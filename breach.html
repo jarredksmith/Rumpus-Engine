@@ -9323,8 +9323,8 @@ function spawnEnemy(spawn){
     ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
     mode: (spawn && spawn.mode) ? spawn.mode : 'hunt',
     home: spawn ? { x:px, z:pz } : null,
-    patrolR: (spawn && spawn.patrolR!=null) ? spawn.patrolR : 6,
-    detectR: (spawn && spawn.detectR!=null) ? spawn.detectR : 14,
+    patrolR: (spawn && spawn.patrolR!=null) ? spawn.patrolR : 10,   // build 620: wider default patrol / detect
+    detectR: (spawn && spawn.detectR!=null) ? spawn.detectR : 18,
     route: (spawn && spawn.route && spawn.route.length) ? spawn.route.map(p=>({ x:(p.x!=null?p.x:p[0]), z:(p.z!=null?p.z:p[1]) })) : null,
     routeLoop: !(spawn && spawn.routeLoop===false), routeIdx:0, routeDir:1,
     aware:false, lostAt:0, wp:null, wpUntil:0 };
@@ -9341,6 +9341,20 @@ function alertEnemy(en, sx, sz){
   en.aware = true; en.lostAt = 0;
   en.lkp = { x:sx, z:sz };                 // last-known position = where the threat came from
   en._alertedT = performance.now();
+}
+// build 620: gunfire is LOUD. A shot (or other noise) at (sx,sz) wakes every living enemy within `radius` and
+// turns it toward the sound — even Hold/Patrol enemies that never saw the player. This is what makes a maze feel
+// hunted: open fire and the halls start converging on you, navigating in (alertEnemy -> aware -> path to lkp),
+// instead of enemies obliviously holding a tiny patrol circle until you walk into their faces.
+const HEAR_RADIUS = 40;   // how far a gunshot carries to alert enemies (world units)
+function alertEnemiesNear(sx, sz, radius){
+  if(typeof enemies==='undefined' || !enemies.length) return;
+  const r2 = radius*radius;
+  for(const en of enemies){
+    if(!en || en.dead || en.hp<=0 || !en.mesh) continue;
+    const dx = en.mesh.position.x - sx, dz = en.mesh.position.z - sz;
+    if(dx*dx + dz*dz <= r2) alertEnemy(en, sx, sz);
+  }
 }
 function enemyDesiredTarget(en, px, pz, dist, now){
   const mode = en.mode || 'hunt';
@@ -9370,7 +9384,7 @@ function enemyDesiredTarget(en, px, pz, dist, now){
   }
 
   // PATROL / HOLD: detection is now gated on BOTH range AND line-of-sight.
-  const detect = en.detectR || 14;
+  const detect = en.detectR || 18;   // build 620: wider default sight so patrollers notice you a hall earlier
   if(dist <= detect && sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz }; }
   else if(en.aware){
     // lost sight or range: remember where they were, chase the last spot, then give up after a grace period.
@@ -9409,7 +9423,7 @@ function enemyDesiredTarget(en, px, pz, dist, now){
     // no route -> wander inside the patrol radius around home
     const reached = en.wp && Math.hypot(here.x-en.wp.x, here.z-en.wp.z) < 1.0;
     if(!en.wp || now > en.wpUntil || reached){
-      const a = Math.random()*Math.PI*2, r = Math.random()*(en.patrolR || 6);
+      const a = Math.random()*Math.PI*2, r = Math.random()*(en.patrolR || 10);   // build 620: wider default wander
       en.wp = { x: hx + Math.cos(a)*r, z: hz + Math.sin(a)*r };
       en.wpUntil = now + 2500 + Math.random()*2500;
     }
@@ -14197,7 +14211,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 619 · 2026-06-22';
+const BUILD_VERSION = 'build 620 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15391,6 +15405,7 @@ function shoot(){
   const clientMode = NET.mode==='client';
   const duelMode = pvpMode();
   if(duelMode && duelDead) return;   // no shooting while waiting to respawn
+  if(!clientMode && !duelMode && typeof alertEnemiesNear==='function') alertEnemiesNear(player.pos.x, player.pos.z, HEAR_RADIUS * (W().silenced ? 0.4 : 1));   // build 620: the shot's noise wakes nearby enemies toward you (suppressors muffle it)
   let rayTargets, enemyMeshes;
   if(duelMode){
     // In a duel the only valid targets are the other players' capsules.
@@ -17212,12 +17227,15 @@ function loop(){
           const _kneeY=(en._groundY!=null?en._groundY:0)+0.4;
           en._pathBlk = (typeof segmentBlocked==='function') ? segmentBlocked(en.mesh.position.x, en.mesh.position.z, td.tx, td.tz, _kneeY) : false;
         }
-        if(td.chase && en._pathBlk && typeof _botFollowPath==='function'){   // path only around real walls; open ground stays a straight charge
+        if(en._pathBlk && typeof _botFollowPath==='function'){   // path only around real walls; open ground stays a straight charge
+          // build 620: route ALL blocked movement through the nav grid — wandering/searching enemies too, not just
+          // active chasers. A patrol enemy heading to a wander/last-known waypoint used to beeline and grind on the
+          // corner; now it navigates the halls like a chaser, so it stops getting "confused" around walls/objects.
           const _wp=_botFollowPath(en._nav||(en._nav={ pos:en.mesh.position }), td.tx, td.tz, dt);
           if(_wp){ const _pdx=_wp.x-en.mesh.position.x, _pdz=_wp.z-en.mesh.position.z, _pl=Math.hypot(_pdx,_pdz);
             if(_pl > 0.5){ _mvx=_pdx/_pl; _mvz=_pdz/_pl; } }
         }
-        if(en._stuckT>0.2 && td.chase){ if(!en._stuckSide) en._stuckSide=((en.id%2)?1:-1); const _px=-_mvz*en._stuckSide, _pz=_mvx*en._stuckSide; _mvx=_mvx*0.5+_px*1.2; _mvz=_mvz*0.5+_pz*1.2; const _l=Math.hypot(_mvx,_mvz)||1; _mvx/=_l; _mvz/=_l; }   // build 540/546: wedged -> wall-follow to one side; faster trigger (0.2s) so a head-on pin clears quickly
+        if(en._stuckT>0.2){ if(!en._stuckSide) en._stuckSide=((en.id%2)?1:-1); const _px=-_mvz*en._stuckSide, _pz=_mvx*en._stuckSide; _mvx=_mvx*0.5+_px*1.2; _mvz=_mvz*0.5+_pz*1.2; const _l=Math.hypot(_mvx,_mvz)||1; _mvx/=_l; _mvz/=_l; }   // build 540/546/620: wedged -> wall-follow to one side; faster trigger (0.2s) so a head-on pin clears quickly (applies to wandering enemies too)
         // build 546: integrate directly and let Phase 3 resolve real penetration. The build-542 per-step clearAt
         // (up to 3 collider-scans + a raycast PER enemy PER frame) tanked wave framerates to single digits and
         // over-rejected on imported meshes ("invisible collider"). Pathfinding routes around walls; the nudge
@@ -17336,7 +17354,7 @@ function loop(){
       // making progress (wedged on a rock). _wantMove excludes an enemy attacking at the player or a ranged
       // enemy holding standoff, which are legitimately still. The Phase-1 nudge wall-follows around the snag.
       // No teleport: yanking a co-op enemy to a random spawn made them vanish in front of the player.
-      if(en._chase && en._wantMove){
+      if(en._wantMove){   // build 620: any enemy actively trying to translate — chasing OR wandering/searching — can wedge on a corner and needs the wall-follow unstick (was chase-only). _wantMove still excludes an enemy attacking or holding standoff, which are legitimately still.
         const _mv = Math.hypot(en.mesh.position.x - (en._spx!=null?en._spx:en.mesh.position.x), en.mesh.position.z - (en._spz!=null?en._spz:en.mesh.position.z));
         if(_mv < (en.speed||3)*dt*0.3){ en._stuckT=(en._stuckT||0)+dt; } else { en._stuckT=0; en._stuckSide=0; }
       } else { en._stuckT=0; en._stuckSide=0; }
@@ -17906,7 +17924,7 @@ function addSceneSpawn(){
   pushUndoSnapshot();
   const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   const px = player.pos.x + fwd.x*6, pz = player.pos.z + fwd.z*6;
-  const g = buildSpawnMarker({ t:[px, pz], mode:'patrol', radius:8, detect:16, face:player.yaw });
+  const g = buildSpawnMarker({ t:[px, pz], mode:'patrol', radius:12, detect:22, face:player.yaw });   // build 620: wider default patrol area + detect
   g.visible = true;
   editorActive='spawns'; editorTargets.spawns.idx = spawnMarkers.length-1; selSpawns=[g]; renderEditorFields();
 }

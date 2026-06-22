@@ -5,7 +5,7 @@ const src = gameSource();
 // the nav-grid edges in toward the player on an open arena instead of charging.
 
 // --- the decision is gated on a cached "direct path blocked" flag, not unconditional ---
-assert(/if\(td\.chase && en\._pathBlk && typeof _botFollowPath==='function'\)/.test(src), 'pathfinding engages only when en._pathBlk is set');
+assert(/if\(en\._pathBlk && typeof _botFollowPath==='function'\)/.test(src), 'pathfinding engages when en._pathBlk is set');
 assert(/let _mvx=dx\/d, _mvz=dz\/d;/.test(src), 'the base movement is a straight beeline at the target');
 
 // --- the gate ray is low (knee height), throttled + jittered, and per-frame budgeted ---

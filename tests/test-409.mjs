@@ -6,7 +6,7 @@ const src = gameSource();
 // build 534/553: chasing enemies beeline straight at the target (always move in the open, from any angle) and
 // only fall back to the nav path when the straight WALKING path is actually blocked. A too-close waypoint
 // must never zero out the step.
-assert(/if\(td\.chase && en\._pathBlk && typeof _botFollowPath==='function'\)/.test(src), 'build 553: pathfinding engages only when the direct walking path is blocked (en._pathBlk)');
+assert(/if\(en\._pathBlk && typeof _botFollowPath==='function'\)/.test(src), 'build 553/620: pathfinding engages when the direct walking path is blocked (en._pathBlk) — chasing AND wandering');
 assert(!/td\.chase && !td\.see && typeof _botFollowPath/.test(src), 'the visible-only pathfinding gate is removed (533/542)');
 assert(!/if\(td\.chase && typeof _botFollowPath==='function'\)\{/.test(src), 'the build-542 always-pathfind is replaced by the blocked-path gate');
 // the gate is fed by a LOW (knee-height) walkability ray so a wall you can see over but not walk through still routes
