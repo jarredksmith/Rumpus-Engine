@@ -7527,7 +7527,7 @@ const _shrunkTex = (typeof WeakSet!=='undefined') ? new WeakSet() : null;   // e
 // build 575: downscale model textures on load to cap VRAM/RAM. Sketchfab models often ship 4K PBR maps (~64MB
 // each on the GPU); capping the longest side to e.g. 1024 cuts that ~16x. Runs once per cached master, so every
 // clone inherits the smaller maps. Configurable cap (0 = no cap on desktop); mobile is always capped at <=1024.
-let _modelTexCap = 1024; try{ const _v=parseInt(localStorage.getItem('breach_model_texcap'),10); if([0,512,1024,2048].indexOf(_v)>=0) _modelTexCap=_v; }catch(e){}
+let _modelTexCap = 1024; try{ const _v=parseInt(localStorage.getItem('breach_model_texcap'),10); if([0,512,1024,2048,4096].indexOf(_v)>=0) _modelTexCap=_v; }catch(e){}   // build 641: 0 = Full (no cap on desktop); up to 4096 for hero models
 function _modelTexCapEff(){ let cap=_modelTexCap; if(typeof IS_COARSE!=='undefined' && IS_COARSE) cap=(cap===0?1024:Math.min(cap,1024)); return cap; }
 function _shrinkTexturesForMobile(root){   // (name kept for call sites) downscale to the effective cap AND pre-upload, so first render never stalls
   if(!root || !root.traverse) return;
@@ -7553,6 +7553,24 @@ function _shrinkTexturesForMobile(root){   // (name kept for call sites) downsca
         if(canWarm) try{ renderer.initTexture(t); }catch(e){}   // build 577: upload to the GPU now (off the render loop) so the prop's first frame doesn't hitch
         if(_shrunkTex) _shrunkTex.add(t);
       } } });
+}
+// build 641: reusable "Model texture cap" control. Shown in the Generate panel AND atop every model search (so
+// it's right there when you import a model). Full = no downscale on desktop; 4k keeps hero objects crisp. Applies
+// to models loaded AFTER you change it — reload the page (F5) to re-apply to ones already in the scene.
+function _modelTexCapControl(host){
+  const tc=document.createElement('div'); tc.style.cssText='margin:5px 0 2px;';
+  const lab=document.createElement('div'); lab.style.cssText='color:#9fe6cf;font-size:11px;margin-bottom:3px;'; lab.innerHTML='<b>Model texture cap</b> — max resolution of imported model maps';
+  const row=document.createElement('div'); row.style.cssText='display:flex;gap:5px;';
+  const build=()=>{ row.innerHTML=''; const cur=(typeof _modelTexCap==='number'?_modelTexCap:1024);
+    [['Full',0],['512',512],['1k',1024],['2k',2048],['4k',4096]].forEach(([txt,val])=>{ const b=document.createElement('button'); b.textContent=txt; const on=(cur===val);
+      b.style.cssText='flex:1;padding:4px 0;font-size:11px;border-radius:4px;cursor:pointer;border:1px solid '+(on?'var(--accent)':'#2a3a42')+';background:'+(on?'#16302a':'#0c1418')+';color:'+(on?'#bff3df':'#7fb8aa')+';';
+      b.onclick=()=>{ _modelTexCap=val; try{ localStorage.setItem('breach_model_texcap', String(val)); }catch(e){} build(); if(typeof toast==='function') toast(val?('New models use up to '+val+'px textures'):'Full-resolution model textures (mobile still caps at 1024)'); };
+      row.appendChild(b); }); };
+  build();
+  tc.appendChild(lab); tc.appendChild(row); host.appendChild(tc);
+  const nt=document.createElement('div'); nt.className='hint'; nt.style.cssText='font-size:10px;opacity:0.7;margin:2px 0 0;'; nt.textContent='Higher = sharper but more GPU memory. Applies to models loaded after you change it — reload the page (F5) to re-apply to ones already in the scene. Mobile always caps at 1024.';
+  host.appendChild(nt);
+  return tc;
 }
 // build 577: after a burst of model spawns settles, precompile their shader programs once, so turning to look at
 // a freshly furnished room doesn't stall while WebGL links shaders on first draw. Debounced + off the render loop.
@@ -10411,18 +10429,8 @@ function renderGeneratePanel(){
     sl.oninput=()=>{ const v=parseFloat(sl.value)||1.6; _furnishScale=v; try{ localStorage.setItem('breach_furnish_scale', String(v)); }catch(e){} const o=sc.querySelector('#edFurnScaleV'); if(o) o.textContent=v.toFixed(1)+'\u00d7'; };
     sc.appendChild(lab); sc.appendChild(sl); host.appendChild(sc);
   }
-  // build 575: model texture memory cap (downscales big Sketchfab maps on load)
-  { const tc=document.createElement('div'); tc.style.cssText='margin:5px 0 2px;';
-    const lab=document.createElement('div'); lab.style.cssText='color:#9fe6cf;font-size:11px;margin-bottom:3px;'; lab.innerHTML='<b>Model texture cap</b> \u2014 shrinks oversized maps to save memory';
-    const row=document.createElement('div'); row.style.cssText='display:flex;gap:5px;';
-    const cur=(typeof _modelTexCap==='number'?_modelTexCap:1024);
-    [['Off',0],['512',512],['1024',1024],['2048',2048]].forEach(([txt,val])=>{ const b=document.createElement('button'); b.textContent=txt; const on=(cur===val);
-      b.style.cssText='flex:1;padding:4px 0;font-size:11px;border-radius:4px;cursor:pointer;border:1px solid '+(on?'var(--accent)':'#2a3a42')+';background:'+(on?'#16302a':'#0c1418')+';color:'+(on?'#bff3df':'#7fb8aa')+';';
-      b.onclick=()=>{ _modelTexCap=val; try{ localStorage.setItem('breach_model_texcap', String(val)); }catch(e){} renderGeneratePanel(); if(typeof toast==='function') toast(val?('New models capped at '+val+'px textures'):'Texture cap off (mobile still caps at 1024)'); };
-      row.appendChild(b); });
-    tc.appendChild(lab); tc.appendChild(row); host.appendChild(tc);
-    const nt=document.createElement('div'); nt.className='hint'; nt.style.cssText='font-size:10px;opacity:0.7;margin:2px 0 0;'; nt.textContent='Applies to newly loaded models. A 4K\u21921K map uses ~16\u00d7 less GPU memory.'; host.appendChild(nt);
-  }
+  // build 575/641: model texture memory cap (downscales big Sketchfab maps on load) \u2014 reusable control
+  _modelTexCapControl(host);
   // generate
   const btn=document.createElement('button'); btn.textContent='\u2699 Generate '+(isMaze?'maze':'office'); btn.style.cssText='width:100%;background:var(--accent);color:#05070a;font-weight:700;border:none;padding:9px;border-radius:6px;margin:4px 0;cursor:pointer;';
   btn.onclick=()=>{ const o={ cells:_genCells, cover:_genCover, loot:_genLoot, tex:_genTex }; if(isMaze) generateMaze(o); else generateOffice(Object.assign(o,{ desc:_genDesc })); };
@@ -14419,7 +14427,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 640 · 2026-06-22';
+const BUILD_VERSION = 'build 641 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18880,7 +18888,9 @@ function _modelSourceBar(host, rerender){
     const sw=document.createElement('div'); sw.style.cssText='display:flex;gap:4px;'; sw.appendChild(mk('pp','Poly Pizza','var(--accent)')); sw.appendChild(mk('sf','Sketchfab','#1caad9')); wrap.appendChild(sw);
     const off=document.createElement('button'); off.textContent='hide'; off.title='Hide the Sketchfab option'; off.style.cssText='flex:0 0 auto;margin-left:auto;padding:3px 8px;font-size:10px;border-radius:6px;border:1px solid #2a3a42;background:transparent;color:#6f968b;cursor:pointer;'; off.onclick=()=>{ sfSetEnabled(false); _setModelSource('pp'); rerender(); }; wrap.appendChild(off);
   }
-  host.appendChild(wrap); return wrap;
+  host.appendChild(wrap);
+  if(typeof _modelTexCapControl==='function') _modelTexCapControl(host);   // build 641: texture-resolution control right where you import models
+  return wrap;
 }
 // Sketchfab search panel: token field, query, thumbnail grid. onPick(model, statusEl) with model.glb = 'sketchfab:<uid>'.
 function renderSketchfabSearch(host, onPick){

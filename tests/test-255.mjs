@@ -47,7 +47,11 @@ assert(/_shrunkTex\.has\(t\)/.test(src), 'shared textures are shrunk once');
 assert(/isCompressedTexture \|\| t\.isDataTexture/.test(src), 'compressed/data textures are skipped (cannot canvas-resize)');
 assert(/'clearcoatMap'/.test(src) && /'sheenColorMap'/.test(src), 'extended PBR map slots covered');
 const rp = extractFunction('renderGeneratePanel');
-assert(/breach_model_texcap/.test(rp) && /Model texture cap/.test(rp), 'panel exposes the texture cap selector');
+assert(/_modelTexCapControl\(host\)/.test(rp), 'panel exposes the texture cap selector (reusable control)');
+const tcc = extractFunction('_modelTexCapControl');
+assert(/breach_model_texcap/.test(tcc) && /Model texture cap/.test(tcc), 'the control persists the cap + is labelled');
+assert(/\['4k',4096\]/.test(tcc), 'build 641: a 4k option for hero models');
+assert(/_modelTexCapControl\(host\)/.test(extractFunction('_modelSourceBar')), 'the control also appears atop every model search (discoverable on import)');
 // build 577: streaming-hitch reduction — pre-upload textures + debounced shader precompile, both off the render loop
 const sh = extractFunction('_shrinkTexturesForMobile');
 assert(/renderer\.initTexture\(t\)/.test(sh), 'textures are pre-uploaded to the GPU at load (no first-draw upload stall)');
