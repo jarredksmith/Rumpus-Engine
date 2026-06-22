@@ -9744,7 +9744,12 @@ function _animateFire(g, tms, dt){
   // keep the shader's point-size attenuation matched to the active camera + viewport height
   if(_fireUniforms){ const cam=(typeof activeCam==='function'?activeCam():(typeof camera!=='undefined'?camera:null));
     const H=(typeof renderer!=='undefined' && renderer.domElement) ? renderer.domElement.height : 800;
-    _fireUniforms.uScale.value = (cam && cam.isPerspectiveCamera) ? (H*0.5)/Math.tan((cam.fov*0.5)*Math.PI/180) : H*0.5; }
+    const baseScale = (cam && cam.isPerspectiveCamera) ? (H*0.5)/Math.tan((cam.fov*0.5)*Math.PI/180) : H*0.5;
+    // build 630: a cutscene animates the camera FOV, and a tight (telephoto) cine lens balloons this scale so every
+    // fire sprite slams into the 128px size clamp and renders as a big uniform WHITE disc — the "grouping of white
+    // particles, not on fire" seen during cinematics. Cap it (only bites below ~fov 37°) so flames keep their shape
+    // under a tight lens; normal + ADS play (wider fov) is unaffected.
+    _fireUniforms.uScale.value = Math.min(baseScale, H*1.6); }
   const ts=tms*0.001, baseY=u.baseY||0, pos=u.posArr, col=u.colArr, siz=u.sizeArr, alp=u.alphaArr, sw=(u.sizeW||0.6);
   const turb=(u.turb!=null?u.turb:1), wind=(u.wind||0), hue=(u.hue!=null?u.hue:30), hueD=hue-30, spk=(u.spk!==false), sat=(u.sat!=null?u.sat:1), smoke=(u.smoke===true);
   for(let i=0;i<u.parts.length;i++){ const p=u.parts[i];
@@ -14271,7 +14276,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 629 · 2026-06-22';
+const BUILD_VERSION = 'build 630 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
