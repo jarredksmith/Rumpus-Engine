@@ -13364,7 +13364,7 @@ function explodeGrenade(g){
   // visual blast (scales with the configured radius)
   const R = GRENADE.radius;
   const pos = g.mesh.position.clone();
-  const bl = new THREE.PointLight(0xffaa44, 30, Math.max(12, R*2.5)); bl.position.copy(pos); scene.add(bl);   // light flash always
+  const bl = _blastLightAt(pos, R);   // build 632: pooled light flash (no per-blast add/remove -> no shader recompile)
   const usedSheet = playFlipbook('explosion', pos, Math.max(0.4, R*0.18));   // realistic flipbook if hosted
   let blast = null;
   if(usedSheet){ playFlipbook('smoke', pos, Math.max(0.4, R*0.16)); }
@@ -13389,6 +13389,17 @@ function explodeGrenade(g){
   scene.remove(g.mesh);
 }
 const explosions = [];
+// build 632: every blast used to `new THREE.PointLight` + scene.add then remove it ~0.35s later. Adding/removing
+// a light changes the scene's light COUNT, which makes three.js recompile every lit material — a hitch on basically
+// every explosion (the rocket/explosion stutter). Instead keep a small pool of blast lights permanently in the
+// scene (created together once, so the count then never changes) and just re-aim + re-brighten one per blast.
+const _blastLightPool = []; let _blastLightN = 0;
+function _blastLightAt(pos, R){
+  if(!_blastLightPool.length){ for(let i=0;i<6;i++){ const L=new THREE.PointLight(0xffaa44, 0, 12); scene.add(L); _blastLightPool.push(L); } }   // one-time: fix the scene's point-light count up front
+  const L = _blastLightPool[_blastLightN++ % _blastLightPool.length];
+  L.position.copy(pos); L.distance = Math.max(12, R*2.5); L.intensity = 30;   // position/distance/intensity are uniforms — changing them never recompiles
+  return L;
+}
 // A grenade-style blast at a point: explosion+smoke flipbook (or fallback sphere), light, sparks, shake,
 // then AoE damage with linear falloff to enemies (co-op) or bots+players (PvP), crediting byId. Nearby
 // breakable props are damaged too, so a shot propane can chain-detonate a cluster. Clients call it for
@@ -13396,7 +13407,7 @@ const explosions = [];
 function explodeAt(pos, R, dmg, byId){
   if(typeof SFX!=='undefined' && SFX.explode) SFX.explode();
   addShake(Math.max(0, 1 - player.pos.distanceTo(pos)/22) * 0.9);
-  const bl=new THREE.PointLight(0xffaa44, 30, Math.max(12, R*2.5)); bl.position.copy(pos); scene.add(bl);
+  const bl=_blastLightAt(pos, R);   // build 632: pooled light (no per-blast add/remove -> no shader recompile)
   const eScale=Math.max(0.4, R*0.18);
   const _vp = pos.clone(); _vp.y += (VFX.explosion.size||6) * eScale * 0.35;   // lift so the billboard sits ON the surface, not half-buried
   const usedSheet=playFlipbook('explosion', _vp, eScale);
@@ -13448,7 +13459,7 @@ function updateGrenades(dt){
     if(e.mesh){ e.mesh.scale.setScalar(Math.max(0.4, prog * (e.maxR || 8)));   // expand out to the blast radius
       e.mesh.material.opacity = Math.max(0, e.life/0.35*0.8); }
     if(e.light) e.light.intensity = Math.max(0, e.life/0.35*30);
-    if(e.life<=0){ if(e.mesh) scene.remove(e.mesh); if(e.light) scene.remove(e.light); explosions.splice(i,1); }
+    if(e.life<=0){ if(e.mesh) scene.remove(e.mesh); if(e.light) e.light.intensity = 0; explosions.splice(i,1); }   // build 632: pooled light stays in the scene (just dimmed) so the light count never changes
   }
 }
 
@@ -14358,7 +14369,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 631 · 2026-06-22';
+const BUILD_VERSION = 'build 632 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15155,7 +15166,7 @@ function spawnFragments(center, size, colorHex, count, impulseDir, impulsePow, s
     const pz = center.z + (Math.random()-0.5)*size.z*0.5;
     mesh.position.set(px,py,pz); mesh.castShadow = true; scene.add(mesh);
     const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(px,py,pz).setLinearDamping(0.1).setAngularDamping(0.3).setCcdEnabled(true));
+      .setTranslation(px,py,pz).setLinearDamping(0.1).setAngularDamping(0.3));   // build 632: no CCD on short-lived cosmetic debris — CCD on up to 90 bodies was a heavy spawn + per-step cost (explosion stutter)
     physWorld.createCollider(RAPIER.ColliderDesc.cuboid(s/2,s/2,s/2).setRestitution(0.35).setFriction(0.8).setMass(0.4), rb);
     // explode outward from the break point, plus a kick along the shot direction
     const out = new THREE.Vector3(px-center.x, py-center.y, pz-center.z); if(out.lengthSq()<1e-4) out.set(Math.random()-0.5, Math.random(), Math.random()-0.5);
