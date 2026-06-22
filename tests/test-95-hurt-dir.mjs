@@ -15,5 +15,5 @@ assert(/updateHurtDir\(dt\);/.test(src), 'ticks each frame');
 assert(/function applyEnemyDamageToSelf\(dmg, sx, sz\)\{/.test(src) && /if\(sx!=null\) hurtDir\(sx,sz\)/.test(src), 'enemy damage points the indicator');
 assert(/if\(rp&&rp\.posEye\) hurtDir\(rp\.posEye\.x, rp\.posEye\.z\)/.test(src), 'pvp hits point toward the attacker');
 assert(/life: 3500, from: from\.clone\(\)/.test(src), 'enemy shots remember their origin');
-assert(/near\.hurt\(en\.dmg \|\| 9, en\.mesh\.position\.x, en\.mesh\.position\.z\)/.test(src), 'melee points toward the enemy');
+assert(/_tn\.hurt\(en\.dmg \|\| 9, en\.mesh\.position\.x, en\.mesh\.position\.z\)/.test(src), 'melee points toward the enemy (telegraphed strike, build 627)');
 done('hurt direction');

@@ -11359,6 +11359,7 @@ function botHurt(b, dmg, sx, sz){
   return false;
 }
 let matchWarmup = 0;
+const ENEMY_MELEE_WINDUP_MS = 320;   // build 627: telegraph window — a melee enemy winds up, then strikes; back out of reach during it and the swing whiffs
 let _warmupBroadcast = false;   // build 624: host has sent the live {t:'warmup'} count to clients this match (sent once)
 let _clientWarmupHold = false;  // build 624: client is frozen on "GET READY" until the host's synced count arrives
 let _repathBudget = 0;   // A* searches allowed per frame (reset each updateBots tick) so a frame never stalls on many repaths at once   // pre-match build/countdown window (host bot matches): bots are held inert until the nav grid is ready
@@ -14265,7 +14266,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 626 · 2026-06-22';
+const BUILD_VERSION = 'build 627 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17424,9 +17425,19 @@ function loop(){
           en._burstN = Math.max(0,(en.burst||1)-1); en._burstT = en.burstGap; en._burstTgt = (en._burstN>0)?near:null;
           en.shootCd = en.fireCd; en._attackT = nowMs + (en.burst>1 ? 450 + en.burst*en.burstGap*1000 : 450);   // attack anim spans the whole burst
         }
-      } else if(en._chase && en._dist < (en._reach || 2.4) && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6 && en.cooldown<=0 && !editorOpen){   // build 539: a chasing melee enemy in reach AND at roughly the same height attacks on PROXIMITY (no LOS gate — at melee range the sightline is moot, and requiring it meant they only swung when literally touching on a cover-heavy map)
-        en.cooldown = 0.8; en._attackT = nowMs + 550;   // brief attack-animation window
-        near.hurt(en.dmg || 9, en.mesh.position.x, en.mesh.position.z);   // routes to the local player or, in co-op, the remote one
+      } else if(en._chase && en._dist < (en._reach || 2.4) && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6 && en.cooldown<=0 && !editorOpen && !en._windupT){   // build 539: a chasing melee enemy in reach AND at roughly the same height attacks on PROXIMITY (no LOS gate — at melee range the sightline is moot, and requiring it meant they only swung when literally touching on a cover-heavy map)
+        en.cooldown = 0.8; en._attackT = nowMs + 550; en._windupT = nowMs + ENEMY_MELEE_WINDUP_MS;   // build 627: wind up now; the hit lands at the end of the wind-up, not on contact
+      }
+      // build 627: resolve a telegraphed melee strike. Damage lands when the wind-up completes, and ONLY if the
+      // target is still within reach (a little leniency) at roughly the same height — so backing out of range
+      // during the ~0.32s tell dodges the swing. Fairer than the old instant-on-contact hit, and it gives the
+      // attack animation something real to telegraph.
+      if(en._windupT && nowMs >= en._windupT){
+        en._windupT = 0;
+        const _tn = en._near;
+        if(_tn && _tn.hurt && en._dist < (en._reach || 2.4) * 1.3 && Math.abs((_tn.pos.y - EYE) - en.mesh.position.y) < 2.6){
+          _tn.hurt(en.dmg || 9, en.mesh.position.x, en.mesh.position.z);   // routes to the local player or, in co-op, the remote one
+        }
       }
       // build 540/541: stuck recovery — only while the enemy is actively trying to CLOSE distance and not
       // making progress (wedged on a rock). _wantMove excludes an enemy attacking at the player or a ranged
