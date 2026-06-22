@@ -7783,6 +7783,19 @@ let deathFxCfg = _sanitizeDeathFx(savedLevel && savedLevel.deathFx);
 const DEFAULT_TRACER = { color:0xfff1c0, width:1, life:1, opacity:0.95, glow:true, on:true };
 let tracerCfg = _sanitizeTracer(savedLevel && savedLevel.tracer);   // load saved bullet streak on boot
 function _sanitizeTracer(o){ o=o||{}; return { color:(o.color!=null?(o.color|0):DEFAULT_TRACER.color), width:_fxClamp(o.width,0.2,6,1), life:_fxClamp(o.life,0.2,5,1), opacity:_fxClamp(o.opacity,0.1,1,0.95), glow:o.glow!==false, on:o.on!==false }; }
+// build 637: ranged-enemy gunfire look (tunable in the editor under Weapons > Enemy gunfire; serialized with the
+// level). Purely cosmetic — bolt tip + streak, trail, muzzle flash and impact. A style preset sets the base shape,
+// the sliders/colours fine-tune it. The old look was one fat additive sphere ("glowing ball"); the default is now
+// a thin, tapered tracer streak.
+const DEFAULT_BOLT = { style:'tracer', coreColor:0xfff0c8, glowColor:0xffae4a, size:1, streak:1, opacity:0.7, trail:true, impactColor:0xffc070, muzzle:1 };
+const _BOLT_STYLES = {
+  tracer: { core:0.05, glowW:0.03,  glowL:1.2 },   // thin bright tracer line (realistic gunfire)
+  plasma: { core:0.09, glowW:0.14,  glowL:0.5 },   // fat sci-fi energy ball (the old look)
+  laser:  { core:0.03, glowW:0.018, glowL:2.4 },   // very thin, long beam
+  slug:   { core:0.06, glowW:0.045, glowL:0.35 },  // short, subtle slug
+};
+let boltCfg = _sanitizeBolt(savedLevel && savedLevel.bolt);   // load saved enemy-gunfire look on boot
+function _sanitizeBolt(o){ o=o||{}; const style=(_BOLT_STYLES[o.style]?o.style:'tracer'); return { style, coreColor:(o.coreColor!=null?(o.coreColor|0):DEFAULT_BOLT.coreColor), glowColor:(o.glowColor!=null?(o.glowColor|0):DEFAULT_BOLT.glowColor), size:_fxClamp(o.size,0.3,4,1), streak:_fxClamp(o.streak,0.2,6,1), opacity:_fxClamp(o.opacity,0.1,1,0.7), trail:o.trail!==false, impactColor:(o.impactColor!=null?(o.impactColor|0):DEFAULT_BOLT.impactColor), muzzle:_fxClamp(o.muzzle,0,3,1) }; }
 let playerBody=null, playerCollider=null, playerCtrl=null, _kccBroken=false;
 const PLAYER_CAP_R = 0.45;   // capsule radius for KCC world collision (narrower than player.radius so archways fit)
 let physAccum = 0;
@@ -11867,6 +11880,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
+  boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; refreshPlayerSpawnMarker(); }
@@ -14389,7 +14403,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 636 · 2026-06-22';
+const BUILD_VERSION = 'build 637 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16112,22 +16126,38 @@ const _boltCoreMat = new THREE.MeshBasicMaterial({ color:0xfff0c8 });
 const _boltGlowGeo = new THREE.SphereGeometry(0.13, 10, 10);
 const _boltGlowMat = new THREE.MeshBasicMaterial({ color:0xff7a2a, transparent:true, opacity:0.6, blending:THREE.AdditiveBlending, depthWrite:false });
 const _boltFlashMat = new THREE.MeshBasicMaterial({ color:0xffb060, transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false });
+const _boltStreakGeo = new THREE.CylinderGeometry(1, 0.15, 1, 6, 1, true);   // build 637: tapered tracer streak (bright tip -> thin tail); radius/height 1, scaled per-bolt
 const boltTrails = [];   // fading additive puffs left behind bolts + impact flashes
+// build 637: a bolt = a bright core tip + a thin tapered additive streak trailing it (its local +Y is travel).
+// Shape comes from the style preset, then size/streak/colour/opacity from boltCfg refine it.
 function makeEnemyBolt(){
+  const st = _BOLT_STYLES[boltCfg.style] || _BOLT_STYLES.tracer;
   const g = new THREE.Group();
-  g.add(new THREE.Mesh(_boltCoreGeo, _boltCoreMat));
-  const glow = new THREE.Mesh(_boltGlowGeo, _boltGlowMat); g.add(glow); g.userData.glow = glow;
+  _boltCoreMat.color.setHex(boltCfg.coreColor);
+  const core = new THREE.Mesh(_boltCoreGeo, _boltCoreMat);
+  core.scale.setScalar((st.core/0.06) * boltCfg.size);   // _boltCoreGeo is radius 0.06
+  g.add(core);
+  _boltGlowMat.color.setHex(boltCfg.glowColor); _boltGlowMat.opacity = boltCfg.opacity;
+  const sl = st.glowL * boltCfg.streak, sw = st.glowW * boltCfg.size;
+  const glow = new THREE.Mesh(_boltStreakGeo, _boltGlowMat);
+  glow.scale.set(sw, sl, sw); glow.position.y = -sl*0.5;   // trail BEHIND the tip
+  g.add(glow); g.userData.glow = glow;
   return g;
 }
 function emitBoltTrail(p){
+  if(!boltCfg.trail) return;
+  _boltGlowMat.color.setHex(boltCfg.glowColor);
   const m = new THREE.Mesh(_boltGlowGeo, _boltGlowMat.clone());
-  m.position.copy(p); const s = 0.5 + Math.random()*0.15; m.scale.setScalar(s);
+  m.material.opacity = boltCfg.opacity*0.7;
+  m.position.copy(p); const s = (0.30 + Math.random()*0.12) * boltCfg.size; m.scale.setScalar(s);
   scene.add(m); boltTrails.push({ mesh:m, life:0.16, max:0.16, s, fade:0.5 });
 }
 function boltImpact(p, color){
-  spark(p, color||fxCfg.color);
+  const col = (color!=null ? color : boltCfg.impactColor);
+  spark(p, col);
+  _boltFlashMat.color.setHex(col);
   const m = new THREE.Mesh(_boltGlowGeo, _boltFlashMat.clone());
-  m.position.copy(p); m.scale.setScalar(0.6);
+  m.position.copy(p); m.scale.setScalar(0.6 * boltCfg.size);
   scene.add(m); boltTrails.push({ mesh:m, life:0.18, max:0.18, s:2.4, fade:0.9 });
   playFlipbook('smoke', p, 0.22, null, 0.45);   // small, quick dust puff at the impact (no-op if no sheet)
 }
@@ -16158,10 +16188,9 @@ function fireEnemyShot(en, target, spread){
   if(spread){ dir.x+=(Math.random()*2-1)*spread; dir.y+=(Math.random()*2-1)*spread*0.6; dir.z+=(Math.random()*2-1)*spread; dir.normalize(); }
   const mesh = makeEnemyBolt();
   mesh.position.copy(from);
-  mesh.quaternion.setFromUnitVectors(_UP, dir.clone().normalize());   // align local +Y to travel
-  if(mesh.userData.glow) mesh.userData.glow.scale.set(1, 4.5, 1);     // stretch the halo into a thin tracer streak
+  mesh.quaternion.setFromUnitVectors(_UP, dir.clone().normalize());   // align local +Y to travel (streak shape is baked in makeEnemyBolt from boltCfg)
   scene.add(mesh);
-  if(!playFlipbook('muzzle', from, 0.7)) flashLightAt(from);          // muzzle flash at the enemy's gun
+  if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);   // muzzle flash at the enemy's gun (scaled by boltCfg)
   enemyShots.push({ mesh, vel: dir.multiplyScalar(en.projSpeed), dmg: en.dmg, born: performance.now(), life: 3500, from: from.clone() });
   if(SFX && SFX.enemyShot) SFX.enemyShot();
 }
@@ -16177,7 +16206,7 @@ function updateEnemyShots(dt){
     let dead = (now - s.born) > s.life || p.y < terrainHeightAt(p.x,p.z)+0.1;
     if(!dead){ for(const pl of ps){ const dx=pl.pos.x-p.x, dy=((pl.eyeY!=null?pl.eyeY:(pl.pos.y!=null?pl.pos.y:1.4)))-p.y, dz=pl.pos.z-p.z; if(dx*dx+dy*dy+dz*dz < 1.1*1.1){ if(pl.hurt) pl.hurt(s.dmg, s.from?s.from.x:null, s.from?s.from.z:null); dead=true; break; } } }
     if(!dead){ for(const c of colliders){ const b=c.userData.box; if(!b) continue; if(p.x>=b.min.x&&p.x<=b.max.x&&p.y>=b.min.y&&p.y<=b.max.y&&p.z>=b.min.z&&p.z<=b.max.z){ dead=true; break; } } }
-    if(dead){ boltImpact(p, 0x6fe0ff); scene.remove(s.mesh); enemyShots.splice(i,1); }
+    if(dead){ boltImpact(p, boltCfg.impactColor); scene.remove(s.mesh); enemyShots.splice(i,1); }
   }
 }
 let _hbT=0;
@@ -18019,7 +18048,7 @@ const MODE_SECTIONS = {
   scene:   ['world','generate','audiozones','deathzones','jumppads','firezones'],
   enemies: ['enemies','gizmo','object','transform'],   // spawn points live here now; their picker/fields/gizmo sections come along
   rules:   ['game','pickups','loot','invitems'],
-  kit:     ['object','transform','impactfx','tracerfx','crosshair'],   // 'object' carries the weapon model import + per-weapon shoot sound; impact/streak FX; music/SFX live in Scene
+  kit:     ['object','transform','impactfx','tracerfx','boltfx','crosshair'],   // 'object' carries the weapon model import + per-weapon shoot sound; impact/streak FX; enemy gunfire FX; music/SFX live in Scene
   files:   ['levelfile','campaign'],
 };
 const MODE_TARGETS = {
@@ -18393,6 +18422,7 @@ function serializeLevel(){
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
     tracer: Object.assign({}, tracerCfg),
+    bolt: Object.assign({}, boltCfg),
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
@@ -18539,6 +18569,24 @@ function renderTracerFxPanel(){
   const br=document.createElement('div'); br.className='row2'; br.style.marginTop='6px';
   const test=document.createElement('button'); test.textContent='Test streak'; test.title='Fire a sample streak across your view'; test.onclick=()=>{ const d=new THREE.Vector3(); camera.getWorldDirection(d); const right=new THREE.Vector3().crossVectors(d, new THREE.Vector3(0,1,0)).normalize(); const mid=camera.position.clone().addScaledVector(d,5); let n=0; const fire=()=>{ tracer(mid.clone().addScaledVector(right,-3), mid.clone().addScaledVector(right,3), true); if(++n<8) setTimeout(fire,55); }; fire(); };
   const rst=document.createElement('button'); rst.textContent='Reset'; rst.onclick=()=>{ tracerCfg=Object.assign({}, DEFAULT_TRACER); renderTracerFxPanel(); };
+  br.appendChild(test); br.appendChild(rst); wrap.appendChild(br);
+  host.appendChild(wrap);
+}
+// build 637: fine control over how ranged enemies' gunfire LOOKS (cosmetic only — no effect on damage/aim).
+function renderBoltFxPanel(){
+  const host=document.getElementById('edBoltFx'); if(!host) return; host.innerHTML='';
+  const wrap=document.createElement('div');
+  const row=(label,node)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px;'; const s=document.createElement('span'); s.textContent=label; s.style.minWidth='64px'; r.appendChild(s); r.appendChild(node); wrap.appendChild(r); };
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px'; intro.textContent='The look of ranged enemies’ bolts: tip, streak, trail, muzzle flash + impact. Cosmetic only — doesn’t change damage or aim.'; wrap.appendChild(intro);
+  const ss=document.createElement('select'); for(const k of ['tracer','plasma','laser','slug']){ const o=document.createElement('option'); o.value=k; o.textContent=k.charAt(0).toUpperCase()+k.slice(1); if(boltCfg.style===k) o.selected=true; ss.appendChild(o); } ss.onchange=()=>{ boltCfg.style=ss.value; }; row('Style', ss);
+  const colorRow=(label,key)=>{ const ci=document.createElement('input'); ci.type='color'; ci.value='#'+(boltCfg[key]>>>0).toString(16).padStart(6,'0').slice(-6); ci.oninput=()=>{ boltCfg[key]=parseInt(ci.value.slice(1),16); }; row(label, ci); };
+  colorRow('Core', 'coreColor'); colorRow('Streak', 'glowColor'); colorRow('Impact', 'impactColor');
+  const slider=(key,label,lo,hi,step)=>{ const box=document.createElement('div'); box.style.cssText='display:flex;flex:1;gap:6px;align-items:center'; const i=document.createElement('input'); i.type='range'; i.min=lo; i.max=hi; i.step=step; i.value=boltCfg[key]; i.style.flex='1'; const v=document.createElement('span'); v.style.cssText='min-width:32px;text-align:right;opacity:.8'; v.textContent=(+boltCfg[key]).toFixed(2); i.oninput=()=>{ boltCfg[key]=+i.value; v.textContent=(+i.value).toFixed(2); }; box.appendChild(i); box.appendChild(v); row(label, box); };
+  slider('size','Size',0.3,4,0.05); slider('streak','Streak',0.2,6,0.05); slider('opacity','Opacity',0.1,1,0.02); slider('muzzle','Muzzle',0,3,0.05);
+  const tg=document.createElement('input'); tg.type='checkbox'; tg.checked=!!boltCfg.trail; tg.onchange=()=>{ boltCfg.trail=tg.checked; }; row('Trail', tg);
+  const br=document.createElement('div'); br.className='row2'; br.style.marginTop='6px';
+  const test=document.createElement('button'); test.textContent='Test bolt'; test.title='Fire a sample bolt forward from your view'; test.onclick=()=>{ const d=new THREE.Vector3(); camera.getWorldDirection(d); const from=camera.position.clone().addScaledVector(d,2.5); const en={ mesh:{ position:from, userData:{} }, dmg:0, projSpeed:42 }; const tgt={ pos:camera.position.clone().addScaledVector(d,40), eyeY:camera.position.y }; let n=0; const fire=()=>{ fireEnemyShot(en, tgt, 0.01); if(++n<5) setTimeout(fire,90); }; fire(); };
+  const rst=document.createElement('button'); rst.textContent='Reset'; rst.onclick=()=>{ boltCfg=Object.assign({}, DEFAULT_BOLT); renderBoltFxPanel(); };
   br.appendChild(test); br.appendChild(rst); wrap.appendChild(br);
   host.appendChild(wrap);
 }
@@ -18721,6 +18769,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
+  boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
   // gun / aim / station
@@ -19073,6 +19122,7 @@ function buildEditorPanel(){
     + sec('Fire zones', 'firezones', '<div id="edFireZones"></div>')
     + sec('Impact FX', 'impactfx', '<div id="edImpactFx"></div>')
     + sec('Bullet streak', 'tracerfx', '<div id="edTracerFx"></div>')
+    + sec('Enemy gunfire', 'boltfx', '<div id="edBoltFx"></div>')
     + sec('Crosshair', 'crosshair', '<div id="edCrosshair"></div>')
     + sec('Characters', 'characters', '<div id="edCharRoster"></div>')
     + sec('Level file', 'levelfile',
@@ -19157,6 +19207,7 @@ function buildEditorPanel(){
   if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
+  if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   // restore saved width + wire drag-to-resize (drag the left edge; wider = more room for the crowded panels)
   try{ const w = parseInt(localStorage.getItem('breach_editor_width')||'',10); if(w>=260 && w<=window.innerWidth*0.92) p.style.width = w+'px'; }catch(e){}
   (function(){

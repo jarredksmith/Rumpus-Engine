@@ -6,7 +6,7 @@ assert(/const EDITOR_MODES = \['build','scene','enemies','rules','kit','files'\]
 // Enemies is its own mode now, not under Rules; Weapons mode carries the gun-model import (the Object section)
 assert(/enemies: \['enemies','gizmo','object','transform'\]/.test(src), 'Enemies mode carries its section plus the spawn picker/fields/gizmo (spawns moved here in build 334)');
 assert(/rules:\s*\['game','pickups','loot','invitems'\]/.test(src), 'Gameplay tab: game + pickups + loot + invitems');
-assert(/kit:\s*\['object','transform','impactfx','tracerfx','crosshair'\]/.test(src), 'Weapons mode = object + transform + impact/streak FX + crosshair');
+assert(/kit:\s*\['object','transform','impactfx','tracerfx','boltfx','crosshair'\]/.test(src), 'Weapons mode = object + transform + impact/streak FX + enemy gunfire + crosshair');
 assert(/const MODE_COLOR = \{/.test(src), 'per-mode accent colours defined');
 assert(!/label: '\uD83D\uDCE6 Extract'/.test(src) && /label: 'Extract'/.test(src), 'Extract tab icon removed');
 assert(/function applyEditorMode\(\)/.test(src), 'applyEditorMode exists (show/hide by mode)');

@@ -13,13 +13,13 @@ assert(/function makeEnemyBolt\(\)/.test(src) && /function emitBoltTrail/.test(s
 const fe = extractFunction('fireEnemyShot');
 assert(/const mesh = makeEnemyBolt\(\);/.test(fe), 'enemy shot uses the bolt');
 assert(/quaternion\.setFromUnitVectors\(_UP, dir\.clone\(\)\.normalize\(\)\)/.test(fe), 'bolt oriented along travel');
-assert(/mesh\.userData\.glow\.scale\.set\(1, 4\.5, 1\)/.test(fe), 'halo stretched into a thin tracer streak');
-assert(/if\(!playFlipbook\('muzzle', from, 0\.7\)\) flashLightAt\(from\)/.test(fe), 'enemy gun gets a muzzle flash');
+assert(/glow\.position\.y = -sl\*0\.5;/.test(extractFunction('makeEnemyBolt')), 'build 637: streak is a tapered tracer trailing the tip (shape baked from boltCfg)');
+assert(/if\(!playFlipbook\('muzzle', from, 0\.7\*boltCfg\.muzzle\)\) flashLightAt\(from\)/.test(fe), 'enemy gun gets a muzzle flash (scaled by the gunfire config)');
 
 // update emits trail + brighter impact
 const ue = extractFunction('updateEnemyShots');
 assert(/emitBoltTrail\(p\);/.test(ue), 'streak trail emitted each frame');
-assert(/boltImpact\(p, 0x6fe0ff\)/.test(ue), 'impact flash on death');
+assert(/boltImpact\(p, boltCfg\.impactColor\)/.test(ue), 'impact flash on death (color from the enemy-gunfire config)');
 assert(/playFlipbook\('smoke', p, 0\.22, null, 0\.45\)/.test(extractFunction('boltImpact')), 'bolt impacts kick a quick dust puff');
 
 // tracer is now an additive beam mesh
