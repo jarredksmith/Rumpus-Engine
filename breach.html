@@ -8917,12 +8917,12 @@ flash.position.set(0,0,0); flash.visible = false; vmMuzzle.add(flash);   // soli
 
 // ---------- Weapon system (data-driven) ----------
 const WEAPONS = {
-  rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null },
-  smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null },
-  shotgun: { name:'SHOTGUN', mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null },
-  sniper:  { name:'SNIPER',  mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true },
-  launcher:{ name:'ROCKET',  mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7 },
-  crowbar: { name:'CROWBAR', mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4 },
+  rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0 },
+  smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7 },
+  shotgun: { name:'SHOTGUN', mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
+  sniper:  { name:'SNIPER',  mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
+  launcher:{ name:'ROCKET',  mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
+  crowbar: { name:'CROWBAR', mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
 };
 // Restore per-weapon model + framing saved to localStorage (serialized under "weapons"). Without this the
 // hardcoded model:''/view:null above would wipe gun edits on every reload.
@@ -14211,7 +14211,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 620 · 2026-06-22';
+const BUILD_VERSION = 'build 621 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15405,7 +15405,7 @@ function shoot(){
   const clientMode = NET.mode==='client';
   const duelMode = pvpMode();
   if(duelMode && duelDead) return;   // no shooting while waiting to respawn
-  if(!clientMode && !duelMode && typeof alertEnemiesNear==='function') alertEnemiesNear(player.pos.x, player.pos.z, HEAR_RADIUS * (W().silenced ? 0.4 : 1));   // build 620: the shot's noise wakes nearby enemies toward you (suppressors muffle it)
+  if(!clientMode && !duelMode && typeof alertEnemiesNear==='function'){ const _loud = (W().loud!=null) ? W().loud : 1; if(_loud>0) alertEnemiesNear(player.pos.x, player.pos.z, HEAR_RADIUS * _loud); }   // build 620/621: the shot's noise wakes nearby enemies toward you, scaled by the weapon's loudness (quiet SMG vs loud sniper/shotgun)
   let rayTargets, enemyMeshes;
   if(duelMode){
     // In a duel the only valid targets are the other players' capsules.

@@ -10,6 +10,9 @@ const src = gameSource();
 // --- hearing helper exists and is wired into shoot() ---
 assert(/const HEAR_RADIUS = 40;/.test(src), 'gunshot hearing radius is defined');
 assert(/alertEnemiesNear\(player\.pos\.x, player\.pos\.z, HEAR_RADIUS/.test(src), 'firing alerts nearby enemies toward the shooter');
+// build 621: hearing scales with the weapon's loudness (quiet SMG vs loud sniper/shotgun); loud:0 makes no noise
+assert(/HEAR_RADIUS \* _loud/.test(src), 'hearing radius scales by weapon loudness');
+assert(/loud:0\.7/.test(src) && /loud:1\.6/.test(src) && /loud:1\.35/.test(src), 'weapons carry per-weapon loudness (SMG quieter, sniper/shotgun louder)');
 
 // --- executable: alertEnemiesNear wakes only LIVING enemies within the radius ---
 const fn = extractFunction('alertEnemiesNear');
