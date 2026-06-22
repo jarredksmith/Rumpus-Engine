@@ -7618,21 +7618,29 @@ function aiSetKey(k){ try{ localStorage.setItem(AI_KEY_LS, (k||'').trim()); }cat
 function sfThumb(m){ try{ const imgs=(m.thumbnails&&m.thumbnails.images)||[]; const s=imgs.filter(i=>i.width<=320).sort((a,b)=>b.width-a.width)[0]||imgs[0]; return s?s.url:''; }catch(e){ return ''; } }
 function sfMap(m){ return { uid:m.uid, title:m.name||'Untitled', thumb:sfThumb(m), animated:!!(m.animationCount), attribution:(m.name||'Model')+(m.user&&m.user.username?(' by '+m.user.username):'')+(m.license&&m.license.label?(' ['+m.license.label+']'):'')+' \u2014 via Sketchfab' }; }
 function sfFetchPage(url, cb, errcb){   // cb(results, nextPageUrl|null)
-  // Public search/browse: send NO Authorization header. Adding it makes the request preflighted, and
-  // Sketchfab's search endpoint does not allow 'authorization' in its CORS Access-Control-Allow-Headers,
-  // so the preflight is rejected. The token is only needed to DOWNLOAD a model (see loadSketchfabModel).
+  // build 638: AUTHENTICATE the search with the user's token when they have one. Sketchfab now allows the
+  // Authorization header on the search endpoint's CORS preflight (access-control-allow-headers includes
+  // 'authorization'), so an authenticated GET works directly from the browser \u2014 and it's rate-limited PER TOKEN
+  // instead of the much stricter ANONYMOUS per-IP limit that made unauthenticated searches fail (no token swap
+  // helped, because the old search sent no token at all). The download path already authenticates the same way.
   const deliver = (d)=>{ cb((d.results||[]).map(sfMap), d.next||null); };
   // Read the body as TEXT first so an empty/non-JSON response gives a clear message instead of the cryptic
   // "Unexpected end of JSON input" that r.json() throws on a blank 200 body.
   const parse = (r)=> r.text().then(t=>{
-    if(!r.ok) throw new Error('HTTP '+r.status+(r.status===401?' \u2014 check your token':''));
+    if(!r.ok) throw new Error('HTTP '+r.status+(r.status===401?' \u2014 check your token':r.status===429?' \u2014 Sketchfab is rate-limiting; wait a few seconds':''));
     if(!t || !t.trim()) throw new Error('Sketchfab returned an empty response \u2014 it may be rate-limiting. Wait a few seconds and try again.');
     try{ return JSON.parse(t); }catch(e){ throw new Error('Sketchfab sent a non-JSON response'); }
   });
-  fetch(url).then(parse).then(deliver).catch(err=>{
-    const px = proxied(url);
-    if(px===url){ errcb && errcb(err); return; }   // no CORS proxy configured -> report the original error
-    fetch(px).then(parse).then(deliver).catch(()=> errcb && errcb(err));   // retry through the proxy; if it also fails, report the first error
+  const tok = (typeof sfGetToken==='function') ? (sfGetToken()||'').trim() : '';
+  const authOpts = tok ? { headers:{ Authorization:'Token '+tok } } : undefined;
+  fetch(url, authOpts).then(parse).then(deliver).catch(err=>{
+    const afterUnauth = ()=>{
+      const px = proxied(url);
+      if(px===url){ errcb && errcb(err); return; }   // no CORS proxy configured -> report the original error
+      fetch(px).then(parse).then(deliver).catch(()=> errcb && errcb(err));   // retry through the proxy; if it also fails, report the first error
+    };
+    if(authOpts){ fetch(url).then(parse).then(deliver).catch(afterUnauth); }   // build 638: auth attempt failed -> retry unauthenticated, then the proxy
+    else afterUnauth();
   });
 }
 function sfSearch(query, cb, errcb, animatedOnly){
@@ -14403,7 +14411,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 637 · 2026-06-22';
+const BUILD_VERSION = 'build 638 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
