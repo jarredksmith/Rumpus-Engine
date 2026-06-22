@@ -7,7 +7,7 @@ const src = gameSource();
 const TYPES = (new Function('return ('+extractConst('ENEMY_TYPES')+')'))();
 assert(TYPES.shielded && TYPES.shielded.shielded === true, 'shielded type exists + flagged');
 assert(TYPES.shielded.hp > TYPES.grunt.hp && TYPES.shielded.speedMax < TYPES.grunt.speedMin, 'tanky + slow (so you can circle it)');
-assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','sapper','shielded','boss'\]/.test(src), 'registered (placeable + serialized)');
+assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','sapper','shielded','charger','boss'\]/.test(src), 'registered (placeable + serialized)');
 assert(/shielded: !!ty\.shielded,/.test(src), 'flag threaded onto the spawned enemy');
 // frontal damage cut applied at the hitscan site (so the damage number matches the HP loss)
 assert(/if\(en\.shielded && en\.mesh\)\{ const _sy=en\.mesh\.rotation\.y-\(en\.mesh\.userData\.faceOff\|\|0\); if\(_reactDir\([^\n]*\)==='Front'\) dealt \*= 0\.18; \}/.test(src), 'frontal shots are cut to 18% (flank for full)');

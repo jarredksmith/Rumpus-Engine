@@ -7,7 +7,7 @@ const src = gameSource();
 const TYPES = (new Function('"use strict"; return ' + extractConst('ENEMY_TYPES')))();
 assert(TYPES.gunner && TYPES.gunner.ranged === true, 'gunner is a ranged type');
 assert(TYPES.gunner.standoff > 0 && TYPES.gunner.fireCd > 0 && TYPES.gunner.projSpeed > 0, 'gunner has standoff/fireCd/projSpeed');
-assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','sapper','shielded','boss'\]/.test(src), 'gunner is an authorable type');
+assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','sapper','shielded','charger','boss']/.test(src), 'gunner is an authorable type');
 
 // can appear in random waves
 const pickEnemyType = new Function('Math', '"use strict"; '+extractFunction('pickEnemyType')+'; return pickEnemyType;')(Math);

@@ -8075,8 +8075,11 @@ const ENEMY_TYPES = {
   // build 634: Shieldbearer — a slow bruiser that SOAKS frontal shots (flank it for full damage). It turns slowly,
   // so a strafing player can get around its guard. Shield only stops bullets/melee, not engulfing explosions.
   shielded: { name:'Shieldbearer', hp:60, speedMin:3, speedMax:4.5, scale:1.25, tint:0x6fb7ff, dmg:14, shielded:true },
+  // build 635: Charger — a bruiser that, at mid-range with line of sight, TELEGRAPHS a wind-up then LUNGES across
+  // the gap to slam you (heavy hit + you can sidestep the dash). Up close it just melees normally.
+  charger: { name:'Charger', hp:75, speedMin:4.5, speedMax:6, scale:1.3, tint:0xff8c1a, dmg:20, charger:true, lungeRange:16, lungeSpeed:30, lungeDur:0.45, lungeWind:520 },
 };
-const ENEMY_TYPE_KEYS = ['grunt','runner','brute','gunner','sapper','shielded','boss'];
+const ENEMY_TYPE_KEYS = ['grunt','runner','brute','gunner','sapper','shielded','charger','boss'];
 // Weighted random type — later waves bias toward tougher + ranged hostiles, and mix in the odd Sapper.
 function pickEnemyType(waveNum, rng){
   rng = rng || Math.random; const r = rng();
@@ -9333,6 +9336,7 @@ function spawnEnemy(spawn){
     exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
     strafe: !!ty.strafe,   // build 633: ranged enemy strafes while holding standoff
     shielded: !!ty.shielded,   // build 634: soaks frontal damage, must be flanked
+    charger: !!ty.charger, lungeRange: ty.lungeRange||16, lungeSpeed: ty.lungeSpeed||30, lungeDur: ty.lungeDur||0.45, lungeWind: ty.lungeWind||520,   // build 635: Charger lunge
 
     mode: (spawn && spawn.mode) ? spawn.mode : 'hunt',
     home: spawn ? { x:px, z:pz } : null,
@@ -14374,7 +14378,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 634 · 2026-06-22';
+const BUILD_VERSION = 'build 635 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17419,7 +17423,27 @@ function loop(){
       const stopAt = td.chase ? (fp + 0.9) : 0.5;          // patrol: stop on the waypoint; chase: body just shy of the player
       const spd = td.chase ? en.speed : en.speed*0.5;      // patrol/return at half pace
       if(en.grounded!==false){   // a launched enemy is airborne: momentum carries it, AI walking is paused
-      if(en.ranged && td.chase){
+      // build 635: Charger — while winding up or dashing it OWNS its movement (normal walking skipped via _charging).
+      let _charging = false;
+      if(en.charger && !editorOpen){
+        if(en._lungeT > 0){                                   // mid-dash: drive straight along the locked direction
+          _charging = true; en._wantMove = true; en._lungeT -= dt;
+          const nx = en.mesh.position.x + en._lungeDx*(en.lungeSpeed||30)*dt, nz = en.mesh.position.z + en._lungeDz*(en.lungeSpeed||30)*dt;
+          if(typeof insideSolid==='function' && insideSolid(nx, nz, (en._groundY!=null?en._groundY:0)+0.6)){ en._lungeT=0; en.cooldown=1.4; }   // slammed a wall -> stop short
+          else { en.mesh.position.x=nx; en.mesh.position.z=nz; }
+          if(en._dist < (en._reach||2.4) + 0.6){ near.hurt(en.dmg||20, en.mesh.position.x, en.mesh.position.z); en._lungeT=0; en.cooldown=1.6; }   // slammed into the player
+        } else if(en._lungeWind > nowMs){                     // winding up: hold still + telegraph (attack-anim window set below)
+          _charging = true; en._wantMove = false;
+        } else if(en._lungePending){                          // wind-up finished -> fire the dash at the player's CURRENT spot (sidesteppable)
+          en._lungePending = false; _charging = true;
+          const lx = near.pos.x - en.mesh.position.x, lz = near.pos.z - en.mesh.position.z, ll = Math.hypot(lx,lz)||1;
+          en._lungeDx = lx/ll; en._lungeDz = lz/ll; en._lungeT = (en.lungeDur||0.45);
+        } else if(en.cooldown<=0 && en._chase && en._see && en._dist > (en._reach||2.4)+1.5 && en._dist < (en.lungeRange||16)){
+          en._lungeWind = nowMs + (en.lungeWind||520); en._attackT = nowMs + (en.lungeWind||520) + 450; en.cooldown = 2.6; en._lungePending = true; _charging = true; en._wantMove = false;   // begin the telegraph
+        }
+      }
+      if(_charging){ /* the lunge owns movement this frame */ }
+      else if(en.ranged && td.chase){
         // hold a standoff range: close in if too far, back off if the player crowds it, else hold + shoot
         const toPx = near.pos.x - en.mesh.position.x, toPz = near.pos.z - en.mesh.position.z, pd = Math.hypot(toPx,toPz)||1;
         if(pd > en.standoff + 1){ en._wantMove=true; en.mesh.position.x += toPx/pd*en.speed*dt; en.mesh.position.z += toPz/pd*en.speed*dt; }

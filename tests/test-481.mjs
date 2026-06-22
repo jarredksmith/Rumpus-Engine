@@ -8,7 +8,7 @@ const TYPES = (new Function('return ('+extractConst('ENEMY_TYPES')+')'))();
 assert(TYPES.sapper && TYPES.sapper.exploder === true, 'sapper is an exploder type');
 assert(TYPES.sapper.dmg === 0 && TYPES.sapper.blastR > 0 && TYPES.sapper.blastDmg > 0, 'no melee; has a blast radius + blast damage');
 assert(TYPES.sapper.speedMin > TYPES.grunt.speedMax, 'sapper is faster than a grunt (it rushes)');
-assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','sapper','shielded','boss'\]/.test(src), 'sapper is registered (placeable + serialized)');
+assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','sapper','shielded','charger','boss']/.test(src), 'sapper is registered (placeable + serialized)');
 // it can roll in later random waves
 const pick = new Function('Math', '"use strict"; const gameCfg={bossWave:0}; '+extractFunction('pickEnemyType')+'; return pickEnemyType;')(Math);
 let sawSapper=false; for(let w=1;w<=8;w++) for(let i=0;i<200;i++){ if(pick(w, ()=>Math.random())==='sapper') sawSapper=true; }

@@ -4,7 +4,7 @@ import { extractFunction, extractConst, evalIn, gameSource, done, assert, eq } f
 
 // --- archetypes ---
 const TYPES = evalIn(extractConst('ENEMY_TYPES'));
-eq(Object.keys(TYPES).length, 7, 'seven enemy types (incl. gunner + boss + sapper + shielded)');
+eq(Object.keys(TYPES).length, 8, 'eight enemy types (incl. gunner + boss + sapper + shielded + charger)');
 assert(TYPES.boss && TYPES.boss.hp >= 500 && TYPES.boss.scale >= 2, 'boss is a big, high-HP type');
 for (const k of ['grunt','runner','brute']){ const t=TYPES[k];
   for (const f of ['hp','speedMin','speedMax','scale','tint','dmg']) assert(f in t, `${k} has ${f}`);
