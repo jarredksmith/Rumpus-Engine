@@ -14,6 +14,8 @@ const nw = extractFunction('navWalkable');
 assert(/const gy=surfaceTopAt\(x,z\)/.test(nw) && /terrainHeightAt\(x,z\)/.test(nw), 'standing height = max(surface, terrain) — same as the player');
 assert(!/insideSolid\(x,z,standY\)\) return false/.test(nw), 'insideSolid is NOT used as a gate (its over-occupied boxes wrongly rejected rock tops)');
 assert(/return \{ ok: clearAt\(x,z,standY,gy\), y: standY \};/.test(nw), 'final walkability is clearAt at the standing height (reusing the surface height to skip a duplicate raycast)');
+// build 619: the floor UNDER head height is tried first so a roof doesn't hijack the cell; surfaceTopAt is the fallback.
+assert(/surfaceTopUnder\(x,z,ceilY\)/.test(nw), 'nav samples the ceiling-aware floor (build 617 surface) before the highest surface');
 
 // generation bounds + storage
 const al = extractFunction('navBuildAlloc');

@@ -10873,13 +10873,25 @@ function navIdx(gx,gz){ return gx*NAV.nz + gz; }
 function navCellOf(x,z){ return { gx:Math.floor((x-NAV.ox)/NAV.cell), gz:Math.floor((z-NAV.oz)/NAV.cell) }; }
 function navWalkable(x,z){   // can a bot stand at this column? Authority = clearAt, the SAME test the player uses.
   if(typeof surfaceTopAt!=='function' || typeof clearAt!=='function') return false;
-  const gy=surfaceTopAt(x,z); const ty=(typeof terrainHeightAt==='function')?terrainHeightAt(x,z):0;
-  const standY=(gy>-Infinity)?Math.max(gy,ty):ty;
-  if(!isFinite(standY)) return false;
+  const ty=(typeof terrainHeightAt==='function')?terrainHeightAt(x,z):0;
+  // build 619: prefer the floor UNDER head height (build 617's ceiling-aware surface) so a roof over a maze /
+  // building doesn't hijack the nav cell. surfaceTopAt returns the HIGHEST surface — the ROOF — so every cell
+  // beneath it floated up onto the roof and the real floor read as unwalkable; enemies couldn't path the play
+  // area and got funnelled single-file around the roof's footprint instead of roaming it freely. If nothing is
+  // standable at that low floor (a raised platform / ledge whose slab fills the body band from below), fall back
+  // to the highest surface so a genuine standable top (platform, rock top, wall top) stays walkable as before.
+  const ceilY = ((typeof player!=='undefined' && player) ? player.pos.y : 0) + 2.5;
+  const lo = (typeof surfaceTopUnder==='function') ? surfaceTopUnder(x,z,ceilY) : surfaceTopAt(x,z);
+  const standLo = (lo>-Infinity)?Math.max(lo,ty):ty;
   // Use clearAt ONLY. It has the ramp/step surface-escape (samples the real mesh), so it treats a rock TOP as
   // standable even when the model's coarse collider box bulges above the actual surface. insideSolid has no
   // such escape, so those over-occupied boxes made it falsely reject every rock cell (the player walks there
   // via clearAt, so the nav grid must agree with clearAt — not with the raw boxes).
+  if(isFinite(standLo) && clearAt(x,z,standLo,lo)) return { ok:true, y:standLo };
+  // The low floor is blocked (a platform/ledge slab) or off-grid — fall back to the single highest surface.
+  const gy=surfaceTopAt(x,z);
+  const standY=(gy>-Infinity)?Math.max(gy,ty):ty;
+  if(!isFinite(standY)) return false;
   return { ok: clearAt(x,z,standY,gy), y: standY };
 }
 function navBuildAlloc(){
@@ -14185,7 +14197,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 618 · 2026-06-19';
+const BUILD_VERSION = 'build 619 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
