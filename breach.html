@@ -8069,13 +8069,16 @@ const ENEMY_TYPES = {
   brute:  { name:'Brute',  hp:90, speedMin:3.5, speedMax:5,  scale:1.5, tint:0x9b6cff, dmg:18 },
   gunner: { name:'Gunner', hp:24, speedMin:4,   speedMax:6,  scale:1.0, tint:0x4dd2ff, dmg:4, ranged:true, standoff:11, fireCd:1.6, projSpeed:38, burst:4, burstGap:0.09 },
   boss:   { name:'BOSS',   hp:900,speedMin:2.8, speedMax:4.2,scale:2.6, tint:0xff7b00, dmg:28, ranged:true, standoff:14, fireCd:1.1, projSpeed:26 },
+  // build 628: Sapper — a fast, fragile rusher that doesn't swing; it DETONATES (blast + falloff) when it reaches
+  // you OR when killed. Kill it from range or it takes a chunk out of you (and launches you). dmg:0 = no melee.
+  sapper: { name:'Sapper', hp:20, speedMin:9.5, speedMax:12.5, scale:0.85, tint:0xff5e3a, dmg:0, exploder:true, blastR:6, blastDmg:40 },
 };
-const ENEMY_TYPE_KEYS = ['grunt','runner','brute','gunner','boss'];
-// Weighted random type — later waves bias toward tougher + ranged hostiles.
+const ENEMY_TYPE_KEYS = ['grunt','runner','brute','gunner','sapper','boss'];
+// Weighted random type — later waves bias toward tougher + ranged hostiles, and mix in the odd Sapper.
 function pickEnemyType(waveNum, rng){
   rng = rng || Math.random; const r = rng();
-  if(waveNum>=5){ return r<0.38 ? 'grunt' : (r<0.62 ? 'runner' : (r<0.82 ? 'gunner' : 'brute')); }
-  if(waveNum>=3){ return r<0.52 ? 'grunt' : (r<0.78 ? 'runner' : (r<0.92 ? 'gunner' : 'brute')); }
+  if(waveNum>=5){ return r<0.34 ? 'grunt' : (r<0.56 ? 'runner' : (r<0.74 ? 'gunner' : (r<0.88 ? 'sapper' : 'brute'))); }
+  if(waveNum>=3){ return r<0.48 ? 'grunt' : (r<0.72 ? 'runner' : (r<0.86 ? 'gunner' : (r<0.95 ? 'sapper' : 'brute'))); }
   return r<0.74 ? 'grunt' : (r<0.92 ? 'runner' : (r<0.98 ? 'gunner' : 'brute'));
 }
 // Random-mode wave: N hostiles scattered around the arena edge, mixed types.
@@ -9324,6 +9327,8 @@ function spawnEnemy(spawn){
   scene.add(mesh);
   const e = { id: nextEnemyId++, mesh, hp:ty.hp, maxHp:ty.hp, speed: ty.speedMin + Math.random()*(ty.speedMax-ty.speedMin), dmg:ty.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
     ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
+    exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
+
     mode: (spawn && spawn.mode) ? spawn.mode : 'hunt',
     home: spawn ? { x:px, z:pz } : null,
     patrolR: (spawn && spawn.patrolR!=null) ? spawn.patrolR : 10,   // build 620: wider default patrol / detect
@@ -14266,7 +14271,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 627 · 2026-06-22';
+const BUILD_VERSION = 'build 628 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15590,6 +15595,20 @@ function killEnemy(en){
   if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); }   // stop animating a dead enemy
   enemies.splice(enemies.indexOf(en),1);
   score += 100; updateHUD();
+  if(en.exploder && !en._detonated){ en._detonated=true; if(typeof explodeAt==='function') explodeAt(en.mesh.position.clone(), en.blastR||6, en.blastDmg||40, en.id); }   // build 628: a downed Sapper still goes off (kill it from range)
+}
+// build 628: a Sapper reaching you self-destructs — blast + falloff damage/launch to the player and a chain to
+// nearby hostiles. Pulled from the enemies list FIRST so it isn't caught in (or re-killed by) its own blast, and
+// removed with NO kill reward (it blew itself up rather than being shot down).
+function detonateExploder(en){
+  if(!en || en._detonated) return;
+  en._detonated = true;
+  const pos = en.mesh.position.clone();
+  scene.remove(en.mesh);
+  if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); }
+  const idx = enemies.indexOf(en); if(idx>=0) enemies.splice(idx,1);
+  if(typeof explodeAt==='function') explodeAt(pos, en.blastR||6, en.blastDmg||40, en.id);
+  if(typeof updateHUD==='function') updateHUD();
 }
 
 // ---------- HUD ----------
@@ -17405,7 +17424,13 @@ function loop(){
         en.mesh.rotation.set(0, turnToward(en.mesh.rotation.y, _tYaw, dt, TURN_RATE), 0);
       }
       en.cooldown -= dt;
-      if(en.ranged){
+      if(en.exploder){
+        // build 628: a Sapper doesn't swing — it rushes in and DETONATES when it reaches you (a hair past melee
+        // reach), blasting + launching you. Kill it from range to avoid the hit; up close, it goes off on you.
+        if(!en._detonated && en._chase && en._dist < (en._reach || 2.4) + 0.7 && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.8 && !editorOpen){
+          detonateExploder(en);
+        }
+      } else if(en.ranged){
         en.shootCd -= dt;
         // rounds 2..n of an in-flight burst: paced by burstGap, re-aimed at the live target each round so the
         // stream tracks a moving player like real automatic fire (each round gets a touch of spread)

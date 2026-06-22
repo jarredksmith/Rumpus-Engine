@@ -7,7 +7,7 @@ const src = gameSource();
 const TYPES = (new Function('return ('+extractConst('ENEMY_TYPES')+')'))();
 assert(TYPES.boss, 'boss type exists');
 assert(TYPES.boss.hp>=500 && TYPES.boss.scale>=2 && TYPES.boss.ranged===true, 'boss is big, tanky, ranged');
-assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','boss'\]/.test(src), 'boss is registered (placeable + serialized)');
+assert(/const ENEMY_TYPE_KEYS = \['grunt','runner','brute','gunner','sapper','boss'\]/.test(src), 'boss is registered (placeable + serialized)');
 
 // cadence config round-trips
 assert(/bossWave: \(savedLevel && savedLevel\.game && savedLevel\.game\.bossWave!=null\) \? savedLevel\.game\.bossWave : 5/.test(src), 'bossWave defaults to 5');
