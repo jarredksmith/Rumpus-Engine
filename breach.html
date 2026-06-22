@@ -7790,6 +7790,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   else propModels.push(obj);
   if(gltf){ obj.userData.animClip = animClip || ''; playModelAnimations(obj, gltf, obj.userData.animMode); }
   if(mat && isShapePrimitive(src)) applyStoredMaterial(obj, mat);   // color / texture / emissive
+  if(gltf && !obj.userData.phys && typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();   // build 643: a model loaded late (e.g. on a joiner) -> rebuild physics so it's solid (you can't walk through it)
   return obj;
 }
 // Physics state (declared here, before spawnProp, because restoring a saved/synced dynamic prop calls
@@ -14431,7 +14432,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 642 · 2026-06-22';
+const BUILD_VERSION = 'build 643 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -14913,6 +14914,20 @@ function buildPhysWorld(){
   // first frame. Without this, starting a game already in physics mode drops the player through the floor
   // (a freshly built world hasn't registered its colliders for queries until it has stepped once).
   try{ physWorld.step(); }catch(e){}
+}
+// build 643: async GLB props finish loading AFTER buildPhysWorld() ran (especially on a joiner, whose models
+// arrive over the network well after the world was built at match start) — so they had no Rapier collider and
+// you could walk straight through them. Whenever a model finishes loading, rebuild the world once the load burst
+// settles, so every static prop becomes solid for the character controller. Debounced; waits out _glbPending.
+let _physRebuildT=0;
+function _schedulePhysRebuild(){
+  if(typeof buildPhysWorld!=='function') return;
+  if(_physRebuildT) clearTimeout(_physRebuildT);
+  _physRebuildT=setTimeout(function tick(){
+    _physRebuildT=0;
+    if(typeof _glbPending!=='undefined' && _glbPending>0){ _physRebuildT=setTimeout(tick, 300); return; }   // still loading models — wait for the burst to finish
+    try{ if(physWorld && (typeof editorOpen==='undefined' || !editorOpen)) buildPhysWorld(); }catch(e){}
+  }, 350);
 }
 function destroyPhysWorld(){
   if(typeof clearFragments==='function') clearFragments();   // drop transient debris first, so its bodies aren't left dangling after free()
