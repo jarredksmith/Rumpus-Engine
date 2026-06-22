@@ -7,7 +7,8 @@ assert(/glow:o\.glow!==false/.test(sf) && /size:_fxClamp/.test(sf), 'fx sanitize
 // spark uses config + glow + flash + shrink
 const sp = extractFunction('spark');
 assert(/const fx=fxCfg/.test(sp), 'spark reads fxCfg');
-assert(/AdditiveBlending/.test(sp) && /shrink:true/.test(sp), 'glow + shrink sparks');
+assert(/shrink:true/.test(sp) && /_getSpark\(_sparkPool, _sparkGeo, col, !!fx\.glow/.test(sp), 'glow + shrink sparks (glow via pooled _getSpark)');
+assert(/AdditiveBlending/.test(extractFunction('_getSpark')), 'glow sparks use additive blending in the pooled spawner');
 assert(/if\(fx\.flash\)\{/.test(sp), 'optional flash sprite');
 assert(!/SphereGeometry\(\.08,4,4\)/.test(sp), 'old cheesy sphere spark gone');
 // surface impacts now use the configurable color

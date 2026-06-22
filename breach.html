@@ -14118,24 +14118,38 @@ function tracer(from, to, force){
 // hit particles
 const _sparkGeo = new THREE.IcosahedronGeometry(1, 0);      // faceted debris bit, scaled per spark
 const _sparkFlashGeo = new THREE.SphereGeometry(1, 8, 8);   // soft additive impact flash
+// build 626: spark() fires on every bullet impact / explosion and used to NEW a Mesh + MeshBasicMaterial per
+// particle and dispose them when they died — a steady allocate/free churn (and GC pressure) right in the middle
+// of combat. The shared geometry was already reused; now the Mesh+Material are pooled per geometry and recycled,
+// so a busy firefight reuses a small working set instead of thrashing the allocator.
+const _sparkPool = [], _flashPool = [];   // free meshes keyed by their geometry (_sparkGeo / _sparkFlashGeo)
+function _getSpark(pool, geo, col, glow, scale, pos){
+  let m = pool.pop();
+  if(!m) m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent:true }));
+  const mat = m.material;
+  mat.color.set(col); mat.opacity = 1; mat.transparent = true;
+  mat.blending = glow ? THREE.AdditiveBlending : THREE.NormalBlending;   // fixed-function state — no shader recompile on reuse
+  mat.depthWrite = !glow;
+  m.scale.setScalar(scale); m.position.copy(pos); m.visible = true;
+  scene.add(m);
+  return m;
+}
 const sparks = [];
 function spark(pos, color){
   const fx=fxCfg, col=(color==null?fx.color:color);
   const n=Math.max(2, Math.round(7*fx.count)), base=0.075*fx.size, life=0.42*fx.life, sp=fx.spread;
   for(let i=0;i<n;i++){
-    const mat=new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:1 });
-    if(fx.glow){ mat.blending=THREE.AdditiveBlending; mat.depthWrite=false; }
-    const m=new THREE.Mesh(_sparkGeo, mat);
-    const s0=base*(0.6+Math.random()*0.9); m.scale.setScalar(s0); m.position.copy(pos);
+    const s0=base*(0.6+Math.random()*0.9);
+    const m=_getSpark(_sparkPool, _sparkGeo, col, !!fx.glow, s0, pos);
     const v=new THREE.Vector3((Math.random()-.5)*2*sp, Math.random()*0.7+0.12, (Math.random()-.5)*2*sp);
     if(v.lengthSq()<1e-5) v.set(0,1,0);
     v.normalize().multiplyScalar(5+Math.random()*7*(0.5+sp));
-    scene.add(m); sparks.push({ mesh:m, vel:v, life, max:life, s0, shrink:true });
+    sparks.push({ mesh:m, vel:v, life, max:life, s0, shrink:true, pool:_sparkPool });
   }
   if(fx.flash){
-    const fmat=new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false });
-    const f=new THREE.Mesh(_sparkFlashGeo, fmat); const fs0=0.16*fx.size; f.scale.setScalar(fs0); f.position.copy(pos);
-    scene.add(f); sparks.push({ mesh:f, vel:new THREE.Vector3(), life:0.11, max:0.11, s0:fs0, grow:2.6, grav:0 });
+    const fs0=0.16*fx.size;
+    const f=_getSpark(_flashPool, _sparkFlashGeo, col, true, fs0, pos); f.material.opacity=0.85;
+    sparks.push({ mesh:f, vel:new THREE.Vector3(), life:0.11, max:0.11, s0:fs0, grow:2.6, grav:0, pool:_flashPool });
   }
 }
 // A clear "elimination" pop where a player died: a red/orange particle burst + an expanding ground ring,
@@ -14251,7 +14265,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 625 · 2026-06-22';
+const BUILD_VERSION = 'build 626 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17176,7 +17190,10 @@ function loop(){
     s.mesh.material.opacity = t; s.mesh.material.transparent=true;
     if(s.shrink && s.s0!=null) s.mesh.scale.setScalar(s.s0*(0.25+0.75*t));
     else if(s.grow && s.s0!=null) s.mesh.scale.setScalar(s.s0*(1+s.grow*(1-t)));
-    if(s.life<=0){ scene.remove(s.mesh); if(s.mesh.material&&s.mesh.material.dispose) s.mesh.material.dispose(); sparks.splice(i,1); }
+    if(s.life<=0){ scene.remove(s.mesh);
+      if(s.pool){ s.mesh.visible=false; s.pool.push(s.mesh); }   // build 626: pooled spark -> recycle the mesh+material (shared geo stays)
+      else if(s.mesh.material&&s.mesh.material.dispose){ s.mesh.material.dispose(); }   // unpooled (death-fx unique geo) -> dispose as before
+      sparks.splice(i,1); }
   }
   // death rings (expanding + fading); each carries its own lifetime + growth (set by the death-FX style)
   for(let i=deathRings.length-1;i>=0;i--){
