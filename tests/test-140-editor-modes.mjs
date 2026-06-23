@@ -2,11 +2,11 @@ import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 
 // the five-mode switch that gates the editor panel
-assert(/const EDITOR_MODES = \['build','scene','enemies','rules','kit','files'\];/.test(src), 'six editor modes defined');
+assert(/const EDITOR_MODES = \['build','scene','player','enemies','rules','kit','files'\];/.test(src), 'seven editor modes defined (Player became its own area in build 652)');
 // Enemies is its own mode now, not under Rules; Weapons mode carries the gun-model import (the Object section)
 assert(/enemies: \['enemies','gizmo','object','transform','boltfx'\]/.test(src), 'Enemies mode carries its section plus the spawn picker/fields/gizmo (spawns moved here in build 334) + enemy gunfire FX (build 647)');
 assert(/rules:\s*\['game','pickups','loot','invitems'\]/.test(src), 'Gameplay tab: game + pickups + loot + invitems');
-assert(/kit:\s*\['object','transform','impactfx','tracerfx','crosshair'\]/.test(src), 'Weapons mode = object + transform + impact/streak FX + crosshair (enemy gunfire moved to Enemies in build 647)');
+assert(/kit:\s*\['object','transform','wepfx'\]/.test(src), 'Weapons mode = object + transform + grouped Effects picker (impacts/tracer/crosshair, build 653)');
 assert(/const MODE_COLOR = \{/.test(src), 'per-mode accent colours defined');
 assert(!/label: '\uD83D\uDCE6 Extract'/.test(src) && /label: 'Extract'/.test(src), 'Extract tab icon removed');
 assert(/function applyEditorMode\(\)/.test(src), 'applyEditorMode exists (show/hide by mode)');
@@ -32,7 +32,7 @@ assert((src.match(/editorActive='props'; syncModeToActive\(\); renderEditorField
 // contextual sections + props reorder + library hidden
 assert(/function applyContextualSections\(\)/.test(src), 'contextual section hide exists');
 assert(/const matOn = matInMode && !!\(selObj && isShapePrimitive/.test(src) && /matSec\.style\.display = matOn/.test(src), 'Material section self-hides unless a primitive is selected AND the Build tab is active (build 361)');
-assert(/xfSec\) xfSec\.style\.display = \(xfInMode && tgt\.fields && tgt\.fields\.length\)/.test(src), 'Transform section hides when the target has no fields (Extract)');
+assert(/xfSec\) xfSec\.style\.display = \(xfInMode && tgt\.fields && tgt\.fields\.length && !_stationOff\)/.test(src), 'Transform section hides when the target has no fields (Extract) or the station is toggled off');
 assert(/<div id="edShapes"><\/div><div id="edModels"><\/div><div id="edUrl"><\/div>/.test(src), 'props object hosts reordered: shapes + search on top');
 assert(/const SHOW_MODEL_LIBRARY = false;/.test(src), 'hardcoded model library hidden behind a flag');
 assert(/editorActive==='props' && !!editorTargets\.props\.obj\(\)/.test(src), 'gizmo only shows with an actual selection');

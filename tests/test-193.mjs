@@ -23,7 +23,7 @@ eq(mk(0).tint, 0xff0000, 'tint still comes from the color selection');
 assert(/function renderCharRosterPanel\(\)/.test(src), 'roster editor panel missing');
 assert(/function _snapshotPlayerCharCfg\(name\)/.test(src), 'snapshot helper missing');
 assert(/sec\('Characters', 'characters'/.test(src), 'Characters editor section missing');
-assert(/build:\s*\['gizmo','object','material','transform','characters'\]/.test(src), 'characters section not assigned to a mode');
+assert(/player:\s*\['gizmo','object','transform','characters'\]/.test(src), 'Characters section lives in the Player mode (build 652)');
 
 // lobby picker
 assert(/function selectRosterChar\(i\)/.test(src), 'roster picker selector missing');

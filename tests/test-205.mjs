@@ -18,7 +18,7 @@ assert(!/spark\(hit\.point, 0x9fd8ff\)/.test(src), 'old blue object impact gone'
 assert(/fx: Object\.assign\(\{\}, fxCfg\)/.test(src), 'fx serialized');
 assert(/fxCfg = _sanitizeFx\(level\.fx\)/.test(src), 'fx restored on load');
 // editor panel registered + built
-assert(/'object','transform','impactfx','tracerfx'/.test(src), 'impactfx section in Weapons mode');
+assert(/kit:\s*\['object','transform','wepfx'\]/.test(src) && /id="edImpactFx" class="wepfxHost" data-wepfx="impactfx"/.test(src), 'impacts panel registered under the grouped Effects picker in Weapons mode (build 653)');
 const rp = extractFunction('renderImpactFxPanel');
 assert(/edImpactFx/.test(rp) && /Test burst/.test(rp), 'panel builds with a test button');
 done();
