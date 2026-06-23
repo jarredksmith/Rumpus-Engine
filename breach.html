@@ -92,10 +92,26 @@
   /* build 658: while editing, hide every gameplay HUD element so only the crosshair sits over the world.
      The editor's own panels + the +/Add button + the floating prop-loader use #editor / #edAddFab / #propLoader,
      which aren't matched, so they stay visible. Crosshair (#crosshair) is intentionally NOT in this list. */
-  body.editing #stats, body.editing #ammoPanel, body.editing #score, body.editing #wavePanel,
-  body.editing #bossBar, body.editing #cpHud, body.editing #buffs, body.editing #prompt,
-  body.editing #minimap, body.editing #turretHud, body.editing #grabHint, body.editing #hurtDir,
-  body.editing #lowhp, body.editing #damage, body.editing #weaponWheel { display: none !important; }
+  body.editing:not(.hudPreview) #stats, body.editing:not(.hudPreview) #ammoPanel, body.editing:not(.hudPreview) #score, body.editing:not(.hudPreview) #wavePanel,
+  body.editing:not(.hudPreview) #bossBar, body.editing:not(.hudPreview) #cpHud, body.editing:not(.hudPreview) #buffs, body.editing:not(.hudPreview) #prompt,
+  body.editing:not(.hudPreview) #minimap, body.editing:not(.hudPreview) #turretHud, body.editing:not(.hudPreview) #grabHint, body.editing:not(.hudPreview) #hurtDir,
+  body.editing:not(.hudPreview) #lowhp, body.editing:not(.hudPreview) #damage, body.editing:not(.hudPreview) #weaponWheel { display: none !important; }
+  /* HUD customization (build 665): a per-level hudCfg drives these via vars set on #hud + body classes.
+     Scoped to #hud so the editor/menus are never restyled. .hudPreview (HUD editor mode) re-shows the HUD. */
+  #hud { font-family: var(--hud-font, var(--ui-font)), ui-monospace, monospace; }
+  #hud .big, #hud #waveNum, #hud #scoreVal, #hud #creditsVal { font-family: var(--hud-display-font, var(--hud-font, var(--ui-font))), ui-monospace, monospace; }
+  #hud #hpFill { background: var(--hud-health, linear-gradient(90deg,#ff4d6d,#ff8a5b)); }
+  #hud #scoreVal, #hud #creditsVal { color: var(--hud-score, #ffd166) !important; }
+  body.hud-shape-rounded #stats, body.hud-shape-square #stats,
+  body.hud-shape-rounded #ammoPanel, body.hud-shape-square #ammoPanel,
+  body.hud-shape-rounded #wavePanel, body.hud-shape-square #wavePanel,
+  body.hud-shape-rounded #score, body.hud-shape-square #score { clip-path: none !important; }
+  body.hud-shape-rounded #hud .panel { border-radius: 12px; }
+  body.hud-shape-square #hud .panel { border-radius: 0; }
+  body.hud-noborder #hud .panel { border-color: transparent !important; }
+  body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel,
+  body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair,
+  body.hud-hide-killfeed #killFeed { display: none !important; }
   #editor #libGrid { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; max-height: 132px; overflow-y: auto; }
   #editor button.libChip {
     flex: 0 0 auto; padding: 5px 9px; font-size: 11px; border-radius: 12px;
@@ -144,7 +160,7 @@
   /* Bottom-left status */
   .panel {
     position: absolute; padding: 14px 18px;
-    background: linear-gradient(135deg, rgba(8,18,22,.82), rgba(8,18,22,.5));
+    background: linear-gradient(135deg, rgba(8,18,22,calc(.82*var(--hud-panel-op,1))), rgba(8,18,22,calc(.5*var(--hud-panel-op,1))));
     border: 1px solid rgba(var(--accent-rgb),.35);
     backdrop-filter: blur(4px);
     clip-path: polygon(0 0, 100% 0, 100% 70%, 92% 100%, 0 100%);
@@ -259,7 +275,7 @@
   body.touch #prompt { pointer-events:auto; z-index:45; cursor:pointer; bottom:150px; }
   body.touch #prompt b { background:rgba(var(--accent-rgb),.32); }
   body.editing #tFire, body.editing #tAim, body.editing #tJump, body.editing #tReload, body.editing #tNade, body.editing #tWeapon, body.editing #tUse { display:none !important; }
-  body.editing #stats { display:none !important; }   /* the integrity box is gameplay-only; hide it so it never sits over the camera-preview window */
+  body.editing:not(.hudPreview) #stats { display:none !important; }   /* the integrity box is gameplay-only; hide it so it never sits over the camera-preview window (HUD preview re-shows it) */
   body.editing #tLook { left:0; right:330px; }   /* keep look-drag off the right-side editor panel */
   body.touch #wavePanel { top: calc(30px + env(safe-area-inset-top)); transform: translateX(-50%) scale(.82); transform-origin:top center; padding:2px 12px; min-width:170px; }
   body.touch #waveNum { font-size:16px; }
@@ -5970,6 +5986,52 @@ function applyUiTheme(){
 function saveUiTheme(){ try{ localStorage.setItem(UI_THEME_KEY, JSON.stringify(uiTheme)); }catch(e){} }
 function resetUiTheme(){ uiTheme = Object.assign({}, UI_THEME_DEFAULT); applyUiTheme(); saveUiTheme(); }
 applyUiTheme();   // apply saved look immediately on load
+
+// ---- Per-level HUD customization (build 665) ----
+// A level can theme its own HUD: colours, fonts, panel style, and which elements show in play. Distinct from
+// the global `uiTheme` (a per-PLAYER localStorage preference) — hudCfg is serialized WITH the level so a shared
+// level carries the creator's HUD design. Applied scoped to #hud (vars) + body classes, so it never restyles
+// the editor or menus.
+const HUD_TOGGLES = ['minimap','score','wave','ammo','health','crosshair','killfeed'];
+const HUD_TOGGLE_LABEL = { minimap:'Minimap', score:'Score', wave:'Wave counter', ammo:'Ammo', health:'Health', crosshair:'Crosshair', killfeed:'Kill feed' };
+const HUD_FONTS = ['Chakra Petch','Major Mono Display','Orbitron','Rajdhani','Press Start 2P','Share Tech Mono','Audiowide','Teko','Exo 2','Saira Condensed','Aldrich','Syncopate','VT323','Michroma','Russo One','Bungee','Space Mono','JetBrains Mono'];
+const DEFAULT_HUD = { accent:'#38f5b5', health:'#ff4d6d', score:'#ffd166', uiFont:'Chakra Petch', displayFont:'Major Mono Display', shape:'angular', panelOp:1, border:true, hide:{} };
+function _sanitizeHud(h){
+  h = (h && typeof h==='object') ? h : {};
+  const hx = (v,d)=>{ v=String(v||'').trim(); return /^#[0-9a-fA-F]{3,8}$/.test(v) ? v : d; };
+  const fnt = (v,d)=> HUD_FONTS.indexOf(String(v))>=0 ? String(v) : d;
+  const out = {
+    accent: hx(h.accent, DEFAULT_HUD.accent),
+    health: hx(h.health, DEFAULT_HUD.health),
+    score:  hx(h.score,  DEFAULT_HUD.score),
+    uiFont: fnt(h.uiFont, DEFAULT_HUD.uiFont),
+    displayFont: fnt(h.displayFont, DEFAULT_HUD.displayFont),
+    shape: (['angular','rounded','square'].indexOf(h.shape)>=0) ? h.shape : DEFAULT_HUD.shape,
+    panelOp: (h.panelOp==null) ? 1 : Math.max(0, Math.min(1, isNaN(+h.panelOp)?1:+h.panelOp)),
+    border: h.border!==false,
+    hide: {}
+  };
+  for(const k of HUD_TOGGLES) out.hide[k] = !!(h.hide && h.hide[k]);
+  return out;
+}
+let hudCfg = null;   // initialized once savedLevel is read (see below); _sanitizeHud(null) until then
+function applyHudCfg(){
+  if(!hudCfg) hudCfg = _sanitizeHud(null);
+  const c = hudCfg, hud = (typeof document!=='undefined') && document.getElementById('hud');
+  if(hud){
+    hud.style.setProperty('--accent', c.accent);
+    hud.style.setProperty('--accent-rgb', _hexToRgbTriplet(c.accent));
+    hud.style.setProperty('--hud-health', c.health);
+    hud.style.setProperty('--hud-score', c.score);
+    hud.style.setProperty('--hud-font', "'"+c.uiFont+"'");
+    hud.style.setProperty('--hud-display-font', "'"+c.displayFont+"'");
+    hud.style.setProperty('--hud-panel-op', String(c.panelOp));
+  }
+  const body = document.body; if(!body) return;
+  for(const s of ['angular','rounded','square']) body.classList.toggle('hud-shape-'+s, c.shape===s);
+  body.classList.toggle('hud-noborder', !c.border);
+  for(const k of HUD_TOGGLES) body.classList.toggle('hud-hide-'+k, !!(c.hide && c.hide[k]));
+}
 function _clamp01(x){ x=+x; return isFinite(x)?Math.max(0,Math.min(1,x)):0; }
 function loadAudioSettings(){ try{ const j=JSON.parse(localStorage.getItem(AUDIO_KEY)); if(j) return { master:_clamp01(j.master!=null?j.master:0.8), music:_clamp01(j.music!=null?j.music:0.6), sfx:_clamp01(j.sfx!=null?j.sfx:1), muted:!!j.muted, sounds:_sanitizeSounds(j.sounds), musicUrl:(typeof j.musicUrl==='string'?j.musicUrl:'') }; }catch(e){} return { master:0.8, music:0.6, sfx:1, muted:false, sounds:_emptySounds(), musicUrl:'' }; }
 const audioSettings = loadAudioSettings();
@@ -6444,6 +6506,7 @@ for(const c of colliders){
 const SAVE_KEY = 'breach_level_v1';
 function readSave(){ try { const s = localStorage.getItem(SAVE_KEY); return s ? JSON.parse(s) : null; } catch(e){ return null; } }
 let savedLevel = readSave();
+hudCfg = _sanitizeHud(savedLevel && savedLevel.hud); try{ applyHudCfg(); }catch(e){}   // build 665: per-level HUD theme, applied on load
 // Self-heal: if localStorage lost the save (cleared on close / evicted) but the durable IndexedDB copy survived,
 // restore it and reload once so the synchronous startup path picks it up. Guarded against reload loops.
 if(!savedLevel){ try{ if(!sessionStorage.getItem('breach_lvl_healed') && typeof _levelDBGet==='function'){ _levelDBGet().then(str=>{ if(str && typeof str==='string'){ try{ localStorage.setItem(SAVE_KEY, str); sessionStorage.setItem('breach_lvl_healed','1'); location.reload(); }catch(e){} } }); } }catch(e){} }
@@ -12023,6 +12086,7 @@ function loadLevelFromNet(level){
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
+  hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; refreshPlayerSpawnMarker(); }
@@ -14573,7 +14637,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 664 · 2026-06-23';
+const BUILD_VERSION = 'build 665 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18377,9 +18441,9 @@ let editorActive = 'gun';
 // ---- Editor MODES: one primary switch that gates which target-tabs + sections are shown, so a new user
 // sees a handful of relevant controls instead of the whole panel at once. Each target/section lives in
 // exactly one mode. (Purely a visibility layer — every panel's editing logic is unchanged.)
-const EDITOR_MODES = ['build','scene','player','enemies','rules','kit','files'];
-const MODE_LABEL = { build:'Build', scene:'World', player:'Player', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', files:'Save' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
-const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', player:'#7c9cff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', files:'#b69cff' };   // per-mode accent so the buttons read as distinct sections
+const EDITOR_MODES = ['build','scene','player','enemies','rules','kit','hud','files'];
+const MODE_LABEL = { build:'Build', scene:'World', player:'Player', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', hud:'HUD', files:'Save' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
+const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', player:'#7c9cff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', hud:'#5eead4', files:'#b69cff' };   // per-mode accent so the buttons read as distinct sections
 // Compact, mode-aware top hint (build 651) — replaces one dense always-on paragraph. Tells a newcomer what
 // THIS mode is for + the one or two gestures that matter here. Universal shortcuts trail every line.
 const MODE_HINT = {
@@ -18389,6 +18453,7 @@ const MODE_HINT = {
   enemies: 'Author who you fight: drop spawn points with <b>+ ▸ Enemy spawn</b>, then tune types, counts & their gunfire look.',
   rules:   'Match flow: waves & win conditions, plus the pickups, loot and items players can grab.',
   kit:     'Your weapons: pick a tab (Gun / Aim / Grenade) to pose the viewmodel; tune bullet impacts, tracer & crosshair below.',
+  hud:     'Make the HUD yours: colours, fonts, panel style, and which elements show in play. Live preview here.',
   files:   'Save, share or export this level, and chain levels into a campaign.',
 };
 const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+A</b> add · <b>F</b> fly · <b>T</b> top view · <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close.</span>';
@@ -18402,6 +18467,7 @@ const MODE_ICON = {
   enemies: _svgIcon('<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v1a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20Z"/>'),
   rules:   _svgIcon('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'),
   kit:     _svgIcon('<circle cx="12" cy="12" r="9"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/>'),
+  hud:     _svgIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>'),
   files:   _svgIcon('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>'),
 };
 const PRIM_ICON = {
@@ -18417,6 +18483,7 @@ const MODE_SECTIONS = {
   enemies: ['enemies','gizmo','object','transform','boltfx'],   // spawn points live here now; their picker/fields/gizmo sections come along. enemy gunfire FX (boltfx) moved here in build 647 — it's about enemies, not your weapons
   rules:   ['game','pickups','loot','invitems'],
   kit:     ['object','transform','wepfx'],   // 'object' carries the weapon model import + per-weapon shoot sound; the 3 FX panels (impacts/tracer/crosshair) are grouped under one 'wepfx' picker (build 653); music/SFX live in Scene
+  hud:     ['hud'],   // build 665: per-level HUD theme + visibility
   files:   ['levelfile','campaign'],
 };
 // Plain-language one-liner shown under each section header (build 648). Keyed by the section's data-sec key
@@ -18445,6 +18512,7 @@ const SEC_SUB = {
   characters: 'Player & enemy character roster, models and animation slots.',
   levelfile:  'Save, share, export or import this level.',
   campaign:   'Chain levels together into a campaign.',
+  hud:        'Theme, fonts, panel style & which HUD elements appear in play.',
 };
 const MODE_TARGETS = {
   build:   ['props','lights','station','extract','turrets'],
@@ -18453,6 +18521,7 @@ const MODE_TARGETS = {
   enemies: ['spawns'],
   rules:   [],
   kit:     ['gun','aim','grenade'],
+  hud:     [],
   files:   [],
 };
 const TARGET_MODE = {};   // reverse: which mode owns each target tab
@@ -18524,6 +18593,7 @@ function applyEditorMode(){
   const tabRow = editorEl.querySelector('#edTabs'); if(tabRow) tabRow.style.display = tgts.length ? 'flex' : 'none';   // no target picker in Scene/Rules/Save
   const view = editorEl.querySelector('#edView'); if(view) view.style.display = 'flex';   // global view toolbar (sits above the tabs)
   const hint = editorEl.querySelector('#edHint'); if(hint) hint.innerHTML = (MODE_HINT[editorMode]||'') + HINT_SHORTCUTS;   // build 651: mode-aware one-liner
+  document.body.classList.toggle('hudPreview', editorMode==='hud');   // build 665: live-preview the real HUD while theming it (overrides the editor's hide-all)
 
   editorEl.querySelectorAll('#edModes .edMode').forEach(b=>{
     const c = MODE_COLOR[b.dataset.mode] || 'var(--accent)', on = b.dataset.mode===editorMode;
@@ -18882,6 +18952,7 @@ function serializeLevel(){
     invItems: (typeof invCatalog!=='undefined') ? JSON.parse(JSON.stringify(invCatalog)) : {},
     station: { url: stationModelUrl, state: Object.assign({}, editorTargets.station.state) },
     stationEnabled: !!stationEnabled,   // build 654: the ammo station is optional per level
+    hud: _sanitizeHud(hudCfg),   // build 665: per-level HUD theme + visibility
     player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}) },
     world:   Object.assign({}, worldCfg),
     chest:   { url: chestModelUrl, scale: chestModelScale, randomOff: !randomLootOn },
@@ -19055,6 +19126,35 @@ function renderTracerFxPanel(){
   host.appendChild(wrap);
 }
 // build 637: fine control over how ranged enemies' gunfire LOOKS (cosmetic only — no effect on damage/aim).
+// build 665: per-level HUD theming editor. Every control writes hudCfg + re-applies live (you see it because
+// HUD mode turns on .hudPreview). Serialized with the level.
+function renderHudPanel(){
+  const host=document.getElementById('edHud'); if(!host) return; host.innerHTML='';
+  const wrap=document.createElement('div');
+  const commit=()=>{ if(typeof applyHudCfg==='function') applyHudCfg(); _levelDirty=true; };   // each control already pushed an undo snapshot
+  const grp=(title)=>{ const h=document.createElement('div'); h.className='edSecSub'; h.style.cssText='margin:8px 0 4px;color:#7fd4c4;letter-spacing:.06em;text-transform:uppercase;font-size:10px;'; h.textContent=title; wrap.appendChild(h); };
+  const row=(label,node)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px;color:#cfeee2;'; const s=document.createElement('span'); s.textContent=label; s.style.cssText='flex:1 1 auto;'; r.appendChild(s); r.appendChild(node); wrap.appendChild(r); return r; };
+  const colorRow=(label,key)=>{ const ci=document.createElement('input'); ci.type='color'; ci.value=hudCfg[key]||'#ffffff'; ci.style.cssText='width:42px;height:24px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#0c1418;cursor:pointer;flex:0 0 auto;'; ci.oninput=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg[key]=ci.value; commit(); }; row(label, ci); };
+  const fontRow=(label,key)=>{ const sel=document.createElement('select'); sel.style.cssText='flex:0 0 auto;max-width:150px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;'; for(const f of HUD_FONTS){ const o=document.createElement('option'); o.value=f; o.textContent=f; o.style.fontFamily="'"+f+"'"; if(hudCfg[key]===f) o.selected=true; sel.appendChild(o); } sel.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg[key]=sel.value; commit(); }; row(label, sel); };
+
+  grp('Colours');
+  colorRow('Accent', 'accent'); colorRow('Health', 'health'); colorRow('Score', 'score');
+
+  grp('Fonts');
+  fontRow('UI font', 'uiFont'); fontRow('Display font', 'displayFont');
+
+  grp('Panels');
+  { const sel=document.createElement('select'); sel.style.cssText='flex:0 0 auto;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;'; for(const [v,t] of [['angular','Angular (default)'],['rounded','Rounded'],['square','Square']]){ const o=document.createElement('option'); o.value=v; o.textContent=t; if(hudCfg.shape===v) o.selected=true; sel.appendChild(o); } sel.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg.shape=sel.value; commit(); }; row('Shape', sel); }
+  { const rr=document.createElement('input'); rr.type='range'; rr.min='0'; rr.max='1'; rr.step='0.05'; rr.value=String(hudCfg.panelOp); rr.style.cssText='flex:1 1 auto;accent-color:var(--accent);max-width:120px;'; const nn=document.createElement('span'); nn.style.cssText='flex:0 0 auto;width:30px;text-align:right;color:#9fdcc9;'; nn.textContent=Math.round(hudCfg.panelOp*100)+'%'; rr.addEventListener('pointerdown',()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); }); rr.oninput=()=>{ hudCfg.panelOp=+rr.value; nn.textContent=Math.round(hudCfg.panelOp*100)+'%'; commit(); }; const r=row('Background', rr); r.appendChild(nn); }
+  { const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=hudCfg.border!==false; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);flex:0 0 auto;'; cb.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg.border=cb.checked; commit(); }; row('Panel border', cb); }
+
+  grp('Show in play');
+  for(const k of HUD_TOGGLES){ const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!(hudCfg.hide&&hudCfg.hide[k]); cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);flex:0 0 auto;'; cb.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg.hide[k]=!cb.checked; commit(); }; row(HUD_TOGGLE_LABEL[k]||k, cb); }
+
+  const rb=document.createElement('button'); rb.textContent='Reset HUD to default'; rb.style.cssText='margin-top:10px;width:100%;'; rb.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg=_sanitizeHud(null); commit(); renderHudPanel(); }; wrap.appendChild(rb);
+  const note=document.createElement('div'); note.className='hint'; note.style.cssText='margin-top:8px;font-size:10px;opacity:.7;'; note.textContent='Previewing live. These settings save with the level, so anyone who plays your level sees this HUD.'; wrap.appendChild(note);
+  host.appendChild(wrap);
+}
 function renderBoltFxPanel(){
   const host=document.getElementById('edBoltFx'); if(!host) return; host.innerHTML='';
   const wrap=document.createElement('div');
@@ -19252,6 +19352,7 @@ function restoreLevel(level){
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
+  hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
   // gun / aim / station
@@ -19616,6 +19717,7 @@ function buildEditorPanel(){
         + '<div id="edCrosshair" class="wepfxHost" data-wepfx="crosshair"></div>')
     + sec('Enemy gunfire', 'boltfx', '<div id="edBoltFx"></div>')
     + sec('Characters', 'characters', '<div id="edCharRoster"></div>')
+    + sec('HUD', 'hud', '<div id="edHud"></div>')
     + sec('Level file', 'levelfile',
         '<div id="edIssues"></div>'
       + '<div class="row2"><button id="edSave">💾 Save</button><button id="edClear">Clear save</button></div>'
@@ -19768,6 +19870,7 @@ function buildEditorPanel(){
   if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   if(typeof renderWepFxPicker==='function') renderWepFxPicker();          // build 653: the grouped weapon-FX type picker
   if(typeof applyWepFxVisibility==='function') applyWepFxVisibility();     // ...and reveal only the active FX panel
+  if(typeof renderHudPanel==='function') renderHudPanel();                // build 665: HUD theming panel
   // restore saved width + wire drag-to-resize (drag the left edge; wider = more room for the crowded panels)
   try{ const w = parseInt(localStorage.getItem('breach_editor_width')||'',10); if(w>=260 && w<=window.innerWidth*0.92) p.style.width = w+'px'; }catch(e){}
   (function(){
@@ -22633,6 +22736,7 @@ function toggleEditor(){
     if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);   // markers linger visible otherwise — the 'stuck double' next to every live pad
     for(const en of enemies){ en.mesh.visible = true; }   // un-hide enemies when leaving the editor
     document.body.classList.remove('editing');   // build 658: restore the combat HUD
+    document.body.classList.remove('hudPreview');   // build 665: leave HUD-preview mode
     gun.visible = true;
     editorBrightLight.intensity = 0;
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;

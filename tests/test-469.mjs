@@ -4,7 +4,7 @@ const page = (typeof html!=='undefined' && html) ? html : src;
 // build 615: the camera preview is draggable, and the integrity HUD hides in the editor (no overlap).
 
 // integrity HUD hidden while editing
-assert(/body\.editing #stats \{ display:none !important; \}/.test(page), 'CSS hides #stats (integrity) when editing');
+assert(/body\.editing:not\(\.hudPreview\) #stats \{ display:none !important; \}/.test(page), 'CSS hides #stats (integrity) when editing (unless HUD-previewing, build 665)');
 assert(/document\.body\.classList\.toggle\('editing', !!editorOpen\)/.test(src), 'the editing body class is toggled from editor state');
 // and it is NOT gated to touch any more (the toggle stands on its own line, outside the isTouch block)
 assert(/\}\s*\n\s*document\.body\.classList\.toggle\('editing', !!editorOpen\)/.test(src), 'editing class applies on all platforms, not just touch');

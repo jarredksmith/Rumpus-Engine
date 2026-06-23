@@ -4,7 +4,7 @@ const src = gameSource();
 // character roster (section) were buried in Build mode next to boxes and lights; they now have their own mode.
 
 // --- the new mode is registered everywhere a mode must be ---
-assert(/const EDITOR_MODES = \['build','scene','player','enemies','rules','kit','files'\];/.test(src), 'player is a top-level mode (after World)');
+assert(/const EDITOR_MODES = \['build','scene','player','enemies','rules','kit','hud','files'\];/.test(src), 'player is a top-level mode (after World)');
 assert(/player:'Player'/.test(src), 'it has a user-facing label');
 assert(/player:'#[0-9a-fA-F]{6}'/.test(src), 'it has a distinct accent colour');
 assert(/MODE_ICON = \{[\s\S]*?player:\s*_svgIcon/.test(src), 'it has a mode icon');

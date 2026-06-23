@@ -2,7 +2,7 @@ import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 
 // the five-mode switch that gates the editor panel
-assert(/const EDITOR_MODES = \['build','scene','player','enemies','rules','kit','files'\];/.test(src), 'seven editor modes defined (Player became its own area in build 652)');
+assert(/const EDITOR_MODES = \['build','scene','player','enemies','rules','kit','hud','files'\];/.test(src), 'eight editor modes defined (HUD added in build 665)');
 // Enemies is its own mode now, not under Rules; Weapons mode carries the gun-model import (the Object section)
 assert(/enemies: \['enemies','gizmo','object','transform','boltfx'\]/.test(src), 'Enemies mode carries its section plus the spawn picker/fields/gizmo (spawns moved here in build 334) + enemy gunfire FX (build 647)');
 assert(/rules:\s*\['game','pickups','loot','invitems'\]/.test(src), 'Gameplay tab: game + pickups + loot + invitems');

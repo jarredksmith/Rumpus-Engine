@@ -5,13 +5,14 @@ const src = gameSource();
 // listeners stay intact, then re-dock on popup close (or when the editor itself is closed via P).
 
 // --- HUD hide: a body.editing class drives a CSS rule covering all combat-HUD ids ---
-assert(/body\.editing #stats, body\.editing #ammoPanel, body\.editing #score, body\.editing #wavePanel,/.test(html), 'CSS rule hides every gameplay HUD element while editing');
+// build 665: the hide rule is preview-aware — `body.editing:not(.hudPreview)` so the HUD editor can show the live HUD
+assert(/body\.editing:not\(\.hudPreview\) #stats, body\.editing:not\(\.hudPreview\) #ammoPanel, body\.editing:not\(\.hudPreview\) #score, body\.editing:not\(\.hudPreview\) #wavePanel,/.test(html), 'CSS rule hides every gameplay HUD element while editing (unless HUD-previewing)');
 for(const id of ['stats','ammoPanel','score','wavePanel','bossBar','cpHud','buffs','prompt','minimap','turretHud','grabHint','hurtDir','lowhp','damage','weaponWheel'])
-  assert(new RegExp('body\\.editing #'+id+'\\b').test(html), 'HUD element #'+id+' is hidden while editing');
-assert(/body\.editing #weaponWheel \{ display: none !important; \}/.test(html), 'the rule uses display:none !important so it overrides inline styles');
+  assert(new RegExp('body\\.editing:not\\(\\.hudPreview\\) #'+id+'\\b').test(html), 'HUD element #'+id+' is hidden while editing');
+assert(/body\.editing:not\(\.hudPreview\) #weaponWheel \{ display: none !important; \}/.test(html), 'the rule uses display:none !important so it overrides inline styles');
 
 // crosshair must NOT be in the rule
-assert(!/body\.editing #crosshair\b/.test(html), 'the crosshair stays visible while editing');
+assert(!/body\.editing[^{]*#crosshair\b/.test(html), 'the crosshair stays visible while editing');
 
 // the body class is toggled by toggleEditor on open + close
 assert(/document\.body\.classList\.add\('editing'\)/.test(src), 'editor open adds the body.editing class');
