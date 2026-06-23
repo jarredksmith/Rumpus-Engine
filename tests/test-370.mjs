@@ -4,12 +4,14 @@ const src = gameSource();
 // build 493: a per-clip "In place" toggle (editor) cancels root-motion forward travel. The existing seat re-pin
 // only resets the model-ROOT object, so clips that animate the hips/root BONE walked the body off its spot.
 // _findRootBone caches the skeleton root + its rest x/z at load; each frame, after the seat re-pin, _lockRootMotion
-// holds that bone's x/z at rest for any state flagged clipInPlace, so the clip animates on the spot (y/bob kept).
+// holds that bone's x/z at rest for any state flagged clipInPlace, so the clip animates on the spot.
+// build 646: also holds the bone's rest HEIGHT (y) so a clip retargeted from a different-scale rig can't fling
+// the body into the air; the y baseline is tracked from unlocked (idle) frames just like x/z.
 
 // ---- wiring ----
 assert(/function _findRootBone\(root\)/.test(src), 'root-bone finder exists');
 assert(/function _lockRootMotion\(v\)/.test(src), 'per-frame in-place lock exists');
-assert(/model\.userData\.rootBone=_rb; model\.userData\.rootRest=\{ x:_rb\.position\.x, z:_rb\.position\.z \}/.test(src), 'root bone + rest x/z captured at model load');
+assert(/model\.userData\.rootBone=_rb; model\.userData\.rootRest=\{ x:_rb\.position\.x, y:_rb\.position\.y, z:_rb\.position\.z \}/.test(src), 'root bone + rest x/y/z captured at model load (y added build 646 to ground retargeted clips)');
 assert(/_lockRootMotion\(_ownAvatar\.userData\.visual\)/.test(src), 'own third-person body is in the lock pass');
 assert(/for\(const en of enemies\)\{ if\(en\.mesh\) _lockRootMotion/.test(src), 'enemies are in the lock pass too (no-op until flagged)');
 
@@ -50,10 +52,10 @@ assert(_findRootBone(new THREE.Object3D()) === null, 'no bones -> null (capsule 
 const _lockRootMotion = new Function('return (' + extractFunction('_lockRootMotion') + ')')();
 {
   const rb = new THREE.Bone(); rb.position.set(5, 2, -7);
-  const v = { userData: { rootBone: rb, rootRest: { x: 0.1, z: -0.2 }, animCfg: { clipInPlace: { walk: true } }, animState: 'walk' } };
+  const v = { userData: { rootBone: rb, rootRest: { x: 0.1, y: 1.0, z: -0.2 }, animCfg: { clipInPlace: { walk: true } }, animState: 'walk' } };
   _lockRootMotion(v);
   assert(Math.abs(rb.position.x - 0.1) < 1e-9 && Math.abs(rb.position.z + 0.2) < 1e-9, 'flagged state -> hips x/z pinned to rest');
-  assert(Math.abs(rb.position.y - 2) < 1e-9, 'vertical (y) is left alone so the bob survives');
+  assert(Math.abs(rb.position.y - 1.0) < 1e-9, 'build 646: vertical (y) is now pinned to rest height so a foreign-rig clip cannot fling the body into the air');
 }
 {
   const rb = new THREE.Bone(); rb.position.set(5, 2, -7);

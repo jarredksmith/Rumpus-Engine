@@ -12077,9 +12077,9 @@ function _lockRootMotion(v){
   const cfg=v.userData.animCfg, st=v.userData.animState;
   const locked = !!(cfg && cfg.clipInPlace && st && cfg.clipInPlace[st]);   // is the current state ticked "in place"?
   let ref=v.userData.rootLockXZ;
-  if(!ref){ const rr=v.userData.rootRest; ref=v.userData.rootLockXZ={ x: rr?rr.x:rb.position.x, z: rr?rr.z:rb.position.z }; }
-  if(locked){ rb.position.x=ref.x; rb.position.z=ref.z; }   // hold at the standing baseline so it aligns with idle
-  else { ref.x=rb.position.x; ref.z=rb.position.z; }        // not locked -> follow the live hips so the next locked clip matches where idle sits
+  if(!ref){ const rr=v.userData.rootRest; ref=v.userData.rootLockXZ={ x: rr?rr.x:rb.position.x, y: rr?rr.y:rb.position.y, z: rr?rr.z:rb.position.z }; }
+  if(locked){ rb.position.x=ref.x; rb.position.z=ref.z; rb.position.y=ref.y; }   // hold x/z + rest hip height: cancels forward travel AND a foreign clip's scale-baked vertical lift (build 646)
+  else { ref.x=rb.position.x; ref.z=rb.position.z; ref.y=rb.position.y; }         // not locked -> follow the live hips so the next locked clip matches where idle sits
 }
 // ---- third-person weapon AIM (build 494): the body only yaws, so the gun stayed level and the tracer ran off
 // at odd angles when you looked up/down. We add the missing pitch. A spine/chest bone carries a natural share
@@ -12240,7 +12240,7 @@ function buildAvatarVisual(g, cfg){
       model.rotation.x = (mc.rx||0); model.rotation.z = (mc.rz||0); model.rotation.y += (mc.face||0);   // full orient: pitch / roll / facing
       g.userData.visual=model; g.userData.hasModel=true;
       model.userData.seat={ p:model.position.clone(), q:model.quaternion.clone(), s:model.scale.clone() };   // re-pinned each frame so root-motion can't fling the model
-      { const _rb=_findRootBone(model); if(_rb){ model.userData.rootBone=_rb; model.userData.rootRest={ x:_rb.position.x, z:_rb.position.z }; } }   // for the per-clip "In place" lock (build 493): hold this bone's x/z at rest to cancel a clip's forward travel
+      { const _rb=_findRootBone(model); if(_rb){ model.userData.rootBone=_rb; model.userData.rootRest={ x:_rb.position.x, y:_rb.position.y, z:_rb.position.z }; } }   // for the per-clip "In place" lock (build 493/646): hold this bone's x/z (and rest height y) to cancel a clip's forward travel + scale-baked hip lift
       { const _as=_findAimSpine(model); if(_as) model.userData.aimSpine=_as; }   // build 494: spine/chest bone the weapon-aim pitch leans (arms + gun follow)
       g.userData.centerLocal = { x:(mc.xoff||0), y:(mc.yoff||0) + h*0.5, z:(mc.zoff||0) };   // visual centre in group space -> chase-cam pivot
       const hb=h*0.82; const px=new THREE.Mesh(new THREE.CylinderGeometry(fr,fr,hb,10), _ENEMY_PROXY_MAT); px.position.y=hb/2; g.add(px); g.userData.hitProxy=px; if(g.userData.noHit) px.raycast=()=>{};
@@ -14520,7 +14520,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 645 · 2026-06-22';
+const BUILD_VERSION = 'build 646 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20044,7 +20044,7 @@ function renderEditorFields(){
       hold.checked = (mc.clipHold && mc.clipHold[stKey]!=null) ? !!mc.clipHold[stKey] : (stKey==='die');
       hold.onchange=()=>{ if(!mc.clipHold) mc.clipHold={}; mc.clipHold[stKey]=hold.checked; refreshEnemyVisuals(); };
       const hl=document.createElement('span'); hl.textContent='hold'; holdWrap.appendChild(hold); holdWrap.appendChild(hl);
-      const ipWrap=document.createElement('label'); ipWrap.title='Lock this clip in place \u2014 cancels root-motion forward travel (tick it for Walk / Run / strafe clips that drift)'; ipWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
+      const ipWrap=document.createElement('label'); ipWrap.title='Lock this clip in place \u2014 cancels root-motion forward travel AND holds the hips at rest height (fixes clips retargeted from a bigger/smaller rig that fling the body into the air). Tick it for Walk / Run / strafe / any clip that drifts or floats.'; ipWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
       const ip=document.createElement('input'); ip.type='checkbox'; ip.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
       ip.checked = !!(mc.clipInPlace && mc.clipInPlace[stKey]);
       ip.onchange=()=>{ if(!mc.clipInPlace) mc.clipInPlace={}; mc.clipInPlace[stKey]=ip.checked; refreshEnemyVisuals(); };
@@ -21204,7 +21204,7 @@ function renderEditorFields(){
         hold.checked = (playerModelCfg.clipHold && playerModelCfg.clipHold[stKey]!=null) ? !!playerModelCfg.clipHold[stKey] : (stKey==='die');
         hold.onchange=()=>{ if(!playerModelCfg.clipHold) playerModelCfg.clipHold={}; playerModelCfg.clipHold[stKey]=hold.checked; rebuildAvatars(); };
         const hl=document.createElement('span'); hl.textContent='hold'; holdWrap.appendChild(hold); holdWrap.appendChild(hl);
-        const ipWrap=document.createElement('label'); ipWrap.title='Lock this clip in place \u2014 cancels root-motion forward travel so the body animates on the spot (tick it for Walk / Run / strafe clips that drift)'; ipWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
+        const ipWrap=document.createElement('label'); ipWrap.title='Lock this clip in place \u2014 cancels root-motion forward travel AND holds the hips at rest height so the body animates on the spot (fixes clips retargeted from a bigger/smaller rig that fling the body into the air). Tick it for Walk / Run / strafe / any clip that drifts or floats.'; ipWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
         const ip=document.createElement('input'); ip.type='checkbox'; ip.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
         ip.checked = !!(playerModelCfg.clipInPlace && playerModelCfg.clipInPlace[stKey]);
         ip.onchange=()=>{ if(!playerModelCfg.clipInPlace) playerModelCfg.clipInPlace={}; playerModelCfg.clipInPlace[stKey]=ip.checked; rebuildAvatars(); };
