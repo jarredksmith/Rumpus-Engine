@@ -7,9 +7,9 @@ const src = gameSource();
 // the same ordered level.turrets list.
 
 // --- mt rides in all three send sites (host self entry, host relay of a client, client's own packet) ---
-assert(/n:NET\.name\|\|'Host', mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\) \}\];/.test(src), 'host snapshot self-entry carries its mounted-turret index');
-assert(/hs:rp\.hs\|\|0, n:rp\.name, mt:\(rp\.mt!=null\?rp\.mt:-1\) \}\);/.test(src), 'host relays each remote player mounted-turret index');
-assert(/n:NET\.name, mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\) \}\); \}catch/.test(src), 'client state packet carries its mounted-turret index');
+assert(/n:NET\.name\|\|'Host', mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\) \}\];/.test(src), 'host snapshot self-entry carries its mounted-turret index');
+assert(/hs:rp\.hs\|\|0, n:rp\.name, mt:\(rp\.mt!=null\?rp\.mt:-1\), cl:\(rp\.cl\|\|0\) \}\);/.test(src), 'host relays each remote player mounted-turret index');
+assert(/n:NET\.name, mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\) \}\); \}catch/.test(src), 'client state packet carries its mounted-turret index');
 
 // --- mt is applied on receipt (host from a client, client from the snapshot) and defaulted on the record ---
 assert(/rp\.mt = \(msg\.mt!=null\?msg\.mt:-1\);/.test(src), 'setRemoteState stores the synced turret index');

@@ -7,11 +7,12 @@ const src = gameSource();
 assert(/const MANTLE_MIN = STEP \+ 0\.05, MANTLE_MAX = 2\.05, MANTLE_DUR = 0\.42;/.test(src), 'MANTLE_MIN = STEP+0.05 (taller than an auto-step, so plain steps do not trigger a climb)');
 const MIN = 0.6 + 0.05;   // STEP + 0.05
 
-// --- wiring in the movement loop ---
-assert(/if\(!_mantle && _jPressed && player\.onGround/.test(src), 'a fresh jump is suppressed on the frame a mantle starts');
+// --- wiring in the movement loop (build 644: grab now HANGS, then pull-up or drop) ---
+assert(/if\(!_ledge && _jPressed && player\.onGround/.test(src), 'a fresh jump is suppressed on the frame a ledge is grabbed');
 assert(/const _lt = mantleLedge\(_fx, _fz, _fy\);/.test(src), 'movement probes for a ledge in front');
-assert(/wish\.dot\(forward\) > 0\.5/.test(src), 'only mantles when actually pushing forward (input-agnostic: keys or stick)');
-assert(/_mantle\.t \+= dt\/MANTLE_DUR;/.test(src) && /player\.pos\.y = _mantle\.fy0 \+ \(_mantle\.ty-_mantle\.fy0\)\*_up;/.test(src), 'the pull-up rises then sweeps forward onto the top');
+assert(/wish\.dot\(forward\) > 0\.5/.test(src), 'only grabs when actually pushing forward (input-agnostic: keys or stick)');
+assert(/_ledge = \{ ph:'hang'/.test(src), 'grabbing a ledge starts in the HANG phase');
+assert(/player\.pos\.y = _ledge\.fy0 \+ \(_ledge\.ty-_ledge\.fy0\)\*_up;/.test(src), 'the pull-up phase rises then sweeps forward onto the top');
 
 // --- executable: the probe accepts a real ledge, rejects too-low / too-tall / no-headroom / no-stand ---
 const probe = new Function('TOP','CAN_STAND','CEIL', `

@@ -11,8 +11,8 @@ assert(/_netHitDir = \(dir==='Front'\)\?0:\(dir==='Back'\)\?1:\(dir==='Left'\)\?
 assert(/_netHitSeq=\(_netHitSeq\+1\)&255;/.test(hd), 'hurtDir bumps the per-hit sequence');
 
 // ---- hd/hs travel on every packet + ingest path ----
-assert(/cr:crouching\?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET\.name, mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\) \}\); \}catch/.test(src), 'client state packet carries hd/hs');
-assert(/cr:crouching\?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET\.name\|\|'Host', mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\) \}\];/.test(src), 'host own snapshot entry carries hd/hs');
+assert(/cr:crouching\?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET\.name, mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\) \}\); \}catch/.test(src), 'client state packet carries hd/hs');
+assert(/cr:crouching\?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET\.name\|\|'Host', mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\) \}\];/.test(src), 'host own snapshot entry carries hd/hs');
 assert(/cr:rp\.crouch\?1:0, hd:rp\.hd\|\|0, hs:rp\.hs\|\|0, n:rp\.name/.test(src), 'host relays each peer\u2019s hd/hs');
 assert(/rp\.crouch = !!msg\.cr; rp\.hd = msg\.hd\|\|0; rp\.hs = msg\.hs\|\|0;/.test(src), 'host stores an incoming client\u2019s hd/hs');
 assert(/rp\.crouch=!!pl\.cr; rp\.hd=pl\.hd\|\|0; rp\.hs=pl\.hs\|\|0;/.test(src), 'client stores the relayed hd/hs');

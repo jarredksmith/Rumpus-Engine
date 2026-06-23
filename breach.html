@@ -6687,6 +6687,13 @@ const ANIM_SLOTS = [
   { k:'fall',      g:'Jumping & airborne', l:'Fall idle',  re:/fall.?idle|falling|fall.?loop|plummet|in.?air.?loop/i },
   // Traversal
   { k:'slide', g:'Traversal', l:'Slide', re:/slide|slid|dash/i },
+  // Climbing (ledge mantle + ladders) — build 644
+  { k:'ledgeHang',  g:'Climbing', l:'Ledge hang',    re:/ledge.?hang|hang(?!.?drop)|hanging|cliff.?hang|brace.?hang/i },
+  { k:'ledgeUp',    g:'Climbing', l:'Ledge pull-up', re:/ledge.?(climb|up|pull)|pull.?up|mantle|clamber|climb.?up.?ledge|hoist|vault.?up/i },
+  { k:'ledgeDrop',  g:'Climbing', l:'Ledge drop',    re:/ledge.?drop|hang.?drop|drop.?down|let.?go|release.?ledge/i },
+  { k:'ladderIdle', g:'Climbing', l:'Ladder hold',   re:/ladder.?idle|ladder.?hold|on.?ladder|ladder.?hang/i },
+  { k:'ladderUp',   g:'Climbing', l:'Ladder up',     re:/ladder.?up|climb.?up.?ladder|ladder.?climb.?up|climbing.?up|climb.?ladder/i },
+  { k:'ladderDown', g:'Climbing', l:'Ladder down',   re:/ladder.?down|climb.?down.?ladder|ladder.?climb.?down|climbing.?down|descend.?ladder/i },
   // Combat
   { k:'attack',     g:'Combat', l:'Fire / attack', re:/attack|melee|punch|kick|bite|swipe|slash|shoot|fire|cast/i },
   { k:'reload',     g:'Combat', l:'Reload',        re:/reload|magazine|mag.?in|clip.?in/i },
@@ -6718,7 +6725,7 @@ const ANIM_SLOTS = [
 ];
 const _STATE_RE = {}; for(const _s of ANIM_SLOTS) _STATE_RE[_s.k] = _s.re;
 // One-shots play once and clamp on the final frame (transitions, reactions, attacks, deaths); the rest loop.
-const _ANIM_ONESHOT = new Set(['idleFidget','idleToCombat','turnL','turnR','turn180','moveStart','moveStop','pivot180','standToCrouch','crouchToStand','jumpStart','jumpLand','hardLand','reload','meleeLight','meleeHeavy','meleeCombo','parry','dodge','equip','holster','throw','hitFront','hitBack','hitLeft','hitRight','stagger','knockdown','getup','die','dieFront','dieBack']);
+const _ANIM_ONESHOT = new Set(['idleFidget','idleToCombat','turnL','turnR','turn180','moveStart','moveStop','pivot180','standToCrouch','crouchToStand','jumpStart','jumpLand','hardLand','reload','meleeLight','meleeHeavy','meleeCombo','parry','dodge','equip','holster','throw','hitFront','hitBack','hitLeft','hitRight','stagger','knockdown','getup','die','dieFront','dieBack','ledgeUp','ledgeDrop']);
 // When a requested state has no mapped/resolved clip, walk this chain until one resolves (else idle / first).
 // Chains terminate at idle and never cycle. Lets you map only the clips a model actually ships with.
 const _ANIM_FALLBACK = {
@@ -6729,6 +6736,7 @@ const _ANIM_FALLBACK = {
   crouch:'idle', crouchWalk:'crouch', crouchBack:'crouchWalk', crouchStrafeL:'crouchWalk', crouchStrafeR:'crouchWalk', standToCrouch:'crouch', crouchToStand:'idle',
   jumpStart:'jump', jump:'idle', jumpLand:'idle', hardLand:'jumpLand', fall:'jump',
   slide:'run',
+  ledgeHang:'jump', ledgeUp:'jumpLand', ledgeDrop:'jump', ladderIdle:'idle', ladderUp:'ladderIdle', ladderDown:'ladderIdle',   // build 644: climbing -> sensible fallbacks when a model ships no climb clips
   walkFire:'walk', runFire:'run', crouchFire:'crouchWalk', sprintFire:'sprint',   // no combined clip -> show the movement (legs still animate)
   attack:'aim', reload:'attack', meleeLight:'attack', meleeHeavy:'meleeLight', meleeCombo:'meleeLight', block:'aim', parry:'block', dodge:'run', equip:'idle', holster:'idle', throw:'attack',
   hitFront:'stagger', hitBack:'stagger', hitLeft:'stagger', hitRight:'stagger', stagger:'idle',
@@ -12379,6 +12387,7 @@ function updateOwnAvatar(dt){
     let st;
     const evtLive = _ownEvt && performance.now()<_ownEvt.until;
     if(dead) st=_lastDieVariant||'die';                         // directional death from the killing hit
+    else if(_climbAnim) st=_climbAnim;                          // build 644: ledge hang / pull-up / drop (and ladder climb in 645)
     else if(evtLive) st=_ownEvt.slot;                           // one-shot: throw / melee / equip / hit-react
     else if(performance.now()-lastShot < 250){ const _ff = crouching ? 'crouch' : (typeof sprinting==='function'&&sprinting()) ? 'sprint' : (_ownSpeed>0.11?'run':'walk'); st = (_ownSpeed>=0.012 ? (_fireSlot(_ff)||'attack') : 'attack'); }   // firing: combined move+fire when moving, else the standing attack pose
     else if(reloading) st='reload';                             // reloading the mag
@@ -12532,7 +12541,7 @@ function setRemoteState(id, msg){
   const rp=ensureRemotePlayer(id, msg.n);
   rp.posEye.set(msg.p[0], msg.p[1], msg.p[2]);
   rp.target.set(msg.p[0], msg.p[1]-EYE, msg.p[2]);   // synced feet (no flat-0 clamp; netInterpolate glues grounded avatars to the LOCAL terrain)
-  rp.yaw = msg.y; rp.pitch = msg.pi||0; if(msg.hp!=null) rp.hp=msg.hp; if(msg.w!=null) rp.wep=msg.w; if(msg.g) rp.grip=_unpackGrip(msg.g); rp.air = !!msg.j; rp.slide = !!msg.sl; rp.ads = !!msg.ad; rp.crouch = !!msg.cr; rp.hd = msg.hd||0; rp.hs = msg.hs||0; rp.mt = (msg.mt!=null?msg.mt:-1);   // build 548: which turret this player is manning (-1 = none)
+  rp.yaw = msg.y; rp.pitch = msg.pi||0; if(msg.hp!=null) rp.hp=msg.hp; if(msg.w!=null) rp.wep=msg.w; if(msg.g) rp.grip=_unpackGrip(msg.g); rp.air = !!msg.j; rp.slide = !!msg.sl; rp.ads = !!msg.ad; rp.crouch = !!msg.cr; rp.hd = msg.hd||0; rp.hs = msg.hs||0; rp.mt = (msg.mt!=null?msg.mt:-1); rp.cl = msg.cl||0;   // build 548/644: turret index + climbing anim code travel in the state
 }
 
 // ---- client-side display meshes for the host's enemies & coins ----
@@ -12558,9 +12567,9 @@ function upsertCoinMesh(c){
 function _packGrip(){ const wk=(typeof curWep!=='undefined'?curWep:'rifle'); const g=activeCharGrip(wk)||tpGunGrip(wk); return [ +(+g.x).toFixed(3), +(+g.y).toFixed(3), +(+g.z).toFixed(3), +(+g.yaw).toFixed(3), +(+g.pitch).toFixed(3), +(+g.roll).toFixed(3), +((g.scale==null?1:+g.scale)).toFixed(3) ]; }
 function _unpackGrip(a){ return (a && a.length>=7) ? { x:+a[0], y:+a[1], z:+a[2], yaw:+a[3], pitch:+a[4], roll:+a[5], scale:+a[6] } : null; }
 function serializeWorld(){
-  const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1) }];
+  const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode() }];   // build 644: cl = climbing anim code
   for(const id in NET.players){ const rp=NET.players[id];
-    P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1) }); }
+    P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1), cl:(rp.cl||0) }); }
   for(const b of bots){ if(b.dead && !b._dying) continue; P.push({ id:b.id, p:[b.pos.x,EYE,b.pos.z], y:b.yaw, pi:0, w:'rifle', hp:(b.dead?0:b.hp), hd:b._netHitDir||0, hs:b._netHitSeq||0, n:b.name }); }   // build 502: keep dead-but-dying bots in the snapshot (+ hd/hs) so clients play the directional death, then they prune on respawn
   const E=enemies.map(e=>({ id:e.id, p:[e.mesh.position.x,e.mesh.position.y,e.mesh.position.z], hd:e._netHitDir||0, hs:e._netHitSeq||0 }));
   const C=coins.map(c=>({ id:c.id, p:[c.mesh.position.x,c.mesh.position.z] }));
@@ -12678,7 +12687,7 @@ function applyWorld(msg){
   const seen=new Set();
   for(const pl of msg.P){ if(pl.id===NET.myId) continue; seen.add(pl.id);
     const rp=ensureRemotePlayer(pl.id, pl.n);
-    rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); }   // build 548: mounted-turret index travels in the snapshot
+    rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); rp.cl=pl.cl||0; }   // build 548/644: turret index + climbing anim code travel in the snapshot
   for(const id in NET.players){ if(!seen.has(+id)) removeRemotePlayer(+id); }
   const es=new Set();
   for(const e of msg.E){ es.add(e.id); upsertEnemyMesh(e); }
@@ -12739,6 +12748,7 @@ function netInterpolate(dt){
       if(rp.ads && md<0.05 && !rp.crouch) _st='aim';                  // aiming (right-click) pose, standing
       if(rp.air) _st='jump';                                          // airborne flag travels in the state packet
       if(rp.slide) _st='slide';                                       // sliding flag travels in the state packet
+      if(rp.cl) _st = _CLIMB_BY_CODE[rp.cl] || _st;                   // build 644: climbing (ledge hang/up/drop, ladder) overrides loco/air
       if(rp._fireT && performance.now() < rp._fireT){ const _rf = rp.crouch ? 'crouch' : (tier==='run'?'run':(tier==='walk'?'walk':null)); _st=(_rf?(_fireSlot(_rf)||'attack'):'attack'); }   // brief move+fire (or standing attack) after a networked shot
       if(rp._hitT && performance.now() < rp._hitT) _st=['hitFront','hitBack','hitLeft','hitRight'][rp._hitDir||0];   // directional hit-react (wins over loco, below death)
       if(rp.hp!=null && rp.hp<=0) _st = (rp._hitDir===0?'dieBack':rp._hitDir===1?'dieFront':'die');   // directional death (front hit -> fall backward), else flat die
@@ -12779,7 +12789,7 @@ function netTick(dt){
   if(NET.sendTimer<=0){
     NET.sendTimer=0.05;
     if(NET.mode==='client' && NET.conn && NET.conn.open){
-      try{ NET.conn.send({ t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1) }); }catch(e){}
+      try{ NET.conn.send({ t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode() }); }catch(e){}
       if(heldProp && heldNidLocal!=null){ const tgt=_localHoldTarget(); try{ NET.conn.send({ t:'hold', nid:heldNidLocal, p:[tgt.x,tgt.y,tgt.z] }); }catch(e){} }
     } else if(NET.mode==='host'){
       broadcastWorld();
@@ -14432,7 +14442,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 643 · 2026-06-22';
+const BUILD_VERSION = 'build 644 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16646,7 +16656,15 @@ function ceilingAt(x, z, feetY){
 // the reach. mantleLedge() is a reusable, testable probe: given a point in front + your feet height it returns the
 // ledge-top Y you'd climb onto, or null (too low / too tall / can't stand up there).
 const MANTLE_MIN = STEP + 0.05, MANTLE_MAX = 2.05, MANTLE_DUR = 0.42;
-let _mantle = null;   // { t, sx,sz,fy0, tx,tz,ty } while pulling up
+// build 644: grabbing a ledge HANGS you (ledgeHang anim); from the hang you PULL UP (Space / hold forward, anim
+// ledgeUp) or DROP DOWN (Ctrl / back, anim ledgeDrop). _ledge holds the phase + the hang/top positions.
+const LEDGE_PULL_DUR = 0.5, LEDGE_DROP_DUR = 0.3, LEDGE_HANG_AUTO = 2.5;
+let _ledge = null;       // { ph:'hang'|'pull'|'drop', t, sx,sz,fy0, hy, tx,tz,ty }
+let _climbAnim = 0;      // current climbing anim slot for the 3rd-person body ('ledgeHang'/'ledgeUp'/'ledgeDrop'/'ladderUp'/'ladderDown'/'ladderIdle'), 0 = none
+// build 644: climbing -> small int code carried in the network snapshot so co-op peers see your climb animation.
+const _CLIMB_CODES = { ledgeHang:1, ledgeUp:2, ledgeDrop:3, ladderUp:4, ladderDown:5, ladderIdle:6 };
+const _CLIMB_BY_CODE = ['',  'ledgeHang','ledgeUp','ledgeDrop','ladderUp','ladderDown','ladderIdle'];
+function _climbCode(){ return _CLIMB_CODES[_climbAnim] || 0; }
 function mantleLedge(fx, fz, feetY){
   if(typeof surfaceTopAt!=='function') return null;
   const top = surfaceTopAt(fx, fz);
@@ -17225,28 +17243,43 @@ function loop(){
   if(player.jumpCd>0) player.jumpCd-=dt;
   const _jHeld = !!(keys['Space']||padJump);
   const _jPressed = (_jHeld && !_jumpHeldPrev) || touchJump;   // rising edge for held inputs; the touch button is already a one-frame pulse
-  // build 640: ledge mantle — jumping or falling toward a chest/head-high ledge while pushing FORWARD grabs it and
-  // pulls you up onto the top. Preempts the jump on this frame so you climb instead of bonking the wall.
-  if(!_mantle && gameOn && !editorOpen && !mountedTurret && !sliding && !duelDead && !_levelLoaderActive && matchWarmup<=0 && (_jPressed || !player.onGround) && wish.dot(forward) > 0.5){
+  // build 640/644: ledge grab — jumping or falling toward a chest/head-high ledge while pushing FORWARD grabs it
+  // and you HANG. From the hang: Space (or keep holding forward) PULLS UP onto the top; Ctrl/back DROPS down.
+  if(!_ledge && gameOn && !editorOpen && !mountedTurret && !sliding && !duelDead && !_levelLoaderActive && matchWarmup<=0 && (_jPressed || !player.onGround) && wish.dot(forward) > 0.5){
     const _fy = player.pos.y - EYE;
     const _fx = player.pos.x + forward.x*0.55, _fz = player.pos.z + forward.z*0.55;
     const _lt = mantleLedge(_fx, _fz, _fy);
-    if(_lt!=null){ _mantle = { t:0, sx:player.pos.x, sz:player.pos.z, fy0:player.pos.y, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE }; player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
+    if(_lt!=null){ _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, fy0:player.pos.y, hy:_lt + EYE - 1.7, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE }; player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
   }
-  if(!_mantle && _jPressed && player.onGround && (player.jumpCd||0)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret){ player.vel.y = JUMP; player.onGround=false; sliding=false; player.jumpCd=JUMP_CD; SFX.jump(); }
+  if(!_ledge && _jPressed && player.onGround && (player.jumpCd||0)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret){ player.vel.y = JUMP; player.onGround=false; sliding=false; player.jumpCd=JUMP_CD; SFX.jump(); }
   _jumpHeldPrev = _jHeld;
   touchJump = false;   // tap is consumed for one frame
-  if(_mantle){
-    // hang -> pull-up: rise first, then sweep forward onto the ledge top (smoothstep on each phase)
-    _mantle.t += dt/MANTLE_DUR; const _mt=Math.min(1,_mantle.t);
+  if(_ledge){
     const _ss=(x)=>{ x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
-    const _up=_ss(Math.min(1,_mt/0.55)), _fw=_ss(Math.max(0,(_mt-0.5)/0.5));
-    player.pos.y = _mantle.fy0 + (_mantle.ty-_mantle.fy0)*_up;
-    player.pos.x = _mantle.sx + (_mantle.tx-_mantle.sx)*_fw;
-    player.pos.z = _mantle.sz + (_mantle.tz-_mantle.sz)*_fw;
     player.vel.x=0; player.vel.y=0; player.vel.z=0; player.onGround=false;
-    if(_mt>=1){ player.pos.x=_mantle.tx; player.pos.y=_mantle.ty; player.pos.z=_mantle.tz; player.onGround=true; _mantle=null; }
+    if(_ledge.ph==='hang'){
+      _ledge.t += dt;
+      const _e=_ss(Math.min(1,_ledge.t/0.18));   // ease into the hang pose
+      player.pos.y = _ledge.fy0 + (_ledge.hy-_ledge.fy0)*_e;
+      _climbAnim = 'ledgeHang';
+      const _wantDrop = (keys['ControlLeft']||keys['ControlRight']||padCrouch||keys['KeyS']);
+      const _wantUp = _jPressed || (keys['KeyW'] && _ledge.t>0.25) || _ledge.t>LEDGE_HANG_AUTO;
+      if(_wantDrop){ _ledge.ph='drop'; _ledge.t=0; }
+      else if(_wantUp){ _ledge.ph='pull'; _ledge.t=0; _ledge.sx=player.pos.x; _ledge.sz=player.pos.z; _ledge.fy0=player.pos.y; }
+    } else if(_ledge.ph==='pull'){
+      _ledge.t += dt; const _mt=Math.min(1,_ledge.t/LEDGE_PULL_DUR);
+      const _up=_ss(Math.min(1,_mt/0.55)), _fw=_ss(Math.max(0,(_mt-0.5)/0.5));
+      player.pos.y = _ledge.fy0 + (_ledge.ty-_ledge.fy0)*_up;
+      player.pos.x = _ledge.sx + (_ledge.tx-_ledge.sx)*_fw;
+      player.pos.z = _ledge.sz + (_ledge.tz-_ledge.sz)*_fw;
+      _climbAnim = 'ledgeUp';
+      if(_mt>=1){ player.pos.x=_ledge.tx; player.pos.y=_ledge.ty; player.pos.z=_ledge.tz; player.onGround=true; _ledge=null; _climbAnim=0; }
+    } else {   // drop
+      _ledge.t += dt; _climbAnim = 'ledgeDrop';
+      if(_ledge.t >= LEDGE_DROP_DUR){ player.pos.x -= forward.x*0.25; player.pos.z -= forward.z*0.25; player.vel.y = -1; _ledge=null; _climbAnim=0; }
+    }
   } else {
+    _climbAnim = 0;   // not on a ledge (ladders set their own climb anim in build 645)
   player.vel.y -= GRAV*dt;
   // one-shot vertical knock from physics props (e.g. a fast body launching the player)
   if(player.extVel.y){ player.vel.y += player.extVel.y; player.onGround=false; player.extVel.y = 0; }

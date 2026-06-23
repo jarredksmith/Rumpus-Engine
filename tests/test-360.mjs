@@ -4,7 +4,7 @@ const src = gameSource();
 // around while bots were frozen — an unfair head start. Freeze player translation AND jump during warmup,
 // mirroring the existing duelDead / level-load freezes.
 assert(/if\(matchWarmup>0\)\{ wish\.set\(0,0,0\); moveScale=0; \}/.test(src), 'movement wish is zeroed during warmup');
-assert(/if\(!_mantle && _jPressed && player\.onGround && \(player\.jumpCd\|\|0\)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret\)\{ player\.vel\.y = JUMP/.test(src), 'jump is blocked during warmup');
+assert(/if\(!_ledge && _jPressed && player\.onGround && \(player\.jumpCd\|\|0\)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret\)\{ player\.vel\.y = JUMP/.test(src), 'jump is blocked during warmup');
 // the freeze sits alongside the other movement freezes (consistent gating)
 assert(/if\(pvpMode\(\) && duelDead\)\{ wish\.set\(0,0,0\); moveScale=0; \}/.test(src), 'duelDead freeze still present');
 assert(/if\(_levelLoaderActive\)\{ wish\.set\(0,0,0\); moveScale=0; \}/.test(src), 'level-load freeze still present');
