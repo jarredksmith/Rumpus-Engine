@@ -15,6 +15,8 @@ assert(/hdr\.appendChild\(po\); hdr\.appendChild\(x\);/.test(ep), 'the pop-out b
 const ow = extractFunction('_openCinePvWindow');
 assert(/window\.open\('', 'breach-cine-preview'/.test(ow), 'opens a named separate window');
 assert(/const c = w\.document\.createElement\('canvas'\); c\.width=_CINEPV_RW; c\.height=_CINEPV_RH;/.test(ow), 'creates a canvas at the preview resolution');
+// build 664: the copied global `canvas{position:fixed;inset:0}` rule would cover the scrubber — reset it inline
+assert(/c\.style\.cssText='position:static;top:auto;left:auto;z-index:auto;/.test(ow), 'the popup canvas is flow-positioned so it does not cover the header/scrubber');
 assert(/_cinePvWinCtx=c\.getContext\('2d'\)/.test(ow), 'grabs a 2D context to paint frames into');
 // build 663: the scrubber + buttons (the header) MOVE into the popup; the in-page panel is hidden
 assert(/if\(_cinePvHeader\)\{ ctrl\.appendChild\(_cinePvHeader\); \}/.test(ow), 'the scrubber/buttons move into the popup window');
