@@ -89,6 +89,13 @@
   #editor .edSecBody { padding: 8px 10px; }
   #editor .edSection.collapsed .edSecBody { display: none; }
   #editor .edSecSub { margin: -2px 0 8px; color: #8fc7b6; font: 400 10.5px/1.4 ui-monospace, monospace; letter-spacing: 0.2px; opacity: 0.85; }
+  /* build 658: while editing, hide every gameplay HUD element so only the crosshair sits over the world.
+     The editor's own panels + the +/Add button + the floating prop-loader use #editor / #edAddFab / #propLoader,
+     which aren't matched, so they stay visible. Crosshair (#crosshair) is intentionally NOT in this list. */
+  body.editing #stats, body.editing #ammoPanel, body.editing #score, body.editing #wavePanel,
+  body.editing #bossBar, body.editing #cpHud, body.editing #buffs, body.editing #prompt,
+  body.editing #minimap, body.editing #turretHud, body.editing #grabHint, body.editing #hurtDir,
+  body.editing #lowhp, body.editing #damage, body.editing #weaponWheel { display: none !important; }
   #editor #libGrid { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; max-height: 132px; overflow-y: auto; }
   #editor button.libChip {
     flex: 0 0 auto; padding: 5px 9px; font-size: 11px; border-radius: 12px;
@@ -14552,7 +14559,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 657 · 2026-06-23';
+const BUILD_VERSION = 'build 658 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19474,6 +19481,7 @@ function buildEditorPanel(){
     + '<div id="edTopBar" style="display:flex;align-items:center;gap:6px;margin:0 0 6px;">'
       + '<h3 style="margin:0;flex:1;">LEVEL / TRANSFORM EDITOR</h3>'
       + '<button id="edHelp" title="Open the field manual (new tab)">?</button>'
+      + '<button id="edPopOut" title="Open the editor in its own window (re-dock by closing it)">\u2197</button>'
       + '<button id="edDock" title="Move panel to the other side">\u21c4</button>'
       + '<button id="edCollapse" title="Collapse panel">\u2304</button>'
     + '</div>'
@@ -19528,6 +19536,43 @@ function buildEditorPanel(){
     const hq=ed.querySelector('#edHelp'); if(hq) hq.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };
     const dk=ed.querySelector('#edDock'); if(dk) dk.onclick=()=>{ ed.classList.toggle('dockLeft'); try{ localStorage.setItem('breach_editor_dock', ed.classList.contains('dockLeft')?'left':'right'); }catch(e){} };
     const cl=ed.querySelector('#edCollapse'); if(cl) cl.onclick=()=>{ const c=ed.classList.toggle('collapsed'); cl.textContent=c?'\u2303':'\u2304'; cl.title=c?'Expand panel':'Collapse panel'; };
+    // build 658: pop the editor into its own borderless browser window. We MOVE the live DOM node into the
+    // popup (not clone \u2014 closures/listeners stay intact), copy the parent's <style> blocks so it looks right,
+    // and re-dock it on popup close. The floating +/Add button rides along.
+    const pop=ed.querySelector('#edPopOut');
+    if(pop){
+      let _popOrigParent=null, _popOrigDisplay='', _popFabOrigParent=null;
+      const reDock=()=>{
+        if(!ed._popWin) return;
+        try{ if(_popOrigParent && ed.parentNode!==_popOrigParent) _popOrigParent.appendChild(ed); }catch(e){}
+        const fb=document.getElementById('edAddFab'); try{ if(_popFabOrigParent && fb && fb.parentNode!==_popFabOrigParent) _popFabOrigParent.appendChild(fb); }catch(e){}
+        ed.classList.remove('popped'); ed.style.cssText = ed.dataset.preStyle || ''; delete ed.dataset.preStyle;
+        if(fb){ fb.style.display = _popOrigDisplay; }
+        ed._popWin = null; pop.textContent = '\u2197'; pop.title = 'Open the editor in its own window (re-dock by closing it)';
+      };
+      ed._reDock = reDock;   // toggleEditor's close path uses this to re-dock automatically
+      pop.onclick = ()=>{
+        if(ed._popWin){ try{ ed._popWin.close(); }catch(e){} reDock(); return; }
+        const w = window.open('', 'breach-editor', 'width=460,height=900,resizable=yes,scrollbars=yes,menubar=no,toolbar=no,location=no,status=no');
+        if(!w){ alert('Could not open a separate window \u2014 your browser blocked the popup. Allow popups for this page and try again.'); return; }
+        try{
+          w.document.open(); w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>BREACH \u2014 editor</title></head><body></body></html>'); w.document.close();
+          for(const s of document.querySelectorAll('style')){ const ns=w.document.createElement('style'); ns.textContent=s.textContent; w.document.head.appendChild(ns); }
+          // override the panel's docked layout: in the popup it should fill the window naturally
+          const ov=w.document.createElement('style'); ov.textContent='html,body{margin:0;background:#06090b;color:#cfeee2;overflow:hidden;}#editor.popped{position:static !important;top:auto !important;right:auto !important;left:auto !important;bottom:auto !important;width:100% !important;height:100vh !important;max-width:none !important;max-height:none !important;border:0 !important;border-radius:0 !important;box-shadow:none !important;overflow:auto;}#editor.popped #editorResize{display:none !important;}#edAddFab{position:fixed !important;top:14px !important;}'; w.document.head.appendChild(ov);
+          // remember the originals so we can put them back when the popup closes
+          _popOrigParent = ed.parentNode; _popOrigDisplay = (document.getElementById('edAddFab')||{}).style ? document.getElementById('edAddFab').style.display : '';
+          ed.dataset.preStyle = ed.style.cssText || '';
+          ed.classList.add('popped'); ed.style.cssText='';
+          w.document.body.appendChild(ed);   // MOVE \u2014 listeners + state survive the reparent
+          const fb=document.getElementById('edAddFab'); if(fb){ _popFabOrigParent = fb.parentNode; w.document.body.appendChild(fb); fb.style.left='0'; fb.style.right=''; fb.style.display='block'; }
+          ed._popWin = w; pop.textContent = '\u2199'; pop.title = 'Re-dock the editor (or just close this window)';
+          w.addEventListener('beforeunload', reDock);
+          // if the parent page closes/navigates, take the popup down too
+          window.addEventListener('beforeunload', ()=>{ try{ w.close(); }catch(e){} }, { once:true });
+        }catch(e){ console.warn('pop-out failed', e); try{ w.close(); }catch(_){} }
+      };
+    }
     // "+ Add" palette: one categorized menu for everything placeable. Each item jumps to the owning
     // tab/target first, then runs the existing add function, so the result lands in view.
     let fab = document.getElementById('edAddFab');
@@ -22458,13 +22503,13 @@ function toggleEditor(){
     if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(true);
     if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
     if(typeof refreshCinePreview==='function') refreshCinePreview();   // show the dotted camera path while editing
-    const mm=$('minimap'); if(mm) mm.style.display='none';        // declutter combat HUD while editing
-    const wp=$('wavePanel'); if(wp) wp.style.display='none';
+    document.body.classList.add('editing');   // build 658: CSS hides all combat HUD elements (crosshair stays)
     if(typeof applyEditorMode==='function') applyEditorMode();
     renderEditorFields();
   } else {
     if(typeof autoSaveNow==='function') autoSaveNow('on close'); if(typeof stopAutoSave==='function') stopAutoSave();   // flush unsaved edits when leaving the editor
     if(typeof applyAudioSettings==='function') applyAudioSettings();   // restore the music bus now that we're leaving the editor
+    if(editorEl && editorEl._popWin){ try{ editorEl._popWin.close(); }catch(e){} if(editorEl._reDock) editorEl._reDock(); }   // build 658: if popped out, re-dock first so it's ready next open
     if(editorEl) editorEl.style.display = 'none';
     { const fb=document.getElementById('edAddFab'); if(fb) fb.style.display='none'; }
     editorAimPreview = false;
@@ -22476,8 +22521,7 @@ function toggleEditor(){
     if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
     if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);   // markers linger visible otherwise — the 'stuck double' next to every live pad
     for(const en of enemies){ en.mesh.visible = true; }   // un-hide enemies when leaving the editor
-    const mm=$('minimap'); if(mm) mm.style.display='';
-    const wp=$('wavePanel'); if(wp) wp.style.display='';
+    document.body.classList.remove('editing');   // build 658: restore the combat HUD
     gun.visible = true;
     editorBrightLight.intensity = 0;
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
