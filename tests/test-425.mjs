@@ -8,7 +8,7 @@ assert(/function generateMaze\(opts\)\{/.test(src), 'generateMaze() exists');
 assert(/function renderGeneratePanel\(\)\{/.test(src), 'renderGeneratePanel() exists');
 assert(/function _mulberry32\(a\)\{/.test(src), 'seedable PRNG (_mulberry32) exists');
 assert(/let _genCells=9, _lastMazeSeed=0, _genCover=true, _genLoot=true, _genTex=true, _genDesc='', _genVision=true;/.test(src), 'panel size + last-seed + content-toggle state');
-assert(/scene:   \['world','generate','audiozones','deathzones','jumppads','firezones'\]/.test(src), "'generate' section under the World/scene mode");
+assert(/scene:   \['world','generate','audiozones','deathzones','jumppads','ladders','firezones'\]/.test(src), "'generate' section under the World/scene mode");
 assert(/sec\('Auto-generate', 'generate', '<div id="edGenerate"><\/div>'\)/.test(src), 'Auto-generate section markup');
 
 const gm = extractFunction('generateMaze');

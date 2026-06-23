@@ -13,7 +13,7 @@ assert((src.match(/jumpPads = Array\.isArray\(level\.jumpPads\) \? level\.jumpPa
 
 // editor: section in the World/scene tab + panel + bounce control
 assert(/sec\('Jump pads', 'jumppads', '<div id="edJumpPads"><\/div>'\)/.test(page), 'Jump pads section registered');
-assert(/scene:   \['world','generate','audiozones','deathzones','jumppads','firezones'\]/.test(src), 'jump pads live under the World/scene mode');
+assert(/scene:   \['world','generate','audiozones','deathzones','jumppads','ladders','firezones'\]/.test(src), 'jump pads live under the World/scene mode');
 assert(/function renderJumpPadsPanel\(\)/.test(src), 'jump pads have an editor panel');
 assert(/mkN\('Bounce','power',2,50,0\.5/.test(src), 'editor exposes a Bounce (launch power) slider');
 assert(/function addJumpPad\(\)/.test(src) && /function removeJumpPad\(i\)/.test(src), 'add/remove jump pads');

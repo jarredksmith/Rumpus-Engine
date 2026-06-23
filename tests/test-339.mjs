@@ -13,7 +13,7 @@ assert((src.match(/fireZones = Array\.isArray\(level\.fireZones\) \? level\.fire
 
 // editor: section in the World/scene tab + panel + a Damage/sec control
 assert(/sec\('Fire zones', 'firezones', '<div id="edFireZones"><\/div>'\)/.test(page), 'Fire zones section registered');
-assert(/scene:   \['world','generate','audiozones','deathzones','jumppads','firezones'\]/.test(src), 'fire zones live under the World/scene mode');
+assert(/scene:   \['world','generate','audiozones','deathzones','jumppads','ladders','firezones'\]/.test(src), 'fire zones live under the World/scene mode');
 assert(/function renderFireZonesPanel\(\)/.test(src), 'fire zones have an editor panel');
 assert(/mkN\('Damage\/sec','dps',0,100,1/.test(src), 'editor exposes a Damage/sec slider');
 assert(/function addFireZone\(\)/.test(src) && /function removeFireZone\(i\)/.test(src), 'add/remove fire zones');

@@ -7861,7 +7861,7 @@ function wipeScene(){
   pickupSpots.length=0; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   lootSpots.length=0; selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
   if(typeof stopAudioZones==='function') stopAudioZones(); audioZones.length=0; if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers();
-  deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; fireZones.length=0; selFireZone=-1; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
+  deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; ladders.length=0; selLadder=-1; fireZones.length=0; selFireZone=-1; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
   // clear selections so the editor doesn't point at a deleted object
   selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1;
   if(editorTargets.props) editorTargets.props.idx=-1; if(editorTargets.lights) editorTargets.lights.idx=-1; if(editorTargets.spawns) editorTargets.spawns.idx=-1;
@@ -9612,6 +9612,22 @@ let selDeathZone = -1;
 function _migrateJumpPad(z){ return { x:+z.x||0, z:+z.z||0, r:(z.r!=null?+z.r:6), y:(z.y!=null?+z.y:0), h:(z.h!=null?+z.h:2), power:(z.power!=null?+z.power:22) }; }
 let jumpPads = (savedLevel && Array.isArray(savedLevel.jumpPads)) ? savedLevel.jumpPads.map(z=>_migrateJumpPad(z)) : [];
 let selJumpPad = -1;
+// ---- Ladders (build 645): a placeable vertical climb volume. Stand in it and W climbs up, S climbs down, jump
+// hops off. `face` is the yaw you step off at the top (set to your facing when you place it). ----
+function _migrateLadder(z){ return { x:+z.x||0, z:+z.z||0, r:(z.r!=null?+z.r:1), y:(z.y!=null?+z.y:0), h:(z.h!=null?+z.h:4), face:(z.face!=null?+z.face:0) }; }
+let ladders = (savedLevel && Array.isArray(savedLevel.ladders)) ? savedLevel.ladders.map(z=>_migrateLadder(z)) : [];
+let selLadder = -1;
+const ladderMarkers = [];
+const CLIMB_SPEED = 3.6;   // ladder climb speed (m/s)
+let _onLadder = false, _ladder = null, _ladderEngaged = false;
+function ladderAt(x, z, feetY){
+  for(const L of ladders){
+    const r=Math.max(0.5,+L.r||1), dx=x-(+L.x||0), dz=z-(+L.z||0); if(dx*dx+dz*dz > r*r) continue;
+    const by=(+L.y||0), h=Math.max(1, +L.h||4);
+    if(feetY >= by-0.5 && feetY <= by+h+0.5) return L;
+  }
+  return null;
+}
 // ---- Fire zones: an area that's on fire — deals damage-over-time to any actor inside it (player, bots, enemies) ----
 function _migrateFireZone(z){ return { x:+z.x||0, z:+z.z||0, r:(z.r!=null?+z.r:5), y:(z.y!=null?+z.y:0), h:(z.h!=null?+z.h:3), dps:(z.dps!=null?+z.dps:15), den:(z.den!=null?+z.den:1), psz:(z.psz!=null?+z.psz:1), hue:(z.hue!=null?+z.hue:30), turb:(z.turb!=null?+z.turb:1), wind:(z.wind!=null?+z.wind:0), spk:(z.spk!==false), sat:(z.sat!=null?+z.sat:1), smoke:(z.smoke===true), rx:(+z.rx||0), ry:(+z.ry||0), rz:(+z.rz||0), sx:(z.sx!=null?+z.sx:1), sy:(z.sy!=null?+z.sy:1), sz:(z.sz!=null?+z.sz:1) }; }   // build 556: rx/ry/rz rotation (deg) + sx/sy/sz scale so fire & smoke can be moved/rotated/scaled like a prop
 let fireZones = (savedLevel && Array.isArray(savedLevel.fireZones)) ? savedLevel.fireZones.map(z=>_migrateFireZone(z)) : [];
@@ -9699,6 +9715,28 @@ function refreshJumpPadMarkers(){
   }
 }
 function setJumpPadMarkersVisible(v){ for(const g of jumpPadMarkers) g.visible=v; }
+// ---- Ladder editor markers (build 645): a translucent column with rungs + an arrow showing the step-off side ----
+const LAD_COLOR = 0xffc23a, LAD_COLOR_HI = 0xffe79b;
+function disposeLadderMarkers(){ for(const g of ladderMarkers){ scene.remove(g); g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose && o.material.dispose(); }); } ladderMarkers.length=0; }
+function refreshLadderMarkers(){
+  disposeLadderMarkers();
+  const vis=(typeof editorOpen!=='undefined' && editorOpen);
+  for(let i=0;i<ladders.length;i++){
+    const L=ladders[i], r=Math.max(0.5,+L.r||1), baseY=(+L.y||0), h=Math.max(1, +L.h||4), face=(+L.face||0), sel=(i===selLadder);
+    const grp=new THREE.Group();
+    const col=sel?LAD_COLOR_HI:LAD_COLOR;
+    const wall=new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 24, 1, true), new THREE.MeshBasicMaterial({ color:LAD_COLOR, transparent:true, opacity:sel?0.20:0.12, side:THREE.DoubleSide, depthWrite:false }));
+    wall.position.y=baseY+h/2; grp.add(wall);
+    const rungN=Math.max(2, Math.round(h/0.45)), rmat=new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.8, depthWrite:false });
+    for(let k=0;k<rungN;k++){ const rung=new THREE.Mesh(new THREE.BoxGeometry(r*1.4, 0.06, 0.06), rmat); rung.position.y=baseY+0.2+(k/(rungN-1||1))*(h-0.4); rung.rotation.y=face; grp.add(rung); }
+    // arrow at the top pointing the step-off direction (the way you'll face stepping off)
+    const arrow=new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.55, 12), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.9, depthWrite:false }));
+    arrow.position.set(-Math.sin(face)*r*1.1, baseY+h, -Math.cos(face)*r*1.1); arrow.rotation.x=Math.PI/2; arrow.rotation.z=-face; grp.add(arrow);
+    grp.position.set(+L.x||0, _maxTerrainOver(+L.x||0,+L.z||0,0), +L.z||0); grp.visible=vis; grp.userData.ladderMarker=true;
+    scene.add(grp); ladderMarkers.push(grp);
+  }
+}
+function setLadderMarkersVisible(v){ for(const g of ladderMarkers) g.visible=v; }
 const FIRE_COLS = [0xff7a1a, 0xffb020, 0xff3a0a];
 // A soft radial-gradient sprite (built once, shared) — the building block for the additive fire particles.
 let _fireSoftTex=null;
@@ -10609,6 +10647,46 @@ function updateBurningProps(dt){
 }
 function addJumpPad(){ pushUndoSnapshot(); jumpPads.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:6, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(player.pos.x,player.pos.z)>-Infinity?surfaceTopAt(player.pos.x,player.pos.z):(typeof terrainHeightAt==='function'?terrainHeightAt(player.pos.x,player.pos.z):0)), h:2, power:22 }); selJumpPad=jumpPads.length-1; editorActive='jumppads'; refreshJumpPadMarkers(); if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel(); }
 function removeJumpPad(i){ pushUndoSnapshot(); jumpPads.splice(i,1); if(selJumpPad>=jumpPads.length) selJumpPad=jumpPads.length-1; refreshJumpPadMarkers(); if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel(); }
+// ---- Ladders editor (build 645) ----
+function addLadder(){ pushUndoSnapshot(); const _y=(typeof surfaceTopAt==='function'&&surfaceTopAt(player.pos.x,player.pos.z)>-Infinity?surfaceTopAt(player.pos.x,player.pos.z):(typeof terrainHeightAt==='function'?terrainHeightAt(player.pos.x,player.pos.z):0)); ladders.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:1, y:_y, h:4, face:+player.yaw.toFixed(3) }); selLadder=ladders.length-1; editorActive='ladders'; refreshLadderMarkers(); if(typeof renderLaddersPanel==='function') renderLaddersPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
+function removeLadder(i){ pushUndoSnapshot(); ladders.splice(i,1); if(selLadder>=ladders.length) selLadder=ladders.length-1; refreshLadderMarkers(); if(typeof renderLaddersPanel==='function') renderLaddersPanel(); }
+function renderLaddersPanel(){
+  const host = (editorEl && editorEl.querySelector('#edLadders')); if(!host) return;
+  host.innerHTML='';
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px';
+  intro.innerHTML='<b>Ladders</b> — a vertical climb volume. Step into it and <b>W</b> climbs up, <b>S</b> climbs down, <b>jump</b> hops off; at the top you step off the way the arrow points. Stand at the foot of the ladder FACING the way you want to step off, then Add. Drag the dot with the move gizmo to position it. Carries to multiplayer.';
+  host.appendChild(intro);
+  const addB=document.createElement('button'); addB.textContent='+ Add ladder (at me)'; addB.style.cssText='width:100%;margin-bottom:8px;';
+  addB.onclick=()=>addLadder(); host.appendChild(addB);
+  if(!ladders.length){ const n=document.createElement('div'); n.className='hint'; n.textContent='None yet. Stand at the ladder’s foot (facing your step-off direction) and click Add.'; host.appendChild(n); return; }
+  ladders.forEach((L, i)=>{
+    const box=document.createElement('div'); box.style.cssText='border:1px solid rgba(255,194,58,0.30);border-radius:6px;padding:7px 9px;margin-bottom:6px;background:'+(i===selLadder?'rgba(255,194,58,0.08)':'transparent')+';';
+    const hd=document.createElement('div'); hd.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;';
+    const tt=document.createElement('span'); tt.style.cssText='font-size:11px;color:#ffe79b;'; tt.textContent='Ladder '+(i+1)+'  ·  ('+(+L.x).toFixed(1)+', '+(+L.z).toFixed(1)+')';
+    const selB=document.createElement('button'); selB.textContent=(i===selLadder?'selected':'select'); selB.style.cssText='font-size:10px;padding:2px 8px;'; selB.onclick=()=>{ selLadder=i; editorActive='ladders'; refreshLadderMarkers(); renderLaddersPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+    const del=document.createElement('button'); del.textContent='✕'; del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeLadder(i);
+    const right=document.createElement('div'); right.style.cssText='display:flex;gap:4px;'; right.appendChild(selB); right.appendChild(del);
+    hd.appendChild(tt); hd.appendChild(right); box.appendChild(hd);
+    const mkN=(label,key,min,max,step,onApply)=>{
+      const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:8px;color:#ffe79b;font-size:11px;margin:3px 0;';
+      const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='62px';
+      const rng=document.createElement('input'); rng.type='range'; rng.min=min; rng.max=max; rng.step=step; rng.value=L[key]; rng.style.cssText='flex:1;accent-color:#ffc23a;';
+      const num=document.createElement('input'); num.type='number'; num.step=step; num.value=L[key]; num.style.cssText='width:58px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+      const ap=(v)=>{ let n=parseFloat(v); if(!isFinite(n)) n=min; if(onApply) n=onApply(n); L[key]=n; rng.value=Math.max(min,Math.min(max,n)); num.value=n; refreshLadderMarkers(); };
+      rng.addEventListener('mousedown',()=>pushUndoSnapshot()); num.addEventListener('focus',()=>pushUndoSnapshot());
+      rng.oninput=()=>ap(rng.value); num.onchange=()=>ap(num.value);
+      row.appendChild(sp); row.appendChild(rng); row.appendChild(num); box.appendChild(row);
+    };
+    mkN('Height','h',1,40,0.5,(n)=>Math.max(1,n));
+    mkN('Radius','r',0.5,4,0.1,(n)=>Math.max(0.5,n));
+    mkN('Base Y','y',-20,40,0.5,null);
+    mkN('Step-off°','face',-180,180,5,(n)=>n);   // editor shows degrees; stored as radians below
+    // face is stored in radians; the slider above edits degrees, so convert
+    const faceRow=box.lastChild; const fr=faceRow.querySelector('input[type=range]'), fn=faceRow.querySelector('input[type=number]');
+    if(fr&&fn){ const deg=Math.round((+L.face||0)*180/Math.PI); fr.value=deg; fn.value=deg; const cv=(v)=>{ let d=parseFloat(v); if(!isFinite(d)) d=0; pushUndoSnapshot(); L.face=d*Math.PI/180; fr.value=d; fn.value=d; refreshLadderMarkers(); }; fr.oninput=()=>cv(fr.value); fn.onchange=()=>cv(fn.value); }
+    host.appendChild(box);
+  });
+}
 function renderJumpPadsPanel(){
   const host = (editorEl && editorEl.querySelector('#edJumpPads')); if(!host) return;
   host.innerHTML='';
@@ -11906,7 +11984,7 @@ function loadLevelFromNet(level){
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -14442,7 +14520,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 644 · 2026-06-22';
+const BUILD_VERSION = 'build 645 · 2026-06-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17243,6 +17321,12 @@ function loop(){
   if(player.jumpCd>0) player.jumpCd-=dt;
   const _jHeld = !!(keys['Space']||padJump);
   const _jPressed = (_jHeld && !_jumpHeldPrev) || touchJump;   // rising edge for held inputs; the touch button is already a one-frame pulse
+  // build 645: ladder detection — you're ON a ladder once you're inside its volume and pressing up/down (W/S).
+  { const _fyL = player.pos.y - EYE;
+    const _L = (gameOn && !editorOpen && !mountedTurret && !duelDead && !sliding && !_ledge && typeof ladderAt==='function') ? ladderAt(player.pos.x, player.pos.z, _fyL) : null;
+    if(!_L){ _onLadder=false; _ladderEngaged=false; _ladder=null; }
+    else { _ladder=_L; if(_ladderEngaged || keys['KeyW'] || keys['KeyS']){ _onLadder=true; _ladderEngaged=true; } else _onLadder=false; }
+  }
   // build 640/644: ledge grab — jumping or falling toward a chest/head-high ledge while pushing FORWARD grabs it
   // and you HANG. From the hang: Space (or keep holding forward) PULLS UP onto the top; Ctrl/back DROPS down.
   if(!_ledge && gameOn && !editorOpen && !mountedTurret && !sliding && !duelDead && !_levelLoaderActive && matchWarmup<=0 && (_jPressed || !player.onGround) && wish.dot(forward) > 0.5){
@@ -17278,8 +17362,27 @@ function loop(){
       _ledge.t += dt; _climbAnim = 'ledgeDrop';
       if(_ledge.t >= LEDGE_DROP_DUR){ player.pos.x -= forward.x*0.25; player.pos.z -= forward.z*0.25; player.vel.y = -1; _ledge=null; _climbAnim=0; }
     }
+  } else if(_onLadder && _ladder){
+    // build 645: ladder climb — W up / S down, jump hops off; XZ is softly locked to the ladder line.
+    const by=(+_ladder.y||0), top=by + Math.max(1,+_ladder.h||4), fy2=(+_ladder.face||0);
+    player.vel.x=0; player.vel.z=0;
+    if(_jPressed){ player.vel.y=JUMP*0.7; player.pos.x+=Math.sin(fy2)*0.3; player.pos.z+=Math.cos(fy2)*0.3; player.onGround=false; _onLadder=false; _ladderEngaged=false; _climbAnim=0; }
+    else {
+      const climb=(keys['KeyW']?1:0)-(keys['KeyS']?1:0);
+      player.pos.x += ((+_ladder.x||0)-player.pos.x)*Math.min(1,dt*10);   // glide onto the ladder line
+      player.pos.z += ((+_ladder.z||0)-player.pos.z)*Math.min(1,dt*10);
+      player.pos.y += climb*CLIMB_SPEED*dt; player.vel.y=0; player.onGround=false;
+      _climbAnim = climb>0?'ladderUp':(climb<0?'ladderDown':'ladderIdle');
+      const _fy=player.pos.y-EYE;
+      if(climb>0 && _fy>=top-0.05){   // reached the top -> step off in the ladder's facing onto the ledge
+        player.pos.x += -Math.sin(fy2)*0.5; player.pos.z += -Math.cos(fy2)*0.5; player.pos.y = top + EYE; player.onGround=true; _onLadder=false; _ladderEngaged=false; _climbAnim=0;
+      } else {
+        const g=(typeof groundHeightAt==='function')?groundHeightAt(player.pos.x,player.pos.z,_fy):by;   // bottom / standing on a surface
+        if(_fy <= g+0.04){ player.pos.y=g+EYE; player.onGround=true; if(climb<0){ _onLadder=false; _ladderEngaged=false; _climbAnim=0; } }
+      }
+    }
   } else {
-    _climbAnim = 0;   // not on a ledge (ladders set their own climb anim in build 645)
+    _climbAnim = 0;   // not climbing
   player.vel.y -= GRAV*dt;
   // one-shot vertical knock from physics props (e.g. a fast body launching the player)
   if(player.extVel.y){ player.vel.y += player.extVel.y; player.onGround=false; player.extVel.y = 0; }
@@ -18156,7 +18259,7 @@ const PRIM_ICON = {
 };
 const MODE_SECTIONS = {
   build:   ['gizmo','object','material','transform','characters'],
-  scene:   ['world','generate','audiozones','deathzones','jumppads','firezones'],
+  scene:   ['world','generate','audiozones','deathzones','jumppads','ladders','firezones'],
   enemies: ['enemies','gizmo','object','transform'],   // spawn points live here now; their picker/fields/gizmo sections come along
   rules:   ['game','pickups','loot','invitems'],
   kit:     ['object','transform','impactfx','tracerfx','boltfx','crosshair'],   // 'object' carries the weapon model import + per-weapon shoot sound; impact/streak FX; enemy gunfire FX; music/SFX live in Scene
@@ -18529,6 +18632,7 @@ function serializeLevel(){
     audioZones: audioZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, url:z.url||'', vol:+z.vol, loop:!!z.loop })),
     deathZones: deathZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3) })),
     jumpPads: jumpPads.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), power:(+z.power||22) })),
+    ladders: ladders.map(L=>({ x:+L.x, z:+L.z, r:(+L.r||1), y:(+L.y||0), h:(L.h!=null?+L.h:4), face:(+L.face||0) })),   // build 645
     fireZones: fireZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3), dps:(+z.dps||0), den:(+z.den||1), psz:(+z.psz||1), hue:(z.hue!=null?+z.hue:30), turb:(z.turb!=null?+z.turb:1), wind:(+z.wind||0), spk:(z.spk!==false), sat:(z.sat!=null?+z.sat:1), smoke:(z.smoke===true?1:0), rx:(+z.rx||0), ry:(+z.ry||0), rz:(+z.rz||0), sx:(z.sx!=null?+z.sx:1), sy:(z.sy!=null?+z.sy:1), sz:(z.sz!=null?+z.sz:1) })),
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
@@ -18877,7 +18981,7 @@ function restoreLevel(level){
   refreshPlayerSpawnMarker();
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); }
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -19232,6 +19336,7 @@ function buildEditorPanel(){
     + sec('Audio zones', 'audiozones', '<div id="edAudioZones"></div>')
     + sec('Death zones', 'deathzones', '<div id="edDeathZones"></div>')
     + sec('Jump pads', 'jumppads', '<div id="edJumpPads"></div>')
+    + sec('Ladders', 'ladders', '<div id="edLadders"></div>')
     + sec('Fire zones', 'firezones', '<div id="edFireZones"></div>')
     + sec('Impact FX', 'impactfx', '<div id="edImpactFx"></div>')
     + sec('Bullet streak', 'tracerfx', '<div id="edTracerFx"></div>')
@@ -19316,6 +19421,8 @@ function buildEditorPanel(){
   if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel();
   if(typeof renderGeneratePanel==='function') renderGeneratePanel();
   if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel();
+  if(typeof renderLaddersPanel==='function') renderLaddersPanel();
+  if(typeof refreshLadderMarkers==='function') refreshLadderMarkers();   // build 645: show ladder markers while editing
   if(typeof renderFireZonesPanel==='function') renderFireZonesPanel();
   if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
@@ -21608,6 +21715,7 @@ function getSelPos(){
   if(editorActive==='extract'){ return extractZone?extractZone.position:null; }
   if(editorActive==='deathzones'){ return (selDeathZone>=0 && deathZoneMarkers[selDeathZone])?deathZoneMarkers[selDeathZone].position:null; }
   if(editorActive==='jumppads'){ return (selJumpPad>=0 && jumpPadMarkers[selJumpPad])?jumpPadMarkers[selJumpPad].position:null; }
+  if(editorActive==='ladders'){ return (selLadder>=0 && ladderMarkers[selLadder])?ladderMarkers[selLadder].position:null; }
   if(editorActive==='firezones'){ return (selFireZone>=0 && fireZoneFx[selFireZone])?fireZoneFx[selFireZone].position:null; }
   return null;
 }
@@ -21647,6 +21755,8 @@ function setSelPos(v){
     extractSpot={x,z}; extractPos.set(x,0,z); if(extractZone) extractZone.position.set(x, _maxTerrainOver(x, z, gameCfg.extractRadius||3.5), z);   // extraction sits on the terrain
   } else if(editorActive==='deathzones'){
     const z=deathZones[selDeathZone]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel();
+  } else if(editorActive==='ladders'){
+    const L=ladders[selLadder]; if(!L) return; L.x=+v.x.toFixed(2); L.z=+v.z.toFixed(2); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof renderLaddersPanel==='function') renderLaddersPanel();
   } else if(editorActive==='jumppads'){
     const z=jumpPads[selJumpPad]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel();
   } else if(editorActive==='firezones'){
@@ -21772,7 +21882,7 @@ function buildGizmo(){
 function updateGizmo(){
   if(!gizmo) gizmo = buildGizmo();
   const gr = gizmo.userData.groups;
-  const movable = editorOpen && (selPickup>=0 || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || (editorActive==='deathzones'&&selDeathZone>=0) || (editorActive==='jumppads'&&selJumpPad>=0) || (editorActive==='firezones'&&selFireZone>=0) || editorActive==='turrets');
+  const movable = editorOpen && (selPickup>=0 || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || (editorActive==='deathzones'&&selDeathZone>=0) || (editorActive==='jumppads'&&selJumpPad>=0) || (editorActive==='ladders'&&selLadder>=0) || (editorActive==='firezones'&&selFireZone>=0) || editorActive==='turrets');
   const pos = movable ? getSelPos() : null;
   if(!pos){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; gizmo.visible = false; return; }
   gizmo.position.copy(pos);
@@ -21783,7 +21893,7 @@ function updateGizmo(){
   if((editorActive==='lights'||editorActive==='spawns'||editorActive==='pstart') && mode==='scale') mode='translate';
   if(selPickup>=0) mode='translate';   // a pickup spot is just an x/z position
   if(editorActive==='extract') mode='translate';   // the extraction point only moves (radius lives in Game / waves)
-  if(editorActive==='deathzones'||editorActive==='jumppads') mode='translate';   // these flat floor zones only move; size lives in their panel
+  if(editorActive==='deathzones'||editorActive==='jumppads'||editorActive==='ladders') mode='translate';   // these zones only move; size lives in their panel
   // build 556: fire zones now support rotate + scale gizmo modes (move/rotate/scale), like a prop
   if(editorActive==='turrets') mode='translate';   // move with the gizmo; facing/scale/arc live in the Turrets panel
   gr.translate.visible = (mode==='translate');
@@ -22251,10 +22361,10 @@ function startGame(){
   if(typeof selBoxes!=='undefined' && selBoxes) for(const b of selBoxes) b.visible=false;
   if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
   if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);
-  if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
+  if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
   if(typeof lightModels!=='undefined') for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; }
   if(typeof setTurretMarkersVisible==='function') setTurretMarkersVisible(false);
-  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; }   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
+  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; }   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   camera.fov = (worldCfg && worldCfg.fov) || BASE_FOV; camera.updateProjectionMatrix(); camera.rotation.z = 0;
   // clear entities
   enemies.slice().forEach(e=>{ scene.remove(e.mesh); if(e.mesh.userData.mixer){ const mi=mixers.indexOf(e.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } }); enemies.length=0;
@@ -22402,10 +22512,10 @@ function endGame(){
   if(typeof selBoxes!=='undefined' && selBoxes) for(const b of selBoxes) b.visible=false;
   if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
   if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);
-  if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
+  if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
   if(typeof lightModels!=='undefined') for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; }
   if(typeof setTurretMarkersVisible==='function') setTurretMarkersVisible(false);
-  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; }   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
+  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; }   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   $('shop').classList.add('hidden');
   $('prompt').style.display='none';
   const ov=$('overlay'); ov.classList.remove('hidden');
