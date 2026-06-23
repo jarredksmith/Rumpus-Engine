@@ -14521,7 +14521,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 648 · 2026-06-23';
+const BUILD_VERSION = 'build 649 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18260,7 +18260,7 @@ const PRIM_ICON = {
 };
 const MODE_SECTIONS = {
   build:   ['gizmo','object','material','transform','characters'],
-  scene:   ['world','generate','audiozones','deathzones','jumppads','ladders','firezones'],
+  scene:   ['world','generate','zones'],   // the 5 placeable volumes are grouped under one 'zones' section with a type picker (build 649)
   enemies: ['enemies','gizmo','object','transform','boltfx'],   // spawn points live here now; their picker/fields/gizmo sections come along. enemy gunfire FX (boltfx) moved here in build 647 — it's about enemies, not your weapons
   rules:   ['game','pickups','loot','invitems'],
   kit:     ['object','transform','impactfx','tracerfx','crosshair'],   // 'object' carries the weapon model import + per-weapon shoot sound; impact/streak FX; crosshair; music/SFX live in Scene
@@ -18305,6 +18305,30 @@ const TARGET_MODE = {};   // reverse: which mode owns each target tab
 for(const _m of EDITOR_MODES) for(const _t of MODE_TARGETS[_m]) TARGET_MODE[_t]=_m;
 let editorMode = 'build';
 try{ const _sm = localStorage.getItem('breach_editor_mode'); if(_sm && EDITOR_MODES.indexOf(_sm)>=0) editorMode = _sm; }catch(e){}
+// Which placeable-volume tool is showing inside the grouped 'Zones' section (build 649).
+const ZONE_TYPES = [['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire']];
+const ZONE_HOST = { audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones' };
+let activeZoneType = 'audiozones';
+try{ const _z = localStorage.getItem('breach_editor_zone'); if(_z && ZONE_HOST[_z]) activeZoneType = _z; }catch(e){}
+// Show only the selected zone tool's host inside the grouped section.
+function applyZoneVisibility(){
+  if(!editorEl) return;
+  for(const k in ZONE_HOST){ const el=document.getElementById(ZONE_HOST[k]); if(el) el.style.display = (k===activeZoneType)?'':'none'; }
+}
+// Segmented picker at the top of the Zones section: pick which volume type you're placing. Shows that
+// type's plain-language description underneath (reusing SEC_SUB), then reveals only its tools.
+function renderZonePicker(){
+  const host=document.getElementById('edZonePicker'); if(!host) return; host.innerHTML='';
+  const bar=document.createElement('div'); bar.style.cssText='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;';
+  for(const [key,icon,label] of ZONE_TYPES){
+    const on=activeZoneType===key; const b=document.createElement('button'); b.textContent=icon+' '+label;
+    b.style.cssText='flex:1 1 auto;padding:5px 6px;font-size:11px;border-radius:5px;cursor:pointer;border:1px solid '+(on?'#5db4ff':'rgba(93,180,255,0.25)')+';background:'+(on?'rgba(93,180,255,0.22)':'transparent')+';color:'+(on?'#eaf6ff':'#9fc6e6')+';';
+    b.onclick=()=>{ activeZoneType=key; try{ localStorage.setItem('breach_editor_zone', key); }catch(e){} renderZonePicker(); applyZoneVisibility(); };
+    bar.appendChild(b);
+  }
+  host.appendChild(bar);
+  const sub=document.createElement('div'); sub.className='edSecSub'; sub.style.margin='0 0 4px'; sub.textContent=SEC_SUB[activeZoneType]||''; host.appendChild(sub);
+}
 // Show only this mode's target-tabs + sections; hide the rest. Highlights the active mode button.
 function applyEditorMode(){
   if(!editorEl) return;
@@ -19361,11 +19385,13 @@ function buildEditorPanel(){
     + sec('Pickups', 'pickups', '<div id="edPickups"></div>')
     + sec('Loot', 'loot', '<div id="edLoot"></div>')
     + sec('Inventory items', 'invitems', '<div id="edInvItems"></div>')
-    + sec('Audio zones', 'audiozones', '<div id="edAudioZones"></div>')
-    + sec('Death zones', 'deathzones', '<div id="edDeathZones"></div>')
-    + sec('Jump pads', 'jumppads', '<div id="edJumpPads"></div>')
-    + sec('Ladders', 'ladders', '<div id="edLadders"></div>')
-    + sec('Fire zones', 'firezones', '<div id="edFireZones"></div>')
+    + sec('Zones', 'zones',
+          '<div id="edZonePicker"></div>'
+        + '<div id="edAudioZones" class="zoneHost" data-zone="audiozones"></div>'
+        + '<div id="edDeathZones" class="zoneHost" data-zone="deathzones"></div>'
+        + '<div id="edJumpPads" class="zoneHost" data-zone="jumppads"></div>'
+        + '<div id="edLadders" class="zoneHost" data-zone="ladders"></div>'
+        + '<div id="edFireZones" class="zoneHost" data-zone="firezones"></div>')
     + sec('Bullet impacts', 'impactfx', '<div id="edImpactFx"></div>')
     + sec('Bullet tracer', 'tracerfx', '<div id="edTracerFx"></div>')
     + sec('Enemy gunfire', 'boltfx', '<div id="edBoltFx"></div>')
@@ -19420,7 +19446,7 @@ function buildEditorPanel(){
         ['\ud83d\udca1 Light',       ()=>{ jump('build','lights');  addSceneLight(); }],
         ['\ud83d\udc7e Enemy spawn', ()=>{ jump('enemies','spawns'); addSceneSpawn(); }],
         ['\u25c6 Pickup pad \u25b8',  '_pickupSub'],
-        ['\ud83d\udd0a Audio zone',  ()=>{ jump('scene'); pushUndoSnapshot(); audioZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:14, url:'', vol:0.8, loop:true }); refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); }],   // the zones panel has its own renderer — renderEditorFields doesn't repaint it
+        ['\ud83d\udd0a Audio zone',  ()=>{ jump('scene'); activeZoneType='audiozones'; if(typeof applyZoneVisibility==='function') applyZoneVisibility(); if(typeof renderZonePicker==='function') renderZonePicker(); pushUndoSnapshot(); audioZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:14, url:'', vol:0.8, loop:true }); refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); }],   // the zones panel has its own renderer — renderEditorFields doesn't repaint it
       ];
       const menuItem=(label, on)=>{ const it=document.createElement('div'); it.textContent=label;
         it.style.cssText='padding:6px 10px;cursor:pointer;border-radius:4px;font:12px ui-monospace,monospace;color:#cfeee2;';
@@ -19452,6 +19478,8 @@ function buildEditorPanel(){
   if(typeof renderLaddersPanel==='function') renderLaddersPanel();
   if(typeof refreshLadderMarkers==='function') refreshLadderMarkers();   // build 645: show ladder markers while editing
   if(typeof renderFireZonesPanel==='function') renderFireZonesPanel();
+  if(typeof renderZonePicker==='function') renderZonePicker();        // build 649: the grouped Zones type picker
+  if(typeof applyZoneVisibility==='function') applyZoneVisibility();   // ...and reveal only the active zone tool
   if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();

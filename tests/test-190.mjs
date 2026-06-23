@@ -33,7 +33,7 @@ near(mkUpdate(0, 0.4), 0.4, 1e-6);    // max-volume scales the whole curve
 
 // editor panel + markers + lifecycle
 assert(/function renderAudioZonesPanel\(\)/.test(src), 'renderAudioZonesPanel missing');
-assert(/sec\('Audio zones', 'audiozones'/.test(src), 'Audio zones editor section missing');
+assert(/sec\('Zones', 'zones',/.test(src) && /id="edAudioZones" class="zoneHost" data-zone="audiozones"/.test(src), 'Audio zones host registered under the grouped Zones section (build 649)');
 assert(/function refreshAudioZoneMarkers\(\)/.test(src) && /RingGeometry/.test(extractFunction('refreshAudioZoneMarkers')), 'ring marker not built');
 assert(/function stopAudioZones\(\)/.test(src), 'stopAudioZones missing');
 done();

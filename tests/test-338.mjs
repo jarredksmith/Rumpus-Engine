@@ -12,8 +12,8 @@ assert(/jumpPads: jumpPads\.map\(z=>\(\{ x:\+z\.x, z:\+z\.z, r:\+z\.r, y:\(\+z\.
 assert((src.match(/jumpPads = Array\.isArray\(level\.jumpPads\) \? level\.jumpPads\.map\(z=>_migrateJumpPad\(z\)\) : \[\];/g)||[]).length >= 2, 'jump pads adopted on the client level-load path (carries to joiners)');
 
 // editor: section in the World/scene tab + panel + bounce control
-assert(/sec\('Jump pads', 'jumppads', '<div id="edJumpPads"><\/div>'\)/.test(page), 'Jump pads section registered');
-assert(/scene:   \['world','generate','audiozones','deathzones','jumppads','ladders','firezones'\]/.test(src), 'jump pads live under the World/scene mode');
+assert(/sec\('Zones', 'zones',/.test(src) && /id="edJumpPads" class="zoneHost" data-zone="jumppads"/.test(src), 'Jump pads host registered under the grouped Zones section (build 649)');
+assert(/scene:   \['world','generate','zones'\]/.test(src), 'zones (incl. jump pads) live under the World/scene mode');
 assert(/function renderJumpPadsPanel\(\)/.test(src), 'jump pads have an editor panel');
 assert(/mkN\('Bounce','power',2,50,0\.5/.test(src), 'editor exposes a Bounce (launch power) slider');
 assert(/function addJumpPad\(\)/.test(src) && /function removeJumpPad\(i\)/.test(src), 'add/remove jump pads');

@@ -21,8 +21,8 @@ assert(/_fy>=top-0\.05\)\{[\s\S]*?player\.onGround=true; _onLadder=false/.test(s
 
 // --- editor + persistence ---
 assert(/function addLadder\(\)/.test(src) && /function renderLaddersPanel\(\)/.test(src), 'editor add + panel');
-assert(/sec\('Ladders', 'ladders'/.test(src), 'a Ladders section in the Scene tab');
-assert(/'world','generate','audiozones','deathzones','jumppads','ladders','firezones'/.test(src), 'Ladders shown in Scene mode');
+assert(/sec\('Zones', 'zones',/.test(src) && /id="edLadders" class="zoneHost" data-zone="ladders"/.test(src), 'Ladders host registered under the grouped Zones section (build 649)');
+assert(/scene:   \['world','generate','zones'\]/.test(src), 'the grouped Zones section (incl. ladders) shows in Scene mode');
 assert(/ladders: ladders\.map\(L=>\(\{ x:\+L\.x, z:\+L\.z, r:\(\+L\.r\|\|1\), y:\(\+L\.y\|\|0\), h:\(L\.h!=null\?\+L\.h:4\), face:\(\+L\.face\|\|0\) \}\)\)/.test(src), 'serialized with the level');
 assert((src.match(/ladders = Array\.isArray\(level\.ladders\) \? level\.ladders\.map\(_migrateLadder\) : \[\]/g)||[]).length===2, 'restored in both load paths');
 assert(/editorActive==='ladders'\){ return \(selLadder>=0/.test(src), 'the move gizmo targets the selected ladder');

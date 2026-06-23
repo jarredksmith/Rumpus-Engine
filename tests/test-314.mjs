@@ -27,7 +27,7 @@ assert(/refreshDeathZoneMarkers\(\); if\(typeof renderDeathZonesPanel==='functio
 const rm = extractFunction('removeDeathZone');
 assert(/deathZones\.splice\(i,1\)[\s\S]*?renderDeathZonesPanel\(\)/.test(rm), 'remove re-renders the panel directly');
 assert(/function renderDeathZonesPanel\(\)\{/.test(src), 'has an editor panel');
-assert(/scene:   \['world','generate','audiozones','deathzones','jumppads','ladders','firezones'\]/.test(src), 'panel lives under the World/scene editor mode');
+assert(/scene:   \['world','generate','zones'\]/.test(src), 'death-zone tools live under the grouped Zones section in the World/scene editor mode');
 
 // executable: the plane predicate — fall onto it dies, arc above it is safe
 function lethal(px,py,pz, z, EYE){
