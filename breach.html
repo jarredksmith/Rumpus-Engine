@@ -799,7 +799,10 @@
 // Surface any module/runtime error on screen instead of a black screen
 window.addEventListener('error', e=>{
   const m = e.message || (e.error && e.error.message) || 'Unknown error';
-  let box = document.getElementById('errbox');
+  // "ResizeObserver loop completed with undelivered notifications" is a benign browser quirk (the layout just
+  // needed an extra frame to settle); it has no stack and nothing is broken. Swallow it so it never paints the
+  // scary on-screen error box. (build 659)
+  if(/ResizeObserver loop/i.test(m)) return;
   if(!box){
     box = document.createElement('div'); box.id='errbox';
     box.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99;background:#2a0810;color:#ff8a9b;font:13px monospace;padding:12px 16px;border-top:1px solid #ff2d55;white-space:pre-wrap';
@@ -14559,7 +14562,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 658 · 2026-06-23';
+const BUILD_VERSION = 'build 659 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19590,7 +19593,10 @@ function buildEditorPanel(){
         fab.style.left = left ? w+'px' : ''; fab.style.right = left ? '' : w+'px';
         addMenu.style.left = left ? '0' : ''; addMenu.style.right = left ? '' : '0'; };
       placeFab();
-      if(typeof ResizeObserver!=='undefined'){ try{ new ResizeObserver(placeFab).observe(ed); }catch(e){} }
+      // Defer placement to the next frame so we never write layout INSIDE the ResizeObserver callback — that
+      // re-entry is what produces the benign "ResizeObserver loop completed with undelivered notifications"
+      // warning (build 659). rAF-coalesced so a burst of resizes runs placeFab once.
+      if(typeof ResizeObserver!=='undefined'){ try{ let _fabRaf=0; new ResizeObserver(()=>{ if(_fabRaf) return; _fabRaf=requestAnimationFrame(()=>{ _fabRaf=0; placeFab(); }); }).observe(ed); }catch(e){} }
       if(dk){ const _dock=dk.onclick; dk.onclick=()=>{ if(_dock) _dock(); placeFab(); }; }
       const jump=(mode,target)=>{ if(target) editorActive=target; setEditorMode(mode, !!target); };
       // build 650: the + menu is the ONE place to add anything placeable. Each entry jumps to the owning

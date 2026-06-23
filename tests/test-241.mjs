@@ -33,7 +33,7 @@ assert(/e\.stopPropagation\(\);/.test(pb) && /document\.addEventListener\('click
 assert(/fab\.id='edAddFab'/.test(pb) && /border-radius:50%/.test(pb), 'Add is a floating circle');
 assert(/\(ed\.parentNode \|\| document\.body\)\.appendChild\(fab\);/.test(pb), 'fab is a sibling of the panel (not clipped by its overflow)');
 assert(/fab\.style\.left = left \? w\+'px' : ''; fab\.style\.right = left \? '' : w\+'px';/.test(pb), 'fab swaps sides with the dock');
-assert(/new ResizeObserver\(placeFab\)\.observe\(ed\)/.test(pb), 'fab tracks panel resize drags');
+assert(/new ResizeObserver\(\(\)=>\{ if\(_fabRaf\) return; _fabRaf=requestAnimationFrame\(\(\)=>\{ _fabRaf=0; placeFab\(\); \}\); \}\)\.observe\(ed\)/.test(pb), 'fab tracks panel resize drags (rAF-coalesced to avoid the ResizeObserver loop warning, build 659)');
 assert(/edAddFab'\); if\(fb\) fb\.style\.display='block'/.test(src) && /edAddFab'\); if\(fb\) fb\.style\.display='none'/.test(src), 'fab follows editor open/close');
 assert((src.match(/editorEl\.style\.display='none'; \{ const _fb=document\.getElementById\('edAddFab'\); if\(_fb\) _fb\.style\.display='none'; \}/g)||[]).length === 2, 'fab also hides on both direct-close paths (Play level / deploy — build 347)');
 assert(/head\.className='edSecHead'/.test(src.slice(src.indexOf('function edFold'), src.indexOf('function edFold')+900)), 'fold headers reuse the polished .edSecHead accordion style (build 415)');
