@@ -12,7 +12,7 @@ assert(/\}\s*\n\s*document\.body\.classList\.toggle\('editing', !!editorOpen\)/.
 // drag: header is a handle, updates a persisted position
 assert(/_cinePvPos=null; try\{ const s=localStorage\.getItem\('breach_cinepvpos'\)/.test(src), 'dragged position restores from storage');
 const ep = extractFunction('_ensureCinePvPanel');
-assert(/hdr\.addEventListener\('pointerdown', \(e\)=>\{ if\(e\.target===sld \|\| e\.target===x\) return;/.test(ep), 'drag starts on the header but not on the scrubber/close');
+assert(/hdr\.addEventListener\('pointerdown', \(e\)=>\{ if\(e\.target===sld \|\| e\.target===x \|\| e\.target===po\) return;/.test(ep), 'drag starts on the header but not on the scrubber/buttons');
 assert(/_cinePvPos=\{ left, top \}; p\.style\.left=left\+'px'; p\.style\.top=top\+'px'/.test(ep), 'dragging moves the panel by top-left');
 assert(/let left=Math\.max\(0, Math\.min\(innerWidth-W, e\.clientX-_drag\.dx\)\), top=Math\.max\(0, Math\.min\(innerHeight-H, e\.clientY-_drag\.dy\)\)/.test(ep), 'drag is clamped on-screen');
 assert(/localStorage\.setItem\('breach_cinepvpos', JSON\.stringify\(_cinePvPos\)\)/.test(ep), 'position persists on drop');

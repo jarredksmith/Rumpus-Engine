@@ -30,7 +30,7 @@ assert(r.pos[0]===2 && r.pos[1]===3 && r.pos[2]===4, 'single-waypoint shot frame
 
 // render wiring
 const rw = extractFunction('_renderCinePvWindow');
-assert(/if\(!editorOpen \|\| !_cinePvOn \|\| _cineActive\)\{ if\(_cinePvPanel\) _cinePvPanel\.style\.display='none'; return; \}/.test(rw), 'hidden when not editing / toggled off / during playback');
+assert(/if\(!editorOpen \|\| !_cinePvOn \|\| _cineActive\)\{ if\(_cinePvPanel\) _cinePvPanel\.style\.display='none'; _blankCinePvWindow\(\); return; \}/.test(rw), 'hidden when not editing / toggled off / during playback (build 662: also blanks the pop-out)');
 assert(/renderer\.setScissorTest\(true\); renderer\.setViewport\(X, Yb, Wr, Hr\); renderer\.setScissor\(X, Yb, Wr, Hr\)/.test(rw), 'renders into a scissored corner viewport');
 assert(/renderer\.render\(scene, _cinePvCam\)/.test(rw), 'previews the real scene through the cinematic camera');
 assert(/renderer\.setScissorTest\(false\); renderer\.setViewport\(0,0,size\.x,size\.y\)/.test(rw), 'restores the full viewport after');
