@@ -12,7 +12,7 @@ assert(!/color:0xfff1c0, transparent:true, opacity:0.95, blending/.test(tr), 'ol
 assert(/tracer: Object\.assign\(\{\}, tracerCfg\)/.test(src), 'tracer serialized');
 assert(/tracerCfg = _sanitizeTracer\(level\.tracer\)/.test(src), 'tracer restored on load');
 // editor section + panel
-assert(/'object','transform','impactfx','tracerfx'/.test(src), 'tracerfx section in Weapons mode');
+assert(/kit:\s*\['object','transform','wepfx'\]/.test(src) && /id="edTracerFx" class="wepfxHost" data-wepfx="tracerfx"/.test(src), 'tracer panel registered under the grouped Effects picker in Weapons mode (build 653)');
 const rp = extractFunction('renderTracerFxPanel');
 assert(/edTracerFx/.test(rp) && /Test streak/.test(rp), 'panel builds with a test button');
 done();

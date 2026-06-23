@@ -8037,7 +8037,7 @@ function clearTurrets(){ for(let i=turretModels.length-1;i>=0;i--) removeTurret(
 function _turretOpts(g){ const t=g.userData.turret||{}; return { x:+g.position.x, y:+g.position.y, z:+g.position.z, yaw:+g.rotation.y, scale:+(t.scale!=null?t.scale:1), yawArc:+(t.yawArc!=null?t.yawArc:TURRET_DEFAULT.yawArc), pitchMin:+(t.pitchMin!=null?t.pitchMin:TURRET_DEFAULT.pitchMin), pitchMax:+(t.pitchMax!=null?t.pitchMax:TURRET_DEFAULT.pitchMax), eye:(t.eye||TURRET_DEFAULT.eye).slice() }; }
 function rebuildTurretVisuals(){ const data=turretModels.map(_turretOpts); clearTurrets(); for(const t of data){ const ng=buildTurret(t); if(ng.userData.marker) ng.userData.marker.visible=true; } }   // re-create all turrets after the shared model URL changes
 function setTurretMarkersVisible(v){ for(const g of turretModels){ if(g.userData.marker) g.userData.marker.visible=!!v; } }
-function addSceneTurret(){ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); const fwd=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw)); const px=player.pos.x+fwd.x*5, pz=player.pos.z+fwd.z*5; const g=buildTurret({ x:px, y:0, z:pz, yaw:player.yaw }); if(g.userData.marker) g.userData.marker.visible=true; editorActive='turrets'; editorTargets.turrets.idx=turretModels.length-1; selTurrets=[g]; if(typeof renderEditorFields==='function') renderEditorFields(); }
+function addSceneTurret(){ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(5):{x:player.pos.x,z:player.pos.z}; const px=_dp.x, pz=_dp.z; const g=buildTurret({ x:px, y:0, z:pz, yaw:player.yaw }); if(g.userData.marker) g.userData.marker.visible=true; editorActive='turrets'; editorTargets.turrets.idx=turretModels.length-1; selTurrets=[g]; if(typeof renderEditorFields==='function') renderEditorFields(); }
 function deleteSelectedTurret(){ const i=editorTargets.turrets.idx; if(i<0||i>=turretModels.length) return; if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); removeTurret(i); editorTargets.turrets.idx=Math.max(0,Math.min(i,turretModels.length-1)); const g=turretModels[editorTargets.turrets.idx]; selTurrets=g?[g]:[]; if(typeof renderEditorFields==='function') renderEditorFields(); }
 for(const T of ((savedLevel && Array.isArray(savedLevel.turrets)) ? savedLevel.turrets : [])) buildTurret(T);   // boot turrets saved in the level
 
@@ -8629,6 +8629,18 @@ addEventListener('keydown', e=>{
     if(!(m==='scale' && editorActive==='lights')){ gizmoMode = m; if(typeof updateGizmo==='function') updateGizmo(); if(typeof renderEditorFields==='function') renderEditorFields(); }
     e.preventDefault();
     return;
+  }
+  // build 656: F = toggle free-fly camera, T = toggle top-down view (editor only). Guarded so typing F/T in a
+  // text field (search, URL, names) doesn't fly the camera. Mirrors the View toolbar buttons exactly.
+  if(editorOpen && !e.repeat && (e.code==='KeyF' || e.code==='KeyT') && !e.ctrlKey && !e.metaKey && !e.altKey){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){
+      if(e.code==='KeyF'){ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } keys['KeyF']=false; }
+      else { editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=75; } }
+      if(typeof renderEditorFields==='function') renderEditorFields();
+      e.preventDefault();
+      return;
+    }
   }
   if(shopOpen){
     // shop is open: number keys buy, E or ESC closes (E re-locks the mouse cleanly; Esc has a browser re-lock cooldown)
@@ -9880,7 +9892,7 @@ function _animateFire(g, tms, dt){
   u.emberT -= dt;
   if(spk && u.emberT<=0 && typeof spark==='function'){ u.emberT = 0.16+Math.random()*0.22; const a=Math.random()*Math.PI*2, rr=Math.sqrt(Math.random())*u.baseR*0.8; spark({ x:g.position.x+Math.cos(a)*rr, y:g.position.y+baseY+0.4, z:g.position.z+Math.sin(a)*rr }, (u.emberCol||0xff8a2a)); }
 }
-function addFireZone(){ pushUndoSnapshot(); fireZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:5, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(player.pos.x,player.pos.z)>-Infinity?surfaceTopAt(player.pos.x,player.pos.z):(typeof terrainHeightAt==='function'?terrainHeightAt(player.pos.x,player.pos.z):0)), h:3, dps:15 }); selFireZone=fireZones.length-1; editorActive='firezones'; refreshFireZones(); if(typeof renderFireZonesPanel==='function') renderFireZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
+function addFireZone(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)}; fireZones.push({ x:_dp.x, z:_dp.z, r:5, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0)), h:3, dps:15 }); selFireZone=fireZones.length-1; editorActive='firezones'; refreshFireZones(); if(typeof renderFireZonesPanel==='function') renderFireZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
 function removeFireZone(i){ pushUndoSnapshot(); fireZones.splice(i,1); if(selFireZone>=fireZones.length) selFireZone=fireZones.length-1; refreshFireZones(); if(typeof renderFireZonesPanel==='function') renderFireZonesPanel(); }
 // ---------- build 557: auto-generate maze level ----------
 // One click builds a fresh, fully-connected maze out of box props + point lights, sets a player start, and
@@ -10646,10 +10658,10 @@ function updateBurningProps(dt){
   }
   if(playerDps>0) _applyPropFireToPlayer(playerDps, dt); else { _propFireAccum=0; _propFireTickT=0; }
 }
-function addJumpPad(){ pushUndoSnapshot(); jumpPads.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:6, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(player.pos.x,player.pos.z)>-Infinity?surfaceTopAt(player.pos.x,player.pos.z):(typeof terrainHeightAt==='function'?terrainHeightAt(player.pos.x,player.pos.z):0)), h:2, power:22 }); selJumpPad=jumpPads.length-1; editorActive='jumppads'; refreshJumpPadMarkers(); if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel(); }
+function addJumpPad(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)}; jumpPads.push({ x:_dp.x, z:_dp.z, r:6, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0)), h:2, power:22 }); selJumpPad=jumpPads.length-1; editorActive='jumppads'; refreshJumpPadMarkers(); if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel(); }
 function removeJumpPad(i){ pushUndoSnapshot(); jumpPads.splice(i,1); if(selJumpPad>=jumpPads.length) selJumpPad=jumpPads.length-1; refreshJumpPadMarkers(); if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel(); }
 // ---- Ladders editor (build 645) ----
-function addLadder(){ pushUndoSnapshot(); const _y=(typeof surfaceTopAt==='function'&&surfaceTopAt(player.pos.x,player.pos.z)>-Infinity?surfaceTopAt(player.pos.x,player.pos.z):(typeof terrainHeightAt==='function'?terrainHeightAt(player.pos.x,player.pos.z):0)); ladders.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:1, y:_y, h:4, face:+player.yaw.toFixed(3) }); selLadder=ladders.length-1; editorActive='ladders'; refreshLadderMarkers(); if(typeof renderLaddersPanel==='function') renderLaddersPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
+function addLadder(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)}; const _y=(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0)); ladders.push({ x:_dp.x, z:_dp.z, r:1, y:_y, h:4, face:+player.yaw.toFixed(3) }); selLadder=ladders.length-1; editorActive='ladders'; refreshLadderMarkers(); if(typeof renderLaddersPanel==='function') renderLaddersPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
 function removeLadder(i){ pushUndoSnapshot(); ladders.splice(i,1); if(selLadder>=ladders.length) selLadder=ladders.length-1; refreshLadderMarkers(); if(typeof renderLaddersPanel==='function') renderLaddersPanel(); }
 function renderLaddersPanel(){
   const host = (editorEl && editorEl.querySelector('#edLadders')); if(!host) return;
@@ -10793,7 +10805,7 @@ function refreshSpawnRegionMarker(){
   scene.add(g); spawnRegionMarker=g;
 }
 function setSpawnRegionMarkerVisible(v){ if(spawnRegionMarker) spawnRegionMarker.visible=v; }
-function addDeathZone(){ pushUndoSnapshot(); deathZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:6, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(player.pos.x,player.pos.z)>-Infinity?surfaceTopAt(player.pos.x,player.pos.z):(typeof terrainHeightAt==='function'?terrainHeightAt(player.pos.x,player.pos.z):0)), h:3 }); selDeathZone=deathZones.length-1; editorActive='deathzones'; refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel(); }
+function addDeathZone(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)}; deathZones.push({ x:_dp.x, z:_dp.z, r:6, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0)), h:3 }); selDeathZone=deathZones.length-1; editorActive='deathzones'; refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel(); }
 function removeDeathZone(i){ pushUndoSnapshot(); deathZones.splice(i,1); if(selDeathZone>=deathZones.length) selDeathZone=deathZones.length-1; refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel(); }
 // Per-frame: kill the player if they're inside a lethal zone.
 let _inDeathZone=false;
@@ -10818,7 +10830,7 @@ function updateDeathZones(){
   _inDeathZone=false;
 }   // rings are editor-only; hide on play without rebuilding
 function disposePickupMarkers(){ for(const m of pickupMarkers){ scene.remove(m); } pickupMarkers.length=0; }
-function addPickupSpot(kind){ pushUndoSnapshot(); const fwd=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw)); const spot={ x:+(player.pos.x+fwd.x*6).toFixed(2), z:+(player.pos.z+fwd.z*6).toFixed(2), kind:kind||'health' }; if(spot.kind==='item'){ const ids=Object.keys(invCatalog); spot.item=ids[0]||''; } pickupSpots.push(spot); selPickup = pickupSpots.length-1; refreshPickupMarkers(); renderEditorFields(); }
+function addPickupSpot(kind){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(6):{x:+(player.pos.x).toFixed(2),z:+(player.pos.z).toFixed(2)}; const spot={ x:_dp.x, z:_dp.z, kind:kind||'health' }; if(spot.kind==='item'){ const ids=Object.keys(invCatalog); spot.item=ids[0]||''; } pickupSpots.push(spot); selPickup = pickupSpots.length-1; refreshPickupMarkers(); renderEditorFields(); }
 function removePickupSpot(i){ pushUndoSnapshot(); pickupSpots.splice(i,1); selPickup=-1; refreshPickupMarkers(); renderEditorFields(); }
 // ---------- Audio zones: ambient sounds that fade up as the player nears the center ----------
 function disposeAudioZoneMarkers(){ for(const m of audioZoneMarkers){ scene.remove(m); try{ m.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} } audioZoneMarkers.length=0; }
@@ -13675,6 +13687,9 @@ const STATION_POS = new THREE.Vector3(8.00000, 0.00000, 7.82061);
 const STATION_SCALE = 0.25297;                          // tweak if the model imports too large/small
 const STATION_ROT = new THREE.Euler(0.00000, 3.14159, 0.00000); // face the terminal toward spawn (origin)
 let station = null;
+// build 654: the ammo/buy station is optional — not every level wants a restock terminal. Default ON so
+// existing levels are unchanged; a level can save it OFF and no station is built (proximity/buy guard on `station`).
+let stationEnabled = !(savedLevel && savedLevel.stationEnabled===false);
 function applyStationLight(){
   if(!station || !station.light) return;
   const s = (typeof editorTargets!=='undefined' && editorTargets.station) ? editorTargets.station.state : {};
@@ -13683,6 +13698,7 @@ function applyStationLight(){
   station.light.distance  = (s.lightDist!=null)?s.lightDist:14;
 }
 function buildStation(){
+  if(!stationEnabled){ station = null; return; }   // build 654: level opted out of the ammo station
   // Create the station record + glow immediately so proximity/buying work even before the model loads.
   const g = new THREE.Group();
   g.position.copy(STATION_POS);
@@ -13736,6 +13752,20 @@ function loadStationModel(){
   );
 }
 function swapStationModel(url){ stationModelUrl = url; loadStationModel(); }
+// Remove the station entirely from the scene + collision (build 654). Safe to call when already gone.
+function teardownStation(){
+  if(!station) return;
+  if(station.light) scene.remove(station.light);
+  if(station.collider){ const i=colliders.indexOf(station.collider); if(i>=0) colliders.splice(i,1); scene.remove(station.collider); }
+  if(station.group) scene.remove(station.group);
+  station = null;
+}
+// Editor/level toggle: turn the ammo station on (build it) or off (tear it down).
+function setStationEnabled(on){
+  stationEnabled = !!on;
+  if(stationEnabled){ if(!station) buildStation(); }
+  else teardownStation();
+}
 
 // ---------- Chests ----------
 const chests = [];
@@ -14521,7 +14551,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 651 · 2026-06-23';
+const BUILD_VERSION = 'build 656 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18238,26 +18268,28 @@ let editorActive = 'gun';
 // ---- Editor MODES: one primary switch that gates which target-tabs + sections are shown, so a new user
 // sees a handful of relevant controls instead of the whole panel at once. Each target/section lives in
 // exactly one mode. (Purely a visibility layer — every panel's editing logic is unchanged.)
-const EDITOR_MODES = ['build','scene','enemies','rules','kit','files'];
-const MODE_LABEL = { build:'Build', scene:'World', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', files:'Save' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
-const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', files:'#b69cff' };   // per-mode accent so the buttons read as distinct sections
+const EDITOR_MODES = ['build','scene','player','enemies','rules','kit','files'];
+const MODE_LABEL = { build:'Build', scene:'World', player:'Player', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', files:'Save' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
+const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', player:'#7c9cff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', files:'#b69cff' };   // per-mode accent so the buttons read as distinct sections
 // Compact, mode-aware top hint (build 651) — replaces one dense always-on paragraph. Tells a newcomer what
 // THIS mode is for + the one or two gestures that matter here. Universal shortcuts trail every line.
 const MODE_HINT = {
   build:   'Place & shape the world. <b>+</b> adds objects; click to select (<b>Shift+click</b>, or drag in <b>Top view</b> to marquee-select props), then <b>Move / Rotate / Scale</b> with the handles or type values.',
   scene:   'Set the stage: terrain, sky, fog, and placeable <b>Zones</b>. Use <b>+ ▸ Zone</b> to drop a volume.',
+  player:  'Who you play: your avatar model, where you spawn (<b>Player start</b> tab), and the character roster.',
   enemies: 'Author who you fight: drop spawn points with <b>+ ▸ Enemy spawn</b>, then tune types, counts & their gunfire look.',
   rules:   'Match flow: waves & win conditions, plus the pickups, loot and items players can grab.',
   kit:     'Your weapons: pick a tab (Gun / Aim / Grenade) to pose the viewmodel; tune bullet impacts, tracer & crosshair below.',
   files:   'Save, share or export this level, and chain levels into a campaign.',
 };
-const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close · drag the edge to resize.</span>';
+const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>F</b> fly · <b>T</b> top view · <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close.</span>';
 function _hexRgba(hex,a){ const nn=parseInt(hex.replace('#',''),16); return 'rgba('+((nn>>16)&255)+','+((nn>>8)&255)+','+(nn&255)+','+a+')'; }
 const SHOW_MODEL_LIBRARY = false;   // hardcoded model-library chips hidden for now (to be rebuilt); flip true to restore
 const _svgIcon = (inner)=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>';
 const MODE_ICON = {
   build:   _svgIcon('<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>'),
   scene:   _svgIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>'),
+  player:  _svgIcon('<circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/>'),
   enemies: _svgIcon('<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v1a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20Z"/>'),
   rules:   _svgIcon('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'),
   kit:     _svgIcon('<circle cx="12" cy="12" r="9"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/>'),
@@ -18270,11 +18302,12 @@ const PRIM_ICON = {
   cone:     _svgIcon('<ellipse cx="12" cy="18" rx="7.5" ry="2.6"/><path d="M12 3 4.5 18M12 3l7.5 15"/>'),
 };
 const MODE_SECTIONS = {
-  build:   ['gizmo','object','material','transform','characters'],
+  build:   ['gizmo','object','material','transform'],
   scene:   ['world','generate','zones'],   // the 5 placeable volumes are grouped under one 'zones' section with a type picker (build 649)
+  player:  ['gizmo','object','transform','characters'],   // build 652: the player avatar, the spawn point + the character roster are their own area
   enemies: ['enemies','gizmo','object','transform','boltfx'],   // spawn points live here now; their picker/fields/gizmo sections come along. enemy gunfire FX (boltfx) moved here in build 647 — it's about enemies, not your weapons
   rules:   ['game','pickups','loot','invitems'],
-  kit:     ['object','transform','impactfx','tracerfx','crosshair'],   // 'object' carries the weapon model import + per-weapon shoot sound; impact/streak FX; crosshair; music/SFX live in Scene
+  kit:     ['object','transform','wepfx'],   // 'object' carries the weapon model import + per-weapon shoot sound; the 3 FX panels (impacts/tracer/crosshair) are grouped under one 'wepfx' picker (build 653); music/SFX live in Scene
   files:   ['levelfile','campaign'],
 };
 // Plain-language one-liner shown under each section header (build 648). Keyed by the section's data-sec key
@@ -18305,8 +18338,9 @@ const SEC_SUB = {
   campaign:   'Chain levels together into a campaign.',
 };
 const MODE_TARGETS = {
-  build:   ['props','lights','station','player','pstart','extract','turrets'],
+  build:   ['props','lights','station','extract','turrets'],
   scene:   [],
+  player:  ['player','pstart'],   // build 652: the player avatar + the start point are their own area
   enemies: ['spawns'],
   rules:   [],
   kit:     ['gun','aim','grenade'],
@@ -18339,6 +18373,27 @@ function renderZonePicker(){
   }
   host.appendChild(bar);
   const sub=document.createElement('div'); sub.className='edSecSub'; sub.style.margin='0 0 4px'; sub.textContent=SEC_SUB[activeZoneType]||''; host.appendChild(sub);
+}
+// Which weapon-FX panel shows inside the grouped 'Effects' section (build 653) — same pattern as the Zones picker.
+const WEPFX_TYPES = [['impactfx','\ud83d\udca5','Impacts'],['tracerfx','\ud83d\udca8','Tracer'],['crosshair','\u25ce','Crosshair']];
+const WEPFX_HOST = { impactfx:'edImpactFx', tracerfx:'edTracerFx', crosshair:'edCrosshair' };
+let activeWepFx = 'impactfx';
+try{ const _w = localStorage.getItem('breach_editor_wepfx'); if(_w && WEPFX_HOST[_w]) activeWepFx = _w; }catch(e){}
+function applyWepFxVisibility(){
+  if(!editorEl) return;
+  for(const k in WEPFX_HOST){ const el=document.getElementById(WEPFX_HOST[k]); if(el) el.style.display = (k===activeWepFx)?'':'none'; }
+}
+function renderWepFxPicker(){
+  const host=document.getElementById('edWepFxPicker'); if(!host) return; host.innerHTML='';
+  const bar=document.createElement('div'); bar.style.cssText='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;';
+  for(const [key,icon,label] of WEPFX_TYPES){
+    const on=activeWepFx===key; const b=document.createElement('button'); b.textContent=icon+' '+label;
+    b.style.cssText='flex:1 1 auto;padding:5px 6px;font-size:11px;border-radius:5px;cursor:pointer;border:1px solid '+(on?'#ff9b5b':'rgba(255,155,91,0.25)')+';background:'+(on?'rgba(255,155,91,0.22)':'transparent')+';color:'+(on?'#ffe7d4':'#e6c6ad')+';';
+    b.onclick=()=>{ activeWepFx=key; try{ localStorage.setItem('breach_editor_wepfx', key); }catch(e){} renderWepFxPicker(); applyWepFxVisibility(); };
+    bar.appendChild(b);
+  }
+  host.appendChild(bar);
+  const sub=document.createElement('div'); sub.className='edSecSub'; sub.style.margin='0 0 4px'; sub.textContent=SEC_SUB[activeWepFx]||''; host.appendChild(sub);
 }
 // Show only this mode's target-tabs + sections; hide the rest. Highlights the active mode button.
 function applyEditorMode(){
@@ -18452,11 +18507,38 @@ function _fitPropToSize(obj, target){
   if(typeof refreshPropCollider==='function') refreshPropCollider(obj);
   return true;
 }
+// build 655: where a freshly-added object should land. Normally a few metres in front of the player — but when
+// you're flying the editor camera (or in top view) the player is somewhere else entirely, so you'd never see the
+// thing appear. In those modes we drop it where you're actually LOOKING: ray-march the fly camera's look vector
+// to the ground, or use the top-view pan centre. Returns ground-level {x,z,y}.
+function editorDropPoint(dist){
+  dist = (dist==null) ? 5 : dist;
+  const gAt = (x,z)=> (typeof terrainHeightAt==='function' ? terrainHeightAt(x,z) : 0);
+  if(typeof editorOpen!=='undefined' && editorOpen && editorFreeFly){
+    const cy=Math.cos(player.yaw), sy=Math.sin(player.yaw), cp=Math.cos(player.pitch), sp=Math.sin(player.pitch);
+    const fx=-sy*cp, fy=sp, fz=-cy*cp;                 // fly-camera forward (matches the look basis)
+    let t = 2;
+    for(let i=0;i<260;i++){                            // march the look ray down to the terrain
+      const x=flyPos.x+fx*t, y=flyPos.y+fy*t, z=flyPos.z+fz*t;
+      if(y <= gAt(x,z)) return { x:+x.toFixed(2), z:+z.toFixed(2), y:gAt(x,z) };
+      t += 0.6; if(t>500) break;
+    }
+    const x=flyPos.x+fx*(dist||5), z=flyPos.z+fz*(dist||5);   // looking up/flat -> a point straight ahead
+    return { x:+x.toFixed(2), z:+z.toFixed(2), y:gAt(x,z) };
+  }
+  if(typeof editorOpen!=='undefined' && editorOpen && editorTopView){
+    const x=topPanX||0, z=topPanZ||0;                 // top view: the pan centre is what you're looking at
+    return { x:+x.toFixed(2), z:+z.toFixed(2), y:gAt(x,z) };
+  }
+  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  const x = player.pos.x + fwd.x*dist, z = player.pos.z + fwd.z*dist;
+  return { x:+x.toFixed(2), z:+z.toFixed(2), y:gAt(x,z) };
+}
 function addSceneProp(src, meta){
   meta = meta || {};
   pushUndoSnapshot();
-  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-  const px = player.pos.x + fwd.x*5, pz = player.pos.z + fwd.z*5;
+  const _dp = editorDropPoint(5);
+  const px = _dp.x, pz = _dp.z;
   const async = !isPrimitive(src);                              // primitives finalize synchronously: no overlay
   let _done=false, _to=null, _shownAt=0;
   // Hold the overlay for a brief minimum once shown. A browser-HTTP-cached .glb can resolve faster than a
@@ -18492,8 +18574,8 @@ function deleteSelectedProp(){
 // Add a point light in front of the player (raised to head height) and select it.
 function addSceneLight(){
   pushUndoSnapshot();
-  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-  const px = player.pos.x + fwd.x*5, pz = player.pos.z + fwd.z*5;
+  const _dp = editorDropPoint(5);
+  const px = _dp.x, pz = _dp.z;
   const g = buildLight({ color:0xffe6a0, intensity:8, distance:22, t:[px, 4, pz] });
   if(g.userData.marker) g.userData.marker.visible = true;
   editorActive='lights'; editorTargets.lights.idx = lightModels.length-1; selLights=[g]; renderEditorFields();
@@ -18501,8 +18583,8 @@ function addSceneLight(){
 // Place an enemy spawn in front of the player and select it.
 function addSceneSpawn(){
   pushUndoSnapshot();
-  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-  const px = player.pos.x + fwd.x*6, pz = player.pos.z + fwd.z*6;
+  const _dp = editorDropPoint(6);
+  const px = _dp.x, pz = _dp.z;
   const g = buildSpawnMarker({ t:[px, pz], mode:'patrol', radius:12, detect:22, face:player.yaw });   // build 620: wider default patrol area + detect
   g.visible = true;
   editorActive='spawns'; editorTargets.spawns.idx = spawnMarkers.length-1; selSpawns=[g]; renderEditorFields();
@@ -18680,6 +18762,7 @@ function serializeLevel(){
     attModels: (typeof attModels!=='undefined') ? JSON.parse(JSON.stringify(attModels)) : {},
     invItems: (typeof invCatalog!=='undefined') ? JSON.parse(JSON.stringify(invCatalog)) : {},
     station: { url: stationModelUrl, state: Object.assign({}, editorTargets.station.state) },
+    stationEnabled: !!stationEnabled,   // build 654: the ammo station is optional per level
     player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}) },
     world:   Object.assign({}, worldCfg),
     chest:   { url: chestModelUrl, scale: chestModelScale, randomOff: !randomLootOn },
@@ -19065,7 +19148,8 @@ function restoreLevel(level){
   if(level.aimWep){ for(const k in level.aimWep) aimByWep[k]=Object.assign({}, AIM_DEFAULT, level.aimWep[k]); }
   if(level.aim){ Object.assign(editorTargets.aim.state, level.aim.state||{}); if(!level.aimWep){ for(const k of Object.keys(WEAPONS)) aimByWep[k]=Object.assign({}, level.aim.state); } }
   applyWeaponAim(curWep); if(editorTargets.aim.syncFromWeapon) editorTargets.aim.syncFromWeapon();
-  if(level.station){ if(level.station.url && level.station.url!==stationModelUrl) swapStationModel(level.station.url); Object.assign(editorTargets.station.state, level.station.state||{}); editorTargets.station.apply(); }
+  setStationEnabled(!(level.stationEnabled===false));   // build 654: build or tear down to match the level
+  if(level.station && station){ if(level.station.url && level.station.url!==stationModelUrl) swapStationModel(level.station.url); Object.assign(editorTargets.station.state, level.station.state||{}); editorTargets.station.apply(); }
   // world + loot
   if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); applyWorldCfg(); }
   if(level.audio){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
@@ -19405,10 +19489,12 @@ function buildEditorPanel(){
         + '<div id="edJumpPads" class="zoneHost" data-zone="jumppads"></div>'
         + '<div id="edLadders" class="zoneHost" data-zone="ladders"></div>'
         + '<div id="edFireZones" class="zoneHost" data-zone="firezones"></div>')
-    + sec('Bullet impacts', 'impactfx', '<div id="edImpactFx"></div>')
-    + sec('Bullet tracer', 'tracerfx', '<div id="edTracerFx"></div>')
+    + sec('Effects', 'wepfx',
+          '<div id="edWepFxPicker"></div>'
+        + '<div id="edImpactFx" class="wepfxHost" data-wepfx="impactfx"></div>'
+        + '<div id="edTracerFx" class="wepfxHost" data-wepfx="tracerfx"></div>'
+        + '<div id="edCrosshair" class="wepfxHost" data-wepfx="crosshair"></div>')
     + sec('Enemy gunfire', 'boltfx', '<div id="edBoltFx"></div>')
-    + sec('Crosshair', 'crosshair', '<div id="edCrosshair"></div>')
     + sec('Characters', 'characters', '<div id="edCharRoster"></div>')
     + sec('Level file', 'levelfile',
         '<div id="edIssues"></div>'
@@ -19455,7 +19541,7 @@ function buildEditorPanel(){
       // mode/target/zone-tool first so the new thing lands in view with its editor already showing.
       const addZone=(type)=>{ jump('scene');
         activeZoneType=type; if(typeof applyZoneVisibility==='function') applyZoneVisibility(); if(typeof renderZonePicker==='function') renderZonePicker();
-        if(type==='audiozones'){ pushUndoSnapshot(); audioZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:14, url:'', vol:0.8, loop:true }); editorActive='audiozones'; refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); }
+        if(type==='audiozones'){ pushUndoSnapshot(); const _dp=editorDropPoint(0); audioZones.push({ x:_dp.x, z:_dp.z, r:14, url:'', vol:0.8, loop:true }); editorActive='audiozones'; refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel(); }
         else if(type==='deathzones'){ if(typeof addDeathZone==='function') addDeathZone(); }
         else if(type==='jumppads'){ if(typeof addJumpPad==='function') addJumpPad(); }
         else if(type==='ladders'){ if(typeof addLadder==='function') addLadder(); }
@@ -19514,6 +19600,8 @@ function buildEditorPanel(){
   if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
+  if(typeof renderWepFxPicker==='function') renderWepFxPicker();          // build 653: the grouped weapon-FX type picker
+  if(typeof applyWepFxVisibility==='function') applyWepFxVisibility();     // ...and reveal only the active FX panel
   // restore saved width + wire drag-to-resize (drag the left edge; wider = more room for the crowded panels)
   try{ const w = parseInt(localStorage.getItem('breach_editor_width')||'',10); if(w>=260 && w<=window.innerWidth*0.92) p.style.width = w+'px'; }catch(e){}
   (function(){
@@ -19528,7 +19616,7 @@ function buildEditorPanel(){
   let secState = {}; try{ secState = JSON.parse(localStorage.getItem('breach_editor_sections')||'{}') || {}; }catch(e){}
   // collapse secondary sections by default so each mode opens to its primary panel, not a wall (build 651);
   // a user's own expand/collapse choices (secState) still override these.
-  const defaultCollapsed = { material:true, loot:true, sounds:true, campaign:true, generate:true, invitems:true, impactfx:true, tracerfx:true, crosshair:true, boltfx:true, characters:true };
+  const defaultCollapsed = { material:true, loot:true, sounds:true, campaign:true, generate:true, invitems:true, boltfx:true, characters:true };
   p.querySelectorAll('.edSection').forEach(s=>{
     const k = s.dataset.sec;
     // one-line plain-language subtitle under each header (build 648): explains the section to a first-timer.
@@ -19814,6 +19902,7 @@ function renderEditorFields(){
   if(spawnRouteEdit && (editorActive!=='spawns' || editorTargets.spawns.obj()!==spawnRouteEdit || spawnRouteEdit.userData.mark.mode!=='patrol')) spawnRouteEdit=null;   // route placement only while its patrol spawn stays selected
   editorEl.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.key===editorActive));
   const tgt = editorTargets[editorActive] || { obj(){ return null; }, code(){ return ''; } };   // zone targets (fire/jump/death) have no editorTargets entry — render as a no-op selectable
+  const _stationOff = (editorActive==='station' && !stationEnabled);   // build 654: hide the model/transform editors when the station is toggled off
   if(editorActive==='extract') refreshExtractMarker();
   ensurePlayerPreview(editorActive==='player');
   if(extractZone) extractZone.visible = (editorActive==='extract');   // the beacon shows as an editor marker only on its own tab
@@ -20597,8 +20686,8 @@ function renderEditorFields(){
     const mk = (label, on, fn)=>{ const b=document.createElement('button'); b.textContent=label;
       if(on){ b.style.background='rgba(56,245,181,0.28)'; b.style.color='#eafff7'; }
       b.onclick=fn; return b; };
-    view.appendChild(mk(editorTopView?'◉ Top view':'○ Top view', editorTopView, ()=>{ editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=75; } renderEditorFields(); }));
-    view.appendChild(mk(editorFreeFly?'◉ Fly mode':'○ Fly mode', editorFreeFly, ()=>{ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } renderEditorFields(); }));
+    { const b=mk(editorTopView?'◉ Top view':'○ Top view', editorTopView, ()=>{ editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=75; } renderEditorFields(); }); b.title='Overhead view  ·  shortcut: T'; view.appendChild(b); }
+    { const b=mk(editorFreeFly?'◉ Fly mode':'○ Fly mode', editorFreeFly, ()=>{ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } renderEditorFields(); }); b.title='Free-fly camera (WASD + mouse)  ·  shortcut: F'; view.appendChild(b); }
     view.appendChild(mk(editorHideEnemies?'◉ Hide enemies':'○ Hide enemies', editorHideEnemies, ()=>{ editorHideEnemies=!editorHideEnemies; renderEditorFields(); }));
     view.appendChild(mk(editorShowColliders?'◉ Show colliders':'○ Show colliders', editorShowColliders, ()=>{ editorShowColliders=!editorShowColliders; renderEditorFields(); }));
   }
@@ -20606,6 +20695,16 @@ function renderEditorFields(){
   // prop picker (only for the selectable Props target)
   const picker = editorEl.querySelector('#edPicker');
   picker.innerHTML = '';
+  // build 654: the ammo station is optional. A checkbox at the top of the Station tab builds/tears it down;
+  // when off, its model + transform editors are hidden (nothing to edit) but the toggle stays.
+  if(editorActive==='station'){
+    const box=document.createElement('label'); box.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:12px;margin:2px 0 6px;cursor:pointer;';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!stationEnabled; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent)';
+    cb.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); setStationEnabled(cb.checked); renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); };
+    const sp=document.createElement('span'); sp.innerHTML='Include the <b>ammo / buy station</b> in this level';
+    box.appendChild(cb); box.appendChild(sp); picker.appendChild(box);
+    if(!stationEnabled){ const h=document.createElement('div'); h.className='hint'; h.style.margin='0 0 4px'; h.innerHTML='Station is <b>off</b> — players won’t have a restock terminal. Tick the box to place one and edit its model & position.'; picker.appendChild(h); }
+  }
   if(tgt.isPstart){
     const h=document.createElement('div'); h.className='hint'; h.style.margin='0 0 6px';
     h.innerHTML='This is where you (and co-op players) spawn at the start of a run. Drag the <b>blue marker</b> with the move gizmo to position it; use the rotate gizmo or the slider below to set which way you face.';
@@ -21171,7 +21270,7 @@ function renderEditorFields(){
     }
     urlHost.appendChild(wrow);
   }
-  if(tgt.urlField){
+  if(tgt.urlField && !_stationOff){
     if(tgt.perWeapon){
       const wh = document.createElement('div'); wh.className='hint'; wh.style.margin='2px 0 3px';
       wh.innerHTML = '<b>Editing weapon</b> — each weapon has its own model + framing';
@@ -21606,7 +21705,7 @@ function renderEditorFields(){
   host.innerHTML = '';
   editorFieldInputs = [];
   { const xfSec = host.closest('.edSection'); const xfInMode=(MODE_SECTIONS[editorMode]||[]).indexOf('transform')>=0;
-    if(xfSec) xfSec.style.display = (xfInMode && tgt.fields && tgt.fields.length) ? '' : 'none'; }   // no fields (Extract) -> hide
+    if(xfSec) xfSec.style.display = (xfInMode && tgt.fields && tgt.fields.length && !_stationOff) ? '' : 'none'; }   // no fields (Extract), or station toggled off -> hide
   for(const fld of (tgt.fields || [])){
     const wrap = document.createElement('div'); wrap.className='field';
     const lab = document.createElement('label');

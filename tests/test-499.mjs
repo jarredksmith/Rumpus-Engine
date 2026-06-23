@@ -26,8 +26,9 @@ assert(/#editor \.edSecSub \{/.test(html), 'edSecSub has its own muted style');
 assert(/sec\('Handles', 'gizmo'/.test(src), 'Gizmo -> Handles');
 assert(/sec\('Environment', 'world'/.test(src), 'World section -> Environment (no longer clashes with the World mode)');
 assert(/sec\('Waves &amp; objectives', 'game'/.test(src), 'Game / waves -> Waves & objectives');
-assert(/sec\('Bullet impacts', 'impactfx'/.test(src), 'Impact FX -> Bullet impacts');
-assert(/sec\('Bullet tracer', 'tracerfx'/.test(src), 'Bullet streak -> Bullet tracer');
+// build 653: Impact/Tracer/Crosshair were regrouped under one Effects picker, so their plain-language
+// descriptions now live in the picker (via SEC_SUB) rather than standalone section titles.
+assert(/sec\('Effects', 'wepfx'/.test(src), 'the three weapon-FX panels are grouped under one Effects section');
 
 // the World MODE label is untouched (only the section title changed)
 assert(/scene:'World'/.test(src), 'the World mode label is unchanged');
