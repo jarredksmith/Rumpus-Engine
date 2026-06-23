@@ -120,6 +120,13 @@
   #hud #wavePanel { transform: translateX(-50%) translate(var(--el-wave-dx,0px), var(--el-wave-dy,0px)) scale(var(--el-wave-s,1)); transform-origin: center top; opacity: var(--el-wave-op,1); font-family: var(--el-font, var(--hud-font, var(--ui-font))), ui-monospace, monospace; }
   #hud #minimap   { transform: translate(var(--el-minimap-dx,0px), var(--el-minimap-dy,0px)) scale(var(--el-minimap-s,1)); transform-origin: left top; opacity: var(--el-minimap-op,1); }
   #hud #crosshair { transform: translate(-50%,-50%) translate(var(--el-crosshair-dx,0px), var(--el-crosshair-dy,0px)) scale(var(--el-crosshair-s,1)); transform-origin: center; opacity: var(--el-crosshair-op,1); }
+  /* build 668: in HUD editor mode, the elements become draggable to position them directly */
+  body.hudPreview #hud #stats, body.hudPreview #hud #ammoPanel, body.hudPreview #hud #score,
+  body.hudPreview #hud #wavePanel, body.hudPreview #hud #minimap, body.hudPreview #hud #crosshair {
+    pointer-events: auto; cursor: move; outline: 1px dashed rgba(var(--accent-rgb),0.7); outline-offset: 3px; }
+  body.hudPreview #hud #stats:hover, body.hudPreview #hud #ammoPanel:hover, body.hudPreview #hud #score:hover,
+  body.hudPreview #hud #wavePanel:hover, body.hudPreview #hud #minimap:hover, body.hudPreview #hud #crosshair:hover {
+    outline-color: var(--accent); }
   #editor #libGrid { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; max-height: 132px; overflow-y: auto; }
   #editor button.libChip {
     flex: 0 0 auto; padding: 5px 9px; font-size: 11px; border-radius: 12px;
@@ -14672,7 +14679,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 667 · 2026-06-23';
+const BUILD_VERSION = 'build 668 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19202,8 +19209,38 @@ function renderHudPanel(){
   { const rb2=document.createElement('button'); rb2.textContent='Reset '+eDef.label; rb2.style.cssText='font-size:10px;padding:2px 8px;margin:2px 0 0;'; rb2.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg.el[eDef.k]={ s:1, dx:0, dy:0, accent:'', font:'', op:1 }; commit(); renderHudPanel(); }; wrap.appendChild(rb2); }
 
   const rb=document.createElement('button'); rb.textContent='Reset HUD to default'; rb.style.cssText='margin-top:10px;width:100%;'; rb.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg=_sanitizeHud(null); commit(); renderHudPanel(); }; wrap.appendChild(rb);
-  const note=document.createElement('div'); note.className='hint'; note.style.cssText='margin-top:8px;font-size:10px;opacity:.7;'; note.textContent='Previewing live. These settings save with the level, so anyone who plays your level sees this HUD.'; wrap.appendChild(note);
+  const note=document.createElement('div'); note.className='hint'; note.style.cssText='margin-top:8px;font-size:10px;opacity:.7;'; note.innerHTML='Previewing live — <b>drag the dashed HUD elements</b> to position them. These settings save with the level, so anyone who plays it sees this HUD.'; wrap.appendChild(note);
   host.appendChild(wrap);
+  if(typeof _wireHudDrag==='function') _wireHudDrag();   // build 668: make the live HUD elements draggable
+}
+// build 668: drag-to-position. Each HUD element gets a pointer handler (wired once) that only acts while the HUD
+// editor mode is showing (.hudPreview). Dragging writes that element's dx/dy live; the panel refreshes on release.
+let _hudDragWired = false;
+function _wireHudDrag(){
+  if(_hudDragWired) return; _hudDragWired = true;
+  for(const e of HUD_ELEMENTS){
+    const dom = document.querySelector(e.sel); if(!dom) continue;
+    let drag=null;
+    dom.addEventListener('pointerdown', (ev)=>{
+      if(!document.body.classList.contains('hudPreview')) return;   // only while theming the HUD
+      ev.preventDefault(); ev.stopPropagation();
+      if(!hudCfg.el) hudCfg.el={};
+      const o = hudCfg.el[e.k] || (hudCfg.el[e.k]={ s:1, dx:0, dy:0, accent:'', font:'', op:1 });
+      drag = { x:ev.clientX, y:ev.clientY, dx:o.dx||0, dy:o.dy||0 };
+      _hudElSel = e.k;
+      if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+      try{ dom.setPointerCapture(ev.pointerId); }catch(_e){}
+    });
+    dom.addEventListener('pointermove', (ev)=>{
+      if(!drag) return;
+      const o = hudCfg.el[e.k]; if(!o) return;
+      o.dx = Math.max(-400, Math.min(400, Math.round(drag.dx + (ev.clientX - drag.x))));
+      o.dy = Math.max(-400, Math.min(400, Math.round(drag.dy + (ev.clientY - drag.y))));
+      if(typeof applyHudCfg==='function') applyHudCfg(); _levelDirty=true;
+    });
+    const end=()=>{ if(!drag) return; drag=null; if(typeof renderHudPanel==='function') renderHudPanel(); };   // refresh the X/Y sliders to the dropped position
+    dom.addEventListener('pointerup', end); dom.addEventListener('pointercancel', end);
+  }
 }
 function renderBoltFxPanel(){
   const host=document.getElementById('edBoltFx'); if(!host) return; host.innerHTML='';
