@@ -8630,6 +8630,18 @@ addEventListener('keydown', e=>{
     e.preventDefault();
     return;
   }
+  // build 656: F = toggle free-fly camera, T = toggle top-down view (editor only). Guarded so typing F/T in a
+  // text field (search, URL, names) doesn't fly the camera. Mirrors the View toolbar buttons exactly.
+  if(editorOpen && !e.repeat && (e.code==='KeyF' || e.code==='KeyT') && !e.ctrlKey && !e.metaKey && !e.altKey){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){
+      if(e.code==='KeyF'){ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } keys['KeyF']=false; }
+      else { editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=75; } }
+      if(typeof renderEditorFields==='function') renderEditorFields();
+      e.preventDefault();
+      return;
+    }
+  }
   if(shopOpen){
     // shop is open: number keys buy, E or ESC closes (E re-locks the mouse cleanly; Esc has a browser re-lock cooldown)
     if(e.code==='Digit1') buyFromShop(0);
@@ -14539,7 +14551,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 655 · 2026-06-23';
+const BUILD_VERSION = 'build 656 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18270,7 +18282,7 @@ const MODE_HINT = {
   kit:     'Your weapons: pick a tab (Gun / Aim / Grenade) to pose the viewmodel; tune bullet impacts, tracer & crosshair below.',
   files:   'Save, share or export this level, and chain levels into a campaign.',
 };
-const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close · drag the edge to resize.</span>';
+const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>F</b> fly · <b>T</b> top view · <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close.</span>';
 function _hexRgba(hex,a){ const nn=parseInt(hex.replace('#',''),16); return 'rgba('+((nn>>16)&255)+','+((nn>>8)&255)+','+(nn&255)+','+a+')'; }
 const SHOW_MODEL_LIBRARY = false;   // hardcoded model-library chips hidden for now (to be rebuilt); flip true to restore
 const _svgIcon = (inner)=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>';
@@ -20674,8 +20686,8 @@ function renderEditorFields(){
     const mk = (label, on, fn)=>{ const b=document.createElement('button'); b.textContent=label;
       if(on){ b.style.background='rgba(56,245,181,0.28)'; b.style.color='#eafff7'; }
       b.onclick=fn; return b; };
-    view.appendChild(mk(editorTopView?'◉ Top view':'○ Top view', editorTopView, ()=>{ editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=75; } renderEditorFields(); }));
-    view.appendChild(mk(editorFreeFly?'◉ Fly mode':'○ Fly mode', editorFreeFly, ()=>{ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } renderEditorFields(); }));
+    { const b=mk(editorTopView?'◉ Top view':'○ Top view', editorTopView, ()=>{ editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=75; } renderEditorFields(); }); b.title='Overhead view  ·  shortcut: T'; view.appendChild(b); }
+    { const b=mk(editorFreeFly?'◉ Fly mode':'○ Fly mode', editorFreeFly, ()=>{ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } renderEditorFields(); }); b.title='Free-fly camera (WASD + mouse)  ·  shortcut: F'; view.appendChild(b); }
     view.appendChild(mk(editorHideEnemies?'◉ Hide enemies':'○ Hide enemies', editorHideEnemies, ()=>{ editorHideEnemies=!editorHideEnemies; renderEditorFields(); }));
     view.appendChild(mk(editorShowColliders?'◉ Show colliders':'○ Show colliders', editorShowColliders, ()=>{ editorShowColliders=!editorShowColliders; renderEditorFields(); }));
   }
