@@ -14,10 +14,10 @@ const mkV = (rootRest) => { const rb = new THREE.Bone(); return { rb, v: { userD
   rb.position.set(0.4, 1, -0.1); v.userData.animState = 'idle';
   _lockRootMotion(v);
   assert(rb.position.x === 0.4 && rb.position.z === -0.1, 'idle frame left untouched');
-  rb.position.set(0.4, 1.05, -2.3); v.userData.animState = 'walk';   // walk travels forward
+  rb.position.set(0.4, 1.05, -2.3); v.userData.animState = 'walk';   // walk travels forward + the clip lifts the hips
   _lockRootMotion(v);
   assert(Math.abs(rb.position.x - 0.4) < 1e-9 && Math.abs(rb.position.z + 0.1) < 1e-9, 'locked walk aligns with the idle baseline (0.4,-0.1), not bind (0,0)');
-  assert(Math.abs(rb.position.y - 1.05) < 1e-9, 'vertical bob preserved');
+  assert(Math.abs(rb.position.y - 1) < 1e-9, 'build 646: vertical pinned to the idle rest height (1), not the clip-lifted 1.05');
 }
 
 // a moving clip stays pinned across frames even as its pose travels (no drift)
@@ -42,16 +42,16 @@ const mkV = (rootRest) => { const rb = new THREE.Bone(); return { rb, v: { userD
 
 // fallback: locked from the very first frame (no idle seen yet) -> the captured rest
 {
-  const { rb, v } = mkV({ x: 0.1, z: -0.2 });
+  const { rb, v } = mkV({ x: 0.1, y: 1, z: -0.2 });
   rb.position.set(5, 2, -7); v.userData.animState = 'walk';
   _lockRootMotion(v);
-  assert(Math.abs(rb.position.x - 0.1) < 1e-9 && Math.abs(rb.position.z + 0.2) < 1e-9, 'no idle frame yet -> falls back to the captured rest');
+  assert(Math.abs(rb.position.x - 0.1) < 1e-9 && Math.abs(rb.position.z + 0.2) < 1e-9 && Math.abs(rb.position.y - 1) < 1e-9, 'no idle frame yet -> x/z and height fall back to the captured rest');
 }
 
 assert(_lockRootMotion({ userData: {} }) === undefined, 'no root bone -> safe no-op');
 
 // ---- source: track when unlocked, hold when locked ----
-assert(/else \{ ref\.x=rb\.position\.x; ref\.z=rb\.position\.z; \}/.test(src), 'unlocked frames track the live hips x/z');
-assert(/if\(locked\)\{ rb\.position\.x=ref\.x; rb\.position\.z=ref\.z; \}/.test(src), 'locked frames hold the tracked baseline');
+assert(/else \{ ref\.x=rb\.position\.x; ref\.z=rb\.position\.z; ref\.y=rb\.position\.y; \}/.test(src), 'unlocked frames track the live hips x/z + height');
+assert(/if\(locked\)\{ rb\.position\.x=ref\.x; rb\.position\.z=ref\.z; rb\.position\.y=ref\.y; \}/.test(src), 'locked frames hold the tracked baseline (x/z + height)');
 
 done();
