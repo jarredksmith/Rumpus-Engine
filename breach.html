@@ -14521,7 +14521,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 651 · 2026-06-23';
+const BUILD_VERSION = 'build 652 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18238,14 +18238,15 @@ let editorActive = 'gun';
 // ---- Editor MODES: one primary switch that gates which target-tabs + sections are shown, so a new user
 // sees a handful of relevant controls instead of the whole panel at once. Each target/section lives in
 // exactly one mode. (Purely a visibility layer — every panel's editing logic is unchanged.)
-const EDITOR_MODES = ['build','scene','enemies','rules','kit','files'];
-const MODE_LABEL = { build:'Build', scene:'World', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', files:'Save' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
-const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', files:'#b69cff' };   // per-mode accent so the buttons read as distinct sections
+const EDITOR_MODES = ['build','scene','player','enemies','rules','kit','files'];
+const MODE_LABEL = { build:'Build', scene:'World', player:'Player', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', files:'Save' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
+const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', player:'#7c9cff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', files:'#b69cff' };   // per-mode accent so the buttons read as distinct sections
 // Compact, mode-aware top hint (build 651) — replaces one dense always-on paragraph. Tells a newcomer what
 // THIS mode is for + the one or two gestures that matter here. Universal shortcuts trail every line.
 const MODE_HINT = {
   build:   'Place & shape the world. <b>+</b> adds objects; click to select (<b>Shift+click</b>, or drag in <b>Top view</b> to marquee-select props), then <b>Move / Rotate / Scale</b> with the handles or type values.',
   scene:   'Set the stage: terrain, sky, fog, and placeable <b>Zones</b>. Use <b>+ ▸ Zone</b> to drop a volume.',
+  player:  'Who you play: your avatar model, where you spawn (<b>Player start</b> tab), and the character roster.',
   enemies: 'Author who you fight: drop spawn points with <b>+ ▸ Enemy spawn</b>, then tune types, counts & their gunfire look.',
   rules:   'Match flow: waves & win conditions, plus the pickups, loot and items players can grab.',
   kit:     'Your weapons: pick a tab (Gun / Aim / Grenade) to pose the viewmodel; tune bullet impacts, tracer & crosshair below.',
@@ -18258,6 +18259,7 @@ const _svgIcon = (inner)=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentC
 const MODE_ICON = {
   build:   _svgIcon('<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>'),
   scene:   _svgIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>'),
+  player:  _svgIcon('<circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/>'),
   enemies: _svgIcon('<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v1a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20Z"/>'),
   rules:   _svgIcon('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'),
   kit:     _svgIcon('<circle cx="12" cy="12" r="9"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/>'),
@@ -18270,8 +18272,9 @@ const PRIM_ICON = {
   cone:     _svgIcon('<ellipse cx="12" cy="18" rx="7.5" ry="2.6"/><path d="M12 3 4.5 18M12 3l7.5 15"/>'),
 };
 const MODE_SECTIONS = {
-  build:   ['gizmo','object','material','transform','characters'],
+  build:   ['gizmo','object','material','transform'],
   scene:   ['world','generate','zones'],   // the 5 placeable volumes are grouped under one 'zones' section with a type picker (build 649)
+  player:  ['gizmo','object','transform','characters'],   // build 652: the player avatar, the spawn point + the character roster are their own area
   enemies: ['enemies','gizmo','object','transform','boltfx'],   // spawn points live here now; their picker/fields/gizmo sections come along. enemy gunfire FX (boltfx) moved here in build 647 — it's about enemies, not your weapons
   rules:   ['game','pickups','loot','invitems'],
   kit:     ['object','transform','impactfx','tracerfx','crosshair'],   // 'object' carries the weapon model import + per-weapon shoot sound; impact/streak FX; crosshair; music/SFX live in Scene
@@ -18305,8 +18308,9 @@ const SEC_SUB = {
   campaign:   'Chain levels together into a campaign.',
 };
 const MODE_TARGETS = {
-  build:   ['props','lights','station','player','pstart','extract','turrets'],
+  build:   ['props','lights','station','extract','turrets'],
   scene:   [],
+  player:  ['player','pstart'],   // build 652: the player avatar + the start point are their own area
   enemies: ['spawns'],
   rules:   [],
   kit:     ['gun','aim','grenade'],

@@ -30,7 +30,8 @@ assert(/if\(v\) keyNames\[kc\]=v; else delete keyNames\[kc\];/.test(niBlock), 'e
 assert(!/\bhint\(/.test(niBlock) && !/[^gA-Za-z]host\./.test(niBlock), 'no out-of-scope helpers/containers (332/333 regression class)');
 
 // --- spawns now live on the Enemies tab ---
-assert(/build:\s*\['props','lights','station','player','pstart','extract','turrets'\]/.test(src), 'spawns gone from the build tab (turrets added, build 523)');
+assert(/build:\s*\['props','lights','station','extract','turrets'\]/.test(src), 'spawns gone from the build tab; player/pstart moved to the Player mode (build 652)');
+assert(/player:\s*\['player','pstart'\]/.test(src), 'the Player area owns the avatar + start targets (build 652)');
 assert(/enemies:\s*\['spawns'\]/.test(src), 'enemies tab owns the spawns target');
 assert(/enemies:\s*\['enemies','gizmo','object','transform','boltfx'\]/.test(src), 'enemies mode renders the spawn picker, fields, gizmo sections + enemy gunfire FX (build 647)');
 // custom models for keys need no new code: the pickup-model row is generic over kinds

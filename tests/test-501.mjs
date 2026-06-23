@@ -9,7 +9,7 @@ assert(/<div class="hint" id="edHint"><\/div>/.test(src), 'the top hint is now a
 assert(!/Click an object to select it\. <b>Shift\+click<\/b> props to multi-select\. In <b>Top view<\/b>/.test(src), 'the old dense always-on paragraph is gone');
 const mh = src.match(/const MODE_HINT = \{([\s\S]*?)\};/);
 assert(mh, 'MODE_HINT map exists');
-for(const m of ['build','scene','enemies','rules','kit','files']) assert(new RegExp('\\b'+m+':').test(mh[1]), 'MODE_HINT covers the '+m+' mode');
+for(const m of ['build','scene','player','enemies','rules','kit','files']) assert(new RegExp('\\b'+m+':').test(mh[1]), 'MODE_HINT covers the '+m+' mode');
 assert(/const HINT_SHORTCUTS = /.test(src) && /Shift\+D/.test(src) && /Alt\+drag<\/b> a prop to clone/.test(src), 'universal shortcuts trail every hint');
 assert(/hint\.innerHTML = \(MODE_HINT\[editorMode\]\|\|''\) \+ HINT_SHORTCUTS/.test(src), 'applyEditorMode fills the hint for the active mode');
 
