@@ -14521,7 +14521,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 650 · 2026-06-23';
+const BUILD_VERSION = 'build 651 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18241,6 +18241,17 @@ let editorActive = 'gun';
 const EDITOR_MODES = ['build','scene','enemies','rules','kit','files'];
 const MODE_LABEL = { build:'Build', scene:'World', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', files:'Save' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
 const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', files:'#b69cff' };   // per-mode accent so the buttons read as distinct sections
+// Compact, mode-aware top hint (build 651) — replaces one dense always-on paragraph. Tells a newcomer what
+// THIS mode is for + the one or two gestures that matter here. Universal shortcuts trail every line.
+const MODE_HINT = {
+  build:   'Place & shape the world. <b>+</b> adds objects; click to select (<b>Shift+click</b>, or drag in <b>Top view</b> to marquee-select props), then <b>Move / Rotate / Scale</b> with the handles or type values.',
+  scene:   'Set the stage: terrain, sky, fog, and placeable <b>Zones</b>. Use <b>+ ▸ Zone</b> to drop a volume.',
+  enemies: 'Author who you fight: drop spawn points with <b>+ ▸ Enemy spawn</b>, then tune types, counts & their gunfire look.',
+  rules:   'Match flow: waves & win conditions, plus the pickups, loot and items players can grab.',
+  kit:     'Your weapons: pick a tab (Gun / Aim / Grenade) to pose the viewmodel; tune bullet impacts, tracer & crosshair below.',
+  files:   'Save, share or export this level, and chain levels into a campaign.',
+};
+const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close · drag the edge to resize.</span>';
 function _hexRgba(hex,a){ const nn=parseInt(hex.replace('#',''),16); return 'rgba('+((nn>>16)&255)+','+((nn>>8)&255)+','+(nn&255)+','+a+')'; }
 const SHOW_MODEL_LIBRARY = false;   // hardcoded model-library chips hidden for now (to be rebuilt); flip true to restore
 const _svgIcon = (inner)=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>';
@@ -18338,6 +18349,8 @@ function applyEditorMode(){
   editorEl.querySelectorAll('#edTabs .tab').forEach(t=>{ t.style.display = (tgts.indexOf(t.dataset.key)>=0) ? '' : 'none'; });
   const tabRow = editorEl.querySelector('#edTabs'); if(tabRow) tabRow.style.display = tgts.length ? 'flex' : 'none';   // no target picker in Scene/Rules/Save
   const view = editorEl.querySelector('#edView'); if(view) view.style.display = 'flex';   // global view toolbar (sits above the tabs)
+  const hint = editorEl.querySelector('#edHint'); if(hint) hint.innerHTML = (MODE_HINT[editorMode]||'') + HINT_SHORTCUTS;   // build 651: mode-aware one-liner
+
   editorEl.querySelectorAll('#edModes .edMode').forEach(b=>{
     const c = MODE_COLOR[b.dataset.mode] || 'var(--accent)', on = b.dataset.mode===editorMode;
     b.classList.toggle('active', on);
@@ -19369,7 +19382,7 @@ function buildEditorPanel(){
       + '<button id="edDock" title="Move panel to the other side">\u21c4</button>'
       + '<button id="edCollapse" title="Collapse panel">\u2304</button>'
     + '</div>'
-    + '<div class="hint">Click an object to select it. <b>Shift+click</b> props to multi-select. In <b>Top view</b>, <b>drag</b> empty space to marquee-select props (Shift adds); pan with <b>right/middle-drag</b>. Use <b>Move / Rotate / Scale</b> + the handles, or type values. <b>Shift+D</b> duplicates (or <b>Alt+drag</b> a prop to clone it in place), <b>Delete</b> removes. Drag the left edge to resize. Press <b>P</b> to close.</div>'
+    + '<div class="hint" id="edHint"></div>'
     + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
     + '<div class="row2" id="edView" style="margin-bottom:10px"></div>'
     + '<div class="edModes" id="edModes"></div>'
@@ -19513,7 +19526,9 @@ function buildEditorPanel(){
   })();
   // collapsible section headers (state persists in localStorage so it survives reopening the editor)
   let secState = {}; try{ secState = JSON.parse(localStorage.getItem('breach_editor_sections')||'{}') || {}; }catch(e){}
-  const defaultCollapsed = { material:true, loot:true, sounds:true, campaign:true };   // collapse secondary sections; primary ones (incl. Enemies in its own mode) start open
+  // collapse secondary sections by default so each mode opens to its primary panel, not a wall (build 651);
+  // a user's own expand/collapse choices (secState) still override these.
+  const defaultCollapsed = { material:true, loot:true, sounds:true, campaign:true, generate:true, invitems:true, impactfx:true, tracerfx:true, crosshair:true, boltfx:true, characters:true };
   p.querySelectorAll('.edSection').forEach(s=>{
     const k = s.dataset.sec;
     // one-line plain-language subtitle under each header (build 648): explains the section to a first-timer.
