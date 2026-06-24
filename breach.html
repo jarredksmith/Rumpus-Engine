@@ -13042,6 +13042,7 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(msg.from, msg.id)){ const _s=NET.players[msg.from]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, msg.d, _sx, _sz)) registerDuelKill(msg.from, msg.id); } }   // a client shot a bot
   else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } }   // a client changed character
   else if(msg.t==='rocket'){ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), d=new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]); fireRocket(o,d,id,true,msg.r||7,WEAPONS.launcher.dmg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'rocket', o:msg.o, d:msg.d, r:msg.r, by:id}); }catch(e){} } } }   // a client fired a rocket: host simulates it + relays the visual
+  else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), id, true); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'nade', o:msg.o, v:msg.v, by:id}); }catch(e){} } } }   // build 670: a client threw a grenade: host simulates it (authors damage) + relays the visual to the others
   else if(msg.t==='push'){ const o=propByNid(msg.nid); if(o) pushDynamic(o, new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]), msg.s||6, msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null); }   // a client shot a dynamic prop (legacy knockback-only)
   else if(msg.t==='propHit'){ const o=propByNid(msg.nid); if(o){ const dir=new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]); const pt=msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null; const broke=damageProp(o, msg.d||0, pt, dir, msg.s||6, id); if(!broke) pushDynamic(o, dir, msg.s||6, pt); } }   // a client shot a prop: damage (breaks/detonates) + knockback, credited to the client
   else if(msg.t==='grab'){ const _go=dynamicById(msg.nid); if(_go && _go.userData.noGrab) return; if(!_remoteHold[msg.nid]) _remoteHold[msg.nid]={by:id}; }   // a client grabbed a prop
@@ -13095,6 +13096,7 @@ function handleHostMsg(msg){
   else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); }        // the host shot this client
   else if(msg.t==='fire'){ remoteFire(msg.from, msg.o, msg.d); }       // someone fired
   else if(msg.t==='rocket'){ fireRocket(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]), msg.by, false, msg.r||7, 0); }   // show another player's rocket (visual)
+  else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), msg.by, false); }   // build 670: show another player's grenade (visual only)
   else if(msg.t==='boom'){ explodeAt(new THREE.Vector3(msg.p[0],msg.p[1],msg.p[2]), msg.r||7, 0, null); }   // show a blast (host applied the damage)
   else if(msg.t==='char'){ applyRemoteChar(msg.from, msg.cfg); }   // another player's character
   else if(msg.t==='score'){ NET.duelScore=msg.s; duelHUD(); }
@@ -13464,7 +13466,21 @@ function throwGrenade(){
   const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
   const vel = dir.multiplyScalar(GRENADE.throwForce); vel.y += 5; // arc
   scene.add(mesh);
-  grenades.push({ mesh, vel, fuse: GRENADE.fuse });
+  // build 670: grenades are networked like rockets. The thrower's machine + the host author damage (auth);
+  // relayed copies on other machines are visual-only. Without this, only the thrower ever saw the grenade/blast.
+  const by = (typeof NET!=='undefined' && NET.mode) ? NET.myId : 0;
+  const auth = !(typeof NET!=='undefined' && NET.mode==='client');   // host + solo apply damage; clients are visual
+  grenades.push({ mesh, vel: vel.clone(), fuse: GRENADE.fuse, by, auth });
+  if(typeof NET!=='undefined' && NET.mode){
+    const pk = { t:'nade', o:[origin.x,origin.y,origin.z], v:[vel.x,vel.y,vel.z], by:(NET.mode==='host'?0:NET.myId) };
+    if(NET.mode==='client'){ if(NET.conn){ try{ NET.conn.send(pk); }catch(e){} } }
+    else { for(const id in NET.conns){ try{ NET.conns[id].send(pk); }catch(e){} } }
+  }
+}
+// Spawn a grenade from network data (relayed throw). auth=true only on the host for a client's grenade.
+function spawnNetGrenade(o, v, by, auth){
+  const mesh = makeGrenadeMesh(); mesh.position.copy(o); scene.add(mesh);
+  grenades.push({ mesh, vel: v.clone(), fuse: GRENADE.fuse, by:(by!=null?by:0), auth:!!auth });
 }
 // ---------- Sprite-sheet (flipbook) VFX ----------
 // Realistic explosions/smoke/fire from pre-rendered flipbook PNGs you host next to breach.html in a
@@ -13665,6 +13681,7 @@ function explodeGrenade(g){
   }
   explosions.push({ mesh:blast, light:bl, life:0.35, maxR:R });
   for(let i=0;i<(usedSheet?6:14);i++) { spark(pos, 0xffaa44); }
+  if(typeof NET!=='undefined' && NET.mode==='client') return;   // build 670: clients render the blast only; the host authors the damage (its own sim of this grenade does that)
   // AoE damage: full at the center, linear falloff to 0 at the radius
   for(const en of enemies.slice()){
     const d = en.mesh.position.distanceTo(g.mesh.position);
@@ -13707,6 +13724,7 @@ function explodeAt(pos, R, dmg, byId){
   else { blast=new THREE.Mesh(new THREE.SphereGeometry(1,16,16), new THREE.MeshBasicMaterial({color:0xffaa44, transparent:true, opacity:0.8})); blast.position.copy(pos); scene.add(blast); }
   explosions.push({ mesh:blast, light:bl, life:0.35, maxR:R });
   for(let i=0;i<(usedSheet?6:14);i++) spark(pos, 0xffaa44);
+  if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'boom', p:[pos.x,pos.y,pos.z], r:R}); }catch(e){} } }   // build 670: tell every client to render this blast (rockets, exploding props, hazards — all of explodeAt)
   if(NET.mode==='client') return;   // host/solo author the damage
   if(!pvpMode()){
     for(const en of enemies.slice()){ const d=en.mesh.position.distanceTo(pos); if(d<R){ const f=1-d/R; alertEnemy(en, pos.x, pos.z); _blastLaunch(en, pos.x,pos.y,pos.z, R, f); enemyHurt(en, dmg*f, pos.x, pos.z); } }
@@ -13804,7 +13822,7 @@ function updateRockets(dt){
       }
     }
     if(impact){
-      if(rk.auth){ explodeAt(p.clone(), rk.R, rk.dmg, rk.by); if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'boom', p:[p.x,p.y,p.z], r:rk.R}); }catch(e){} } } }
+      if(rk.auth){ explodeAt(p.clone(), rk.R, rk.dmg, rk.by); }   // build 670: explodeAt itself broadcasts the boom to clients now (covers prop blasts too, not just rockets)
       scene.remove(rk.mesh); rockets.splice(i,1);
     }
   }
@@ -14679,7 +14697,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 669 · 2026-06-23';
+const BUILD_VERSION = 'build 670 · 2026-06-23';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

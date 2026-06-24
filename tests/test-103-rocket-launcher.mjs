@@ -16,7 +16,8 @@ assert(/fireRocket\(o,d,NET\.myId,true,R,dmg\)/.test(fs2), 'host/solo fires an a
 
 const ur = extractFunction('updateRockets');
 assert(/if\(rk\.auth\)\{ explodeAt\(p\.clone\(\), rk\.R, rk\.dmg, rk\.by\)/.test(ur), 'authoritative rocket detonates via explodeAt');
-assert(/NET\.conns\[id\]\.send\(\{t:'boom', p:\[p\.x,p\.y,p\.z\], r:rk\.R\}\)/.test(ur), 'host broadcasts the blast');
+// build 670: the boom broadcast moved INTO explodeAt (so prop blasts + hazards reach clients too, not just rockets)
+assert(/NET\.conns\[id\]\.send\(\{t:'boom', p:\[pos\.x,pos\.y,pos\.z\], r:R\}\)/.test(extractFunction('explodeAt')), 'host broadcasts every blast from explodeAt');
 assert(/for\(const en of enemies\).*distanceTo\(p\)<1\.0/.test(ur), 'co-op: rocket impacts on enemies');
 assert(/!sameTeam\(rk\.by,NET\.myId\)/.test(ur) && /\+id!==rk\.by/.test(ur), 'rocket passes through the shooter + teammates');
 
