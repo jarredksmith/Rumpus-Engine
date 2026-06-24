@@ -3,8 +3,9 @@ const src = gameSource();
 // build 679: a grabbable prop can carry a custom "grab label" that replaces the default "[G / MMB] Grab" prompt,
 // so the author can tell the player what the prop is and how to use it. Saved with the prop; safe via textContent.
 
-// --- the live prompt uses the aimed prop's label, falling back to the default ---
+// --- the live prompt uses the prop's label, falling back to the default, both aiming AND carrying ---
 const ug = extractFunction('updateGrabHint');
+assert(/if\(heldProp\) txt = \(heldProp\.userData && heldProp\.userData\.grabLabel\) \|\| '\[G \/ MMB\] Drop (?:·|\\u00b7) Click Throw (?:·|\\u00b7) Scroll Distance';/.test(ug), 'while carrying, a custom label replaces the drop/throw/scroll controls (build 681)');
 assert(/else if\(_grabAvail\) txt = _grabLabel \|\| '\[G \/ MMB\] Grab';/.test(ug), 'the grab prompt prefers a custom label');
 assert(/el\.textContent=txt/.test(ug), 'the label is rendered as text (no markup injection)');
 const tg = extractFunction('tickGrabHint');
