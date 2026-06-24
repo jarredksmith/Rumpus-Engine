@@ -14750,7 +14750,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 673 · 2026-06-24';
+const BUILD_VERSION = 'build 674 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15450,6 +15450,18 @@ const DEFAULT_RADIAL = [
   { src:'sphere',   label:'Ball',      icon:'\u26aa',       exp:false, col:null,    tex:'', scale:0.9 },
   { src:'cone',     label:'Cone',      icon:'\ud83d\udd3a', exp:false, col:null,    tex:'', scale:0.9 },
   { src:'cylinder', label:'Explosive', icon:'\ud83d\udca5', exp:true,  col:0xc23b22, tex:'', scale:0.9 },
+];
+// build 674: a prebuilt icon palette for the radial-menu editor (click to pick; raw-emoji-safe escapes).
+const RADIAL_ICONS = [
+  '\ud83d\udce6','\ud83d\udee2\ufe0f','\ud83e\uddf0','\ud83e\udea3','\ud83d\uded2','\ud83c\udf81','\ud83d\uddc3\ufe0f','\ud83e\uddf1','\ud83e\udea4','\ud83d\udedf',
+  '\u26bd','\ud83c\udfc0','\ud83c\udfb1','\ud83e\udea9','\u26aa','\ud83d\udd35','\ud83d\udd34','\ud83d\udfe2','\ud83d\udfe1','\ud83d\udfe0',
+  '\ud83d\udfe3','\ud83d\udfe4','\u25c6','\u25b2','\u25a0','\u25cf','\u2605','\u2726','\u2b22','\u2b1f',
+  '\ud83e\udde8','\ud83d\udca3','\ud83d\udca5','\ud83d\udd25','\u26a1','\u2622\ufe0f','\u2623\ufe0f','\u26a0\ufe0f','\ud83d\udea7','\ud83d\uded1',
+  '\ud83d\udd27','\ud83d\udd28','\ud83e\ude9a','\ud83e\ude9b','\u2699\ufe0f','\ud83d\udd29','\ud83e\uddf2','\u26cf\ufe0f','\ud83e\ude9d','\ud83d\udd17',
+  '\ud83c\udf32','\ud83c\udf33','\ud83e\udea8','\ud83c\udf35','\ud83c\udf44','\ud83e\udeb5','\ud83c\udf31','\ud83c\udf3f','\ud83e\ude91','\ud83d\udeaa',
+  '\ud83e\ude9f','\ud83c\udfe0','\ud83c\udfdb\ufe0f','\u26e9\ufe0f','\ud83d\uddff','\ud83d\udecb\ufe0f','\ud83d\udca1','\ud83d\udd26','\ud83d\udd6f\ufe0f','\ud83c\udfee',
+  '\u2728','\ud83d\udc8e','\ud83d\udc51','\ud83d\udd14','\ud83c\udfb2','\ud83c\udccf','\ud83d\udddd\ufe0f','\ud83d\udee1\ufe0f','\ud83c\udf88','\ud83e\ude81',
+  '\ud83e\uddca','\u2b50','\ud83d\ude97','\ud83d\udede'
 ];
 function _sanitizeRadial(arr){
   if(!Array.isArray(arr) || !arr.length) return DEFAULT_RADIAL.map(s=>Object.assign({}, s));
@@ -19286,7 +19298,7 @@ function renderBuildMenuPanel(){
   const touch=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); _levelDirty=true; };
   const lbl=(t)=>{ const s=document.createElement('span'); s.textContent=t; s.style.cssText='flex:1 1 auto;font-size:11px;color:#cfeee2;'; return s; };
   const intro=document.createElement('div'); intro.className='hint'; intro.style.cssText='margin:0 0 8px;font-size:10px;opacity:.8;';
-  intro.innerHTML='The radial <b>Deploy</b> menu players hold in-game. Each slot is a shape or a custom model URL with its own colour/texture/scale. Saved with the level &amp; shared in multiplayer.';
+  intro.innerHTML='The radial <b>Deploy</b> menu players hold in-game. Each slot is a shape or a custom model — <b>search Poly Pizza / Sketchfab</b> right here, <b>pick an icon</b> from the palette, and set its colour/texture/scale. Saved with the level &amp; shared in multiplayer.';
   wrap.appendChild(intro);
   radialCfg.forEach((s,i)=>{
     const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:7px 8px;margin-bottom:7px;';
@@ -19306,11 +19318,25 @@ function renderBuildMenuPanel(){
     { const o=document.createElement('option'); o.value='__model'; o.textContent='Custom model…'; if(!isPrim) o.selected=true; sel.appendChild(o); }
     sel.onchange=()=>{ touch(); if(sel.value==='__model'){ s.src = isModelSrc(s.src)?s.src:''; } else { s.src=sel.value; } renderBuildMenuPanel(); };
     row('Type', sel);
-    if(!isPrim || sel.value==='__model'){ const u=document.createElement('input'); u.type='text'; u.placeholder='https://…/model.glb'; u.value=isModelSrc(s.src)?s.src:''; u.style.cssText='flex:1 1 auto;min-width:0;background:#05080b;border:1px solid #2a3a42;color:#d6f5e8;border-radius:4px;padding:2px 5px;font-size:11px;'; u.onchange=()=>{ touch(); s.src=u.value.trim()||'box'; }; const r=document.createElement('div'); r.style.cssText='display:flex;margin:3px 0;'; r.appendChild(u); card.appendChild(r); }
-    // label + icon
-    { const li=document.createElement('input'); li.type='text'; li.value=s.label; li.maxLength=18; li.style.cssText='flex:0 0 auto;width:96px;background:#05080b;border:1px solid #2a3a42;color:#d6f5e8;border-radius:4px;padding:2px 5px;font-size:11px;'; li.onchange=()=>{ touch(); s.label=li.value.slice(0,18)||'Prop'; };
-      const ic=document.createElement('input'); ic.type='text'; ic.value=s.icon; ic.maxLength=4; ic.title='Emoji/glyph shown in the wheel'; ic.style.cssText='flex:0 0 auto;width:40px;text-align:center;background:#05080b;border:1px solid #2a3a42;color:#d6f5e8;border-radius:4px;padding:2px 4px;font-size:13px;'; ic.onchange=()=>{ touch(); s.icon=ic.value.slice(0,4)||'◆'; };
-      const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;margin:3px 0;'; r.appendChild(lbl('Label / icon')); r.appendChild(li); r.appendChild(ic); card.appendChild(r); }
+    let labelInput=null;   // referenced by the model-search pick to live-update the label field
+    // custom-model controls: a URL field + an in-editor Poly Pizza / Sketchfab search for this slot
+    if(!isPrim || sel.value==='__model'){ const u=document.createElement('input'); u.type='text'; u.placeholder='https://…/model.glb'; u.value=isModelSrc(s.src)?s.src:''; u.style.cssText='flex:1 1 auto;min-width:0;background:#05080b;border:1px solid #2a3a42;color:#d6f5e8;border-radius:4px;padding:2px 5px;font-size:11px;'; u.onchange=()=>{ touch(); s.src=u.value.trim()||'box'; }; const r=document.createElement('div'); r.style.cssText='display:flex;margin:3px 0;'; r.appendChild(u); card.appendChild(r);
+      const sBtn=document.createElement('button'); sBtn.textContent='Search Poly Pizza / Sketchfab'; sBtn.style.cssText='font-size:11px;padding:2px 8px;margin:0 0 4px;width:100%;';
+      const sBox=document.createElement('div'); sBox.style.cssText='display:none;border:1px solid #24323a;border-radius:6px;padding:6px;margin:0 0 5px;background:#080d10;'; let mounted=false;
+      sBtn.onclick=()=>{ const open=sBox.style.display!=='none'; if(open){ sBox.style.display='none'; sBtn.style.background=''; return; } sBox.style.display='block'; sBtn.style.background='rgba(56,245,181,0.22)';
+        if(!mounted){ mounted=true; renderModelSearch(sBox, (m,st)=>{ if(!m||!m.glb) return; touch(); s.src=m.glb; u.value=m.glb; if((!s.label||s.label==='Prop') && m.title){ s.label=m.title.slice(0,18); if(labelInput) labelInput.value=s.label; } if(st) st.textContent='Slot '+(i+1)+' → '+(m.title||'model'); }, { placeholder:'search models for this slot…' }); } };
+      card.appendChild(sBtn); card.appendChild(sBox); }
+    // label + icon — type a glyph or pick one from the prebuilt palette
+    { const li=document.createElement('input'); li.type='text'; li.value=s.label; li.maxLength=18; li.style.cssText='flex:0 0 auto;width:96px;background:#05080b;border:1px solid #2a3a42;color:#d6f5e8;border-radius:4px;padding:2px 5px;font-size:11px;'; li.onchange=()=>{ touch(); s.label=li.value.slice(0,18)||'Prop'; }; labelInput=li;
+      const ic=document.createElement('input'); ic.type='text'; ic.value=s.icon; ic.maxLength=4; ic.title='Icon shown in the wheel — type one or pick below'; ic.style.cssText='flex:0 0 auto;width:40px;text-align:center;background:#05080b;border:1px solid #2a3a42;color:#d6f5e8;border-radius:4px;padding:2px 4px;font-size:15px;';
+      const markIcons=()=>{ for(const b of (grid._btns||[])){ const on=(b.dataset.g===s.icon); b.style.background=on?'rgba(56,245,181,0.30)':'#0c1418'; b.style.borderColor=on?'var(--accent)':'#24323a'; } };
+      ic.onchange=()=>{ touch(); s.icon=ic.value.slice(0,4)||'◆'; markIcons(); };
+      const pickBtn=document.createElement('button'); pickBtn.textContent='Icons'; pickBtn.title='Pick from the icon palette'; pickBtn.style.cssText='font-size:11px;padding:1px 8px;flex:0 0 auto;';
+      const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;margin:3px 0;'; r.appendChild(lbl('Label / icon')); r.appendChild(li); r.appendChild(ic); r.appendChild(pickBtn); card.appendChild(r);
+      const grid=document.createElement('div'); grid.style.cssText='display:none;grid-template-columns:repeat(10,1fr);gap:3px;margin:2px 0 5px;max-height:132px;overflow:auto;border:1px solid #24323a;border-radius:6px;padding:5px;background:#080d10;'; grid._btns=[];
+      for(const g of RADIAL_ICONS){ const b=document.createElement('button'); b.textContent=g; b.dataset.g=g; b.style.cssText='font-size:17px;line-height:1;padding:3px 0;background:#0c1418;border:1px solid #24323a;border-radius:5px;cursor:pointer;'; b.onclick=()=>{ touch(); s.icon=g; ic.value=g; markIcons(); }; grid._btns.push(b); grid.appendChild(b); }
+      pickBtn.onclick=()=>{ const open=grid.style.display!=='none'; grid.style.display=open?'none':'grid'; pickBtn.style.background=open?'':'rgba(56,245,181,0.22)'; if(!open) markIcons(); };
+      card.appendChild(grid); markIcons(); }
     // colour (tint) + texture
     { const wrap2=document.createElement('div'); wrap2.style.cssText='display:flex;align-items:center;gap:6px;flex:0 0 auto;';
       const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=s.col!=null; cb.title='Tint this prop'; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
