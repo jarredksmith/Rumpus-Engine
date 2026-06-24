@@ -2,7 +2,7 @@
 import { extractConst, evalIn, done, assert, eq } from './harness.mjs';
 const W = evalIn(extractConst('WEAPONS'));
 const need = ['name','mag','magSize','reserve','reserveMax','fireRate','dmg','pellets','spread','auto','reloadMs','color','refillAmt','refillCost','model','view'];
-eq(Object.keys(W).length, 6, 'six weapons (5 guns + crowbar)');
+eq(Object.keys(W).length, 7, 'seven weapons (5 guns + crowbar + fists)');
 for (const k of Object.keys(W)) {
   const w = W[k];
   for (const f of need) assert(f in w, `${k} has field ${f}`);

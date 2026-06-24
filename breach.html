@@ -8285,6 +8285,10 @@ let gameCfg = {
   extractRadius: (savedLevel && savedLevel.game && savedLevel.game.extractRadius!=null) ? savedLevel.game.extractRadius : 3.5,
   bossWave: (savedLevel && savedLevel.game && savedLevel.game.bossWave!=null) ? savedLevel.game.bossWave : 5,   // random mode: spawn a BOSS every Nth wave (0 = never)
   noRespawn: !!(savedLevel && savedLevel.game && savedLevel.game.noRespawn),   // pre-built: spawn authored markers once, don't respawn cleared waves
+  // build 672: "hands" / unarmed support — turns BREACH into a fist-fight / adventure / puzzle base
+  unarmed: !!(savedLevel && savedLevel.game && savedLevel.game.unarmed),        // start with fists only (no guns)
+  allowPickup: (savedLevel && savedLevel.game && savedLevel.game.allowPickup!=null) ? !!savedLevel.game.allowPickup : true,   // can still pick up weapons found in the level
+  flashlight: !!(savedLevel && savedLevel.game && savedLevel.game.flashlight),  // a toggleable held flashlight (press L)
   // Confine multiplayer/bot random spawns to a region (e.g. inside an arena prop) instead of the whole map.
   // shape 'circle' (x,z,r) or 'poly' (a clicked outline of {x,z} points) — poly handles odd-shaped arenas.
   spawnRegion: {
@@ -8783,6 +8787,7 @@ addEventListener('keydown', e=>{
   if(e.code==='KeyV') meleeAttack();
   if(e.code==='KeyE') interact();
   if(e.code==='KeyG') grabAction();   // grab / drop a prop (grenade moved to F)
+  if(e.code==='KeyL' && !e.repeat) toggleFlashlight();   // build 672: held flashlight (when the level enables it)
   if(e.code==='KeyF') throwGrenade();
   // weapon switching by owned slot
   if(e.code==='Digit1' && owned[0]) switchWeapon(owned[0]);
@@ -8965,6 +8970,41 @@ vmMuzzle.position.set(GUN_OFFSET.x, GUN_OFFSET.y + 0.04, GUN_OFFSET.z - 1.02);
 gun.add(vmMuzzle);
 const MUZZLE_DEFAULT = { x:GUN_OFFSET.x, y:GUN_OFFSET.y + 0.04, z:GUN_OFFSET.z - 1.02 };   // where tracers + the flash originate
 function applyWeaponMuzzle(key){ const v=wepView(key); vmMuzzle.position.set(v.mzx!=null?v.mzx:MUZZLE_DEFAULT.x, v.mzy!=null?v.mzy:MUZZLE_DEFAULT.y, v.mzz!=null?v.mzz:MUZZLE_DEFAULT.z); }
+// ===== build 672: hands / unarmed =====
+// First-person fists viewmodel (shown when the FISTS weapon is equipped). Two simple procedural fists in the
+// viewmodel scene; punching lunges the active fist forward, alternating sides.
+let _fistsVM=null, _fistPunch=0, _fistSide=1;
+function _buildFists(){
+  if(_fistsVM) return _fistsVM;
+  const g=new THREE.Group();
+  const mat=new THREE.MeshStandardMaterial({ color:0xd8a982, roughness:0.72, metalness:0.04 });
+  const mk=(side)=>{ const f=new THREE.Group();
+    const hand=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.14,0.18), mat);
+    const arm=new THREE.Mesh(new THREE.BoxGeometry(0.11,0.11,0.32), mat); arm.position.set(0,-0.01,0.22);
+    f.add(hand, arm); f.position.set(side*0.22, -0.42, -0.6); f.rotation.set(-0.18, side*0.12, 0); return f; };
+  g.add((g.userData.L=mk(-1)), (g.userData.R=mk(1))); g.visible=false; gun.add(g); _fistsVM=g; return g;
+}
+function _setFistsVisible(v){ _buildFists().visible=!!v; }
+function _punchFists(){ _fistPunch=1; _fistSide=-_fistSide; }
+function _animFists(){
+  if(!_fistsVM || !_fistsVM.visible) return;
+  _fistPunch=Math.max(0, _fistPunch-0.085);
+  const f=_fistSide<0?_fistsVM.userData.L:_fistsVM.userData.R, o=_fistSide<0?_fistsVM.userData.R:_fistsVM.userData.L, k=_fistPunch;
+  f.position.z=-0.6 - k*0.5; f.position.y=-0.42 + k*0.05; o.position.z=-0.6; o.position.y=-0.42;
+}
+// Held flashlight: a spotlight parented to the camera (lights where you look). Lazily created; off = intensity 0.
+let flashlightOn=false, _flashlight=null;
+function ensureFlashlight(){
+  if(_flashlight) return;
+  _flashlight=new THREE.SpotLight(0xfff0d4, 0, 46, Math.PI/6.5, 0.45, 1.1);
+  const tgt=new THREE.Object3D(); tgt.position.set(0,0,-1); camera.add(_flashlight); camera.add(tgt); _flashlight.target=tgt;
+  _flashlight.position.set(0.18,-0.12,0.1); _flashlight.visible=false; _flashlight.castShadow=false;
+}
+function toggleFlashlight(){
+  if(!gameCfg.flashlight) return;
+  ensureFlashlight(); flashlightOn=!flashlightOn; _flashlight.visible=flashlightOn; _flashlight.intensity=flashlightOn?6:0;
+  if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
+}
 const _muzNdc = new THREE.Vector2();
 // A neutral fallback environment so metallic gun materials reflect *something* even on levels with no sky.
 let _vmEnvFallback = null, _vmEnvTried = false;
@@ -8982,6 +9022,7 @@ function _ensureVmEnv(){
 function renderViewmodel(){
   if(activeCam() !== camera || !gun.visible) return;   // skip the editor's top-down view / when the weapon is hidden
   if(typeof _scopedNow!=='undefined' && _scopedNow) return;   // looking through the optic: no viewmodel
+  if(typeof _animFists==='function') _animFists();   // build 672: punch lunge
   const _r=perfOn?_pnow():0;
   _ensureVmEnv();
   vmScene.environment = scene.environment || _vmEnvFallback;   // metallic gun materials need an env map to reflect — without it they render BLACK
@@ -9015,6 +9056,9 @@ function applyWepView(model, key){
 
 // Show the given weapon's model (loading it on first use); hide the others and the placeholder.
 function showWeaponModel(key){
+  const isFists = (key==='hands' || (WEAPONS[key] && WEAPONS[key].fists));   // build 672: empty hands -> fists viewmodel, no gun
+  if(typeof _setFistsVisible==='function') _setFistsVisible(isFists);
+  if(isFists){ for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible=false; } if(gunPlaceholder) gunPlaceholder.visible=false; gunModel=null; sight=null; if(typeof rebuildAttMounts==='function') rebuildAttMounts(key); return; }
   for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible = (k===key); }
   if(typeof rebuildAttMounts==='function') rebuildAttMounts(key);   // build 586: show this weapon's mounted attachments
   const existing = gunModelByWep[key];
@@ -9123,6 +9167,7 @@ const WEAPONS = {
   sniper:  { name:'SNIPER',  mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
   launcher:{ name:'ROCKET',  mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
   crowbar: { name:'CROWBAR', mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
+  hands:   { name:'FISTS',   mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
 };
 // build 623: the factory damage of each weapon, captured before any saved override is applied, so the editor can
 // show/reset to default and serialize ONLY a damage that was actually changed (keeps old levels on the defaults).
@@ -12120,7 +12165,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn;
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight;
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -13933,7 +13978,7 @@ const ITEM_POOL = [
   { id:'crowbar', name:'CROWBAR', desc:'Heavy melee — big knockback, no ammo', cost:140, act:()=>giveWeapon('crowbar'), oneTime:true },
   { id:'ammo',    name:'AMMO CRATE',    desc:'Refill current weapon ammo',  cost:50,  act:()=>{ const w=W(); w.reserve=w.reserveMax; updateHUD(); } },
 ];
-function giveWeapon(key){ if(!owned.includes(key)){ owned.push(key); } switchWeapon(key); }
+function giveWeapon(key){ if(gameCfg.unarmed && !gameCfg.allowPickup && key!=='hands' && !(WEAPONS[key]&&WEAPONS[key].fists)) return; if(!owned.includes(key)){ owned.push(key); } switchWeapon(key); }   // build 672: a strict unarmed level refuses guns
 
 const chestGeo = new THREE.BoxGeometry(1.6, 1.1, 1.1);
 const chestMat = new THREE.MeshStandardMaterial({ color:0x3a2a10, emissive:0xffaa00, emissiveIntensity:0.5, metalness:0.5, roughness:0.5 });
@@ -14698,7 +14743,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 671 · 2026-06-24';
+const BUILD_VERSION = 'build 672 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15879,6 +15924,7 @@ function meleeAttack(wep){
   const now = performance.now();
   if(now - _meleeT < (wep ? 0 : MELEE_CD)) return;   // a weapon is gated by its own fireRate; the bare-fist punch uses MELEE_CD
   _meleeT = now; if(typeof playOwnAnim==='function') playOwnAnim((wep && wep.dmg>=50)?'meleeHeavy':'meleeLight', 360);   // heavy swing for the crowbar, light otherwise
+  if(wep && wep.fists && typeof _punchFists==='function') _punchFists();   // build 672: lunge the first-person fist
   const RANGE = (wep && wep.reach) || MELEE_RANGE, DMG = (wep && wep.dmg) || MELEE_DMG;
   if(typeof tone==='function') tone({ freq:320, type:'sine', dur:0.07, vol:0.07, slideTo:150 });   // swing whoosh
   const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
@@ -19075,7 +19121,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
+    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
     extract: extractSpot ? { x: +extractSpot.x.toFixed(3), z: +extractSpot.z.toFixed(3) } : null,
@@ -19535,7 +19581,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn;
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight;
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -21030,6 +21076,13 @@ function renderEditorFields(){
     const ugSp=document.createElement('span'); ugSp.textContent='Between-wave upgrade cards (solo)';
     ugLab.appendChild(ugCb); ugLab.appendChild(ugSp); gHost.appendChild(ugLab);
     hint(gHost, '', '2px 0 0').textContent = 'On: clearing a wave in solo lets you pick 1 of 3 upgrades. Off: waves flow straight through.';
+    // build 672: hands / unarmed — turns BREACH into a fist-fight / adventure / puzzle base
+    hint(gHost, '<b>Hands / unarmed</b>', '12px 0 4px');
+    const _chk=(label, checked, on)=>{ const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;'; cb.onchange=()=>{ pushUndoSnapshot(); on(cb.checked); }; const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); gHost.appendChild(lab); return cb; };
+    _chk('<b>Start unarmed</b> (fists only — punch, carry, no guns)', gameCfg.unarmed, v=>{ gameCfg.unarmed=v; renderEditorFields(); });
+    if(gameCfg.unarmed) _chk('Allow picking up weapons found in the level', gameCfg.allowPickup!==false, v=>{ gameCfg.allowPickup=v; });
+    _chk('<b>Flashlight</b> (players toggle a held light with <b>L</b>)', gameCfg.flashlight, v=>{ gameCfg.flashlight=v; });
+    hint(gHost, '', '2px 0 6px').textContent = 'Unarmed: left-click punches, G grabs/carries/throws objects. Great for fist-fights, adventure & puzzle levels.';
     // hit-number look
     hint(gHost, '<b>Hit numbers</b>', '12px 0 4px');
     const hnLab=document.createElement('label'); hnLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;';
@@ -23018,8 +23071,10 @@ function startGame(){
   // finishes (reveal()), or immediately at the end of startGame when there's no loader/cover at all.
   player.hp=100; player.maxHp=100; run = { ...RUN0 }; if(typeof closeUpgradePicker==='function') closeUpgradePicker(); player.pos.set(playerSpawn.x, terrainHeightAt(playerSpawn.x, playerSpawn.z)+(playerSpawn.y||0)+EYE, playerSpawn.z); player.vel.set(0,0,0);
   player.yaw=playerSpawn.yaw; player.pitch=0; player.onGround=(playerSpawn.y||0)<=0;
-  // reset weapons
-  owned = ['rifle']; curWep='rifle';
+  // reset weapons — build 672: an "unarmed" level starts you on fists, no guns
+  if(gameCfg.unarmed){ owned = ['hands']; curWep='hands'; } else { owned = ['rifle']; curWep='rifle'; }
+  if(typeof showWeaponModel==='function') showWeaponModel(curWep);   // show fists / gun for the chosen loadout
+  flashlightOn=false; if(_flashlight){ _flashlight.visible=false; _flashlight.intensity=0; }   // flashlight off at the start of a run
   WEAPONS.rifle.mag=30; WEAPONS.rifle.reserve=90;
   WEAPONS.smg.mag=40; WEAPONS.smg.reserve=120;
   WEAPONS.shotgun.mag=6; WEAPONS.shotgun.reserve=24;
