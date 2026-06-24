@@ -8749,6 +8749,13 @@ addEventListener('keydown', e=>{
     e.preventDefault();
     return;
   }
+  if(editorOpen && e.code==='Digit4' && !e.repeat){
+    // build 673: 4 toggles proportional (uniform) scaling on/off — mirrors the Gizmo panel checkbox
+    scaleProportional = !scaleProportional;
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    e.preventDefault();
+    return;
+  }
   // build 656: F = toggle free-fly camera, T = toggle top-down view (editor only). Guarded so typing F/T in a
   // text field (search, URL, names) doesn't fly the camera. Mirrors the View toolbar buttons exactly.
   if(editorOpen && !e.repeat && (e.code==='KeyF' || e.code==='KeyT') && !e.ctrlKey && !e.metaKey && !e.altKey){
@@ -14743,7 +14750,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 672 · 2026-06-24';
+const BUILD_VERSION = 'build 673 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21386,7 +21393,7 @@ function renderEditorFields(){
     gz.innerHTML = '';
     const selectable = (editorActive==='station') || (editorActive==='props' && !!editorTargets.props.obj()) || (editorActive==='lights' && !!editorTargets.lights.obj());
     if(selectable){
-      const head = document.createElement('div'); head.className='hint'; head.style.margin='2px 0 3px'; head.innerHTML='<b>Gizmo</b> — drag the handles in the scene · keys <b>1 2 3</b>' + (isGroupSel() ? (' · <b style="color:var(--accent)">'+activeSel().length+' selected (group)</b>') : '');
+      const head = document.createElement('div'); head.className='hint'; head.style.margin='2px 0 3px'; head.innerHTML='<b>Gizmo</b> — drag the handles in the scene · keys <b>1 2 3</b>, <b>4</b> proportional' + (isGroupSel() ? (' · <b style="color:var(--accent)">'+activeSel().length+' selected (group)</b>') : '');
       gz.appendChild(head);
       const row = document.createElement('div'); row.className='row2';
       const modes = [['translate','Move','1'],['rotate','Rotate','2'],['scale','Scale','3']];
@@ -21404,7 +21411,7 @@ function renderEditorFields(){
         lab.style.cssText='display:flex;align-items:center;gap:7px;margin:7px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer;'+(gizmoMode==='scale'?'':'opacity:0.55;');
         const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=scaleProportional; cb.style.accentColor='var(--accent)';
         cb.onchange=()=>{ scaleProportional=cb.checked; };
-        const span=document.createElement('span'); span.innerHTML='Proportional scaling '+(scaleProportional?'(uniform)':'(per-axis)');
+        const span=document.createElement('span'); span.innerHTML='Proportional scaling <b>(4)</b> '+(scaleProportional?'(uniform)':'(per-axis)');
         lab.appendChild(cb); lab.appendChild(span);
         gz.appendChild(lab);
       }
