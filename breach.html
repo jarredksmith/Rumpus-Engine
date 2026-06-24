@@ -14816,7 +14816,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 678 · 2026-06-24';
+const BUILD_VERSION = 'build 679 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15398,6 +15398,7 @@ function applyPropDynState(obj, p){
   if(!p || !p.dyn) return;
   setPropDynamic(obj, true);
   if(p.ng) obj.userData.noGrab=true;
+  if(p.glbl) obj.userData.grabLabel = String(p.glbl).slice(0,80);   // build 679: custom grab prompt label
   if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
   if(p.mass!=null) obj.userData.mass = p.mass;
   if(p.brk===false){ obj.userData.breakable = false; }
@@ -15433,7 +15434,7 @@ function pushDynamic(obj, dir, strength, point){
 // ---------- Build mechanic: gravity-gun style grab / carry / stack / throw of dynamic props ----------
 // Host/solo author the physics (drive the held body's velocity toward a point in front of the camera);
 // a connected client streams its aim to the host, which moves the body (host stays authoritative).
-let heldProp=null, heldDist=4, heldNidLocal=null, _grabHintT=0, _holdSendT=0, _grabAvail=false;
+let heldProp=null, heldDist=4, heldNidLocal=null, _grabHintT=0, _holdSendT=0, _grabAvail=false, _grabLabel='';
 const _remoteHold={};   // host: nid -> { by, target:[x,y,z] } for props clients are carrying
 const HOLD_MIN=2.2, HOLD_MAX=6.5, HOLD_GRAB_RANGE=6.5, HOLD_K=14, HOLD_MAXV=22, HOLD_BREAK=7.5, THROW_SPEED=17;
 const THROW_DMG_MIN_SPEED=6, THROW_DMG_K=2.0, THROW_DMG_MAX=60, THROW_ARM_MS=1500;   // a thrown prop is "armed" for a moment and hurts what it hits, scaled by impact speed * mass
@@ -15491,16 +15492,19 @@ function throwHeld(){
 function updateGrabHint(){
   const el=document.getElementById('grabHint'); if(!el) return;
   let txt='';
+  // build 679: a grabbable prop can carry a custom label that replaces the default "grab" prompt \u2014 the author
+  // uses it to say what the prop is and how to use it. Held controls stay (drop/throw/scroll) once it's in hand.
   if(heldProp) txt='[G / MMB] Drop \u00b7 Click Throw \u00b7 Scroll Distance';
-  else if(_grabAvail) txt='[G / MMB] Grab';
+  else if(_grabAvail) txt = _grabLabel || '[G / MMB] Grab';
   if(txt){ if(el.textContent!==txt) el.textContent=txt; el.style.display='block'; } else el.style.display='none';
 }
 function tickGrabHint(dt){
   if(_deployCD>0) _deployCD-=dt;
   if(heldProp){ _grabHintT=0; updateGrabHint(); return; }
   _grabHintT-=dt; if(_grabHintT>0) return; _grabHintT=0.12;
-  const avail = !!(gameOn && !editorOpen && !shopOpen && !paused && !duelDead && _aimedProp());
-  if(avail!==_grabAvail){ _grabAvail=avail; updateGrabHint(); }
+  const aimed = (gameOn && !editorOpen && !shopOpen && !paused && !duelDead) ? _aimedProp() : null;
+  const avail = !!aimed, lbl = (aimed && aimed.userData.grabLabel) || '';
+  if(avail!==_grabAvail || lbl!==_grabLabel){ _grabAvail=avail; _grabLabel=lbl; updateGrabHint(); }
 }
 // ---------- Radial deploy menu: hold Tab to open a wheel of buildable props; aim a wedge + click (or
 // release Tab) to spawn it in front of you. Spawned props are dynamic, so they ride the prop reconciler
@@ -19214,6 +19218,7 @@ function propEntry(o){
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
+    if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
     if(o.userData.onFire){ e.fire=1; if(o.userData.fireDps!=null) e.fdps=o.userData.fireDps; if(o.userData.fireFuse!=null) e.ffuse=o.userData.fireFuse; }
     if(o.userData.breakable===false) e.brk=false;   // breakable defaults true; only store when off
     else { if(o.userData.maxHp!=null) e.hp=o.userData.maxHp; if(o.userData.breakStyle==='puff') e.bst='puff'; if(o.userData.objective) e.obj=1;
@@ -21837,6 +21842,13 @@ function renderEditorFields(){
           grbcb.onchange=()=>{ pushUndoSnapshot(); sel.userData.noGrab = !grbcb.checked; };
           const grbsp=document.createElement('span'); grbsp.innerHTML='<b>Grabbable</b> \u2014 can be picked up &amp; thrown';
           grb.appendChild(grbcb); grb.appendChild(grbsp); pdBody.appendChild(grb);
+          // build 679: a custom prompt label for grabbable props \u2014 replaces the default "[G / MMB] Grab" tooltip
+          if(sel.userData.noGrab!==true){
+            const glWrap=document.createElement('div'); glWrap.style.cssText='margin:6px 0 2px;';
+            const glLab=document.createElement('div'); glLab.className='hint'; glLab.style.margin='0 0 2px'; glLab.innerHTML='<b>Grab label</b> \u2014 shown instead of the default prompt (blank = default)';
+            const glIn=document.createElement('input'); glIn.type='text'; glIn.maxLength=80; glIn.placeholder='e.g. Ancient Tome \u2014 [G] to read'; glIn.value=sel.userData.grabLabel||''; glIn.style.cssText='width:100%;background:#05080b;border:1px solid #2a3a42;color:#d6f5e8;border-radius:4px;padding:3px 6px;font-size:11px;'; glIn.onchange=()=>{ pushUndoSnapshot(); const v=glIn.value.trim().slice(0,80); sel.userData.grabLabel = v || undefined; _levelDirty=true; };
+            glWrap.appendChild(glLab); glWrap.appendChild(glIn); pdBody.appendChild(glWrap);
+          }
 
           // On fire: the prop burns (flames + contact damage); an explosive one can burn, then detonate after a fuse
           const fr=document.createElement('label'); fr.style.cssText='display:flex;align-items:center;gap:7px;color:#ffb38a;font-size:12px;margin-top:8px;cursor:pointer;';
