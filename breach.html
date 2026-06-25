@@ -14593,7 +14593,11 @@ function spawnItemProp(id, it){
   if(heldProp && typeof releaseHeld==='function') releaseHeld();   // free a hand first
   const fwd=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
   const px=player.pos.x+fwd.x*2.0, pz=player.pos.z+fwd.z*2.0, py=player.pos.y-0.3;
-  const sc=(it.scale>0)?it.scale:1;
+  // build 690: imported models arrive in arbitrary (often world-sized) units, so normalize them to a sane size like
+  // the editor's "fit to size on add" \u2014 then the item's scale multiplies that. Built-in shapes are already unit-sized.
+  const isModel = (typeof isModelSrc==='function') && isModelSrc(it.model||'');
+  const itScale = (it.scale>0) ? it.scale : 1;
+  const sc = isModel ? 1 : itScale;
   spawnProp(it.model||'box', [px, py, pz, 0,0,0, sc], (obj)=>{
     obj.userData.runtime = true;          // session-only: never saved, cleared on redeploy
     obj.userData.fromItem = id;
@@ -14601,6 +14605,7 @@ function spawnItemProp(id, it){
     if(Array.isArray(it.signals) && it.signals.length) obj.userData.signals = it.signals.map(s=>Object.assign({}, s));
     if(it.sigNeed>1) obj.userData.sigNeed = +it.sigNeed;
     if(it.grabLabel) obj.userData.grabLabel = it.grabLabel;
+    if(isModel && typeof _fitPropToSize==='function') _fitPropToSize(obj, PROP_FIT_TARGET * itScale);   // normalize BEFORE the collider is captured
     setPropDynamic(obj, true);
     if(typeof grabSpecificProp==='function') grabSpecificProp(obj);   // straight into your hands
   }, undefined, 'loop', null);
@@ -14879,7 +14884,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 689 · 2026-06-24';
+const BUILD_VERSION = 'build 690 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
