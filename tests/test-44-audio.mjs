@@ -15,7 +15,7 @@ assert(/function initAudio\(\)\{[^}]*buildAudioBuses\(\);/.test(src), 'initAudio
 assert(/const reveal=\(\)=>\{[\s\S]*?hideLevelLoader\(\); try\{ startMusic\(\); \}catch\(e\)\{\} \};/.test(src), 'world music starts when the loader reveals (loading complete)');
 assert(/if\(!_levelLoaderActive\)\{ try\{ startMusic\(\); \}catch\(e\)\{\} \}/.test(src), 'with no loader/cover up, music starts at the end of startGame');
 assert(!/initAudio\(\);\n  startMusic\(\);/.test(src), 'music no longer starts during loading (was right after initAudio in startGame)');
-assert(/function gameWon\(\)\{\n  if\(!gameOn\) return;[\s\S]*?stopMusic\(\);/.test(src) && /function endGame\(\)\{\n  releaseHeld\(\); closeRadial\(false\);\n  stopMusic\(\);/.test(src), 'music stops on win/death');
+assert(/function gameWon\(\)\{\n  if\(!gameOn\) return;[\s\S]*?stopMusic\(\);/.test(src) && /function endGame\(\)\{\n  releaseHeld\(\); closeRadial\(false\);\n[\s\S]*?stopMusic\(\);/.test(src), 'music stops on win/death');
 assert(/if\(_musicOn\) setMusicIntensity\(musicTargetFor\(\{ enemies: enemies\.length, toSpawn, wave \}\)\)/.test(src), 'loop feeds live threat into music intensity');
 
 // controls

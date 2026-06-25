@@ -8073,7 +8073,7 @@ function removeProp(idx){
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -12290,7 +12290,7 @@ function loadLevelFromNet(level){
   // rebuild from the host's data
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -14411,6 +14411,15 @@ function checkProximity(){
       if(d<bd){ bd=d; best=o; } }
     if(best) nearTarget = { type:'xanim', obj:best };
   }
+  if(!nearTarget){   // build 695: a prop with dialogue lines is a talkable NPC
+    let best=null, bd=2.8;
+    for(const o of propModels){ const dl=o&&o.userData&&o.userData.dialogue; if(!dl||!dl.length) continue;
+      const b=o.userData.box; let d;
+      if(b){ const cx=Math.max(b.min.x,Math.min(player.pos.x,b.max.x)), cy=Math.max(b.min.y,Math.min(player.pos.y,b.max.y)), cz=Math.max(b.min.z,Math.min(player.pos.z,b.max.z)); d=Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz); }
+      else d=Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
+      if(d<bd){ bd=d; best=o; } }
+    if(best) nearTarget = { type:'npc', obj:best };
+  }
   if(!nearTarget && !mountedTurret){
     let best=null, bd=2.8;
     for(const g of turretModels){ const d=Math.hypot(player.pos.x-g.position.x, player.pos.z-g.position.z); if(d<bd){ bd=d; best=g; } }
@@ -14430,6 +14439,8 @@ function checkProximity(){
       const lo=nearTarget.obj, lk=lo&&lo.userData.lockId;
       if(lk && !lo.userData.unlocked) prompt.innerHTML = playerKeys[lk] ? `<b>E</b> Unlock \u2014 ${keyDisplayName(lk)}` : `LOCKED \u2014 needs ${keyDisplayName(lk)}`;
       else prompt.innerHTML = `<b>E</b> Activate`;
+    } else if(nearTarget.type==='npc'){
+      const nm=nearTarget.obj.userData.npcName; prompt.innerHTML = nm ? `<b>E</b> Talk to ${_creditEsc(nm)}` : `<b>E</b> Talk`;
     } else if(nearTarget.type==='turret'){
       prompt.innerHTML = `<b>E</b> Man the turret`;
     } else if(nearTarget.type==='pickup'){
@@ -14443,10 +14454,45 @@ function checkProximity(){
   }
 }
 
+// build 695: simple NPC dialogue. A prop with dialogue lines shows a talk box on E; click / E steps through it.
+// The first line also fires the prop's 'interacted' signals, so talking can give a quest (set objective), open a
+// door, drop a checkpoint, etc. Text is escaped (safe for shared levels). Doesn't pause the world.
+let _dlg = { open:false, lines:[], i:0, name:'' };
+function _ensureDialogueEl(){
+  let el=document.getElementById('dialogue');
+  if(!el){ el=document.createElement('div'); el.id='dialogue';
+    el.style.cssText='position:fixed;left:50%;bottom:9%;transform:translateX(-50%);z-index:60;width:min(680px,90vw);background:rgba(6,12,15,.92);border:1px solid rgba(120,200,180,.4);border-radius:10px;padding:12px 16px 13px;box-shadow:0 8px 30px rgba(0,0,0,.55);cursor:pointer;display:none;';
+    el.onclick=()=>advanceDialogue();
+    document.body.appendChild(el); }
+  return el;
+}
+function openDialogue(obj){
+  const dl=obj && obj.userData && obj.userData.dialogue; if(!dl||!dl.length) return;
+  _dlg.open=true; _dlg.lines=dl.slice(0,12); _dlg.i=0; _dlg.name=obj.userData.npcName||'';
+  _renderDialogue();
+  try{ fireSignals(obj, 'interacted'); }catch(e){}   // talking to them triggers their signals (quest/objective/etc.)
+}
+function _renderDialogue(){
+  const el=_ensureDialogueEl();
+  const line=_creditEsc(_dlg.lines[_dlg.i]||'');
+  const nm=_dlg.name ? '<div style="color:var(--accent);font-family:var(--display-font,ui-monospace),monospace;font-size:13px;letter-spacing:1px;margin-bottom:4px;">'+_creditEsc(_dlg.name)+'</div>' : '';
+  const more=(_dlg.i < _dlg.lines.length-1) ? 'click / E ▸' : 'click / E to close';
+  el.innerHTML=nm+'<div style="color:#eafff7;font-size:15px;line-height:1.5;">'+line+'</div><div style="color:#6f9385;font-size:10px;text-align:right;margin-top:6px;">'+more+'</div>';
+  el.style.display='block';
+}
+function advanceDialogue(){
+  if(!_dlg.open) return;
+  _dlg.i++;
+  if(_dlg.i >= _dlg.lines.length) closeDialogue();
+  else _renderDialogue();
+}
+function closeDialogue(){ _dlg.open=false; const el=document.getElementById('dialogue'); if(el) el.style.display='none'; }
 function interact(){
+  if(_dlg.open){ advanceDialogue(); return; }   // mid-conversation -> next line
   if(mountedTurret){ dismountTurret(); return; }
   if(heldProp){ releaseHeld(); return; }   // carrying a prop -> drop it
   if(shopOpen){ closeShop(); return; }
+  if(nearTarget && nearTarget.type==='npc'){ openDialogue(nearTarget.obj); return; }   // talk to an NPC
   if(!nearTarget){ tryGrabProp(); return; }   // nothing to use -> try to pick up a prop
   if(nearTarget.type==='pickup'){
     const p=nearTarget.pu;
@@ -14910,7 +14956,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 694 · 2026-06-24';
+const BUILD_VERSION = 'build 695 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19364,6 +19410,8 @@ function propEntry(o){
   const m=propMaterialDesc(o); if(m) e.mat=m;
   if(o.userData.lockId){ e.lk=o.userData.lockId; if(o.userData.lockConsume) e.lkc=1; }
   if(o.userData.tag) e.tg=o.userData.tag;
+  if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,12).map(s=>String(s).slice(0,200));   // build 695: NPC dialogue
+  if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
   if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(s=>{ const x={ w:s.when, d:s.do, t:s.target }; if(s.clip) x.c=s.clip; if(s.cs) x.n=s.cs; if(s.from) x.f=s.from; if(s.contain) x.ci=1; if(s.text) x.tx=s.text; return x; });
   if(o.userData.sigNeed>1) e.snd=o.userData.sigNeed;
   if(o.userData.attribution) e.att=o.userData.attribution;
@@ -19884,7 +19932,7 @@ function restoreLevel(level){
   propModels.length = 0;
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -21954,6 +22002,19 @@ function renderEditorFields(){
         const sgBody = edFold(animHost, 'signals', 'Signals', false, 'Tag this prop, or have it trigger others');
         buildSignalsUI(sgBody, sel.userData, renderEditorFields);   // build 688: shared with inventory-item signals
       }
+      // ---- Dialogue (build 695): make this prop a talkable NPC ----
+      if(sel){
+        const dBody = edFold(animHost, 'dialogue', 'Dialogue (NPC)', true, 'Talk to this prop with E — one line per row');
+        const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 4px;font-size:11px;color:#9fe6cf;';
+        const nsp=document.createElement('span'); nsp.textContent='Name'; nsp.style.minWidth='42px';
+        const nin=document.createElement('input'); nin.type='text'; nin.maxLength=40; nin.placeholder='e.g. Old Hermit (optional)'; nin.value=sel.userData.npcName||''; nin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+        nin.onchange=()=>{ pushUndoSnapshot(); const v=nin.value.trim().slice(0,40); if(v) sel.userData.npcName=v; else delete sel.userData.npcName; };
+        nr.appendChild(nsp); nr.appendChild(nin); dBody.appendChild(nr);
+        const ta=document.createElement('textarea'); ta.rows=4; ta.placeholder='One line of dialogue per row…\nPress E to advance through them.'; ta.value=(sel.userData.dialogue||[]).join('\n'); ta.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:5px 7px;font-size:12px;line-height:1.5;resize:vertical;';
+        ta.onchange=()=>{ pushUndoSnapshot(); const lines=ta.value.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,12).map(s=>s.slice(0,200)); if(lines.length) sel.userData.dialogue=lines; else delete sel.userData.dialogue; };
+        dBody.appendChild(ta);
+        const dh=document.createElement('div'); dh.className='hint'; dh.style.margin='3px 0 0'; dh.innerHTML='Gives the prop an <b>E Talk</b> prompt. The first line also fires this prop’s <b>“On E”</b> signals — so a chat can set the objective, drop a checkpoint, open a door, etc.'; dBody.appendChild(dh);
+      }
       // ---- Mechanism: move/rotate this object into a platform, door, elevator, etc. ----
       if(sel){
         if(!sel.userData.xa) sel.userData.xa = { on:false, mode:'loop', trig:'auto', mx:0,my:0,mz:0, rx:0,ry:0,rz:0, pvx:0,pvy:0,pvz:0, dur:2 };
@@ -23473,7 +23534,7 @@ function startGame(){
   // build 555: do NOT start the world music here — startGame runs while the loading screen is still up, so the
   // track used to begin the instant loading started, playing behind the loader. It now starts when the loader
   // finishes (reveal()), or immediately at the end of startGame when there's no loader/cover at all.
-  player.hp=100; player.maxHp=100; run = { ...RUN0 }; _checkpoint=null; if(typeof closeUpgradePicker==='function') closeUpgradePicker(); player.pos.set(playerSpawn.x, terrainHeightAt(playerSpawn.x, playerSpawn.z)+(playerSpawn.y||0)+EYE, playerSpawn.z); player.vel.set(0,0,0);
+  player.hp=100; player.maxHp=100; run = { ...RUN0 }; _checkpoint=null; if(typeof closeDialogue==='function') closeDialogue(); if(typeof closeUpgradePicker==='function') closeUpgradePicker(); player.pos.set(playerSpawn.x, terrainHeightAt(playerSpawn.x, playerSpawn.z)+(playerSpawn.y||0)+EYE, playerSpawn.z); player.vel.set(0,0,0);
   player.yaw=playerSpawn.yaw; player.pitch=0; player.onGround=(playerSpawn.y||0)<=0;
   // reset weapons — build 672: an "unarmed" level starts you on fists, no guns
   if(gameCfg.unarmed){ owned = ['hands']; curWep='hands'; } else { owned = ['rifle']; curWep='rifle'; }
@@ -23604,6 +23665,7 @@ function bindEndScreen(){
 }
 function gameWon(){
   if(!gameOn) return;
+  if(typeof closeDialogue==='function') closeDialogue();   // build 695: drop any open NPC dialogue
   if(campaignActive && campaign.levels.length){
     if(campaignIdx < campaign.levels.length-1){
       const carry=_captureLoadout();
@@ -23643,6 +23705,7 @@ function gameWon(){
 }
 function endGame(){
   releaseHeld(); closeRadial(false);
+  if(typeof closeDialogue==='function') closeDialogue();   // build 695: drop any open NPC dialogue
   stopMusic();
   gameOn=false; gameOver=true; safeExitPointerLock(); if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false; if(typeof closeUpgradePicker==='function') closeUpgradePicker();
   firing=false; ads=false; shopOpen=false;
