@@ -111,7 +111,7 @@
   body.hud-noborder #hud .panel { border-color: transparent !important; }
   body.hud-hide-minimap #minimap, body.hud-hide-score #score, body.hud-hide-wave #wavePanel,
   body.hud-hide-ammo #ammoPanel, body.hud-hide-health #stats, body.hud-hide-crosshair #crosshair,
-  body.hud-hide-killfeed #killFeed { display: none !important; }
+  body.hud-hide-killfeed #killFeed, body.hud-hide-prompt #prompt, body.hud-hide-grab #grabHint { display: none !important; }
   /* build 666: per-element scale + nudge. transform-origin = each element's anchor corner so scaling stays put;
      elements with a base transform (wave / crosshair) keep it. Vars set by applyHudCfg on #hud. */
   #hud #stats     { transform: translate(var(--el-health-dx,0px), var(--el-health-dy,0px)) scale(var(--el-health-s,1)); transform-origin: left bottom; opacity: var(--el-health-op,1); font-family: var(--el-font, var(--hud-font, var(--ui-font))), ui-monospace, monospace; }
@@ -215,7 +215,7 @@
   #cpHud .cpFill { height:100%; width:0; transition:width .15s; }
   #cpHud .cpFill.red { background:#ff4d5e; } #cpHud .cpFill.blue { background:#3a9bff; }
   #cpMid { font-size:13px; letter-spacing:1px; font-weight:700; color:#9fe6cf; min-width:112px; text-align:center; }
-  #grabHint { position:fixed; left:50%; top:58%; transform:translateX(-50%); z-index:8; display:none; color:#cfeee2; background:rgba(6,12,15,.5); border:1px solid rgba(120,200,180,.25); border-radius:6px; padding:3px 10px; font:600 12px ui-monospace,monospace; letter-spacing:1px; pointer-events:none; }
+  #grabHint { position:fixed; left:50%; top:58%; transform:translateX(-50%) translate(var(--el-grab-dx,0px),var(--el-grab-dy,0px)) scale(var(--el-grab-s,1)); transform-origin:center; opacity:var(--el-grab-op,1); z-index:8; display:none; color:var(--el-tint,#cfeee2); background:rgba(6,12,15,.5); border:1px solid rgba(120,200,180,.25); border-radius:6px; padding:3px 10px; font:600 12px var(--el-font, ui-monospace), monospace; letter-spacing:1px; pointer-events:none; }
   #radial { position:fixed; inset:0; z-index:30; display:none; background:rgba(4,8,10,.45); }
   #radialRing { position:absolute; inset:0; }
   #radial .radItem { position:absolute; transform:translate(-50%,-50%); width:74px; text-align:center; color:#cfeee2; transition:transform .08s; pointer-events:none; }
@@ -558,8 +558,10 @@
   .buff .t { margin-left:auto; color:#5a7d72; font-variant-numeric:tabular-nums; }
 
   /* Interaction prompt */
-  #prompt { position:absolute; left:50%; bottom:120px; transform:translateX(-50%);
-    text-align:center; color:#ffd166; font-size:15px; letter-spacing:1px; font-weight:600;
+  #prompt { position:absolute; left:50%; bottom:120px;
+    transform:translateX(-50%) translate(var(--el-prompt-dx,0px),var(--el-prompt-dy,0px)) scale(var(--el-prompt-s,1)); transform-origin:center bottom; opacity:var(--el-prompt-op,1);
+    text-align:center; color:var(--el-tint,#ffd166); font-size:15px; letter-spacing:1px; font-weight:600;
+    font-family:var(--el-font, var(--hud-font, var(--ui-font))), ui-monospace, monospace;
     background:rgba(8,18,22,.85); padding:10px 20px; border:1px solid rgba(255,209,102,.4);
     clip-path:polygon(4% 0,96% 0,100% 100%,0 100%); display:none; }
   #prompt b { color:#fff; background:rgba(255,209,102,.25); padding:1px 8px; border-radius:3px; }
@@ -6009,8 +6011,8 @@ applyUiTheme();   // apply saved look immediately on load
 // the global `uiTheme` (a per-PLAYER localStorage preference) — hudCfg is serialized WITH the level so a shared
 // level carries the creator's HUD design. Applied scoped to #hud (vars) + body classes, so it never restyles
 // the editor or menus.
-const HUD_TOGGLES = ['minimap','score','wave','ammo','health','crosshair','killfeed'];
-const HUD_TOGGLE_LABEL = { minimap:'Minimap', score:'Score', wave:'Wave counter', ammo:'Ammo', health:'Health', crosshair:'Crosshair', killfeed:'Kill feed' };
+const HUD_TOGGLES = ['minimap','score','wave','ammo','health','crosshair','killfeed','prompt','grab'];
+const HUD_TOGGLE_LABEL = { minimap:'Minimap', score:'Score', wave:'Wave counter', ammo:'Ammo', health:'Health', crosshair:'Crosshair', killfeed:'Kill feed', prompt:'Interact prompt', grab:'Grab hint' };
 const HUD_FONTS = ['Chakra Petch','Major Mono Display','Orbitron','Rajdhani','Press Start 2P','Share Tech Mono','Audiowide','Teko','Exo 2','Saira Condensed','Aldrich','Syncopate','VT323','Michroma','Russo One','Bungee','Space Mono','JetBrains Mono'];
 // build 666: per-element placement/size/tint. Each entry's CSS rule reads --el-<k>-{s,dx,dy}; applyHudCfg sets
 // those vars on #hud, plus an optional per-element accent override directly on the element.
@@ -6021,6 +6023,8 @@ const HUD_ELEMENTS = [
   { k:'wave',      sel:'#wavePanel', label:'Wave counter', text:true },
   { k:'minimap',   sel:'#minimap',   label:'Minimap' },
   { k:'crosshair', sel:'#crosshair', label:'Crosshair' },
+  { k:'prompt',    sel:'#prompt',    label:'Interact prompt', text:true },   // build 696: "E Activate / Talk / Open…"
+  { k:'grab',      sel:'#grabHint',  label:'Grab hint',       text:true },   // build 696: "[G/MMB] Grab / carry"
 ];
 const DEFAULT_HUD = { accent:'#38f5b5', health:'#ff4d6d', score:'#ffd166', uiFont:'Chakra Petch', displayFont:'Major Mono Display', shape:'angular', panelOp:1, border:true, hide:{}, el:{} };
 function _sanitizeHud(h){
@@ -6066,7 +6070,13 @@ function applyHudCfg(){
       hud.style.setProperty('--el-'+e.k+'-op', String(o.op!=null?o.op:1));
       const dom=document.querySelector(e.sel);
       if(dom){
-        if(o.accent){ dom.style.setProperty('--accent', o.accent); dom.style.setProperty('--accent-rgb', _hexToRgbTriplet(o.accent)); } else { dom.style.removeProperty('--accent'); dom.style.removeProperty('--accent-rgb'); }
+        // build 696: also set the transform/opacity vars ON the element, so elements that live OUTSIDE #hud
+        // (the grab hint) still pick them up — they don't inherit #hud's custom properties.
+        dom.style.setProperty('--el-'+e.k+'-s', String(o.s!=null?o.s:1));
+        dom.style.setProperty('--el-'+e.k+'-dx', (o.dx||0)+'px');
+        dom.style.setProperty('--el-'+e.k+'-dy', (o.dy||0)+'px');
+        dom.style.setProperty('--el-'+e.k+'-op', String(o.op!=null?o.op:1));
+        if(o.accent){ dom.style.setProperty('--accent', o.accent); dom.style.setProperty('--accent-rgb', _hexToRgbTriplet(o.accent)); dom.style.setProperty('--el-tint', o.accent); } else { dom.style.removeProperty('--accent'); dom.style.removeProperty('--accent-rgb'); dom.style.removeProperty('--el-tint'); }
         if(o.font){ dom.style.setProperty('--el-font', "'"+o.font+"'"); } else { dom.style.removeProperty('--el-font'); }
       }
     }
@@ -14956,7 +14966,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 695 · 2026-06-24';
+const BUILD_VERSION = 'build 696 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19070,6 +19080,11 @@ function applyEditorMode(){
   const view = editorEl.querySelector('#edView'); if(view) view.style.display = 'flex';   // global view toolbar (sits above the tabs)
   const hint = editorEl.querySelector('#edHint'); if(hint) hint.innerHTML = (MODE_HINT[editorMode]||'') + HINT_SHORTCUTS;   // build 651: mode-aware one-liner
   document.body.classList.toggle('hudPreview', editorMode==='hud');   // build 665: live-preview the real HUD while theming it (overrides the editor's hide-all)
+  // build 696: the interact prompt + grab hint are normally hidden (they only show in play). While theming the HUD,
+  // fill them with sample text + force them visible so they can be sized, positioned (dragged) and recoloured.
+  { const pe=document.getElementById('prompt'), ge=document.getElementById('grabHint'), on=(editorMode==='hud');
+    if(pe){ if(on){ pe.dataset.hudPreview='1'; pe.innerHTML='<b>E</b> Activate'; pe.style.display='block'; } else if(pe.dataset.hudPreview){ delete pe.dataset.hudPreview; pe.innerHTML=''; pe.style.display='none'; } }
+    if(ge){ if(on){ ge.dataset.hudPreview='1'; ge.textContent='[G / MMB] Grab'; ge.style.display='block'; } else if(ge.dataset.hudPreview){ delete ge.dataset.hudPreview; ge.textContent=''; ge.style.display='none'; } } }
 
   editorEl.querySelectorAll('#edModes .edMode').forEach(b=>{
     const c = MODE_COLOR[b.dataset.mode] || 'var(--accent)', on = b.dataset.mode===editorMode;
