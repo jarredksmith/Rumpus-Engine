@@ -14857,7 +14857,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 682 · 2026-06-24';
+const BUILD_VERSION = 'build 683 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15440,6 +15440,7 @@ function applyPropDynState(obj, p){
   setPropDynamic(obj, true);
   if(p.ng) obj.userData.noGrab=true;
   if(p.glbl) obj.userData.grabLabel = String(p.glbl).slice(0,80);   // build 679: custom grab prompt label
+  if(p.grng>0) obj.userData.grabRange = +p.grng;   // build 683: per-prop grab distance
   if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
   if(p.mass!=null) obj.userData.mass = p.mass;
   if(p.brk===false){ obj.userData.breakable = false; }
@@ -15487,7 +15488,10 @@ function _aimedProp(){
   const hits=_holdRay.intersectObjects(meshes, true);
   if(!hits.length) return null;
   let node=hits[0].object; while(node && !(node.userData && node.userData.phys)) node=node.parent;
-  return (node && node.userData && node.userData.phys) ? node : null;
+  if(!(node && node.userData && node.userData.phys)) return null;
+  const range = (node.userData.grabRange>0) ? node.userData.grabRange : HOLD_GRAB_RANGE;   // build 683: per-prop grab distance (default = full reach)
+  if(hits[0].distance > range) return null;   // aiming at it, but the player isn't close enough yet
+  return node;
 }
 function tryGrabProp(){
   if(!gameOn || editorOpen || shopOpen || paused || duelDead) return false;
@@ -19261,6 +19265,7 @@ function propEntry(o){
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
+    if(o.userData.grabRange>0 && o.userData.noGrab!==true) e.grng = +o.userData.grabRange;   // build 683: per-prop grab distance
     if(o.userData.onFire){ e.fire=1; if(o.userData.fireDps!=null) e.fdps=o.userData.fireDps; if(o.userData.fireFuse!=null) e.ffuse=o.userData.fireFuse; }
     if(o.userData.breakable===false) e.brk=false;   // breakable defaults true; only store when off
     else { if(o.userData.maxHp!=null) e.hp=o.userData.maxHp; if(o.userData.breakStyle==='puff') e.bst='puff'; if(o.userData.objective) e.obj=1;
@@ -21902,6 +21907,16 @@ function renderEditorFields(){
             const glLab=document.createElement('div'); glLab.className='hint'; glLab.style.margin='0 0 2px'; glLab.innerHTML='<b>Grab label</b> \u2014 shown instead of the default prompt (blank = default)';
             const glIn=document.createElement('input'); glIn.type='text'; glIn.maxLength=80; glIn.placeholder='e.g. Ancient Tome \u2014 [G] to read'; glIn.value=sel.userData.grabLabel||''; glIn.style.cssText='width:100%;background:#05080b;border:1px solid #2a3a42;color:#d6f5e8;border-radius:4px;padding:3px 6px;font-size:11px;'; glIn.onchange=()=>{ pushUndoSnapshot(); const v=glIn.value.trim().slice(0,80); sel.userData.grabLabel = v || undefined; _levelDirty=true; };
             glWrap.appendChild(glLab); glWrap.appendChild(glIn); pdBody.appendChild(glWrap);
+            // build 683: per-prop grab distance — how close the player must be before they can pick it up
+            const gdWrap=document.createElement('div'); gdWrap.style.cssText='margin:6px 0 2px;';
+            const gdLab=document.createElement('div'); gdLab.className='hint'; gdLab.style.margin='0 0 2px'; gdLab.innerHTML='<b>Grab distance</b> — how close the player must be to pick it up';
+            const gdRow=document.createElement('div'); gdRow.style.cssText='display:flex;align-items:center;gap:8px;';
+            const gdMax=+HOLD_GRAB_RANGE, gdCur=(sel.userData.grabRange>0)?Math.min(gdMax,sel.userData.grabRange):gdMax;
+            const gdRange=document.createElement('input'); gdRange.type='range'; gdRange.min='0.5'; gdRange.max=String(gdMax); gdRange.step='0.5'; gdRange.value=String(gdCur); gdRange.style.cssText='flex:1;accent-color:var(--accent);';
+            const gdNum=document.createElement('span'); gdNum.style.cssText='flex:0 0 60px;text-align:right;color:#cfeee2;font-size:11px;'; const gdFmt=v=>(v>=gdMax?'Default':(v.toFixed(1)+'m')); gdNum.textContent=gdFmt(gdCur);
+            const gdApply=v=>{ const m=Math.max(0.5,Math.min(gdMax,v)); if(m>=gdMax) sel.userData.grabRange=undefined; else sel.userData.grabRange=m; gdNum.textContent=gdFmt(m); _levelDirty=true; };
+            gdRange.addEventListener('pointerdown',()=>pushUndoSnapshot()); gdRange.oninput=()=>gdApply(+gdRange.value);
+            gdRow.appendChild(gdRange); gdRow.appendChild(gdNum); gdWrap.appendChild(gdLab); gdWrap.appendChild(gdRow); pdBody.appendChild(gdWrap);
           }
 
           // On fire: the prop burns (flames + contact damage); an explosive one can burn, then detonate after a fuse
