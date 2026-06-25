@@ -14857,7 +14857,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 684 · 2026-06-24';
+const BUILD_VERSION = 'build 685 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16847,6 +16847,7 @@ let spawnQueue = [];   // pending authored-spawn descriptors for the current wav
 // ---- Objective layer: the win condition + HUD label live here so game modes are pluggable.
 // 'eliminate' = clear waves (optionally a fixed count). 'survival' = outlast a countdown (endless spawns).
 function objectiveActive(){ return gameCfg.objective || 'eliminate'; }
+function noEnemyMode(){ return objectiveActive()==='puzzle'; }   // build 685: puzzle / exploration mode spawns no enemies; you win via signals (reach an exit, solve it, etc.)
 function fmtClock(s){ s=Math.max(0,Math.ceil(s)); const m=Math.floor(s/60); return m+':'+String(s%60).padStart(2,'0'); }
 // --- Extraction beacon (a glowing zone you must reach + hold). Built lazily, scaled to the zone radius. ---
 function buildExtractZone(){
@@ -16928,6 +16929,7 @@ function objectiveHUD(){
   else if(objectiveActive()==='defend'){ wn.textContent = _defendInZone ? ('DEFEND '+fmtClock(surviveLeft)) : ('HOLD THE ZONE \u2014 '+fmtClock(surviveLeft)); }
   else if(objectiveActive()==='destroy'){ wn.textContent = (_destroyTotal>0) ? ('DESTROY '+(_destroyTotal-_destroyRemain)+' / '+_destroyTotal) : 'NO TARGETS SET'; }
   else if(objectiveActive()==='escort'){ wn.textContent = _escortNear ? ('ESCORT '+_escortPct+'%') : ('ESCORT '+_escortPct+'% \u2014 STAY CLOSE'); }
+  else if(objectiveActive()==='puzzle'){ wn.textContent = 'EXPLORE'; }
   else { wn.textContent = (gameCfg.winWaves>0) ? ('WAVE '+wave+' / '+gameCfg.winWaves) : ('WAVE '+wave); }
 }
 function objectiveTick(dt){   // host/solo per-frame; may trigger the win
@@ -16996,6 +16998,7 @@ function objectiveTick(dt){   // host/solo per-frame; may trigger the win
 function startWave(){
   clearMovementInput();   // don't carry a held key / stuck stick into the new wave (auto-move bug)
   spawnQueue = [];
+  if(noEnemyMode()){ toSpawn = 0; objectiveHUD(); updateHUD(); return; }   // build 685: puzzle mode never queues enemies
   if(gameCfg.mode === 'prebuilt'){
     for(const g of spawnMarkers){ if(spawnAppearsOnWave(g.userData.mark, wave)) spawnQueue.push(descFromMarker(g)); }
     toSpawn = spawnQueue.length;
@@ -18162,7 +18165,8 @@ function loop(){
   // wave spawning (host / solo, co-op only — never in a duel, and paused while the editor is open)
   if(!isClient && !duelMode && !editorOpen){
     objectiveTick(dt);   // survival countdown (may end the run as a win)
-    if(toSpawn>0){
+    if(noEnemyMode()){ /* build 685: puzzle mode — no spawns, no wave loop; the run ends via a Win signal */ }
+    else if(toSpawn>0){
       spawnTimer-=dt;
       if(spawnTimer<=0){ spawnEnemy(spawnQueue.length ? spawnQueue.shift() : null); toSpawn--; spawnTimer=0.6; updateHUD(); }
     } else if(enemies.length===0){
@@ -21028,8 +21032,9 @@ function renderEditorFields(){
     hint(gHost, '<b>Objective</b>', '2px 0 4px');
     const obRow=document.createElement('div'); obRow.className='row2';
     const obBtn=(key,txt)=>{ const b=document.createElement('button'); b.textContent=txt; if(objectiveActive()===key){ b.style.background='rgba(56,245,181,0.30)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); gameCfg.objective=key; renderEditorFields(); }; return b; };
-    obRow.appendChild(obBtn('eliminate','🎯 Eliminate')); obRow.appendChild(obBtn('survival','⏱ Survival')); obRow.appendChild(obBtn('extraction','📦 Extraction')); obRow.appendChild(obBtn('defend','🛡 Defend')); obRow.appendChild(obBtn('destroy','💥 Destroy')); obRow.appendChild(obBtn('escort','🚚 Escort'));
+    obRow.appendChild(obBtn('eliminate','🎯 Eliminate')); obRow.appendChild(obBtn('survival','⏱ Survival')); obRow.appendChild(obBtn('extraction','📦 Extraction')); obRow.appendChild(obBtn('defend','🛡 Defend')); obRow.appendChild(obBtn('destroy','💥 Destroy')); obRow.appendChild(obBtn('escort','🚚 Escort')); obRow.appendChild(obBtn('puzzle','🧩 Puzzle'));
     gHost.appendChild(obRow);
+    if(objectiveActive()==='puzzle'){ hint(gHost, '', '4px 0 2px').innerHTML = '<b>Puzzle / exploration</b> — no enemies ever spawn. Build the level with props, mechanisms & signals, and end the run with a <b>Win level</b> signal (e.g. a contact plate or an E-activated exit). Great with <b>Start unarmed</b> + the flashlight.'; }
     // ---- Fall damage ----
     if(!gameCfg.fallDamage) gameCfg.fallDamage = { on:false, player:true, ai:true, minSpeed:24, perUnit:1.4 };
     hint(gHost, '<b>Fall damage</b> — hurt anything that lands hard', '10px 0 4px');
