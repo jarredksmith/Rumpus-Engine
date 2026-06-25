@@ -47,11 +47,11 @@ assert(it.indexOf("fireSignals(o, 'interacted')", xI) > it.indexOf('broadcastXAn
 
 // --- persistence: serialize + 3-site restore ---
 assert(/if\(o\.userData\.tag\) e\.tg=o\.userData\.tag;/.test(extractFunction('propEntry')), 'tag serialized');
-assert(/e\.sg=o\.userData\.signals\.map\(s=>\{ const x=\{ w:s\.when, d:s\.do, t:s\.target \}; if\(s\.clip\) x\.c=s\.clip; if\(s\.cs\) x\.n=s\.cs; if\(s\.from\) x\.f=s\.from; if\(s\.contain\) x\.ci=1; return x; \}\);/.test(extractFunction('propEntry')), 'signals serialized compactly (clip 349, cutscene name 356, contact 682)');
-assert(src.split('if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; return x; });').length - 1 === 3, 'restored at all three prop-load sites (clip + cutscene name + contact)');
+assert(/e\.sg=o\.userData\.signals\.map\(s=>\{ const x=\{ w:s\.when, d:s\.do, t:s\.target \}; if\(s\.clip\) x\.c=s\.clip; if\(s\.cs\) x\.n=s\.cs; if\(s\.from\) x\.f=s\.from; if\(s\.contain\) x\.ci=1; if\(s\.text\) x\.tx=s\.text; return x; \}\);/.test(extractFunction('propEntry')), 'signals serialized compactly (clip 349, cutscene 356, contact 682, objective 692)');
+assert(src.split('if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; return x; });').length - 1 === 3, 'restored at all three prop-load sites (clip + cutscene + contact + objective)');
 
 // --- editor + level check ---
 assert(/edFold\(animHost, 'signals', 'Signals', false, 'Tag this prop/.test(src), 'Signals fold in the inspector (title + subtitle, build 362)');
-assert(/\[\['destroyed','On destroyed'\],\['interacted','On E'\],\['contact','On object placed'\]\]/.test(src) && /\[\['toggle','Toggle'\],\['open','Open'\],\['close','Close'\],\['anim','Play anim'\],\['unlock','Unlock'\],\['win','Win level'\],\['cutscene','Play cutscene'\]\]/.test(src), 'when/do dropdowns');
+assert(/\[\['destroyed','On destroyed'\],\['interacted','On E'\],\['contact','On object placed'\]\]/.test(src) && /\[\['toggle','Toggle'\],\['open','Open'\],\['close','Close'\],\['anim','Play anim'\],\['unlock','Unlock'\],\['win','Win level'\],\['cutscene','Play cutscene'\],\['objective','Set objective'\]\]/.test(src), 'when/do dropdowns');
 assert(/A signal targets tag '"\+s\.target\+"', but no prop carries that tag\./.test(extractFunction('levelIssues')), 'Level check flags dangling signal targets');
 done();

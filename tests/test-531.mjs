@@ -15,7 +15,7 @@ assert(/if\(noEnemyMode\(\)\)\{ toSpawn = 0;[\s\S]*?return; \}/.test(sw), 'start
 
 // --- HUD label ---
 const oh = extractFunction('objectiveHUD');
-assert(/objectiveActive\(\)==='puzzle'\)\{ wn\.textContent = 'EXPLORE'; \}/.test(oh), 'the wave HUD shows EXPLORE');
+assert(/objectiveActive\(\)==='puzzle'\)\{ wn\.textContent = _curGoal \? _curGoal\.slice\(0,48\) : 'EXPLORE'; \}/.test(oh), 'the wave HUD shows the goal (or EXPLORE)');
 
 // --- editor exposes the objective ---
 const panel = extractFunction('renderEditorFields');
