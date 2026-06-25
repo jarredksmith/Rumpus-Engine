@@ -25,7 +25,7 @@ assert(/triggerGunAnim\('shoot'\); meleeAttack\(w\)/.test(src), 'melee swing tri
 assert(/reloading = true; SFX\.reload\(\); triggerGunAnim\('reload'\)/.test(src), 'reload triggers the clip');
 
 // persistence: serialized + restored on all three weapons paths
-assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg\) acc\[k\]=\{ model:w\.model\|\|'', view:w\.view\|\|null, clips:w\.clips\|\|null, dmg: dmgChg \? w\.dmg : undefined \}/.test(src), 'clips (and changed damage) serialized');
+assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle\) acc\[k\]=\{ model:w\.model\|\|'', view:w\.view\|\|null, clips:w\.clips\|\|null, dmg: dmgChg \? w\.dmg : undefined, noMuzzle: w\.noMuzzle \? true : undefined \}/.test(src), 'clips (and changed damage + muzzle toggle) serialized');
 assert((src.match(/Object\.assign\(_wepClipBlank\(k\), wd\.clips\)/g)||[]).length>=3, 'clips restored at boot + net-load + restoreLevel (fists-aware defaults)');
 
 // editor picker

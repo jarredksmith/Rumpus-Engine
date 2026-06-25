@@ -14,7 +14,7 @@ assert(/WEAPONS\[k\]\.dmg=GUN_BASE_DMG\[k\];/.test(src), 'a weapon with no saved
 // serialize writes a damage only when it differs from the factory value
 assert(/const dmgChg = \(w\.dmg!=null && w\.dmg!==GUN_BASE_DMG\[k\]\);/.test(src), 'serialize detects a changed damage');
 assert(/dmg: dmgChg \? w\.dmg : undefined/.test(src), 'serialize emits the changed damage (else nothing)');
-assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg\)/.test(src), 'a damage-only change still creates a weapons record');
+assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle\)/.test(src), 'a damage-only change still creates a weapons record');
 
 // editor UI: a number input + a reset-to-default button
 assert(/WEAPONS\[curWep\]\.dmg=Math\.max\(0, \+dinp\.value\|\|0\);/.test(src), 'editing the field sets the current weapon damage (clamped >= 0)');

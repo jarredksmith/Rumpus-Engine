@@ -29,8 +29,8 @@ const ni = extractFunction('netInterpolate');
 assert(/if\(rp\._fireT && performance\.now\(\) < rp\._fireT\)\{/.test(ni) && /_fireSlot\(_rf\)\|\|'attack'/.test(ni), 'attack / move+fire pose held while _fireT active (build 518)');
 
 // relay + receive
-assert(/else if\(msg\.t==='fire'\)\{ remoteFire\(id, msg\.o, msg\.d\); for\(const cid in NET\.conns\)/.test(src), 'host renders + relays client fire');
-assert(/else if\(msg\.t==='fire'\)\{ remoteFire\(msg\.from, msg\.o, msg\.d\); \}/.test(src), 'client renders a fire event');
+assert(/else if\(msg\.t==='fire'\)\{ remoteFire\(id, msg\.o, msg\.d, msg\.w\); for\(const cid in NET\.conns\)/.test(src), 'host renders + relays client fire');
+assert(/else if\(msg\.t==='fire'\)\{ remoteFire\(msg\.from, msg\.o, msg\.d, msg\.w\); \}/.test(src), 'client renders a fire event');
 
 // attenuated sound
 assert(/shootAt\(pos\)\{/.test(src), 'SFX.shootAt exists');

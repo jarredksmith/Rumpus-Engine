@@ -9288,7 +9288,7 @@ const WEAPONS = {
 const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k].dmg;
 // Restore per-weapon model + framing saved to localStorage (serialized under "weapons"). Without this the
 // hardcoded model:''/view:null above would wipe gun edits on every reload.
-if(savedLevel && savedLevel.weapons){ for(const k in WEAPONS){ const wd = savedLevel.weapons[k]; if(wd){ WEAPONS[k].model = wd.model || ''; WEAPONS[k].view = wd.view || null; if(wd.dmg!=null) WEAPONS[k].dmg = +wd.dmg; if(wd.clips) WEAPONS[k].clips = Object.assign(_wepClipBlank(k), wd.clips); } } }
+if(savedLevel && savedLevel.weapons){ for(const k in WEAPONS){ const wd = savedLevel.weapons[k]; if(wd){ WEAPONS[k].model = wd.model || ''; WEAPONS[k].view = wd.view || null; if(wd.dmg!=null) WEAPONS[k].dmg = +wd.dmg; if(wd.clips) WEAPONS[k].clips = Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; } } }
 let owned = ['rifle'];           // weapons the player has
 let curWep = 'rifle';            // current weapon key
 loadGunModel();                  // load the starting weapon's viewmodel (now that WEAPONS/curWep exist)
@@ -12292,7 +12292,7 @@ function loadLevelFromNet(level){
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; refreshPlayerSpawnMarker(); }
-  if(level.weapons){ for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; if(wd.clips) WEAPONS[k].clips=Object.assign(_wepClipBlank(k), wd.clips); } } }
+  if(level.weapons){ for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; if(wd.clips) WEAPONS[k].clips=Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; } } }
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
   if(level.enemies || level.enemy){   // adopt the host's per-type enemy models so clients render the same hostiles
     applyEnemyModelData(level.enemies, level.enemy);
@@ -13197,7 +13197,7 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
   else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
   else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); }       // a client shot the host
-  else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d}); }catch(e){} } } }   // show + relay the shot
+  else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
   else if(msg.t==='died'){ registerDuelKill(msg.by, id); }            // a client died; credit the killer
   else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(msg.from, msg.id)){ const _s=NET.players[msg.from]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, msg.d, _sx, _sz)) registerDuelKill(msg.from, msg.id); } }   // a client shot a bot
   else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } }   // a client changed character
@@ -13254,7 +13254,7 @@ function handleHostMsg(msg){
   else if(msg.t==='power'){ applyPowerupLocal(msg.k, msg.item); }
   else if(msg.t==='cp'){ NET.cpOwner=msg.o; NET.cpCap=msg.c; NET.cpCapTeam=msg.ct; NET.cpContested=!!msg.x; if(msg.s) NET.cpScore=msg.s; }
   else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); }        // the host shot this client
-  else if(msg.t==='fire'){ remoteFire(msg.from, msg.o, msg.d); }       // someone fired
+  else if(msg.t==='fire'){ remoteFire(msg.from, msg.o, msg.d, msg.w); }       // someone fired
   else if(msg.t==='rocket'){ fireRocket(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]), msg.by, false, msg.r||7, 0); }   // show another player's rocket (visual)
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), msg.by, false); }   // build 670: show another player's grenade (visual only)
   else if(msg.t==='boom'){ explodeAt(new THREE.Vector3(msg.p[0],msg.p[1],msg.p[2]), msg.r||7, 0, null); }   // show a blast (host applied the damage)
@@ -13953,7 +13953,7 @@ function fireRocketShot(){
   const d=new THREE.Vector3(); camera.getWorldDirection(d); d.normalize();
   o.addScaledVector(d, 1.2);                 // spawn just ahead of the camera
   addShake(0.22); player.pitch += 0.02;      // chunky launch kick
-  muzzle.intensity=8; flashMat.opacity=1; playFlipbook('muzzle', new THREE.Vector3(0,0,-0.05), 0.7, vmMuzzle);
+  if(!WEAPONS.launcher.noMuzzle){ muzzle.intensity=8; flashMat.opacity=1; playFlipbook('muzzle', new THREE.Vector3(0,0,-0.05), 0.7, vmMuzzle); }   // build 684: per-weapon muzzle-flash toggle
   if(typeof SFX!=='undefined' && SFX.shoot) SFX.shoot();
   const R=(WEAPONS.launcher.blastRadius)||7, dmg=WEAPONS.launcher.dmg;
   if(NET.mode==='client'){ fireRocket(o,d,NET.myId,false,R,0); if(NET.conn) try{ NET.conn.send({t:'rocket', o:[o.x,o.y,o.z], d:[d.x,d.y,d.z], r:R}); }catch(e){} }
@@ -14681,15 +14681,15 @@ function muzzleFlashAt(pos){
 function netFire(o, d){
   if(NET.mode==='off') return;
   const dir=d.clone(); if(dir.lengthSq()<1e-6) return; dir.normalize();
-  const m={ t:'fire', from:NET.myId, o:[+o.x.toFixed(2),+o.y.toFixed(2),+o.z.toFixed(2)], d:[+dir.x.toFixed(3),+dir.y.toFixed(3),+dir.z.toFixed(3)] };
+  const m={ t:'fire', from:NET.myId, o:[+o.x.toFixed(2),+o.y.toFixed(2),+o.z.toFixed(2)], d:[+dir.x.toFixed(3),+dir.y.toFixed(3),+dir.z.toFixed(3)], w:curWep };   // build 684: weapon key so peers honour its muzzle-flash toggle
   if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send(m); }catch(e){} }
   else if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send(m); }catch(e){} } }
 }
-function remoteFire(pid, o, d){
+function remoteFire(pid, o, d, wep){
   const from=new THREE.Vector3(o[0],o[1],o[2]);
   const dir=new THREE.Vector3(d[0],d[1],d[2]); if(dir.lengthSq()<1e-6) return; dir.normalize();
   tracer(from, from.clone().addScaledVector(dir, 60));
-  muzzleFlashAt(from);
+  if(!(wep && WEAPONS[wep] && WEAPONS[wep].noMuzzle)) muzzleFlashAt(from);   // build 684: respect a flash-less weapon
   const rp=NET.players[pid];
   if(rp){ rp._fireT = performance.now()+480; }   // netInterpolate owns the rp pose (attack vs move+fire); the longer hold bridges the gap between shots so it doesn't flicker shot-to-shot
   if(typeof SFX!=='undefined' && SFX.shootAt){ SFX.shootAt(from); }   // distance-attenuated shot (falls back to nothing if unsupported)
@@ -14857,7 +14857,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 683 · 2026-06-24';
+const BUILD_VERSION = 'build 684 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16182,8 +16182,8 @@ function shoot(){
 
   recoil = Math.min(recoil + (0.018*w.pellets*0.5 + 0.014) * (adsBlend>0.5?0.5:1) * (w.scope?2.0:1), 0.10);
   player.pitch += (0.010 + Math.random()*0.006) * (adsBlend>0.5?0.5:1) * (w.scope?2.4:1);
-  muzzle.intensity = 6; flashMat.opacity = 1;
-  playFlipbook('muzzle', new THREE.Vector3(0,0,-0.05), 0.5, vmMuzzle);   // muzzle.png on your own gun, just in front of the barrel
+  if(!w.noMuzzle){ muzzle.intensity = 6; flashMat.opacity = 1;
+    playFlipbook('muzzle', new THREE.Vector3(0,0,-0.05), 0.5, vmMuzzle); }   // muzzle.png on your own gun, just in front of the barrel (build 684: skip for flash-less guns)
 
   const dmgMul = (buffs.damage ? 2 : 1) * run.dmgMul;
   const clientMode = NET.mode==='client';
@@ -19294,7 +19294,7 @@ function serializeLevel(){
   return {
     v: 1,
     gun:     { url: gunModelUrl,     state: Object.assign({}, editorTargets.gun.state) },
-    weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); if(w.model || w.view || w.clips || dmgChg) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined }; return acc; }, {}),   // build 623: persist a changed per-weapon damage
+    weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); if(w.model || w.view || w.clips || dmgChg || w.noMuzzle) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined }; return acc; }, {}),   // build 623: per-weapon damage; build 684: muzzle-flash toggle
     aim:     { state: Object.assign({}, editorTargets.aim.state) },
     aimWep:  JSON.parse(JSON.stringify(aimByWep)),
     mountWep: (typeof mountByWep!=='undefined') ? JSON.parse(JSON.stringify(mountByWep)) : {},
@@ -19825,7 +19825,7 @@ function restoreLevel(level){
   if(level.gun){ if(level.gun.url && level.gun.url!==gunModelUrl) swapGunModel(level.gun.url); Object.assign(editorTargets.gun.state, level.gun.state||{}); editorTargets.gun.apply(); }
   // per-weapon models + framing
   if(level.weapons && typeof level.weapons==='object'){
-    for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; WEAPONS[k].clips = wd.clips ? Object.assign(_wepClipBlank(k), wd.clips) : undefined; } else { WEAPONS[k].model=''; WEAPONS[k].view=null; WEAPONS[k].dmg=GUN_BASE_DMG[k]; WEAPONS[k].clips=undefined; } }
+    for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; WEAPONS[k].clips = wd.clips ? Object.assign(_wepClipBlank(k), wd.clips) : undefined; WEAPONS[k].noMuzzle = !!wd.noMuzzle; } else { WEAPONS[k].model=''; WEAPONS[k].view=null; WEAPONS[k].dmg=GUN_BASE_DMG[k]; WEAPONS[k].clips=undefined; WEAPONS[k].noMuzzle=false; } }
     // drop cached models so they reload with their (possibly new) urls
     for(const k in gunModelByWep){ if(gunModelByWep[k]){ gun.remove(gunModelByWep[k]); gunModelByWep[k]=null; } _gunLoading[k]=false; }
     if(editorTargets.gun.syncFromWeapon) editorTargets.gun.syncFromWeapon();
@@ -22077,6 +22077,13 @@ function renderEditorFields(){
         wrow.appendChild(b);
       }
       urlHost.appendChild(wrow);
+      if(editorActive==='gun'){   // build 684: muzzle-flash toggle (off for a water gun, bow, sci-fi beam, etc.)
+        const mfLab=document.createElement('label'); mfLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0 2px;cursor:pointer;';
+        const mfCb=document.createElement('input'); mfCb.type='checkbox'; mfCb.checked=!WEAPONS[curWep].noMuzzle; mfCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+        mfCb.onchange=()=>{ pushUndoSnapshot(); WEAPONS[curWep].noMuzzle = !mfCb.checked; _levelDirty=true; };
+        const mfSp=document.createElement('span'); mfSp.innerHTML='<b>Muzzle flash</b> — the gun’s barrel flash on each shot';
+        mfLab.appendChild(mfCb); mfLab.appendChild(mfSp); urlHost.appendChild(mfLab);
+      }
       if(editorActive==='gun'){   // animation mapping for this weapon's model -- 'gun' is an editorActive TARGET, not an editorMode
         const isFists = _isFistsWep(curWep);   // build 678: fists animate on idle / punch R / punch L / grab
         const STATES = isFists ? _FIST_STATES : ['idle','shoot','reload'];
