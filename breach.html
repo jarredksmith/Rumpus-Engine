@@ -128,6 +128,11 @@
   body.hudPreview #hud #stats:hover, body.hudPreview #hud #ammoPanel:hover, body.hudPreview #hud #score:hover,
   body.hudPreview #hud #wavePanel:hover, body.hudPreview #hud #minimap:hover, body.hudPreview #hud #crosshair:hover {
     outline-color: var(--accent); }
+  /* build 698: the interact prompt + grab hint are gameplay-only (their display is driven by proximity), so force
+     them visible + draggable while theming the HUD so they can be positioned. Respect their own hide toggles. */
+  body.hudPreview:not(.hud-hide-prompt) #prompt, body.hudPreview:not(.hud-hide-grab) #grabHint {
+    display: block !important; pointer-events: auto; cursor: move; outline: 1px dashed rgba(var(--accent-rgb),0.7); outline-offset: 3px; }
+  body.hudPreview:not(.hud-hide-prompt) #prompt:hover, body.hudPreview:not(.hud-hide-grab) #grabHint:hover { outline-color: var(--accent); }
   #editor #libGrid { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; max-height: 132px; overflow-y: auto; }
   #editor button.libChip {
     flex: 0 0 auto; padding: 5px 9px; font-size: 11px; border-radius: 12px;
@@ -14968,7 +14973,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 697 · 2026-06-24';
+const BUILD_VERSION = 'build 698 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19082,11 +19087,11 @@ function applyEditorMode(){
   const view = editorEl.querySelector('#edView'); if(view) view.style.display = 'flex';   // global view toolbar (sits above the tabs)
   const hint = editorEl.querySelector('#edHint'); if(hint) hint.innerHTML = (MODE_HINT[editorMode]||'') + HINT_SHORTCUTS;   // build 651: mode-aware one-liner
   document.body.classList.toggle('hudPreview', editorMode==='hud');   // build 665: live-preview the real HUD while theming it (overrides the editor's hide-all)
-  // build 696: the interact prompt + grab hint are normally hidden (they only show in play). While theming the HUD,
-  // fill them with sample text + force them visible so they can be sized, positioned (dragged) and recoloured.
+  // build 696/698: the interact prompt + grab hint are gameplay-only (proximity drives their display). While theming
+  // the HUD, fill them with sample text; the CSS above force-shows + outlines them so they can be dragged/sized.
   { const pe=document.getElementById('prompt'), ge=document.getElementById('grabHint'), on=(editorMode==='hud');
-    if(pe){ if(on){ pe.dataset.hudPreview='1'; pe.innerHTML='<b>E</b> Activate'; pe.style.display='block'; } else if(pe.dataset.hudPreview){ delete pe.dataset.hudPreview; pe.innerHTML=''; pe.style.display='none'; } }
-    if(ge){ if(on){ ge.dataset.hudPreview='1'; ge.textContent='[G / MMB] Grab'; ge.style.display='block'; } else if(ge.dataset.hudPreview){ delete ge.dataset.hudPreview; ge.textContent=''; ge.style.display='none'; } } }
+    if(pe){ if(on){ pe.dataset.hudPreview='1'; pe.innerHTML='<b>E</b> Activate'; } else if(pe.dataset.hudPreview){ delete pe.dataset.hudPreview; pe.innerHTML=''; pe.style.display='none'; } }
+    if(ge){ if(on){ ge.dataset.hudPreview='1'; ge.textContent='[G / MMB] Grab'; } else if(ge.dataset.hudPreview){ delete ge.dataset.hudPreview; ge.textContent=''; ge.style.display='none'; } } }
 
   editorEl.querySelectorAll('#edModes .edMode').forEach(b=>{
     const c = MODE_COLOR[b.dataset.mode] || 'var(--accent)', on = b.dataset.mode===editorMode;

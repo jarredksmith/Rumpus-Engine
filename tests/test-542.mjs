@@ -21,8 +21,10 @@ assert(/dom\.style\.setProperty\('--el-tint', o\.accent\)/.test(ah), 'per-elemen
 
 // --- the HUD editor shows sample prompt/grab text so they can be dragged/sized live ---
 const ae = extractFunction('applyEditorMode');
-assert(/pe\.innerHTML='<b>E<\/b> Activate'; pe\.style\.display='block'/.test(ae), 'a sample prompt shows while theming the HUD');
-assert(/ge\.textContent='\[G \/ MMB\] Grab'; ge\.style\.display='block'/.test(ae), 'a sample grab hint shows while theming the HUD');
+assert(/pe\.innerHTML='<b>E<\/b> Activate';/.test(ae), 'a sample prompt is filled in while theming the HUD');
+assert(/ge\.textContent='\[G \/ MMB\] Grab';/.test(ae), 'a sample grab hint is filled in while theming the HUD');
+// build 698: CSS force-shows them in preview (their display is otherwise driven by proximity, which would hide them)
+assert(/body\.hudPreview:not\(\.hud-hide-prompt\) #prompt, body\.hudPreview:not\(\.hud-hide-grab\) #grabHint \{\s*display: block !important; pointer-events: auto; cursor: move;/.test(html), 'the prompt + grab hint are force-shown + draggable in the HUD editor');
 
 // --- build 697: the prompt + grab hint panel chrome now follows the HUD theme ---
 assert(/#prompt \{[^}]*background:linear-gradient\(135deg, rgba\(8,18,22,calc\(\.88\*var\(--hud-panel-op,1\)\)\)/.test(html), 'prompt background honours the panel-opacity theme');
