@@ -22,7 +22,7 @@ assert(/editorActive==='firezones'\)\{[\s\S]*?g\.scale\.copy\(v\);[\s\S]*?z\.sx=
 
 // --- the gizmo is no longer forced to translate-only for fire zones ---
 assert(!/editorActive==='firezones'\) mode='translate'/.test(src), 'fire zones are not forced to translate-only');
-assert(/editorActive==='deathzones'\|\|editorActive==='jumppads'\|\|editorActive==='ladders'\) mode='translate'/.test(src), 'flat floor zones (death/jump) + ladders still translate-only');
+assert(/editorActive==='deathzones'\|\|editorActive==='jumppads'\|\|editorActive==='ladders'\|\|editorActive==='audiozones'\) mode='translate'/.test(src), 'flat floor zones (death/jump) + ladders + audio zones still translate-only');
 
 // --- panel exposes precise rotation + uniform scale ---
 const panel = extractFunction('renderFireZonesPanel');

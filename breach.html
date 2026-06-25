@@ -14857,7 +14857,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 686 · 2026-06-24';
+const BUILD_VERSION = 'build 687 · 2026-06-24';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19720,18 +19720,19 @@ function renderAudioZonesPanel(){
   const info=document.createElement('div'); info.className='hint'; info.style.margin='2px 0 6px';
   info.innerHTML='Ambient <b>audio zones</b>. Drop a zone, give it a sound file URL, and set its radius. The volume rises as the player nears the center (full at the middle, silent at the edge). Loops by default. The blue ring shows the radius in the editor.';
   host.appendChild(info);
-  const addB=document.createElement('button'); addB.textContent='\u2795 Add zone at me'; addB.title='Drop a new audio zone at your current position'; addB.onclick=()=>{ pushUndoSnapshot(); audioZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:14, url:'', vol:0.8, loop:true }); refreshAudioZoneMarkers(); renderAudioZonesPanel(); };
+  const addB=document.createElement('button'); addB.textContent='\u2795 Add zone at me'; addB.title='Drop a new audio zone at your current position'; addB.onclick=()=>{ pushUndoSnapshot(); audioZones.push({ x:+player.pos.x.toFixed(2), z:+player.pos.z.toFixed(2), r:14, url:'', vol:0.8, loop:true }); selAudioZone=audioZones.length-1; editorActive='audiozones'; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
   host.appendChild(addB);
   const st=document.createElement('div'); st.className='hint'; st.style.margin='6px 0 2px'; st.textContent = audioZones.length ? (audioZones.length+' zone'+(audioZones.length>1?'s':'')+':') : 'No zones yet.';
   host.appendChild(st);
   const slider=(label, val, min, max, step, on, fmt)=>{ const w=document.createElement('div'); w.style.cssText='margin:4px 0;'; const lab=document.createElement('div'); lab.style.cssText='display:flex;justify-content:space-between;font-size:10px;color:#9fe6cf;'; const nm=document.createElement('span'); nm.textContent=label; const vv=document.createElement('span'); vv.textContent=fmt(val); lab.appendChild(nm); lab.appendChild(vv); const inp=document.createElement('input'); inp.type='range'; inp.min=min; inp.max=max; inp.step=step; inp.value=val; inp.style.cssText='width:100%;accent-color:var(--accent);'; inp.oninput=()=>{ const v=parseFloat(inp.value); vv.textContent=fmt(v); on(v); }; inp.onchange=()=>{ pushUndoSnapshot(); }; w.appendChild(lab); w.appendChild(inp); return w; };
   audioZones.forEach((z,i)=>{
-    const card=document.createElement('div'); card.style.cssText='border:1px solid #243640;border-radius:6px;padding:6px 7px;margin:5px 0;background:#0c1418;';
+    const card=document.createElement('div'); card.style.cssText='border:1px solid '+(i===selAudioZone?'rgba(79,208,255,0.6)':'#243640')+';border-radius:6px;padding:6px 7px;margin:5px 0;background:'+(i===selAudioZone?'rgba(79,208,255,0.08)':'#0c1418')+';';
     const top=document.createElement('div'); top.style.cssText='display:flex;align-items:center;gap:6px;margin-bottom:5px;';
     const lbl=document.createElement('div'); lbl.textContent='Zone '+(i+1); lbl.style.cssText='flex:1;font-size:12px;color:#9fe6cf;font-weight:600;';
-    const moveB=document.createElement('button'); moveB.textContent='Move here'; moveB.title='Recenter this zone on your current position'; moveB.style.cssText='padding:1px 7px;font-size:11px;'; moveB.onclick=()=>{ pushUndoSnapshot(); z.x=+player.pos.x.toFixed(2); z.z=+player.pos.z.toFixed(2); refreshAudioZoneMarkers(); };
-    const delB=document.createElement('button'); delB.textContent='\u2715'; delB.title='Remove this zone'; delB.style.cssText='padding:1px 7px;font-size:11px;'; delB.onclick=()=>{ pushUndoSnapshot(); audioZones.splice(i,1); stopAudioZones(); refreshAudioZoneMarkers(); renderAudioZonesPanel(); };
-    top.appendChild(lbl); top.appendChild(moveB); top.appendChild(delB); card.appendChild(top);
+    const selB=document.createElement('button'); selB.textContent=(i===selAudioZone?'selected':'select'); selB.title='Select this zone to drag its handle in the scene'; selB.style.cssText='padding:1px 7px;font-size:10px;'; selB.onclick=()=>{ selAudioZone=i; editorActive='audiozones'; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+    const moveB=document.createElement('button'); moveB.textContent='Move here'; moveB.title='Recenter this zone on your current position'; moveB.style.cssText='padding:1px 7px;font-size:11px;'; moveB.onclick=()=>{ pushUndoSnapshot(); z.x=+player.pos.x.toFixed(2); z.z=+player.pos.z.toFixed(2); selAudioZone=i; refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+    const delB=document.createElement('button'); delB.textContent='\u2715'; delB.title='Remove this zone'; delB.style.cssText='padding:1px 7px;font-size:11px;'; delB.onclick=()=>{ pushUndoSnapshot(); audioZones.splice(i,1); if(selAudioZone>=audioZones.length) selAudioZone=audioZones.length-1; stopAudioZones(); refreshAudioZoneMarkers(); renderAudioZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+    top.appendChild(lbl); top.appendChild(selB); top.appendChild(moveB); top.appendChild(delB); card.appendChild(top);
     card.appendChild(_sndRow('Sound', ()=>z.url||'', v=>{ z.url=(v||'').trim(); }));   // same input/test/status widget as the other sounds
     const fsBtn=document.createElement('button'); fsBtn.textContent='Search Freesound'; fsBtn.title='Find a free CC sound and assign it to this zone'; fsBtn.style.cssText='padding:2px 9px;font-size:11px;margin:1px 0 2px;'; let fsBox=null;
     fsBtn.onclick=()=>{ if(fsBox){ fsBox.remove(); fsBox=null; fsBtn.textContent='Search Freesound'; return; } fsBox=renderFreesoundBrowser(card, ()=>renderAudioZonesPanel(), { label:'Zone '+(i+1), set:v=>{ z.url=(v||'').trim(); } }); card.appendChild(fsBox); fsBtn.textContent='Hide Freesound'; };
@@ -22714,6 +22715,7 @@ function getSelPos(){
   if(editorActive==='jumppads'){ return (selJumpPad>=0 && jumpPadMarkers[selJumpPad])?jumpPadMarkers[selJumpPad].position:null; }
   if(editorActive==='ladders'){ return (selLadder>=0 && ladderMarkers[selLadder])?ladderMarkers[selLadder].position:null; }
   if(editorActive==='firezones'){ return (selFireZone>=0 && fireZoneFx[selFireZone])?fireZoneFx[selFireZone].position:null; }
+  if(editorActive==='audiozones'){ return (selAudioZone>=0 && audioZoneMarkers[selAudioZone])?audioZoneMarkers[selAudioZone].position:null; }   // build 687: drag-handle for audio zones
   return null;
 }
 // move the selected object to a world position and sync its editor state + collider
@@ -22758,6 +22760,8 @@ function setSelPos(v){
     const z=jumpPads[selJumpPad]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel();
   } else if(editorActive==='firezones'){
     const z=fireZones[selFireZone]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof renderFireZonesPanel==='function') renderFireZonesPanel();
+  } else if(editorActive==='audiozones'){   // build 687: dragging the handle moves the audio zone (radius stays in the panel)
+    const z=audioZones[selAudioZone]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   }
 }
 // --- rotation (Euler, radians) of the selected object, for the rotate gizmo ---
@@ -22879,7 +22883,7 @@ function buildGizmo(){
 function updateGizmo(){
   if(!gizmo) gizmo = buildGizmo();
   const gr = gizmo.userData.groups;
-  const movable = editorOpen && (selPickup>=0 || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || (editorActive==='deathzones'&&selDeathZone>=0) || (editorActive==='jumppads'&&selJumpPad>=0) || (editorActive==='ladders'&&selLadder>=0) || (editorActive==='firezones'&&selFireZone>=0) || editorActive==='turrets');
+  const movable = editorOpen && (selPickup>=0 || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || (editorActive==='deathzones'&&selDeathZone>=0) || (editorActive==='jumppads'&&selJumpPad>=0) || (editorActive==='ladders'&&selLadder>=0) || (editorActive==='firezones'&&selFireZone>=0) || (editorActive==='audiozones'&&selAudioZone>=0) || editorActive==='turrets');
   const pos = movable ? getSelPos() : null;
   if(!pos){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; gizmo.visible = false; return; }
   gizmo.position.copy(pos);
@@ -22890,7 +22894,7 @@ function updateGizmo(){
   if((editorActive==='lights'||editorActive==='spawns'||editorActive==='pstart') && mode==='scale') mode='translate';
   if(selPickup>=0) mode='translate';   // a pickup spot is just an x/z position
   if(editorActive==='extract') mode='translate';   // the extraction point only moves (radius lives in Game / waves)
-  if(editorActive==='deathzones'||editorActive==='jumppads'||editorActive==='ladders') mode='translate';   // these zones only move; size lives in their panel
+  if(editorActive==='deathzones'||editorActive==='jumppads'||editorActive==='ladders'||editorActive==='audiozones') mode='translate';   // these zones only move; size lives in their panel
   // build 556: fire zones now support rotate + scale gizmo modes (move/rotate/scale), like a prop
   if(editorActive==='turrets') mode='translate';   // move with the gizmo; facing/scale/arc live in the Turrets panel
   gr.translate.visible = (mode==='translate');
