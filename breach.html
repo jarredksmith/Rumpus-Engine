@@ -8549,7 +8549,7 @@ const player = {
 };
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
-const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, sun:0.9, sunColor:0x9fd8ff, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
+const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
 let worldCfg = Object.assign({}, DEFAULT_WORLD, (savedLevel && savedLevel.world) || {});
 
 // Apply (or clear) a tiling texture on a shared material. Stores the current url on the material under
@@ -8735,6 +8735,7 @@ function applyWorldCfg(){
   worldCfg.launchPower = Math.max(0.1, Math.min(5, +worldCfg.launchPower || DEFAULT_WORLD.launchPower));
   worldCfg.grav   = Math.max(1,  +worldCfg.grav   || DEFAULT_WORLD.grav);
   worldCfg.crouch = Math.max(1,  Math.min(worldCfg.walk, +worldCfg.crouch || DEFAULT_WORLD.crouch));
+  worldCfg.eyeHeight = Math.max(0.6, Math.min(2.8, worldCfg.eyeHeight == null ? DEFAULT_WORLD.eyeHeight : +worldCfg.eyeHeight));   // build 702: first-person camera height (view only; collider stays standard)
   // global lighting (saved with the level)
   worldCfg.sun     = Math.max(0, worldCfg.sun     == null ? DEFAULT_WORLD.sun     : +worldCfg.sun);
   worldCfg.sky     = Math.max(0, worldCfg.sky     == null ? DEFAULT_WORLD.sky     : +worldCfg.sky);
@@ -15052,7 +15053,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 701 · 2026-06-25';
+const BUILD_VERSION = 'build 702 · 2026-06-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18265,6 +18266,7 @@ function loop(){
     if(editorBrightLight.intensity !== 0) editorBrightLight.intensity = 0;
     gun.visible = true;
     camera.position.copy(player.pos);
+    camera.position.y += (worldCfg.eyeHeight - EYE);   // build 702: per-level camera height — shifts the view only; the collider + enemy aim stay at the true body
     if(crouchT > 0.001) camera.position.y -= crouchT * CROUCH_DIP;   // crouch lowers the view
 
     // camera shake (decays quickly) — offsets rotation so it reads as a jolt
@@ -21042,7 +21044,8 @@ function renderEditorFields(){
     { const b=subSec('Movement','move',false);
       slider(b,'Walk speed','walk',4,60,1); slider(b,'Run speed','run',4,100,1); slider(b,'Crouch speed','crouch',1,40,1);
       slider(b,'Jump','jump',0,30,0.5); slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);
-      hint(b,'','1px 0 2px').textContent='Crouch: hold Ctrl (R3 on a controller). Gravity change affects props on next Deploy.'; }
+      slider(b,'Eye height','eyeHeight',0.6,2.8,0.05);   // build 702: first-person camera height
+      hint(b,'','1px 0 2px').textContent='Crouch: hold Ctrl (R3 on a controller). Eye height sets the first-person camera level (1.7 = default; view only, collision is unchanged). Gravity change affects props on next Deploy.'; }
     { const b=subSec('Lighting','light',true);
       slider(b,'Sun (directional)','sun',0,4,0.05); slider(b,'Sky (ambient fill)','sky',0,3,0.05); slider(b,'Brightness lift','ambient',0,2,0.05);
       const scRow=document.createElement('label'); scRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0 4px;';
