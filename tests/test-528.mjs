@@ -5,9 +5,9 @@ const src = gameSource();
 // the existing per-action broadcasts. Optional 'from' tag filters which object counts; 'contain' switches touch->inside.
 
 // --- the single-signal applier was factored out and is shared ---
-assert(/function _applySignalAction\(s\)\{/.test(src), '_applySignalAction exists');
+assert(/function _applySignalAction\(s, src\)\{/.test(src), '_applySignalAction exists (takes the source for the distinct-sender gate)');
 const fs = extractFunction('fireSignals');
-assert(/if\(s\.when !== when\) continue;/.test(fs) && /_applySignalAction\(s\);/.test(fs), 'fireSignals checks the when + delegates to _applySignalAction');
+assert(/if\(s\.when !== when\) continue;/.test(fs) && /_applySignalAction\(s, o\);/.test(fs), 'fireSignals checks the when + delegates to _applySignalAction with the source');
 
 // --- contact detection ---
 const cp = extractFunction('_contactObjectPresent');
@@ -21,7 +21,7 @@ assert(/else if\(_cBoxA\.intersectsBox\(_cBoxB\)\) return true;/.test(cp), '"tou
 const tk = extractFunction('tickContactSignals');
 assert(/if\(typeof NET!=='undefined' && NET\.mode==='client'\) return;/.test(tk), 'clients skip it (host/solo authors the fire)');
 assert(/_contactAcc -= dt; if\(_contactAcc>0\) return; _contactAcc = 0\.12;/.test(tk), 'throttled, not every frame');
-assert(/if\(hit && !s\._active\)\{ s\._active=true;[\s\S]*?_applySignalAction\(s\);[\s\S]*?\}/.test(tk), 'fires once on the rising edge');
+assert(/if\(hit && !s\._active\)\{ s\._active=true;[\s\S]*?_applySignalAction\(s, o\);[\s\S]*?\}/.test(tk), 'fires once on the rising edge, passing the detector as the source');
 assert(/else if\(!hit && s\._active\)\{ s\._active=false; \}/.test(tk), 're-arms when the object is removed');
 assert(/tickContactSignals\(dt\)/.test(src), 'the tick runs in the main loop');
 

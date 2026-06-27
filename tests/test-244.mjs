@@ -11,12 +11,18 @@ const mk = (net) => {
   const f = fn(props, o=>{ o.userData.xa.dest = o.userData.xa.dest?0:1; }, i=>calls.xbc.push(i), ()=>{}, ()=>{}, ()=>{}, net||{ mode:'off' }, ()=>calls.won++, [], ()=>{}, ()=>{});   // build 699: lightModels/setLightOn/broadcastLight stubs
   return { f, props, calls };
 };
+// build 708: the gate counts DISTINCT senders, so each source needs its own identity (nid). The same sender firing
+// again must NOT advance the count — that's the pressure-plate-double-fire bug this fixes.
 { const { f, props, calls } = mk();
-  const gen = { userData:{ signals:[{ when:'destroyed', do:'open', target:'vault' }] } };
-  f(gen,'destroyed'); f(gen,'destroyed');
-  assert(props[0].userData.xa.dest === 0 && calls.xbc.length === 0 && props[0].userData._sigCount === 2, 'two of three signals absorbed, door still shut');
-  f(gen,'destroyed');
-  assert(props[0].userData.xa.dest === 1 && calls.xbc.length === 1, 'third signal opens it'); }
+  const g1={ userData:{ nid:'g1', signals:[{ when:'destroyed', do:'open', target:'vault' }] } };
+  const g2={ userData:{ nid:'g2', signals:[{ when:'destroyed', do:'open', target:'vault' }] } };
+  const g3={ userData:{ nid:'g3', signals:[{ when:'destroyed', do:'open', target:'vault' }] } };
+  f(g1,'destroyed'); f(g2,'destroyed');
+  assert(props[0].userData.xa.dest === 0 && calls.xbc.length === 0 && props[0].userData._sigSrc.size === 2, 'two of three DISTINCT senders absorbed, door still shut');
+  f(g1,'destroyed');   // the SAME sender firing again must not advance the gate (the bug)
+  assert(props[0].userData.xa.dest === 0 && props[0].userData._sigSrc.size === 2, 're-firing an already-counted sender does nothing');
+  f(g3,'destroyed');
+  assert(props[0].userData.xa.dest === 1 && calls.xbc.length === 1, 'the third DISTINCT sender opens it'); }
 { const { f, calls } = mk();
   f({ userData:{ signals:[{ when:'interacted', do:'win' }] } }, 'interacted');
   assert(calls.won === 1, 'win fires with no target, solo'); }
@@ -25,7 +31,7 @@ const mk = (net) => {
   assert(calls.won === 0, 'clients never end the level locally'); }
 
 // --- run-state reset at deploy ---
-assert(/for\(const o of propModels\)\{ if\(o && o\.userData\)\{ delete o\.userData\._sigCount; delete o\.userData\.unlocked; \} \}/.test(extractFunction('startGame')), 'counters and key-unlocks reset every deploy');
+assert(/for\(const o of propModels\)\{ if\(o && o\.userData\)\{ delete o\.userData\._sigCount; delete o\.userData\._sigSrc; delete o\.userData\._sigEvt; delete o\.userData\.unlocked; \} \}/.test(extractFunction('startGame')), 'counters (incl. the distinct-sender set) and key-unlocks reset every deploy');
 
 // --- editor + persistence + level check ---
 assert(/\['win','Win level'\]/.test(src), 'Win level in the action dropdown');

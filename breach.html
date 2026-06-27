@@ -7167,12 +7167,12 @@ function fireSignals(o, when){
       }
       if(s.needConsume && typeof takeItem==='function') takeItem(s.needItem);
     }
-    _applySignalAction(s);
+    _applySignalAction(s, o);
   }
 }
 // Apply ONE signal's action (shared by E/destroy/contact firing). win/cutscene need no target; everything else
 // fans the action out to every prop carrying the target tag, honouring each target's sigNeed counter gate.
-function _applySignalAction(s){
+function _applySignalAction(s, src){
     if(s.do==='win'){ if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } return; }   // ends the level; needs no target. Solo/host only — a client's E can't end the match.
     if(s.do==='cutscene'){   // plays a cutscene by name mid-game, for everyone. No target needed; blank name = cutscene #1.
       const cc = (typeof cutsceneByName==='function') ? cutsceneByName(s.cs) : null;
@@ -7184,8 +7184,15 @@ function _applySignalAction(s){
     if(!s.target) return;
     for(let i=0;i<propModels.length;i++){
       const t = propModels[i]; if(!t || t.userData.tag !== s.target) continue;
-      // counter gate: a target with sigNeed>1 absorbs signals until enough have arrived ("all 3 generators")
-      if(t.userData.sigNeed>1){ t.userData._sigCount=(t.userData._sigCount||0)+1; if(t.userData._sigCount < t.userData.sigNeed) continue; }
+      // counter gate: a target with sigNeed>1 waits for that many DISTINCT sources ("all 3 generators" / "both plates").
+      // build 708: count distinct senders, not raw events — a single pressure plate that re-fires (a dropped physics prop
+      // settling/bouncing on it, or being re-placed) used to advance the count by itself and trip the gate too early.
+      if(t.userData.sigNeed>1){
+        const _sk = (src && src.userData) ? (src.userData.nid || src.uuid) : ('e'+(t.userData._sigEvt=(t.userData._sigEvt||0)+1));
+        const _set = t.userData._sigSrc || (t.userData._sigSrc = new Set());
+        _set.add(_sk);
+        if(_set.size < t.userData.sigNeed) continue;
+      }
       try{
         if(s.do==='toggle'){ if(t.userData.xa && t.userData.xa.on){ xaToggle(t); broadcastXAnim(i); } }
         else if(s.do==='open'){ if(t.userData.xa && t.userData.xa.on && !t.userData.xa.dest){ t.userData.xa.dest=1; broadcastXAnim(i); } }
@@ -7231,7 +7238,7 @@ function tickContactSignals(dt){
     for(const s of sigs){
       if(s.when!=='contact') continue;
       const hit = _contactObjectPresent(o, s);
-      if(hit && !s._active){ s._active=true; try{ _applySignalAction(s); }catch(e){} }
+      if(hit && !s._active){ s._active=true; try{ _applySignalAction(s, o); }catch(e){} }
       else if(!hit && s._active){ s._active=false; }   // re-arm so it can fire again next time something is placed
     }
   }
@@ -15076,7 +15083,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 707 · 2026-06-25';
+const BUILD_VERSION = 'build 708 · 2026-06-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20904,11 +20911,11 @@ function buildSignalsUI(sgBody, store, rerender){
     tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) store.tag=v; else delete store.tag; };
     tr.appendChild(tsp); tr.appendChild(tin); sgBody.appendChild(tr); }
   { const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:0 0 4px;font-size:11px;color:#9fe6cf;';
-    const nsp=document.createElement('span'); nsp.innerHTML='<b>Needs</b>'; nsp.style.minWidth='56px'; nsp.title='How many incoming signals this absorbs before it reacts';
+    const nsp=document.createElement('span'); nsp.innerHTML='<b>Needs</b>'; nsp.style.minWidth='56px'; nsp.title='How many DIFFERENT senders must signal this before it reacts (e.g. both plates / all 3 generators). The same sender firing twice still counts once.';
     const nin=document.createElement('input'); nin.type='number'; nin.min='1'; nin.max='20'; nin.value=store.sigNeed||1;
     nin.style.cssText='width:54px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
     nin.onchange=()=>{ pushUndoSnapshot(); const v=Math.max(1, Math.min(20, parseInt(nin.value)||1)); if(v>1) store.sigNeed=v; else delete store.sigNeed; nin.value=v; };
-    const nl=document.createElement('span'); nl.textContent='signal(s) before it reacts'; nl.style.fontSize='10px';
+    const nl=document.createElement('span'); nl.textContent='different sender(s) before it reacts'; nl.style.fontSize='10px';
     nr.appendChild(nsp); nr.appendChild(nin); nr.appendChild(nl); sgBody.appendChild(nr); }
   const sigs = store.signals || (store.signals=[]);
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
@@ -23794,7 +23801,7 @@ function startGame(){
   WEAPONS.shotgun.mag=6; WEAPONS.shotgun.reserve=24;
   WEAPONS.sniper.mag=5; WEAPONS.sniper.reserve=20;
   reloading=false; score=0; wave=1; credits=0; grenadeCount=0; runKills=0; playerKeys={}; if(typeof renderKeyChips==='function') renderKeyChips();
-  for(const o of propModels){ if(o && o.userData){ delete o.userData._sigCount; delete o.userData.unlocked; } }   // fresh run: counters back to zero, locked props re-lock (the hint always promised per-deploy)
+  for(const o of propModels){ if(o && o.userData){ delete o.userData._sigCount; delete o.userData._sigSrc; delete o.userData._sigEvt; delete o.userData.unlocked; } }   // fresh run: counters back to zero, locked props re-lock (the hint always promised per-deploy)
   if(typeof initSceneLights==='function') initSceneLights();   // build 699: "start off" lights begin dark until a signal lights them
   if(typeof startObjective==='function') startObjective();   // reset survival timer for this run
   if(typeof disposePickupMarkers==='function') disposePickupMarkers();   // remove editor previews; the live (grabbable) pads are spawned next
