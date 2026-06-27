@@ -7121,6 +7121,15 @@ function _xaMoves(a){ return !!(a && a.on && ((a.path && a.path.length>=2) || a.
 function xaApply(o, sx){ o.userData.xa = { on:true, mode:sx.mode||'loop', trig:sx.trig||'auto', mx:sx.mx||0, my:sx.my||0, mz:sx.mz||0, rx:sx.rx||0, ry:sx.ry||0, rz:sx.rz||0, pvx:sx.pvx||0, pvy:sx.pvy||0, pvz:sx.pvz||0, dur:sx.dur||2, path:(sx.path&&sx.path.length>=2)?sx.path.map(q=>[+q[0]||0,+q[1]||0,+q[2]||0]):undefined };
   // a body can't be both scripted along a path AND shoved by physics: animation wins, so an animated prop is never dynamic
   if(_xaMoves(o.userData.xa) && o.userData.phys) setPropDynamic(o, false); }
+// build 707: physics JOINT config (Rapier impulse joint). A dynamic prop can be hinged to a fixed world point or to
+// another tagged body, so it swings/pivots under physics — doors, levers, see-saws, pendulums (and, with a motor,
+// the basis for powered wheels). Authoring lives in userData.joint; the joint itself is created in buildJoints().
+function jointApply(o, j){ if(!o||!j) return; o.userData.joint = {
+  type:(j.type||'hinge'), to:(j.to||''),
+  ax:+j.ax||0, ay:+j.ay||0, az:+j.az||0,
+  axis:(j.axis==='x'||j.axis==='z')?j.axis:'y',
+  lim:!!j.lim, min:(j.min!=null?+j.min:-90), max:(j.max!=null?+j.max:90),
+  mspeed:+j.mspeed||0, mstr:(j.mstr!=null?+j.mstr:1) }; }
 function _xaEach(fn){ for(const o of propModels){ const a=o&&o.userData&&o.userData.xa; if(a&&a.on) fn(o,a); } }
 function xaCapture(){ _xaEach((o,a)=>{ a.bpx=undefined; a.ph=0; a.dir=1; a.dest=0; }); }   // deploy: recapture point A on the next frame
 function xaSnapToBase(){ _xaEach((o,a)=>{ a.ph=0; a.dir=1; a.dest=0; if(a.bpx!==undefined){ o.position.set(a.bpx,a.bpy,a.bpz); o.rotation.set(a.brx,a.bry,a.brz); o.updateMatrixWorld(true); if(colliders.indexOf(o)>=0||o.userData.box) refreshPropCollider(o); } }); }   // editor: show point A
@@ -8168,7 +8177,7 @@ function removeProp(idx){
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -12400,7 +12409,7 @@ function loadLevelFromNet(level){
   // rebuild from the host's data
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -15067,7 +15076,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 706 · 2026-06-25';
+const BUILD_VERSION = 'build 707 · 2026-06-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15544,11 +15553,44 @@ function buildPhysWorld(){
   physWorld.createCollider(RAPIER.ColliderDesc.cuboid(ARENA, 2, ARENA).setFriction(0.9).setRestitution(0.1), fb);
   for(const c of colliders) addStaticColliderFor(c);   // walls + all static props (dynamic props aren't in this list)
   for(const o of dynamicProps) createBodyFor(o);
+  buildJoints();                  // build 707: physics joints (after every body exists)
   physAccum = 0;
   // Warm the broad-phase / query pipeline so the character controller sees the floor & walls on the very
   // first frame. Without this, starting a game already in physics mode drops the player through the floor
   // (a freshly built world hasn't registered its colliders for queries until it has stepped once).
   try{ physWorld.step(); }catch(e){}
+}
+// build 707: create every prop's physics joint once all bodies exist. Each joint is fully isolated in try/catch so a
+// bad config (or an older Rapier without a given joint API) can never break the world build — it just skips that one.
+const _jWorld = new THREE.Vector3(), _jLocal = new THREE.Vector3(), _jInv = new THREE.Quaternion(), _jA2 = new THREE.Vector3();
+function _findJointBody(tag, self){
+  if(!tag) return null;
+  for(const p of dynamicProps){ if(p!==self && p.userData.tag===tag && p.userData.phys && p.userData.phys.body) return p; }
+  for(const c of colliders){ if(c!==self && c.userData && c.userData.tag===tag && (c.userData._kbody || (c.userData.phys && c.userData.phys.body))) return c; }
+  return null;
+}
+function buildJoints(){
+  if(!physWorld || !RAPIER || !RAPIER.JointData || typeof physWorld.createImpulseJoint!=='function') return;
+  for(const o of dynamicProps){
+    const J = o.userData.joint, body = o.userData.phys && o.userData.phys.body;
+    if(!J || !body) continue;
+    try{
+      o.updateMatrixWorld(true);
+      _jLocal.set(J.ax||0, J.ay||0, J.az||0);
+      _jWorld.copy(_jLocal).applyQuaternion(o.quaternion).add(o.position);   // the hinge point, in world space
+      // body2: a tagged prop's body, else a fresh fixed body anchored at the hinge point in space
+      let body2=null, otherObj=_findJointBody(J.to, o);
+      if(otherObj){ const ob = (otherObj.userData.phys && otherObj.userData.phys.body) || otherObj.userData._kbody;
+        body2 = ob; _jA2.copy(_jWorld).sub(otherObj.position).applyQuaternion(_jInv.copy(otherObj.quaternion).invert()); }
+      else { body2 = physWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(_jWorld.x, _jWorld.y, _jWorld.z)); _jA2.set(0,0,0); }
+      const axis = J.axis==='x' ? {x:1,y:0,z:0} : J.axis==='z' ? {x:0,y:0,z:1} : {x:0,y:1,z:0};
+      const a1 = { x:_jLocal.x, y:_jLocal.y, z:_jLocal.z }, a2 = { x:_jA2.x, y:_jA2.y, z:_jA2.z };
+      const jd = RAPIER.JointData.revolute(a1, a2, axis);
+      if(J.lim){ try{ jd.limitsEnabled = true; jd.limits = [ (J.min||0)*RAD, (J.max||0)*RAD ]; }catch(e){} }
+      const joint = physWorld.createImpulseJoint(jd, body, body2, true);
+      if(J.mspeed){ try{ joint.configureMotorVelocity((J.mspeed||0)*RAD, (J.mstr!=null?J.mstr:1)); }catch(e){} }   // powered hinge (wheel/conveyor/door-closer)
+    }catch(e){ console.warn('joint build failed for a prop', e); }
+  }
 }
 // build 643: async GLB props finish loading AFTER buildPhysWorld() ran (especially on a joiner, whose models
 // arrive over the network well after the world was built at match start) — so they had no Rapier collider and
@@ -19517,6 +19559,7 @@ function propEntry(o){
   if(o.userData.animPlay && o.userData.animPlay!=='loop') e.animPlay=o.userData.animPlay;
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
+  if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } }   // build 707: physics joint
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -20056,7 +20099,7 @@ function restoreLevel(level){
   propModels.length = 0;
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -22169,6 +22212,34 @@ function renderEditorFields(){
         ta.onchange=()=>{ pushUndoSnapshot(); const lines=ta.value.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,12).map(s=>s.slice(0,200)); if(lines.length) sel.userData.dialogue=lines; else delete sel.userData.dialogue; };
         dBody.appendChild(ta);
         const dh=document.createElement('div'); dh.className='hint'; dh.style.margin='3px 0 0'; dh.innerHTML='Gives the prop an <b>E Talk</b> prompt. The first line also fires this prop’s <b>“On E”</b> signals — so a chat can set the objective, drop a checkpoint, open a door, etc.'; dBody.appendChild(dh);
+      }
+      // ---- Joint (physics, build 707): hinge a DYNAMIC prop to a world point or another tagged body ----
+      if(sel){
+        const jBody = edFold(animHost, 'joint', 'Joint (physics)', true, 'Hinge this object so it swings under physics — doors, levers, see-saws');
+        const jon=document.createElement('label'); jon.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;';
+        const jcb=document.createElement('input'); jcb.type='checkbox'; jcb.checked=!!sel.userData.joint; jcb.style.accentColor='#7ad7ff';
+        jcb.onchange=()=>{ pushUndoSnapshot(); if(jcb.checked) jointApply(sel, sel.userData.joint||{}); else delete sel.userData.joint; renderEditorFields(); };
+        const jsp=document.createElement('span'); jsp.innerHTML='<b>Physics joint (hinge)</b>';
+        jon.appendChild(jcb); jon.appendChild(jsp); jBody.appendChild(jon);
+        if(sel.userData.joint){
+          const J=sel.userData.joint;
+          if(!sel.userData.phys){ const w=document.createElement('div'); w.className='hint'; w.style.cssText='margin:3px 0;color:#ffd27f;'; w.textContent='Turn on Physics → Dynamic (above) for the joint to take effect — only dynamic props can swing.'; jBody.appendChild(w); }
+          const cr=document.createElement('label'); cr.style.cssText='display:flex;align-items:center;gap:7px;color:#bfe6ff;font-size:12px;margin-top:5px;'; const csp=document.createElement('span'); csp.textContent='Anchor to'; csp.style.minWidth='90px';
+          const ti=document.createElement('input'); ti.type='text'; ti.placeholder='blank = a fixed point in space; or a prop tag'; ti.value=J.to||''; ti.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:12px;';
+          ti.onchange=()=>{ pushUndoSnapshot(); J.to=ti.value.trim(); };
+          cr.appendChild(csp); cr.appendChild(ti); jBody.appendChild(cr);
+          const num=(label,key,min,max,step)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#bfe6ff;font-size:12px;margin-top:5px;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='90px'; const ni=document.createElement('input'); ni.type='number'; ni.min=min; ni.max=max; ni.step=step; ni.value=(J[key]!=null?J[key]:0); ni.style.cssText='width:74px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ni.addEventListener('focus',()=>pushUndoSnapshot()); ni.onchange=()=>{ J[key]=parseFloat(ni.value)||0; }; l.appendChild(sp); l.appendChild(ni); jBody.appendChild(l); };
+          const seg=(label,key,opts)=>{ const h=document.createElement('div'); h.className='hint'; h.style.margin='6px 0 2px'; h.textContent=label; jBody.appendChild(h); const row=document.createElement('div'); row.className='row2'; opts.forEach(o=>{ const b=document.createElement('button'); b.textContent=o[1]; if((J[key]||opts[0][0])===o[0]){ b.style.background='rgba(122,215,255,0.28)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); J[key]=o[0]; renderEditorFields(); }; row.appendChild(b); }); jBody.appendChild(row); };
+          seg('Hinge axis','axis',[['y','Y (door)'],['x','X (see-saw)'],['z','Z']]);
+          { const ph=document.createElement('div'); ph.className='hint'; ph.style.marginTop='4px'; ph.textContent='Hinge point, offset from the prop’s origin (e.g. set X to half the width so a door hinges at its edge).'; jBody.appendChild(ph); }
+          num('Hinge X (m)','ax',-50,50,0.05); num('Hinge Y (m)','ay',-50,50,0.05); num('Hinge Z (m)','az',-50,50,0.05);
+          const lon=document.createElement('label'); lon.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin-top:6px;cursor:pointer;'; const lcb=document.createElement('input'); lcb.type='checkbox'; lcb.checked=!!J.lim; lcb.onchange=()=>{ pushUndoSnapshot(); J.lim=lcb.checked; renderEditorFields(); }; const lsp=document.createElement('span'); lsp.textContent='Limit the swing angle'; lon.appendChild(lcb); lon.appendChild(lsp); jBody.appendChild(lon);
+          if(J.lim){ num('Min angle (°)','min',-180,180,1); num('Max angle (°)','max',-180,180,1); }
+          num('Motor speed (°/s)','mspeed',-720,720,5);
+          { const ph=document.createElement('div'); ph.className='hint'; ph.style.marginTop='2px'; ph.textContent='Motor drives the hinge (0 = free swing). The basis for powered wheels / auto-closing doors.'; jBody.appendChild(ph); }
+          if(J.mspeed) num('Motor strength','mstr',0,100,0.5);
+          const jh=document.createElement('div'); jh.className='hint'; jh.style.margin='4px 0 0'; jh.innerHTML='Takes effect on <b>Deploy</b>. Anchor to a tag to chain bodies (pendulums, rope bridges); blank pins it to a fixed point in space.'; jBody.appendChild(jh);
+        }
       }
       // ---- Mechanism: move/rotate this object into a platform, door, elevator, etc. ----
       if(sel){
