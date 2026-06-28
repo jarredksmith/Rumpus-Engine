@@ -14533,20 +14533,24 @@ function driveUpdate(dt){
   const o=drivingCar; if(!o) return;
   if(!gameOn || gameOver || (player.hp!=null && player.hp<=0)){ exitCar(); return; }   // died / match over -> get out
   const cfg=o.userData.vehicle; if(!cfg){ exitCar(); return; }
-  let throttle=0, steer=0;
+  let throttle=0;
   if(keys['KeyW']) throttle+=1; if(keys['KeyS']) throttle-=1;
-  if(keys['KeyD']) steer+=1; if(keys['KeyA']) steer-=1;
-  if(padMoveZ) throttle += -padMoveZ; if(padMoveX) steer += padMoveX;   // controller stick drives too
-  throttle=Math.max(-1,Math.min(1,throttle)); steer=Math.max(-1,Math.min(1,steer));
-  const r = driveStep(o.userData.carSpeed||0, throttle, steer, cfg, dt);
+  if(padMoveZ) throttle += -padMoveZ;   // left stick / W,S = throttle + reverse
+  throttle=Math.max(-1,Math.min(1,throttle));
+  const r = driveStep(o.userData.carSpeed||0, throttle, 0, cfg, dt);   // driveStep handles the SPEED; steering is mouse-orbit below
   o.userData.carSpeed = r.speed;
-  o.rotation.y += r.yawDelta;
+  // build 711: steer toward where the camera is looking (player.yaw, driven by the mouse / right stick). The car curves
+  // to align with your view, rate-limited by its turn speed and scaled by how fast it's moving (no turning at a stop).
+  const speedFrac = Math.min(1, Math.abs(r.speed)/Math.max(1, cfg.maxSpeed*0.35));
+  let diff = player.yaw - o.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));   // shortest angle to the look heading
+  const maxStep = (cfg.turn*Math.PI/180) * speedFrac * dt;
+  o.rotation.y += Math.max(-maxStep, Math.min(maxStep, diff));
   const fx=-Math.sin(o.rotation.y), fz=-Math.cos(o.rotation.y);
   o.position.x += fx * r.speed * dt;
   o.position.z += fz * r.speed * dt;
   o.position.y = _carGroundY(o.position.x, o.position.z, o);   // sit on the ground / ramps (excluding the car itself)
   o.updateMatrixWorld(true);
-  player.pos.set(o.position.x, o.position.y+EYE, o.position.z); player.vel.set(0,0,0); player.onGround=true; player.yaw=o.rotation.y;
+  player.pos.set(o.position.x, o.position.y+EYE, o.position.z); player.vel.set(0,0,0); player.onGround=true;   // ride along; player.yaw stays free for the mouse to steer
 }
 let nearTarget = null;    // what the player is standing next to
 function _pickupLabel(p){   // build 616: human-readable name for an interact-pickup prompt
@@ -15154,7 +15158,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 710 · 2026-06-26';
+const BUILD_VERSION = 'build 711 · 2026-06-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16417,7 +16421,7 @@ let instanceMeshes = [];   // active InstancedMesh objects
 let instancedProps = [];   // individual prop meshes currently hidden behind instances
 let instancingActive = false;
 function instanceEligible(o){
-  return o && isShapePrimitive(o.userData.src) && !o.userData.tex && !o.userData.emit && !o.userData.phys && !(o.userData.xa && o.userData.xa.on);   // animated mechanisms must stay individual movable meshes (instancing bakes a static matrix)
+  return o && isShapePrimitive(o.userData.src) && !o.userData.tex && !o.userData.emit && !o.userData.phys && !o.userData.vehicle && !(o.userData.xa && o.userData.xa.on);   // animated mechanisms + drivable vehicles must stay individual movable meshes (instancing bakes a static matrix)
 }
 function buildInstancing(){
   if(instancingActive || editorOpen) return;
@@ -18353,7 +18357,7 @@ function loop(){
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
     if(editorBrightLight.intensity !== 0) editorBrightLight.intensity = 0;
     gun.visible=false;
-    const o=drivingCar, yaw=o.rotation.y, fx=-Math.sin(yaw), fz=-Math.cos(yaw);
+    const o=drivingCar, yaw=player.yaw, fx=-Math.sin(yaw), fz=-Math.cos(yaw);   // build 711: orbit with the mouse (player.yaw), the car steers to follow
     camera.position.set(o.position.x - fx*6.5, o.position.y + 3.4, o.position.z - fz*6.5);
     camera.rotation.order='YXZ'; camera.rotation.y=yaw; camera.rotation.x=-0.28; camera.rotation.z=0;
   } else if(editorOpen && editorTopView){

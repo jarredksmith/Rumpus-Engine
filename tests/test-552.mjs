@@ -34,7 +34,14 @@ assert(/if\(drivingCar\)\{ exitCar\(\); return; \}/.test(extractFunction('intera
 assert(/nearTarget\.type==='vehicle'\)\{\s*enterCar\(nearTarget\.obj\);/.test(extractFunction('interact')), 'E on a vehicle gets you in');
 assert(/if\(drivingCar\)\{ wish\.set\(0,0,0\); moveScale=0; \}/.test(src), 'foot movement is frozen while driving');
 assert(/if\(drivingCar\) driveUpdate\(dt\);/.test(src), 'driveUpdate runs each frame while driving');
-assert(/\} else if\(drivingCar\)\{[\s\S]*?camera\.position\.set\(o\.position\.x - fx\*6\.5/.test(src), 'a chase camera follows the car');
+assert(/\} else if\(drivingCar\)\{[\s\S]*?const o=drivingCar, yaw=player\.yaw[\s\S]*?camera\.position\.set\(o\.position\.x - fx\*6\.5/.test(src), 'a chase camera orbits with the look (player.yaw)');
+
+// --- build 711: mouse-orbit steering — the car turns toward where you look (player.yaw), not A/D ---
+const du = extractFunction('driveUpdate');
+assert(/let diff = player\.yaw - o\.rotation\.y; diff = Math\.atan2\(Math\.sin\(diff\), Math\.cos\(diff\)\);/.test(du), 'steers toward the look heading (shortest angle)');
+assert(/o\.rotation\.y \+= Math\.max\(-maxStep, Math\.min\(maxStep, diff\)\);/.test(du), 'turn is rate-limited toward that heading');
+assert(!/keys\['KeyA'\]|keys\['KeyD'\]/.test(du), 'A/D no longer steer (mouse does)');
+assert(/!o\.userData\.vehicle/.test(extractFunction('instanceEligible')), 'a vehicle is never instanced (so it renders where it is driven)');
 assert(/if\(drivingCar\)\{ drivingCar=null; _carReturn=null; \}/.test(extractFunction('startGame')), 'never start a round still driving');
 assert(/if\(o\.userData && o\.userData\.vehicle\) return;/.test(extractFunction('addStaticColliderFor')), 'a vehicle gets no static collider (it is moved kinematically)');
 
