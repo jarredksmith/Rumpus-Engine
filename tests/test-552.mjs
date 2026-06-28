@@ -229,4 +229,17 @@ assert(/for\(let i=0;i<5;i\+\+\) _spawnDust\(nx, o\.position\.y\+0\.3, nz/.test(
 assert(/o\.userData\.hitShake=_hs\*\(1-Math\.min\(1,dt\*5\)\);/.test(src), 'the impact jolt decays in the chase cam');
 assert(/o\.userData\.hitShake=0; o\.userData\._hitCd=0;/.test(extractFunction('enterCar')), 'impact state resets on enter');
 
-done('build 709-734: drivable vehicles — … / suspension lean / speed-FOV+shake / impact feedback / heavy-prop push-back');
+// --- build 741: drive-state animation clips (forward / back / turn / idle) ---
+const sca = extractFunction('_setCarAnim');
+assert(/if\(o\.userData\._carAnimCur === clipName\) return;/.test(sca), '_setCarAnim is a no-op if already on that clip');
+assert(/if\(clipName && nm===clipName\)\{ a\.enabled=true;[\s\S]*?a\.fadeIn\(0\.18\); a\.play\(\); \}/.test(sca) && /else a\.fadeOut\(0\.18\);/.test(sca), 'it crossfades to the matching clip and fades the rest out');
+assert(/if\(Math\.abs\(r\.speed\)<0\.6\) _as='animIdle';/.test(du), 'idle when ~stopped');
+assert(/else if\(Math\.abs\(_yawRate\)>0\.4 \|\| steer!==0\)\{ const _d=\(steer!==0\)\?steer:Math\.sign\(_yawRate\); _as=_d>0\?'animLeft':'animRight'; \}/.test(du), 'turning picks turn-left/right by steer / yaw-rate');
+assert(/else _as = r\.speed>0 \? 'animFwd' : 'animBack';/.test(du), 'otherwise forward / backward by speed sign');
+assert(/if\(!_clip && _as!=='animIdle'\) _clip=\(r\.speed>0\?cfg\.animFwd:cfg\.animBack\)\|\|cfg\.animIdle\|\|'';/.test(du), 'a missing turn clip falls back to forward/back');
+assert(/animIdle:\(''\+\(v\.animIdle\|\|''\)\), animFwd:\(''\+\(v\.animFwd\|\|''\)\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores the clip names');
+assert(/if\(V\.animFwd\) e\.veh\.animFwd=V\.animFwd;/.test(src), 'the clips serialize');
+assert(/animRow\('Idle','animIdle'\); animRow\('Forward','animFwd'\); animRow\('Backward','animBack'\); animRow\('Turn left','animLeft'\); animRow\('Turn right','animRight'\);/.test(src), 'editor exposes the 5 animation-slot dropdowns');
+assert(/_setCarAnim\(o, \(_v&&_v\.animIdle\)\|\|''\);/.test(extractFunction('exitCar')), 'parking settles to the idle clip');
+
+done('build 709-741: drivable vehicles — … / impact feedback / push-back / openings ceiling / drive anims');
