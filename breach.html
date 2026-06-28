@@ -14550,7 +14550,7 @@ function _driveHudEl(){
 }
 function enterCar(o){
   if(drivingCar || !o || !o.userData.vehicle) return;
-  drivingCar = o; o.userData.carSpeed = 0;
+  drivingCar = o; o.userData.carSpeed = 0; o.userData.carVelY = 0; o.userData.carPitch = 0; o.userData.carRoll = 0;
   _carReturn = { x:player.pos.x, y:player.pos.y, z:player.pos.z, yaw:player.yaw, pitch:player.pitch };
   player.vel.set(0,0,0); sliding=false; firing=false; ads=false;
   player.yaw = o.rotation.y; player.pitch = -0.18;
@@ -14632,7 +14632,25 @@ function driveUpdate(dt){
   if(mvz!==0 && _carWall(o, 0, Math.sign(mvz), Math.abs(mvz), _h)) mvz = 0;
   o.position.x += mvx; o.position.z += mvz;
   if(mvx===0 && mvz===0 && Math.abs(r.speed)>1) o.userData.carSpeed = r.speed * 0.2;   // bonk: nearly stopped by a wall
-  o.position.y = _carGroundY(o.position.x, o.position.z, o);   // sit on the ground / ramps (excluding the car itself)
+  // build 717: ramp-aware vertical — sample the ground under the car's 4 corners, TILT the body to the surface (so the
+  // ramp doesn't clip through the mesh), and give it gravity + a launch so it actually flies off a ramp edge.
+  const _hd=_h.hd, _hw=_h.hw, _rx=-fz, _rz=fx;   // right vector = forward rotated 90°
+  const gC=_carGroundY(o.position.x, o.position.z, o);
+  const gF=_carGroundY(o.position.x+fx*_hd, o.position.z+fz*_hd, o);
+  const gB=_carGroundY(o.position.x-fx*_hd, o.position.z-fz*_hd, o);
+  const gR=_carGroundY(o.position.x+_rx*_hw, o.position.z+_rz*_hw, o);
+  const gL=_carGroundY(o.position.x-_rx*_hw, o.position.z-_rz*_hw, o);
+  const _cy=o.position.y; let _vy=o.userData.carVelY||0; const _climb=(gC-_cy)/dt;
+  _vy -= GRAV*0.85*dt; let _ny=_cy+_vy*dt; const _SNAP=Math.max(0.45,_h.hh);
+  if(_ny<=gC){ _ny=gC; _vy=(_climb>0.8)?Math.min(_climb,14):0; }   // grounded: bank ramp-climb speed as launch velocity (capped)
+  else if(_vy<=0 && (_ny-gC)<_SNAP){ _ny=gC; _vy=0; }              // hug the ground over small downhill drops (no micro-hops)
+  o.position.y=_ny; o.userData.carVelY=_vy;
+  const _grounded=(_ny-gC)<0.12;
+  const _tp=_grounded?Math.atan2(gF-gB, 2*_hd):0, _tr=_grounded?Math.atan2(gR-gL, 2*_hw):0;   // pitch from front/back, roll from sides
+  const _k=Math.min(1, dt*9);
+  o.userData.carPitch=(o.userData.carPitch||0)+(_tp-(o.userData.carPitch||0))*_k;   // ease (also levels out in the air)
+  o.userData.carRoll =(o.userData.carRoll ||0)+(_tr-(o.userData.carRoll ||0))*_k;
+  o.rotation.order='YXZ'; o.rotation.x=o.userData.carPitch; o.rotation.z=o.userData.carRoll;
   o.updateMatrixWorld(true);
   player.pos.set(o.position.x, o.position.y+EYE, o.position.z); player.vel.set(0,0,0); player.onGround=true;   // ride along; player.yaw stays free for the mouse to steer
   _engUpdate(r.speed, throttle);   // build 715: engine pitch/volume + speed HUD
@@ -15244,7 +15262,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 716 · 2026-06-26';
+const BUILD_VERSION = 'build 717 · 2026-06-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

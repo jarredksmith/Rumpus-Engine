@@ -60,7 +60,12 @@ assert(/if\(o\.userData && o\.userData\.vehicle\) return;/.test(extractFunction(
 // --- build 710 fix: the ground query excludes the car so it can't read its own roof and climb into the sky ---
 assert(/function surfaceTopAt\(x, z, exclude\)\{/.test(src), 'surfaceTopAt takes an exclude');
 assert(/const _ex = exclude \? \(h\)=>\{ let o=h\.object; while\(o\)\{ if\(o===exclude\) return true; o=o\.parent; \} return false; \} : null;/.test(src), 'exclude drops an object (and its children) from the surface result');
-assert(/o\.position\.y = _carGroundY\(o\.position\.x, o\.position\.z, o\);/.test(src), 'driveUpdate excludes the car from its own ground query');
+assert(/const gC=_carGroundY\(o\.position\.x, o\.position\.z, o\);/.test(src), 'driveUpdate samples its ground excluding the car itself');
+// build 717: ramp-aware vertical — 4-corner ground sample, surface tilt, gravity + launch
+assert(/const gF=_carGroundY\(o\.position\.x\+fx\*_hd[\s\S]*?const gB=_carGroundY\(o\.position\.x-fx\*_hd/.test(src), 'samples front + back ground to tilt to the ramp');
+assert(/_vy -= GRAV\*0\.85\*dt;/.test(src), 'the car has gravity (so it can leave a ramp)');
+assert(/_vy=\(_climb>0\.8\)\?Math\.min\(_climb,14\):0;/.test(src), 'climbing a ramp banks launch velocity, capped');
+assert(/o\.rotation\.order='YXZ'; o\.rotation\.x=o\.userData\.carPitch; o\.rotation\.z=o\.userData\.carRoll;/.test(src), 'the body pitches/rolls to the surface (no clip-through)');
 
 // --- serialize + restore (compact veh) at all three prop-load sites ---
 assert(/if\(o\.userData\.vehicle\)\{ const V=o\.userData\.vehicle; e\.veh=\{ maxSpeed:V\.maxSpeed, accel:V\.accel, turn:V\.turn, reverse:V\.reverse \}; \}/.test(src), 'vehicle serialized');
