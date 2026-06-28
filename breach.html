@@ -293,6 +293,13 @@
   #turretHud .thBarTrack { width:160px; height:8px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.2); border-radius:5px; overflow:hidden; }
   #turretHud #turretHeatFill { height:100%; width:0%; background:#38f5b5; transition:width 0.08s linear; }
   #turretHud .thExit { position:absolute; left:50%; bottom:6.2vh; transform:translateX(-50%); font:600 12px/1 system-ui,sans-serif; color:#9fdcc9; letter-spacing:1px; }
+  /* build 715: driving speed HUD */
+  #driveHud { position:fixed; left:50%; bottom:5vh; transform:translateX(-50%); z-index:31; display:none; pointer-events:none; text-align:center; font:600 13px/1.2 system-ui,sans-serif; color:#cfeee2; }
+  #driveHud .dhSpeed { font-size:30px; letter-spacing:1px; text-shadow:0 2px 10px rgba(0,0,0,.7); }
+  #driveHud .dhSpeed small { font-size:12px; opacity:.7; }
+  #driveHud .dhTrack { width:180px; height:7px; margin:5px auto 0; background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.2); border-radius:5px; overflow:hidden; }
+  #driveHud #dhFill { height:100%; width:0%; background:linear-gradient(90deg,#38f5b5,#ffd166); transition:width .1s linear; }
+  #driveHud .dhExit { margin-top:6px; font-size:11px; color:#9fdcc9; letter-spacing:1px; }
   #tFire { right:28px; bottom:42px; width:94px; height:94px; font-size:14px; }
   #tAim { right:138px; bottom:74px; width:66px; height:66px; }
   #tJump { right:46px; bottom:150px; width:64px; height:64px; }
@@ -14509,6 +14516,38 @@ function driveStep(speed, throttle, steer, cfg, dt){
   const yawDelta = steer * (cfg.turn*Math.PI/180) * speedFrac * (sp>=0?1:-1) * dt;   // steering flips in reverse
   return { speed: sp, yawDelta };
 }
+// build 715: a simple speed-reactive engine sound (sawtooth through a lowpass; pitch + volume track speed/throttle).
+let _eng = null;
+function _engStart(){
+  if(_eng || typeof actx==='undefined' || !actx || !sfxBus) return;
+  try{
+    const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=60;
+    const f=actx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=500; f.Q.value=5;
+    const g=actx.createGain(); g.gain.value=0.0001;
+    o.connect(f).connect(g).connect(sfxBus); o.start();
+    _eng={ o, f, g };
+  }catch(e){ _eng=null; }
+}
+function _engUpdate(speed, throttle){
+  if(!_eng || typeof actx==='undefined' || !actx) return;
+  const t=actx.currentTime, frac=Math.min(1, Math.abs(speed)/14), gas=Math.abs(throttle)>0.01;
+  try{
+    _eng.o.frequency.setTargetAtTime(55 + frac*150 + (throttle>0?18:0), t, 0.08);
+    _eng.f.frequency.setTargetAtTime(380 + frac*1700, t, 0.1);
+    _eng.g.gain.setTargetAtTime(0.03 + frac*0.085 + (gas?0.02:0), t, 0.06);
+  }catch(e){}
+}
+function _engStop(){
+  if(!_eng) return; const e=_eng; _eng=null;
+  try{ const t=actx.currentTime; e.g.gain.setTargetAtTime(0.0001, t, 0.05); e.o.stop(t+0.2); setTimeout(()=>{ try{ e.o.disconnect(); e.f.disconnect(); e.g.disconnect(); }catch(_){} }, 360); }catch(e2){}
+}
+function _driveHudEl(){
+  let el=document.getElementById('driveHud');
+  if(!el){ el=document.createElement('div'); el.id='driveHud';
+    el.innerHTML='<div class="dhSpeed"><span id="dhVal">0</span> <small>km/h</small></div><div class="dhTrack"><div id="dhFill"></div></div><div class="dhExit">[E] / [Esc] exit</div>';
+    document.body.appendChild(el); }
+  return el;
+}
 function enterCar(o){
   if(drivingCar || !o || !o.userData.vehicle) return;
   drivingCar = o; o.userData.carSpeed = 0;
@@ -14516,10 +14555,12 @@ function enterCar(o){
   player.vel.set(0,0,0); sliding=false; firing=false; ads=false;
   player.yaw = o.rotation.y; player.pitch = -0.18;
   if(SFX.swap) SFX.swap();
+  _engStart(); _driveHudEl().style.display='block';   // build 715: engine sound + speed HUD
 }
 function exitCar(){
   if(!drivingCar) return;
   const o=drivingCar; drivingCar=null; if(o.userData) o.userData.carSpeed=0;
+  _engStop(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; }   // build 715
   const side=new THREE.Vector3(Math.cos(o.rotation.y),0,-Math.sin(o.rotation.y));   // step out to the side
   player.pos.set(o.position.x+side.x*2.2, (o.position.y||0)+EYE, o.position.z+side.z*2.2);
   player.vel.set(0,0,0); player.onGround=true;
@@ -14581,6 +14622,8 @@ function driveUpdate(dt){
   o.position.y = _carGroundY(o.position.x, o.position.z, o);   // sit on the ground / ramps (excluding the car itself)
   o.updateMatrixWorld(true);
   player.pos.set(o.position.x, o.position.y+EYE, o.position.z); player.vel.set(0,0,0); player.onGround=true;   // ride along; player.yaw stays free for the mouse to steer
+  _engUpdate(r.speed, throttle);   // build 715: engine pitch/volume + speed HUD
+  { const v=document.getElementById('dhVal'); if(v) v.textContent=Math.round(Math.abs(r.speed)*3.6); const f=document.getElementById('dhFill'); if(f) f.style.width=Math.min(100, Math.abs(r.speed)/Math.max(1,cfg.maxSpeed)*100)+'%'; }
 }
 let nearTarget = null;    // what the player is standing next to
 function _pickupLabel(p){   // build 616: human-readable name for an interact-pickup prompt
@@ -15188,7 +15231,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 714 · 2026-06-26';
+const BUILD_VERSION = 'build 715 · 2026-06-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23932,6 +23975,7 @@ function _prewarmMatchModels(){
 function startGame(){
   if(mountedTurret){ mountedTurret=null; const _th=document.getElementById('turretHud'); if(_th) _th.style.display='none'; }   // never start a round still manning a turret
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
+  if(typeof _engStop==='function') _engStop(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; }   // build 715: kill engine sound + HUD on (re)deploy
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
   if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
