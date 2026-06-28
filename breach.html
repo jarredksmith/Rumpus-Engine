@@ -14549,8 +14549,12 @@ function _engStart(){
 function _engUpdate(speed, throttle, slip){
   if(!_eng || typeof actx==='undefined' || !actx) return;
   const t=actx.currentTime, frac=Math.min(1, Math.abs(speed)/14), gas=Math.abs(throttle)>0.01;
+  // build 731: a simple gearbox — RPM climbs through a gear then DROPS on the upshift, so accelerating sounds like it's
+  // running up and changing gears (and coasting / engine-braking reads as the revs falling away).
+  const GEARS=5, _g=Math.min(GEARS-1, Math.floor(frac*GEARS)), _rpm=(frac*GEARS)-_g;   // _rpm = 0..1 within the current gear
+  const _revHz=(58 + _g*6) + _rpm*120 + (throttle>0?16:0);
   try{
-    _eng.o.frequency.setTargetAtTime(55 + frac*150 + (throttle>0?18:0), t, 0.08);
+    _eng.o.frequency.setTargetAtTime(_revHz, t, 0.07);
     _eng.f.frequency.setTargetAtTime(380 + frac*1700, t, 0.1);
     _eng.g.gain.setTargetAtTime(0.03 + frac*0.085 + (gas?0.02:0), t, 0.06);
     if(_eng.scr){ const sl=Math.max(0, Math.min(1, ((slip||0)-0.2)/0.9)) * Math.min(1, Math.abs(speed)/6);   // slide hard + fast = louder screech
@@ -14696,6 +14700,9 @@ function driveUpdate(dt){
   const boosting=o.userData.boostT>0;
   const effCfg = boosting ? { maxSpeed:cfg.maxSpeed*bMult, accel:cfg.accel*1.5, turn:cfg.turn, reverse:cfg.reverse } : cfg;
   const r = driveStep(o.userData.carSpeed||0, throttle, 0, effCfg, dt);   // driveStep handles the SPEED; steering is mouse-orbit below
+  // build 731: engine braking — lifting off the throttle adds a little drivetrain drag on top of driveStep's coast, so the
+  // car slows when you come off the gas rather than gliding forever.
+  if(Math.abs(throttle)<0.01 && Math.abs(r.speed)>0.4) r.speed *= (1 - Math.min(0.4, 0.8*dt));
   o.userData.carSpeed = r.speed;
   // build 711: steer toward where the camera is looking (player.yaw, driven by the mouse / right stick). The car curves
   // to align with your view, rate-limited by its turn speed and scaled by how fast it's moving (no turning at a stop).
@@ -15420,7 +15427,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 730 · 2026-06-28';
+const BUILD_VERSION = 'build 731 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
