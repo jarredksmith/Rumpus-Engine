@@ -7237,17 +7237,48 @@ function _contactObjectPresent(detector, s){
   }
   return false;
 }
+// build 735: like _contactObjectPresent, but returns the KEYS of every distinct prop currently touching/inside the detector,
+// so a "Needs N" contact signal can count N different objects placed on it (e.g. drop all 3 potions on the plate to win).
+function _contactTouchers(detector, s){
+  const out=[]; const from=(s.from||'').trim();
+  _cBoxA.setFromObject(detector); if(_cBoxA.isEmpty()) return out;
+  for(let i=0;i<propModels.length;i++){
+    const c = propModels[i]; if(!c || c===detector) continue;
+    if(!c.userData || !(c.userData.phys || (c.userData.xa && c.userData.xa.on))) continue;
+    if(from && c.userData.tag !== from) continue;
+    _cBoxB.setFromObject(c); if(_cBoxB.isEmpty()) continue;
+    let touch;
+    if(s.contain){ _cBoxB.getCenter(_cCtr); touch = _cBoxA.containsPoint(_cCtr); }
+    else touch = _cBoxA.intersectsBox(_cBoxB);
+    if(touch) out.push(c.userData.nid || c.uuid);
+  }
+  return out;
+}
 function tickContactSignals(dt){
   if(!gameOn || editorOpen) return;
   if(typeof NET!=='undefined' && NET.mode==='client') return;   // host/solo authors the fire; clients see broadcasts
   _contactAcc -= dt; if(_contactAcc>0) return; _contactAcc = 0.12;
   for(let i=0;i<propModels.length;i++){
     const o = propModels[i]; const sigs = o && o.userData && o.userData.signals; if(!sigs || !sigs.length) continue;
+    const need = Math.max(1, +o.userData.sigNeed||1);   // "Needs N different senders" lives on the detector prop
     for(const s of sigs){
       if(s.when!=='contact') continue;
-      const hit = _contactObjectPresent(o, s);
-      if(hit && !s._active){ s._active=true; try{ _applySignalAction(s, o); }catch(e){} }
-      else if(!hit && s._active){ s._active=false; }   // re-arm so it can fire again next time something is placed
+      if(need<=1){
+        // single-toucher: edge-triggered — fire when something is placed, re-arm when it clears (unchanged behaviour)
+        const hit = _contactObjectPresent(o, s);
+        if(hit && !s._active){ s._active=true; try{ _applySignalAction(s, o); }catch(e){} }
+        else if(!hit && s._active){ s._active=false; }
+      } else {
+        // build 735: multi-toucher — accumulate DISTINCT objects placed on/in it and fire only once N different ones have
+        // been placed. (Previously a contact signal fired on the very first toucher, ignoring "Needs N".)
+        if(s._fired) continue;
+        const keys = _contactTouchers(o, s);
+        if(keys.length){
+          const acc = s._touchers || (s._touchers = new Set());
+          for(const k of keys) acc.add(k);
+          if(acc.size >= need){ s._fired=true; try{ _applySignalAction(s, o); }catch(e){} }
+        }
+      }
     }
   }
 }
@@ -15501,7 +15532,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 734 · 2026-06-28';
+const BUILD_VERSION = 'build 735 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

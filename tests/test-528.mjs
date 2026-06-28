@@ -25,6 +25,21 @@ assert(/if\(hit && !s\._active\)\{ s\._active=true;[\s\S]*?_applySignalAction\(s
 assert(/else if\(!hit && s\._active\)\{ s\._active=false; \}/.test(tk), 're-arms when the object is removed');
 assert(/tickContactSignals\(dt\)/.test(src), 'the tick runs in the main loop');
 
+// --- build 735: "Needs N" on a contact detector counts N DISTINCT touchers (drop all 3 potions on the plate to win) ---
+assert(/const need = Math\.max\(1, \+o\.userData\.sigNeed\|\|0\)\|\|1;|const need = Math\.max\(1, \+o\.userData\.sigNeed\|\|1\);/.test(tk), 'the detector\'s "Needs N" is read');
+assert(/if\(need<=1\)\{/.test(tk), 'single-toucher path keeps the old edge-triggered behaviour');
+const ct = extractFunction('_contactTouchers');
+assert(/if\(from && c\.userData\.tag !== from\) continue;/.test(ct) && /if\(touch\) out\.push\(c\.userData\.nid \|\| c\.uuid\);/.test(ct), '_contactTouchers collects the distinct keys of all matching touchers');
+assert(/const acc = s\._touchers \|\| \(s\._touchers = new Set\(\)\);/.test(tk) && /for\(const k of keys\) acc\.add\(k\);/.test(tk), 'distinct touchers accumulate in a Set (the same object placed twice still counts once)');
+assert(/if\(acc\.size >= need\)\{ s\._fired=true;[\s\S]*?_applySignalAction\(s, o\);/.test(tk), 'fires only once N DIFFERENT objects have been placed, then latches');
+
+// executable: 1 potion does not fire, 3 distinct potions do (and a re-touch of the same one does not advance)
+{ const need=3; const acc=new Set(); const fire=keys=>{ for(const k of keys) acc.add(k); return acc.size>=need; };
+  assert(fire(['p1'])===false, 'one potion is not enough');
+  assert(fire(['p1'])===false, 'the same potion touching again does not advance the count');
+  assert(fire(['p2'])===false, 'two distinct potions still not enough');
+  assert(fire(['p3'])===true, 'the third distinct potion fires it'); }
+
 // --- editor: contact option + sub-fields ---
 const panel = extractFunction('buildSignalsUI');   // build 688: the signals editor is a shared function now
 assert(/\['contact','On object placed'\]/.test(panel), 'the When dropdown offers "On object placed"');
@@ -36,4 +51,4 @@ assert(/if\(mi\.value\) s\.contain=true; else delete s\.contain;/.test(panel), '
 assert(/if\(s\.from\) x\.f=s\.from; if\(s\.contain\) x\.ci=1;/.test(src), 'from/contain serialize');
 assert((src.match(/if\(s\.f\) x\.from=s\.f; if\(s\.ci\) x\.contain=true;/g)||[]).length===3, 'from/contain restore in all three load paths');
 
-done('build 682: contact / containment signal trigger (pressure plates, drop-in-bin)');
+done('build 682/735: contact signal trigger (pressure plates, drop-in-bin) + Needs-N distinct touchers');
