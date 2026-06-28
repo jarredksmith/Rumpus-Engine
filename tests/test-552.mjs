@@ -66,7 +66,7 @@ assert(/const gC=_carGroundY\(o\.position\.x, o\.position\.z, o\);/.test(src), '
 assert(/const gF=_carGroundY\(o\.position\.x\+hx\*_hd[\s\S]*?const gB=_carGroundY\(o\.position\.x-hx\*_hd/.test(src), 'samples front + back ground (heading frame) to tilt to the ramp');
 assert(/_vy -= GRAV\*0\.85\*dt;/.test(src), 'the car has gravity (so it can leave a ramp)');
 assert(/const _launch=\(_climb>0\.8 && _climb<22\)\?Math\.min\(_climb,7\):0;/.test(src), 'a real ramp banks launch velocity (capped); a sudden spike (wall ram) does not');
-assert(/_carEuler\.set\(o\.userData\.carPitch, carYaw, o\.userData\.carRoll\);/.test(src) && /o\.quaternion\.copy\(_carQuat\)\.multiply\(_carModelQ\);/.test(src), 'the body pitches/rolls to the surface in the travel frame (no clip-through)');
+assert(/_carEuler\.set\(o\.userData\.carPitch \+ o\.userData\.leanPitch, carYaw, o\.userData\.carRoll \+ o\.userData\.leanRoll\);/.test(src) && /o\.quaternion\.copy\(_carQuat\)\.multiply\(_carModelQ\);/.test(src), 'the body pitches/rolls to the surface + suspension lean (build 729)');
 
 // --- serialize + restore (compact veh) at all three prop-load sites ---
 assert(/if\(o\.userData\.vehicle\)\{ const V=o\.userData\.vehicle; e\.veh=\{ maxSpeed:V\.maxSpeed, accel:V\.accel, turn:V\.turn, reverse:V\.reverse \}; if\(V\.units==='mph'\) e\.veh\.units='mph'; if\(V\.boost>1\.01\)\{ e\.veh\.boost=V\.boost; e\.veh\.boostDur=V\.boostDur; e\.veh\.boostCd=V\.boostCd; \} if\(V\.modelYaw\) e\.veh\.modelYaw=V\.modelYaw; if\(V\.pivot\) e\.veh\.pivot=V\.pivot;/.test(src), 'vehicle (+ units + boost + model facing + pivot) serialized');
@@ -184,4 +184,17 @@ assert(/if\(handbrake && Math\.abs\(r\.speed\)>0\.1\)\{ const _bk=1 - Math\.min\
   let tr=Math.atan2(8-0, 2*1); tr=Math.max(-TR,Math.min(TR,tr));   // an 8m wall under one side
   assert(tr===TR, 'a wall under one side is capped (lean, never flip)'); }
 
-done('build 709-727: drivable vehicles — drive / collision / ramps+openings / boost / facing / pivot / cam+ride / shove / anti-launch / A·D + drift / tilt + handbrake / long-ramp fix');
+// --- build 729: suspension lean / weight transfer (visual offsets on top of the surface tilt) ---
+assert(/const _leanRollT=Math\.max\(-0\.13,Math\.min\(0\.13, _yawRate\*r\.speed\*0\.012\)\);/.test(du), 'body rolls out of the corner, scaled by yaw-rate * speed (capped)');
+assert(/const _leanPitchT=Math\.max\(-0\.1,Math\.min\(0\.1, _accel\*0\.006\)\);/.test(du), 'body dives on braking / squats under power, scaled by longitudinal accel (capped)');
+assert(/o\.userData\.leanRoll =\(o\.userData\.leanRoll \|\|0\)\+\(_leanRollT -\(o\.userData\.leanRoll \|\|0\)\)\*_lk;/.test(du), 'the lean eases (suspension feel), not a snap');
+assert(/o\.userData\.leanRoll=0; o\.userData\.leanPitch=0; o\.userData\._prevSpeed=0;/.test(extractFunction('enterCar')), 'lean starts neutral on enter');
+
+// executable: lean signs — turning leans, accel/brake pitch the body the right way
+{ const clamp=(v,m)=>Math.max(-m,Math.min(m,v));
+  const rollTurning=clamp(2.0*12*0.012, 0.13), rollStraight=clamp(0*12*0.012, 0.13);
+  assert(rollTurning>0 && rollStraight===0, 'turning at speed leans the body; going straight does not');
+  const pitchAccel=clamp(18*0.006, 0.1), pitchBrake=clamp(-30*0.006, 0.1);
+  assert(pitchAccel>0 && pitchBrake<0, 'power squats (nose up, +) and braking dives (nose down, -)'); }
+
+done('build 709-729: drivable vehicles — drive / collision / ramps+openings / boost / facing / pivot / cam+ride / shove / anti-launch / A·D + drift / tilt + handbrake / long-ramp / suspension lean');

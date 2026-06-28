@@ -14602,6 +14602,7 @@ function enterCar(o){
   // so a model authored facing any direction drives nose-first.
   o.userData.carYaw = o.rotation.y + (o.userData.vehicle.modelYaw||0)*RAD;
   o.userData.carVelYaw = o.userData.carYaw;   // build 725: travel direction starts aligned with the heading (no drift until you turn)
+  o.userData.leanRoll=0; o.userData.leanPitch=0; o.userData._prevSpeed=0;   // build 729: suspension lean starts neutral
   { o.updateMatrixWorld(true); const _bb=new THREE.Box3().setFromObject(o); o.userData.carBaseOff = _bb.isEmpty()?0:(o.position.y - _bb.min.y); }   // build 722: how far the origin sits above the model's lowest point (so wheels rest on the ground)
   _carReturn = { x:player.pos.x, y:player.pos.y, z:player.pos.z, yaw:player.yaw, pitch:player.pitch };
   player.vel.set(0,0,0); sliding=false; firing=false; ads=false;
@@ -14773,9 +14774,18 @@ function driveUpdate(dt){
   const _k=Math.min(1, dt*9);
   o.userData.carPitch=(o.userData.carPitch||0)+(_tp-(o.userData.carPitch||0))*_k;   // ease (also levels out in the air)
   o.userData.carRoll =(o.userData.carRoll ||0)+(_tr-(o.userData.carRoll ||0))*_k;
+  // build 729: suspension lean / weight transfer (visual) — the body rolls OUT of a corner, dives (nose down) under braking,
+  // and squats (nose up) under power. Eased offsets added on top of the surface tilt; capped small so it reads as suspension.
+  const _yawRate=(carYaw-_yawOld)/Math.max(1e-4,dt), _accel=(r.speed-(o.userData._prevSpeed||0))/Math.max(1e-4,dt);
+  o.userData._prevSpeed=r.speed;
+  const _leanRollT=Math.max(-0.13,Math.min(0.13, _yawRate*r.speed*0.012));    // lateral weight transfer (lean out of the turn)
+  const _leanPitchT=Math.max(-0.1,Math.min(0.1, _accel*0.006));               // longitudinal: +accel -> nose up (squat), -accel (brake) -> nose down (dive)
+  const _lk=Math.min(1, dt*6);
+  o.userData.leanRoll =(o.userData.leanRoll ||0)+(_leanRollT -(o.userData.leanRoll ||0))*_lk;
+  o.userData.leanPitch=(o.userData.leanPitch||0)+(_leanPitchT-(o.userData.leanPitch||0))*_lk;
   // build 720: orient = Ry(carYaw)·Rx(pitch)·Rz(roll)·Ry(-modelYaw). The tilt is applied in the TRAVEL frame; the final
   // Ry(-modelYaw) spins the mesh so its authored nose lines up with the drive direction.
-  _carEuler.set(o.userData.carPitch, carYaw, o.userData.carRoll);
+  _carEuler.set(o.userData.carPitch + o.userData.leanPitch, carYaw, o.userData.carRoll + o.userData.leanRoll);
   _carQuat.setFromEuler(_carEuler);
   _carModelQ.setFromAxisAngle(_UP_Y, -(cfg.modelYaw||0)*RAD);
   o.quaternion.copy(_carQuat).multiply(_carModelQ);
@@ -15409,7 +15419,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 728 · 2026-06-28';
+const BUILD_VERSION = 'build 729 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
