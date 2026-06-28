@@ -14612,26 +14612,22 @@ function _carShoveDynamics(o, speed, tx, tz, half, dt){   // tx,tz = unit TRAVEL
 function _carWall(o, dx, dz, dist, half){
   if(!physWorld || !RAPIER || !RAPIER.Ray || typeof physWorld.castRay!=='function') return false;
   const baseY = o.position.y;
-  const y = baseY + Math.max(0.3, half.hh*0.6);
+  // build 724: classify by whether there's SOLID geometry at the car's body height — just above the tallest step it can
+  // climb. A wall is solid there (blocks); a ramp/kerb's surface is below it (climbed); an archway / doorway / tunnel is
+  // OPEN there (the lintel is overhead, so the ray passes through and we don't block). This replaces the old "highest
+  // surface above is too tall" test, which wrongly read an archway's top beam as a wall.
+  const MAX_RISE = Math.max(0.9, half.hh);
+  const y = baseY + MAX_RISE + 0.15;
   const alongX = Math.abs(dx) > Math.abs(dz);
   const front = alongX ? half.hw : half.hd;          // half-extent along the motion
   const span  = alongX ? half.hd : half.hw;          // half-extent across the motion
   const perpx = alongX ? 0 : 1, perpz = alongX ? 1 : 0;
   const start = Math.max(front, 0.5);
-  // build 716: only BLOCK if what's ahead is too tall to drive up. A ramp/step's surface ahead is only modestly
-  // higher than the car, so it's let through and the ground-follow climbs it; a wall's surface (its top) is far
-  // higher, so it blocks. This is what makes ramps work again after the Phase-2 wall collision.
-  const MAX_RISE = Math.max(0.9, half.hh);
   for(const off of [-span*0.8, 0, span*0.8]){
     const ox = o.position.x + perpx*off + dx*start, oz = o.position.z + perpz*off + dz*start;
     try{
       const ray = new RAPIER.Ray({x:ox, y, z:oz}, {x:dx, y:0, z:dz});
-      const hit = physWorld.castRay(ray, dist+0.12, true);
-      if(hit){
-        const toi = (typeof hit==='number') ? hit : (hit && hit.toi!=null ? hit.toi : 0);
-        const gy = _carGroundY(ox + dx*(toi+0.15), oz + dz*(toi+0.15), o);   // surface height just past the hit
-        if(gy - baseY > MAX_RISE) return true;   // a tall obstacle = wall; a low ramp/step is climbed, not blocked
-      }
+      if(physWorld.castRay(ray, dist+0.12, true)) return true;   // something solid at body height ahead = wall
     }
     catch(e){ return false; }
   }
@@ -14692,11 +14688,17 @@ function driveUpdate(dt){
   const gL=_carGroundY(o.position.x-_rx*_hw, o.position.z-_rz*_hw, o);
   // build 722: rest the model's WHEELS on the ground, not its origin. carBaseOff (origin->lowest point, measured on enter)
   // cancels models whose origin sits high (float) or low (sink); rideHeight is an optional author trim.
-  const _base=(o.userData.carBaseOff||0)+(+cfg.rideHeight||0), _rest=gC+_base;
-  const _cy=o.position.y; let _vy=o.userData.carVelY||0; const _climb=(_rest-_cy)/dt;
+  const _base=(o.userData.carBaseOff||0)+(+cfg.rideHeight||0); let _rest=gC+_base;
+  const _cy=o.position.y;
+  // build 724: cap how far the car climbs in a single frame. Ramming a kerb/wall at speed used to read the obstacle's top
+  // as ground, spike _climb, and rocket the car (+ you) out of the arena. A real ramp rises gradually so this never clamps it.
+  const _maxUp=_cy + Math.max(0.6, _h.hh*1.2);
+  if(_rest>_maxUp) _rest=_maxUp;
+  let _vy=o.userData.carVelY||0; const _climb=(_rest-_cy)/dt;
   _vy -= GRAV*0.85*dt; let _ny=_cy+_vy*dt; const _SNAP=Math.max(0.45,_h.hh);
-  if(_ny<=_rest){ _ny=_rest; _vy=(_climb>0.8)?Math.min(_climb,14):0; }   // grounded: bank ramp-climb speed as launch velocity (capped)
-  else if(_vy<=0 && (_ny-_rest)<_SNAP){ _ny=_rest; _vy=0; }              // hug the ground over small downhill drops (no micro-hops)
+  const _launch=(_climb>0.8 && _climb<22)?Math.min(_climb,7):0;   // a real ramp banks launch velocity (capped); a sudden spike (wall ram) does NOT launch
+  if(_ny<=_rest){ _ny=_rest; _vy=_launch; }                       // grounded: bank ramp-climb speed as launch velocity
+  else if(_vy<=0 && (_ny-_rest)<_SNAP){ _ny=_rest; _vy=0; }       // hug the ground over small downhill drops (no micro-hops)
   o.position.y=_ny; o.userData.carVelY=_vy;
   const _grounded=(_ny-_rest)<0.12;
   const _tp=_grounded?Math.atan2(gF-gB, 2*_hd):0, _tr=_grounded?Math.atan2(gR-gL, 2*_hw):0;   // pitch from front/back, roll from sides
@@ -15329,7 +15331,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 723 · 2026-06-28';
+const BUILD_VERSION = 'build 724 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

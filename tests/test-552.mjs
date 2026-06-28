@@ -50,10 +50,11 @@ const cw = extractFunction('_carWall');
 assert(/if\(!physWorld \|\| !RAPIER \|\| !RAPIER\.Ray \|\| typeof physWorld\.castRay!=='function'\) return false;/.test(cw), 'collision degrades to none if Rapier is unavailable');
 assert(/new RAPIER\.Ray\(\{x:ox, y, z:oz\}, \{x:dx, y:0, z:dz\}\)/.test(cw) && /physWorld\.castRay\(ray, dist\+0\.12, true\)/.test(cw), 'casts forward rays against the world');
 assert(/\}\s*catch\(e\)\{ return false; \}/.test(cw), 'a cast error never breaks driving');
-// build 716: ramps work — only block when what's ahead is too tall to drive up (a wall), not a climbable ramp/step
+// build 716/724: ramps + openings work — block only on SOLID geometry at the car's body height (just above the tallest
+// climbable step). A wall hits there; a ramp/kerb is below it (climbed); an archway/doorway is open there (driven through).
 assert(/const MAX_RISE = Math\.max\(0\.9, half\.hh\);/.test(cw), 'a max climbable rise is defined');
-assert(/const gy = _carGroundY\(ox \+ dx\*\(toi\+0\.15\), oz \+ dz\*\(toi\+0\.15\), o\);/.test(cw), 'it samples the surface height just past the hit');
-assert(/if\(gy - baseY > MAX_RISE\) return true;/.test(cw), 'only a too-tall obstacle (a wall) blocks; a ramp is climbed');
+assert(/const y = baseY \+ MAX_RISE \+ 0\.15;/.test(cw), 'rays are cast just above the tallest climbable step (so openings stay clear)');
+assert(/if\(physWorld\.castRay\(ray, dist\+0\.12, true\)\) return true;/.test(cw), 'a hit at body height = wall; an archway/ramp passes (no surfaceTopAt over-blocking)');
 assert(/if\(drivingCar\)\{ drivingCar=null; _carReturn=null; \}/.test(extractFunction('startGame')), 'never start a round still driving');
 assert(/if\(o\.userData && o\.userData\.vehicle\) return;/.test(extractFunction('addStaticColliderFor')), 'a vehicle gets no static collider (it is moved kinematically)');
 
@@ -64,7 +65,7 @@ assert(/const gC=_carGroundY\(o\.position\.x, o\.position\.z, o\);/.test(src), '
 // build 717: ramp-aware vertical — 4-corner ground sample, surface tilt, gravity + launch
 assert(/const gF=_carGroundY\(o\.position\.x\+fx\*_hd[\s\S]*?const gB=_carGroundY\(o\.position\.x-fx\*_hd/.test(src), 'samples front + back ground to tilt to the ramp');
 assert(/_vy -= GRAV\*0\.85\*dt;/.test(src), 'the car has gravity (so it can leave a ramp)');
-assert(/_vy=\(_climb>0\.8\)\?Math\.min\(_climb,14\):0;/.test(src), 'climbing a ramp banks launch velocity, capped');
+assert(/const _launch=\(_climb>0\.8 && _climb<22\)\?Math\.min\(_climb,7\):0;/.test(src), 'a real ramp banks launch velocity (capped); a sudden spike (wall ram) does not');
 assert(/_carEuler\.set\(o\.userData\.carPitch, carYaw, o\.userData\.carRoll\);/.test(src) && /o\.quaternion\.copy\(_carQuat\)\.multiply\(_carModelQ\);/.test(src), 'the body pitches/rolls to the surface in the travel frame (no clip-through)');
 
 // --- serialize + restore (compact veh) at all three prop-load sites ---
@@ -116,8 +117,9 @@ assert(/pd\.position\.copy\(o\.position\)\.addScaledVector\(_vaFwd, pv\);/.test(
 // --- build 722: fit-to-model placement — chase-cam distance/height + ride height (no float/sink) ---
 assert(/camDist:\+v\.camDist\|\|0, camHigh:\+v\.camHigh\|\|0, rideHeight:\+v\.rideHeight\|\|0/.test(extractFunction('vehicleApply')), 'vehicleApply stores camera + ride trims');
 assert(/o\.userData\.carBaseOff = _bb\.isEmpty\(\)\?0:\(o\.position\.y - _bb\.min\.y\);/.test(extractFunction('enterCar')), 'entering measures origin->lowest-point so the wheels rest on the ground');
-assert(/const _base=\(o\.userData\.carBaseOff\|\|0\)\+\(\+cfg\.rideHeight\|\|0\), _rest=gC\+_base;/.test(du), 'the car rests at ground + base offset (+ ride trim), not origin-on-ground');
+assert(/const _base=\(o\.userData\.carBaseOff\|\|0\)\+\(\+cfg\.rideHeight\|\|0\); let _rest=gC\+_base;/.test(du), 'the car rests at ground + base offset (+ ride trim), not origin-on-ground');
 assert(/if\(_ny<=_rest\)\{ _ny=_rest;/.test(du) && /const _grounded=\(_ny-_rest\)<0\.12;/.test(du), 'the vertical solve snaps + grounds against the rest height');
+assert(/const _maxUp=_cy \+ Math\.max\(0\.6, _h\.hh\*1\.2\);/.test(du) && /if\(_rest>_maxUp\) _rest=_maxUp;/.test(du), 'build 724: the per-frame climb is capped so a fast hit cannot rocket the car out of the arena');
 assert(/const _cd=Math\.max\(2\.5, _ex\.hd\*2\.4 \+ _ex\.hw\*0\.5 \+ 4 \+ \(\+_vv\.camDist\|\|0\)\);/.test(src), 'chase-cam distance fits the model depth/width, trimmable by camDist');
 assert(/const _ch=Math\.max\(1\.2, _ex\.hh\*1\.8 \+ 1\.5 \+ \(\+_vv\.camHigh\|\|0\)\);/.test(src) && /camera\.position\.set\(_tx - fx\*_cd, o\.position\.y \+ _ch, _tz - fz\*_cd\)/.test(src), 'chase-cam height fits the model height, trimmable by camHigh');
 assert(/if\(V\.camDist\) e\.veh\.camDist=V\.camDist; if\(V\.camHigh\) e\.veh\.camHigh=V\.camHigh; if\(V\.rideHeight\) e\.veh\.rideHeight=V\.rideHeight;/.test(src), 'camera + ride trims serialized');
@@ -150,4 +152,4 @@ assert(/if\(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\{ const _sgn=Ma
   shove(back, null, pd)({ position:{x:0,y:0,z:0} }, 10, 1, 0, { hw:0.6, hh:0.5, hd:1.2 }, 1/60);
   assert(captured===null, 'a barrel behind the car is not dragged along'); }
 
-done('build 709-723: drivable vehicles — drive / collision / ramps / units / boost / arrow / facing / pivot / fit-to-model cam+ride / physics shove');
+done('build 709-724: drivable vehicles — drive / collision / ramps+openings / units / boost / arrow / facing / pivot / cam+ride / physics shove / anti-launch');
