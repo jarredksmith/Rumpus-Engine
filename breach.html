@@ -14619,12 +14619,15 @@ function _carWall(o, dx, dz, dist, half){
   // OPEN there (the lintel is overhead, so the ray passes through and we don't block). This replaces the old "highest
   // surface above is too tall" test, which wrongly read an archway's top beam as a wall.
   const MAX_RISE = Math.max(0.9, half.hh);
-  const y = baseY + MAX_RISE + 0.15;
   const alongX = Math.abs(dx) > Math.abs(dz);
   const front = alongX ? half.hw : half.hd;          // half-extent along the motion
   const span  = alongX ? half.hd : half.hw;          // half-extent across the motion
   const perpx = alongX ? 0 : 1, perpz = alongX ? 1 : 0;
   const start = Math.max(front, 0.5);
+  // build 727: raise the ray so it clears a climbable ramp out to the leading edge. For a LONG vehicle the ray starts `front`
+  // metres ahead, where a ramp has already risen above body height — the old fixed height read that as a wall and blocked the
+  // climb. The +start*0.45 term clears any ramp up to ~24° at the nose, while a genuinely TALL wall still blocks.
+  const y = baseY + MAX_RISE + 0.15 + start*0.45;
   for(const off of [-span*0.8, 0, span*0.8]){
     const ox = o.position.x + perpx*off + dx*start, oz = o.position.z + perpz*off + dz*start;
     try{
@@ -14720,13 +14723,13 @@ function driveUpdate(dt){
   else if(_vy<=0 && (_ny-_rest)<_SNAP){ _ny=_rest; _vy=0; }       // hug the ground over small downhill drops (no micro-hops)
   o.position.y=_ny; o.userData.carVelY=_vy;
   const _grounded=(_ny-_rest)<0.12;
-  // build 726: clamp the tilt. A corner ground-sample that lands on a WALL or STEP top (now reachable since 724 opened
-  // archways) used to read a huge rise and roll the car ~60° onto its side, clipping it into the floor. Ignore anything
-  // more than a climbable step away from the centre sample, then cap the final pitch/roll so the car can never tip over.
-  const _MRt=Math.max(0.9,_h.hh), _clT=g=>Math.max(gC-_MRt, Math.min(gC+_MRt, g));
-  const _TILT=0.45;   // ~26°, plenty for ramps, never enough to bury the car
-  let _tp=_grounded?Math.atan2(_clT(gF)-_clT(gB), 2*_hd):0, _tr=_grounded?Math.atan2(_clT(gR)-_clT(gL), 2*_hw):0;
-  _tp=Math.max(-_TILT,Math.min(_TILT,_tp)); _tr=Math.max(-_TILT,Math.min(_TILT,_tr));
+  // build 727: clamp the tilt by ANGLE (slope), not by sample height. The build-726 height clamp throttled the pitch of a
+  // LONG vehicle (a camper) on a ramp, so it under-tilted, dug into the ramp, sank, and _carWall then false-blocked it (stuck
+  // at 0). Clamping the final angle instead gives correct ramp pitch at any length, while a sideways wall still can't flip it:
+  // pitch (front/back, where ramps live) is allowed steep; roll (sideways) is capped tighter so a wall can only lean it, not bury it.
+  const _TP=0.72, _TR=0.42;   // pitch up to ~41° (steep ramps ok); roll up to ~24° (a wall leans it, never rolls it over)
+  let _tp=_grounded?Math.atan2(gF-gB, 2*_hd):0, _tr=_grounded?Math.atan2(gR-gL, 2*_hw):0;
+  _tp=Math.max(-_TP,Math.min(_TP,_tp)); _tr=Math.max(-_TR,Math.min(_TR,_tr));
   const _k=Math.min(1, dt*9);
   o.userData.carPitch=(o.userData.carPitch||0)+(_tp-(o.userData.carPitch||0))*_k;   // ease (also levels out in the air)
   o.userData.carRoll =(o.userData.carRoll ||0)+(_tr-(o.userData.carRoll ||0))*_k;
@@ -15356,7 +15359,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 726 · 2026-06-28';
+const BUILD_VERSION = 'build 727 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

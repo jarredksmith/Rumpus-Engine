@@ -53,7 +53,7 @@ assert(/\}\s*catch\(e\)\{ return false; \}/.test(cw), 'a cast error never breaks
 // build 716/724: ramps + openings work — block only on SOLID geometry at the car's body height (just above the tallest
 // climbable step). A wall hits there; a ramp/kerb is below it (climbed); an archway/doorway is open there (driven through).
 assert(/const MAX_RISE = Math\.max\(0\.9, half\.hh\);/.test(cw), 'a max climbable rise is defined');
-assert(/const y = baseY \+ MAX_RISE \+ 0\.15;/.test(cw), 'rays are cast just above the tallest climbable step (so openings stay clear)');
+assert(/const y = baseY \+ MAX_RISE \+ 0\.15 \+ start\*0\.45;/.test(cw), 'rays are cast above the tallest climbable step + a ramp-clearance term (so openings + ramps pass, walls block)');
 assert(/if\(physWorld\.castRay\(ray, dist\+0\.12, true\)\) return true;/.test(cw), 'a hit at body height = wall; an archway/ramp passes (no surfaceTopAt over-blocking)');
 assert(/if\(drivingCar\)\{ drivingCar=null; _carReturn=null; \}/.test(extractFunction('startGame')), 'never start a round still driving');
 assert(/if\(o\.userData && o\.userData\.vehicle\) return;/.test(extractFunction('addStaticColliderFor')), 'a vehicle gets no static collider (it is moved kinematically)');
@@ -169,16 +169,19 @@ assert(/row\('Grip','grip', 1, 12, 0\.5, 1\)/.test(src), 'editor exposes a Grip 
   assert(gripped>drifty && drifty>0, 'a gripped car aligns its travel to the heading faster than a handbraking one');
   assert(Math.abs(ease(0, 0.0001, 6, 1/60)) < 0.0002, 'no heading change => travel direction barely moves'); }
 
-// --- build 726: physics fixes — clamp the tilt (no rolling over / sinking next to walls) + handbrake brakes ---
-assert(/const _MRt=Math\.max\(0\.9,_h\.hh\), _clT=g=>Math\.max\(gC-_MRt, Math\.min\(gC\+_MRt, g\)\);/.test(du), 'corner ground samples for tilt are clamped near the centre (a wall/step top cannot flip the car)');
-assert(/let _tp=_grounded\?Math\.atan2\(_clT\(gF\)-_clT\(gB\), 2\*_hd\):0, _tr=_grounded\?Math\.atan2\(_clT\(gR\)-_clT\(gL\), 2\*_hw\):0;/.test(du), 'tilt is computed from the clamped samples');
-assert(/_tp=Math\.max\(-_TILT,Math\.min\(_TILT,_tp\)\); _tr=Math\.max\(-_TILT,Math\.min\(_TILT,_tr\)\);/.test(du), 'final pitch/roll is capped so the car can never tip over and bury itself');
+// --- build 726/727: tilt clamped by ANGLE (no roll-over, correct ramp pitch at any length) + handbrake brakes ---
+assert(/const _TP=0\.72, _TR=0\.42;/.test(du), 'pitch is allowed steep (ramps); roll is capped tighter (a wall leans, never flips)');
+assert(/let _tp=_grounded\?Math\.atan2\(gF-gB, 2\*_hd\):0, _tr=_grounded\?Math\.atan2\(gR-gL, 2\*_hw\):0;/.test(du), 'tilt is the raw surface slope (no height clamp that throttled a long vehicle on a ramp)');
+assert(/_tp=Math\.max\(-_TP,Math\.min\(_TP,_tp\)\); _tr=Math\.max\(-_TR,Math\.min\(_TR,_tr\)\);/.test(du), 'final pitch/roll is angle-capped so the car never tips over and buries itself');
 assert(/if\(handbrake && Math\.abs\(r\.speed\)>0\.1\)\{ const _bk=1 - Math\.min\(0\.85, 3\.2\*dt\); o\.userData\.carSpeed\*=_bk; r\.speed\*=_bk; \}/.test(du), 'the handbrake actually brakes (slows the car), not just loosens grip');
 
-// executable: clamping keeps the tilt sane even when a corner sample sits on a tall wall
-{ const gC=0, MR=0.9, clT=g=>Math.max(gC-MR, Math.min(gC+MR, g)), TILT=0.45, hd=1;
-  const wallGF=8;   // a 8m wall top under the front-corner sample
-  let tp=Math.atan2(clT(wallGF)-clT(0), 2*hd); tp=Math.max(-TILT,Math.min(TILT,tp));
-  assert(tp<=TILT && tp>0, 'a wall under one corner yields a bounded tilt, never a flip'); }
+// executable: a steep ramp pitches a LONG vehicle correctly (build-726 height-clamp would have throttled it), a wall is bounded
+{ const TP=0.72, TR=0.42;
+  const hd=2.5, ramp=30*Math.PI/180;              // a long camper on a 30° ramp
+  const gF=hd*Math.tan(ramp), gB=-hd*Math.tan(ramp);
+  let tp=Math.atan2(gF-gB, 2*hd); tp=Math.max(-TP,Math.min(TP,tp));
+  assert(Math.abs(tp-ramp)<1e-9, 'a long vehicle pitches to match the ramp (not under-tilted into it)');
+  let tr=Math.atan2(8-0, 2*1); tr=Math.max(-TR,Math.min(TR,tr));   // an 8m wall under one side
+  assert(tr===TR, 'a wall under one side is capped (lean, never flip)'); }
 
-done('build 709-726: drivable vehicles — drive / collision / ramps+openings / boost / facing / pivot / cam+ride / shove / anti-launch / A·D + drift / tilt-clamp + handbrake');
+done('build 709-727: drivable vehicles — drive / collision / ramps+openings / boost / facing / pivot / cam+ride / shove / anti-launch / A·D + drift / tilt + handbrake / long-ramp fix');
