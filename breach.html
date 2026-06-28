@@ -15187,7 +15187,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 712 · 2026-06-26';
+const BUILD_VERSION = 'build 713 · 2026-06-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19014,7 +19014,7 @@ const editorTargets = {
     apply(){ const o=this.obj(), s=this.state; if(!o) return;
       o.position.set(s.px,s.py,s.pz); o.scale.set(s.sx,s.sy,s.sz);
       o.rotation.set(s.rx*RAD, s.ry*RAD, s.rz*RAD);
-      refreshPropCollider(o);   // keep the solid hitbox aligned with what you see
+      refreshPropCollider(o); _homeSync(o);   // keep the solid hitbox aligned with what you see + the dynamic-prop authored home in sync (build 713)
       if(o.userData.emit) applyPropEmissive(o, o.userData.emit.c, o.userData.emit.i);   // re-spread emitter lights along the new longest axis
     },
     code(){
@@ -19029,9 +19029,8 @@ const editorTargets = {
           const dyn = o.userData.phys ? (", dyn: true" + (o.userData.mass!=null ? (", mass: " + fmt(o.userData.mass)) : '')) : '';
           const md = propMaterialDesc(o);
           const mat = md ? (", mat: " + JSON.stringify(md)) : '';
-          const hx = o.userData.physHome ? o.userData.physHome.x : o.position.x;
-          const hy = o.userData.physHome ? o.userData.physHome.y : o.position.y;
-          const hz = o.userData.physHome ? o.userData.physHome.z : o.position.z;
+          const _h = _authoredHome(o);   // build 713: editor move now saves (only physics-simulated props use physHome)
+          const hx = _h.x, hy = _h.y, hz = _h.z;
           body += '  { src: ' + JSON.stringify(src) + anim + dyn + mat + ', t: ['
                + fmt(hx) + ', ' + fmt(hy) + ', ' + fmt(hz)
                + ', ' + fmt(o.rotation.x) + ', ' + fmt(o.rotation.y) + ', ' + fmt(o.rotation.z)
@@ -19675,9 +19674,26 @@ function propMaterialDesc(o){
   if(o.userData.shine && (Math.abs(o.userData.shine.r-PRIM_DEFAULT_ROUGH)>1e-3 || Math.abs(o.userData.shine.m-PRIM_DEFAULT_METAL)>1e-3)) m.shine = { r:o.userData.shine.r, m:o.userData.shine.m };
   return Object.keys(m).length ? m : null;
 }
+// Authored position for save/export. build 713: ONLY fall back to physHome while a dynamic prop is actually being
+// simulated (it has a live body during play, where o.position is physics-displaced). In the editor the physics world
+// is torn down (no body), so o.position IS the authored spot — using it means a gizmo/field move actually saves
+// instead of reverting to the position the prop had when it was first made dynamic.
+function _authoredHome(o){
+  const simming = o.userData.phys && o.userData.phys.body;
+  return (simming && o.userData.physHome) ? o.userData.physHome : o.position;
+}
+// build 713: keep a dynamic prop's authored home (physHome/physHomeQ) in step with editor moves, so re-opening the
+// editor (which snaps dynamic props back to physHome) doesn't undo a move you made in a previous session.
+function _homeSync(o){
+  if(o && o.userData && o.userData.phys){
+    (o.userData.physHome  || (o.userData.physHome  = new THREE.Vector3())).copy(o.position);
+    (o.userData.physHomeQ || (o.userData.physHomeQ = new THREE.Quaternion())).copy(o.quaternion);
+  }
+}
 // One prop's serialized descriptor (used by both level save and live prop sync). Carries the network id.
 function propEntry(o){
-  const e={ src:o.userData.src||PROP_MODEL_URL, t:[ (o.userData.physHome?o.userData.physHome.x:o.position.x), (o.userData.physHome?o.userData.physHome.y:o.position.y), (o.userData.physHome?o.userData.physHome.z:o.position.z), o.rotation.x,o.rotation.y,o.rotation.z,o.scale.x,o.scale.y,o.scale.z] };
+  const h = _authoredHome(o);
+  const e={ src:o.userData.src||PROP_MODEL_URL, t:[ h.x, h.y, h.z, o.rotation.x,o.rotation.y,o.rotation.z,o.scale.x,o.scale.y,o.scale.z] };
   if(o.userData.animMode==='trigger') e.anim='trigger';
   if(o.userData.animTrigger && o.userData.animTrigger!=='auto') e.animTrig=o.userData.animTrigger;
   if(o.userData.animPlay && o.userData.animPlay!=='loop') e.animPlay=o.userData.animPlay;
@@ -23296,7 +23312,7 @@ function setSelPos(v){
     refreshStationCollider();
   } else if(editorActive==='props'){
     const o=editorTargets.props.obj(); if(!o) return;
-    o.position.copy(v); refreshPropCollider(o);
+    o.position.copy(v); refreshPropCollider(o); _homeSync(o);
     const s=editorTargets.props.state; s.px=v.x; s.py=v.y; s.pz=v.z;
   } else if(editorActive==='lights'){
     const g=editorTargets.lights.obj(); if(!g) return;
@@ -23349,7 +23365,7 @@ function setSelRot(euler){
     refreshStationCollider();
   } else if(editorActive==='props'){
     const o=editorTargets.props.obj(); if(!o) return;
-    o.rotation.copy(euler); refreshPropCollider(o);
+    o.rotation.copy(euler); refreshPropCollider(o); _homeSync(o);
     const s=editorTargets.props.state; s.rx=euler.x*DEG; s.ry=euler.y*DEG; s.rz=euler.z*DEG;
   } else if(editorActive==='lights'){
     const g=editorTargets.lights.obj(); if(!g) return;
@@ -23586,7 +23602,7 @@ const _gdq = new THREE.Quaternion(), _gtmp = new THREE.Vector3();
 function applyGroupDrag(e, d){
   const pivot = d.pivot;
   const isL = d.lights;
-  const touch = (o)=>{ if(!isL) refreshPropCollider(o); };   // lights have no collider
+  const touch = (o)=>{ if(!isL){ refreshPropCollider(o); _homeSync(o); } };   // lights have no collider; build 713: keep dynamic props' authored home synced
   if(d.kind==='translate'){
     const s = axisParamUnderPointer(e, pivot, d.dir);
     const off = d.dir.clone().multiplyScalar(s - d.startParam);
