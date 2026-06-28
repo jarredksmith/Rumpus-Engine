@@ -195,8 +195,14 @@ assert(/if\(handbrake && Math\.abs\(r\.speed\)>0\.1\)\{ const _bk=1 - Math\.min\
   assert(tr===TR, 'a wall under one side is capped (lean, never flip)'); }
 
 // --- build 729: suspension lean / weight transfer (visual offsets on top of the surface tilt) ---
-assert(/const _leanRollT=Math\.max\(-0\.13,Math\.min\(0\.13, _yawRate\*r\.speed\*0\.012\)\);/.test(du), 'body rolls out of the corner, scaled by yaw-rate * speed (capped)');
-assert(/const _leanPitchT=Math\.max\(-0\.1,Math\.min\(0\.1, _accel\*0\.006\)\);/.test(du), 'body dives on braking / squats under power, scaled by longitudinal accel (capped)');
+assert(/const _leanRollT=Math\.max\(-0\.07,Math\.min\(0\.07, _yawRate\*r\.speed\*0\.007\)\)\*_leanAmt;/.test(du), 'body rolls out of the corner, scaled by yaw-rate * speed * Body-lean (capped, build 737)');
+assert(/const _leanPitchT=Math\.max\(-0\.07,Math\.min\(0\.07, _accel\*0\.005\)\)\*_leanAmt;/.test(du), 'body dives on braking / squats under power, scaled by accel * Body-lean (capped)');
+// build 737: adjustable + snappier (no boat sway)
+assert(/const _leanAmt=\(cfg\.lean==null\?0\.5:\+cfg\.lean\);/.test(du), 'the lean is scaled by the per-vehicle Body-lean amount (0 = off)');
+assert(/const _lk=Math\.min\(1, dt\*8\);/.test(du), 'the lean eases faster now (settles instead of swaying like a boat)');
+assert(/lean:\(v\.lean==null\?0\.5:Math\.max\(0, Math\.min\(2, \+v\.lean\|\|0\)\)\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores Body lean (default 0.5)');
+assert(/if\(V\.lean!=null && V\.lean!==0\.5\) e\.veh\.lean=V\.lean;/.test(src), 'Body lean serialized when non-default');
+assert(/row\('Body lean','lean', 0, 2, 0\.05, 1\)/.test(src), 'editor exposes a Body lean slider (0 = off)');
 assert(/o\.userData\.leanRoll =\(o\.userData\.leanRoll \|\|0\)\+\(_leanRollT -\(o\.userData\.leanRoll \|\|0\)\)\*_lk;/.test(du), 'the lean eases (suspension feel), not a snap');
 assert(/o\.userData\.leanRoll=0; o\.userData\.leanPitch=0; o\.userData\._prevSpeed=0;/.test(extractFunction('enterCar')), 'lean starts neutral on enter');
 

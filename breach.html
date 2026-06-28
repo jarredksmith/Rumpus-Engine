@@ -14540,7 +14540,8 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   boost:Math.max(1, Math.min(4, +v.boost||1)), boostDur:Math.max(0.5, +v.boostDur||3), boostCd:Math.max(0, +v.boostCd||5),
   modelYaw:+v.modelYaw||0, pivot:+v.pivot||0,
   camDist:+v.camDist||0, camHigh:+v.camHigh||0, rideHeight:+v.rideHeight||0,
-  grip:Math.max(0.5, +v.grip||6) }; }   // 719: boost; 720: modelYaw; 721: pivot; 722: cam/ride trims; 725: grip (lower=drifty, Space=handbrake)
+  grip:Math.max(0.5, +v.grip||6),
+  lean:(v.lean==null?0.5:Math.max(0, Math.min(2, +v.lean||0))) }; }   // 719: boost; 720: modelYaw; 721: pivot; 722: cam/ride; 725: grip; 737: body-lean amount (0=off)
 const _SPEED_UNIT = { kph:{ f:3.6, l:'km/h' }, mph:{ f:2.23694, l:'mph' } };   // m/s -> display
 // Pure arcade step: given the current forward speed + inputs (throttle/steer in -1..1) + config + dt, return the new
 // speed and the yaw change (radians). Self-contained (no globals) so the harness can test the feel math directly.
@@ -14908,9 +14909,11 @@ function driveUpdate(dt){
   // and squats (nose up) under power. Eased offsets added on top of the surface tilt; capped small so it reads as suspension.
   const _yawRate=(carYaw-_yawOld)/Math.max(1e-4,dt), _accel=(r.speed-(o.userData._prevSpeed||0))/Math.max(1e-4,dt);
   o.userData._prevSpeed=r.speed;
-  const _leanRollT=Math.max(-0.13,Math.min(0.13, _yawRate*r.speed*0.012));    // lateral weight transfer (lean out of the turn)
-  const _leanPitchT=Math.max(-0.1,Math.min(0.1, _accel*0.006));               // longitudinal: +accel -> nose up (squat), -accel (brake) -> nose down (dive)
-  const _lk=Math.min(1, dt*6);
+  // build 737: much subtler + snappier than build 729 (which swayed like a boat), and scaled by the per-vehicle "Body lean".
+  const _leanAmt=(cfg.lean==null?0.5:+cfg.lean);
+  const _leanRollT=Math.max(-0.07,Math.min(0.07, _yawRate*r.speed*0.007))*_leanAmt;   // lateral weight transfer (lean out of the turn)
+  const _leanPitchT=Math.max(-0.07,Math.min(0.07, _accel*0.005))*_leanAmt;            // longitudinal: +accel -> nose up (squat), brake -> nose down (dive)
+  const _lk=Math.min(1, dt*8);   // snappier so it settles instead of swaying
   o.userData.leanRoll =(o.userData.leanRoll ||0)+(_leanRollT -(o.userData.leanRoll ||0))*_lk;
   o.userData.leanPitch=(o.userData.leanPitch||0)+(_leanPitchT-(o.userData.leanPitch||0))*_lk;
   // build 720: orient = Ry(carYaw)·Rx(pitch)·Rz(roll)·Ry(-modelYaw). The tilt is applied in the TRAVEL frame; the final
@@ -15560,7 +15563,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 736 · 2026-06-28';
+const BUILD_VERSION = 'build 737 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20086,7 +20089,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } }   // build 707: physics joint
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; }   // build 709-725: drivable vehicle + units + boost + model facing + pivot + camera/ride trims + grip
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; }   // build 709-737: drivable vehicle + tuning (grip, body lean, …)
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -22771,6 +22774,8 @@ function renderEditorFields(){
           row('Reverse ('+U.l+')','reverse', 2, 120, 1, U.f);
           { const gh=document.createElement('div'); gh.className='hint'; gh.style.margin='8px 0 1px'; gh.innerHTML='<b>Grip</b> — how hard the tyres bite. Lower = loose &amp; <b>drifty</b> (slides in turns); higher = planted. Steer with the <b>mouse</b> + <b>A/D</b>; hold <b>Space</b> to handbrake-drift.'; vBody.appendChild(gh); }
           row('Grip','grip', 1, 12, 0.5, 1);
+          { const lh=document.createElement('div'); lh.className='hint'; lh.style.margin='8px 0 1px'; lh.innerHTML='<b>Body lean</b> — how much the body rolls in turns / dives under braking. <b>0 = off</b> (rigid). Lower it if it feels like a boat.'; vBody.appendChild(lh); }
+          row('Body lean','lean', 0, 2, 0.05, 1);
           { const mh=document.createElement('div'); mh.className='hint'; mh.style.margin='8px 0 1px'; mh.innerHTML='<b>Model facing</b> — rotate until the green arrow points out the <b>front</b> of your model. Drives nose-first; doesn’t move the prop.'; vBody.appendChild(mh); }
           row('Model facing (°)','modelYaw', -180, 180, 1, 1);
           { const ph=document.createElement('div'); ph.className='hint'; ph.style.margin='8px 0 1px'; ph.innerHTML='<b>Turn pivot</b> — the red dot is where the car spins. Slide it toward the nose (+) so a model whose origin sits at the tail turns around its <b>centre</b>, not the back.'; vBody.appendChild(ph); }
