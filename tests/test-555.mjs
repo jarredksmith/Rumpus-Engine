@@ -43,18 +43,22 @@ assert(/const sl=Math\.max\(0, Math\.min\(1, \(\(slip\|\|0\)-0\.2\)\/0\.9\)\) \*
 assert(/if\(e\.scr\)\{ e\.scr\.g\.gain\.setTargetAtTime\(0\.0001, t, 0\.05\); try\{ e\.scr\.src\.stop\(t\+0\.2\); \}catch/.test(extractFunction('_engStop')), 'engine stop also ramps down + stops the screech (no leak)');
 const ds2 = extractFunction('_dropSkid'), fs = extractFunction('_fadeSkids');
 assert(/_skidYawQ\.setFromAxisAngle\(_skidUp, yaw\); m\.quaternion\.copy\(_skidYawQ\)\.multiply\(_skidFlatQ\);/.test(ds2), 'a skid mark is laid flat and spun to the car yaw');
-assert(/m\.material\.opacity=0\.5; m\.userData\.skidLife=9;/.test(ds2) && /const l=\(m\.userData\.skidLife-=dt\);/.test(fs), 'skid marks carry a life and fade out');
+assert(/m\.material\.opacity=_SKID_OP; m\.userData\.skidLife=9;/.test(ds2) && /const l=\(m\.userData\.skidLife-=dt\);/.test(fs), 'skid marks carry a life and fade out');
+// build 736: soft textures (not flat squares) + lower opacity
+assert(/_skidTex=new THREE\.CanvasTexture/.test(src) && /map:tex\|\|null/.test(extractFunction('_ensureSkidPool')), 'skid marks use a soft canvas texture');
+assert(/_puffTex=new THREE\.CanvasTexture/.test(src) && /createRadialGradient/.test(src), 'dust uses a soft radial smoke texture');
+assert(/const _DUST_OP=0\.16;/.test(src) && /const _SKID_OP=0\.34;/.test(src), 'dust + skids toned down to faint opacities (build 736)');
 assert(/const _sliding=\(_slip>0\.3 \|\| handbrake\);/.test(du) && /if\(_grounded && _sliding && Math\.abs\(r\.speed\)>3\)\{/.test(du), 'skid marks drop only while grounded + sliding/braking + moving');
 assert(/_dropSkid\(_rbx \+ _rx\*_hw\*0\.7, gC, _rbz \+ _rz\*_hw\*0\.7, carYaw\);/.test(du), 'a mark is dropped under each rear tyre');
 assert(/if\(typeof _clearSkids==='function'\) _clearSkids\(\);/.test(extractFunction('startGame')), 'deploy clears any lingering skid marks');
 
 // build 732: tyre dust — billboarded puffs off the rear tyres under power / slides / boost
 const ud = extractFunction('_updateDust');
-assert(/m\.position\.x\+=d\.vx\*dt; m\.position\.y\+=d\.vy\*dt; m\.position\.z\+=d\.vz\*dt; d\.vy\*=\(1-0\.6\*dt\);/.test(ud), 'dust puffs drift + rise with decaying upward velocity');
-assert(/m\.material\.opacity=0\.45\*f; m\.scale\.setScalar\(m\.scale\.x \+ dt\*0\.9\);/.test(ud) && /m\.lookAt\(camPos\)/.test(ud), 'dust grows + fades and billboards to the camera');
-assert(/const _boosting=\(o\.userData\.boostT>0\);/.test(du) && /const _every=_boosting\?0\.04:0\.07;/.test(du), 'dust spawns faster on boost');
-assert(/_spawnDust\(_rbx \+ _rx\*_hw\*0\.6, gC\+0\.25, _rbz \+ _rz\*_hw\*0\.6, -hx\*r\.speed, -hz\*r\.speed\);/.test(du), 'dust spawns at the rear tyres, thrown back along travel');
+assert(/m\.position\.x\+=d\.vx\*dt; m\.position\.y\+=d\.vy\*dt; m\.position\.z\+=d\.vz\*dt; d\.vy\*=\(1-0\.7\*dt\);/.test(ud), 'dust puffs drift + rise with decaying upward velocity');
+assert(/m\.material\.opacity=d\.op\*f; m\.scale\.setScalar\(m\.scale\.x \+ dt\*1\.4\);/.test(ud) && /m\.lookAt\(camPos\)/.test(ud), 'dust grows softly + fades and billboards to the camera');
+assert(/const _dustI=_sliding\?1\.5:\(_boosting\?1\.2:0\.55\);/.test(du) && /const _every=_sliding\?0\.05:0\.075;/.test(du), 'dust is a faint continuous haze, thicker on slides/boost (build 736)');
+assert(/_spawnDust\(_rbx \+ _rx\*_hw\*0\.6, gC\+0\.2, _rbz \+ _rz\*_hw\*0\.6, -hx\*r\.speed, -hz\*r\.speed, _dustI\);/.test(du), 'dust spawns at the rear tyres, thrown back along travel, scaled by intensity');
 assert(/_fadeSkids\(dt\); _updateDust\(dt, camera && camera\.position\);/.test(du), 'skids + dust update each frame');
 assert(/if\(typeof _clearDust==='function'\) _clearDust\(\);/.test(extractFunction('startGame')), 'deploy clears lingering dust too');
 
-done('build 715/728/731/732: driving HUD + engine + screech + skid marks + gearbox + engine braking + tyre dust');
+done('build 715/728/731/732/736: driving HUD + engine + screech + skid marks + gearbox + engine braking + soft tyre dust');

@@ -14599,14 +14599,39 @@ function _engStop(){
     if(e.scr){ e.scr.g.gain.setTargetAtTime(0.0001, t, 0.05); try{ e.scr.src.stop(t+0.2); }catch(_){} }
     setTimeout(()=>{ try{ e.o.disconnect(); e.f.disconnect(); e.g.disconnect(); if(e.scr){ e.scr.src.disconnect(); e.scr.bp.disconnect(); e.scr.g.disconnect(); } }catch(_){} }, 360); }catch(e2){}
 }
-// build 728: skid marks — a pooled ring of flat dark quads dropped under the rear tyres while sliding, fading out over time.
+// build 736: soft canvas textures so dust reads as smoke (radial alpha falloff) and skids as faded rubber (soft edges),
+// instead of flat opaque squares. Generated once, cached; degrade to null (plain quad) if canvas is unavailable.
+let _puffTex=null, _skidTex=null;
+function _getPuffTex(){
+  if(_puffTex!==null) return _puffTex||undefined;
+  try{ const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+    const grd=g.createRadialGradient(32,32,0,32,32,32);
+    grd.addColorStop(0,'rgba(255,255,255,0.85)'); grd.addColorStop(0.45,'rgba(255,255,255,0.32)'); grd.addColorStop(1,'rgba(255,255,255,0)');
+    g.fillStyle=grd; g.beginPath(); g.arc(32,32,32,0,Math.PI*2); g.fill();
+    _puffTex=new THREE.CanvasTexture(c); _puffTex.anisotropy=1;
+  }catch(e){ _puffTex=false; }
+  return _puffTex||undefined;
+}
+function _getSkidTex(){
+  if(_skidTex!==null) return _skidTex||undefined;
+  try{ const c=document.createElement('canvas'); c.width=32; c.height=64; const g=c.getContext('2d');
+    const grd=g.createLinearGradient(0,0,32,0);   // soft across the width, so the strip has no hard edges
+    grd.addColorStop(0,'rgba(0,0,0,0)'); grd.addColorStop(0.5,'rgba(0,0,0,0.9)'); grd.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=grd; g.fillRect(0,0,32,64);
+    for(let i=0;i<140;i++){ g.fillStyle='rgba(0,0,0,'+(Math.random()*0.25)+')'; g.fillRect(6+Math.random()*20, Math.random()*64, 1.5, 1.5); }   // a little grain
+    _skidTex=new THREE.CanvasTexture(c);
+  }catch(e){ _skidTex=false; }
+  return _skidTex||undefined;
+}
+// build 728/736: skid marks — a pooled ring of soft, faded rubber streaks dropped under the rear tyres while sliding.
 let _skidPool=null, _skidIdx=0;
+const _SKID_OP=0.34;   // build 736: lower, softer than the old flat 0.5
 const _skidFlatQ=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -Math.PI/2), _skidYawQ=new THREE.Quaternion(), _skidUp=new THREE.Vector3(0,1,0);
 function _ensureSkidPool(){
   if(_skidPool) return _skidPool;
-  _skidPool=[]; const geo=new THREE.PlaneGeometry(0.34, 0.85);
+  _skidPool=[]; const geo=new THREE.PlaneGeometry(0.30, 0.85), tex=_getSkidTex();
   for(let i=0;i<140;i++){
-    const mat=new THREE.MeshBasicMaterial({ color:0x0b0b0b, transparent:true, opacity:0, depthWrite:false });
+    const mat=new THREE.MeshBasicMaterial({ color:0x141414, map:tex||null, transparent:true, opacity:0, depthWrite:false });
     const m=new THREE.Mesh(geo, mat); m.visible=false; m.renderOrder=2; m.userData.skidLife=0;
     scene.add(m); _skidPool.push(m);
   }
@@ -14616,38 +14641,40 @@ function _dropSkid(x,y,z,yaw){
   const pool=_ensureSkidPool(), m=pool[_skidIdx]; _skidIdx=(_skidIdx+1)%pool.length;
   m.position.set(x, y+0.02, z);
   _skidYawQ.setFromAxisAngle(_skidUp, yaw); m.quaternion.copy(_skidYawQ).multiply(_skidFlatQ);
-  m.material.opacity=0.5; m.userData.skidLife=9; m.visible=true;
+  m.material.opacity=_SKID_OP; m.userData.skidLife=9; m.visible=true;
 }
 function _fadeSkids(dt){
   if(!_skidPool) return;
-  for(const m of _skidPool){ if(!m.visible) continue; const l=(m.userData.skidLife-=dt); if(l<=0){ m.visible=false; m.material.opacity=0; } else if(l<2){ m.material.opacity=0.5*(l/2); } }
+  for(const m of _skidPool){ if(!m.visible) continue; const l=(m.userData.skidLife-=dt); if(l<=0){ m.visible=false; m.material.opacity=0; } else if(l<2){ m.material.opacity=_SKID_OP*(l/2); } }
 }
 function _clearSkids(){ if(!_skidPool) return; for(const m of _skidPool){ m.visible=false; m.material.opacity=0; m.userData.skidLife=0; } }
-// build 732: tyre dust — a pool of billboarded puffs kicked up off the rear tyres under power / slides / boost; they rise, grow, and fade.
+// build 732/736: tyre dust — a pool of soft, billboarded smoke puffs off the rear tyres; toned way down (subtle + continuous).
 let _dustPool=null, _dustIdx=0;
+const _DUST_OP=0.16;   // build 736: much lower than the old 0.45 — a faint haze, not a cheesy cloud
 function _ensureDustPool(){
   if(_dustPool) return _dustPool;
-  _dustPool=[]; const geo=new THREE.PlaneGeometry(0.7,0.7);
-  for(let i=0;i<64;i++){
-    const mat=new THREE.MeshBasicMaterial({ color:0xc2b8a6, transparent:true, opacity:0, depthWrite:false });
-    const m=new THREE.Mesh(geo,mat); m.visible=false; m.renderOrder=3; m.userData.dust={life:0,max:1,vx:0,vy:0,vz:0};
+  _dustPool=[]; const geo=new THREE.PlaneGeometry(1,1), tex=_getPuffTex();
+  for(let i=0;i<80;i++){
+    const mat=new THREE.MeshBasicMaterial({ color:0xb9b2a6, map:tex||null, transparent:true, opacity:0, depthWrite:false });
+    const m=new THREE.Mesh(geo,mat); m.visible=false; m.renderOrder=3; m.userData.dust={life:0,max:1,vx:0,vy:0,vz:0,op:_DUST_OP};
     scene.add(m); _dustPool.push(m);
   }
   return _dustPool;
 }
-function _spawnDust(x,y,z,vx,vz){
+function _spawnDust(x,y,z,vx,vz,intensity){
   const pool=_ensureDustPool(), m=pool[_dustIdx]; _dustIdx=(_dustIdx+1)%pool.length;
-  m.position.set(x,y,z); m.scale.setScalar(0.5+Math.random()*0.45);
-  const d=m.userData.dust; d.life=d.max=0.7+Math.random()*0.4; d.vy=0.8+Math.random()*0.7;
-  d.vx=vx*0.25+(Math.random()-0.5)*0.7; d.vz=vz*0.25+(Math.random()-0.5)*0.7;
-  m.material.opacity=0.45; m.visible=true;
+  m.position.set(x,y,z); m.scale.setScalar(0.35+Math.random()*0.35);
+  const d=m.userData.dust; d.life=d.max=0.55+Math.random()*0.4; d.vy=0.5+Math.random()*0.4;
+  d.vx=vx*0.18+(Math.random()-0.5)*0.45; d.vz=vz*0.18+(Math.random()-0.5)*0.45;
+  d.op=_DUST_OP*(intensity||1);
+  m.material.opacity=d.op; m.visible=true;
 }
 function _updateDust(dt,camPos){
   if(!_dustPool) return;
   for(const m of _dustPool){ if(!m.visible) continue; const d=m.userData.dust; d.life-=dt;
     if(d.life<=0){ m.visible=false; m.material.opacity=0; continue; }
-    m.position.x+=d.vx*dt; m.position.y+=d.vy*dt; m.position.z+=d.vz*dt; d.vy*=(1-0.6*dt);
-    const f=d.life/d.max; m.material.opacity=0.45*f; m.scale.setScalar(m.scale.x + dt*0.9);   // grow + fade out
+    m.position.x+=d.vx*dt; m.position.y+=d.vy*dt; m.position.z+=d.vz*dt; d.vy*=(1-0.7*dt);
+    const f=d.life/d.max; m.material.opacity=d.op*f; m.scale.setScalar(m.scale.x + dt*1.4);   // grow softly + fade
     if(camPos) m.lookAt(camPos);   // billboard toward the camera
   }
 }
@@ -14673,7 +14700,7 @@ function _carImpactFx(o, imp){
   _carThud(f);
   const cy=(o.userData.carYaw!=null)?o.userData.carYaw:o.rotation.y, hx=-Math.sin(cy), hz=-Math.cos(cy), ex=_carExtents(o);
   const nx=o.position.x+hx*ex.hd, nz=o.position.z+hz*ex.hd;   // a debris burst at the nose
-  for(let i=0;i<4;i++) _spawnDust(nx, o.position.y+0.3, nz, (Math.random()-0.5)*4, (Math.random()-0.5)*4);
+  for(let i=0;i<5;i++) _spawnDust(nx, o.position.y+0.3, nz, (Math.random()-0.5)*4, (Math.random()-0.5)*4, 1.8);
 }
 function _driveHudEl(){
   let el=document.getElementById('driveHud');
@@ -14905,12 +14932,13 @@ function driveUpdate(dt){
     }
   }
   const _boosting=(o.userData.boostT>0);
-  if(_grounded && (_sliding || _boosting || (throttle>0 && Math.abs(r.speed)>2)) && Math.abs(r.speed)>2){
+  if(_grounded && Math.abs(r.speed)>2){   // build 736: a faint continuous haze while driving, thickening on slides / boost
+    const _dustI=_sliding?1.5:(_boosting?1.2:0.55);
     o.userData._dustT=(o.userData._dustT||0)+dt;
-    const _every=_boosting?0.04:0.07;
+    const _every=_sliding?0.05:0.075;
     if(o.userData._dustT>=_every){ o.userData._dustT=0;
-      _spawnDust(_rbx + _rx*_hw*0.6, gC+0.25, _rbz + _rz*_hw*0.6, -hx*r.speed, -hz*r.speed);
-      _spawnDust(_rbx - _rx*_hw*0.6, gC+0.25, _rbz - _rz*_hw*0.6, -hx*r.speed, -hz*r.speed);
+      _spawnDust(_rbx + _rx*_hw*0.6, gC+0.2, _rbz + _rz*_hw*0.6, -hx*r.speed, -hz*r.speed, _dustI);
+      _spawnDust(_rbx - _rx*_hw*0.6, gC+0.2, _rbz - _rz*_hw*0.6, -hx*r.speed, -hz*r.speed, _dustI);
     }
   }
   _fadeSkids(dt); _updateDust(dt, camera && camera.position);
@@ -15532,7 +15560,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 735 · 2026-06-28';
+const BUILD_VERSION = 'build 736 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

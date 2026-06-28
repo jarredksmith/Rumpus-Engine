@@ -217,7 +217,7 @@ assert(/camera\.fov=worldCfg\.fov; camera\.updateProjectionMatrix\(\); \}   \/\/
 assert(/if\(mvx===0 && mvz===0 && _imp0>5 && o\.userData\._hitCd<=0\)\{ o\.userData\._hitCd=0\.35; o\.userData\.carSpeed=r\.speed\*0\.1; r\.speed=o\.userData\.carSpeed; _carImpactFx\(o, _imp0\); \}/.test(du), 'a hard head-on hit fires impact FX once per hit (cooldown)');
 const cfx = extractFunction('_carImpactFx');
 assert(/o\.userData\.hitShake=Math\.max\(o\.userData\.hitShake\|\|0, 0\.02 \+ f\*0\.06\);/.test(cfx) && /_carThud\(f\)/.test(cfx), 'impact jolts the camera + thuds, scaled by impact speed');
-assert(/for\(let i=0;i<4;i\+\+\) _spawnDust\(nx, o\.position\.y\+0\.3, nz/.test(cfx), 'impact throws a debris burst at the nose');
+assert(/for\(let i=0;i<5;i\+\+\) _spawnDust\(nx, o\.position\.y\+0\.3, nz/.test(cfx), 'impact throws a debris burst at the nose');
 assert(/o\.userData\.hitShake=_hs\*\(1-Math\.min\(1,dt\*5\)\);/.test(src), 'the impact jolt decays in the chase cam');
 assert(/o\.userData\.hitShake=0; o\.userData\._hitCd=0;/.test(extractFunction('enterCar')), 'impact state resets on enter');
 
