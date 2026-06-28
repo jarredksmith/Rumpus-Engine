@@ -21,7 +21,7 @@ assert(/const mvx = padMoveX \|\| touchMoveX, mvz = padMoveZ \|\| touchMoveZ;/.t
 assert(/function sprinting\(\)\{ if\(padSprint \|\| touchSprint\) return true;/.test(src) && /return !!keys\['ShiftLeft'\];/.test(src), 'sprint() honors stick/touch + Shift (hold) or the toggle latch (build 369)');
 assert(/\(_jHeld && !_jumpHeldPrev\) \|\| touchJump;/.test(src) && /touchJump = false;/.test(src), 'jump is a one-shot touch tap (edge-triggered, build 517)');
 assert(/ads \|\| padAds \|\| touchAds \|\| editorAimPreview/.test(src), 'aim toggle feeds ADS');
-assert(/if\(\(firing \|\| padFiring \|\| touchFiring\) && !heldProp && !editorOpen && !_levelLoaderActive\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'fire button feeds the shoot trigger');
+assert(/if\(\(firing \|\| padFiring \|\| touchFiring\) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'fire button feeds the shoot trigger');
 assert(/if\(!isTouch && gameOn && !locked/.test(src), 'no pointer-lock grab on touch devices');
 
 // touch look is applied in the loop (no pointer lock on mobile) and reset each frame

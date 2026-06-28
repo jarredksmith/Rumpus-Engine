@@ -8184,7 +8184,7 @@ function removeProp(idx){
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -8896,6 +8896,7 @@ addEventListener('keydown', e=>{
   // Universal escape hatch in multiplayer: Esc always opens a match menu, even while dead or on the result
   // screen, so you can never get trapped with no way out.
   if(e.code==='Escape' && mountedTurret){ e.preventDefault(); dismountTurret(); return; }
+  if(e.code==='Escape' && drivingCar){ e.preventDefault(); exitCar(); return; }
   if(e.code==='Escape' && NET.mode && NET.mode!=='off' && !editorOpen){
     e.preventDefault();
     if(typeof toggleMatchMenu==='function') toggleMatchMenu();
@@ -12416,7 +12417,7 @@ function loadLevelFromNet(level){
   // rebuild from the host's data
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -14487,6 +14488,66 @@ function turretFire(){
   }
   tracer(origin,endPoint); muzzleFlashAt(origin);
 }
+// ============================  DRIVABLE VEHICLES (arcade, build 709 Phase 1)  ============================
+// A prop flagged as a vehicle can be entered (E) and driven (W/S throttle, A/D steer) with a chase camera. The model
+// is moved kinematically and follows the ground/ramps; the player rides along. (Phase 2 adds wall collision; Phase 3
+// co-op sync.) The movement is a pure function so it's unit-testable without a browser.
+let drivingCar = null, _carReturn = null;
+function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
+  maxSpeed:Math.max(2, +v.maxSpeed||16), accel:Math.max(1, +v.accel||18),
+  turn:Math.max(10, +v.turn||90), reverse:Math.max(1, +v.reverse||7) }; }
+// Pure arcade step: given the current forward speed + inputs (throttle/steer in -1..1) + config + dt, return the new
+// speed and the yaw change (radians). Self-contained (no globals) so the harness can test the feel math directly.
+function driveStep(speed, throttle, steer, cfg, dt){
+  const target = throttle>=0 ? throttle*cfg.maxSpeed : throttle*cfg.reverse;   // throttle<0 reverses
+  let sp = speed;
+  if(Math.abs(throttle) < 0.01){ const d=cfg.accel*0.7*dt; sp = sp>0 ? Math.max(0,sp-d) : Math.min(0,sp+d); }   // coast to a stop
+  else if(sp < target) sp = Math.min(target, sp + cfg.accel*dt);
+  else sp = Math.max(target, sp - cfg.accel*1.6*dt);                            // braking / decel is sharper than accel
+  const speedFrac = Math.min(1, Math.abs(sp)/Math.max(1, cfg.maxSpeed*0.35));   // barely steers when nearly stopped
+  const yawDelta = steer * (cfg.turn*Math.PI/180) * speedFrac * (sp>=0?1:-1) * dt;   // steering flips in reverse
+  return { speed: sp, yawDelta };
+}
+function enterCar(o){
+  if(drivingCar || !o || !o.userData.vehicle) return;
+  drivingCar = o; o.userData.carSpeed = 0;
+  _carReturn = { x:player.pos.x, y:player.pos.y, z:player.pos.z, yaw:player.yaw, pitch:player.pitch };
+  player.vel.set(0,0,0); sliding=false; firing=false; ads=false;
+  player.yaw = o.rotation.y; player.pitch = -0.18;
+  if(SFX.swap) SFX.swap();
+}
+function exitCar(){
+  if(!drivingCar) return;
+  const o=drivingCar; drivingCar=null; if(o.userData) o.userData.carSpeed=0;
+  const side=new THREE.Vector3(Math.cos(o.rotation.y),0,-Math.sin(o.rotation.y));   // step out to the side
+  player.pos.set(o.position.x+side.x*2.2, (o.position.y||0)+EYE, o.position.z+side.z*2.2);
+  player.vel.set(0,0,0); player.onGround=true;
+  if(_carReturn){ player.yaw=_carReturn.yaw; player.pitch=_carReturn.pitch; }
+  if(SFX.swap) SFX.swap();
+}
+function _carGroundY(x,z){
+  if(typeof surfaceTopAt==='function'){ const s=surfaceTopAt(x,z); if(s>-Infinity) return s; }
+  return (typeof terrainHeightAt==='function') ? terrainHeightAt(x,z) : 0;
+}
+function driveUpdate(dt){
+  const o=drivingCar; if(!o) return;
+  if(!gameOn || gameOver || (player.hp!=null && player.hp<=0)){ exitCar(); return; }   // died / match over -> get out
+  const cfg=o.userData.vehicle; if(!cfg){ exitCar(); return; }
+  let throttle=0, steer=0;
+  if(keys['KeyW']) throttle+=1; if(keys['KeyS']) throttle-=1;
+  if(keys['KeyD']) steer+=1; if(keys['KeyA']) steer-=1;
+  if(padMoveZ) throttle += -padMoveZ; if(padMoveX) steer += padMoveX;   // controller stick drives too
+  throttle=Math.max(-1,Math.min(1,throttle)); steer=Math.max(-1,Math.min(1,steer));
+  const r = driveStep(o.userData.carSpeed||0, throttle, steer, cfg, dt);
+  o.userData.carSpeed = r.speed;
+  o.rotation.y += r.yawDelta;
+  const fx=-Math.sin(o.rotation.y), fz=-Math.cos(o.rotation.y);
+  o.position.x += fx * r.speed * dt;
+  o.position.z += fz * r.speed * dt;
+  o.position.y = _carGroundY(o.position.x, o.position.z);   // sit on the ground / ramps
+  o.updateMatrixWorld(true);
+  player.pos.set(o.position.x, o.position.y+EYE, o.position.z); player.vel.set(0,0,0); player.onGround=true; player.yaw=o.rotation.y;
+}
 let nearTarget = null;    // what the player is standing next to
 function _pickupLabel(p){   // build 616: human-readable name for an interact-pickup prompt
   if(!p) return 'item';
@@ -14553,6 +14614,11 @@ function checkProximity(){
     for(const g of turretModels){ const d=Math.hypot(player.pos.x-g.position.x, player.pos.z-g.position.z); if(d<bd){ bd=d; best=g; } }
     if(best) nearTarget = { type:'turret', turret:best };
   }
+  if(!nearTarget && !drivingCar){   // build 709: a drivable vehicle prop you can get into
+    let best=null, bd=3.4;
+    for(const o of propModels){ if(!o || !o.userData.vehicle) continue; const d=Math.hypot(player.pos.x-o.position.x, player.pos.z-o.position.z); if(d<bd){ bd=d; best=o; } }
+    if(best) nearTarget = { type:'vehicle', obj:best };
+  }
   if(!nearTarget){   // build 616: pickups flagged "require interact" wait here for E instead of auto-collecting
     let best=null, bd=2.2;
     for(const p of powerups){ if(!p || !p.interact || !p.ready) continue; const d=Math.hypot(player.pos.x-p.x, player.pos.z-p.z); if(d<bd){ bd=d; best=p; } }
@@ -14571,6 +14637,8 @@ function checkProximity(){
       const nm=nearTarget.obj.userData.npcName; prompt.innerHTML = nm ? `<b>E</b> Talk to ${_creditEsc(nm)}` : `<b>E</b> Talk`;
     } else if(nearTarget.type==='turret'){
       prompt.innerHTML = `<b>E</b> Man the turret`;
+    } else if(nearTarget.type==='vehicle'){
+      prompt.innerHTML = `<b>E</b> Drive`;
     } else if(nearTarget.type==='pickup'){
       prompt.innerHTML = `<b>E</b> Pick up \u2014 ${_pickupLabel(nearTarget.pu)}`;
     } else {
@@ -14617,6 +14685,7 @@ function closeDialogue(){ _dlg.open=false; const el=document.getElementById('dia
 function interact(){
   if(_dlg.open){ advanceDialogue(); return; }   // mid-conversation -> next line
   if(mountedTurret){ dismountTurret(); return; }
+  if(drivingCar){ exitCar(); return; }   // driving -> get out
   if(heldProp){ releaseHeld(); return; }   // carrying a prop -> drop it
   if(shopOpen){ closeShop(); return; }
   if(nearTarget && nearTarget.type==='npc'){ openDialogue(nearTarget.obj); return; }   // talk to an NPC
@@ -14648,6 +14717,8 @@ function interact(){
     fireSignals(o, 'interacted');
   } else if(nearTarget.type==='turret'){
     mountTurret(nearTarget.turret);
+  } else if(nearTarget.type==='vehicle'){
+    enterCar(nearTarget.obj);
   } else {
     openShop(nearTarget.chest);
   }
@@ -15083,7 +15154,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 708 · 2026-06-25';
+const BUILD_VERSION = 'build 709 · 2026-06-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -15484,6 +15555,7 @@ function trimeshDescFor(o){
 }
 function addStaticColliderFor(o){
   if(!physWorld || !o) return;
+  if(o.userData && o.userData.vehicle) return;   // build 709: a drivable vehicle is moved kinematically — no static collider (it would leave a ghost wall where it started)
   // Animated prop (moving platform / trebuchet arm): build a KINEMATIC body and drive its pose each
   // physics step (see updatePhysics) so it actually sweeps through — and launches — dynamic props.
   // colliderDescFor(propShapeInfo) gives a body-local shape (scale baked into the half-extents), so the
@@ -18119,6 +18191,7 @@ function loop(){
   if(_levelLoaderActive){ wish.set(0,0,0); moveScale=0; }   // frozen while the level is still loading
   if(matchWarmup>0){ wish.set(0,0,0); moveScale=0; }   // frozen during the pre-match GENERATING/countdown (no pre-positioning advantage)
   if(mountedTurret){ wish.set(0,0,0); moveScale=0; }   // frozen while manning a turret
+  if(drivingCar){ wish.set(0,0,0); moveScale=0; }      // foot movement off while driving — driveUpdate moves the car
   wish.normalize();
   let _wantCrouch = ((_crouchMode==='toggle') ? _crouchToggled : (keys['ControlLeft']||keys['ControlRight'])) || padCrouch;   // Ctrl = crouch (C is slide, kept separate); toggle mode avoids holding Ctrl+W
   if(!_wantCrouch && crouchT > 0.4){   // releasing crouch: only stand if there's headroom for the full body
@@ -18265,6 +18338,7 @@ function loop(){
   } else if(!player.onGround){ _stepT = 0.12; }
   if(!(editorOpen && editorActive==='player')) _charPrevInit=false;   // re-seed the third-person preview each time the Player tab opens
   if(mountedTurret) turretUpdate(dt);
+  if(drivingCar) driveUpdate(dt);
   if(mountedTurret){
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
     if(editorBrightLight.intensity !== 0) editorBrightLight.intensity = 0;
@@ -18272,6 +18346,13 @@ function loop(){
     turretEyeWorld(mountedTurret, camera.position);
     camera.rotation.order='YXZ'; camera.rotation.y=player.yaw; camera.rotation.x=player.pitch; camera.rotation.z=0;
     if(shake>0.001){ const sk=shake*shake; camera.rotation.x+=(Math.random()-0.5)*0.06*sk; camera.rotation.y+=(Math.random()-0.5)*0.06*sk; shake=Math.max(0,shake-dt*2.2); } else shake=0;
+  } else if(drivingCar){   // build 709: chase camera — behind + above the car, looking forward down its heading
+    if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
+    if(editorBrightLight.intensity !== 0) editorBrightLight.intensity = 0;
+    gun.visible=false;
+    const o=drivingCar, yaw=o.rotation.y, fx=-Math.sin(yaw), fz=-Math.cos(yaw);
+    camera.position.set(o.position.x - fx*6.5, o.position.y + 3.4, o.position.z - fz*6.5);
+    camera.rotation.order='YXZ'; camera.rotation.y=yaw; camera.rotation.x=-0.28; camera.rotation.z=0;
   } else if(editorOpen && editorTopView){
     // locked orthographic straight-down view; pan with drag, zoom with wheel
     scene.fog = null;   // fog would wash out the whole overhead view
@@ -18382,7 +18463,7 @@ function loop(){
   recoil *= 0.85;
   muzzle.intensity *= 0.6; flashMat.opacity *= 0.5;
 
-  if((firing || padFiring || touchFiring) && !heldProp && !editorOpen && !_levelLoaderActive){ if(mountedTurret) turretFire(); else shoot(); }
+  if((firing || padFiring || touchFiring) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar){ if(mountedTurret) turretFire(); else shoot(); }   // hands on the wheel — no shooting while driving (Phase 1)
 
   // tracers
   for(let i=tracers.length-1;i>=0;i--){
@@ -19567,6 +19648,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } }   // build 707: physics joint
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; }   // build 709: drivable vehicle
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -20106,7 +20188,7 @@ function restoreLevel(level){
   propModels.length = 0;
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -22220,6 +22302,24 @@ function renderEditorFields(){
         dBody.appendChild(ta);
         const dh=document.createElement('div'); dh.className='hint'; dh.style.margin='3px 0 0'; dh.innerHTML='Gives the prop an <b>E Talk</b> prompt. The first line also fires this prop’s <b>“On E”</b> signals — so a chat can set the objective, drop a checkpoint, open a door, etc.'; dBody.appendChild(dh);
       }
+      // ---- Vehicle (drivable, build 709): flag this prop as a car you can enter + drive ----
+      if(sel){
+        const vBody = edFold(animHost, 'vehicle', 'Vehicle (drivable)', true, 'Make this prop a car — press E to drive it (W/S throttle, A/D steer)');
+        const von=document.createElement('label'); von.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;';
+        const vcb=document.createElement('input'); vcb.type='checkbox'; vcb.checked=!!sel.userData.vehicle; vcb.style.accentColor='#7ad7ff';
+        vcb.onchange=()=>{ pushUndoSnapshot(); if(vcb.checked){ vehicleApply(sel, sel.userData.vehicle||{}); if(typeof setPropDynamic==='function') setPropDynamic(sel,false); } else delete sel.userData.vehicle; renderEditorFields(); };
+        const vsp=document.createElement('span'); vsp.innerHTML='<b>Drivable vehicle</b>';
+        von.appendChild(vcb); von.appendChild(vsp); vBody.appendChild(von);
+        if(sel.userData.vehicle){
+          const V=sel.userData.vehicle;
+          const num=(label,key,min,max,step)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#bfe6ff;font-size:12px;margin-top:5px;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='110px'; const ni=document.createElement('input'); ni.type='number'; ni.min=min; ni.max=max; ni.step=step; ni.value=(V[key]!=null?V[key]:0); ni.style.cssText='width:74px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ni.addEventListener('focus',()=>pushUndoSnapshot()); ni.onchange=()=>{ V[key]=parseFloat(ni.value)||0; }; l.appendChild(sp); l.appendChild(ni); vBody.appendChild(l); };
+          num('Top speed (m/s)','maxSpeed',2,60,1);
+          num('Acceleration','accel',2,80,1);
+          num('Turn rate (°/s)','turn',20,360,5);
+          num('Reverse speed','reverse',1,30,1);
+          const vh=document.createElement('div'); vh.className='hint'; vh.style.margin='4px 0 0'; vh.innerHTML='Walk up to it in-game and press <b>E</b> to drive (<b>E</b> / <b>Esc</b> to get out). Phase 1: drives + follows ramps, no wall collision yet. The prop is moved directly, so keep it a normal (non-dynamic) prop.'; vBody.appendChild(vh);
+        }
+      }
       // ---- Joint (physics, build 707): hinge a DYNAMIC prop to a world point or another tagged body ----
       if(sel){
         const jBody = edFold(animHost, 'joint', 'Joint (physics)', true, 'Hinge this object so it swings under physics — doors, levers, see-saws');
@@ -23776,6 +23876,7 @@ function _prewarmMatchModels(){
 }
 function startGame(){
   if(mountedTurret){ mountedTurret=null; const _th=document.getElementById('turretHud'); if(_th) _th.style.display='none'; }   // never start a round still manning a turret
+  if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
   if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
