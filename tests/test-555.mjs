@@ -19,7 +19,7 @@ assert(/if\(typeof _engStop==='function'\) _engStop\(\);/.test(extractFunction('
 
 // --- per-frame update: engine + speedometer (km/h + bar) ---
 const du = extractFunction('driveUpdate');
-assert(/_engUpdate\(r\.speed, throttle\);/.test(du), 'the engine is updated each frame with speed + throttle');
+assert(/_engUpdate\(r\.speed, throttle, _slip\);/.test(du), 'the engine is updated each frame with speed + throttle + slip (build 728 screech)');
 assert(/const U=_SPEED_UNIT\[cfg\.units\]\|\|_SPEED_UNIT\.kph;/.test(du) && /v\.textContent=Math\.round\(Math\.abs\(r\.speed\)\*U\.f\)/.test(du), 'speed shown in the vehicle’s unit (km/h or mph)');
 assert(/un\.textContent=U\.l/.test(du), 'the unit label tracks the setting');
 assert(/f\.style\.width=Math\.min\(100, Math\.abs\(r\.speed\)\/Math\.max\(1,cfg\.maxSpeed\)\*100\)\+'%'/.test(du), 'the bar fills toward top speed');
@@ -29,4 +29,16 @@ const dh = extractFunction('_driveHudEl');
 assert(/el\.id='driveHud'/.test(dh) && /id="dhVal"/.test(dh) && /id="dhFill"/.test(dh), 'the driveHud element carries the speed value + bar');
 assert(/#driveHud \{ position:fixed;[^}]*display:none;/.test(html), 'driveHud is hidden by default (shown only while driving)');
 
-done('build 715: driving speed HUD + speed-reactive engine sound');
+// --- build 728: tyre screech (slip-driven noise) + skid marks ---
+const es2 = extractFunction('_engStart');
+assert(/src\.loop=true;/.test(es2) && /bp\.type='bandpass'/.test(es2) && /scr=\{ src, bp, g:sg \};/.test(es2), 'engine start also builds a looping bandpassed noise loop for screech');
+assert(/const sl=Math\.max\(0, Math\.min\(1, \(\(slip\|\|0\)-0\.2\)\/0\.9\)\) \* Math\.min\(1, Math\.abs\(speed\)\/6\);/.test(extractFunction('_engUpdate')), 'screech gain follows slip * speed (silent until you slide and move)');
+assert(/if\(e\.scr\)\{ e\.scr\.g\.gain\.setTargetAtTime\(0\.0001, t, 0\.05\); try\{ e\.scr\.src\.stop\(t\+0\.2\); \}catch/.test(extractFunction('_engStop')), 'engine stop also ramps down + stops the screech (no leak)');
+const ds2 = extractFunction('_dropSkid'), fs = extractFunction('_fadeSkids');
+assert(/_skidYawQ\.setFromAxisAngle\(_skidUp, yaw\); m\.quaternion\.copy\(_skidYawQ\)\.multiply\(_skidFlatQ\);/.test(ds2), 'a skid mark is laid flat and spun to the car yaw');
+assert(/m\.material\.opacity=0\.5; m\.userData\.skidLife=9;/.test(ds2) && /const l=\(m\.userData\.skidLife-=dt\);/.test(fs), 'skid marks carry a life and fade out');
+assert(/if\(_grounded && \(_slip>0\.3 \|\| handbrake\) && Math\.abs\(r\.speed\)>3\)\{/.test(du), 'skid marks drop only while grounded + sliding/braking + moving');
+assert(/_dropSkid\(_rbx \+ _rx\*_hw\*0\.7, gC, _rbz \+ _rz\*_hw\*0\.7, carYaw\);/.test(du), 'a mark is dropped under each rear tyre');
+assert(/if\(typeof _clearSkids==='function'\) _clearSkids\(\);/.test(extractFunction('startGame')), 'deploy clears any lingering skid marks');
+
+done('build 715/728: driving speed HUD + engine sound + tyre screech + skid marks');

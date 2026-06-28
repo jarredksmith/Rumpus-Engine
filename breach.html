@@ -14532,22 +14532,62 @@ function _engStart(){
     const f=actx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=500; f.Q.value=5;
     const g=actx.createGain(); g.gain.value=0.0001;
     o.connect(f).connect(g).connect(sfxBus); o.start();
-    _eng={ o, f, g };
+    // build 728: tyre screech — a looping noise buffer through a bandpass; its gain tracks the slip angle (silent until you slide)
+    let scr=null;
+    try{
+      const n=Math.floor(actx.sampleRate*0.5), buf=actx.createBuffer(1,n,actx.sampleRate), d=buf.getChannelData(0);
+      for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+      const src=actx.createBufferSource(); src.buffer=buf; src.loop=true;
+      const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1500; bp.Q.value=1.4;
+      const sg=actx.createGain(); sg.gain.value=0.0001;
+      src.connect(bp).connect(sg).connect(sfxBus); src.start();
+      scr={ src, bp, g:sg };
+    }catch(e){}
+    _eng={ o, f, g, scr };
   }catch(e){ _eng=null; }
 }
-function _engUpdate(speed, throttle){
+function _engUpdate(speed, throttle, slip){
   if(!_eng || typeof actx==='undefined' || !actx) return;
   const t=actx.currentTime, frac=Math.min(1, Math.abs(speed)/14), gas=Math.abs(throttle)>0.01;
   try{
     _eng.o.frequency.setTargetAtTime(55 + frac*150 + (throttle>0?18:0), t, 0.08);
     _eng.f.frequency.setTargetAtTime(380 + frac*1700, t, 0.1);
     _eng.g.gain.setTargetAtTime(0.03 + frac*0.085 + (gas?0.02:0), t, 0.06);
+    if(_eng.scr){ const sl=Math.max(0, Math.min(1, ((slip||0)-0.2)/0.9)) * Math.min(1, Math.abs(speed)/6);   // slide hard + fast = louder screech
+      _eng.scr.g.gain.setTargetAtTime(0.0001 + sl*0.12, t, 0.05);
+      _eng.scr.bp.frequency.setTargetAtTime(1300 + sl*900, t, 0.06); }
   }catch(e){}
 }
 function _engStop(){
   if(!_eng) return; const e=_eng; _eng=null;
-  try{ const t=actx.currentTime; e.g.gain.setTargetAtTime(0.0001, t, 0.05); e.o.stop(t+0.2); setTimeout(()=>{ try{ e.o.disconnect(); e.f.disconnect(); e.g.disconnect(); }catch(_){} }, 360); }catch(e2){}
+  try{ const t=actx.currentTime; e.g.gain.setTargetAtTime(0.0001, t, 0.05); e.o.stop(t+0.2);
+    if(e.scr){ e.scr.g.gain.setTargetAtTime(0.0001, t, 0.05); try{ e.scr.src.stop(t+0.2); }catch(_){} }
+    setTimeout(()=>{ try{ e.o.disconnect(); e.f.disconnect(); e.g.disconnect(); if(e.scr){ e.scr.src.disconnect(); e.scr.bp.disconnect(); e.scr.g.disconnect(); } }catch(_){} }, 360); }catch(e2){}
 }
+// build 728: skid marks — a pooled ring of flat dark quads dropped under the rear tyres while sliding, fading out over time.
+let _skidPool=null, _skidIdx=0;
+const _skidFlatQ=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -Math.PI/2), _skidYawQ=new THREE.Quaternion(), _skidUp=new THREE.Vector3(0,1,0);
+function _ensureSkidPool(){
+  if(_skidPool) return _skidPool;
+  _skidPool=[]; const geo=new THREE.PlaneGeometry(0.34, 0.85);
+  for(let i=0;i<140;i++){
+    const mat=new THREE.MeshBasicMaterial({ color:0x0b0b0b, transparent:true, opacity:0, depthWrite:false });
+    const m=new THREE.Mesh(geo, mat); m.visible=false; m.renderOrder=2; m.userData.skidLife=0;
+    scene.add(m); _skidPool.push(m);
+  }
+  return _skidPool;
+}
+function _dropSkid(x,y,z,yaw){
+  const pool=_ensureSkidPool(), m=pool[_skidIdx]; _skidIdx=(_skidIdx+1)%pool.length;
+  m.position.set(x, y+0.02, z);
+  _skidYawQ.setFromAxisAngle(_skidUp, yaw); m.quaternion.copy(_skidYawQ).multiply(_skidFlatQ);
+  m.material.opacity=0.5; m.userData.skidLife=9; m.visible=true;
+}
+function _fadeSkids(dt){
+  if(!_skidPool) return;
+  for(const m of _skidPool){ if(!m.visible) continue; const l=(m.userData.skidLife-=dt); if(l<=0){ m.visible=false; m.material.opacity=0; } else if(l<2){ m.material.opacity=0.5*(l/2); } }
+}
+function _clearSkids(){ if(!_skidPool) return; for(const m of _skidPool){ m.visible=false; m.material.opacity=0; m.userData.skidLife=0; } }
 function _driveHudEl(){
   let el=document.getElementById('driveHud');
   if(!el){ el=document.createElement('div'); el.id='driveHud';
@@ -14741,7 +14781,17 @@ function driveUpdate(dt){
   o.quaternion.copy(_carQuat).multiply(_carModelQ);
   o.updateMatrixWorld(true);
   player.pos.set(o.position.x + hx*_pv, o.position.y+EYE, o.position.z + hz*_pv); player.vel.set(0,0,0); player.onGround=true;   // build 721/725: ride at the pivot (centre, heading frame); player.yaw stays free for the mouse to steer
-  _engUpdate(r.speed, throttle);   // build 715: engine pitch/volume + speed HUD
+  // build 728: lay skid marks under the rear tyres while sliding (or braking hard), spaced out in time
+  if(_grounded && (_slip>0.3 || handbrake) && Math.abs(r.speed)>3){
+    o.userData._skidT=(o.userData._skidT||0)+dt;
+    if(o.userData._skidT>=0.03){ o.userData._skidT=0;
+      const _rbx=o.position.x - hx*_hd*0.7, _rbz=o.position.z - hz*_hd*0.7;   // rear axle (behind centre)
+      _dropSkid(_rbx + _rx*_hw*0.7, gC, _rbz + _rz*_hw*0.7, carYaw);
+      _dropSkid(_rbx - _rx*_hw*0.7, gC, _rbz - _rz*_hw*0.7, carYaw);
+    }
+  }
+  _fadeSkids(dt);
+  _engUpdate(r.speed, throttle, _slip);   // build 715/728: engine pitch/volume + speed HUD + tyre screech (slip)
   { const U=_SPEED_UNIT[cfg.units]||_SPEED_UNIT.kph;   // build 718: km/h or mph
     const v=document.getElementById('dhVal'); if(v) v.textContent=Math.round(Math.abs(r.speed)*U.f);
     const un=document.getElementById('dhUnit'); if(un && un.textContent!==U.l) un.textContent=U.l;
@@ -15359,7 +15409,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 727 · 2026-06-28';
+const BUILD_VERSION = 'build 728 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24176,7 +24226,7 @@ function _prewarmMatchModels(){
 function startGame(){
   if(mountedTurret){ mountedTurret=null; const _th=document.getElementById('turretHud'); if(_th) _th.style.display='none'; }   // never start a round still manning a turret
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
-  if(typeof _engStop==='function') _engStop(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; }   // build 715: kill engine sound + HUD on (re)deploy
+  if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; }   // build 715/728: kill engine sound + HUD + skid marks on (re)deploy
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
   if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
