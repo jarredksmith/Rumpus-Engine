@@ -14495,7 +14495,7 @@ function turretFire(){
 let drivingCar = null, _carReturn = null;
 function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   maxSpeed:Math.max(2, +v.maxSpeed||16), accel:Math.max(1, +v.accel||18),
-  turn:Math.max(10, +v.turn||90), reverse:Math.max(1, +v.reverse||7) }; }
+  turn:Math.max(10, +v.turn||120), reverse:Math.max(1, +v.reverse||7) }; }
 // Pure arcade step: given the current forward speed + inputs (throttle/steer in -1..1) + config + dt, return the new
 // speed and the yaw change (radians). Self-contained (no globals) so the harness can test the feel math directly.
 function driveStep(speed, throttle, steer, cfg, dt){
@@ -14529,6 +14529,28 @@ function _carGroundY(x,z,exclude){
   if(typeof surfaceTopAt==='function'){ const s=surfaceTopAt(x,z,exclude); if(s>-Infinity) return s; }   // exclude the car so it doesn't read its own roof
   return (typeof terrainHeightAt==='function') ? terrainHeightAt(x,z) : 0;
 }
+const _carHalfV = new THREE.Vector3();
+function _carExtents(o){   // half-extents of the vehicle (world AABB if known, else its scale)
+  if(o.userData.box && !o.userData.box.isEmpty()){ o.userData.box.getSize(_carHalfV); return { hw:_carHalfV.x/2||0.5, hh:_carHalfV.y/2||0.5, hd:_carHalfV.z/2||0.5 }; }
+  const s=o.scale; return { hw:Math.abs(s.x)/2||0.5, hh:Math.abs(s.y)/2||0.5, hd:Math.abs(s.z)/2||0.5 };
+}
+// True if a wall is within `dist` ahead of the car along the world-axis unit dir (dx,dz). Three rays across the car's
+// width, fired from its leading edge (so they start past the player capsule pinned at the centre).
+function _carWall(o, dx, dz, dist, half){
+  if(!physWorld || !RAPIER || !RAPIER.Ray || typeof physWorld.castRay!=='function') return false;
+  const y = o.position.y + Math.max(0.3, half.hh*0.6);
+  const alongX = Math.abs(dx) > Math.abs(dz);
+  const front = alongX ? half.hw : half.hd;          // half-extent along the motion
+  const span  = alongX ? half.hd : half.hw;          // half-extent across the motion
+  const perpx = alongX ? 0 : 1, perpz = alongX ? 1 : 0;
+  const start = Math.max(front, 0.5);
+  for(const off of [-span*0.8, 0, span*0.8]){
+    const ox = o.position.x + perpx*off + dx*start, oz = o.position.z + perpz*off + dz*start;
+    try{ const ray = new RAPIER.Ray({x:ox, y, z:oz}, {x:dx, y:0, z:dz}); if(physWorld.castRay(ray, dist+0.12, true)) return true; }
+    catch(e){ return false; }
+  }
+  return false;
+}
 function driveUpdate(dt){
   const o=drivingCar; if(!o) return;
   if(!gameOn || gameOver || (player.hp!=null && player.hp<=0)){ exitCar(); return; }   // died / match over -> get out
@@ -14541,13 +14563,20 @@ function driveUpdate(dt){
   o.userData.carSpeed = r.speed;
   // build 711: steer toward where the camera is looking (player.yaw, driven by the mouse / right stick). The car curves
   // to align with your view, rate-limited by its turn speed and scaled by how fast it's moving (no turning at a stop).
-  const speedFrac = Math.min(1, Math.abs(r.speed)/Math.max(1, cfg.maxSpeed*0.35));
+  const speedFrac = Math.min(1, Math.abs(r.speed)/Math.max(1, cfg.maxSpeed*0.22));   // build 712: reach full turn authority sooner
   let diff = player.yaw - o.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));   // shortest angle to the look heading
   const maxStep = (cfg.turn*Math.PI/180) * speedFrac * dt;
   o.rotation.y += Math.max(-maxStep, Math.min(maxStep, diff));
+  // build 712 (Phase 2): wall collision — block each axis of the intended move if a wall is within reach, so the car
+  // slides along walls instead of driving through them. Self-contained ray-casts; degrades to no-collision if Rapier
+  // is unavailable. (Footprint is approximate; a full swept-body collider can come later.)
   const fx=-Math.sin(o.rotation.y), fz=-Math.cos(o.rotation.y);
-  o.position.x += fx * r.speed * dt;
-  o.position.z += fz * r.speed * dt;
+  let mvx = fx * r.speed * dt, mvz = fz * r.speed * dt;
+  const _h = _carExtents(o);
+  if(mvx!==0 && _carWall(o, Math.sign(mvx), 0, Math.abs(mvx), _h)) mvx = 0;
+  if(mvz!==0 && _carWall(o, 0, Math.sign(mvz), Math.abs(mvz), _h)) mvz = 0;
+  o.position.x += mvx; o.position.z += mvz;
+  if(mvx===0 && mvz===0 && Math.abs(r.speed)>1) o.userData.carSpeed = r.speed * 0.2;   // bonk: nearly stopped by a wall
   o.position.y = _carGroundY(o.position.x, o.position.z, o);   // sit on the ground / ramps (excluding the car itself)
   o.updateMatrixWorld(true);
   player.pos.set(o.position.x, o.position.y+EYE, o.position.z); player.vel.set(0,0,0); player.onGround=true;   // ride along; player.yaw stays free for the mouse to steer
@@ -15158,7 +15187,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 711 · 2026-06-26';
+const BUILD_VERSION = 'build 712 · 2026-06-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
