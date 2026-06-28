@@ -14592,6 +14592,35 @@ function _fadeSkids(dt){
   for(const m of _skidPool){ if(!m.visible) continue; const l=(m.userData.skidLife-=dt); if(l<=0){ m.visible=false; m.material.opacity=0; } else if(l<2){ m.material.opacity=0.5*(l/2); } }
 }
 function _clearSkids(){ if(!_skidPool) return; for(const m of _skidPool){ m.visible=false; m.material.opacity=0; m.userData.skidLife=0; } }
+// build 732: tyre dust — a pool of billboarded puffs kicked up off the rear tyres under power / slides / boost; they rise, grow, and fade.
+let _dustPool=null, _dustIdx=0;
+function _ensureDustPool(){
+  if(_dustPool) return _dustPool;
+  _dustPool=[]; const geo=new THREE.PlaneGeometry(0.7,0.7);
+  for(let i=0;i<64;i++){
+    const mat=new THREE.MeshBasicMaterial({ color:0xc2b8a6, transparent:true, opacity:0, depthWrite:false });
+    const m=new THREE.Mesh(geo,mat); m.visible=false; m.renderOrder=3; m.userData.dust={life:0,max:1,vx:0,vy:0,vz:0};
+    scene.add(m); _dustPool.push(m);
+  }
+  return _dustPool;
+}
+function _spawnDust(x,y,z,vx,vz){
+  const pool=_ensureDustPool(), m=pool[_dustIdx]; _dustIdx=(_dustIdx+1)%pool.length;
+  m.position.set(x,y,z); m.scale.setScalar(0.5+Math.random()*0.45);
+  const d=m.userData.dust; d.life=d.max=0.7+Math.random()*0.4; d.vy=0.8+Math.random()*0.7;
+  d.vx=vx*0.25+(Math.random()-0.5)*0.7; d.vz=vz*0.25+(Math.random()-0.5)*0.7;
+  m.material.opacity=0.45; m.visible=true;
+}
+function _updateDust(dt,camPos){
+  if(!_dustPool) return;
+  for(const m of _dustPool){ if(!m.visible) continue; const d=m.userData.dust; d.life-=dt;
+    if(d.life<=0){ m.visible=false; m.material.opacity=0; continue; }
+    m.position.x+=d.vx*dt; m.position.y+=d.vy*dt; m.position.z+=d.vz*dt; d.vy*=(1-0.6*dt);
+    const f=d.life/d.max; m.material.opacity=0.45*f; m.scale.setScalar(m.scale.x + dt*0.9);   // grow + fade out
+    if(camPos) m.lookAt(camPos);   // billboard toward the camera
+  }
+}
+function _clearDust(){ if(!_dustPool) return; for(const m of _dustPool){ m.visible=false; m.material.opacity=0; if(m.userData.dust) m.userData.dust.life=0; } }
 function _driveHudEl(){
   let el=document.getElementById('driveHud');
   if(!el){ el=document.createElement('div'); el.id='driveHud';
@@ -14799,16 +14828,26 @@ function driveUpdate(dt){
   o.quaternion.copy(_carQuat).multiply(_carModelQ);
   o.updateMatrixWorld(true);
   player.pos.set(o.position.x + hx*_pv, o.position.y+EYE, o.position.z + hz*_pv); player.vel.set(0,0,0); player.onGround=true;   // build 721/725: ride at the pivot (centre, heading frame); player.yaw stays free for the mouse to steer
-  // build 728: lay skid marks under the rear tyres while sliding (or braking hard), spaced out in time
-  if(_grounded && (_slip>0.3 || handbrake) && Math.abs(r.speed)>3){
+  // build 728/732: rear-tyre effects — skid marks while sliding/braking, and dust kicked up under power / slides / boost
+  const _rbx=o.position.x - hx*_hd*0.7, _rbz=o.position.z - hz*_hd*0.7;   // rear axle (behind centre)
+  const _sliding=(_slip>0.3 || handbrake);
+  if(_grounded && _sliding && Math.abs(r.speed)>3){
     o.userData._skidT=(o.userData._skidT||0)+dt;
     if(o.userData._skidT>=0.03){ o.userData._skidT=0;
-      const _rbx=o.position.x - hx*_hd*0.7, _rbz=o.position.z - hz*_hd*0.7;   // rear axle (behind centre)
       _dropSkid(_rbx + _rx*_hw*0.7, gC, _rbz + _rz*_hw*0.7, carYaw);
       _dropSkid(_rbx - _rx*_hw*0.7, gC, _rbz - _rz*_hw*0.7, carYaw);
     }
   }
-  _fadeSkids(dt);
+  const _boosting=(o.userData.boostT>0);
+  if(_grounded && (_sliding || _boosting || (throttle>0 && Math.abs(r.speed)>2)) && Math.abs(r.speed)>2){
+    o.userData._dustT=(o.userData._dustT||0)+dt;
+    const _every=_boosting?0.04:0.07;
+    if(o.userData._dustT>=_every){ o.userData._dustT=0;
+      _spawnDust(_rbx + _rx*_hw*0.6, gC+0.25, _rbz + _rz*_hw*0.6, -hx*r.speed, -hz*r.speed);
+      _spawnDust(_rbx - _rx*_hw*0.6, gC+0.25, _rbz - _rz*_hw*0.6, -hx*r.speed, -hz*r.speed);
+    }
+  }
+  _fadeSkids(dt); _updateDust(dt, camera && camera.position);
   _engUpdate(r.speed, throttle, _slip);   // build 715/728: engine pitch/volume + speed HUD + tyre screech (slip)
   { const U=_SPEED_UNIT[cfg.units]||_SPEED_UNIT.kph;   // build 718: km/h or mph
     const v=document.getElementById('dhVal'); if(v) v.textContent=Math.round(Math.abs(r.speed)*U.f);
@@ -15427,7 +15466,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 731 · 2026-06-28';
+const BUILD_VERSION = 'build 732 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24250,7 +24289,7 @@ function _prewarmMatchModels(){
 function startGame(){
   if(mountedTurret){ mountedTurret=null; const _th=document.getElementById('turretHud'); if(_th) _th.style.display='none'; }   // never start a round still manning a turret
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
-  if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; }   // build 715/728: kill engine sound + HUD + skid marks on (re)deploy
+  if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); if(typeof _clearDust==='function') _clearDust(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; }   // build 715/728/732: kill engine sound + HUD + skid marks + dust on (re)deploy
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
   if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game

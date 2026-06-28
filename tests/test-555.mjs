@@ -44,8 +44,17 @@ assert(/if\(e\.scr\)\{ e\.scr\.g\.gain\.setTargetAtTime\(0\.0001, t, 0\.05\); tr
 const ds2 = extractFunction('_dropSkid'), fs = extractFunction('_fadeSkids');
 assert(/_skidYawQ\.setFromAxisAngle\(_skidUp, yaw\); m\.quaternion\.copy\(_skidYawQ\)\.multiply\(_skidFlatQ\);/.test(ds2), 'a skid mark is laid flat and spun to the car yaw');
 assert(/m\.material\.opacity=0\.5; m\.userData\.skidLife=9;/.test(ds2) && /const l=\(m\.userData\.skidLife-=dt\);/.test(fs), 'skid marks carry a life and fade out');
-assert(/if\(_grounded && \(_slip>0\.3 \|\| handbrake\) && Math\.abs\(r\.speed\)>3\)\{/.test(du), 'skid marks drop only while grounded + sliding/braking + moving');
+assert(/const _sliding=\(_slip>0\.3 \|\| handbrake\);/.test(du) && /if\(_grounded && _sliding && Math\.abs\(r\.speed\)>3\)\{/.test(du), 'skid marks drop only while grounded + sliding/braking + moving');
 assert(/_dropSkid\(_rbx \+ _rx\*_hw\*0\.7, gC, _rbz \+ _rz\*_hw\*0\.7, carYaw\);/.test(du), 'a mark is dropped under each rear tyre');
 assert(/if\(typeof _clearSkids==='function'\) _clearSkids\(\);/.test(extractFunction('startGame')), 'deploy clears any lingering skid marks');
 
-done('build 715/728/731: driving HUD + engine sound + screech + skid marks + gearbox + engine braking');
+// build 732: tyre dust — billboarded puffs off the rear tyres under power / slides / boost
+const ud = extractFunction('_updateDust');
+assert(/m\.position\.x\+=d\.vx\*dt; m\.position\.y\+=d\.vy\*dt; m\.position\.z\+=d\.vz\*dt; d\.vy\*=\(1-0\.6\*dt\);/.test(ud), 'dust puffs drift + rise with decaying upward velocity');
+assert(/m\.material\.opacity=0\.45\*f; m\.scale\.setScalar\(m\.scale\.x \+ dt\*0\.9\);/.test(ud) && /m\.lookAt\(camPos\)/.test(ud), 'dust grows + fades and billboards to the camera');
+assert(/const _boosting=\(o\.userData\.boostT>0\);/.test(du) && /const _every=_boosting\?0\.04:0\.07;/.test(du), 'dust spawns faster on boost');
+assert(/_spawnDust\(_rbx \+ _rx\*_hw\*0\.6, gC\+0\.25, _rbz \+ _rz\*_hw\*0\.6, -hx\*r\.speed, -hz\*r\.speed\);/.test(du), 'dust spawns at the rear tyres, thrown back along travel');
+assert(/_fadeSkids\(dt\); _updateDust\(dt, camera && camera\.position\);/.test(du), 'skids + dust update each frame');
+assert(/if\(typeof _clearDust==='function'\) _clearDust\(\);/.test(extractFunction('startGame')), 'deploy clears lingering dust too');
+
+done('build 715/728/731/732: driving HUD + engine + screech + skid marks + gearbox + engine braking + tyre dust');
