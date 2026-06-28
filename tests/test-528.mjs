@@ -51,4 +51,14 @@ assert(/if\(mi\.value\) s\.contain=true; else delete s\.contain;/.test(panel), '
 assert(/if\(s\.from\) x\.f=s\.from; if\(s\.contain\) x\.ci=1;/.test(src), 'from/contain serialize');
 assert((src.match(/if\(s\.f\) x\.from=s\.f; if\(s\.ci\) x\.contain=true;/g)||[]).length===3, 'from/contain restore in all three load paths');
 
-done('build 682/735: contact signal trigger (pressure plates, drop-in-bin) + Needs-N distinct touchers');
+// --- build 740: "Consume it" — the placed object vanishes when it lands on/in the detector ---
+const cn = extractFunction('_consumeTouchers');
+assert(/if\(touch\)\{ keys\.push\(c\.userData\.nid \|\| c\.uuid\); rm\.push\(i\); \}/.test(cn), '_consumeTouchers collects matching touchers + their keys');
+assert(/for\(let j=rm\.length-1;j>=0;j--\)\{ try\{ if\(typeof removeProp==='function'\) removeProp\(rm\[j\]\); \}catch/.test(cn), 'it removes them high->low (indices stay valid) so they disappear');
+assert(/if\(s\.consume\)\{ const keys=_consumeTouchers\(o, s\); if\(keys\.length\)\{ try\{ _applySignalAction\(s, o\);/.test(tk), 'single-toucher + Consume: each placement is removed and fires');
+assert(/const keys = s\.consume \? _consumeTouchers\(o, s\) : _contactTouchers\(o, s\);/.test(tk), 'multi-toucher + Consume: distinct placements are consumed as they count toward N');
+assert(/cc\.appendChild\(document\.createTextNode\('Consume it \(the placed object vanishes when it lands\)'\)\)/.test(panel), 'the editor exposes a Consume checkbox on contact signals');
+assert(/if\(s\.consume\) x\.cn=1;/.test(src), 'consume serializes');
+assert((src.match(/if\(s\.cn\) x\.consume=true;/g)||[]).length===3, 'consume restores in all three load paths');
+
+done('build 682/735/740: contact signal trigger + Needs-N distinct touchers + Consume (vanish on placement)');
