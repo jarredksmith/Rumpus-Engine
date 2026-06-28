@@ -169,4 +169,16 @@ assert(/row\('Grip','grip', 1, 12, 0\.5, 1\)/.test(src), 'editor exposes a Grip 
   assert(gripped>drifty && drifty>0, 'a gripped car aligns its travel to the heading faster than a handbraking one');
   assert(Math.abs(ease(0, 0.0001, 6, 1/60)) < 0.0002, 'no heading change => travel direction barely moves'); }
 
-done('build 709-725: drivable vehicles — drive / collision / ramps+openings / boost / facing / pivot / cam+ride / shove / anti-launch / A·D steer + drift');
+// --- build 726: physics fixes — clamp the tilt (no rolling over / sinking next to walls) + handbrake brakes ---
+assert(/const _MRt=Math\.max\(0\.9,_h\.hh\), _clT=g=>Math\.max\(gC-_MRt, Math\.min\(gC\+_MRt, g\)\);/.test(du), 'corner ground samples for tilt are clamped near the centre (a wall/step top cannot flip the car)');
+assert(/let _tp=_grounded\?Math\.atan2\(_clT\(gF\)-_clT\(gB\), 2\*_hd\):0, _tr=_grounded\?Math\.atan2\(_clT\(gR\)-_clT\(gL\), 2\*_hw\):0;/.test(du), 'tilt is computed from the clamped samples');
+assert(/_tp=Math\.max\(-_TILT,Math\.min\(_TILT,_tp\)\); _tr=Math\.max\(-_TILT,Math\.min\(_TILT,_tr\)\);/.test(du), 'final pitch/roll is capped so the car can never tip over and bury itself');
+assert(/if\(handbrake && Math\.abs\(r\.speed\)>0\.1\)\{ const _bk=1 - Math\.min\(0\.85, 3\.2\*dt\); o\.userData\.carSpeed\*=_bk; r\.speed\*=_bk; \}/.test(du), 'the handbrake actually brakes (slows the car), not just loosens grip');
+
+// executable: clamping keeps the tilt sane even when a corner sample sits on a tall wall
+{ const gC=0, MR=0.9, clT=g=>Math.max(gC-MR, Math.min(gC+MR, g)), TILT=0.45, hd=1;
+  const wallGF=8;   // a 8m wall top under the front-corner sample
+  let tp=Math.atan2(clT(wallGF)-clT(0), 2*hd); tp=Math.max(-TILT,Math.min(TILT,tp));
+  assert(tp<=TILT && tp>0, 'a wall under one corner yields a bounded tilt, never a flip'); }
+
+done('build 709-726: drivable vehicles — drive / collision / ramps+openings / boost / facing / pivot / cam+ride / shove / anti-launch / A·D + drift / tilt-clamp + handbrake');

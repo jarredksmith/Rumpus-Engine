@@ -14689,6 +14689,7 @@ function driveUpdate(dt){
   const vYaw=o.userData.carVelYaw, fx=-Math.sin(vYaw), fz=-Math.cos(vYaw);   // travel direction — lags the heading when drifting
   const _slip=Math.abs(Math.atan2(Math.sin(carYaw-vYaw),Math.cos(carYaw-vYaw)));   // slip angle (heading vs travel)
   if(_slip>0.15){ const _f=1 - Math.min(0.5,_slip*0.4)*Math.min(1,dt*5); o.userData.carSpeed*=_f; r.speed*=_f; }   // tyres scrub speed in a slide
+  if(handbrake && Math.abs(r.speed)>0.1){ const _bk=1 - Math.min(0.85, 3.2*dt); o.userData.carSpeed*=_bk; r.speed*=_bk; }   // build 726: the handbrake actually slows the car (brake + slide = drift)
   let mvx = fx * r.speed * dt, mvz = fz * r.speed * dt;
   const _h = _carExtents(o);
   if(mvx!==0 && _carWall(o, Math.sign(mvx), 0, Math.abs(mvx), _h)) mvx = 0;
@@ -14719,7 +14720,13 @@ function driveUpdate(dt){
   else if(_vy<=0 && (_ny-_rest)<_SNAP){ _ny=_rest; _vy=0; }       // hug the ground over small downhill drops (no micro-hops)
   o.position.y=_ny; o.userData.carVelY=_vy;
   const _grounded=(_ny-_rest)<0.12;
-  const _tp=_grounded?Math.atan2(gF-gB, 2*_hd):0, _tr=_grounded?Math.atan2(gR-gL, 2*_hw):0;   // pitch from front/back, roll from sides
+  // build 726: clamp the tilt. A corner ground-sample that lands on a WALL or STEP top (now reachable since 724 opened
+  // archways) used to read a huge rise and roll the car ~60° onto its side, clipping it into the floor. Ignore anything
+  // more than a climbable step away from the centre sample, then cap the final pitch/roll so the car can never tip over.
+  const _MRt=Math.max(0.9,_h.hh), _clT=g=>Math.max(gC-_MRt, Math.min(gC+_MRt, g));
+  const _TILT=0.45;   // ~26°, plenty for ramps, never enough to bury the car
+  let _tp=_grounded?Math.atan2(_clT(gF)-_clT(gB), 2*_hd):0, _tr=_grounded?Math.atan2(_clT(gR)-_clT(gL), 2*_hw):0;
+  _tp=Math.max(-_TILT,Math.min(_TILT,_tp)); _tr=Math.max(-_TILT,Math.min(_TILT,_tr));
   const _k=Math.min(1, dt*9);
   o.userData.carPitch=(o.userData.carPitch||0)+(_tp-(o.userData.carPitch||0))*_k;   // ease (also levels out in the air)
   o.userData.carRoll =(o.userData.carRoll ||0)+(_tr-(o.userData.carRoll ||0))*_k;
@@ -15349,7 +15356,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 725 · 2026-06-28';
+const BUILD_VERSION = 'build 726 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
