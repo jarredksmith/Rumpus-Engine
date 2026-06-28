@@ -59,11 +59,13 @@ assert(/if\(drivingCar\)\{ drivingCar=null; _carReturn=null; \}/.test(extractFun
 assert(/if\(o\.userData && o\.userData\.vehicle\) return;/.test(extractFunction('addStaticColliderFor')), 'a vehicle gets no static collider (it is moved kinematically)');
 
 // --- build 710 fix: the ground query excludes the car so it can't read its own roof and climb into the sky ---
-assert(/function surfaceTopAt\(x, z, exclude, skipDynamic\)\{/.test(src), 'surfaceTopAt takes an exclude');
+assert(/function surfaceTopAt\(x, z, exclude, skipDynamic, ceilY\)\{/.test(src), 'surfaceTopAt takes an exclude');
 assert(/const _ex = exclude \? \(h\)=>\{ let o=h\.object; while\(o\)\{ if\(o===exclude\) return true; o=o\.parent; \} return false; \} : null;/.test(src), 'exclude drops an object (and its children) from the surface result');
-assert(/const gC=_carGroundY\(o\.position\.x, o\.position\.z, o\);/.test(src), 'driveUpdate samples its ground excluding the car itself');
+assert(/const gC=_carGroundY\(o\.position\.x, o\.position\.z, o, _ceil\);/.test(src), 'driveUpdate samples its ground excluding the car itself, capped at headroom');
+assert(/const _ceil=o\.position\.y \+ _h\.hh\*2 \+ 0\.6;/.test(src), 'build 739: the ground query is capped at the car\'s headroom so it ignores roofs/overhangs (no climbing onto buildings)');
+assert(/const _cap = \(ceilY!=null\) \? ceilY : Infinity;/.test(src) && /if\(h\.point\.y > _cap\) continue;/.test(src), 'surfaceTopAt ignores any surface above the ceiling (the roof over a doorway)');
 // build 717: ramp-aware vertical — 4-corner ground sample, surface tilt, gravity + launch
-assert(/const gF=_carGroundY\(o\.position\.x\+hx\*_hd[\s\S]*?const gB=_carGroundY\(o\.position\.x-hx\*_hd/.test(src), 'samples front + back ground (heading frame) to tilt to the ramp');
+assert(/const gF=_carGroundY\(o\.position\.x\+hx\*_hd[\s\S]*?_ceil\);[\s\S]*?const gB=_carGroundY\(o\.position\.x-hx\*_hd/.test(src), 'samples front + back ground (heading frame) to tilt to the ramp');
 assert(/_vy -= GRAV\*0\.85\*dt;/.test(src), 'the car has gravity (so it can leave a ramp)');
 assert(/const _launch=\(_climb>0\.8 && _climb<22\)\?Math\.min\(_climb,7\):0;/.test(src), 'a real ramp banks launch velocity (capped); a sudden spike (wall ram) does not');
 assert(/_carEuler\.set\(o\.userData\.carPitch \+ o\.userData\.leanPitch, carYaw, o\.userData\.carRoll \+ o\.userData\.leanRoll\);/.test(src) && /o\.quaternion\.copy\(_carQuat\)\.multiply\(_carModelQ\);/.test(src), 'the body pitches/rolls to the surface + suspension lean (build 729)');
@@ -127,9 +129,9 @@ assert(/row\('Camera back \(±m\)','camDist'/.test(src) && /row\('Camera up \(±
 
 // --- build 723: vehicle physics — ignore dynamic props as ground (no fling) + shove them out of the way ---
 const st = extractFunction('surfaceTopAt');
-assert(/function surfaceTopAt\(x, z, exclude, skipDynamic\)\{/.test(st), 'surfaceTopAt takes a skipDynamic flag');
+assert(/function surfaceTopAt\(x, z, exclude, skipDynamic, ceilY\)\{/.test(st), 'surfaceTopAt takes a skipDynamic flag');
 assert(/if\(dynamicProps\.length && !skipDynamic\)\{/.test(st), 'skipDynamic drops dynamic props from the surface result');
-assert(/const s=surfaceTopAt\(x,z,exclude,true\);/.test(extractFunction('_carGroundY')), 'the car ground query skips dynamic props (so it never rides up + launches off a barrel)');
+assert(/const s=surfaceTopAt\(x,z,exclude,true,ceilY\);/.test(extractFunction('_carGroundY')), 'the car ground query skips dynamic props + caps at the headroom ceiling');
 const sh = extractFunction('_carShoveDynamics');
 assert(/const b = p\.userData && p\.userData\.phys && p\.userData\.phys\.body; if\(!b\) continue;/.test(sh), 'only dynamic props with a physics body are shoved');
 assert(/if\(sp < 1\.2\) return 0;/.test(sh), 'a near-stopped car does not shove (so it can rest against props)');

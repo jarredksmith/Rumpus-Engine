@@ -14740,8 +14740,8 @@ function exitCar(){
   if(typeof worldCfg!=='undefined' && worldCfg.fov && typeof camera!=='undefined'){ camera.fov=worldCfg.fov; camera.updateProjectionMatrix(); }   // build 730: restore the normal FOV after the speed-FOV
   if(SFX.swap) SFX.swap();
 }
-function _carGroundY(x,z,exclude){
-  if(typeof surfaceTopAt==='function'){ const s=surfaceTopAt(x,z,exclude,true); if(s>-Infinity) return s; }   // exclude the car (own roof) AND dynamic props (build 723: don't ride up on barrels)
+function _carGroundY(x,z,exclude,ceilY){
+  if(typeof surfaceTopAt==='function'){ const s=surfaceTopAt(x,z,exclude,true,ceilY); if(s>-Infinity) return s; }   // exclude the car (own roof), dynamic props (build 723), and anything above the car's headroom (build 739: don't climb roofs/buildings)
   return (typeof terrainHeightAt==='function') ? terrainHeightAt(x,z) : 0;
 }
 const _carHalfV = new THREE.Vector3();
@@ -14878,11 +14878,14 @@ function driveUpdate(dt){
   // build 717: ramp-aware vertical — sample the ground under the car's 4 corners, TILT the body to the surface (so the
   // ramp doesn't clip through the mesh), and give it gravity + a launch so it actually flies off a ramp edge.
   const _hd=_h.hd, _hw=_h.hw, _rx=-hz, _rz=hx;   // build 725: tilt to the surface under the BODY (heading frame), not the travel dir
-  const gC=_carGroundY(o.position.x, o.position.z, o);
-  const gF=_carGroundY(o.position.x+hx*_hd, o.position.z+hz*_hd, o);
-  const gB=_carGroundY(o.position.x-hx*_hd, o.position.z-hz*_hd, o);
-  const gR=_carGroundY(o.position.x+_rx*_hw, o.position.z+_rz*_hw, o);
-  const gL=_carGroundY(o.position.x-_rx*_hw, o.position.z-_rz*_hw, o);
+  // build 739: cap the ground query at the car's headroom, so a roof / floor-above (a doorway lintel, a building roof)
+  // is NOT read as ground — the car reads the FLOOR below it and drives through openings instead of climbing the building.
+  const _ceil=o.position.y + _h.hh*2 + 0.6;
+  const gC=_carGroundY(o.position.x, o.position.z, o, _ceil);
+  const gF=_carGroundY(o.position.x+hx*_hd, o.position.z+hz*_hd, o, _ceil);
+  const gB=_carGroundY(o.position.x-hx*_hd, o.position.z-hz*_hd, o, _ceil);
+  const gR=_carGroundY(o.position.x+_rx*_hw, o.position.z+_rz*_hw, o, _ceil);
+  const gL=_carGroundY(o.position.x-_rx*_hw, o.position.z-_rz*_hw, o, _ceil);
   // build 722: rest the model's WHEELS on the ground, not its origin. carBaseOff (origin->lowest point, measured on enter)
   // cancels models whose origin sits high (float) or low (sink); rideHeight is an optional author trim.
   const _base=(o.userData.carBaseOff||0)+(+cfg.rideHeight||0); let _rest=gC+_base;
@@ -15567,7 +15570,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 738 · 2026-06-28';
+const BUILD_VERSION = 'build 739 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17807,23 +17810,24 @@ function _surfCull(x, z){
   }
   return out;
 }
-function surfaceTopAt(x, z, exclude, skipDynamic){
+function surfaceTopAt(x, z, exclude, skipDynamic, ceilY){
   // highest collider surface directly under (x,z); -Infinity if nothing there. `exclude` (build 710) drops one object
   // (and its children) from the result — a driving vehicle must not read its OWN roof as the ground, or it climbs itself.
-  // Dynamic props are included so the player can stand on / walk up their real (possibly tilted)
-  // surfaces — a tilted dynamic box reads as a ramp, a steep face reads as a wall, just like static
-  // geometry. Their meshes are transformed by the physics step, so the raycast tracks them.
+  // build 739: `ceilY` (optional) ignores any surface ABOVE that height — so a car under a roofed doorway reads the FLOOR,
+  // not the roof above it (which used to make it climb onto buildings). Dynamic props are included so the player can stand
+  // on / walk up their real (possibly tilted) surfaces. Their meshes are transformed by the physics step, so the ray tracks them.
   _downOrigin.set(x, 300, z);
   _downRay.set(_downOrigin, _downDir);
   _downRay.far = 600;
   let top = -Infinity;
+  const _cap = (ceilY!=null) ? ceilY : Infinity;
   const _ex = exclude ? (h)=>{ let o=h.object; while(o){ if(o===exclude) return true; o=o.parent; } return false; } : null;
   const hits = _downRay.intersectObjects(_surfCull(x,z), true);   // only colliders whose footprint is under (x,z)
-  for(const h of hits){ if(_ex && _ex(h)) continue; if(h.point.y > top) top = h.point.y; }
+  for(const h of hits){ if(_ex && _ex(h)) continue; if(h.point.y > _cap) continue; if(h.point.y > top) top = h.point.y; }
   if(dynamicProps.length && !skipDynamic){   // build 723: a driving car ignores dynamic props as ground (it plows through + shoves them, instead of riding up and launching)
     const list = heldProp ? dynamicProps.filter(o=>o!==heldProp) : dynamicProps;   // never let the player stand on / collide with the object they're carrying
     const dh = _downRay.intersectObjects(list, true);
-    for(const h of dh){ if(_ex && _ex(h)) continue; if(h.point.y > top) top = h.point.y; }
+    for(const h of dh){ if(_ex && _ex(h)) continue; if(h.point.y > _cap) continue; if(h.point.y > top) top = h.point.y; }
   }
   // Safety net: ONLY when the downward ray found nothing at all (slipped through an open/awkward model
   // top). In that case fall back to the bounding-box top of an UPRIGHT prop whose footprint covers (x,z).
@@ -17837,7 +17841,7 @@ function surfaceTopAt(x, z, exclude, skipDynamic){
       if(src==='sphere' || src==='cone') continue;            // curved/pointed top -> trust the ray
       const r = c.rotation;
       if(r && (Math.abs(r.x)>0.05 || Math.abs(r.z)>0.05)) continue;   // tilted (ramp) -> trust the ray
-      for(const b of bs){ if(x>=b.min.x && x<=b.max.x && z>=b.min.z && z<=b.max.z && b.max.y>top) top = b.max.y; }
+      for(const b of bs){ if(x>=b.min.x && x<=b.max.x && z>=b.min.z && z<=b.max.z && b.max.y>top && b.max.y<=_cap) top = b.max.y; }
     }
   }
   return top;
