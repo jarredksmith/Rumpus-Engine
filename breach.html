@@ -14960,7 +14960,7 @@ function driveUpdate(dt){
   // car goes where it points; a handbrake (Space / B) or a hard turn at speed lets travel lag the heading => it slides.
   if(o.userData.carVelYaw==null) o.userData.carVelYaw=carYaw;
   const handbrake=(keys['Space']||keys['KeyB']);
-  if(handbrake && !o.userData._hbWas && Math.abs(o.userData.carSpeed||0)>3 && typeof playSample==='function') playSample(curSounds().carBrake);   // build 749: brake SFX on the rising edge of the handbrake
+  if(handbrake && !o.userData._hbWas && o.userData._carGrounded!==false && Math.abs(o.userData.carSpeed||0)>3 && typeof playSample==='function') playSample(curSounds().carBrake);   // build 749: brake SFX on the rising edge of the handbrake (build 754: only when grounded — airborne tyres can't screech)
   o.userData._hbWas=handbrake;
   const gripBase=Math.max(0.5,+cfg.grip||6), grip=handbrake?gripBase*0.16:gripBase;
   let vd=carYaw-o.userData.carVelYaw; vd=Math.atan2(Math.sin(vd),Math.cos(vd));
@@ -15011,7 +15011,7 @@ function driveUpdate(dt){
   if(_ny<=_rest){ _ny=_rest; _vy=_launch; }                       // grounded: bank ramp-climb speed as launch velocity
   else if(_vy<=0 && (_ny-_rest)<_SNAP){ _ny=_rest; _vy=0; }       // hug the ground over small downhill drops (no micro-hops)
   o.position.y=_ny; o.userData.carVelY=_vy;
-  const _grounded=(_ny-_rest)<0.12;
+  const _grounded=(_ny-_rest)<0.12; o.userData._carGrounded=_grounded;   // build 754: persist so next frame's brake-SFX check can suppress a mid-air screech
   // build 727: clamp the tilt by ANGLE (slope), not by sample height. The build-726 height clamp throttled the pitch of a
   // LONG vehicle (a camper) on a ramp, so it under-tilted, dug into the ramp, sank, and _carWall then false-blocked it (stuck
   // at 0). Clamping the final angle instead gives correct ramp pitch at any length, while a sideways wall still can't flip it:
@@ -15049,7 +15049,7 @@ function driveUpdate(dt){
   // build 728/732: rear-tyre effects — skid marks while sliding/braking, and dust kicked up under power / slides / boost
   const _rbx=o.position.x - hx*_hd*0.7, _rbz=o.position.z - hz*_hd*0.7;   // rear axle (behind centre)
   const _sliding=(_slip>0.3 || handbrake);
-  if(_sliding && !o.userData._slideWas && Math.abs(r.speed)>4 && typeof playSample==='function') playSample(curSounds().carSkid);   // build 749: skid SFX when a slide begins
+  if(_sliding && !o.userData._slideWas && _grounded && Math.abs(r.speed)>4 && typeof playSample==='function') playSample(curSounds().carSkid);   // build 749: skid SFX when a slide begins (build 754: grounded only)
   o.userData._slideWas=_sliding;
   const _skidAmt=(cfg.skid==null?1:+cfg.skid), _dustAmt=(cfg.dust==null?1:+cfg.dust);   // build 738: editor amounts (0 = off)
   if(_skidAmt>0 && _grounded && _sliding && Math.abs(r.speed)>3){
@@ -15699,7 +15699,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 753 · 2026-06-28';
+const BUILD_VERSION = 'build 754 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
