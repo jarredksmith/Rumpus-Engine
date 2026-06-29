@@ -5989,6 +5989,8 @@ function playSample(url){
   try{ const src=actx.createBufferSource(); src.buffer=buf; src.connect(sfxBus); src.start(); return true; }catch(e){ return false; }
 }
 function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost']) loadSound(s[k]); }
+// build 750: preload every signal's custom clip (do:'sound') so a light switch / button plays on the first press, not the second.
+function preloadSignalSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const sigs=o&&o.userData&&o.userData.signals; if(!sigs) continue; for(const s of sigs){ if(s.do==='sound' && s.sound) loadSound(s.sound); } } }
 
 // ---------- Audio buses + persisted volume settings (separate from level data) ----------
 let masterBus=null, sfxBus=null, musicBus=null;
@@ -7198,6 +7200,7 @@ function _applySignalAction(s, src){
       } return; }
     if(s.do==='objective'){ if(typeof setGoal==='function') setGoal(s.text||''); return; }   // build 692: update the on-screen objective; no target needed
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
+    if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
     if(!s.target) return;
     for(let i=0;i<propModels.length;i++){
       const t = propModels[i]; if(!t || t.userData.tag !== s.target) continue;
@@ -8254,7 +8257,7 @@ function removeProp(idx){
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -12488,7 +12491,7 @@ function loadLevelFromNet(level){
   // rebuild from the host's data
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -15691,7 +15694,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 749 · 2026-06-28';
+const BUILD_VERSION = 'build 750 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20258,7 +20261,7 @@ function propEntry(o){
   if(o.userData.tag) e.tg=o.userData.tag;
   if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,12).map(s=>String(s).slice(0,200));   // build 695: NPC dialogue
   if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
-  if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(s=>{ const x={ w:s.when, d:s.do, t:s.target }; if(s.clip) x.c=s.clip; if(s.cs) x.n=s.cs; if(s.from) x.f=s.from; if(s.contain) x.ci=1; if(s.text) x.tx=s.text; if(s.needItem) x.ni=s.needItem; if(s.needConsume) x.nc=1; if(s.consume) x.cn=1; return x; });
+  if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(s=>{ const x={ w:s.when, d:s.do, t:s.target }; if(s.clip) x.c=s.clip; if(s.cs) x.n=s.cs; if(s.from) x.f=s.from; if(s.contain) x.ci=1; if(s.text) x.tx=s.text; if(s.needItem) x.ni=s.needItem; if(s.needConsume) x.nc=1; if(s.consume) x.cn=1; if(s.sound) x.so=s.sound; return x; });
   if(o.userData.sigNeed>1) e.snd=o.userData.sigNeed;
   if(o.userData.attribution) e.att=o.userData.attribution;
   if(o.userData.nid) e.nid=o.userData.nid;
@@ -20779,7 +20782,7 @@ function restoreLevel(level){
   propModels.length = 0;
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -21594,7 +21597,7 @@ function buildSignalsUI(sgBody, store, rerender){
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
     r.appendChild(mkSel([['destroyed','On destroyed'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));
-    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint']], s.do, v=>{ s.do=v; }));
+    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag'; ti.value=s.target||'';
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
     ti.onchange=()=>{ pushUndoSnapshot(); s.target=ti.value.trim(); rerender(); };
@@ -21651,6 +21654,12 @@ function buildSignalsUI(sgBody, store, rerender){
       oi.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#9fe6cf;border-radius:4px;padding:2px 5px;font-size:10px;';
       oi.onchange=()=>{ pushUndoSnapshot(); const v=oi.value.slice(0,160); if(v) s.text=v; else delete s.text; };
       orow.appendChild(oi); sgBody.appendChild(orow);
+    }
+    if(s.do==='sound'){   // build 750: a custom audio clip played when this fires (on E / object placed / destroyed) — light switch, button click, chime
+      const srow=document.createElement('div'); srow.style.cssText='margin:-1px 0 4px;padding-left:8px;';
+      srow.appendChild(_sndRow('Sound clip', ()=>s.sound||'', v=>{ if(v){ s.sound=v; if(typeof loadSound==='function') loadSound(v); } else delete s.sound; }));
+      srow.appendChild(renderFreesoundBrowser(srow, ()=>renderEditorFields(), { label:'Signal sound', set:v=>{ if(v){ s.sound=v; if(typeof loadSound==='function') loadSound(v); } else delete s.sound; } }));
+      sgBody.appendChild(srow);
     }
     if(s.do==='anim'){
       const cr2=document.createElement('div'); cr2.style.cssText='display:flex;gap:4px;align-items:center;margin:-1px 0 4px;padding-left:8px;';
@@ -24579,6 +24588,7 @@ function startGame(){
   if(mountedTurret){ mountedTurret=null; const _th=document.getElementById('turretHud'); if(_th) _th.style.display='none'; }   // never start a round still manning a turret
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
   if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); if(typeof _clearDust==='function') _clearDust(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/728/732/738: kill engine + HUD + skid + dust + restore crosshair on (re)deploy
+  if(typeof preloadSignalSounds==='function') preloadSignalSounds();   // build 750: warm up custom signal clips so the first trigger plays
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
   if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
