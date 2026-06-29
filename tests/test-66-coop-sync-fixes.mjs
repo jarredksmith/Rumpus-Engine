@@ -17,7 +17,7 @@ assert(/setSpawnMarkersVisible\(editorOpen\)/.test(ll), 'client hides spawn mark
 
 // 97: host SFX sync
 assert(/function curSounds\(\)\{ return \(typeof NET!=='undefined' && NET\.sounds\)/.test(src), 'curSounds prefers the host override');
-assert(/if\(playSample\(\(curSounds\(\)\.shoot\|\|\{\}\)\[curWep\]\)\)/.test(src), 'shoot SFX uses the active set');
+assert(/if\(playSample\(\(curSounds\(\)\.shoot\|\|\{\}\)\[curWep\], \{vary:0\.04\}\)\)/.test(src), 'shoot SFX uses the active set');
 assert(/sounds:audioSettings\.sounds, music:audioSettings\.musicUrl/.test(src), 'host sends its sounds in the welcome');
 assert(/NET\.sounds=_sanitizeSounds\(NET\.pendingSounds\)/.test(src), 'client adopts the host sounds for the session');
 done('co-op sync + HUD/pause fixes');

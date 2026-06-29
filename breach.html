@@ -5915,7 +5915,7 @@ function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass'}={}){
   src.start(t);
 }
 const SFX = {
-  shoot(){ if(playSample((curSounds().shoot||{})[curWep])) return;
+  shoot(){ if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;
     if(curWep==='shotgun'){ tone({freq:150, type:'square', dur:0.15, vol:0.17, slideTo:55}); noise({dur:0.17, vol:0.30, filterFreq:1400, type:'lowpass'}); }
     else if(curWep==='smg'){ tone({freq:380, type:'square', dur:0.05, vol:0.10, slideTo:150}); noise({dur:0.05, vol:0.15, filterFreq:3000, type:'highpass'}); }
     else if(curWep==='sniper'){ tone({freq:95, type:'square', dur:0.22, vol:0.22, slideTo:38}); noise({dur:0.26, vol:0.34, filterFreq:1000, type:'lowpass'}); }
@@ -5925,16 +5925,15 @@ const SFX = {
     const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
     const n=Math.floor(actx.sampleRate*0.07); const buf=actx.createBuffer(1,n,actx.sampleRate); const dd=buf.getChannelData(0); for(let i=0;i<n;i++) dd[i]=(Math.random()*2-1)*(1-i/n); const src=actx.createBufferSource(); src.buffer=buf; const filt=actx.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=2000; const ng=actx.createGain(); ng.gain.value=0.18; src.connect(filt).connect(ng).connect(gain); src.start(t); },
   reload(){ const r=curSounds().reload; const u=(r&&typeof r==='object')?(r[curWep]||r._all):r; if(playSample(u)) return; tone({freq:200, type:'square', dur:0.06, vol:0.1}); setTimeout(()=>tone({freq:300, type:'square', dur:0.08, vol:0.1}),550); },
-  hit(){ if(playSample(curSounds().hit)) return; tone({freq:600, type:'sine', dur:0.05, vol:0.12, slideTo:900}); },
+  hit(){ if(playSample(curSounds().hit, {vary:0.06})) return; tone({freq:600, type:'sine', dur:0.05, vol:0.12, slideTo:900}); },
   shatter(){ noise({dur:0.22, vol:0.22, filterFreq:3000, type:'highpass'}); tone({freq:220, type:'square', dur:0.12, vol:0.13, slideTo:70}); setTimeout(()=>noise({dur:0.12, vol:0.12, filterFreq:1600}),40); },
   puff(){ noise({dur:0.18, vol:0.14, filterFreq:700, type:'lowpass'}); tone({freq:160, type:'sine', dur:0.1, vol:0.08, slideTo:90}); },
-  kill(){ if(playSample(curSounds().kill)) return; tone({freq:160, type:'sawtooth', dur:0.3, vol:0.16, slideTo:50}); noise({dur:0.25, vol:0.15, filterFreq:800}); },
-  hurt(){ if(playSample(curSounds().hurt)) return; tone({freq:140, type:'sawtooth', dur:0.2, vol:0.2, slideTo:70}); },
-  pickup(){ tone({freq:520, type:'triangle', dur:0.1, vol:0.18, slideTo:780}); setTimeout(()=>tone({freq:780, type:'triangle', dur:0.12, vol:0.18, slideTo:1100}),90); },
+  kill(type){ const ek=curSounds().enemyKill||{}; if(playSample((type&&ek[type])||curSounds().kill, {vary:0.05})) return; tone({freq:160, type:'sawtooth', dur:0.3, vol:0.16, slideTo:50}); noise({dur:0.25, vol:0.15, filterFreq:800}); },   // build 752: per-enemy-type kill clip + pitch wobble
+  hurt(){ if(playSample(curSounds().hurt, {vary:0.05})) return; tone({freq:140, type:'sawtooth', dur:0.2, vol:0.2, slideTo:70}); },
+  pickup(){ if(playSample(curSounds().pickup)) return; tone({freq:520, type:'triangle', dur:0.1, vol:0.18, slideTo:780}); setTimeout(()=>tone({freq:780, type:'triangle', dur:0.12, vol:0.18, slideTo:1100}),90); },   // build 751: custom pickup clip, else the chime
   empty(){ tone({freq:180, type:'square', dur:0.04, vol:0.08}); },
   wave(){ tone({freq:300, type:'triangle', dur:0.15, vol:0.16, slideTo:450}); setTimeout(()=>tone({freq:450, type:'triangle', dur:0.2, vol:0.16, slideTo:600}),140); },
   jump(){ if(playSample(curSounds().jump)) return; tone({freq:280, type:'sine', dur:0.12, vol:0.1, slideTo:420}); },
-  pickup(){ if(playSample(curSounds().pickup)) return; this.power(); },   // build 751: powerup / item pickup (falls back to the power chime)
   coin(){ if(playSample(curSounds().coin)) return; tone({freq:880, type:'square', dur:0.06, vol:0.1, slideTo:1320}); setTimeout(()=>tone({freq:1320, type:'square', dur:0.08, vol:0.1}),55); },
   buy(){ tone({freq:660, type:'triangle', dur:0.08, vol:0.16, slideTo:990}); setTimeout(()=>tone({freq:990, type:'triangle', dur:0.1, vol:0.16, slideTo:1320}),80); },
   deny(){ tone({freq:160, type:'sawtooth', dur:0.12, vol:0.14, slideTo:90}); },
@@ -5958,12 +5957,13 @@ const SFX = {
 // URLs are stored in audioSettings.sounds (per device). When a sample is loaded for an event we play it;
 // otherwise we fall back to the procedural SFX above. Samples route through sfxBus, so the SFX volume applies.
 const _soundBuffers = {};   // url -> AudioBuffer | 'loading' | 'error'
-function _emptySounds(){ return { shoot:{}, reload:{}, explode:'', coin:'', hit:'', kill:'', hurt:'', turret:'', carEngine:'', carBrake:'', carSkid:'', carBoost:'', pickup:'', jump:'' }; }   // build 748: per-weapon reload; 749: car SFX; 751: pickup + jump
+function _emptySounds(){ return { shoot:{}, reload:{}, enemyKill:{}, explode:'', coin:'', hit:'', kill:'', hurt:'', turret:'', carEngine:'', carBrake:'', carSkid:'', carBoost:'', pickup:'', jump:'' }; }   // build 748: per-weapon reload; 749: car SFX; 751: pickup+jump; 752: per-enemy-type kill
 function _sanitizeSounds(s){ const o=_emptySounds();
   if(s && typeof s==='object'){
     if(s.shoot && typeof s.shoot==='object'){ for(const k in s.shoot){ if(typeof s.shoot[k]==='string') o.shoot[k]=s.shoot[k]; } }
     if(s.reload && typeof s.reload==='object'){ for(const k in s.reload){ if(typeof s.reload[k]==='string') o.reload[k]=s.reload[k]; } }
     else if(typeof s.reload==='string' && s.reload){ o.reload._all=s.reload; }   // legacy: a single shared reload clip applies to every gun
+    if(s.enemyKill && typeof s.enemyKill==='object'){ for(const k in s.enemyKill){ if(typeof s.enemyKill[k]==='string') o.enemyKill[k]=s.enemyKill[k]; } }   // build 752: per-enemy-type kill clips
     for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump']){ if(typeof s[k]==='string') o[k]=s[k]; }
   }
   return o;
@@ -5983,13 +5983,17 @@ function loadSound(url, cb){
 }
 // Active SFX set: a co-op client plays the HOST's custom sounds (NET.sounds); otherwise your own.
 function curSounds(){ return (typeof NET!=='undefined' && NET.sounds) || (audioSettings && audioSettings.sounds) || _emptySounds(); }
-function playSample(url){
+function playSample(url, opts){
   if(!url || !actx || !sfxBus) return false;
+  if(Array.isArray(url)){ if(!url.length) return false; url=url[Math.floor(Math.random()*url.length)]; }   // build 752: a slot may hold several clips — pick one at random
   const buf=_soundBuffers[url];
   if(!(buf && buf.duration!==undefined)){ loadSound(url); return false; }   // not decoded yet -> let the synth play this time
-  try{ const src=actx.createBufferSource(); src.buffer=buf; src.connect(sfxBus); src.start(); return true; }catch(e){ return false; }
+  try{ const src=actx.createBufferSource(); src.buffer=buf;
+    const vary=(opts&&opts.vary)||0;
+    if(vary>0) src.playbackRate.value = Math.max(0.5, 1 + (Math.random()*2-1)*vary);   // build 752: small pitch wobble so repeated hits/kills don't sound identical
+    src.connect(sfxBus); src.start(); return true; }catch(e){ return false; }
 }
-function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump']) loadSound(s[k]); }
+function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); if(s.enemyKill){ for(const k in s.enemyKill) loadSound(s.enemyKill[k]); } for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump']) loadSound(s[k]); }
 // build 750: preload every signal's custom clip (do:'sound') so a light switch / button plays on the first press, not the second.
 function preloadSignalSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const sigs=o&&o.userData&&o.userData.signals; if(!sigs) continue; for(const s of sigs){ if(s.do==='sound' && s.sound) loadSound(s.sound); } } }
 
@@ -15695,7 +15699,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 751 · 2026-06-28';
+const BUILD_VERSION = 'build 752 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17193,7 +17197,7 @@ function enemyHurt(en, dmg, sx, sz){
 }
 function killEnemy(en){
   runKills++;
-  spark(en.mesh.position, 0xff2d55); SFX.kill();
+  spark(en.mesh.position, 0xff2d55); SFX.kill(en.type);   // build 752: per-enemy-type kill sound
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
   else if(NET.mode==='host' && _coopKillFor==null) registerLocalKill();   // co-op host's OWN kill -> callout (no slow-mo, gated inside); client kills are credited via {t:'frag'}
   // drop 1-2 coins worth scaling slightly with wave
@@ -24918,6 +24922,9 @@ function _fsAssignSlots(){
   }
   for(const [lab,key] of [['Grenade','explode'],['Coin','coin'],['Pickup','pickup'],['Jump','jump'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt'],['Turret fire','turret'],
       ['Car engine','carEngine'],['Car brake','carBrake'],['Car skid','carSkid'],['Car boost','carBoost']]){ out.push({ label:lab, set:u=>{ audioSettings.sounds[key]=u; } }); }
+  if(!audioSettings.sounds.enemyKill || typeof audioSettings.sounds.enemyKill!=='object') audioSettings.sounds.enemyKill={};   // build 752: per-enemy-type kill
+  const ET=(typeof ENEMY_TYPES!=='undefined')?ENEMY_TYPES:{};
+  for(const k of Object.keys(ET)){ const nm=(ET[k]&&ET[k].name)?ET[k].name:k; out.push({ label:'Kill · '+nm, set:u=>{ if(u) audioSettings.sounds.enemyKill[k]=u; else delete audioSettings.sounds.enemyKill[k]; } }); }
   return out;
 }
 function renderFreesoundBrowser(host, refresh, directTarget){
@@ -24994,9 +25001,15 @@ function populateSoundEditor(host){
     host.appendChild(_sndRow('Shoot · '+name, ()=>audioSettings.sounds.shoot[k], v=>{ if(v) audioSettings.sounds.shoot[k]=v; else delete audioSettings.sounds.shoot[k]; }));
     host.appendChild(_sndRow('Reload · '+name, ()=>audioSettings.sounds.reload[k], v=>{ if(v) audioSettings.sounds.reload[k]=v; else delete audioSettings.sounds.reload[k]; }));
   }
-  for(const [lab,key] of [['Grenade explosion','explode'],['Coin pickup','coin'],['Powerup / item pickup','pickup'],['Jump','jump'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt'],
+  for(const [lab,key] of [['Grenade explosion','explode'],['Coin pickup','coin'],['Powerup / item pickup','pickup'],['Jump','jump'],['Hit marker','hit'],['Enemy kill (all)','kill'],['Player hurt','hurt'],
       ['Car engine (loops)','carEngine'],['Car brake','carBrake'],['Car skid/slide','carSkid'],['Car boost','carBoost']]){   // build 749/751
     host.appendChild(_sndRow(lab, ()=>audioSettings.sounds[key], v=>{ audioSettings.sounds[key]=v; }));
+  }
+  // build 752: per-enemy-type kill clips (override the shared "Enemy kill (all)" above for that type)
+  if(!audioSettings.sounds.enemyKill || typeof audioSettings.sounds.enemyKill!=='object') audioSettings.sounds.enemyKill={};
+  const ET=(typeof ENEMY_TYPES!=='undefined')?ENEMY_TYPES:{};
+  for(const k of Object.keys(ET)){ const name=(ET[k]&&ET[k].name)?ET[k].name:(k.charAt(0).toUpperCase()+k.slice(1));
+    host.appendChild(_sndRow('Kill · '+name, ()=>audioSettings.sounds.enemyKill[k], v=>{ if(v) audioSettings.sounds.enemyKill[k]=v; else delete audioSettings.sounds.enemyKill[k]; }));
   }
   host.appendChild(renderFreesoundBrowser(host, ()=>populateSoundEditor(host)));   // search + import free CC sound effects
 }
