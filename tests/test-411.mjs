@@ -1,9 +1,9 @@
 import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 // build 536: turrets get their own fire sound (Freesound search), stored alongside the other custom SFX.
-assert(/function _emptySounds\(\)\{ return \{ shoot:\{\}, reload:\{\}, explode:'', coin:'', hit:'', kill:'', hurt:'', turret:'', carEngine:'', carBrake:'', carSkid:'', carBoost:'' \}; \}/.test(src), 'turret + car slots exist in the sounds shape (reload is a per-weapon map, build 748/749)');
-assert(/'explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost'\]\)\{ if\(typeof s\[k\]==='string'\)/.test(src), 'sanitizeSounds keeps the turret + car URLs');
-assert(/'explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost'\]\) loadSound/.test(src), 'preloadCustomSounds preloads the turret + car sounds');
+assert(/function _emptySounds\(\)\{ return \{ shoot:\{\}, reload:\{\}, explode:'', coin:'', hit:'', kill:'', hurt:'', turret:'', carEngine:'', carBrake:'', carSkid:'', carBoost:'', pickup:'', jump:'' \}; \}/.test(src), 'turret + car + pickup/jump slots exist in the sounds shape (build 748/749/751)');
+assert(/'explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump'\]\)\{ if\(typeof s\[k\]==='string'\)/.test(src), 'sanitizeSounds keeps all the event URLs');
+assert(/'explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump'\]\) loadSound/.test(src), 'preloadCustomSounds preloads all the event sounds');
 assert(/else if\(typeof s\.reload==='string' && s\.reload\)\{ o\.reload\._all=s\.reload; \}/.test(src), 'build 748: a legacy shared reload clip migrates to _all');
 assert(/if\(!\(curSounds\(\)\.turret && playSample\(curSounds\(\)\.turret\)\)\) SFX\.shoot\(\);/.test(src), 'turretFire plays the custom turret sound, else the default shoot SFX');
 assert(/\['Turret fire','turret'\]/.test(src), 'master sound editor lists a Turret fire slot');

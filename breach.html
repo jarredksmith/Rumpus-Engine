@@ -5933,7 +5933,8 @@ const SFX = {
   pickup(){ tone({freq:520, type:'triangle', dur:0.1, vol:0.18, slideTo:780}); setTimeout(()=>tone({freq:780, type:'triangle', dur:0.12, vol:0.18, slideTo:1100}),90); },
   empty(){ tone({freq:180, type:'square', dur:0.04, vol:0.08}); },
   wave(){ tone({freq:300, type:'triangle', dur:0.15, vol:0.16, slideTo:450}); setTimeout(()=>tone({freq:450, type:'triangle', dur:0.2, vol:0.16, slideTo:600}),140); },
-  jump(){ tone({freq:280, type:'sine', dur:0.12, vol:0.1, slideTo:420}); },
+  jump(){ if(playSample(curSounds().jump)) return; tone({freq:280, type:'sine', dur:0.12, vol:0.1, slideTo:420}); },
+  pickup(){ if(playSample(curSounds().pickup)) return; this.power(); },   // build 751: powerup / item pickup (falls back to the power chime)
   coin(){ if(playSample(curSounds().coin)) return; tone({freq:880, type:'square', dur:0.06, vol:0.1, slideTo:1320}); setTimeout(()=>tone({freq:1320, type:'square', dur:0.08, vol:0.1}),55); },
   buy(){ tone({freq:660, type:'triangle', dur:0.08, vol:0.16, slideTo:990}); setTimeout(()=>tone({freq:990, type:'triangle', dur:0.1, vol:0.16, slideTo:1320}),80); },
   deny(){ tone({freq:160, type:'sawtooth', dur:0.12, vol:0.14, slideTo:90}); },
@@ -5957,13 +5958,13 @@ const SFX = {
 // URLs are stored in audioSettings.sounds (per device). When a sample is loaded for an event we play it;
 // otherwise we fall back to the procedural SFX above. Samples route through sfxBus, so the SFX volume applies.
 const _soundBuffers = {};   // url -> AudioBuffer | 'loading' | 'error'
-function _emptySounds(){ return { shoot:{}, reload:{}, explode:'', coin:'', hit:'', kill:'', hurt:'', turret:'', carEngine:'', carBrake:'', carSkid:'', carBoost:'' }; }   // build 748: per-weapon reload; 749: car SFX
+function _emptySounds(){ return { shoot:{}, reload:{}, explode:'', coin:'', hit:'', kill:'', hurt:'', turret:'', carEngine:'', carBrake:'', carSkid:'', carBoost:'', pickup:'', jump:'' }; }   // build 748: per-weapon reload; 749: car SFX; 751: pickup + jump
 function _sanitizeSounds(s){ const o=_emptySounds();
   if(s && typeof s==='object'){
     if(s.shoot && typeof s.shoot==='object'){ for(const k in s.shoot){ if(typeof s.shoot[k]==='string') o.shoot[k]=s.shoot[k]; } }
     if(s.reload && typeof s.reload==='object'){ for(const k in s.reload){ if(typeof s.reload[k]==='string') o.reload[k]=s.reload[k]; } }
     else if(typeof s.reload==='string' && s.reload){ o.reload._all=s.reload; }   // legacy: a single shared reload clip applies to every gun
-    for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost']){ if(typeof s[k]==='string') o[k]=s[k]; }
+    for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump']){ if(typeof s[k]==='string') o[k]=s[k]; }
   }
   return o;
 }
@@ -5988,7 +5989,7 @@ function playSample(url){
   if(!(buf && buf.duration!==undefined)){ loadSound(url); return false; }   // not decoded yet -> let the synth play this time
   try{ const src=actx.createBufferSource(); src.buffer=buf; src.connect(sfxBus); src.start(); return true; }catch(e){ return false; }
 }
-function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost']) loadSound(s[k]); }
+function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump']) loadSound(s[k]); }
 // build 750: preload every signal's custom clip (do:'sound') so a light switch / button plays on the first press, not the second.
 function preloadSignalSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const sigs=o&&o.userData&&o.userData.signals; if(!sigs) continue; for(const s of sigs){ if(s.do==='sound' && s.sound) loadSound(s.sound); } } }
 
@@ -11437,7 +11438,7 @@ function spawnPowerups(){
 }
 function applyPowerupLocal(kind, item){
   if(kind==='item'){ if(item && typeof giveItem==='function') giveItem(item); return; }   // build 597: collectible inventory item
-  if(kind==='health'){ player.hp = Math.min(player.maxHp, player.hp + 50); SFX.power && SFX.power(); updateHUD(); }
+  if(kind==='health'){ player.hp = Math.min(player.maxHp, player.hp + 50); SFX.pickup && SFX.pickup(); updateHUD(); }
   else if(kind==='damage') applyDamage();
   else if(kind==='speed') applySpeed();
   else if(kind==='shield') applyShield();
@@ -13727,10 +13728,10 @@ function refreshGamesList(){ fetchRooms(rooms=>renderGamesList(rooms)); }
 
 const buffs = { damage:0, speed:0, shield:0 }; // values are remaining seconds (shield is hit points)
 let grenadeCount = 0;
-function applyHealth(){ player.hp = Math.min(player.maxHp, player.hp + 50); SFX.power(); flashHeal(); updateHUD(); }
-function applyDamage(){ buffs.damage = 20; SFX.power(); updateHUD(); }
-function applySpeed(){ buffs.speed = 20; SFX.power(); updateHUD(); }
-function applyShield(){ buffs.shield = 75; SFX.power(); updateHUD(); }
+function applyHealth(){ player.hp = Math.min(player.maxHp, player.hp + 50); SFX.pickup(); flashHeal(); updateHUD(); }
+function applyDamage(){ buffs.damage = 20; SFX.pickup(); updateHUD(); }
+function applySpeed(){ buffs.speed = 20; SFX.pickup(); updateHUD(); }
+function applyShield(){ buffs.shield = 75; SFX.pickup(); updateHUD(); }
 function flashHeal(){
   const d=$('damage'); d.style.boxShadow='inset 0 0 200px rgba(56,245,181,.4)';
   setTimeout(()=>{ d.style.boxShadow='inset 0 0 200px rgba(255,40,70,0)'; },150);
@@ -15380,7 +15381,7 @@ let invOpen=false; let _invEl=null;
 function defineItem(def){ if(!def||!def.id) return null; invCatalog[def.id]=Object.assign({ name:def.id, desc:'', model:'', thumb:'', scale:1, type:'object', journal:'', useType:'none', useKey:'gold', useAmount:25, useConsume:true }, invCatalog[def.id]||{}, def); return invCatalog[def.id]; }
 function hasItem(id){ return inventory.some(s=>s.id===id && s.n>0); }
 function invCount(id){ const s=inventory.find(x=>x.id===id); return s?s.n:0; }
-function giveItem(id, n){ n=n||1; if(!id) return false; if(!invCatalog[id]) defineItem({ id, name:id }); const s=inventory.find(x=>x.id===id); if(s) s.n+=n; else inventory.push({ id, n }); if(typeof toast==='function') toast('Picked up: '+((invCatalog[id]&&invCatalog[id].name)||id)); if(typeof SFX!=='undefined'&&SFX.coin) SFX.coin(); if(invOpen) renderInventory(); return true; }
+function giveItem(id, n){ n=n||1; if(!id) return false; if(!invCatalog[id]) defineItem({ id, name:id }); const s=inventory.find(x=>x.id===id); if(s) s.n+=n; else inventory.push({ id, n }); if(typeof toast==='function') toast('Picked up: '+((invCatalog[id]&&invCatalog[id].name)||id)); if(typeof SFX!=='undefined'&&SFX.pickup) SFX.pickup(); if(invOpen) renderInventory(); return true; }   // build 751: item pickup uses the pickup sound
 function takeItem(id, n){ n=n||1; const s=inventory.find(x=>x.id===id); if(!s) return false; s.n-=n; if(s.n<=0) inventory=inventory.filter(x=>x!==s); if(invOpen) renderInventory(); return true; }
 // build 607: items that DO something. 'key' bridges into the existing lock system (set playerKeys[color], then a
 // matching locked prop opens with E); 'heal'/'ammo' are consumables. Default useConsume removes one on use.
@@ -15694,7 +15695,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 750 · 2026-06-28';
+const BUILD_VERSION = 'build 751 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24915,7 +24916,7 @@ function _fsAssignSlots(){
     out.push({ label:'Shoot \u00b7 '+nm, set:u=>{ if(!audioSettings.sounds.shoot) audioSettings.sounds.shoot={}; if(u) audioSettings.sounds.shoot[k]=u; else delete audioSettings.sounds.shoot[k]; } });
     out.push({ label:'Reload \u00b7 '+nm, set:u=>{ if(u) audioSettings.sounds.reload[k]=u; else delete audioSettings.sounds.reload[k]; } });
   }
-  for(const [lab,key] of [['Grenade','explode'],['Coin','coin'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt'],['Turret fire','turret'],
+  for(const [lab,key] of [['Grenade','explode'],['Coin','coin'],['Pickup','pickup'],['Jump','jump'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt'],['Turret fire','turret'],
       ['Car engine','carEngine'],['Car brake','carBrake'],['Car skid','carSkid'],['Car boost','carBoost']]){ out.push({ label:lab, set:u=>{ audioSettings.sounds[key]=u; } }); }
   return out;
 }
@@ -24993,8 +24994,8 @@ function populateSoundEditor(host){
     host.appendChild(_sndRow('Shoot · '+name, ()=>audioSettings.sounds.shoot[k], v=>{ if(v) audioSettings.sounds.shoot[k]=v; else delete audioSettings.sounds.shoot[k]; }));
     host.appendChild(_sndRow('Reload · '+name, ()=>audioSettings.sounds.reload[k], v=>{ if(v) audioSettings.sounds.reload[k]=v; else delete audioSettings.sounds.reload[k]; }));
   }
-  for(const [lab,key] of [['Grenade explosion','explode'],['Coin pickup','coin'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt'],
-      ['Car engine (loops)','carEngine'],['Car brake','carBrake'],['Car skid/slide','carSkid'],['Car boost','carBoost']]){   // build 749
+  for(const [lab,key] of [['Grenade explosion','explode'],['Coin pickup','coin'],['Powerup / item pickup','pickup'],['Jump','jump'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt'],
+      ['Car engine (loops)','carEngine'],['Car brake','carBrake'],['Car skid/slide','carSkid'],['Car boost','carBoost']]){   // build 749/751
     host.appendChild(_sndRow(lab, ()=>audioSettings.sounds[key], v=>{ audioSettings.sounds[key]=v; }));
   }
   host.appendChild(renderFreesoundBrowser(host, ()=>populateSoundEditor(host)));   // search + import free CC sound effects

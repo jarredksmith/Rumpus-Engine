@@ -45,4 +45,10 @@ await new Promise(r=>setTimeout(r,5));
 eq(env.buffers['https://bad/s.mp3'], 'error', 'a 404 marks the url errored');
 eq(env.playSample('https://bad/s.mp3'), false, 'errored url falls back to synth');
 eq(env.playSample(''), false, 'empty url is a no-op');
+// build 751: pickup + jump sounds
+assert(/jump\(\)\{ if\(playSample\(curSounds\(\)\.jump\)\) return;/.test(src), 'jump uses a custom jump sample');
+assert(/pickup\(\)\{ if\(playSample\(curSounds\(\)\.pickup\)\) return; this\.power\(\); \}/.test(src), 'pickup plays a custom clip, else the power chime');
+assert(/function giveItem[\s\S]*?SFX\.pickup\(\)/.test(src), 'item pickups use the pickup sound');
+assert(/function applyHealth\(\)\{[\s\S]*?SFX\.pickup\(\)/.test(src), 'powerups use the pickup sound');
+
 done('custom sound samples');
