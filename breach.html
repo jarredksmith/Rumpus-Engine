@@ -5924,7 +5924,7 @@ const SFX = {
   shootAt(pos){ if(!actx||!sfxBus) return; let g=1; try{ const dx=pos.x-player.pos.x, dy=pos.y-player.pos.y, dz=pos.z-player.pos.z; g=Math.max(0, 1-Math.sqrt(dx*dx+dy*dy+dz*dz)/45); g*=g; }catch(e){} if(g<=0.02) return; const t=actx.currentTime; const gain=actx.createGain(); gain.gain.value=g; gain.connect(sfxBus);
     const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
     const n=Math.floor(actx.sampleRate*0.07); const buf=actx.createBuffer(1,n,actx.sampleRate); const dd=buf.getChannelData(0); for(let i=0;i<n;i++) dd[i]=(Math.random()*2-1)*(1-i/n); const src=actx.createBufferSource(); src.buffer=buf; const filt=actx.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=2000; const ng=actx.createGain(); ng.gain.value=0.18; src.connect(filt).connect(ng).connect(gain); src.start(t); },
-  reload(){ if(playSample(curSounds().reload)) return; tone({freq:200, type:'square', dur:0.06, vol:0.1}); setTimeout(()=>tone({freq:300, type:'square', dur:0.08, vol:0.1}),550); },
+  reload(){ const r=curSounds().reload; const u=(r&&typeof r==='object')?(r[curWep]||r._all):r; if(playSample(u)) return; tone({freq:200, type:'square', dur:0.06, vol:0.1}); setTimeout(()=>tone({freq:300, type:'square', dur:0.08, vol:0.1}),550); },
   hit(){ if(playSample(curSounds().hit)) return; tone({freq:600, type:'sine', dur:0.05, vol:0.12, slideTo:900}); },
   shatter(){ noise({dur:0.22, vol:0.22, filterFreq:3000, type:'highpass'}); tone({freq:220, type:'square', dur:0.12, vol:0.13, slideTo:70}); setTimeout(()=>noise({dur:0.12, vol:0.12, filterFreq:1600}),40); },
   puff(){ noise({dur:0.18, vol:0.14, filterFreq:700, type:'lowpass'}); tone({freq:160, type:'sine', dur:0.1, vol:0.08, slideTo:90}); },
@@ -5957,8 +5957,16 @@ const SFX = {
 // URLs are stored in audioSettings.sounds (per device). When a sample is loaded for an event we play it;
 // otherwise we fall back to the procedural SFX above. Samples route through sfxBus, so the SFX volume applies.
 const _soundBuffers = {};   // url -> AudioBuffer | 'loading' | 'error'
-function _emptySounds(){ return { shoot:{}, reload:'', explode:'', coin:'', hit:'', kill:'', hurt:'', turret:'' }; }
-function _sanitizeSounds(s){ const o=_emptySounds(); if(s && typeof s==='object'){ if(s.shoot && typeof s.shoot==='object'){ for(const k in s.shoot){ if(typeof s.shoot[k]==='string') o.shoot[k]=s.shoot[k]; } } for(const k of ['reload','explode','coin','hit','kill','hurt','turret']){ if(typeof s[k]==='string') o[k]=s[k]; } } return o; }
+function _emptySounds(){ return { shoot:{}, reload:{}, explode:'', coin:'', hit:'', kill:'', hurt:'', turret:'' }; }   // build 748: reload is a per-weapon map (like shoot)
+function _sanitizeSounds(s){ const o=_emptySounds();
+  if(s && typeof s==='object'){
+    if(s.shoot && typeof s.shoot==='object'){ for(const k in s.shoot){ if(typeof s.shoot[k]==='string') o.shoot[k]=s.shoot[k]; } }
+    if(s.reload && typeof s.reload==='object'){ for(const k in s.reload){ if(typeof s.reload[k]==='string') o.reload[k]=s.reload[k]; } }
+    else if(typeof s.reload==='string' && s.reload){ o.reload._all=s.reload; }   // legacy: a single shared reload clip applies to every gun
+    for(const k of ['explode','coin','hit','kill','hurt','turret']){ if(typeof s[k]==='string') o[k]=s[k]; }
+  }
+  return o;
+}
 function loadSound(url, cb){
   if(!url){ cb && cb('empty'); return; }
   if(!actx) initAudio();
@@ -5980,7 +5988,7 @@ function playSample(url){
   if(!(buf && buf.duration!==undefined)){ loadSound(url); return false; }   // not decoded yet -> let the synth play this time
   try{ const src=actx.createBufferSource(); src.buffer=buf; src.connect(sfxBus); src.start(); return true; }catch(e){ return false; }
 }
-function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } for(const k of ['reload','explode','coin','hit','kill','hurt','turret']) loadSound(s[k]); }
+function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); for(const k of ['explode','coin','hit','kill','hurt','turret']) loadSound(s[k]); }
 
 // ---------- Audio buses + persisted volume settings (separate from level data) ----------
 let masterBus=null, sfxBus=null, musicBus=null;
@@ -15660,7 +15668,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 747 · 2026-06-28';
+const BUILD_VERSION = 'build 748 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23301,8 +23309,10 @@ function renderEditorFields(){
     if(tgt===editorTargets.gun){   // per-weapon shoot sound (moved here from the old Sounds tab)
       if(!audioSettings.sounds) audioSettings.sounds=_emptySounds(); if(!audioSettings.sounds.shoot) audioSettings.sounds.shoot={};
       const wn=(WEAPONS[curWep]&&WEAPONS[curWep].name)?WEAPONS[curWep].name:curWep;
-      const sh=document.createElement('div'); sh.className='hint'; sh.style.margin='10px 0 2px'; sh.innerHTML='<b>Shoot sound</b> \u2014 '+wn+' (saved on this device)'; urlHost.appendChild(sh);
+      if(!audioSettings.sounds.reload || typeof audioSettings.sounds.reload!=='object') audioSettings.sounds.reload={};   // build 748: per-weapon reload
+      const sh=document.createElement('div'); sh.className='hint'; sh.style.margin='10px 0 2px'; sh.innerHTML='<b>Shoot &amp; reload sounds</b> \u2014 '+wn+' (saved on this device)'; urlHost.appendChild(sh);
       urlHost.appendChild(_sndRow('Shoot \u00b7 '+wn, ()=>audioSettings.sounds.shoot[curWep], v=>{ if(v) audioSettings.sounds.shoot[curWep]=v; else delete audioSettings.sounds.shoot[curWep]; }));
+      urlHost.appendChild(_sndRow('Reload \u00b7 '+wn, ()=>audioSettings.sounds.reload[curWep], v=>{ if(v) audioSettings.sounds.reload[curWep]=v; else delete audioSettings.sounds.reload[curWep]; }));
       urlHost.appendChild(renderFreesoundBrowser(urlHost, ()=>renderEditorFields(), { label:'Shoot \u00b7 '+wn, set:v=>{ if(v) audioSettings.sounds.shoot[curWep]=v; else delete audioSettings.sounds.shoot[curWep]; } }));
     }
     if(tgt===editorTargets.station){   // station glow controls
@@ -24867,8 +24877,12 @@ function _fsAssignSlots(){
   const out=[];
   out.push({ label:'Music', set:u=>{ audioSettings.musicUrl=u||''; if(_musicOn){ stopMusic(); startMusic(); } } });
   const W=(typeof WEAPONS!=='undefined')?WEAPONS:{};
-  for(const k of Object.keys(W)){ const nm=(W[k]&&W[k].name)?W[k].name:k; out.push({ label:'Shoot \u00b7 '+nm, set:u=>{ if(!audioSettings.sounds.shoot) audioSettings.sounds.shoot={}; if(u) audioSettings.sounds.shoot[k]=u; else delete audioSettings.sounds.shoot[k]; } }); }
-  for(const [lab,key] of [['Reload','reload'],['Grenade','explode'],['Coin','coin'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt'],['Turret fire','turret']]){ out.push({ label:lab, set:u=>{ audioSettings.sounds[key]=u; } }); }
+  if(!audioSettings.sounds.reload || typeof audioSettings.sounds.reload!=='object') audioSettings.sounds.reload={};
+  for(const k of Object.keys(W)){ const nm=(W[k]&&W[k].name)?W[k].name:k;
+    out.push({ label:'Shoot \u00b7 '+nm, set:u=>{ if(!audioSettings.sounds.shoot) audioSettings.sounds.shoot={}; if(u) audioSettings.sounds.shoot[k]=u; else delete audioSettings.sounds.shoot[k]; } });
+    out.push({ label:'Reload \u00b7 '+nm, set:u=>{ if(u) audioSettings.sounds.reload[k]=u; else delete audioSettings.sounds.reload[k]; } });
+  }
+  for(const [lab,key] of [['Grenade','explode'],['Coin','coin'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt'],['Turret fire','turret']]){ out.push({ label:lab, set:u=>{ audioSettings.sounds[key]=u; } }); }
   return out;
 }
 function renderFreesoundBrowser(host, refresh, directTarget){
@@ -24939,11 +24953,13 @@ function populateSoundEditor(host){
   mhint.textContent='Music loops continuously and replaces the generated soundtrack. The ♪ Music volume slider (pause menu) controls it.';
   host.appendChild(mhint);
   const W=(typeof WEAPONS!=='undefined')?WEAPONS:{};
+  if(!audioSettings.sounds.reload || typeof audioSettings.sounds.reload!=='object') audioSettings.sounds.reload={};   // build 748: per-weapon reload
   for(const k of Object.keys(W)){
     const name=(W[k] && W[k].name) ? W[k].name : k;
     host.appendChild(_sndRow('Shoot · '+name, ()=>audioSettings.sounds.shoot[k], v=>{ if(v) audioSettings.sounds.shoot[k]=v; else delete audioSettings.sounds.shoot[k]; }));
+    host.appendChild(_sndRow('Reload · '+name, ()=>audioSettings.sounds.reload[k], v=>{ if(v) audioSettings.sounds.reload[k]=v; else delete audioSettings.sounds.reload[k]; }));
   }
-  for(const [lab,key] of [['Reload','reload'],['Grenade explosion','explode'],['Coin pickup','coin'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt']]){
+  for(const [lab,key] of [['Grenade explosion','explode'],['Coin pickup','coin'],['Hit marker','hit'],['Enemy kill','kill'],['Player hurt','hurt']]){
     host.appendChild(_sndRow(lab, ()=>audioSettings.sounds[key], v=>{ audioSettings.sounds[key]=v; }));
   }
   host.appendChild(renderFreesoundBrowser(host, ()=>populateSoundEditor(host)));   // search + import free CC sound effects

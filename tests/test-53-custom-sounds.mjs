@@ -11,7 +11,9 @@ assert(/preloadCustomSounds\(\);/.test(src) && /buildAudioBuses\(\); preloadCust
 
 // SFX override hooks (sample first, else synth)
 assert(/shoot\(\)\{ if\(playSample\(\(curSounds\(\)\.shoot\|\|\{\}\)\[curWep\]\)\) return;/.test(src), 'per-weapon shoot sample overrides the synth');
-for(const ev of ['reload','explode','coin','hit','kill','hurt'])
+// build 748: reload is per-weapon now (with _all legacy fallback)
+assert(/reload\(\)\{ const r=curSounds\(\)\.reload; const u=\(r&&typeof r==='object'\)\?\(r\[curWep\]\|\|r\._all\):r; if\(playSample\(u\)\) return;/.test(src), 'per-weapon reload sample overrides the synth');
+for(const ev of ['explode','coin','hit','kill','hurt'])
   assert(new RegExp(ev+'\\(\\)\\{ if\\(playSample\\(curSounds\\(\\)\\.'+ev+'\\)\\) return;').test(src), ev+' sample overrides the synth');
 
 // --- runnable: loader + player against a stubbed WebAudio ---

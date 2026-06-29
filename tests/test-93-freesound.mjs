@@ -15,7 +15,7 @@ const fps = extractFunction('fsParseSound');
 assert(/pv\['preview-hq-mp3'\]\|\|pv\['preview-lq-mp3'\]/.test(fps), 'prefers the hq mp3 preview');
 
 const slots = extractFunction('_fsAssignSlots');
-assert(/label:'Music'/.test(slots) && /'Shoot \\u00b7 '\+nm/.test(slots) && /\['Reload','reload'\]/.test(slots), 'assignable slots: music, per-weapon shoot, and the event sounds');
+assert(/label:'Music'/.test(slots) && /'Shoot \\u00b7 '\+nm/.test(slots) && /'Reload \\u00b7 '\+nm/.test(slots) && /\['Grenade','explode'\]/.test(slots), 'assignable slots: music, per-weapon shoot + reload (build 748), and the event sounds');
 
 assert(/function renderFreesoundBrowser\(host, refresh, directTarget\)\{/.test(src), 'browser renderer exists');
 assert(/host\.appendChild\(renderFreesoundBrowser\(host, \(\)=>populateSoundEditor\(host\)\)\)/.test(src), 'browser wired into the Sounds tab');
