@@ -15699,7 +15699,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 756 · 2026-06-29';
+const BUILD_VERSION = 'build 757 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16226,8 +16226,10 @@ function buildJoints(){
       const axis = J.axis==='x' ? {x:1,y:0,z:0} : J.axis==='z' ? {x:0,y:0,z:1} : {x:0,y:1,z:0};
       const a1 = { x:_jLocal.x, y:_jLocal.y, z:_jLocal.z }, a2 = { x:_jA2.x, y:_jA2.y, z:_jA2.z };
       const jd = RAPIER.JointData.revolute(a1, a2, axis);
-      if(J.lim){ try{ jd.limitsEnabled = true; jd.limits = [ (J.min||0)*RAD, (J.max||0)*RAD ]; }catch(e){} }
       const joint = physWorld.createImpulseJoint(jd, body, body2, true);
+      // build 757: a revolute joint's limits are IGNORED when set on JointData (rapier-compat only reads limit fields for
+      // prismatic joints) — that's why a "limited" trailer still spun a full 360. Apply them on the joint itself instead.
+      if(J.lim){ try{ let lo=(J.min||0)*RAD, hi=(J.max||0)*RAD; if(lo>hi){ const t=lo; lo=hi; hi=t; } joint.setLimits(lo, hi); }catch(e){ console.warn('joint limits unsupported', e); } }
       if(J.mspeed){ try{ joint.configureMotorVelocity((J.mspeed||0)*RAD, (J.mstr!=null?J.mstr:1)); }catch(e){} }   // powered hinge (wheel/conveyor/door-closer)
     }catch(e){ console.warn('joint build failed for a prop', e); }
   }

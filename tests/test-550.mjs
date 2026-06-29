@@ -21,7 +21,9 @@ assert(/RAPIER\.JointData\.revolute\(a1, a2, axis\)/.test(bj), 'builds a revolut
 assert(/physWorld\.createImpulseJoint\(jd, body, body2, true\)/.test(bj), 'creates the impulse joint between the two bodies');
 assert(/RAPIER\.RigidBodyDesc\.fixed\(\)\.setTranslation\(_jWorld\.x, _jWorld\.y, _jWorld\.z\)/.test(bj), 'a blank anchor pins to a fresh fixed body at the hinge point');
 assert(/joint\.configureMotorVelocity\(\(J\.mspeed\|\|0\)\*RAD, /.test(bj), 'a motor drives the hinge when set');
-assert(/jd\.limitsEnabled = true; jd\.limits = \[ \(J\.min\|\|0\)\*RAD, \(J\.max\|\|0\)\*RAD \]/.test(bj), 'swing limits applied when enabled');
+// build 757: revolute limits must be set on the JOINT (rapier-compat only reads JointData limit fields for prismatic) — sorted lo<=hi
+assert(/if\(J\.lim\)\{ try\{ let lo=\(J\.min\|\|0\)\*RAD, hi=\(J\.max\|\|0\)\*RAD; if\(lo>hi\)\{ const t=lo; lo=hi; hi=t; \} joint\.setLimits\(lo, hi\); \}/.test(bj), 'swing limits applied on the joint (the JointData fields are ignored for revolute)');
+assert(!/jd\.limitsEnabled/.test(bj), 'the ineffective JointData-limit path is gone');
 assert(/\}catch\(e\)\{ console\.warn\('joint build failed for a prop'/.test(bj), 'each joint is isolated so a bad one never breaks the world');
 
 // --- buildJoints runs inside buildPhysWorld after every body is created ---
