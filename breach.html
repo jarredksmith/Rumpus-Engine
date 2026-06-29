@@ -15699,7 +15699,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 757 · 2026-06-29';
+const BUILD_VERSION = 'build 758 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16058,11 +16058,14 @@ function colliderDescFor(info){
 function createBodyFor(obj){
   if(!physWorld || !obj.userData.phys) return;
   const q = obj.quaternion;
+  // build 758: a jointed body (e.g. a towed trailer) hangs off a stiff constraint to an infinite-mass kinematic car;
+  // with default damping it oscillates against the hinge and visibly shakes. Heavier damping bleeds that energy off fast.
+  const _jointed = !!obj.userData.joint;
   const rb = physWorld.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(obj.position.x, obj.position.y, obj.position.z)
       .setRotation({ x:q.x, y:q.y, z:q.z, w:q.w })
-      .setLinearDamping(0.2).setAngularDamping(0.45).setCcdEnabled(true));
+      .setLinearDamping(_jointed?0.5:0.2).setAngularDamping(_jointed?1.1:0.45).setCcdEnabled(true));
   const info = propShapeInfo(obj);
   // footprint used for player<->prop collision: horizontal radius + total height (origin is the base)
   let fr, fh;
@@ -16072,7 +16075,7 @@ function createBodyFor(obj){
   obj.userData.physInfo = { radius:fr, height:fh };
   const cd = colliderDescFor(info)
     .setTranslation(info.off.x, info.off.y, info.off.z)
-    .setRestitution(0.3).setFriction(0.85)
+    .setRestitution(_jointed?0:0.3).setFriction(0.85)   // build 758: a towed body shouldn't bounce on bumps (adds to the shake)
     .setMass(obj.userData.mass || 1);
   physWorld.createCollider(cd, rb);
   obj.userData.phys.body = rb;
@@ -16176,6 +16179,7 @@ function buildPhysWorld(){
   destroyPhysWorld();
   physWorld = new RAPIER.World({ x:0, y:-GRAV, z:0 });
   physWorld.timestep = PHYS_DT;
+  try{ physWorld.numSolverIterations = 8; }catch(e){}   // build 758: default 4 lets a towed-trailer hinge overshoot/buzz; more iterations resolve the joint stiffly (also steadies prop stacks)
   // arena floor. With terrain: a trimesh matching the visible height-mesh is the walkable surface, backed by
   // a deep flat slab as a safety net. Flat levels keep the simple slab with its top at y = 0.
   let slabTop = 0;

@@ -29,6 +29,13 @@ assert(/\}catch\(e\)\{ console\.warn\('joint build failed for a prop'/.test(bj),
 // --- buildJoints runs inside buildPhysWorld after every body is created ---
 assert(/for\(const o of dynamicProps\) createBodyFor\(o\);\s*\n\s*buildJoints\(\);/.test(src), 'buildJoints is called after the dynamic bodies are built');
 
+// --- build 758: stop a towed trailer from shaking — more solver iterations + heavier damping on a jointed body ---
+assert(/physWorld\.numSolverIterations = 8;/.test(src), 'the world runs more solver iterations so a hinge resolves stiffly (no buzz)');
+const cbf = extractFunction('createBodyFor');
+assert(/const _jointed = !!obj\.userData\.joint;/.test(cbf), 'createBodyFor detects a jointed (towed) prop');
+assert(/setLinearDamping\(_jointed\?0\.5:0\.2\)\.setAngularDamping\(_jointed\?1\.1:0\.45\)/.test(cbf), 'a jointed body gets heavier linear + angular damping');
+assert(/setRestitution\(_jointed\?0:0\.3\)/.test(cbf), 'a jointed body does not bounce on bumps');
+
 // --- serialize + restore (compact j) at all three prop-load sites ---
 assert(/if\(o\.userData\.joint\)\{ const J=o\.userData\.joint; e\.j=\{ type:J\.type\|\|'hinge', to:J\.to\|\|'', ax:J\.ax\|\|0, ay:J\.ay\|\|0, az:J\.az\|\|0, axis:J\.axis\|\|'y' \};/.test(src), 'joint serialized compactly');
 eq(src.split('if(p.j) jointApply(obj, p.j);').length - 1, 3, 'joint restored at all three prop-load sites');
