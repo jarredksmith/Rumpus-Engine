@@ -294,13 +294,14 @@
   #turretHud #turretHeatFill { height:100%; width:0%; background:#38f5b5; transition:width 0.08s linear; }
   #turretHud .thExit { position:absolute; left:50%; bottom:6.2vh; transform:translateX(-50%); font:600 12px/1 system-ui,sans-serif; color:#9fdcc9; letter-spacing:1px; }
   /* build 715: driving speed HUD */
-  #driveHud { position:fixed; left:50%; bottom:5vh; transform:translateX(-50%); z-index:31; display:none; pointer-events:none; text-align:center; font:600 13px/1.2 system-ui,sans-serif; color:#cfeee2; }
-  #driveHud .dhSpeed { font-size:30px; letter-spacing:1px; text-shadow:0 2px 10px rgba(0,0,0,.7); }
-  #driveHud .dhSpeed small { font-size:12px; opacity:.7; }
-  #driveHud .dhTrack { width:180px; height:7px; margin:5px auto 0; background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.2); border-radius:5px; overflow:hidden; }
-  #driveHud #dhFill { height:100%; width:0%; background:linear-gradient(90deg,#38f5b5,#ffd166); transition:width .1s linear; }
-  #driveHud .dhBoost { margin-top:6px; font-size:12px; font-weight:700; letter-spacing:2px; min-height:15px; }
-  #driveHud .dhExit { margin-top:6px; font-size:11px; color:#9fdcc9; letter-spacing:1px; }
+  #driveHud { position:fixed; left:50%; bottom:4vh; transform:translateX(-50%); z-index:31; display:none; pointer-events:none; text-align:center; font:600 13px/1.2 system-ui,sans-serif; color:#cfeee2; }
+  #driveHud .dhGauge { display:block; margin:0 auto; filter:drop-shadow(0 5px 16px rgba(0,0,0,.6)); }
+  #driveHud .dhArcBg { fill:none; stroke:rgba(255,255,255,.13); stroke-width:9; stroke-linecap:round; }
+  #driveHud .dhArcFg { fill:none; stroke:#38f5b5; stroke-width:9; stroke-linecap:round; transition:stroke-dashoffset .08s linear, stroke .25s linear; }
+  #driveHud .dhNum { fill:#fff; font:700 32px system-ui,sans-serif; text-anchor:middle; }
+  #driveHud .dhUnitT { fill:#9fdcc9; font:600 11px system-ui,sans-serif; text-anchor:middle; letter-spacing:1.5px; text-transform:uppercase; }
+  #driveHud .dhBoost { margin-top:1px; font-size:12px; font-weight:700; letter-spacing:2px; min-height:15px; }
+  #driveHud .dhExit { margin-top:2px; font-size:11px; color:#9fdcc9; letter-spacing:1px; }
   #tFire { right:28px; bottom:42px; width:94px; height:94px; font-size:14px; }
   #tAim { right:138px; bottom:74px; width:66px; height:66px; }
   #tJump { right:46px; bottom:150px; width:64px; height:64px; }
@@ -14730,7 +14731,14 @@ function _carImpactFx(o, imp){
 function _driveHudEl(){
   let el=document.getElementById('driveHud');
   if(!el){ el=document.createElement('div'); el.id='driveHud';
-    el.innerHTML='<div class="dhSpeed"><span id="dhVal">0</span> <small id="dhUnit">km/h</small></div><div class="dhTrack"><div id="dhFill"></div></div><div id="dhBoost" class="dhBoost"></div><div class="dhExit">[E] / [Esc] exit</div>';
+    // build 743: a 270° circular gauge — background arc + a foreground arc revealed by stroke-dashoffset, number in the centre
+    el.innerHTML='<svg class="dhGauge" viewBox="0 0 120 120" width="150" height="150">'
+      +'<circle class="dhArcBg" cx="60" cy="60" r="52" transform="rotate(135 60 60)" stroke-dasharray="245 327"/>'
+      +'<circle class="dhArcFg" id="dhArc" cx="60" cy="60" r="52" transform="rotate(135 60 60)" stroke-dasharray="245 327" stroke-dashoffset="245"/>'
+      +'<text class="dhNum" id="dhVal" x="60" y="66">0</text>'
+      +'<text class="dhUnitT" id="dhUnit" x="60" y="84">km/h</text>'
+      +'</svg>'
+      +'<div id="dhBoost" class="dhBoost"></div><div class="dhExit">[E] / [Esc] exit</div>';
     document.body.appendChild(el); }
   return el;
 }
@@ -15003,7 +15011,8 @@ function driveUpdate(dt){
   { const U=_SPEED_UNIT[cfg.units]||_SPEED_UNIT.kph;   // build 718: km/h or mph
     const v=document.getElementById('dhVal'); if(v) v.textContent=Math.round(Math.abs(r.speed)*U.f);
     const un=document.getElementById('dhUnit'); if(un && un.textContent!==U.l) un.textContent=U.l;
-    const f=document.getElementById('dhFill'); if(f) f.style.width=Math.min(100, Math.abs(r.speed)/Math.max(1,cfg.maxSpeed)*100)+'%';
+    const _frac=Math.min(1, Math.abs(r.speed)/Math.max(1,cfg.maxSpeed));   // build 743: fill the circular gauge + tint it by speed
+    const a=document.getElementById('dhArc'); if(a){ a.style.strokeDashoffset=(245*(1-_frac)).toFixed(1); a.style.stroke = _frac>0.8?'#ff5a5a':(_frac>0.55?'#ffd166':'#38f5b5'); }
     const bd=document.getElementById('dhBoost');   // build 719: boost status
     if(bd){ if(bMult<=1.01){ bd.textContent=''; }
       else if(boosting){ bd.textContent='⚡ BOOST'; bd.style.color='#ffd166'; }
@@ -15617,7 +15626,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 742 · 2026-06-28';
+const BUILD_VERSION = 'build 743 · 2026-06-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

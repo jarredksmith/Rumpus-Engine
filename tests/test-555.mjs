@@ -29,11 +29,12 @@ const du = extractFunction('driveUpdate');
 assert(/_engUpdate\(r\.speed, throttle, _slip\);/.test(du), 'the engine is updated each frame with speed + throttle + slip (build 728 screech)');
 assert(/const U=_SPEED_UNIT\[cfg\.units\]\|\|_SPEED_UNIT\.kph;/.test(du) && /v\.textContent=Math\.round\(Math\.abs\(r\.speed\)\*U\.f\)/.test(du), 'speed shown in the vehicle’s unit (km/h or mph)');
 assert(/un\.textContent=U\.l/.test(du), 'the unit label tracks the setting');
-assert(/f\.style\.width=Math\.min\(100, Math\.abs\(r\.speed\)\/Math\.max\(1,cfg\.maxSpeed\)\*100\)\+'%'/.test(du), 'the bar fills toward top speed');
+assert(/const _frac=Math\.min\(1, Math\.abs\(r\.speed\)\/Math\.max\(1,cfg\.maxSpeed\)\);/.test(du) && /a\.style\.strokeDashoffset=\(245\*\(1-_frac\)\)\.toFixed\(1\);/.test(du), 'build 743: the circular gauge fills toward top speed (arc dashoffset)');
+assert(/a\.style\.stroke = _frac>0\.8\?'#ff5a5a':\(_frac>0\.55\?'#ffd166':'#38f5b5'\)/.test(du), 'the gauge tints green -> amber -> red with speed');
 
 // --- the HUD element + its styles exist ---
 const dh = extractFunction('_driveHudEl');
-assert(/el\.id='driveHud'/.test(dh) && /id="dhVal"/.test(dh) && /id="dhFill"/.test(dh), 'the driveHud element carries the speed value + bar');
+assert(/el\.id='driveHud'/.test(dh) && /id="dhVal"/.test(dh) && /class="dhGauge"/.test(dh) && /id="dhArc"/.test(dh), 'the driveHud element is a circular gauge carrying the speed value');
 assert(/#driveHud \{ position:fixed;[^}]*display:none;/.test(html), 'driveHud is hidden by default (shown only while driving)');
 
 // --- build 728: tyre screech (slip-driven noise) + skid marks ---
