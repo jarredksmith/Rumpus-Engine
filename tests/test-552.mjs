@@ -281,6 +281,8 @@ assert(/\[\['chase','Chase'\],\['cockpit','Cockpit'\]\]/.test(src) && /row\('Sea
 // --- build 746: trailer towing — the car's kinematic body is found by the joint lookup + driven by the kinematic loop ---
 assert(/for\(const c of colliders\)\{ if\(c!==self && c\.userData && c\.userData\.tag===tag && \(c\.userData\._kbody/.test(extractFunction('_findJointBody')), 'a jointed trailer finds the car by tag (its kinematic body)');
 assert(/for\(const o of colliders\)\{ const kb = o\.userData && o\.userData\._kbody; if\(!kb\) continue;[\s\S]*?kb\.setNextKinematicTranslation/.test(src), 'the kinematic loop drives the car body from its pose each frame (towing the trailer)');
+// build 760: tow with a clean heading-only orientation (no cosmetic lean/tilt wobble pumping the trailer joint)
+assert(/if\(o\.userData\.vehicle && o\.userData\.carYaw!=null\)\{[\s\S]*?const _ty=\(o\.userData\.carYaw - \(\(o\.userData\.vehicle\.modelYaw\|\|0\)\*RAD\)\)\*0\.5;[\s\S]*?kb\.setNextKinematicRotation\(\{ x:0, y:Math\.sin\(_ty\), z:0, w:Math\.cos\(_ty\) \}\)/.test(src), 'a towing vehicle body uses a clean yaw-only orientation (kills the trailer shake)');
 assert(/<b>Tow a trailer:<\/b>/.test(src), 'the joint editor explains how to hitch a trailer to a drivable car');
 
 // --- build 756: a live hinge marker (dot + axis) so authoring the hinge offset isn't blind ---

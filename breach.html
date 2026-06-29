@@ -15700,7 +15700,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 759 · 2026-06-29';
+const BUILD_VERSION = 'build 760 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16239,7 +16239,11 @@ function buildJoints(){
       // build 759: trailer self-centering — a box on a vertical hinge has no tyre grip, so it swings out and stays out
       // however heavy it is. A soft position-spring toward the deploy-time angle (straight behind) acts like that grip:
       // it trails in-line on the straights but still yields in turns. Mass-scaled so a heavy trailer gets enough pull.
-      else if(J.center>0){ try{ const m=(o.userData.mass||1); joint.configureMotorPosition(0, J.center*m*6, J.center*m*2.2); }catch(e){} }
+      else if(J.center>0){ try{
+        if(RAPIER.MotorModel && typeof joint.configureMotorModel==='function') joint.configureMotorModel(RAPIER.MotorModel.AccelerationBased);   // build 760: mass-independent, so a 200kg trailer feels the same as a light one (no per-mass tuning)
+        const kp=J.center*30, kd=2*Math.sqrt(kp)*1.4;   // overdamped (ratio 1.4): the spring settles toward straight WITHOUT ringing back and forth
+        joint.configureMotorPosition(0, kp, kd);
+      }catch(e){} }
     }catch(e){ console.warn('joint build failed for a prop', e); }
   }
 }
@@ -16842,9 +16846,14 @@ function updatePhysics(dt){
   // drive kinematic moving-platform bodies to this frame's animated pose; Rapier derives their velocity
   // from the pose delta and imparts it to anything they sweep into (the trebuchet flinging a ball).
   for(const o of colliders){ const kb = o.userData && o.userData._kbody; if(!kb) continue;
-    const q = o.quaternion;
     kb.setNextKinematicTranslation({ x:o.position.x, y:o.position.y, z:o.position.z });
-    kb.setNextKinematicRotation({ x:q.x, y:q.y, z:q.z, w:q.w }); }
+    if(o.userData.vehicle && o.userData.carYaw!=null){
+      // build 760: tow with a CLEAN heading-only orientation. The visual mesh adds cosmetic lean/tilt that eases (wobbles)
+      // every frame; feeding that into the towing body pumps energy through the hinge and makes the trailer shake/swing.
+      // Ry(carYaw - modelYaw) matches the build-time anchor frame, so the trailer tracks the heading smoothly with no jitter.
+      const _ty=(o.userData.carYaw - ((o.userData.vehicle.modelYaw||0)*RAD))*0.5;
+      kb.setNextKinematicRotation({ x:0, y:Math.sin(_ty), z:0, w:Math.cos(_ty) });
+    } else { const q = o.quaternion; kb.setNextKinematicRotation({ x:q.x, y:q.y, z:q.z, w:q.w }); } }
   let n = 0;
   while(physAccum >= PHYS_DT && n < PHYS_MAX_SUBSTEPS){ physWorld.step(); physAccum -= PHYS_DT; n++; }
   let _impactList=null;

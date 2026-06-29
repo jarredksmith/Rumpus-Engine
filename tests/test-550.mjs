@@ -41,7 +41,9 @@ assert(/setLinearDamping\(_jointed\?0\.5:0\.2\)\.setAngularDamping\(_jointed\?1\
 assert(/setRestitution\(_jointed\?0:0\.3\)/.test(cbf), 'a jointed body does not bounce on bumps');
 
 // --- build 759: trailer self-centering = a mass-scaled position spring toward the deploy angle (only without a velocity motor) ---
-assert(/else if\(J\.center>0\)\{ try\{ const m=\(o\.userData\.mass\|\|1\); joint\.configureMotorPosition\(0, J\.center\*m\*6, J\.center\*m\*2\.2\); \}/.test(bj), 'a self-centering trailer gets a mass-scaled position spring toward straight');
+// build 760: acceleration-based (mass-independent) + overdamped so a heavy trailer self-centers WITHOUT ringing
+assert(/joint\.configureMotorModel\(RAPIER\.MotorModel\.AccelerationBased\)/.test(bj), 'the centering motor is acceleration-based (same feel at any weight)');
+assert(/const kp=J\.center\*30, kd=2\*Math\.sqrt\(kp\)\*1\.4;/.test(bj) && /joint\.configureMotorPosition\(0, kp, kd\);/.test(bj), 'an overdamped position spring centers the trailer toward straight');
 assert(/if\(J\.center\) e\.j\.center=J\.center;/.test(src), 'tracking strength serializes');
 assert(/num\('Trailer tracking','center',0,1,0\.05\)/.test(src), 'the joint editor exposes a Trailer tracking control');
 
