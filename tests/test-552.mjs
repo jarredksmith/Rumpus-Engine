@@ -298,4 +298,18 @@ assert(/if\(!o\.userData\.physHome\)\{ o\.userData\.physHome = o\.position\.clon
 assert(/for\(const o of propModels\)\{ if\(o && o\.userData && o\.userData\.vehicle && o\.userData\.physHome\)\{ o\.position\.copy\(o\.userData\.physHome\);/.test(src), 'entering the editor snaps the car back to where it was placed');
 assert(/for\(const o of propModels\)\{ if\(o && o\.userData && o\.userData\.vehicle\)\{ o\.userData\.physHome=o\.position\.clone\(\);/.test(src), 'leaving the editor re-bases the car reset target to its edited placement');
 
-done('build 709-747: drivable vehicles — … / cockpit view / trailer towing / hide TP body while driving');
+// --- build 762: PROCEDURAL wheels — spin/steer named wheel meshes (no baked animation needed) ---
+const wm = new Function(extractFunction('_wheelMatch') + '\nreturn _wheelMatch;')();
+assert(wm('Wheel_FL','wheel')===true && wm('body','wheel')===false, 'matches a part name against the pattern (substring, case-insensitive)');
+assert(wm('Wheel_FR','fl, fr')===true && wm('Wheel_RL','fl, fr')===false, 'a comma/space list marks just the front wheels');
+assert(wm('anything','')===false && wm('','wheel')===false, 'an empty pattern or empty name never matches');
+assert(/wheels:\(''\+\(v\.wheels\|\|''\)\), wheelsFront:\(''\+\(v\.wheelsFront\|\|''\)\), wheelAxis:\(\(v\.wheelAxis==='y'\|\|v\.wheelAxis==='z'\)\?v\.wheelAxis:'x'\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores the wheel name patterns + spin axle');
+assert(/wheelSteer:\(v\.wheelSteer==null\?28:/.test(extractFunction('vehicleApply')) && /wheelSpin:\(v\.wheelSpin==null\?1:/.test(extractFunction('vehicleApply')), 'vehicleApply stores steer angle (28°) + spin rate (1) defaults');
+assert(/w\.spin \+= \(speed\*dt\/w\.rad\)\*gain;/.test(extractFunction('_updateWheels')), 'wheels roll by speed / radius (faster = spins faster)');
+assert(/if\(w\.front && \(cfg\.wheelSteer==null\?28:cfg\.wheelSteer\)>0\)\{ _wqSteer\.setFromAxisAngle\(_wUp, steerRad\); w\.obj\.quaternion\.multiply\(_wqSteer\); \}/.test(extractFunction('_updateWheels')), 'only the front wheels yaw, by the steering input');
+assert(/_updateWheels\(o, cfg, r\.speed, _sf, dt\)/.test(du), 'driveUpdate spins/steers the wheels each frame');
+assert(/if\(V\.wheels\) e\.veh\.wheels=V\.wheels;[\s\S]*?if\(V\.wheelSpin!=null && V\.wheelSpin!==1\) e\.veh\.wheelSpin=V\.wheelSpin;/.test(src), 'wheel config serializes (non-default only)');
+assert(/txt\('Wheel names','wheels'/.test(src) && /row\('Steer angle \(°\)','wheelSteer'/.test(src) && /row\('Spin rate','wheelSpin'/.test(src), 'the editor exposes the wheel-name + steer + spin controls');
+assert(/<b>Detected parts:<\/b>/.test(src), 'the editor lists the model’s named parts so you know what to type');
+
+done('build 709-762: drivable vehicles — … / cockpit / trailer towing / TP-body hide / procedural wheels');

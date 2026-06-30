@@ -14588,7 +14588,9 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   dust:(v.dust==null?1:Math.max(0, Math.min(2, +v.dust||0))), skid:(v.skid==null?1:Math.max(0, Math.min(2, +v.skid||0))),
   animIdle:(''+(v.animIdle||'')), animFwd:(''+(v.animFwd||'')), animBack:(''+(v.animBack||'')), animLeft:(''+(v.animLeft||'')), animRight:(''+(v.animRight||'')),
   ram:(v.ram==null?50:Math.max(0, Math.min(500, +v.ram||0))),
-  camView:(v.camView==='cockpit'?'cockpit':'chase'), seatF:(+v.seatF||0), seatU:(v.seatU==null?1:+v.seatU), seatS:(+v.seatS||0) }; }   // 744: ram damage; 745: cockpit (driver POV) view + seat offsets
+  camView:(v.camView==='cockpit'?'cockpit':'chase'), seatF:(+v.seatF||0), seatU:(v.seatU==null?1:+v.seatU), seatS:(+v.seatS||0),
+  wheels:(''+(v.wheels||'')), wheelsFront:(''+(v.wheelsFront||'')), wheelAxis:((v.wheelAxis==='y'||v.wheelAxis==='z')?v.wheelAxis:'x'),
+  wheelSteer:(v.wheelSteer==null?28:Math.max(0,Math.min(60,+v.wheelSteer||0))), wheelSpin:(v.wheelSpin==null?1:Math.max(-4,Math.min(4,+v.wheelSpin||0))) }; }   // 744: ram; 745: cockpit; 762: procedural wheels
 const _SPEED_UNIT = { kph:{ f:3.6, l:'km/h' }, mph:{ f:2.23694, l:'mph' } };   // m/s -> display
 // Pure arcade step: given the current forward speed + inputs (throttle/steer in -1..1) + config + dt, return the new
 // speed and the yaw change (radians). Self-contained (no globals) so the harness can test the feel math directly.
@@ -14812,6 +14814,7 @@ function exitCar(){
   if(_carReturn){ player.yaw=_carReturn.yaw; player.pitch=_carReturn.pitch; }
   if(typeof worldCfg!=='undefined' && worldCfg.fov && typeof camera!=='undefined'){ camera.fov=worldCfg.fov; camera.updateProjectionMatrix(); }   // build 730: restore the normal FOV after the speed-FOV
   if(o.userData.animActions && o.userData.animActions.length){ const _v=o.userData.vehicle; _setCarAnim(o, (_v&&_v.animIdle)||''); }   // build 741: settle to the idle clip when parked
+  if(o.userData._wheels && o.userData.vehicle) _updateWheels(o, o.userData.vehicle, 0, 0, 1);   // build 762: straighten the front wheels when you park
   if(SFX.swap) SFX.swap();
 }
 function _carGroundY(x,z,exclude,ceilY){
@@ -14827,6 +14830,38 @@ function _setCarAnim(o, clipName){
   for(const a of acts){ const nm=(a.userData && a.userData.clipName)||'';
     if(clipName && nm===clipName){ a.enabled=true; a.loop=THREE.LoopRepeat; a.clampWhenFinished=false; a.setEffectiveTimeScale(1); a.setEffectiveWeight(1); if(!a.isRunning()) a.reset(); a.fadeIn(0.18); a.play(); }
     else a.fadeOut(0.18);
+  }
+}
+// build 762: PROCEDURAL wheel spin + steer. Most car models ship NO baked wheel animation — the wheels are just separate
+// named meshes. So instead of relying on animation clips, spin the matched wheel meshes about their axle (rate tied to
+// speed) and yaw the front ones by the steering input. Works on any modular car (Kenney/Quaternius/Sketchfab).
+function _wheelMatch(name, pat){ if(!pat||!name) return false; name=String(name).toLowerCase();
+  return String(pat).toLowerCase().split(/[ ,]+/).filter(Boolean).some(p=>name.indexOf(p)>=0); }
+const _wBox=new THREE.Box3(), _wSz=new THREE.Vector3();
+function _buildWheelCache(o, cfg){
+  const list=[];
+  o.traverse(n=>{ if(n===o) return; if(_wheelMatch(n.name, cfg.wheels)){
+    _wBox.setFromObject(n); _wBox.getSize(_wSz);
+    list.push({ obj:n, baseQ:n.quaternion.clone(), rad:Math.max(0.08, 0.5*Math.max(_wSz.x,_wSz.y,_wSz.z)), front:_wheelMatch(n.name, cfg.wheelsFront), spin:0 });
+  }});
+  o.userData._wheels=list; o.userData._wheelSteer=0;
+}
+const _wqSpin=new THREE.Quaternion(), _wqSteer=new THREE.Quaternion(), _wAxle=new THREE.Vector3(), _wUp=new THREE.Vector3(0,1,0);
+function _updateWheels(o, cfg, speed, steerFrac, dt){
+  if(!cfg || !cfg.wheels){ if(o.userData._wheels) o.userData._wheels=null; return; }
+  if(!o.userData._wheels) _buildWheelCache(o, cfg);
+  const W=o.userData._wheels; if(!W || !W.length) return;
+  const tgt=Math.max(-1,Math.min(1, steerFrac||0));
+  o.userData._wheelSteer = (o.userData._wheelSteer||0) + (tgt-(o.userData._wheelSteer||0))*Math.min(1, dt*10);   // ease the steer
+  const steerRad=(o.userData._wheelSteer)*((cfg.wheelSteer==null?28:cfg.wheelSteer))*RAD;
+  _wAxle.set(0,0,0); _wAxle[cfg.wheelAxis==='y'?'y':cfg.wheelAxis==='z'?'z':'x']=1;
+  const gain=(cfg.wheelSpin==null?1:cfg.wheelSpin);
+  for(const w of W){
+    w.spin += (speed*dt/w.rad)*gain;                          // roll angle (speed / radius)
+    _wqSpin.setFromAxisAngle(_wAxle, w.spin);
+    w.obj.quaternion.copy(w.baseQ);
+    if(w.front && (cfg.wheelSteer==null?28:cfg.wheelSteer)>0){ _wqSteer.setFromAxisAngle(_wUp, steerRad); w.obj.quaternion.multiply(_wqSteer); }
+    w.obj.quaternion.multiply(_wqSpin);
   }
 }
 const _carHalfV = new THREE.Vector3();
@@ -15082,6 +15117,8 @@ function driveUpdate(dt){
     if(!_clip && _as!=='animIdle') _clip=(r.speed>0?cfg.animFwd:cfg.animBack)||cfg.animIdle||'';   // fall back to forward/back if no turn clip
     _setCarAnim(o, _clip);
   }
+  // build 762: procedural wheels — spin tied to speed, front wheels steered by A/D (else the live turn rate)
+  { const _sf = (steer!==0) ? steer : Math.max(-1, Math.min(1, _yawRate*0.7)); _updateWheels(o, cfg, r.speed, _sf, dt); }
   { const U=_SPEED_UNIT[cfg.units]||_SPEED_UNIT.kph;   // build 718: km/h or mph
     const v=document.getElementById('dhVal'); if(v) v.textContent=Math.round(Math.abs(r.speed)*U.f);
     const un=document.getElementById('dhUnit'); if(un && un.textContent!==U.l) un.textContent=U.l;
@@ -15700,7 +15737,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 761 · 2026-06-29';
+const BUILD_VERSION = 'build 762 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20273,7 +20310,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -23022,6 +23059,22 @@ function renderEditorFields(){
                 wrap.appendChild(sp); wrap.appendChild(sel2); vBody.appendChild(wrap); };
               animRow('Idle','animIdle'); animRow('Forward','animFwd'); animRow('Backward','animBack'); animRow('Turn left','animLeft'); animRow('Turn right','animRight');
             } else { ah.innerHTML='<b>Animations</b> — import a model that ships animation clips to drive its wheels/parts by state.'; vBody.appendChild(ah); }
+          }
+          // build 762: procedural wheels — spin/steer separate wheel meshes by name (no baked animation needed)
+          { const wh=document.createElement('div'); wh.className='hint'; wh.style.margin='10px 0 1px'; wh.innerHTML='<b>Wheels (procedural)</b> — spin + steer the model’s wheel meshes by name. No animation clips needed; works on any car whose wheels are separate parts.'; vBody.appendChild(wh);
+            // list the model's named parts so the author knows what to type
+            const _names=[]; sel.traverse(n=>{ if(n!==sel && n.name && _names.indexOf(n.name)<0) _names.push(n.name); });
+            if(_names.length){ const pl=document.createElement('div'); pl.className='hint'; pl.style.cssText='margin:1px 0 4px;font-size:10px;opacity:.8;max-height:54px;overflow:auto;'; pl.innerHTML='<b>Detected parts:</b> '+_names.slice(0,60).map(n=>'<span style="color:#9fe6cf">'+n.replace(/[<>&]/g,'')+'</span>').join(', '); vBody.appendChild(pl); }
+            else { const pl=document.createElement('div'); pl.className='hint'; pl.style.cssText='margin:1px 0 4px;font-size:10px;color:#ffd27f;'; pl.textContent='This model exposes no named sub-parts — procedural wheels need a model whose wheels are separate, named meshes.'; vBody.appendChild(pl); }
+            const txt=(label,key,ph)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#bfe6ff;font-size:12px;margin-top:5px;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.cssText='min-width:96px;flex:0 0 auto;'; const ti=document.createElement('input'); ti.type='text'; ti.placeholder=ph; ti.value=V[key]||''; ti.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:12px;'; ti.addEventListener('focus',()=>pushUndoSnapshot()); ti.onchange=()=>{ V[key]=ti.value.trim(); }; l.appendChild(sp); l.appendChild(ti); vBody.appendChild(l); };
+            txt('Wheel names','wheels','e.g. wheel, tire (matches any part containing this)');
+            txt('Front (steered)','wheelsFront','e.g. front, _fl, _fr (subset that turns)');
+            { const sh=document.createElement('div'); sh.className='hint'; sh.style.margin='6px 0 2px'; sh.textContent='Spin axle'; vBody.appendChild(sh);
+              const seg=document.createElement('div'); seg.style.cssText='display:flex;gap:4px;';
+              [['x','X'],['y','Y'],['z','Z']].forEach(o=>{ const on=((V.wheelAxis||'x')===o[0]); const b=document.createElement('button'); b.textContent=o[1]; b.style.cssText='flex:1;padding:3px 6px;font-size:11px;border-radius:5px;cursor:pointer;border:1px solid '+(on?'#7ad7ff':'rgba(122,215,255,0.3)')+';background:'+(on?'rgba(122,215,255,0.22)':'transparent')+';color:'+(on?'#eafff7':'#9fc6e6')+';'; b.onclick=()=>{ pushUndoSnapshot(); V.wheelAxis=o[0]; renderEditorFields(); }; seg.appendChild(b); }); vBody.appendChild(seg);
+              const ah2=document.createElement('div'); ah2.className='hint'; ah2.style.cssText='margin:2px 0 0;font-size:10px;opacity:.8;'; ah2.textContent='The axle the wheels roll about (usually X). If they spin the wrong way, use a negative Spin rate or a different axle.'; vBody.appendChild(ah2); }
+            row('Steer angle (°)','wheelSteer', 0, 60, 1, 1);
+            row('Spin rate','wheelSpin', -4, 4, 0.1, 1);
           }
           const vh=document.createElement('div'); vh.className='hint'; vh.style.margin='4px 0 0'; vh.innerHTML='Walk up + press <b>E</b> to drive (<b>E</b>/<b>Esc</b> to exit). <b>Turn rate</b> = how fast it swings to your view (higher = sharper turns). Speeds use the unit above. Keep it a normal (non-dynamic) prop.'; vBody.appendChild(vh);
         }
