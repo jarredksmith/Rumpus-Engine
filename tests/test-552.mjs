@@ -330,6 +330,11 @@ const hit = extractFunction('_carHitsActor');
 assert(/const along=dx\*fx\+dz\*fz - ext\.oz, side=dx\*rxu\+dz\*rzu - ext\.ox;/.test(hit) && /Math\.abs\(along\) < ext\.hd\+ar && Math\.abs\(side\) < ext\.hw\+ar/.test(hit), 'the oriented overlap test recentres on the footprint and uses the hit extents');
 assert(/_carShoveDynamics\(o, r\.speed, fx\*_sgn, fz\*_sgn, _carHitExtents\(o\), dt\)/.test(du), 'the shove uses the adjustable hit footprint too');
 assert(/row\('Hit width \(X\)','hitWid', 0\.3, 3, 0\.05, 1\)/.test(src) && /row\('Hit height \(Y\)','hitH'/.test(src) && /row\('Hit length \(Z\)','hitLen'/.test(src), 'the editor exposes hit X/Y/Z sliders');
+// build 774: the hit box can also be MOVED (offset), not just scaled
+assert(/ox:f\.ox\+\(\+v\.hitOffX\|\|0\), oz:f\.oz\+\(\+v\.hitOffZ\|\|0\), oy:f\.oy\+\(\+v\.hitOffY\|\|0\)/.test(src), 'the hit extents add the X/Y/Z position offsets');
+assert(/hitOffX:\(\+v\.hitOffX\|\|0\), hitOffY:\(\+v\.hitOffY\|\|0\), hitOffZ:\(\+v\.hitOffZ\|\|0\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores the hit offsets');
+assert(/if\(V\.hitOffX\) e\.veh\.hitOffX=V\.hitOffX;/.test(src), 'hit offsets serialize');
+assert(/row\('Offset X \(m\)','hitOffX', -5, 5, 0\.05, 1\)/.test(src) && /row\('Offset Y \(m\)','hitOffY'/.test(src) && /row\('Offset Z \(m\)','hitOffZ'/.test(src), 'the editor exposes hit-box offset sliders');
 assert(/function _ensureCarHitBox\(\)\{[\s\S]*?EdgesGeometry[\s\S]*?color:0xffa033/.test(src), 'an orange wireframe outlines the hit area');
 assert(/hb\.scale\.set\(ext\.hw\*2, ext\.hh\*2, ext\.hd\*2\); hb\.rotation\.set\(0, _hy, 0\)/.test(src) || /hb\.scale\.set\(ext\.hw\*2, ext\.hh\*2, ext\.hd\*2\)[\s\S]*?hb\.rotation\.set\(0, _hy, 0\)/.test(src), 'the outline matches the hit extents, oriented along the heading');
 assert(/if\(_se && _se\.userData && _se\.userData\.vehicle && _se\.userData\.vehicle\.boostFlame\) _editorFlamePreview\(_se, dt\)/.test(src), 'the editor previews boost flames on the selected vehicle');
