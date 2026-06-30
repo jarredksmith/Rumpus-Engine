@@ -323,13 +323,13 @@ assert(/animRow\('Idle','animIdle'\); animRow\('Forward','animFwd'\); animRow\('
 assert(/_setCarAnim\(o, \(_v&&_v\.animIdle\)\|\|''\);/.test(extractFunction('exitCar')), 'parking settles to the idle clip');
 
 // --- build 772: adjustable oriented hit area + outline + editor flame preview ---
-assert(/hitLen:\(v\.hitLen==null\?1:Math\.max\(0\.3,Math\.min\(3,\+v\.hitLen\|\|0\)\)\), hitWid:\(v\.hitWid==null\?1:/.test(extractFunction('vehicleApply')), 'vehicleApply stores hit length/width multipliers');
-assert(/if\(V\.hitLen!=null && V\.hitLen!==1\) e\.veh\.hitLen=V\.hitLen;/.test(src), 'hit length serializes when non-default');
-assert(/function _carHitExtents\(o\)\{ const f=_carFoot\(o\)[\s\S]*?hd:f\.hd\*\(v\.hitLen==null\?1:v\.hitLen\)/.test(src), 'the hit extents scale the true oriented footprint by the multipliers');
+assert(/hitLen:\(v\.hitLen==null\?1:Math\.max\(0\.3,Math\.min\(3,\+v\.hitLen\|\|0\)\)\), hitWid:\(v\.hitWid==null\?1:/.test(extractFunction('vehicleApply')) && /hitH:\(v\.hitH==null\?1:/.test(extractFunction('vehicleApply')), 'vehicleApply stores hit X/Y/Z multipliers');
+assert(/if\(V\.hitLen!=null && V\.hitLen!==1\) e\.veh\.hitLen=V\.hitLen;/.test(src) && /if\(V\.hitH!=null && V\.hitH!==1\) e\.veh\.hitH=V\.hitH;/.test(src), 'hit X/Y/Z serialize when non-default');
+assert(/function _carHitExtents\(o\)\{ const f=_carFoot\(o\)[\s\S]*?hh:f\.hh\*\(v\.hitH==null\?1:v\.hitH\)[\s\S]*?hd:f\.hd\*\(v\.hitLen==null\?1:v\.hitLen\)/.test(src), 'the hit extents scale the true oriented footprint on all three axes');
 const hit = extractFunction('_carHitsActor');
 assert(/const along=dx\*fx\+dz\*fz - ext\.oz, side=dx\*rxu\+dz\*rzu - ext\.ox;/.test(hit) && /Math\.abs\(along\) < ext\.hd\+ar && Math\.abs\(side\) < ext\.hw\+ar/.test(hit), 'the oriented overlap test recentres on the footprint and uses the hit extents');
 assert(/_carShoveDynamics\(o, r\.speed, fx\*_sgn, fz\*_sgn, _carHitExtents\(o\), dt\)/.test(du), 'the shove uses the adjustable hit footprint too');
-assert(/row\('Hit length','hitLen', 0\.3, 3, 0\.05, 1\)/.test(src) && /row\('Hit width','hitWid'/.test(src), 'the editor exposes hit length/width sliders');
+assert(/row\('Hit width \(X\)','hitWid', 0\.3, 3, 0\.05, 1\)/.test(src) && /row\('Hit height \(Y\)','hitH'/.test(src) && /row\('Hit length \(Z\)','hitLen'/.test(src), 'the editor exposes hit X/Y/Z sliders');
 assert(/function _ensureCarHitBox\(\)\{[\s\S]*?EdgesGeometry[\s\S]*?color:0xffa033/.test(src), 'an orange wireframe outlines the hit area');
 assert(/hb\.scale\.set\(ext\.hw\*2, ext\.hh\*2, ext\.hd\*2\); hb\.rotation\.set\(0, _hy, 0\)/.test(src) || /hb\.scale\.set\(ext\.hw\*2, ext\.hh\*2, ext\.hd\*2\)[\s\S]*?hb\.rotation\.set\(0, _hy, 0\)/.test(src), 'the outline matches the hit extents, oriented along the heading');
 assert(/if\(_se && _se\.userData && _se\.userData\.vehicle && _se\.userData\.vehicle\.boostFlame\) _editorFlamePreview\(_se, dt\)/.test(src), 'the editor previews boost flames on the selected vehicle');
