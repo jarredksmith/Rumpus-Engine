@@ -14991,7 +14991,9 @@ function driveUpdate(dt){
   if(typeof padMoveX!=='undefined' && padMoveX) steer-=padMoveX;
   steer=Math.max(-1,Math.min(1,steer));
   const _yawOld = o.userData.carYaw;
-  o.userData.carYaw += steer * (cfg.turn*RAD) * speedFrac * dt;
+  // build 767: reversing inverts the steer response (like a real car backing up): holding A while reversing swings the
+  // BACK of the car toward the left. The front wheels still visually point the way you steer (that uses the raw input).
+  o.userData.carYaw += steer * (cfg.turn*RAD) * speedFrac * (r.speed<-0.05?-1:1) * dt;
   // build 721: pivot the turn around a point cfg.pivot metres toward the nose (not the mesh origin), so a model whose origin
   // sits at the tail still swings around its middle/front. Shift the origin so that pivot point holds still as the yaw changes.
   const _pv=+cfg.pivot||0;
@@ -15756,7 +15758,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 766 · 2026-06-29';
+const BUILD_VERSION = 'build 767 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

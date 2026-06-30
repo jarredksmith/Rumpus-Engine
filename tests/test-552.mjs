@@ -39,7 +39,7 @@ assert(/\} else if\(drivingCar\)\{[\s\S]*?const o=drivingCar, yaw=player\.yaw[\s
 // --- build 764: A/D steer the car DIRECTLY; the mouse is a free-orbit camera only (no longer steers) ---
 const du = extractFunction('driveUpdate');
 assert(/let steer=0; if\(keys\['KeyA'\]\) steer\+=1; if\(keys\['KeyD'\]\) steer-=1;/.test(du), 'A/D set the steer input');
-assert(/o\.userData\.carYaw \+= steer \* \(cfg\.turn\*RAD\) \* speedFrac \* dt;/.test(du), 'steer turns the heading directly, scaled by speed (no pivot when parked)');
+assert(/o\.userData\.carYaw \+= steer \* \(cfg\.turn\*RAD\) \* speedFrac \* \(r\.speed<-0\.05\?-1:1\) \* dt;/.test(du), 'steer turns the heading directly, scaled by speed, inverted in reverse (real-car backing up)');
 assert(!/player\.yaw \+= steer/.test(du) && !/diff = player\.yaw/.test(du), 'A/D no longer move the camera (player.yaw), and the car no longer chases the look');
 
 // --- build 765: optional follow-cam toggle (trails behind the car, recenters when you stop orbiting) ---
