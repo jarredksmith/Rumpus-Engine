@@ -14918,7 +14918,7 @@ function _updateCoastCars(dt){
   }
 }
 function _carGroundY(x,z,exclude,ceilY){
-  if(typeof surfaceTopAt==='function'){ const s=surfaceTopAt(x,z,exclude,true,ceilY); if(s>-Infinity) return s; }   // exclude the car (own roof), dynamic props (build 723), and anything above the car's headroom (build 739: don't climb roofs/buildings)
+  if(typeof surfaceTopAt==='function'){ const s=surfaceTopAt(x,z,exclude,true,ceilY,true); if(s>-Infinity) return s; }   // exclude the car (own roof), dynamic props (723), other vehicles (775: collide, don't climb), + anything above headroom (739)
   return (typeof terrainHeightAt==='function') ? terrainHeightAt(x,z) : 0;
 }
 // build 741: drive a vehicle model's baked clips by state — crossfade to the clip the author mapped to forward / back /
@@ -15061,6 +15061,61 @@ function _carRamActors(o, dmg, dt){
     if(rp.hp!=null && rp.hp<=0) continue;
     if(typeof sameTeam==='function' && sameTeam(NET.myId, +id)) continue;
     if(_carHitsActor(o, rp.posEye.x, rp.posEye.y, rp.posEye.z, 0.45, EYE)){ rp._ramT=0.4; if(typeof sendToPlayer==='function') sendToPlayer(+id, {t:'pvpHit', d:dmg, from:NET.myId}); }
+  }
+}
+// build 775: push the player OUT of a car's (tunable) hit box horizontally — you can't walk through it. Standing on top
+// is handled by surfaceTopAt (the real roof), so we only block when the feet are below the roof; near/above it we leave
+// the player alone so they can land + stand.
+function _resolvePlayerVsCars(){
+  if(!_vehicleMeshes.length || typeof player==='undefined') return;
+  const R=(player.radius!=null?player.radius:0.4), fy=player.pos.y-EYE, headY=fy+(typeof effPlayerHeight==='function'?effPlayerHeight():1.7);
+  for(const o of _vehicleMeshes){
+    if(o===drivingCar) continue;
+    const ext=_carHitExtents(o), cy=(o.userData.carYaw!=null)?o.userData.carYaw:(o.rotation.y+((o.userData.vehicle.modelYaw||0)*RAD));
+    const fx=-Math.sin(cy), fz=-Math.cos(cy), rxu=-fz, rzu=fx;
+    const bx=o.position.x+fx*ext.oz+rxu*ext.ox, bz=o.position.z+fz*ext.oz+rzu*ext.ox, byc=o.position.y+ext.oy;
+    const top=byc+ext.hh, bot=byc-ext.hh;
+    if(fy >= top-0.3) continue;        // on / above the roof — the ground system supports you (don't shove sideways)
+    if(headY <= bot+1e-3) continue;    // entirely beneath the car
+    const dx=player.pos.x-bx, dz=player.pos.z-bz, along=dx*fx+dz*fz, side=dx*rxu+dz*rzu;
+    const oAlong=(ext.hd+R)-Math.abs(along), oSide=(ext.hw+R)-Math.abs(side);
+    if(oAlong<=0 || oSide<=0) continue;   // outside the footprint
+    let pdx,pdz,pen; if(oAlong<=oSide){ const s=along>=0?1:-1; pdx=fx*s; pdz=fz*s; pen=oAlong; } else { const s=side>=0?1:-1; pdx=rxu*s; pdz=rzu*s; pen=oSide; }
+    player.pos.x+=pdx*pen; player.pos.z+=pdz*pen;
+    const vp=player.vel.x*pdx+player.vel.z*pdz; if(vp<0){ player.vel.x-=pdx*vp; player.vel.z-=pdz*vp; }   // kill the velocity into the car
+  }
+}
+const _satProj=(e, fx,fz, rx,rz, ux,uz)=> Math.abs(e.hd*(fx*ux+fz*uz)) + Math.abs(e.hw*(rx*ux+rz*uz));   // half-width of an oriented box projected onto axis (ux,uz)
+// build 775: cars are kinematic, so Rapier won't collide two of them — resolve overlaps manually (OBB vs OBB, SAT). The
+// moving car (driven / coasting) gets pushed back + slowed; the other (usually parked) gets bumped away.
+function _resolveCarVsCars(){
+  const movers=[]; if(drivingCar) movers.push(drivingCar); if(typeof _coastingCars!=='undefined') for(const c of _coastingCars){ if(c) movers.push(c); }
+  if(!movers.length || _vehicleMeshes.length<2) return;
+  for(const a of movers){
+    const ea=_carHitExtents(a), cya=(a.userData.carYaw!=null)?a.userData.carYaw:(a.rotation.y+((a.userData.vehicle.modelYaw||0)*RAD));
+    const afx=-Math.sin(cya), afz=-Math.cos(cya), arx=-afz, arz=afx;
+    const ax=a.position.x+afx*ea.oz+arx*ea.ox, az=a.position.z+afz*ea.oz+arz*ea.ox, ay=a.position.y+ea.oy;
+    for(const b of _vehicleMeshes){
+      if(b===a) continue;
+      const eb=_carHitExtents(b), cyb=(b.userData.carYaw!=null)?b.userData.carYaw:(b.rotation.y+((b.userData.vehicle.modelYaw||0)*RAD));
+      const bfx=-Math.sin(cyb), bfz=-Math.cos(cyb), brx=-bfz, brz=bfx;
+      const bx=b.position.x+bfx*eb.oz+brx*eb.ox, bz=b.position.z+bfz*eb.oz+brz*eb.ox, by=b.position.y+eb.oy;
+      if(Math.abs(ay-by) > ea.hh+eb.hh) continue;                          // no vertical overlap
+      const dx=bx-ax, dz=bz-az;
+      // SAT over the 4 axes (a.fwd, a.right, b.fwd, b.right); separated if any gap >= 0
+      let mnOv=Infinity, nx=0, nz=0, sep=false;
+      for(const [ux,uz] of [[afx,afz],[arx,arz],[bfx,bfz],[brx,brz]]){
+        const aH=_satProj(ea,afx,afz,arx,arz,ux,uz), bH=_satProj(eb,bfx,bfz,brx,brz,ux,uz);
+        const d=dx*ux+dz*uz, ov=(aH+bH)-Math.abs(d);
+        if(ov<=0){ sep=true; break; }
+        if(ov<mnOv){ mnOv=ov; const s=d>=0?1:-1; nx=ux*s; nz=uz*s; }   // push b away from a along this axis
+      }
+      if(sep) continue;
+      b.position.x+=nx*mnOv*0.7; b.position.z+=nz*mnOv*0.7;             // bump the other car away
+      a.position.x-=nx*mnOv*0.3; a.position.z-=nz*mnOv*0.3;             // back the mover out a touch
+      if(a.userData) a.userData.carSpeed=(a.userData.carSpeed||0)*0.45; // and slow it on impact
+      if(b.userData){ b.userData._enterBoxKey=null; b.userData._footKey=null; }   // its caches moved
+    }
   }
 }
 // True if a wall is within `dist` ahead of the car along the world-axis unit dir (dx,dz). Three rays across the car's
@@ -15908,7 +15963,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 774 · 2026-06-29';
+const BUILD_VERSION = 'build 775 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18185,7 +18240,8 @@ function _surfCull(x, z){
   }
   return out;
 }
-function surfaceTopAt(x, z, exclude, skipDynamic, ceilY){
+let _vehicleMeshes = [];   // build 775: cached list of drivable vehicle props, refreshed each frame, so the player can stand on them
+function surfaceTopAt(x, z, exclude, skipDynamic, ceilY, skipVehicles){
   // highest collider surface directly under (x,z); -Infinity if nothing there. `exclude` (build 710) drops one object
   // (and its children) from the result — a driving vehicle must not read its OWN roof as the ground, or it climbs itself.
   // build 739: `ceilY` (optional) ignores any surface ABOVE that height — so a car under a roofed doorway reads the FLOOR,
@@ -18203,6 +18259,10 @@ function surfaceTopAt(x, z, exclude, skipDynamic, ceilY){
     const list = heldProp ? dynamicProps.filter(o=>o!==heldProp) : dynamicProps;   // never let the player stand on / collide with the object they're carrying
     const dh = _downRay.intersectObjects(list, true);
     for(const h of dh){ if(_ex && _ex(h)) continue; if(h.point.y > _cap) continue; if(h.point.y > top) top = h.point.y; }
+  }
+  if(!skipVehicles && _vehicleMeshes.length){   // build 775: stand on / ride a parked car (its real roof contour, via the mesh). The car itself passes skipVehicles=true so it doesn't climb other cars.
+    const vh = _downRay.intersectObjects(exclude ? _vehicleMeshes.filter(o=>o!==exclude) : _vehicleMeshes, true);
+    for(const h of vh){ if(_ex && _ex(h)) continue; if(h.point.y > _cap) continue; if(h.point.y > top) top = h.point.y; }
   }
   // Safety net: ONLY when the downward ray found nothing at all (slipped through an open/awkward model
   // top). In that case fall back to the bounding-box top of an UPRIGHT prop whose footprint covers (x,z).
@@ -19133,8 +19193,12 @@ function loop(){
   } else if(!player.onGround){ _stepT = 0.12; }
   if(!(editorOpen && editorActive==='player')) _charPrevInit=false;   // re-seed the third-person preview each time the Player tab opens
   if(mountedTurret) turretUpdate(dt);
+  // build 775: refresh the vehicle list once per frame; resolve the player out of any car (no walking through), then drive
+  _vehicleMeshes.length=0; if(typeof propModels!=='undefined') for(const _p of propModels){ if(_p && _p.userData && _p.userData.vehicle) _vehicleMeshes.push(_p); }
+  if(!editorOpen && !mountedTurret) _resolvePlayerVsCars();
   if(drivingCar) driveUpdate(dt);
   if(_coastingCars.length) _updateCoastCars(dt);   // build 770: cars you bailed from at speed keep rolling
+  if(!editorOpen && (drivingCar || _coastingCars.length)) _resolveCarVsCars();   // build 775: cars collide with cars
   // build 772: preview boost flames on the selected parked vehicle in the editor + keep flames animating when not driving
   if(editorOpen && editorActive==='props'){ const _se=(typeof selectedSceneObject==='function')?selectedSceneObject():null; if(_se && _se.userData && _se.userData.vehicle && _se.userData.vehicle.boostFlame) _editorFlamePreview(_se, dt); }
   if(!drivingCar) _updateFlames(dt, camera && camera.position);

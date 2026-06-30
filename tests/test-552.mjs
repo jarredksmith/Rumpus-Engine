@@ -131,7 +131,7 @@ assert(/if\(drivingCar\)\{ drivingCar=null; _carReturn=null; \}/.test(extractFun
   assert(/o\.userData\._kbody = physWorld\.createRigidBody\(RAPIER\.RigidBodyDesc\.kinematicPositionBased\(\)/.test(asc), 'build 746: a drivable car gets a kinematic body so a trailer can be hitched + towed'); }
 
 // --- build 710 fix: the ground query excludes the car so it can't read its own roof and climb into the sky ---
-assert(/function surfaceTopAt\(x, z, exclude, skipDynamic, ceilY\)\{/.test(src), 'surfaceTopAt takes an exclude');
+assert(/function surfaceTopAt\(x, z, exclude, skipDynamic, ceilY, skipVehicles\)\{/.test(src), 'surfaceTopAt takes an exclude');
 assert(/const _ex = exclude \? \(h\)=>\{ let o=h\.object; while\(o\)\{ if\(o===exclude\) return true; o=o\.parent; \} return false; \} : null;/.test(src), 'exclude drops an object (and its children) from the surface result');
 assert(/const gC=_carGroundY\(o\.position\.x, o\.position\.z, o, _ceil\);/.test(src), 'driveUpdate samples its ground excluding the car itself, capped at headroom');
 assert(/const _ceil=o\.position\.y \+ _h\.hh\*2 \+ 0\.6;/.test(src), 'build 739: the ground query is capped at the car\'s headroom so it ignores roofs/overhangs (no climbing onto buildings)');
@@ -206,9 +206,9 @@ assert(/row\('Camera back \(±m\)','camDist'/.test(src) && /row\('Camera up \(±
 
 // --- build 723: vehicle physics — ignore dynamic props as ground (no fling) + shove them out of the way ---
 const st = extractFunction('surfaceTopAt');
-assert(/function surfaceTopAt\(x, z, exclude, skipDynamic, ceilY\)\{/.test(st), 'surfaceTopAt takes a skipDynamic flag');
+assert(/function surfaceTopAt\(x, z, exclude, skipDynamic, ceilY, skipVehicles\)\{/.test(st), 'surfaceTopAt takes a skipDynamic + skipVehicles flag');
 assert(/if\(dynamicProps\.length && !skipDynamic\)\{/.test(st), 'skipDynamic drops dynamic props from the surface result');
-assert(/const s=surfaceTopAt\(x,z,exclude,true,ceilY\);/.test(extractFunction('_carGroundY')), 'the car ground query skips dynamic props + caps at the headroom ceiling');
+assert(/const s=surfaceTopAt\(x,z,exclude,true,ceilY,true\);/.test(extractFunction('_carGroundY')), 'the car ground query skips dynamic props, OTHER vehicles, + caps at the headroom ceiling');
 const sh = extractFunction('_carShoveDynamics');
 assert(/const b = p\.userData && p\.userData\.phys && p\.userData\.phys\.body; if\(!b\) continue;/.test(sh), 'only dynamic props with a physics body are shoved');
 assert(/if\(sp < 0\.2\) return 0;/.test(sh), 'a near-stopped car does not shove (so it can rest against props); build 769 lowered the gate to a crawl');
@@ -339,6 +339,17 @@ assert(/function _ensureCarHitBox\(\)\{[\s\S]*?EdgesGeometry[\s\S]*?color:0xffa0
 assert(/hb\.scale\.set\(ext\.hw\*2, ext\.hh\*2, ext\.hd\*2\); hb\.rotation\.set\(0, _hy, 0\)/.test(src) || /hb\.scale\.set\(ext\.hw\*2, ext\.hh\*2, ext\.hd\*2\)[\s\S]*?hb\.rotation\.set\(0, _hy, 0\)/.test(src), 'the outline matches the hit extents, oriented along the heading');
 assert(/if\(_se && _se\.userData && _se\.userData\.vehicle && _se\.userData\.vehicle\.boostFlame\) _editorFlamePreview\(_se, dt\)/.test(src), 'the editor previews boost flames on the selected vehicle');
 assert(/function _editorFlamePreview\(o, dt\)\{/.test(src), 'there is an editor flame-preview emitter');
+
+// --- build 775: solid vehicles — stand on top, can't walk through, cars collide with cars ---
+assert(/function surfaceTopAt\(x, z, exclude, skipDynamic, ceilY, skipVehicles\)\{/.test(src), 'surfaceTopAt takes a skipVehicles flag');
+assert(/if\(!skipVehicles && _vehicleMeshes\.length\)\{[\s\S]*?_downRay\.intersectObjects/.test(src), 'the player ground ray includes vehicles (stand on / ride a car)');
+const rpc = extractFunction('_resolvePlayerVsCars');
+assert(/if\(fy >= top-0\.3\) continue;/.test(rpc), 'no sideways shove when the feet are on/above the roof (so you can stand)');
+assert(/player\.pos\.x\+=pdx\*pen; player\.pos\.z\+=pdz\*pen;/.test(rpc), 'the player is pushed out of the car footprint (no walking through)');
+const rcc = extractFunction('_resolveCarVsCars');
+assert(/ov=\(aH\+bH\)-Math\.abs\(d\);/.test(rcc) && /if\(ov<=0\)\{ sep=true; break; \}/.test(rcc), 'car-vs-car uses an SAT separating-axis test');
+assert(/b\.position\.x\+=nx\*mnOv\*0\.7;[\s\S]*?a\.position\.x-=nx\*mnOv\*0\.3;/.test(rcc), 'the parked car is bumped away and the mover is backed out');
+assert(/if\(!editorOpen && !mountedTurret\) _resolvePlayerVsCars\(\);/.test(src) && /if\(!editorOpen && \(drivingCar \|\| _coastingCars\.length\)\) _resolveCarVsCars\(\);/.test(src), 'the loop resolves player-vs-car and car-vs-car each frame');
 
 // --- build 744: ram damage — driving into enemies / bots / rival players hurts them, scaled by speed ---
 assert(/ram:\(v\.ram==null\?50:Math\.max\(0, Math\.min\(500, \+v\.ram\|\|0\)\)\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores Ram damage (default 50, on)');
