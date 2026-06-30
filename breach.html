@@ -14598,6 +14598,8 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   ram:(v.ram==null?50:Math.max(0, Math.min(500, +v.ram||0))),
   camView:(v.camView==='cockpit'?'cockpit':'chase'), seatF:(+v.seatF||0), seatU:(v.seatU==null?1:+v.seatU), seatS:(+v.seatS||0),
   camFollow:!!v.camFollow, enterDist:(v.enterDist==null?2.5:Math.max(0.5,Math.min(12,+v.enterDist||0))), boostFlame:!!v.boostFlame,
+  flameColor:(v.flameColor!=null?(v.flameColor|0):0xff7a3d), flameSize:(v.flameSize==null?1:Math.max(0.3,Math.min(3,+v.flameSize||0))), flameDensity:(v.flameDensity==null?1:Math.max(0.3,Math.min(3,+v.flameDensity||0))),
+  flameBack:(+v.flameBack||0), flameUp:(+v.flameUp||0), flameSide:(+v.flameSide||0),
   ejectCoast:(v.ejectCoast==null?true:!!v.ejectCoast),
   wheels:(''+(v.wheels||'')), wheelsFront:(''+(v.wheelsFront||'')), wheelAxis:((v.wheelAxis==='y'||v.wheelAxis==='z')?v.wheelAxis:'x'),
   wheelSteer:(v.wheelSteer==null?28:Math.max(0,Math.min(60,+v.wheelSteer||0))), wheelSpin:(v.wheelSpin==null?1:Math.max(-4,Math.min(4,+v.wheelSpin||0))) }; }   // 744: ram; 745: cockpit; 762: procedural wheels
@@ -14767,16 +14769,17 @@ function _ensureFlamePool(){
   _flamePool=[]; const geo=new THREE.PlaneGeometry(1,1), tex=_getPuffTex();
   for(let i=0;i<48;i++){
     const mat=new THREE.MeshBasicMaterial({ color:0xffaa33, map:tex||null, transparent:true, opacity:0, depthWrite:false, blending:THREE.AdditiveBlending });
-    const m=new THREE.Mesh(geo,mat); m.visible=false; m.renderOrder=4; m.userData.fl={life:0,max:1,vx:0,vy:0,vz:0,op:0};
+    const m=new THREE.Mesh(geo,mat); m.visible=false; m.renderOrder=4; m.userData.fl={life:0,max:1,vx:0,vy:0,vz:0,op:0,r:1,g:0.55,b:0.27};
     scene.add(m); _flamePool.push(m);
   }
   return _flamePool;
 }
-function _spawnFlame(x,y,z,vx,vy,vz,scale){
+function _spawnFlame(x,y,z,vx,vy,vz,scale,col){
   const pool=_ensureFlamePool(), m=pool[_flameIdx]; _flameIdx=(_flameIdx+1)%pool.length;
   m.position.set(x,y,z); m.scale.setScalar(scale||(0.5+Math.random()*0.4));
   const d=m.userData.fl; d.life=d.max=0.22+Math.random()*0.16; d.vx=vx; d.vy=vy; d.vz=vz; d.op=0.85;
-  m.material.opacity=d.op; m.material.color.setRGB(1,0.85,0.45); m.visible=true;
+  if(col!=null){ d.r=((col>>16)&255)/255; d.g=((col>>8)&255)/255; d.b=(col&255)/255; } else { d.r=1; d.g=0.55; d.b=0.27; }   // build 771: per-vehicle flame colour
+  m.material.opacity=d.op; m.material.color.setRGB(d.r,d.g,d.b); m.visible=true;
 }
 function _updateFlames(dt,camPos){
   if(!_flamePool) return;
@@ -14784,7 +14787,8 @@ function _updateFlames(dt,camPos){
     if(d.life<=0){ m.visible=false; m.material.opacity=0; continue; }
     m.position.x+=d.vx*dt; m.position.y+=d.vy*dt; m.position.z+=d.vz*dt; d.vx*=(1-2.5*dt); d.vz*=(1-2.5*dt); d.vy+=1.6*dt;
     const f=d.life/d.max; m.material.opacity=d.op*f; m.scale.setScalar(Math.max(0.05, m.scale.x*(1-1.0*dt)));   // shrink + fade
-    m.material.color.setRGB(1, 0.32+0.55*f, 0.10*f);   // hot yellow -> orange -> deep red as it cools
+    const _k=0.35+0.65*f, _wf=Math.max(0,(f-0.55))*1.3;   // build 771: white-hot when fresh, darken to the base colour as it cools (works for any hue)
+    m.material.color.setRGB(Math.min(1,d.r*_k+_wf), Math.min(1,d.g*_k+_wf), Math.min(1,d.b*_k+_wf));
     if(camPos) m.lookAt(camPos);
   }
 }
@@ -15200,17 +15204,21 @@ function driveUpdate(dt){
       _spawnDust(_rbx - _rx*_hw*0.6, gC+0.2, _rbz - _rz*_hw*0.6, -hx*r.speed, -hz*r.speed, _dustI);
     }
   }
-  // build 768: turbo flames out the exhaust while boosting (toggle per vehicle)
+  // build 768/771: turbo flames out the exhaust while boosting, with per-vehicle position / density / size / colour
   if(_boosting && cfg.boostFlame){
     o.userData._flameT=(o.userData._flameT||0)+dt;
     if(o.userData._flameT>=0.016){ o.userData._flameT=0;
-      const _fy=o.position.y + Math.max(0.2, _h.hh*0.55);
-      const _fbx=o.position.x - hx*_hd*0.96, _fbz=o.position.z - hz*_hd*0.96;   // rear-centre (exhaust)
+      const _bk=+cfg.flameBack||0, _up=+cfg.flameUp||0, _sd=+cfg.flameSide||0;
+      const _dens=(cfg.flameDensity==null?1:cfg.flameDensity), _sz=(cfg.flameSize==null?1:cfg.flameSize);
+      const _col=(cfg.flameColor!=null?cfg.flameColor:0xff7a3d);
+      const _fy=o.position.y + Math.max(0.2, _h.hh*0.55) + _up;
+      const _fbx=o.position.x - hx*(_hd*0.96+_bk) + _rx*_sd, _fbz=o.position.z - hz*(_hd*0.96+_bk) + _rz*_sd;   // rear-centre (exhaust) + offsets
       const _fbs=2.6 + Math.abs(r.speed)*0.22;                                  // shoots out the back faster than the car
-      for(let i=0;i<3;i++){ const _lat=(Math.random()-0.5)*_hw;
+      const _n=Math.max(1, Math.round(3*_dens));
+      for(let i=0;i<_n;i++){ const _lat=(Math.random()-0.5)*_hw;
         _spawnFlame(_fbx + _rx*_lat, _fy + (Math.random()-0.35)*0.22, _fbz + _rz*_lat,
           -hx*_fbs + (Math.random()-0.5)*1.1, 0.35+Math.random()*0.7, -hz*_fbs + (Math.random()-0.5)*1.1,
-          0.5+Math.random()*0.4);
+          (0.5+Math.random()*0.4)*_sz, _col);
       }
     }
   } else o.userData._flameT=0;
@@ -15854,7 +15862,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 770 · 2026-06-29';
+const BUILD_VERSION = 'build 771 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19123,10 +19131,10 @@ function loop(){
     const _spd=Math.abs(o.userData.carSpeed||0), _msp=Math.max(1,+_vv.maxSpeed||16), _sf=Math.min(1,_spd/_msp), _bst=(o.userData.boostT>0)?1:0;
     const _baseFov=(typeof worldCfg!=='undefined'&&worldCfg.fov)?worldCfg.fov:78, _fovT=_baseFov + _sf*12 + _bst*9;
     camera.fov += (_fovT-camera.fov)*Math.min(1,dt*4); camera.updateProjectionMatrix();
-    const _shk=_sf*0.0045 + _bst*0.006;
+    const _shk=_sf*0.0018 + _bst*0.0025;   // build 771: toned down (~40% of build 730) — the high-speed jitter was too much
     if(_shk>0.0006){ camera.rotation.x += (Math.random()-0.5)*_shk; camera.rotation.y += (Math.random()-0.5)*_shk; }
     const _hs=o.userData.hitShake||0;   // build 733: impact jolt, decays
-    if(_hs>0.001){ camera.rotation.x += (Math.random()-0.5)*_hs*2; camera.rotation.y += (Math.random()-0.5)*_hs*2; camera.rotation.z += (Math.random()-0.5)*_hs; o.userData.hitShake=_hs*(1-Math.min(1,dt*5)); }
+    if(_hs>0.001){ camera.rotation.x += (Math.random()-0.5)*_hs*1.3; camera.rotation.y += (Math.random()-0.5)*_hs*1.3; camera.rotation.z += (Math.random()-0.5)*_hs*0.7; o.userData.hitShake=_hs*(1-Math.min(1,dt*5)); }   // build 771: softer impact jolt
   } else if(editorOpen && editorTopView){
     // locked orthographic straight-down view; pan with drag, zoom with wheel
     scene.fog = null;   // fog would wash out the whole overhead view
@@ -20438,7 +20446,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -23181,8 +23189,20 @@ function renderEditorFields(){
           row('Boost ×','boost', 1, 4, 0.05, 1);
           row('Boost time (s)','boostDur', 0.5, 15, 0.5, 1);
           row('Cooldown (s)','boostCd', 0, 30, 0.5, 1);
-          // build 768: turbo flames out the exhaust while boosting
-          { const fl=document.createElement('label'); fl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin-top:6px;cursor:pointer;'; const fcb=document.createElement('input'); fcb.type='checkbox'; fcb.checked=!!V.boostFlame; fcb.style.accentColor='#ff7a3d'; fcb.onchange=()=>{ pushUndoSnapshot(); V.boostFlame=fcb.checked; }; const fsp=document.createElement('span'); fsp.innerHTML='<b>Flames on boost</b> — fire shoots out the exhaust while boosting'; fl.appendChild(fcb); fl.appendChild(fsp); vBody.appendChild(fl); }
+          // build 768/771: turbo flames out the exhaust while boosting, with position / density / size / colour controls
+          { const fl=document.createElement('label'); fl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin-top:6px;cursor:pointer;'; const fcb=document.createElement('input'); fcb.type='checkbox'; fcb.checked=!!V.boostFlame; fcb.style.accentColor='#ff7a3d'; fcb.onchange=()=>{ pushUndoSnapshot(); V.boostFlame=fcb.checked; renderEditorFields(); }; const fsp=document.createElement('span'); fsp.innerHTML='<b>Flames on boost</b> — fire shoots out the exhaust while boosting'; fl.appendChild(fcb); fl.appendChild(fsp); vBody.appendChild(fl); }
+          if(V.boostFlame){
+            row('Flame size','flameSize', 0.3, 3, 0.1, 1);
+            row('Flame density','flameDensity', 0.3, 3, 0.1, 1);
+            row('Back / forward (m)','flameBack', -3, 3, 0.05, 1);
+            row('Up / down (m)','flameUp', -2, 3, 0.05, 1);
+            row('Side (m)','flameSide', -3, 3, 0.05, 1);
+            { const cl=document.createElement('label'); cl.style.cssText='display:flex;align-items:center;gap:7px;color:#bfe6ff;font-size:12px;margin-top:5px;'; const sp=document.createElement('span'); sp.textContent='Flame colour'; sp.style.cssText='min-width:118px;flex:0 0 auto;';
+              const ci=document.createElement('input'); ci.type='color'; ci.value='#'+(((V.flameColor!=null?V.flameColor:0xff7a3d)>>>0)&0xffffff).toString(16).padStart(6,'0'); ci.style.cssText='flex:1;min-width:0;height:26px;background:#0c1418;border:1px solid #2a3a42;border-radius:4px;cursor:pointer;';
+              ci.oninput=()=>{ V.flameColor=parseInt(ci.value.slice(1),16); }; ci.addEventListener('focus',()=>pushUndoSnapshot());
+              cl.appendChild(sp); cl.appendChild(ci); vBody.appendChild(cl); }
+            { const fh=document.createElement('div'); fh.className='hint'; fh.style.cssText='margin:2px 0 0;font-size:10px;opacity:.85;'; fh.innerHTML='Offsets move the exhaust point from the model’s rear-centre (e.g. <b>Side</b> for one tailpipe). The core glows white-hot and cools toward your colour — try a blue for an afterburner.'; vBody.appendChild(fh); }
+          }
           // build 741: drive-state animation clips (only for models that ship animations)
           { const _clips=(sel.userData.animClipNames||[]).filter(Boolean);
             const ah=document.createElement('div'); ah.className='hint'; ah.style.margin='8px 0 1px';

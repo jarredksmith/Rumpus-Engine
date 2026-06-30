@@ -65,10 +65,16 @@ assert(/addEventListener\('pagehide', \(\)=>\{ try\{ if\(drivingCar && typeof ex
 assert(/boostFlame:!!v\.boostFlame/.test(extractFunction('vehicleApply')), 'vehicleApply stores the boost-flame flag');
 assert(/if\(V\.boostFlame\) e\.veh\.boostFlame=1;/.test(src), 'boost-flame serialized when on');
 assert(/blending:THREE\.AdditiveBlending/.test(extractFunction('_ensureFlamePool')), 'the flame particles are additive-blended (glow)');
-assert(/m\.material\.color\.setRGB\(1, 0\.32\+0\.55\*f, 0\.10\*f\)/.test(extractFunction('_updateFlames')), 'flames cool from hot yellow to deep red as they fade');
+assert(/const _k=0\.35\+0\.65\*f, _wf=Math\.max\(0,\(f-0\.55\)\)\*1\.3;/.test(extractFunction('_updateFlames')) && /m\.material\.color\.setRGB\(Math\.min\(1,d\.r\*_k\+_wf\)/.test(extractFunction('_updateFlames')), 'flames glow white-hot fresh and cool toward the base colour as they fade (any hue)');
 assert(/if\(_boosting && cfg\.boostFlame\)\{[\s\S]*?_spawnFlame\(/.test(du), 'boosting + the toggle emits flames out the rear');
-assert(/const _fbx=o\.position\.x - hx\*_hd\*0\.96, _fbz=o\.position\.z - hz\*_hd\*0\.96;/.test(du), 'flames spawn at the rear-centre (exhaust) along the heading');
+assert(/const _fbx=o\.position\.x - hx\*\(_hd\*0\.96\+_bk\) \+ _rx\*_sd, _fbz=o\.position\.z - hz\*\(_hd\*0\.96\+_bk\) \+ _rz\*_sd;/.test(du), 'flames spawn at the rear-centre (exhaust) plus the position offsets');
 assert(/<b>Flames on boost<\/b>/.test(src), 'the editor exposes the boost-flame toggle');
+// build 771: flame controls — position offsets, density, size, colour
+assert(/flameColor:\(v\.flameColor!=null\?\(v\.flameColor\|0\):0xff7a3d\)/.test(extractFunction('vehicleApply')) && /flameSize:\(v\.flameSize==null\?1:/.test(extractFunction('vehicleApply')) && /flameDensity:\(v\.flameDensity==null\?1:/.test(extractFunction('vehicleApply')), 'vehicleApply stores flame colour/size/density');
+assert(/const _n=Math\.max\(1, Math\.round\(3\*_dens\)\);/.test(du), 'flame density scales the particles per emit');
+assert(/\(0\.5\+Math\.random\(\)\*0\.4\)\*_sz, _col\)/.test(du), 'flame size scales each particle and the colour is passed through');
+assert(/if\(col!=null\)\{ d\.r=\(\(col>>16\)&255\)\/255; d\.g=\(\(col>>8\)&255\)\/255; d\.b=\(col&255\)\/255; \}/.test(extractFunction('_spawnFlame')), 'the flame colour is unpacked per particle');
+assert(/row\('Flame size','flameSize'/.test(src) && /row\('Flame density','flameDensity'/.test(src) && /ci\.type='color'/.test(src), 'the editor exposes flame size/density/colour controls (when flames are on)');
 
 // --- build 769: penetration spring so props don't clip half-into the car at low speed ---
 assert(/const sp = Math\.abs\(speed\); if\(sp < 0\.2\) return 0;/.test(extractFunction('_carShoveDynamics')), 'the car reacts at a crawl (shove gate lowered from 1.2 to 0.2 m/s)');
@@ -290,6 +296,9 @@ assert(/o\.userData\.leanRoll=0; o\.userData\.leanPitch=0; o\.userData\._prevSpe
 assert(/const _baseFov=\(typeof worldCfg!=='undefined'&&worldCfg\.fov\)\?worldCfg\.fov:78, _fovT=_baseFov \+ _sf\*12 \+ _bst\*9;/.test(src), 'FOV target widens with speed fraction + a boost kick');
 assert(/camera\.fov \+= \(_fovT-camera\.fov\)\*Math\.min\(1,dt\*4\); camera\.updateProjectionMatrix\(\);/.test(src), 'FOV eases toward the target each frame');
 assert(/if\(_shk>0\.0006\)\{ camera\.rotation\.x \+= \(Math\.random\(\)-0\.5\)\*_shk; camera\.rotation\.y \+= \(Math\.random\(\)-0\.5\)\*_shk; \}/.test(src), 'a faint shake scales with speed/boost');
+// build 771: the speed/boost shake is toned down (~40% of build 730) + a softer impact jolt
+assert(/const _shk=_sf\*0\.0018 \+ _bst\*0\.0025;/.test(src), 'the high-speed camera shake is reduced');
+assert(/camera\.rotation\.x \+= \(Math\.random\(\)-0\.5\)\*_hs\*1\.3;/.test(src), 'the impact jolt is softer (1.3x, was 2x)');
 assert(/camera\.fov=worldCfg\.fov; camera\.updateProjectionMatrix\(\); \}   \/\/ build 730: restore the normal FOV/.test(extractFunction('exitCar')), 'exiting restores the normal FOV');
 
 // --- build 733: impact feedback — a hard head-on wall hit jolts/thuds/throws debris (not a silent stop) ---
