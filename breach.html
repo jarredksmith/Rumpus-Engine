@@ -14578,6 +14578,7 @@ function turretFire(){
 // is moved kinematically and follows the ground/ramps; the player rides along. (Phase 2 adds wall collision; Phase 3
 // co-op sync.) The movement is a pure function so it's unit-testable without a browser.
 let drivingCar = null, _carReturn = null;
+let _coastingCars = [];   // build 770: cars you bailed out of at speed keep rolling (momentum), decelerating until they stop
 const _carQuat = new THREE.Quaternion(), _carEuler = new THREE.Euler(0,0,0,'YXZ'), _carModelQ = new THREE.Quaternion();   // build 720: reusable temps for the orientation compose
 const _camFrameQ = new THREE.Quaternion(), _camFrameE = new THREE.Euler(0,0,0,'YXZ'), _seatV = new THREE.Vector3();   // build 745: cockpit camera temps
 let _carViewOverride = null;   // build 745: session toggle (C) overriding the vehicle's default camera view ('chase' | 'cockpit')
@@ -14597,6 +14598,7 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   ram:(v.ram==null?50:Math.max(0, Math.min(500, +v.ram||0))),
   camView:(v.camView==='cockpit'?'cockpit':'chase'), seatF:(+v.seatF||0), seatU:(v.seatU==null?1:+v.seatU), seatS:(+v.seatS||0),
   camFollow:!!v.camFollow, enterDist:(v.enterDist==null?2.5:Math.max(0.5,Math.min(12,+v.enterDist||0))), boostFlame:!!v.boostFlame,
+  ejectCoast:(v.ejectCoast==null?true:!!v.ejectCoast),
   wheels:(''+(v.wheels||'')), wheelsFront:(''+(v.wheelsFront||'')), wheelAxis:((v.wheelAxis==='y'||v.wheelAxis==='z')?v.wheelAxis:'x'),
   wheelSteer:(v.wheelSteer==null?28:Math.max(0,Math.min(60,+v.wheelSteer||0))), wheelSpin:(v.wheelSpin==null?1:Math.max(-4,Math.min(4,+v.wheelSpin||0))) }; }   // 744: ram; 745: cockpit; 762: procedural wheels
 const _SPEED_UNIT = { kph:{ f:3.6, l:'km/h' }, mph:{ f:2.23694, l:'mph' } };   // m/s -> display
@@ -14826,6 +14828,7 @@ function _driveHudEl(){
 }
 function enterCar(o){
   if(drivingCar || !o || !o.userData.vehicle) return;
+  { const _ci=_coastingCars.indexOf(o); if(_ci>=0) _coastingCars.splice(_ci,1); o.userData._coastT=0; }   // build 770: jumping back in stops the coast
   drivingCar = o; o.userData.carSpeed = 0; o.userData.carVelY = 0; o.userData.carPitch = 0; o.userData.carRoll = 0; o.userData.boostT = 0; o.userData.boostCdT = 0;
   // build 720: carYaw is the LOGICAL heading the car drives along. It starts pointing out the model's nose (placement yaw + modelYaw),
   // so a model authored facing any direction drives nose-first.
@@ -14844,7 +14847,11 @@ function enterCar(o){
 function exitCar(){
   if(!drivingCar) return;
   _carViewOverride=null; _carFollowOverride=null;   // build 745/765: next car starts at its own default view + follow setting
-  const o=drivingCar; drivingCar=null; if(o.userData) o.userData.carSpeed=0;
+  const o=drivingCar; drivingCar=null;
+  // build 770: bail out at speed and the car keeps its momentum, coasting + decelerating until it stops (a per-vehicle toggle).
+  const _ecfg=o.userData.vehicle||{}, _esp=o.userData.carSpeed||0;
+  if((_ecfg.ejectCoast!==false) && Math.abs(_esp)>5){ o.userData._coastT=6; if(_coastingCars.indexOf(o)<0) _coastingCars.push(o); }
+  else if(o.userData){ o.userData.carSpeed=0; }
   _engStop(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/738: hide HUD; restore crosshair
   const side=new THREE.Vector3(Math.cos(o.rotation.y),0,-Math.sin(o.rotation.y));   // step out to the side
   player.pos.set(o.position.x+side.x*2.2, (o.position.y||0)+EYE, o.position.z+side.z*2.2);
@@ -14856,6 +14863,37 @@ function exitCar(){
   if(typeof _clearFlames==='function') _clearFlames();   // build 768: drop any lingering boost flames
   o.userData._flameT=0;
   if(SFX.swap) SFX.swap();
+}
+// build 770: a driverless car you bailed from at speed keeps rolling. Trimmed driveUpdate: momentum + decel + ground +
+// walls + wheel spin (no input, no camera, no HUD). Stops on a wall, when it slows to a crawl, or after the coast window.
+function _stopCoast(o){ if(!o||!o.userData) return; o.userData.carSpeed=0; o.userData._coastT=0;
+  if(o.userData.animActions && o.userData.animActions.length){ const _v=o.userData.vehicle; _setCarAnim(o, (_v&&_v.animIdle)||''); }
+  if(o.userData._wheels && o.userData.vehicle) _updateWheels(o, o.userData.vehicle, 0, 0, 1); }
+function _updateCoastCars(dt){
+  for(let i=_coastingCars.length-1;i>=0;i--){
+    const o=_coastingCars[i];
+    if(!o || o===drivingCar || !o.userData || !o.userData.vehicle){ if(o && o!==drivingCar) _stopCoast(o); _coastingCars.splice(i,1); continue; }
+    const cfg=o.userData.vehicle;
+    o.userData._coastT=(o.userData._coastT||0)-dt;
+    let sp=o.userData.carSpeed||0;
+    sp *= (1 - Math.min(0.85, 0.5*dt));                                   // aerodynamic drag (proportional)
+    sp -= Math.sign(sp)*Math.min(Math.abs(sp), (4+Math.abs(sp)*0.12)*dt); // + steady roll resistance
+    o.userData.carSpeed=sp;
+    if(Math.abs(sp)<1.2 || o.userData._coastT<=0){ _stopCoast(o); _coastingCars.splice(i,1); continue; }
+    const vYaw=(o.userData.carVelYaw!=null?o.userData.carVelYaw:(o.userData.carYaw||0));
+    const fx=-Math.sin(vYaw), fz=-Math.cos(vYaw); const _h=_carExtents(o);
+    let mvx=fx*sp*dt, mvz=fz*sp*dt;
+    if(typeof _carWall==='function'){ if(mvx!==0 && _carWall(o, Math.sign(mvx),0,Math.abs(mvx),_h)) mvx=0; if(mvz!==0 && _carWall(o, 0, Math.sign(mvz), Math.abs(mvz), _h)) mvz=0; }
+    if(mvx===0 && mvz===0){ _stopCoast(o); _coastingCars.splice(i,1); continue; }   // ran into a wall -> park there
+    o.position.x+=mvx; o.position.z+=mvz;
+    const _ceil=o.position.y + _h.hh*2 + 0.6, g=_carGroundY(o.position.x, o.position.z, o, _ceil);
+    o.position.y = g + (o.userData.carBaseOff||0) + (+cfg.rideHeight||0);   // rest on the surface
+    o.quaternion.setFromAxisAngle(_UP_Y, (o.userData.carYaw||0) - ((cfg.modelYaw||0)*RAD));   // level, along the heading
+    o.updateMatrixWorld(true);
+    if(cfg.wheels && typeof _updateWheels==='function') _updateWheels(o, cfg, sp, 0, dt);   // wheels keep rolling
+    if((typeof NET==='undefined'||NET.mode!=='client') && cfg.ram>0 && Math.abs(sp)>3 && typeof _carRamActors==='function'){ const _rd=cfg.ram*Math.min(1,(Math.abs(sp)-3)/Math.max(1,cfg.maxSpeed*0.85-3)); _carRamActors(o, _rd, dt); }   // a runaway car still mows
+    if((typeof NET==='undefined'||NET.mode!=='client') && typeof _carShoveDynamics==='function'){ const _sgn=Math.sign(sp)||1; _carShoveDynamics(o, sp, fx*_sgn, fz*_sgn, _h, dt); }   // and shoves props
+  }
 }
 function _carGroundY(x,z,exclude,ceilY){
   if(typeof surfaceTopAt==='function'){ const s=surfaceTopAt(x,z,exclude,true,ceilY); if(s>-Infinity) return s; }   // exclude the car (own roof), dynamic props (build 723), and anything above the car's headroom (build 739: don't climb roofs/buildings)
@@ -15816,7 +15854,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 769 · 2026-06-29';
+const BUILD_VERSION = 'build 770 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19042,6 +19080,7 @@ function loop(){
   if(!(editorOpen && editorActive==='player')) _charPrevInit=false;   // re-seed the third-person preview each time the Player tab opens
   if(mountedTurret) turretUpdate(dt);
   if(drivingCar) driveUpdate(dt);
+  if(_coastingCars.length) _updateCoastCars(dt);   // build 770: cars you bailed from at speed keep rolling
   if(mountedTurret){
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
     if(editorBrightLight.intensity !== 0) editorBrightLight.intensity = 0;
@@ -20399,7 +20438,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -23136,6 +23175,8 @@ function renderEditorFields(){
           // build 766: how close you must be to ANY part of the model for the "press E to drive" prompt
           row('Enter radius (m)','enterDist', 0.5, 12, 0.5, 1);
           { const eh=document.createElement('div'); eh.className='hint'; eh.style.cssText='margin:2px 0 0;font-size:10px;opacity:.85;'; eh.textContent='The “press E to drive” prompt shows when you’re within this distance of any part of the model (measured to its footprint, not its centre).'; vBody.appendChild(eh); }
+          // build 770: keep the car's momentum when you bail out at speed
+          { const cl=document.createElement('label'); cl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin-top:6px;cursor:pointer;'; const ccb=document.createElement('input'); ccb.type='checkbox'; ccb.checked=(V.ejectCoast!==false); ccb.style.accentColor='#7ad7ff'; ccb.onchange=()=>{ pushUndoSnapshot(); V.ejectCoast=ccb.checked; }; const csp=document.createElement('span'); csp.innerHTML='<b>Keep rolling on exit</b> — bail out at speed and the car coasts on'; cl.appendChild(ccb); cl.appendChild(csp); vBody.appendChild(cl); }
           { const bh=document.createElement('div'); bh.className='hint'; bh.style.margin='8px 0 1px'; bh.innerHTML='<b>Boost</b> — hold <b>Shift</b> while driving. Multiplier 1 = off.'; vBody.appendChild(bh); }
           row('Boost ×','boost', 1, 4, 0.05, 1);
           row('Boost time (s)','boostDur', 0.5, 15, 0.5, 1);
@@ -24700,7 +24741,8 @@ function toggleEditor(){
     if(typeof syncSelToIdx==='function') syncSelToIdx();   // start each editor session with a clean (single) selection
     destroyPhysWorld();     // edit plain meshes; snap dynamic props back to their authored transform
     for(const o of dynamicProps){ if(o.userData.physHome) o.position.copy(o.userData.physHome); if(o.userData.physHomeQ) o.quaternion.copy(o.userData.physHomeQ); }
-    for(const o of propModels){ if(o && o.userData && o.userData.vehicle && o.userData.physHome){ o.position.copy(o.userData.physHome); if(o.userData.physHomeQ) o.quaternion.copy(o.userData.physHomeQ); o.userData.carSpeed=0; o.userData.carVelY=0; o.userData.carPitch=0; o.userData.carRoll=0; o.userData.leanRoll=0; o.userData.leanPitch=0; } }   // build 755: a driven car snaps back to its authored placement (its position is what gets saved)
+    for(const o of propModels){ if(o && o.userData && o.userData.vehicle && o.userData.physHome){ o.position.copy(o.userData.physHome); if(o.userData.physHomeQ) o.quaternion.copy(o.userData.physHomeQ); o.userData.carSpeed=0; o.userData.carVelY=0; o.userData.carPitch=0; o.userData.carRoll=0; o.userData.leanRoll=0; o.userData.leanPitch=0; o.userData._coastT=0; } }   // build 755: a driven car snaps back to its authored placement (its position is what gets saved); 770: cancel any coast
+    if(typeof _coastingCars!=='undefined') _coastingCars.length=0;   // build 770: stop all coasting on editor entry
     if(typeof clearRuntimeProps==='function') clearRuntimeProps();        // radial props don't belong in the editor or the saved level
     if(typeof restoreDestroyedProps==='function') restoreDestroyedProps();   // show authored props that were destroyed in play, so they can be edited again
     if(typeof xaSnapToBase==='function') xaSnapToBase();

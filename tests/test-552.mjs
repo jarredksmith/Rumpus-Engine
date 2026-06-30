@@ -87,6 +87,23 @@ assert(/\(sp\*14 \+ penImp\*50\)\*m\*dt/.test(extractFunction('_carShoveDynamics
   assert(calls.length===0, 'a near-parked car (<0.2 m/s) rests against props instead of shoving');
   calls.length=0; dyn[0].position.x=20; shove(car, 2, 1, 0, half, 1/60);
   assert(calls.length===0, 'a barrel well out of reach is not shoved'); }
+
+// --- build 770: bail out at speed and the car keeps coasting (momentum) ---
+assert(/ejectCoast:\(v\.ejectCoast==null\?true:!!v\.ejectCoast\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores the eject-coast flag (default on)');
+assert(/if\(V\.ejectCoast===false\) e\.veh\.ejectCoast=0;/.test(src), 'eject-coast serialized only when turned off');
+assert(/if\(\(_ecfg\.ejectCoast!==false\) && Math\.abs\(_esp\)>5\)\{ o\.userData\._coastT=6; if\(_coastingCars\.indexOf\(o\)<0\) _coastingCars\.push\(o\); \}/.test(extractFunction('exitCar')), 'exiting above 5 m/s keeps the car rolling instead of stopping it');
+assert(/const _ci=_coastingCars\.indexOf\(o\); if\(_ci>=0\) _coastingCars\.splice\(_ci,1\)/.test(extractFunction('enterCar')), 'jumping back in cancels the coast');
+const uc = extractFunction('_updateCoastCars');
+assert(/sp \*= \(1 - Math\.min\(0\.85, 0\.5\*dt\)\);/.test(uc) && /sp -= Math\.sign\(sp\)\*Math\.min\(Math\.abs\(sp\), \(4\+Math\.abs\(sp\)\*0\.12\)\*dt\);/.test(uc), 'a coasting car decelerates (drag + roll resistance)');
+assert(/if\(Math\.abs\(sp\)<1\.2 \|\| o\.userData\._coastT<=0\)\{ _stopCoast\(o\)/.test(uc), 'it parks when it slows to a crawl or the coast window ends');
+assert(/if\(mvx===0 && mvz===0\)\{ _stopCoast\(o\)/.test(uc), 'a coasting car parks when it hits a wall');
+assert(/if\(cfg\.wheels && typeof _updateWheels==='function'\) _updateWheels\(o, cfg, sp, 0, dt\);/.test(uc), 'the wheels keep rolling while it coasts');
+assert(/if\(_coastingCars\.length\) _updateCoastCars\(dt\);/.test(src), 'the main loop advances coasting cars each frame');
+assert(/<b>Keep rolling on exit<\/b>/.test(src), 'the editor exposes the keep-rolling toggle');
+// executable: deceleration brings a fast coast down and never reverses sign
+{ let sp=40; const step=(s,dt)=>{ s*=(1-Math.min(0.85,0.5*dt)); s-=Math.sign(s)*Math.min(Math.abs(s),(4+Math.abs(s)*0.12)*dt); return s; };
+  for(let t=0;t<600;t++) sp=step(sp,1/60);   // ~10s
+  assert(sp>=0 && sp<1.2, 'a 40 m/s coast decelerates to a near stop (never reverses)'); }
 assert(/!o\.userData\.vehicle/.test(extractFunction('instanceEligible')), 'a vehicle is never instanced (so it renders where it is driven)');
 
 // --- build 712: Phase 2 wall collision — each axis of the move is blocked if a wall is within reach (slide), guarded ---
