@@ -14837,16 +14837,20 @@ function _setCarAnim(o, clipName){
 // speed) and yaw the front ones by the steering input. Works on any modular car (Kenney/Quaternius/Sketchfab).
 function _wheelMatch(name, pat){ if(!pat||!name) return false; name=String(name).toLowerCase();
   return String(pat).toLowerCase().split(/[ ,]+/).filter(Boolean).some(p=>name.indexOf(p)>=0); }
-const _wBox=new THREE.Box3(), _wSz=new THREE.Vector3();
+const _wBox=new THREE.Box3(), _wSz=new THREE.Vector3(), _wCtr=new THREE.Vector3();
 function _buildWheelCache(o, cfg){
-  const list=[];
+  const list=[]; o.updateMatrixWorld(true);
   o.traverse(n=>{ if(n===o) return; if(_wheelMatch(n.name, cfg.wheels)){
-    _wBox.setFromObject(n); _wBox.getSize(_wSz);
-    list.push({ obj:n, baseQ:n.quaternion.clone(), rad:Math.max(0.08, 0.5*Math.max(_wSz.x,_wSz.y,_wSz.z)), front:_wheelMatch(n.name, cfg.wheelsFront), spin:0 });
+    _wBox.setFromObject(n); _wBox.getSize(_wSz); _wBox.getCenter(_wCtr);
+    // build 763: pivot = the wheel's geometric centre in its OWN rotation frame (scale-baked). Spinning/steering about this
+    // instead of the mesh's transform origin stops wheels whose origin sits at the car centre from orbiting / flying off.
+    const m=n.worldToLocal(_wCtr.clone());
+    const pivot=new THREE.Vector3(m.x*n.scale.x, m.y*n.scale.y, m.z*n.scale.z);
+    list.push({ obj:n, baseQ:n.quaternion.clone(), basePos:n.position.clone(), pivot, rad:Math.max(0.08, 0.5*Math.max(_wSz.x,_wSz.y,_wSz.z)), front:_wheelMatch(n.name, cfg.wheelsFront), spin:0 });
   }});
   o.userData._wheels=list; o.userData._wheelSteer=0;
 }
-const _wqSpin=new THREE.Quaternion(), _wqSteer=new THREE.Quaternion(), _wAxle=new THREE.Vector3(), _wUp=new THREE.Vector3(0,1,0);
+const _wqSpin=new THREE.Quaternion(), _wqSteer=new THREE.Quaternion(), _wAxle=new THREE.Vector3(), _wUp=new THREE.Vector3(0,1,0), _wpA=new THREE.Vector3(), _wpB=new THREE.Vector3();
 function _updateWheels(o, cfg, speed, steerFrac, dt){
   if(!cfg || !cfg.wheels){ if(o.userData._wheels) o.userData._wheels=null; return; }
   if(!o.userData._wheels) _buildWheelCache(o, cfg);
@@ -14862,6 +14866,9 @@ function _updateWheels(o, cfg, speed, steerFrac, dt){
     w.obj.quaternion.copy(w.baseQ);
     if(w.front && (cfg.wheelSteer==null?28:cfg.wheelSteer)>0){ _wqSteer.setFromAxisAngle(_wUp, steerRad); w.obj.quaternion.multiply(_wqSteer); }
     w.obj.quaternion.multiply(_wqSpin);
+    // build 763: keep the geometric centre pinned (rotate about the wheel's centre, not its origin)
+    _wpA.copy(w.pivot).applyQuaternion(w.baseQ); _wpB.copy(w.pivot).applyQuaternion(w.obj.quaternion);
+    w.obj.position.copy(w.basePos).add(_wpA).sub(_wpB);
   }
 }
 const _carHalfV = new THREE.Vector3();
@@ -15737,7 +15744,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 762 · 2026-06-29';
+const BUILD_VERSION = 'build 763 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
