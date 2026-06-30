@@ -78,6 +78,8 @@ assert(/row\('Flame size','flameSize'/.test(src) && /row\('Flame density','flame
 
 // --- build 769: penetration spring so props don't clip half-into the car at low speed ---
 assert(/const sp = Math\.abs\(speed\); if\(sp < 0\.2\) return 0;/.test(extractFunction('_carShoveDynamics')), 'the car reacts at a crawl (shove gate lowered from 1.2 to 0.2 m/s)');
+// build 776: the shove centres on the footprint (origin + offset), so an off-centre model origin doesn't shift the collision
+assert(/const cx=o\.position\.x \+ tx\*_oz \+ rxu\*_ox, cy=o\.position\.y \+ \(half\.oy\|\|0\), cz=o\.position\.z \+ tz\*_oz \+ rzu\*_ox;/.test(extractFunction('_carShoveDynamics')), 'the shove is centred on the hit-box footprint, matching the orange outline');
 assert(/const frontPen=\(hd\+pr\)-ahead, sidePen=\(hw\+pr\)-Math\.abs\(side\);/.test(extractFunction('_carShoveDynamics')), 'penetration is measured into the oriented footprint (front + side)');
 assert(/\(sp\*14 \+ penImp\*50\)\*m\*dt/.test(extractFunction('_carShoveDynamics')), 'the impulse is a speed knock plus a depth spring');
 // executable: a slow car still shoves a barrel sunk into its footprint; a near-parked one rests

@@ -15011,8 +15011,11 @@ const _carShoveDir = { x:0, y:0, z:0 };
 function _carShoveDynamics(o, speed, tx, tz, half, dt){   // tx,tz = unit TRAVEL direction (forward * sign(speed)); returns the mass-weighted reaction on the car
   if(typeof dynamicProps==='undefined' || !dynamicProps.length) return 0;
   const sp = Math.abs(speed); if(sp < 0.2) return 0;      // build 769: react even at a crawl (was 1.2) so props don't clip in; a truly parked car still rests
-  const cx=o.position.x, cy=o.position.y, cz=o.position.z;
   const hd=half.hd, hw=half.hw, rxu=-tz, rzu=tx;          // travel frame: forward = (tx,tz), right = (rxu,rzu)
+  // build 776: centre on the FOOTPRINT (origin + the hit-box offset rotated into the travel frame), not the model origin —
+  // otherwise a car whose origin sits off-centre collides on a box shifted away from the visible body (and the outline).
+  const _oz=half.oz||0, _ox=half.ox||0;
+  const cx=o.position.x + tx*_oz + rxu*_ox, cy=o.position.y + (half.oy||0), cz=o.position.z + tz*_oz + rzu*_ox;
   const reach = Math.max(hw, hd) + 1.1, reach2 = reach*reach;
   let reaction=0;
   for(const p of dynamicProps){
@@ -15963,7 +15966,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 775 · 2026-06-29';
+const BUILD_VERSION = 'build 776 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
