@@ -14592,6 +14592,10 @@ let _carViewOverride = null;   // build 745: session toggle (C) overriding the v
 function _carViewMode(o){ if(_carViewOverride) return _carViewOverride; const v=o&&o.userData&&o.userData.vehicle; return (v&&v.camView==='cockpit')?'cockpit':'chase'; }
 let _carFollowOverride = null;   // build 765: session toggle (V) for the follow-cam, overriding the vehicle's default
 function _carFollowMode(o){ if(_carFollowOverride!=null) return _carFollowOverride; const v=o&&o.userData&&o.userData.vehicle; return !!(v&&v.camFollow); }
+// build 786: shared vehicle toggles so the gamepad can drive the same C / V / H actions the keyboard does (single source of truth).
+function _carCycleView(){ if(!drivingCar) return; _carViewOverride = (_carViewMode(drivingCar)==='cockpit')?'chase':'cockpit'; }
+function _carCycleFollow(){ if(!drivingCar) return; _carFollowOverride = !_carFollowMode(drivingCar); if(typeof flashToast==='function') flashToast('Camera: '+(_carFollowOverride?'follows the car':'free orbit')); }
+function _carCycleHeadlights(){ if(!drivingCar || !drivingCar.userData.vehicle || !drivingCar.userData.vehicle.headlights) return; _carHeadOn=!_carHeadOn; if(typeof flashToast==='function') flashToast('Headlights '+(_carHeadOn?'on':'off')); }
 function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   maxSpeed:Math.max(2, +v.maxSpeed||16), accel:Math.max(1, +v.accel||18),
   turn:Math.max(10, +v.turn||120), reverse:Math.max(1, +v.reverse||7), units:(v.units==='mph'?'mph':'kph'),
@@ -15215,7 +15219,7 @@ function driveUpdate(dt){
   if(padMoveZ) throttle += -padMoveZ;   // left stick / W,S = throttle + reverse
   throttle=Math.max(-1,Math.min(1,throttle));
   // build 719: BOOST — hold Shift to surge for boostDur seconds, then a boostCd cooldown before it's ready again.
-  const bMult=+cfg.boost||1, boostKey=(keys['ShiftLeft']||keys['ShiftRight']);
+  const bMult=+cfg.boost||1, boostKey=(keys['ShiftLeft']||keys['ShiftRight']||(typeof padFiring!=='undefined'&&padFiring));   // build 786: RT also boosts (firing is gated off while driving)
   if(o.userData.boostCdT>0) o.userData.boostCdT=Math.max(0, o.userData.boostCdT-dt);
   if(o.userData.boostT>0){ o.userData.boostT-=dt; if(o.userData.boostT<=0){ o.userData.boostT=0; o.userData.boostCdT=+cfg.boostCd||0; } }
   else if(boostKey && bMult>1.01 && (o.userData.boostCdT||0)<=0 && throttle>0){ o.userData.boostT=+cfg.boostDur||3; if(typeof playSample==='function') playSample(curSounds().carBoost); }   // engage (forward only) + build 749 boost SFX
@@ -15254,7 +15258,7 @@ function driveUpdate(dt){
   // build 725: GRIP / DRIFT — the travel direction (carVelYaw) chases the heading at a grip rate. Normally sticky, so the
   // car goes where it points; a handbrake (Space / B) or a hard turn at speed lets travel lag the heading => it slides.
   if(o.userData.carVelYaw==null) o.userData.carVelYaw=carYaw;
-  const handbrake=(keys['Space']||keys['KeyB']);
+  const handbrake=(keys['Space']||keys['KeyB']||(typeof padAds!=='undefined'&&padAds));   // build 786: LT also handbrakes (ADS is gated off while driving)
   if(handbrake && !o.userData._hbWas && o.userData._carGrounded!==false && Math.abs(o.userData.carSpeed||0)>3 && typeof playSample==='function') playSample(curSounds().carBrake);   // build 749: brake SFX on the rising edge of the handbrake (build 754: only when grounded — airborne tyres can't screech)
   o.userData._hbWas=handbrake;
   const gripBase=Math.max(0.5,+cfg.grip||6), grip=handbrake?gripBase*0.16:gripBase;
@@ -16023,7 +16027,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 785 · 2026-06-29';
+const BUILD_VERSION = 'build 786 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16088,12 +16092,22 @@ function pollGamepad(dt){
 
   // Edge-triggered actions
   const edge = i => down(i) && !padPrev[i];
-  padJump = edge(0);          // A — consumed by the jump check this frame
-  if(edge(2)) reload();       // X
-  if(edge(3)) interact();     // Y
-  if(edge(1)) throwGrenade(); // B
-  if(edge(5)) cycleWeapon(1); // RB
-  if(edge(4)) cycleWeapon(-1);// LB
+  if(typeof drivingCar!=='undefined' && drivingCar){
+    // build 786: while driving, repurpose the face/D-pad buttons for vehicle controls. Throttle/steer come from the
+    // left stick, look from the right stick, and boost/handbrake are the held triggers (RT/LT), read in driveUpdate.
+    if(edge(3)) interact();                                  // Y — exit the car
+    if(edge(2)) _carCycleHeadlights();                       // X — headlights on/off
+    if(edge(1)) _carCycleView();                             // B — chase <-> cockpit
+    if(edge(0)) _carCycleFollow();                           // A — follow-cam <-> free orbit
+    padJump = false;
+  } else {
+    padJump = edge(0);          // A — consumed by the jump check this frame
+    if(edge(2)) reload();       // X
+    if(edge(3)) interact();     // Y
+    if(edge(1)) throwGrenade(); // B
+    if(edge(5)) cycleWeapon(1); // RB
+    if(edge(4)) cycleWeapon(-1);// LB
+  }
 
   // releasing the fire trigger re-arms semi-auto (mirrors mouseup)
   if(padFiringPrev && !padFiring) firingLatch = false;
