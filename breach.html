@@ -14980,27 +14980,37 @@ function _updateWheels(o, cfg, speed, steerFrac, dt){
 // build 781: car HEADLIGHTS — two spotlights mounted at the front of the car you're driving, aimed forward + slightly
 // down. Toggle with H. Lazily created, only the driven car lights up (max 2 lights), positioned from the footprint.
 let _headL=null, _headR=null, _carHeadOn=true;
+// IMPORTANT: the lights stay in the scene with visible=true ALWAYS and are toggled by INTENSITY. Toggling a light's
+// visibility (or adding/removing one) changes the scene light count, which recompiles every material's shader — a
+// multi-second stall. Creating them happens at deploy/editor-load (see addStaticColliderFor / the editor preview) so
+// that one-time recompile is masked by the load, and the in-game H toggle is then just an intensity change (no hitch).
 function _ensureHeadlights(){
-  if(_headL) return;
-  const mk=()=>{ const sp=new THREE.SpotLight(0xfff2cc, 0, 30, 0.5, 0.5, 1.0); sp.castShadow=false; const t=new THREE.Object3D(); scene.add(sp); scene.add(t); sp.target=t; sp.visible=false; return sp; };
+  if(_headL){ if(!_headL.parent){ scene.add(_headL); scene.add(_headL.target); scene.add(_headR); scene.add(_headR.target); } return; }
+  const mk=()=>{ const sp=new THREE.SpotLight(0xfff2cc, 0, 32, 0.5, 0.5, 1.0); sp.castShadow=false; sp.visible=true; const t=new THREE.Object3D(); scene.add(sp); scene.add(t); sp.target=t; return sp; };
   _headL=mk(); _headR=mk();
 }
-function _headlightsOff(){ if(_headL){ _headL.visible=false; _headL.intensity=0; } if(_headR){ _headR.visible=false; _headR.intensity=0; } }
-function _updateHeadlights(o, cfg){
-  if(!cfg.headlights || !_carHeadOn || drivingCar!==o){ _headlightsOff(); return; }
+function _headlightsOff(){ if(_headL) _headL.intensity=0; if(_headR) _headR.intensity=0; }   // intensity only — never touch visible
+function _placeHeadlights(o, cfg, cy){
   _ensureHeadlights();
-  const cy=(o.userData.carYaw!=null)?o.userData.carYaw:o.rotation.y, hx=-Math.sin(cy), hz=-Math.cos(cy), rx=-hz, rz=hx;
-  const f=_carFoot(o);
+  const hx=-Math.sin(cy), hz=-Math.cos(cy), rx=-hz, rz=hx, f=_carFoot(o);
   const fwd=f.hd*0.95 + (+cfg.headFwd||0), sep=Math.max(0.05, f.hw*0.62 + (+cfg.headSep||0)), y=o.position.y + Math.max(0.15, f.hh*0.55 + (+cfg.headY||0));
   const fcx=o.position.x + hx*(f.oz+fwd) + rx*f.ox, fcz=o.position.z + hz*(f.oz+fwd) + rz*f.ox;
   const col=(cfg.headColor!=null?cfg.headColor:0xfff2cc), inten=(cfg.headInten!=null?+cfg.headInten:6), rng=(cfg.headRange!=null?+cfg.headRange:32);
-  const lights=[[_headL,-1],[_headR,1]];
-  for(const [L,s] of lights){
-    L.visible=true; L.intensity=inten; L.color.setHex(col); L.distance=rng;
+  for(const [L,s] of [[_headL,-1],[_headR,1]]){
+    L.intensity=inten; L.color.setHex(col); L.distance=rng;
     L.position.set(fcx + rx*sep*s, y, fcz + rz*sep*s);
     L.target.position.set(L.position.x + hx*rng, y - rng*0.14, L.position.z + hz*rng);   // aim forward, dipped a touch
     L.target.updateMatrixWorld();
   }
+}
+function _updateHeadlights(o, cfg){
+  if(!cfg.headlights || !_carHeadOn || drivingCar!==o){ _headlightsOff(); return; }
+  _placeHeadlights(o, cfg, (o.userData.carYaw!=null)?o.userData.carYaw:o.rotation.y);
+}
+function _editorHeadlightPreview(o){   // build 782: light the SELECTED car in the editor so you can aim the beams live
+  const cfg=o&&o.userData&&o.userData.vehicle;
+  if(!cfg || !cfg.headlights){ _headlightsOff(); return; }
+  _placeHeadlights(o, cfg, o.rotation.y + (cfg.modelYaw||0)*RAD);
 }
 const _carHalfV = new THREE.Vector3();
 function _carExtents(o){   // half-extents of the vehicle (world AABB if known, else its scale)
@@ -16006,7 +16016,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 781 · 2026-06-29';
+const BUILD_VERSION = 'build 782 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16417,6 +16427,7 @@ function addStaticColliderFor(o){
     // not wherever it was last driven (otherwise autosave would persist the driven spot and lose the layout). Capture
     // once — at first deploy the car sits at its authored transform; a later async rebuild must not overwrite it.
     if(!o.userData.physHome){ o.userData.physHome = o.position.clone(); o.userData.physHomeQ = o.quaternion.clone(); }
+    if(o.userData.vehicle.headlights && typeof _ensureHeadlights==='function') _ensureHeadlights();   // build 782: create the spotlights now (at deploy), so the shader recompile is masked by load, not a mid-game stall
     // build 709: a drivable vehicle gets no static collider (it would leave a ghost wall where it started).
     // build 746: but it DOES get a kinematic body (no collider) so a TRAILER can be jointed to it — the car then tows the
     // trailer with real physics (it swings, lags in turns, settles). The kinematic loop drives this body from the car's
@@ -19300,7 +19311,8 @@ function loop(){
   if(_coastingCars.length) _updateCoastCars(dt);   // build 770: cars you bailed from at speed keep rolling
   if(!editorOpen && (drivingCar || _coastingCars.length)) _resolveCarVsCars();   // build 775: cars collide with cars
   // build 772: preview boost flames on the selected parked vehicle in the editor + keep flames animating when not driving
-  if(editorOpen && editorActive==='props'){ const _se=(typeof selectedSceneObject==='function')?selectedSceneObject():null; if(_se && _se.userData && _se.userData.vehicle && _se.userData.vehicle.boostFlame) _editorFlamePreview(_se, dt); }
+  if(editorOpen && editorActive==='props'){ const _se=(typeof selectedSceneObject==='function')?selectedSceneObject():null; if(_se && _se.userData && _se.userData.vehicle && _se.userData.vehicle.boostFlame) _editorFlamePreview(_se, dt); _editorHeadlightPreview((_se && _se.userData && _se.userData.vehicle) ? _se : null); }
+  else if(editorOpen && typeof _headlightsOff==='function') _headlightsOff();
   if(!drivingCar) _updateFlames(dt, camera && camera.position);
   if(mountedTurret){
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;

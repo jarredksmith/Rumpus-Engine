@@ -303,8 +303,13 @@ assert(/headlights:!!v\.headlights, headColor:\(v\.headColor!=null\?\(v\.headCol
 assert(/if\(V\.headlights\)\{ e\.veh\.headlights=1;/.test(src), 'headlights serialize when on');
 const uhl = extractFunction('_updateHeadlights');
 assert(/if\(!cfg\.headlights \|\| !_carHeadOn \|\| drivingCar!==o\)\{ _headlightsOff\(\); return; \}/.test(uhl), 'headlights only light the car you are driving (and only when toggled on)');
-assert(/L\.target\.position\.set\(L\.position\.x \+ hx\*rng, y - rng\*0\.14, L\.position\.z \+ hz\*rng\)/.test(uhl), 'each headlight aims forward along the heading, dipped slightly');
+assert(/L\.target\.position\.set\(L\.position\.x \+ hx\*rng, y - rng\*0\.14, L\.position\.z \+ hz\*rng\)/.test(extractFunction('_placeHeadlights')), 'each headlight aims forward along the heading, dipped slightly');
 assert(/_updateHeadlights\(o, cfg\)/.test(du), 'driveUpdate positions the headlights each frame');
+// build 782: toggle by INTENSITY (never visible) so the light count is stable — no shader-recompile stall
+assert(/function _headlightsOff\(\)\{ if\(_headL\) _headL\.intensity=0; if\(_headR\) _headR\.intensity=0; \}/.test(src), 'off = intensity 0, the lights stay in the scene (no recompile stall)');
+assert(/sp\.visible=true;/.test(extractFunction('_ensureHeadlights')), 'the spotlights are always visible (intensity does the toggling)');
+assert(/if\(o\.userData\.vehicle\.headlights && typeof _ensureHeadlights==='function'\) _ensureHeadlights\(\);/.test(extractFunction('addStaticColliderFor')), 'the lights are created at deploy so the recompile is masked by load');
+assert(/_editorHeadlightPreview\(\(_se && _se\.userData && _se\.userData\.vehicle\) \? _se : null\)/.test(src), 'the editor previews the selected car’s headlights live');
 assert(/e\.code==='KeyH'[\s\S]*?_carHeadOn=!_carHeadOn/.test(src), 'H toggles the headlights while driving');
 assert(/_carHeadOn = \(o\.userData\.vehicle\.headStart!==false\)/.test(extractFunction('enterCar')) && /if\(typeof _headlightsOff==='function'\) _headlightsOff\(\);/.test(extractFunction('exitCar')), 'lights start per the vehicle default on enter, and go off on exit');
 assert(/<b>Headlights<\/b>/.test(src) && /row\('Range \(m\)','headRange'/.test(src), 'the editor exposes the headlight toggle + controls');
