@@ -14600,6 +14600,7 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   camFollow:!!v.camFollow, enterDist:(v.enterDist==null?2.5:Math.max(0.5,Math.min(12,+v.enterDist||0))), boostFlame:!!v.boostFlame,
   flameColor:(v.flameColor!=null?(v.flameColor|0):0xff7a3d), flameSize:(v.flameSize==null?1:Math.max(0.3,Math.min(3,+v.flameSize||0))), flameDensity:(v.flameDensity==null?1:Math.max(0.3,Math.min(3,+v.flameDensity||0))),
   flameBack:(+v.flameBack||0), flameUp:(+v.flameUp||0), flameSide:(+v.flameSide||0),
+  hitLen:(v.hitLen==null?1:Math.max(0.3,Math.min(3,+v.hitLen||0))), hitWid:(v.hitWid==null?1:Math.max(0.3,Math.min(3,+v.hitWid||0))),
   ejectCoast:(v.ejectCoast==null?true:!!v.ejectCoast),
   wheels:(''+(v.wheels||'')), wheelsFront:(''+(v.wheelsFront||'')), wheelAxis:((v.wheelAxis==='y'||v.wheelAxis==='z')?v.wheelAxis:'x'),
   wheelSteer:(v.wheelSteer==null?28:Math.max(0,Math.min(60,+v.wheelSteer||0))), wheelSpin:(v.wheelSpin==null?1:Math.max(-4,Math.min(4,+v.wheelSpin||0))) }; }   // 744: ram; 745: cockpit; 762: procedural wheels
@@ -14793,6 +14794,22 @@ function _updateFlames(dt,camPos){
   }
 }
 function _clearFlames(){ if(!_flamePool) return; for(const m of _flamePool){ m.visible=false; m.material.opacity=0; if(m.userData.fl) m.userData.fl.life=0; } }
+// build 772: preview the boost flames in the editor on the selected (parked) vehicle, so you can see where they sit.
+function _editorFlamePreview(o, dt){
+  const cfg=o.userData.vehicle; if(!cfg) return;
+  o.userData._flameT=(o.userData._flameT||0)+dt; if(o.userData._flameT<0.03) return; o.userData._flameT=0;
+  const f=_carFoot(o), _hy=(o.rotation.y + (cfg.modelYaw||0)*RAD), hx=-Math.sin(_hy), hz=-Math.cos(_hy), rx=-hz, rz=hx;
+  const _bk=+cfg.flameBack||0, _up=+cfg.flameUp||0, _sd=+cfg.flameSide||0;
+  const _dens=(cfg.flameDensity==null?1:cfg.flameDensity), _sz=(cfg.flameSize==null?1:cfg.flameSize), _col=(cfg.flameColor!=null?cfg.flameColor:0xff7a3d);
+  const _fy=o.position.y + Math.max(0.2, f.hh*0.55) + _up;
+  const _fbx=o.position.x - hx*(f.hd*0.96+_bk) + rx*_sd, _fbz=o.position.z - hz*(f.hd*0.96+_bk) + rz*_sd;
+  const _n=Math.max(1, Math.round(3*_dens));
+  for(let i=0;i<_n;i++){ const _lat=(Math.random()-0.5)*f.hw;
+    _spawnFlame(_fbx + rx*_lat, _fy+(Math.random()-0.35)*0.22, _fbz + rz*_lat,
+      -hx*2.0 + (Math.random()-0.5)*1.0, 0.35+Math.random()*0.6, -hz*2.0 + (Math.random()-0.5)*1.0,
+      (0.5+Math.random()*0.4)*_sz, _col);
+  }
+}
 // build 733: impact feedback — a crunchy thud (noise burst + a low sine thump) when the car hits a wall hard.
 function _carThud(vol){
   if(typeof actx==='undefined' || !actx || !sfxBus) return;
@@ -14896,7 +14913,7 @@ function _updateCoastCars(dt){
     o.updateMatrixWorld(true);
     if(cfg.wheels && typeof _updateWheels==='function') _updateWheels(o, cfg, sp, 0, dt);   // wheels keep rolling
     if((typeof NET==='undefined'||NET.mode!=='client') && cfg.ram>0 && Math.abs(sp)>3 && typeof _carRamActors==='function'){ const _rd=cfg.ram*Math.min(1,(Math.abs(sp)-3)/Math.max(1,cfg.maxSpeed*0.85-3)); _carRamActors(o, _rd, dt); }   // a runaway car still mows
-    if((typeof NET==='undefined'||NET.mode!=='client') && typeof _carShoveDynamics==='function'){ const _sgn=Math.sign(sp)||1; _carShoveDynamics(o, sp, fx*_sgn, fz*_sgn, _h, dt); }   // and shoves props
+    if((typeof NET==='undefined'||NET.mode!=='client') && typeof _carShoveDynamics==='function'){ const _sgn=Math.sign(sp)||1; _carShoveDynamics(o, sp, fx*_sgn, fz*_sgn, _carHitExtents(o), dt); }   // and shoves props
   }
 }
 function _carGroundY(x,z,exclude,ceilY){
@@ -14958,6 +14975,35 @@ function _carExtents(o){   // half-extents of the vehicle (world AABB if known, 
   if(o.userData.box && !o.userData.box.isEmpty()){ o.userData.box.getSize(_carHalfV); return { hw:_carHalfV.x/2||0.5, hh:_carHalfV.y/2||0.5, hd:_carHalfV.z/2||0.5 }; }
   const s=o.scale; return { hw:Math.abs(s.x)/2||0.5, hh:Math.abs(s.y)/2||0.5, hd:Math.abs(s.z)/2||0.5 };
 }
+// build 772: the car's true ORIENTED footprint, measured in the DRIVE frame (un-rotated by the resting heading) so hd =
+// length-along-travel and hw = width-across regardless of modelYaw. Rotation-invariant, so it's cached (keyed by scale).
+const _footV=new THREE.Vector3();
+function _carFoot(o){
+  const v=(o.userData&&o.userData.vehicle)||{};
+  const _key=(o.scale.x*1000|0)+'_'+(o.scale.y*1000|0)+'_'+(o.scale.z*1000|0);
+  if(o.userData._foot && o.userData._footKey===_key) return o.userData._foot;
+  const cy=(o.rotation.y + ((v.modelYaw||0)*RAD)), cs=Math.cos(-cy), sn=Math.sin(-cy);
+  o.updateMatrixWorld(true); const cx=o.position.x, cz=o.position.z;
+  let mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity,mnZ=Infinity,mxZ=-Infinity, any=false;
+  o.traverse(n=>{ const g=n.geometry; if(!g) return; if(!g.boundingBox) g.computeBoundingBox(); const bb=g.boundingBox; if(!bb||!isFinite(bb.min.x)) return;
+    for(let i=0;i<8;i++){ _footV.set(i&1?bb.max.x:bb.min.x, i&2?bb.max.y:bb.min.y, i&4?bb.max.z:bb.min.z).applyMatrix4(n.matrixWorld);
+      const lx=_footV.x-cx, lz=_footV.z-cz, rx=lx*cs-lz*sn, rz=lx*sn+lz*cs;
+      if(rx<mnX)mnX=rx; if(rx>mxX)mxX=rx; if(rz<mnZ)mnZ=rz; if(rz>mxZ)mxZ=rz; if(_footV.y<mnY)mnY=_footV.y; if(_footV.y>mxY)mxY=_footV.y; any=true; } });
+  let foot;
+  if(!any){ const s=o.scale; foot={ hw:Math.abs(s.x)/2||0.5, hh:Math.abs(s.y)/2||0.5, hd:Math.abs(s.z)/2||0.5, ox:0, oz:0, oy:0 }; }
+  else foot={ hw:Math.max(0.1,(mxX-mnX)/2), hh:Math.max(0.1,(mxY-mnY)/2), hd:Math.max(0.1,(mxZ-mnZ)/2), ox:(mnX+mxX)/2, oz:(mnZ+mxZ)/2, oy:(mnY+mxY)/2-o.position.y };
+  o.userData._foot=foot; o.userData._footKey=_key; return foot;
+}
+function _carHitExtents(o){ const f=_carFoot(o), v=(o.userData&&o.userData.vehicle)||{}; return { hw:f.hw*(v.hitWid==null?1:v.hitWid), hh:f.hh, hd:f.hd*(v.hitLen==null?1:v.hitLen), ox:f.ox, oz:f.oz, oy:f.oy }; }
+// oriented overlap test (heading frame) used by ram damage — actor at (ax,ay,az) with horizontal radius ar, height ah.
+function _carHitsActor(o, ax, ay, az, ar, ah){
+  const ext=_carHitExtents(o);
+  const cy=(o.userData.carYaw!=null)?o.userData.carYaw:(o.rotation.y + ((o.userData.vehicle&&o.userData.vehicle.modelYaw||0)*RAD));
+  const fx=-Math.sin(cy), fz=-Math.cos(cy), rxu=-fz, rzu=fx;
+  const dx=ax-o.position.x, dz=az-o.position.z, dy=ay-o.position.y;
+  const along=dx*fx+dz*fz - ext.oz, side=dx*rxu+dz*rzu - ext.ox;   // recentre on the footprint
+  return Math.abs(along) < ext.hd+ar && Math.abs(side) < ext.hw+ar && dy > -(ext.hh+1.5) && dy < ext.hh+(ah||1.7);
+}
 // build 723: the car is kinematic (no Rapier body), so dynamic props can't see it. Manually shove any dynamic prop the car
 // drives into — along the travel direction + away from the car — scaled by speed and the prop's mass, so barrels go flying.
 const _carShoveDir = { x:0, y:0, z:0 };
@@ -14999,22 +15045,21 @@ function _carShoveDynamics(o, speed, tx, tz, half, dt){   // tx,tz = unit TRAVEL
 // Per-target cooldown so one drive-through is a few hits, not one per frame. Host/solo authors it; rival players are told via pvpHit.
 const _carRamBox = (typeof THREE!=='undefined') ? new THREE.Box3() : null;
 function _carRamActors(o, dmg, dt){
-  if(dmg<=0.5 || !_carRamBox) return;
-  const box=_carRamBox.setFromObject(o);
+  if(dmg<=0.5) return;   // build 772: oriented hit test against the (adjustable) footprint, consistent with the shove + the outline
   if(typeof enemies!=='undefined') for(const en of enemies){ if(!en||en.hp<=0||!en.mesh) continue;
     if(en._ramT>0){ en._ramT-=dt; continue; }
     const ep=en.mesh.position;
-    if(_propBoxHitsActor(box, ep.x, ep.y, ep.z, 1.7, 0.45)){ en._ramT=0.4; enemyHurt(en, dmg, null, null); if(typeof spark==='function') spark(ep, 0xff6b6b); }
+    if(_carHitsActor(o, ep.x, ep.y, ep.z, 0.45, 1.7)){ en._ramT=0.4; enemyHurt(en, dmg, null, null); if(typeof spark==='function') spark(ep, 0xff6b6b); }
   }
   if(typeof bots!=='undefined') for(const b of bots){ if(b.dead) continue;
     if(b._ramT>0){ b._ramT-=dt; continue; }
-    if(_propBoxHitsActor(box, b.pos.x, b.pos.y, b.pos.z, 1.7, 0.45)){ b._ramT=0.4; botHurt(b, dmg, null, null); }
+    if(_carHitsActor(o, b.pos.x, b.pos.y, b.pos.z, 0.45, 1.7)){ b._ramT=0.4; botHurt(b, dmg, null, null); }
   }
   if(typeof NET!=='undefined' && NET.players) for(const id in NET.players){ const rp=NET.players[id]; if(!rp||!rp.posEye) continue;
     if(rp._ramT>0){ rp._ramT-=dt; continue; }
     if(rp.hp!=null && rp.hp<=0) continue;
     if(typeof sameTeam==='function' && sameTeam(NET.myId, +id)) continue;
-    if(_propBoxHitsActor(box, rp.posEye.x, rp.posEye.y, rp.posEye.z, EYE, 0.45)){ rp._ramT=0.4; if(typeof sendToPlayer==='function') sendToPlayer(+id, {t:'pvpHit', d:dmg, from:NET.myId}); }
+    if(_carHitsActor(o, rp.posEye.x, rp.posEye.y, rp.posEye.z, 0.45, EYE)){ rp._ramT=0.4; if(typeof sendToPlayer==='function') sendToPlayer(+id, {t:'pvpHit', d:dmg, from:NET.myId}); }
   }
 }
 // True if a wall is within `dist` ahead of the car along the world-axis unit dir (dx,dz). Three rays across the car's
@@ -15114,7 +15159,7 @@ function driveUpdate(dt){
   // build 733: a HARD head-on hit (both axes blocked at speed) jolts the camera, thuds, and throws debris — once per hit
   o.userData._hitCd=Math.max(0,(o.userData._hitCd||0)-dt);
   if(mvx===0 && mvz===0 && _imp0>5 && o.userData._hitCd<=0){ o.userData._hitCd=0.35; o.userData.carSpeed=r.speed*0.1; r.speed=o.userData.carSpeed; _carImpactFx(o, _imp0); }
-  if(typeof NET==='undefined' || NET.mode!=='client'){ const _sgn=Math.sign(r.speed)||1; const _react=_carShoveDynamics(o, r.speed, fx*_sgn, fz*_sgn, _h, dt);   // build 723: host/solo knocks dynamic props flying
+  if(typeof NET==='undefined' || NET.mode!=='client'){ const _sgn=Math.sign(r.speed)||1; const _react=_carShoveDynamics(o, r.speed, fx*_sgn, fz*_sgn, _carHitExtents(o), dt);   // build 723/772: host/solo knocks dynamic props flying (using the adjustable hit footprint)
     // build 734: Newton's 3rd law — a heavy prop shoves the car back (slows it); a light barrel barely registers. CARM = reference car mass.
     if(_react>0){ const CARM=8, _slow=Math.min(0.55, (_react/CARM)*dt*3); o.userData.carSpeed*=(1-_slow); r.speed*=(1-_slow); if(_react>20 && (o.userData._hitCd||0)<=0){ o.userData._hitCd=0.3; _carImpactFx(o, Math.min(14,_react*0.4)); } }
   }
@@ -15862,7 +15907,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 771 · 2026-06-29';
+const BUILD_VERSION = 'build 772 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19089,6 +19134,9 @@ function loop(){
   if(mountedTurret) turretUpdate(dt);
   if(drivingCar) driveUpdate(dt);
   if(_coastingCars.length) _updateCoastCars(dt);   // build 770: cars you bailed from at speed keep rolling
+  // build 772: preview boost flames on the selected parked vehicle in the editor + keep flames animating when not driving
+  if(editorOpen && editorActive==='props'){ const _se=(typeof selectedSceneObject==='function')?selectedSceneObject():null; if(_se && _se.userData && _se.userData.vehicle && _se.userData.vehicle.boostFlame) _editorFlamePreview(_se, dt); }
+  if(!drivingCar) _updateFlames(dt, camera && camera.position);
   if(mountedTurret){
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
     if(editorBrightLight.intensity !== 0) editorBrightLight.intensity = 0;
@@ -20446,7 +20494,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -23138,7 +23186,7 @@ function renderEditorFields(){
             const dv=()=> (V[key]!=null?V[key]:0)*factor;
             const rng=document.createElement('input'); rng.type='range'; rng.min=mn; rng.max=mx; rng.step=st; rng.value=dv(); rng.style.cssText='flex:1;min-width:0;accent-color:var(--accent);';
             const ni=document.createElement('input'); ni.type='number'; ni.min=mn; ni.max=mx; ni.step=st; ni.value=+dv().toFixed(2); ni.style.cssText='width:62px;flex:0 0 auto;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
-            const apply=(disp,fromSlider)=>{ disp=parseFloat(disp); if(isNaN(disp)) return; V[key]=disp/factor; if(fromSlider) ni.value=+disp.toFixed(2); else rng.value=disp; };
+            const apply=(disp,fromSlider)=>{ disp=parseFloat(disp); if(isNaN(disp)) return; V[key]=disp/factor; if(fromSlider) ni.value=+disp.toFixed(2); else rng.value=disp; if(typeof _setVehArrow==='function') _setVehArrow(sel); };   // build 772: keep the arrow / pivot / hit-area outline live as you drag
             rng.addEventListener('pointerdown',()=>pushUndoSnapshot()); rng.oninput=()=>apply(rng.value,true);
             ni.addEventListener('focus',()=>pushUndoSnapshot()); ni.onchange=()=>apply(ni.value,false);
             wrap.appendChild(sp); wrap.appendChild(rng); wrap.appendChild(ni); vBody.appendChild(wrap); };
@@ -23185,6 +23233,10 @@ function renderEditorFields(){
           { const eh=document.createElement('div'); eh.className='hint'; eh.style.cssText='margin:2px 0 0;font-size:10px;opacity:.85;'; eh.textContent='The “press E to drive” prompt shows when you’re within this distance of any part of the model (measured to its footprint, not its centre).'; vBody.appendChild(eh); }
           // build 770: keep the car's momentum when you bail out at speed
           { const cl=document.createElement('label'); cl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin-top:6px;cursor:pointer;'; const ccb=document.createElement('input'); ccb.type='checkbox'; ccb.checked=(V.ejectCoast!==false); ccb.style.accentColor='#7ad7ff'; ccb.onchange=()=>{ pushUndoSnapshot(); V.ejectCoast=ccb.checked; }; const csp=document.createElement('span'); csp.innerHTML='<b>Keep rolling on exit</b> — bail out at speed and the car coasts on'; cl.appendChild(ccb); cl.appendChild(csp); vBody.appendChild(cl); }
+          // build 772: hit area — the oriented footprint props/enemies collide with. The orange outline in the scene shows it live.
+          { const hh=document.createElement('div'); hh.className='hint'; hh.style.margin='10px 0 1px'; hh.innerHTML='<b>Hit area</b> — the <b style="color:#ffa033">orange outline</b> shows the collision footprint (what props & enemies react to). Scale it to fit the model.'; vBody.appendChild(hh); }
+          row('Hit length','hitLen', 0.3, 3, 0.05, 1);
+          row('Hit width','hitWid', 0.3, 3, 0.05, 1);
           { const bh=document.createElement('div'); bh.className='hint'; bh.style.margin='8px 0 1px'; bh.innerHTML='<b>Boost</b> — hold <b>Shift</b> while driving. Multiplier 1 = off.'; vBody.appendChild(bh); }
           row('Boost ×','boost', 1, 4, 0.05, 1);
           row('Boost time (s)','boostDur', 0.5, 15, 0.5, 1);
@@ -24053,7 +24105,7 @@ function _ensureVehPivot(){
 const _vaFwd=new THREE.Vector3(), _vaBox=new THREE.Box3(), _vaSz=new THREE.Vector3(), _vaCtr=new THREE.Vector3();
 function _setVehArrow(o){
   const isVeh = o && editorOpen && editorActive==='props' && o.userData && o.userData.vehicle;
-  if(!isVeh){ if(_vehArrow) _vehArrow.visible=false; if(_vehPivotDot) _vehPivotDot.visible=false; return; }
+  if(!isVeh){ if(_vehArrow) _vehArrow.visible=false; if(_vehPivotDot) _vehPivotDot.visible=false; if(_carHitBox) _carHitBox.visible=false; return; }
   const a=_ensureVehArrow();
   _vaFwd.set(0,0,-1).applyAxisAngle(_UP_Y, (o.userData.vehicle.modelYaw||0)*RAD).applyQuaternion(o.quaternion).normalize();   // build 720: arrow follows the Model facing offset, not just the prop's -Z
   _vaBox.setFromObject(o); _vaBox.getSize(_vaSz); _vaBox.getCenter(_vaCtr);
@@ -24064,6 +24116,19 @@ function _setVehArrow(o){
   const pd=_ensureVehPivot(); const pv=+o.userData.vehicle.pivot||0;
   pd.position.copy(o.position).addScaledVector(_vaFwd, pv); pd.position.y=_vaCtr.y;
   pd.visible=true;
+  // build 772: hit-area outline — the oriented footprint props/enemies collide against, sized by Hit length / width.
+  const hb=_ensureCarHitBox(); const ext=_carHitExtents(o), _hy=(o.rotation.y + (o.userData.vehicle.modelYaw||0)*RAD);
+  const _ffx=-Math.sin(_hy), _ffz=-Math.cos(_hy), _frx=-_ffz, _frz=_ffx;   // forward + right (heading frame)
+  hb.scale.set(ext.hw*2, ext.hh*2, ext.hd*2);
+  hb.position.set(o.position.x + _ffx*ext.oz + _frx*ext.ox, o.position.y + ext.oy, o.position.z + _ffz*ext.oz + _frz*ext.ox);
+  hb.rotation.set(0, _hy, 0); hb.visible=true;
+}
+let _carHitBox=null;
+function _ensureCarHitBox(){
+  if(!_carHitBox){ const g=new THREE.BoxGeometry(1,1,1);
+    const e=new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color:0xffa033, depthTest:false, transparent:true, opacity:0.85 }));
+    e.renderOrder=1000; e.visible=false; scene.add(e); _carHitBox=e; }
+  return _carHitBox;
 }
 // build 756: a live marker for a physics joint's hinge — a cyan dot at the hinge point, a ring + axis line showing the
 // swing axis. Authoring the Hinge X/Y/Z offset used to be blind trial-and-error; now you can see exactly where it pivots.
@@ -24794,6 +24859,7 @@ function toggleEditor(){
     if(_vehArrow) _vehArrow.visible = false;   // build 719: hide the vehicle forward arrow when leaving the editor
     if(_vehPivotDot) _vehPivotDot.visible = false;   // build 721: hide the pivot marker too
     if(_jointGiz) _jointGiz.visible = false;   // build 756: hide the joint hinge marker
+    if(_carHitBox) _carHitBox.visible = false;   // build 772: hide the hit-area outline
     for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible = false; }
     setTurretMarkersVisible(false);
     if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);

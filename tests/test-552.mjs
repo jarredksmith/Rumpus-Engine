@@ -214,7 +214,7 @@ assert(/const b = p\.userData && p\.userData\.phys && p\.userData\.phys\.body; i
 assert(/if\(sp < 0\.2\) return 0;/.test(sh), 'a near-stopped car does not shove (so it can rest against props); build 769 lowered the gate to a crawl');
 assert(/const ahead=dx\*tx \+ dz\*tz; if\(ahead < -0\.3\) continue;/.test(sh), 'props behind the travel direction are not dragged');
 assert(/pushDynamic\(p, _carShoveDir, \(sp\*14 \+ penImp\*50\)\*m\*dt, p\.position\)/.test(sh), 'shove impulse = speed knock + penetration spring, scaled by mass');
-assert(/if\(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\{ const _sgn=Math\.sign\(r\.speed\)\|\|1; const _react=_carShoveDynamics\(o, r\.speed, fx\*_sgn, fz\*_sgn, _h, dt\);/.test(du), 'the host/solo shoves dynamic props each frame along the travel direction');
+assert(/if\(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\{ const _sgn=Math\.sign\(r\.speed\)\|\|1; const _react=_carShoveDynamics\(o, r\.speed, fx\*_sgn, fz\*_sgn, _carHitExtents\(o\), dt\);/.test(du), 'the host/solo shoves dynamic props each frame along the travel direction (using the hit footprint)');
 
 // --- build 734: Newton's 3rd law — a heavy prop shoves the car back (mass matters both ways) ---
 assert(/reaction \+= m \* Math\.max\(0, nx\*tx \+ nz\*tz\);/.test(sh) && /return reaction;/.test(sh), 'the shove accumulates a mass-weighted, head-on reaction and returns it');
@@ -322,11 +322,25 @@ assert(/if\(V\.animFwd\) e\.veh\.animFwd=V\.animFwd;/.test(src), 'the clips seri
 assert(/animRow\('Idle','animIdle'\); animRow\('Forward','animFwd'\); animRow\('Backward','animBack'\); animRow\('Turn left','animLeft'\); animRow\('Turn right','animRight'\);/.test(src), 'editor exposes the 5 animation-slot dropdowns');
 assert(/_setCarAnim\(o, \(_v&&_v\.animIdle\)\|\|''\);/.test(extractFunction('exitCar')), 'parking settles to the idle clip');
 
+// --- build 772: adjustable oriented hit area + outline + editor flame preview ---
+assert(/hitLen:\(v\.hitLen==null\?1:Math\.max\(0\.3,Math\.min\(3,\+v\.hitLen\|\|0\)\)\), hitWid:\(v\.hitWid==null\?1:/.test(extractFunction('vehicleApply')), 'vehicleApply stores hit length/width multipliers');
+assert(/if\(V\.hitLen!=null && V\.hitLen!==1\) e\.veh\.hitLen=V\.hitLen;/.test(src), 'hit length serializes when non-default');
+assert(/function _carHitExtents\(o\)\{ const f=_carFoot\(o\)[\s\S]*?hd:f\.hd\*\(v\.hitLen==null\?1:v\.hitLen\)/.test(src), 'the hit extents scale the true oriented footprint by the multipliers');
+const hit = extractFunction('_carHitsActor');
+assert(/const along=dx\*fx\+dz\*fz - ext\.oz, side=dx\*rxu\+dz\*rzu - ext\.ox;/.test(hit) && /Math\.abs\(along\) < ext\.hd\+ar && Math\.abs\(side\) < ext\.hw\+ar/.test(hit), 'the oriented overlap test recentres on the footprint and uses the hit extents');
+assert(/_carShoveDynamics\(o, r\.speed, fx\*_sgn, fz\*_sgn, _carHitExtents\(o\), dt\)/.test(du), 'the shove uses the adjustable hit footprint too');
+assert(/row\('Hit length','hitLen', 0\.3, 3, 0\.05, 1\)/.test(src) && /row\('Hit width','hitWid'/.test(src), 'the editor exposes hit length/width sliders');
+assert(/function _ensureCarHitBox\(\)\{[\s\S]*?EdgesGeometry[\s\S]*?color:0xffa033/.test(src), 'an orange wireframe outlines the hit area');
+assert(/hb\.scale\.set\(ext\.hw\*2, ext\.hh\*2, ext\.hd\*2\); hb\.rotation\.set\(0, _hy, 0\)/.test(src) || /hb\.scale\.set\(ext\.hw\*2, ext\.hh\*2, ext\.hd\*2\)[\s\S]*?hb\.rotation\.set\(0, _hy, 0\)/.test(src), 'the outline matches the hit extents, oriented along the heading');
+assert(/if\(_se && _se\.userData && _se\.userData\.vehicle && _se\.userData\.vehicle\.boostFlame\) _editorFlamePreview\(_se, dt\)/.test(src), 'the editor previews boost flames on the selected vehicle');
+assert(/function _editorFlamePreview\(o, dt\)\{/.test(src), 'there is an editor flame-preview emitter');
+
 // --- build 744: ram damage — driving into enemies / bots / rival players hurts them, scaled by speed ---
 assert(/ram:\(v\.ram==null\?50:Math\.max\(0, Math\.min\(500, \+v\.ram\|\|0\)\)\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores Ram damage (default 50, on)');
 const cra = extractFunction('_carRamActors');
-assert(/if\(_propBoxHitsActor\(box, ep\.x, ep\.y, ep\.z, 1\.7, 0\.45\)\)\{ en\._ramT=0\.4; enemyHurt\(en, dmg, null, null\);/.test(cra), 'a moving car hurts wave enemies it overlaps');
-assert(/if\(_propBoxHitsActor\(box, b\.pos\.x, b\.pos\.y, b\.pos\.z, 1\.7, 0\.45\)\)\{ b\._ramT=0\.4; botHurt\(b, dmg, null, null\);/.test(cra), 'and bots');
+// build 772: ram uses the oriented hit footprint (consistent with the shove + the outline)
+assert(/if\(_carHitsActor\(o, ep\.x, ep\.y, ep\.z, 0\.45, 1\.7\)\)\{ en\._ramT=0\.4; enemyHurt\(en, dmg, null, null\);/.test(cra), 'a moving car hurts wave enemies inside its hit footprint');
+assert(/if\(_carHitsActor\(o, b\.pos\.x, b\.pos\.y, b\.pos\.z, 0\.45, 1\.7\)\)\{ b\._ramT=0\.4; botHurt\(b, dmg, null, null\);/.test(cra), 'and bots');
 assert(/sendToPlayer\(\+id, \{t:'pvpHit', d:dmg, from:NET\.myId\}\)/.test(cra) && /sameTeam\(NET\.myId, \+id\)/.test(cra), 'and rival players (PvP, not teammates) via pvpHit');
 assert(/if\(en\._ramT>0\)\{ en\._ramT-=dt; continue; \}/.test(cra), 'a per-target cooldown spaces the hits (one drive-through = a few hits)');
 assert(/if\(\(typeof NET==='undefined' \|\| NET\.mode!=='client'\) && cfg\.ram>0 && Math\.abs\(r\.speed\)>3\)\{/.test(du), 'host/solo authors ram damage, only above a threshold speed');
