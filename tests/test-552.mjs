@@ -60,6 +60,15 @@ assert(/const rad=\(o\.userData\.vehicle\.enterDist!=null\?Math\.max\(0\.5,\+o\.
 assert(/row\('Enter radius \(m\)','enterDist', 0\.5, 12, 0\.5, 1\)/.test(src), 'the editor exposes an Enter radius slider');
 assert(/if\(!editorOpen && drivingCar && typeof exitCar==='function'\) exitCar\(\);/.test(extractFunction('toggleEditor')), 'opening the editor forces you out of the car (no stuck speedo)');
 assert(/addEventListener\('pagehide', \(\)=>\{ try\{ if\(drivingCar && typeof exitCar==='function'\) exitCar\(\);/.test(src), 'leaving the page (refresh/close) forces you out of the car');
+
+// --- build 768: turbo flames out the exhaust while boosting (toggle) ---
+assert(/boostFlame:!!v\.boostFlame/.test(extractFunction('vehicleApply')), 'vehicleApply stores the boost-flame flag');
+assert(/if\(V\.boostFlame\) e\.veh\.boostFlame=1;/.test(src), 'boost-flame serialized when on');
+assert(/blending:THREE\.AdditiveBlending/.test(extractFunction('_ensureFlamePool')), 'the flame particles are additive-blended (glow)');
+assert(/m\.material\.color\.setRGB\(1, 0\.32\+0\.55\*f, 0\.10\*f\)/.test(extractFunction('_updateFlames')), 'flames cool from hot yellow to deep red as they fade');
+assert(/if\(_boosting && cfg\.boostFlame\)\{[\s\S]*?_spawnFlame\(/.test(du), 'boosting + the toggle emits flames out the rear');
+assert(/const _fbx=o\.position\.x - hx\*_hd\*0\.96, _fbz=o\.position\.z - hz\*_hd\*0\.96;/.test(du), 'flames spawn at the rear-centre (exhaust) along the heading');
+assert(/<b>Flames on boost<\/b>/.test(src), 'the editor exposes the boost-flame toggle');
 assert(/!o\.userData\.vehicle/.test(extractFunction('instanceEligible')), 'a vehicle is never instanced (so it renders where it is driven)');
 
 // --- build 712: Phase 2 wall collision — each axis of the move is blocked if a wall is within reach (slide), guarded ---
