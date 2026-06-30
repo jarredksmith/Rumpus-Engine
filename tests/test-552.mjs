@@ -36,11 +36,11 @@ assert(/if\(drivingCar\)\{ wish\.set\(0,0,0\); moveScale=0; \}/.test(src), 'foot
 assert(/if\(drivingCar\) driveUpdate\(dt\);/.test(src), 'driveUpdate runs each frame while driving');
 assert(/\} else if\(drivingCar\)\{[\s\S]*?const o=drivingCar, yaw=player\.yaw[\s\S]*?camera\.position\.set\(_tx - fx\*_cd/.test(src), 'a chase camera orbits with the look (player.yaw)');
 
-// --- build 711: mouse-orbit steering — the car turns toward where you look (player.yaw), not A/D ---
+// --- build 764: A/D steer the car DIRECTLY; the mouse is a free-orbit camera only (no longer steers) ---
 const du = extractFunction('driveUpdate');
-assert(/let diff = player\.yaw - o\.userData\.carYaw; diff = Math\.atan2\(Math\.sin\(diff\), Math\.cos\(diff\)\);/.test(du), 'steers toward the look heading (shortest angle)');
-assert(/o\.userData\.carYaw \+= Math\.max\(-maxStep, Math\.min\(maxStep, diff\)\);/.test(du), 'turn is rate-limited toward that heading');
-assert(/let steer=0; if\(keys\['KeyA'\]\) steer\+=1; if\(keys\['KeyD'\]\) steer-=1;/.test(du) && /if\(steer\) player\.yaw \+= steer \* \(cfg\.turn\*RAD\) \* 0\.85 \* dt;/.test(du), 'build 725: A/D steer too, alongside the mouse (swing the look heading)');
+assert(/let steer=0; if\(keys\['KeyA'\]\) steer\+=1; if\(keys\['KeyD'\]\) steer-=1;/.test(du), 'A/D set the steer input');
+assert(/o\.userData\.carYaw \+= steer \* \(cfg\.turn\*RAD\) \* speedFrac \* dt;/.test(du), 'steer turns the heading directly, scaled by speed (no pivot when parked)');
+assert(!/player\.yaw \+= steer/.test(du) && !/diff = player\.yaw/.test(du), 'A/D no longer move the camera (player.yaw), and the car no longer chases the look');
 assert(/!o\.userData\.vehicle/.test(extractFunction('instanceEligible')), 'a vehicle is never instanced (so it renders where it is driven)');
 
 // --- build 712: Phase 2 wall collision — each axis of the move is blocked if a wall is within reach (slide), guarded ---

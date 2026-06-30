@@ -14967,27 +14967,23 @@ function driveUpdate(dt){
   else if(boostKey && bMult>1.01 && (o.userData.boostCdT||0)<=0 && throttle>0){ o.userData.boostT=+cfg.boostDur||3; if(typeof playSample==='function') playSample(curSounds().carBoost); }   // engage (forward only) + build 749 boost SFX
   const boosting=o.userData.boostT>0;
   const effCfg = boosting ? { maxSpeed:cfg.maxSpeed*bMult, accel:cfg.accel*1.5, turn:cfg.turn, reverse:cfg.reverse } : cfg;
-  const r = driveStep(o.userData.carSpeed||0, throttle, 0, effCfg, dt);   // driveStep handles the SPEED; steering is mouse-orbit below
+  const r = driveStep(o.userData.carSpeed||0, throttle, 0, effCfg, dt);   // driveStep handles the SPEED; A/D steering is below
   // build 731: engine braking — lifting off the throttle adds a little drivetrain drag on top of driveStep's coast, so the
   // car slows when you come off the gas rather than gliding forever.
   if(Math.abs(throttle)<0.01 && Math.abs(r.speed)>0.4) r.speed *= (1 - Math.min(0.4, 0.8*dt));
   o.userData.carSpeed = r.speed;
-  // build 711: steer toward where the camera is looking (player.yaw, driven by the mouse / right stick). The car curves
-  // to align with your view, rate-limited by its turn speed and scaled by how fast it's moving (no turning at a stop).
+  // turn authority grows with speed (no pivoting in place when parked).
   const speedFrac = Math.min(1, Math.abs(r.speed)/Math.max(1, cfg.maxSpeed*0.22));   // build 712: reach full turn authority sooner
   // build 720: steer the LOGICAL heading (carYaw), decoupled from the prop's mesh rotation, so the model's nose can sit
   // at any offset (modelYaw) and still drive forward correctly.
   if(o.userData.carYaw==null) o.userData.carYaw = o.rotation.y + (cfg.modelYaw||0)*RAD;
-  // build 725: A and D (and the left-stick X) steer too, in conjunction with the mouse — they swing the look heading the
-  // car follows, so you can turn without moving the mouse and over-steer into a drift.
+  // build 764: A / D (and the left-stick X) steer the car DIRECTLY. The mouse no longer steers — it's a free-orbit camera
+  // (it moves player.yaw, which the chase cam orbits on, but does not turn the car). So you can look around while driving.
   let steer=0; if(keys['KeyA']) steer+=1; if(keys['KeyD']) steer-=1;
   if(typeof padMoveX!=='undefined' && padMoveX) steer-=padMoveX;
   steer=Math.max(-1,Math.min(1,steer));
-  if(steer) player.yaw += steer * (cfg.turn*RAD) * 0.85 * dt;
-  let diff = player.yaw - o.userData.carYaw; diff = Math.atan2(Math.sin(diff), Math.cos(diff));   // shortest angle to the look heading
-  const maxStep = (cfg.turn*Math.PI/180) * speedFrac * dt;
   const _yawOld = o.userData.carYaw;
-  o.userData.carYaw += Math.max(-maxStep, Math.min(maxStep, diff));
+  o.userData.carYaw += steer * (cfg.turn*RAD) * speedFrac * dt;
   // build 721: pivot the turn around a point cfg.pivot metres toward the nose (not the mesh origin), so a model whose origin
   // sits at the tail still swings around its middle/front. Shift the origin so that pivot point holds still as the yaw changes.
   const _pv=+cfg.pivot||0;
@@ -15744,7 +15740,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 763 · 2026-06-29';
+const BUILD_VERSION = 'build 764 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
