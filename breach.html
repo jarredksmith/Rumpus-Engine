@@ -15216,10 +15216,11 @@ function driveUpdate(dt){
   const cfg=o.userData.vehicle; if(!cfg){ exitCar(); return; }
   let throttle=0;
   if(keys['KeyW']) throttle+=1; if(keys['KeyS']) throttle-=1;
-  if(padMoveZ) throttle += -padMoveZ;   // left stick / W,S = throttle + reverse
+  if(padMoveZ) throttle += -padMoveZ;   // gamepad left stick / W,S = throttle + reverse
+  else if(typeof touchMoveZ!=='undefined' && touchMoveZ) throttle += -touchMoveZ;   // build 786: mobile joystick drives the car too
   throttle=Math.max(-1,Math.min(1,throttle));
   // build 719: BOOST — hold Shift to surge for boostDur seconds, then a boostCd cooldown before it's ready again.
-  const bMult=+cfg.boost||1, boostKey=(keys['ShiftLeft']||keys['ShiftRight']||(typeof padFiring!=='undefined'&&padFiring));   // build 786: RT also boosts (firing is gated off while driving)
+  const bMult=+cfg.boost||1, boostKey=(keys['ShiftLeft']||keys['ShiftRight']||(typeof padFiring!=='undefined'&&padFiring)||(typeof touchFiring!=='undefined'&&touchFiring));   // build 786: RT / the mobile Fire button also boost (firing is gated off while driving)
   if(o.userData.boostCdT>0) o.userData.boostCdT=Math.max(0, o.userData.boostCdT-dt);
   if(o.userData.boostT>0){ o.userData.boostT-=dt; if(o.userData.boostT<=0){ o.userData.boostT=0; o.userData.boostCdT=+cfg.boostCd||0; } }
   else if(boostKey && bMult>1.01 && (o.userData.boostCdT||0)<=0 && throttle>0){ o.userData.boostT=+cfg.boostDur||3; if(typeof playSample==='function') playSample(curSounds().carBoost); }   // engage (forward only) + build 749 boost SFX
@@ -15239,6 +15240,7 @@ function driveUpdate(dt){
   // (it moves player.yaw, which the chase cam orbits on, but does not turn the car). So you can look around while driving.
   let steer=0; if(keys['KeyA']) steer+=1; if(keys['KeyD']) steer-=1;
   if(typeof padMoveX!=='undefined' && padMoveX) steer-=padMoveX;
+  else if(typeof touchMoveX!=='undefined' && touchMoveX) steer-=touchMoveX;   // build 786: mobile joystick steers (left/right)
   steer=Math.max(-1,Math.min(1,steer));
   const _yawOld = o.userData.carYaw;
   // build 767: reversing inverts the steer response (like a real car backing up): holding A while reversing swings the
@@ -15258,7 +15260,7 @@ function driveUpdate(dt){
   // build 725: GRIP / DRIFT — the travel direction (carVelYaw) chases the heading at a grip rate. Normally sticky, so the
   // car goes where it points; a handbrake (Space / B) or a hard turn at speed lets travel lag the heading => it slides.
   if(o.userData.carVelYaw==null) o.userData.carVelYaw=carYaw;
-  const handbrake=(keys['Space']||keys['KeyB']||(typeof padAds!=='undefined'&&padAds));   // build 786: LT also handbrakes (ADS is gated off while driving)
+  const handbrake=(keys['Space']||keys['KeyB']||(typeof padAds!=='undefined'&&padAds)||(typeof touchAds!=='undefined'&&touchAds));   // build 786: LT / the mobile Aim button also handbrake (ADS is gated off while driving)
   if(handbrake && !o.userData._hbWas && o.userData._carGrounded!==false && Math.abs(o.userData.carSpeed||0)>3 && typeof playSample==='function') playSample(curSounds().carBrake);   // build 749: brake SFX on the rising edge of the handbrake (build 754: only when grounded — airborne tyres can't screech)
   o.userData._hbWas=handbrake;
   const gripBase=Math.max(0.5,+cfg.grip||6), grip=handbrake?gripBase*0.16:gripBase;
@@ -16027,7 +16029,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 786 · 2026-06-30';
+const BUILD_VERSION = 'build 787 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

@@ -6,8 +6,12 @@ const src = gameSource();
 const du = extractFunction('driveUpdate');
 
 // --- held triggers: RT boosts, LT handbrakes (firing/ADS are gated off while driving, so reusing them is safe) ---
-assert(/boostKey=\(keys\['ShiftLeft'\]\|\|keys\['ShiftRight'\]\|\|\(typeof padFiring!=='undefined'&&padFiring\)\)/.test(du), 'RT (padFiring) also engages boost');
-assert(/const handbrake=\(keys\['Space'\]\|\|keys\['KeyB'\]\|\|\(typeof padAds!=='undefined'&&padAds\)\);/.test(du), 'LT (padAds) also engages the handbrake');
+assert(/boostKey=\(keys\['ShiftLeft'\]\|\|keys\['ShiftRight'\]\|\|\(typeof padFiring!=='undefined'&&padFiring\)\|\|\(typeof touchFiring!=='undefined'&&touchFiring\)\)/.test(du), 'RT (padFiring) + mobile Fire engage boost');
+assert(/const handbrake=\(keys\['Space'\]\|\|keys\['KeyB'\]\|\|\(typeof padAds!=='undefined'&&padAds\)\|\|\(typeof touchAds!=='undefined'&&touchAds\)\);/.test(du), 'LT (padAds) + mobile Aim engage the handbrake');
+
+// --- mobile: the virtual joystick drives the car (throttle + steer), mirroring the gamepad left stick ---
+assert(/else if\(typeof touchMoveZ!=='undefined' && touchMoveZ\) throttle \+= -touchMoveZ;/.test(du), 'mobile joystick Y = throttle/reverse');
+assert(/else if\(typeof touchMoveX!=='undefined' && touchMoveX\) steer-=touchMoveX;/.test(du), 'mobile joystick X = steering');
 
 // --- shared toggle helpers so the pad drives the same C / V / H actions the keyboard does ---
 assert(/function _carCycleView\(\)\{ if\(!drivingCar\) return; _carViewOverride = \(_carViewMode\(drivingCar\)==='cockpit'\)\?'chase':'cockpit'; \}/.test(src), 'a shared view toggle helper exists');
