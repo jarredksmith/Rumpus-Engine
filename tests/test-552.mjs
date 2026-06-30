@@ -41,6 +41,16 @@ const du = extractFunction('driveUpdate');
 assert(/let steer=0; if\(keys\['KeyA'\]\) steer\+=1; if\(keys\['KeyD'\]\) steer-=1;/.test(du), 'A/D set the steer input');
 assert(/o\.userData\.carYaw \+= steer \* \(cfg\.turn\*RAD\) \* speedFrac \* dt;/.test(du), 'steer turns the heading directly, scaled by speed (no pivot when parked)');
 assert(!/player\.yaw \+= steer/.test(du) && !/diff = player\.yaw/.test(du), 'A/D no longer move the camera (player.yaw), and the car no longer chases the look');
+
+// --- build 765: optional follow-cam toggle (trails behind the car, recenters when you stop orbiting) ---
+assert(/camFollow:!!v\.camFollow/.test(extractFunction('vehicleApply')), 'vehicleApply stores the follow-cam flag');
+assert(/if\(V\.camFollow\) e\.veh\.camFollow=1;/.test(src), 'follow-cam serialized when on');
+assert(/function _carFollowMode\(o\)\{ if\(_carFollowOverride!=null\) return _carFollowOverride;/.test(src), 'a session override (V) wins over the vehicle default');
+assert(/if\(_carFollowMode\(drivingCar\) && _carViewMode\(drivingCar\)!=='cockpit'\)\{/.test(src), 'the recenter only runs in chase view when follow is on');
+assert(/player\.yaw \+= _rd \* Math\.min\(1, dt\*2\.2\);/.test(src), 'the look heading eases toward the car heading (gentle trail)');
+assert(/if\(drivingCar && mx\) drivingCar\.userData\._lookCd = 0\.6;/.test(src), 'moving the mouse pauses the recenter (free orbit while you look)');
+assert(/e\.code==='KeyV'[\s\S]*?_carFollowOverride = !_carFollowMode\(drivingCar\)/.test(src), 'V toggles follow-cam vs free orbit live');
+assert(/<b>Camera follows the car<\/b>/.test(src), 'the editor exposes the follow-cam toggle');
 assert(/!o\.userData\.vehicle/.test(extractFunction('instanceEligible')), 'a vehicle is never instanced (so it renders where it is driven)');
 
 // --- build 712: Phase 2 wall collision — each axis of the move is blocked if a wall is within reach (slide), guarded ---

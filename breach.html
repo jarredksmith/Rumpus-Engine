@@ -9069,6 +9069,7 @@ addEventListener('keydown', e=>{
   }
   if(e.code==='KeyM' && !e.repeat){ if(gameOn && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade){ openBigMap(); e.preventDefault(); return; } }
   if(e.code==='KeyC' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carViewOverride = (_carViewMode(drivingCar)==='cockpit')?'chase':'cockpit'; e.preventDefault(); return; }   // build 745: toggle chase <-> cockpit view while driving
+  if(e.code==='KeyV' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carFollowOverride = !_carFollowMode(drivingCar); if(typeof flashToast==='function') flashToast('Camera: '+(_carFollowOverride?'follows the car':'free orbit')); e.preventDefault(); return; }   // build 765: toggle follow-cam <-> free orbit while driving
   if(e.code==='KeyN' && !e.repeat){ navOverlayToggle(); e.preventDefault(); return; }   // debug: toggle the bot nav grid overlay
   if(editorOpen) return;   // ignore gameplay keys while editing
   if(e.code==='KeyR') reload();
@@ -9163,6 +9164,7 @@ document.addEventListener('mousemove', e=>{
   player.yaw   -= mx * sens;
   player.pitch -= my * sens;
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+  if(drivingCar && mx) drivingCar.userData._lookCd = 0.6;   // build 765: pause the follow-cam recenter while you orbit with the mouse
 });
 renderer.domElement.addEventListener('mousedown', e=>{
   if(!editorOpen || e.button!==0) return;
@@ -14577,6 +14579,8 @@ const _carQuat = new THREE.Quaternion(), _carEuler = new THREE.Euler(0,0,0,'YXZ'
 const _camFrameQ = new THREE.Quaternion(), _camFrameE = new THREE.Euler(0,0,0,'YXZ'), _seatV = new THREE.Vector3();   // build 745: cockpit camera temps
 let _carViewOverride = null;   // build 745: session toggle (C) overriding the vehicle's default camera view ('chase' | 'cockpit')
 function _carViewMode(o){ if(_carViewOverride) return _carViewOverride; const v=o&&o.userData&&o.userData.vehicle; return (v&&v.camView==='cockpit')?'cockpit':'chase'; }
+let _carFollowOverride = null;   // build 765: session toggle (V) for the follow-cam, overriding the vehicle's default
+function _carFollowMode(o){ if(_carFollowOverride!=null) return _carFollowOverride; const v=o&&o.userData&&o.userData.vehicle; return !!(v&&v.camFollow); }
 function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   maxSpeed:Math.max(2, +v.maxSpeed||16), accel:Math.max(1, +v.accel||18),
   turn:Math.max(10, +v.turn||120), reverse:Math.max(1, +v.reverse||7), units:(v.units==='mph'?'mph':'kph'),
@@ -14589,6 +14593,7 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   animIdle:(''+(v.animIdle||'')), animFwd:(''+(v.animFwd||'')), animBack:(''+(v.animBack||'')), animLeft:(''+(v.animLeft||'')), animRight:(''+(v.animRight||'')),
   ram:(v.ram==null?50:Math.max(0, Math.min(500, +v.ram||0))),
   camView:(v.camView==='cockpit'?'cockpit':'chase'), seatF:(+v.seatF||0), seatU:(v.seatU==null?1:+v.seatU), seatS:(+v.seatS||0),
+  camFollow:!!v.camFollow,
   wheels:(''+(v.wheels||'')), wheelsFront:(''+(v.wheelsFront||'')), wheelAxis:((v.wheelAxis==='y'||v.wheelAxis==='z')?v.wheelAxis:'x'),
   wheelSteer:(v.wheelSteer==null?28:Math.max(0,Math.min(60,+v.wheelSteer||0))), wheelSpin:(v.wheelSpin==null?1:Math.max(-4,Math.min(4,+v.wheelSpin||0))) }; }   // 744: ram; 745: cockpit; 762: procedural wheels
 const _SPEED_UNIT = { kph:{ f:3.6, l:'km/h' }, mph:{ f:2.23694, l:'mph' } };   // m/s -> display
@@ -14805,7 +14810,7 @@ function enterCar(o){
 }
 function exitCar(){
   if(!drivingCar) return;
-  _carViewOverride=null;   // build 745: next car starts at its own default view
+  _carViewOverride=null; _carFollowOverride=null;   // build 745/765: next car starts at its own default view + follow setting
   const o=drivingCar; drivingCar=null; if(o.userData) o.userData.carSpeed=0;
   _engStop(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/738: hide HUD; restore crosshair
   const side=new THREE.Vector3(Math.cos(o.rotation.y),0,-Math.sin(o.rotation.y));   // step out to the side
@@ -15740,7 +15745,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 764 · 2026-06-29';
+const BUILD_VERSION = 'build 765 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18977,7 +18982,17 @@ function loop(){
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
     if(editorBrightLight.intensity !== 0) editorBrightLight.intensity = 0;
     gun.visible=false;
-    const o=drivingCar, yaw=player.yaw, fx=-Math.sin(yaw), fz=-Math.cos(yaw);   // build 711: orbit with the mouse (player.yaw), the car steers to follow
+    // build 765: follow-cam — when enabled (and you're not actively orbiting with the mouse), ease the look heading back
+    // behind the car so the camera trails it through turns. The mouse still freely orbits and pauses this while you move it.
+    if(_carFollowMode(drivingCar) && _carViewMode(drivingCar)!=='cockpit'){
+      drivingCar.userData._lookCd = Math.max(0, (drivingCar.userData._lookCd||0) - dt);
+      if(drivingCar.userData._lookCd<=0 && Math.abs(drivingCar.userData.carSpeed||0)>0.3){
+        let _rd = (drivingCar.userData.carYaw!=null?drivingCar.userData.carYaw:player.yaw) - player.yaw;
+        _rd = Math.atan2(Math.sin(_rd), Math.cos(_rd));
+        player.yaw += _rd * Math.min(1, dt*2.2);   // gentle trail (~0.45s); the car's heading leads, the camera follows
+      }
+    }
+    const o=drivingCar, yaw=player.yaw, fx=-Math.sin(yaw), fz=-Math.cos(yaw);   // build 711/765: chase cam orbits on player.yaw (mouse free-look; follow-cam trails the car)
     const _vv=o.userData.vehicle||{}, _pv=+_vv.pivot||0, _cy=(o.userData.carYaw!=null?o.userData.carYaw:o.rotation.y);   // build 721: orbit the pivot/centre, not the mesh origin
     if(_carViewMode(o)==='cockpit'){   // build 745: driver's POV — camera seated inside the model, looking where you aim (the car follows)
       const _cp=o.userData.carPitch||0, _cr=o.userData.carRoll||0;
@@ -20313,7 +20328,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -23044,6 +23059,9 @@ function renderEditorFields(){
             row('Seat up (m)','seatU', -2, 4, 0.05, 1);
             row('Seat side (m)','seatS', -3, 3, 0.05, 1);
           }
+          // build 765: chase-cam follow toggle — trail behind the car (recenters when you stop orbiting) vs a pure free orbit
+          { const fl=document.createElement('label'); fl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin-top:6px;cursor:pointer;'; const fcb=document.createElement('input'); fcb.type='checkbox'; fcb.checked=!!V.camFollow; fcb.style.accentColor='#7ad7ff'; fcb.onchange=()=>{ pushUndoSnapshot(); V.camFollow=fcb.checked; }; const fsp=document.createElement('span'); fsp.innerHTML='<b>Camera follows the car</b>'; fl.appendChild(fcb); fl.appendChild(fsp); vBody.appendChild(fl);
+            const fh=document.createElement('div'); fh.className='hint'; fh.style.cssText='margin:2px 0 0;font-size:10px;opacity:.85;'; fh.innerHTML='Chase cam trails behind the car and re-centres when you stop moving the mouse (the mouse still free-orbits). Off = a pure free orbit that stays where you point it. Press <b>V</b> while driving to flip it live.'; vBody.appendChild(fh); }
           { const bh=document.createElement('div'); bh.className='hint'; bh.style.margin='8px 0 1px'; bh.innerHTML='<b>Boost</b> — hold <b>Shift</b> while driving. Multiplier 1 = off.'; vBody.appendChild(bh); }
           row('Boost ×','boost', 1, 4, 0.05, 1);
           row('Boost time (s)','boostDur', 0.5, 15, 0.5, 1);
