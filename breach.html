@@ -14921,9 +14921,10 @@ function _carExtents(o){   // half-extents of the vehicle (world AABB if known, 
 const _carShoveDir = { x:0, y:0, z:0 };
 function _carShoveDynamics(o, speed, tx, tz, half, dt){   // tx,tz = unit TRAVEL direction (forward * sign(speed)); returns the mass-weighted reaction on the car
   if(typeof dynamicProps==='undefined' || !dynamicProps.length) return 0;
-  const sp = Math.abs(speed); if(sp < 1.2) return 0;      // must be moving to shove (so a parked car rests against them)
+  const sp = Math.abs(speed); if(sp < 0.2) return 0;      // build 769: react even at a crawl (was 1.2) so props don't clip in; a truly parked car still rests
   const cx=o.position.x, cy=o.position.y, cz=o.position.z;
-  const reach = Math.max(half.hw, half.hd) + 1.1, reach2 = reach*reach;
+  const hd=half.hd, hw=half.hw, rxu=-tz, rzu=tx;          // travel frame: forward = (tx,tz), right = (rxu,rzu)
+  const reach = Math.max(hw, hd) + 1.1, reach2 = reach*reach;
   let reaction=0;
   for(const p of dynamicProps){
     const b = p.userData && p.userData.phys && p.userData.phys.body; if(!b) continue;
@@ -14933,9 +14934,20 @@ function _carShoveDynamics(o, speed, tx, tz, half, dt){   // tx,tz = unit TRAVEL
     const d2=dx*dx+dz*dz; if(d2 > reach2) continue;       // out of footprint reach
     const ahead=dx*tx + dz*tz; if(ahead < -0.3) continue; // behind the travel direction — don't drag it
     const d=Math.sqrt(d2)||1e-4, nx=dx/d, nz=dz/d;
-    _carShoveDir.x = tx*0.65 + nx*0.55; _carShoveDir.y = 0; _carShoveDir.z = tz*0.65 + nz*0.55;   // along travel + away from the car
     const m = p.userData.mass||1;
-    if(typeof pushDynamic==='function') pushDynamic(p, _carShoveDir, sp*m*14*dt, p.position);   // force-like (dt-scaled); pushDynamic adds an upward bias for the launch arc
+    // build 769: PENETRATION SPRING — how far the prop has sunk inside the oriented body footprint (length hd, width hw,
+    // plus the prop's own radius). Push it out the SHALLOWEST edge (front or side), scaled by depth, so even a crawl
+    // separates it instead of letting it clip half-into the car. The speed term still gives the satisfying knock at pace.
+    const pr=(p.userData.physInfo && p.userData.physInfo.radius)||0.4;
+    const side=dx*rxu + dz*rzu;
+    const frontPen=(hd+pr)-ahead, sidePen=(hw+pr)-Math.abs(side);
+    let penImp=0, pxx=nx, pzz=nz;                          // default push = radially away from the car centre
+    if(frontPen>0 && sidePen>0){                           // the prop is overlapping the footprint
+      if(frontPen<=sidePen){ penImp=frontPen; pxx=tx; pzz=tz; }                       // shallowest exit is the front -> push forward
+      else { const s=side>=0?1:-1; penImp=sidePen; pxx=rxu*s; pzz=rzu*s; }            // shallowest exit is a side -> squirt it out sideways
+    }
+    _carShoveDir.x = tx*0.5 + pxx*0.7; _carShoveDir.y = 0; _carShoveDir.z = tz*0.5 + pzz*0.7;
+    if(typeof pushDynamic==='function') pushDynamic(p, _carShoveDir, (sp*14 + penImp*50)*m*dt, p.position);   // speed knock + depth-spring; pushDynamic adds an upward bias for the launch arc
     // build 734: equal-and-opposite — a prop pushes back on the car, scaled by its mass and how head-on the contact is.
     reaction += m * Math.max(0, nx*tx + nz*tz);
   }
@@ -15804,7 +15816,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 768 · 2026-06-29';
+const BUILD_VERSION = 'build 769 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

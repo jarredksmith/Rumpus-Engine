@@ -69,6 +69,24 @@ assert(/m\.material\.color\.setRGB\(1, 0\.32\+0\.55\*f, 0\.10\*f\)/.test(extract
 assert(/if\(_boosting && cfg\.boostFlame\)\{[\s\S]*?_spawnFlame\(/.test(du), 'boosting + the toggle emits flames out the rear');
 assert(/const _fbx=o\.position\.x - hx\*_hd\*0\.96, _fbz=o\.position\.z - hz\*_hd\*0\.96;/.test(du), 'flames spawn at the rear-centre (exhaust) along the heading');
 assert(/<b>Flames on boost<\/b>/.test(src), 'the editor exposes the boost-flame toggle');
+
+// --- build 769: penetration spring so props don't clip half-into the car at low speed ---
+assert(/const sp = Math\.abs\(speed\); if\(sp < 0\.2\) return 0;/.test(extractFunction('_carShoveDynamics')), 'the car reacts at a crawl (shove gate lowered from 1.2 to 0.2 m/s)');
+assert(/const frontPen=\(hd\+pr\)-ahead, sidePen=\(hw\+pr\)-Math\.abs\(side\);/.test(extractFunction('_carShoveDynamics')), 'penetration is measured into the oriented footprint (front + side)');
+assert(/\(sp\*14 \+ penImp\*50\)\*m\*dt/.test(extractFunction('_carShoveDynamics')), 'the impulse is a speed knock plus a depth spring');
+// executable: a slow car still shoves a barrel sunk into its footprint; a near-parked one rests
+{ const calls=[];
+  const dyn=[{ position:{x:1,y:0,z:0}, userData:{ mass:2, physInfo:{radius:0.4}, phys:{ body:{} } } }];
+  const shove = new Function('dynamicProps','heldProp','pushDynamic','_carShoveDir',
+    extractFunction('_carShoveDynamics') + '\nreturn _carShoveDynamics;')(
+    dyn, null, (p,dir,str)=>calls.push(str), {x:0,y:0,z:0});
+  const car={position:{x:0,y:0,z:0}, userData:{}}, half={hw:1, hh:0.5, hd:2.2};
+  calls.length=0; shove(car, 0.3, 1, 0, half, 1/60);
+  assert(calls.length===1 && calls[0]>0, 'a slow (0.3 m/s) car still shoves a barrel sunk into its footprint');
+  calls.length=0; shove(car, 0.1, 1, 0, half, 1/60);
+  assert(calls.length===0, 'a near-parked car (<0.2 m/s) rests against props instead of shoving');
+  calls.length=0; dyn[0].position.x=20; shove(car, 2, 1, 0, half, 1/60);
+  assert(calls.length===0, 'a barrel well out of reach is not shoved'); }
 assert(/!o\.userData\.vehicle/.test(extractFunction('instanceEligible')), 'a vehicle is never instanced (so it renders where it is driven)');
 
 // --- build 712: Phase 2 wall collision — each axis of the move is blocked if a wall is within reach (slide), guarded ---
@@ -170,9 +188,9 @@ assert(/if\(dynamicProps\.length && !skipDynamic\)\{/.test(st), 'skipDynamic dro
 assert(/const s=surfaceTopAt\(x,z,exclude,true,ceilY\);/.test(extractFunction('_carGroundY')), 'the car ground query skips dynamic props + caps at the headroom ceiling');
 const sh = extractFunction('_carShoveDynamics');
 assert(/const b = p\.userData && p\.userData\.phys && p\.userData\.phys\.body; if\(!b\) continue;/.test(sh), 'only dynamic props with a physics body are shoved');
-assert(/if\(sp < 1\.2\) return 0;/.test(sh), 'a near-stopped car does not shove (so it can rest against props)');
+assert(/if\(sp < 0\.2\) return 0;/.test(sh), 'a near-stopped car does not shove (so it can rest against props); build 769 lowered the gate to a crawl');
 assert(/const ahead=dx\*tx \+ dz\*tz; if\(ahead < -0\.3\) continue;/.test(sh), 'props behind the travel direction are not dragged');
-assert(/pushDynamic\(p, _carShoveDir, sp\*m\*14\*dt, p\.position\)/.test(sh), 'shove impulse scales with speed * mass (heavier/faster = bigger launch)');
+assert(/pushDynamic\(p, _carShoveDir, \(sp\*14 \+ penImp\*50\)\*m\*dt, p\.position\)/.test(sh), 'shove impulse = speed knock + penetration spring, scaled by mass');
 assert(/if\(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\{ const _sgn=Math\.sign\(r\.speed\)\|\|1; const _react=_carShoveDynamics\(o, r\.speed, fx\*_sgn, fz\*_sgn, _h, dt\);/.test(du), 'the host/solo shoves dynamic props each frame along the travel direction');
 
 // --- build 734: Newton's 3rd law — a heavy prop shoves the car back (mass matters both ways) ---
