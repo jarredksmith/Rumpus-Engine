@@ -8585,6 +8585,7 @@ let gameCfg = {
     minSpeed:(savedLevel && savedLevel.game && savedLevel.game.fallDamage && savedLevel.game.fallDamage.minSpeed!=null) ? +savedLevel.game.fallDamage.minSpeed : 24,   // safe landing speed; no damage below this
     perUnit: (savedLevel && savedLevel.game && savedLevel.game.fallDamage && savedLevel.game.fallDamage.perUnit!=null) ? +savedLevel.game.fallDamage.perUnit : 1.4,   // damage per (units/s) above the safe speed
   },
+  ragdoll: !!(savedLevel && savedLevel.game && savedLevel.game.ragdoll),   // build 779: physics-corpse ragdoll on death (enemies)
   // Crushing props: a moving physics/animated prop (e.g. a falling box) that hits an actor deals damage. Off by default.
   crushDamage: {
     on:      !!(savedLevel && savedLevel.game && savedLevel.game.crushDamage && savedLevel.game.crushDamage.on),
@@ -12516,7 +12517,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : "";
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -14579,6 +14580,7 @@ function turretFire(){
 // co-op sync.) The movement is a pure function so it's unit-testable without a browser.
 let drivingCar = null, _carReturn = null;
 let _coastingCars = [];   // build 770: cars you bailed out of at speed keep rolling (momentum), decelerating until they stop
+let _corpses = [];        // build 779: Tier-0 ragdoll — dead characters become a tumbling physics body (see spawnCorpse)
 const _carQuat = new THREE.Quaternion(), _carEuler = new THREE.Euler(0,0,0,'YXZ'), _carModelQ = new THREE.Quaternion();   // build 720: reusable temps for the orientation compose
 const _camFrameQ = new THREE.Quaternion(), _camFrameE = new THREE.Euler(0,0,0,'YXZ'), _seatV = new THREE.Vector3();   // build 745: cockpit camera temps
 let _carViewOverride = null;   // build 745: session toggle (C) overriding the vehicle's default camera view ('chase' | 'cockpit')
@@ -15974,7 +15976,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 778 · 2026-06-29';
+const BUILD_VERSION = 'build 779 · 2026-06-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16539,6 +16541,7 @@ function _schedulePhysRebuild(){
 }
 function destroyPhysWorld(){
   if(typeof clearFragments==='function') clearFragments();   // drop transient debris first, so its bodies aren't left dangling after free()
+  if(typeof _clearCorpses==='function') _clearCorpses();     // build 779: ragdoll bodies belong to the world we're about to free
   if(physWorld){ try{ physWorld.free(); }catch(e){} physWorld = null; }
   for(const o of dynamicProps){ if(o.userData.phys) o.userData.phys.body = null; }
   for(const o of colliders){ if(o.userData && o.userData._kbody) o.userData._kbody = null; }
@@ -17117,7 +17120,7 @@ function stepClientPlayerPhys(dt){
 function updatePhysics(dt){
   if(!physWorld) return;
   driveAllHeld();   // command velocity of any grabbed prop toward its hold point before stepping
-  if(!dynamicProps.length && !fragments.length && !(playerPhysMode && playerBody)){ physAccum = 0; return; }   // nothing dynamic to simulate; but if the player is on the physics controller, keep stepping so its collision queries stay fresh (otherwise the player slowly sinks through static-only levels)
+  if(!dynamicProps.length && !fragments.length && !_corpses.length && !(playerPhysMode && playerBody)){ physAccum = 0; return; }   // nothing dynamic to simulate; but if the player is on the physics controller, keep stepping so its collision queries stay fresh (otherwise the player slowly sinks through static-only levels)
   physAccum += Math.min(dt, 0.1);
   // drive kinematic moving-platform bodies to this frame's animated pose; Rapier derives their velocity
   // from the pose delta and imparts it to anything they sweep into (the trebuchet flinging a ball).
@@ -17485,7 +17488,7 @@ function shoot(){
 function enemyHurt(en, dmg, sx, sz){
   if(!en || en.hp<=0) return false;
   en.hp -= dmg;
-  if(en.hp<=0){ killEnemy(en); return true; }
+  if(en.hp<=0){ killEnemy(en, sx, sz); return true; }
   const now=performance.now();
   if(sx!=null && now>(en._evtCd||0) && en.mesh && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
     const eyaw = en.mesh.rotation.y - (en.mesh.userData.faceOff||0);   // logical facing (strip the model's facing offset)
@@ -17495,7 +17498,7 @@ function enemyHurt(en, dmg, sx, sz){
   }
   return false;
 }
-function killEnemy(en){
+function killEnemy(en, sx, sz){
   runKills++;
   spark(en.mesh.position, 0xff2d55); SFX.kill(en.type);   // build 752: per-enemy-type kill sound
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
@@ -17512,8 +17515,12 @@ function killEnemy(en){
     for(let i=0;i<6;i++){ const ox=(Math.random()-0.5)*3, oz=(Math.random()-0.5)*3; spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round(60*run.coinMul)); }
     spark(en.mesh.position, 0xff7b00); flashToast('☠ BOSS DOWN');
   }
-  scene.remove(en.mesh);
-  if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); }   // stop animating a dead enemy
+  // build 779: ragdoll the corpse (carries the killing hit's direction), else just remove the mesh
+  let _rdx, _rdz;
+  if(sx!=null){ _rdx=en.mesh.position.x-sx; _rdz=en.mesh.position.z-sz; const _l=Math.hypot(_rdx,_rdz)||1; _rdx/=_l; _rdz/=_l; }
+  else { const _a=Math.random()*6.2832; _rdx=Math.cos(_a); _rdz=Math.sin(_a); }
+  const _rag = (gameCfg.ragdoll && typeof spawnCorpse==='function') ? spawnCorpse(en.mesh, _rdx, 0, _rdz, 4.5+Math.random()*3.5) : false;
+  if(!_rag){ scene.remove(en.mesh); if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } }   // stop animating a dead enemy
   enemies.splice(enemies.indexOf(en),1);
   score += 100; updateHUD();
   if(en.exploder && !en._detonated){ en._detonated=true; if(typeof explodeAt==='function') explodeAt(en.mesh.position.clone(), en.blastR||6, en.blastDmg||40, en.id); }   // build 628: a downed Sapper still goes off (kill it from range)
@@ -17531,6 +17538,46 @@ function detonateExploder(en){
   if(typeof explodeAt==='function') explodeAt(pos, en.blastR||6, en.blastDmg||40, en.id);
   if(typeof updateHUD==='function') updateHUD();
 }
+// build 779: TIER-0 RAGDOLL ("physics corpse"). On death the character's FROZEN mesh is rigidly attached to one dynamic
+// capsule that tumbles + collides with the world, carrying the killing hit's force. Not floppy limbs, but real physics +
+// ground collisions read as a ragdoll for an arcade FPS — and it works on ANY model (no rig needed). Capped + faded out.
+const _corpV = new THREE.Vector3(), _corpBox = new THREE.Box3(), _corpSz = new THREE.Vector3();
+const RAGDOLL_MAX = 24;
+function spawnCorpse(mesh, dirx, diry, dirz, force){
+  if(!mesh || !physWorld || !RAPIER || !RAPIER.RigidBodyDesc || typeof physWorld.createRigidBody!=='function') return false;
+  _corpBox.setFromObject(mesh); if(_corpBox.isEmpty()) return false; _corpBox.getSize(_corpSz);
+  const totalH=Math.max(0.6, _corpSz.y), r=Math.max(0.16, Math.min(_corpSz.x,_corpSz.z)*0.32), hh=Math.max(0.04, totalH*0.5 - r);
+  if(mesh.userData.mixer){ const mi=mixers.indexOf(mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); }   // freeze the pose
+  mesh.traverse(o=>{ if(o.isMesh && o.material){ o.material = Array.isArray(o.material)?o.material.map(m=>m.clone()):o.material.clone(); } });   // own materials so the fade doesn't touch live enemies
+  const cx=mesh.position.x, cy=(mesh.position.y||0)+totalH*0.5, cz=mesh.position.z, f=Math.max(0, force||4);
+  let rb;
+  try{
+    rb=physWorld.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(cx,cy,cz)
+      .setLinvel((dirx||0)*f, Math.abs(diry||0)*f*0.5 + f*0.45, (dirz||0)*f)
+      .setAngvel({ x:(Math.random()-0.5)*7, y:(Math.random()-0.5)*4, z:(Math.random()-0.5)*7 })
+      .setLinearDamping(0.15).setAngularDamping(0.5).setCcdEnabled(true));
+    physWorld.createCollider(RAPIER.ColliderDesc.capsule(hh, r).setFriction(0.85).setRestitution(0.1).setMass(2.2), rb);
+  }catch(e){ return false; }
+  _corpses.push({ mesh, body:rb, hh:totalH*0.5, t:0, life:7 });
+  if(_corpses.length>RAGDOLL_MAX){ _removeCorpse(_corpses.shift()); }   // recycle the oldest
+  return true;
+}
+function _removeCorpse(c){ if(!c) return; if(c.body && physWorld){ try{ physWorld.removeRigidBody(c.body); }catch(e){} } if(c.mesh) scene.remove(c.mesh); c.body=null; }
+function updateCorpses(dt){
+  for(let i=_corpses.length-1;i>=0;i--){
+    const c=_corpses[i]; c.t+=dt;
+    if(c.body){ const t=c.body.translation(), q=c.body.rotation();
+      c.mesh.quaternion.set(q.x,q.y,q.z,q.w);
+      _corpV.set(0,-c.hh,0).applyQuaternion(c.mesh.quaternion);
+      c.mesh.position.set(t.x+_corpV.x, t.y+_corpV.y, t.z+_corpV.z);
+    }
+    if(c.t > c.life){ const k=1-Math.min(1,(c.t-c.life)/1.2);   // fade out the last 1.2s, then remove
+      if(k<=0){ _removeCorpse(c); _corpses.splice(i,1); continue; }
+      c.mesh.traverse(o=>{ if(o.isMesh && o.material){ const ms=Array.isArray(o.material)?o.material:[o.material]; ms.forEach(m=>{ m.transparent=true; m.opacity=k; }); } });
+    }
+  }
+}
+function _clearCorpses(){ for(const c of _corpses) _removeCorpse(c); _corpses.length=0; }
 
 // ---------- HUD ----------
 const $ = id=>document.getElementById(id);
@@ -19716,6 +19763,7 @@ function loop(){
 
   // physics: host/solo simulate dynamic props; clients receive their transforms via the snapshot.
   { const _a=perfOn?_pnow():0; if(!editorOpen){ if(NET.mode!=='client'){ updatePhysics(dt); updateThrownDamage(dt); crushPass(dt); } else if(playerPhysMode && playerBody && physWorld){ stepClientPlayerPhys(dt); } } if(perfOn)_prof.phys+=_pnow()-_a; }
+  if(!editorOpen && _corpses.length) updateCorpses(dt);   // build 779: ragdoll corpses follow their tumbling bodies
   if(typeof updateFragments==='function') updateFragments();   // advance/cleanup destruction debris
   updateLightBudget();
 
@@ -20641,7 +20689,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
+    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
     extract: extractSpot ? { x: +extractSpot.x.toFixed(3), z: +extractSpot.z.toFixed(3) } : null,
@@ -21119,7 +21167,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : "";
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -22528,6 +22576,9 @@ function renderEditorFields(){
       fdNum('Safe speed', ()=>gameCfg.fallDamage.minSpeed, v=>gameCfg.fallDamage.minSpeed=v, 0, 80, 1, 'Landings slower than this do no damage (higher = more forgiving).');
       fdNum('Damage', ()=>gameCfg.fallDamage.perUnit, v=>gameCfg.fallDamage.perUnit=v, 0, 8, 0.1, 'Damage dealt per unit of speed above the safe speed.');
     }
+    // ---- Ragdoll (build 779) ----
+    hint(gHost, '<b>Ragdoll</b> — dead enemies become a tumbling physics body that flies with the killing hit', '10px 0 4px');
+    fdToggle('<b>Ragdoll on death</b>', ()=>gameCfg.ragdoll, v=>gameCfg.ragdoll=v);
     // ---- Crushing props ----
     if(!gameCfg.crushDamage) gameCfg.crushDamage = { on:false, player:true, ai:true, minSpeed:7, perUnit:2.2 };
     hint(gHost, '<b>Crushing props</b> — a moving prop (e.g. a falling box) that hits someone deals damage', '10px 0 4px');

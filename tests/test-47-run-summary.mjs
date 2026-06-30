@@ -4,7 +4,7 @@ import { gameSource, extractFunction, done, assert, eq } from './harness.mjs';
 const src = gameSource();
 
 assert(/let runKills = 0;/.test(src), 'per-run kill counter exists');
-assert(/function killEnemy\(en\)\{\n  runKills\+\+;/.test(src), 'kills are counted');
+assert(/function killEnemy\(en, sx, sz\)\{\n  runKills\+\+;/.test(src), 'kills are counted');
 assert(/runKills=0;/.test(src), 'kills reset each run');
 assert(/const BEST_KEY='breach_best'/.test(src) && /localStorage\.setItem\(BEST_KEY/.test(src), 'best persists to localStorage');
 assert(/\$\{runSummaryHTML\(\)\}/.test(src), 'summary injected into the end screens');
