@@ -312,6 +312,8 @@ assert(/if\(o\.userData\.vehicle\.headlights && typeof _ensureHeadlights==='func
 assert(/_editorHeadlightPreview\(\(_se && _se\.userData && _se\.userData\.vehicle\) \? _se : null\)/.test(src), 'the editor previews the selected car’s headlights live');
 assert(/e\.code==='KeyH'[\s\S]*?_carHeadOn=!_carHeadOn/.test(src), 'H toggles the headlights while driving');
 assert(/_carHeadOn = \(o\.userData\.vehicle\.headStart!==false\)/.test(extractFunction('enterCar')) && /if\(typeof _headlightsOff==='function'\) _headlightsOff\(\);/.test(extractFunction('exitCar')), 'lights start per the vehicle default on enter, and go off on exit');
+// build 785: getting in a car stows the held flashlight (camera-parented, breaks on the chase cam)
+assert(/if\(flashlightOn && typeof toggleFlashlight==='function'\) toggleFlashlight\(\);/.test(extractFunction('enterCar')), 'the flashlight turns off when you get in a car');
 assert(/<b>Headlights<\/b>/.test(src) && /row\('Range \(m\)','headRange'/.test(src), 'the editor exposes the headlight toggle + controls');
 
 // build 771: the speed/boost shake is toned down (~40% of build 730) + a softer impact jolt
