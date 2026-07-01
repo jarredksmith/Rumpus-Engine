@@ -15238,11 +15238,13 @@ function driveUpdate(dt){
   const cfg=o.userData.vehicle; if(!cfg){ exitCar(); return; }
   let throttle=0;
   if(keys['KeyW']) throttle+=1; if(keys['KeyS']) throttle-=1;
-  if(padMoveZ) throttle += -padMoveZ;   // gamepad left stick / W,S = throttle + reverse
-  else if(typeof touchMoveZ!=='undefined' && touchMoveZ) throttle += -touchMoveZ;   // build 786: mobile joystick drives the car too
+  // build 789: on a controller the RIGHT TRIGGER is the gas (analog) and A is reverse — the left stick steers only, no speed.
+  if(typeof padDriveGas!=='undefined' && padDriveGas>0.06) throttle += padDriveGas;
+  if(typeof padDriveRev!=='undefined' && padDriveRev) throttle -= 1;
+  if(typeof touchMoveZ!=='undefined' && touchMoveZ) throttle += -touchMoveZ;   // build 786: mobile joystick drives the car (throttle + reverse)
   throttle=Math.max(-1,Math.min(1,throttle));
   // build 719: BOOST — hold Shift to surge for boostDur seconds, then a boostCd cooldown before it's ready again.
-  const bMult=+cfg.boost||1, boostKey=(keys['ShiftLeft']||keys['ShiftRight']||(typeof padFiring!=='undefined'&&padFiring)||(typeof touchBoost!=='undefined'&&touchBoost));   // build 786/788: RT / the mobile Boost button engage boost (firing is gated off while driving)
+  const bMult=+cfg.boost||1, boostKey=(keys['ShiftLeft']||keys['ShiftRight']||(typeof padDriveBoost!=='undefined'&&padDriveBoost)||(typeof touchBoost!=='undefined'&&touchBoost));   // build 789: Shift / LT / the mobile Boost button engage boost
   if(o.userData.boostCdT>0) o.userData.boostCdT=Math.max(0, o.userData.boostCdT-dt);
   if(o.userData.boostT>0){ o.userData.boostT-=dt; if(o.userData.boostT<=0){ o.userData.boostT=0; o.userData.boostCdT=+cfg.boostCd||0; } }
   else if(boostKey && bMult>1.01 && (o.userData.boostCdT||0)<=0 && throttle>0){ o.userData.boostT=+cfg.boostDur||3; if(typeof playSample==='function') playSample(curSounds().carBoost); }   // engage (forward only) + build 749 boost SFX
@@ -15282,7 +15284,7 @@ function driveUpdate(dt){
   // build 725: GRIP / DRIFT — the travel direction (carVelYaw) chases the heading at a grip rate. Normally sticky, so the
   // car goes where it points; a handbrake (Space / B) or a hard turn at speed lets travel lag the heading => it slides.
   if(o.userData.carVelYaw==null) o.userData.carVelYaw=carYaw;
-  const handbrake=(keys['Space']||keys['KeyB']||(typeof padAds!=='undefined'&&padAds)||(typeof touchHandbrake!=='undefined'&&touchHandbrake));   // build 786/788: LT / the mobile Brake button engage the handbrake (ADS is gated off while driving)
+  const handbrake=(keys['Space']||keys['KeyB']||(typeof padDriveBrake!=='undefined'&&padDriveBrake)||(typeof touchHandbrake!=='undefined'&&touchHandbrake));   // build 789: Space / B / gamepad B button / the mobile Brake button engage the handbrake
   if(handbrake && !o.userData._hbWas && o.userData._carGrounded!==false && Math.abs(o.userData.carSpeed||0)>3 && typeof playSample==='function') playSample(curSounds().carBrake);   // build 749: brake SFX on the rising edge of the handbrake (build 754: only when grounded — airborne tyres can't screech)
   o.userData._hbWas=handbrake;
   const gripBase=Math.max(0.5,+cfg.grip||6), grip=handbrake?gripBase*0.16:gripBase;
@@ -16026,6 +16028,7 @@ let padPrev = [];                  // previous pressed-states (edge detection)
 let padFiringPrev = false;
 let padRadialPrev = false;
 let padFiring=false, padAds=false, padSprint=false, padJump=false, padCrouch=false, padMoveX=0, padMoveZ=0;
+let padDriveGas=0, padDriveRev=false, padDriveBoost=false, padDriveBrake=false;   // build 789: driving-only controller state — RT=gas, LT=boost, A=reverse, B=handbrake (left stick = steering only)
 const PAD_DEADZONE = 0.18;
 const PAD_LOOK_YAW = 2.8, PAD_LOOK_PITCH = 2.1;   // rad/sec at full right-stick deflection
 addEventListener('gamepadconnected', e=>{ padIndex = e.gamepad.index; const b=$('roomBadge'); /* noop */ const c=$('padNote'); if(c){ c.style.display='block'; } });
@@ -16051,7 +16054,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 788 · 2026-06-30';
+const BUILD_VERSION = 'build 789 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -16078,7 +16081,7 @@ function pollGamepad(dt){
   if(gp) padIndex = gp.index;
   updatePadDebug(pads, gp);
   const note=$('padNote'); if(note) note.style.display = gp ? 'block' : 'none';   // reflect real detection, not just the connect event
-  if(!gp){ padMoveX=0; padMoveZ=0; padSprint=false; padFiring=false; padAds=false; padJump=false; padCrouch=false; return; }
+  if(!gp){ padMoveX=0; padMoveZ=0; padSprint=false; padFiring=false; padAds=false; padJump=false; padCrouch=false; padDriveGas=0; padDriveRev=false; padDriveBoost=false; padDriveBrake=false; return; }
   const bt = gp.buttons, ax = gp.axes;
   const down = i => !!(bt[i] && bt[i].pressed);
   const aval = i => bt[i] ? bt[i].value : 0;
@@ -16091,7 +16094,7 @@ function pollGamepad(dt){
     padPrev = snapshot(); return;
   }
   // Shop / editor: pad idles (no movement/fire) but keep edge state fresh
-  if(shopOpen || editorOpen){ padMoveX=0; padMoveZ=0; padSprint=false; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }
+  if(shopOpen || editorOpen){ padMoveX=0; padMoveZ=0; padSprint=false; padFiring=false; padAds=false; padJump=false; padDriveGas=0; padDriveRev=false; padDriveBoost=false; padDriveBrake=false; padPrev=snapshot(); return; }
 
   // Sticks
   const lx=padDead(ax[0]), ly=padDead(ax[1]), rx=padDead(ax[2]), ry=padDead(ax[3]);
@@ -16117,14 +16120,19 @@ function pollGamepad(dt){
   // Edge-triggered actions
   const edge = i => down(i) && !padPrev[i];
   if(typeof drivingCar!=='undefined' && drivingCar){
-    // build 786: while driving, repurpose the face/D-pad buttons for vehicle controls. Throttle/steer come from the
-    // left stick, look from the right stick, and boost/handbrake are the held triggers (RT/LT), read in driveUpdate.
-    if(edge(3)) interact();                                  // Y — exit the car
-    if(edge(2)) _carCycleHeadlights();                       // X — headlights on/off
-    if(edge(1)) _carCycleView();                             // B — chase <-> cockpit
-    if(edge(0)) _carCycleFollow();                           // A — follow-cam <-> free orbit
+    // build 789: driving control scheme — RT (analog) = gas, LT = boost, left stick = STEERING ONLY. Reverse and the
+    // handbrake move to the face buttons (A / B, held); the camera toggles move to the D-pad. All read in driveUpdate.
+    padDriveGas   = aval(7);                 // RT — analog throttle (gas)
+    padDriveBoost = aval(6) > 0.4 || down(6);// LT — boost
+    padDriveRev   = down(0);                 // A — reverse (held)
+    padDriveBrake = down(1);                 // B — handbrake (held)
+    if(edge(3)) interact();                  // Y — exit the car
+    if(edge(2)) _carCycleHeadlights();       // X — headlights on/off
+    if(edge(12)) _carCycleView();            // D-pad up — chase <-> cockpit
+    if(edge(13)) _carCycleFollow();          // D-pad down — follow-cam <-> free orbit
     padJump = false;
   } else {
+    padDriveGas = 0; padDriveRev = false; padDriveBoost = false; padDriveBrake = false;
     padJump = edge(0);          // A — consumed by the jump check this frame
     if(edge(2)) reload();       // X
     if(edge(3)) interact();     // Y

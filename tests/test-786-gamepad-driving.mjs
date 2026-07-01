@@ -1,30 +1,41 @@
-// (build 786) Driving works on a connected gamepad. Throttle/steer already came from the left stick (padMoveZ/padMoveX)
-// and look from the right stick; this build wires the remaining controls: RT = boost, LT = handbrake, and while driving
-// the face/D-pad edges toggle the vehicle's camera + headlights instead of firing/reloading/cycling weapons.
+// (build 786/789) Driving on a connected gamepad. Steering + look already came from the sticks; build 786 wired the
+// action controls, and build 789 switched to a racing scheme: RIGHT TRIGGER = gas (analog), LEFT TRIGGER = boost, and
+// the LEFT STICK steers ONLY (no speed). Reverse/handbrake move to A/B (held); the camera toggles move to the D-pad.
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
 const du = extractFunction('driveUpdate');
 
-// --- held triggers: RT boosts, LT handbrakes on the gamepad; dedicated Boost/Brake buttons on mobile ---
-assert(/boostKey=\(keys\['ShiftLeft'\]\|\|keys\['ShiftRight'\]\|\|\(typeof padFiring!=='undefined'&&padFiring\)\|\|\(typeof touchBoost!=='undefined'&&touchBoost\)\)/.test(du), 'RT (padFiring) + mobile Boost button engage boost');
-assert(/const handbrake=\(keys\['Space'\]\|\|keys\['KeyB'\]\|\|\(typeof padAds!=='undefined'&&padAds\)\|\|\(typeof touchHandbrake!=='undefined'&&touchHandbrake\)\);/.test(du), 'LT (padAds) + mobile Brake button engage the handbrake');
+// --- gamepad throttle: RT analog = gas, A = reverse; the left stick no longer feeds speed ---
+assert(/if\(typeof padDriveGas!=='undefined' && padDriveGas>0\.06\) throttle \+= padDriveGas;/.test(du), 'RT analog value is the gas');
+assert(/if\(typeof padDriveRev!=='undefined' && padDriveRev\) throttle -= 1;/.test(du), 'A (padDriveRev) reverses');
+assert(!/padMoveZ/.test(du), 'the left stick Y (padMoveZ) no longer drives the car — steering only');
 
-// --- mobile: the virtual joystick drives the car (throttle + steer), mirroring the gamepad left stick ---
-assert(/else if\(typeof touchMoveZ!=='undefined' && touchMoveZ\) throttle \+= -touchMoveZ;/.test(du), 'mobile joystick Y = throttle/reverse');
+// --- boost = LT, handbrake = B (plus keyboard + mobile buttons) ---
+assert(/boostKey=\(keys\['ShiftLeft'\]\|\|keys\['ShiftRight'\]\|\|\(typeof padDriveBoost!=='undefined'&&padDriveBoost\)\|\|\(typeof touchBoost!=='undefined'&&touchBoost\)\)/.test(du), 'LT (padDriveBoost) + mobile Boost button engage boost');
+assert(/const handbrake=\(keys\['Space'\]\|\|keys\['KeyB'\]\|\|\(typeof padDriveBrake!=='undefined'&&padDriveBrake\)\|\|\(typeof touchHandbrake!=='undefined'&&touchHandbrake\)\);/.test(du), 'B (padDriveBrake) + mobile Brake button engage the handbrake');
+
+// --- mobile: the virtual joystick still drives the car (throttle + steer) ---
+assert(/if\(typeof touchMoveZ!=='undefined' && touchMoveZ\) throttle \+= -touchMoveZ;/.test(du), 'mobile joystick Y = throttle/reverse');
 assert(/else if\(typeof touchMoveX!=='undefined' && touchMoveX\) steer-=touchMoveX;/.test(du), 'mobile joystick X = steering');
+// the gamepad left stick X still steers
+assert(/if\(typeof padMoveX!=='undefined' && padMoveX\) steer-=padMoveX;/.test(du), 'the gamepad left stick X steers');
 
 // --- shared toggle helpers so the pad drives the same C / V / H actions the keyboard does ---
 assert(/function _carCycleView\(\)\{ if\(!drivingCar\) return; _carViewOverride = \(_carViewMode\(drivingCar\)==='cockpit'\)\?'chase':'cockpit'; \}/.test(src), 'a shared view toggle helper exists');
 assert(/function _carCycleFollow\(\)\{ if\(!drivingCar\) return; _carFollowOverride = !_carFollowMode\(drivingCar\);/.test(src), 'a shared follow-cam toggle helper exists');
 assert(/function _carCycleHeadlights\(\)\{ if\(!drivingCar \|\| !drivingCar\.userData\.vehicle \|\| !drivingCar\.userData\.vehicle\.headlights\) return; _carHeadOn=!_carHeadOn;/.test(src), 'a shared headlight toggle helper exists (guards on the vehicle having headlights)');
 
-// --- pollGamepad: while driving, the edges are repurposed for the car ---
+// --- pollGamepad: while driving, set the driving state + repurpose the buttons ---
 const pg = extractFunction('pollGamepad');
 assert(/if\(typeof drivingCar!=='undefined' && drivingCar\)\{/.test(pg), 'pollGamepad branches on whether you are driving');
-assert(/if\(edge\(3\)\) interact\(\);[\s\S]*?if\(edge\(2\)\) _carCycleHeadlights\(\);[\s\S]*?if\(edge\(1\)\) _carCycleView\(\);[\s\S]*?if\(edge\(0\)\) _carCycleFollow\(\);/.test(pg), 'driving: Y exits, X = headlights, B = view, A = follow-cam');
-assert(/if\(typeof drivingCar!=='undefined' && drivingCar\)\{[\s\S]*?padJump = false;/.test(pg), 'driving suppresses the jump edge (A is the follow-cam toggle instead)');
+assert(/padDriveGas   = aval\(7\);/.test(pg), 'RT feeds the analog gas');
+assert(/padDriveBoost = aval\(6\) > 0\.4 \|\| down\(6\);/.test(pg), 'LT feeds boost');
+assert(/padDriveRev   = down\(0\);/.test(pg), 'A feeds reverse');
+assert(/padDriveBrake = down\(1\);/.test(pg), 'B feeds the handbrake');
+assert(/if\(edge\(3\)\) interact\(\);[\s\S]*?if\(edge\(2\)\) _carCycleHeadlights\(\);[\s\S]*?if\(edge\(12\)\) _carCycleView\(\);[\s\S]*?if\(edge\(13\)\) _carCycleFollow\(\);/.test(pg), 'driving: Y exits, X = headlights, D-pad up = view, D-pad down = follow-cam');
 
-// --- on foot, the original mapping is intact ---
+// --- on foot, the original mapping is intact + the driving state is cleared ---
+assert(/padDriveGas = 0; padDriveRev = false; padDriveBoost = false; padDriveBrake = false;/.test(pg), 'on foot the driving state resets');
 assert(/\} else \{[\s\S]*?padJump = edge\(0\);[\s\S]*?if\(edge\(2\)\) reload\(\);[\s\S]*?if\(edge\(1\)\) throwGrenade\(\);[\s\S]*?if\(edge\(5\)\) cycleWeapon\(1\);/.test(pg), 'on foot keeps jump / reload / grenade / weapon-cycle');
 
-done('build 786: car/driving controls fully wired for a gamepad');
+done('build 786/789: car/driving controls wired for a gamepad (RT gas, LT boost, stick steers only)');
