@@ -8266,6 +8266,8 @@ function wipeScene(){
   // clear selections so the editor doesn't point at a deleted object
   selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1;
   if(editorTargets.props) editorTargets.props.idx=-1; if(editorTargets.lights) editorTargets.lights.idx=-1; if(editorTargets.spawns) editorTargets.spawns.idx=-1;
+  if(typeof worldCfg!=='undefined'){ _postOffWorld(worldCfg); if(typeof applyWorldCfg==='function') applyWorldCfg(); }   // build 796: clearing the scene turns the post FX off (a clean slate)
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
   if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
   if(typeof renderEditorFields==='function') renderEditorFields();
   if(typeof _enforceModelCacheCap==='function') _enforceModelCacheCap();   // build 576: free VRAM from models with no instances left (recent ones stay warm under the cap)
@@ -8676,7 +8678,12 @@ const player = {
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
 const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
+// build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
+// a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
+// (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
+function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.postVig=0; w.postGrain=0; w.postSat=1; w.postCon=1; return w; }
 let worldCfg = Object.assign({}, DEFAULT_WORLD, (savedLevel && savedLevel.world) || {});
+if(!(savedLevel && savedLevel.world)) _postOffWorld(worldCfg);   // build 796: first-time scene (no saved world) -> post FX off by default
 
 // Apply (or clear) a tiling texture on a shared material. Stores the current url on the material under
 // `urlKey` so re-applying the same url is a no-op. Cross-origin textures load via the proxying loader.
@@ -16136,7 +16143,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 795 · 2026-06-30';
+const BUILD_VERSION = 'build 796 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
