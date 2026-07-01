@@ -14607,6 +14607,25 @@ let _coastingCars = [];   // build 770: cars you bailed out of at speed keep rol
 let _corpses = [];        // build 779: Tier-0 ragdoll — dead characters become a tumbling physics body (see spawnCorpse)
 const _carQuat = new THREE.Quaternion(), _carEuler = new THREE.Euler(0,0,0,'YXZ'), _carModelQ = new THREE.Quaternion();   // build 720: reusable temps for the orientation compose
 const _camFrameQ = new THREE.Quaternion(), _camFrameE = new THREE.Euler(0,0,0,'YXZ'), _seatV = new THREE.Vector3();   // build 745: cockpit camera temps
+// build 795: chase-camera collision — cast from the look pivot out to the wanted camera position; if a wall / prop /
+// building sits between, pull the camera in to just short of that surface so it never clips through. Uses the same
+// `colliders` mesh set the line-of-sight tests use. `ignoreObj` skips the car you're driving (so it can't hit itself).
+const _camColRay = (typeof THREE!=='undefined') ? new THREE.Raycaster() : null;
+const _camColFrom = new THREE.Vector3(), _camColDir = new THREE.Vector3();
+function _cameraCollide(px,py,pz, cx,cy,cz, minDist, ignoreObj){
+  if(!_camColRay || typeof colliders==='undefined' || !colliders || !colliders.length) return null;
+  _camColFrom.set(px,py,pz); _camColDir.set(cx-px, cy-py, cz-pz);
+  const want=_camColDir.length(); if(want<1e-3) return null;
+  _camColDir.multiplyScalar(1/want);
+  _camColRay.set(_camColFrom, _camColDir); _camColRay.near=0; _camColRay.far=want;
+  const hits=_camColRay.intersectObjects(colliders, true);
+  for(const h of hits){
+    if(ignoreObj){ let p=h.object, self=false; while(p){ if(p===ignoreObj){ self=true; break; } p=p.parent; } if(self) continue; }   // don't collide with the car itself
+    const d=Math.max(minDist||0.4, h.distance - 0.35);   // pull in, keep a small skin so the near plane doesn't poke through the surface
+    return _camColFrom.clone().addScaledVector(_camColDir, d);
+  }
+  return null;
+}
 let _carViewOverride = null;   // build 745: session toggle (C) overriding the vehicle's default camera view ('chase' | 'cockpit')
 function _carViewMode(o){ if(_carViewOverride) return _carViewOverride; const v=o&&o.userData&&o.userData.vehicle; return (v&&v.camView==='cockpit')?'cockpit':'chase'; }
 let _carFollowOverride = null;   // build 765: session toggle (V) for the follow-cam, overriding the vehicle's default
@@ -16117,7 +16136,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 794 · 2026-06-30';
+const BUILD_VERSION = 'build 795 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19473,6 +19492,10 @@ function loop(){
       const _cd=Math.max(2.5, _ex.hd*2.4 + _ex.hw*0.5 + 4 + (+_vv.camDist||0));
       const _ch=Math.max(1.2, _ex.hh*1.8 + 1.5 + (+_vv.camHigh||0));
       camera.position.set(_tx - fx*_cd, o.position.y + _ch, _tz - fz*_cd);
+      // build 795: pull the chase cam in if a wall / prop / building sits between it and the car, so it never clips through
+      { const _pvy=o.position.y + Math.max(0.6, _ex.hh*0.8);
+        const _cc=_cameraCollide(_tx, _pvy, _tz, camera.position.x, camera.position.y, camera.position.z, 1.0, o);
+        if(_cc) camera.position.copy(_cc); }
       camera.rotation.order='YXZ'; camera.rotation.y=yaw; camera.rotation.x=-0.28; camera.rotation.z=0;
     }
     // build 730: sense of speed — the FOV eases wider with speed (and a kick on boost), plus a faint shake at pace
