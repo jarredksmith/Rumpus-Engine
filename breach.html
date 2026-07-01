@@ -16215,7 +16215,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 804 · 2026-06-30';
+const BUILD_VERSION = 'build 805 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19611,11 +19611,9 @@ function loop(){
     if(keys['KeyD']) flyPos.addScaledVector(right, spd);
     if(keys['KeyA']) flyPos.addScaledVector(right, -spd);
     if(keys['Space'] || keys['KeyE']) flyPos.y += spd;
-    // Descend on Q, or Ctrl — but NOT while Ctrl is part of a shortcut combo (Ctrl+Z undo, Ctrl+C, etc.),
-    // otherwise undoing in fly mode also sinks the camera.
-    const ctrlHeld = keys['ControlLeft'] || keys['ControlRight'];
-    const ctrlCombo = ctrlHeld && (keys['KeyZ'] || keys['KeyY']);   // undo / redo — don't sink the camera while undoing
-    if(keys['KeyQ'] || (ctrlHeld && !ctrlCombo)) flyPos.y -= spd;
+    // build 805: descend on Q only. Ctrl is NOT a descend key — holding it for a shortcut (Ctrl+Z undo, Ctrl+S, Ctrl+G, …)
+    // was sinking the fly camera. Q keeps the fly controls fully usable without stealing every Ctrl combo.
+    if(keys['KeyQ']) flyPos.y -= spd;
     if(isTouch){ if(touchMoveZ) flyPos.addScaledVector(fwd, -touchMoveZ*spd*1.5); if(touchMoveX) flyPos.addScaledVector(right, touchMoveX*spd*1.5); }   // mobile: joystick flies (look up + forward to ascend)
     camera.position.copy(flyPos);
     camera.rotation.order = 'YXZ';
