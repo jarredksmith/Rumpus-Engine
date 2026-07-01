@@ -15112,16 +15112,21 @@ function _ensureHeadlights(){
   _headL=mk(); _headR=mk();
 }
 function _headlightsOff(){ if(_headL) _headL.intensity=0; if(_headR) _headR.intensity=0; }   // intensity only — never touch visible
+// build 804: the car's body orientation (heading + pitch + roll incl. suspension lean) as a quaternion, so a mounted light
+// offset rides the tilt on a ramp / jump instead of staying flat. Drive-frame local coords: +x = right, +y = up, -z = forward.
+const _cbEuler=new THREE.Euler(0,0,0,'YXZ'), _cbQuat=new THREE.Quaternion(), _cbVec=new THREE.Vector3();
+function _carBodyQuat(o, cy){ const p=(o.userData.carPitch||0)+(o.userData.leanPitch||0), r=(o.userData.carRoll||0)+(o.userData.leanRoll||0); _cbEuler.set(p, cy, r); _cbQuat.setFromEuler(_cbEuler); return _cbQuat; }
 function _placeHeadlights(o, cfg, cy){
   _ensureHeadlights();
-  const hx=-Math.sin(cy), hz=-Math.cos(cy), rx=-hz, rz=hx, f=_carFoot(o);
-  const fwd=f.hd*0.95 + (+cfg.headFwd||0), sep=Math.max(0.05, f.hw*0.62 + (+cfg.headSep||0)), y=o.position.y + Math.max(0.15, f.hh*0.55 + (+cfg.headY||0));
-  const fcx=o.position.x + hx*(f.oz+fwd) + rx*f.ox, fcz=o.position.z + hz*(f.oz+fwd) + rz*f.ox;
+  const f=_carFoot(o), Q=_carBodyQuat(o, cy);
+  const fwd=f.hd*0.95 + (+cfg.headFwd||0), sep=Math.max(0.05, f.hw*0.62 + (+cfg.headSep||0)), up=Math.max(0.15, f.hh*0.55 + (+cfg.headY||0));
   const col=(cfg.headColor!=null?cfg.headColor:0xfff2cc), inten=(cfg.headInten!=null?+cfg.headInten:6), rng=(cfg.headRange!=null?+cfg.headRange:32);
   for(const [L,s] of [[_headL,-1],[_headR,1]]){
     L.intensity=inten; L.color.setHex(col); L.distance=rng;
-    L.position.set(fcx + rx*sep*s, y, fcz + rz*sep*s);
-    L.target.position.set(L.position.x + hx*rng, y - rng*0.14, L.position.z + hz*rng);   // aim forward, dipped a touch
+    _cbVec.set(f.ox + sep*s, up, -(f.oz+fwd)).applyQuaternion(Q);   // mount offset, rotated onto the tilted body
+    L.position.set(o.position.x+_cbVec.x, o.position.y+_cbVec.y, o.position.z+_cbVec.z);
+    _cbVec.set(0, -0.14, -1).applyQuaternion(Q);                    // aim forward + a slight dip, tilting with the car
+    L.target.position.set(L.position.x + _cbVec.x*rng, L.position.y + _cbVec.y*rng, L.position.z + _cbVec.z*rng);
     L.target.updateMatrixWorld();
   }
 }
@@ -15145,14 +15150,14 @@ function _ensureBrakeLights(){
 function _brakeLightsOff(){ if(_brakeL) _brakeL.material.opacity=0; if(_brakeR) _brakeR.material.opacity=0; }
 function _placeBrakeLights(o, cfg, cy, lit){
   _ensureBrakeLights();
-  const hx=-Math.sin(cy), hz=-Math.cos(cy), rx=-hz, rz=hx, f=_carFoot(o);
+  const f=_carFoot(o), Q=_carBodyQuat(o, cy);
   const back=-(f.hd*0.95) - (+cfg.brakeBack||0);   // sit at the TAIL (negative forward), trimmable
-  const sep=Math.max(0.02, f.hw*0.55 + (+cfg.brakeSep||0)), y=o.position.y + (f.hh*0.5 + (+cfg.brakeY||0));   // build 802: no height floor — brakeY can drop the lights all the way to (and below) the model base
-  const bcx=o.position.x + hx*(f.oz+back) + rx*f.ox, bcz=o.position.z + hz*(f.oz+back) + rz*f.ox;
+  const sep=Math.max(0.02, f.hw*0.55 + (+cfg.brakeSep||0)), up=(f.hh*0.5 + (+cfg.brakeY||0));   // build 802: no height floor — brakeY can drop the lights all the way to (and below) the model base
   const col=(cfg.brakeColor!=null?cfg.brakeColor:0xff2020), sz=Math.max(0.12, (cfg.brakeSize!=null?+cfg.brakeSize:0.5));
   for(const [S,s] of [[_brakeL,-1],[_brakeR,1]]){
     S.material.color.setHex(col); S.material.opacity=lit; S.scale.setScalar(sz);
-    S.position.set(bcx + rx*sep*s, y, bcz + rz*sep*s);
+    _cbVec.set(f.ox + sep*s, up, -(f.oz+back)).applyQuaternion(Q);   // build 804: rotate the tail-light offset onto the tilted body so it rides ramps / jumps
+    S.position.set(o.position.x+_cbVec.x, o.position.y+_cbVec.y, o.position.z+_cbVec.z);
   }
 }
 function _updateBrakeLights(o, cfg, braking){
@@ -16210,7 +16215,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 803 · 2026-06-30';
+const BUILD_VERSION = 'build 804 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

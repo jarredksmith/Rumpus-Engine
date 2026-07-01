@@ -303,7 +303,7 @@ assert(/headlights:!!v\.headlights, headColor:\(v\.headColor!=null\?\(v\.headCol
 assert(/if\(V\.headlights\)\{ e\.veh\.headlights=1;/.test(src), 'headlights serialize when on');
 const uhl = extractFunction('_updateHeadlights');
 assert(/if\(!cfg\.headlights \|\| !_carHeadOn \|\| drivingCar!==o\)\{ _headlightsOff\(\); return; \}/.test(uhl), 'headlights only light the car you are driving (and only when toggled on)');
-assert(/L\.target\.position\.set\(L\.position\.x \+ hx\*rng, y - rng\*0\.14, L\.position\.z \+ hz\*rng\)/.test(extractFunction('_placeHeadlights')), 'each headlight aims forward along the heading, dipped slightly');
+assert(/_cbVec\.set\(0, -0\.14, -1\)\.applyQuaternion\(Q\);[\s\S]*?L\.target\.position\.set\(L\.position\.x \+ _cbVec\.x\*rng, L\.position\.y \+ _cbVec\.y\*rng, L\.position\.z \+ _cbVec\.z\*rng\)/.test(extractFunction('_placeHeadlights')), 'each headlight aims forward + dipped, tilting with the car body (build 804)');
 assert(/_updateHeadlights\(o, cfg\)/.test(du), 'driveUpdate positions the headlights each frame');
 // build 782: toggle by INTENSITY (never visible) so the light count is stable — no shader-recompile stall
 assert(/function _headlightsOff\(\)\{ if\(_headL\) _headL\.intensity=0; if\(_headR\) _headR\.intensity=0; \}/.test(src), 'off = intensity 0, the lights stay in the scene (no recompile stall)');
