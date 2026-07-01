@@ -13465,7 +13465,7 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, msg.d, (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
   else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
-  else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); }       // a client shot the host
+  else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us)
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
   else if(msg.t==='died'){ registerDuelKill(msg.by, id); }            // a client died; credit the killer
   else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(msg.from, msg.id)){ const _s=NET.players[msg.from]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, msg.d, _sx, _sz)) registerDuelKill(msg.from, msg.id); } }   // a client shot a bot
@@ -13523,7 +13523,7 @@ function handleHostMsg(msg){
   else if(msg.t==='credit'){ credits+=msg.v; SFX.coin(); updateHUD(); }
   else if(msg.t==='power'){ applyPowerupLocal(msg.k, msg.item); }
   else if(msg.t==='cp'){ NET.cpOwner=msg.o; NET.cpCap=msg.c; NET.cpCapTeam=msg.ct; NET.cpContested=!!msg.x; if(msg.s) NET.cpScore=msg.s; }
-  else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); }        // the host shot this client
+  else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }        // the host shot this client (build 797: a car ram also flings us)
   else if(msg.t==='fire'){ remoteFire(msg.from, msg.o, msg.d, msg.w); }       // someone fired
   else if(msg.t==='rocket'){ fireRocket(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]), msg.by, false, msg.r||7, 0); }   // show another player's rocket (visual)
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), msg.by, false); }   // build 670: show another player's grenade (visual only)
@@ -15194,20 +15194,34 @@ function _carShoveDynamics(o, speed, tx, tz, half, dt){   // tx,tz = unit TRAVEL
 const _carRamBox = (typeof THREE!=='undefined') ? new THREE.Box3() : null;
 function _carRamActors(o, dmg, dt){
   if(dmg<=0.5) return;   // build 772: oriented hit test against the (adjustable) footprint, consistent with the shove + the outline
+  // build 797: a ram doesn't just deal damage — it KNOCKS THE ACTOR FLYING. The fling is mostly the car's travel direction
+  // plus a radial nudge (so an off-centre hit throws them sideways), scaled by speed, with a pop up so they tumble. Passing
+  // the car's position into the hurt call also makes a *lethal* ram ragdoll the corpse away from the car (not a random way).
+  const _tvy=(o.userData.carVelYaw!=null?o.userData.carVelYaw:(o.userData.carYaw||0));
+  const _dfx=-Math.sin(_tvy), _dfz=-Math.cos(_tvy), _sp=Math.abs(o.userData.carSpeed||0);
+  const _kbMag=Math.min(8 + _sp*0.85, 44), _upMag=Math.min(3.5 + _sp*0.16, 11);
+  const _fling=(px,pz)=>{ const rx=px-o.position.x, rz=pz-o.position.z, rl=Math.hypot(rx,rz)||1;
+    let bx=_dfx*0.82 + (rx/rl)*0.5, bz=_dfz*0.82 + (rz/rl)*0.5; const bl=Math.hypot(bx,bz)||1;
+    return { kx:(bx/bl)*_kbMag, kz:(bz/bl)*_kbMag, ky:_upMag }; };
   if(typeof enemies!=='undefined') for(const en of enemies){ if(!en||en.hp<=0||!en.mesh) continue;
     if(en._ramT>0){ en._ramT-=dt; continue; }
     const ep=en.mesh.position;
-    if(_carHitsActor(o, ep.x, ep.y, ep.z, 0.45, 1.7)){ en._ramT=0.4; enemyHurt(en, dmg, null, null); if(typeof spark==='function') spark(ep, 0xff6b6b); }
+    if(_carHitsActor(o, ep.x, ep.y, ep.z, 0.45, 1.7)){ en._ramT=0.4; const F=_fling(ep.x,ep.z);
+      en.evx=(en.evx||0)+F.kx; en.evz=(en.evz||0)+F.kz; en.vy=Math.max(en.vy||0,F.ky); en.grounded=false;   // send them flying + tumbling
+      enemyHurt(en, dmg, o.position.x, o.position.z); if(typeof spark==='function') spark(ep, 0xff6b6b); }
   }
   if(typeof bots!=='undefined') for(const b of bots){ if(b.dead) continue;
     if(b._ramT>0){ b._ramT-=dt; continue; }
-    if(_carHitsActor(o, b.pos.x, b.pos.y, b.pos.z, 0.45, 1.7)){ b._ramT=0.4; botHurt(b, dmg, null, null); }
+    if(_carHitsActor(o, b.pos.x, b.pos.y, b.pos.z, 0.45, 1.7)){ b._ramT=0.4; const F=_fling(b.pos.x,b.pos.z);
+      b.evx=(b.evx||0)+F.kx; b.evz=(b.evz||0)+F.kz; b.vy=Math.max(b.vy||0,F.ky); b.grounded=false;
+      botHurt(b, dmg, o.position.x, o.position.z); }
   }
   if(typeof NET!=='undefined' && NET.players) for(const id in NET.players){ const rp=NET.players[id]; if(!rp||!rp.posEye) continue;
     if(rp._ramT>0){ rp._ramT-=dt; continue; }
     if(rp.hp!=null && rp.hp<=0) continue;
     if(typeof sameTeam==='function' && sameTeam(NET.myId, +id)) continue;
-    if(_carHitsActor(o, rp.posEye.x, rp.posEye.y, rp.posEye.z, 0.45, EYE)){ rp._ramT=0.4; if(typeof sendToPlayer==='function') sendToPlayer(+id, {t:'pvpHit', d:dmg, from:NET.myId}); }
+    if(_carHitsActor(o, rp.posEye.x, rp.posEye.y, rp.posEye.z, 0.45, EYE)){ rp._ramT=0.4; const F=_fling(rp.posEye.x,rp.posEye.z);
+      if(typeof sendToPlayer==='function') sendToPlayer(+id, {t:'pvpHit', d:dmg, kx:F.kx, kz:F.kz, ky:F.ky, from:NET.myId}); }   // tell the rival's client to fling their own player
   }
 }
 // build 775: push the player OUT of a car's (tunable) hit box horizontally — you can't walk through it. Standing on top
@@ -16143,7 +16157,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 796 · 2026-06-30';
+const BUILD_VERSION = 'build 797 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

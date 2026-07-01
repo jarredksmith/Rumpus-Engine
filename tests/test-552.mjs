@@ -375,9 +375,9 @@ assert(/if\(!editorOpen && !mountedTurret\) _resolvePlayerVsCars\(\);/.test(src)
 assert(/ram:\(v\.ram==null\?50:Math\.max\(0, Math\.min\(500, \+v\.ram\|\|0\)\)\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores Ram damage (default 50, on)');
 const cra = extractFunction('_carRamActors');
 // build 772: ram uses the oriented hit footprint (consistent with the shove + the outline)
-assert(/if\(_carHitsActor\(o, ep\.x, ep\.y, ep\.z, 0\.45, 1\.7\)\)\{ en\._ramT=0\.4; enemyHurt\(en, dmg, null, null\);/.test(cra), 'a moving car hurts wave enemies inside its hit footprint');
-assert(/if\(_carHitsActor\(o, b\.pos\.x, b\.pos\.y, b\.pos\.z, 0\.45, 1\.7\)\)\{ b\._ramT=0\.4; botHurt\(b, dmg, null, null\);/.test(cra), 'and bots');
-assert(/sendToPlayer\(\+id, \{t:'pvpHit', d:dmg, from:NET\.myId\}\)/.test(cra) && /sameTeam\(NET\.myId, \+id\)/.test(cra), 'and rival players (PvP, not teammates) via pvpHit');
+assert(/if\(_carHitsActor\(o, ep\.x, ep\.y, ep\.z, 0\.45, 1\.7\)\)\{ en\._ramT=0\.4;[\s\S]*?enemyHurt\(en, dmg, o\.position\.x, o\.position\.z\);/.test(cra), 'a moving car hurts wave enemies inside its hit footprint (build 797: from the car position so the corpse flings away)');
+assert(/if\(_carHitsActor\(o, b\.pos\.x, b\.pos\.y, b\.pos\.z, 0\.45, 1\.7\)\)\{ b\._ramT=0\.4;[\s\S]*?botHurt\(b, dmg, o\.position\.x, o\.position\.z\);/.test(cra), 'and bots');
+assert(/sendToPlayer\(\+id, \{t:'pvpHit', d:dmg, kx:F\.kx, kz:F\.kz, ky:F\.ky, from:NET\.myId\}\)/.test(cra) && /sameTeam\(NET\.myId, \+id\)/.test(cra), 'and rival players (PvP, not teammates) via pvpHit (build 797: carries the knock)');
 assert(/if\(en\._ramT>0\)\{ en\._ramT-=dt; continue; \}/.test(cra), 'a per-target cooldown spaces the hits (one drive-through = a few hits)');
 assert(/if\(\(typeof NET==='undefined' \|\| NET\.mode!=='client'\) && cfg\.ram>0 && Math\.abs\(r\.speed\)>3\)\{/.test(du), 'host/solo authors ram damage, only above a threshold speed');
 assert(/const _rdmg = cfg\.ram \* Math\.min\(1, \(Math\.abs\(r\.speed\)-3\)\/Math\.max\(1, cfg\.maxSpeed\*0\.85-3\)\);/.test(du), 'damage scales from 0 up to the full Ram value near top speed');
