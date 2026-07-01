@@ -8286,7 +8286,7 @@ function removeProp(idx){
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -9052,6 +9052,12 @@ addEventListener('keydown', e=>{
     e.preventDefault();
     return;
   }
+  // build 798: Ctrl/Cmd+G groups the selected props, Ctrl/Cmd+Shift+G ungroups — clicking any member then grabs the whole group
+  if(editorOpen && editorActive==='props' && (e.ctrlKey||e.metaKey) && e.code==='KeyG' && !e.repeat){
+    if(e.shiftKey){ if(typeof ungroupSelectedProps==='function') ungroupSelectedProps(); }
+    else { if(typeof groupSelectedProps==='function') groupSelectedProps(); }
+    keys['KeyG']=false; e.preventDefault(); return;
+  }
   if(editorOpen && (e.code==='Digit1'||e.code==='Digit2'||e.code==='Digit3')){
     // 1/2/3 switch the transform gizmo: Move / Rotate / Scale (Scale n/a for lights)
     const m = e.code==='Digit1' ? 'translate' : (e.code==='Digit2' ? 'rotate' : 'scale');
@@ -9238,8 +9244,9 @@ function _marqueeFinish(e){
     const sx = r.left + (_marqueeV.x*0.5+0.5)*r.width, sy = r.top + (-_marqueeV.y*0.5+0.5)*r.height;
     if(_marqueeV.z < 1 && sx>=x0 && sx<=x1 && sy>=y0 && sy<=y1) hits.push(p);
   }
-  if(e.shiftKey){ for(const o of hits) if(selProps.indexOf(o)<0) selProps.push(o); }   // add to the current selection
-  else { selProps = hits.slice(); selLights = []; }                                     // fresh selection (empty box clears)
+  const _mem = (typeof _groupMembers==='function') ? (o)=>_groupMembers(o) : (o)=>[o];   // build 798: a box that catches any group member grabs the whole group
+  if(e.shiftKey){ for(const o of hits) for(const m of _mem(o)) if(selProps.indexOf(m)<0) selProps.push(m); }   // add to the current selection
+  else { const set=[]; for(const o of hits) for(const m of _mem(o)) if(set.indexOf(m)<0) set.push(m); selProps = set; selLights = []; }   // fresh selection (empty box clears)
   editorActive='props';
   if(selProps.length) editorTargets.props.idx = propModels.indexOf(selProps[selProps.length-1]);
   if(typeof syncModeToActive==='function') syncModeToActive();
@@ -12534,7 +12541,7 @@ function loadLevelFromNet(level){
   // rebuild from the host's data
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -16157,7 +16164,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 797 · 2026-06-30';
+const BUILD_VERSION = 'build 798 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20750,16 +20757,49 @@ function _dupPropForDrag(o){
   _altDup = null;
   spawnProp(srcUrl, t, (obj)=>{ if(wasDyn) setPropDynamic(obj, true); _altDup = obj; editorActive='props'; editorTargets.props.idx = propModels.indexOf(obj); selProps=[obj]; if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateSelectionHighlight==='function') updateSelectionHighlight(); }, undefined, o.userData.animMode || 'loop', propMaterialDesc(o));
 }
-function duplicateSelectedProp(){
-  const i = editorTargets.props.idx;
-  const o = propModels[i]; if(!o) return;
+// build 798: PROP GROUPING — bind several props into one "group" by a shared id. Clicking any member selects the whole
+// group, so the existing multi-selection gizmo moves / rotates / scales them together (about the group's centroid). It's a
+// soft link (props stay flat in propModels, keep their own colliders + physics), which is exactly what "treat these pieces
+// as one thing to transform" needs — no fragile reparenting. The id saves with the level (`gid`).
+let _groupSeq = 0;
+function _newGroupId(){ return 'g'+(++_groupSeq); }
+function _bumpGroupSeq(gid){ if(typeof gid==='string' && gid[0]==='g'){ const n=parseInt(gid.slice(1),10); if(isFinite(n) && n>_groupSeq) _groupSeq=n; } }   // keep new ids ahead of loaded ones
+function _groupMembers(o){ const gid=o&&o.userData&&o.userData.groupId; if(!gid) return o?[o]:[]; return propModels.filter(p=>p&&p.userData&&p.userData.groupId===gid); }
+function groupSelectedProps(){
+  if(!selProps || selProps.length<2) return;   // need at least two pieces to form a group
   pushUndoSnapshot();
-  const src = o.userData.src || PROP_MODEL_URL;
-  const t = [ o.position.x + DUP_OFFSET, o.position.y, o.position.z,
-              o.rotation.x, o.rotation.y, o.rotation.z,
-              o.scale.x, o.scale.y, o.scale.z ];   // 9-tuple keeps non-uniform scale exact
-  const wasDyn = !!o.userData.phys;
-  spawnProp(src, t, (obj)=>{ if(wasDyn) setPropDynamic(obj, true); editorActive='props'; editorTargets.props.idx = propModels.indexOf(obj); selProps=[obj]; renderEditorFields(); }, undefined, o.userData.animMode || 'loop', propMaterialDesc(o));
+  const gid=_newGroupId();
+  for(const o of selProps) if(o&&o.userData) o.userData.groupId=gid;
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof flashToast==='function') flashToast('Grouped '+selProps.length+' props');
+}
+function ungroupSelectedProps(){
+  if(!selProps || !selProps.length || !selProps.some(o=>o&&o.userData&&o.userData.groupId)) return;
+  pushUndoSnapshot();
+  for(const o of selProps) if(o&&o.userData) delete o.userData.groupId;
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof flashToast==='function') flashToast('Ungrouped');
+}
+function duplicateSelectedProp(){
+  // build 798: duplicate the WHOLE current selection (a grouped assembly copies as one unit with a fresh group id), not
+  // just the primary. Falls back to the single primary when nothing else is selected.
+  const list=(selProps && selProps.length) ? selProps.slice() : [ propModels[editorTargets.props.idx] ].filter(Boolean);
+  if(!list.length) return;
+  pushUndoSnapshot();
+  const remap={};   // old group id -> new group id, so a duplicated group stays one group but is independent of the original
+  const made=[]; let pending=list.length;
+  const finish=()=>{ if(pending>0) return; if(made.length){ selProps=made.slice(); editorActive='props'; editorTargets.props.idx=propModels.indexOf(made[made.length-1]); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateSelectionHighlight==='function') updateSelectionHighlight(); } };
+  for(const o of list){ if(!o){ pending--; continue; }
+    const src=o.userData.src || PROP_MODEL_URL;
+    const t=[ o.position.x + DUP_OFFSET, o.position.y, o.position.z, o.rotation.x, o.rotation.y, o.rotation.z, o.scale.x, o.scale.y, o.scale.z ];
+    const wasDyn=!!o.userData.phys, oldGid=o.userData.groupId;
+    const gid = oldGid ? (remap[oldGid] || (remap[oldGid]=_newGroupId())) : null;
+    spawnProp(src, t, (obj)=>{ if(wasDyn) setPropDynamic(obj, true); if(gid) obj.userData.groupId=gid; made.push(obj); pending--; finish(); }, undefined, o.userData.animMode || 'loop', propMaterialDesc(o));
+  }
 }
 function duplicateSelectedLight(){
   const g = lightModels[editorTargets.lights.idx]; if(!g) return;
@@ -20859,6 +20899,7 @@ function propEntry(o){
   const m=propMaterialDesc(o); if(m) e.mat=m;
   if(o.userData.lockId){ e.lk=o.userData.lockId; if(o.userData.lockConsume) e.lkc=1; }
   if(o.userData.tag) e.tg=o.userData.tag;
+  if(o.userData.groupId) e.gid=o.userData.groupId;   // build 798: prop group link
   if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,12).map(s=>String(s).slice(0,200));   // build 695: NPC dialogue
   if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
   if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(s=>{ const x={ w:s.when, d:s.do, t:s.target }; if(s.clip) x.c=s.clip; if(s.cs) x.n=s.cs; if(s.from) x.f=s.from; if(s.contain) x.ci=1; if(s.text) x.tx=s.text; if(s.needItem) x.ni=s.needItem; if(s.needConsume) x.nc=1; if(s.consume) x.cn=1; if(s.sound) x.so=s.sound; return x; });
@@ -21382,7 +21423,7 @@ function restoreLevel(level){
   propModels.length = 0;
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -23301,6 +23342,15 @@ function renderEditorFields(){
       next.onclick = ()=>{ tgt.idx=(tgt.idx+1)%n; if(editorActive==='props') syncSelToIdx(); else if(editorActive==='spawns'){ const g=tgt.obj(); selSpawns=g?[g]:[]; } else if(editorActive==='turrets'){ const g=tgt.obj(); selTurrets=g?[g]:[]; } renderEditorFields(); };
       row.appendChild(prev); row.appendChild(lbl); row.appendChild(next);
       picker.appendChild(row);
+      // build 798: Group / Ungroup for props — bind the current multi-selection so clicking any piece grabs the whole group
+      if(editorActive==='props'){
+        const _selN=(selProps?selProps.length:0), _grouped=selProps && selProps.some(o=>o&&o.userData&&o.userData.groupId);
+        const grow=document.createElement('div'); grow.className='row2'; grow.style.marginBottom='6px';
+        const gb=document.createElement('button'); gb.textContent='⛓ Group'; gb.title='Bind the selected props into one group (Ctrl+G). Clicking any piece then selects the whole group, so move / rotate / scale affect them all.'; gb.disabled=(_selN<2); gb.style.opacity=(_selN<2?'0.5':'1'); gb.onclick=()=>{ if(typeof groupSelectedProps==='function') groupSelectedProps(); };
+        const ub=document.createElement('button'); ub.textContent='✂ Ungroup'; ub.title='Break the group on the selection (Ctrl+Shift+G).'; ub.disabled=!_grouped; ub.style.opacity=(_grouped?'1':'0.5'); ub.onclick=()=>{ if(typeof ungroupSelectedProps==='function') ungroupSelectedProps(); };
+        grow.appendChild(gb); grow.appendChild(ub); picker.appendChild(grow);
+        if(_selN>1 || _grouped){ const gh=document.createElement('div'); gh.className='hint'; gh.style.margin='0 0 7px'; gh.textContent=_grouped?('Grouped — '+_selN+' pieces move together. Shift-click adds to the selection.'):(_selN+' selected. Group them so a click grabs all, then transform as one.'); picker.appendChild(gh); }
+      }
       // behavior mode for the selected spawn
       if(tgt.isSpawns){
         const g = tgt.obj();
@@ -25118,14 +25168,14 @@ renderer.domElement.addEventListener('click', (e)=>{
   else if(picked==='extract'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='extract'; syncModeToActive(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
   else if(picked==='props'){
     const obj = propModels[editorTargets.props.idx];
+    const mem = obj ? _groupMembers(obj) : [];   // build 798: clicking a grouped prop grabs the whole group
     if(e.shiftKey && obj){
-      const at = selProps.indexOf(obj);
-      if(at>=0){ if(selProps.length>1) selProps.splice(at,1); }   // toggle off (keep at least one)
-      else selProps.push(obj);
+      if(selProps.indexOf(obj)>=0){ if(selProps.length>mem.length) for(const m of mem){ const at=selProps.indexOf(m); if(at>=0) selProps.splice(at,1); } }   // toggle the group off (keep at least one)
+      else { for(const m of mem) if(selProps.indexOf(m)<0) selProps.push(m); }
       const primary = selProps[selProps.length-1] || obj;
       editorTargets.props.idx = propModels.indexOf(primary);
     } else {
-      selProps = obj ? [obj] : [];
+      selProps = mem;
     }
     editorActive='props'; syncModeToActive(); renderEditorFields();
   } else if(picked==='lights'){

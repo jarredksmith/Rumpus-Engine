@@ -20,8 +20,8 @@ assert(/addEventListener\('contextmenu', e=>\{ if\(editorOpen && editorTopView\)
 const mf = extractFunction('_marqueeFinish');
 assert(/Math\.abs\(e\.clientX-_marqueeX0\)<=4 && Math\.abs\(e\.clientY-_marqueeY0\)<=4\)\{ editorDragMoved=false; return; \}/.test(mf), 'a negligible drag is treated as a click, not a marquee');
 assert(/_marqueeV\.setFromMatrixPosition\(p\.matrixWorld\); _marqueeV\.project\(cam\);/.test(mf), 'each prop center is projected through the active camera');
-assert(/if\(e\.shiftKey\)\{ for\(const o of hits\) if\(selProps\.indexOf\(o\)<0\) selProps\.push\(o\); \}/.test(mf), 'Shift adds the boxed props to the selection');
-assert(/else \{ selProps = hits\.slice\(\); selLights = \[\]; \}/.test(mf), 'no-Shift replaces the selection (empty box clears)');
+assert(/if\(e\.shiftKey\)\{ for\(const o of hits\) for\(const m of _mem\(o\)\) if\(selProps\.indexOf\(m\)<0\) selProps\.push\(m\); \}/.test(mf), 'Shift adds the boxed props (whole groups) to the selection (build 798)');
+assert(/else \{ const set=\[\]; for\(const o of hits\) for\(const m of _mem\(o\)\) if\(set\.indexOf\(m\)<0\) set\.push\(m\); selProps = set; selLights = \[\]; \}/.test(mf), 'no-Shift replaces the selection with the boxed props + their groups (empty box clears)');
 assert(/editorActive='props'/.test(mf) && /updateSelectionHighlight/.test(mf) && /renderEditorFields/.test(mf), 'selection routes to props + refreshes highlight/panel');
 
 // hint documents it
