@@ -13,4 +13,7 @@ assert(/const _edScroll = editorEl\.scrollTop;[\s\S]{0,520}?if\(typeof _clearPar
 const ch = extractFunction('_clearPartHighlight');
 assert(/if\(_partFlash\)\{ for\(const r of _partFlash\) if\(r\.mat && r\.mat\.emissive\) r\.mat\.emissive\.setHex\(r\.hex\); _partFlash=null; \}/.test(ch), 'clearing restores the saved emissive and clears the tracker');
 
-done('build 806: part-hover highlight self-heals on panel rebuild (no more stuck highlight)');
+// build 807: leaving the whole parts-list container clears the highlight, even if an individual chip's mouseleave is missed
+assert(/pl\.onmouseleave=\(\)=>\{ if\(typeof _clearPartHighlight==='function'\) _clearPartHighlight\(\); \};/.test(src), 'moving out of the parts list clears the highlight (build 807)');
+
+done('build 806/807: part-hover highlight self-heals (panel rebuild + list-leave)');

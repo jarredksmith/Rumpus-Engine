@@ -16215,7 +16215,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 806 · 2026-06-30';
+const BUILD_VERSION = 'build 807 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19284,7 +19284,15 @@ function loop(){
   { const _anow=_pnow(); if(_adaptLast) _adaptResTick(_anow-_adaptLast, _anow); _adaptLast=_anow; }   // adaptive resolution: its own always-on timer
   updatePerfHud();   // measure real frame time every frame (before any early-out)
   if(editorOpen || _cineActive) _dirtyShadows(1);   // authoring + camera moves: keep shadows current
-  else { for(const o of propModels){ const a=o&&o.userData&&o.userData.xa; if(a&&a.on&&a.ph>0&&a.ph<1){ _dirtyShadows(1); break; } } }   // a platform/door mid-travel
+  else {
+    // build 807: shadows are static for perf, but MOVING shadow-casters (a driven/coasting car, a ragdoll, a still-settling
+    // physics prop, or an animated platform) must refresh the sun shadow — otherwise the shadow stays baked where the object
+    // started. Only dirty while something actually moves, so a fully idle scene keeps the cheap static path.
+    let _shDirty = !!drivingCar || (typeof _coastingCars!=='undefined' && _coastingCars.length>0) || (typeof _corpses!=='undefined' && _corpses.length>0);
+    if(!_shDirty){ for(const o of propModels){ const a=o&&o.userData&&o.userData.xa; if(a&&a.on&&a.ph>0&&a.ph<1){ _shDirty=true; break; } } }   // a platform/door mid-travel
+    if(!_shDirty && typeof dynamicProps!=='undefined'){ for(const o of dynamicProps){ const b=o&&o.userData&&o.userData.phys&&o.userData.phys.body; if(b && typeof b.isSleeping==='function' && !b.isSleeping()){ _shDirty=true; break; } } }   // an awake (moving) physics prop
+    if(_shDirty) _dirtyShadows(1);
+  }
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
   if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
@@ -23773,6 +23781,7 @@ function renderEditorFields(){
                 chip.onmouseenter=()=>{ chip.style.background='rgba(56,245,181,0.32)'; if(typeof _setPartHighlight==='function') _setPartHighlight(sel, nm); };   // build 803: hover previews the part (no commit)
                 chip.onmouseleave=()=>{ chip.style.background='rgba(56,245,181,0.12)'; if(typeof _clearPartHighlight==='function') _clearPartHighlight(); };
                 chip.onclick=(ev)=>{ if(typeof _flashModelPart==='function') _flashModelPart(sel, nm); _addToken(ev.shiftKey?'wheelsFront':'wheels', nm); if(typeof _levelDirty!=='undefined') _levelDirty=true; }; pl.appendChild(chip); });
+              pl.onmouseleave=()=>{ if(typeof _clearPartHighlight==='function') _clearPartHighlight(); };   // build 807: leaving the whole list clears the highlight (robust — a chip's own mouseleave can be missed)
               vBody.appendChild(pl); }
             else { const pl=document.createElement('div'); pl.className='hint'; pl.style.cssText='margin:1px 0 4px;font-size:10px;color:#ffd27f;'; pl.textContent='This model exposes no named sub-parts — procedural wheels need a model whose wheels are separate, named meshes.'; vBody.appendChild(pl); }
             const txt=(label,key,ph)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#bfe6ff;font-size:12px;margin-top:5px;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.cssText='min-width:96px;flex:0 0 auto;'; const ti=document.createElement('input'); ti.type='text'; ti.placeholder=ph; ti.value=V[key]||''; ti.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:12px;'; ti.addEventListener('focus',()=>pushUndoSnapshot()); ti.onchange=()=>{ V[key]=ti.value.trim(); }; l.appendChild(sp); l.appendChild(ti); vBody.appendChild(l); _txtRefs[key]=ti; };
