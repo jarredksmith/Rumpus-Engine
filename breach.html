@@ -14686,20 +14686,27 @@ function _engStart(){
     _eng={ o, f, g, sample, scr };
   }catch(e){ _eng=null; }
 }
-function _engUpdate(speed, throttle, slip){
+function _engUpdate(speed, throttle, slip, maxSpeed){
   if(!_eng || typeof actx==='undefined' || !actx) return;
-  const t=actx.currentTime, frac=Math.min(1, Math.abs(speed)/14), gas=Math.abs(throttle)>0.01;
-  // build 731: a simple gearbox — RPM climbs through a gear then DROPS on the upshift, so accelerating sounds like it's
-  // running up and changing gears (and coasting / engine-braking reads as the revs falling away).
+  // build 793: the gearbox now spans the vehicle's REAL top speed (was a fixed /14, which pinned any fast car in top gear
+  // above ~50km/h — "stuck in a gear"). frac = 0..1 across the whole speed range, so gears change all the way up.
+  const t=actx.currentTime, _top=Math.max(6, (+maxSpeed||16)), frac=Math.min(1, Math.abs(speed)/_top), gas=Math.abs(throttle)>0.01;
+  // a simple gearbox — RPM climbs through a gear then DROPS on the upshift, so accelerating sounds like it's running up and
+  // changing gears (coasting / engine-braking reads as the revs falling away).
   const GEARS=5, _g=Math.min(GEARS-1, Math.floor(frac*GEARS)), _rpm=(frac*GEARS)-_g;   // _rpm = 0..1 within the current gear
-  const _revHz=(58 + _g*6) + _rpm*120 + (throttle>0?16:0);
+  // build 793: CLUTCH DIP — when the gear index climbs, briefly duck the volume so you actually HEAR the shift, not just a pitch reset.
+  if(_eng._gear==null) _eng._gear=_g;
+  if(_g>_eng._gear) _eng._shiftT=t+0.13;   // opened a shift window on the upshift
+  _eng._gear=_g;
+  const _shift=(_eng._shiftT && t<_eng._shiftT)?0.5:1;   // duck to 50% while shifting
+  const _revHz=(58 + _g*7) + _rpm*130 + (throttle>0?18:0);   // gear base + in-gear RPM
   try{
-    if(_eng.sample){ _eng.sample.src.playbackRate.setTargetAtTime(0.55 + frac*1.5 + (throttle>0?0.12:0), t, 0.08);   // build 749: custom engine clip pitch/volume ride speed
-      _eng.sample.g.gain.setTargetAtTime(0.18 + frac*0.5 + (gas?0.05:0), t, 0.06); }
+    if(_eng.sample){ _eng.sample.src.playbackRate.setTargetAtTime((0.6 + _g*0.14 + _rpm*0.95 + (throttle>0?0.05:0)), t, 0.06);   // build 749/793: clip pitch steps DOWN on each shift, climbs with RPM
+      _eng.sample.g.gain.setTargetAtTime((0.18 + frac*0.5 + (gas?0.05:0))*_shift, t, 0.06); }
     else if(_eng.o){
-      _eng.o.frequency.setTargetAtTime(_revHz, t, 0.07);
-      _eng.f.frequency.setTargetAtTime(380 + frac*1700, t, 0.1);
-      _eng.g.gain.setTargetAtTime(0.03 + frac*0.085 + (gas?0.02:0), t, 0.06);
+      _eng.o.frequency.setTargetAtTime(_revHz, t, 0.06);
+      _eng.f.frequency.setTargetAtTime(380 + frac*1900, t, 0.1);
+      _eng.g.gain.setTargetAtTime((0.03 + frac*0.09 + (gas?0.02:0))*_shift, t, 0.05);
     }
     if(_eng.scr){ const sl=Math.max(0, Math.min(1, ((slip||0)-0.2)/0.9)) * Math.min(1, Math.abs(speed)/6);   // slide hard + fast = louder screech
       _eng.scr.g.gain.setTargetAtTime(0.0001 + sl*0.12, t, 0.05);
@@ -15436,7 +15443,7 @@ function driveUpdate(dt){
     }
   } else o.userData._flameT=0;
   _fadeSkids(dt); _updateDust(dt, camera && camera.position); _updateFlames(dt, camera && camera.position);
-  _engUpdate(r.speed, throttle, _slip);   // build 715/728: engine pitch/volume + speed HUD + tyre screech (slip)
+  _engUpdate(r.speed, throttle, _slip, cfg.maxSpeed);   // build 715/728/793: engine pitch/volume (gearbox spans real top speed) + tyre screech (slip)
   // build 741: pick the drive-state clip (idle / forward / back / turn L|R) and crossfade to it, if the author mapped any.
   if(o.userData.animActions && o.userData.animActions.length){
     let _as;
@@ -16077,7 +16084,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 792 · 2026-06-30';
+const BUILD_VERSION = 'build 793 · 2026-06-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

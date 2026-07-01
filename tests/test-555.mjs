@@ -8,15 +8,20 @@ const es = extractFunction('_engStart');
 assert(/if\(_eng \|\| typeof actx==='undefined' \|\| !actx \|\| !sfxBus\) return;/.test(es), 'engine start is guarded (no audio context = no-op)');
 assert(/o\.type='sawtooth'/.test(es) && /f\.type='lowpass'/.test(es) && /o\.connect\(f\)\.connect\(g\)\.connect\(sfxBus\)/.test(es), 'osc -> lowpass -> gain -> sfx bus');
 const eu = extractFunction('_engUpdate');
-assert(/const t=actx\.currentTime, frac=Math\.min\(1, Math\.abs\(speed\)\/14\)/.test(eu), 'pitch/volume scale with speed');
-assert(/_eng\.o\.frequency\.setTargetAtTime\(_revHz/.test(eu) && /_eng\.g\.gain\.setTargetAtTime\(0\.03 \+ frac\*0\.085/.test(eu), 'frequency (gearbox rev) + gain ramp with speed/throttle');
-// build 731: gearbox — RPM climbs within a gear then drops on the upshift
+// build 793: the gearbox spans the vehicle's REAL top speed (was a fixed /14 that pinned fast cars in top gear)
+assert(/const t=actx\.currentTime, _top=Math\.max\(6, \(\+maxSpeed\|\|16\)\), frac=Math\.min\(1, Math\.abs\(speed\)\/_top\)/.test(eu), 'pitch/volume scale with speed relative to the real top speed');
+assert(/_eng\.o\.frequency\.setTargetAtTime\(_revHz/.test(eu) && /_eng\.g\.gain\.setTargetAtTime\(\(0\.03 \+ frac\*0\.09/.test(eu), 'frequency (gearbox rev) + gain ramp with speed/throttle');
+// build 731/793: gearbox — RPM climbs within a gear then drops on the upshift; a clutch dip ducks the gain so you hear the shift
 assert(/const GEARS=5, _g=Math\.min\(GEARS-1, Math\.floor\(frac\*GEARS\)\), _rpm=\(frac\*GEARS\)-_g;/.test(eu), 'speed maps to a gear + an in-gear RPM (0..1)');
-assert(/const _revHz=\(58 \+ _g\*6\) \+ _rpm\*120 \+ \(throttle>0\?16:0\);/.test(eu), 'rev pitch = gear base + in-gear RPM (drops on each upshift)');
+assert(/const _revHz=\(58 \+ _g\*7\) \+ _rpm\*130 \+ \(throttle>0\?18:0\);/.test(eu), 'rev pitch = gear base + in-gear RPM (drops on each upshift)');
+assert(/if\(_g>_eng\._gear\) _eng\._shiftT=t\+0\.13;/.test(eu) && /const _shift=\(_eng\._shiftT && t<_eng\._shiftT\)\?0\.5:1;/.test(eu), 'an upshift opens a short window that ducks the volume (clutch dip)');
 assert(/if\(Math\.abs\(throttle\)<0\.01 && Math\.abs\(r\.speed\)>0\.4\) r\.speed \*= \(1 - Math\.min\(0\.4, 0\.8\*dt\)\);/.test(extractFunction('driveUpdate')), 'build 731: engine braking slows the car when off the throttle');
 // executable: RPM resets down at each gear boundary (the upshift)
-{ const GEARS=5, rev=frac=>{ const g=Math.min(GEARS-1,Math.floor(frac*GEARS)), rpm=(frac*GEARS)-g; return (58+g*6)+rpm*120; };
-  assert(rev(0.199) > rev(0.201), 'crossing into the next gear drops the revs (an upshift)'); }
+{ const GEARS=5, rev=frac=>{ const g=Math.min(GEARS-1,Math.floor(frac*GEARS)), rpm=(frac*GEARS)-g; return (58+g*7)+rpm*130; };
+  assert(rev(0.199) > rev(0.201), 'crossing into the next gear drops the revs (an upshift)');
+  // and with the real-top-speed scaling, a fast car still shifts across the range (not pinned at frac=1)
+  const fr=(spd,top)=>Math.min(1,Math.abs(spd)/Math.max(6,top||16));
+  assert(fr(20,60) < 0.4 && fr(50,60) > 0.8, 'a 60-unit car spreads the gears across its whole range (20 vs 50 land in different gears)'); }
 assert(/e\.o\.stop\(t\+0\.2\)/.test(extractFunction('_engStop')) && /e\.o\.disconnect\(\)/.test(extractFunction('_engStop')), 'stop ramps down, stops, and disconnects the nodes (no leak)');
 
 // --- lifecycle: start + show on enter, stop + hide on exit, killed on deploy ---
@@ -26,7 +31,7 @@ assert(/if\(typeof _engStop==='function'\) _engStop\(\);/.test(extractFunction('
 
 // --- per-frame update: engine + speedometer (km/h + bar) ---
 const du = extractFunction('driveUpdate');
-assert(/_engUpdate\(r\.speed, throttle, _slip\);/.test(du), 'the engine is updated each frame with speed + throttle + slip (build 728 screech)');
+assert(/_engUpdate\(r\.speed, throttle, _slip, cfg\.maxSpeed\);/.test(du), 'the engine is updated each frame with speed + throttle + slip + the top speed (build 793 gearbox scaling)');
 assert(/const U=_SPEED_UNIT\[cfg\.units\]\|\|_SPEED_UNIT\.kph;/.test(du) && /v\.textContent=Math\.round\(Math\.abs\(r\.speed\)\*U\.f\)/.test(du), 'speed shown in the vehicle’s unit (km/h or mph)');
 assert(/un\.textContent=U\.l/.test(du), 'the unit label tracks the setting');
 assert(/const _frac=Math\.min\(1, Math\.abs\(r\.speed\)\/Math\.max\(1,cfg\.maxSpeed\)\);/.test(du) && /a\.style\.strokeDashoffset=\(245\*\(1-_frac\)\)\.toFixed\(1\);/.test(du), 'build 743: the circular gauge fills toward top speed (arc dashoffset)');
@@ -74,7 +79,7 @@ assert(/const _cx=document\.getElementById\('crosshair'\); if\(_cx\) _cx\.style\
 // build 749: custom car SFX — engine clip loop (else synth) + brake / skid / boost one-shots
 const es3 = extractFunction('_engStart'), eu3 = extractFunction('_engUpdate');
 assert(/const engUrl=\(typeof curSounds==='function'\)\?curSounds\(\)\.carEngine:'';/.test(es3) && /es\.loop=true;/.test(es3), 'a set engine clip is looped (else the synth osc is used)');
-assert(/if\(_eng\.sample\)\{ _eng\.sample\.src\.playbackRate\.setTargetAtTime\(0\.55 \+ frac\*1\.5/.test(eu3) && /else if\(_eng\.o\)\{/.test(eu3), 'the engine clip pitch/volume track speed; the synth path is the fallback');
+assert(/if\(_eng\.sample\)\{ _eng\.sample\.src\.playbackRate\.setTargetAtTime\(\(0\.6 \+ _g\*0\.14 \+ _rpm\*0\.95/.test(eu3) && /else if\(_eng\.o\)\{/.test(eu3), 'the engine clip pitch steps down on each gear + climbs with RPM; the synth path is the fallback (build 793)');
 assert(/playSample\(curSounds\(\)\.carBoost\)/.test(du), 'boost plays the car-boost clip');
 assert(/if\(handbrake && !o\.userData\._hbWas && o\.userData\._carGrounded!==false && Math\.abs\(o\.userData\.carSpeed\|\|0\)>3 && typeof playSample==='function'\) playSample\(curSounds\(\)\.carBrake\);/.test(du), 'the handbrake plays the brake clip on its rising edge — only when grounded (build 754)');
 assert(/if\(_sliding && !o\.userData\._slideWas && _grounded && Math\.abs\(r\.speed\)>4 && typeof playSample==='function'\) playSample\(curSounds\(\)\.carSkid\);/.test(du), 'a starting slide plays the skid clip (grounded only, build 754)');
