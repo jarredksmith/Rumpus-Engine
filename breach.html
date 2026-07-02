@@ -15643,7 +15643,13 @@ function driveUpdate(dt){
   // to ~0 and the car can no longer creep up an (often invisible) vertical collider onto the roof. Real ramps move the car
   // forward, so they climb normally; this also keeps a high-speed kerb hit from rocketing it skyward.
   const _horiz=Math.hypot(mvx,mvz);
-  const _budget=(_horiz>0.015 ? 0.05 : 0) + _horiz*1.3;   // ~52° max climb relative to forward travel; ~0 when blocked
+  // build 826: scale the climb budget by CARRIED SPEED (momentum), not only this-frame displacement. At a ramp LIP the nose
+  // briefly stalls forward progress for a frame — the old displacement-only floor (0.05) then collapsed the budget and the
+  // chassis sank into the slab (the clip the player saw). Momentum persists across that one stalled frame, so the car keeps
+  // climbing cleanly. The guard still holds: a wall zeroes mvx/mvz (blocked -> _horiz 0 -> budget 0) AND the bonk below
+  // bleeds carSpeed to ~10% on contact, so a genuine wall can never ladder the car up onto its roof.
+  const _spd=Math.abs(o.userData.carSpeed||0);
+  const _budget=(_horiz>0.015 ? Math.max(_horiz*1.3, _spd*dt*1.15) : 0);   // ~52°+ climb while moving; ~0 the instant it's blocked
   if(_rest > _cy + _budget) _rest = _cy + _budget;
   let _vy=o.userData.carVelY||0; const _climb=(_rest-_cy)/dt;
   _vy -= GRAV*(_airb?1:0.85)*dt; let _ny=_cy+_vy*dt; const _SNAP=Math.max(0.45,_h.hh);   // build 824: FULL gravity in flight — a proper heavy arc, not a float
@@ -15686,13 +15692,16 @@ function driveUpdate(dt){
   // at 0). Clamping the final angle instead gives correct ramp pitch at any length, while a sideways wall still can't flip it:
   // pitch (front/back, where ramps live) is allowed steep; roll (sideways) is capped tighter so a wall can only lean it, not bury it.
   const _TP=0.72, _TR=0.42;   // pitch up to ~41° (steep ramps ok); roll up to ~24° (a wall leans it, never rolls it over)
-  const _k=Math.min(1, dt*9);
+  // build 826: track PITCH faster than roll. Ramps live in pitch, and the old dt*9 ease lagged the slope as the car drove
+  // onto a ramp — the nose stayed flat for ~7 frames and dug into the incline before catching up (part of the "clipping"
+  // feel). dt*14 snaps the nose onto the ramp promptly; roll stays gentle so a sideways wall only leans the body, no snap.
+  const _kp=Math.min(1, dt*14), _kr=Math.min(1, dt*9);
   if(_grounded){
     // on a surface the body pitches/rolls to the slope (angle-clamped so a wall can only lean it, never bury it)
     let _tp=Math.atan2(gF-gB, 2*_hd), _tr=Math.atan2(gR-gL, 2*_hw);
     _tp=Math.max(-_TP,Math.min(_TP,_tp)); _tr=Math.max(-_TR,Math.min(_TR,_tr));
-    o.userData.carPitch=(o.userData.carPitch||0)+(_tp-(o.userData.carPitch||0))*_k;
-    o.userData.carRoll =(o.userData.carRoll ||0)+(_tr-(o.userData.carRoll ||0))*_k;
+    o.userData.carPitch=(o.userData.carPitch||0)+(_tp-(o.userData.carPitch||0))*_kp;
+    o.userData.carRoll =(o.userData.carRoll ||0)+(_tr-(o.userData.carRoll ||0))*_kr;
   } else {
     // build 792: AIR CONTROL — the throttle tilts the nose in the air (gas = nose up, brake/reverse = nose down) so you can
     // level a landing or exaggerate a jump. With no throttle the nose auto-levels toward the flight arc (the build-790 arc).
@@ -16414,7 +16423,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 825 · 2026-07-02';
+const BUILD_VERSION = 'build 826 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

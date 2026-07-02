@@ -6,7 +6,7 @@ const src = gameSource();
 const du = extractFunction('driveUpdate');
 
 // grounded vs airborne split
-assert(/const _k=Math\.min\(1, dt\*9\);\s*\n\s*if\(_grounded\)\{/.test(du), 'the tilt solve branches grounded vs airborne');
+assert(/const _kp=Math\.min\(1, dt\*14\), _kr=Math\.min\(1, dt\*9\);\s*\n\s*if\(_grounded\)\{/.test(du), 'the tilt solve branches grounded vs airborne (build 826: pitch dt*14, roll dt*9)');
 
 // airborne: throttle drives the pitch, bounded around the arc
 assert(/const _arc=Math\.atan2\(_vy, Math\.max\(4,Math\.abs\(r\.speed\)\)\);/.test(du), 'the flight arc is the auto-level anchor');

@@ -196,12 +196,16 @@ assert(/camDist:\+v\.camDist\|\|0, camHigh:\+v\.camHigh\|\|0, rideHeight:\+v\.ri
 assert(/o\.userData\.carBaseOff = _bb\.isEmpty\(\)\?0:\(o\.position\.y - _bb\.min\.y\);/.test(extractFunction('enterCar')), 'entering measures origin->lowest-point so the wheels rest on the ground');
 assert(/const _base=\(o\.userData\.carBaseOff\|\|0\)\+\(\+cfg\.rideHeight\|\|0\); let _rest=gC\+_base;/.test(du), 'the car rests at ground + base offset (+ ride trim), not origin-on-ground');
 assert(/if\(_ny<=_rest\)\{ _ny=_rest;/.test(du) && /const _grounded=\(_ny-_rest\)<0\.12;/.test(du), 'the vertical solve snaps + grounds against the rest height');
-assert(/const _horiz=Math\.hypot\(mvx,mvz\);/.test(du) && /const _budget=\(_horiz>0\.015 \? 0\.05 : 0\) \+ _horiz\*1\.3;/.test(du) && /if\(_rest > _cy \+ _budget\) _rest = _cy \+ _budget;/.test(du), 'build 724/742: climb is capped to forward progress (~52° slope) — a wall stops forward motion so the car cannot drive up it onto a roof');
+assert(/const _horiz=Math\.hypot\(mvx,mvz\);/.test(du) && /const _budget=\(_horiz>0\.015 \? Math\.max\(_horiz\*1\.3, _spd\*dt\*1\.15\) : 0\);/.test(du) && /if\(_rest > _cy \+ _budget\) _rest = _cy \+ _budget;/.test(du), 'build 724/742/826: climb is capped to forward progress OR carried momentum (~52°+ slope) — a wall zeroes forward motion so the car cannot drive up it onto a roof');
 
-// executable: a blocked car (no forward progress) cannot climb; a moving car can climb a drivable slope
-{ const budget=(mvx,mvz)=>{ const h=Math.hypot(mvx,mvz); return (h>0.015?0.05:0)+h*1.3; };
-  assert(budget(0,0) < 0.001, 'a fully-blocked car gets ~no climb budget (cannot drive up a wall)');
-  assert(budget(0.16,0) > 0.16*Math.tan(45*Math.PI/180), 'a car moving 0.16/frame can still climb a 45° ramp'); }
+// executable: a blocked car (no forward progress) cannot climb; a moving car can climb a drivable slope. build 826: the
+// budget takes max(this-frame displacement, carried-speed*dt) so a ramp LIP (one stalled frame, momentum retained) keeps
+// climbing — but a blocked car (_horiz==0) still gets zero regardless of the speed it WAS carrying.
+{ const budget=(mvx,mvz,spd,dt=1/60)=>{ const h=Math.hypot(mvx,mvz); return (h>0.015? Math.max(h*1.3, spd*dt*1.15) : 0); };
+  assert(budget(0,0,20) < 0.001, 'a fully-blocked car gets ~no climb budget even at speed (cannot drive up a wall)');
+  assert(budget(0.16,0,10) > 0.16*Math.tan(45*Math.PI/180), 'a car moving 0.16/frame can still climb a 45° ramp');
+  // the lip: forward displacement collapses to a crawl for one frame but momentum (speed) is retained -> budget stays open
+  assert(budget(0.02,0,18) > budget(0.02,0,0), 'at a ramp lip the carried speed keeps the climb budget open (no sink/clip)'); }
 assert(/const _cd=Math\.max\(2\.5, _ex\.hd\*2\.4 \+ _ex\.hw\*0\.5 \+ 4 \+ \(\+_vv\.camDist\|\|0\)\);/.test(src), 'chase-cam distance fits the model depth/width, trimmable by camDist');
 assert(/const _ch=Math\.max\(1\.2, _ex\.hh\*1\.8 \+ 1\.5 \+ \(\+_vv\.camHigh\|\|0\)\);/.test(src) && /camera\.position\.set\(_tx - fx\*_cd, o\.position\.y \+ _ch, _tz - fz\*_cd\)/.test(src), 'chase-cam height fits the model height, trimmable by camHigh');
 assert(/if\(V\.camDist\) e\.veh\.camDist=V\.camDist; if\(V\.camHigh\) e\.veh\.camHigh=V\.camHigh; if\(V\.rideHeight\) e\.veh\.rideHeight=V\.rideHeight;/.test(src), 'camera + ride trims serialized');

@@ -2,8 +2,9 @@
 //  1. cell-moved / airborne enemies re-grounded unbudgeted — a blast launching a wave fired ~3 casts x N enemies on ONE
 //     frame (the exact spike the budget system exists to stop). They now draw from their own larger pool (8/frame);
 //     over-budget movers reuse last frame's cached ground for one frame.
-//  2. the driven car sampled the ground at 5 points every frame. The 4 OUTER corners only feed the body tilt (eased at
-//     dt*9), so they now refresh at ~25Hz / on movement; only the centre (rest height / landing) stays frame-live.
+//  2. the driven car sampled the ground at 5 points every frame. The 4 OUTER corners only feed the body tilt (eased, and as
+//     of build 826 pitch tracks at dt*14 / roll at dt*9), so they refresh at ~25Hz / on movement; only the centre (rest
+//     height / landing) stays frame-live.
 import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
