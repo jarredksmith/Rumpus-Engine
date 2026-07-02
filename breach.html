@@ -6244,7 +6244,7 @@ _applyPixelRatio();
 // Rolling frame-time monitor (always on, ~free). Targets ~50fps; if we miss it for a stretch, drop a
 // step; if we beat ~58fps comfortably for longer, climb back. Asymmetric: quick to relieve, slow to push.
 let _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
-const ADAPT_ENABLED_DEFAULT = IS_COARSE;   // on for touch by default; desktop opts in
+const ADAPT_ENABLED_DEFAULT = true;   // build 810: on by default everywhere (was touch-only) — desktop laptops need the relief too; opt out via the setting
 let _adaptOn = ADAPT_ENABLED_DEFAULT;
 try{ const v=localStorage.getItem('breach_adaptres'); if(v==='on') _adaptOn=true; else if(v==='off') _adaptOn=false; }catch(e){}
 function _adaptResTick(frameMs, now){
@@ -6425,6 +6425,14 @@ function _renderPostFX(scn, cam){
   // 3) composite (scene + bloom + grade + vignette + grain) -> full res
   const cu=_matComp.uniforms; cu.tColor.value=_postRT.texture; cu.tBloom.value=_bloomRT.texture;
   cu.uBloom.value=_postBloom; cu.uVig.value=_postVig; cu.uGrain.value=_postGrain; cu.uSat.value=_postSat; cu.uCon.value=_postCon; cu.uTime.value=(performance.now()*0.001)%1000;
+  // build 810: with motion blur ~0 (or shed by adaptive res at its lowest step), composite STRAIGHT TO SCREEN — the
+  // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
+  // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
+  const _mbOn = _postMotion>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);
+  if(!_mbOn){
+    _postQuad.material=_matComp; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
+    return;
+  }
   _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
   // 4) motion blur: blend with the previous frame -> _afterB
   _matAfter.uniforms.tNew.value=_compRT.texture; _matAfter.uniforms.tOld.value=_afterA.texture; _matAfter.uniforms.uDamp.value=_postMotion;
@@ -16224,7 +16232,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 809 · 2026-07-02';
+const BUILD_VERSION = 'build 810 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
