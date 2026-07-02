@@ -17,6 +17,6 @@ assert(/if\(surviveLeft<=0\)\{ surviveLeft=0; if\(typeof gameWon==='function'\) 
 const aos = extractFunction('applyObjectiveSnapshot');
 assert(/O\.o==='defend'/.test(aos) && /extractZone\.visible=true/.test(aos), 'client shows defend zone');
 // editor button + params
-assert(/obBtn\('defend','🛡 Defend'\)/.test(src), 'editor has a Defend button');
+assert(/obBtn\('defend',_icn\('shield'\)\+'Defend'\)/.test(src), 'editor has a Defend button (build 819: SVG icon)');
 assert(/objectiveActive\(\)==='defend'\)\{\n\s*const drow=/.test(src), 'editor exposes defend params');
 done();

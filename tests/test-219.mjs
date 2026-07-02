@@ -15,5 +15,5 @@ assert(/objectiveActive\(\)==='escort'/.test(hud) && /STAY CLOSE/.test(hud), 'es
 assert(/es:\[\+escortPos\.x\.toFixed\(2\), \+escortPos\.z\.toFixed\(2\)\], ep:_escortPct, en:_escortNear\?1:0/.test(src), 'escort synced to clients');
 const aos = extractFunction('applyObjectiveSnapshot');
 assert(/O\.o==='escort'/.test(aos) && /_ensureEscortMarker\(\); escortMarker\.visible=true;/.test(aos), 'client renders the payload');
-assert(/obBtn\('escort','🚚 Escort'\)/.test(src), 'editor has an Escort button');
+assert(/obBtn\('escort',_icn\('truck'\)\+'Escort'\)/.test(src), 'editor has an Escort button (build 819: SVG icon)');
 done();

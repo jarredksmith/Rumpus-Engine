@@ -23,6 +23,6 @@ assert(/NO TARGETS SET/.test(hud) && /DESTROY '\+\(_destroyTotal-_destroyRemain\
 assert(/dd:_destroyTotal-_destroyRemain, dn:_destroyTotal/.test(src), 'destroy progress sent to clients');
 const aos = extractFunction('applyObjectiveSnapshot');
 assert(/O\.o==='destroy'/.test(aos), 'client shows destroy progress');
-assert(/obBtn\('destroy','💥 Destroy'\)/.test(src), 'editor has a Destroy button');
+assert(/obBtn\('destroy',_icn\('blast'\)\+'Destroy'\)/.test(src), 'editor has a Destroy button (build 819: SVG icon)');
 assert(/Objective target/.test(src), 'prop editor exposes the objective-target toggle');
 done();

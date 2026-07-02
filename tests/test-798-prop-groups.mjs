@@ -34,8 +34,8 @@ assert(/const mem = obj \? _groupMembers\(obj\) : \[\];/.test(src) && /selProps 
 assert(/\(e\.ctrlKey\|\|e\.metaKey\) && e\.code==='KeyG'[\s\S]*?ungroupSelectedProps\(\)[\s\S]*?groupSelectedProps\(\)/.test(src), 'Ctrl/Cmd+G groups, +Shift ungroups');
 
 // --- Group / Ungroup buttons, gated on the selection ---
-assert(/gb\.textContent='⛓ Group'; gb\.title=[\s\S]*?gb\.disabled=\(_selN<2\)/.test(src), 'a Group button (disabled under 2 selected)');
-assert(/ub\.textContent='✂ Ungroup'; ub\.title=[\s\S]*?ub\.disabled=!_grouped/.test(src), 'an Ungroup button (disabled when nothing is grouped)');
+assert(/gb\.innerHTML=_icn\('chain'\)\+'Group'; gb\.title=[\s\S]*?gb\.disabled=\(_selN<2\)/.test(src), 'a Group button (disabled under 2 selected; build 819: SVG icon)');
+assert(/ub\.innerHTML=_icn\('scissors'\)\+'Ungroup'; ub\.title=[\s\S]*?ub\.disabled=!_grouped/.test(src), 'an Ungroup button (disabled when nothing is grouped; SVG icon)');
 
 // --- serialize + load round-trips the group id ---
 assert(/if\(o\.userData\.groupId\) e\.gid=o\.userData\.groupId;/.test(extractFunction('propEntry')), 'the group id serializes as gid');

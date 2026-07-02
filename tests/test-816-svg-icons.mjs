@@ -22,7 +22,7 @@ assert((src.match(/_icn\('search'\)\+'Poly Pizza/g)||[]).length===3, 'the three 
 // no color-emoji remain on those controls (comments don't count)
 {
   const code = src.split('\n').map(l=>l.replace(/\/\/.*$/,'')).join('\n');
-  for(const em of ['💾','🔗','⬇','⬆','🗑','🔍','👁','➕'])
+  for(const em of ['💾','🔗','⬇','⬆','🗑','🔍','👁','➕','🎯','⏱','📦','🛡','💥','🚚','🧩','🎲','🗺','🚶','💨','🪨','🧊','🔁','⛓','✨'])
     eq(code.includes(em), false, 'color emoji removed from the UI: '+em);
 }
 

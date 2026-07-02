@@ -42,6 +42,6 @@ assert(/route:\s*m\.route\.map\(p=>\[p\.x,p\.z\]\),\s*loop:\s*m\.routeLoop/.test
 assert(/function refreshRouteViz\(g\)/.test(src), 'route is visualized in the editor');
 const clickAppend = /spawnRouteEdit\.userData\.mark\.route\.push\(\{ x:gp\.x, z:gp\.z \}\)/.test(src);
 assert(clickAppend, 'clicking the ground in route mode appends a waypoint');
-assert(/✏️ Place waypoints/.test(src) && /↩ Remove last/.test(src) && /✖ Clear route/.test(src), 'route editing UI present');
-assert(/Ping-pong/.test(src) && /🔁 Loop/.test(src), 'loop / ping-pong toggle present');
+assert(/_icn\('pencil'\)\+'Place waypoints'/.test(src) && /↩ Remove last/.test(src) && /✕ Clear route/.test(src), 'route editing UI present (build 819: SVG icons)');
+assert(/_icn\('arrows'\)\+'Ping-pong'/.test(src) && /_icn\('repeat'\)\+'Loop'/.test(src), 'loop / ping-pong toggle present (SVG icons)');
 done('waypoint patrol routes (loop / ping-pong / detect) + editor wiring');
