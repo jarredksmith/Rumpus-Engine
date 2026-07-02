@@ -6620,7 +6620,7 @@ function rebuildArena(){
   setTerrainFromCfg(true);
   // grid
   if(grid){ scene.remove(grid); grid.geometry.dispose(); }
-  const divs = Math.max(8, Math.round(ARENA*2/2.5));
+  const divs = Math.max(8, Math.min(400, Math.round(ARENA*2/2.5)));   // build 827: cap the line count so a huge racing arena's grid stays light (cells just grow past ~1 km)
   grid = new THREE.GridHelper(ARENA*2, divs, 0x1f4a44, 0x12302c);
   grid.position.y = 0.02; scene.add(grid);
   // honor the saved grid-visibility toggle on every rebuild (incl. the deferred arena-resize rebuild,
@@ -8978,7 +8978,7 @@ function applyWorldCfg(){
   JUMP = worldCfg.jump; GRAV = worldCfg.grav; CROUCH_SPEED = worldCfg.crouch;
   // arena size — rebuild floor/grid/walls only when it changes; coalesce rapid changes (slider drag)
   // into one rebuild per frame so dragging stays smooth.
-  worldCfg.arena = Math.max(15, Math.min(400, worldCfg.arena == null ? DEFAULT_WORLD.arena : +worldCfg.arena));
+  worldCfg.arena = Math.max(15, Math.min(2000, worldCfg.arena == null ? DEFAULT_WORLD.arena : +worldCfg.arena));   // build 827: up to 2000 (a 4 km course) for racing-scale worlds; the flat floor/walls scale free and the nav grid stays bounded
   if(typeof rebuildArena==='function' && Math.abs(ARENA - worldCfg.arena) > 1e-4){
     ARENA = worldCfg.arena;
     if(!_arenaRebuildQueued){ _arenaRebuildQueued = true; requestAnimationFrame(()=>{ _arenaRebuildQueued = false; rebuildArena(); }); }
@@ -11714,6 +11714,9 @@ function navWalkable(x,z){   // can a bot stand at this column? Authority = clea
 }
 function navBuildAlloc(){
   const lim = ARENA - 1.5;
+  // build 827: grow the cell so a big arena still fits inside the 160x160 cap — the grid then covers the WHOLE course
+  // (coarser cells, bounded bot memory) instead of only the central ~320 m. Small arenas keep the fine 2 m cell.
+  NAV.cell = Math.max(2.0, (2*lim)/160);
   NAV.ox = -lim; NAV.oz = -lim;
   NAV.nx = Math.max(1, Math.min(160, Math.ceil((2*lim)/NAV.cell)));
   NAV.nz = NAV.nx;
@@ -16423,7 +16426,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 826 · 2026-07-02';
+const BUILD_VERSION = 'build 827 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22950,7 +22953,7 @@ function renderEditorFields(){
       { const wh=document.createElement('div'); b.appendChild(wh); renderTexSearch(wh,(maps)=>{ pushUndoSnapshot(); worldCfg.wallTex=maps.map||''; worldCfg.wallTexN=maps.normal||''; worldCfg.wallTexR=maps.rough||''; applyWorldCfg(); renderEditorFields(); }); }
       hint(b,'','4px 0 2px').textContent='Tile W/H = repeats across width / height (0 = auto). Lower roughness = shinier; metalness adds sheen. Rotate spins the texture (planks/bricks a new way).'; }
     { const b=subSec('Arena','arena',true);
-      hint(b,'Playable half-size (rebuilds floor + walls live)','2px 0 4px'); slider(b,'Arena size','arena',15,400,1); }
+      hint(b,'Playable half-size (rebuilds floor + walls live). Go big for a racing course — raise <b>View distance</b> (Camera) to match so you can see down the track.','2px 0 4px'); slider(b,'Arena size','arena',15,2000,5); }
     { const b=subSec('Audio','audio',true);
       if(!audioSettings.sounds) audioSettings.sounds=_emptySounds(); if(!audioSettings.sounds.shoot) audioSettings.sounds.shoot={};
       if(!audioSettings.sounds.enemyKill || typeof audioSettings.sounds.enemyKill!=='object') audioSettings.sounds.enemyKill={};
