@@ -14771,6 +14771,7 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   modelYaw:+v.modelYaw||0, pivot:+v.pivot||0,
   camDist:+v.camDist||0, camHigh:+v.camHigh||0, rideHeight:+v.rideHeight||0,
   grip:Math.max(0.5, +v.grip||6),
+  latG:(v.latG==null?1.15:Math.max(0.4, Math.min(2.5, +v.latG||0))),
   launch:(v.launch==null?1:Math.max(0, Math.min(3, +v.launch||0))),
   lean:(v.lean==null?0.5:Math.max(0, Math.min(2, +v.lean||0))),
   dust:(v.dust==null?1:Math.max(0, Math.min(2, +v.dust||0))), skid:(v.skid==null?1:Math.max(0, Math.min(2, +v.skid||0))),
@@ -15502,7 +15503,11 @@ function driveUpdate(dt){
   if(o.userData.boostT>0){ o.userData.boostT-=dt; if(o.userData.boostT<=0){ o.userData.boostT=0; o.userData.boostCdT=+cfg.boostCd||0; } }
   else if(boostKey && bMult>1.01 && (o.userData.boostCdT||0)<=0 && throttle>0){ o.userData.boostT=+cfg.boostDur||3; if(typeof playSample==='function') playSample(curSounds().carBoost); }   // engage (forward only) + build 749 boost SFX
   const boosting=o.userData.boostT>0;
-  const effCfg = boosting ? { maxSpeed:cfg.maxSpeed*bMult, accel:cfg.accel*1.5, turn:cfg.turn, reverse:cfg.reverse } : cfg;
+  // build 820: TRACTION CIRCLE — grip spent cornering isn't available to accelerate. Near the lateral limit the drive
+  // wheels can only put down sqrt(1-latFrac^2) of their force, so flooring it mid-corner pushes wide instead of free speed.
+  const _tc=Math.sqrt(Math.max(0.15, 1 - Math.pow(o.userData._latFrac||0, 2)));
+  const effCfg = boosting ? { maxSpeed:cfg.maxSpeed*bMult, accel:cfg.accel*1.5*_tc, turn:cfg.turn, reverse:cfg.reverse }
+                          : (_tc<0.999 ? { maxSpeed:cfg.maxSpeed, accel:cfg.accel*_tc, turn:cfg.turn, reverse:cfg.reverse } : cfg);
   const r = driveStep(o.userData.carSpeed||0, throttle, 0, effCfg, dt);   // driveStep handles the SPEED; A/D steering is below
   // build 731: engine braking — lifting off the throttle adds a little drivetrain drag on top of driveStep's coast, so the
   // car slows when you come off the gas rather than gliding forever.
@@ -15520,9 +15525,20 @@ function driveUpdate(dt){
   else if(typeof touchMoveX!=='undefined' && touchMoveX) steer-=touchMoveX;   // build 786: mobile joystick steers (left/right)
   steer=Math.max(-1,Math.min(1,steer));
   const _yawOld = o.userData.carYaw;
+  const handbrake=(keys['Space']||keys['KeyB']||(typeof padDriveBrake!=='undefined'&&padDriveBrake)||(typeof touchHandbrake!=='undefined'&&touchHandbrake));   // build 789 (moved up in 820: the grip cap below needs it): Space / B / gamepad B / mobile Brake
+  if(handbrake && !o.userData._hbWas && o.userData._carGrounded!==false && Math.abs(o.userData.carSpeed||0)>3 && typeof playSample==='function') playSample(curSounds().carBrake);   // build 749: brake SFX on the rising edge (754: grounded only)
+  o.userData._hbWas=handbrake;
+  // build 820: LATERAL-G HANDLING — tires hold at most latG of lateral acceleration, and a = v*yawRate, so the achievable
+  // yaw rate SHRINKS with speed. Corners genuinely widen at speed (understeer) instead of every speed turning on the same
+  // radius — the single biggest “arcade toy” tell in the old model. The handbrake bypasses the cap (that IS oversteer).
   // build 767: reversing inverts the steer response (like a real car backing up): holding A while reversing swings the
   // BACK of the car toward the left. The front wheels still visually point the way you steer (that uses the raw input).
-  o.userData.carYaw += steer * (cfg.turn*RAD) * speedFrac * (r.speed<-0.05?-1:1) * dt;
+  const _latG=(cfg.latG==null?1.15:+cfg.latG);
+  const _maxYawRate=(_latG*9.81)/Math.max(4, Math.abs(r.speed));
+  const _wantYaw=steer*(cfg.turn*RAD)*speedFrac;
+  const _cmdYaw=handbrake?_wantYaw:Math.max(-_maxYawRate, Math.min(_maxYawRate, _wantYaw));
+  o.userData._latFrac=(_maxYawRate>1e-6)?Math.min(1,Math.abs(_cmdYaw)/_maxYawRate):0;   // how much tire is spent cornering (feeds the traction circle)
+  o.userData.carYaw += _cmdYaw * (r.speed<-0.05?-1:1) * dt;
   // build 721: pivot the turn around a point cfg.pivot metres toward the nose (not the mesh origin), so a model whose origin
   // sits at the tail still swings around its middle/front. Shift the origin so that pivot point holds still as the yaw changes.
   const _pv=+cfg.pivot||0;
@@ -15537,11 +15553,12 @@ function driveUpdate(dt){
   // build 725: GRIP / DRIFT — the travel direction (carVelYaw) chases the heading at a grip rate. Normally sticky, so the
   // car goes where it points; a handbrake (Space / B) or a hard turn at speed lets travel lag the heading => it slides.
   if(o.userData.carVelYaw==null) o.userData.carVelYaw=carYaw;
-  const handbrake=(keys['Space']||keys['KeyB']||(typeof padDriveBrake!=='undefined'&&padDriveBrake)||(typeof touchHandbrake!=='undefined'&&touchHandbrake));   // build 789: Space / B / gamepad B button / the mobile Brake button engage the handbrake
-  if(handbrake && !o.userData._hbWas && o.userData._carGrounded!==false && Math.abs(o.userData.carSpeed||0)>3 && typeof playSample==='function') playSample(curSounds().carBrake);   // build 749: brake SFX on the rising edge of the handbrake (build 754: only when grounded — airborne tyres can't screech)
-  o.userData._hbWas=handbrake;
-  const gripBase=Math.max(0.5,+cfg.grip||6), grip=handbrake?gripBase*0.16:gripBase;
+  const gripBase=Math.max(0.5,+cfg.grip||6); let grip=handbrake?gripBase*0.16:gripBase;
   let vd=carYaw-o.userData.carVelYaw; vd=Math.atan2(Math.sin(vd),Math.cos(vd));
+  // build 820: PROGRESSIVE BREAKAWAY — pushing at the last 15% of the grip limit lets the rear step out (mild push -> slide
+  // at the edge), and COUNTER-STEERING (steering against the slide) recovers grip 1.4x faster, so drifts catch like a real car.
+  if(!handbrake && (o.userData._latFrac||0)>0.85) grip *= 1 - 0.6*((o.userData._latFrac)-0.85)/0.15;
+  if(steer!==0 && Math.abs(vd)>0.06 && Math.sign(steer)===-Math.sign(vd)) grip *= 1.4;
   const vstep=grip*dt; o.userData.carVelYaw += Math.max(-vstep,Math.min(vstep,vd));
   const vYaw=o.userData.carVelYaw, fx=-Math.sin(vYaw), fz=-Math.cos(vYaw);   // travel direction — lags the heading when drifting
   const _slip=Math.abs(Math.atan2(Math.sin(carYaw-vYaw),Math.cos(carYaw-vYaw)));   // slip angle (heading vs travel)
@@ -16341,7 +16358,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 819 · 2026-07-02';
+const BUILD_VERSION = 'build 820 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21073,7 +21090,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.latG!=null && V.latG!==1.15) e.veh.latG=V.latG; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -23804,6 +23821,8 @@ function renderEditorFields(){
           row('Reverse ('+U.l+')','reverse', 2, 120, 1, U.f);
           { const gh=document.createElement('div'); gh.className='hint'; gh.style.margin='8px 0 1px'; gh.innerHTML='<b>Grip</b> — how hard the tyres bite. Lower = loose &amp; <b>drifty</b> (slides in turns); higher = planted. Steer with the <b>mouse</b> + <b>A/D</b>; hold <b>Space</b> to handbrake-drift.'; vBody.appendChild(gh); }
           row('Grip','grip', 1, 12, 0.5, 1);
+          { const cg=document.createElement('div'); cg.className='hint'; cg.style.margin='8px 0 1px'; cg.innerHTML='<b>Cornering grip (G)</b> — the lateral force the tyres hold before the car pushes wide. Corners widen with speed like a real car; <b>higher = corners flatter at speed</b> (sports ~1.4, truck ~0.8). Flooring it mid-corner costs grip (traction circle).'; vBody.appendChild(cg); }
+          row('Cornering grip (G)','latG', 0.4, 2.5, 0.05, 1);
           { const lh=document.createElement('div'); lh.className='hint'; lh.style.margin='8px 0 1px'; lh.innerHTML='<b>Body lean</b> — how much the body rolls in turns / dives under braking. <b>0 = off</b> (rigid). Lower it if it feels like a boat.'; vBody.appendChild(lh); }
           row('Body lean','lean', 0, 2, 0.05, 1);
           { const jh=document.createElement('div'); jh.className='hint'; jh.style.margin='8px 0 1px'; jh.innerHTML='<b>Launch</b> — how hard a ramp throws the car into the air. <b>1 = normal</b>; raise for big-air buggies, <b>0 = never leaves the ground</b> (go-kart). The nose follows the arc and the suspension soaks up the landing.'; vBody.appendChild(jh); }
