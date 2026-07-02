@@ -14772,6 +14772,7 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   camDist:+v.camDist||0, camHigh:+v.camHigh||0, rideHeight:+v.rideHeight||0,
   grip:Math.max(0.5, +v.grip||6),
   latG:(v.latG==null?1.15:Math.max(0.4, Math.min(2.5, +v.latG||0))),
+  susp:(v.susp==null?1:Math.max(0, Math.min(2, +v.susp||0))),
   launch:(v.launch==null?1:Math.max(0, Math.min(3, +v.launch||0))),
   lean:(v.lean==null?0.5:Math.max(0, Math.min(2, +v.lean||0))),
   dust:(v.dust==null?1:Math.max(0, Math.min(2, +v.dust||0))), skid:(v.skid==null?1:Math.max(0, Math.min(2, +v.skid||0))),
@@ -15043,7 +15044,7 @@ function _driveHudEl(){
 function enterCar(o){
   if(drivingCar || !o || !o.userData.vehicle) return;
   { const _ci=_coastingCars.indexOf(o); if(_ci>=0) _coastingCars.splice(_ci,1); o.userData._coastT=0; }   // build 770: jumping back in stops the coast
-  drivingCar = o; o.userData.carSpeed = 0; o.userData.carVelY = 0; o.userData.carPitch = 0; o.userData.carRoll = 0; o.userData.boostT = 0; o.userData.boostCdT = 0;
+  drivingCar = o; o.userData.carSpeed = 0; o.userData.carVelY = 0; o.userData.carPitch = 0; o.userData.carRoll = 0; o.userData.boostT = 0; o.userData.boostCdT = 0; o.userData._suspOff = 0; o.userData._suspVel = 0;   // build 821: suspension starts settled
   // build 720: carYaw is the LOGICAL heading the car drives along. It starts pointing out the model's nose (placement yaw + modelYaw),
   // so a model authored facing any direction drives nose-first.
   o.userData.carYaw = o.rotation.y + (o.userData.vehicle.modelYaw||0)*RAD;
@@ -15065,6 +15066,7 @@ function exitCar(){
   if(!drivingCar) return;
   _carViewOverride=null; _carFollowOverride=null;   // build 745/765: next car starts at its own default view + follow setting
   const o=drivingCar; drivingCar=null;
+  if(o.userData._suspOff){ o.position.y -= o.userData._suspOff; o.userData._suspOff=0; o.userData._suspVel=0; }   // build 821: fold the suspension travel out so the parked height is clean
   // build 770: bail out at speed and the car keeps its momentum, coasting + decelerating until it stops (a per-vehicle toggle).
   const _ecfg=o.userData.vehicle||{}, _esp=o.userData.carSpeed||0;
   if((_ecfg.ejectCoast!==false) && Math.abs(_esp)>5){ o.userData._coastT=6; if(_coastingCars.indexOf(o)<0) _coastingCars.push(o); }
@@ -15600,7 +15602,7 @@ function driveUpdate(dt){
   // build 722: rest the model's WHEELS on the ground, not its origin. carBaseOff (origin->lowest point, measured on enter)
   // cancels models whose origin sits high (float) or low (sink); rideHeight is an optional author trim.
   const _base=(o.userData.carBaseOff||0)+(+cfg.rideHeight||0); let _rest=gC+_base;
-  const _cy=o.position.y;
+  const _cy=o.position.y - (o.userData._suspOff||0);   // build 821: physics reads the CLEAN chassis height — the suspension offset is render-only
   // build 724/742: you can only GAIN height in proportion to how far you actually drove forward this frame — i.e. up a
   // drivable slope. A wall / building face stops forward progress (_carWall zeroes mvx/mvz), so the climb budget collapses
   // to ~0 and the car can no longer creep up an (often invisible) vertical collider onto the roof. Real ramps move the car
@@ -15615,15 +15617,28 @@ function driveUpdate(dt){
   const _impVy=_vy;                                               // build 790: descent speed at the moment of contact (for landing feedback)
   if(_ny<=_rest){ _ny=_rest; _vy=_launch; }                       // grounded: bank ramp-climb speed as launch velocity
   else if(_vy<=0 && (_ny-_rest)<_SNAP){ _ny=_rest; _vy=0; }       // hug the ground over small downhill drops (no micro-hops)
-  o.position.y=_ny; o.userData.carVelY=_vy;
+  o.userData.carVelY=_vy;
   const _wasAir=o.userData._carGrounded===false;                  // build 790: remember last frame's state to detect a touchdown
   const _grounded=(_ny-_rest)<0.12; o.userData._carGrounded=_grounded;   // build 754: persist so next frame's brake-SFX check can suppress a mid-air screech
-  // build 790: LANDING — touch down from a real fall and the suspension compresses (nose dips) with a camera jolt scaled by
-  // the impact speed, so a jump lands with weight instead of teleporting flat onto the ground.
+  // build 821: SPRING-DAMPER SUSPENSION — the rigid chassis solve above stays authoritative (walls / ramps / trailers all
+  // depend on it); the body then rides a slightly under-damped spring on top. Landings COMPRESS and rebound; kerbs and
+  // sudden rises kick the body up and it settles — instead of the old glued-to-the-ground snap. Render + camera only.
+  const _sAmt=(cfg.susp==null?1:+cfg.susp);
+  // build 790: LANDING — touch down from a real fall: suspension compression + a camera jolt scaled by the impact speed.
   if(_grounded && _wasAir && _impVy < -6){ const _fall=Math.min(1,(-_impVy-6)/18);
     o.userData.hitShake=Math.max(o.userData.hitShake||0, 0.03 + _fall*0.10);
     o.userData.leanPitch=(o.userData.leanPitch||0) - 0.11*_fall;   // dip on contact; the lean ease below springs it back
+    o.userData._suspVel=(o.userData._suspVel||0) - Math.min(-_impVy,20)*0.14*_sAmt;   // build 821: the springs take the hit
     if(_fall>0.35 && typeof playSample==='function') playSample(curSounds().carBrake);   // a heavy landing thud (reuses the tyre/brake clip)
+  }
+  if(_grounded && _climb>1.5 && _climb<22) o.userData._suspVel=(o.userData._suspVel||0) + Math.min(_climb,10)*0.05*_sAmt;   // build 821: a kerb/bump kicks the body up
+  { const _sK=120, _sC=11;   // under-damped (critical ~21.9): one honest, visible rebound, then it settles
+    let _sOff=o.userData._suspOff||0, _sVel=o.userData._suspVel||0;
+    _sVel += (-_sK*_sOff - _sC*_sVel)*dt; _sOff += _sVel*dt;
+    const _sMax=Math.max(0.06, _h.hh*0.3);
+    if(_sOff>_sMax){ _sOff=_sMax; if(_sVel>0)_sVel=0; } else if(_sOff<-_sMax){ _sOff=-_sMax; if(_sVel<0)_sVel=0; }
+    o.userData._suspOff=_sOff; o.userData._suspVel=_sVel;
+    o.position.y=_ny + _sOff;   // render height = clean chassis + suspension travel
   }
   // build 727: clamp the tilt by ANGLE (slope), not by sample height. The build-726 height clamp throttled the pitch of a
   // LONG vehicle (a camper) on a ramp, so it under-tilted, dug into the ramp, sank, and _carWall then false-blocked it (stuck
@@ -16358,7 +16373,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 820 · 2026-07-02';
+const BUILD_VERSION = 'build 821 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21090,7 +21105,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.latG!=null && V.latG!==1.15) e.veh.latG=V.latG; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.latG!=null && V.latG!==1.15) e.veh.latG=V.latG; if(V.susp!=null && V.susp!==1) e.veh.susp=V.susp; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -23823,6 +23838,8 @@ function renderEditorFields(){
           row('Grip','grip', 1, 12, 0.5, 1);
           { const cg=document.createElement('div'); cg.className='hint'; cg.style.margin='8px 0 1px'; cg.innerHTML='<b>Cornering grip (G)</b> — the lateral force the tyres hold before the car pushes wide. Corners widen with speed like a real car; <b>higher = corners flatter at speed</b> (sports ~1.4, truck ~0.8). Flooring it mid-corner costs grip (traction circle).'; vBody.appendChild(cg); }
           row('Cornering grip (G)','latG', 0.4, 2.5, 0.05, 1);
+          { const sh2=document.createElement('div'); sh2.className='hint'; sh2.style.margin='8px 0 1px'; sh2.innerHTML='<b>Suspension</b> — how much the body compresses and rebounds over kerbs, bumps and landings. <b>0 = rigid</b>, 1 = normal, 2 = soft off-roader.'; vBody.appendChild(sh2); }
+          row('Suspension','susp', 0, 2, 0.05, 1);
           { const lh=document.createElement('div'); lh.className='hint'; lh.style.margin='8px 0 1px'; lh.innerHTML='<b>Body lean</b> — how much the body rolls in turns / dives under braking. <b>0 = off</b> (rigid). Lower it if it feels like a boat.'; vBody.appendChild(lh); }
           row('Body lean','lean', 0, 2, 0.05, 1);
           { const jh=document.createElement('div'); jh.className='hint'; jh.style.margin='8px 0 1px'; jh.innerHTML='<b>Launch</b> — how hard a ramp throws the car into the air. <b>1 = normal</b>; raise for big-air buggies, <b>0 = never leaves the ground</b> (go-kart). The nose follows the arc and the suspension soaks up the landing.'; vBody.appendChild(jh); }
@@ -25500,7 +25517,7 @@ function toggleEditor(){
     if(typeof syncSelToIdx==='function') syncSelToIdx();   // start each editor session with a clean (single) selection
     destroyPhysWorld();     // edit plain meshes; snap dynamic props back to their authored transform
     for(const o of dynamicProps){ if(o.userData.physHome) o.position.copy(o.userData.physHome); if(o.userData.physHomeQ) o.quaternion.copy(o.userData.physHomeQ); }
-    for(const o of propModels){ if(o && o.userData && o.userData.vehicle && o.userData.physHome){ o.position.copy(o.userData.physHome); if(o.userData.physHomeQ) o.quaternion.copy(o.userData.physHomeQ); o.userData.carSpeed=0; o.userData.carVelY=0; o.userData.carPitch=0; o.userData.carRoll=0; o.userData.leanRoll=0; o.userData.leanPitch=0; o.userData._coastT=0; } }   // build 755: a driven car snaps back to its authored placement (its position is what gets saved); 770: cancel any coast
+    for(const o of propModels){ if(o && o.userData && o.userData.vehicle && o.userData.physHome){ o.position.copy(o.userData.physHome); if(o.userData.physHomeQ) o.quaternion.copy(o.userData.physHomeQ); o.userData.carSpeed=0; o.userData.carVelY=0; o.userData.carPitch=0; o.userData.carRoll=0; o.userData.leanRoll=0; o.userData.leanPitch=0; o.userData._coastT=0; o.userData._suspOff=0; o.userData._suspVel=0; } }   // build 755: a driven car snaps back to its authored placement (its position is what gets saved); 770: cancel any coast
     if(typeof _coastingCars!=='undefined') _coastingCars.length=0;   // build 770: stop all coasting on editor entry
     if(typeof clearRuntimeProps==='function') clearRuntimeProps();        // radial props don't belong in the editor or the saved level
     if(typeof restoreDestroyedProps==='function') restoreDestroyedProps();   // show authored props that were destroyed in play, so they can be edited again
