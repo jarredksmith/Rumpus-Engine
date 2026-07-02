@@ -1,0 +1,36 @@
+# Deploys the game to GitHub Pages via OUR workflow instead of GitHub's canned "pages build and deployment" pipeline.
+# Why: that pipeline's deploy step aborts after 10 minutes in deployment_queued, and Pages queue congestion (2026-07-02)
+# killed 5 consecutive deploys that way. This workflow raises the deploy timeout to 30 minutes to outlast the queue,
+# and gives us a Run-workflow button for manual redeploys.
+# REQUIRES: Settings -> Pages -> Source = "GitHub Actions".
+name: Deploy to GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true   # a newer push supersedes a queued deploy
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          timeout: 1800000   # 30 min (default 10) — outlasts Pages deployment-queue congestion
