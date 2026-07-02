@@ -7962,7 +7962,108 @@ function buildConeProp(){
   const geo = new THREE.ConeGeometry(0.5, 1, 20); geo.translate(0, 0.5, 0);
   return new THREE.Mesh(geo, primitiveMat());
 }
-const PRIMITIVE_BUILDERS = { box:buildBoxProp, sphere:buildSphereProp, cylinder:buildCylinderProp, cone:buildConeProp, pillar:buildPillar };
+// ---------- build 828: RACE TRACK pieces ----------
+// Snap-together track segments for laying out a racing course. Each piece is a normal PROP (a src key in
+// PRIMITIVE_BUILDERS), so serialization / undo / share links / multiplayer sync / the gizmo all work unchanged,
+// and — because these are NOT shape-primitives — addStaticColliderFor gives them a TRIMESH of their real
+// triangles (curves and ramp slopes are true physics geometry cars drive on).
+// Authored in real metres: the ENTRY socket is the local ORIGIN facing -Z, deck from y=0 up to TRACK_T.
+// `exit` is the far socket in entry-local coords ({x,z,dy} offset + yaw change); addTrackPiece chains by it.
+const TRACK_W = 12;    // road width (comfortably two cars)
+const TRACK_T = 0.35;  // deck thickness — a kerb-step cars climb onto
+const TRACK_R = 18;    // curve centreline radius
+const TRACK_PIECES = {
+  track_start:     { label:'Start line', len:12, start:true, icon:'<path d="M6 21V3"/><path d="M6 4h12l-2.5 3.5L18 11H6"/><path d="M10 4v7M14 4v7"/>' },
+  track_straight:  { label:'Straight',   len:24, icon:'<path d="M8 21V3M16 21V3"/><path d="M12 18v-3M12 12v-3M12 6V3"/>' },
+  track_short:     { label:'Short',      len:8,  icon:'<path d="M8 17V7M16 17V7"/><path d="M12 15v-2M12 11V9"/>' },
+  track_curve45_l: { label:'45° L', arc:Math.PI/4, dir:1,  icon:'<path d="M16 21v-6a14 14 0 0 0-5-9"/><path d="M8 21v-5a9 9 0 0 0-3-6"/>' },
+  track_curve45_r: { label:'45° R', arc:Math.PI/4, dir:-1, icon:'<path d="M8 21v-6a14 14 0 0 1 5-9"/><path d="M16 21v-5a9 9 0 0 1 3-6"/>' },
+  track_curve_l:   { label:'90° L', arc:Math.PI/2, dir:1,  icon:'<path d="M17 21v-4A11 11 0 0 0 6 6H3"/><path d="M11 21v-3a6 6 0 0 0-6-6H3"/>' },
+  track_curve_r:   { label:'90° R', arc:Math.PI/2, dir:-1, icon:'<path d="M7 21v-4A11 11 0 0 1 18 6h3"/><path d="M13 21v-3a6 6 0 0 1 6-6h2"/>' },
+  track_ramp_up:   { label:'Ramp ↑', len:24, rise:6,  icon:'<path d="M3 20h4L21 8"/><path d="M17 8h4v4"/>' },
+  track_ramp_dn:   { label:'Ramp ↓', len:24, rise:-6, icon:'<path d="M3 8l14 8h4"/><path d="M21 12v4h-4"/>' },
+};
+// Exit sockets. Straights/ramps: the far end. Curves: swing around the arc — left (dir=+1) increases yaw.
+for(const _tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[_tk];
+  d.exit = (d.arc!=null)
+    ? { x:-d.dir*TRACK_R*(1-Math.cos(d.arc)), z:-TRACK_R*Math.sin(d.arc), yaw:d.dir*d.arc, dy:0 }
+    : { x:0, z:-d.len, yaw:0, dy:(d.rise||0) };
+}
+// Centreline sample at t (0..1) in entry-local coords. Ramps rise on a smoothstep so both ends are level
+// (no lip to snag on); curves sweep a circular arc of radius TRACK_R.
+function _trackCL(def, t){
+  if(def.arc!=null){ const a=def.arc*t, R=TRACK_R;
+    return { x:-def.dir*R*(1-Math.cos(a)), z:-R*Math.sin(a), y:0, yaw:def.dir*a };
+  }
+  return { x:0, z:-def.len*t, y:(def.rise ? def.rise*(3*t*t - 2*t*t*t) : 0), yaw:0 };
+}
+// ONE merged BufferGeometry ribbon following the centreline between lateral offsets latA..latB (metres,
+// +right), from yBot..yTop, over t0..t1. yBot===yTop emits a flat strip (painted lines); otherwise a solid
+// slab (top, bottom, sides, end caps). uScale maps metres-along to U so striped/checkered textures repeat.
+function _trackRibbon(def, latA, latB, yBot, yTop, segs, uScale, t0, t1){
+  if(t0==null) t0=0; if(t1==null) t1=1; uScale=uScale||0;
+  const S=[]; for(let i=0;i<=segs;i++) S.push(_trackCL(def, t0+(t1-t0)*i/segs));
+  const us=[0]; for(let i=1;i<=segs;i++){ const a=S[i-1], b=S[i]; us.push(us[i-1]+Math.hypot(b.x-a.x, b.y-a.y, b.z-a.z)); }
+  const pos=[], uv=[], idx=[];
+  const pt=(c,lat,y)=>[ c.x + Math.cos(c.yaw)*lat, c.y + y, c.z - Math.sin(c.yaw)*lat ];   // right vector at yaw = (cos, -sin)
+  const strip=(lA,lB,yA,yB)=>{ const base=pos.length/3;
+    for(let i=0;i<=segs;i++){ const c=S[i], pA=pt(c,lA,yA), pB=pt(c,lB,yB);
+      pos.push(pA[0],pA[1],pA[2], pB[0],pB[1],pB[2]); uv.push(us[i]*uScale,0, us[i]*uScale,1); }
+    for(let i=0;i<segs;i++){ const a=base+i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); } };
+  strip(latA,latB,yTop,yTop);                                        // deck
+  if(yTop!==yBot){
+    strip(latB,latA,yBot,yBot);                                      // underside
+    strip(latA,latA,yBot,yTop); strip(latB,latB,yTop,yBot);          // side walls
+    for(const e of [0,segs]){ const c=S[e], base=pos.length/3;       // end caps
+      const q=[pt(c,latA,yBot), pt(c,latB,yBot), pt(c,latB,yTop), pt(c,latA,yTop)];
+      for(const p of q) pos.push(p[0],p[1],p[2]); uv.push(0,0, 1,0, 1,1, 0,1);
+      idx.push(base,base+1,base+2, base,base+2,base+3); }
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+// Shared track materials (built once): asphalt, painted line, red/white striped kerb, checkered start band.
+let _trkM=null;
+function _trackMats(){
+  if(_trkM) return _trkM;
+  const mk=(c,r)=>new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:0.04, side:THREE.DoubleSide });
+  const road=mk(0x24272c,0.95), line=mk(0xe8ecef,0.75);
+  const kerb=mk(0xd8402f,0.85), chk=mk(0xffffff,0.8);
+  try{ const c=document.createElement('canvas'); c.width=64; c.height=8; const g=c.getContext('2d');
+    g.fillStyle='#d8402f'; g.fillRect(0,0,64,8); g.fillStyle='#eef0f2'; g.fillRect(32,0,32,8);
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; kerb.map=t; kerb.color.setHex(0xffffff);
+  }catch(e){}
+  try{ const c=document.createElement('canvas'); c.width=64; c.height=64; const g=c.getContext('2d');
+    for(let r=0;r<8;r++) for(let q=0;q<8;q++){ g.fillStyle=((r+q)&1)?'#101317':'#eef0f2'; g.fillRect(q*8,r*8,8,8); }
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; chk.map=t;
+  }catch(e){}
+  _trkM={ road, line, kerb, chk };
+  return _trkM;
+}
+function _buildTrackPiece(key){
+  const def=TRACK_PIECES[key], M=_trackMats(), g=new THREE.Group();
+  const segs = def.arc!=null ? Math.max(10, Math.round(def.arc*16)) : (def.rise ? 12 : 2);
+  const half=TRACK_W/2, KW=0.9;   // kerb strip width along each edge
+  g.add(new THREE.Mesh(_trackRibbon(def, -half+KW,  half-KW, 0, TRACK_T,      segs, 0),      M.road));   // asphalt deck
+  g.add(new THREE.Mesh(_trackRibbon(def, -half,    -half+KW, 0, TRACK_T+0.07, segs, 1/1.8), M.kerb));    // kerbs (striped, slightly proud)
+  g.add(new THREE.Mesh(_trackRibbon(def,  half-KW,  half,    0, TRACK_T+0.07, segs, 1/1.8), M.kerb));
+  const yl=TRACK_T+0.015;                                                                                 // painted edge lines (flat strips)
+  g.add(new THREE.Mesh(_trackRibbon(def, -half+KW+0.12, -half+KW+0.42, yl, yl, segs, 0), M.line));
+  g.add(new THREE.Mesh(_trackRibbon(def,  half-KW-0.42,  half-KW-0.12, yl, yl, segs, 0), M.line));
+  if(def.start){   // checkered band across the deck just past the entry
+    const bw=TRACK_W-2*KW;                       // band spans the asphalt; 8 checker rows across
+    g.add(new THREE.Mesh(_trackRibbon(def, -half+KW, half-KW, TRACK_T+0.02, TRACK_T+0.02, 2, 1/bw, 0.08, 0.28), M.chk));
+  }
+  return g;
+}
+const PRIMITIVE_BUILDERS = { box:buildBoxProp, sphere:buildSphereProp, cylinder:buildCylinderProp, cone:buildConeProp, pillar:buildPillar,
+  track_start:()=>_buildTrackPiece('track_start'), track_straight:()=>_buildTrackPiece('track_straight'), track_short:()=>_buildTrackPiece('track_short'),
+  track_curve45_l:()=>_buildTrackPiece('track_curve45_l'), track_curve45_r:()=>_buildTrackPiece('track_curve45_r'),
+  track_curve_l:()=>_buildTrackPiece('track_curve_l'), track_curve_r:()=>_buildTrackPiece('track_curve_r'),
+  track_ramp_up:()=>_buildTrackPiece('track_ramp_up'), track_ramp_dn:()=>_buildTrackPiece('track_ramp_dn') };
 function isPrimitive(src){ return PRIMITIVE_BUILDERS.hasOwnProperty(src); }
 // Cache loaded glTFs by URL so repeated/added props of the same model don't refetch.
 const gltfCache = {};
@@ -16426,7 +16527,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 827 · 2026-07-02';
+const BUILD_VERSION = 'build 828 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20937,6 +21038,37 @@ function addSceneProp(src, meta){
     _finish();
   }, undefined, newPropAnimMode, null, (err)=>{ _finish(); if(meta.onError) meta.onError(err); });
 }
+// build 828: world-space EXIT socket of a placed track piece — where the next piece snaps on. The local
+// exit offset is scaled by the piece's scale (a stretched straight ends farther out) and rotated by its yaw.
+function _trackExitPose(o){
+  const def=TRACK_PIECES[o.userData && o.userData.src]; if(!def) return null;
+  const e=def.exit, ry=o.rotation.y, c=Math.cos(ry), s=Math.sin(ry);
+  const lx=e.x*o.scale.x, lz=e.z*o.scale.z;
+  return { x:o.position.x + lx*c + lz*s,
+           z:o.position.z - lx*s + lz*c,
+           y:o.position.y + (e.dy||0)*o.scale.y,
+           yaw:ry + e.yaw };
+}
+// build 828: add a track piece, SNAPPED to the chain. Anchor = the selected track piece if there is one
+// (so you can branch from anywhere), else the last track piece placed. No anchor -> drop at the editor
+// drop point (top view: the pan centre) facing north. The new piece inherits the anchor's scale and is
+// auto-selected so the next click keeps chaining.
+function addTrackPiece(key){
+  if(!TRACK_PIECES[key]) return;
+  pushUndoSnapshot();
+  let anchor=null;
+  const selO=(editorTargets.props && editorTargets.props.idx>=0) ? propModels[editorTargets.props.idx] : null;
+  if(selO && selO.userData && TRACK_PIECES[selO.userData.src]) anchor=selO;
+  if(!anchor) for(let i=propModels.length-1;i>=0;i--){ const p=propModels[i]; if(p && p.userData && TRACK_PIECES[p.userData.src]){ anchor=p; break; } }
+  let px, py, pz, yaw, sx=1, sy=1, sz=1;
+  if(anchor){ const ex=_trackExitPose(anchor); px=ex.x; py=ex.y; pz=ex.z; yaw=ex.yaw; sx=anchor.scale.x; sy=anchor.scale.y; sz=anchor.scale.z; }
+  else { const dp=editorDropPoint(6); px=dp.x; py=dp.y||0; pz=dp.z; yaw=0; }
+  spawnProp(key, [px, py, pz, 0, yaw, 0, sx, sy, sz], (obj)=>{
+    editorActive='props'; editorTargets.props.idx=propModels.indexOf(obj); selProps=[obj];
+    if(typeof _levelDirty!=='undefined') _levelDirty=true;
+    renderEditorFields();
+  });
+}
 function deleteSelectedProp(){
   pushUndoSnapshot();
   if(isGroupSel()){
@@ -24558,6 +24690,18 @@ function renderEditorFields(){
         srow.appendChild(b);
       }
       shapesHost.appendChild(srow);
+      // build 828: TRACK BUILDER — snap-together race track pieces. Each new piece snaps to the exit of the
+      // SELECTED track piece (select any piece to branch from it), or the last one placed. Best laid out in
+      // top view (V): click a piece, watch the course grow, Delete removes the selected piece.
+      const tHead=document.createElement('div'); tHead.className='hint'; tHead.style.margin='9px 0 3px';
+      tHead.innerHTML='<b>Track builder</b> — pieces snap onto the <b>selected</b> piece’s exit (or the last one placed). Lay the course in <b>top view</b> (V); <b>Del</b> removes the selected piece. Add a vehicle + raise Arena size for a full circuit.';
+      shapesHost.appendChild(tHead);
+      const tgrid=document.createElement('div'); tgrid.style.cssText='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;';
+      for(const tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[tk];
+        const b=document.createElement('button'); b.className='primBtn'; b.innerHTML=_svgIcon(d.icon||'')+'<span>'+d.label+'</span>'; b.title='Add '+d.label+' track piece (snaps to the chain)'; b.onclick=()=>{ addTrackPiece(tk); };
+        tgrid.appendChild(b);
+      }
+      shapesHost.appendChild(tgrid);
     }
   }
   // ---- Material section (selected shape primitive only): color, texture+tiling, emissive light ----
