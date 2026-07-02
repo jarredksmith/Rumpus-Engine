@@ -6721,6 +6721,21 @@ function _uiDialog(msg, buttons){
 }
 function uiConfirm(msg, onYes, yesLabel){ _uiDialog(msg, [ { label:'Cancel' }, { label:yesLabel||'Confirm', primary:true, fn:onYes } ]); }
 function uiNotice(msg){ _uiDialog(msg, [ { label:'OK', primary:true } ]); }
+// build 816: inline SVG icons for dynamically-built buttons — the same 24x24 currentColor stroke language (.eico) the
+// static HTML already uses. Color emoji (💾🗑🔍…) render differently on every OS and can't inherit the theme; these do.
+const _ICONS = {
+  save:'<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
+  link:'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+  trash:'<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  eye:'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff:'<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>',
+  plus:'<path d="M5 12h14"/><path d="M12 5v14"/>',
+  warn:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'
+};
+function _icn(name){ return '<svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(_ICONS[name]||'')+'</svg>'; }
 // build 700: ~19 call sites notify via `toast(msg)` behind an `if(typeof toast==='function')` guard, but `toast`
 // was never defined — so those notices (Checkpoint reached, Respawned, AI-furnish progress, key saved, texture
 // cap…) silently never showed. Alias it to the real toaster so the guard passes and the messages appear.
@@ -11275,7 +11290,7 @@ function renderLaddersPanel(){
     const hd=document.createElement('div'); hd.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;';
     const tt=document.createElement('span'); tt.style.cssText='font-size:11px;color:#ffe79b;'; tt.textContent='Ladder '+(i+1)+'  ·  ('+(+L.x).toFixed(1)+', '+(+L.z).toFixed(1)+')';
     const selB=document.createElement('button'); selB.textContent=(i===selLadder?'selected':'select'); selB.style.cssText='font-size:10px;padding:2px 8px;'; selB.onclick=()=>{ selLadder=i; editorActive='ladders'; refreshLadderMarkers(); renderLaddersPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
-    const del=document.createElement('button'); del.textContent='✕'; del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeLadder(i);
+    const del=document.createElement('button'); del.textContent='✕'; del.title='Remove ladder'; del.setAttribute('aria-label','Remove ladder'); del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeLadder(i);
     const right=document.createElement('div'); right.style.cssText='display:flex;gap:4px;'; right.appendChild(selB); right.appendChild(del);
     hd.appendChild(tt); hd.appendChild(right); box.appendChild(hd);
     const mkN=(label,key,min,max,step,onApply)=>{
@@ -16290,7 +16305,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 815 · 2026-07-02';
+const BUILD_VERSION = 'build 816 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21215,7 +21230,7 @@ function renderCharRosterPanel(){
   const info=document.createElement('div'); info.className='hint'; info.style.margin='2px 0 6px';
   info.innerHTML='<b>Character roster</b> for multiplayer. Tune a model on the <b>Player</b> tab (model URL, scale, clips, <b>held-gun grip</b>, <b>third-person camera + gunfire origin</b>), then add it here \u2014 all of it is baked in, so every player who picks this character holds the weapon and frames the camera exactly as you set it. At the start of a multiplayer match each player picks one from this list. Saved with the level.';
   host.appendChild(info);
-  const addB=document.createElement('button'); addB.textContent='➕ Add current player model'; addB.title='Snapshot the model currently on the Player tab as a roster character'; addB.onclick=()=>{ pushUndoSnapshot(); charRoster.push(_snapshotPlayerCharCfg('Character '+(charRoster.length+1))); renderCharRosterPanel(); };
+  const addB=document.createElement('button'); addB.innerHTML=_icn('plus')+'Add current player model'; addB.title='Snapshot the model currently on the Player tab as a roster character'; addB.onclick=()=>{ pushUndoSnapshot(); charRoster.push(_snapshotPlayerCharCfg('Character '+(charRoster.length+1))); renderCharRosterPanel(); };
   host.appendChild(addB);
   const st=document.createElement('div'); st.className='hint'; st.style.margin='6px 0 2px'; st.textContent = charRoster.length ? (charRoster.length+' character'+(charRoster.length>1?'s':'')+':') : 'No characters yet - players use the default model.';
   host.appendChild(st);
@@ -21224,7 +21239,7 @@ function renderCharRosterPanel(){
     const nm=document.createElement('input'); nm.type='text'; nm.value=c.name||('Character '+(i+1)); nm.title=(c.url? c.url : 'capsule (no model set)'); nm.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 6px;font-size:12px;'; nm.onchange=()=>{ c.name=nm.value.trim()||('Character '+(i+1)); };
     const loadB=document.createElement('button'); loadB.textContent='Load'; loadB.title='Put this character on the Player tab to re-tune'; loadB.style.cssText='padding:1px 7px;font-size:11px;'; loadB.onclick=()=>_loadCharIntoEditor(i);
     const upB=document.createElement('button'); upB.textContent='Update'; upB.title='Replace this character with the current Player-tab model'; upB.style.cssText='padding:1px 7px;font-size:11px;'; upB.onclick=()=>{ pushUndoSnapshot(); const nmv=c.name; charRoster[i]=_snapshotPlayerCharCfg(nmv); renderCharRosterPanel(); if(typeof flashToast==='function') flashToast('Updated "'+(nmv||'Character')+'"'); };
-    const del=document.createElement('button'); del.textContent='✕'; del.style.cssText='padding:1px 7px;font-size:11px;'; del.onclick=()=>{ pushUndoSnapshot(); charRoster.splice(i,1); renderCharRosterPanel(); };
+    const del=document.createElement('button'); del.textContent='✕'; del.title='Remove character'; del.setAttribute('aria-label','Remove character'); del.style.cssText='padding:1px 7px;font-size:11px;'; del.onclick=()=>{ pushUndoSnapshot(); charRoster.splice(i,1); renderCharRosterPanel(); };
     row.appendChild(nm); row.appendChild(loadB); row.appendChild(upB); row.appendChild(del); host.appendChild(row);
   });
 }
@@ -21537,9 +21552,9 @@ function renderCampaignPanel(){
   campaign.levels.forEach((lv,i)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:5px;font-size:12px;color:#cfeee2;margin:2px 0;'+((i===campaignEditIdx)?'outline:1px solid var(--accent);border-radius:5px;padding:2px 3px;':'');
     const nm=document.createElement('input'); nm.type='text'; nm.value=(lv.name!=null?lv.name:('Level '+(i+1))); nm.title=((lv.game&&lv.game.objective)||'eliminate')+' · '+((lv.props&&lv.props.length)||0)+' props'; nm.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 6px;font-size:12px;'; nm.onchange=()=>{ lv.name=nm.value.trim()||('Level '+(i+1)); saveCampaign(); };
     const ed=document.createElement('button'); ed.textContent='Edit'; ed.title='Load this level back into the editor to change it'; ed.style.cssText='padding:1px 7px;font-size:11px;'; ed.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); restoreLevel(campaign.levels[i]); campaignEditIdx=i; if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof renderCampaignPanel==='function') renderCampaignPanel(); if(typeof flashToast==='function') flashToast('Editing "'+(lv.name||('Level '+(i+1)))+'" - Save to campaign when done'); };
-    const up=document.createElement('button'); up.textContent='▲'; up.style.cssText='padding:1px 6px'; up.onclick=()=>{ if(i>0){ const t=campaign.levels[i-1]; campaign.levels[i-1]=campaign.levels[i]; campaign.levels[i]=t; campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); } };
-    const dn=document.createElement('button'); dn.textContent='▼'; dn.style.cssText='padding:1px 6px'; dn.onclick=()=>{ if(i<campaign.levels.length-1){ const t=campaign.levels[i+1]; campaign.levels[i+1]=campaign.levels[i]; campaign.levels[i]=t; campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); } };
-    const del=document.createElement('button'); del.textContent='✕'; del.style.cssText='padding:1px 7px'; del.onclick=()=>{ campaign.levels.splice(i,1); campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); };
+    const up=document.createElement('button'); up.textContent='▲'; up.title='Move up'; up.setAttribute('aria-label','Move level up'); up.style.cssText='padding:1px 6px'; up.onclick=()=>{ if(i>0){ const t=campaign.levels[i-1]; campaign.levels[i-1]=campaign.levels[i]; campaign.levels[i]=t; campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); } };
+    const dn=document.createElement('button'); dn.textContent='▼'; dn.title='Move down'; dn.setAttribute('aria-label','Move level down'); dn.style.cssText='padding:1px 6px'; dn.onclick=()=>{ if(i<campaign.levels.length-1){ const t=campaign.levels[i+1]; campaign.levels[i+1]=campaign.levels[i]; campaign.levels[i]=t; campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); } };
+    const del=document.createElement('button'); del.textContent='✕'; del.title='Remove level'; del.setAttribute('aria-label','Remove level'); del.style.cssText='padding:1px 7px'; del.onclick=()=>{ campaign.levels.splice(i,1); campaignEditIdx=-1; saveCampaign(); renderCampaignPanel(); };
     r.appendChild(nm); r.appendChild(ed); r.appendChild(up); r.appendChild(dn); r.appendChild(del); host.appendChild(r); });
 }
 
@@ -21956,14 +21971,14 @@ function buildEditorPanel(){
     + sec('HUD', 'hud', '<div id="edHud"></div>')
     + sec('Level file', 'levelfile',
         '<div id="edIssues"></div>'
-      + '<div class="row2"><button id="edSave">💾 Save</button><button id="edClear">Clear save</button></div>'
+      + '<div class="row2"><button id="edSave">'+_icn('save')+'Save</button><button id="edClear">Clear save</button></div>'
       + '<label style="display:flex;align-items:center;gap:7px;margin:6px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer"><input type="checkbox" id="edAutoSave" style="width:15px;height:15px;accent-color:var(--accent)"><b>Autosave</b> while editing</label>'
       + '<div class="hint" id="edAutoStatus" style="font-size:10px;opacity:0.75;margin:0 0 4px">Saves automatically as you work.</div>'
-      + '<div class="row2" style="margin-top:6px"><button id="edShare">🔗 Copy share link</button></div>'
-      + '<div class="row2" style="margin-top:6px"><button id="edExport">⬇ Export .json</button><button id="edImport">⬆ Import .json</button></div>'
+      + '<div class="row2" style="margin-top:6px"><button id="edShare">'+_icn('link')+'Copy share link</button></div>'
+      + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .json</button><button id="edImport">'+_icn('upload')+'Import .json</button></div>'
       + '<input type="file" id="edImportFile" accept=".json,application/json" style="display:none">'
       + '<div class="row2" style="margin-top:6px"><button id="edReset">Reset target</button><button id="edCopy">Copy code</button></div>'
-      + '<div class="row2" style="margin-top:10px"><button id="edWipe" style="width:100%;border-color:#7a2630;color:#ff9b93">🗑 Delete all objects (fresh scene)</button></div>'
+      + '<div class="row2" style="margin-top:10px"><button id="edWipe" style="width:100%;border-color:#7a2630;color:#ff9b93">'+_icn('trash')+'Delete all objects (fresh scene)</button></div>'
       + '<div class="copied" id="edCopied"></div>'
       + '<textarea id="edOut" readonly></textarea>')
     + sec('Campaign', 'campaign', '<div id="edCampaign"></div>')
@@ -22153,8 +22168,8 @@ function buildEditorPanel(){
   { const ac=p.querySelector('#edAutoSave'); if(ac){ ac.checked=_autoSaveOn; ac.onchange=()=>{ setAutoSaveOn(ac.checked); const st=p.querySelector('#edAutoStatus'); if(st) st.textContent=ac.checked?'Saves automatically as you work.':'Autosave off — remember to Save.'; }; } }
   p.querySelector('#edCopy').onclick = ()=>{ copyEditorCode(); };
   { const wb=p.querySelector('#edWipe'); if(wb){ let armed=false, t=null; wb.onclick=()=>{
-      if(!armed){ armed=true; wb.textContent='⚠ Click again to delete ALL objects'; wb.style.background='#7a2630'; t=setTimeout(()=>{ armed=false; wb.textContent='🗑 Delete all objects (fresh scene)'; wb.style.background=''; }, 3500); return; }
-      clearTimeout(t); armed=false; wb.textContent='🗑 Delete all objects (fresh scene)'; wb.style.background='';
+      if(!armed){ armed=true; wb.innerHTML=_icn('warn')+'Click again to delete ALL objects'; wb.style.background='#7a2630'; t=setTimeout(()=>{ armed=false; wb.innerHTML=_icn('trash')+'Delete all objects (fresh scene)'; wb.style.background=''; }, 3500); return; }
+      clearTimeout(t); armed=false; wb.innerHTML=_icn('trash')+'Delete all objects (fresh scene)'; wb.style.background='';
       wipeScene(); const note=editorEl.querySelector('#edCopied'); if(note) note.textContent='Scene cleared — all objects deleted ✓';
     }; } }
   p.querySelector('#edSave').onclick = ()=>{
@@ -22743,7 +22758,7 @@ function renderEditorFields(){
           const lab=document.createElement('span'); lab.textContent=(i===0?'Start':('Pt '+i)); lab.style.flex='1';
           const go=document.createElement('button'); go.textContent='Go to'; go.title='Fly the editor camera to this waypoint'; go.style.cssText='padding:1px 7px;font-size:10px;'; go.onclick=()=>{ const q=CS.path[i]; if(!q) return; flyPos.set(q[0],q[1],q[2]); player.pos.set(q[0],q[1],q[2]); if(editorTopView){ topPanX=q[0]; topPanZ=q[2]; } };
           const setb=document.createElement('button'); setb.textContent='Set'; setb.title='Update this waypoint to the current camera view'; setb.style.cssText='padding:1px 7px;font-size:10px;'; setb.onclick=()=>{ pushUndoSnapshot(); const o=CS.path[i]; const keep=(o && o.length>=6)?[o[3],o[4],o[5]]:[]; CS.path[i]=[+camera.position.x.toFixed(3),+camera.position.y.toFixed(3),+camera.position.z.toFixed(3), ...keep]; if(typeof refreshCinePreview==='function') refreshCinePreview(); };
-          const del=document.createElement('button'); del.textContent='✕'; del.style.cssText='padding:1px 7px;font-size:10px;'; del.onclick=()=>{ pushUndoSnapshot(); CS.path.splice(i,1); renderEditorFields(); };
+          const del=document.createElement('button'); del.textContent='✕'; del.title='Remove waypoint'; del.setAttribute('aria-label','Remove waypoint'); del.style.cssText='padding:1px 7px;font-size:10px;'; del.onclick=()=>{ pushUndoSnapshot(); CS.path.splice(i,1); renderEditorFields(); };
           const hasLook = pt.length>=6;
           const eye=document.createElement('button'); eye.textContent='\ud83d\udc41';
           eye.title = hasLook ? 'Update the look target to what the view is aiming at now' : 'Set a look target: aim the editor view at the subject, then click';
@@ -22837,7 +22852,7 @@ function renderEditorFields(){
     const eAb=document.createElement('button'); eAb.textContent='Apply'; eAb.style.flex='0 0 auto';
     eAb.onclick=()=>{ pushUndoSnapshot(); swapEnemyModel(eUrl.value, editorEnemyType); refreshEnemyVisuals(); renderEditorFields(); };   // re-skin this type's enemies immediately
     eRow.appendChild(eUrl); eRow.appendChild(eAb); eHost.appendChild(eRow);
-    const enPsHead=document.createElement('div'); enPsHead.className='hint'; enPsHead.style.margin='8px 0 3px'; enPsHead.innerHTML='<b>🔍 Poly Pizza</b> — search free models, click to use for this enemy type';
+    const enPsHead=document.createElement('div'); enPsHead.className='hint'; enPsHead.style.margin='8px 0 3px'; enPsHead.innerHTML='<b>'+_icn('search')+'Poly Pizza</b> — search free models, click to use for this enemy type';
     eHost.appendChild(enPsHead);
     const enPsHost=document.createElement('div'); eHost.appendChild(enPsHost);
     renderModelSearch(enPsHost, (m, st)=>{ eUrl.value=m.glb; pushUndoSnapshot(); swapEnemyModel(m.glb, editorEnemyType); refreshEnemyVisuals(); creditAsset(m.attribution); if(st) st.textContent='Using "'+m.title+'" — credit: '+(m.attribution||''); }, { placeholder:'e.g. zombie, alien, drone' });
@@ -22928,7 +22943,7 @@ function renderEditorFields(){
     offRow('Offset Z', ()=>mc.zoff, v=>mc.zoff=v);
     // preview + auto-fit
     const pvRow=document.createElement('div'); pvRow.className='row2'; pvRow.style.marginTop='6px';
-    const pv=document.createElement('button'); pv.textContent = previewEnemy ? '👁 Hide preview' : '👁 Preview enemy';
+    const pv=document.createElement('button'); pv.innerHTML = (previewEnemy ? _icn('eyeOff')+'Hide preview' : _icn('eye')+'Preview enemy');
     if(previewEnemy){ pv.style.background='rgba(var(--accent-rgb),0.30)'; pv.style.color='#eafff7'; }
     pv.onclick=()=>{ if(previewEnemy) clearPreviewEnemy(); else buildPreviewEnemy(editorEnemyType); renderEditorFields(); };
     const af=document.createElement('button'); af.textContent='⤢ Auto-fit size';
@@ -23282,7 +23297,7 @@ function renderEditorFields(){
     const ab=document.createElement('button'); ab.textContent='Apply'; ab.style.flex='0 0 auto';
     ab.onclick=()=>{ pushUndoSnapshot(); swapChestModel(url.value); for(const ch of chests.slice()){ scene.remove(ch.mesh); } chests.length=0; chestTimer=Math.min(chestTimer,2); };
     urlRow.appendChild(url); urlRow.appendChild(ab); lHost.appendChild(urlRow);
-    const ltPsHead=document.createElement('div'); ltPsHead.className='hint'; ltPsHead.style.margin='8px 0 3px'; ltPsHead.innerHTML='<b>🔍 Poly Pizza</b> — search free models, click to use as the loot box';
+    const ltPsHead=document.createElement('div'); ltPsHead.className='hint'; ltPsHead.style.margin='8px 0 3px'; ltPsHead.innerHTML='<b>'+_icn('search')+'Poly Pizza</b> — search free models, click to use as the loot box';
     lHost.appendChild(ltPsHead);
     const ltPsHost=document.createElement('div'); lHost.appendChild(ltPsHost);
     renderModelSearch(ltPsHost, (m, st)=>{ url.value=m.glb; pushUndoSnapshot(); swapChestModel(m.glb); for(const ch of chests.slice()){ scene.remove(ch.mesh); } chests.length=0; chestTimer=Math.min(chestTimer,2); creditAsset(m.attribution); if(st) st.textContent='Using "'+m.title+'" — credit: '+(m.attribution||''); }, { placeholder:'e.g. chest, crate, barrel' });
@@ -23309,7 +23324,7 @@ function renderEditorFields(){
       const hd=document.createElement('div'); hd.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;';
       const tt=document.createElement('span'); tt.style.cssText='font-size:11px;color:#9fe6cf;'; tt.textContent='Box '+(li+1)+'  ·  ('+sp.x.toFixed(1)+', '+sp.z.toFixed(1)+')';
       const sel=document.createElement('button'); sel.textContent=(li===selLoot?'selected':'select'); sel.style.cssText='font-size:10px;padding:2px 8px;'; sel.onclick=()=>{ selLoot=li; refreshLootMarkers(); renderEditorFields(); };
-      const del=document.createElement('button'); del.textContent='✕'; del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeLootSpot(li);
+      const del=document.createElement('button'); del.textContent='✕'; del.title='Remove loot spot'; del.setAttribute('aria-label','Remove loot spot'); del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeLootSpot(li);
       const right=document.createElement('div'); right.style.cssText='display:flex;gap:4px;'; right.appendChild(sel); right.appendChild(del);
       hd.appendChild(tt); hd.appendChild(right); box.appendChild(hd);
       // position (x/y/z) + emission (color/intensity)
@@ -24215,7 +24230,7 @@ function renderEditorFields(){
     }
     urlHost.appendChild(row);
     if(tgt.urlField && !tgt.addable){   // Poly Pizza search for single-slot models (gun/station/grenade/player)
-      const psHead=document.createElement('div'); psHead.className='hint'; psHead.style.margin='10px 0 3px'; psHead.innerHTML='<b>🔍 Poly Pizza</b> — search free models, click one to use it';
+      const psHead=document.createElement('div'); psHead.className='hint'; psHead.style.margin='10px 0 3px'; psHead.innerHTML='<b>'+_icn('search')+'Poly Pizza</b> — search free models, click one to use it';
       urlHost.appendChild(psHead);
       const psHost=document.createElement('div'); urlHost.appendChild(psHost);
       renderModelSearch(psHost, (m, st)=>{ inp.value=m.glb; tgt.pickedThumb=m.thumb||''; if(tgt.setUrl) tgt.setUrl(m.glb); creditAsset(m.attribution); if(st) st.textContent='Using "'+m.title+'" — credit: '+(m.attribution||''); }, { placeholder:'e.g. pistol, robot, barrel' });
@@ -24544,7 +24559,7 @@ function renderEditorFields(){
   }
   if(tgt.isSpawns){
     const row = document.createElement('div'); row.className='row2'; row.style.marginBottom='4px';
-    const add = document.createElement('button'); add.textContent='➕ Add spawn';
+    const add = document.createElement('button'); add.innerHTML=_icn('plus')+'Add spawn';
     add.onclick = ()=>{ addSceneSpawn(); };
     row.appendChild(add);
     urlHost.appendChild(row);
@@ -24554,7 +24569,7 @@ function renderEditorFields(){
   }
   if(tgt.isTurret){
     const row = document.createElement('div'); row.className='row2'; row.style.marginBottom='4px';
-    const add = document.createElement('button'); add.textContent='➕ Add turret';
+    const add = document.createElement('button'); add.innerHTML=_icn('plus')+'Add turret';
     add.onclick = ()=>{ addSceneTurret(); };
     row.appendChild(add); urlHost.appendChild(row);
     const lab=document.createElement('label'); lab.className='field';

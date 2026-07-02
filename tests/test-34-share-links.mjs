@@ -41,7 +41,7 @@ eq(api.levelCodeFromUrl(), 'ZZZ123', 'reads lvl code from the hash');
 globalThis.location.hash = '#nothing'; eq(api.levelCodeFromUrl(), null, 'no code when hash lacks lvl=');
 
 // --- wiring ---
-assert(/id="edShare"/.test(src) && /🔗 Copy share link/.test(src), 'editor has a share button');
+assert(/id="edShare"/.test(src) && /_icn\('link'\)\+'Copy share link/.test(src), 'editor has a share button (build 816: SVG icon)');
 assert(/buildShareLink\(await encodeLevel\(serializeLevel\(\)\)\)/.test(src), 'share encodes the live level into a link');
 assert(/navigator\.clipboard\.writeText\(link\)/.test(src), 'copies to clipboard (with a visible fallback box)');
 assert(/const code = levelCodeFromUrl\(\);/.test(src) && /restoreLevel\(lvl\); flashToast/.test(src), 'startup loads a shared level via restoreLevel');

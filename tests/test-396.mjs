@@ -19,7 +19,7 @@ assert((src.match(/if\(Array\.isArray\(level\.turrets\)\) for\(const T of level\
 
 // ---- editor: a placeable, selectable target + Add/Delete + gizmo move ----
 assert(/turrets: \{[\s\S]*?isTurret: true,[\s\S]*?addable: true,[\s\S]*?noun: 'Turret',/.test(src), 'editor has a Turrets target');
-assert(/add\.textContent='\u2795 Add turret';/.test(src) && /addSceneTurret\(\)/.test(src), 'Add turret button wired');
+assert(/add\.innerHTML=_icn\('plus'\)\+'Add turret';/.test(src) && /addSceneTurret\(\)/.test(src), 'Add turret button wired (build 816: SVG icon)');
 assert(/else if\(tgt\.isTurret\) deleteSelectedTurret\(\);/.test(src), 'delete handles turrets');
 assert(/if\(editorActive==='turrets'\)\{ const g=editorTargets\.turrets\.obj\(\); return g\?g\.position:null; \}/.test(src), 'gizmo reads the turret position');
 assert(/\|\| editorActive==='turrets'\);/.test(src), 'turret is gizmo-movable');
