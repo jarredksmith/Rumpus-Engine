@@ -141,8 +141,8 @@ assert(/const _cap = \(ceilY!=null\) \? ceilY : Infinity;/.test(src) && /if\(h\.
 // build 717: ramp-aware vertical — 4-corner ground sample, surface tilt, gravity + launch
 assert(/gF:_carGroundY\(o\.position\.x\+hx\*_hd[\s\S]*?_ceil\),[\s\S]*?gB:_carGroundY\(o\.position\.x-hx\*_hd/.test(src), 'samples front + back ground (heading frame) to tilt to the ramp (build 809: via the ~25Hz corner cache)');
 assert(/const _ccStale=!_cc \|\| \(_ccNow-_cc\.t>40\)/.test(src) && /const gC=_carGroundY\(o\.position\.x, o\.position\.z, o, _ceil\);/.test(src), 'the centre sample stays live (rest height); only the tilt corners are cached');
-assert(/_vy -= GRAV\*0\.85\*dt;/.test(src), 'the car has gravity (so it can leave a ramp)');
-assert(/const _launch=\(_climb>0\.8 && _climb<22\)\?Math\.min\(_climb\*1\.15,15\)\*_lm:0;/.test(src), 'build 790/791: a ramp banks launch velocity (cap 15) scaled by the Launch multiplier; a wall-ram spike does not');
+assert(/_vy -= GRAV\*\(_airb\?1:0\.85\)\*dt;/.test(src), 'the car has gravity — FULL gravity in flight (build 824), so a jump arcs with weight');
+assert(/const _launch=\(_slope>0\.06 && _slope<1\.2 && Math\.abs\(r\.speed\)>2\) \? Math\.min\(_slope\*Math\.abs\(r\.speed\), 18\)\*_lm : 0;/.test(src), 'build 824: launch = ramp SLOPE x speed (a kerb step no longer fires it); a wall face (slope>1.2) never launches');
 assert(/_carEuler\.set\(o\.userData\.carPitch \+ o\.userData\.leanPitch, carYaw, o\.userData\.carRoll \+ o\.userData\.leanRoll\);/.test(src) && /o\.quaternion\.copy\(_carQuat\)\.multiply\(_carModelQ\);/.test(src), 'the body pitches/rolls to the surface + suspension lean (build 729)');
 
 // --- serialize + restore (compact veh) at all three prop-load sites ---
@@ -251,7 +251,7 @@ assert(/const handbrake=\(keys\['Space'\]\|\|keys\['KeyB'\]\|\|\(typeof padDrive
 assert(/const gripBase=Math\.max\(0\.5,\+cfg\.grip\|\|6\); let grip=handbrake\?gripBase\*0\.16:gripBase;/.test(du), 'the handbrake cuts grip so the travel dir lags far behind the heading (big slide)');
 assert(/const vstep=grip\*dt; o\.userData\.carVelYaw \+= Math\.max\(-vstep,Math\.min\(vstep,vd\)\);/.test(du), 'the travel direction chases the heading at the grip rate');
 assert(/const vYaw=o\.userData\.carVelYaw, fx=-Math\.sin\(vYaw\), fz=-Math\.cos\(vYaw\);/.test(du), 'the car MOVES along the travel direction (which may differ from the heading = drift)');
-assert(/if\(_slip>0\.15\)\{ const _f=1 - Math\.min\(0\.5,_slip\*0\.4\)\*Math\.min\(1,dt\*5\); o\.userData\.carSpeed\*=_f; r\.speed\*=_f; \}/.test(du), 'tyres scrub speed during a slide');
+assert(/if\(!_airb && _slip>0\.15\)\{ const _f=1 - Math\.min\(0\.5,_slip\*0\.4\)\*Math\.min\(1,dt\*5\); o\.userData\.carSpeed\*=_f; r\.speed\*=_f; \}/.test(du), 'tyres scrub speed during a slide (grounded only, build 824)');
 assert(/if\(V\.grip && V\.grip!==6\) e\.veh\.grip=V\.grip;/.test(src), 'grip serialized when non-default');
 assert(/row\('Grip','grip', 1, 12, 0\.5, 1\)/.test(src), 'editor exposes a Grip slider');
 
@@ -265,7 +265,7 @@ assert(/row\('Grip','grip', 1, 12, 0\.5, 1\)/.test(src), 'editor exposes a Grip 
 assert(/const _TP=0\.72, _TR=0\.42;/.test(du), 'pitch is allowed steep (ramps); roll is capped tighter (a wall leans, never flips)');
 assert(/if\(_grounded\)\{[\s\S]*?let _tp=Math\.atan2\(gF-gB, 2\*_hd\), _tr=Math\.atan2\(gR-gL, 2\*_hw\);/.test(du), 'grounded: tilt is the raw surface slope (no height clamp that throttled a long vehicle on a ramp)');
 assert(/_tp=Math\.max\(-_TP,Math\.min\(_TP,_tp\)\); _tr=Math\.max\(-_TR,Math\.min\(_TR,_tr\)\);/.test(du), 'final pitch/roll is angle-capped so the car never tips over and buries itself');
-assert(/if\(handbrake && Math\.abs\(r\.speed\)>0\.1\)\{ const _bk=1 - Math\.min\(0\.85, 3\.2\*dt\); o\.userData\.carSpeed\*=_bk; r\.speed\*=_bk; \}/.test(du), 'the handbrake actually brakes (slows the car), not just loosens grip');
+assert(/if\(!_airb && handbrake && Math\.abs\(r\.speed\)>0\.1\)\{ const _bk=1 - Math\.min\(0\.85, 3\.2\*dt\); o\.userData\.carSpeed\*=_bk; r\.speed\*=_bk; \}/.test(du), 'the handbrake actually brakes (slows the car) — on the ground (build 824)');
 
 // executable: a steep ramp pitches a LONG vehicle correctly (build-726 height-clamp would have throttled it), a wall is bounded
 { const TP=0.72, TR=0.42;

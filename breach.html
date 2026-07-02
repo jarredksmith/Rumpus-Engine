@@ -15478,7 +15478,7 @@ function _carWall(o, dx, dz, dist, half){
   // metres ahead, where a ramp has already risen above body height — the old fixed height read that as a wall and blocked the
   // climb. The +start*0.45 term clears any ramp up to ~24° at the nose, while a genuinely TALL wall still blocks.
   const y = baseY + MAX_RISE + 0.15 + start*0.45;
-  for(const off of [-span*0.8, 0, span*0.8]){
+  for(const off of [-span*0.95, -span*0.45, 0, span*0.45, span*0.95]){   // build 824: full-width coverage incl. the corners (the outer 20% was exposed — angled approaches clipped through)
     const ox = o.position.x + perpx*off + dx*start, oz = o.position.z + perpz*off + dz*start;
     try{
       const ray = new RAPIER.Ray({x:ox, y, z:oz}, {x:dx, y:0, z:dz});
@@ -15505,15 +15505,20 @@ function driveUpdate(dt){
   if(o.userData.boostT>0){ o.userData.boostT-=dt; if(o.userData.boostT<=0){ o.userData.boostT=0; o.userData.boostCdT=+cfg.boostCd||0; } }
   else if(boostKey && bMult>1.01 && (o.userData.boostCdT||0)<=0 && throttle>0){ o.userData.boostT=+cfg.boostDur||3; if(typeof playSample==='function') playSample(curSounds().carBoost); }   // engage (forward only) + build 749 boost SFX
   const boosting=o.userData.boostT>0;
+  // build 824: BALLISTIC FLIGHT — in the air there are no tires. The engine can't accelerate you, lifting off doesn't
+  // engine-brake, and momentum carries (tiny aero drag only) — so a ramp THROWS the car on a solid parabola instead of the
+  // speed mushing around mid-flight. _airb is last frame's ground state.
+  const _airb = (o.userData._carGrounded===false);
   // build 820: TRACTION CIRCLE — grip spent cornering isn't available to accelerate. Near the lateral limit the drive
   // wheels can only put down sqrt(1-latFrac^2) of their force, so flooring it mid-corner pushes wide instead of free speed.
   const _tc=Math.sqrt(Math.max(0.15, 1 - Math.pow(o.userData._latFrac||0, 2)));
   const effCfg = boosting ? { maxSpeed:cfg.maxSpeed*bMult, accel:cfg.accel*1.5*_tc, turn:cfg.turn, reverse:cfg.reverse }
                           : (_tc<0.999 ? { maxSpeed:cfg.maxSpeed, accel:cfg.accel*_tc, turn:cfg.turn, reverse:cfg.reverse } : cfg);
-  const r = driveStep(o.userData.carSpeed||0, throttle, 0, effCfg, dt);   // driveStep handles the SPEED; A/D steering is below
+  const r = _airb ? { speed:(o.userData.carSpeed||0)*(1-0.02*dt), yawDelta:0 }
+                  : driveStep(o.userData.carSpeed||0, throttle, 0, effCfg, dt);   // driveStep handles the SPEED; A/D steering is below
   // build 731: engine braking — lifting off the throttle adds a little drivetrain drag on top of driveStep's coast, so the
   // car slows when you come off the gas rather than gliding forever.
-  if(Math.abs(throttle)<0.01 && Math.abs(r.speed)>0.4) r.speed *= (1 - Math.min(0.4, 0.8*dt));
+  if(!_airb && Math.abs(throttle)<0.01 && Math.abs(r.speed)>0.4) r.speed *= (1 - Math.min(0.4, 0.8*dt));   // build 824: engine braking needs wheels on the ground
   o.userData.carSpeed = r.speed;
   // turn authority grows with speed (no pivoting in place when parked).
   const speedFrac = Math.min(1, Math.abs(r.speed)/Math.max(1, cfg.maxSpeed*0.22));   // build 712: reach full turn authority sooner
@@ -15565,16 +15570,20 @@ function driveUpdate(dt){
   // at the edge), and COUNTER-STEERING (steering against the slide) recovers grip 1.4x faster, so drifts catch like a real car.
   if(!handbrake && (o.userData._latFrac||0)>0.9) grip *= 1 - 0.35*((o.userData._latFrac)-0.9)/0.1;   // build 823: gentler breakaway — the edge slides, it doesn't give way
   if(steer!==0 && Math.abs(vd)>0.06 && Math.sign(steer)===-Math.sign(vd)) grip *= 1.4;
+  if(_airb) grip=0.02;   // build 824: no tires on the ground — the travel direction is locked in flight (heading still swings for air control)
   const vstep=grip*dt; o.userData.carVelYaw += Math.max(-vstep,Math.min(vstep,vd));
   const vYaw=o.userData.carVelYaw, fx=-Math.sin(vYaw), fz=-Math.cos(vYaw);   // travel direction — lags the heading when drifting
   const _slip=Math.abs(Math.atan2(Math.sin(carYaw-vYaw),Math.cos(carYaw-vYaw)));   // slip angle (heading vs travel)
-  if(_slip>0.15){ const _f=1 - Math.min(0.5,_slip*0.4)*Math.min(1,dt*5); o.userData.carSpeed*=_f; r.speed*=_f; }   // tyres scrub speed in a slide
-  if(handbrake && Math.abs(r.speed)>0.1){ const _bk=1 - Math.min(0.85, 3.2*dt); o.userData.carSpeed*=_bk; r.speed*=_bk; }   // build 726: the handbrake actually slows the car (brake + slide = drift)
+  if(!_airb && _slip>0.15){ const _f=1 - Math.min(0.5,_slip*0.4)*Math.min(1,dt*5); o.userData.carSpeed*=_f; r.speed*=_f; }   // tyres scrub speed in a slide (on the ground)
+  if(!_airb && handbrake && Math.abs(r.speed)>0.1){ const _bk=1 - Math.min(0.85, 3.2*dt); o.userData.carSpeed*=_bk; r.speed*=_bk; }   // build 726: the handbrake actually slows the car (brake + slide = drift)
   let mvx = fx * r.speed * dt, mvz = fz * r.speed * dt;
   const _h = _carExtents(o);
   const _premv=Math.hypot(mvx,mvz);   // build 822: intended travel before the wall test
   if(mvx!==0 && _carWall(o, Math.sign(mvx), 0, Math.abs(mvx), _h)) mvx = 0;
   if(mvz!==0 && _carWall(o, 0, Math.sign(mvz), Math.abs(mvz), _h)) mvz = 0;
+  // build 824: the two axis tests can THREAD a corner diagonally (each axis individually clear while the combined motion
+  // is not) — one extra ray along the true motion direction closes the gap.
+  if(mvx!==0 && mvz!==0){ const _dl=Math.hypot(mvx,mvz); if(_carWall(o, mvx/_dl, mvz/_dl, _dl, _h)){ mvx=0; mvz=0; } }
   const _imp0=Math.abs(r.speed);   // speed carried into the wall (for impact feedback)
   // build 822: GLANCING DEFLECTION — a wall contact scrubs speed by how much of the travel it killed. A shallow scrape
   // (keep~0.98) barely slows you; a 45-degree hit grinds speed off in ~a quarter second; head-on (keep~0) stops (the bonk
@@ -15623,12 +15632,18 @@ function driveUpdate(dt){
   const _budget=(_horiz>0.015 ? 0.05 : 0) + _horiz*1.3;   // ~52° max climb relative to forward travel; ~0 when blocked
   if(_rest > _cy + _budget) _rest = _cy + _budget;
   let _vy=o.userData.carVelY||0; const _climb=(_rest-_cy)/dt;
-  _vy -= GRAV*0.85*dt; let _ny=_cy+_vy*dt; const _SNAP=Math.max(0.45,_h.hh);
+  _vy -= GRAV*(_airb?1:0.85)*dt; let _ny=_cy+_vy*dt; const _SNAP=Math.max(0.45,_h.hh);   // build 824: FULL gravity in flight — a proper heavy arc, not a float
   const _lm=(cfg.launch==null?1:cfg.launch);   // build 791: per-vehicle Launch multiplier (0 = never jumps, >1 = big air)
-  const _launch=(_climb>0.8 && _climb<22)?Math.min(_climb*1.15,15)*_lm:0;   // build 790/791: a real ramp banks launch velocity — scaled by the vehicle's Launch; a sudden spike (wall ram) still does NOT launch
+  // build 824: launch = ballistic continuation of the RAMP SLOPE (vy = slope x forward speed), not the one-frame climb
+  // RATE — a kerb step spiked the rate for a single frame and fired the full launch (small bumps threw the car skyward).
+  // The slope comes from the front/back ground samples so it's bounded by real geometry; a wall face (slope > 1.2) never
+  // launches. _rampVy remembers ~0.2s of ramp so the lip frame (front sample already past the edge) still throws hard.
+  const _slope=(gF-gB)/(2*_hd);
+  const _launch=(_slope>0.06 && _slope<1.2 && Math.abs(r.speed)>2) ? Math.min(_slope*Math.abs(r.speed), 18)*_lm : 0;
   const _impVy=_vy;                                               // build 790: descent speed at the moment of contact (for landing feedback)
-  if(_ny<=_rest){ _ny=_rest; _vy=_launch; }                       // grounded: bank ramp-climb speed as launch velocity
+  if(_ny<=_rest){ _ny=_rest; _vy = (_slope < -0.05) ? Math.max(_launch, o.userData._rampVy||0) : _launch; }   // grounded: ride the ramp; at the crest/lip, throw with the remembered ramp vy
   else if(_vy<=0 && (_ny-_rest)<_SNAP){ _ny=_rest; _vy=0; }       // hug the ground over small downhill drops (no micro-hops)
+  o.userData._rampVy = Math.max(_launch, (o.userData._rampVy||0)*(1-Math.min(1,dt*6)));   // ~0.2s ramp memory (decays)
   o.userData.carVelY=_vy;
   const _wasAir=o.userData._carGrounded===false;                  // build 790: remember last frame's state to detect a touchdown
   const _grounded=(_ny-_rest)<0.12; o.userData._carGrounded=_grounded;   // build 754: persist so next frame's brake-SFX check can suppress a mid-air screech
@@ -16385,7 +16400,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 823 · 2026-07-02';
+const BUILD_VERSION = 'build 824 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

@@ -15,7 +15,7 @@ assert(/_eng\.o\.frequency\.setTargetAtTime\(_revHz/.test(eu) && /_eng\.g\.gain\
 assert(/const GEARS=5, _g=Math\.min\(GEARS-1, Math\.floor\(frac\*GEARS\)\), _rpm=\(frac\*GEARS\)-_g;/.test(eu), 'speed maps to a gear + an in-gear RPM (0..1)');
 assert(/const _revHz=\(58 \+ _g\*7\) \+ _rpm\*130 \+ \(throttle>0\?18:0\);/.test(eu), 'rev pitch = gear base + in-gear RPM (drops on each upshift)');
 assert(/if\(_g>_eng\._gear\) _eng\._shiftT=t\+0\.13;/.test(eu) && /const _shift=\(_eng\._shiftT && t<_eng\._shiftT\)\?0\.5:1;/.test(eu), 'an upshift opens a short window that ducks the volume (clutch dip)');
-assert(/if\(Math\.abs\(throttle\)<0\.01 && Math\.abs\(r\.speed\)>0\.4\) r\.speed \*= \(1 - Math\.min\(0\.4, 0\.8\*dt\)\);/.test(extractFunction('driveUpdate')), 'build 731: engine braking slows the car when off the throttle');
+assert(/if\(!_airb && Math\.abs\(throttle\)<0\.01 && Math\.abs\(r\.speed\)>0\.4\) r\.speed \*= \(1 - Math\.min\(0\.4, 0\.8\*dt\)\);/.test(extractFunction('driveUpdate')), 'build 731/824: engine braking slows the car when off the throttle — wheels on the ground only');
 // executable: RPM resets down at each gear boundary (the upshift)
 { const GEARS=5, rev=frac=>{ const g=Math.min(GEARS-1,Math.floor(frac*GEARS)), rpm=(frac*GEARS)-g; return (58+g*7)+rpm*130; };
   assert(rev(0.199) > rev(0.201), 'crossing into the next gear drops the revs (an upshift)');

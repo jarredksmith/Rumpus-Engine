@@ -11,14 +11,15 @@ assert(/launch:\(v\.launch==null\?1:Math\.max\(0, Math\.min\(3, \+v\.launch\|\|0
 
 // --- driveUpdate reads the multiplier and applies it to the ramp launch ---
 assert(/const _lm=\(cfg\.launch==null\?1:cfg\.launch\);/.test(du), 'driveUpdate resolves the Launch multiplier (default 1 for old vehicles)');
-assert(/Math\.min\(_climb\*1\.15,15\)\*_lm/.test(du), 'the launch velocity is scaled by the multiplier');
+assert(/Math\.min\(_slope\*Math\.abs\(r\.speed\), 18\)\*_lm/.test(du), 'the launch velocity is scaled by the multiplier (build 824: slope-based)');
 // behaviour: 0 => no launch, 2 => double
 {
-  const launch = (climb, lm) => (climb>0.8 && climb<22) ? Math.min(climb*1.15,15)*lm : 0;
-  eq(launch(10, 0), 0, 'Launch 0 => the car never leaves the ground');
-  eq(launch(10, 1) > 0, true, 'Launch 1 => normal air');
-  eq(launch(10, 2), launch(10, 1)*2, 'Launch 2 => double the pop');
-  eq(launch(30, 1), 0, 'a wall-ram spike (climb 30 > 22) still never launches, any multiplier');
+  const launch = (slope, speed, lm) => (slope>0.06 && slope<1.2 && Math.abs(speed)>2) ? Math.min(slope*Math.abs(speed), 18)*lm : 0;
+  eq(launch(0.5, 20, 0), 0, 'Launch 0 => the car never leaves the ground');
+  eq(launch(0.5, 20, 1) > 0, true, 'Launch 1 => normal air');
+  eq(launch(0.5, 20, 2), launch(0.5, 20, 1)*2, 'Launch 2 => double the pop');
+  eq(launch(2.0, 20, 1), 0, 'a wall face (slope 2.0 > 1.2) never launches, any multiplier');
+  eq(launch(0.02, 20, 1), 0, 'a flat kerb-step slope never launches (the old climb-rate spike bug)');
 }
 
 // --- serialized only when non-default ---

@@ -6,8 +6,11 @@ import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
 const du = extractFunction('driveUpdate');
 
-// 1. launch is banked from the ramp climb, bigger cap, scaled by the vehicle Launch multiplier, still rejects a wall-ram spike (>22)
-assert(/const _launch=\(_climb>0\.8 && _climb<22\)\?Math\.min\(_climb\*1\.15,15\)\*_lm:0;/.test(du), 'ramp launch scales with climb (cap 15) x Launch multiplier, wall-ram spikes still excluded');
+// 1. (reworked in build 824) launch = ramp SLOPE x forward speed — physically the ballistic continuation of the ramp;
+//    a kerb's one-frame climb spike can no longer fire it, and a wall face (slope > 1.2) never launches.
+assert(/const _slope=\(gF-gB\)\/\(2\*_hd\);/.test(du), 'the slope comes from the front/back ground samples');
+assert(/const _launch=\(_slope>0\.06 && _slope<1\.2 && Math\.abs\(r\.speed\)>2\) \? Math\.min\(_slope\*Math\.abs\(r\.speed\), 18\)\*_lm : 0;/.test(du), 'launch = slope x speed (capped 18), gated against walls + crawling');
+assert(/o\.userData\._rampVy = Math\.max\(_launch, \(o\.userData\._rampVy\|\|0\)\*\(1-Math\.min\(1,dt\*6\)\)\);/.test(du), 'a short ramp memory covers the lip frame (front sample past the edge)');
 
 // 2. airborne, the nose follows the arc: nose up while rising (+_vy), nosing over as it falls (−_vy). Build 792 moved this
 //    into the else-branch as the auto-level target `_arc`; air control tilts around it (see test-792).
