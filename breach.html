@@ -7980,6 +7980,8 @@ const TRACK_PIECES = {
   track_curve45_r: { label:'45° R', arc:Math.PI/4, dir:-1, icon:'<path d="M8 21v-6a14 14 0 0 1 5-9"/><path d="M16 21v-5a9 9 0 0 1 3-6"/>' },
   track_curve_l:   { label:'90° L', arc:Math.PI/2, dir:1,  icon:'<path d="M17 21v-4A11 11 0 0 0 6 6H3"/><path d="M11 21v-3a6 6 0 0 0-6-6H3"/>' },
   track_curve_r:   { label:'90° R', arc:Math.PI/2, dir:-1, icon:'<path d="M7 21v-4A11 11 0 0 1 18 6h3"/><path d="M13 21v-3a6 6 0 0 1 6-6h2"/>' },
+  track_bank_l:    { label:'Bank L', arc:Math.PI/2, dir:1,  bank:0.26, icon:'<path d="M17 21v-4A11 11 0 0 0 6 6H3"/><path d="M11 21v-3a6 6 0 0 0-6-6H3"/><path d="M15 13l4-3"/>' },
+  track_bank_r:    { label:'Bank R', arc:Math.PI/2, dir:-1, bank:0.26, icon:'<path d="M7 21v-4A11 11 0 0 1 18 6h3"/><path d="M13 21v-3a6 6 0 0 1 6-6h2"/><path d="M9 13l-4-3"/>' },
   track_ramp_up:   { label:'Ramp ↑', len:24, rise:6,  icon:'<path d="M3 20h4L21 8"/><path d="M17 8h4v4"/>' },
   track_ramp_dn:   { label:'Ramp ↓', len:24, rise:-6, icon:'<path d="M3 8l14 8h4"/><path d="M21 12v4h-4"/>' },
 };
@@ -7990,12 +7992,16 @@ for(const _tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[_tk];
     : { x:0, z:-d.len, yaw:0, dy:(d.rise||0) };
 }
 // Centreline sample at t (0..1) in entry-local coords. Ramps rise on a smoothstep so both ends are level
-// (no lip to snag on); curves sweep a circular arc of radius TRACK_R.
+// (no lip to snag on); curves sweep a circular arc of radius TRACK_R. build 830: `roll` is the cross-section
+// BANK (camber) — it eases in and out on a smoothstep so a banked piece is FLUSH with flat neighbours at both
+// sockets, and holds def.bank through the middle. dir signs it so the OUTSIDE edge of the turn is the raised one.
 function _trackCL(def, t){
+  let roll=0;
+  if(def.bank){ const u=Math.min(1, Math.min(t, 1-t)/0.28); roll=(def.dir||1)*def.bank*(u*u*(3-2*u)); }
   if(def.arc!=null){ const a=def.arc*t, R=TRACK_R;
-    return { x:-def.dir*R*(1-Math.cos(a)), z:-R*Math.sin(a), y:0, yaw:def.dir*a };
+    return { x:-def.dir*R*(1-Math.cos(a)), z:-R*Math.sin(a), y:0, yaw:def.dir*a, roll };
   }
-  return { x:0, z:-def.len*t, y:(def.rise ? def.rise*(3*t*t - 2*t*t*t) : 0), yaw:0 };
+  return { x:0, z:-def.len*t, y:(def.rise ? def.rise*(3*t*t - 2*t*t*t) : 0), yaw:0, roll };
 }
 // ONE merged BufferGeometry ribbon following the centreline between lateral offsets latA..latB (metres,
 // +right), from yBot..yTop, over t0..t1. yBot===yTop emits a flat strip (painted lines); otherwise a solid
@@ -8005,7 +8011,8 @@ function _trackRibbon(def, latA, latB, yBot, yTop, segs, uScale, t0, t1){
   const S=[]; for(let i=0;i<=segs;i++) S.push(_trackCL(def, t0+(t1-t0)*i/segs));
   const us=[0]; for(let i=1;i<=segs;i++){ const a=S[i-1], b=S[i]; us.push(us[i-1]+Math.hypot(b.x-a.x, b.y-a.y, b.z-a.z)); }
   const pos=[], uv=[], idx=[];
-  const pt=(c,lat,y)=>[ c.x + Math.cos(c.yaw)*lat, c.y + y, c.z - Math.sin(c.yaw)*lat ];   // right vector at yaw = (cos, -sin)
+  const pt=(c,lat,y)=>{ const cr=Math.cos(c.roll||0), sr=Math.sin(c.roll||0);   // right vector at yaw = (cos, -sin); roll tilts the cross-section (banking)
+    return [ c.x + Math.cos(c.yaw)*lat*cr, c.y + y + lat*sr, c.z - Math.sin(c.yaw)*lat*cr ]; };
   const strip=(lA,lB,yA,yB)=>{ const base=pos.length/3;
     for(let i=0;i<=segs;i++){ const c=S[i], pA=pt(c,lA,yA), pB=pt(c,lB,yB);
       pos.push(pA[0],pA[1],pA[2], pB[0],pB[1],pB[2]); uv.push(us[i]*uScale,0, us[i]*uScale,1); }
@@ -8040,7 +8047,9 @@ function _trackMats(){
     for(let r=0;r<8;r++) for(let q=0;q<8;q++){ g.fillStyle=((r+q)&1)?'#101317':'#eef0f2'; g.fillRect(q*8,r*8,8,8); }
     const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; chk.map=t;
   }catch(e){}
-  _trkM={ road, line, kerb, chk };
+  const barrier=mk(0xb9bdc2,0.9);                                                        // concrete barrier base
+  const screen=mk(0x9fd8ff,0.4); screen.transparent=true; screen.opacity=0.16; screen.depthWrite=false;   // clear catch-screen above it
+  _trkM={ road, line, kerb, chk, barrier, screen };
   return _trkM;
 }
 function _buildTrackPiece(key){
@@ -8059,10 +8068,34 @@ function _buildTrackPiece(key){
   }
   return g;
 }
+// build 830: BARRIER WALLS toggle on any placed track piece — a concrete base wall along each edge with a
+// clear catch-screen above it (total 3 m: tall enough that the car wall-classifier reads it as SOLID at body
+// height even for long vehicles, so cars deflect off it instead of pushing through). Follows banking/ramps
+// (same ribbon path). trk is serialized ({w:1}) and reapplied by every loader, so walls survive save/share/undo.
+function trackApply(o, trk){
+  const def=TRACK_PIECES[o.userData && o.userData.src]; if(!def) return;
+  const on=!!(trk && trk.w);
+  for(let i=o.children.length-1;i>=0;i--){ const ch=o.children[i];
+    if(ch.userData && ch.userData._trkWall){ o.remove(ch); if(ch.geometry) ch.geometry.dispose(); } }
+  o.userData.trk = on ? { w:1 } : null;
+  if(on){
+    const M=_trackMats(), half=TRACK_W/2;
+    const segs = def.arc!=null ? Math.max(10, Math.round(def.arc*16)) : (def.rise ? 12 : 2);
+    for(const s of [-1,1]){
+      const base=new THREE.Mesh(_trackRibbon(def, s*(half-0.28), s*half, TRACK_T, TRACK_T+1.1, segs, 0), M.barrier);
+      const scr =new THREE.Mesh(_trackRibbon(def, s*(half-0.2),  s*(half-0.06), TRACK_T+1.1, TRACK_T+3.0, segs, 0), M.screen);
+      base.userData._trkWall=1; scr.userData._trkWall=1;
+      base.castShadow=base.receiveShadow=true; scr.castShadow=false;
+      o.add(base, scr);
+    }
+  }
+  if(typeof refreshPropCollider==='function') refreshPropCollider(o);
+}
 const PRIMITIVE_BUILDERS = { box:buildBoxProp, sphere:buildSphereProp, cylinder:buildCylinderProp, cone:buildConeProp, pillar:buildPillar,
   track_start:()=>_buildTrackPiece('track_start'), track_straight:()=>_buildTrackPiece('track_straight'), track_short:()=>_buildTrackPiece('track_short'),
   track_curve45_l:()=>_buildTrackPiece('track_curve45_l'), track_curve45_r:()=>_buildTrackPiece('track_curve45_r'),
   track_curve_l:()=>_buildTrackPiece('track_curve_l'), track_curve_r:()=>_buildTrackPiece('track_curve_r'),
+  track_bank_l:()=>_buildTrackPiece('track_bank_l'), track_bank_r:()=>_buildTrackPiece('track_bank_r'),
   track_ramp_up:()=>_buildTrackPiece('track_ramp_up'), track_ramp_dn:()=>_buildTrackPiece('track_ramp_dn') };
 function isPrimitive(src){ return PRIMITIVE_BUILDERS.hasOwnProperty(src); }
 // Cache loaded glTFs by URL so repeated/added props of the same model don't refetch.
@@ -8482,7 +8515,7 @@ function removeProp(idx){
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -12751,7 +12784,7 @@ function loadLevelFromNet(level){
   // rebuild from the host's data
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -16527,7 +16560,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 829 · 2026-07-02';
+const BUILD_VERSION = 'build 830 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21290,6 +21323,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
+  if(o.userData.trk && o.userData.trk.w) e.trk=1;   // build 830: track-piece barrier walls
   if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.latG!=null && V.latG!==2.2) e.veh.latG=V.latG; if(V.susp!=null && V.susp!==1) e.veh.susp=V.susp; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.brake!=null && V.brake!==1) e.veh.brake=V.brake; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
@@ -21835,7 +21869,7 @@ function restoreLevel(level){
   propModels.length = 0;
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -24702,6 +24736,31 @@ function renderEditorFields(){
         tgrid.appendChild(b);
       }
       shapesHost.appendChild(tgrid);
+      // build 830: BARRIER WALLS — toggle on the selected piece, or the whole course at once. Walls keep cars
+      // on the road (a concrete base + clear screen, solid at car body height) and follow banking/ramps.
+      {
+        const _selP=(editorActive==='props' && editorTargets.props.idx>=0) ? propModels[editorTargets.props.idx] : null;
+        const _selTrk=(_selP && _selP.userData && TRACK_PIECES[_selP.userData.src]) ? _selP : null;
+        const _allTrk=propModels.filter(p=>p && p.userData && TRACK_PIECES[p.userData.src]);
+        if(_selTrk || _allTrk.length){
+          const wrow=document.createElement('div'); wrow.style.cssText='display:flex;align-items:center;gap:10px;margin-top:7px;flex-wrap:wrap;';
+          if(_selTrk){
+            const wl=document.createElement('label'); wl.style.cssText='display:flex;align-items:center;gap:6px;color:#9fe6cf;font-size:12px;cursor:pointer;';
+            const wcb=document.createElement('input'); wcb.type='checkbox'; wcb.checked=!!(_selTrk.userData.trk && _selTrk.userData.trk.w); wcb.style.accentColor='var(--accent)';
+            wcb.onchange=()=>{ pushUndoSnapshot(); trackApply(_selTrk, {w:wcb.checked}); if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+            const wsp=document.createElement('span'); wsp.innerHTML='<b>Barrier walls</b> (selected piece)';
+            wl.appendChild(wcb); wl.appendChild(wsp); wrow.appendChild(wl);
+          }
+          if(_allTrk.length){
+            const anyOff=_allTrk.some(p=>!(p.userData.trk && p.userData.trk.w));
+            const wb=document.createElement('button'); wb.className='primBtn'; wb.style.flex='1'; wb.textContent=anyOff?'Walls: whole track':'Walls: remove all';
+            wb.title=anyOff?'Add barrier walls to every track piece':'Remove barrier walls from every track piece';
+            wb.onclick=()=>{ pushUndoSnapshot(); for(const p of _allTrk) trackApply(p, {w:anyOff}); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
+            wrow.appendChild(wb);
+          }
+          shapesHost.appendChild(wrow);
+        }
+      }
     }
   }
   // ---- Material section (selected shape primitive only): color, texture+tiling, emissive light ----
