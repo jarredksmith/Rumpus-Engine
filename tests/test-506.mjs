@@ -11,7 +11,7 @@ assert(/const tag = \(e\.target && e\.target\.tagName\) \|\| '';\s*\n\s*if\(tag!
 
 // F toggles fly (and exits top view); T toggles top view (and exits fly) — same as the toolbar
 assert(/if\(e\.code==='KeyF'\)\{ editorFreeFly=!editorFreeFly; if\(editorFreeFly\)\{ editorTopView=false; flyInit=false; \}/.test(src), 'F toggles free-fly and leaves top view');
-assert(/else \{ editorTopView=!editorTopView; if\(editorTopView\)\{ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=75; \}/.test(src), 'T toggles top view and leaves fly mode');
+assert(/else \{ editorTopView=!editorTopView; if\(editorTopView\)\{ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=Math\.min\(Math\.max\(75, ARENA\*1\.12\), 2600\); \}/.test(src), 'T toggles top view, leaves fly mode, and fits the zoom to the whole arena (build 829)');
 assert(/keys\['KeyF'\]=false;/.test(src), 'the F keydown is consumed so it does not also strafe');
 
 // discoverability: the toolbar buttons advertise the keys, and the hint line lists them
