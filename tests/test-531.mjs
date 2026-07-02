@@ -3,7 +3,7 @@ const src = gameSource();
 // build 685: a no-enemies "puzzle" objective (objective:'puzzle'). No waves/spawns ever run; the level is built
 // from props + mechanisms + signals and won via a Win-level signal. Ideal for puzzle / exploration / adventure maps.
 
-assert(/function noEnemyMode\(\)\{ return objectiveActive\(\)==='puzzle'; \}/.test(src), 'noEnemyMode flags the puzzle objective');
+assert(/function noEnemyMode\(\)\{ return objectiveActive\(\)==='puzzle' \|\| objectiveActive\(\)==='race'; \}/.test(src), 'noEnemyMode flags the puzzle + race objectives (build 831: a race is a clean grid)');
 
 // --- the spawn loop is skipped, but objectiveTick still runs ---
 const upd = src;

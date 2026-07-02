@@ -8804,8 +8804,9 @@ let gameCfg = {
   mode: (savedLevel && savedLevel.game && savedLevel.game.mode) || (spawnMarkers.length ? 'prebuilt' : 'random'),
   winWaves: (savedLevel && savedLevel.game && savedLevel.game.winWaves!=null) ? savedLevel.game.winWaves : 0,   // 0 = endless
   upgrades: (savedLevel && savedLevel.game && savedLevel.game.upgrades!=null) ? !!savedLevel.game.upgrades : true,   // solo between-wave card picks
-  objective: (savedLevel && savedLevel.game && savedLevel.game.objective) || 'eliminate',   // 'eliminate' | 'survival' | 'extraction'
+  objective: (savedLevel && savedLevel.game && savedLevel.game.objective) || 'eliminate',   // 'eliminate' | 'survival' | 'extraction' | 'defend' | 'destroy' | 'escort' | 'puzzle' | 'race'
   surviveSecs: (savedLevel && savedLevel.game && savedLevel.game.surviveSecs!=null) ? savedLevel.game.surviveSecs : 120,
+  raceLaps: (savedLevel && savedLevel.game && savedLevel.game.raceLaps!=null) ? savedLevel.game.raceLaps : 3,   // build 831: laps to win a race
   extractHold: (savedLevel && savedLevel.game && savedLevel.game.extractHold!=null) ? savedLevel.game.extractHold : 5,
   extractRadius: (savedLevel && savedLevel.game && savedLevel.game.extractRadius!=null) ? savedLevel.game.extractRadius : 3.5,
   bossWave: (savedLevel && savedLevel.game && savedLevel.game.bossWave!=null) ? savedLevel.game.bossWave : 5,   // random mode: spawn a BOSS every Nth wave (0 = never)
@@ -12798,7 +12799,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -16560,7 +16561,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 830 · 2026-07-02';
+const BUILD_VERSION = 'build 831 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18708,7 +18709,7 @@ let spawnQueue = [];   // pending authored-spawn descriptors for the current wav
 // ---- Objective layer: the win condition + HUD label live here so game modes are pluggable.
 // 'eliminate' = clear waves (optionally a fixed count). 'survival' = outlast a countdown (endless spawns).
 function objectiveActive(){ return gameCfg.objective || 'eliminate'; }
-function noEnemyMode(){ return objectiveActive()==='puzzle'; }   // build 685: puzzle / exploration mode spawns no enemies; you win via signals (reach an exit, solve it, etc.)
+function noEnemyMode(){ return objectiveActive()==='puzzle' || objectiveActive()==='race'; }   // build 685: puzzle / exploration mode spawns no enemies; you win via signals (reach an exit, solve it, etc.). build 831: a race is a clean grid too.
 function fmtClock(s){ s=Math.max(0,Math.ceil(s)); const m=Math.floor(s/60); return m+':'+String(s%60).padStart(2,'0'); }
 // --- Extraction beacon (a glowing zone you must reach + hold). Built lazily, scaled to the zone radius. ---
 function buildExtractZone(){
@@ -18776,12 +18777,68 @@ function _setupEscort(){
   placeExtraction();   // the delivery beacon (destination)
 }
 function _clearEscort(){ if(escortMarker) escortMarker.visible=false; _escortNear=false; }
+// ---------- build 831: RACE objective — laps around a track-builder course ----------
+// The start-line piece (checkered band) is the lap line; EVERY placed track piece is an implicit checkpoint,
+// so a lap only counts if you actually drove the course (>=60% of pieces visited — no cutting across the
+// infield). Crossing the band moving FORWARD starts the race, then each valid crossing closes a lap; win at
+// gameCfg.raceLaps. Timing: per-lap clock with last/best; player.pos rides the driven car, so it works
+// driving or (comically) on foot.
+let _raceLap=0, _raceLapT=0, _raceLastT=0, _raceBestT=Infinity, _raceCrossCd=0, _racePrevLz=null;
+let _raceStartO=null; const _raceCk=[]; const _raceVisited=new Set();
+function _fmtRace(t){ if(!isFinite(t)) return '--:--.-'; const m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
+function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); }
+function _raceSetup(){
+  _raceClear();
+  for(const o of propModels){
+    const def=o && o.userData && TRACK_PIECES[o.userData.src]; if(!def) continue;
+    if(def.start && !_raceStartO) _raceStartO=o;
+    // checkpoint = the piece's centreline midpoint in world space; radius reaches past either socket so
+    // driving anywhere along the piece registers the visit.
+    const mid=_trackCL(def,0.5), ent=_trackCL(def,0);
+    const sc=Math.max(Math.abs(o.scale.x), Math.abs(o.scale.z))||1;
+    const r=(Math.hypot(mid.x-ent.x, mid.z-ent.z)+2.5)*sc;
+    const ry=o.rotation.y, c=Math.cos(ry), s=Math.sin(ry);
+    _raceCk.push({ x:o.position.x + mid.x*o.scale.x*c + mid.z*o.scale.z*s,
+                   z:o.position.z - mid.x*o.scale.x*s + mid.z*o.scale.z*c, r2:r*r });
+  }
+}
+function _raceTick(dt){
+  if(!_raceStartO){ objectiveHUD(); return; }
+  if(_raceCrossCd>0) _raceCrossCd-=dt;
+  if(_raceLap>=1) _raceLapT+=dt;
+  const px=player.pos.x, pz=player.pos.z;
+  for(let i=0;i<_raceCk.length;i++){ if(_raceVisited.has(i)) continue;
+    const k=_raceCk[i], dx=px-k.x, dz=pz-k.z; if(dx*dx+dz*dz<=k.r2) _raceVisited.add(i); }
+  // start/finish crossing: player position in the start piece's LOCAL frame; the lap line is the checkered
+  // band (z = -len*0.18). Forward travel is -Z, so a crossing is prevLz > plane >= lz inside the road width.
+  const o=_raceStartO, ry=o.rotation.y, c=Math.cos(ry), s=Math.sin(ry);
+  const dx=px-o.position.x, dz=pz-o.position.z;
+  const lx=dx*c - dz*s, lz=dx*s + dz*c;
+  const def=TRACK_PIECES[o.userData.src];
+  const plane=-def.len*0.18*(Math.abs(o.scale.z)||1), halfW=(TRACK_W/2+1)*(Math.abs(o.scale.x)||1);
+  const onLine = Math.abs(lx)<=halfW && Math.abs(player.pos.y-o.position.y)<8 && Math.abs(lz-plane)<14;
+  if(onLine && _racePrevLz!=null && _raceCrossCd<=0 && _racePrevLz>plane && lz<=plane){
+    _raceCrossCd=3;
+    const total=Math.max(1, gameCfg.raceLaps||3);
+    if(_raceLap===0){ _raceLap=1; _raceLapT=0; _raceVisited.clear(); if(typeof toast==='function') toast('RACE — LAP 1 / '+total); }
+    else if(_raceVisited.size >= Math.max(1, Math.ceil(_raceCk.length*0.6))){
+      _raceLastT=_raceLapT; if(_raceLapT<_raceBestT) _raceBestT=_raceLapT;
+      if(_raceLap>=total){ objectiveHUD(); if(typeof gameWon==='function') gameWon(); return; }
+      _raceLap++; _raceLapT=0; _raceVisited.clear();
+      if(typeof toast==='function') toast('LAP '+_raceLap+' / '+total+' — last '+_fmtRace(_raceLastT));
+    }
+    else if(typeof toast==='function') toast('Lap not counted — missed checkpoints');
+  }
+  _racePrevLz = onLine ? lz : null;
+  objectiveHUD();
+}
 function startObjective(){
   surviveLeft = gameCfg.surviveSecs || 0; extractHoldT = 0;
   if(objectiveActive()==='extraction' || objectiveActive()==='defend' || objectiveActive()==='escort'){ placeExtraction(); }
   else if(extractZone){ extractZone.visible = false; }
   if(objectiveActive()==='destroy') _setupDestroyTargets(); else _clearDestroyMarkers();
   if(objectiveActive()==='escort') _setupEscort(); else _clearEscort();
+  if(objectiveActive()==='race') _raceSetup(); else _raceClear();   // build 831: snapshot the course (start line + per-piece checkpoints)
   _curGoal = (gameCfg.goalText||'').slice(0,160);   // build 692: the live goal line (signals can change it mid-run)
   if(_curGoal) showGoalBanner(_curGoal);
 }
@@ -18809,6 +18866,10 @@ function objectiveHUD(){
   else if(objectiveActive()==='destroy'){ wn.textContent = (_destroyTotal>0) ? ('DESTROY '+(_destroyTotal-_destroyRemain)+' / '+_destroyTotal) : 'NO TARGETS SET'; }
   else if(objectiveActive()==='escort'){ wn.textContent = _escortNear ? ('ESCORT '+_escortPct+'%') : ('ESCORT '+_escortPct+'% \u2014 STAY CLOSE'); }
   else if(objectiveActive()==='puzzle'){ wn.textContent = _curGoal ? _curGoal.slice(0,48) : 'EXPLORE'; }
+  else if(objectiveActive()==='race'){ const total=Math.max(1, gameCfg.raceLaps||3);
+    wn.textContent = !_raceStartO ? 'PLACE A START LINE'
+      : (_raceLap===0 ? 'CROSS THE START LINE'
+      : ('LAP '+_raceLap+' / '+total+' · '+_fmtRace(_raceLapT)+(isFinite(_raceBestT)?(' · BEST '+_fmtRace(_raceBestT)):''))); }
   else { wn.textContent = (gameCfg.winWaves>0) ? ('WAVE '+wave+' / '+gameCfg.winWaves) : ('WAVE '+wave); }
 }
 function objectiveTick(dt){   // host/solo per-frame; may trigger the win
@@ -18872,6 +18933,8 @@ function objectiveTick(dt){   // host/solo per-frame; may trigger the win
       const pulse=0.6+0.4*Math.sin(performance.now()*0.004); if(escortMarker.userData.ring) escortMarker.userData.ring.material.opacity=0.4+0.4*pulse; }
     objectiveHUD();
     if(remain<=1.2){ if(typeof gameWon==='function') gameWon(); }
+  } else if(objectiveActive()==='race'){
+    _raceTick(dt);   // build 831: lap line + checkpoint sweep + per-lap clock (wins at gameCfg.raceLaps)
   }
 }
 function startWave(){
@@ -21396,7 +21459,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
+    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
     extract: extractSpot ? { x: +extractSpot.x.toFixed(3), z: +extractSpot.z.toFixed(3) } : null,
@@ -21878,7 +21941,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -23254,7 +23317,7 @@ function renderEditorFields(){
     hint(gHost, '<b>Objective</b>', '2px 0 4px');
     const obRow=document.createElement('div'); obRow.className='row2';
     const obBtn=(key,txt)=>{ const b=document.createElement('button'); b.innerHTML=txt; if(objectiveActive()===key){ b.style.background='rgba(var(--accent-rgb),0.30)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); gameCfg.objective=key; renderEditorFields(); }; return b; };
-    obRow.appendChild(obBtn('eliminate',_icn('target')+'Eliminate')); obRow.appendChild(obBtn('survival',_icn('timer')+'Survival')); obRow.appendChild(obBtn('extraction',_icn('box')+'Extraction')); obRow.appendChild(obBtn('defend',_icn('shield')+'Defend')); obRow.appendChild(obBtn('destroy',_icn('blast')+'Destroy')); obRow.appendChild(obBtn('escort',_icn('truck')+'Escort')); obRow.appendChild(obBtn('puzzle',_icn('puzzle')+'Puzzle'));
+    obRow.appendChild(obBtn('eliminate',_icn('target')+'Eliminate')); obRow.appendChild(obBtn('survival',_icn('timer')+'Survival')); obRow.appendChild(obBtn('extraction',_icn('box')+'Extraction')); obRow.appendChild(obBtn('defend',_icn('shield')+'Defend')); obRow.appendChild(obBtn('destroy',_icn('blast')+'Destroy')); obRow.appendChild(obBtn('escort',_icn('truck')+'Escort')); obRow.appendChild(obBtn('puzzle',_icn('puzzle')+'Puzzle')); obRow.appendChild(obBtn('race',_icn('route')+'Race'));
     gHost.appendChild(obRow);
     if(objectiveActive()==='puzzle'){ hint(gHost, '', '4px 0 2px').innerHTML = '<b>Puzzle / exploration</b> — no enemies ever spawn. Build the level with props, mechanisms & signals, and end the run with a <b>Win level</b> signal (e.g. a contact plate or an E-activated exit). Great with <b>Start unarmed</b> + the flashlight.'; }
     // ---- Objective text (build 692): a goal line shown at the start + recallable with J; signals can update it ----
@@ -23370,6 +23433,8 @@ function renderEditorFields(){
       ? 'Destroy: blow up every prop flagged \u201cObjective target\u201d (mark them on the prop\u2019s settings). They glow with a red beacon; destroy them all to win.'
       : (objectiveActive()==='escort')
       ? 'Escort: a payload travels from your spawn to the delivery beacon. It only moves while a player stays within the radius; deliver it to win.'
+      : (objectiveActive()==='race')
+      ? 'Race: lap the track-builder course. Crossing the Start-line piece starts the clock; every track piece is a checkpoint, so cutting the course voids the lap. No enemies spawn.'
       : 'Eliminate: clear waves of hostiles (optionally a fixed number to win).';
     if(objectiveActive()==='survival'){
       const svLab=document.createElement('label'); svLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;';
@@ -23395,6 +23460,17 @@ function renderEditorFields(){
       const erow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); gHost.appendChild(l); };
       erow('Escort radius','1.5','12','0.5', ()=>gameCfg.extractRadius, v=>gameCfg.extractRadius=Math.max(1.5,Math.min(12,v||3.5)));
       hint(gHost, '', '2px 0 0').textContent = 'Payload starts at your spawn and rolls to the beacon. Stay within '+(gameCfg.extractRadius||3.5)+'m to keep it moving.';
+    }
+    if(objectiveActive()==='race'){
+      const rcLab=document.createElement('label'); rcLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;';
+      const rcSp=document.createElement('span'); rcSp.textContent='Laps to win'; rcSp.style.minWidth='118px';
+      const rcN=document.createElement('input'); rcN.type='number'; rcN.min='1'; rcN.max='99'; rcN.step='1'; rcN.value=gameCfg.raceLaps||3; rcN.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
+      rcN.onchange=()=>{ pushUndoSnapshot(); gameCfg.raceLaps=Math.max(1,Math.min(99,parseInt(rcN.value,10)||3)); renderEditorFields(); };
+      rcLab.appendChild(rcSp); rcLab.appendChild(rcN); gHost.appendChild(rcLab);
+      const _hasStart=propModels.some(p=>p && p.userData && TRACK_PIECES[p.userData.src] && TRACK_PIECES[p.userData.src].start);
+      hint(gHost, '', '2px 0 0').textContent = _hasStart
+        ? ('Cross the Start line to begin; complete '+(gameCfg.raceLaps||3)+' lap'+((gameCfg.raceLaps||3)===1?'':'s')+' to win. The HUD shows lap, live time and best.')
+        : 'No Start-line piece placed yet — add one from Build > Track builder or the race can’t begin.';
     }
     // ---- Multiplayer spawn region: confine MP/bot random spawns to a circle (e.g. inside an arena prop) ----
     { const sr = gameCfg.spawnRegion;
@@ -26061,7 +26137,7 @@ function gameWon(){
   const ov=$('overlay'); ov.classList.remove('hidden');
   ov.innerHTML = `
     <h1 style="color:var(--accent);text-shadow:0 0 30px rgba(var(--accent-rgb),.5)">${_campaignComplete?'CAMPAIGN COMPLETE':'MISSION COMPLETE'}</h1>
-    <div class="sub">${ gameCfg.objective==='puzzle' ? 'SOLVED' : gameCfg.objective==='survival' ? ('SURVIVED '+fmtClock(gameCfg.surviveSecs)) : gameCfg.objective==='extraction' ? 'EXTRACTED' : gameCfg.objective==='defend' ? ('ZONE HELD '+fmtClock(gameCfg.surviveSecs)) : gameCfg.objective==='destroy' ? 'ALL TARGETS DESTROYED' : gameCfg.objective==='escort' ? 'PAYLOAD DELIVERED' : (gameCfg.winWaves+' WAVE'+(gameCfg.winWaves===1?'':'S')+' CLEARED') }</div>
+    <div class="sub">${ gameCfg.objective==='puzzle' ? 'SOLVED' : gameCfg.objective==='survival' ? ('SURVIVED '+fmtClock(gameCfg.surviveSecs)) : gameCfg.objective==='extraction' ? 'EXTRACTED' : gameCfg.objective==='defend' ? ('ZONE HELD '+fmtClock(gameCfg.surviveSecs)) : gameCfg.objective==='destroy' ? 'ALL TARGETS DESTROYED' : gameCfg.objective==='escort' ? 'PAYLOAD DELIVERED' : gameCfg.objective==='race' ? ((gameCfg.raceLaps||3)+' LAP'+((gameCfg.raceLaps||3)===1?'':'S')+(isFinite(_raceBestT)?(' · BEST '+_fmtRace(_raceBestT)):'')) : (gameCfg.winWaves+' WAVE'+(gameCfg.winWaves===1?'':'S')+' CLEARED') }</div>
     ${ gameCfg.winText ? '<div class="sub" style="color:#cfe9df;font-size:15px;line-height:1.5;max-width:560px;margin:8px auto 0;opacity:.95">'+_creditEsc(gameCfg.winText)+'</div>' : '' }
     ${runSummaryHTML()}
     ${challengeResultHTML()}
