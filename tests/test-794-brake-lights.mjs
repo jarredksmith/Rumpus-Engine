@@ -23,8 +23,8 @@ assert(/S\.material\.opacity=lit;/.test(pb), 'the lit amount drives the sprite o
 const ub = extractFunction('_updateBrakeLights');
 assert(/if\(!cfg\.brakeLights \|\| drivingCar!==o\)\{ _brakeLightsOff\(\); return; \}/.test(ub), 'brake lights only show on the car you drive');
 
-// --- driveUpdate lights them on braking / reverse / handbrake ---
-assert(/_updateBrakeLights\(o, cfg, \(handbrake \|\| throttle<-0\.01\)\);/.test(extractFunction('driveUpdate')), 'braking = handbrake OR reverse/brake input');
+// --- driveUpdate lights them when actually braking (input opposes travel) or on the handbrake (build 825) ---
+assert(/_updateBrakeLights\(o, cfg, \(handbrake \|\| \(throttle<-0\.01 && r\.speed>0\.2\) \|\| \(throttle>0\.01 && r\.speed<-0\.2\)\)\);/.test(extractFunction('driveUpdate')), 'braking = handbrake OR the throttle opposing the direction of travel');
 
 // --- exit + editor teardown ---
 assert(/if\(typeof _brakeLightsOff==='function'\) _brakeLightsOff\(\);/.test(extractFunction('exitCar')), 'brake lights go off when you leave the car');

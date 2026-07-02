@@ -14774,6 +14774,7 @@ function vehicleApply(o, v){ if(!o) return; v=v||{}; o.userData.vehicle = {
   latG:(v.latG==null?2.2:Math.max(0.6, Math.min(4, +v.latG||0))),
   susp:(v.susp==null?1:Math.max(0, Math.min(2, +v.susp||0))),
   launch:(v.launch==null?1:Math.max(0, Math.min(3, +v.launch||0))),
+  brake:(v.brake==null?1:Math.max(0.2, Math.min(3, +v.brake||0))),
   lean:(v.lean==null?0.5:Math.max(0, Math.min(2, +v.lean||0))),
   dust:(v.dust==null?1:Math.max(0, Math.min(2, +v.dust||0))), skid:(v.skid==null?1:Math.max(0, Math.min(2, +v.skid||0))),
   animIdle:(''+(v.animIdle||'')), animFwd:(''+(v.animFwd||'')), animBack:(''+(v.animBack||'')), animLeft:(''+(v.animLeft||'')), animRight:(''+(v.animRight||'')),
@@ -14793,11 +14794,24 @@ const _SPEED_UNIT = { kph:{ f:3.6, l:'km/h' }, mph:{ f:2.23694, l:'mph' } };   /
 // Pure arcade step: given the current forward speed + inputs (throttle/steer in -1..1) + config + dt, return the new
 // speed and the yaw change (radians). Self-contained (no globals) so the harness can test the feel math directly.
 function driveStep(speed, throttle, steer, cfg, dt){
-  const target = throttle>=0 ? throttle*cfg.maxSpeed : throttle*cfg.reverse;   // throttle<0 reverses
   let sp = speed;
+  // build 825: BRAKING is its own force, not "accelerate toward reverse". If the input OPPOSES the way you're travelling
+  // (S while rolling forward, or W while rolling back) you're on the BRAKES — decelerate toward a stop and never overshoot
+  // into reverse. Reverse only engages once you've actually stopped. This kills the old "tap S = instant stop then shoot
+  // backwards" feel and gives a real, weighty stopping distance you can lean on.
+  const braking = (throttle > 0.01 && sp < -0.2) || (throttle < -0.01 && sp > 0.2);
   if(Math.abs(throttle) < 0.01){ const d=cfg.accel*0.7*dt; sp = sp>0 ? Math.max(0,sp-d) : Math.min(0,sp+d); }   // coast to a stop
-  else if(sp < target) sp = Math.min(target, sp + cfg.accel*dt);
-  else sp = Math.max(target, sp - cfg.accel*1.6*dt);                            // braking / decel is sharper than accel
+  else if(braking){
+    // firm but with real distance (default ~1x accel, was a hard 1.6x with no separation from reverse), and the last ~2 m/s
+    // ease off (ABS-like) so it settles to rest instead of jerking to a dead stop. Tunable per-vehicle via cfg.brake (0.2..3).
+    const _bm=(cfg.brake==null?1:cfg.brake);
+    const d=cfg.accel*_bm*Math.max(0.28, Math.min(1, Math.abs(sp)/2))*dt;
+    sp = sp>0 ? Math.max(0, sp - d) : Math.min(0, sp + d);
+  } else {
+    const target = throttle>=0 ? throttle*cfg.maxSpeed : throttle*cfg.reverse;   // throttle<0 reverses (only once stopped)
+    if(sp < target) sp = Math.min(target, sp + cfg.accel*dt);
+    else sp = Math.max(target, sp - cfg.accel*dt);                              // gentle engine decel toward a lower target
+  }
   const speedFrac = Math.min(1, Math.abs(sp)/Math.max(1, cfg.maxSpeed*0.35));   // barely steers when nearly stopped
   const yawDelta = steer * (cfg.turn*Math.PI/180) * speedFrac * (sp>=0?1:-1) * dt;   // steering flips in reverse
   return { speed: sp, yawDelta };
@@ -15769,7 +15783,7 @@ function driveUpdate(dt){
   // build 762: procedural wheels — spin tied to speed, front wheels steered by A/D (else the live turn rate)
   { const _sf = (steer!==0) ? steer : Math.max(-1, Math.min(1, _yawRate*0.7)); _updateWheels(o, cfg, r.speed, _sf, dt); }
   _updateHeadlights(o, cfg);   // build 781: headlights follow the car front
-  _updateBrakeLights(o, cfg, (handbrake || throttle<-0.01));   // build 794: brake lights glow on braking / reverse / handbrake
+  _updateBrakeLights(o, cfg, (handbrake || (throttle<-0.01 && r.speed>0.2) || (throttle>0.01 && r.speed<-0.2)));   // build 794/825: brake lights glow only when actually braking (input opposes travel) or on the handbrake
   { const U=_SPEED_UNIT[cfg.units]||_SPEED_UNIT.kph;   // build 718: km/h or mph
     const v=document.getElementById('dhVal'); if(v) v.textContent=Math.round(Math.abs(r.speed)*U.f);
     const un=document.getElementById('dhUnit'); if(un && un.textContent!==U.l) un.textContent=U.l;
@@ -16400,7 +16414,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 824 · 2026-07-02';
+const BUILD_VERSION = 'build 825 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21132,7 +21146,7 @@ function propEntry(o){
   if(o.userData.animClip) e.animClip = o.userData.animClip;
   if(o.userData.xa && o.userData.xa.on){ const a=o.userData.xa; e.xa={ mode:a.mode||'loop', trig:a.trig||'auto', mx:a.mx||0, my:a.my||0, mz:a.mz||0, rx:a.rx||0, ry:a.ry||0, rz:a.rz||0, dur:a.dur||2 }; if(a.scx||a.scy||a.scz){ e.xa.scx=a.scx||0; e.xa.scy=a.scy||0; e.xa.scz=a.scz||0; } if(a.pvx||a.pvy||a.pvz){ e.xa.pvx=a.pvx||0; e.xa.pvy=a.pvy||0; e.xa.pvz=a.pvz||0; } if(a.path && a.path.length>=2) e.xa.path = a.path.map(q=>[+q[0],+q[1],+q[2]]); }
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
-  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.latG!=null && V.latG!==2.2) e.veh.latG=V.latG; if(V.susp!=null && V.susp!==1) e.veh.susp=V.susp; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.latG!=null && V.latG!==2.2) e.veh.latG=V.latG; if(V.susp!=null && V.susp!==1) e.veh.susp=V.susp; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.brake!=null && V.brake!==1) e.veh.brake=V.brake; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
@@ -23871,6 +23885,8 @@ function renderEditorFields(){
           row('Body lean','lean', 0, 2, 0.05, 1);
           { const jh=document.createElement('div'); jh.className='hint'; jh.style.margin='8px 0 1px'; jh.innerHTML='<b>Launch</b> — how hard a ramp throws the car into the air. <b>1 = normal</b>; raise for big-air buggies, <b>0 = never leaves the ground</b> (go-kart). The nose follows the arc and the suspension soaks up the landing.'; vBody.appendChild(jh); }
           row('Launch','launch', 0, 3, 0.05, 1);
+          { const bh=document.createElement('div'); bh.className='hint'; bh.style.margin='8px 0 1px'; bh.innerHTML='<b>Braking</b> — how hard the brakes bite when you press back against your direction of travel. Braking is separate from reverse now: you slow to a stop first (with real stopping distance), then reverse engages. <b>1 = normal</b>, lower = long lazy stops, higher = race-car stoppers. The nose dives under braking.'; vBody.appendChild(bh); }
+          row('Braking','brake', 0.2, 3, 0.05, 1);
           { const fh=document.createElement('div'); fh.className='hint'; fh.style.margin='8px 0 1px'; fh.innerHTML='<b>Effects</b> — tyre smoke + skid marks. <b>1 = normal, 0 = off.</b> Raise for a dustier surface, lower for clean tarmac.'; vBody.appendChild(fh); }
           row('Tyre smoke','dust', 0, 2, 0.05, 1);
           row('Skid marks','skid', 0, 2, 0.05, 1);
