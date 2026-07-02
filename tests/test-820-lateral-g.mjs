@@ -10,16 +10,18 @@ const src = gameSource();
 const du = extractFunction('driveUpdate');
 
 // --- 1. the yaw cap ---
-assert(/const _latG=\(cfg\.latG==null\?1\.15:\+cfg\.latG\);/.test(du), 'per-vehicle lateral-G (default 1.15)');
+assert(/const _latG=\(cfg\.latG==null\?2\.2:\+cfg\.latG\);/.test(du), 'per-vehicle lateral-G (build 823: arcade-calibrated default 2.2)');
 assert(/const _maxYawRate=\(_latG\*9\.81\)\/Math\.max\(4, Math\.abs\(r\.speed\)\);/.test(du), 'max yaw rate = latG*g / v (a = v*omega)');
-assert(/const _cmdYaw=handbrake\?_wantYaw:Math\.max\(-_maxYawRate, Math\.min\(_maxYawRate, _wantYaw\)\);/.test(du), 'demand is clamped to the tire limit; the handbrake bypasses it (oversteer)');
+assert(/const _cap=Math\.max\(_maxYawRate, Math\.abs\(_wantYaw\)\*0\.35\);/.test(du) && /const _cmdYaw=handbrake\?_wantYaw:Math\.max\(-_cap, Math\.min\(_cap, _wantYaw\)\);/.test(du), 'demand clamps to the tire limit with a 35% steering floor (build 823) — understeer softens, never bricks; handbrake bypasses');
 // executable: corner radius grows with speed once past the grip point (radius = v / yawRate)
 {
   const maxYaw=(latG,v)=>(latG*9.81)/Math.max(4,Math.abs(v));
-  const radius=(v)=>v/Math.min(2.0 /*driver demand*/, maxYaw(1.15, v));
+  const cap=(latG,v,want)=>Math.max(maxYaw(latG,v), Math.abs(want)*0.35);
+  const radius=(v)=>v/Math.min(2.0 /*driver demand*/, cap(2.2, v, 2.0));
   near(radius(4), 4/2.0, 1e-9, 'slow: the driver demand rules (tight radius)');
-  assert(radius(50) > radius(20)*2, 'fast: the corner radius grows with speed (understeer)');
-  near(50/maxYaw(1.15,50), 50*50/(1.15*9.81), 1e-6, 'r = v^2/(latG*g) — the real cornering formula');
+  assert(radius(40) > radius(15)*1.5, 'fast: the corner radius grows with speed (understeer)');
+  near(20/maxYaw(2.2,20), 20*20/(2.2*9.81), 1e-6, 'r = v^2/(latG*g) — the real cornering formula');
+  assert(cap(2.2, 80, 2.0) >= 0.7-1e-9, 'the 35% floor keeps the wheel alive even at extreme speed');
 }
 
 // --- 2. traction circle ---
@@ -33,12 +35,12 @@ assert(/accel:cfg\.accel\*1\.5\*_tc/.test(du) && /accel:cfg\.accel\*_tc/.test(du
 }
 
 // --- 3. breakaway + counter-steer ---
-assert(/if\(!handbrake && \(o\.userData\._latFrac\|\|0\)>0\.85\) grip \*= 1 - 0\.6\*\(\(o\.userData\._latFrac\)-0\.85\)\/0\.15;/.test(du), 'the last 15% of the limit progressively loses grip (push -> slide)');
+assert(/if\(!handbrake && \(o\.userData\._latFrac\|\|0\)>0\.9\) grip \*= 1 - 0\.35\*\(\(o\.userData\._latFrac\)-0\.9\)\/0\.1;/.test(du), 'the last 10% of the limit progressively loses grip (build 823: gentler — the edge slides, never gives way)');
 assert(/if\(steer!==0 && Math\.abs\(vd\)>0\.06 && Math\.sign\(steer\)===-Math\.sign\(vd\)\) grip \*= 1\.4;/.test(du), 'counter-steering recovers grip 1.4x (catchable drifts)');
 
 // --- wiring: sanitize, serialize, editor ---
-assert(/latG:\(v\.latG==null\?1\.15:Math\.max\(0\.4, Math\.min\(2\.5, \+v\.latG\|\|0\)\)\),/.test(extractFunction('vehicleApply')), 'latG sanitized to [0.4, 2.5]');
-assert(/if\(V\.latG!=null && V\.latG!==1\.15\) e\.veh\.latG=V\.latG;/.test(src), 'serialized when non-default');
-assert(/row\('Cornering grip \(G\)','latG', 0\.4, 2\.5, 0\.05, 1\);/.test(src), 'editor slider present');
+assert(/latG:\(v\.latG==null\?2\.2:Math\.max\(0\.6, Math\.min\(4, \+v\.latG\|\|0\)\)\),/.test(extractFunction('vehicleApply')), 'latG sanitized to [0.6, 4], default 2.2');
+assert(/if\(V\.latG!=null && V\.latG!==2\.2\) e\.veh\.latG=V\.latG;/.test(src), 'serialized when non-default');
+assert(/row\('Cornering grip \(G\)','latG', 0\.6, 4, 0\.05, 1\);/.test(src), 'editor slider present');
 
 done('build 820: lateral-G handling — understeer, traction circle, catchable drifts');
