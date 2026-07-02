@@ -15568,9 +15568,17 @@ function driveUpdate(dt){
   if(handbrake && Math.abs(r.speed)>0.1){ const _bk=1 - Math.min(0.85, 3.2*dt); o.userData.carSpeed*=_bk; r.speed*=_bk; }   // build 726: the handbrake actually slows the car (brake + slide = drift)
   let mvx = fx * r.speed * dt, mvz = fz * r.speed * dt;
   const _h = _carExtents(o);
+  const _premv=Math.hypot(mvx,mvz);   // build 822: intended travel before the wall test
   if(mvx!==0 && _carWall(o, Math.sign(mvx), 0, Math.abs(mvx), _h)) mvx = 0;
   if(mvz!==0 && _carWall(o, 0, Math.sign(mvz), Math.abs(mvz), _h)) mvz = 0;
   const _imp0=Math.abs(r.speed);   // speed carried into the wall (for impact feedback)
+  // build 822: GLANCING DEFLECTION — a wall contact scrubs speed by how much of the travel it killed. A shallow scrape
+  // (keep~0.98) barely slows you; a 45-degree hit grinds speed off in ~a quarter second; head-on (keep~0) stops (the bonk
+  // below finishes it). The old behavior kept FULL speed while sliding along a wall — slot-car glue with no penalty.
+  if(_premv>1e-6){ const _keep=Math.hypot(mvx,mvz)/_premv;
+    if(_keep<0.999){ const _f=1-(1-_keep)*Math.min(0.9, dt*10); o.userData.carSpeed*=_f; r.speed*=_f;
+      if(_keep<0.7 && _imp0>8 && (o.userData._hitCd||0)<=0){ o.userData._hitCd=0.3; _carImpactFx(o, Math.min(10, _imp0*(1-_keep)*0.8)); }   // a hard side slam registers (shake + thud)
+    } }
   o.position.x += mvx; o.position.z += mvz;
   if(mvx===0 && mvz===0 && Math.abs(r.speed)>1) o.userData.carSpeed = r.speed * 0.2;   // bonk: nearly stopped by a wall
   // build 733: a HARD head-on hit (both axes blocked at speed) jolts the camera, thuds, and throws debris — once per hit
@@ -16373,7 +16381,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 821 · 2026-07-02';
+const BUILD_VERSION = 'build 822 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
