@@ -35,7 +35,7 @@ assert(/_engUpdate\(r\.speed, throttle, _slip, cfg\.maxSpeed\);/.test(du), 'the 
 assert(/const U=_SPEED_UNIT\[cfg\.units\]\|\|_SPEED_UNIT\.kph;/.test(du) && /v\.textContent=Math\.round\(Math\.abs\(r\.speed\)\*U\.f\)/.test(du), 'speed shown in the vehicle’s unit (km/h or mph)');
 assert(/un\.textContent=U\.l/.test(du), 'the unit label tracks the setting');
 assert(/const _frac=Math\.min\(1, Math\.abs\(r\.speed\)\/Math\.max\(1,cfg\.maxSpeed\)\);/.test(du) && /a\.style\.strokeDashoffset=\(245\*\(1-_frac\)\)\.toFixed\(1\);/.test(du), 'build 743: the circular gauge fills toward top speed (arc dashoffset)');
-assert(/a\.style\.stroke = _frac>0\.8\?'#ff5a5a':\(_frac>0\.55\?'#ffd166':'#38f5b5'\)/.test(du), 'the gauge tints green -> amber -> red with speed');
+assert(/a\.style\.stroke = _frac>0\.8\?'#ff5a5a':\(_frac>0\.55\?'#ffd166':'var\(--accent\)'\)/.test(du), 'the gauge tints accent -> amber -> red with speed (build 814: themed base)');
 
 // --- the HUD element + its styles exist ---
 const dh = extractFunction('_driveHudEl');

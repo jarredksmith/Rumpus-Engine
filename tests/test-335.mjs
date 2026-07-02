@@ -4,7 +4,7 @@ const page = html;
 // build 444: UI theming — players can set the accent color + UI/title fonts; persisted and applied via CSS vars.
 
 // CSS is driven by variables now
-assert(/:root\{ --accent:#38f5b5; --accent-rgb:56,245,181; --ui-font:'Chakra Petch', monospace; --display-font:'Major Mono Display', monospace; \}/.test(page), ':root defines the themable variables');
+assert(/:root\{ --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Chakra Petch', monospace; --display-font:'Major Mono Display', monospace; \}/.test(page), ':root defines the themable variables (build 814: + gold/info/danger)');
 assert(page.indexOf('var(--accent)')>=0 && page.indexOf('rgba(var(--accent-rgb)')>=0, 'CSS uses the accent variable (hex + rgba forms)');
 assert(page.indexOf('font-family:var(--ui-font)')>=0 && page.indexOf('var(--display-font)')>=0, 'CSS uses the font variables');
 // extra fonts are loaded so the choices actually render
