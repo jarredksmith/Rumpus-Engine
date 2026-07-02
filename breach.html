@@ -6472,14 +6472,17 @@ scene.add(moon);
 // lights here; each frame we keep only the MAX_ACTIVE_LIGHTS nearest to the camera switched on (the
 // rest stay in the scene but at zero intensity, so they cost almost nothing). Glow (emissive material)
 // is free and always visible, so distant emitters still look lit even when their cast light is culled.
-const MAX_ACTIVE_LIGHTS = 16;   // nearest N emitter lights at full; any beyond ease out over a band so they don't pop
+// build 811: the cap is device-aware and ADAPTIVE — mobile fragments are far more light-cost-sensitive, and when the
+// adaptive-resolution scaler is already two steps down (the GPU is drowning) halving the lit-light count reclaims
+// per-fragment cost that a resolution drop alone can't. Emissive glow is free and unaffected, so the scene still reads lit.
+function _maxActiveLights(){ const base = IS_COARSE ? 8 : 16; return (typeof _prStepI!=='undefined' && _prStepI>=2) ? (base>>1) : base; }
 const emitterLights = [];   // { light, baseIntensity }
 function registerEmitterLight(light){ light.castShadow = false; emitterLights.push({ light, baseIntensity: light.intensity }); }
 function unregisterEmitterLight(light){ const i = emitterLights.findIndex(e=>e.light===light); if(i>=0) emitterLights.splice(i,1); }
 const _lp = new THREE.Vector3();
 function updateLightBudget(){
-  const N = emitterLights.length;
-  if(N <= MAX_ACTIVE_LIGHTS){
+  const N = emitterLights.length, MAXL = _maxActiveLights();
+  if(N <= MAXL){
     for(const e of emitterLights) e.light.intensity = e.baseIntensity;
     return;
   }
@@ -6489,7 +6492,7 @@ function updateLightBudget(){
   // rather than snapping on and off when the nearest-set reshuffles.
   const FADE = 5;
   for(let i=0;i<N;i++){
-    const over = i - (MAX_ACTIVE_LIGHTS - 1);
+    const over = i - (MAXL - 1);
     const f = (over<=0) ? 1 : (over>=FADE ? 0 : 1 - over/FADE);
     emitterLights[i].light.intensity = emitterLights[i].baseIntensity * f;
   }
@@ -16232,7 +16235,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 810 · 2026-07-02';
+const BUILD_VERSION = 'build 811 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
