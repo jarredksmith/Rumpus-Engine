@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>BREACH // FPS</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Major+Mono+Display&family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Press+Start+2P&family=Share+Tech+Mono&family=Audiowide&family=Teko:wght@500;600;700&family=Exo+2:wght@500;700&family=Saira+Condensed:wght@600;700&family=Aldrich&family=Syncopate:wght@700&family=VT323&family=Michroma&family=Russo+One&family=Bungee&family=Space+Mono:wght@700&family=JetBrains+Mono:wght@500;700&display=swap');
+  /* build 817: only the two DEFAULT families load at boot — the other 16 HUD-picker fonts lazy-load on first use (see _ensureHudFonts) */
+  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Major+Mono+Display&display=swap');
 
   :root{ --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Chakra Petch', monospace; --display-font:'Major Mono Display', monospace; }
 
@@ -6061,6 +6062,7 @@ let UI_ACCENT = '#38f5b5', UI_ACCENT_RGB = '56,245,181';   // canvas-drawn HUD r
 function _hexToRgbTriplet(hex){ try{ hex=String(hex||'').replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join(''); const n=parseInt(hex,16); return ((n>>16)&255)+','+((n>>8)&255)+','+(n&255); }catch(e){ return '56,245,181'; } }
 function applyUiTheme(){
   try{
+    if(typeof _ensureHudFonts==='function'){ const _f=String(uiTheme.uiFont||'')+String(uiTheme.displayFont||''); if(_f && !/^'Chakra Petch', monospace'Major Mono Display', monospace$/.test(_f)) _ensureHudFonts(); }   // build 817: a customised theme font pulls the lazy pack
     UI_ACCENT = uiTheme.accent||UI_THEME_DEFAULT.accent;
     UI_ACCENT_RGB = _hexToRgbTriplet(UI_ACCENT);
     const r=document.documentElement.style;
@@ -6082,6 +6084,17 @@ applyUiTheme();   // apply saved look immediately on load
 const HUD_TOGGLES = ['minimap','score','wave','ammo','health','crosshair','killfeed','prompt','grab','goal','dlg'];
 const HUD_TOGGLE_LABEL = { minimap:'Minimap', score:'Score', wave:'Wave counter', ammo:'Ammo', health:'Health', crosshair:'Crosshair', killfeed:'Kill feed', prompt:'Interact prompt', grab:'Grab hint', goal:'Objective banner', dlg:'NPC dialogue' };
 const HUD_FONTS = ['Chakra Petch','Major Mono Display','Orbitron','Rajdhani','Press Start 2P','Share Tech Mono','Audiowide','Teko','Exo 2','Saira Condensed','Aldrich','Syncopate','VT323','Michroma','Russo One','Bungee','Space Mono','JetBrains Mono'];
+// build 817: the 16 optional HUD fonts were a blocking @import of 18 families at boot. Load them ON DEMAND — when the
+// font pickers open, or when a saved theme / loaded level actually USES a non-default family. display=swap keeps text
+// visible while they arrive.
+let _extraFontsReq=false;
+function _ensureHudFonts(){
+  if(_extraFontsReq) return; _extraFontsReq=true;
+  const l=document.createElement('link'); l.rel='stylesheet';
+  l.href='https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Press+Start+2P&family=Share+Tech+Mono&family=Audiowide&family=Teko:wght@500;600;700&family=Exo+2:wght@500;700&family=Saira+Condensed:wght@600;700&family=Aldrich&family=Syncopate:wght@700&family=VT323&family=Michroma&family=Russo+One&family=Bungee&family=Space+Mono:wght@700&family=JetBrains+Mono:wght@500;700&display=swap';
+  document.head.appendChild(l);
+}
+function _fontNeedsLoad(f){ return f && f!=='Chakra Petch' && f!=='Major Mono Display'; }
 // build 666: per-element placement/size/tint. Each entry's CSS rule reads --el-<k>-{s,dx,dy}; applyHudCfg sets
 // those vars on #hud, plus an optional per-element accent override directly on the element.
 const HUD_ELEMENTS = [
@@ -6125,6 +6138,7 @@ let _hudElSel = 'health';   // build 666: which element the Per-element controls
 function applyHudCfg(){
   if(!hudCfg) hudCfg = _sanitizeHud(null);
   const c = hudCfg, hud = (typeof document!=='undefined') && document.getElementById('hud');
+  if(typeof _fontNeedsLoad==='function' && (_fontNeedsLoad(c.uiFont) || _fontNeedsLoad(c.displayFont) || (c.el && Object.keys(c.el).some(k=>_fontNeedsLoad(c.el[k] && c.el[k].font))))) _ensureHudFonts();   // build 817: a used non-default font pulls the lazy pack
   if(hud){
     hud.style.setProperty('--accent', c.accent);
     hud.style.setProperty('--accent-rgb', _hexToRgbTriplet(c.accent));
@@ -16305,7 +16319,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 816 · 2026-07-02';
+const BUILD_VERSION = 'build 817 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21331,6 +21345,7 @@ function renderBuildMenuPanel(){
   host.appendChild(wrap);
 }
 function renderHudPanel(){
+  if(typeof _ensureHudFonts==='function') _ensureHudFonts();   // build 817: the font picker previews every family
   const host=edDoc().getElementById('edHud'); if(!host) return; host.innerHTML='';
   const wrap=document.createElement('div');
   const commit=()=>{ if(typeof applyHudCfg==='function') applyHudCfg(); _levelDirty=true; };   // each control already pushed an undo snapshot
@@ -26074,7 +26089,7 @@ function bindPauseMenu(){
   // ---- appearance controls ----
   { const ac=document.getElementById('uiAccent'); if(ac){ ac.value=uiTheme.accent||'var(--accent)'; ac.oninput=()=>{ uiTheme.accent=ac.value; applyUiTheme(); saveUiTheme(); }; }
     const fillSel=(sel, choices, cur)=>{ if(!sel) return; sel.innerHTML=''; for(const c of choices){ const o=document.createElement('option'); o.value=c.v; o.textContent=c.label; if(c.v===cur) o.selected=true; sel.appendChild(o); } };
-    const uf=document.getElementById('uiFontSel'); fillSel(uf, UI_FONT_CHOICES, uiTheme.uiFont); if(uf){ uf.onchange=()=>{ uiTheme.uiFont=uf.value; applyUiTheme(); saveUiTheme(); }; }
+    const uf=document.getElementById('uiFontSel'); if(typeof _ensureHudFonts==='function') _ensureHudFonts(); fillSel(uf, UI_FONT_CHOICES, uiTheme.uiFont); if(uf){ uf.onchange=()=>{ uiTheme.uiFont=uf.value; applyUiTheme(); saveUiTheme(); }; }
     const df=document.getElementById('uiDispSel'); fillSel(df, UI_DISPLAY_CHOICES, uiTheme.displayFont); if(df){ df.onchange=()=>{ uiTheme.displayFont=df.value; applyUiTheme(); saveUiTheme(); }; }
     const rb=document.getElementById('uiThemeReset'); if(rb){ rb.onclick=()=>{ resetUiTheme(); const ac2=document.getElementById('uiAccent'); if(ac2) ac2.value=uiTheme.accent; fillSel(uf, UI_FONT_CHOICES, uiTheme.uiFont); fillSel(df, UI_DISPLAY_CHOICES, uiTheme.displayFont); }; }
   }
