@@ -10066,7 +10066,7 @@ function makeCoinMesh(){
   if(coinCfg.url){
     const g = new THREE.Group();
     loadGLTFCached(coinCfg.url,
-      (gltf)=>{ const model=THREE.cloneSkinned(gltf.scene); model.scale.setScalar(coinCfg.scale||1); model.traverse(o=>{ if(o.isMesh) o.castShadow=true; }); g.add(model); if(typeof playModelAnimations==='function') playModelAnimations(model, gltf); },
+      (gltf)=>{ const model=THREE.cloneSkinned(gltf.scene); model.scale.setScalar(coinCfg.scale||1); model.traverse(o=>{ if(o.isMesh) o.castShadow=false; }); g.add(model); if(typeof playModelAnimations==='function') playModelAnimations(model, gltf); },   // build 808: coins don't cast shadows — dozens of tiny casters bloat the sun's shadow pass for no visible gain
       (err)=>{ console.warn('Coin model load failed, using built-in coin:', err && err.message); const c=new THREE.Mesh(coinGeo, coinMat); c.rotation.x=Math.PI/2; g.add(c); });
     return g;
   }
@@ -16215,7 +16215,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 807 · 2026-06-30';
+const BUILD_VERSION = 'build 808 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17231,7 +17231,7 @@ function spawnFragments(center, size, colorHex, count, impulseDir, impulsePow, s
     const px = center.x + (Math.random()-0.5)*size.x*0.5;
     const py = center.y + (Math.random()-0.5)*size.y*0.5;
     const pz = center.z + (Math.random()-0.5)*size.z*0.5;
-    mesh.position.set(px,py,pz); mesh.castShadow = true; scene.add(mesh);
+    mesh.position.set(px,py,pz); mesh.castShadow = false; scene.add(mesh);   // build 808: short-lived debris never casts — up to MAX_FRAGMENTS tiny casters made every shadow refresh expensive
     const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(px,py,pz).setLinearDamping(0.1).setAngularDamping(0.3));   // build 632: no CCD on short-lived cosmetic debris — CCD on up to 90 bodies was a heavy spawn + per-step cost (explosion stutter)
     physWorld.createCollider(RAPIER.ColliderDesc.cuboid(s/2,s/2,s/2).setRestitution(0.35).setFriction(0.8).setMass(0.4), rb);
@@ -17256,7 +17256,7 @@ function spawnFragmentsVisual(center, size, colorHex, count, sizeFrac, shape){
     const mesh = new THREE.Mesh(debrisGeo(shape), mat);
     mesh.scale.set(s*(0.82+Math.random()*0.36), s*(0.82+Math.random()*0.36), s*(0.82+Math.random()*0.36));
     mesh.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
-    mesh.castShadow = true;
+    mesh.castShadow = false;   // build 808: cosmetic client debris never casts
     const px = center.x + (Math.random()-0.5)*size.x*0.5, py = center.y + (Math.random()-0.5)*size.y*0.5, pz = center.z + (Math.random()-0.5)*size.z*0.5;
     mesh.position.set(px,py,pz); scene.add(mesh);
     const out = new THREE.Vector3(px-center.x, py-center.y+0.3, pz-center.z); if(out.lengthSq()<1e-4) out.set(Math.random()-0.5,1,Math.random()-0.5);
@@ -19266,6 +19266,7 @@ function _blitCinePvToWindow(){
   for(const o of hid) o.visible=true; for(const b of sbh) b.visible=true;
 }
 let _shadowDirtyFrames = 2;
+let _shadowTick = 0;   // build 808: 3-frame cadence for TRANSIENT shadow movers (corpses / settling props)
 let _adaptLast = 0;
 function _dirtyShadows(n){ _shadowDirtyFrames = Math.max(_shadowDirtyFrames, n||2); }   // call whenever something the sun casts moves/spawns/breaks
 let _tabHidden = false;
@@ -19285,13 +19286,17 @@ function loop(){
   updatePerfHud();   // measure real frame time every frame (before any early-out)
   if(editorOpen || _cineActive) _dirtyShadows(1);   // authoring + camera moves: keep shadows current
   else {
-    // build 807: shadows are static for perf, but MOVING shadow-casters (a driven/coasting car, a ragdoll, a still-settling
-    // physics prop, or an animated platform) must refresh the sun shadow — otherwise the shadow stays baked where the object
-    // started. Only dirty while something actually moves, so a fully idle scene keeps the cheap static path.
-    let _shDirty = !!drivingCar || (typeof _coastingCars!=='undefined' && _coastingCars.length>0) || (typeof _corpses!=='undefined' && _corpses.length>0);
+    // build 807: shadows are static for perf, but MOVING shadow-casters must refresh the sun shadow — otherwise the shadow
+    // stays baked where the object started. build 808 splits the movers into two tiers so a wave full of corpses / settling
+    // props no longer re-renders the whole shadow pass EVERY frame (which silently defeated the static optimization):
+    //   FAST (player-focus, live refresh): the driven car, coasting cars, a platform/door mid-travel.
+    //   TRANSIENT (peripheral, every 3rd frame): ragdoll corpses, awake physics props still settling.
+    _shadowTick=(_shadowTick+1)%3;
+    let _shDirty = !!drivingCar || (typeof _coastingCars!=='undefined' && _coastingCars.length>0);
     if(!_shDirty){ for(const o of propModels){ const a=o&&o.userData&&o.userData.xa; if(a&&a.on&&a.ph>0&&a.ph<1){ _shDirty=true; break; } } }   // a platform/door mid-travel
-    if(!_shDirty && typeof dynamicProps!=='undefined'){ for(const o of dynamicProps){ const b=o&&o.userData&&o.userData.phys&&o.userData.phys.body; if(b && typeof b.isSleeping==='function' && !b.isSleeping()){ _shDirty=true; break; } } }   // an awake (moving) physics prop
-    if(_shDirty) _dirtyShadows(1);
+    let _shSlow = !_shDirty && (typeof _corpses!=='undefined' && _corpses.length>0);
+    if(!_shDirty && !_shSlow && typeof dynamicProps!=='undefined'){ for(const o of dynamicProps){ const b=o&&o.userData&&o.userData.phys&&o.userData.phys.body; if(b && typeof b.isSleeping==='function' && !b.isSleeping()){ _shSlow=true; break; } } }   // an awake (moving) physics prop
+    if(_shDirty || (_shSlow && _shadowTick===0)) _dirtyShadows(1);
   }
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
   if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
