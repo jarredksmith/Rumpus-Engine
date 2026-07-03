@@ -16578,7 +16578,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 838 · 2026-07-03';
+const BUILD_VERSION = 'build 839 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18805,7 +18805,7 @@ let _raceStartO=null; const _raceCk=[]; const _raceVisited=new Set();
 const _raceTimes=[];   // build 832: every completed lap's time, for the results breakdown
 let _raceCountT=0, _raceCountShown='';   // build 832: 3-2-1-GO standing start (throttle locked while >1)
 function _fmtRace(t){ if(!isFinite(t)) return '--:--.-'; const m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
-function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); _raceWinner=null; _raceNetAcc=0; for(const k in _raceNet) delete _raceNet[k]; }
+function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); _raceWinner=null; _raceNetAcc=0; for(const k in _raceNet) delete _raceNet[k]; if(typeof _raceHudHide==='function') _raceHudHide(); }
 // build 832: the big centre countdown. One lazily-created element; numbers pop in accent, GO flashes green.
 function _raceCountEl(){
   let el=document.getElementById('raceCount');
@@ -18815,6 +18815,29 @@ function _raceCountEl(){
   return el;
 }
 function _raceCountHide(){ const el=document.getElementById('raceCount'); if(el) el.style.display='none'; }
+// build 839: the RACE HUD — a top-centre pill with position, lap, live time and best. The old readout hid in
+// the tiny wave indicator; racing needs its numbers in your face.
+function _raceHudEl(){
+  let el=document.getElementById('raceHud');
+  if(!el){ el=document.createElement('div'); el.id='raceHud';
+    el.style.cssText='position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:22;display:none;background:rgba(7,14,18,0.62);border:1px solid rgba(var(--accent-rgb),0.4);border-radius:10px;padding:7px 16px;font:600 16px Rajdhani,system-ui,sans-serif;color:#eafff7;letter-spacing:0.05em;text-align:center;pointer-events:none;white-space:nowrap;';
+    document.body.appendChild(el); }
+  return el;
+}
+function _raceHudHide(){ const el=document.getElementById('raceHud'); if(el) el.style.display='none'; }
+function _raceHudTick(){
+  const el=_raceHudEl();
+  if(objectiveActive()!=='race' || !gameOn || editorOpen || !_raceStartO){ el.style.display='none'; return; }
+  const total=Math.max(1, gameCfg.raceLaps||3);
+  const pl=(typeof _racePlace==='function')?_racePlace():null;
+  el.innerHTML = (_raceLap===0)
+    ? '<span style="opacity:.75">CROSS THE START LINE</span>'
+    : (pl?('<b style="color:var(--accent)">P'+pl.place+'</b><span style="opacity:.6">/'+pl.field+'</span> &nbsp; '):'')
+      + 'LAP <b>'+_raceLap+'</b><span style="opacity:.6">/'+total+'</span> &nbsp; '
+      + '<b style="font-family:JetBrains Mono,monospace;font-size:15px">'+_fmtRace(_raceLapT)+'</b>'
+      + (isFinite(_raceBestT)?('&nbsp; <span style="opacity:.65;font-size:13px">BEST '+_fmtRace(_raceBestT)+'</span>'):'');
+  el.style.display='block';
+}
 // Called from enterCar: getting into a vehicle near the start line before the race has begun arms a
 // standing start — 3-2-1 with the throttle locked, GO releases it.
 function _raceMaybeCountdown(o){
@@ -18875,12 +18898,16 @@ function _raceBuildPath(){
   for(let i=0;i<N;i++){ const a=pts[i], b=pts[(i+1)%N];
     a.len=Math.max(0.01, Math.hypot(b.x-a.x, b.z-a.z)); a.s=total; total+=a.len;
     a.yaw=Math.atan2(-(b.x-a.x), -(b.z-a.z)); a.pitch=Math.atan2(b.y-a.y, a.len); }
+  // build 839: pace comes from the TEMPLATE VEHICLE, not a constant — a fast car makes fast rivals. Rails
+  // hold more than tires (bots never slide), so they corner at latG*1.5; top speed and braking are the car's.
+  const _tv=(propModels.find(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime)||{userData:{}}).userData.vehicle||{};
+  const G=((+_tv.latG||2.2))*1.5, TOP=Math.max(12, +_tv.maxSpeed||40), BRK=Math.max(14, (+_tv.accel||18)*1.4);
   for(let i=0;i<N;i++){ const a=pts[i], b=pts[(i+1)%N];
     let dy=b.yaw-a.yaw; dy=Math.atan2(Math.sin(dy),Math.cos(dy));
-    a.vmax=Math.min(60, Math.sqrt((2.2*9.81)/Math.max(0.0004, Math.abs(dy)/a.len))); }
+    a.vmax=Math.min(TOP, Math.sqrt((G*9.81)/Math.max(0.0004, Math.abs(dy)/a.len))); }
   for(let k=0;k<2;k++) for(let i=N-1;i>=0;i--){ const nx=pts[(i+1)%N];   // brake early: entry speed <= sqrt(exit^2 + 2*a*d)
-    pts[i].vmax=Math.min(pts[i].vmax, Math.sqrt(nx.vmax*nx.vmax + 2*22*pts[i].len)); }
-  return { pts, total };
+    pts[i].vmax=Math.min(pts[i].vmax, Math.sqrt(nx.vmax*nx.vmax + 2*BRK*pts[i].len)); }
+  return { pts, total, brk:BRK, accel:Math.max(10, +_tv.accel||18) };
 }
 function _racePathAt(s, lat){   // pose at arc-distance s (wraps), pushed lat metres to the right of the line
   const P=_racePath, pts=P.pts, N=pts.length;
@@ -18922,7 +18949,9 @@ function _raceSpawnBots(){
       obj.traverse(m=>{ if(m.isMesh && m.material && m.material.color){ m.material=m.material.clone(); m.material.color.lerp(tint, 0.35); } });
       st.obj=obj;
       const pose=_racePathAt(st.s, st.lat);
-      obj.position.set(pose.x, pose.y + TRACK_T + st.baseOff, pose.z);
+      let _gy=(typeof surfaceTopAt==='function') ? surfaceTopAt(pose.x, pose.z, obj, true, pose.y+6, true) : -Infinity;
+      if(!(_gy>-Infinity)) _gy=pose.y+TRACK_T;
+      obj.position.set(pose.x, _gy + st.baseOff, pose.z);
       obj.rotation.set(0, pose.yaw - st.mYaw, 0);
       _raceBots.push(st);
     });
@@ -18937,7 +18966,7 @@ function _raceBotsTick(dt){
     else{
       const look=6 + st.v*0.55;                                    // look ahead further at speed
       const tgt=_racePathAt(st.s+look, 0).vmax * st.skill;
-      const d=tgt-st.v, rate=(d>0 ? 12 : 26);                      // brakes bite harder than the throttle
+      const d=tgt-st.v, rate=(d>0 ? _racePath.accel : _racePath.brk);   // build 839: the car's own throttle + brakes
       st.v=Math.max(0, st.v + Math.max(-rate*dt, Math.min(rate*dt, d)));
     }
     st.s += st.v*dt;
@@ -18947,7 +18976,11 @@ function _raceBotsTick(dt){
         objectiveHUD(); if(typeof endGame==='function') endGame(); return; }
     }
     const pose=_racePathAt(st.s, st.lat);
-    o.position.set(pose.x, pose.y + TRACK_T + st.baseOff, pose.z);
+    // build 839: rest on the REAL deck via the shared ground query (banked curves, scaled pieces, ramps all
+    // included) instead of a computed height — this is what had rival wheels clipping through the track mesh.
+    let _gy=(typeof surfaceTopAt==='function') ? surfaceTopAt(pose.x, pose.z, o, true, pose.y+6, true) : -Infinity;
+    if(!(_gy>-Infinity)) _gy=pose.y+TRACK_T;
+    o.position.set(pose.x, _gy + st.baseOff, pose.z);
     let dyaw=(st.prevYaw==null)?0:(pose.yaw-st.prevYaw); dyaw=Math.atan2(Math.sin(dyaw),Math.cos(dyaw)); st.prevYaw=pose.yaw;
     _carEuler.set(pose.pitch, pose.yaw, 0); _carQuat.setFromEuler(_carEuler);
     _carModelQ.setFromAxisAngle(_UP_Y, -st.mYaw);
@@ -19048,6 +19081,18 @@ function _raceDeclareWinner(id){   // host: first finisher takes it; everyone is
   if(id===0){ if(typeof gameWon==='function') gameWon(); } else _raceLose(nm);
 }
 function _raceLose(nm){ _raceOver=true; if(typeof toast==='function') toast((nm||'A rival')+' takes the chequered flag'); if(typeof endGame==='function') endGame(); }
+// build 839: AUTO-SEAT — a race deploy puts you straight in the car on the grid (no walk-over-and-press-E).
+// Solo only: in multiplayer everyone would fight over the same seat. GLB vehicles can still be downloading at
+// deploy, so it retries for ~6 s before giving up quietly.
+function _raceAutoSeat(tries){
+  if(objectiveActive()!=='race' || !gameOn || editorOpen || gameOver || drivingCar) return;
+  if(typeof NET!=='undefined' && NET.mode!=='off') return;
+  const car=propModels.find(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
+  if(!car){ if((tries|0)<12) setTimeout(()=>_raceAutoSeat((tries|0)+1), 500); return; }
+  player.pos.set(car.position.x+2, car.position.y+EYE, car.position.z);
+  enterCar(car);
+  if(typeof toast==='function') toast('On the grid');
+}
 function _racePlace(){   // player's live position in the field (AI rivals solo; humans in MP), by laps + fraction
   const entries=[];
   if(_racePath && _raceBots.length) for(const st of _raceBots){ if(st.obj) entries.push(st.laps + st.s/_racePath.total); }
@@ -19082,6 +19127,7 @@ function _raceTick(dt){
   if(_raceOver) return; // a rival already finished — the lose screen is up
   _ghostRecordTick(dt); _ghostPlayTick();   // build 834: record this lap; replay the best one
   _raceNetTick(dt);     // build 836: share progress with the other racers
+  _raceHudTick();       // build 839: the top-centre position/lap/time pill
   if(_raceCrossCd>0) _raceCrossCd-=dt;
   if(_raceLap>=1) _raceLapT+=dt;
   const px=player.pos.x, pz=player.pos.z;
@@ -26325,6 +26371,7 @@ function startGame(){
   for(const o of propModels){ if(o && o.userData){ delete o.userData._sigCount; delete o.userData._sigSrc; delete o.userData._sigEvt; delete o.userData.unlocked; } }   // fresh run: counters back to zero, locked props re-lock (the hint always promised per-deploy)
   if(typeof initSceneLights==='function') initSceneLights();   // build 699: "start off" lights begin dark until a signal lights them
   if(typeof startObjective==='function') startObjective();   // reset survival timer for this run
+  if(typeof _raceAutoSeat==='function' && typeof objectiveActive==='function' && objectiveActive()==='race') setTimeout(()=>_raceAutoSeat(0), 350);   // build 839: race deploys start you in the car
   if(typeof disposePickupMarkers==='function') disposePickupMarkers();   // remove editor previews; the live (grabbable) pads are spawned next
   if(typeof disposeAudioZoneMarkers==='function') disposeAudioZoneMarkers(); if(typeof stopAudioZones==='function') stopAudioZones();   // hide zone rings + reset zone playback for a fresh run
   if(typeof spawnPowerups==='function') spawnPowerups();   // lay out map powerups for this run
@@ -26463,6 +26510,7 @@ function gameWon(){
   if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false;
   if(typeof closeUpgradePicker==='function') closeUpgradePicker();
   gameOn=false; gameOver=true; safeExitPointerLock();
+  if(typeof _raceHudHide==='function') _raceHudHide();   // build 839: the race pill doesn't outlive the race
   firing=false; ads=false; shopOpen=false;
   if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
   $('shop').classList.add('hidden');
@@ -26486,7 +26534,7 @@ function endGame(){
   releaseHeld(); closeRadial(false);
   if(typeof closeDialogue==='function') closeDialogue();   // build 695: drop any open NPC dialogue
   stopMusic();
-  gameOn=false; gameOver=true; safeExitPointerLock(); if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false; if(typeof closeUpgradePicker==='function') closeUpgradePicker();
+  gameOn=false; gameOver=true; safeExitPointerLock(); if(typeof _raceHudHide==='function') _raceHudHide(); if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false; if(typeof closeUpgradePicker==='function') closeUpgradePicker();
   firing=false; ads=false; shopOpen=false;
   editorOpen=false; _editorOpenFlag=false; editorAimPreview=false; editorFreeFly=false; editorTopView=false;
   if(typeof updateGizmo==='function') updateGizmo();   // editorOpen now false -> updateGizmo hides the handles (it only hides when called, and nothing else calls it on this path)

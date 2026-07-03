@@ -67,13 +67,16 @@ near(P.total, 32 + 4*(Math.PI/2*18), 1.5, 'path length = both 16 m straights + f
 
 // 2. corner speeds are lower than straight speeds, and braking zones ramp down before corners
 {
+  // build 839: pace derives from the TEMPLATE VEHICLE — this sim's template has no tuning, so the defaults
+  // apply: cornering G = 2.2*1.5 (rail confidence), brake decel = 18*1.4.
+  const G=2.2*1.5, BRK=18*1.4;
   const vs=P.pts.map(p=>p.vmax);
   const vMin=Math.min(...vs), vMaxv=Math.max(...vs);
-  near(vMin, Math.sqrt(2.2*9.81*18), 1.2, 'corner speed matches lateral-G theory: sqrt(latG*g*R) for the 18 m curve');
-  // this stadium's straights are only 16 m, so the brake-zone smoothing caps them at sqrt(vCorner^2 + 2*22*16)
-  assert(vMaxv > vMin+8 && vMaxv <= Math.sqrt(vMin*vMin + 2*22*17)+1, 'straights are faster, but capped by the braking zone into the next corner');
+  near(vMin, Math.sqrt(G*9.81*18), 1.2, 'corner speed matches lateral-G theory: sqrt(G*g*R) for the 18 m curve');
+  // this stadium's straights are only 16 m, so the brake-zone smoothing caps them near sqrt(vCorner^2 + 2*BRK*16)
+  assert(vMaxv > vMin+8 && vMaxv <= Math.sqrt(vMin*vMin + 2*BRK*17)+1, 'straights are faster, but capped by the braking zone into the next corner');
   for(let i=0;i<P.pts.length;i++){ const a=P.pts[i], b=P.pts[(i+1)%P.pts.length];
-    assert(a.vmax <= Math.sqrt(b.vmax*b.vmax + 2*22*a.len) + 1e-6, 'no point demands an impossible brake (entry <= sqrt(exit^2+2ad))'); }
+    assert(a.vmax <= Math.sqrt(b.vmax*b.vmax + 2*BRK*a.len) + 1e-6, 'no point demands an impossible brake (entry <= sqrt(exit^2+2ad))'); }
 }
 
 // 3. two rivals gridded behind the line, spliced out of colliders/propModels

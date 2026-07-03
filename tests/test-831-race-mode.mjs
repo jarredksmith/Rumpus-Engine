@@ -32,6 +32,7 @@ const env = new Function('"use strict";'+
   // build 832-834 additions touch the DOM / storage / the driven car — stub them for the headless sim
   const document={ getElementById:()=>null, createElement:()=>({style:{},textContent:'',appendChild(){}}), body:{appendChild(){}} };
   const SFX={}, drivingCar=null, localStorage={ getItem:()=>null, setItem(){} }, scene={ remove(){}, add(){} };
+  const objectiveActive=()=>'race', gameOn=true, editorOpen=false;   // build 839: the race HUD pill reads these
   const colliders=[], spawnProp=()=>{}, isModelSrc=()=>false, _modelRelease=()=>{};
   const _carEuler={set(){}}, _carQuat={setFromEuler(){}}, _carModelQ={setFromAxisAngle(){}}, _UP_Y={}, _updateWheels=()=>{};
   const THREE={ Box3:class{ setFromObject(){return this;} isEmpty(){return true;} }, Color:class{ constructor(){} lerp(){} } };
