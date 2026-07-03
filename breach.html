@@ -13758,6 +13758,8 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='pMov'){ if(netApplyMovProp(msg.nid, msg.x)) relayProp({t:'pMov', nid:msg.nid, x:msg.x}, id); } // a client moved a prop
   else if(msg.t==='death'){ playerDeathFx(msg.p[0], msg.p[1], msg.p[2]); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send(msg); }catch(e){} } } }   // a client died -> show + relay the pop
   else if(msg.t==='chat'){ const nm=(NET.players[id]&&NET.players[id].name)||msg.name||('P'+id); const tx=(''+(msg.text||'')).slice(0,200); addChatLine(nm, tx); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'chat', name:nm, text:tx}); }catch(e){} } } }   // a client chatted -> show + relay to the others
+  else if(msg.t==='race'){ _raceNet[id]={ lap:msg.lap|0, f:+msg.f||0 }; for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'race', from:id, lap:msg.lap, f:msg.f}); }catch(e){} } } }   // build 836: a racer's progress -> store + relay
+  else if(msg.t==='raceFin'){ _raceDeclareWinner(id); }   // build 836: a client crossed the final line — first one in wins
   else if(msg.t==='rematchReq'){ if(gameOver) hostRematch(); }   // a client asked to replay; only honor it once the match has actually ended (so it can't force a mid-match restart)
 }
 function handleHostMsg(msg){
@@ -13799,6 +13801,8 @@ function handleHostMsg(msg){
   else if(msg.t==='frag'){ registerLocalKill(); }   // co-op: the host confirmed our shot killed an enemy -> multi-kill tracking
   else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200)); }   // chat from the host or relayed from another player
   else if(msg.t==='duelOver'){ showDuelResult(msg.w, msg.wt); }
+  else if(msg.t==='race'){ _raceNet[msg.from]={ lap:msg.lap|0, f:+msg.f||0 }; }   // build 836: another racer's progress (standings)
+  else if(msg.t==='raceOver'){ if(msg.w){ if(typeof gameWon==='function') gameWon(); } else _raceLose(msg.wn); }   // build 836: the host called the finish
   else if(msg.t==='anim'){ const o=propModels[msg.i]; if(o) playPropAnimationOnce(o, msg.c); }   // a trigger animation fired somewhere
       else if(msg.t==='cine'){ const cc=cutsceneByName(msg.n); if(cc && !editorOpen && !_cineActive && _ccHasData(cc)) startCinematic({ shots: cineShotsOf(cc), audio: cc.audio }, false); }   // a story beat fired somewhere
   else if(msg.t==='xa'){ const o=propModels[msg.i]; if(o&&o.userData.xa) o.userData.xa.dest=msg.dest?1:0; }   // a mechanism toggled somewhere
@@ -16567,7 +16571,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 835 · 2026-07-02';
+const BUILD_VERSION = 'build 836 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18794,7 +18798,7 @@ let _raceStartO=null; const _raceCk=[]; const _raceVisited=new Set();
 const _raceTimes=[];   // build 832: every completed lap's time, for the results breakdown
 let _raceCountT=0, _raceCountShown='';   // build 832: 3-2-1-GO standing start (throttle locked while >1)
 function _fmtRace(t){ if(!isFinite(t)) return '--:--.-'; const m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
-function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); }
+function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); _raceWinner=null; _raceNetAcc=0; for(const k in _raceNet) delete _raceNet[k]; }
 // build 832: the big centre countdown. One lazily-created element; numbers pop in accent, GO flashes green.
 function _raceCountEl(){
   let el=document.getElementById('raceCount');
@@ -18891,6 +18895,7 @@ function _raceClearBots(){
   _ghostRec.length=0; _ghostAcc=0;
 }
 function _raceSpawnBots(){
+  if(typeof NET!=='undefined' && NET.mode!=='off') return;   // build 836: in multiplayer the HUMANS are the field
   const n=Math.max(0, Math.min(6, (gameCfg.raceBots|0)));
   if(!n) return;
   if(!_racePath){ if(typeof toast==='function') toast('No AI rivals — the track loop isn’t closed'); return; }
@@ -19005,13 +19010,45 @@ function _ghostPlayTick(){
   _carQuat.setFromEuler(_carEuler); _carModelQ.setFromAxisAngle(_UP_Y, -_ghostObj.mYaw);
   W.quaternion.copy(_carQuat).multiply(_carModelQ);
 }
-function _racePlace(){   // player's live position in the field, by laps-started + track fraction
-  if(!_racePath || !_raceBots.length) return null;
+// ---------- build 836: MULTIPLAYER RACING — humans race humans ----------
+// Each peer detects its OWN line crossings and lap times locally (zero-latency feel), broadcasts progress
+// ~3x/s ({t:'race', lap, f}), and the HOST arbitrates the finish: the first {t:'raceFin'} (or the host's own
+// final lap) wins, and every peer is told ({t:'raceOver', w:did-I-win, wn:winner-name}) — winner sees the
+// results screen, the rest get RACE LOST. AI rivals sit out MP (the humans are the field).
+let _raceWinner=null, _raceNetAcc=0; const _raceNet={};   // remote racers: id -> { lap, f }
+function _raceFrac(){   // my track fraction 0..1 (nearest racing-line point); 0 when the loop isn't closed
+  if(!_racePath) return 0;
   const pts=_racePath.pts; let bi=0, bd=Infinity;
   for(let i=0;i<pts.length;i++){ const dx=player.pos.x-pts[i].x, dz=player.pos.z-pts[i].z; const d=dx*dx+dz*dz; if(d<bd){ bd=d; bi=i; } }
-  const pp=_raceLap + pts[bi].s/_racePath.total;
-  let place=1; for(const st of _raceBots){ if(st.obj && (st.laps + st.s/_racePath.total) > pp) place++; }
-  return { place, field:_raceBots.length+1 };
+  return pts[bi].s/_racePath.total;
+}
+function _raceNetTick(dt){
+  if(typeof NET==='undefined' || NET.mode==='off') return;
+  _raceNetAcc+=dt; if(_raceNetAcc<0.33) return; _raceNetAcc=0;
+  const m={t:'race', lap:_raceLap, f:+_raceFrac().toFixed(3)};
+  if(NET.mode==='client'){ if(NET.conn){ try{ NET.conn.send(m); }catch(e){} } }
+  else { m.from=0; for(const cid in NET.conns){ try{ NET.conns[cid].send(m); }catch(e){} } }
+}
+function _raceFinishLocal(){   // I crossed the line on the final lap
+  if(typeof NET==='undefined' || NET.mode==='off'){ if(typeof gameWon==='function') gameWon(); return; }
+  if(NET.mode==='host') _raceDeclareWinner(0);
+  else if(NET.conn){ try{ NET.conn.send({t:'raceFin'}); }catch(e){} }
+}
+function _raceDeclareWinner(id){   // host: first finisher takes it; everyone is told
+  if(_raceWinner!=null) return; _raceWinner=id;
+  const nm=(id===0) ? ((typeof NET!=='undefined' && NET.name)||'Host') : ((NET.players[id]&&NET.players[id].name)||('P'+id));
+  for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'raceOver', w:(+cid===id)?1:0, wn:nm}); }catch(e){} }
+  if(id===0){ if(typeof gameWon==='function') gameWon(); } else _raceLose(nm);
+}
+function _raceLose(nm){ _raceOver=true; if(typeof toast==='function') toast((nm||'A rival')+' takes the chequered flag'); if(typeof endGame==='function') endGame(); }
+function _racePlace(){   // player's live position in the field (AI rivals solo; humans in MP), by laps + fraction
+  const entries=[];
+  if(_racePath && _raceBots.length) for(const st of _raceBots){ if(st.obj) entries.push(st.laps + st.s/_racePath.total); }
+  if(typeof NET!=='undefined' && NET.mode!=='off') for(const k in _raceNet){ const r=_raceNet[k]; entries.push((r.lap||0)+(r.f||0)); }
+  if(!entries.length) return null;
+  const pp=_raceLap + _raceFrac();
+  let place=1; for(const e of entries) if(e>pp) place++;
+  return { place, field:entries.length+1 };
 }
 function _raceSetup(){
   _raceClear();
@@ -19037,6 +19074,7 @@ function _raceTick(dt){
   _raceBotsTick(dt);    // build 833: the AI rivals drive their line
   if(_raceOver) return; // a rival already finished — the lose screen is up
   _ghostRecordTick(dt); _ghostPlayTick();   // build 834: record this lap; replay the best one
+  _raceNetTick(dt);     // build 836: share progress with the other racers
   if(_raceCrossCd>0) _raceCrossCd-=dt;
   if(_raceLap>=1) _raceLapT+=dt;
   const px=player.pos.x, pz=player.pos.z;
@@ -19057,7 +19095,7 @@ function _raceTick(dt){
     else if(_raceVisited.size >= Math.max(1, Math.ceil(_raceCk.length*0.6))){
       _raceLastT=_raceLapT; if(_raceLapT<_raceBestT) _raceBestT=_raceLapT; _raceTimes.push(_raceLapT);   // build 832: keep every lap for the results
       if(_raceLapT===_raceBestT) _ghostSave(_raceLapT);   // build 834: a new best lap becomes the ghost
-      if(_raceLap>=total){ objectiveHUD(); if(typeof gameWon==='function') gameWon(); return; }
+      if(_raceLap>=total){ objectiveHUD(); _raceFinishLocal(); return; }   // build 836: solo wins outright; MP asks the host to arbitrate
       _raceLap++; _raceLapT=0; _raceVisited.clear(); _ghostRec.length=0; _ghostAcc=0; _ghostEnsureObj();
       if(typeof toast==='function') toast('LAP '+_raceLap+' / '+total+' — last '+_fmtRace(_raceLastT));
     }
@@ -20449,6 +20487,10 @@ function loop(){
     chestTimer -= dt;
     if(chestTimer <= 0){ spawnChest(); chestTimer = 30 + Math.random()*20; }
   }
+
+  // build 836: multiplayer racing — CLIENTS run their own race tick (line crossings, lap clock, countdown,
+  // ghost, progress broadcast). objectiveTick is host-only, so this is the client's half of the race.
+  if(isClient && !duelMode && !editorOpen && typeof objectiveActive==='function' && objectiveActive()==='race' && typeof _raceTick==='function') _raceTick(dt);
 
   // enemy AI (host / solo, co-op only) — targets the nearest player in co-op
   const hideEn = editorOpen && editorHideEnemies;
