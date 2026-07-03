@@ -749,6 +749,7 @@
     <button id="loadCampBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>Load campaign</button>
     <button id="instrBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Instructions</button>
     <button id="helpBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Field manual</button>
+    <button id="helpBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Help &amp; tutorials</button>
     <button id="creditsBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>Credits</button>
     <button id="ctrlBtn" class="secBtn ghost"></button>
     <button id="fsBtn" class="secBtn ghost" style="display:none"></button>
@@ -775,6 +776,18 @@
       Tap the <b>minimap</b> to open the full map · pause with the <b>❚❚</b> button<br>
       <span style="color:var(--gold)">Kill enemies for credits — spend them at the ammo station and supply caches.</span>
       <div class="hint" style="margin-top:10px;color:var(--accent)">Tip: pause → <b>✿ Customize controls</b> to move or resize any on-screen button.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Help & tutorials modal (build 848) -->
+<div id="helpModal" class="modalBack hidden">
+  <div class="modalCard" style="max-width:720px">
+    <button class="modalClose" data-close="helpModal">✕</button>
+    <h2>HELP &amp; TUTORIALS</h2>
+    <div style="display:flex;gap:12px;text-align:left;min-height:300px;flex-wrap:wrap">
+      <div id="helpNav" style="flex:0 0 172px;display:flex;flex-direction:column;gap:4px"></div>
+      <div id="helpBody" style="flex:1;min-width:260px;font-size:13px;line-height:1.6;max-height:62vh;overflow:auto;padding-right:6px;color:#cfe9df"></div>
     </div>
   </div>
 </div>
@@ -882,6 +895,7 @@
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20 12 4l7 16"/><path d="M7.7 14h8.6"/></svg>Title font<select id="uiDispSel" style="margin-left:auto;background:#0c1418;color:#cfeee2;border:1px solid #2a3a42;border-radius:5px;padding:2px 4px"></select></label>
       <button id="uiThemeReset" class="pBtnGhost" style="font-size:11px;padding:4px 8px">↺ Reset appearance</button>
     </div>
+    <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
     <button id="pauseCredits" class="pBtnGhost">Credits &amp; licenses</button>
     <button id="pauseExit" class="pBtnExit">⌂ Exit to main menu</button>
   </div>
@@ -16590,7 +16604,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 847 · 2026-07-03';
+const BUILD_VERSION = 'build 848 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26878,6 +26892,7 @@ function bindMenu(){
   try{ if(!localStorage.getItem('breach_seen')){ localStorage.setItem('breach_seen','1'); syncInstrControls(); openModal('instrModal'); } }catch(e){}
   const hb=document.getElementById('helpBtn'); if(hb) hb.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };   // full docs, hosted beside the game
   const crb=document.getElementById('creditsBtn'); if(crb) crb.onclick=openCredits;   // build 549: player-facing credits + license screen
+  const hlb=document.getElementById('helpBtn'); if(hlb) hlb.onclick=openHelp;   // build 848: help & tutorials from the home menu
   const cb=document.getElementById('ctrlBtn');
   if(cb){
     const lbl=()=>{ cb.innerHTML=UI_ICON.gamepad + 'Controls: ' + (_ctrlPref==='touch'?'Touch':_ctrlPref==='desktop'?'Desktop':'Auto'); };
@@ -26955,6 +26970,7 @@ function bindPauseMenu(){
   const cmb=document.getElementById('pauseCamMode'); if(cmb){ const updc=()=>{ cmb.textContent='Camera: '+(tpMode?'Third person':'First person'); }; updc(); cmb.onclick=()=>{ tpMode=!tpMode; try{ localStorage.setItem('breach_tp', tpMode?'1':'0'); }catch(e){} updc(); }; }
   const x=document.getElementById('pauseExit'); if(x) x.onclick=exitToMenu;
   const pc=document.getElementById('pauseCredits'); if(pc) pc.onclick=openCredits;   // build 549: credits reachable mid-game from the pause menu
+  const ph=document.getElementById('pauseHelp'); if(ph) ph.onclick=openHelp;   // build 848: help & tutorials mid-game too
   const mc=document.getElementById('muteCb'); if(mc){ mc.checked=audioSettings.muted; mc.onchange=()=>{ audioSettings.muted=mc.checked; applyAudioSettings(); saveAudioSettings(); }; }
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
@@ -27016,6 +27032,124 @@ function renderCreditsScreen(){
   else h+='<div style="color:#8fb1a6;font-size:12px">No Creative-Commons assets are loaded right now. Models and sounds you add from Poly Pizza, Sketchfab, or Freesound are credited here automatically.</div>';
   h+='<div style="color:#7e9d92;font-size:11px;margin-top:12px">Poly Haven textures &amp; HDRIs are CC0 (public domain, no attribution required — listed above as a courtesy). When you publish, keep this screen reachable so each asset\u2019s license is satisfied.</div>';
   host.innerHTML=h;
+}
+// ---------- build 848: HELP & TUTORIALS — a first-timer's front door ----------
+// Topics render into a left-nav modal (home + pause menus). Tutorials are step-by-step recipes that match the
+// reorganized editor tabs; two of them have one-click LOADABLE examples built with the same APIs the editor
+// uses (spawnProp / track pieces / gameCfg), so a new user can inspect a working level instead of a blank arena.
+const HELP_TOPICS = [
+ { id:'play', title:'How to play', html:
+   '<b style="color:#eafff7">On foot</b><br>'
+  +'<code>WASD</code> move · <code>mouse</code> look/shoot · <code>Shift</code> run · <code>Space</code> jump · <code>C</code> slide/crouch<br>'
+  +'<code>R</code> reload · <code>F</code> grenade · <code>V</code> melee · <code>E</code> interact · <code>G</code> grab/carry/throw · <code>L</code> flashlight (if enabled) · <code>J</code> re-read objective<br><br>'
+  +'<b style="color:#eafff7">Driving</b> (walk up to a vehicle, press <code>E</code>)<br>'
+  +'<code>W/S</code> gas & brake (brake first, then reverse) · <code>A/D</code> steer · <code>Space</code> handbrake drift · <code>Shift</code> boost<br>'
+  +'<code>C</code> chase/cockpit view · <code>H</code> headlights · <code>G</code> toggle the ghost lap (in races) · <code>E</code> get out<br><br>'
+  +'<b style="color:#eafff7">Racing</b>: cross the checkered start line to begin — every track piece is a checkpoint, so stay on the course or the lap won\'t count. The HUD pill shows your position, lap and times.' },
+ { id:'editor', title:'Editor tour', html:
+   'Open the editor with <b>Build mode</b> (home menu) or <code>P</code> in a solo game. Eight tabs:<br><br>'
+  +'<b style="color:#eafff7">Build</b> — place shapes, searched models and <b>track pieces</b>; select to edit animation, physics, vehicle, signals & more.<br>'
+  +'<b style="color:#eafff7">World</b> — terrain, sky, lighting, camera, fog, arena size, audio.<br>'
+  +'<b style="color:#eafff7">Player</b> — avatar, spawn point, character roster.<br>'
+  +'<b style="color:#eafff7">Enemies</b> — types, models, spawn markers, gunfire look.<br>'
+  +'<b style="color:#eafff7">Gameplay</b> — objective & rules, pickups, loot, inventory items, build menu, <b>cutscenes</b>.<br>'
+  +'<b style="color:#eafff7">Weapons</b> — per-weapon models, damage, sounds, effects.<br>'
+  +'<b style="color:#eafff7">HUD</b> — colours, fonts, visibility, <b>crosshair</b>.<br>'
+  +'<b style="color:#eafff7">Save</b> — level files, share links, campaigns.<br><br>'
+  +'<b>Keys</b>: <code>F</code> fly · <code>V</code> top-down view · <code>W/E/R</code> move/rotate/scale gizmo · <code>Del</code> delete · <code>Ctrl+Z</code> undo · <code>Alt+drag</code> duplicate · <code>P</code> play the level.' },
+ { id:'tut-race', title:'Tutorial: race circuit', example:'race', html:
+   'Build a racing level in ~2 minutes:<br><br>'
+  +'1. <b>Build tab</b> → Track builder → press <code>V</code> for top-down view.<br>'
+  +'2. Click <b>Start line</b>, then chain pieces — each snaps to the last. Classic oval: Start → Short → 90°&nbsp;L → 90°&nbsp;L → Straight → 90°&nbsp;L → 90°&nbsp;L.<br>'
+  +'3. Ends almost meeting? <b>Close loop</b> bridges the gap exactly.<br>'
+  +'4. Click <b>Walls: whole track</b> so cars can\'t fall off.<br>'
+  +'5. Place a vehicle: add any shape or model near the start, then in its settings open <b>Vehicle (drivable)</b> and enable it.<br>'
+  +'6. <b>Gameplay tab</b> → Objective → <b>Race</b>. Set laps + AI rivals.<br>'
+  +'7. Press <code>P</code> — you\'ll be auto-seated on the grid. 3-2-1-GO.' },
+ { id:'tut-arena', title:'Tutorial: arena shootout', example:'arena', html:
+   'The classic BREACH wave fight:<br><br>'
+  +'1. <b>World tab</b> → set Arena size (~70) and pick a sky + floor texture.<br>'
+  +'2. <b>Build tab</b> → scatter Boxes for cover; scale them with <code>R</code>. Add a few Pillars for landmarks.<br>'
+  +'3. <b>Enemies tab</b> → place spawn markers (or leave it on random waves).<br>'
+  +'4. <b>Gameplay tab</b> → Objective <b>Eliminate</b>, set <b>Win after N waves</b>.<br>'
+  +'5. <b>Gameplay → Pickups</b> → drop ammo + health pads where fights will happen.<br>'
+  +'6. Press <code>P</code> and survive.' },
+ { id:'tut-puzzle', title:'Tutorial: puzzle room', html:
+   'An adventure room with a locked door — the signals system in miniature:<br><br>'
+  +'1. Build a room from Boxes (walls + a doorway). Place a Box as the <b>door</b>.<br>'
+  +'2. Select the door → <b>Lock</b> fold → set a key id (e.g. <code>gold</code>).<br>'
+  +'3. <b>Gameplay → Inventory items</b> → define a <code>gold</code> key item with a model.<br>'
+  +'4. Place the key somewhere hidden as a pickup.<br>'
+  +'5. Select the door → <b>Signals</b> → on <b>unlock</b> → do <b>Open</b> (or play an animation).<br>'
+  +'6. <b>Gameplay tab</b> → Objective <b>Puzzle</b> (no enemies) and write a goal text.<br>'
+  +'7. Optional: an NPC with <b>Dialogue</b> that hints where the key is.<br>'
+  +'8. <code>P</code> to play: find key → unlock → door opens. Chain more signals for bigger puzzles.' },
+ { id:'share', title:'Save & share', html:
+   '<b style="color:#eafff7">Save tab</b>:<br><br>'
+  +'· <b>Save/load .json</b> — your level as a file (also autosaved in the browser).<br>'
+  +'· <b>Copy link</b> — the whole level compressed into a URL; anyone who opens it plays it. Models load from Poly&nbsp;Pizza/Sketchfab, so recipients may need a Sketchfab token for those.<br>'
+  +'· <b>Challenge a friend</b> (end screen) — share the level + your score to beat.<br>'
+  +'· <b>Campaign</b> — chain several levels into a sequence with carry-over loadout.<br><br>'
+  +'Multiplayer: <b>Host</b> from the home menu, share the room code; joiners get the level automatically.' },
+];
+let _helpSel='play';
+function renderHelp(){
+  const nav=document.getElementById('helpNav'), body=document.getElementById('helpBody');
+  if(!nav || !body) return;
+  nav.innerHTML=''; body.innerHTML='';
+  for(const t of HELP_TOPICS){
+    const b=document.createElement('button'); b.textContent=t.title;
+    b.style.cssText='text-align:left;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid '+(t.id===_helpSel?'rgba(var(--accent-rgb),0.55)':'#24323a')+';background:'+(t.id===_helpSel?'rgba(var(--accent-rgb),0.18)':'#0c1418')+';color:'+(t.id===_helpSel?'#eafff7':'#9fc4ba')+';';
+    b.onclick=()=>{ _helpSel=t.id; renderHelp(); };
+    nav.appendChild(b);
+  }
+  const t=HELP_TOPICS.find(x=>x.id===_helpSel)||HELP_TOPICS[0];
+  const h=document.createElement('div'); h.innerHTML=t.html; body.appendChild(h);
+  if(t.example){
+    const eb=document.createElement('button'); eb.textContent='⚡ Load this example project';
+    eb.style.cssText='margin-top:12px;padding:8px 14px;font-size:13px;border-radius:7px;cursor:pointer;border:1px solid rgba(var(--accent-rgb),0.55);background:rgba(var(--accent-rgb),0.2);color:#eafff7;';
+    eb.onclick=()=>{ uiConfirm('Load the example into the editor? This replaces the current level (undo works).', ()=>_helpLoadExample(t.example), 'Load example'); };
+    body.appendChild(eb);
+    const eh=document.createElement('div'); eh.className='hint'; eh.style.marginTop='4px'; eh.textContent='Builds a ready-to-play version of this tutorial in the editor so you can inspect every setting.';
+    body.appendChild(eh);
+  }
+}
+function openHelp(){ renderHelp(); openModal('helpModal'); }
+function _helpLoadExample(kind){
+  closeModal('helpModal'); if(typeof closePause==='function') closePause();
+  if(!editorOpen){ if(!gameOn && typeof enterEditor==='function') enterEditor(); else if(typeof toggleEditor==='function') toggleEditor(); }
+  setTimeout(()=>{ try{ _helpBuildExample(kind); }catch(e){ console.warn('example build failed', e); if(typeof flashToast==='function') flashToast('Could not build the example: '+(e&&e.message)); } }, 200);
+}
+function _helpBuildExample(kind){
+  pushUndoSnapshot();
+  for(let i=propModels.length-1;i>=0;i--) removeProp(i);   // fresh canvas for the example (level settings kept; undo restores)
+  selProps.length=0; if(editorTargets.props) editorTargets.props.idx=-1;
+  if(kind==='race'){
+    // a closed stadium: Start(16)+Short(8) vs Straight(24), four 90° lefts — exact closure (mod-8 lengths)
+    let pose={x:0,y:0,z:0,yaw:0};
+    for(const k of ['track_start','track_short','track_curve_l','track_curve_l','track_straight','track_curve_l','track_curve_l']){
+      const t=[pose.x, pose.y, pose.z, 0, pose.yaw, 0, 1,1,1];
+      let placed=null; spawnProp(k, t, (o)=>{ placed=o; trackApply(o, {w:1}); });
+      pose=_trackExitPose({ position:{x:t[0],y:t[1],z:t[2]}, rotation:{y:t[4]}, scale:{x:1,y:1,z:1}, userData:{src:k} });
+    }
+    // a simple block car beside the grid — swap it for a searched model any time
+    spawnProp('box', [12, 0, -6, 0, 0, 0, 1.9, 1.1, 4.4], (o)=>{
+      o.userData.col=0xff4757; if(typeof applyPropColor==='function') applyPropColor(o);
+      vehicleApply(o, { maxSpeed:36, accel:22, turn:150, reverse:9, grip:7, latG:2.6, boost:1.6, brakeLights:true, headlights:true });
+    });
+    gameCfg.objective='race'; gameCfg.raceLaps=3; gameCfg.raceBots=2; gameCfg.raceBotSkill=0.85;
+    if(typeof worldCfg!=='undefined' && (+worldCfg.arena||0) < 110){ worldCfg.arena=110; if(typeof applyWorldCfg==='function') applyWorldCfg(); }
+    if(typeof flashToast==='function') flashToast('Race circuit loaded — press P to race (3 laps vs 2 rivals)');
+  } else if(kind==='arena'){
+    for(let i=0;i<14;i++){ const s=2.5+Math.random()*3, ht=Math.min(s*0.7, 2.6);
+      let px, pz; do{ px=(Math.random()-0.5)*90; pz=(Math.random()-0.5)*90; }while(Math.hypot(px,pz)<9);
+      spawnProp('box', [px, 0, pz, 0, Math.random()*Math.PI, 0, s, ht, s]); }
+    for(let i=0;i<5;i++){ const a=i/5*Math.PI*2; spawnProp('pillar', [Math.cos(a)*38, 0, Math.sin(a)*38, 0, 0, 0, 1]); }
+    gameCfg.objective='eliminate'; gameCfg.mode='random'; gameCfg.winWaves=3;
+    if(typeof flashToast==='function') flashToast('Arena loaded — press P to fight (win after 3 waves)');
+  }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof renderEditorFields==='function') renderEditorFields();
 }
 function openCredits(){ renderCreditsScreen(); openModal('creditsModal'); }
 function openModal(id){ const m=document.getElementById(id); if(m) m.classList.remove('hidden'); }
