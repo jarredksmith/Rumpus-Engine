@@ -36,6 +36,7 @@ const env=new Function(`"use strict";
   const isModelSrc=()=>false, _modelRelease=()=>{};
   const _carEuler={set(){}}, _carQuat={setFromEuler(){}}, _carModelQ={setFromAxisAngle(){}}, _UP_Y={};
   const _updateWheels=()=>{};
+  const drivingCar=null, localStorage={ getItem:()=>null, setItem(){} };   // build 840: _raceBotObstacle reads the driven car; ghost load reads storage
   const THREE={ Box3:class{ setFromObject(){ return this; } isEmpty(){ return true; } },
                 Color:class{ constructor(){} lerp(){} } };
   const _mkObj=()=>({ position:{x:0,y:0,z:0,set(x,y,z){this.x=x;this.y=y;this.z=z;}},

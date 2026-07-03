@@ -15753,6 +15753,13 @@ function driveUpdate(dt){
   // build 824: the two axis tests can THREAD a corner diagonally (each axis individually clear while the combined motion
   // is not) — one extra ray along the true motion direction closes the gap.
   if(mvx!==0 && mvz!==0){ const _dl=Math.hypot(mvx,mvz); if(_carWall(o, mvx/_dl, mvz/_dl, _dl, _h)){ mvx=0; mvz=0; } }
+  // build 840: cars are SOLID in a race — rivals and parked vehicles block like walls (axis-separated so you
+  // scrape and slide along them), and the glancing deflection + bonk below price the contact.
+  if(typeof _raceCarBlock==='function' && (mvx!==0 || mvz!==0)){
+    if(mvx!==0 && _raceCarBlock(o.position.x+mvx, o.position.z, o.position.x, o.position.z, o)) mvx=0;
+    if(mvz!==0 && _raceCarBlock(o.position.x, o.position.z+mvz, o.position.x, o.position.z, o)) mvz=0;
+    if(mvx!==0 && mvz!==0 && _raceCarBlock(o.position.x+mvx, o.position.z+mvz, o.position.x, o.position.z, o)){ mvx=0; mvz=0; }
+  }
   const _imp0=Math.abs(r.speed);   // speed carried into the wall (for impact feedback)
   // build 822: GLANCING DEFLECTION — a wall contact scrubs speed by how much of the travel it killed. A shallow scrape
   // (keep~0.98) barely slows you; a 45-degree hit grinds speed off in ~a quarter second; head-on (keep~0) stops (the bonk
@@ -16578,7 +16585,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 839 · 2026-07-03';
+const BUILD_VERSION = 'build 840 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18944,7 +18951,8 @@ function _raceSpawnBots(){
       { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // rivals never block rays / physics
       { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }   // ...and never serialize or get picked
       obj.userData.runtime=true; obj.userData._raceBot=st;
-      { obj.position.set(0,0,0); obj.updateMatrixWorld(true); const bb=new THREE.Box3().setFromObject(obj); st.baseOff=bb.isEmpty()?0:(-bb.min.y); }
+      { obj.position.set(0,0,0); obj.updateMatrixWorld(true); const bb=new THREE.Box3().setFromObject(obj); st.baseOff=bb.isEmpty()?0:(-bb.min.y);
+        if(!bb.isEmpty()){ const _hx=(bb.max.x-bb.min.x)/2, _hz=(bb.max.z-bb.min.z)/2; st.hw=Math.min(_hx,_hz); st.hl=Math.max(_hx,_hz); } }   // build 840: contact footprint (width across, length along)
       const tint=new THREE.Color(_RACEBOT_TINTS[i%_RACEBOT_TINTS.length]);      // liveried so rivals read at a glance
       obj.traverse(m=>{ if(m.isMesh && m.material && m.material.color){ m.material=m.material.clone(); m.material.color.lerp(tint, 0.35); } });
       st.obj=obj;
@@ -18965,7 +18973,8 @@ function _raceBotsTick(dt){
     if(_raceCountT>1){ st.v=0; }                                  // held on the grid until GO
     else{
       const look=6 + st.v*0.55;                                    // look ahead further at speed
-      const tgt=_racePathAt(st.s+look, 0).vmax * st.skill;
+      let tgt=_racePathAt(st.s+look, 0).vmax * st.skill;
+      tgt=Math.min(tgt, _raceBotObstacle(st, o, (st.prevYaw!=null?st.prevYaw:o.rotation.y+st.mYaw)));   // build 840: brake behind traffic, never phase through it
       const d=tgt-st.v, rate=(d>0 ? _racePath.accel : _racePath.brk);   // build 839: the car's own throttle + brakes
       st.v=Math.max(0, st.v + Math.max(-rate*dt, Math.min(rate*dt, d)));
     }
@@ -19081,6 +19090,44 @@ function _raceDeclareWinner(id){   // host: first finisher takes it; everyone is
   if(id===0){ if(typeof gameWon==='function') gameWon(); } else _raceLose(nm);
 }
 function _raceLose(nm){ _raceOver=true; if(typeof toast==='function') toast((nm||'A rival')+' takes the chequered flag'); if(typeof endGame==='function') endGame(); }
+// ---------- build 840: SOLID CARS in a race ----------
+// Contact is geometric (circle-vs-oriented-box), engine-independent: the PLAYER's intended move is blocked when
+// it would enter a rival's or a parked vehicle's footprint — the existing glancing deflection + bonk then price
+// the hit (speed bleed, shake, thud). Escape is always allowed: a move is only blocked if it ENTERS a box it
+// wasn't already inside, so an overlap (a rival drives over a stopped car) can never freeze anyone. Rivals do
+// their part by BRAKING behind traffic (_raceBotObstacle) instead of phasing through it.
+function _raceCarInside(nx, nz, pr, cx, cz, yaw, hw, hl){
+  const dx=nx-cx, dz=nz-cz, c=Math.cos(yaw), s=Math.sin(yaw);
+  const lx=dx*c - dz*s, lz=dx*s + dz*c;                       // world -> the obstacle's local frame
+  const qx=Math.max(-hw, Math.min(hw, lx)), qz=Math.max(-hl, Math.min(hl, lz));
+  const ex=lx-qx, ez=lz-qz; return (ex*ex+ez*ez) < pr*pr;
+}
+function _raceCarBlock(nx, nz, cx, cz, self){
+  if(typeof objectiveActive!=='function' || objectiveActive()!=='race') return false;
+  const f=_carFoot(self), pr=Math.max(0.35, Math.min(f.hw, f.hd)*0.85);
+  for(const st of _raceBots){ const o=st.obj; if(!o) continue;
+    const yaw=(st.prevYaw!=null)?st.prevYaw:(o.rotation.y+st.mYaw), hw=st.hw||1, hl=st.hl||2;
+    if(_raceCarInside(nx,nz,pr, o.position.x,o.position.z, yaw,hw,hl) && !_raceCarInside(cx,cz,pr, o.position.x,o.position.z, yaw,hw,hl)) return true; }
+  for(const p of propModels){ if(!p || p===self || !p.userData || !p.userData.vehicle || p.userData.runtime) continue;
+    const pf=_carFoot(p), yaw=(p.userData.carYaw!=null)?p.userData.carYaw:(p.rotation.y+((p.userData.vehicle.modelYaw||0))*RAD);
+    if(_raceCarInside(nx,nz,pr, p.position.x,p.position.z, yaw,pf.hw,pf.hd) && !_raceCarInside(cx,cz,pr, p.position.x,p.position.z, yaw,pf.hw,pf.hd)) return true; }
+  return false;
+}
+// Nearest car ahead on a rival's line (the player's, a parked vehicle, another rival) -> a speed limit that
+// closes to a stop as the gap closes: follow at ~their pace from 9 m, never ram.
+function _raceBotObstacle(st, o, yaw){
+  let lim=Infinity;
+  const fx=-Math.sin(yaw), fz=-Math.cos(yaw), c=Math.cos(yaw), s=Math.sin(yaw);
+  const check=(x,z,speed)=>{
+    const dx=x-o.position.x, dz=z-o.position.z;
+    const fwd=dx*fx+dz*fz, lat=Math.abs(dx*c - dz*s);
+    if(fwd>0.5 && fwd<9+st.v*0.4 && lat<2.3) lim=Math.min(lim, Math.max(0, speed*0.92 + Math.max(0, fwd-4)*1.2));
+  };
+  if(typeof drivingCar!=='undefined' && drivingCar) check(drivingCar.position.x, drivingCar.position.z, Math.abs(drivingCar.userData.carSpeed||0));
+  for(const ot of _raceBots){ if(ot===st || !ot.obj) continue; check(ot.obj.position.x, ot.obj.position.z, ot.v); }
+  for(const p of propModels){ if(!p || !p.userData || !p.userData.vehicle || p.userData.runtime || p===drivingCar) continue; check(p.position.x, p.position.z, 0); }
+  return lim;
+}
 // build 839: AUTO-SEAT — a race deploy puts you straight in the car on the grid (no walk-over-and-press-E).
 // Solo only: in multiplayer everyone would fight over the same seat. GLB vehicles can still be downloading at
 // deploy, so it retries for ~6 s before giving up quietly.
