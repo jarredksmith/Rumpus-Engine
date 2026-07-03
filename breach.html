@@ -6510,6 +6510,12 @@ moon.shadow.camera.top = 80; moon.shadow.camera.bottom = -80;
 moon.shadow.bias = -0.0004;
 moon.shadow.normalBias = 1.2;
 scene.add(moon);
+// Shadow-refresh bookkeeping lives HERE (not by the render loop) since build 855: applyWorldCfg runs at
+// boot and now calls _dirtyShadows when the sun moves — declaring these ~11k lines later was a TDZ crash.
+let _shadowDirtyFrames = 2;
+let _shadowTick = 0;   // build 808: 3-frame cadence for TRANSIENT shadow movers (corpses / settling props)
+let _adaptLast = 0;
+function _dirtyShadows(n){ _shadowDirtyFrames = Math.max(_shadowDirtyFrames, n||2); }   // call whenever something the sun casts moves/spawns/breaks
 
 // ---------- Light budget ----------
 // Forward-rendered WebGL slows down fast with many lit lights. Emissive props register their point
@@ -8941,7 +8947,7 @@ const player = {
 };
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
-const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
+const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -9140,7 +9146,18 @@ function applyWorldCfg(){
   worldCfg.skyRot = ((((+worldCfg.skyRot || 0) % 360) + 360) % 360);
   worldCfg.ambient = Math.max(0, worldCfg.ambient == null ? DEFAULT_WORLD.ambient : +worldCfg.ambient);
   if(worldCfg.sunColor == null) worldCfg.sunColor = DEFAULT_WORLD.sunColor;
-  if(typeof moon!=='undefined'){ moon.intensity = worldCfg.sun; moon.color.setHex(worldCfg.sunColor>>>0); }
+  // build 855: sun DIRECTION — azimuth (compass spin) + elevation (height above the horizon). The light
+  // orbits the origin at the same ~90m radius the fixed position always used, so the ±80 shadow box and
+  // far plane still cover the arena. Elevation is floored at 5° — a horizontal sun degenerates the shadows.
+  worldCfg.sunAzim = ((((worldCfg.sunAzim == null ? DEFAULT_WORLD.sunAzim : +worldCfg.sunAzim) % 360) + 360) % 360);
+  worldCfg.sunElev = Math.max(5, Math.min(89, worldCfg.sunElev == null ? DEFAULT_WORLD.sunElev : +worldCfg.sunElev));
+  if(typeof moon!=='undefined'){
+    moon.intensity = worldCfg.sun; moon.color.setHex(worldCfg.sunColor>>>0);
+    const _saz = worldCfg.sunAzim*Math.PI/180, _sel = worldCfg.sunElev*Math.PI/180, _sr = 90;
+    const _sh = Math.cos(_sel)*_sr;
+    moon.position.set(Math.sin(_saz)*_sh, Math.sin(_sel)*_sr, Math.cos(_saz)*_sh);
+    if(typeof _dirtyShadows==='function') _dirtyShadows(3);   // re-render the shadow map from the new angle
+  }
   if(typeof skyLight!=='undefined'){ skyLight.intensity = worldCfg.sky; skyLight.color.setHex(((worldCfg.skyColor==null?DEFAULT_WORLD.skyColor:worldCfg.skyColor)>>>0)); }   // build 584: sky hemisphere color is now adjustable (was a hardcoded teal that tinted everything green)
   if(typeof worldAmbient!=='undefined') worldAmbient.intensity = worldCfg.ambient;
   SPEED = worldCfg.walk; SPRINT = worldCfg.run / worldCfg.walk;
@@ -16615,7 +16632,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 854 · 2026-07-03';
+const BUILD_VERSION = 'build 855 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20123,10 +20140,7 @@ function _blitCinePvToWindow(){
   renderer.shadowMap.autoUpdate=sa;
   for(const o of hid) o.visible=true; for(const b of sbh) b.visible=true;
 }
-let _shadowDirtyFrames = 2;
-let _shadowTick = 0;   // build 808: 3-frame cadence for TRANSIENT shadow movers (corpses / settling props)
-let _adaptLast = 0;
-function _dirtyShadows(n){ _shadowDirtyFrames = Math.max(_shadowDirtyFrames, n||2); }   // call whenever something the sun casts moves/spawns/breaks
+// (_shadowDirtyFrames/_dirtyShadows moved up beside the sun light in build 855 — applyWorldCfg calls it at boot)
 let _tabHidden = false;
 addEventListener('visibilitychange', ()=>{
   _tabHidden = (document.visibilityState === 'hidden');
@@ -23515,6 +23529,8 @@ function renderEditorFields(){
       hint(b,'','1px 0 2px').textContent='Crouch: hold Ctrl (R3 on a controller). Eye height sets the first-person camera level (1.7 = default; up to 20m for a tall/overhead view). View only — collision is unchanged. Gravity change affects props on next Deploy.'; }
     { const b=subSec('Lighting','light',true);
       slider(b,'Sun (directional)','sun',0,4,0.05); slider(b,'Sky (ambient fill)','sky',0,3,0.05); slider(b,'Brightness lift','ambient',0,2,0.05);
+      slider(b,'Sun direction °','sunAzim',0,360,1); slider(b,'Sun height °','sunElev',5,89,1);   // build 855: rotate the sun — shadows follow live
+      hint(b,'','1px 0 4px').textContent='Direction spins the sun around the map (match it to your HDRI sky’s sun); Height is the angle above the horizon — low = long dramatic shadows, high = short noon shadows.';
       const scRow=document.createElement('label'); scRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0 4px;';
       const scSp=document.createElement('span'); scSp.textContent='Sun color'; scSp.style.minWidth='86px';
       const sc=document.createElement('input'); sc.type='color'; sc.value=hexStr(worldCfg.sunColor); sc.style.cssText='width:48px;height:24px;background:#0c1418;border:1px solid #2a3a42;border-radius:4px;cursor:pointer;';
