@@ -6,8 +6,9 @@ const src = gameSource();
 
 // --- one grouped section owns all three FX hosts ---
 assert(/sec\('Effects', 'wepfx',/.test(src), 'a single Effects section is registered');
-for(const id of ['edImpactFx','edTracerFx','edCrosshair'])
+for(const id of ['edImpactFx','edTracerFx'])
   assert(new RegExp('id="'+id+'" class="wepfxHost"').test(src), id+' host lives inside the grouped Effects section');
+assert(/sec\('Crosshair', 'crosshair', '<div id="edCrosshair"><\/div>'\)/.test(src), 'build 845: the crosshair is its own section on the HUD tab (a reticle is HUD, not a weapon effect)');
 assert(/id="edWepFxPicker"/.test(src), 'the Effects section has a type picker host');
 
 // --- Weapons mode lists object + transform + the grouped picker ---

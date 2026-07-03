@@ -16590,7 +16590,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 844 · 2026-07-03';
+const BUILD_VERSION = 'build 845 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21284,8 +21284,8 @@ const MODE_SECTIONS = {
   player:  ['gizmo','object','transform','characters'],   // build 652: the player avatar, the spawn point + the character roster are their own area
   enemies: ['enemies','gizmo','object','transform','boltfx'],   // spawn points live here now; their picker/fields/gizmo sections come along. enemy gunfire FX (boltfx) moved here in build 647 — it's about enemies, not your weapons
   rules:   ['game','pickups','loot','invitems','buildmenu'],
-  kit:     ['object','transform','wepfx'],   // 'object' carries the weapon model import + per-weapon shoot sound; the 3 FX panels (impacts/tracer/crosshair) are grouped under one 'wepfx' picker (build 653); music/SFX live in Scene
-  hud:     ['hud'],   // build 665: per-level HUD theme + visibility
+  kit:     ['object','transform','wepfx'],   // 'object' carries the weapon model import + per-weapon shoot sound; the FX panels (impacts/tracer) are grouped under one 'wepfx' picker (build 653); music/SFX live in Scene
+  hud:     ['hud','crosshair'],   // build 665: per-level HUD theme + visibility. build 845: the crosshair is a HUD element — it moved here from Weapons > Effects
   files:   ['levelfile','campaign'],
 };
 // Plain-language one-liner shown under each section header (build 648). Keyed by the section's data-sec key
@@ -21366,8 +21366,8 @@ function renderZonePicker(){
   const sub=document.createElement('div'); sub.className='edSecSub'; sub.style.margin='0 0 4px'; sub.textContent=SEC_SUB[activeZoneType]||''; host.appendChild(sub);
 }
 // Which weapon-FX panel shows inside the grouped 'Effects' section (build 653) — same pattern as the Zones picker.
-const WEPFX_TYPES = [['impactfx','\ud83d\udca5','Impacts'],['tracerfx','\ud83d\udca8','Tracer'],['crosshair','\u25ce','Crosshair']];
-const WEPFX_HOST = { impactfx:'edImpactFx', tracerfx:'edTracerFx', crosshair:'edCrosshair' };
+const WEPFX_TYPES = [['impactfx','\ud83d\udca5','Impacts'],['tracerfx','\ud83d\udca8','Tracer']];   // build 845: Crosshair moved to the HUD tab \u2014 it's a reticle, not a weapon effect
+const WEPFX_HOST = { impactfx:'edImpactFx', tracerfx:'edTracerFx' };
 let activeWepFx = 'impactfx';
 try{ const _w = localStorage.getItem('breach_editor_wepfx'); if(_w && WEPFX_HOST[_w]) activeWepFx = _w; }catch(e){}
 function applyWepFxVisibility(){
@@ -22796,8 +22796,8 @@ function buildEditorPanel(){
     + sec('Effects', 'wepfx',
           '<div id="edWepFxPicker"></div>'
         + '<div id="edImpactFx" class="wepfxHost" data-wepfx="impactfx"></div>'
-        + '<div id="edTracerFx" class="wepfxHost" data-wepfx="tracerfx"></div>'
-        + '<div id="edCrosshair" class="wepfxHost" data-wepfx="crosshair"></div>')
+        + '<div id="edTracerFx" class="wepfxHost" data-wepfx="tracerfx"></div>')
+    + sec('Crosshair', 'crosshair', '<div id="edCrosshair"></div>')
     + sec('Enemy gunfire', 'boltfx', '<div id="edBoltFx"></div>')
     + sec('Characters', 'characters', '<div id="edCharRoster"></div>')
     + sec('HUD', 'hud', '<div id="edHud"></div>')
