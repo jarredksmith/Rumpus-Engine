@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   issues: write
+  actions: write   # to dispatch the Pages deploy after the bot push (see below)
 
 concurrency:
   group: publish-level   # serialize index.json edits when several approvals land at once
@@ -41,6 +42,13 @@ jobs:
           git commit -m "community: publish \"${{ steps.pub.outputs.name }}\" (#${{ github.event.issue.number }})"
           git pull --rebase origin main
           git push origin main
+      - name: Deploy the site
+        if: steps.pub.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Pushes made with GITHUB_TOKEN deliberately do NOT fire on:push workflows (recursion guard),
+        # so the Pages deploy must be dispatched explicitly or the level lands in the repo but never on the site.
+        run: gh workflow run pages.yml --ref main
       - name: Close the issue (published)
         if: steps.pub.outputs.ok == 'true'
         uses: actions/github-script@v7

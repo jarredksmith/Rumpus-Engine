@@ -798,8 +798,8 @@
   <div class="modalCard" style="max-width:640px">
     <button class="modalClose" data-close="communityModal">✕</button>
     <h2>COMMUNITY LEVELS</h2>
-    <div id="commNote" class="hint" style="margin:2px 0 10px">Player-built levels, hosted with the game. Load one, remix it, or submit your own from the editor's <b>Save</b> tab.</div>
-    <div id="commList" style="text-align:left;max-height:56vh;overflow:auto;display:flex;flex-direction:column;gap:8px"></div>
+    <div id="commNote" style="margin:2px 0 12px;color:#cfe9df;font-size:13px;line-height:1.5">Player-built levels, hosted with the game. Load one, remix it, or submit your own from the editor's <b style="color:#eafff7">Save</b> tab.</div>
+    <div id="commList" style="text-align:left;max-height:56vh;overflow:auto;display:flex;flex-direction:column;gap:8px;color:#d6f5e8"></div>
   </div>
 </div>
 
@@ -16615,7 +16615,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 851 · 2026-07-03';
+const BUILD_VERSION = 'build 852 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27160,27 +27160,27 @@ const COMM_SUBMIT_URL = 'https://github.com/jarredksmith/breach/issues/new?templ
 function openCommunity(){ openModal('communityModal'); renderCommunity(); }
 async function renderCommunity(){
   const list=document.getElementById('commList'); if(!list) return;
-  list.innerHTML='<div class="hint">Loading the library…</div>';
+  list.innerHTML='<div style="color:#cfe9df;font-size:13px">Loading the library…</div>';
   let idx=null;
   try{
     const r=await fetch(COMM_INDEX_URL, { cache:'no-cache' });
     if(!r.ok) throw new Error('HTTP '+r.status);
     idx=await r.json();
   }catch(e){
-    list.innerHTML='<div class="hint">Could not reach the library ('+(e&&e.message)+'). It needs the game to be served over http(s) — on the hosted site this always works; offline or file:// it cannot.</div>';
+    list.innerHTML='<div style="color:#ffc9a3;font-size:13px;line-height:1.5">Could not reach the library ('+(e&&e.message)+'). It needs the game to be served over http(s) — on the hosted site this always works; offline or file:// it cannot.</div>';
     return;
   }
   const levels=(idx && Array.isArray(idx.levels)) ? idx.levels : [];
-  if(!levels.length){ list.innerHTML='<div class="hint">The library is empty — be the first: build a level, then Save tab → Submit to community library.</div>'; return; }
+  if(!levels.length){ list.innerHTML='<div style="color:#cfe9df;font-size:13px;line-height:1.5">The library is empty — be the first: build a level, then Save tab → Submit to community library.</div>'; return; }
   list.innerHTML='';
   for(const L of levels){
     const row=document.createElement('div');
     row.style.cssText='border:1px solid #24323a;border-radius:8px;padding:9px 12px;background:#0c1418;display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
     const info=document.createElement('div'); info.style.cssText='flex:1;min-width:180px;';
     const nm=document.createElement('div'); nm.style.cssText='color:#eafff7;font-weight:700;font-size:14px;'; nm.textContent=L.name||L.file;
-    const meta=document.createElement('div'); meta.style.cssText='color:#7fa99c;font-size:11px;margin-top:1px;';
+    const meta=document.createElement('div'); meta.style.cssText='color:#a9d3c6;font-size:11px;margin-top:1px;letter-spacing:0.5px;';
     meta.textContent=(L.objective?String(L.objective).toUpperCase()+' · ':'')+'by '+(L.author||'anonymous')+(L.date?' · '+L.date:'');
-    const ds=document.createElement('div'); ds.style.cssText='color:#9fc4ba;font-size:12px;margin-top:3px;'; ds.textContent=L.desc||'';
+    const ds=document.createElement('div'); ds.style.cssText='color:#cfe9df;font-size:12px;margin-top:3px;line-height:1.45;'; ds.textContent=L.desc||'';
     info.appendChild(nm); info.appendChild(meta); if(L.desc) info.appendChild(ds);
     const mkBtn=(txt,primary,fn)=>{ const b=document.createElement('button'); b.textContent=txt;
       b.style.cssText='padding:7px 12px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid '+(primary?'rgba(var(--accent-rgb),0.55)':'#2a3a42')+';background:'+(primary?'rgba(var(--accent-rgb),0.2)':'#101c22')+';color:'+(primary?'#eafff7':'#9fc4ba')+';';
