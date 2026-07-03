@@ -17,7 +17,7 @@ assert(/id="edWipe"[^>]*>'\+_icn\('trash'\)\+'Delete all objects/.test(src), 'De
 assert(/wb\.innerHTML=_icn\('warn'\)\+'Click again to delete ALL objects'/.test(src), 'the armed wipe state uses the warning icon');
 assert(/pv\.innerHTML = \(previewEnemy \? _icn\('eyeOff'\)\+'Hide preview' : _icn\('eye'\)\+'Preview enemy'\);/.test(src), 'enemy preview uses eye / eye-off icons');
 assert((src.match(/_icn\('plus'\)\+'Add /g)||[]).length>=3, 'the add buttons use the plus icon');
-assert((src.match(/_icn\('search'\)\+'Poly Pizza/g)||[]).length===3, 'the three model-search headers use the search icon');
+assert((src.match(/_icn\('search'\)\+'Search free models/g)||[]).length===4, 'the model-search headers use the search icon with one normalized phrase (build 844)');
 
 // no color-emoji remain on those controls (comments don't count)
 {

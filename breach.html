@@ -16590,7 +16590,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 843 · 2026-07-03';
+const BUILD_VERSION = 'build 844 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21292,7 +21292,7 @@ const MODE_SECTIONS = {
 // so renaming a display title never desyncs it. Injected in buildEditorPanel.
 const SEC_SUB = {
   gizmo:      'Drag the on-screen handles to move, rotate or scale the selection.',
-  object:     'Swap the model, search for props, or set up animations.',
+  object:     'Swap or search the model, then set up animation, physics, vehicle, signals, locks and more.',
   material:   'Colour, texture & glow of the selected shape.',
   transform:  'Type exact position, rotation & scale values.',
   world:      'Terrain, sky, fog, gravity & ambient audio for the whole level.',
@@ -22681,7 +22681,7 @@ function renderModelBrowser(host){
 function renderModelBrowserPP(host){
   host.innerHTML = '';
   const head = document.createElement('div'); head.className='hint'; head.style.margin='8px 0 4px';
-  head.innerHTML = '<b>Poly Pizza</b> — search thousands of free models, click one to add it.';
+  head.innerHTML = '<b>Search free models</b> — Poly Pizza / Sketchfab; click one to add it.';
   host.appendChild(head);
 
   // (API key + CORS proxy use baked-in defaults; advanced overrides remain via localStorage 'pp_api_key' / 'pp_proxy'.)
@@ -22719,7 +22719,7 @@ function renderModelBrowserPP(host){
   function doSearch(){
     const term = q.value.trim(); if(!term){ status.textContent='Type something to search.'; return; }
     ppLastQuery = term; _bpage=1; status.textContent='Searching…'; grid.innerHTML='';
-    ppSearch(term, (list,total)=>{ ppLastResults = list; _bmore = list.length>=24 && (total==null || ppLastResults.length<total); renderResults(list); }, (err)=>{ ppLastResults=[]; _bmore=false; const msg=(err&&err.message)||String(err); status.innerHTML = (!ppProxy() && /failed|load|network/i.test(msg)) ? 'Search blocked by CORS — Poly Pizza needs the proxy. Deploy polypizza-proxy.js as a Cloudflare Worker and paste its URL above.' : ('Search failed: ' + msg); }, 1);
+    ppSearch(term, (list,total)=>{ ppLastResults = list; _bmore = list.length>=24 && (total==null || ppLastResults.length<total); renderResults(list); }, (err)=>{ ppLastResults=[]; _bmore=false; const msg=(err&&err.message)||String(err); status.innerHTML = (!ppProxy() && /failed|load|network/i.test(msg)) ? 'Search blocked by CORS — the Poly Pizza proxy isn’t reachable. (Advanced: deploy polypizza-proxy.js as a Cloudflare Worker and set localStorage "pp_proxy" to its URL.)' : ('Search failed: ' + msg); }, 1);
   }
   sBtn.onclick = doSearch;
   q.addEventListener('keydown', e=>{ if(e.code==='Enter'){ e.preventDefault(); doSearch(); } });
@@ -22969,7 +22969,7 @@ function buildEditorPanel(){
   let secState = {}; try{ secState = JSON.parse(localStorage.getItem('breach_editor_sections')||'{}') || {}; }catch(e){}
   // collapse secondary sections by default so each mode opens to its primary panel, not a wall (build 651);
   // a user's own expand/collapse choices (secState) still override these.
-  const defaultCollapsed = { material:true, loot:true, sounds:true, campaign:true, generate:true, invitems:true, boltfx:true, characters:true };
+  const defaultCollapsed = { material:true, loot:true, campaign:true, generate:true, invitems:true, boltfx:true, characters:true };   // build 844: 'sounds' dropped — that section no longer exists (audio lives in World > Audio)
   p.querySelectorAll('.edSection').forEach(s=>{
     const k = s.dataset.sec;
     // one-line plain-language subtitle under each header (build 648): explains the section to a first-timer.
@@ -23415,7 +23415,6 @@ function renderEditorFields(){
   const gameHost    = editorEl.querySelector('#edGame');
   const crosshairHost = editorEl.querySelector('#edCrosshair');
   const lootHost    = editorEl.querySelector('#edLoot');
-  const soundHost   = editorEl.querySelector('#edSounds');
   const invItemsHost = editorEl.querySelector('#edInvItems'); if(invItemsHost && typeof renderInvItems==='function') renderInvItems(invItemsHost);
   // Sounds relocated: per-weapon shoot sound -> each weapon (Weapons tab); music + global SFX -> Scene > Audio
   if(worldHost){
@@ -23693,7 +23692,7 @@ function renderEditorFields(){
     const eAb=document.createElement('button'); eAb.textContent='Apply'; eAb.style.flex='0 0 auto';
     eAb.onclick=()=>{ pushUndoSnapshot(); swapEnemyModel(eUrl.value, editorEnemyType); refreshEnemyVisuals(); renderEditorFields(); };   // re-skin this type's enemies immediately
     eRow.appendChild(eUrl); eRow.appendChild(eAb); eHost.appendChild(eRow);
-    const enPsHead=document.createElement('div'); enPsHead.className='hint'; enPsHead.style.margin='8px 0 3px'; enPsHead.innerHTML='<b>'+_icn('search')+'Poly Pizza</b> — search free models, click to use for this enemy type';
+    const enPsHead=document.createElement('div'); enPsHead.className='hint'; enPsHead.style.margin='8px 0 3px'; enPsHead.innerHTML='<b>'+_icn('search')+'Search free models</b> — Poly Pizza / Sketchfab, click to use for this enemy type';
     eHost.appendChild(enPsHead);
     const enPsHost=document.createElement('div'); eHost.appendChild(enPsHost);
     renderModelSearch(enPsHost, (m, st)=>{ eUrl.value=m.glb; pushUndoSnapshot(); swapEnemyModel(m.glb, editorEnemyType); refreshEnemyVisuals(); creditAsset(m.attribution); if(st) st.textContent='Using "'+m.title+'" — credit: '+(m.attribution||''); }, { placeholder:'e.g. zombie, alien, drone' });
@@ -24155,7 +24154,7 @@ function renderEditorFields(){
     const ab=document.createElement('button'); ab.textContent='Apply'; ab.style.flex='0 0 auto';
     ab.onclick=()=>{ pushUndoSnapshot(); swapChestModel(url.value); for(const ch of chests.slice()){ scene.remove(ch.mesh); } chests.length=0; chestTimer=Math.min(chestTimer,2); };
     urlRow.appendChild(url); urlRow.appendChild(ab); lHost.appendChild(urlRow);
-    const ltPsHead=document.createElement('div'); ltPsHead.className='hint'; ltPsHead.style.margin='8px 0 3px'; ltPsHead.innerHTML='<b>'+_icn('search')+'Poly Pizza</b> — search free models, click to use as the loot box';
+    const ltPsHead=document.createElement('div'); ltPsHead.className='hint'; ltPsHead.style.margin='8px 0 3px'; ltPsHead.innerHTML='<b>'+_icn('search')+'Search free models</b> — Poly Pizza / Sketchfab, click to use as the loot box';
     lHost.appendChild(ltPsHead);
     const ltPsHost=document.createElement('div'); lHost.appendChild(ltPsHost);
     renderModelSearch(ltPsHost, (m, st)=>{ url.value=m.glb; pushUndoSnapshot(); swapChestModel(m.glb); for(const ch of chests.slice()){ scene.remove(ch.mesh); } chests.length=0; chestTimer=Math.min(chestTimer,2); creditAsset(m.attribution); if(st) st.textContent='Using "'+m.title+'" — credit: '+(m.attribution||''); }, { placeholder:'e.g. chest, crate, barrel' });
@@ -25094,7 +25093,7 @@ function renderEditorFields(){
     }
     urlHost.appendChild(row);
     if(tgt.urlField && !tgt.addable){   // Poly Pizza search for single-slot models (gun/station/grenade/player)
-      const psHead=document.createElement('div'); psHead.className='hint'; psHead.style.margin='10px 0 3px'; psHead.innerHTML='<b>'+_icn('search')+'Poly Pizza</b> — search free models, click one to use it';
+      const psHead=document.createElement('div'); psHead.className='hint'; psHead.style.margin='10px 0 3px'; psHead.innerHTML='<b>'+_icn('search')+'Search free models</b> — Poly Pizza / Sketchfab, click one to use it';
       urlHost.appendChild(psHead);
       const psHost=document.createElement('div'); urlHost.appendChild(psHost);
       renderModelSearch(psHost, (m, st)=>{ inp.value=m.glb; tgt.pickedThumb=m.thumb||''; if(tgt.setUrl) tgt.setUrl(m.glb); creditAsset(m.attribution); if(st) st.textContent='Using "'+m.title+'" — credit: '+(m.attribution||''); }, { placeholder:'e.g. pistol, robot, barrel' });
@@ -25335,7 +25334,13 @@ function renderEditorFields(){
     const selObj = (editorActive==='props' && editorTargets.props.obj) ? editorTargets.props.obj() : null;
     const matInMode = (MODE_SECTIONS[editorMode]||[]).indexOf('material')>=0;   // only the Build tab owns Material; without this it leaks onto Save/etc.
     const matOn = matInMode && !!(selObj && isShapePrimitive(selObj.userData.src));
-    const matSec = matHost.closest('.edSection'); if(matSec) matSec.style.display = matOn ? '' : 'none';   // shape primitive selected AND we're on a tab that shows Material
+    // build 844: an imported model used to HIDE the whole Material section (first-timers thought colour wasn't
+    // editable at all). Now the section stays and explains itself.
+    const matNote = matInMode && !matOn && !!selObj;
+    const matSec = matHost.closest('.edSection'); if(matSec) matSec.style.display = (matOn||matNote) ? '' : 'none';
+    if(matNote){ const nn=document.createElement('div'); nn.className='hint';
+      nn.textContent='Imported models keep their own materials. Colour, texture and glow editing applies to the built-in shapes (Box / Sphere / Cylinder / Cone).';
+      matHost.appendChild(nn); }
     if(matOn){
       const toHex = n => '#' + ('000000'+(n>>>0).toString(16)).slice(-6);
       const _matN = (selProps && selProps.length) ? selProps.filter(o=>o&&isShapePrimitive(o.userData.src)).length : 1;
@@ -25487,7 +25492,7 @@ function renderEditorFields(){
     mh.textContent='One model is shared by all turrets; set its base size with Scale. Traverse arc + pitch limits define how far it can aim when a player mans it.';
     urlHost.appendChild(mh);
     // build 535: same Poly Pizza / Sketchfab model search the gun + station use, scoped to the shared turret model
-    const tpsHead=document.createElement('div'); tpsHead.className='hint'; tpsHead.style.margin='10px 0 3px'; tpsHead.innerHTML='<b>\uD83D\uDD0D Poly Pizza</b> \u2014 search free models, click one to use for the turret';
+    const tpsHead=document.createElement('div'); tpsHead.className='hint'; tpsHead.style.margin='10px 0 3px'; tpsHead.innerHTML='<b>'+_icn('search')+'Search free models</b> \u2014 Poly Pizza / Sketchfab, click one to use for the turret';
     urlHost.appendChild(tpsHead);
     const tpsHost=document.createElement('div'); urlHost.appendChild(tpsHost);
     renderModelSearch(tpsHost, (m, st)=>{ inp.value=m.glb; pushUndoSnapshot(); turretModelUrl=m.glb; rebuildTurretVisuals(); creditAsset(m.attribution); if(st) st.textContent='Using \u201c'+m.title+'\u201d \u2014 credit: '+(m.attribution||''); }, { placeholder:'e.g. turret, cannon, gun emplacement' });
@@ -26839,44 +26844,14 @@ function renderFreesoundBrowser(host, refresh, directTarget){
       list.appendChild(card);
     }
   }
-  function doSearch(){ const term=q.value.trim(); if(!term){ status.textContent='Type something to search.'; return; } if(!fsGetKey()){ status.textContent='Enter your Freesound API token above first.'; return; } fsLastQuery=term; status.textContent='Searching\u2026'; list.innerHTML='';
+  function doSearch(){ const term=q.value.trim(); if(!term){ status.textContent='Type something to search.'; return; } if(!fsGetKey()){ status.textContent='Freesound isn’t available — no API key is configured in this build.'; return; } fsLastQuery=term; status.textContent='Searching\u2026'; list.innerHTML='';
     fsSearch(term, arr=>{ fsLastResults=arr; renderResults(arr); }, err=>{ fsLastResults=[]; status.textContent='Search failed: '+((err&&err.message)||String(err)); }); }
   go.onclick=doSearch; q.addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
   if(fsLastResults && fsLastResults.length) renderResults(fsLastResults);
   return wrap;
 }
-function populateSoundEditor(host){
-  host.innerHTML='';
-  if(!audioSettings.sounds) audioSettings.sounds=_emptySounds();
-  if(!audioSettings.sounds.shoot) audioSettings.sounds.shoot={};
-  const hint=document.createElement('div'); hint.className='hint'; hint.style.margin='2px 0 6px';
-  hint.innerHTML='Optional mp3/wav/ogg per event (saved on this device). Host must allow cross-origin loading, else the built-in sound is used.';
-  host.appendChild(hint);
-  // custom MUSIC: a looping track that replaces the built-in adaptive score (blank = generated music)
-  host.appendChild(_sndRow('Music track (loops)', ()=>audioSettings.musicUrl||'', v=>{ audioSettings.musicUrl=v||''; if(_musicOn){ stopMusic(); startMusic(); } }));
-  const mhint=document.createElement('div'); mhint.className='hint'; mhint.style.margin='0 0 8px'; mhint.style.color='#5a7d72';
-  mhint.textContent='Music loops continuously and replaces the generated soundtrack. The ♪ Music volume slider (pause menu) controls it.';
-  host.appendChild(mhint);
-  const W=(typeof WEAPONS!=='undefined')?WEAPONS:{};
-  if(!audioSettings.sounds.reload || typeof audioSettings.sounds.reload!=='object') audioSettings.sounds.reload={};   // build 748: per-weapon reload
-  for(const k of Object.keys(W)){
-    const name=(W[k] && W[k].name) ? W[k].name : k;
-    host.appendChild(_sndRow('Shoot · '+name, ()=>audioSettings.sounds.shoot[k], v=>{ if(v) audioSettings.sounds.shoot[k]=v; else delete audioSettings.sounds.shoot[k]; }));
-    host.appendChild(_sndRow('Reload · '+name, ()=>audioSettings.sounds.reload[k], v=>{ if(v) audioSettings.sounds.reload[k]=v; else delete audioSettings.sounds.reload[k]; }));
-  }
-  for(const [lab,key] of [['Grenade explosion','explode'],['Coin pickup','coin'],['Powerup / item pickup','pickup'],['Jump','jump'],['Hit marker','hit'],['Enemy kill (all)','kill'],['Player hurt','hurt'],
-      ['Car engine (loops)','carEngine'],['Car brake','carBrake'],['Car skid/slide','carSkid'],['Car boost','carBoost']]){   // build 749/751
-    host.appendChild(_sndRow(lab, ()=>audioSettings.sounds[key], v=>{ audioSettings.sounds[key]=v; }));
-  }
-  // build 752: per-enemy-type kill clips (override the shared "Enemy kill (all)" above for that type)
-  if(!audioSettings.sounds.enemyKill || typeof audioSettings.sounds.enemyKill!=='object') audioSettings.sounds.enemyKill={};
-  const ET=(typeof ENEMY_TYPES!=='undefined')?ENEMY_TYPES:{};
-  for(const k of Object.keys(ET)){ const name=(ET[k]&&ET[k].name)?ET[k].name:(k.charAt(0).toUpperCase()+k.slice(1));
-    host.appendChild(_sndRow('Kill · '+name, ()=>audioSettings.sounds.enemyKill[k], v=>{ if(v) audioSettings.sounds.enemyKill[k]=v; else delete audioSettings.sounds.enemyKill[k]; }));
-  }
-  host.appendChild(renderFreesoundBrowser(host, ()=>populateSoundEditor(host)));   // search + import free CC sound effects
-}
-
+// populateSoundEditor removed (build 844): its host (#edSounds) was never created after the audio controls
+// moved to World > Audio and per-weapon sounds moved to the Weapons tab — the function was unreachable.
 function bindMenu(){
   { const cb=document.getElementById('charBtn'); if(cb) cb.onclick=openCharPicker; const lcb=document.getElementById('lobbyCharBtn'); if(lcb) lcb.onclick=openCharPicker; updateCharBtnLabel(); }
   { const ccf=document.getElementById('charConfirm'); if(ccf) ccf.onclick=()=>{ _charChosen=true; closeModal('charPicker'); if(NET.mode!=='off') broadcastMyChar(); _updateReadyBtn(); }; }   // build 552: confirming the picker counts as choosing (covers a returning player keeping their current character)

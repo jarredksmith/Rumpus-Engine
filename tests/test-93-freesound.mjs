@@ -18,5 +18,5 @@ const slots = extractFunction('_fsAssignSlots');
 assert(/label:'Music'/.test(slots) && /'Shoot \\u00b7 '\+nm/.test(slots) && /'Reload \\u00b7 '\+nm/.test(slots) && /\['Grenade','explode'\]/.test(slots), 'assignable slots: music, per-weapon shoot + reload (build 748), and the event sounds');
 
 assert(/function renderFreesoundBrowser\(host, refresh, directTarget\)\{/.test(src), 'browser renderer exists');
-assert(/host\.appendChild\(renderFreesoundBrowser\(host, \(\)=>populateSoundEditor\(host\)\)\)/.test(src), 'browser wired into the Sounds tab');
+assert(/b\.appendChild\(renderFreesoundBrowser\(b, \(\)=>renderEditorFields\(\)\)\); \}/.test(src), 'browser wired into World > Audio (build 844: the orphaned Sounds-tab copy was removed)');
 done('freesound browser');
