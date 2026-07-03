@@ -61,6 +61,6 @@ eq((src.match(/waterZones = Array\.isArray\(level\.waterZones\) \? level\.waterZ
 assert(/waterZones\.length=0; selWaterZone=-1;/.test(src), 'wipe clears them');
 assert(/if\(typeof _waterPlayerStep==='function'\) _waterPlayerStep\(dt\);/.test(src), 'the swim hook sits after gravity, before both movers');
 assert(/Water zone'\]/.test(src), 'quick-add (+) offers a Water zone');
-assert(/waterzones: 'Lakes, ponds, puddles & streams/.test(src), 'the picker subtitle');
+assert(/waterzones: 'Lakes, ponds, puddles, streams & waterfalls/.test(src), 'the picker subtitle');   // build 858 added falls to the same tool
 
 done('build 856: water zones — executable swim/wade/flow physics, one-draw-call shader surface, full zone plumbing');

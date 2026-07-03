@@ -8523,7 +8523,7 @@ function wipeScene(){
   pickupSpots.length=0; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   lootSpots.length=0; selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
   if(typeof stopAudioZones==='function') stopAudioZones(); audioZones.length=0; if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers();
-  deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; ladders.length=0; selLadder=-1; fireZones.length=0; selFireZone=-1; waterZones.length=0; selWaterZone=-1; if(typeof refreshWaterZones==='function') refreshWaterZones(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
+  deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; ladders.length=0; selLadder=-1; fireZones.length=0; selFireZone=-1; waterZones.length=0; selWaterZone=-1; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls.length=0; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
   // clear selections so the editor doesn't point at a deleted object
   selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1;
   if(editorTargets.props) editorTargets.props.idx=-1; if(editorTargets.lights) editorTargets.lights.idx=-1; if(editorTargets.spawns) editorTargets.spawns.idx=-1;
@@ -10843,6 +10843,54 @@ function renderWaterZonesPanel(){
     const fh=document.createElement('div'); fh.className='hint'; fh.style.cssText='font-size:10px;opacity:0.7;margin:1px 0 3px;'; fh.textContent='Flow push > 0 turns this into a stream — the current carries swimmers along Flow dir (and the ripples scroll with it). Chain a few round zones for a winding river.'; box.appendChild(fh);
     host.appendChild(box);
   });
+  _renderWaterfallsUI(host);
+}
+// build 858: waterfalls live inside the Water tool — a vertical sheet + foam pool + positional sound.
+function _renderWaterfallsUI(host){
+  const hd=document.createElement('div'); hd.style.cssText='margin:12px 0 4px;color:#8fd8f5;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;opacity:0.9;'; hd.textContent='Waterfalls'; host.appendChild(hd);
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px';
+  intro.innerHTML='A falling sheet from <b>Top Y</b> down <b>Drop</b> metres, with a foam pool at the base. Pour one into a water zone, set <b>Facing</b> so the sheet hugs your cliff, and give it a loopable <b>Sound URL</b> (Freesound: search “waterfall loop”) — volume falls off with distance automatically.';
+  host.appendChild(intro);
+  const addB=document.createElement('button'); addB.textContent='+ Add waterfall (at me)'; addB.style.cssText='width:100%;margin-bottom:8px;';
+  addB.onclick=()=>addWaterfall(); host.appendChild(addB);
+  if(!waterfalls.length){ const n=document.createElement('div'); n.className='hint'; n.textContent='None yet.'; host.appendChild(n); return; }
+  waterfalls.forEach((f,i)=>{
+    const box=document.createElement('div'); box.style.cssText='border:1px solid rgba(54,198,255,0.3);border-radius:6px;padding:7px 9px;margin-bottom:6px;';
+    const hd2=document.createElement('div'); hd2.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;';
+    const tt=document.createElement('span'); tt.style.cssText='font-size:11px;color:#8fd8f5;'; tt.textContent='Fall '+(i+1)+'  ·  ('+(+f.x).toFixed(1)+', '+(+f.z).toFixed(1)+')';
+    const del=document.createElement('button'); del.textContent='✕'; del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeWaterfall(i);
+    hd2.appendChild(tt); hd2.appendChild(del); box.appendChild(hd2);
+    const mkN=(label,key,min,max,step,onApply)=>{
+      const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:8px;color:#8fd8f5;font-size:11px;margin:3px 0;';
+      const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='72px';
+      const rng=document.createElement('input'); rng.type='range'; rng.min=min; rng.max=max; rng.step=step; rng.value=f[key]; rng.style.cssText='flex:1;accent-color:#36c6ff;';
+      const num=document.createElement('input'); num.type='number'; num.step=step; num.value=f[key]; num.style.cssText='width:58px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+      const ap=(v)=>{ let n=parseFloat(v); if(!isFinite(n)) n=min; if(onApply) n=onApply(n); f[key]=n; rng.value=Math.max(min,Math.min(max,n)); num.value=n; refreshWaterfalls(); };
+      rng.addEventListener('mousedown',()=>pushUndoSnapshot()); num.addEventListener('focus',()=>pushUndoSnapshot());
+      rng.oninput=()=>ap(rng.value); num.onchange=()=>ap(num.value);
+      row.appendChild(sp); row.appendChild(rng); row.appendChild(num); box.appendChild(row);
+    };
+    mkN('X','x',-2000,2000,0.5,null); mkN('Z','z',-2000,2000,0.5,null);
+    mkN('Top Y','y',-20,80,0.5,null);
+    mkN('Drop','h',1,60,0.5,(n)=>Math.max(1,n));
+    mkN('Width','w',0.5,60,0.5,(n)=>Math.max(0.5,n));
+    mkN('Facing °','yaw',-180,180,1,null);
+    { const cw=document.createElement('label'); cw.style.cssText='display:flex;align-items:center;gap:8px;color:#8fd8f5;font-size:11px;margin:3px 0;';
+      const cs=document.createElement('span'); cs.textContent='Tint'; cs.style.minWidth='72px';
+      const ci=document.createElement('input'); ci.type='color'; ci.value='#'+((f.color!=null?+f.color:0xbfe6f2)>>>0).toString(16).padStart(6,'0').slice(-6); ci.style.cssText='width:42px;height:24px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#0c1418;cursor:pointer;';
+      ci.addEventListener('mousedown',()=>pushUndoSnapshot()); ci.oninput=()=>{ f.color=parseInt(ci.value.slice(1),16)||0; refreshWaterfalls(); };
+      cw.appendChild(cs); cw.appendChild(ci); box.appendChild(cw); }
+    mkN('Opacity','op',0.1,0.95,0.05,(n)=>Math.max(0.1,Math.min(0.95,n)));
+    mkN('Speed','spd',0.1,4,0.05,(n)=>Math.max(0.1,n));
+    mkN('Splash','splash',0,2,0.05,(n)=>Math.max(0,n));
+    { const sr=document.createElement('div'); sr.style.cssText='display:flex;gap:6px;margin:4px 0 2px;align-items:center;';
+      const ss=document.createElement('span'); ss.className='hint'; ss.style.margin='0'; ss.textContent='Sound URL';
+      const si=document.createElement('input'); si.type='text'; si.placeholder='https://…/waterfall-loop.mp3'; si.value=f.snd||''; si.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:11px;';
+      si.onchange=()=>{ pushUndoSnapshot(); f.snd=si.value.trim(); const rt=_fallRT[i]; if(rt&&rt.src){ try{ rt.src.stop(); }catch(e){} rt.src=null; rt.gain=null; rt.playing=false; } };
+      sr.appendChild(ss); sr.appendChild(si); box.appendChild(sr); }
+    mkN('Volume','vol',0,1,0.05,(n)=>Math.max(0,Math.min(1,n)));
+    host.appendChild(box);
+  });
 }
 // The deepest zone the player is currently in: { z, surfY, sub } (sub = how far the feet are below the surface).
 function _waterAt(px, py, pz){
@@ -10905,6 +10953,86 @@ function updateWaterZones(dt){
   const live=(typeof gameOn!=='undefined'&&gameOn) && !(typeof editorOpen!=='undefined'&&editorOpen);
   const eyeW=live ? _waterAt(player.pos.x, player.pos.y, player.pos.z) : null;   // eye height, not feet
   _waterTintEl.style.display=(eyeW && eyeW.sub>0.02) ? 'block' : 'none';
+}
+// ---- Waterfalls (build 858): a vertical falling-water sheet + a foam pool at the base + positional
+// sound. Same cheap philosophy as the water surface: ONE shader plane per fall (scrolling streaks,
+// edge/bottom fades), one foam disc, no particles, no render targets. Sound reuses the audio-zone
+// recipe (buffer -> gain -> sfxBus with linear distance falloff), so master/SFX volume + mute apply. ----
+function _migrateWaterfall(f){ return { x:+f.x||0, z:+f.z||0, y:(f.y!=null?+f.y:8), h:(f.h!=null?+f.h:8), w:(f.w!=null?+f.w:6), yaw:(+f.yaw||0), color:(f.color!=null?+f.color:0xbfe6f2), op:(f.op!=null?+f.op:0.55), spd:(f.spd!=null?+f.spd:1), splash:(f.splash!=null?+f.splash:1), snd:(typeof f.snd==='string'?f.snd:''), vol:(f.vol!=null?+f.vol:0.8) }; }
+let waterfalls = (savedLevel && Array.isArray(savedLevel.waterfalls)) ? savedLevel.waterfalls.map(_migrateWaterfall) : [];
+let waterfallFx = []; const _fallRT = [];
+function _fallGainFor(d, audR, vol){ return Math.max(0, Math.min(1, (vol==null?0.8:+vol)) * (1 - d/Math.max(1, audR))); }
+function _fallAudR(f){ return Math.max(14, (+f.w||6)*2 + (+f.h||8)*1.2); }   // bigger falls are audible further
+const _FALL_FSH = [
+  'uniform vec3 uCol; uniform float uOp; uniform float uTime; uniform float uSpd;',
+  'varying vec2 vUv;',
+  'void main(){',
+  '  float drop = fract(vUv.y + uTime*uSpd*0.55);',                                     // the sheet slides down
+  '  float band = 0.72 + 0.28*sin((vUv.y - uTime*uSpd)*46.0);',                         // fine falling bands
+  '  float streak = 0.55 + 0.45*sin(vUv.x*34.0 + sin(vUv.y*9.0 - uTime*uSpd*6.0)*1.4);',// vertical streak variation
+  '  float edge = smoothstep(0.0,0.12,vUv.x)*smoothstep(1.0,0.88,vUv.x);',              // soft sheet edges
+  '  float head = smoothstep(1.0,0.965,vUv.y);',                                        // crisp lip at the top
+  '  float foam = smoothstep(0.35,0.0,vUv.y);',                                         // whiter + mistier toward the plunge
+  '  vec3 col = mix(uCol, vec3(1.0), 0.25*streak + 0.55*foam);',
+  '  float a = uOp * edge * head * (0.5 + 0.5*band*streak) * (1.0 - 0.35*drop*0.0);',
+  '  a = a * (0.85 + 0.5*foam);',
+  '  gl_FragColor = vec4(col, clamp(a, 0.0, 0.95));',
+  '}'
+].join('\n');
+const _FOAM_FSH = [
+  'uniform float uTime; uniform float uOp;',
+  'varying vec2 vUv;',
+  'void main(){',
+  '  vec2 c = vUv*2.0-1.0; float r = length(c);',
+  '  float rings = 0.6 + 0.4*sin(r*14.0 - uTime*5.0);',
+  '  float a = uOp * rings * smoothstep(1.0,0.25,r);',
+  '  gl_FragColor = vec4(vec3(1.0), clamp(a,0.0,0.85));',
+  '}'
+].join('\n');
+const _FALL_VSH = 'varying vec2 vUv;\nvoid main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }';
+function buildWaterfallGroup(f){
+  const grp=new THREE.Group(); const w=Math.max(0.5,+f.w||6), h=Math.max(1,+f.h||8);
+  const sheetMat=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,f.op!=null?+f.op:0.55)) }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1)) } }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+  const sheet=new THREE.Mesh(new THREE.PlaneGeometry(w,h), sheetMat);
+  sheet.position.y=(+f.y||0)-h/2; sheet.renderOrder=2; grp.add(sheet);
+  const foamMat=new THREE.ShaderMaterial({ uniforms:{ uTime:{ value:0 }, uOp:{ value:Math.max(0,Math.min(1.7,0.5*(f.splash!=null?+f.splash:1))) } }, vertexShader:_FALL_VSH, fragmentShader:_FOAM_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+  const foam=new THREE.Mesh(new THREE.CircleGeometry(Math.max(0.6,w*0.42), 36), foamMat);
+  foam.rotation.x=-Math.PI/2; foam.position.y=(+f.y||0)-h+0.06; foam.renderOrder=2; grp.add(foam);
+  grp.userData.sheetMat=sheetMat; grp.userData.foamMat=foamMat;
+  grp.position.set(+f.x||0, 0, +f.z||0); grp.rotation.y=(+f.yaw||0)*RAD;
+  return grp;
+}
+function refreshWaterfalls(){
+  for(const g of waterfallFx){ scene.remove(g); g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }
+  waterfallFx.length=0;
+  for(let i=0;i<waterfalls.length;i++){ const g=buildWaterfallGroup(waterfalls[i]); g.userData.fallIdx=i; scene.add(g); waterfallFx.push(g); }
+}
+function addWaterfall(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)};
+  const by=(typeof terrainHeightAt==='function')?terrainHeightAt(_dp.x,_dp.z):0;
+  waterfalls.push(_migrateWaterfall({ x:_dp.x, z:_dp.z, y:+(by+8).toFixed(2), h:8, w:6 }));
+  refreshWaterfalls(); if(typeof renderWaterZonesPanel==='function') renderWaterZonesPanel(); }
+function removeWaterfall(i){ pushUndoSnapshot(); waterfalls.splice(i,1); const rt=_fallRT[i]; if(rt&&rt.src){ try{ rt.src.stop(); }catch(e){} } _fallRT.splice(i,1); refreshWaterfalls(); if(typeof renderWaterZonesPanel==='function') renderWaterZonesPanel(); }
+function updateWaterfalls(dt){
+  if(!waterfalls.length) return;
+  const showing=((typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver)) || (typeof editorOpen!=='undefined'&&editorOpen);
+  for(const g of waterfallFx){ if(!g) continue; g.visible=showing;
+    if(g.userData.sheetMat) g.userData.sheetMat.uniforms.uTime.value=_waterTime;
+    if(g.userData.foamMat)  g.userData.foamMat.uniforms.uTime.value=_waterTime; }
+  const live=(typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver) && !(typeof editorOpen!=='undefined'&&editorOpen)
+    && !(typeof paused!=='undefined'&&paused) && !(typeof _cineActive!=='undefined'&&_cineActive);
+  for(let i=0;i<waterfalls.length;i++){
+    const f=waterfalls[i]; const rt=_fallRT[i]||(_fallRT[i]={src:null,gain:null,playing:false});
+    if(!f.snd){ if(rt.gain){ try{ rt.gain.gain.value=0; }catch(e){} } continue; }
+    const d=Math.hypot(player.pos.x-(+f.x||0), player.pos.z-(+f.z||0));
+    const audR=_fallAudR(f);
+    const vol=(live && d<audR) ? _fallGainFor(d, audR, f.vol) : 0;
+    const buf=(typeof _soundBuffers!=='undefined') ? _soundBuffers[f.snd] : undefined;
+    if(buf===undefined && live && typeof loadSound==='function') loadSound(f.snd);
+    if(vol>0 && !rt.playing && buf && buf.duration!==undefined && typeof actx!=='undefined' && actx){
+      try{ rt.src=actx.createBufferSource(); rt.src.buffer=buf; rt.src.loop=true; rt.gain=actx.createGain(); rt.gain.gain.value=0; rt.src.connect(rt.gain).connect(sfxBus); rt.src.start(); rt.playing=true; }catch(e){}
+    }
+    if(rt.gain){ try{ rt.gain.gain.setTargetAtTime(vol, actx.currentTime, 0.1); }catch(e){ try{ rt.gain.gain.value=vol; }catch(_){} } }
+  }
 }
 // ---------- build 557: auto-generate maze level ----------
 // One click builds a fresh, fully-connected maze out of box props + point lights, sets a player start, and
@@ -13032,7 +13160,7 @@ function loadLevelFromNet(level){
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -16809,7 +16937,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 857 · 2026-07-03';
+const BUILD_VERSION = 'build 858 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20350,7 +20478,7 @@ function loop(){
     if(_shDirty || (_shSlow && _shadowTick===0)) _dirtyShadows(1);
   }
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
   if(_cineAvatar && _cineAvatar.visible && !editorOpen && !_cineActive){ _hideCineAvatar(); }   // editor authoring body never lingers into play
@@ -21526,7 +21654,7 @@ const SEC_SUB = {
   jumppads:   'Launch the player up or forward on contact.',
   ladders:    'Climbable vertical volumes (W up / S down, jump to hop off).',
   firezones:  'Place fire & smoke emitters in the world.',
-  waterzones: 'Lakes, ponds, puddles & streams — swim, wade, ride the current.',
+  waterzones: 'Lakes, ponds, puddles, streams & waterfalls — swim, wade, ride the current.',
   impactfx:   'Sparks, marks & debris where YOUR shots land.',
   tracerfx:   'The streak your own gunfire leaves in the air.',
   crosshair:  'Reticle shape, size & colour.',
@@ -22140,6 +22268,7 @@ function serializeLevel(){
     jumpPads: jumpPads.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), power:(+z.power||22) })),
     ladders: ladders.map(L=>({ x:+L.x, z:+L.z, r:(+L.r||1), y:(+L.y||0), h:(L.h!=null?+L.h:4), face:(+L.face||0) })),   // build 645
     waterZones: waterZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), color:(z.color!=null?+z.color:0x14586e), op:(z.op!=null?+z.op:0.72), wave:(z.wave!=null?+z.wave:1), flowDir:(+z.flowDir||0), flowSpd:(+z.flowSpd||0) })),
+    waterfalls: waterfalls.map(f=>({ x:+f.x, z:+f.z, y:+f.y, h:+f.h, w:+f.w, yaw:(+f.yaw||0), color:(f.color!=null?+f.color:0xbfe6f2), op:(f.op!=null?+f.op:0.55), spd:(f.spd!=null?+f.spd:1), splash:(f.splash!=null?+f.splash:1), snd:(f.snd||''), vol:(f.vol!=null?+f.vol:0.8) })),
     fireZones: fireZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3), dps:(+z.dps||0), den:(+z.den||1), psz:(+z.psz||1), hue:(z.hue!=null?+z.hue:30), turb:(z.turb!=null?+z.turb:1), wind:(+z.wind||0), spk:(z.spk!==false), sat:(z.sat!=null?+z.sat:1), smoke:(z.smoke===true?1:0), rx:(+z.rx||0), ry:(+z.ry||0), rz:(+z.rz||0), sx:(z.sx!=null?+z.sx:1), sy:(z.sy!=null?+z.sy:1), sz:(z.sz!=null?+z.sz:1) })),
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
@@ -22639,7 +22768,7 @@ function restoreLevel(level){
   refreshPlayerSpawnMarker();
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); }
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
