@@ -41,7 +41,7 @@ assert(/radialCfg\.forEach\(\(it,i\)=>\{/.test(op) && /it\.icon/.test(op) && /it
 // --- editor + persistence ---
 assert(/function renderBuildMenuPanel\(\)\{/.test(src), 'a Build-menu editor panel exists');
 assert(/sec\('Build menu', 'buildmenu', '<div id="edBuildMenu"><\/div>'\)/.test(src), 'the section is registered');
-assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu'\]/.test(src), 'it lives in the Gameplay mode');
+assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','cutscenes'\]/.test(src), 'it lives in the Gameplay mode');
 assert(/radial: _sanitizeRadial\(radialCfg\)/.test(src), 'serialized with the level');
 assert((src.match(/radialCfg = _sanitizeRadial\(level\.radial\)/g)||[]).length===2, 'restored in both load paths');
 

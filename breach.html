@@ -16590,7 +16590,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 845 · 2026-07-03';
+const BUILD_VERSION = 'build 846 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21283,7 +21283,7 @@ const MODE_SECTIONS = {
   scene:   ['world','generate','zones'],   // the 5 placeable volumes are grouped under one 'zones' section with a type picker (build 649)
   player:  ['gizmo','object','transform','characters'],   // build 652: the player avatar, the spawn point + the character roster are their own area
   enemies: ['enemies','gizmo','object','transform','boltfx'],   // spawn points live here now; their picker/fields/gizmo sections come along. enemy gunfire FX (boltfx) moved here in build 647 — it's about enemies, not your weapons
-  rules:   ['game','pickups','loot','invitems','buildmenu'],
+  rules:   ['game','pickups','loot','invitems','buildmenu','cutscenes'],   // build 846: cutscenes are story/gameplay authoring — they moved out of World > Environment
   kit:     ['object','transform','wepfx'],   // 'object' carries the weapon model import + per-weapon shoot sound; the FX panels (impacts/tracer) are grouped under one 'wepfx' picker (build 653); music/SFX live in Scene
   hud:     ['hud','crosshair'],   // build 665: per-level HUD theme + visibility. build 845: the crosshair is a HUD element — it moved here from Weapons > Effects
   files:   ['levelfile','campaign'],
@@ -21312,6 +21312,7 @@ const SEC_SUB = {
   impactfx:   'Sparks, marks & debris where YOUR shots land.',
   tracerfx:   'The streak your own gunfire leaves in the air.',
   crosshair:  'Reticle shape, size & colour.',
+  cutscenes:  'Author camera cutscenes — play them from signals or on level start.',
   characters: 'Player & enemy character roster, models and animation slots.',
   levelfile:  'Save, share, export or import this level.',
   campaign:   'Chain levels together into a campaign.',
@@ -22786,6 +22787,7 @@ function buildEditorPanel(){
     + sec('Loot', 'loot', '<div id="edLoot"></div>')
     + sec('Inventory items', 'invitems', '<div id="edInvItems"></div>')
     + sec('Build menu', 'buildmenu', '<div id="edBuildMenu"></div>')
+    + sec('Cutscenes', 'cutscenes', '<div id="edCutscenes"></div>')
     + sec('Zones', 'zones',
           '<div id="edZonePicker"></div>'
         + '<div id="edAudioZones" class="zoneHost" data-zone="audiozones"></div>'
@@ -23455,7 +23457,7 @@ function renderEditorFields(){
 
     // ===== WORLD split into collapsible sub-sections =====
     const _wss = (()=>{ try{ return JSON.parse(localStorage.getItem('breach_world_sections')||'{}')||{}; }catch(e){ return {}; } })();
-    const subSec = (title, key, collapsedDefault)=>{
+    const subSec = (title, key, collapsedDefault, host)=>{   // build 846: optional host — the Cutscenes group renders into its own Gameplay-tab section
       const sec=document.createElement('div'); sec.className='edSubSection';
       const collapsed = (key in _wss) ? _wss[key]===true : !!collapsedDefault;
       if(collapsed) sec.classList.add('collapsed');
@@ -23463,7 +23465,7 @@ function renderEditorFields(){
       head.innerHTML='<span class="edCaret">\u25be</span>'+title;
       const body=document.createElement('div'); body.className='edSubBody';
       head.onclick=()=>{ sec.classList.toggle('collapsed'); _wss[key]=sec.classList.contains('collapsed'); try{ localStorage.setItem('breach_world_sections', JSON.stringify(_wss)); }catch(e){} };
-      sec.appendChild(head); sec.appendChild(body); worldHost.appendChild(sec); return body;
+      sec.appendChild(head); sec.appendChild(body); (host||worldHost).appendChild(sec); return body;
     };
     { const b=subSec('Movement','move',false);
       slider(b,'Walk speed','walk',4,60,1); slider(b,'Run speed','run',4,100,1); slider(b,'Crouch speed','crouch',1,40,1);
@@ -23545,7 +23547,10 @@ function renderEditorFields(){
         }
         tb.appendChild(bw);
         b.appendChild(tb); } }
-    { const b=subSec('Cinematic','cine',true);
+    // build 846: the cutscene editor renders into its own Gameplay-tab section (#edCutscenes) — story
+    // authoring is gameplay, not world dressing. The group keeps its fold state; open by default in its new home.
+    const _cutHost=editorEl.querySelector('#edCutscenes'); if(_cutHost) _cutHost.innerHTML='';
+    { const b=subSec('Cinematic','cine',false, _cutHost);
       { const r=document.createElement('label'); r.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0 6px;cursor:pointer;';
         const c=document.createElement('input'); c.type='checkbox'; c.checked=(typeof _cinePvOn!=='undefined' && _cinePvOn); c.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
         c.onchange=()=>{ _cinePvOn=c.checked; try{ localStorage.setItem('breach_cinepv', _cinePvOn?'on':'off'); }catch(e){} };

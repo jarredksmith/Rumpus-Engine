@@ -5,7 +5,7 @@ const src = gameSource();
 assert(/const EDITOR_MODES = \['build','scene','player','enemies','rules','kit','hud','files'\];/.test(src), 'eight editor modes defined (HUD added in build 665)');
 // Enemies is its own mode now, not under Rules; Weapons mode carries the gun-model import (the Object section)
 assert(/enemies: \['enemies','gizmo','object','transform','boltfx'\]/.test(src), 'Enemies mode carries its section plus the spawn picker/fields/gizmo (spawns moved here in build 334) + enemy gunfire FX (build 647)');
-assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu'\]/.test(src), 'Gameplay tab: game + pickups + loot + invitems');
+assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','cutscenes'\]/.test(src), 'Gameplay tab: game + pickups + loot + invitems');
 assert(/kit:\s*\['object','transform','wepfx'\]/.test(src), 'Weapons mode = object + transform + grouped Effects picker (impacts/tracer/crosshair, build 653)');
 assert(/const MODE_COLOR = \{/.test(src), 'per-mode accent colours defined');
 assert(!/label: '\uD83D\uDCE6 Extract'/.test(src) && /label: 'Extract'/.test(src), 'Extract tab icon removed');
@@ -44,7 +44,7 @@ assert(/const PRIM_ICON = \{/.test(src), 'primitive icons defined');
 assert(/b\.innerHTML=\(PRIM_ICON\[src\]\|\|''\)\+'<span>\+ '\+label/.test(src), 'shape buttons show icon + "+ Label"');
 assert(/shapesHost\.innerHTML='';\s*\n\s*if\(tgt\.addable && tgt\.urlField\)/.test(src), 'Add-shape limited to Props (addable + urlField)');
 // Scene world split + sounds relocation
-assert(/const subSec = \(title, key, collapsedDefault\)/.test(src), 'Scene world split into collapsible sub-sections');
+assert(/const subSec = \(title, key, collapsedDefault, host\)/.test(src), 'Scene world split into collapsible sub-sections (build 846: optional host)');
 assert(/subSec\('Movement'/.test(src) && /subSec\('Floor'/.test(src) && /subSec\('Audio'/.test(src), 'Scene has Movement/Floor/Audio sub-sections');
 assert(/tgt===editorTargets\.gun\)\{   \/\/ per-weapon shoot sound/.test(src), 'per-weapon shoot sound on the weapon');
 assert(/function renderFreesoundBrowser\(host, refresh, directTarget\)/.test(src), 'freesound browser supports a direct target');
