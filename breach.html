@@ -16587,7 +16587,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 841 · 2026-07-03';
+const BUILD_VERSION = 'build 842 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22483,10 +22483,20 @@ function _modelSourceBar(host, rerender){
 // Sketchfab search panel: token field, query, thumbnail grid. onPick(model, statusEl) with model.glb = 'sketchfab:<uid>'.
 function renderSketchfabSearch(host, onPick){
   host.innerHTML='';
+  // build 842: the token field used to sit at the top of EVERY Sketchfab search box (a dozen places). Now:
+  // the full input shows only while NO token is saved (the first-run affordance); once saved it collapses to
+  // a one-line "Token saved \u00b7 change" link. The permanent home is Scene > Integrations & API keys.
   const tRow=document.createElement('div'); tRow.style.cssText='display:flex;gap:5px;margin-bottom:5px;';
   const tk=document.createElement('input'); tk.type='password'; tk.placeholder='Sketchfab API token'; tk.value=sfGetToken(); tk.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
   const tb=document.createElement('button'); tb.textContent='Save'; tb.style.flex='0 0 auto'; tRow.appendChild(tk); tRow.appendChild(tb); host.appendChild(tRow);
   const tHint=document.createElement('div'); tHint.className='hint'; tHint.style.cssText='margin:-1px 0 6px;font-size:10px;'; tHint.innerHTML='Get a token at sketchfab.com \u2192 Settings \u2192 Password &amp; API. Needed to search + download.'; host.appendChild(tHint);
+  if(sfGetToken()){
+    tRow.style.display='none'; tHint.style.display='none';
+    const mini=document.createElement('div'); mini.className='hint'; mini.style.cssText='margin:0 0 5px;font-size:10px;';
+    mini.innerHTML='Sketchfab token saved \u00b7 <a href="#" style="color:#7fe6cf">change</a>';
+    mini.querySelector('a').onclick=(e)=>{ e.preventDefault(); mini.remove(); tRow.style.display='flex'; tHint.style.display='block'; tk.focus(); };
+    host.appendChild(mini);
+  }
   const sRow=document.createElement('div'); sRow.className='row2'; sRow.style.marginBottom='4px';
   const q=document.createElement('input'); q.type='text'; q.placeholder='search Sketchfab\u2026'; q.value=sfLastQuery; q.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
   const sb=document.createElement('button'); sb.textContent='Search'; sb.style.flex='0 0 auto'; sRow.appendChild(q); sRow.appendChild(sb); host.appendChild(sRow);
