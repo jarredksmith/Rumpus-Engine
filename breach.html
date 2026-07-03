@@ -16566,7 +16566,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 833 · 2026-07-02';
+const BUILD_VERSION = 'build 834 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18885,6 +18885,9 @@ function _raceClearBots(){
   for(const st of _raceBots){ const o=st.obj; if(!o) continue; scene.remove(o);
     if(o.userData.src && typeof isModelSrc==='function' && isModelSrc(o.userData.src) && typeof _modelRelease==='function') _modelRelease(o.userData.src); }
   _raceBots.length=0; _racePath=null; _raceOver=false;
+  if(_ghostObj){ const g=_ghostObj.obj; _ghostObj=null;   // build 834: the ghost is a runtime race actor too
+    if(g){ scene.remove(g); if(typeof isModelSrc==='function' && isModelSrc(g.userData.src) && typeof _modelRelease==='function') _modelRelease(g.userData.src); } }
+  _ghostRec.length=0; _ghostAcc=0;
 }
 function _raceSpawnBots(){
   const n=Math.max(0, Math.min(6, (gameCfg.raceBots|0)));
@@ -18939,6 +18942,68 @@ function _raceBotsTick(dt){
     if(st.veh && typeof _updateWheels==='function') _updateWheels(o, st.veh, st.v, Math.max(-1, Math.min(1, dyaw*28)), dt);
   }
 }
+// ---------- build 834: GHOST LAP — race your own best ----------
+// While racing, the driven car's pose is sampled at 10 Hz; a lap that sets a NEW BEST is saved as the ghost
+// (localStorage, keyed by a fingerprint of the track layout — edit the course and old ghosts retire). During
+// later laps a translucent copy of the vehicle replays it in real time, so the thing you're chasing is
+// literally your own best lap. Works alongside AI rivals or alone as a time-trial opponent.
+let _ghostBest=null, _ghostObj=null, _ghostAcc=0; const _ghostRec=[];
+function _ghostKey(){
+  let h=5381;
+  for(const p of propModels){ if(!p || !p.userData || !TRACK_PIECES[p.userData.src]) continue;
+    const s=p.userData.src+','+p.position.x.toFixed(1)+','+p.position.z.toFixed(1)+','+p.rotation.y.toFixed(2);
+    for(let i=0;i<s.length;i++) h=((h*33)^s.charCodeAt(i))>>>0; }
+  return 'breachGhost_'+h.toString(36);
+}
+function _ghostLoad(){ try{ const raw=localStorage.getItem(_ghostKey()); _ghostBest=raw?JSON.parse(raw):null;
+  if(_ghostBest && !(_ghostBest.samples && _ghostBest.samples.length>3)) _ghostBest=null; }catch(e){ _ghostBest=null; } }
+function _ghostSave(lapT){
+  if(_ghostRec.length<4) return;
+  _ghostBest={ dt:0.1, lapT:+lapT.toFixed(2), samples:_ghostRec.slice(0,6000) };
+  try{ localStorage.setItem(_ghostKey(), JSON.stringify(_ghostBest)); }catch(e){}
+  if(typeof toast==='function') toast('NEW BEST — ghost lap saved');
+}
+function _ghostEnsureObj(){
+  if(_ghostObj || !_ghostBest) return;
+  const tmpl=propModels.find(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
+  if(!tmpl) return;
+  const holder={ mYaw:((tmpl.userData.vehicle.modelYaw||0))*RAD, src:tmpl.userData.src, obj:null };
+  _ghostObj=holder;
+  spawnProp(tmpl.userData.src, [0,-1000,0, 0,0,0, tmpl.scale.x, tmpl.scale.y, tmpl.scale.z], (obj)=>{
+    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // the ghost is pure light — no rays, no saves
+    { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }
+    obj.userData.runtime=true; obj.visible=false;
+    obj.traverse(m=>{ if(m.isMesh){ m.castShadow=false; m.receiveShadow=false;
+      if(m.material){ m.material=m.material.clone(); m.material.transparent=true; m.material.opacity=0.3; m.material.depthWrite=false;
+        if(m.material.color) m.material.color.lerp(new THREE.Color(0x8fd8ff), 0.5); } } });
+    if(_ghostObj===holder) holder.obj=obj; else scene.remove(obj);   // setup changed while the model loaded
+  });
+}
+function _ghostRecordTick(dt){
+  if(_raceLap<1 || !drivingCar) return;
+  _ghostAcc+=dt;
+  const _first=(_ghostRec.length===0);   // the lap's first sample lands AT the line, not 0.1 s late
+  if(_first || _ghostAcc>=0.1){
+    if(_first) _ghostAcc=0; else _ghostAcc-=0.1;   // carry the remainder so the cadence averages exactly 10 Hz
+    const o=drivingCar, u=o.userData;
+    if(_ghostRec.length<6000) _ghostRec.push([+o.position.x.toFixed(2), +o.position.y.toFixed(2), +o.position.z.toFixed(2),
+      +(u.carYaw||0).toFixed(3), +((u.carPitch||0)+(u.leanPitch||0)).toFixed(3), +((u.carRoll||0)+(u.leanRoll||0)).toFixed(3)]);
+  }
+}
+function _ghostPlayTick(){
+  const G=_ghostBest, W=_ghostObj && _ghostObj.obj;
+  if(!W) return;
+  if(!G || _raceLap<1){ W.visible=false; return; }
+  const t=_raceLapT, i=Math.floor(t/G.dt), S=G.samples;
+  if(i>=S.length-1){ W.visible=false; return; }   // the ghost already finished its lap
+  const a=S[i], b=S[i+1], f=Math.max(0, Math.min(1, (t-i*G.dt)/G.dt));
+  W.visible=true;
+  W.position.set(a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f);
+  let dy=b[3]-a[3]; dy=Math.atan2(Math.sin(dy),Math.cos(dy));
+  _carEuler.set(a[4]+(b[4]-a[4])*f, a[3]+dy*f, a[5]+(b[5]-a[5])*f);
+  _carQuat.setFromEuler(_carEuler); _carModelQ.setFromAxisAngle(_UP_Y, -_ghostObj.mYaw);
+  W.quaternion.copy(_carQuat).multiply(_carModelQ);
+}
 function _racePlace(){   // player's live position in the field, by laps-started + track fraction
   if(!_racePath || !_raceBots.length) return null;
   const pts=_racePath.pts; let bi=0, bd=Infinity;
@@ -18963,12 +19028,14 @@ function _raceSetup(){
   }
   _racePath=_raceBuildPath();                       // build 833: the racing line (null if the loop isn't closed)
   if((gameCfg.raceBots|0)>0) _raceSpawnBots();      // build 833: grid the AI rivals
+  _ghostLoad(); if(_ghostBest) _ghostEnsureObj();   // build 834: bring back this track's best-lap ghost
 }
 function _raceTick(dt){
   if(!_raceStartO){ objectiveHUD(); return; }
   _raceCountTick(dt);   // build 832: the 3-2-1-GO standing start
   _raceBotsTick(dt);    // build 833: the AI rivals drive their line
   if(_raceOver) return; // a rival already finished — the lose screen is up
+  _ghostRecordTick(dt); _ghostPlayTick();   // build 834: record this lap; replay the best one
   if(_raceCrossCd>0) _raceCrossCd-=dt;
   if(_raceLap>=1) _raceLapT+=dt;
   const px=player.pos.x, pz=player.pos.z;
@@ -18985,11 +19052,12 @@ function _raceTick(dt){
   if(onLine && _racePrevLz!=null && _raceCrossCd<=0 && _racePrevLz>plane && lz<=plane){
     _raceCrossCd=3;
     const total=Math.max(1, gameCfg.raceLaps||3);
-    if(_raceLap===0){ _raceLap=1; _raceLapT=0; _raceVisited.clear(); _raceTimes.length=0; if(typeof toast==='function') toast('RACE — LAP 1 / '+total); }
+    if(_raceLap===0){ _raceLap=1; _raceLapT=0; _raceVisited.clear(); _raceTimes.length=0; _ghostRec.length=0; _ghostAcc=0; if(typeof toast==='function') toast('RACE — LAP 1 / '+total); }
     else if(_raceVisited.size >= Math.max(1, Math.ceil(_raceCk.length*0.6))){
       _raceLastT=_raceLapT; if(_raceLapT<_raceBestT) _raceBestT=_raceLapT; _raceTimes.push(_raceLapT);   // build 832: keep every lap for the results
+      if(_raceLapT===_raceBestT) _ghostSave(_raceLapT);   // build 834: a new best lap becomes the ghost
       if(_raceLap>=total){ objectiveHUD(); if(typeof gameWon==='function') gameWon(); return; }
-      _raceLap++; _raceLapT=0; _raceVisited.clear();
+      _raceLap++; _raceLapT=0; _raceVisited.clear(); _ghostRec.length=0; _ghostAcc=0; _ghostEnsureObj();
       if(typeof toast==='function') toast('LAP '+_raceLap+' / '+total+' — last '+_fmtRace(_raceLastT));
     }
     else if(typeof toast==='function') toast('Lap not counted — missed checkpoints');
