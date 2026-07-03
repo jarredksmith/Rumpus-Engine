@@ -11,7 +11,7 @@ Hard-refresh (Ctrl/Cmd+Shift+R) before starting so you're on the latest build (b
 
 ## 1. Racing stack (newest — highest risk)
 
-- [ ] **Track builder**: top view (V) → lay Start line → straights/curves snap to the chain → `Close loop` bridges the final gap exactly (no seam overlap/z-fighting at the joint)
+- [ ] **Track builder**: top view (T) → lay Start line → straights/curves snap to the chain → `Close loop` bridges the final gap exactly (no seam overlap/z-fighting at the joint)
 - [ ] **Banked curves**: Bank L/R sit flush with flat neighbours; car + rivals ride the camber without floating/clipping
 - [ ] **Barrier walls**: `Walls: whole track` — cars deflect off walls (never pass through or climb them); walls follow banking and ramps
 - [ ] **Race deploy**: auto-seated in the car on the grid → 3-2-1-GO countdown (throttle locked until GO) → race HUD pill top-center (P n/N · LAP · time · BEST)

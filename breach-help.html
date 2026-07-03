@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BREACH — Field Manual</title>
+<style>
+  :root{
+    --bg:#0a1114; --panel:#0e171c; --panel2:#111c22; --line:#22333b; --line2:#1a282f;
+    --ink:#cfe9df; --ink-dim:#8fb4a8; --bright:#eafff7; --accent:#4de3ae; --accent-dim:rgba(77,227,174,0.14);
+    --gold:#ffd479; --warn:#ffb35c; --code:#9fe6cf;
+  }
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; scroll-padding-top:18px; }
+  body{ margin:0; background:var(--bg); color:var(--ink); font:15px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  a{ color:var(--accent); text-decoration:none; }
+  a:hover{ text-decoration:underline; }
+  code, kbd{ font-family:"JetBrains Mono", ui-monospace, Consolas, monospace; }
+  code{ color:var(--code); background:#0c1a18; border:1px solid var(--line2); border-radius:4px; padding:1px 5px; font-size:0.86em; }
+  kbd{ display:inline-block; min-width:1.5em; text-align:center; color:var(--bright); background:#15242b; border:1px solid #33474f; border-bottom-width:2px; border-radius:5px; padding:1px 6px; font-size:0.8em; }
+
+  .layout{ display:flex; max-width:1240px; margin:0 auto; }
+  nav{ flex:0 0 248px; position:sticky; top:0; align-self:flex-start; height:100vh; overflow-y:auto; padding:22px 10px 40px 18px; border-right:1px solid var(--line2); }
+  nav .brand{ font-size:21px; font-weight:800; letter-spacing:3px; color:var(--bright); margin-bottom:2px; }
+  nav .brand span{ color:var(--accent); }
+  nav .sub{ font-size:11px; letter-spacing:2px; color:var(--ink-dim); text-transform:uppercase; margin-bottom:14px; }
+  nav .play{ display:block; margin:0 8px 14px 0; padding:7px 10px; text-align:center; border:1px solid rgba(77,227,174,0.5); border-radius:7px; background:var(--accent-dim); color:var(--bright); font-size:13px; font-weight:600; }
+  nav .play:hover{ text-decoration:none; background:rgba(77,227,174,0.24); }
+  nav .grp{ font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--ink-dim); margin:14px 0 4px; }
+  nav a.lnk{ display:block; padding:4px 8px; margin-right:8px; border-radius:5px; color:var(--ink); font-size:13px; }
+  nav a.lnk:hover{ background:var(--panel2); text-decoration:none; color:var(--bright); }
+  #navFilter{ width:calc(100% - 8px); margin:0 8px 8px 0; padding:6px 9px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:6px; font-size:13px; }
+  #navFilter:focus{ outline:none; border-color:var(--accent); }
+
+  main{ flex:1; min-width:0; padding:26px 34px 90px; }
+  h1{ color:var(--bright); font-size:30px; letter-spacing:1px; margin:6px 0 4px; }
+  .lede{ color:var(--ink-dim); font-size:15px; margin:0 0 26px; max-width:70ch; }
+  section{ margin:0 0 8px; }
+  h2{ color:var(--bright); font-size:21px; letter-spacing:0.5px; margin:44px 0 6px; padding-top:18px; border-top:1px solid var(--line2); }
+  h2 .tag{ font-size:11px; letter-spacing:2px; color:var(--accent); text-transform:uppercase; display:block; margin-bottom:2px; }
+  h3{ color:var(--bright); font-size:16px; margin:26px 0 4px; }
+  h4{ color:var(--accent); font-size:13.5px; letter-spacing:0.4px; margin:18px 0 3px; }
+  p{ margin:7px 0; max-width:78ch; }
+  ul, ol{ margin:7px 0; padding-left:24px; max-width:75ch; }
+  li{ margin:3px 0; }
+  table{ border-collapse:collapse; margin:10px 0; font-size:13.5px; width:100%; max-width:860px; }
+  .tblwrap{ overflow-x:auto; }
+  th{ text-align:left; color:var(--accent); font-size:11px; letter-spacing:1.5px; text-transform:uppercase; padding:7px 12px 5px 0; border-bottom:1px solid var(--line); }
+  td{ padding:6px 12px 6px 0; border-bottom:1px solid var(--line2); vertical-align:top; }
+  td:first-child{ white-space:nowrap; color:var(--bright); }
+  .box{ background:var(--panel); border:1px solid var(--line2); border-left:3px solid var(--accent); border-radius:0 8px 8px 0; padding:10px 16px; margin:14px 0; max-width:820px; }
+  .box.warn{ border-left-color:var(--warn); }
+  .box.gold{ border-left-color:var(--gold); }
+  .box b{ color:var(--bright); }
+  .crumbs{ font-size:12px; color:var(--ink-dim); letter-spacing:0.4px; margin:-2px 0 8px; }
+  .crumbs b{ color:var(--code); font-weight:600; }
+  footer{ margin-top:70px; padding-top:16px; border-top:1px solid var(--line2); color:var(--ink-dim); font-size:12.5px; }
+
+  #menuBtn{ display:none; }
+  @media (max-width:900px){
+    .layout{ display:block; }
+    nav{ position:static; height:auto; border-right:none; border-bottom:1px solid var(--line2); padding:16px 18px; }
+    nav .toc{ display:none; }
+    nav.open .toc{ display:block; }
+    #menuBtn{ display:inline-block; margin:4px 0; padding:6px 12px; background:var(--panel2); color:var(--bright); border:1px solid var(--line); border-radius:6px; font-size:13px; cursor:pointer; }
+    main{ padding:18px 18px 70px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav id="nav">
+  <div class="brand">BRE<span>A</span>CH</div>
+  <div class="sub">Field manual</div>
+  <a class="play" href="breach.html">▶ Play BREACH</a>
+  <button id="menuBtn">☰ Contents</button>
+  <div class="toc">
+    <input id="navFilter" type="search" placeholder="Filter topics…" aria-label="Filter topics">
+    <div class="grp">Basics</div>
+    <a class="lnk" href="#start">Getting started</a>
+    <a class="lnk" href="#controls">Controls</a>
+    <div class="grp">Editor reference</div>
+    <a class="lnk" href="#editor">Editor overview</a>
+    <a class="lnk" href="#tab-build">Build tab</a>
+    <a class="lnk" href="#folds">Object folds</a>
+    <a class="lnk" href="#tab-world">World tab</a>
+    <a class="lnk" href="#tab-player">Player tab</a>
+    <a class="lnk" href="#tab-enemies">Enemies tab</a>
+    <a class="lnk" href="#tab-gameplay">Gameplay tab</a>
+    <a class="lnk" href="#tab-weapons">Weapons tab</a>
+    <a class="lnk" href="#tab-hud">HUD tab</a>
+    <a class="lnk" href="#tab-save">Save tab</a>
+    <div class="grp">Systems</div>
+    <a class="lnk" href="#racing">Track builder &amp; racing</a>
+    <a class="lnk" href="#vehicles">Vehicle tuning</a>
+    <a class="lnk" href="#signals">Signals, locks &amp; mechanisms</a>
+    <a class="lnk" href="#pickups">Pickups &amp; inventory</a>
+    <a class="lnk" href="#objectives">Objectives &amp; rules</a>
+    <a class="lnk" href="#cutscenes">Cutscenes</a>
+    <a class="lnk" href="#multiplayer">Multiplayer</a>
+    <a class="lnk" href="#sharing">Saving &amp; sharing</a>
+    <div class="grp">Extras</div>
+    <a class="lnk" href="#faq">Tips &amp; troubleshooting</a>
+  </div>
+</nav>
+<main>
+
+<h1>Field Manual</h1>
+<p class="lede">The complete reference for BREACH — every tab, section, fold and slider in the level editor,
+plus the systems behind racing, vehicles, signals, multiplayer and sharing. For guided walkthroughs with
+one-click example projects, open <b>Help &amp; tutorials</b> on the game's home menu instead.</p>
+
+<section id="start">
+<h2><span class="tag">Basics</span>Getting started</h2>
+<p>BREACH is a single-file browser FPS with a built-in level editor. Nothing installs; the whole game is one page.</p>
+<h3>The home menu</h3>
+<ul>
+  <li><b>Deploy</b> — play the current level (your autosaved work, a loaded file, or the default arena).</li>
+  <li><b>Play campaign / Load campaign</b> — play a sequence of chained levels with carry-over loadout.</li>
+  <li><b>Multiplayer</b> — host or join a room (see <a href="#multiplayer">Multiplayer</a>).</li>
+  <li><b>Build / edit level</b> — open the editor on the current level.</li>
+  <li><b>Instructions</b> — a quick controls card. <b>Help &amp; tutorials</b> — guided tutorials with loadable example projects. <b>Field manual</b> — this page. <b>Credits</b> — engine libraries plus the asset attributions collected for the current level.</li>
+</ul>
+<div class="box">The <b>build number</b> is shown at the bottom-left of the home menu. If a fix doesn't seem to be live,
+hard-refresh (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) and check that number first.</div>
+</section>
+
+<section id="controls">
+<h2><span class="tag">Basics</span>Controls</h2>
+<h3>On foot</h3>
+<div class="tblwrap"><table>
+<tr><th>Input</th><th>Action</th></tr>
+<tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> + mouse</td><td>Move and look</td></tr>
+<tr><td>Left click / Right click</td><td>Fire / aim down sights</td></tr>
+<tr><td><kbd>Shift</kbd></td><td>Run (hold)</td></tr>
+<tr><td><kbd>Space</kbd></td><td>Jump</td></tr>
+<tr><td><kbd>C</kbd> or <kbd>Ctrl</kbd></td><td>Crouch — while running, slide (<kbd>Ctrl</kbd> toggles, <kbd>C</kbd> holds)</td></tr>
+<tr><td><kbd>R</kbd></td><td>Reload</td></tr>
+<tr><td><kbd>F</kbd></td><td>Throw grenade</td></tr>
+<tr><td><kbd>V</kbd></td><td>Melee attack</td></tr>
+<tr><td><kbd>E</kbd></td><td>Interact — doors, NPCs, pickups, vehicles, mechanisms</td></tr>
+<tr><td><kbd>G</kbd></td><td>Grab / carry / throw physics props</td></tr>
+<tr><td><kbd>L</kbd></td><td>Flashlight (when the level enables it)</td></tr>
+<tr><td><kbd>J</kbd></td><td>Re-read the current objective</td></tr>
+<tr><td><kbd>1</kbd>–<kbd>5</kbd> / wheel</td><td>Switch weapon / cycle weapons</td></tr>
+<tr><td><kbd>Tab</kbd> (hold)</td><td>Radial Deploy menu (when the level defines one)</td></tr>
+<tr><td><kbd>I</kbd></td><td>Inventory (carryable items + 3D inspector)</td></tr>
+<tr><td><kbd>M</kbd></td><td>Big map</td></tr>
+<tr><td><kbd>T</kbd></td><td>Chat (multiplayer)</td></tr>
+</table></div>
+<h3>Driving <span style="color:var(--ink-dim);font-size:13px;font-weight:400">(walk up to a vehicle, press <kbd>E</kbd>)</span></h3>
+<div class="tblwrap"><table>
+<tr><th>Input</th><th>Action</th></tr>
+<tr><td><kbd>W</kbd> / <kbd>S</kbd></td><td>Gas / brake — braking comes first, reverse only engages from a stop</td></tr>
+<tr><td><kbd>A</kbd> / <kbd>D</kbd></td><td>Steer</td></tr>
+<tr><td><kbd>Space</kbd></td><td>Handbrake — kicks the tail out for drifts</td></tr>
+<tr><td><kbd>Shift</kbd></td><td>Boost (if the vehicle has one)</td></tr>
+<tr><td><kbd>C</kbd></td><td>Chase ↔ cockpit camera</td></tr>
+<tr><td><kbd>V</kbd></td><td>Camera follows the car ↔ free orbit</td></tr>
+<tr><td><kbd>H</kbd></td><td>Headlights</td></tr>
+<tr><td><kbd>G</kbd></td><td>Toggle the ghost lap (during a race)</td></tr>
+<tr><td><kbd>E</kbd> / <kbd>Esc</kbd></td><td>Get out</td></tr>
+</table></div>
+<h3>Editor</h3>
+<div class="tblwrap"><table>
+<tr><th>Input</th><th>Action</th></tr>
+<tr><td><kbd>P</kbd></td><td>Toggle the editor ↔ play the level</td></tr>
+<tr><td><kbd>F</kbd></td><td>Free-fly camera</td></tr>
+<tr><td><kbd>T</kbd></td><td>Top-down view (fits the whole arena; scroll to zoom, drag to pan)</td></tr>
+<tr><td><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd></td><td>Gizmo mode: move / rotate / scale</td></tr>
+<tr><td><kbd>4</kbd></td><td>Toggle proportional (uniform) scaling</td></tr>
+<tr><td><kbd>Shift</kbd>+<kbd>D</kbd> · <kbd>Alt</kbd>+drag</td><td>Duplicate the selection / duplicate the prop under the cursor</td></tr>
+<tr><td><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td>Delete the selection</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></td><td>Group / ungroup the selection</td></tr>
+<tr><td><kbd>Shift</kbd>+<kbd>A</kbd></td><td>Quick-add (+) menu</td></tr>
+</table></div>
+<p>Gamepads and touch are supported: plug in a controller (press <kbd>]</kbd> to switch between detected pads), or on a phone use the on-screen joysticks and drive cluster — pause → <b>✿ Customize controls</b> to move or resize any on-screen button.</p>
+</section>
+
+<section id="editor">
+<h2><span class="tag">Editor reference</span>Editor overview</h2>
+<p>Open the editor with <b>Build / edit level</b> on the home menu, or press <kbd>P</kbd> during a solo game.
+The panel on the right is organized into <b>eight tabs</b>; the last tab you used is remembered.</p>
+<div class="tblwrap"><table>
+<tr><th>Tab</th><th>What lives there</th></tr>
+<tr><td>Build</td><td>Place shapes, track pieces and searched models; edit the selection (material, transform, animation, physics, vehicle, signals, locks…)</td></tr>
+<tr><td>World</td><td>Terrain, sky, lighting, camera &amp; post-FX, fog, arena size, boundary walls, audio, auto-generate, zones</td></tr>
+<tr><td>Player</td><td>Avatar model, player start point, the character roster</td></tr>
+<tr><td>Enemies</td><td>Enemy types &amp; models, hit colliders, spawn markers, how enemy gunfire looks</td></tr>
+<tr><td>Gameplay</td><td>Objective &amp; rules, pickups, loot, inventory items, the in-game build menu, cutscenes</td></tr>
+<tr><td>Weapons</td><td>Per-weapon models, damage, sounds; impact &amp; tracer effects</td></tr>
+<tr><td>HUD</td><td>Theme colours, fonts, panel style, which HUD elements show, per-element layout, crosshair</td></tr>
+<tr><td>Save</td><td>Save/load, share links, export/import <code>.json</code>, campaigns</td></tr>
+</table></div>
+<p>Most sections start collapsed — click a header to expand it. The <b>?</b> button on the editor toolbar opens this manual.
+Everything you do in the editor is undoable with <kbd>Ctrl</kbd>+<kbd>Z</kbd>, and the level autosaves in your browser while you edit (toggle on the Save tab).</p>
+</section>
+
+<section id="tab-build">
+<h2><span class="tag">Editor reference</span>Build tab</h2>
+<h3>Add shape</h3>
+<p><b>+ Box, + Sphere, + Cylinder, + Cone</b> drop a primitive in front of the camera. Primitives get the full
+<a href="#sec-material">Material</a> editor and exact box/sphere colliders; searched models use their real mesh shape.
+A <b>Pillar</b> and the track pieces are also primitives under the hood.</p>
+<h3>Track builder</h3>
+<p>Snap-together race track pieces — covered in depth in <a href="#racing">Track builder &amp; racing</a>.</p>
+<h3>Search free models</h3>
+<p>One search box finds free 3D models on <b>Poly Pizza</b> (no key needed) and <b>Sketchfab</b>
+(needs a free API token — enter it once, everywhere else shows “Token saved · change”). Click a result to place it.
+Every searched asset is recorded for the level's <b>Credits</b> screen automatically.</p>
+<h3>Object &amp; selection</h3>
+<p>With something selected, this section shows: swap/replace model, and the eight <a href="#folds">folds</a> that
+give a prop behaviour — animation, locks, signals, dialogue, vehicle, joints, mechanisms, physics &amp; destruction.</p>
+<h3 id="sec-material">Material</h3>
+<p>For shape primitives: colour, texture map with U/V tiling and rotation, roughness, metalness, and emissive glow.
+Imported models keep their own materials — the section says so instead of hiding.</p>
+<h3>Transform &amp; Handles</h3>
+<p><b>Transform</b> is the numeric version of the gizmo: exact position, rotation and scale fields.
+<b>Handles</b> pick the gizmo mode (move / rotate / scale — also <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>) and
+proportional scaling (<kbd>4</kbd>).</p>
+<h3>Groups</h3>
+<p>Select multiple props and press <kbd>Ctrl</kbd>+<kbd>G</kbd> to group them — the group moves, rotates, scales and
+duplicates as one. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> ungroups.</p>
+</section>
+
+<section id="folds">
+<h2><span class="tag">Editor reference</span>Object folds — giving props behaviour</h2>
+<p>Select any prop on the Build tab and open <b>Object &amp; selection</b>. Eight folds, in panel order:</p>
+<div class="tblwrap"><table>
+<tr><th>Fold</th><th>What it does</th></tr>
+<tr><td>Animation</td><td>Play a model's built-in animation clips — pick the clip, then when it plays (<i>Auto</i> on load, <i>E&nbsp;Activate</i>, or <i>Signals only</i>) and whether it loops or plays once.</td></tr>
+<tr><td>Lock</td><td>Require a key to E-activate the prop: <i>None</i> or the red / blue / gold / green key, plus <b>Consume key on unlock</b>. Keys come from key pickup pads (see <a href="#pickups">Pickups</a>).</td></tr>
+<tr><td>Signals</td><td>Tag the prop and wire cause → effect between props — full reference in <a href="#signals">Signals, locks &amp; mechanisms</a>.</td></tr>
+<tr><td>Dialogue (NPC)</td><td>Make the prop talkable with <kbd>E</kbd> — one line per row, shown as HUD dialogue. Great for hints and flavour.</td></tr>
+<tr><td>Vehicle (drivable)</td><td>Turn the prop into a drivable car — full reference in <a href="#vehicles">Vehicle tuning</a>.</td></tr>
+<tr><td>Joint (physics)</td><td>Hinge the object so it swings under physics — doors, levers, see-saws.</td></tr>
+<tr><td>Mechanism</td><td>Move / rotate / scale the object over time — platforms, doors, elevators — with an optional multi-point <b>Waypoint path</b>. See <a href="#signals">Signals, locks &amp; mechanisms</a>.</td></tr>
+<tr><td>Physics &amp; destruction</td><td>Make it dynamic (pushed, thrown, stacked), grabbable with <kbd>G</kbd>, breakable with health and debris, or explosive.</td></tr>
+</table></div>
+</section>
+
+<section id="tab-world">
+<h2><span class="tag">Editor reference</span>World tab</h2>
+<p class="crumbs">Sections: <b>Environment</b> · <b>Auto-generate</b> · <b>Zones</b></p>
+<h3>Environment</h3>
+<h4>Movement</h4>
+<p>Global player physics: Walk speed (4–60) · Run speed (4–100) · Crouch speed (1–40) · Jump (0–30) ·
+Launch power (0.25–4, jump-pad multiplier) · Gravity (5–80) · Eye height (0.4–20).</p>
+<h4>Lighting</h4>
+<p>Sun (directional, 0–4) · Sky ambient fill (0–3) · Brightness lift (0–2) · Sun colour · Sky light colour.</p>
+<h4>Camera &amp; view</h4>
+<p>Field of view (50–110) · View distance (60–2000) · Fog density &amp; colour · ground grid toggle.
+<b>Depth of field</b>: focus distance, in-focus range, blur strength.
+<b>Post-processing</b>: bloom (+ threshold), motion blur, vignette, film grain, saturation, contrast —
+all compose together, and DoF still works with effects on.</p>
+<h4>Sky</h4>
+<p>Browse <b>Poly Haven HDRIs</b> in-editor or paste an HDRI URL; presets Park / Mountain / Room / None;
+reflection strength (0–3) and sky rotation (0–360°).</p>
+<h4>Floor &amp; terrain</h4>
+<p>Floor colour / roughness / metalness, texture with tile W/H and rotation, and a texture search.
+<b>Terrain</b>: Height (0–18) and Detail (1–8) with <b>Generate</b> / <b>Regenerate</b> / <b>Flatten</b>, plus a
+<b>sculpt brush</b> (Raise / Lower / Smooth, brush size, strength) painted directly onto the ground.</p>
+<h4>Walls &amp; arena</h4>
+<p><b>Show boundary walls</b> (off = invisible but still solid), wall material/texture controls, and
+<b>Arena size</b> (15–2000) — half-width of the playable square. Racing levels usually want 300+.</p>
+<h4>Audio</h4>
+<p>A looping music track plus per-event sound rows: grenade explosion, coin pickup, powerup pickup, jump,
+hit marker, enemy kill (with per-enemy-type overrides), player hurt, and the car set —
+engine loop, brake, skid, boost. A built-in <b>Freesound</b> browser searches free sounds; each pick is credited automatically.</p>
+<h3>Auto-generate</h3>
+<p>Procedurally builds a starting layout (cover, buildings, scatter) you then edit by hand. There's also an
+<b>AI scene builder</b> — describe a scene in a sentence and it searches and places matching models (works best with a Poly Pizza or Sketchfab key).</p>
+<h3>Zones</h3>
+<p>Paintable volumes: <b>Audio zones</b> (music/ambience changes inside), <b>Death zones</b> (instant kill — lava, pits),
+<b>Jump pads</b> (launch with Launch power), <b>Ladders</b> (climbable faces), and <b>Fire zones</b> (damage over time).</p>
+</section>
+
+<section id="tab-player">
+<h2><span class="tag">Editor reference</span>Player tab</h2>
+<p class="crumbs">Sections: <b>Handles</b> · <b>Object &amp; selection</b> · <b>Transform</b> · <b>Characters</b></p>
+<ul>
+  <li><b>Player avatar</b> — import any model as the third-person body; scroll in the preview to zoom.</li>
+  <li><b>Player start</b> — drag the blue marker to set where the run begins; <b>Facing°</b> (−180…180) sets the initial look direction.</li>
+  <li><b>Characters</b> — the roster of player &amp; enemy character models, with animation-slot mapping (clips are grouped by taxonomy: locomotion, combat, hits, deaths…). Characters picked here appear in multiplayer's CHARACTER menu too.</li>
+</ul>
+</section>
+
+<section id="tab-enemies">
+<h2><span class="tag">Editor reference</span>Enemies tab</h2>
+<p class="crumbs">Sections: <b>Enemies</b> · <b>Object &amp; selection</b> · <b>Transform</b> · <b>Enemy gunfire</b></p>
+<ul>
+  <li><b>Type picker</b> — choose an enemy type, import a model for it (<b>⤢ Auto-fit size</b> matches the collider), live preview.</li>
+  <li><b>Collider radius / height</b> — size the <i>damage</i> hit-cylinder only (0 = auto-fit). They no longer affect movement or spacing; toggle <b>Show colliders</b> to see the pink cylinders on live enemies. Offsets re-center off-pivot models.</li>
+  <li><b>Spawn markers</b> — place exact spawn points with patrol/hunt mode, patrol radius, detect radius, facing, a patrol route, and “Appears on wave N” (0 = every wave). No markers = classic random waves.</li>
+  <li><b>Enemy gunfire</b> — how enemy fire looks: bolt tip, streak, trail and muzzle flash.</li>
+</ul>
+</section>
+
+<section id="tab-gameplay">
+<h2><span class="tag">Editor reference</span>Gameplay tab</h2>
+<p class="crumbs">Sections: <b>Objectives &amp; rules</b> · <b>Pickups</b> · <b>Loot</b> · <b>Inventory items</b> · <b>Build menu</b> · <b>Cutscenes</b></p>
+<p><b>Objectives &amp; rules</b> is the heart of the level — the full reference is in
+<a href="#objectives">Objectives &amp; rules</a>. The other sections:</p>
+<ul>
+  <li><b>Pickups</b> — pads that grant ammo, health, weapons, power-ups, keys and items. See <a href="#pickups">Pickups &amp; inventory</a>.</li>
+  <li><b>Loot</b> — what enemies and loot boxes drop when destroyed; place loot boxes with a custom model, per-box contents, or random loot.</li>
+  <li><b>Inventory items</b> — define carryable items: name, type (<i>3D object</i> you can rotate/zoom in the inspector, or a <i>Journal / note</i> text page), description, model, scale, and what <i>using</i> the item does (use-type / key / amount / consume). Hand them out via pickup pads or signals-gated props.</li>
+  <li><b>Build menu</b> — the in-game radial Deploy menu (<kbd>Tab</kbd>): choose which shapes/models players can spawn while playing.</li>
+  <li><b>Cutscenes</b> — the camera-sequence editor. See <a href="#cutscenes">Cutscenes</a>.</li>
+</ul>
+</section>
+
+<section id="tab-weapons">
+<h2><span class="tag">Editor reference</span>Weapons tab</h2>
+<p class="crumbs">Sections: <b>Object &amp; selection</b> · <b>Transform</b> · <b>Effects</b></p>
+<p>Per weapon you can import a replacement <b>model</b> (with framing/transform for both hip and aim view),
+set its <b>shoot &amp; reload sounds</b>, override its <b>damage</b>, and disable the muzzle flash.
+<b>Effects</b> covers your own gunfire's look: <b>Impacts</b> (sparks, marks &amp; debris where shots land) and
+<b>Tracer</b> (the streak your fire leaves).</p>
+<h3>The arsenal</h3>
+<div class="tblwrap"><table>
+<tr><th>Weapon</th><th>Mag / reserve</th><th>Damage</th><th>Character</th></tr>
+<tr><td>RIFLE</td><td>30 / 90</td><td>12</td><td>Full-auto all-rounder</td></tr>
+<tr><td>SMG</td><td>40 / 120</td><td>8</td><td>Fast full-auto, close range</td></tr>
+<tr><td>SHOTGUN</td><td>6 / 24</td><td>9 × 8 pellets</td><td>Devastating up close</td></tr>
+<tr><td>SNIPER</td><td>5 / 20</td><td>95</td><td>Scoped (right-click), one-shot potential</td></tr>
+<tr><td>ROCKET</td><td>1 / 6</td><td>90 + splash</td><td>Projectile with a 7&nbsp;m blast radius</td></tr>
+<tr><td>CROWBAR</td><td>—</td><td>60</td><td>Melee, long reach</td></tr>
+<tr><td>FISTS</td><td>—</td><td>24</td><td>Always available; the <i>Start unarmed</i> loadout</td></tr>
+</table></div>
+<p><b>Attachments</b> are bought with credits at the in-game Weapon loadout screen — optic (Red Dot, 2× Scope),
+muzzle (Compensator, Suppressor), magazine (Extended, Drum), tactical (Laser Sight, Angled Grip).</p>
+</section>
+
+<section id="tab-hud">
+<h2><span class="tag">Editor reference</span>HUD tab</h2>
+<p class="crumbs">Sections: <b>HUD</b> · <b>Crosshair</b></p>
+<ul>
+  <li><b>Colours</b> — accent, health, score.</li>
+  <li><b>Fonts</b> — separate UI and display fonts from an 18-font set (Chakra Petch, Orbitron, Rajdhani, Press Start 2P, VT323, Russo One, Bungee, JetBrains Mono…).</li>
+  <li><b>Panels</b> — shape (<i>Angular</i> / <i>Rounded</i> / <i>Square</i>), background opacity, border.</li>
+  <li><b>Show in play</b> — toggle each element: minimap, score, wave counter, ammo, health, crosshair, kill feed, interact prompt, grab hint, objective banner, NPC dialogue.</li>
+  <li><b>Per-element layout</b> — pick an element and adjust its size, X/Y offset, opacity, font and tint, or drag the dashed outlines live. Reset per element or the whole HUD.</li>
+  <li><b>Crosshair</b> — style <b>✛ Classic · + Cross · • Dot · ◯ Circle · ⊤ T-shape · ∅ None</b>, with size, thickness, gap, center dot and colour.</li>
+</ul>
+</section>
+
+<section id="tab-save">
+<h2><span class="tag">Editor reference</span>Save tab</h2>
+<p class="crumbs">Sections: <b>Level file</b> · <b>Campaign</b></p>
+<ul>
+  <li><b>💾 Save</b> / <b>Clear save</b> — browser save slot; <b>Autosave while editing</b> keeps it fresh.</li>
+  <li><b>🔗 Copy share link</b> — the whole level compressed into a URL. See <a href="#sharing">Saving &amp; sharing</a>.</li>
+  <li><b>⬇ Export / ⬆ Import .json</b> — the level as a file you can back up, edit or send.</li>
+  <li><b>🗑 Delete all objects</b> — fresh scene (undoable).</li>
+  <li><b>Issues panel</b> — validation warnings (e.g. a race objective without a start line) so a broken level tells you why.</li>
+  <li><b>Campaign</b> — chain several levels into a sequence with carry-over loadout; export/import the campaign as one file.</li>
+</ul>
+</section>
+
+<section id="racing">
+<h2><span class="tag">Systems</span>Track builder &amp; racing</h2>
+<h3>Laying track</h3>
+<p>On the <b>Build tab</b>, the Track builder places snap-together road pieces. Press <kbd>T</kbd> for top-down view
+(scroll to zoom), then click pieces — each snaps onto the exit of the <b>selected</b> piece (select any piece to branch
+from there), or the last one placed. <kbd>Del</kbd> removes the selected piece.</p>
+<div class="tblwrap"><table>
+<tr><th>Piece</th><th>Geometry</th></tr>
+<tr><td>Start line</td><td>16&nbsp;m straight with the checkered band — the lap counter and grid. Every course needs exactly one.</td></tr>
+<tr><td>Straight</td><td>24&nbsp;m straight</td></tr>
+<tr><td>Short</td><td>8&nbsp;m straight — the fine-adjustment piece</td></tr>
+<tr><td>45° L / 45° R</td><td>Eighth-turn, 18&nbsp;m radius</td></tr>
+<tr><td>90° L / 90° R</td><td>Quarter-turn, 18&nbsp;m radius</td></tr>
+<tr><td>Bank L / Bank R</td><td>Quarter-turn with camber that eases in and out — flat at both ends, so it joins flat pieces seamlessly</td></tr>
+<tr><td>Ramp ↑ / Ramp ↓</td><td>24&nbsp;m straight rising/falling 6&nbsp;m — chain them for hills and jumps</td></tr>
+</table></div>
+<p>The road is 12&nbsp;m wide. All lengths are multiples of 8, so closed circuits line up exactly —
+and when the two ends nearly meet, <b>Close loop</b> bridges the remaining gap with one exactly-stretched straight.</p>
+<h3>Barrier walls</h3>
+<p>Per-piece (<b>Barrier walls</b> checkbox on the selected piece) or course-wide (<b>Walls: whole track</b> /
+<b>Walls: remove all</b>). Walls are a concrete base plus a clear catch-screen to car-body height; they follow banking and ramps.</p>
+<h3>The Race objective</h3>
+<p>Gameplay tab → Objective → <b>Race</b>. Settings: <b>Laps to win</b> (1–99), <b>AI rivals</b> (0–6; 0 = time trial),
+<b>Rival pace</b> (0.4–1.3 — 1.0 races flat-out). Rivals need a <i>closed</i> loop and a placed drivable vehicle to clone.
+On deploy you're auto-seated on the grid; throttle unlocks at the end of the 3-2-1-GO countdown.</p>
+<ul>
+  <li><b>Race HUD</b> — position (P&nbsp;n/N), lap counter, live lap time and session best, top-center.</li>
+  <li><b>Checkpoints</b> — every piece is a checkpoint; cutting the infield voids the lap with a toast.</li>
+  <li><b>Ghost lap</b> — your best lap replays as a translucent ghost; toggle with <kbd>G</kbd> while driving. It's stored per track shape, so editing the course retires the old ghost.</li>
+  <li><b>Contact</b> — cars collide: rear-end a rival to shunt them, side-swipe to knock them off line. They recover, and so can you.</li>
+  <li><b>Results</b> — per-lap times with the best starred; if a rival finishes first you'll see RACE LOST.</li>
+  <li><b>Multiplayer racing</b> — host a co-op room on a race level: standings sync live and the first to finish wins on every screen.</li>
+</ul>
+</section>
+
+<section id="vehicles">
+<h2><span class="tag">Systems</span>Vehicle tuning</h2>
+<p>Any prop can be a car: select it → <b>Object &amp; selection</b> → <b>Vehicle (drivable)</b> → enable.
+Readouts switch between km/h and mph. The full control set:</p>
+<div class="tblwrap"><table>
+<tr><th>Group</th><th>Controls</th></tr>
+<tr><td>Performance</td><td>Top speed (5–200) · Acceleration (1–80) · Turn rate °/s (20–400) · Reverse (2–120) · Boost × (1–4) with boost time &amp; cooldown</td></tr>
+<tr><td>Handling</td><td>Grip (1–12) · Cornering grip G (0.6–4, the understeer limit) · Suspension (0–2) · Body lean (0–2) · Launch (0–3) · Braking (0.2–3)</td></tr>
+<tr><td>Feel &amp; FX</td><td>Tyre smoke · Skid marks · Ram damage (0–300) · boost flames (size, density, position, colour)</td></tr>
+<tr><td>Fitting</td><td>Model facing° · Pivot m (put it near the rear axle for realistic steering; <b>Center pivot on model</b> auto-centers) · Ride height · Hit area (width/height/length + offsets)</td></tr>
+<tr><td>Camera</td><td>Chase or Cockpit default (<kbd>C</kbd> flips) · camera back/up distance · cockpit seat forward/up/side · follow-cam toggle (<kbd>V</kbd> flips)</td></tr>
+<tr><td>Lights</td><td>Headlights (<kbd>H</kbd>): beam colour, brightness, range, spread, position, start-on · Brake lights: colour, size, spread, position</td></tr>
+<tr><td>Wheels</td><td><b>Auto-detect wheels</b> or pick named parts · which wheels steer · spin axle X/Y/Z · steer angle (0–60°) · spin rate</td></tr>
+<tr><td>Misc</td><td>Enter radius (0.5–12&nbsp;m) · keep rolling on exit · animation-clip mapping (idle/forward/backward/turn) for models that ship clips</td></tr>
+</table></div>
+</section>
+
+<section id="signals">
+<h2><span class="tag">Systems</span>Signals, locks &amp; mechanisms</h2>
+<p>These three folds are BREACH's wiring: <b>Mechanism</b> makes a prop move, <b>Signals</b> connect cause to effect,
+and <b>Lock</b> gates it all behind keys. Together they build doors, elevators, traps, switch puzzles and win conditions.</p>
+<h3>Mechanism (the “xa” system)</h3>
+<p>Enable <b>Animated mechanism</b> on a prop, then set what it does — Move X/Y/Z (m), Rotate X/Y/Z (°), Scale X/Y/Z,
+a Pivot offset, and Duration (s):</p>
+<ul>
+  <li><b>Playback</b>: ⟳ Loop · ⇄ Ping-pong · → Once.</li>
+  <li><b>Trigger</b>: <i>Auto</i> (runs on level start) · <i>E&nbsp;Activate</i> (player presses <kbd>E</kbd>) · <i>Signals only</i> (waits for a signal).</li>
+  <li><b>Waypoint path</b> — add waypoints and the prop travels through them (overrides the Move offset): patrol platforms, cable cars, roaming hazards.</li>
+</ul>
+<h3>Signals</h3>
+<p>On the <b>Signals</b> fold, give props a <b>tag</b>, then add rules — <i>when</i> something happens to this prop,
+<i>do</i> something to a tagged target:</p>
+<div class="tblwrap"><table>
+<tr><th>When…</th><th>Meaning</th></tr>
+<tr><td>On destroyed</td><td>This prop is broken (needs Physics &amp; destruction health)</td></tr>
+<tr><td>On E</td><td>The player activates it with <kbd>E</kbd></td></tr>
+<tr><td>On object placed</td><td>A tagged object is set down touching it (contact plates, altars) — optionally only from a specific tag</td></tr>
+</table></div>
+<div class="tblwrap"><table>
+<tr><th>Do…</th><th>Effect on the target tag</th></tr>
+<tr><td>Toggle / Open / Close</td><td>Drive the target's mechanism</td></tr>
+<tr><td>Play anim</td><td>Play a named animation clip on the target</td></tr>
+<tr><td>Unlock</td><td>Remove the target's lock</td></tr>
+<tr><td>Win level</td><td>Mission complete (no target needed)</td></tr>
+<tr><td>Play cutscene</td><td>Run a named cutscene (no target needed)</td></tr>
+<tr><td>Set objective</td><td>Change the objective banner text mid-run</td></tr>
+<tr><td>Set checkpoint</td><td>Drop a respawn checkpoint here</td></tr>
+<tr><td>Play sound</td><td>Play a sound URL</td></tr>
+</table></div>
+<p>A rule can also require an <b>inventory item</b> — “On E, if the player carries the fuse, do Open”.</p>
+<h3>Locks &amp; keys</h3>
+<p>The <b>Lock</b> fold requires a key (red / blue / gold / green) before <kbd>E</kbd> works on the prop, with optional
+<b>Consume key on unlock</b>. Keys are granted by key pickup pads (one-shot — they don't respawn), appear as HUD chips,
+and can carry a custom display name set on the pickup.</p>
+</section>
+
+<section id="pickups">
+<h2><span class="tag">Systems</span>Pickups &amp; inventory</h2>
+<h3>Pickup pads</h3>
+<p>Gameplay tab → <b>Pickups</b>. Toggle spawning, the base disc, and the bounce/rotate animation; then place pads with
+<b>+ Place ahead</b> or edit each spot's kind, transform and (for items) which inventory item it grants. The kinds:</p>
+<div class="tblwrap"><table>
+<tr><th>Kind</th><th>Grants</th></tr>
+<tr><td>+Health</td><td>+50 integrity</td></tr>
+<tr><td>+Ammo / +Grenade</td><td>Reserve ammo / a grenade</td></tr>
+<tr><td>Rifle · SMG · Shotgun · Sniper · Rocket</td><td>That weapon</td></tr>
+<tr><td>2× Dmg · Speed · Shield</td><td>Timed power-up</td></tr>
+<tr><td>Red / Blue / Gold / Green Key</td><td>The matching key (one-shot; see <a href="#signals">Locks</a>)</td></tr>
+<tr><td>Inventory Item</td><td>A specific item from your catalog</td></tr>
+</table></div>
+<h3>Inventory</h3>
+<p>Items defined under <b>Inventory items</b> land in the player's inventory (<kbd>I</kbd>): 3D objects open in a
+rotate/zoom inspector, journals open as text pages. An item's <i>use</i> action can heal, grant ammo, or act as a
+consumable key for signal rules. In campaigns, inventory carries between levels.</p>
+<h3>Loot &amp; coins</h3>
+<p><b>Loot</b> sets what enemies and loot boxes drop. <b>Coins</b> (spawned on kills) are the in-run currency for the
+shop and weapon attachments.</p>
+</section>
+
+<section id="objectives">
+<h2><span class="tag">Systems</span>Objectives &amp; rules</h2>
+<h3>The eight objectives</h3>
+<div class="tblwrap"><table>
+<tr><th>Objective</th><th>Win condition</th></tr>
+<tr><td>Eliminate</td><td>Classic waves — survive and clear; <b>Win after N waves</b> (0 = endless), boss waves every N</td></tr>
+<tr><td>Survival</td><td>Stay alive until the timer runs out</td></tr>
+<tr><td>Extraction</td><td>Reach the beacon and hold it to extract</td></tr>
+<tr><td>Defend</td><td>Keep the target alive through the assault</td></tr>
+<tr><td>Destroy</td><td>Destroy the marked targets</td></tr>
+<tr><td>Escort</td><td>Protect the convoy to its destination</td></tr>
+<tr><td>Puzzle</td><td>No enemies ever spawn — you win via a <b>Win level</b> signal. Pairs well with <i>Start unarmed</i> + flashlight</td></tr>
+<tr><td>Race</td><td>First to the lap count — see <a href="#racing">Racing</a></td></tr>
+</table></div>
+<h3>Rules that shape the run</h3>
+<ul>
+  <li><b>Objective text</b> — the goal banner (players re-read it with <kbd>J</kbd>; signals can rewrite it mid-run).</li>
+  <li><b>Respawn at checkpoint</b> (solo) — death returns you to the last checkpoint instead of ending the run.</li>
+  <li><b>Wave mode</b> — Random, or Pre-built from your spawn markers (optionally single-pass, no respawns); between-wave upgrade cards in solo.</li>
+  <li><b>Fall damage</b> — on/off for player and AI, with safe speed and damage scaling. <b>Ragdoll on death</b>. <b>Crushing props</b> — heavy movers deal damage, with min speed.</li>
+  <li><b>Hands / unarmed</b> — start with fists only, optionally allow picking up weapons found in the level; the <b>flashlight</b> (brightness, cone, softness, range, colour).</li>
+  <li><b>Hit numbers</b> — floating damage numbers with font size and hit/kill colours.</li>
+  <li><b>Multiplayer spawn area</b> — confine MP spawns to a circle or drawn polygon.</li>
+  <li><b>End-screen messages</b> — custom victory and defeat text.</li>
+</ul>
+</section>
+
+<section id="cutscenes">
+<h2><span class="tag">Systems</span>Cutscenes</h2>
+<p>Gameplay tab → <b>Cutscenes</b>. A cutscene is a list of camera <b>shots</b>; each shot flies through its waypoints
+with cinematic controls. Cutscene <b>#1 is the intro</b> — toggle <b>Play intro flythrough on deploy</b> —
+and any cutscene can be fired mid-run by a signal's <i>Play cutscene</i> action.</p>
+<ul>
+  <li><b>Waypoints</b> — fly the editor camera somewhere and click <b>+ Add camera waypoint (current view)</b>; per-point Go&nbsp;to / Set / 👁&nbsp;look-target / clear / delete.</li>
+  <li><b>Lens</b> — start/end focal length (14–120&nbsp;mm) for slow zooms.</li>
+  <li><b>Rack focus</b> — focus start/end distance, blur start/end, focus band: real depth-of-field pulls.</li>
+  <li><b>Timing</b> — duration (1–120&nbsp;s), hold at start/end.</li>
+  <li><b>Dutch</b> — roll the camera up to ±60° across the shot.</li>
+  <li><b>Framing</b> — <i>Aim at player start</i> or <i>Look along path</i>.</li>
+  <li><b>Motion</b> — Smooth (ease in+out) / Constant speed / Ease in / Ease out, on a <i>Linear</i> or <i>Smooth (curved)</i> path.</li>
+  <li><b>Audio</b> — a per-cutscene sound URL, searchable on Freesound.</li>
+  <li><b>Preview</b> — ▶ the whole cutscene or just the current shot, with a live <b>camera preview window</b> while you edit.</li>
+</ul>
+</section>
+
+<section id="multiplayer">
+<h2><span class="tag">Systems</span>Multiplayer</h2>
+<p>Peer-to-peer over WebRTC — no accounts, no servers to rent. One player <b>hosts</b> and shares the 5-character
+room code (or joiners pick from the <b>Open games</b> list); everyone else <b>joins</b>, and the host's level transfers
+automatically — including custom models and sounds.</p>
+<h3>Modes</h3>
+<div class="tblwrap"><table>
+<tr><th>Mode</th><th>Rules</th></tr>
+<tr><td>CO-OP</td><td>Waves and objectives vs the AI, together — including <b>multiplayer racing</b> on race levels</td></tr>
+<tr><td>1 v 1 DUEL</td><td>First to N kills</td></tr>
+<tr><td>FREE-FOR-ALL</td><td>Everyone vs everyone (3+)</td></tr>
+<tr><td>TEAM DEATHMATCH</td><td>Red vs Blue, no friendly fire</td></tr>
+<tr><td>KING OF THE HILL</td><td>Hold the point — first to N points</td></tr>
+</table></div>
+<p>PvP hosts can add <b>AI bots</b> (0–7) at Recruit / Regular / Veteran / Elite difficulty, or <b>Fill with bots</b> from
+the lobby. Players pick a name, character and colour; the lobby shows ready-up state and the host starts the match.</p>
+<p>What syncs: player movement and state, enemies, kill credit, coins and pickups, prop animations and mechanisms,
+unlocks and keys, objective progress, race standings, chat, and the host's custom HUD/sounds.</p>
+</section>
+
+<section id="sharing">
+<h2><span class="tag">Systems</span>Saving &amp; sharing</h2>
+<ul>
+  <li><b>Browser save</b> — one save slot plus autosave while editing.</li>
+  <li><b>.json export/import</b> — the level (or a whole campaign) as a file. Everything serializes: props, track, vehicle tuning, rules, cutscenes, HUD, and the asset-credit list.</li>
+  <li><b>Share link</b> — the entire level compressed into a URL. Anyone who opens it plays it instantly. Models re-download from Poly Pizza / Sketchfab on the recipient's machine (Sketchfab models need the recipient's own free token).</li>
+  <li><b>Challenge links</b> — from the end screen, share the level <i>plus your score to beat</i>.</li>
+  <li><b>Campaigns</b> — chain levels with carry-over loadout and inventory; share as one file.</li>
+  <li><b>Credits</b> — every searched model, texture, HDRI and sound is attributed automatically and travels with the level; the Credits screen shows the per-level list.</li>
+</ul>
+</section>
+
+<section id="faq">
+<h2><span class="tag">Extras</span>Tips &amp; troubleshooting</h2>
+<ul>
+  <li><b>Sketchfab search says it needs a token</b> — it's a free API key: sketchfab.com → Settings → Password &amp; API. Paste it once in any search box; every other box switches to “Token saved · change”.</li>
+  <li><b>A shared level is missing models</b> — Sketchfab downloads require each player's own token; Poly Pizza models need none. Prefer Poly Pizza for levels you plan to share widely.</li>
+  <li><b>The game looks out of date</b> — hard-refresh (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) and check the build number bottom-left of the home menu.</li>
+  <li><b>Performance dips</b> — post-FX sheds passes automatically under load, but the biggest wins are yours: fewer point lights, smaller textures, fewer high-poly Sketchfab models. The adaptive resolution scaler kicks in on sustained drops.</li>
+  <li><b>My race rivals won't spawn</b> — rivals need a <i>closed</i> track loop (use <b>Close loop</b>) and a placed drivable vehicle to clone. The Save tab's issues panel calls this out.</li>
+  <li><b>A mechanism won't fire</b> — check its Trigger: <i>Signals only</i> waits for a signal; <i>E&nbsp;Activate</i> may be gated by a Lock. The signal's target tag must match exactly.</li>
+  <li><b>I can't find a setting</b> — sections remember their collapsed state; expand the section headers. Selection folds (Vehicle, Signals…) only appear with a prop selected on the Build tab.</li>
+</ul>
+</section>
+
+<footer>
+BREACH — created by Jarred Smith. Engine: three.js · Rapier physics · PeerJS networking.
+Free model &amp; sound sources: Poly Pizza, Sketchfab, Poly Haven, Freesound — see the in-game Credits screen for per-level attributions.
+· <a href="breach.html">Play</a>
+</footer>
+</main>
+</div>
+<script>
+(function(){
+  var f=document.getElementById('navFilter');
+  if(f) f.addEventListener('input', function(){
+    var q=f.value.trim().toLowerCase();
+    document.querySelectorAll('#nav a.lnk').forEach(function(a){
+      a.style.display=(!q || a.textContent.toLowerCase().indexOf(q)>=0)?'':'none';
+    });
+    document.querySelectorAll('#nav .grp').forEach(function(g){
+      var el=g.nextElementSibling, any=false;
+      while(el && el.classList && el.classList.contains('lnk')){ if(el.style.display!=='none') any=true; el=el.nextElementSibling; }
+      g.style.display=any?'':'none';
+    });
+  });
+  var m=document.getElementById('menuBtn'), nav=document.getElementById('nav');
+  if(m) m.addEventListener('click', function(){ nav.classList.toggle('open'); });
+  if(nav) nav.addEventListener('click', function(e){ if(e.target.classList && e.target.classList.contains('lnk')) nav.classList.remove('open'); });
+})();
+</script>
+</body>
+</html>

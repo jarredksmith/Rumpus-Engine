@@ -23,9 +23,9 @@ Everything — engine glue, editor, netcode, assets pipeline — ships in one `b
 | Combat | click shoot · `R` reload · `F` grenade · `V` melee |
 | World | `E` interact · `G` grab/carry/throw · `L` flashlight |
 | Driving | `E` enter/exit · `W/S` gas/brake · `A/D` steer · `Space` handbrake · `Shift` boost |
-| Editor | `P` open/play · `F` fly · `V` top view · `Ctrl+Z` undo |
+| Editor | `P` open/play · `F` fly · `T` top view · `Ctrl+Z` undo |
 
-Full guide: **Help & tutorials** on the home menu.
+Tutorials: **Help & tutorials** on the home menu. Full reference: **[Field manual](https://jarredksmith.github.io/breach/breach-help.html)** — every editor tab, section and slider documented.
 
 ## Tech
 

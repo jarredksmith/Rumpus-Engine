@@ -748,7 +748,7 @@
   <div class="menuBtns menuSub">
     <button id="loadCampBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>Load campaign</button>
     <button id="instrBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Instructions</button>
-    <button id="helpBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Field manual</button>
+    <button id="manualBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Field manual</button>
     <button id="helpBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Help &amp; tutorials</button>
     <button id="creditsBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>Credits</button>
     <button id="ctrlBtn" class="secBtn ghost"></button>
@@ -16604,7 +16604,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 849 · 2026-07-03';
+const BUILD_VERSION = 'build 850 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25305,9 +25305,9 @@ function renderEditorFields(){
       shapesHost.appendChild(srow);
       // build 828: TRACK BUILDER — snap-together race track pieces. Each new piece snaps to the exit of the
       // SELECTED track piece (select any piece to branch from it), or the last one placed. Best laid out in
-      // top view (V): click a piece, watch the course grow, Delete removes the selected piece.
+      // top view (T): click a piece, watch the course grow, Delete removes the selected piece.
       const tHead=document.createElement('div'); tHead.className='hint'; tHead.style.margin='9px 0 3px';
-      tHead.innerHTML='<b>Track builder</b> — pieces snap onto the <b>selected</b> piece’s exit (or the last one placed). Lay the course in <b>top view</b> (V); <b>Del</b> removes the selected piece. When the ends nearly meet, <b>Close loop</b> bridges the final gap exactly.';
+      tHead.innerHTML='<b>Track builder</b> — pieces snap onto the <b>selected</b> piece’s exit (or the last one placed). Lay the course in <b>top view</b> (T); <b>Del</b> removes the selected piece. When the ends nearly meet, <b>Close loop</b> bridges the final gap exactly.';
       shapesHost.appendChild(tHead);
       const tgrid=document.createElement('div'); tgrid.style.cssText='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;';
       for(const tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[tk];
@@ -26890,7 +26890,7 @@ function bindMenu(){
   const ib=document.getElementById('instrBtn'); if(ib) ib.onclick=()=>{ syncInstrControls(); openModal('instrModal'); };
   // First run: greet a cold visitor with the instructions once (device-aware), then never auto-open again.
   try{ if(!localStorage.getItem('breach_seen')){ localStorage.setItem('breach_seen','1'); syncInstrControls(); openModal('instrModal'); } }catch(e){}
-  const hb=document.getElementById('helpBtn'); if(hb) hb.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };   // full docs, hosted beside the game
+  const hb=document.getElementById('manualBtn'); if(hb) hb.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };   // build 850: the field manual ships beside the game again (it was a dead link — and this button shared helpBtn's id, so Help & tutorials had stolen its click)
   const crb=document.getElementById('creditsBtn'); if(crb) crb.onclick=openCredits;   // build 549: player-facing credits + license screen
   const hlb=document.getElementById('helpBtn'); if(hlb) hlb.onclick=openHelp;   // build 848: help & tutorials from the home menu
   const cb=document.getElementById('ctrlBtn');
@@ -27056,10 +27056,11 @@ const HELP_TOPICS = [
   +'<b style="color:#eafff7">Weapons</b> — per-weapon models, damage, sounds, effects.<br>'
   +'<b style="color:#eafff7">HUD</b> — colours, fonts, visibility, <b>crosshair</b>.<br>'
   +'<b style="color:#eafff7">Save</b> — level files, share links, campaigns.<br><br>'
-  +'<b>Keys</b>: <code>F</code> fly · <code>V</code> top-down view · <code>W/E/R</code> move/rotate/scale gizmo · <code>Del</code> delete · <code>Ctrl+Z</code> undo · <code>Alt+drag</code> duplicate · <code>P</code> play the level.' },
+  +'<b>Keys</b>: <code>F</code> fly · <code>T</code> top-down view · <code>1/2/3</code> move/rotate/scale gizmo (<code>4</code> uniform) · <code>Del</code> delete · <code>Ctrl+Z</code> undo · <code>Alt+drag</code> duplicate · <code>P</code> play the level.<br><br>'
+  +'The <b>?</b> button on the editor toolbar (and <b>Field manual</b> on the home menu) opens the full manual — every tab, section and slider documented.' },
  { id:'tut-race', title:'Tutorial: race circuit', example:'race', html:
    'Build a racing level in ~2 minutes:<br><br>'
-  +'1. <b>Build tab</b> → Track builder → press <code>V</code> for top-down view.<br>'
+  +'1. <b>Build tab</b> → Track builder → press <code>T</code> for top-down view.<br>'
   +'2. Click <b>Start line</b>, then chain pieces — each snaps to the last. Classic oval: Start → Short → 90°&nbsp;L → 90°&nbsp;L → Straight → 90°&nbsp;L → 90°&nbsp;L.<br>'
   +'3. Ends almost meeting? <b>Close loop</b> bridges the gap exactly.<br>'
   +'4. Click <b>Walls: whole track</b> so cars can\'t fall off.<br>'
@@ -27102,6 +27103,13 @@ function renderHelp(){
     b.style.cssText='text-align:left;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid '+(t.id===_helpSel?'rgba(var(--accent-rgb),0.55)':'#24323a')+';background:'+(t.id===_helpSel?'rgba(var(--accent-rgb),0.18)':'#0c1418')+';color:'+(t.id===_helpSel?'#eafff7':'#9fc4ba')+';';
     b.onclick=()=>{ _helpSel=t.id; renderHelp(); };
     nav.appendChild(b);
+  }
+  { // build 850: the deep-reference manual lives on its own page — link it from here too
+    const mb=document.createElement('button'); mb.textContent='Full field manual ↗';
+    mb.style.cssText='text-align:left;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px dashed #2c4a42;background:transparent;color:#9fc4ba;margin-top:8px;';
+    mb.title='Every tab, section and slider documented (opens in a new tab)';
+    mb.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };
+    nav.appendChild(mb);
   }
   const t=HELP_TOPICS.find(x=>x.id===_helpSel)||HELP_TOPICS[0];
   const h=document.createElement('div'); h.innerHTML=t.html; body.appendChild(h);
