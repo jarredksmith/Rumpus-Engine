@@ -16937,7 +16937,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 858 · 2026-07-03';
+const BUILD_VERSION = 'build 859 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19561,6 +19561,21 @@ function _raceSetup(){
                    z:o.position.z - mid.x*o.scale.x*s + mid.z*o.scale.z*c, r2:r*r });
   }
   _racePath=_raceBuildPath();                       // build 833: the racing line (null if the loop isn't closed)
+  // build 859: the PLAYER'S car grids too — authors park it anywhere (the help example used to leave it
+  // 6m off-road), but a race starts ON the grid: pole position, just ahead of the bot rows. Solo only
+  // (in MP every client gridding to the same slot would stack the field). The move is runtime-only —
+  // re-entering the editor snaps the car back to its authored spot via physHome.
+  if(_racePath && (typeof NET==='undefined' || NET.mode==='off')){
+    const car=propModels.find(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
+    if(car){
+      const pose=_racePathAt(_racePath.total-4, 2.7);
+      let _gy=(typeof surfaceTopAt==='function') ? surfaceTopAt(pose.x, pose.z, car, true, pose.y+6, true) : -Infinity;
+      car.position.set(pose.x, (_gy>-Infinity?_gy:pose.y)+0.15, pose.z);
+      car.rotation.set(0, pose.yaw - ((car.userData.vehicle.modelYaw||0)*RAD), 0);
+      car.userData.carSpeed=0; car.userData.carVelY=0; car.userData.carPitch=0; car.userData.carRoll=0;
+      car.updateMatrixWorld(true);
+    }
+  }
   if((gameCfg.raceBots|0)>0) _raceSpawnBots();      // build 833: grid the AI rivals
   _ghostLoad(); if(_ghostBest) _ghostEnsureObj();   // build 834: bring back this track's best-lap ghost
 }
@@ -26883,6 +26898,7 @@ function startGame(){
   if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false;
   if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   if(typeof selBoxes!=='undefined' && selBoxes) for(const b of selBoxes) b.visible=false;
+  if(typeof _vehArrow!=='undefined' && _vehArrow) _vehArrow.visible=false; if(typeof _vehPivotDot!=='undefined' && _vehPivotDot) _vehPivotDot.visible=false; if(typeof _carHitBox!=='undefined' && _carHitBox) _carHitBox.visible=false; if(typeof _jointGiz!=='undefined' && _jointGiz) _jointGiz.visible=false;   // build 859: toggleEditor hid these; the direct-close paths (Deploy / end of game) didn't — the arrow + orange hit box rode into play
   if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
   if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);
   if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
@@ -27039,6 +27055,7 @@ function endGame(){
   if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false;
   if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   if(typeof selBoxes!=='undefined' && selBoxes) for(const b of selBoxes) b.visible=false;
+  if(typeof _vehArrow!=='undefined' && _vehArrow) _vehArrow.visible=false; if(typeof _vehPivotDot!=='undefined' && _vehPivotDot) _vehPivotDot.visible=false; if(typeof _carHitBox!=='undefined' && _carHitBox) _carHitBox.visible=false; if(typeof _jointGiz!=='undefined' && _jointGiz) _jointGiz.visible=false;   // build 859: toggleEditor hid these; the direct-close paths (Deploy / end of game) didn't — the arrow + orange hit box rode into play
   if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
   if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false);
   if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
@@ -27631,8 +27648,8 @@ function _helpBuildExample(kind){
       let placed=null; spawnProp(k, t, (o)=>{ placed=o; trackApply(o, {w:1}); });
       pose=_trackExitPose({ position:{x:t[0],y:t[1],z:t[2]}, rotation:{y:t[4]}, scale:{x:1,y:1,z:1}, userData:{src:k} });
     }
-    // a simple block car beside the grid — swap it for a searched model any time
-    spawnProp('box', [12, 0, -6, 0, 0, 0, 1.9, 1.1, 4.4], (o)=>{
+    // a simple block car ON the start line (build 859: it sat 6m off-road) — swap it for a searched model any time
+    spawnProp('box', [2.5, 0, 1.5, 0, 0, 0, 1.9, 1.1, 4.4], (o)=>{
       if(typeof applyPropColor==='function') applyPropColor(o, 0xff4757); else o.userData.col=0xff4757;   // build 851: pass the hex — calling with none wiped col and painted the mesh black
       vehicleApply(o, { maxSpeed:36, accel:22, turn:150, reverse:9, grip:7, latG:2.6, boost:1.6, brakeLights:true, headlights:true });
     });

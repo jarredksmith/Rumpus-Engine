@@ -50,10 +50,10 @@ const env=new Function(`"use strict";
   let pose={x:0,y:0,z:0,yaw:0};
   const place=(k,sz)=>{ const o=_mkObj(); o.userData.src=k; o.position.x=pose.x; o.position.y=pose.y; o.position.z=pose.z; o.rotation.y=pose.yaw; if(sz) o.scale.z=sz; propModels.push(o); pose=_trackExitPose(o); return o; };
   place('track_start'); place('track_curve_l'); place('track_curve_l'); place('track_straight', 16/24); place('track_curve_l'); place('track_curve_l');   // build 837: the start line is 16 m, so the back straight scales to match
-  // the vehicle the rivals clone
-  propModels.push({ userData:{ vehicle:{ modelYaw:0, wheels:'' } }, scale:{x:1,y:1,z:1}, position:{x:0,y:0,z:0}, rotation:{y:0} });
+  // the vehicle the rivals clone (build 859: a full mock — _raceSetup now GRIDS it via position.set/rotation.set)
+  const _tmplCar=_mkObj(); _tmplCar.userData.vehicle={ modelYaw:0, wheels:'' }; propModels.push(_tmplCar);
   _raceSetup();
-  return { path:()=>_racePath, bots:_raceBots, inProps:(o)=>propModels.includes(o),
+  return { path:()=>_racePath, bots:_raceBots, inProps:(o)=>propModels.includes(o), carPos:()=>_tmplCar.position,
     tick:(dt)=>_raceBotsTick(dt),
     setCount:(t)=>{ _raceCountT=t; },
     over:()=>_raceOver, ended:()=>ended,
@@ -64,6 +64,7 @@ const env=new Function(`"use strict";
 // 1. the loop closes: a racing line exists with the right length (12+12 straights + 4 quarter-circles of r18)
 const P=env.path();
 assert(P, 'the closed course yields a racing line');
+{ const c=env.carPos(); assert(Math.hypot(c.x, c.z) > 0.5, 'build 859: the PLAYER car gridded onto the racing line (moved off its parked spot)'); }
 near(P.total, 32 + 4*(Math.PI/2*18), 1.5, 'path length = both 16 m straights + four quarter-circle arcs');
 
 // 2. corner speeds are lower than straight speeds, and braking zones ramp down before corners
