@@ -16604,7 +16604,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 848 · 2026-07-03';
+const BUILD_VERSION = 'build 849 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27074,16 +27074,16 @@ const HELP_TOPICS = [
   +'4. <b>Gameplay tab</b> → Objective <b>Eliminate</b>, set <b>Win after N waves</b>.<br>'
   +'5. <b>Gameplay → Pickups</b> → drop ammo + health pads where fights will happen.<br>'
   +'6. Press <code>P</code> and survive.' },
- { id:'tut-puzzle', title:'Tutorial: puzzle room', html:
-   'An adventure room with a locked door — the signals system in miniature:<br><br>'
-  +'1. Build a room from Boxes (walls + a doorway). Place a Box as the <b>door</b>.<br>'
-  +'2. Select the door → <b>Lock</b> fold → set a key id (e.g. <code>gold</code>).<br>'
-  +'3. <b>Gameplay → Inventory items</b> → define a <code>gold</code> key item with a model.<br>'
-  +'4. Place the key somewhere hidden as a pickup.<br>'
-  +'5. Select the door → <b>Signals</b> → on <b>unlock</b> → do <b>Open</b> (or play an animation).<br>'
-  +'6. <b>Gameplay tab</b> → Objective <b>Puzzle</b> (no enemies) and write a goal text.<br>'
-  +'7. Optional: an NPC with <b>Dialogue</b> that hints where the key is.<br>'
-  +'8. <code>P</code> to play: find key → unlock → door opens. Chain more signals for bigger puzzles.' },
+ { id:'tut-puzzle', title:'Tutorial: puzzle room', example:'puzzle', html:
+   'A locked vault, a hidden key, and a win condition — the adventure systems in miniature:<br><br>'
+  +'1. Build a vault from Boxes (three walls + two front segments, leaving a doorway). Place a Box as the <b>door</b>.<br>'
+  +'2. Select the door → <b>Lock</b> fold → key <code>gold</code>.<br>'
+  +'3. Door → <b>Mechanism</b> → Trigger <b>E&nbsp;Activate</b>, Move&nbsp;Y ≈ 3.4 — with a key, <code>E</code> unlocks it and slides it up.<br>'
+  +'4. <b>Gameplay → Pickups</b> → add a <b>Gold key</b> pad and hide it behind cover.<br>'
+  +'5. Place a prize inside the vault → <b>Mechanism</b> (E&nbsp;Activate, Once) → <b>Signals</b> → when <b>Interacted</b> → do <b>Win level</b>.<br>'
+  +'6. <b>Gameplay tab</b> → Objective <b>Puzzle</b> (no enemies) + a goal text.<br>'
+  +'7. Optional: an NPC with <b>Dialogue</b> lines that hint where the key is.<br>'
+  +'8. <code>P</code>: find key → unlock the vault → claim the prize → MISSION COMPLETE. Chain more signals for bigger puzzles.' },
  { id:'share', title:'Save & share', html:
    '<b style="color:#eafff7">Save tab</b>:<br><br>'
   +'· <b>Save/load .json</b> — your level as a file (also autosaved in the browser).<br>'
@@ -27147,6 +27147,35 @@ function _helpBuildExample(kind){
     for(let i=0;i<5;i++){ const a=i/5*Math.PI*2; spawnProp('pillar', [Math.cos(a)*38, 0, Math.sin(a)*38, 0, 0, 0, 1]); }
     gameCfg.objective='eliminate'; gameCfg.mode='random'; gameCfg.winWaves=3;
     if(typeof flashToast==='function') flashToast('Arena loaded — press P to fight (win after 3 waves)');
+  } else if(kind==='puzzle'){
+    // build 849: the vault — a locked door (E unlocks + slides up with the gold key), the key hidden behind
+    // crates, a Curator NPC who hints, and a prize inside whose 'interacted' signal wins the level.
+    const _tint=(o,c)=>{ o.userData.col=c; if(typeof applyPropColor==='function') applyPropColor(o); };
+    const wall=(t)=>spawnProp('box', t, (o)=>_tint(o, 0x2c3540));
+    wall([0, 0, -26, 0, 0, 0, 10, 4, 0.8]);                      // back
+    wall([-5, 0, -21.8, 0, 0, 0, 0.8, 4, 8.8]);                  // left
+    wall([ 5, 0, -21.8, 0, 0, 0, 0.8, 4, 8.8]);                  // right
+    wall([-3.4, 0, -18, 0, 0, 0, 3.2, 4, 0.8]);                  // front, beside the doorway
+    wall([ 3.4, 0, -18, 0, 0, 0, 3.2, 4, 0.8]);
+    spawnProp('box', [0, 0, -18, 0, 0, 0, 3.6, 3.6, 0.7], (o)=>{ _tint(o, 0x8a3232);   // the vault door
+      o.userData.lockId='gold';
+      xaApply(o, { trig:'interact', mode:'once', my:3.4, dur:1.4 });
+    });
+    spawnProp('cone', [0, 0, -23, 0, 0, 0, 1, 1.8, 1], (o)=>{ _tint(o, 0xffd166);      // the prize
+      xaApply(o, { trig:'interact', mode:'once', my:0.8, dur:0.8 });
+      o.userData.signals=[{ when:'interacted', do:'win' }];
+    });
+    spawnProp('cone', [5, 0, -12, 0, -0.6, 0, 0.9, 1.7, 0.9], (o)=>{ _tint(o, 0x9be15a);   // the Curator
+      o.userData.npcName='Curator';
+      o.userData.dialogue=['The vault answers only to the gold key.','I last saw it glinting behind the crates, east of here.'];
+    });
+    spawnProp('box', [17.5, 0, 7, 0, 0.4, 0, 2.6, 2, 2.6]);      // the crates hiding the key
+    spawnProp('box', [20.5, 0, 9, 0, -0.3, 0, 2.2, 1.6, 2.2]);
+    spawnProp('box', [-12, 0, 4, 0, 0.7, 0, 2.8, 2.1, 2.8]);     // decoy cover
+    pickupSpots.push({ x:19, z:10.5, kind:'key_gold' });
+    if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
+    gameCfg.objective='puzzle'; gameCfg.goalText='Recover the idol from the locked vault.'; gameCfg.winText='The idol is yours. The Curator nods approvingly.';
+    if(typeof flashToast==='function') flashToast('Puzzle room loaded — press P: find the key, open the vault, claim the idol');
   }
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
   if(typeof renderEditorFields==='function') renderEditorFields();
