@@ -43,6 +43,11 @@ export function validateSubmission(parsed, issueNumber){
   catch(e){ return { ok:false, reason:'the level JSON does not parse ('+e.message.slice(0,120)+') — paste it exactly as the game copied it' }; }
   if(!level || typeof level!=='object' || Array.isArray(level) || (!level.props && !level.world))
     return { ok:false, reason:'that JSON is not a BREACH level (no `props`/`world` keys) — use Submit to community library or Export .json' };
+  // build 854: the game embeds a screenshot as `thumb` — lift it into the gallery index and strip it
+  // from the level file itself (players fetch the index constantly; the level only on Play).
+  const thumb = (typeof level.thumb==='string' && /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(level.thumb) && level.thumb.length <= 100_000) ? level.thumb : '';
+  delete level.thumb;
+  const sketchfab = JSON.stringify(level).includes('sketchfab:');   // those models need the player's own token
   const slug = (name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40) || 'level') + '-' + issueNumber;
   const entry = {
     file: slug + '.json',
@@ -50,6 +55,8 @@ export function validateSubmission(parsed, issueNumber){
     ...(desc ? { desc } : {}),
     objective: (level.game && level.game.objective) || 'eliminate',
     date: new Date().toISOString().slice(0,10),
+    ...(sketchfab ? { sketchfab: true } : {}),
+    ...(thumb ? { thumb } : {}),
   };
   return { ok:true, entry, level };
 }

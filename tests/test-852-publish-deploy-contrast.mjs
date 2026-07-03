@@ -19,7 +19,7 @@ assert(/if: steps\.pub\.outputs\.ok == 'true'\n        env:\n          GH_TOKEN/
 // 2 — no unstyled "hint" text remains in the community modal (inline colors win over any theme)
 assert(!/class="hint"/.test(html.match(/id="communityModal"[\s\S]{0,900}/)[0]), 'the modal markup carries no editor-scoped hint class');
 assert(/id="commNote" style="[^"]*color:#cfe9df/.test(html), 'the intro note has an explicit bright color');
-const gallery = src.match(/async function renderCommunity[\s\S]{0,2600}/)[0];
+const gallery = src.match(/async function renderCommunity[\s\S]{0,6000}/)[0];   // build 854 grew the gallery (thumbs/badge/filters)
 assert(!/class="hint"/.test(gallery), 'loading/error/empty states are inline-styled, not hint-classed');
 assert(/color:#cfe9df/.test(gallery) && /color:#ffc9a3/.test(gallery), 'states use bright body/error colors');
 assert(/color:#a9d3c6/.test(gallery) && /color:#cfe9df;font-size:12px/.test(gallery), 'row meta + description brightened');

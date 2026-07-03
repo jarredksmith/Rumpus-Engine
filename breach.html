@@ -16615,7 +16615,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 853 · 2026-07-03';
+const BUILD_VERSION = 'build 854 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23089,10 +23089,12 @@ function buildEditorPanel(){
   };
   // build 851: submit the current level to the community library — clipboard carries the JSON
   // (far too big for a URL), the GitHub issue form receives the paste, an Action publishes on approval.
+  // build 854: a small screenshot of the current view rides along as `thumb` — the publish Action lifts
+  // it into the gallery index (and strips it from the level file), so entries get a real preview image.
   const submitBtn = p.querySelector('#edSubmitComm');
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
-    let str; try{ str = JSON.stringify(serializeLevel()); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
+    let str; try{ const lvl = serializeLevel(); const th = _commCaptureThumb(); if(th) lvl.thumb = th; str = JSON.stringify(lvl); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
     let copied = false;
     try{ await navigator.clipboard.writeText(str); copied = true; }
     catch(e){ try{ const ta=document.createElement('textarea'); ta.value=str; document.body.appendChild(ta); ta.select(); copied=document.execCommand('copy'); ta.remove(); }catch(_){} }
@@ -27166,6 +27168,37 @@ function openHelp(){ renderHelp(); openModal('helpModal'); }
 const COMM_INDEX_URL = 'community/index.json';
 const COMM_SUBMIT_URL = 'https://github.com/jarredksmith/breach/issues/new?template=submit-level.yml&title=' + encodeURIComponent('[Level] ');
 function openCommunity(){ openModal('communityModal'); renderCommunity(); }
+// build 854: a small JPEG of the current view, captured through a render target (reliable regardless of
+// preserveDrawingBuffer — same technique as the cine preview window). Returns a data URI, or '' on any failure.
+function _commCaptureThumb(){
+  try{
+    if(typeof renderer==='undefined' || !renderer || typeof scene==='undefined') return '';
+    const RW=256, RH=144;
+    const cam = (typeof activeCam==='function' && activeCam()) || (typeof camera!=='undefined' ? camera : null);
+    if(!cam) return '';
+    const rt=new THREE.WebGLRenderTarget(RW,RH,{ minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:THREE.UnsignedByteType });
+    const pix=new Uint8Array(RW*RH*4);
+    const hid=[]; for(const o of [(typeof gizmo!=='undefined'?gizmo:null), (typeof selBox!=='undefined'?selBox:null)]){ if(o && o.visible){ o.visible=false; hid.push(o); } }
+    const pa=cam.aspect; cam.aspect=RW/RH; cam.updateProjectionMatrix();
+    renderer.setScissorTest(false);
+    renderer.setRenderTarget(rt); renderer.setViewport(0,0,RW,RH); renderer.render(scene, cam);
+    renderer.readRenderTargetPixels(rt, 0,0, RW,RH, pix);
+    renderer.setRenderTarget(null);
+    cam.aspect=pa; cam.updateProjectionMatrix();
+    const sz=renderer.getSize(new THREE.Vector2());
+    renderer.setViewport(0,0,sz.x,sz.y); renderer.setScissor(0,0,sz.x,sz.y);   // restore the full-screen viewport (build 663 lesson)
+    for(const o of hid) o.visible=true;
+    rt.dispose();
+    const cv=document.createElement('canvas'); cv.width=RW; cv.height=RH;
+    const ctx=cv.getContext('2d'); const img=ctx.createImageData(RW,RH);
+    const rowB=RW*4;   // GL origin is bottom-left -> flip rows
+    for(let y=0;y<RH;y++){ const s=(RH-1-y)*rowB, d=y*rowB; img.data.set(pix.subarray(s, s+rowB), d); }
+    ctx.putImageData(img, 0, 0);
+    const uri=cv.toDataURL('image/jpeg', 0.55);
+    return (uri && uri.length<80000) ? uri : '';   // stay well under the publish pipeline's cap
+  }catch(e){ return ''; }
+}
+let _commFilter='all';
 async function renderCommunity(){
   const list=document.getElementById('commList'); if(!list) return;
   list.innerHTML='<div style="color:#cfe9df;font-size:13px">Loading the library…</div>';
@@ -27181,13 +27214,46 @@ async function renderCommunity(){
   const levels=(idx && Array.isArray(idx.levels)) ? idx.levels : [];
   if(!levels.length){ list.innerHTML='<div style="color:#cfe9df;font-size:13px;line-height:1.5">The library is empty — be the first: build a level, then Save tab → Submit to community library.</div>'; return; }
   list.innerHTML='';
-  for(const L of levels){
+  // objective filter chips — only shown when the library spans more than one objective
+  const kinds=[...new Set(levels.map(L=>String(L.objective||'other')))];
+  if(kinds.length>1){
+    if(_commFilter!=='all' && !kinds.includes(_commFilter)) _commFilter='all';
+    const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin:0 0 4px;';
+    for(const k of ['all', ...kinds]){
+      const b=document.createElement('button'); b.textContent=(k==='all'?'All':k.toUpperCase());
+      const on=(_commFilter===k);
+      b.style.cssText='padding:4px 11px;font-size:11px;letter-spacing:0.5px;border-radius:12px;cursor:pointer;border:1px solid '+(on?'rgba(var(--accent-rgb),0.55)':'#2a3a42')+';background:'+(on?'rgba(var(--accent-rgb),0.22)':'#0c1418')+';color:'+(on?'#eafff7':'#a9d3c6')+';';
+      b.onclick=()=>{ _commFilter=k; renderCommunity(); };
+      bar.appendChild(b);
+    }
+    list.appendChild(bar);
+  }
+  const shown=levels.filter(L=>_commFilter==='all' || String(L.objective||'other')===_commFilter);
+  if(!shown.length){ const d=document.createElement('div'); d.style.cssText='color:#cfe9df;font-size:13px;'; d.textContent='No '+_commFilter+' levels yet.'; list.appendChild(d); }
+  for(const L of shown){
     const row=document.createElement('div');
-    row.style.cssText='border:1px solid #24323a;border-radius:8px;padding:9px 12px;background:#0c1418;display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
-    const info=document.createElement('div'); info.style.cssText='flex:1;min-width:180px;';
+    row.style.cssText='border:1px solid #24323a;border-radius:8px;padding:9px 12px;background:#0c1418;display:flex;align-items:center;gap:12px;flex-wrap:wrap;';
+    // thumbnail (captured at submit time) — or a monogram placeholder for entries without one
+    if(L.thumb && /^data:image\/(jpeg|png);base64,/.test(L.thumb)){
+      const im=document.createElement('img'); im.src=L.thumb; im.alt=''; im.loading='lazy';
+      im.style.cssText='width:96px;height:54px;object-fit:cover;border-radius:6px;border:1px solid #24323a;flex:none;';
+      row.appendChild(im);
+    } else {
+      const ph=document.createElement('div');
+      ph.style.cssText='width:96px;height:54px;border-radius:6px;border:1px solid #24323a;flex:none;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#101c22,#0c1418);color:rgba(var(--accent-rgb),0.75);font-weight:800;font-size:20px;letter-spacing:1px;';
+      ph.textContent=(L.name||'?').trim().charAt(0).toUpperCase();
+      row.appendChild(ph);
+    }
+    const info=document.createElement('div'); info.style.cssText='flex:1;min-width:170px;';
     const nm=document.createElement('div'); nm.style.cssText='color:#eafff7;font-weight:700;font-size:14px;'; nm.textContent=L.name||L.file;
     const meta=document.createElement('div'); meta.style.cssText='color:#a9d3c6;font-size:11px;margin-top:1px;letter-spacing:0.5px;';
     meta.textContent=(L.objective?String(L.objective).toUpperCase()+' · ':'')+'by '+(L.author||'anonymous')+(L.date?' · '+L.date:'');
+    if(L.sketchfab){
+      const bd=document.createElement('span'); bd.textContent='needs Sketchfab token';
+      bd.title='This level uses Sketchfab models — they download with your own free API token (any search box, one time).';
+      bd.style.cssText='margin-left:8px;padding:1px 7px;border-radius:9px;font-size:10px;letter-spacing:0.4px;border:1px solid #6b5a2c;background:#241f10;color:#ffd479;vertical-align:1px;';
+      meta.appendChild(bd);
+    }
     const ds=document.createElement('div'); ds.style.cssText='color:#cfe9df;font-size:12px;margin-top:3px;line-height:1.45;'; ds.textContent=L.desc||'';
     info.appendChild(nm); info.appendChild(meta); if(L.desc) info.appendChild(ds);
     const mkBtn=(txt,primary,fn)=>{ const b=document.createElement('button'); b.textContent=txt;
