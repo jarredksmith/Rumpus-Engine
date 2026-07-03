@@ -16809,7 +16809,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 856 · 2026-07-03';
+const BUILD_VERSION = 'build 857 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27447,14 +27447,16 @@ async function renderCommunity(){
     const nm=document.createElement('div'); nm.style.cssText='color:#eafff7;font-weight:700;font-size:14px;'; nm.textContent=L.name||L.file;
     const meta=document.createElement('div'); meta.style.cssText='color:#a9d3c6;font-size:11px;margin-top:1px;letter-spacing:0.5px;';
     meta.textContent=(L.objective?String(L.objective).toUpperCase()+' · ':'')+'by '+(L.author||'anonymous')+(L.date?' · '+L.date:'');
-    if(L.sketchfab){
-      const bd=document.createElement('span'); bd.textContent='needs Sketchfab token';
-      bd.title='This level uses Sketchfab models — they download with your own free API token (any search box, one time).';
-      bd.style.cssText='margin-left:8px;padding:1px 7px;border-radius:9px;font-size:10px;letter-spacing:0.4px;border:1px solid #6b5a2c;background:#241f10;color:#ffd479;vertical-align:1px;';
-      meta.appendChild(bd);
+    let bd=null;
+    if(L.sketchfab){   // build 857: its own row (inline it wrapped mid-badge on narrow cards), nowrap so it can never break internally
+      bd=document.createElement('div');
+      const chip=document.createElement('span'); chip.textContent='needs Sketchfab token';
+      chip.title='This level uses Sketchfab models — they download with your own free API token (any search box, one time).';
+      chip.style.cssText='display:inline-block;white-space:nowrap;padding:1px 7px;border-radius:9px;font-size:10px;letter-spacing:0.4px;border:1px solid #6b5a2c;background:#241f10;color:#ffd479;';
+      bd.style.cssText='margin-top:3px;'; bd.appendChild(chip);
     }
     const ds=document.createElement('div'); ds.style.cssText='color:#cfe9df;font-size:12px;margin-top:3px;line-height:1.45;'; ds.textContent=L.desc||'';
-    info.appendChild(nm); info.appendChild(meta); if(L.desc) info.appendChild(ds);
+    info.appendChild(nm); info.appendChild(meta); if(bd) info.appendChild(bd); if(L.desc) info.appendChild(ds);
     const mkBtn=(txt,primary,fn)=>{ const b=document.createElement('button'); b.textContent=txt;
       b.style.cssText='padding:7px 12px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid '+(primary?'rgba(var(--accent-rgb),0.55)':'#2a3a42')+';background:'+(primary?'rgba(var(--accent-rgb),0.2)':'#101c22')+';color:'+(primary?'#eafff7':'#9fc4ba')+';';
       b.onclick=fn; return b; };
