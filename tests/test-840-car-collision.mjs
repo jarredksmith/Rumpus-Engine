@@ -9,9 +9,10 @@ const src = gameSource();
 // --- wiring pins ---
 {
   const du=extractFunction('driveUpdate');
-  assert(/if\(mvx!==0 && _raceCarBlock\(o\.position\.x\+mvx, o\.position\.z, o\.position\.x, o\.position\.z, o\)\) mvx=0;/.test(du), 'X moves test against cars');
-  assert(/if\(mvz!==0 && _raceCarBlock\(o\.position\.x, o\.position\.z\+mvz, o\.position\.x, o\.position\.z, o\)\) mvz=0;/.test(du), 'Z moves test against cars');
-  assert(/if\(mvx!==0 && mvz!==0 && _raceCarBlock\(o\.position\.x\+mvx, o\.position\.z\+mvz, o\.position\.x, o\.position\.z, o\)\)\{ mvx=0; mvz=0; \}/.test(du), 'diagonals cannot thread a car');
+  assert(/if\(mvx!==0 && _raceCarBlock\(o\.position\.x\+mvx, o\.position\.z, o\.position\.x, o\.position\.z, o\)\)\{ mvx=0; _hitSt=_hitSt\|\|_raceHitBot; \}/.test(du), 'X moves test against cars (and remember who was hit)');
+  assert(/if\(mvz!==0 && _raceCarBlock\(o\.position\.x, o\.position\.z\+mvz, o\.position\.x, o\.position\.z, o\)\)\{ mvz=0; _hitSt=_hitSt\|\|_raceHitBot; \}/.test(du), 'Z moves test against cars');
+  assert(/if\(mvx!==0 && mvz!==0 && _raceCarBlock\(o\.position\.x\+mvx, o\.position\.z\+mvz, o\.position\.x, o\.position\.z, o\)\)\{ mvx=0; mvz=0; _hitSt=_hitSt\|\|_raceHitBot; \}/.test(du), 'diagonals cannot thread a car');
+  assert(/if\(_hitSt\) _raceBotBump\(_hitSt, r\.speed, o\);/.test(du), 'a blocked move transfers the impulse to the rival (build 841)');
 }
 assert(/tgt=Math\.min\(tgt, _raceBotObstacle\(st, o, \(st\.prevYaw!=null\?st\.prevYaw:o\.rotation\.y\+st\.mYaw\)\)\);/.test(extractFunction('_raceBotsTick')), 'rivals brake behind traffic');
 assert(/st\.hw=Math\.min\(_hx,_hz\); st\.hl=Math\.max\(_hx,_hz\);/.test(extractFunction('_raceSpawnBots')), 'rival contact footprints measured at spawn');
@@ -24,8 +25,9 @@ const env=new Function(`"use strict";
   const _raceBots=[{ obj:{ position:{x:0,y:0,z:-10}, rotation:{y:0} }, prevYaw:0, mYaw:0, hw:1, hl:2.4, v:8 }];
   const drivingCar={ position:{x:0,y:0,z:0}, userData:{ carSpeed:12 } };
   const _carFoot=(o)=>({ hw:1, hd:2.4, hh:0.6, ox:0, oz:0, oy:0 });
+  let _raceHitBot=null;   // build 841: the block function stashes the struck rival here
 `+extractFunction('_raceCarInside')+'\n'+extractFunction('_raceCarBlock')+'\n'+extractFunction('_raceBotObstacle')+`
-  return { block:(nx,nz,cx,cz)=>_raceCarBlock(nx,nz,cx,cz,{}),
+  return { block:(nx,nz,cx,cz)=>_raceCarBlock(nx,nz,cx,cz,{ userData:{carYaw:0}, rotation:{y:0}, position:{x:cx,y:0,z:cz} }),
     inside:_raceCarInside,
     obstacle:(st,o,yaw)=>_raceBotObstacle(st,o,yaw),
     bots:_raceBots, props:propModels };

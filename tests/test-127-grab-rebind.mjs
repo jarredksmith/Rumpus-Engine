@@ -4,7 +4,7 @@ import { gameSource, extractFunction, done, assert } from './harness.mjs';
 const src = gameSource();
 
 assert(/function grabAction\(\)\{ if\(heldProp\) releaseHeld\(\); else tryGrabProp\(\);/.test(src), 'dedicated grabAction (grab/drop)');
-assert(/if\(e\.code==='KeyG'\) grabAction\(\);/.test(src), 'G grabs / drops');
+assert(/if\(e\.code==='KeyG'\)\{ if\(drivingCar && typeof _ghostToggle==='function'[^\n]*else grabAction\(\); \}/.test(src), 'G grabs / drops on foot (build 841: in a race car it toggles the ghost)');
 assert(/if\(e\.code==='KeyF'\) throwGrenade\(\);/.test(src), 'grenade relocated to F');
 assert(!/if\(e\.code==='KeyG'\) throwGrenade\(\)/.test(src), 'G no longer throws a grenade');
 assert(/else if\(e\.button===1\)\{ e\.preventDefault\(\); grabAction\(\); \}/.test(src), 'middle-mouse (scroll-wheel push) grabs / drops');

@@ -9351,7 +9351,7 @@ addEventListener('keydown', e=>{
   if(e.code==='KeyR') reload();
   if(e.code==='KeyV') meleeAttack();
   if(e.code==='KeyE') interact();
-  if(e.code==='KeyG') grabAction();   // grab / drop a prop (grenade moved to F)
+  if(e.code==='KeyG'){ if(drivingCar && typeof _ghostToggle==='function' && typeof objectiveActive==='function' && objectiveActive()==='race' && !e.repeat) _ghostToggle(); else grabAction(); }   // build 841: G in a race car toggles the ghost; on foot it's still grab/drop
   if(e.code==='KeyL' && !e.repeat) toggleFlashlight();   // build 672: held flashlight (when the level enables it)
   if(e.code==='KeyJ' && !e.repeat && _curGoal) showGoalBanner(_curGoal);   // build 692: recall the current objective
   if(e.code==='KeyF') throwGrenade();
@@ -15756,9 +15756,11 @@ function driveUpdate(dt){
   // build 840: cars are SOLID in a race — rivals and parked vehicles block like walls (axis-separated so you
   // scrape and slide along them), and the glancing deflection + bonk below price the contact.
   if(typeof _raceCarBlock==='function' && (mvx!==0 || mvz!==0)){
-    if(mvx!==0 && _raceCarBlock(o.position.x+mvx, o.position.z, o.position.x, o.position.z, o)) mvx=0;
-    if(mvz!==0 && _raceCarBlock(o.position.x, o.position.z+mvz, o.position.x, o.position.z, o)) mvz=0;
-    if(mvx!==0 && mvz!==0 && _raceCarBlock(o.position.x+mvx, o.position.z+mvz, o.position.x, o.position.z, o)){ mvx=0; mvz=0; }
+    let _hitSt=null;
+    if(mvx!==0 && _raceCarBlock(o.position.x+mvx, o.position.z, o.position.x, o.position.z, o)){ mvx=0; _hitSt=_hitSt||_raceHitBot; }
+    if(mvz!==0 && _raceCarBlock(o.position.x, o.position.z+mvz, o.position.x, o.position.z, o)){ mvz=0; _hitSt=_hitSt||_raceHitBot; }
+    if(mvx!==0 && mvz!==0 && _raceCarBlock(o.position.x+mvx, o.position.z+mvz, o.position.x, o.position.z, o)){ mvx=0; mvz=0; _hitSt=_hitSt||_raceHitBot; }
+    if(_hitSt) _raceBotBump(_hitSt, r.speed, o);   // build 841: the rival takes the hit — shunted forward or knocked off line
   }
   const _imp0=Math.abs(r.speed);   // speed carried into the wall (for impact feedback)
   // build 822: GLANCING DEFLECTION — a wall contact scrubs speed by how much of the travel it killed. A shallow scrape
@@ -16585,7 +16587,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 840 · 2026-07-03';
+const BUILD_VERSION = 'build 841 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18970,6 +18972,7 @@ function _raceBotsTick(dt){
   const total=Math.max(1, gameCfg.raceLaps||3);
   for(const st of _raceBots){
     const o=st.obj; if(!o) continue;
+    if(st._bumpCd>0) st._bumpCd-=dt;
     if(_raceCountT>1){ st.v=0; }                                  // held on the grid until GO
     else{
       const look=6 + st.v*0.55;                                    // look ahead further at speed
@@ -18978,13 +18981,22 @@ function _raceBotsTick(dt){
       const d=tgt-st.v, rate=(d>0 ? _racePath.accel : _racePath.brk);   // build 839: the car's own throttle + brakes
       st.v=Math.max(0, st.v + Math.max(-rate*dt, Math.min(rate*dt, d)));
     }
+    // build 841: a bump's lateral impulse plays out here — the shove decays, the offset steers back to the
+    // lane over ~a second, and the whole excursion is clamped to the deck so a hit can't punt them off-track.
+    if(st.latVel || st.latOff){
+      st.latVel=(st.latVel||0)*(1-Math.min(1, dt*2.2));
+      st.latOff=((st.latOff||0) + st.latVel*dt)*(1-Math.min(1, dt*1.1));
+      const _lmax=TRACK_W/2-1.4 - Math.abs(st.lat);
+      st.latOff=Math.max(-Math.max(0.2,_lmax), Math.min(Math.max(0.2,_lmax), st.latOff));
+      if(Math.abs(st.latVel)<0.02 && Math.abs(st.latOff)<0.02){ st.latVel=0; st.latOff=0; }
+    }
     st.s += st.v*dt;
     if(st.s>=_racePath.total){ st.s-=_racePath.total; st.laps++;
       if(st.laps>=total+1){ _raceOver=true;                        // wrapped the line total+1 times = finished the race
         if(typeof toast==='function') toast('A rival takes the chequered flag');
         objectiveHUD(); if(typeof endGame==='function') endGame(); return; }
     }
-    const pose=_racePathAt(st.s, st.lat);
+    const pose=_racePathAt(st.s, st.lat + (st.latOff||0));
     // build 839: rest on the REAL deck via the shared ground query (banked curves, scaled pieces, ramps all
     // included) instead of a computed height — this is what had rival wheels clipping through the track mesh.
     let _gy=(typeof surfaceTopAt==='function') ? surfaceTopAt(pose.x, pose.z, o, true, pose.y+6, true) : -Infinity;
@@ -19045,10 +19057,17 @@ function _ghostRecordTick(dt){
       +(u.carYaw||0).toFixed(3), +((u.carPitch||0)+(u.leanPitch||0)).toFixed(3), +((u.carRoll||0)+(u.leanRoll||0)).toFixed(3)]);
   }
 }
+// build 841: G (while driving a race) toggles the ghost on/off — some drivers find it distracting. Persisted.
+let _ghostOn=true; try{ _ghostOn = localStorage.getItem('breachGhostOn')!=='0'; }catch(e){}
+function _ghostToggle(){
+  _ghostOn=!_ghostOn;
+  try{ localStorage.setItem('breachGhostOn', _ghostOn?'1':'0'); }catch(e){}
+  if(typeof toast==='function') toast(_ghostOn ? 'Ghost ON' : 'Ghost OFF');
+}
 function _ghostPlayTick(){
   const G=_ghostBest, W=_ghostObj && _ghostObj.obj;
   if(!W) return;
-  if(!G || _raceLap<1){ W.visible=false; return; }
+  if(!G || _raceLap<1 || !_ghostOn){ W.visible=false; return; }
   const t=_raceLapT, i=Math.floor(t/G.dt), S=G.samples;
   if(i>=S.length-1){ W.visible=false; return; }   // the ghost already finished its lap
   const a=S[i], b=S[i+1], f=Math.max(0, Math.min(1, (t-i*G.dt)/G.dt));
@@ -19102,16 +19121,42 @@ function _raceCarInside(nx, nz, pr, cx, cz, yaw, hw, hl){
   const qx=Math.max(-hw, Math.min(hw, lx)), qz=Math.max(-hl, Math.min(hl, lz));
   const ex=lx-qx, ez=lz-qz; return (ex*ex+ez*ez) < pr*pr;
 }
+let _raceHitBot=null;   // build 841: the rival the last blocked move ran into (feeds the bump impulse)
 function _raceCarBlock(nx, nz, cx, cz, self){
   if(typeof objectiveActive!=='function' || objectiveActive()!=='race') return false;
+  // build 841: test THREE circles along the car's length (nose / centre / tail), not one at the origin —
+  // the single centre circle let a long car's nose visibly clip into rivals before contact registered.
   const f=_carFoot(self), pr=Math.max(0.35, Math.min(f.hw, f.hd)*0.85);
+  const cy=(self.userData && self.userData.carYaw!=null)?self.userData.carYaw:self.rotation.y;
+  const hx=-Math.sin(cy), hz=-Math.cos(cy), off=Math.max(0, f.hd-pr)*0.8;
+  const S=[[0,0],[hx*off,hz*off],[-hx*off,-hz*off]];
+  const hitAny=(bx,bz,yaw,hw,hl)=>{
+    for(const s of S){ if(_raceCarInside(nx+s[0],nz+s[1],pr, bx,bz, yaw,hw,hl) && !_raceCarInside(cx+s[0],cz+s[1],pr, bx,bz, yaw,hw,hl)) return true; }
+    return false; };
+  _raceHitBot=null;
   for(const st of _raceBots){ const o=st.obj; if(!o) continue;
-    const yaw=(st.prevYaw!=null)?st.prevYaw:(o.rotation.y+st.mYaw), hw=st.hw||1, hl=st.hl||2;
-    if(_raceCarInside(nx,nz,pr, o.position.x,o.position.z, yaw,hw,hl) && !_raceCarInside(cx,cz,pr, o.position.x,o.position.z, yaw,hw,hl)) return true; }
+    const yaw=(st.prevYaw!=null)?st.prevYaw:(o.rotation.y+st.mYaw);
+    if(hitAny(o.position.x, o.position.z, yaw, st.hw||1, st.hl||2)){ _raceHitBot=st; return true; } }
   for(const p of propModels){ if(!p || p===self || !p.userData || !p.userData.vehicle || p.userData.runtime) continue;
     const pf=_carFoot(p), yaw=(p.userData.carYaw!=null)?p.userData.carYaw:(p.rotation.y+((p.userData.vehicle.modelYaw||0))*RAD);
-    if(_raceCarInside(nx,nz,pr, p.position.x,p.position.z, yaw,pf.hw,pf.hd) && !_raceCarInside(cx,cz,pr, p.position.x,p.position.z, yaw,pf.hw,pf.hd)) return true; }
+    if(hitAny(p.position.x, p.position.z, yaw, pf.hw, pf.hd)) return true; }
   return false;
+}
+// build 841: BUMPS ARE PHYSICAL — running into a rival transfers an impulse. The hit direction decomposes in
+// the rival's frame: a rear-end shunts them FORWARD (st.v), a side hit knocks them OFF LINE (st.latVel, which
+// the tick integrates into a lateral offset that steers back over ~a second). Cooldown per rival so one scrape
+// isn't twenty impulses.
+function _raceBotBump(st, spd, self){
+  if((st._bumpCd||0)>0 || !st.obj) return; st._bumpCd=0.3;
+  const o=st.obj;
+  let nx=o.position.x-self.position.x, nz=o.position.z-self.position.z;
+  const d=Math.hypot(nx,nz)||1; nx/=d; nz/=d;
+  const imp=Math.min(12, Math.abs(spd)*0.55);
+  const yaw=(st.prevYaw!=null)?st.prevYaw:(o.rotation.y+st.mYaw);
+  const rfx=-Math.sin(yaw), rfz=-Math.cos(yaw), rxx=Math.cos(yaw), rxz=-Math.sin(yaw);
+  st.v=Math.max(0, st.v + (nx*rfx+nz*rfz)*imp*0.7);          // shunted forward / checked up
+  st.latVel=(st.latVel||0) + (nx*rxx+nz*rxz)*imp*0.85;       // knocked off the racing line
+  if(typeof _carImpactFx==='function' && Math.abs(spd)>6 && (self.userData._hitCd||0)<=0){ self.userData._hitCd=0.3; _carImpactFx(self, Math.min(10, Math.abs(spd)*0.4)); }
 }
 // Nearest car ahead on a rival's line (the player's, a parked vehicle, another rival) -> a speed limit that
 // closes to a stop as the gap closes: follow at ~their pace from 9 m, never ram.
