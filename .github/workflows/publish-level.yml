@@ -19,9 +19,10 @@ concurrency:
 
 jobs:
   publish:
-    # Gate on the title prefix (set by the issue form) rather than the template label — template labels
-    # are silently dropped by GitHub unless they already exist in the repo, and this must work on a fork too.
-    if: github.event.label.name == 'approved' && startsWith(github.event.issue.title, '[Level]')
+    # Gate on the '### Level JSON' heading the issue FORM always writes into the body — not the title
+    # (users edit titles; issue #6 "Japanese Village" dropped the [Level] prefix and was silently skipped)
+    # and not the template label (GitHub drops template labels unless they pre-exist in the repo).
+    if: github.event.label.name == 'approved' && contains(github.event.issue.body, '### Level JSON')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
