@@ -13,6 +13,7 @@ Everything — engine glue, editor, netcode, assets pipeline — ships in one `b
 - **Level editor** — in-browser: terrain sculpting, free model search (Poly Pizza / Sketchfab), signals & locks, NPCs & dialogue, cutscene editor, campaigns
 - **Multiplayer** — PeerJS/WebRTC co-op and PvP with room codes; levels sync to joiners automatically, including multiplayer racing
 - **Sharing** — a whole level compressed into a URL; challenge links with score targets
+- **Community library** — an in-game gallery of player-built levels; submit yours via a GitHub issue and a bot publishes it on approval
 - **Help & tutorials** — in-game guide with one-click loadable example projects
 
 ## Controls (quick reference)

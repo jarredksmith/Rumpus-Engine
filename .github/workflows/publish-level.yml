@@ -1,0 +1,61 @@
+# Publishes an approved community-level submission into community/ (which the in-game gallery reads).
+# Flow: player submits via the "Submit a level" issue form (label: level-submission) → maintainer reviews
+# and adds the `approved` label → this workflow validates the JSON, writes community/levels/<slug>.json,
+# regenerates community/index.json, commits to main (which redeploys Pages), and closes the issue.
+# A bad submission gets a comment explaining why and STAYS OPEN — fix the body and re-add the label.
+name: Publish community level
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: publish-level   # serialize index.json edits when several approvals land at once
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Gate on the title prefix (set by the issue form) rather than the template label — template labels
+    # are silently dropped by GitHub unless they already exist in the repo, and this must work on a fork too.
+    if: github.event.label.name == 'approved' && startsWith(github.event.issue.title, '[Level]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - id: pub
+        name: Validate and stage the level
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: node .github/scripts/publish-level.mjs
+      - name: Commit to main
+        if: steps.pub.outputs.ok == 'true'
+        run: |
+          git config user.name "breach-librarian[bot]"
+          git config user.email "noreply@github.com"
+          git add community/
+          git commit -m "community: publish \"${{ steps.pub.outputs.name }}\" (#${{ github.event.issue.number }})"
+          git pull --rebase origin main
+          git push origin main
+      - name: Close the issue (published)
+        if: steps.pub.outputs.ok == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const n = context.issue.number;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: n, body:
+              `🏁 **"${{ steps.pub.outputs.name }}" is published!** It will appear in the in-game **Community levels** gallery as soon as the site redeploys (a few minutes).\n\nFile: \`community/levels/${{ steps.pub.outputs.file }}\`` });
+            await github.rest.issues.update({ ...context.repo, issue_number: n, state: 'closed', state_reason: 'completed' });
+      - name: Comment the rejection (stays open)
+        if: steps.pub.outputs.ok != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const n = context.issue.number;
+            await github.rest.issues.removeLabel({ ...context.repo, issue_number: n, name: 'approved' }).catch(()=>{});
+            await github.rest.issues.createComment({ ...context.repo, issue_number: n, body:
+              `⚠️ Could not publish this submission: ${{ toJSON(steps.pub.outputs.reason) }}\n\nEdit the issue body to fix it, then re-add the \`approved\` label to retry.` });

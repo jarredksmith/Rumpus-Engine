@@ -746,6 +746,7 @@
     <button id="editBtn" class="secBtn"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Build / edit level</button>
   </div>
   <div class="menuBtns menuSub">
+    <button id="commBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/></svg>Community levels</button>
     <button id="loadCampBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>Load campaign</button>
     <button id="instrBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Instructions</button>
     <button id="manualBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Field manual</button>
@@ -789,6 +790,16 @@
       <div id="helpNav" style="flex:0 0 172px;display:flex;flex-direction:column;gap:4px"></div>
       <div id="helpBody" style="flex:1;min-width:260px;font-size:13px;line-height:1.6;max-height:62vh;overflow:auto;padding-right:6px;color:#cfe9df"></div>
     </div>
+  </div>
+</div>
+
+<!-- Community level library (build 851): levels served from community/ beside the game -->
+<div id="communityModal" class="modalBack hidden">
+  <div class="modalCard" style="max-width:640px">
+    <button class="modalClose" data-close="communityModal">✕</button>
+    <h2>COMMUNITY LEVELS</h2>
+    <div id="commNote" class="hint" style="margin:2px 0 10px">Player-built levels, hosted with the game. Load one, remix it, or submit your own from the editor's <b>Save</b> tab.</div>
+    <div id="commList" style="text-align:left;max-height:56vh;overflow:auto;display:flex;flex-direction:column;gap:8px"></div>
   </div>
 </div>
 
@@ -16604,7 +16615,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 850 · 2026-07-03';
+const BUILD_VERSION = 'build 851 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22825,6 +22836,8 @@ function buildEditorPanel(){
       + '<div class="row2" style="margin-top:6px"><button id="edShare">'+_icn('link')+'Copy share link</button></div>'
       + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .json</button><button id="edImport">'+_icn('upload')+'Import .json</button></div>'
       + '<input type="file" id="edImportFile" accept=".json,application/json" style="display:none">'
+      + '<div class="row2" style="margin-top:6px"><button id="edSubmitComm" style="width:100%">'+_icn('upload')+'Submit to community library</button></div>'
+      + '<div class="hint" style="font-size:10px;opacity:0.75;margin:2px 0 0">Copies the level JSON, then opens the submission form on GitHub — paste it there. Levels go live in the in-game library once approved.</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edReset">Reset target</button><button id="edCopy">Copy code</button></div>'
       + '<div class="row2" style="margin-top:10px"><button id="edWipe" style="width:100%;border-color:#7a2630;color:#ff9b93">'+_icn('trash')+'Delete all objects (fresh scene)</button></div>'
       + '<div class="copied" id="edCopied"></div>'
@@ -23073,6 +23086,18 @@ function buildEditorPanel(){
       clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 3200);
     };
     reader.readAsText(file);
+  };
+  // build 851: submit the current level to the community library — clipboard carries the JSON
+  // (far too big for a URL), the GitHub issue form receives the paste, an Action publishes on approval.
+  const submitBtn = p.querySelector('#edSubmitComm');
+  if(submitBtn) submitBtn.onclick = async ()=>{
+    const note = editorEl.querySelector('#edCopied');
+    let str; try{ str = JSON.stringify(serializeLevel()); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
+    let copied = false;
+    try{ await navigator.clipboard.writeText(str); copied = true; }
+    catch(e){ try{ const ta=document.createElement('textarea'); ta.value=str; document.body.appendChild(ta); ta.select(); copied=document.execCommand('copy'); ta.remove(); }catch(_){} }
+    if(note){ note.textContent = copied ? 'Level JSON copied ✓ — paste it into the GitHub form' : 'Copy failed — use Copy code below and paste that instead'; clearTimeout(note._t); note._t=setTimeout(()=>{ note.textContent=''; }, 6000); }
+    try{ window.open(COMM_SUBMIT_URL, '_blank'); }catch(e){}
   };
   setEditorMode(editorMode);   // apply mode visibility + render (replaces the bare initial render)
 }
@@ -26893,6 +26918,7 @@ function bindMenu(){
   const hb=document.getElementById('manualBtn'); if(hb) hb.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };   // build 850: the field manual ships beside the game again (it was a dead link — and this button shared helpBtn's id, so Help & tutorials had stolen its click)
   const crb=document.getElementById('creditsBtn'); if(crb) crb.onclick=openCredits;   // build 549: player-facing credits + license screen
   const hlb=document.getElementById('helpBtn'); if(hlb) hlb.onclick=openHelp;   // build 848: help & tutorials from the home menu
+  const cmb=document.getElementById('commBtn'); if(cmb) cmb.onclick=openCommunity;   // build 851: the community level library
   const cb=document.getElementById('ctrlBtn');
   if(cb){
     const lbl=()=>{ cb.innerHTML=UI_ICON.gamepad + 'Controls: ' + (_ctrlPref==='touch'?'Touch':_ctrlPref==='desktop'?'Desktop':'Auto'); };
@@ -27091,7 +27117,8 @@ const HELP_TOPICS = [
   +'· <b>Copy link</b> — the whole level compressed into a URL; anyone who opens it plays it. Models load from Poly&nbsp;Pizza/Sketchfab, so recipients may need a Sketchfab token for those.<br>'
   +'· <b>Challenge a friend</b> (end screen) — share the level + your score to beat.<br>'
   +'· <b>Campaign</b> — chain several levels into a sequence with carry-over loadout.<br><br>'
-  +'Multiplayer: <b>Host</b> from the home menu, share the room code; joiners get the level automatically.' },
+  +'Multiplayer: <b>Host</b> from the home menu, share the room code; joiners get the level automatically.<br><br>'
+  +'<b>Community levels</b> (home menu) is the player-built gallery — browse, play, or open any entry in the editor to remix it. Publish yours with Save tab → <b>Submit to community library</b>: it copies the level JSON and opens the submission form (GitHub account needed); approved levels appear in everyone\'s gallery, credited to you.' },
 ];
 let _helpSel='play';
 function renderHelp(){
@@ -27123,6 +27150,66 @@ function renderHelp(){
   }
 }
 function openHelp(){ renderHelp(); openModal('helpModal'); }
+// ---- Community level library (build 851) ----
+// Levels live in community/levels/*.json with a community/index.json catalog, hosted BESIDE the game
+// (same origin), so the gallery is one relative fetch — no API, no keys, works on any fork.
+// Submissions arrive as GitHub issues; a repo Action publishes them once the owner approves (see
+// .github/workflows/publish-level.yml).
+const COMM_INDEX_URL = 'community/index.json';
+const COMM_SUBMIT_URL = 'https://github.com/jarredksmith/breach/issues/new?template=submit-level.yml&title=' + encodeURIComponent('[Level] ');
+function openCommunity(){ openModal('communityModal'); renderCommunity(); }
+async function renderCommunity(){
+  const list=document.getElementById('commList'); if(!list) return;
+  list.innerHTML='<div class="hint">Loading the library…</div>';
+  let idx=null;
+  try{
+    const r=await fetch(COMM_INDEX_URL, { cache:'no-cache' });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    idx=await r.json();
+  }catch(e){
+    list.innerHTML='<div class="hint">Could not reach the library ('+(e&&e.message)+'). It needs the game to be served over http(s) — on the hosted site this always works; offline or file:// it cannot.</div>';
+    return;
+  }
+  const levels=(idx && Array.isArray(idx.levels)) ? idx.levels : [];
+  if(!levels.length){ list.innerHTML='<div class="hint">The library is empty — be the first: build a level, then Save tab → Submit to community library.</div>'; return; }
+  list.innerHTML='';
+  for(const L of levels){
+    const row=document.createElement('div');
+    row.style.cssText='border:1px solid #24323a;border-radius:8px;padding:9px 12px;background:#0c1418;display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+    const info=document.createElement('div'); info.style.cssText='flex:1;min-width:180px;';
+    const nm=document.createElement('div'); nm.style.cssText='color:#eafff7;font-weight:700;font-size:14px;'; nm.textContent=L.name||L.file;
+    const meta=document.createElement('div'); meta.style.cssText='color:#7fa99c;font-size:11px;margin-top:1px;';
+    meta.textContent=(L.objective?String(L.objective).toUpperCase()+' · ':'')+'by '+(L.author||'anonymous')+(L.date?' · '+L.date:'');
+    const ds=document.createElement('div'); ds.style.cssText='color:#9fc4ba;font-size:12px;margin-top:3px;'; ds.textContent=L.desc||'';
+    info.appendChild(nm); info.appendChild(meta); if(L.desc) info.appendChild(ds);
+    const mkBtn=(txt,primary,fn)=>{ const b=document.createElement('button'); b.textContent=txt;
+      b.style.cssText='padding:7px 12px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid '+(primary?'rgba(var(--accent-rgb),0.55)':'#2a3a42')+';background:'+(primary?'rgba(var(--accent-rgb),0.2)':'#101c22')+';color:'+(primary?'#eafff7':'#9fc4ba')+';';
+      b.onclick=fn; return b; };
+    row.appendChild(info);
+    row.appendChild(mkBtn('Play', true, ()=>_commLoad(L, false)));
+    row.appendChild(mkBtn('Open in editor', false, ()=>_commLoad(L, true)));
+    list.appendChild(row);
+  }
+}
+async function _commLoad(entry, toEditor){
+  const file=String(entry.file||'').replace(/[^a-zA-Z0-9._-]/g,'');   // belt & braces: index is trusted, but keep the path boring
+  let level=null;
+  try{
+    const r=await fetch('community/levels/'+file, { cache:'no-cache' });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    level=await r.json();
+  }catch(e){ if(typeof flashToast==='function') flashToast('Could not load "'+(entry.name||file)+'": '+(e&&e.message)); return; }
+  if(!level || typeof level!=='object' || (!level.props && !level.world)){ if(typeof flashToast==='function') flashToast('That file does not look like a BREACH level'); return; }
+  closeModal('communityModal');
+  if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();   // Ctrl+Z restores what you had
+  if(toEditor){
+    if(!editorOpen){ if(!gameOn && typeof enterEditor==='function') enterEditor(); else if(typeof toggleEditor==='function') toggleEditor(); }
+    setTimeout(()=>{ try{ restoreLevel(level); if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" opened in the editor'); }catch(e){ console.warn('community level failed to load', e); } }, 200);
+  } else {
+    restoreLevel(level);
+    if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" loaded — press Deploy');
+  }
+}
 function _helpLoadExample(kind){
   closeModal('helpModal'); if(typeof closePause==='function') closePause();
   if(!editorOpen){ if(!gameOn && typeof enterEditor==='function') enterEditor(); else if(typeof toggleEditor==='function') toggleEditor(); }
@@ -27142,7 +27229,7 @@ function _helpBuildExample(kind){
     }
     // a simple block car beside the grid — swap it for a searched model any time
     spawnProp('box', [12, 0, -6, 0, 0, 0, 1.9, 1.1, 4.4], (o)=>{
-      o.userData.col=0xff4757; if(typeof applyPropColor==='function') applyPropColor(o);
+      if(typeof applyPropColor==='function') applyPropColor(o, 0xff4757); else o.userData.col=0xff4757;   // build 851: pass the hex — calling with none wiped col and painted the mesh black
       vehicleApply(o, { maxSpeed:36, accel:22, turn:150, reverse:9, grip:7, latG:2.6, boost:1.6, brakeLights:true, headlights:true });
     });
     gameCfg.objective='race'; gameCfg.raceLaps=3; gameCfg.raceBots=2; gameCfg.raceBotSkill=0.85;
@@ -27158,7 +27245,7 @@ function _helpBuildExample(kind){
   } else if(kind==='puzzle'){
     // build 849: the vault — a locked door (E unlocks + slides up with the gold key), the key hidden behind
     // crates, a Curator NPC who hints, and a prize inside whose 'interacted' signal wins the level.
-    const _tint=(o,c)=>{ o.userData.col=c; if(typeof applyPropColor==='function') applyPropColor(o); };
+    const _tint=(o,c)=>{ if(typeof applyPropColor==='function') applyPropColor(o, c); else o.userData.col=c; };   // build 851: pass the hex — calling with none wiped col and painted the mesh black
     const wall=(t)=>spawnProp('box', t, (o)=>_tint(o, 0x2c3540));
     wall([0, 0, -26, 0, 0, 0, 10, 4, 0.8]);                      // back
     wall([-5, 0, -21.8, 0, 0, 0, 0.8, 4, 8.8]);                  // left
