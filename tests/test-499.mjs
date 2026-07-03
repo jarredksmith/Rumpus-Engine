@@ -25,7 +25,7 @@ assert(/#editor \.edSecSub \{/.test(html), 'edSecSub has its own muted style');
 // --- jargon titles renamed (these titles are not pinned elsewhere) ---
 assert(/sec\('Handles', 'gizmo'/.test(src), 'Gizmo -> Handles');
 assert(/sec\('Environment', 'world'/.test(src), 'World section -> Environment (no longer clashes with the World mode)');
-assert(/sec\('Waves &amp; objectives', 'game'/.test(src), 'Game / waves -> Waves & objectives');
+assert(/sec\('Objectives &amp; rules', 'game'/.test(src), 'the game section title covers its real contents (build 847)');
 // build 653: Impact/Tracer/Crosshair were regrouped under one Effects picker, so their plain-language
 // descriptions now live in the picker (via SEC_SUB) rather than standalone section titles.
 assert(/sec\('Effects', 'wepfx'/.test(src), 'the three weapon-FX panels are grouped under one Effects section');
