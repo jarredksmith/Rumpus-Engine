@@ -29,6 +29,9 @@ const env = new Function('"use strict";'+
   const propModels=[], player={pos:{x:0,y:0,z:0}}, gameCfg={raceLaps:2};
   let won=0; const toasts=[];
   const gameWon=()=>{ won++; }, toast=(t)=>toasts.push(t), objectiveHUD=()=>{};
+  // build 832 additions touch the DOM (countdown overlay) — stub it out for the headless sim
+  const document={ getElementById:()=>null, createElement:()=>({style:{},textContent:'',appendChild(){}}), body:{appendChild(){}} };
+  const SFX={};
   // build a closed 4x90-left circle: start line + 3 curves... the start piece must chain too, so:
   // start(12) -> short(8)? keep EXACT closure: 4 x curve_l alone closes; prepend a start line and close with
   // matching straights: start(12), curve, curve, straight(12)? 12+? Use: start(12) then 4 curves then... the

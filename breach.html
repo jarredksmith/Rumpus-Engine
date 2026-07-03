@@ -15213,11 +15213,13 @@ function enterCar(o){
   _engStart(); _driveHudEl().style.display='block';   // build 715: engine sound + speed HUD
   { const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display='none'; }   // build 738: no crosshair while driving
   if(document.body) document.body.classList.add('driving');   // build 788: swap the mobile combat buttons for the driving cluster
+  if(gameOn && typeof _raceMaybeCountdown==='function') _raceMaybeCountdown(o);   // build 832: standing start when you grid up near the line
 }
 function exitCar(){
   if(!drivingCar) return;
   _carViewOverride=null; _carFollowOverride=null;   // build 745/765: next car starts at its own default view + follow setting
   const o=drivingCar; drivingCar=null;
+  if(typeof _raceCountT!=='undefined' && _raceCountT>0){ _raceCountT=0; _raceCountShown=''; _raceCountHide(); }   // build 832: hopping out scrubs the standing start
   if(o.userData._suspOff){ o.position.y -= o.userData._suspOff; o.userData._suspOff=0; o.userData._suspVel=0; }   // build 821: fold the suspension travel out so the parked height is clean
   // build 770: bail out at speed and the car keeps its momentum, coasting + decelerating until it stops (a per-vehicle toggle).
   const _ecfg=o.userData.vehicle||{}, _esp=o.userData.carSpeed||0;
@@ -15651,6 +15653,7 @@ function driveUpdate(dt){
   if(typeof padDriveRev!=='undefined' && padDriveRev) throttle -= 1;
   if(typeof touchMoveZ!=='undefined' && touchMoveZ) throttle += -touchMoveZ;   // build 786: mobile joystick drives the car (throttle + reverse)
   throttle=Math.max(-1,Math.min(1,throttle));
+  if(typeof _raceCountT!=='undefined' && _raceCountT>1) throttle=0;   // build 832: the grid holds you until GO (the last second is the GO flash — throttle live)
   // build 719: BOOST — hold Shift to surge for boostDur seconds, then a boostCd cooldown before it's ready again.
   const bMult=+cfg.boost||1, boostKey=(keys['ShiftLeft']||keys['ShiftRight']||(typeof padDriveBoost!=='undefined'&&padDriveBoost)||(typeof touchBoost!=='undefined'&&touchBoost));   // build 789: Shift / LT / the mobile Boost button engage boost
   if(o.userData.boostCdT>0) o.userData.boostCdT=Math.max(0, o.userData.boostCdT-dt);
@@ -16561,7 +16564,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 831 · 2026-07-02';
+const BUILD_VERSION = 'build 832 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18785,8 +18788,40 @@ function _clearEscort(){ if(escortMarker) escortMarker.visible=false; _escortNea
 // driving or (comically) on foot.
 let _raceLap=0, _raceLapT=0, _raceLastT=0, _raceBestT=Infinity, _raceCrossCd=0, _racePrevLz=null;
 let _raceStartO=null; const _raceCk=[]; const _raceVisited=new Set();
+const _raceTimes=[];   // build 832: every completed lap's time, for the results breakdown
+let _raceCountT=0, _raceCountShown='';   // build 832: 3-2-1-GO standing start (throttle locked while >1)
 function _fmtRace(t){ if(!isFinite(t)) return '--:--.-'; const m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
-function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); }
+function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); }
+// build 832: the big centre countdown. One lazily-created element; numbers pop in accent, GO flashes green.
+function _raceCountEl(){
+  let el=document.getElementById('raceCount');
+  if(!el){ el=document.createElement('div'); el.id='raceCount';
+    el.style.cssText='position:fixed;left:50%;top:32%;transform:translate(-50%,-50%);font:800 96px Rajdhani,system-ui,sans-serif;letter-spacing:0.06em;color:var(--accent);text-shadow:0 0 34px rgba(var(--accent-rgb),0.55);z-index:60;pointer-events:none;display:none;';
+    document.body.appendChild(el); }
+  return el;
+}
+function _raceCountHide(){ const el=document.getElementById('raceCount'); if(el) el.style.display='none'; }
+// Called from enterCar: getting into a vehicle near the start line before the race has begun arms a
+// standing start — 3-2-1 with the throttle locked, GO releases it.
+function _raceMaybeCountdown(o){
+  if(objectiveActive()!=='race' || !_raceStartO || _raceLap!==0 || _raceCountT>0) return;
+  const dx=o.position.x-_raceStartO.position.x, dz=o.position.z-_raceStartO.position.z;
+  if(dx*dx+dz*dz > 45*45) return;   // far from the grid: free practice, flying start still works
+  _raceCountT=4; _raceCountShown='';
+}
+function _raceCountTick(dt){
+  if(_raceCountT<=0) return;
+  _raceCountT-=dt;
+  const el=_raceCountEl();
+  if(_raceCountT<=0){ _raceCountT=0; _raceCountShown=''; el.style.display='none'; return; }
+  const label=_raceCountT>1 ? String(Math.ceil(_raceCountT-1)) : 'GO!';
+  if(label!==_raceCountShown){ _raceCountShown=label;
+    el.textContent=label; el.style.display='block';
+    el.style.color = (label==='GO!') ? '#57ff9a' : 'var(--accent)';
+    el.animate && el.animate([{transform:'translate(-50%,-50%) scale(1.5)',opacity:0.4},{transform:'translate(-50%,-50%) scale(1)',opacity:1}],{duration:220,easing:'ease-out'});
+    if(typeof SFX!=='undefined'){ if(label==='GO!'){ if(SFX.wave) SFX.wave(); } else if(SFX.coin) SFX.coin(); }
+  }
+}
 function _raceSetup(){
   _raceClear();
   for(const o of propModels){
@@ -18804,6 +18839,7 @@ function _raceSetup(){
 }
 function _raceTick(dt){
   if(!_raceStartO){ objectiveHUD(); return; }
+  _raceCountTick(dt);   // build 832: the 3-2-1-GO standing start
   if(_raceCrossCd>0) _raceCrossCd-=dt;
   if(_raceLap>=1) _raceLapT+=dt;
   const px=player.pos.x, pz=player.pos.z;
@@ -18820,9 +18856,9 @@ function _raceTick(dt){
   if(onLine && _racePrevLz!=null && _raceCrossCd<=0 && _racePrevLz>plane && lz<=plane){
     _raceCrossCd=3;
     const total=Math.max(1, gameCfg.raceLaps||3);
-    if(_raceLap===0){ _raceLap=1; _raceLapT=0; _raceVisited.clear(); if(typeof toast==='function') toast('RACE — LAP 1 / '+total); }
+    if(_raceLap===0){ _raceLap=1; _raceLapT=0; _raceVisited.clear(); _raceTimes.length=0; if(typeof toast==='function') toast('RACE — LAP 1 / '+total); }
     else if(_raceVisited.size >= Math.max(1, Math.ceil(_raceCk.length*0.6))){
-      _raceLastT=_raceLapT; if(_raceLapT<_raceBestT) _raceBestT=_raceLapT;
+      _raceLastT=_raceLapT; if(_raceLapT<_raceBestT) _raceBestT=_raceLapT; _raceTimes.push(_raceLapT);   // build 832: keep every lap for the results
       if(_raceLap>=total){ objectiveHUD(); if(typeof gameWon==='function') gameWon(); return; }
       _raceLap++; _raceLapT=0; _raceVisited.clear();
       if(typeof toast==='function') toast('LAP '+_raceLap+' / '+total+' — last '+_fmtRace(_raceLastT));
@@ -26139,6 +26175,7 @@ function gameWon(){
     <h1 style="color:var(--accent);text-shadow:0 0 30px rgba(var(--accent-rgb),.5)">${_campaignComplete?'CAMPAIGN COMPLETE':'MISSION COMPLETE'}</h1>
     <div class="sub">${ gameCfg.objective==='puzzle' ? 'SOLVED' : gameCfg.objective==='survival' ? ('SURVIVED '+fmtClock(gameCfg.surviveSecs)) : gameCfg.objective==='extraction' ? 'EXTRACTED' : gameCfg.objective==='defend' ? ('ZONE HELD '+fmtClock(gameCfg.surviveSecs)) : gameCfg.objective==='destroy' ? 'ALL TARGETS DESTROYED' : gameCfg.objective==='escort' ? 'PAYLOAD DELIVERED' : gameCfg.objective==='race' ? ((gameCfg.raceLaps||3)+' LAP'+((gameCfg.raceLaps||3)===1?'':'S')+(isFinite(_raceBestT)?(' · BEST '+_fmtRace(_raceBestT)):'')) : (gameCfg.winWaves+' WAVE'+(gameCfg.winWaves===1?'':'S')+' CLEARED') }</div>
     ${ gameCfg.winText ? '<div class="sub" style="color:#cfe9df;font-size:15px;line-height:1.5;max-width:560px;margin:8px auto 0;opacity:.95">'+_creditEsc(gameCfg.winText)+'</div>' : '' }
+    ${ (gameCfg.objective==='race' && typeof _raceTimes!=='undefined' && _raceTimes.length) ? '<div class="sub" style="font-family:JetBrains Mono,monospace;font-size:14px;line-height:1.7;margin-top:10px">'+_raceTimes.slice(0,12).map((t,i)=>'LAP '+(i+1)+' — '+_fmtRace(t)+(t===_raceBestT?'  ★':'')).join('<br>')+(_raceTimes.length>12?'<br>…':'')+'</div>' : '' }
     ${runSummaryHTML()}
     ${challengeResultHTML()}
     <button id="startBtn">Redeploy</button>
