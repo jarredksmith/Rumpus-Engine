@@ -56,8 +56,8 @@ const env = new Function('"use strict";'+
 assert(env.state().start, 'the start-line piece was found');
 eq(env.ck.length, 5, 'every track piece is a checkpoint');
 
-// the lap plane on an unrotated start piece at origin: z = -12*0.18 = -2.16, road half-width 7
-const PLANE=-2.16;
+// the lap plane on an unrotated start piece at origin: z = -16*0.18 = -2.88 (build 837: 16 m start), road half-width 7
+const PLANE=-2.88;
 // approach from behind the line (z>plane) and cross forward (z decreasing): the race starts
 env.drive([[0,0,6],[0,0,3],[0,0,0],[0,0,-3]]);
 eq(env.state().lap, 1, 'crossing the band forward starts lap 1');

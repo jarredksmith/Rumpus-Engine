@@ -7973,7 +7973,7 @@ const TRACK_W = 12;    // road width (comfortably two cars)
 const TRACK_T = 0.35;  // deck thickness — a kerb-step cars climb onto
 const TRACK_R = 18;    // curve centreline radius
 const TRACK_PIECES = {
-  track_start:     { label:'Start line', len:12, start:true, icon:'<path d="M6 21V3"/><path d="M6 4h12l-2.5 3.5L18 11H6"/><path d="M10 4v7M14 4v7"/>' },
+  track_start:     { label:'Start line', len:16, start:true, icon:'<path d="M6 21V3"/><path d="M6 4h12l-2.5 3.5L18 11H6"/><path d="M10 4v7M14 4v7"/>' },   // build 837: 16 m — every piece length is now a multiple of 8, so rectangular loops CLOSE (the old 12 left a permanent 4 m gap)
   track_straight:  { label:'Straight',   len:24, icon:'<path d="M8 21V3M16 21V3"/><path d="M12 18v-3M12 12v-3M12 6V3"/>' },
   track_short:     { label:'Short',      len:8,  icon:'<path d="M8 17V7M16 17V7"/><path d="M12 15v-2M12 11V9"/>' },
   track_curve45_l: { label:'45° L', arc:Math.PI/4, dir:1,  icon:'<path d="M16 21v-6a14 14 0 0 0-5-9"/><path d="M8 21v-5a9 9 0 0 0-3-6"/>' },
@@ -16571,7 +16571,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 836 · 2026-07-02';
+const BUILD_VERSION = 'build 837 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21442,6 +21442,44 @@ function addTrackPiece(key){
     renderEditorFields();
   });
 }
+// build 837: CLOSE THE LOOP — bridge the last gap with ONE exactly-stretched straight. Walks the chain
+// backward from the anchor to find its first piece, measures the gap from the anchor's exit to that entry in
+// the exit's own frame, and: same heading + in-line -> spawn a straight scaled to precisely the gap length.
+// Anything a straight can't fix gets a specific toast (headings differ / sideways offset / height mismatch).
+function closeTrackLoop(){
+  const pieces=propModels.filter(p=>p && p.userData && TRACK_PIECES[p.userData.src]);
+  if(!pieces.length){ if(typeof flashToast==='function') flashToast('Place track pieces first'); return; }
+  let anchor=null;
+  const selO=(editorTargets.props && editorTargets.props.idx>=0) ? propModels[editorTargets.props.idx] : null;
+  if(selO && selO.userData && TRACK_PIECES[selO.userData.src]) anchor=selO;
+  if(!anchor) for(let i=propModels.length-1;i>=0;i--){ const p=propModels[i]; if(p && p.userData && TRACK_PIECES[p.userData.src]){ anchor=p; break; } }
+  // walk BACKWARD: keep finding the piece whose exit feeds the current head's entry
+  let first=anchor; const seen=new Set([anchor]);
+  for(let g=0; g<pieces.length; g++){
+    let prev=null;
+    for(const p of pieces){ if(seen.has(p)) continue; const px=_trackExitPose(p); if(!px) continue;
+      const ddx=px.x-first.position.x, ddz=px.z-first.position.z;
+      let dyw=px.yaw-first.rotation.y; dyw=Math.atan2(Math.sin(dyw),Math.cos(dyw));
+      if((ddx*ddx+ddz*ddz)<9 && Math.abs(dyw)<0.35){ prev=p; break; } }
+    if(!prev) break; seen.add(prev); first=prev;
+  }
+  const ex=_trackExitPose(anchor);
+  let dyaw=first.rotation.y-ex.yaw; dyaw=Math.atan2(Math.sin(dyaw),Math.cos(dyaw));
+  const dx=first.position.x-ex.x, dz=first.position.z-ex.z, dy=first.position.y-ex.y;
+  const fwd = dx*(-Math.sin(ex.yaw)) + dz*(-Math.cos(ex.yaw));   // gap along the exit's forward
+  const lat = dx*( Math.cos(ex.yaw)) + dz*(-Math.sin(ex.yaw));   // sideways miss (+ = right)
+  if(Math.abs(dyaw)>0.06){ if(typeof flashToast==='function') flashToast('Ends face different directions ('+Math.round(Math.abs(dyaw)*180/Math.PI)+'°) — add curves until the headings match'); return; }
+  if(Math.abs(dy)>0.3){ if(typeof flashToast==='function') flashToast('Ends differ in height by '+Math.abs(dy).toFixed(1)+' m — add a matching ramp first'); return; }
+  if(Math.abs(lat)>0.35){ if(typeof flashToast==='function') flashToast('Ends are offset sideways by '+Math.abs(lat).toFixed(1)+' m — a pair of opposite 45° curves shifts the line over'); return; }
+  if(fwd<0.4){ if(typeof flashToast==='function') flashToast(fwd>-0.4 ? 'Loop already closed' : 'The ends overlap — remove a piece'); return; }
+  pushUndoSnapshot();
+  spawnProp('track_straight', [ex.x, ex.y, ex.z, 0, ex.yaw, 0, anchor.scale.x, anchor.scale.y, fwd/24], (obj)=>{
+    editorActive='props'; editorTargets.props.idx=propModels.indexOf(obj); selProps=[obj];
+    if(typeof _levelDirty!=='undefined') _levelDirty=true;
+    if(typeof flashToast==='function') flashToast('Loop closed — bridged '+fwd.toFixed(1)+' m');
+    renderEditorFields();
+  });
+}
 function deleteSelectedProp(){
   pushUndoSnapshot();
   if(isGroupSel()){
@@ -25087,7 +25125,7 @@ function renderEditorFields(){
       // SELECTED track piece (select any piece to branch from it), or the last one placed. Best laid out in
       // top view (V): click a piece, watch the course grow, Delete removes the selected piece.
       const tHead=document.createElement('div'); tHead.className='hint'; tHead.style.margin='9px 0 3px';
-      tHead.innerHTML='<b>Track builder</b> — pieces snap onto the <b>selected</b> piece’s exit (or the last one placed). Lay the course in <b>top view</b> (V); <b>Del</b> removes the selected piece. Add a vehicle + raise Arena size for a full circuit.';
+      tHead.innerHTML='<b>Track builder</b> — pieces snap onto the <b>selected</b> piece’s exit (or the last one placed). Lay the course in <b>top view</b> (V); <b>Del</b> removes the selected piece. When the ends nearly meet, <b>Close loop</b> bridges the final gap exactly.';
       shapesHost.appendChild(tHead);
       const tgrid=document.createElement('div'); tgrid.style.cssText='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;';
       for(const tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[tk];
@@ -25111,6 +25149,10 @@ function renderEditorFields(){
             wl.appendChild(wcb); wl.appendChild(wsp); wrow.appendChild(wl);
           }
           if(_allTrk.length){
+            const clb=document.createElement('button'); clb.className='primBtn'; clb.style.flex='1'; clb.textContent='Close loop';
+            clb.title='Bridge the gap between the chain’s end and its start with one exactly-stretched straight';
+            clb.onclick=()=>{ closeTrackLoop(); };
+            wrow.appendChild(clb);
             const anyOff=_allTrk.some(p=>!(p.userData.trk && p.userData.trk.w));
             const wb=document.createElement('button'); wb.className='primBtn'; wb.style.flex='1'; wb.textContent=anyOff?'Walls: whole track':'Walls: remove all';
             wb.title=anyOff?'Add barrier walls to every track piece':'Remove barrier walls from every track piece';
