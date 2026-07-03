@@ -5,5 +5,5 @@
 import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 assert(/sec\('Objectives &amp; rules', 'game', '<div id="edGame"><\/div>'\)/.test(src), 'the section title covers its contents');
-assert(/game:\s*'Objective, waves & win conditions — plus gameplay rules: damage, ragdoll, flashlight, unarmed\.'/.test(src), 'the subtitle names what actually lives inside');
+assert(/game:\s*'Five folds: objective & win, waves, damage & death rules, player options, multiplayer spawns\.'/.test(src), 'the subtitle names what actually lives inside');   // build 853: the section renders as folds now
 done('build 847: the Gameplay tab’s main section is honestly titled');

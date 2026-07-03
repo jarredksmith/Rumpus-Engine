@@ -16615,7 +16615,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 852 · 2026-07-03';
+const BUILD_VERSION = 'build 853 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21324,7 +21324,7 @@ const SEC_SUB = {
   generate:   'Procedurally build a starting layout you can then edit.',
   enemies:    'Enemy types, counts & difficulty for this level.',
   boltfx:     'How enemy gunfire looks: bolt tip, streak, trail & muzzle flash.',
-  game:       'Objective, waves & win conditions — plus gameplay rules: damage, ragdoll, flashlight, unarmed.',
+  game:       'Five folds: objective & win, waves, damage & death rules, player options, multiplayer spawns.',
   pickups:    'Pads that grant ammo, health & power-ups.',
   loot:       'What enemies and crates drop when destroyed.',
   invitems:   'Define carryable items and what using them does.',
@@ -23837,36 +23837,44 @@ function renderEditorFields(){
 
     // ===== GAME / WAVES section =====
     const gHost = gameHost || worldHost;
+    // build 853: five folds, created up front — display order is fixed here, so each block below
+    // can append into its own fold body regardless of code order (this also moves the per-objective
+    // settings back UP next to the objective picker; they used to render below the damage rules).
+    const bObj = subSec('Objective & win', 'g_obj', false, gHost);
+    const bWav = subSec('Waves & difficulty', 'g_wav', true, gHost);
+    const bDmg = subSec('Damage & death rules', 'g_dmg', true, gHost);
+    const bPly = subSec('Player options', 'g_ply', true, gHost);
+    const bMps = subSec('Multiplayer spawn area', 'g_mps', true, gHost);
     // objective selector — the win condition for the level
-    hint(gHost, '<b>Objective</b>', '2px 0 4px');
+    hint(bObj, '<b>Objective</b>', '2px 0 4px');
     const obRow=document.createElement('div'); obRow.className='row2';
     const obBtn=(key,txt)=>{ const b=document.createElement('button'); b.innerHTML=txt; if(objectiveActive()===key){ b.style.background='rgba(var(--accent-rgb),0.30)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); gameCfg.objective=key; renderEditorFields(); }; return b; };
     obRow.appendChild(obBtn('eliminate',_icn('target')+'Eliminate')); obRow.appendChild(obBtn('survival',_icn('timer')+'Survival')); obRow.appendChild(obBtn('extraction',_icn('box')+'Extraction')); obRow.appendChild(obBtn('defend',_icn('shield')+'Defend')); obRow.appendChild(obBtn('destroy',_icn('blast')+'Destroy')); obRow.appendChild(obBtn('escort',_icn('truck')+'Escort')); obRow.appendChild(obBtn('puzzle',_icn('puzzle')+'Puzzle')); obRow.appendChild(obBtn('race',_icn('route')+'Race'));
-    gHost.appendChild(obRow);
-    if(objectiveActive()==='puzzle'){ hint(gHost, '', '4px 0 2px').innerHTML = '<b>Puzzle / exploration</b> — no enemies ever spawn. Build the level with props, mechanisms & signals, and end the run with a <b>Win level</b> signal (e.g. a contact plate or an E-activated exit). Great with <b>Start unarmed</b> + the flashlight.'; }
+    bObj.appendChild(obRow);
+    if(objectiveActive()==='puzzle'){ hint(bObj, '', '4px 0 2px').innerHTML = '<b>Puzzle / exploration</b> — no enemies ever spawn. Build the level with props, mechanisms & signals, and end the run with a <b>Win level</b> signal (e.g. a contact plate or an E-activated exit). Great with <b>Start unarmed</b> + the flashlight.'; }
     // ---- Objective text (build 692): a goal line shown at the start + recallable with J; signals can update it ----
-    hint(gHost, '<b>Objective text</b> — tells the player what to do', '10px 0 3px');
-    { const gi=document.createElement('input'); gi.type='text'; gi.maxLength=160; gi.placeholder='e.g. Find the three idols and place them on the altar'; gi.value=gameCfg.goalText||''; gi.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:12px;'; gi.onchange=()=>{ pushUndoSnapshot(); gameCfg.goalText=gi.value.slice(0,160); _levelDirty=true; }; gHost.appendChild(gi);
-      hint(gHost, '', '2px 0 0').textContent='Shown as a banner when the run starts; the player presses J to re-read it. A signal’s “Set objective” action can change it as the puzzle progresses.'; }
+    hint(bObj, '<b>Objective text</b> — tells the player what to do', '10px 0 3px');
+    { const gi=document.createElement('input'); gi.type='text'; gi.maxLength=160; gi.placeholder='e.g. Find the three idols and place them on the altar'; gi.value=gameCfg.goalText||''; gi.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:12px;'; gi.onchange=()=>{ pushUndoSnapshot(); gameCfg.goalText=gi.value.slice(0,160); _levelDirty=true; }; bObj.appendChild(gi);
+      hint(bObj, '', '2px 0 0').textContent='Shown as a banner when the run starts; the player presses J to re-read it. A signal’s “Set objective” action can change it as the puzzle progresses.'; }
     // ---- Checkpoints (build 693): solo death respawns at the last checkpoint instead of ending the run ----
     { const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:9px 0 2px;cursor:pointer;';
       const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!gameCfg.respawnOnDeath; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
       cb.onchange=()=>{ pushUndoSnapshot(); gameCfg.respawnOnDeath=cb.checked; }; const sp=document.createElement('span'); sp.innerHTML='<b>Respawn at checkpoint</b> on death (solo)';
-      lab.appendChild(cb); lab.appendChild(sp); gHost.appendChild(lab);
-      hint(gHost, '', '2px 0 6px').textContent='On: dying in solo sends you back to the last checkpoint (or the start) with full health — no game over. Drop checkpoints with a signal’s “Set checkpoint” action (e.g. a contact plate or an E-activated flag). Off: dying ends the run (wave shooters).'; }
+      lab.appendChild(cb); lab.appendChild(sp); bObj.appendChild(lab);
+      hint(bObj, '', '2px 0 6px').textContent='On: dying in solo sends you back to the last checkpoint (or the start) with full health — no game over. Drop checkpoints with a signal’s “Set checkpoint” action (e.g. a contact plate or an E-activated flag). Off: dying ends the run (wave shooters).'; }
     // ---- Custom win / lose messages (build 694): shown on the victory / defeat screens ----
-    hint(gHost, '<b>End-screen messages</b> — your own victory / defeat text', '10px 0 3px');
-    { const wi=document.createElement('textarea'); wi.maxLength=240; wi.rows=2; wi.placeholder='Victory message (e.g. The temple is yours. The idol returns home.)'; wi.value=gameCfg.winText||''; wi.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:12px;resize:vertical;'; wi.onchange=()=>{ pushUndoSnapshot(); gameCfg.winText=wi.value.slice(0,240); _levelDirty=true; }; const r=document.createElement('div'); r.style.margin='0 0 4px'; const l=document.createElement('div'); l.className='hint'; l.style.margin='0 0 1px'; l.textContent='Victory screen'; r.appendChild(l); r.appendChild(wi); gHost.appendChild(r); }
-    { const li=document.createElement('textarea'); li.maxLength=240; li.rows=2; li.placeholder='Defeat message (e.g. The curse claims another. Try again.)'; li.value=gameCfg.loseText||''; li.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:12px;resize:vertical;'; li.onchange=()=>{ pushUndoSnapshot(); gameCfg.loseText=li.value.slice(0,240); _levelDirty=true; }; const r=document.createElement('div'); r.style.margin='0 0 4px'; const l=document.createElement('div'); l.className='hint'; l.style.margin='0 0 1px'; l.textContent='Defeat screen'; r.appendChild(l); r.appendChild(li); gHost.appendChild(r); }
-    hint(gHost, '', '0 0 6px').textContent='Blank = the default headlines. Great for ending an adventure with a line of story.';
+    hint(bObj, '<b>End-screen messages</b> — your own victory / defeat text', '10px 0 3px');
+    { const wi=document.createElement('textarea'); wi.maxLength=240; wi.rows=2; wi.placeholder='Victory message (e.g. The temple is yours. The idol returns home.)'; wi.value=gameCfg.winText||''; wi.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:12px;resize:vertical;'; wi.onchange=()=>{ pushUndoSnapshot(); gameCfg.winText=wi.value.slice(0,240); _levelDirty=true; }; const r=document.createElement('div'); r.style.margin='0 0 4px'; const l=document.createElement('div'); l.className='hint'; l.style.margin='0 0 1px'; l.textContent='Victory screen'; r.appendChild(l); r.appendChild(wi); bObj.appendChild(r); }
+    { const li=document.createElement('textarea'); li.maxLength=240; li.rows=2; li.placeholder='Defeat message (e.g. The curse claims another. Try again.)'; li.value=gameCfg.loseText||''; li.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:12px;resize:vertical;'; li.onchange=()=>{ pushUndoSnapshot(); gameCfg.loseText=li.value.slice(0,240); _levelDirty=true; }; const r=document.createElement('div'); r.style.margin='0 0 4px'; const l=document.createElement('div'); l.className='hint'; l.style.margin='0 0 1px'; l.textContent='Defeat screen'; r.appendChild(l); r.appendChild(li); bObj.appendChild(r); }
+    hint(bObj, '', '0 0 6px').textContent='Blank = the default headlines. Great for ending an adventure with a line of story.';
     // ---- Fall damage ----
     if(!gameCfg.fallDamage) gameCfg.fallDamage = { on:false, player:true, ai:true, minSpeed:24, perUnit:1.4 };
-    hint(gHost, '<b>Fall damage</b> — hurt anything that lands hard', '10px 0 4px');
+    hint(bDmg, '<b>Fall damage</b> — hurt anything that lands hard', '10px 0 4px');
     const fdToggle=(label, get, set)=>{
       const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;margin:3px 0;';
       const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!get(); cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);flex:none;';
       cb.onchange=()=>{ pushUndoSnapshot(); set(cb.checked); renderEditorFields(); };
-      const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); gHost.appendChild(lab);
+      const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); bDmg.appendChild(lab);
     };
     fdToggle('<b>Enable fall damage</b>', ()=>gameCfg.fallDamage.on, v=>gameCfg.fallDamage.on=v);
     if(gameCfg.fallDamage.on){
@@ -23880,18 +23888,18 @@ function renderEditorFields(){
         const ap=(v)=>{ let n=parseFloat(v); if(!isFinite(n)) n=min; n=Math.max(min,Math.min(max,n)); set(n); rng.value=n; nm.value=+n.toFixed(2); };
         rng.addEventListener('mousedown',()=>pushUndoSnapshot()); nm.addEventListener('focus',()=>pushUndoSnapshot());
         rng.oninput=()=>ap(rng.value); nm.onchange=()=>ap(nm.value);
-        row.appendChild(s); row.appendChild(rng); row.appendChild(nm); gHost.appendChild(row);
-        if(hintTxt) hint(gHost, hintTxt, '0 0 4px');
+        row.appendChild(s); row.appendChild(rng); row.appendChild(nm); bDmg.appendChild(row);
+        if(hintTxt) hint(bDmg, hintTxt, '0 0 4px');
       };
       fdNum('Safe speed', ()=>gameCfg.fallDamage.minSpeed, v=>gameCfg.fallDamage.minSpeed=v, 0, 80, 1, 'Landings slower than this do no damage (higher = more forgiving).');
       fdNum('Damage', ()=>gameCfg.fallDamage.perUnit, v=>gameCfg.fallDamage.perUnit=v, 0, 8, 0.1, 'Damage dealt per unit of speed above the safe speed.');
     }
     // ---- Ragdoll (build 779) ----
-    hint(gHost, '<b>Ragdoll</b> — dead enemies become a tumbling physics body that flies with the killing hit', '10px 0 4px');
+    hint(bDmg, '<b>Ragdoll</b> — dead enemies become a tumbling physics body that flies with the killing hit', '10px 0 4px');
     fdToggle('<b>Ragdoll on death</b>', ()=>gameCfg.ragdoll, v=>gameCfg.ragdoll=v);
     // ---- Crushing props ----
     if(!gameCfg.crushDamage) gameCfg.crushDamage = { on:false, player:true, ai:true, minSpeed:7, perUnit:2.2 };
-    hint(gHost, '<b>Crushing props</b> — a moving prop (e.g. a falling box) that hits someone deals damage', '10px 0 4px');
+    hint(bDmg, '<b>Crushing props</b> — a moving prop (e.g. a falling box) that hits someone deals damage', '10px 0 4px');
     fdToggle('<b>Enable crush damage</b>', ()=>gameCfg.crushDamage.on, v=>gameCfg.crushDamage.on=v);
     if(gameCfg.crushDamage.on){
       fdToggle('Affects the player', ()=>gameCfg.crushDamage.player, v=>gameCfg.crushDamage.player=v);
@@ -23904,8 +23912,8 @@ function renderEditorFields(){
         const ap=(v)=>{ let n=parseFloat(v); if(!isFinite(n)) n=min; n=Math.max(min,Math.min(max,n)); set(n); rng.value=n; nm.value=+n.toFixed(2); };
         rng.addEventListener('mousedown',()=>pushUndoSnapshot()); nm.addEventListener('focus',()=>pushUndoSnapshot());
         rng.oninput=()=>ap(rng.value); nm.onchange=()=>ap(nm.value);
-        row.appendChild(s); row.appendChild(rng); row.appendChild(nm); gHost.appendChild(row);
-        if(hintTxt) hint(gHost, hintTxt, '0 0 4px');
+        row.appendChild(s); row.appendChild(rng); row.appendChild(nm); bDmg.appendChild(row);
+        if(hintTxt) hint(bDmg, hintTxt, '0 0 4px');
       };
       cdNum('Min speed', ()=>gameCfg.crushDamage.minSpeed, v=>gameCfg.crushDamage.minSpeed=v, 0, 40, 0.5, 'How fast a prop must be moving to deal crush damage.');
       cdNum('Damage', ()=>gameCfg.crushDamage.perUnit, v=>gameCfg.crushDamage.perUnit=v, 0, 12, 0.1, 'Damage per unit of prop speed above the minimum.');
@@ -23947,7 +23955,7 @@ function renderEditorFields(){
     if(typeof applyCrosshair==='function') applyCrosshair(gameCfg.crosshair);
     if(crosshairEl) crosshairEl.style.opacity = '1';   // show a live preview while tuning on this tab
     }
-    hint(gHost, '', '3px 0 6px').textContent = (objectiveActive()==='survival')
+    hint(bObj, '', '3px 0 6px').textContent = (objectiveActive()==='survival')
       ? 'Survival: hostiles spawn endlessly — outlast the countdown to win.'
       : (objectiveActive()==='extraction')
       ? 'Extraction: reach the beacon (auto-placed across the arena) and hold it while hostiles spawn endlessly.'
@@ -23965,49 +23973,49 @@ function renderEditorFields(){
       const svSp=document.createElement('span'); svSp.textContent='Survive seconds'; svSp.style.minWidth='118px';
       const svN=document.createElement('input'); svN.type='number'; svN.min='10'; svN.max='999'; svN.step='5'; svN.value=gameCfg.surviveSecs; svN.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
       svN.onchange=()=>{ gameCfg.surviveSecs=Math.max(10,Math.min(999,parseInt(svN.value,10)||120)); renderEditorFields(); };
-      svLab.appendChild(svSp); svLab.appendChild(svN); gHost.appendChild(svLab);
-      hint(gHost, '', '2px 0 0').textContent = 'Outlast '+fmtClock(gameCfg.surviveSecs)+' to win. Spawn style + upgrades below still apply.';
+      svLab.appendChild(svSp); svLab.appendChild(svN); bObj.appendChild(svLab);
+      hint(bObj, '', '2px 0 0').textContent = 'Outlast '+fmtClock(gameCfg.surviveSecs)+' to win. Spawn style + upgrades below still apply.';
     }
     if(objectiveActive()==='extraction'){
-      const exrow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); gHost.appendChild(l); };
+      const exrow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); bObj.appendChild(l); };
       exrow('Hold seconds','1','30','1', ()=>gameCfg.extractHold, v=>gameCfg.extractHold=Math.max(1,Math.min(30,v||5)));
       exrow('Zone radius','1.5','10','0.5', ()=>gameCfg.extractRadius, v=>gameCfg.extractRadius=Math.max(1.5,Math.min(10,v||3.5)));
-      hint(gHost, '', '2px 0 0').textContent = 'Beacon drops across the arena from your spawn. Hold it '+gameCfg.extractHold+'s to win (leaving resets progress).';
+      hint(bObj, '', '2px 0 0').textContent = 'Beacon drops across the arena from your spawn. Hold it '+gameCfg.extractHold+'s to win (leaving resets progress).';
     }
     if(objectiveActive()==='defend'){
-      const drow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); gHost.appendChild(l); };
+      const drow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); bObj.appendChild(l); };
       drow('Hold seconds','10','999','5', ()=>gameCfg.surviveSecs, v=>gameCfg.surviveSecs=Math.max(10,Math.min(999,v||60)));
       drow('Zone radius','1.5','12','0.5', ()=>gameCfg.extractRadius, v=>gameCfg.extractRadius=Math.max(1.5,Math.min(12,v||3.5)));
-      hint(gHost, '', '2px 0 0').textContent = 'Zone drops across the arena from your spawn. Hold it a total of '+fmtClock(gameCfg.surviveSecs)+' (clock pauses when nobody is inside).';
+      hint(bObj, '', '2px 0 0').textContent = 'Zone drops across the arena from your spawn. Hold it a total of '+fmtClock(gameCfg.surviveSecs)+' (clock pauses when nobody is inside).';
     }
     if(objectiveActive()==='escort'){
-      const erow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); gHost.appendChild(l); };
+      const erow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); bObj.appendChild(l); };
       erow('Escort radius','1.5','12','0.5', ()=>gameCfg.extractRadius, v=>gameCfg.extractRadius=Math.max(1.5,Math.min(12,v||3.5)));
-      hint(gHost, '', '2px 0 0').textContent = 'Payload starts at your spawn and rolls to the beacon. Stay within '+(gameCfg.extractRadius||3.5)+'m to keep it moving.';
+      hint(bObj, '', '2px 0 0').textContent = 'Payload starts at your spawn and rolls to the beacon. Stay within '+(gameCfg.extractRadius||3.5)+'m to keep it moving.';
     }
     if(objectiveActive()==='race'){
       const rcLab=document.createElement('label'); rcLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;';
       const rcSp=document.createElement('span'); rcSp.textContent='Laps to win'; rcSp.style.minWidth='118px';
       const rcN=document.createElement('input'); rcN.type='number'; rcN.min='1'; rcN.max='99'; rcN.step='1'; rcN.value=gameCfg.raceLaps||3; rcN.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
       rcN.onchange=()=>{ pushUndoSnapshot(); gameCfg.raceLaps=Math.max(1,Math.min(99,parseInt(rcN.value,10)||3)); renderEditorFields(); };
-      rcLab.appendChild(rcSp); rcLab.appendChild(rcN); gHost.appendChild(rcLab);
+      rcLab.appendChild(rcSp); rcLab.appendChild(rcN); bObj.appendChild(rcLab);
       // build 833: AI rivals — count + pace
-      const rrow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ pushUndoSnapshot(); set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); gHost.appendChild(l); };
+      const rrow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ pushUndoSnapshot(); set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); bObj.appendChild(l); };
       rrow('AI rivals','0','6','1', ()=>gameCfg.raceBots, v=>gameCfg.raceBots=Math.max(0,Math.min(6,Math.round(v)||0)));
       rrow('Rival pace','0.4','1.3','0.05', ()=>gameCfg.raceBotSkill, v=>gameCfg.raceBotSkill=Math.max(0.4,Math.min(1.3,v||0.85)));
       const _hasStart=propModels.some(p=>p && p.userData && TRACK_PIECES[p.userData.src] && TRACK_PIECES[p.userData.src].start);
-      hint(gHost, '', '2px 0 0').textContent = _hasStart
+      hint(bObj, '', '2px 0 0').textContent = _hasStart
         ? ('Cross the Start line to begin; complete '+(gameCfg.raceLaps||3)+' lap'+((gameCfg.raceLaps||3)===1?'':'s')+' to win. Rivals need a CLOSED loop + a placed vehicle to clone; 0 rivals = time trial. Pace 0.85 = beatable, 1+ = ruthless.')
         : 'No Start-line piece placed yet — add one from Build > Track builder or the race can’t begin.';
     }
     // ---- Multiplayer spawn region: confine MP/bot random spawns to a circle (e.g. inside an arena prop) ----
     { const sr = gameCfg.spawnRegion;
-      hint(gHost, '<b>Multiplayer spawn area</b>', '14px 0 4px');
+      hint(bMps, '<b>Multiplayer spawn area</b>', '14px 0 4px');
       const onLab=document.createElement('label'); onLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0 4px;cursor:pointer;';
       const onCb=document.createElement('input'); onCb.type='checkbox'; onCb.checked=!!sr.on; onCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
       onCb.onchange=()=>{ pushUndoSnapshot(); sr.on=onCb.checked; refreshSpawnRegionMarker(); renderEditorFields(); };
-      const onSp=document.createElement('span'); onSp.innerHTML='<b>Confine spawns to a region</b>'; onLab.appendChild(onCb); onLab.appendChild(onSp); gHost.appendChild(onLab);
-      hint(gHost,'','0 0 6px').textContent = sr.on
+      const onSp=document.createElement('span'); onSp.innerHTML='<b>Confine spawns to a region</b>'; onLab.appendChild(onCb); onLab.appendChild(onSp); bMps.appendChild(onLab);
+      hint(bMps,'','0 0 6px').textContent = sr.on
         ? 'Players and bots spawn only inside this circle \u2014 keep it inside your arena.'
         : 'Off \u2014 players/bots spawn anywhere clear on the map (can land outside an arena prop).';
       if(sr.on){
@@ -24018,27 +24026,27 @@ function renderEditorFields(){
           b.onclick=()=>{ pushUndoSnapshot(); sr.shape=val; if(val==='circle') spawnPolyEdit=false; refreshSpawnRegionMarker(); renderEditorFields(); };
           shRow.appendChild(b);
         });
-        gHost.appendChild(shRow);
+        bMps.appendChild(shRow);
         if(sr.shape==='poly'){
           spawnPolyEdit = !!spawnPolyEdit;   // keep current draw state
-          const tip=hint(gHost,'','0 0 6px'); tip.textContent='Switch to Top view, click Draw, then click around your arena\u2019s edge to trace its shape. 3+ points needed.';
+          const tip=hint(bMps,'','0 0 6px'); tip.textContent='Switch to Top view, click Draw, then click around your arena\u2019s edge to trace its shape. 3+ points needed.';
           const drawBtn=document.createElement('button'); drawBtn.style.cssText='width:100%;margin:0 0 6px;'+(spawnPolyEdit?'background:#7a4d12;border-color:#ffb74d;color:#fff;':'');
           drawBtn.textContent = spawnPolyEdit ? '✓ Drawing… click the map (click here to stop)' : '✎ Draw outline (click points on the map)';
           drawBtn.onclick=()=>{ spawnPolyEdit=!spawnPolyEdit; renderEditorFields(); };
-          gHost.appendChild(drawBtn);
-          const cnt=hint(gHost,'','0 0 6px'); cnt.textContent=(sr.poly.length)+' point'+(sr.poly.length===1?'':'s')+' placed'+(sr.poly.length>=3?' — region active.':(sr.poly.length?' — need at least 3.':'.'));
+          bMps.appendChild(drawBtn);
+          const cnt=hint(bMps,'','0 0 6px'); cnt.textContent=(sr.poly.length)+' point'+(sr.poly.length===1?'':'s')+' placed'+(sr.poly.length>=3?' — region active.':(sr.poly.length?' — need at least 3.':'.'));
           const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;';
           const undo=document.createElement('button'); undo.textContent='↶ Undo point'; undo.style.flex='1'; undo.disabled=!sr.poly.length;
           undo.onclick=()=>{ if(!sr.poly.length) return; pushUndoSnapshot(); sr.poly.pop(); refreshSpawnRegionMarker(); renderEditorFields(); };
           const clr=document.createElement('button'); clr.textContent='✕ Clear outline'; clr.style.flex='1'; clr.disabled=!sr.poly.length;
           clr.onclick=()=>{ pushUndoSnapshot(); sr.poly.length=0; refreshSpawnRegionMarker(); renderEditorFields(); };
-          row.appendChild(undo); row.appendChild(clr); gHost.appendChild(row);
+          row.appendChild(undo); row.appendChild(clr); bMps.appendChild(row);
         } else {
           spawnPolyEdit=false;
           const useStart=document.createElement('button'); useStart.textContent='\u2316 Center on player start'; useStart.style.cssText='width:100%;margin:0 0 6px;';
           useStart.title='Snap the region center to your placed player start.';
           useStart.onclick=()=>{ pushUndoSnapshot(); sr.x=+playerSpawn.x||0; sr.z=+playerSpawn.z||0; refreshSpawnRegionMarker(); renderEditorFields(); };
-          gHost.appendChild(useStart);
+          bMps.appendChild(useStart);
           const mkN=(label,key,min,max,step)=>{
             const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:12px;margin:3px 0;';
             const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='70px';
@@ -24047,7 +24055,7 @@ function renderEditorFields(){
             const ap=(v)=>{ let n=parseFloat(v); if(!isFinite(n)) n=0; sr[key]=n; rng.value=n; num.value=n; refreshSpawnRegionMarker(); };
             rng.addEventListener('mousedown',()=>pushUndoSnapshot()); num.addEventListener('focus',()=>pushUndoSnapshot());
             rng.oninput=()=>ap(rng.value); num.onchange=()=>ap(num.value);
-            row.appendChild(sp); row.appendChild(rng); row.appendChild(num); gHost.appendChild(row);
+            row.appendChild(sp); row.appendChild(rng); row.appendChild(num); bMps.appendChild(row);
           };
           mkN('Center X','x',-200,200,1); mkN('Center Z','z',-200,200,1); mkN('Radius','r',3,200,1);
         }
@@ -24116,20 +24124,20 @@ function renderEditorFields(){
         row.appendChild(lab); row.appendChild(ks); if(isel) row.appendChild(isel); row.appendChild(pos); row.appendChild(ed); row.appendChild(del); pkHost.appendChild(row);
         if(selPickup===i) _pickupXformPanel(pkHost, sp, i); });
     } else { hint(pkHost,'','3px 0 0').textContent='None yet. Pick a kind, walk where you want it, then Place ahead. They respawn on a timer.'; }
-    hint(gHost, '<b>Wave mode</b>', '12px 0 4px');
+    hint(bWav, '<b>Wave mode</b>', '12px 0 4px');
     const gmRow=document.createElement('div'); gmRow.className='row2';
     const gmBtn=(key,txt)=>{ const b=document.createElement('button'); b.innerHTML=txt; if(gameCfg.mode===key){ b.style.background='rgba(var(--accent-rgb),0.30)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); gameCfg.mode=key; renderEditorFields(); }; return b; };
     gmRow.appendChild(gmBtn('random',_icn('dice')+'Random')); gmRow.appendChild(gmBtn('prebuilt',_icn('map')+'Pre-built'));
-    gHost.appendChild(gmRow);
-    hint(gHost, '', '3px 0 6px').textContent = (gameCfg.mode==='prebuilt')
+    bWav.appendChild(gmRow);
+    hint(bWav, '', '3px 0 6px').textContent = (gameCfg.mode==='prebuilt')
       ? 'Pre-built: each wave spawns the enemy markers assigned to it (set “Appears on wave” per spawn on the Spawns tab; 0 = every wave).'
       : 'Random: each wave auto-spawns scattered, mixed-type hostiles that scale with the wave number.';
     if(gameCfg.mode==='prebuilt'){
       const nrLab=document.createElement('label'); nrLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0 4px;cursor:pointer;';
       const nrCb=document.createElement('input'); nrCb.type='checkbox'; nrCb.checked=!!gameCfg.noRespawn; nrCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
       nrCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.noRespawn=nrCb.checked; renderEditorFields(); };
-      const nrSp=document.createElement('span'); nrSp.innerHTML='<b>No respawn</b> (single pass)'; nrLab.appendChild(nrCb); nrLab.appendChild(nrSp); gHost.appendChild(nrLab);
-      hint(gHost,'','0 0 6px').textContent = gameCfg.noRespawn
+      const nrSp=document.createElement('span'); nrSp.innerHTML='<b>No respawn</b> (single pass)'; nrLab.appendChild(nrCb); nrLab.appendChild(nrSp); bWav.appendChild(nrLab);
+      hint(bWav,'','0 0 6px').textContent = gameCfg.noRespawn
         ? 'Each spawn fires once on its wave (0 = wave 1); after the last authored wave is cleared the field stays empty. Eliminate wins on the final clear; extraction/survival finish via their own goal.'
         : 'Cleared waves auto-advance and respawn (markers set to 0 = every wave keep coming back). Turn this on to fight the placed enemies once and then leave the field clear.';
     }
@@ -24137,58 +24145,58 @@ function renderEditorFields(){
     const wwSp=document.createElement('span'); wwSp.textContent='Win after N waves'; wwSp.style.minWidth='118px';
     const wwN=document.createElement('input'); wwN.type='number'; wwN.min='0'; wwN.max='99'; wwN.step='1'; wwN.value=gameCfg.winWaves; wwN.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
     wwN.onchange=()=>{ gameCfg.winWaves=Math.max(0,Math.min(99,parseInt(wwN.value,10)||0)); renderEditorFields(); };
-    wwLab.appendChild(wwSp); wwLab.appendChild(wwN); gHost.appendChild(wwLab);
-    hint(gHost, '', '2px 0 0').textContent = (gameCfg.winWaves>0) ? ('Clear '+gameCfg.winWaves+' wave'+(gameCfg.winWaves===1?'':'s')+' to win (MISSION COMPLETE).') : '0 = endless survival.';
+    wwLab.appendChild(wwSp); wwLab.appendChild(wwN); bWav.appendChild(wwLab);
+    hint(bWav, '', '2px 0 0').textContent = (gameCfg.winWaves>0) ? ('Clear '+gameCfg.winWaves+' wave'+(gameCfg.winWaves===1?'':'s')+' to win (MISSION COMPLETE).') : '0 = endless survival.';
     const bwLab=document.createElement('label'); bwLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;';
     const bwSp=document.createElement('span'); bwSp.textContent='Boss every N waves'; bwSp.style.minWidth='118px';
     const bwN=document.createElement('input'); bwN.type='number'; bwN.min='0'; bwN.max='20'; bwN.step='1'; bwN.value=gameCfg.bossWave; bwN.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
     bwN.onchange=()=>{ gameCfg.bossWave=Math.max(0,Math.min(20,parseInt(bwN.value,10)||0)); renderEditorFields(); };
-    bwLab.appendChild(bwSp); bwLab.appendChild(bwN); gHost.appendChild(bwLab);
-    hint(gHost, '', '2px 0 0').textContent = (gameCfg.bossWave>0) ? ('Random mode: a BOSS joins every '+gameCfg.bossWave+' wave'+(gameCfg.bossWave===1?'':'s')+'. (Pre-built: place boss spawns on the Spawns tab.)') : 'No automatic bosses (you can still place boss spawns on the Spawns tab).';
+    bwLab.appendChild(bwSp); bwLab.appendChild(bwN); bWav.appendChild(bwLab);
+    hint(bWav, '', '2px 0 0').textContent = (gameCfg.bossWave>0) ? ('Random mode: a BOSS joins every '+gameCfg.bossWave+' wave'+(gameCfg.bossWave===1?'':'s')+'. (Pre-built: place boss spawns on the Spawns tab.)') : 'No automatic bosses (you can still place boss spawns on the Spawns tab).';
     const ugLab=document.createElement('label'); ugLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 2px;cursor:pointer;';
     const ugCb=document.createElement('input'); ugCb.type='checkbox'; ugCb.checked=(gameCfg.upgrades!==false); ugCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
     ugCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.upgrades=ugCb.checked; };
     const ugSp=document.createElement('span'); ugSp.textContent='Between-wave upgrade cards (solo)';
-    ugLab.appendChild(ugCb); ugLab.appendChild(ugSp); gHost.appendChild(ugLab);
-    hint(gHost, '', '2px 0 0').textContent = 'On: clearing a wave in solo lets you pick 1 of 3 upgrades. Off: waves flow straight through.';
+    ugLab.appendChild(ugCb); ugLab.appendChild(ugSp); bWav.appendChild(ugLab);
+    hint(bWav, '', '2px 0 0').textContent = 'On: clearing a wave in solo lets you pick 1 of 3 upgrades. Off: waves flow straight through.';
     // build 672: hands / unarmed — turns BREACH into a fist-fight / adventure / puzzle base
-    hint(gHost, '<b>Hands / unarmed</b>', '12px 0 4px');
-    const _chk=(label, checked, on)=>{ const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;'; cb.onchange=()=>{ pushUndoSnapshot(); on(cb.checked); }; const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); gHost.appendChild(lab); return cb; };
+    hint(bPly, '<b>Hands / unarmed</b>', '12px 0 4px');
+    const _chk=(label, checked, on)=>{ const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;'; cb.onchange=()=>{ pushUndoSnapshot(); on(cb.checked); }; const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); bPly.appendChild(lab); return cb; };
     _chk('<b>Start unarmed</b> (fists only — punch, carry, no guns)', gameCfg.unarmed, v=>{ gameCfg.unarmed=v; renderEditorFields(); });
     if(gameCfg.unarmed) _chk('Allow picking up weapons found in the level', gameCfg.allowPickup!==false, v=>{ gameCfg.allowPickup=v; });
     _chk('<b>Flashlight</b> (players toggle a held light with <b>L</b>)', gameCfg.flashlight, v=>{ gameCfg.flashlight=v; renderEditorFields(); });
     if(gameCfg.flashlight){
       if(!gameCfg.flashCfg) gameCfg.flashCfg=_sanitizeFlash(null);
       const fc=gameCfg.flashCfg;
-      const _flRow=(label, min, max, step, get, set, fmt)=>{ const w=document.createElement('div'); w.style.cssText='display:flex;align-items:center;gap:8px;margin:3px 0 3px 22px;color:#9fe6cf;font-size:12px;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.cssText='flex:0 0 92px;'; const rr=document.createElement('input'); rr.type='range'; rr.min=String(min); rr.max=String(max); rr.step=String(step); rr.value=String(get()); rr.style.cssText='flex:1 1 auto;accent-color:var(--accent);'; const nn=document.createElement('span'); nn.style.cssText='flex:0 0 44px;text-align:right;color:#cfeee2;'; nn.textContent=fmt(get()); rr.addEventListener('pointerdown',()=>pushUndoSnapshot()); rr.oninput=()=>{ set(+rr.value); nn.textContent=fmt(+rr.value); if(typeof applyFlashCfg==='function') applyFlashCfg(); _levelDirty=true; }; w.appendChild(sp); w.appendChild(rr); w.appendChild(nn); gHost.appendChild(w); };
+      const _flRow=(label, min, max, step, get, set, fmt)=>{ const w=document.createElement('div'); w.style.cssText='display:flex;align-items:center;gap:8px;margin:3px 0 3px 22px;color:#9fe6cf;font-size:12px;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.cssText='flex:0 0 92px;'; const rr=document.createElement('input'); rr.type='range'; rr.min=String(min); rr.max=String(max); rr.step=String(step); rr.value=String(get()); rr.style.cssText='flex:1 1 auto;accent-color:var(--accent);'; const nn=document.createElement('span'); nn.style.cssText='flex:0 0 44px;text-align:right;color:#cfeee2;'; nn.textContent=fmt(get()); rr.addEventListener('pointerdown',()=>pushUndoSnapshot()); rr.oninput=()=>{ set(+rr.value); nn.textContent=fmt(+rr.value); if(typeof applyFlashCfg==='function') applyFlashCfg(); _levelDirty=true; }; w.appendChild(sp); w.appendChild(rr); w.appendChild(nn); bPly.appendChild(w); };
       _flRow('Brightness', 0.5, 20, 0.5, ()=>fc.intensity, v=>fc.intensity=v, v=>v.toFixed(1));
       _flRow('Cone angle', 8, 60, 1, ()=>fc.angle, v=>fc.angle=v, v=>Math.round(v)+'°');
       _flRow('Edge softness', 0, 1, 0.05, ()=>fc.penumbra, v=>fc.penumbra=v, v=>Math.round(v*100)+'%');
       _flRow('Range', 5, 150, 1, ()=>fc.distance, v=>fc.distance=v, v=>Math.round(v)+'m');
-      const cw=document.createElement('div'); cw.style.cssText='display:flex;align-items:center;gap:8px;margin:3px 0 3px 22px;color:#9fe6cf;font-size:12px;'; const cs=document.createElement('span'); cs.textContent='Beam colour'; cs.style.cssText='flex:0 0 92px;'; const ci=document.createElement('input'); ci.type='color'; ci.value='#'+(fc.color>>>0).toString(16).padStart(6,'0').slice(-6); ci.style.cssText='width:42px;height:24px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#0c1418;cursor:pointer;'; ci.oninput=()=>{ pushUndoSnapshot(); fc.color=parseInt(ci.value.slice(1),16); if(typeof applyFlashCfg==='function') applyFlashCfg(); _levelDirty=true; }; cw.appendChild(cs); cw.appendChild(ci); gHost.appendChild(cw);
-      hint(gHost, '', '1px 0 5px').textContent='Tune the held beam — players see it the moment they press L in your level.';
+      const cw=document.createElement('div'); cw.style.cssText='display:flex;align-items:center;gap:8px;margin:3px 0 3px 22px;color:#9fe6cf;font-size:12px;'; const cs=document.createElement('span'); cs.textContent='Beam colour'; cs.style.cssText='flex:0 0 92px;'; const ci=document.createElement('input'); ci.type='color'; ci.value='#'+(fc.color>>>0).toString(16).padStart(6,'0').slice(-6); ci.style.cssText='width:42px;height:24px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#0c1418;cursor:pointer;'; ci.oninput=()=>{ pushUndoSnapshot(); fc.color=parseInt(ci.value.slice(1),16); if(typeof applyFlashCfg==='function') applyFlashCfg(); _levelDirty=true; }; cw.appendChild(cs); cw.appendChild(ci); bPly.appendChild(cw);
+      hint(bPly, '', '1px 0 5px').textContent='Tune the held beam — players see it the moment they press L in your level.';
     }
-    hint(gHost, '', '2px 0 6px').textContent = 'Unarmed: left-click punches, G grabs/carries/throws objects. Great for fist-fights, adventure & puzzle levels.';
+    hint(bPly, '', '2px 0 6px').textContent = 'Unarmed: left-click punches, G grabs/carries/throws objects. Great for fist-fights, adventure & puzzle levels.';
     // hit-number look
-    hint(gHost, '<b>Hit numbers</b>', '12px 0 4px');
+    hint(bDmg, '<b>Hit numbers</b>', '12px 0 4px');
     const hnLab=document.createElement('label'); hnLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;';
     const hnCb=document.createElement('input'); hnCb.type='checkbox'; hnCb.checked=(dmgNumCfg.on!==false); hnCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
     hnCb.onchange=()=>{ pushUndoSnapshot(); dmgNumCfg.on=hnCb.checked; renderEditorFields(); };
     const hnSp=document.createElement('span'); hnSp.textContent='Show floating damage numbers';
-    hnLab.appendChild(hnCb); hnLab.appendChild(hnSp); gHost.appendChild(hnLab);
+    hnLab.appendChild(hnCb); hnLab.appendChild(hnSp); bDmg.appendChild(hnLab);
     if(dmgNumCfg.on!==false){
       const szLab=document.createElement('label'); szLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;';
       const szSp=document.createElement('span'); szSp.textContent='Font size'; szSp.style.minWidth='86px';
       const szN=document.createElement('input'); szN.type='number'; szN.min='10'; szN.max='120'; szN.step='2'; szN.value=dmgNumCfg.size; szN.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
       szN.onchange=()=>{ dmgNumCfg.size=Math.max(10,Math.min(120,parseInt(szN.value,10)||44)); };
-      szLab.appendChild(szSp); szLab.appendChild(szN); gHost.appendChild(szLab);
+      szLab.appendChild(szSp); szLab.appendChild(szN); bDmg.appendChild(szLab);
       const colRow=document.createElement('div'); colRow.style.cssText='display:flex;gap:16px;margin:4px 0 0;';
       const mkCol=(label,val,set)=>{ const w=document.createElement('label'); w.style.cssText='display:flex;align-items:center;gap:6px;color:#9fe6cf;font-size:12px;cursor:pointer;'; const i=document.createElement('input'); i.type='color'; i.value=val; i.style.cssText='width:30px;height:22px;border:none;background:none;cursor:pointer;'; i.oninput=()=>set(i.value); const sp=document.createElement('span'); sp.textContent=label; w.appendChild(i); w.appendChild(sp); return w; };
       colRow.appendChild(mkCol('Hit', dmgNumCfg.hitColor, v=>dmgNumCfg.hitColor=v));
       colRow.appendChild(mkCol('Kill', dmgNumCfg.killColor, v=>dmgNumCfg.killColor=v));
-      gHost.appendChild(colRow);
+      bDmg.appendChild(colRow);
     }
-    hint(gHost, '', '4px 0 0').textContent = 'Numbers pop at each hit and float up. Kills show the red color with a "!".';
+    hint(bDmg, '', '4px 0 0').textContent = 'Numbers pop at each hit and float up. Kills show the red color with a "!".';
 
     // ===== LOOT section =====
     const lHost = lootHost || worldHost;

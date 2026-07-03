@@ -20,7 +20,7 @@ assert(/objectiveActive\(\)==='puzzle'\)\{ wn\.textContent = _curGoal \? _curGoa
 // --- editor exposes the objective ---
 const panel = extractFunction('renderEditorFields');
 assert(/obBtn\('puzzle',/.test(panel), 'a Puzzle objective button exists');
-assert(/if\(objectiveActive\(\)==='puzzle'\)\{ hint\(gHost[\s\S]*?Win level<\/b> signal/.test(panel), 'the panel explains the puzzle win path');
+assert(/if\(objectiveActive\(\)==='puzzle'\)\{ hint\(bObj[\s\S]*?Win level<\/b> signal/.test(panel), 'the panel explains the puzzle win path');   // build 853: the hint lives in the Objective & win fold now
 
 // --- it serializes through the normal objective field (round-trips) ---
 assert(/objective: gameCfg\.objective/.test(src), 'objective (incl. puzzle) saves with the level');
