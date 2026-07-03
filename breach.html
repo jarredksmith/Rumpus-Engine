@@ -8807,6 +8807,8 @@ let gameCfg = {
   objective: (savedLevel && savedLevel.game && savedLevel.game.objective) || 'eliminate',   // 'eliminate' | 'survival' | 'extraction' | 'defend' | 'destroy' | 'escort' | 'puzzle' | 'race'
   surviveSecs: (savedLevel && savedLevel.game && savedLevel.game.surviveSecs!=null) ? savedLevel.game.surviveSecs : 120,
   raceLaps: (savedLevel && savedLevel.game && savedLevel.game.raceLaps!=null) ? savedLevel.game.raceLaps : 3,   // build 831: laps to win a race
+  raceBots: (savedLevel && savedLevel.game && savedLevel.game.raceBots!=null) ? savedLevel.game.raceBots : 3,   // build 833: AI rivals on the grid (0 = time trial)
+  raceBotSkill: (savedLevel && savedLevel.game && savedLevel.game.raceBotSkill!=null) ? savedLevel.game.raceBotSkill : 0.85,   // build 833: rival pace (fraction of the ideal line speed)
   extractHold: (savedLevel && savedLevel.game && savedLevel.game.extractHold!=null) ? savedLevel.game.extractHold : 5,
   extractRadius: (savedLevel && savedLevel.game && savedLevel.game.extractRadius!=null) ? savedLevel.game.extractRadius : 3.5,
   bossWave: (savedLevel && savedLevel.game && savedLevel.game.bossWave!=null) ? savedLevel.game.bossWave : 5,   // random mode: spawn a BOSS every Nth wave (0 = never)
@@ -12799,7 +12801,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -16564,7 +16566,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 832 · 2026-07-02';
+const BUILD_VERSION = 'build 833 · 2026-07-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18791,7 +18793,7 @@ let _raceStartO=null; const _raceCk=[]; const _raceVisited=new Set();
 const _raceTimes=[];   // build 832: every completed lap's time, for the results breakdown
 let _raceCountT=0, _raceCountShown='';   // build 832: 3-2-1-GO standing start (throttle locked while >1)
 function _fmtRace(t){ if(!isFinite(t)) return '--:--.-'; const m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
-function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); }
+function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); }
 // build 832: the big centre countdown. One lazily-created element; numbers pop in accent, GO flashes green.
 function _raceCountEl(){
   let el=document.getElementById('raceCount');
@@ -18822,6 +18824,129 @@ function _raceCountTick(dt){
     if(typeof SFX!=='undefined'){ if(label==='GO!'){ if(SFX.wave) SFX.wave(); } else if(SFX.coin) SFX.coin(); }
   }
 }
+// ---------- build 833: AI RIVALS — bot drivers that race the track chain ----------
+// The ordered chain is rebuilt by walking exit->entry socket matches from the start line; if the loop closes,
+// its centreline becomes the racing line: a polyline with per-point tangent, slope and a CORNER SPEED from
+// curvature (same 2.2-G lateral model as the player car), smoothed backwards so rivals brake BEFORE corners.
+// Bots are kinematic mesh clones of the level's vehicle (tinted, spliced out of colliders/propModels so they
+// never block, never serialize and can't be entered); they hold on the grid until GO and win if they complete
+// the race first.
+let _racePath=null, _raceOver=false; const _raceBots=[];
+const _RACEBOT_TINTS=[0xff5a5a,0x5ab0ff,0xffd75a,0xb05aff,0x5affc8,0xff9a3d];
+function _raceBuildPath(){
+  if(!_raceStartO) return null;
+  const pieces=propModels.filter(p=>p && p.userData && TRACK_PIECES[p.userData.src]);
+  const used=new Set([_raceStartO]), chain=[_raceStartO]; let cur=_raceStartO;
+  for(let g=0; g<pieces.length; g++){
+    const ex=_trackExitPose(cur); let best=null, bestD=9;   // 3 m position tolerance
+    for(const p of pieces){ if(used.has(p)) continue;
+      const dx=p.position.x-ex.x, dz=p.position.z-ex.z, dy=p.position.y-ex.y;
+      let dyaw=p.rotation.y-ex.yaw; dyaw=Math.atan2(Math.sin(dyaw),Math.cos(dyaw));
+      const d=dx*dx+dz*dz+dy*dy*0.25;
+      if(d<bestD && Math.abs(dyaw)<0.35){ best=p; bestD=d; }
+    }
+    if(!best) break;
+    chain.push(best); used.add(best); cur=best;
+  }
+  const end=_trackExitPose(cur), cdx=end.x-_raceStartO.position.x, cdz=end.z-_raceStartO.position.z;
+  if(chain.length<3 || (cdx*cdx+cdz*cdz)>16) return null;   // open chain: no racing line
+  const pts=[];
+  for(const p of chain){ const def=TRACK_PIECES[p.userData.src];
+    const ry=p.rotation.y, c=Math.cos(ry), s=Math.sin(ry);
+    const n=(def.arc!=null)?12:(def.rise?10:4);
+    for(let i=0;i<n;i++){ const cl=_trackCL(def, i/n);
+      pts.push({ x:p.position.x + (cl.x*p.scale.x)*c + (cl.z*p.scale.z)*s,
+                 y:p.position.y + cl.y*p.scale.y,
+                 z:p.position.z - (cl.x*p.scale.x)*s + (cl.z*p.scale.z)*c });
+    } }
+  const N=pts.length; let total=0;
+  for(let i=0;i<N;i++){ const a=pts[i], b=pts[(i+1)%N];
+    a.len=Math.max(0.01, Math.hypot(b.x-a.x, b.z-a.z)); a.s=total; total+=a.len;
+    a.yaw=Math.atan2(-(b.x-a.x), -(b.z-a.z)); a.pitch=Math.atan2(b.y-a.y, a.len); }
+  for(let i=0;i<N;i++){ const a=pts[i], b=pts[(i+1)%N];
+    let dy=b.yaw-a.yaw; dy=Math.atan2(Math.sin(dy),Math.cos(dy));
+    a.vmax=Math.min(60, Math.sqrt((2.2*9.81)/Math.max(0.0004, Math.abs(dy)/a.len))); }
+  for(let k=0;k<2;k++) for(let i=N-1;i>=0;i--){ const nx=pts[(i+1)%N];   // brake early: entry speed <= sqrt(exit^2 + 2*a*d)
+    pts[i].vmax=Math.min(pts[i].vmax, Math.sqrt(nx.vmax*nx.vmax + 2*22*pts[i].len)); }
+  return { pts, total };
+}
+function _racePathAt(s, lat){   // pose at arc-distance s (wraps), pushed lat metres to the right of the line
+  const P=_racePath, pts=P.pts, N=pts.length;
+  s=((s%P.total)+P.total)%P.total;
+  let lo=0, hi=N-1;
+  while(lo<hi){ const mid=(lo+hi+1)>>1; if(pts[mid].s<=s) lo=mid; else hi=mid-1; }
+  const a=pts[lo], b=pts[(lo+1)%N], f=Math.min(1,(s-a.s)/a.len);
+  let dyaw=b.yaw-a.yaw; dyaw=Math.atan2(Math.sin(dyaw),Math.cos(dyaw));
+  const yaw=a.yaw+dyaw*f;
+  return { x:a.x+(b.x-a.x)*f + Math.cos(yaw)*lat, y:a.y+(b.y-a.y)*f, z:a.z+(b.z-a.z)*f - Math.sin(yaw)*lat,
+           yaw, pitch:a.pitch, vmax:Math.min(a.vmax,b.vmax) };
+}
+function _raceClearBots(){
+  for(const st of _raceBots){ const o=st.obj; if(!o) continue; scene.remove(o);
+    if(o.userData.src && typeof isModelSrc==='function' && isModelSrc(o.userData.src) && typeof _modelRelease==='function') _modelRelease(o.userData.src); }
+  _raceBots.length=0; _racePath=null; _raceOver=false;
+}
+function _raceSpawnBots(){
+  const n=Math.max(0, Math.min(6, (gameCfg.raceBots|0)));
+  if(!n) return;
+  if(!_racePath){ if(typeof toast==='function') toast('No AI rivals — the track loop isn’t closed'); return; }
+  const tmpl=propModels.find(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
+  if(!tmpl){ if(typeof toast==='function') toast('No AI rivals — place a vehicle first'); return; }
+  const src=tmpl.userData.src, sc=tmpl.scale, veh=tmpl.userData.vehicle;
+  const skill=Math.max(0.4, Math.min(1.3, +gameCfg.raceBotSkill||0.85));
+  for(let i=0;i<n;i++){
+    const st={ i, src, veh, s:_racePath.total - 7 - 6*i, lat:(i%2?2.7:-2.7), v:0, laps:0, prevYaw:null,
+               mYaw:((veh.modelYaw||0))*RAD, skill:skill*(1 - 0.035*i), baseOff:0, obj:null };
+    spawnProp(src, [0,-1000,0, 0,0,0, sc.x, sc.y, sc.z], (obj)=>{
+      { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // rivals never block rays / physics
+      { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }   // ...and never serialize or get picked
+      obj.userData.runtime=true; obj.userData._raceBot=st;
+      { obj.position.set(0,0,0); obj.updateMatrixWorld(true); const bb=new THREE.Box3().setFromObject(obj); st.baseOff=bb.isEmpty()?0:(-bb.min.y); }
+      const tint=new THREE.Color(_RACEBOT_TINTS[i%_RACEBOT_TINTS.length]);      // liveried so rivals read at a glance
+      obj.traverse(m=>{ if(m.isMesh && m.material && m.material.color){ m.material=m.material.clone(); m.material.color.lerp(tint, 0.35); } });
+      st.obj=obj;
+      const pose=_racePathAt(st.s, st.lat);
+      obj.position.set(pose.x, pose.y + TRACK_T + st.baseOff, pose.z);
+      obj.rotation.set(0, pose.yaw - st.mYaw, 0);
+      _raceBots.push(st);
+    });
+  }
+}
+function _raceBotsTick(dt){
+  if(!_racePath || !_raceBots.length || _raceOver) return;
+  const total=Math.max(1, gameCfg.raceLaps||3);
+  for(const st of _raceBots){
+    const o=st.obj; if(!o) continue;
+    if(_raceCountT>1){ st.v=0; }                                  // held on the grid until GO
+    else{
+      const look=6 + st.v*0.55;                                    // look ahead further at speed
+      const tgt=_racePathAt(st.s+look, 0).vmax * st.skill;
+      const d=tgt-st.v, rate=(d>0 ? 12 : 26);                      // brakes bite harder than the throttle
+      st.v=Math.max(0, st.v + Math.max(-rate*dt, Math.min(rate*dt, d)));
+    }
+    st.s += st.v*dt;
+    if(st.s>=_racePath.total){ st.s-=_racePath.total; st.laps++;
+      if(st.laps>=total+1){ _raceOver=true;                        // wrapped the line total+1 times = finished the race
+        if(typeof toast==='function') toast('A rival takes the chequered flag');
+        objectiveHUD(); if(typeof endGame==='function') endGame(); return; }
+    }
+    const pose=_racePathAt(st.s, st.lat);
+    o.position.set(pose.x, pose.y + TRACK_T + st.baseOff, pose.z);
+    let dyaw=(st.prevYaw==null)?0:(pose.yaw-st.prevYaw); dyaw=Math.atan2(Math.sin(dyaw),Math.cos(dyaw)); st.prevYaw=pose.yaw;
+    _carEuler.set(pose.pitch, pose.yaw, 0); _carQuat.setFromEuler(_carEuler);
+    _carModelQ.setFromAxisAngle(_UP_Y, -st.mYaw);
+    o.quaternion.copy(_carQuat).multiply(_carModelQ);
+    if(st.veh && typeof _updateWheels==='function') _updateWheels(o, st.veh, st.v, Math.max(-1, Math.min(1, dyaw*28)), dt);
+  }
+}
+function _racePlace(){   // player's live position in the field, by laps-started + track fraction
+  if(!_racePath || !_raceBots.length) return null;
+  const pts=_racePath.pts; let bi=0, bd=Infinity;
+  for(let i=0;i<pts.length;i++){ const dx=player.pos.x-pts[i].x, dz=player.pos.z-pts[i].z; const d=dx*dx+dz*dz; if(d<bd){ bd=d; bi=i; } }
+  const pp=_raceLap + pts[bi].s/_racePath.total;
+  let place=1; for(const st of _raceBots){ if(st.obj && (st.laps + st.s/_racePath.total) > pp) place++; }
+  return { place, field:_raceBots.length+1 };
+}
 function _raceSetup(){
   _raceClear();
   for(const o of propModels){
@@ -18836,10 +18961,14 @@ function _raceSetup(){
     _raceCk.push({ x:o.position.x + mid.x*o.scale.x*c + mid.z*o.scale.z*s,
                    z:o.position.z - mid.x*o.scale.x*s + mid.z*o.scale.z*c, r2:r*r });
   }
+  _racePath=_raceBuildPath();                       // build 833: the racing line (null if the loop isn't closed)
+  if((gameCfg.raceBots|0)>0) _raceSpawnBots();      // build 833: grid the AI rivals
 }
 function _raceTick(dt){
   if(!_raceStartO){ objectiveHUD(); return; }
   _raceCountTick(dt);   // build 832: the 3-2-1-GO standing start
+  _raceBotsTick(dt);    // build 833: the AI rivals drive their line
+  if(_raceOver) return; // a rival already finished — the lose screen is up
   if(_raceCrossCd>0) _raceCrossCd-=dt;
   if(_raceLap>=1) _raceLapT+=dt;
   const px=player.pos.x, pz=player.pos.z;
@@ -18903,9 +19032,10 @@ function objectiveHUD(){
   else if(objectiveActive()==='escort'){ wn.textContent = _escortNear ? ('ESCORT '+_escortPct+'%') : ('ESCORT '+_escortPct+'% \u2014 STAY CLOSE'); }
   else if(objectiveActive()==='puzzle'){ wn.textContent = _curGoal ? _curGoal.slice(0,48) : 'EXPLORE'; }
   else if(objectiveActive()==='race'){ const total=Math.max(1, gameCfg.raceLaps||3);
+    const _pl=(typeof _racePlace==='function')?_racePlace():null;   // build 833: live standing vs the AI field
     wn.textContent = !_raceStartO ? 'PLACE A START LINE'
       : (_raceLap===0 ? 'CROSS THE START LINE'
-      : ('LAP '+_raceLap+' / '+total+' · '+_fmtRace(_raceLapT)+(isFinite(_raceBestT)?(' · BEST '+_fmtRace(_raceBestT)):''))); }
+      : ((_pl?('P'+_pl.place+'/'+_pl.field+' · '):'')+'LAP '+_raceLap+' / '+total+' · '+_fmtRace(_raceLapT)+(isFinite(_raceBestT)?(' · BEST '+_fmtRace(_raceBestT)):''))); }
   else { wn.textContent = (gameCfg.winWaves>0) ? ('WAVE '+wave+' / '+gameCfg.winWaves) : ('WAVE '+wave); }
 }
 function objectiveTick(dt){   // host/solo per-frame; may trigger the win
@@ -21495,7 +21625,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
+    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
     extract: extractSpot ? { x: +extractSpot.x.toFixed(3), z: +extractSpot.z.toFixed(3) } : null,
@@ -21977,7 +22107,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -23503,9 +23633,13 @@ function renderEditorFields(){
       const rcN=document.createElement('input'); rcN.type='number'; rcN.min='1'; rcN.max='99'; rcN.step='1'; rcN.value=gameCfg.raceLaps||3; rcN.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;';
       rcN.onchange=()=>{ pushUndoSnapshot(); gameCfg.raceLaps=Math.max(1,Math.min(99,parseInt(rcN.value,10)||3)); renderEditorFields(); };
       rcLab.appendChild(rcSp); rcLab.appendChild(rcN); gHost.appendChild(rcLab);
+      // build 833: AI rivals — count + pace
+      const rrow=(label,min,max,step,get,set)=>{ const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;'; const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='118px'; const ip=document.createElement('input'); ip.type='number'; ip.min=min; ip.max=max; ip.step=step; ip.value=get(); ip.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:12px;'; ip.onchange=()=>{ pushUndoSnapshot(); set(parseFloat(ip.value)); renderEditorFields(); }; l.appendChild(sp); l.appendChild(ip); gHost.appendChild(l); };
+      rrow('AI rivals','0','6','1', ()=>gameCfg.raceBots, v=>gameCfg.raceBots=Math.max(0,Math.min(6,Math.round(v)||0)));
+      rrow('Rival pace','0.4','1.3','0.05', ()=>gameCfg.raceBotSkill, v=>gameCfg.raceBotSkill=Math.max(0.4,Math.min(1.3,v||0.85)));
       const _hasStart=propModels.some(p=>p && p.userData && TRACK_PIECES[p.userData.src] && TRACK_PIECES[p.userData.src].start);
       hint(gHost, '', '2px 0 0').textContent = _hasStart
-        ? ('Cross the Start line to begin; complete '+(gameCfg.raceLaps||3)+' lap'+((gameCfg.raceLaps||3)===1?'':'s')+' to win. The HUD shows lap, live time and best.')
+        ? ('Cross the Start line to begin; complete '+(gameCfg.raceLaps||3)+' lap'+((gameCfg.raceLaps||3)===1?'':'s')+' to win. Rivals need a CLOSED loop + a placed vehicle to clone; 0 rivals = time trial. Pace 0.85 = beatable, 1+ = ruthless.')
         : 'No Start-line piece placed yet — add one from Build > Track builder or the race can’t begin.';
     }
     // ---- Multiplayer spawn region: confine MP/bot random spawns to a circle (e.g. inside an arena prop) ----
@@ -25874,6 +26008,7 @@ function toggleEditor(){
   if(!editorOpen && drivingCar && typeof exitCar==='function') exitCar();   // build 766: opening the editor forces you out of the car (no stuck speedo HUD)
   editorOpen = !editorOpen; _editorOpenFlag = editorOpen;
   if(editorOpen){
+    if(typeof _raceClearBots==='function') _raceClearBots();   // build 833: rivals are runtime-only — never ghosts in the editor
     if(!editorEl) buildEditorPanel();
     editorEl.style.display = 'block';
     if(typeof stopMusic==='function') stopMusic();   // silence the level's music/ambience while editing
@@ -26206,8 +26341,8 @@ function endGame(){
   $('prompt').style.display='none';
   const ov=$('overlay'); ov.classList.remove('hidden');
   ov.innerHTML = `
-    <h1 style="color:#ff2d55;text-shadow:0 0 30px rgba(255,45,85,.5)">TERMINATED</h1>
-    <div class="sub">${ gameCfg.objective==='puzzle' ? 'YOU DIED' : ('REACHED WAVE '+wave) }</div>
+    <h1 style="color:#ff2d55;text-shadow:0 0 30px rgba(255,45,85,.5)">${ (gameCfg.objective==='race' && typeof _raceOver!=='undefined' && _raceOver) ? 'RACE LOST' : 'TERMINATED' }</h1>
+    <div class="sub">${ (gameCfg.objective==='race' && typeof _raceOver!=='undefined' && _raceOver) ? ('A RIVAL FINISHED FIRST'+(typeof _raceBestT!=='undefined' && isFinite(_raceBestT)?(' · YOUR BEST LAP '+_fmtRace(_raceBestT)):'')) : gameCfg.objective==='puzzle' ? 'YOU DIED' : ('REACHED WAVE '+wave) }</div>
     ${ gameCfg.loseText ? '<div class="sub" style="color:#f3c4c9;font-size:15px;line-height:1.5;max-width:560px;margin:8px auto 0;opacity:.95">'+_creditEsc(gameCfg.loseText)+'</div>' : '' }
     ${runSummaryHTML()}
     ${challengeResultHTML()}
