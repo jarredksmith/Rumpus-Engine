@@ -13444,6 +13444,8 @@ function dropClient(pid, why){
   removeRemotePlayer(pid);
   delete NET.conns[pid];
   if(NET._seen) delete NET._seen[pid];
+  try{ for(const nid in _remoteHold){ if(_remoteHold[nid] && _remoteHold[nid].by===pid) delete _remoteHold[nid]; } }catch(e){}   // build 843: a leaver's carried prop is released, not velocity-driven at a stale target forever
+  try{ if(typeof _raceNet!=='undefined') delete _raceNet[pid]; }catch(e){}   // build 843: leavers drop out of the race standings
   if(NET.phase==='lobby' && typeof refreshLobby==='function') refreshLobby();
   if(why==='timeout' && typeof toast==='function') toast(nm+' disconnected');
 }
@@ -13641,6 +13643,7 @@ function applyWorld(msg){
 }
 
 // ---- per-frame smoothing for everything I don't simulate locally ----
+const _netLerpV = new THREE.Vector3();   // build 843: netInterpolate scratch (was a fresh Vector3 per dynamic prop per frame)
 function netInterpolate(dt){
   const k=Math.min(1, dt*14);
   for(const id in NET.players){ const rp=NET.players[id];
@@ -13694,7 +13697,7 @@ function netInterpolate(dt){
         setEnemyAnimState(em.mesh, _st);
       }
     }
-    for(const o of dynamicProps){ const tp=o.userData._netTarget; if(tp){ o.position.lerp(new THREE.Vector3(tp[0],tp[1],tp[2]), k); } }
+    for(const o of dynamicProps){ const tp=o.userData._netTarget; if(tp){ _netLerpV.set(tp[0],tp[1],tp[2]); o.position.lerp(_netLerpV, k); } }   // build 843: scratch vector — no per-prop-per-frame allocation
     if(_clientBeaconOn && extractZone){ const pulse=0.6+0.4*Math.sin(performance.now()*0.004);
       if(extractZone.userData.ring) extractZone.userData.ring.material.opacity=0.5+0.4*pulse;
       if(extractZone.userData.pillar) extractZone.userData.pillar.material.opacity=0.06+0.09*pulse; }
@@ -16587,7 +16590,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 842 · 2026-07-03';
+const BUILD_VERSION = 'build 843 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18919,6 +18922,7 @@ function _raceBuildPath(){
   return { pts, total, brk:BRK, accel:Math.max(10, +_tv.accel||18) };
 }
 function _racePathAt(s, lat){   // pose at arc-distance s (wraps), pushed lat metres to the right of the line
+  if(!_racePath) return { x:0, y:-1000, z:0, yaw:0, pitch:0, vmax:0 };   // build 843: a late async car load can outlive the race teardown
   const P=_racePath, pts=P.pts, N=pts.length;
   s=((s%P.total)+P.total)%P.total;
   let lo=0, hi=N-1;
@@ -18930,11 +18934,12 @@ function _racePathAt(s, lat){   // pose at arc-distance s (wraps), pushed lat me
            yaw, pitch:a.pitch, vmax:Math.min(a.vmax,b.vmax) };
 }
 function _raceClearBots(){
-  for(const st of _raceBots){ const o=st.obj; if(!o) continue; scene.remove(o);
+  const _dropMixer=(o)=>{ if(o.userData.mixer){ const mi=mixers.indexOf(o.userData.mixer); if(mi>=0) mixers.splice(mi,1); o.userData.mixer=null; } };   // build 843: race actors bypass removeProp, so they must drop their AnimationMixer here or it ticks forever
+  for(const st of _raceBots){ const o=st.obj; if(!o) continue; _dropMixer(o); scene.remove(o);
     if(o.userData.src && typeof isModelSrc==='function' && isModelSrc(o.userData.src) && typeof _modelRelease==='function') _modelRelease(o.userData.src); }
   _raceBots.length=0; _racePath=null; _raceOver=false;
   if(_ghostObj){ const g=_ghostObj.obj; _ghostObj=null;   // build 834: the ghost is a runtime race actor too
-    if(g){ scene.remove(g); if(typeof isModelSrc==='function' && isModelSrc(g.userData.src) && typeof _modelRelease==='function') _modelRelease(g.userData.src); } }
+    if(g){ _dropMixer(g); scene.remove(g); if(typeof isModelSrc==='function' && isModelSrc(g.userData.src) && typeof _modelRelease==='function') _modelRelease(g.userData.src); } }
   _ghostRec.length=0; _ghostAcc=0;
 }
 function _raceSpawnBots(){
@@ -20100,9 +20105,11 @@ function _dirtyShadows(n){ _shadowDirtyFrames = Math.max(_shadowDirtyFrames, n||
 let _tabHidden = false;
 addEventListener('visibilitychange', ()=>{
   _tabHidden = (document.visibilityState === 'hidden');
+  if(typeof clearMovementInput==='function') clearMovementInput();   // build 843: a keyup lost to alt-tab can't leave the player auto-walking/firing
   if(_tabHidden){ try{ if(typeof _suspendAudioForHide==='function') _suspendAudioForHide(); }catch(e){} }
   else { try{ clock.getDelta(); }catch(e){} _dirtyShadows(2); _adaptLast=0; _adaptNext=0; }   // returning: drop the huge dt (don't let it trip the scaler) + refresh shadows
 });
+addEventListener('blur', ()=>{ if(typeof clearMovementInput==='function') clearMovementInput(); });   // build 843: same for focus loss without a tab switch (e.g. clicking another window)
 function loop(){
   requestAnimationFrame(loop);
   if(_tabHidden) return;   // backgrounded: stop rendering AND stepping physics — a hidden tab simulating is what gets the page killed on mobile
@@ -20641,7 +20648,6 @@ function loop(){
   const hideEn = editorOpen && editorHideEnemies;
   if(!isClient && !duelMode){
     const players = allPlayers();
-    const _eDir = new THREE.Vector3();
     const nowMs = performance.now();
     // build 531: give solo/campaign enemies the SAME nav-grid pathfinding the MP bots use, so they route
     // around walls/props instead of beelining into them. Build the grid incrementally (no spawn freeze;
@@ -20783,9 +20789,11 @@ function loop(){
         const info = obj.userData.physInfo; if(!info) continue;
         const baseY = obj.position.y, topY = baseY + (info.height||1);
         if(topY < 0.1 || baseY > 2.7) continue;                 // no vertical overlap with the enemy column
-        let dx = en.mesh.position.x - obj.position.x, dz = en.mesh.position.z - obj.position.z, d = Math.hypot(dx,dz);
-        const minD = eR + (info.radius||0.5);
-        if(d < minD && d > 1e-4){ const push=minD-d; en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push; }
+        let dx = en.mesh.position.x - obj.position.x, dz = en.mesh.position.z - obj.position.z;
+        const minD = eR + (info.radius||0.5), d2 = dx*dx + dz*dz;
+        if(d2 >= minD*minD || d2 <= 1e-8) continue;             // build 843: squared coarse reject — hypot only for actual overlaps (was O(enemies x props) hypots per frame)
+        const d = Math.sqrt(d2), push=minD-d;
+        en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push;
       }
       // trap launch: horizontal momentum + a vertical pop that arcs under gravity and settles back to the hover height
       if(en.evx||en.evz){ en.mesh.position.x+=en.evx*dt; en.mesh.position.z+=en.evz*dt; const kd=Math.max(0,1-((en.grounded?6:0.6))*dt); en.evx*=kd; en.evz*=kd; if(Math.abs(en.evx)<0.05)en.evx=0; if(Math.abs(en.evz)<0.05)en.evz=0; }
@@ -20835,14 +20843,15 @@ function loop(){
           en._burstT -= dt;
           if(en._burstT<=0){
             const tg=en._burstTgt;
-            if(tg && tg.pos && !segmentBlocked(en.mesh.position.x, en.mesh.position.z, tg.pos.x, tg.pos.z, (en.mesh.position.y + (tg.pos.y!=null?tg.pos.y:en.mesh.position.y)) * 0.5)){ fireEnemyShot(en, tg, 0.035); }
+            if(tg && tg.pos && _losBudget>0 && (_losBudget--, !segmentBlocked(en.mesh.position.x, en.mesh.position.z, tg.pos.x, tg.pos.z, (en.mesh.position.y + (tg.pos.y!=null?tg.pos.y:en.mesh.position.y)) * 0.5))){ fireEnemyShot(en, tg, 0.035); }   // build 843: burst re-aims draw from the LOS budget (a synced wave can't spike a frame)
             en._burstN--; en._burstT = en.burstGap;
             if(en._burstN<=0) en._burstTgt=null;
           }
         }
         else if(en._chase && en._see && en.shootCd<=0 && !editorOpen && en._dist < en.standoff*1.7
            && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6   // roughly the same level — no shooting through a floor
-           && !segmentBlocked(en.mesh.position.x, en.mesh.position.z, near.pos.x, near.pos.z, (en.mesh.position.y + (near.pos.y!=null?near.pos.y:en.mesh.position.y)) * 0.5)){
+           && _losBudget>0   // build 843: the fire-gate cast draws from the LOS budget too — it was the one unbudgeted raycast left in the wave loop
+           && (_losBudget--, !segmentBlocked(en.mesh.position.x, en.mesh.position.z, near.pos.x, near.pos.z, (en.mesh.position.y + (near.pos.y!=null?near.pos.y:en.mesh.position.y)) * 0.5))){
           fireEnemyShot(en, near, (en.burst>1)?0.02:0);   // round 1 of the burst (or the whole shot for single-fire types)
           en._burstN = Math.max(0,(en.burst||1)-1); en._burstT = en.burstGap; en._burstTgt = (en._burstN>0)?near:null;
           en.shootCd = en.fireCd; en._attackT = nowMs + (en.burst>1 ? 450 + en.burst*en.burstGap*1000 : 450);   // attack anim spans the whole burst
