@@ -890,6 +890,7 @@
 
 <script>
 // Surface any module/runtime error on screen instead of a black screen
+let box = null;   // build 838: this was never declared — the error REPORTER itself threw 'box is not defined' and real errors vanished
 window.addEventListener('error', e=>{
   const m = e.message || (e.error && e.error.message) || 'Unknown error';
   // "ResizeObserver loop completed with undelivered notifications" is a benign browser quirk (the layout just
@@ -8512,6 +8513,12 @@ function removeProp(idx){
   if(obj.userData.src && typeof isModelSrc==='function' && isModelSrc(obj.userData.src)) _modelRelease(obj.userData.src);   // build 576: drop this instance's ref; the master is freed once no instance remains
   propModels.splice(idx,1);
 }
+// Prop-group id sequence. Declared HERE (build 838), above the boot-time loadHostedProps() call below —
+// it used to live ~13k lines down, so any saved level containing a GROUPED prop hit the temporal dead zone
+// in _bumpGroupSeq and the entire prop load crashed on startup.
+let _groupSeq = 0;
+function _newGroupId(){ return 'g'+(++_groupSeq); }
+function _bumpGroupSeq(gid){ if(typeof gid==='string' && gid[0]==='g'){ const n=parseInt(gid.slice(1),10); if(isFinite(n) && n>_groupSeq) _groupSeq=n; } }   // keep new ids ahead of loaded ones
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
@@ -16571,7 +16578,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 837 · 2026-07-02';
+const BUILD_VERSION = 'build 838 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21580,9 +21587,9 @@ function _dupPropForDrag(o){
 // group, so the existing multi-selection gizmo moves / rotates / scales them together (about the group's centroid). It's a
 // soft link (props stay flat in propModels, keep their own colliders + physics), which is exactly what "treat these pieces
 // as one thing to transform" needs — no fragile reparenting. The id saves with the level (`gid`).
-let _groupSeq = 0;
-function _newGroupId(){ return 'g'+(++_groupSeq); }
-function _bumpGroupSeq(gid){ if(typeof gid==='string' && gid[0]==='g'){ const n=parseInt(gid.slice(1),10); if(isFinite(n) && n>_groupSeq) _groupSeq=n; } }   // keep new ids ahead of loaded ones
+// _groupSeq + helpers moved up beside loadHostedProps (build 838): boot-time prop loading calls _bumpGroupSeq
+// for grouped props, and the declaration living down here put it in the temporal dead zone — any SAVED level
+// containing a prop group crashed the whole prop load on startup.
 function _groupMembers(o){ const gid=o&&o.userData&&o.userData.groupId; if(!gid) return o?[o]:[]; return propModels.filter(p=>p&&p.userData&&p.userData.groupId===gid); }
 function groupSelectedProps(){
   if(!selProps || selProps.length<2) return;   // need at least two pieces to form a group
