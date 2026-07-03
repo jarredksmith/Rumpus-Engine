@@ -64,7 +64,7 @@ assert(!validateSubmission({ name:'x', author:'y', desc:'', json: JSON.stringify
 // ---- workflow wiring ----
 const wf = readFileSync(new URL('.github/workflows/publish-level.yml', root), 'utf8');
 assert(/github\.event\.label\.name == 'approved'/.test(wf), 'publishes only on the approved label');
-assert(/startsWith\(github\.event\.issue\.title, '\[Level\]'\)/.test(wf), '...and only for [Level] form submissions (title gate — template labels are dropped unless they pre-exist)');
+assert(/contains\(github\.event\.issue\.body, '### Level JSON'\)/.test(wf), '...and only for issue-FORM submissions (body-marker gate — titles get edited, issue #6 proved it, and template labels are dropped unless they pre-exist)');
 assert(/contents: write/.test(wf) && /issues: write/.test(wf), 'scoped permissions');
 assert(existsSync(new URL('.github/ISSUE_TEMPLATE/submit-level.yml', root)), 'the issue form ships');
 

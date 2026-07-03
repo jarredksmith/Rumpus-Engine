@@ -8523,7 +8523,7 @@ function wipeScene(){
   pickupSpots.length=0; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   lootSpots.length=0; selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
   if(typeof stopAudioZones==='function') stopAudioZones(); audioZones.length=0; if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers();
-  deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; ladders.length=0; selLadder=-1; fireZones.length=0; selFireZone=-1; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
+  deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; ladders.length=0; selLadder=-1; fireZones.length=0; selFireZone=-1; waterZones.length=0; selWaterZone=-1; if(typeof refreshWaterZones==='function') refreshWaterZones(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
   // clear selections so the editor doesn't point at a deleted object
   selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1;
   if(editorTargets.props) editorTargets.props.idx=-1; if(editorTargets.lights) editorTargets.lights.idx=-1; if(editorTargets.spawns) editorTargets.spawns.idx=-1;
@@ -10729,6 +10729,183 @@ function _animateFire(g, tms, dt){
 }
 function addFireZone(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)}; fireZones.push({ x:_dp.x, z:_dp.z, r:5, y:(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0)), h:3, dps:15 }); selFireZone=fireZones.length-1; editorActive='firezones'; refreshFireZones(); if(typeof renderFireZonesPanel==='function') renderFireZonesPanel(); if(typeof updateGizmo==='function') updateGizmo(); }
 function removeFireZone(i){ pushUndoSnapshot(); fireZones.splice(i,1); if(selFireZone>=fireZones.length) selFireZone=fireZones.length-1; refreshFireZones(); if(typeof renderFireZonesPanel==='function') renderFireZonesPanel(); }
+// ---- Water zones (build 856): lakes, ponds, puddles & streams. A cylinder volume filled with water up to
+// y+h; the SURFACE is one transparent disc per zone with an animated ShaderMaterial — procedural ripple
+// normals, a crude fresnel toward the sky color, and a specular glint from the ACTUAL sun direction
+// (build 855). No reflection/refraction render targets, so the whole system is one draw call per zone
+// plus a time uniform: it runs fine on phones. Deep water = swim (buoyancy, Space up / C down, falls are
+// braked so no fall damage); shallow = wade (slowed); Flow pushes you along the current (streams). ----
+function _migrateWaterZone(z){ return { x:+z.x||0, z:+z.z||0, r:(z.r!=null?+z.r:8), y:(z.y!=null?+z.y:0), h:(z.h!=null?+z.h:2), color:(z.color!=null?+z.color:0x14586e), op:(z.op!=null?+z.op:0.72), wave:(z.wave!=null?+z.wave:1), flowDir:(+z.flowDir||0), flowSpd:(+z.flowSpd||0) }; }
+let waterZones = (savedLevel && Array.isArray(savedLevel.waterZones)) ? savedLevel.waterZones.map(_migrateWaterZone) : [];
+let selWaterZone = -1;
+let waterZoneFx = [];
+let _waterTime = 0, _waterTintEl = null, _waterSwimming = false;
+const _WATER_VSH = 'varying vec3 vWP;\nvoid main(){ vec4 wp = modelMatrix * vec4(position,1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }';
+const _WATER_FSH = [
+  'uniform vec3 uDeep; uniform vec3 uSky; uniform float uOp; uniform float uTime; uniform float uWave; uniform vec2 uFlow;',
+  'uniform vec3 uSunDir; uniform vec3 uSunCol;',
+  'varying vec3 vWP;',
+  'void main(){',
+  '  vec2 p = vWP.xz * 0.55 - uFlow * uTime;',
+  // two crossed sine waves + a diagonal chop; grad is their analytic slope -> a cheap rippling normal
+  '  vec2 grad = vec2(cos(p.x*1.7 + uTime*1.9)*1.7 + cos((p.x+p.y)*0.9 + uTime*2.6)*0.9,',
+  '                   -sin(p.y*1.4 - uTime*1.3)*1.4 + cos((p.x+p.y)*0.9 + uTime*2.6)*0.9);',
+  '  vec3 n = normalize(vec3(-grad.x*0.06*uWave, 1.0, -grad.y*0.06*uWave));',
+  '  vec3 V = normalize(cameraPosition - vWP);',
+  '  float fres = pow(1.0 - abs(dot(n, V)), 3.0);',                       // abs: sane from underwater too
+  '  float spec = pow(max(dot(reflect(-uSunDir, n), V), 0.0), 90.0);',
+  '  vec3 col = mix(uDeep, uSky, fres*0.75) + uSunCol * spec * 0.9;',
+  '  gl_FragColor = vec4(col, clamp(uOp + fres*0.18 + spec*0.35, 0.0, 0.97));',
+  '}'
+].join('\n');
+function _waterSurfaceMat(z){
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uDeep:   { value: new THREE.Color((z.color!=null?+z.color:0x14586e)>>>0) },
+      uSky:    { value: new THREE.Color(0x9fc8d8) },
+      uOp:     { value: Math.max(0.1, Math.min(0.95, z.op!=null?+z.op:0.72)) },
+      uTime:   { value: 0 },
+      uWave:   { value: Math.max(0, Math.min(2.5, z.wave!=null?+z.wave:1)) },
+      uFlow:   { value: new THREE.Vector2(Math.sin((+z.flowDir||0)*RAD), Math.cos((+z.flowDir||0)*RAD)).multiplyScalar(Math.max(0.15, (+z.flowSpd||0)*0.25)) },
+      uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.2) },
+      uSunCol: { value: new THREE.Color(0xffffff) },
+    },
+    vertexShader: _WATER_VSH, fragmentShader: _WATER_FSH,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+}
+function buildWaterZoneGroup(z, sel){
+  const grp=new THREE.Group(); const r=Math.max(1,+z.r||8), surfY=(+z.y||0)+Math.max(0.05,+z.h||2);
+  const surf=new THREE.Mesh(new THREE.CircleGeometry(r, 56), _waterSurfaceMat(z));
+  surf.rotation.x=-Math.PI/2; surf.position.y=surfY+0.02; surf.renderOrder=2; grp.add(surf);
+  grp.userData.surf=surf;
+  // editor-only volume cues (blue, mirroring the death-zone language)
+  const ed=[];
+  const ring=new THREE.Mesh(new THREE.RingGeometry(Math.max(0.3,r-0.35), r, 56), new THREE.MeshBasicMaterial({ color:0x36c6ff, transparent:true, opacity:sel?0.85:0.5, side:THREE.DoubleSide, depthWrite:false }));
+  ring.rotation.x=-Math.PI/2; ring.position.y=(+z.y||0)+0.06; grp.add(ring); ed.push(ring);
+  const wall=new THREE.Mesh(new THREE.CylinderGeometry(r, r, Math.max(0.05,+z.h||2), 40, 1, true), new THREE.MeshBasicMaterial({ color:0x36c6ff, transparent:true, opacity:sel?0.14:0.08, side:THREE.DoubleSide, depthWrite:false }));
+  wall.position.y=(+z.y||0)+Math.max(0.05,+z.h||2)/2; grp.add(wall); ed.push(wall);
+  grp.userData.editorBits=ed;
+  grp.position.set(+z.x||0, 0, +z.z||0);
+  return grp;
+}
+function refreshWaterZones(){
+  for(const g of waterZoneFx){ scene.remove(g); g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }
+  waterZoneFx.length=0;
+  for(let i=0;i<waterZones.length;i++){ const g=buildWaterZoneGroup(waterZones[i], i===selWaterZone); g.userData.zoneIdx=i; scene.add(g); waterZoneFx.push(g); }
+}
+function addWaterZone(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)};
+  const by=(typeof terrainHeightAt==='function')?terrainHeightAt(_dp.x,_dp.z):0;
+  waterZones.push(_migrateWaterZone({ x:_dp.x, z:_dp.z, r:8, y:+by.toFixed(2), h:2 }));
+  selWaterZone=waterZones.length-1; refreshWaterZones(); if(typeof renderWaterZonesPanel==='function') renderWaterZonesPanel(); }
+function removeWaterZone(i){ pushUndoSnapshot(); waterZones.splice(i,1); if(selWaterZone>=waterZones.length) selWaterZone=waterZones.length-1; refreshWaterZones(); if(typeof renderWaterZonesPanel==='function') renderWaterZonesPanel(); }
+function renderWaterZonesPanel(){
+  const host=(editorEl && editorEl.querySelector('#edWaterZones')); if(!host) return;
+  host.innerHTML='';
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px';
+  intro.innerHTML='<b>Water zones</b> — lakes, ponds, puddles &amp; streams. Water fills the cylinder up to <b>Base Y + Depth</b>; the animated surface sits on top. Deep water = swim (<b>Space</b> up, <b>C</b> down); shallow = wade (slowed). <b>Flow</b> makes a current that pushes you. Sculpt a terrain basin first for natural shores. They carry to multiplayer.';
+  host.appendChild(intro);
+  const addB=document.createElement('button'); addB.textContent='+ Add water zone (at me)'; addB.style.cssText='width:100%;margin-bottom:8px;';
+  addB.onclick=()=>addWaterZone(); host.appendChild(addB);
+  if(!waterZones.length){ const n=document.createElement('div'); n.className='hint'; n.textContent='None yet. Stand where you want one and click Add. A puddle is just Depth 0.1; a lake is a big radius over a sculpted dip.'; host.appendChild(n); return; }
+  waterZones.forEach((z,i)=>{
+    const box=document.createElement('div'); box.style.cssText='border:1px solid rgba(54,198,255,0.3);border-radius:6px;padding:7px 9px;margin-bottom:6px;background:'+(i===selWaterZone?'rgba(54,198,255,0.09)':'transparent')+';';
+    const hd=document.createElement('div'); hd.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;';
+    const tt=document.createElement('span'); tt.style.cssText='font-size:11px;color:#8fd8f5;'; tt.textContent='Water '+(i+1)+'  ·  ('+(+z.x).toFixed(1)+', '+(+z.z).toFixed(1)+')';
+    const selB=document.createElement('button'); selB.textContent=(i===selWaterZone?'selected':'select'); selB.style.cssText='font-size:10px;padding:2px 8px;'; selB.onclick=()=>{ selWaterZone=i; refreshWaterZones(); renderWaterZonesPanel(); };
+    const del=document.createElement('button'); del.textContent='✕'; del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeWaterZone(i);
+    const right=document.createElement('div'); right.style.cssText='display:flex;gap:4px;'; right.appendChild(selB); right.appendChild(del);
+    hd.appendChild(tt); hd.appendChild(right); box.appendChild(hd);
+    const mkN=(label,key,min,max,step,onApply)=>{
+      const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:8px;color:#8fd8f5;font-size:11px;margin:3px 0;';
+      const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='72px';
+      const rng=document.createElement('input'); rng.type='range'; rng.min=min; rng.max=max; rng.step=step; rng.value=z[key]; rng.style.cssText='flex:1;accent-color:#36c6ff;';
+      const num=document.createElement('input'); num.type='number'; num.step=step; num.value=z[key]; num.style.cssText='width:58px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+      const ap=(v)=>{ let n=parseFloat(v); if(!isFinite(n)) n=min; if(onApply) n=onApply(n); z[key]=n; rng.value=Math.max(min,Math.min(max,n)); num.value=n; refreshWaterZones(); };
+      rng.addEventListener('mousedown',()=>pushUndoSnapshot()); num.addEventListener('focus',()=>pushUndoSnapshot());
+      rng.oninput=()=>ap(rng.value); num.onchange=()=>ap(num.value);
+      row.appendChild(sp); row.appendChild(rng); row.appendChild(num); box.appendChild(row);
+    };
+    mkN('Radius','r',1,120,0.5,(n)=>Math.max(1,n));
+    mkN('Depth','h',0.05,20,0.05,(n)=>Math.max(0.05,n));
+    mkN('Base Y','y',-20,40,0.1,null);
+    mkN('X','x',-2000,2000,0.5,null);
+    mkN('Z','z',-2000,2000,0.5,null);
+    { const cw=document.createElement('label'); cw.style.cssText='display:flex;align-items:center;gap:8px;color:#8fd8f5;font-size:11px;margin:3px 0;';
+      const cs=document.createElement('span'); cs.textContent='Water color'; cs.style.minWidth='72px';
+      const ci=document.createElement('input'); ci.type='color'; ci.value='#'+((z.color!=null?+z.color:0x14586e)>>>0).toString(16).padStart(6,'0').slice(-6); ci.style.cssText='width:42px;height:24px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#0c1418;cursor:pointer;';
+      ci.addEventListener('mousedown',()=>pushUndoSnapshot()); ci.oninput=()=>{ z.color=parseInt(ci.value.slice(1),16)||0; refreshWaterZones(); };
+      cw.appendChild(cs); cw.appendChild(ci); box.appendChild(cw); }
+    mkN('Opacity','op',0.1,0.95,0.05,(n)=>Math.max(0.1,Math.min(0.95,n)));
+    mkN('Waves','wave',0,2.5,0.05,(n)=>Math.max(0,n));
+    mkN('Flow dir °','flowDir',0,360,1,null);
+    mkN('Flow push','flowSpd',0,12,0.5,(n)=>Math.max(0,n));
+    const fh=document.createElement('div'); fh.className='hint'; fh.style.cssText='font-size:10px;opacity:0.7;margin:1px 0 3px;'; fh.textContent='Flow push > 0 turns this into a stream — the current carries swimmers along Flow dir (and the ripples scroll with it). Chain a few round zones for a winding river.'; box.appendChild(fh);
+    host.appendChild(box);
+  });
+}
+// The deepest zone the player is currently in: { z, surfY, sub } (sub = how far the feet are below the surface).
+function _waterAt(px, py, pz){
+  let best=null;
+  for(const z of waterZones){
+    const r=Math.max(1,+z.r||8); const dx=px-(+z.x||0), dz=pz-(+z.z||0); if(dx*dx+dz*dz>r*r) continue;
+    const baseY=(+z.y||0), surfY=baseY+Math.max(0.05,+z.h||2);
+    if(py>surfY+0.2 || py<baseY-2.5) continue;
+    const sub=surfY-py;
+    if(!best || sub>best.sub) best={ z, surfY, sub };
+  }
+  return best;
+}
+// Runs right after gravity, before the KCC/classic move — both consume player.vel, so one hook covers both.
+function _waterPlayerStep(dt){
+  _waterSwimming=false;
+  if(!waterZones.length || (typeof drivingCar!=='undefined'&&drivingCar) || (typeof mountedTurret!=='undefined'&&mountedTurret)) return;
+  const feetY=player.pos.y-EYE;
+  const w=_waterAt(player.pos.x, feetY, player.pos.z);
+  if(!w || w.sub<=0.12) return;
+  const flowMag=Math.max(0,+w.z.flowSpd||0);
+  const flowX=Math.sin((+w.z.flowDir||0)*RAD)*flowMag, flowZ=Math.cos((+w.z.flowDir||0)*RAD)*flowMag;
+  if(w.sub < 1.25){   // wading: heavy legs + the current tugs at you
+    const k=0.62;
+    player.vel.x=player.vel.x*k+flowX*0.5; player.vel.z=player.vel.z*k+flowZ*0.5;
+    return;
+  }
+  // swimming: buoyancy cancels gravity and eases you toward the surface; drag brakes any plunge
+  _waterSwimming=true;
+  player.vel.y += GRAV*dt;                                     // undo this frame's gravity
+  player.vel.y *= Math.max(0, 1-3.2*dt);                       // water drag (also what makes deep water a safe landing)
+  const eyeUnder = player.pos.y < w.surfY+0.12;
+  if(keys['Space'])      player.vel.y += (3.4-player.vel.y)*Math.min(1,dt*6);   // stroke up
+  else if(keys['KeyC'])  player.vel.y += (-2.6-player.vel.y)*Math.min(1,dt*6);  // dive
+  else if(eyeUnder)      player.vel.y += 2.1*dt;                                // gentle float-up
+  else                   player.vel.y += (0-player.vel.y)*Math.min(1,dt*4);     // tread at the surface
+  if(player.pos.y > w.surfY+0.35 && player.vel.y>0) player.vel.y=0;             // don't hover out of the pool
+  const k=0.55;
+  player.vel.x=player.vel.x*k+flowX; player.vel.z=player.vel.z*k+flowZ;
+  player.onGround=false;
+}
+function updateWaterZones(dt){
+  if(!waterZones.length){ if(_waterTintEl && _waterTintEl.style.display!=='none') _waterTintEl.style.display='none'; return; }
+  _waterTime += dt;
+  const showing=((typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver)) || (typeof editorOpen!=='undefined'&&editorOpen);
+  const _eo=(typeof editorOpen!=='undefined'&&editorOpen);
+  const sd=(typeof moon!=='undefined') ? moon.position : null;
+  for(const g of waterZoneFx){
+    if(!g) continue; g.visible=showing;
+    if(g.userData.editorBits) for(const m of g.userData.editorBits) m.visible=_eo;
+    const u=g.userData.surf && g.userData.surf.material.uniforms;
+    if(u){ u.uTime.value=_waterTime; if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof worldCfg!=='undefined'?(+worldCfg.sun||1):1))); } }
+  }
+  // underwater tint: a fixed overlay while the EYE is below a surface (cheap, sells the dive)
+  if(!_waterTintEl){
+    _waterTintEl=document.createElement('div'); _waterTintEl.id='waterTint';
+    _waterTintEl.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:39;display:none;background:radial-gradient(ellipse at center, rgba(22,90,110,0.34), rgba(8,40,54,0.55));';
+    document.body.appendChild(_waterTintEl);
+  }
+  const live=(typeof gameOn!=='undefined'&&gameOn) && !(typeof editorOpen!=='undefined'&&editorOpen);
+  const eyeW=live ? _waterAt(player.pos.x, player.pos.y, player.pos.z) : null;   // eye height, not feet
+  _waterTintEl.style.display=(eyeW && eyeW.sub>0.02) ? 'block' : 'none';
+}
 // ---------- build 557: auto-generate maze level ----------
 // One click builds a fresh, fully-connected maze out of box props + point lights, sets a player start, and
 // scatters a few enemy spawns. It's just ordinary level data (boxes / lights / spawns), so collision, the nav
@@ -12855,7 +13032,7 @@ function loadLevelFromNet(level){
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -16632,7 +16809,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 855 · 2026-07-03';
+const BUILD_VERSION = 'build 856 · 2026-07-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20173,7 +20350,7 @@ function loop(){
     if(_shDirty || (_shSlow && _shadowTick===0)) _dirtyShadows(1);
   }
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
   if(_cineAvatar && _cineAvatar.visible && !editorOpen && !_cineActive){ _hideCineAvatar(); }   // editor authoring body never lingers into play
@@ -20364,6 +20541,7 @@ function loop(){
   } else {
     _climbAnim = 0;   // not climbing
   player.vel.y -= GRAV*dt;
+  if(typeof _waterPlayerStep==='function') _waterPlayerStep(dt);   // build 856: buoyancy/wade/flow — adjusts player.vel before BOTH the KCC and classic movers consume it
   // one-shot vertical knock from physics props (e.g. a fast body launching the player)
   if(player.extVel.y){ player.vel.y += player.extVel.y; player.onGround=false; player.extVel.y = 0; }
 
@@ -21348,6 +21526,7 @@ const SEC_SUB = {
   jumppads:   'Launch the player up or forward on contact.',
   ladders:    'Climbable vertical volumes (W up / S down, jump to hop off).',
   firezones:  'Place fire & smoke emitters in the world.',
+  waterzones: 'Lakes, ponds, puddles & streams — swim, wade, ride the current.',
   impactfx:   'Sparks, marks & debris where YOUR shots land.',
   tracerfx:   'The streak your own gunfire leaves in the air.',
   crosshair:  'Reticle shape, size & colour.',
@@ -21372,8 +21551,8 @@ for(const _m of EDITOR_MODES) for(const _t of MODE_TARGETS[_m]) TARGET_MODE[_t]=
 let editorMode = 'build';
 try{ const _sm = localStorage.getItem('breach_editor_mode'); if(_sm && EDITOR_MODES.indexOf(_sm)>=0) editorMode = _sm; }catch(e){}
 // Which placeable-volume tool is showing inside the grouped 'Zones' section (build 649).
-const ZONE_TYPES = [['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire']];
-const ZONE_HOST = { audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones' };
+const ZONE_TYPES = [['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire'],['waterzones','\ud83d\udca7','Water']];
+const ZONE_HOST = { audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones', waterzones:'edWaterZones' };
 let activeZoneType = 'audiozones';
 try{ const _z = localStorage.getItem('breach_editor_zone'); if(_z && ZONE_HOST[_z]) activeZoneType = _z; }catch(e){}
 // Show only the selected zone tool's host inside the grouped section.
@@ -21960,6 +22139,7 @@ function serializeLevel(){
     deathZones: deathZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3) })),
     jumpPads: jumpPads.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), power:(+z.power||22) })),
     ladders: ladders.map(L=>({ x:+L.x, z:+L.z, r:(+L.r||1), y:(+L.y||0), h:(L.h!=null?+L.h:4), face:(+L.face||0) })),   // build 645
+    waterZones: waterZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), color:(z.color!=null?+z.color:0x14586e), op:(z.op!=null?+z.op:0.72), wave:(z.wave!=null?+z.wave:1), flowDir:(+z.flowDir||0), flowSpd:(+z.flowSpd||0) })),
     fireZones: fireZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3), dps:(+z.dps||0), den:(+z.den||1), psz:(+z.psz||1), hue:(z.hue!=null?+z.hue:30), turb:(z.turb!=null?+z.turb:1), wind:(+z.wind||0), spk:(z.spk!==false), sat:(z.sat!=null?+z.sat:1), smoke:(z.smoke===true?1:0), rx:(+z.rx||0), ry:(+z.ry||0), rz:(+z.rz||0), sx:(z.sx!=null?+z.sx:1), sy:(z.sy!=null?+z.sy:1), sz:(z.sz!=null?+z.sz:1) })),
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
@@ -22459,7 +22639,7 @@ function restoreLevel(level){
   refreshPlayerSpawnMarker();
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); }
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -22833,7 +23013,8 @@ function buildEditorPanel(){
         + '<div id="edDeathZones" class="zoneHost" data-zone="deathzones"></div>'
         + '<div id="edJumpPads" class="zoneHost" data-zone="jumppads"></div>'
         + '<div id="edLadders" class="zoneHost" data-zone="ladders"></div>'
-        + '<div id="edFireZones" class="zoneHost" data-zone="firezones"></div>')
+        + '<div id="edFireZones" class="zoneHost" data-zone="firezones"></div>'
+        + '<div id="edWaterZones" class="zoneHost" data-zone="waterzones"></div>')
     + sec('Effects', 'wepfx',
           '<div id="edWepFxPicker"></div>'
         + '<div id="edImpactFx" class="wepfxHost" data-wepfx="impactfx"></div>'
@@ -22938,8 +23119,9 @@ function buildEditorPanel(){
         else if(type==='jumppads'){ if(typeof addJumpPad==='function') addJumpPad(); }
         else if(type==='ladders'){ if(typeof addLadder==='function') addLadder(); }
         else if(type==='firezones'){ if(typeof addFireZone==='function') addFireZone(); }
+        else if(type==='waterzones'){ if(typeof addWaterZone==='function') addWaterZone(); }
       };
-      const ZONE_ADD=[['audiozones','\ud83d\udd0a','Audio zone'],['deathzones','\u2620','Death zone'],['jumppads','\u2b06','Jump pad'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire zone']];
+      const ZONE_ADD=[['audiozones','\ud83d\udd0a','Audio zone'],['deathzones','\u2620','Death zone'],['jumppads','\u2b06','Jump pad'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire zone'],['waterzones','\ud83d\udca7','Water zone']];
       const ADD_ITEMS=[
         ['\u25a0 Box',      ()=>{ jump('build','props');   addSceneProp('box'); }],
         ['\u25cf Sphere',   ()=>{ jump('build','props');   addSceneProp('sphere'); }],
@@ -22988,6 +23170,7 @@ function buildEditorPanel(){
   if(typeof renderLaddersPanel==='function') renderLaddersPanel();
   if(typeof refreshLadderMarkers==='function') refreshLadderMarkers();   // build 645: show ladder markers while editing
   if(typeof renderFireZonesPanel==='function') renderFireZonesPanel();
+  if(typeof renderWaterZonesPanel==='function') renderWaterZonesPanel();
   if(typeof renderZonePicker==='function') renderZonePicker();        // build 649: the grouped Zones type picker
   if(typeof applyZoneVisibility==='function') applyZoneVisibility();   // ...and reveal only the active zone tool
   if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
