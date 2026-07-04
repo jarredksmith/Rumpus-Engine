@@ -9,6 +9,26 @@ Hard-refresh (Ctrl/Cmd+Shift+R) before starting so you're on the latest build (b
 
 ---
 
+## 0. Atmosphere & water (builds 855–863 — newest)
+
+- [ ] **Water zones**: pond over a sculpted basin — surface ripples/glints, swim in deep water (`Space` up, `C` dive, screen tints underwater), wading slows you, a high jump into deep water doesn't hurt
+- [ ] **Streams**: flow direction + push carries you visibly; ripples scroll with the current
+- [ ] **Waterfalls**: sheet flows DOWN, foam pool animates, standing in it pushes you into the pool; sound gets louder as you approach and respects master volume/mute
+- [ ] **Water gameplay**: drive a car into water (slows + bow spray), toss a grabbable crate in (bobs to the surface), lure an enemy through water (visibly slower)
+- [ ] **Sun rotation**: drag Sun direction/height — shadows swing live; save/reload keeps the angle
+- [ ] **Day/night cycle**: full cycle plays (dawn gold → noon → dusk gold → dark-but-visible night); enter a headlighted car at night → lights on automatically; toggling the cycle off restores the authored sky instantly
+- [ ] **Weather**: rain leans and streaks, snow drifts, Amount scales density; check FPS with weather + water + a race on a phone
+- [ ] **Editor round-trip**: all of the above survive save → wipe → import, and carry to a joiner in MP
+
+## 0.5 Community library & help (builds 848–854)
+
+- [ ] **Gallery**: Community levels lists all entries with thumbnails/placeholders, badges, filter chips; Play and Open-in-editor both work; Ctrl+Z undoes a load
+- [ ] **Submission round-trip**: Submit from the Save tab (frame a nice view first — it's the thumbnail) → paste → approve label → level goes live in the gallery WITHOUT any manual step
+- [ ] **Field manual** (`breach-help.html`): loads from the home menu + editor `?`, sidebar filter works, readable on a phone
+- [ ] **Help & tutorials**: all three example projects load and are winnable
+
+---
+
 ## 1. Racing stack (newest — highest risk)
 
 - [ ] **Track builder**: top view (T) → lay Start line → straights/curves snap to the chain → `Close loop` bridges the final gap exactly (no seam overlap/z-fighting at the joint)
