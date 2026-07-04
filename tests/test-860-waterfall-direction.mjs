@@ -5,8 +5,8 @@
 import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 const sheet = src.match(/const _FALL_FSH = \[[\s\S]{0,1800}?\]\.join/)[0];
-assert(/sin\(\(vUv\.y \+ uTime\*uSpd\)\*46\.0\)/.test(sheet), 'band phase descends (time ADDED to vUv.y)');
-assert(/sin\(vUv\.y\*9\.0 \+ uTime\*uSpd\*6\.0\)/.test(sheet), 'streak wobble descends too');
+assert(/sin\(\(vUv\.y \+ t\*0\.9\)\*60\.0/.test(sheet), 'band phase descends (time ADDED to vUv.y)');   // build 865: the falling-band octave
+assert(/sin\(vUv\.y\*7\.0 \+ t\*5\.0\)/.test(sheet), 'streak wobble descends too');
 assert(!/vUv\.y - uTime/.test(sheet) && !/vUv\.y\*9\.0 - uTime/.test(sheet), 'no upward (subtracted-time) phase remains');
 assert(!/float drop = /.test(sheet) && !/\*drop\*/.test(sheet), 'the dead drop term is gone');
 done('build 860: the waterfall sheet scrolls downward');

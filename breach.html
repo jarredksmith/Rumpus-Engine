@@ -10937,6 +10937,7 @@ function _renderWaterfallsUI(host){
     mkN('Opacity','op',0.1,0.95,0.05,(n)=>Math.max(0.1,Math.min(0.95,n)));
     mkN('Speed','spd',0.1,4,0.05,(n)=>Math.max(0.1,n));
     mkN('Splash','splash',0,2,0.05,(n)=>Math.max(0,n));
+    mkN('Pool width','pool',0.2,2.5,0.05,(n)=>Math.max(0.2,Math.min(2.5,n)));
     { const sr=document.createElement('div'); sr.style.cssText='display:flex;gap:6px;margin:4px 0 2px;align-items:center;';
       const ss=document.createElement('span'); ss.className='hint'; ss.style.margin='0'; ss.textContent='Sound URL';
       const si=document.createElement('input'); si.type='text'; si.placeholder='https://…/waterfall-loop.mp3'; si.value=f.snd||''; si.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:11px;';
@@ -11012,7 +11013,7 @@ function updateWaterZones(dt){
 // sound. Same cheap philosophy as the water surface: ONE shader plane per fall (scrolling streaks,
 // edge/bottom fades), one foam disc, no particles, no render targets. Sound reuses the audio-zone
 // recipe (buffer -> gain -> sfxBus with linear distance falloff), so master/SFX volume + mute apply. ----
-function _migrateWaterfall(f){ return { x:+f.x||0, z:+f.z||0, y:(f.y!=null?+f.y:8), h:(f.h!=null?+f.h:8), w:(f.w!=null?+f.w:6), yaw:(+f.yaw||0), color:(f.color!=null?+f.color:0xbfe6f2), op:(f.op!=null?+f.op:0.55), spd:(f.spd!=null?+f.spd:1), splash:(f.splash!=null?+f.splash:1), snd:(typeof f.snd==='string'?f.snd:''), vol:(f.vol!=null?+f.vol:0.8) }; }
+function _migrateWaterfall(f){ return { x:+f.x||0, z:+f.z||0, y:(f.y!=null?+f.y:8), h:(f.h!=null?+f.h:8), w:(f.w!=null?+f.w:6), yaw:(+f.yaw||0), color:(f.color!=null?+f.color:0xbfe6f2), op:(f.op!=null?+f.op:0.55), spd:(f.spd!=null?+f.spd:1), splash:(f.splash!=null?+f.splash:1), pool:(f.pool!=null?Math.max(0.2,Math.min(2.5,+f.pool)):1.15), snd:(typeof f.snd==='string'?f.snd:''), vol:(f.vol!=null?+f.vol:0.8) }; }   // build 865: pool = foam width as a multiple of the sheet width
 let waterfalls = (savedLevel && Array.isArray(savedLevel.waterfalls)) ? savedLevel.waterfalls.map(_migrateWaterfall) : [];
 let waterfallFx = []; const _fallRT = [];
 function _fallGainFor(d, audR, vol){ return Math.max(0, Math.min(1, (vol==null?0.8:+vol)) * (1 - d/Math.max(1, audR))); }
@@ -11021,16 +11022,22 @@ const _FALL_FSH = [
   'uniform vec3 uCol; uniform float uOp; uniform float uTime; uniform float uSpd;',
   'varying vec2 vUv;',
   'void main(){',
-  // DOWNWARD phase (build 860): a feature at constant phase needs vUv.y = C - t, i.e. y DECREASES over
-  // time — so time must be ADDED to vUv.y. The original subtracted it and the whole sheet climbed.
-  '  float band = 0.72 + 0.28*sin((vUv.y + uTime*uSpd)*46.0);',                         // fine falling bands
-  '  float streak = 0.55 + 0.45*sin(vUv.x*34.0 + sin(vUv.y*9.0 + uTime*uSpd*6.0)*1.4);',// vertical streak variation
-  '  float edge = smoothstep(0.0,0.12,vUv.x)*smoothstep(1.0,0.88,vUv.x);',              // soft sheet edges
-  '  float head = smoothstep(1.0,0.965,vUv.y);',                                        // crisp lip at the top
-  '  float foam = smoothstep(0.35,0.0,vUv.y);',                                         // whiter + mistier toward the plunge
-  '  vec3 col = mix(uCol, vec3(1.0), 0.25*streak + 0.55*foam);',
-  '  float a = uOp * edge * head * (0.5 + 0.5*band*streak);',
-  '  a = a * (0.85 + 0.5*foam);',
+  // build 865: layered columns instead of flat sine bands — three octaves with per-column phase,
+  // slivers of see-through gap between streams, a slow column wobble, bright churn at the lip,
+  // white mist toward the plunge. All still pure sin() — no textures, no noise lookups.
+  '  float t = uTime*uSpd;',
+  '  float xx = vUv.x + sin(vUv.y*3.0 + uTime*0.8)*0.015;',
+  '  float s1 = sin(xx*40.0 + sin(vUv.y*7.0 + t*5.0));',
+  '  float s2 = sin(xx*90.0 + t*1.7 + sin(xx*13.0)*3.0);',
+  '  float s3 = sin((vUv.y + t*0.9)*60.0 + sin(xx*30.0)*2.0);',   // falling bands, per-column phase (time ADDED: downward)
+  '  float streaks = 0.5 + 0.22*s1 + 0.16*s2 + 0.12*s3;',
+  '  float gaps = smoothstep(0.25, 0.6, 0.5+0.5*sin(xx*23.0 + sin(xx*7.3)*2.0));',      // some columns run thin
+  '  float edge = smoothstep(0.0,0.10,vUv.x)*smoothstep(1.0,0.90,vUv.x);',
+  '  float head = smoothstep(1.0,0.955,vUv.y);',
+  '  float lip = smoothstep(0.86,0.99,vUv.y)*0.5;',                                      // churn where it pours over
+  '  float foam = smoothstep(0.42,0.0,vUv.y);',
+  '  vec3 col = mix(uCol, vec3(1.0), clamp(0.2*streaks + 0.6*foam + lip, 0.0, 1.0));',
+  '  float a = uOp * edge * head * (0.35+0.65*streaks) * (0.55+0.45*gaps) * (0.9+0.45*foam);',
   '  gl_FragColor = vec4(col, clamp(a, 0.0, 0.95));',
   '}'
 ].join('\n');
@@ -11038,22 +11045,30 @@ const _FOAM_FSH = [
   'uniform float uTime; uniform float uOp;',
   'varying vec2 vUv;',
   'void main(){',
-  '  vec2 c = vUv*2.0-1.0; float r = length(c);',
-  '  float rings = 0.6 + 0.4*sin(r*14.0 - uTime*5.0);',
-  '  float a = uOp * rings * smoothstep(1.0,0.25,r);',
-  '  gl_FragColor = vec4(vec3(1.0), clamp(a,0.0,0.85));',
+  // build 865: churn, not concentric rings — radial pulse x angular boil, brightest just off-centre
+  '  vec2 c = vUv*2.0-1.0; float r = length(c); float ang = atan(c.y, c.x);',
+  '  float churn = 0.55 + 0.25*sin(r*16.0 - uTime*5.0) + 0.2*sin(ang*7.0 + uTime*2.3 + r*9.0);',
+  '  float a = uOp * churn * smoothstep(1.0,0.15,r) * (0.6+0.4*smoothstep(0.0,0.35,r));',
+  '  gl_FragColor = vec4(vec3(1.0), clamp(a,0.0,0.9));',
   '}'
 ].join('\n');
 const _FALL_VSH = 'varying vec2 vUv;\nvoid main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }';
 function buildWaterfallGroup(f){
   const grp=new THREE.Group(); const w=Math.max(0.5,+f.w||6), h=Math.max(1,+f.h||8);
-  const sheetMat=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,f.op!=null?+f.op:0.55)) }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1)) } }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
-  const sheet=new THREE.Mesh(new THREE.PlaneGeometry(w,h), sheetMat);
-  sheet.position.y=(+f.y||0)-h/2; sheet.renderOrder=2; grp.add(sheet);
+  const mkSheet=(spdMul, opMul, zOff)=>{
+    const m=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,(f.op!=null?+f.op:0.55)))*opMul }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1))*spdMul } }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+    const s=new THREE.Mesh(new THREE.PlaneGeometry(w,h), m);
+    s.position.set(0, (+f.y||0)-h/2, zOff); s.renderOrder=2; grp.add(s); return m;
+  };
+  // build 865: TWO layers — a back sheet running slightly slower/dimmer gives the fall visual depth
+  grp.userData.sheetMat=mkSheet(1, 1, 0);
+  grp.userData.sheetMat2=mkSheet(0.82, 0.55, -0.35);
   const foamMat=new THREE.ShaderMaterial({ uniforms:{ uTime:{ value:0 }, uOp:{ value:Math.max(0,Math.min(1.7,0.5*(f.splash!=null?+f.splash:1))) } }, vertexShader:_FALL_VSH, fragmentShader:_FOAM_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
-  const foam=new THREE.Mesh(new THREE.CircleGeometry(Math.max(0.6,w*0.42), 36), foamMat);
+  const pool=Math.max(0.2, Math.min(2.5, f.pool!=null?+f.pool:1.15));   // build 865: author-controlled pool width (x sheet width)
+  const foam=new THREE.Mesh(new THREE.CircleGeometry(w*0.5, 36), foamMat);
+  foam.scale.set(pool, pool*0.62, 1);   // elliptical: wider along the sheet than out from it (local Y becomes depth after the rotate)
   foam.rotation.x=-Math.PI/2; foam.position.y=(+f.y||0)-h+0.06; foam.renderOrder=2; grp.add(foam);
-  grp.userData.sheetMat=sheetMat; grp.userData.foamMat=foamMat;
+  grp.userData.foamMat=foamMat;
   grp.position.set(+f.x||0, 0, +f.z||0); grp.rotation.y=(+f.yaw||0)*RAD;
   return grp;
 }
@@ -11071,8 +11086,9 @@ function updateWaterfalls(dt){
   if(!waterfalls.length) return;
   const showing=((typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver)) || (typeof editorOpen!=='undefined'&&editorOpen);
   for(const g of waterfallFx){ if(!g) continue; g.visible=showing;
-    if(g.userData.sheetMat) g.userData.sheetMat.uniforms.uTime.value=_waterTime;
-    if(g.userData.foamMat)  g.userData.foamMat.uniforms.uTime.value=_waterTime; }
+    if(g.userData.sheetMat)  g.userData.sheetMat.uniforms.uTime.value=_waterTime;
+    if(g.userData.sheetMat2) g.userData.sheetMat2.uniforms.uTime.value=_waterTime;
+    if(g.userData.foamMat)   g.userData.foamMat.uniforms.uTime.value=_waterTime; }
   const live=(typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver) && !(typeof editorOpen!=='undefined'&&editorOpen)
     && !(typeof paused!=='undefined'&&paused) && !(typeof _cineActive!=='undefined'&&_cineActive);
   for(let i=0;i<waterfalls.length;i++){
@@ -17119,7 +17135,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 864 · 2026-07-04';
+const BUILD_VERSION = 'build 865 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22468,7 +22484,7 @@ function serializeLevel(){
     jumpPads: jumpPads.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), power:(+z.power||22) })),
     ladders: ladders.map(L=>({ x:+L.x, z:+L.z, r:(+L.r||1), y:(+L.y||0), h:(L.h!=null?+L.h:4), face:(+L.face||0) })),   // build 645
     waterZones: waterZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), color:(z.color!=null?+z.color:0x14586e), op:(z.op!=null?+z.op:0.72), wave:(z.wave!=null?+z.wave:1), flowDir:(+z.flowDir||0), flowSpd:(+z.flowSpd||0) })),
-    waterfalls: waterfalls.map(f=>({ x:+f.x, z:+f.z, y:+f.y, h:+f.h, w:+f.w, yaw:(+f.yaw||0), color:(f.color!=null?+f.color:0xbfe6f2), op:(f.op!=null?+f.op:0.55), spd:(f.spd!=null?+f.spd:1), splash:(f.splash!=null?+f.splash:1), snd:(f.snd||''), vol:(f.vol!=null?+f.vol:0.8) })),
+    waterfalls: waterfalls.map(f=>({ x:+f.x, z:+f.z, y:+f.y, h:+f.h, w:+f.w, yaw:(+f.yaw||0), color:(f.color!=null?+f.color:0xbfe6f2), op:(f.op!=null?+f.op:0.55), spd:(f.spd!=null?+f.spd:1), splash:(f.splash!=null?+f.splash:1), pool:(f.pool!=null?+f.pool:1.15), snd:(f.snd||''), vol:(f.vol!=null?+f.vol:0.8) })),
     fireZones: fireZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3), dps:(+z.dps||0), den:(+z.den||1), psz:(+z.psz||1), hue:(z.hue!=null?+z.hue:30), turb:(z.turb!=null?+z.turb:1), wind:(+z.wind||0), spk:(z.spk!==false), sat:(z.sat!=null?+z.sat:1), smoke:(z.smoke===true?1:0), rx:(+z.rx||0), ry:(+z.ry||0), rz:(+z.rz||0), sx:(z.sx!=null?+z.sx:1), sy:(z.sy!=null?+z.sy:1), sz:(z.sz!=null?+z.sz:1) })),
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),

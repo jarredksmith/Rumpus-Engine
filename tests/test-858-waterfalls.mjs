@@ -17,10 +17,10 @@ assert(audFn({ w:30, h:40 }) > audFn({ w:6, h:8 }), 'bigger falls carry further'
 
 // ---- the sheet + foam are the cheap kind ----
 const sheet = src.match(/const _FALL_FSH = \[[\s\S]{0,1600}?\]\.join/)[0];
-assert(/uTime\*uSpd/.test(sheet) && /smoothstep\(0\.0,0\.12,vUv\.x\)/.test(sheet), 'scrolling sheet with soft edges');
-assert(/smoothstep\(0\.35,0\.0,vUv\.y\)/.test(sheet), 'whiter/mistier toward the plunge');
+assert(/uTime\*uSpd/.test(sheet) && /smoothstep\(0\.0,0\.10,vUv\.x\)/.test(sheet), 'scrolling sheet with soft edges');   // build 865 reshaped the shader
+assert(/smoothstep\(0\.42,0\.0,vUv\.y\)/.test(sheet), 'whiter/mistier toward the plunge');
 assert(!/WebGLRenderTarget/.test(src.match(/function buildWaterfallGroup[\s\S]{0,1800}/)[0]), 'no render targets');
-assert(/CircleGeometry\(Math\.max\(0\.6,w\*0\.42\), 36\)/.test(src), 'foam pool disc at the base');
+assert(/CircleGeometry\(w\*0\.5, 36\)/.test(src) && /foam\.scale\.set\(pool, pool\*0\.62, 1\)/.test(src), 'foam pool disc at the base (elliptical, author-scaled since 865)');
 
 // ---- sound path mirrors the audio zones (sfxBus => master/SFX/mute apply) ----
 const upd = src.match(/function updateWaterfalls[\s\S]{0,2600}/)[0];
