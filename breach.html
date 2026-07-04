@@ -10967,14 +10967,15 @@ const _FALL_FSH = [
   'uniform vec3 uCol; uniform float uOp; uniform float uTime; uniform float uSpd;',
   'varying vec2 vUv;',
   'void main(){',
-  '  float drop = fract(vUv.y + uTime*uSpd*0.55);',                                     // the sheet slides down
-  '  float band = 0.72 + 0.28*sin((vUv.y - uTime*uSpd)*46.0);',                         // fine falling bands
-  '  float streak = 0.55 + 0.45*sin(vUv.x*34.0 + sin(vUv.y*9.0 - uTime*uSpd*6.0)*1.4);',// vertical streak variation
+  // DOWNWARD phase (build 860): a feature at constant phase needs vUv.y = C - t, i.e. y DECREASES over
+  // time — so time must be ADDED to vUv.y. The original subtracted it and the whole sheet climbed.
+  '  float band = 0.72 + 0.28*sin((vUv.y + uTime*uSpd)*46.0);',                         // fine falling bands
+  '  float streak = 0.55 + 0.45*sin(vUv.x*34.0 + sin(vUv.y*9.0 + uTime*uSpd*6.0)*1.4);',// vertical streak variation
   '  float edge = smoothstep(0.0,0.12,vUv.x)*smoothstep(1.0,0.88,vUv.x);',              // soft sheet edges
   '  float head = smoothstep(1.0,0.965,vUv.y);',                                        // crisp lip at the top
   '  float foam = smoothstep(0.35,0.0,vUv.y);',                                         // whiter + mistier toward the plunge
   '  vec3 col = mix(uCol, vec3(1.0), 0.25*streak + 0.55*foam);',
-  '  float a = uOp * edge * head * (0.5 + 0.5*band*streak) * (1.0 - 0.35*drop*0.0);',
+  '  float a = uOp * edge * head * (0.5 + 0.5*band*streak);',
   '  a = a * (0.85 + 0.5*foam);',
   '  gl_FragColor = vec4(col, clamp(a, 0.0, 0.95));',
   '}'
@@ -16937,7 +16938,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 859 · 2026-07-03';
+const BUILD_VERSION = 'build 860 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
