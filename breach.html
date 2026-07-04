@@ -11080,6 +11080,57 @@ function updateWaterfalls(dt){
     if(rt.gain){ try{ rt.gain.gain.setTargetAtTime(vol, actx.currentTime, 0.1); }catch(e){ try{ rt.gain.gain.value=vol; }catch(_){} } }
   }
 }
+// ---- Water gameplay polish (build 862): cars drag + spray, props float, falls push down, AI wades slow ----
+function _waterSlowFor(px,py,pz){ if(!waterZones.length) return 1; const w=_waterAt(px,py,pz); return (w && w.sub>0.3) ? 0.55 : 1; }   // enemies + bots wade at ~half pace
+function _carWaterFactor(sub){ return sub<=0.15 ? 1 : (sub<1.1 ? 0.45 : 0.18); }   // top-speed cap fraction by submersion: splash / shallow / deep
+function _carWaterStep(o, dt){
+  if(!waterZones.length || !o || !o.userData || !o.userData.vehicle) return;
+  const w=_waterAt(o.position.x, o.position.y+0.1, o.position.z);
+  if(!w || w.sub<=0.15) return;
+  const top=Math.max(5, +o.userData.vehicle.maxSpeed||40);
+  const cap=top*_carWaterFactor(w.sub);
+  const s=o.userData.carSpeed||0;
+  if(Math.abs(s)>cap){
+    const k=Math.max(0, 1-2.6*dt);   // water hauls the car down toward the cap — no hard snap
+    o.userData.carSpeed = (Math.abs(s*k)<cap) ? Math.sign(s)*cap : s*k;
+  }
+  if(Math.abs(s)>4 && typeof _spawnDust==='function' && Math.random() < Math.min(1, dt*14)){   // bow spray off the waterline
+    const yaw=o.rotation.y+((o.userData.vehicle.modelYaw||0)*RAD), fx=-Math.sin(yaw), fz=-Math.cos(yaw);
+    _spawnDust(o.position.x + fx*1.4 + (Math.random()-0.5)*1.6, w.surfY+0.12, o.position.z + fz*1.4 + (Math.random()-0.5)*1.6, fx*2.5, fz*2.5, 1.5);
+  }
+}
+// Standing in a waterfall pushes you down into the plunge pool (containment is sign-agnostic: |lx| spans
+// the width, |lz| the sheet thickness, so the local-frame rotation direction can't get it wrong).
+function _fallPushStep(dt){
+  if(!waterfalls.length || (typeof drivingCar!=='undefined'&&drivingCar) || (typeof mountedTurret!=='undefined'&&mountedTurret)) return;
+  const px=player.pos.x, pz=player.pos.z, feetY=player.pos.y-EYE;
+  for(const f of waterfalls){
+    const r=(+f.yaw||0)*RAD, dx=px-(+f.x||0), dz=pz-(+f.z||0);
+    const lx=dx*Math.cos(r)+dz*Math.sin(r), lz=-dx*Math.sin(r)+dz*Math.cos(r);
+    const w=Math.max(0.5,+f.w||6), h=Math.max(1,+f.h||8), top=(+f.y||0);
+    if(Math.abs(lx)<=w/2+0.4 && Math.abs(lz)<=1.5 && feetY>top-h-0.6 && feetY<top+0.4){
+      player.vel.y=Math.max(player.vel.y-30*dt, -14); player.onGround=false;   // the cascade drives you down (overrides buoyancy)
+      break;
+    }
+  }
+}
+// Dynamic props float: an upward impulse proportional to submersion + heavy drag, applied to the Rapier
+// body before each physics step. Runs only when there IS water and a physics world.
+function _waterPropsStep(dt){
+  if(!waterZones.length || typeof physWorld==='undefined' || !physWorld || typeof dynamicProps==='undefined') return;
+  for(const o of dynamicProps){
+    const body=o && o.userData && o.userData.phys && o.userData.phys.body; if(!body) continue;
+    let t; try{ t=body.translation(); }catch(e){ continue; }
+    const w=_waterAt(t.x, t.y, t.z); if(!w || w.sub<=0.05) continue;
+    try{
+      const m=(body.mass && body.mass())||1, sub=Math.min(1.2, w.sub);
+      body.applyImpulse({ x:0, y: m*GRAV*1.3*(sub/1.2)*dt, z:0 }, true);   // slightly over-buoyant -> props bob up and settle at the surface
+      const lv=body.linvel(), k=Math.max(0, 1-2.4*dt);
+      body.setLinvel({ x:lv.x*k, y:lv.y*Math.max(0, 1-3.0*dt), z:lv.z*k }, true);
+      const av=body.angvel(); body.setAngvel({ x:av.x*k, y:av.y*k, z:av.z*k }, true);
+    }catch(e){}
+  }
+}
 // ---------- build 557: auto-generate maze level ----------
 // One click builds a fresh, fully-connected maze out of box props + point lights, sets a player start, and
 // scatters a few enemy spawns. It's just ordinary level data (boxes / lights / spawns), so collision, the nav
@@ -12866,7 +12917,7 @@ function updateBots(dt){
     if(b.grounded!==false){   // walk only with feet on a surface; while airborne, momentum carries it
       // stuck recovery: if we've been blocked a while, steer perpendicular for a moment to get around it
       if(b._stuckT>0.5){ if(!b._stuckSide) b._stuckSide=(Math.random()<0.5?1:-1); const px=-mvz*b._stuckSide, pz=mvx*b._stuckSide; mvx=mvx*0.5+px*1.2; mvz=mvz*0.5+pz*1.2; const ml=Math.hypot(mvx,mvz)||1; mvx/=ml; mvz/=ml; }   // jammed -> follow the wall to ONE consistent side until it slides clear (instead of oscillating in place)
-      const step=spd*dt;
+      const step=spd*dt*(typeof _waterSlowFor==='function' ? _waterSlowFor(b.pos.x, b.pos.y, b.pos.z) : 1);   // build 862: bots wade at half pace too
       const cx=Math.max(-lim,Math.min(lim, b.pos.x+mvx*step)), cz=Math.max(-lim,Math.min(lim, b.pos.z+mvz*step));
       // The arena walls + props are the only movement boundary; the spawn region never blocks motion, so a
       // bot can leave its spawn area and roam the whole map.
@@ -16983,7 +17034,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 861 · 2026-07-04';
+const BUILD_VERSION = 'build 862 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18145,6 +18196,7 @@ function stepClientPlayerPhys(dt){
     if(b.setLinvel) b.setLinvel({x:0,y:0,z:0}, false); if(b.setAngvel) b.setAngvel({x:0,y:0,z:0}, false);
   }
   physAccum += Math.min(dt, 0.1);
+  if(typeof _waterPropsStep==='function') _waterPropsStep(dt);   // build 862: buoyancy before the step
   let n=0; while(physAccum >= PHYS_DT && n < PHYS_MAX_SUBSTEPS){ physWorld.step(); physAccum -= PHYS_DT; n++; }
 }
 function updatePhysics(dt){
@@ -20731,6 +20783,7 @@ function loop(){
     _climbAnim = 0;   // not climbing
   player.vel.y -= GRAV*dt;
   if(typeof _waterPlayerStep==='function') _waterPlayerStep(dt);   // build 856: buoyancy/wade/flow — adjusts player.vel before BOTH the KCC and classic movers consume it
+  if(typeof _fallPushStep==='function') _fallPushStep(dt);   // build 862: waterfalls drive you down into the plunge pool
   // one-shot vertical knock from physics props (e.g. a fast body launching the player)
   if(player.extVel.y){ player.vel.y += player.extVel.y; player.onGround=false; player.extVel.y = 0; }
 
@@ -20784,6 +20837,7 @@ function loop(){
   if(!editorOpen && !mountedTurret) _resolvePlayerVsCars();
   if(drivingCar) driveUpdate(dt);
   if(_coastingCars.length) _updateCoastCars(dt);   // build 770: cars you bailed from at speed keep rolling
+  if(typeof _carWaterStep==='function' && !editorOpen){ if(drivingCar) _carWaterStep(drivingCar, dt); for(const _cc of _coastingCars) _carWaterStep(_cc, dt); }   // build 862: water drags cars + bow spray
   if(!editorOpen && (drivingCar || _coastingCars.length)) _resolveCarVsCars();   // build 775: cars collide with cars
   // build 772: preview boost flames on the selected parked vehicle in the editor + keep flames animating when not driving
   if(editorOpen && editorActive==='props'){ const _se=(typeof selectedSceneObject==='function')?selectedSceneObject():null; if(_se && _se.userData && _se.userData.vehicle && _se.userData.vehicle.boostFlame) _editorFlamePreview(_se, dt); const _sv=(_se && _se.userData && _se.userData.vehicle) ? _se : null; _editorHeadlightPreview(_sv); _editorBrakePreview(_sv); }
@@ -21084,7 +21138,7 @@ function loop(){
       const fp = en.mesh.userData.footprint || 0.9;
       en._reach = 1.5 + fp;                                // attack range scales with the body too (Phase 3)
       const stopAt = td.chase ? (fp + 0.9) : 0.5;          // patrol: stop on the waypoint; chase: body just shy of the player
-      const spd = td.chase ? en.speed : en.speed*0.5;      // patrol/return at half pace
+      const spd = (td.chase ? en.speed : en.speed*0.5) * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them
       if(en.grounded!==false){   // a launched enemy is airborne: momentum carries it, AI walking is paused
       // build 635: Charger — while winding up or dashing it OWNS its movement (normal walking skipped via _charging).
       let _charging = false;
