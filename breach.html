@@ -896,6 +896,7 @@
     <div class="pauseAudio">
       <label class="paLbl"><input type="checkbox" id="muteCb"> Mute all</label>
       <label class="paLbl"><input type="checkbox" id="postFxCb"> Visual effects (bloom · motion blur)</label>
+      <label class="paLbl"><input type="checkbox" id="adaptResCb"> Adaptive resolution (trades sharpness for fps)</label>
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>Master<input type="range" id="volMaster" min="0" max="100" value="80"></label>
       <label class="paLbl">♪ Music<input type="range" id="volMusic" min="0" max="100" value="60"></label>
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>SFX<input type="range" id="volSfx" min="0" max="100" value="100"></label>
@@ -6412,6 +6413,13 @@ function ensurePost(){
   const [w,h] = _postSize(); const hw=Math.max(1,w>>1), hh=Math.max(1,h>>1);
   const mkRT = (rw,rh)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:THREE.UnsignedByteType });
   _postRT=mkRT(w,h); _bloomRT=mkRT(hw,hh); _compRT=mkRT(w,h); _afterA=mkRT(w,h); _afterB=mkRT(w,h);
+  // build 872: the scene pass is the ONLY place geometry rasterizes when effects are on, and a plain render
+  // target gets zero antialiasing — the canvas's antialias:true never applied, so effects-on meant jagged
+  // edges everywhere. 4x MSAA on this one target restores it (WebGL2 resolves via blitFramebuffer; ~free on
+  // desktop GPUs). The quad passes (bloom/composite/afterimage) draw no geometry and stay single-sample.
+  // Known gap: with DoF active the scene rasterizes into the DoF target instead (it carries a DepthTexture,
+  // which can't be multisampled in r149) — DoF's own blur hides most of the difference.
+  if(renderer.capabilities && renderer.capabilities.isWebGL2) _postRT.samples = 4;
   const vert='varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }';
   // bright-pass + blur into the half-res bloom buffer (a 5x5 thresholded box gather)
   _matBright=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
@@ -17204,7 +17212,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 871 · 2026-07-04';
+const BUILD_VERSION = 'build 872 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27675,6 +27683,9 @@ function bindPauseMenu(){
   const ph=document.getElementById('pauseHelp'); if(ph) ph.onclick=openHelp;   // build 848: help & tutorials mid-game too
   const mc=document.getElementById('muteCb'); if(mc){ mc.checked=audioSettings.muted; mc.onchange=()=>{ audioSettings.muted=mc.checked; applyAudioSettings(); saveAudioSettings(); }; }
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
+  // build 872: adaptive resolution gets a visible switch (it was on-by-default with only a localStorage
+  // escape hatch since build 810). Turning it OFF also snaps back to full resolution immediately.
+  const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vMu=document.getElementById('volMusic'); if(vMu){ vMu.value=Math.round(audioSettings.music*100); vMu.oninput=()=>{ audioSettings.music=(+vMu.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vS=document.getElementById('volSfx'); if(vS){ vS.value=Math.round(audioSettings.sfx*100); vS.oninput=()=>{ audioSettings.sfx=(+vS.value)/100; applyAudioSettings(); saveAudioSettings(); initAudio(); SFX.coin(); }; }   // tick so it's
