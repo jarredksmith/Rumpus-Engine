@@ -10794,9 +10794,17 @@ let waterZones = (savedLevel && Array.isArray(savedLevel.waterZones)) ? savedLev
 let selWaterZone = -1;
 let waterZoneFx = [];
 let _waterTime = 0, _waterTintEl = null, _waterSwimming = false;
+// build 868: how lit the scene is, normalized so the default Lighting sliders give ~1. Water/waterfall
+// shaders multiply their body color by this, so the Sun/Sky sliders AND the day/night cycle (which writes
+// moon.intensity/skyLight.intensity every frame) darken or brighten the water like everything else.
+function _waterLightF(){
+  const s=(typeof moon!=='undefined')?moon.intensity:0.9, k=(typeof skyLight!=='undefined')?skyLight.intensity:0.55;
+  const a=(typeof worldAmbient!=='undefined')?worldAmbient.intensity:0;
+  return Math.max(0.04, Math.min(1.6, s*0.75 + k*0.65 + a*0.5));
+}
 const _WATER_VSH = 'varying vec3 vWP;\nvoid main(){ vec4 wp = modelMatrix * vec4(position,1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }';
 const _WATER_FSH = [
-  'uniform vec3 uDeep; uniform vec3 uSky; uniform float uOp; uniform float uTime; uniform float uWave; uniform vec2 uFlow;',
+  'uniform vec3 uDeep; uniform vec3 uSky; uniform float uOp; uniform float uTime; uniform float uWave; uniform vec2 uFlow; uniform float uLight;',
   'uniform vec3 uSunDir; uniform vec3 uSunCol;',
   'varying vec3 vWP;',
   'void main(){',
@@ -10808,7 +10816,7 @@ const _WATER_FSH = [
   '  vec3 V = normalize(cameraPosition - vWP);',
   '  float fres = pow(1.0 - abs(dot(n, V)), 3.0);',                       // abs: sane from underwater too
   '  float spec = pow(max(dot(reflect(-uSunDir, n), V), 0.0), 90.0);',
-  '  vec3 col = mix(uDeep, uSky, fres*0.75) + uSunCol * spec * 0.9;',
+  '  vec3 col = mix(uDeep, uSky, fres*0.75)*uLight + uSunCol * spec * 0.9;',   // build 868: the body dims/brightens with the scene; the glint tracks the sun on its own
   '  gl_FragColor = vec4(col, clamp(uOp + fres*0.18 + spec*0.35, 0.0, 0.97));',
   '}'
 ].join('\n');
@@ -10823,6 +10831,7 @@ function _waterSurfaceMat(z){
       uFlow:   { value: new THREE.Vector2(Math.sin((+z.flowDir||0)*RAD), Math.cos((+z.flowDir||0)*RAD)).multiplyScalar(Math.max(0.15, (+z.flowSpd||0)*0.25)) },
       uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.2) },
       uSunCol: { value: new THREE.Color(0xffffff) },
+      uLight:  { value: 1 },
     },
     vertexShader: _WATER_VSH, fragmentShader: _WATER_FSH,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -10997,7 +11006,7 @@ function updateWaterZones(dt){
     if(!g) continue; g.visible=showing;
     if(g.userData.editorBits) for(const m of g.userData.editorBits) m.visible=_eo;
     const u=g.userData.surf && g.userData.surf.material.uniforms;
-    if(u){ u.uTime.value=_waterTime; if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof worldCfg!=='undefined'?(+worldCfg.sun||1):1))); } }
+    if(u){ u.uTime.value=_waterTime; u.uLight.value=_waterLightF(); if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof moon!=='undefined'?moon.intensity:1))); } }
   }
   // underwater tint: a fixed overlay while the EYE is below a surface (cheap, sells the dive)
   if(!_waterTintEl){
@@ -11019,7 +11028,7 @@ let waterfallFx = []; const _fallRT = [];
 function _fallGainFor(d, audR, vol){ return Math.max(0, Math.min(1, (vol==null?0.8:+vol)) * (1 - d/Math.max(1, audR))); }
 function _fallAudR(f){ return Math.max(14, (+f.w||6)*2 + (+f.h||8)*1.2); }   // bigger falls are audible further
 const _FALL_FSH = [
-  'uniform vec3 uCol; uniform float uOp; uniform float uTime; uniform float uSpd;',
+  'uniform vec3 uCol; uniform float uOp; uniform float uTime; uniform float uSpd; uniform float uLight;',
   'varying vec2 vUv;',
   'void main(){',
   // build 865: layered columns instead of flat sine bands — three octaves with per-column phase,
@@ -11038,32 +11047,32 @@ const _FALL_FSH = [
   '  float foam = smoothstep(0.42,0.0,vUv.y);',
   '  vec3 col = mix(uCol, vec3(1.0), clamp(0.2*streaks + 0.6*foam + lip, 0.0, 1.0));',
   '  float a = uOp * edge * head * (0.35+0.65*streaks) * (0.55+0.45*gaps) * (0.9+0.45*foam);',
-  '  gl_FragColor = vec4(col, clamp(a, 0.0, 0.95));',
+  '  gl_FragColor = vec4(col*uLight, clamp(a, 0.0, 0.95));',   // build 868: falls dim at night too
   '}'
 ].join('\n');
 const _FOAM_FSH = [
-  'uniform float uTime; uniform float uOp;',
+  'uniform float uTime; uniform float uOp; uniform float uLight;',
   'varying vec2 vUv;',
   'void main(){',
   // build 865: churn, not concentric rings — radial pulse x angular boil, brightest just off-centre
   '  vec2 c = vUv*2.0-1.0; float r = length(c); float ang = atan(c.y, c.x);',
   '  float churn = 0.55 + 0.25*sin(r*16.0 - uTime*5.0) + 0.2*sin(ang*7.0 + uTime*2.3 + r*9.0);',
   '  float a = uOp * churn * smoothstep(1.0,0.15,r) * (0.6+0.4*smoothstep(0.0,0.35,r));',
-  '  gl_FragColor = vec4(vec3(1.0), clamp(a,0.0,0.9));',
+  '  gl_FragColor = vec4(vec3(uLight), clamp(a,0.0,0.9));',
   '}'
 ].join('\n');
 const _FALL_VSH = 'varying vec2 vUv;\nvoid main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }';
 function buildWaterfallGroup(f){
   const grp=new THREE.Group(); const w=Math.max(0.5,+f.w||6), h=Math.max(1,+f.h||8);
   const mkSheet=(spdMul, opMul, zOff)=>{
-    const m=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,(f.op!=null?+f.op:0.55)))*opMul }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1))*spdMul } }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+    const m=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,(f.op!=null?+f.op:0.55)))*opMul }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1))*spdMul }, uLight:{ value:1 } }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
     const s=new THREE.Mesh(new THREE.PlaneGeometry(w,h), m);
     s.position.set(0, (+f.y||0)-h/2, zOff); s.renderOrder=2; grp.add(s); return m;
   };
   // build 865: TWO layers — a back sheet running slightly slower/dimmer gives the fall visual depth
   grp.userData.sheetMat=mkSheet(1, 1, 0);
   grp.userData.sheetMat2=mkSheet(0.82, 0.55, -0.35);
-  const foamMat=new THREE.ShaderMaterial({ uniforms:{ uTime:{ value:0 }, uOp:{ value:Math.max(0,Math.min(1.7,0.5*(f.splash!=null?+f.splash:1))) } }, vertexShader:_FALL_VSH, fragmentShader:_FOAM_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+  const foamMat=new THREE.ShaderMaterial({ uniforms:{ uTime:{ value:0 }, uOp:{ value:Math.max(0,Math.min(1.7,0.5*(f.splash!=null?+f.splash:1))) }, uLight:{ value:1 } }, vertexShader:_FALL_VSH, fragmentShader:_FOAM_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
   const pool=Math.max(0.2, Math.min(2.5, f.pool!=null?+f.pool:1.15));   // build 865: author-controlled pool width (x sheet width)
   const foam=new THREE.Mesh(new THREE.CircleGeometry(w*0.5, 36), foamMat);
   foam.scale.set(pool, pool*0.62, 1);   // elliptical: wider along the sheet than out from it (local Y becomes depth after the rotate)
@@ -11085,10 +11094,11 @@ function removeWaterfall(i){ pushUndoSnapshot(); waterfalls.splice(i,1); const r
 function updateWaterfalls(dt){
   if(!waterfalls.length) return;
   const showing=((typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver)) || (typeof editorOpen!=='undefined'&&editorOpen);
+  const _lf=_waterLightF();
   for(const g of waterfallFx){ if(!g) continue; g.visible=showing;
-    if(g.userData.sheetMat)  g.userData.sheetMat.uniforms.uTime.value=_waterTime;
-    if(g.userData.sheetMat2) g.userData.sheetMat2.uniforms.uTime.value=_waterTime;
-    if(g.userData.foamMat)   g.userData.foamMat.uniforms.uTime.value=_waterTime; }
+    if(g.userData.sheetMat){  g.userData.sheetMat.uniforms.uTime.value=_waterTime;  g.userData.sheetMat.uniforms.uLight.value=_lf; }
+    if(g.userData.sheetMat2){ g.userData.sheetMat2.uniforms.uTime.value=_waterTime; g.userData.sheetMat2.uniforms.uLight.value=_lf; }
+    if(g.userData.foamMat){   g.userData.foamMat.uniforms.uTime.value=_waterTime;   g.userData.foamMat.uniforms.uLight.value=_lf; } }
   const live=(typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver) && !(typeof editorOpen!=='undefined'&&editorOpen)
     && !(typeof paused!=='undefined'&&paused) && !(typeof _cineActive!=='undefined'&&_cineActive);
   for(let i=0;i<waterfalls.length;i++){
@@ -17134,7 +17144,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 867 · 2026-07-04';
+const BUILD_VERSION = 'build 868 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
