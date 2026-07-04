@@ -227,17 +227,43 @@ duplicates as one. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> ungroups.</p>
 
 <section id="folds">
 <h2><span class="tag">Editor reference</span>Object folds — giving props behaviour</h2>
-<p>Select any prop on the Build tab and open <b>Object &amp; selection</b>. Eight folds, in panel order:</p>
+<p>Select any prop on the Build tab and open <b>Object &amp; selection</b>. Eight folds, in panel order.
+(Signals and Mechanism get their full treatment in <a href="#signals">Signals, locks &amp; mechanisms</a>;
+Vehicle in <a href="#vehicles">Vehicle tuning</a>.)</p>
+<h3>Animation</h3>
+<p>Plays a model's built-in clips. Pick the clip (or <i>all clips at once</i>), then <b>when</b> it plays —
+<i>Auto</i> (from level load), <i>E&nbsp;Activate</i> (player interacts), or <i>Signals only</i> (waits to be
+targeted) — and <b>how</b>: ⟳ Loop, ⇄ Ping-pong, or → Once. Built-in shapes have no clips (use Mechanism to
+move those); for models without animations, the Sketchfab search has an "Animated only" filter.</p>
+<h3>Lock</h3>
+<p><b>Lock</b> picks the required key (red / blue / gold / green); pressing <kbd>E</kbd> on the prop then needs
+that key in hand — place a matching key pickup pad somewhere findable. <b>Consume key on unlock</b> spends the
+key (for one-key-one-door puzzles; off = a master key). A prop unlocks once per deploy, for everyone in MP.</p>
+<h3>Dialogue (NPC)</h3>
+<p><b>Name</b> (shown over the prompt) + one line of dialogue per row (up to 12 × 200 chars); the player presses
+<kbd>E</kbd> to advance. The first line also fires the prop's <b>On&nbsp;E</b> signals — so a conversation can
+set the objective, drop a checkpoint, or open a door as it starts.</p>
+<h3>Joint (physics)</h3>
 <div class="tblwrap"><table>
-<tr><th>Fold</th><th>What it does</th></tr>
-<tr><td>Animation</td><td>Play a model's built-in animation clips — pick the clip, then when it plays (<i>Auto</i> on load, <i>E&nbsp;Activate</i>, or <i>Signals only</i>) and whether it loops or plays once.</td></tr>
-<tr><td>Lock</td><td>Require a key to E-activate the prop: <i>None</i> or the red / blue / gold / green key, plus <b>Consume key on unlock</b>. Keys come from key pickup pads (see <a href="#pickups">Pickups</a>).</td></tr>
-<tr><td>Signals</td><td>Tag the prop and wire cause → effect between props — full reference in <a href="#signals">Signals, locks &amp; mechanisms</a>.</td></tr>
-<tr><td>Dialogue (NPC)</td><td>Make the prop talkable with <kbd>E</kbd> — one line per row, shown as HUD dialogue. Great for hints and flavour.</td></tr>
-<tr><td>Vehicle (drivable)</td><td>Turn the prop into a drivable car — full reference in <a href="#vehicles">Vehicle tuning</a>.</td></tr>
-<tr><td>Joint (physics)</td><td>Hinge the object so it swings under physics — doors, levers, see-saws.</td></tr>
-<tr><td>Mechanism</td><td>Move / rotate / scale the object over time — platforms, doors, elevators — with an optional multi-point <b>Waypoint path</b>. See <a href="#signals">Signals, locks &amp; mechanisms</a>.</td></tr>
-<tr><td>Physics &amp; destruction</td><td>Make it dynamic (pushed, thrown, stacked), grabbable with <kbd>G</kbd>, breakable with health and debris, or explosive.</td></tr>
+<tr><th>Control</th><th>What it does / how to use it</th></tr>
+<tr><td>Physics joint (hinge)</td><td>Hinges the prop so it swings under physics. The prop must also be <b>Dynamic</b> (Physics fold) or the joint does nothing — the editor warns.</td></tr>
+<tr><td>Anchor to</td><td>Blank = pinned to a fixed point in space (doors, see-saws). A prop <b>tag</b> = chained to that body — pendulums, rope bridges, and <b>towed trailers</b> (anchor to a drivable car's tag, keep axis Y, put the hinge at the trailer's front tongue; the car pulls it with real physics).</td></tr>
+<tr><td>Hinge axis + X/Y/Z</td><td>Y = door, X = see-saw, Z = paddle. The offsets move the hinge point from the prop's origin — e.g. half the width so a door hinges at its edge. The <b>cyan marker</b> shows the live hinge point in the scene; the ring + line show the swing axis.</td></tr>
+<tr><td>Limit the swing angle</td><td>Min/Max (±180°) — stop a door at 90°, a see-saw at ±25°.</td></tr>
+<tr><td>Trailer tracking</td><td>0–1: simulates tyre grip so a towed trailer trails straight instead of swinging out (0 = free hinge). It still yields in turns — raise it if the trailer whips around, lower if stiff. It centres on the angle it has at Deploy, so place the trailer in line behind the car.</td></tr>
+<tr><td>Motor speed / strength</td><td>±720 °/s drives the hinge (0 = free swing) — powered wheels, auto-closing doors, spinning hazards.</td></tr>
+</table></div>
+<p>Joints take effect on Deploy.</p>
+<h3>Physics &amp; destruction</h3>
+<div class="tblwrap"><table>
+<tr><th>Control</th><th>Range (default)</th><th>What it does / how to use it</th></tr>
+<tr><td>Dynamic</td><td>off</td><td>Falls, tumbles, stacks on floors/ramps/crate tops, reacts to shots and rams. Resets to its authored spot on Deploy. Needs the page served over http(s) — file:// blocks the physics engine.</td></tr>
+<tr><td>Weight</td><td>0.05–200</td><td>Heavier = harder to knock around, throws shorter, hits harder under Crushing-props rules.</td></tr>
+<tr><td>Grabbable</td><td>on</td><td>Players can pick it up with <kbd>G</kbd>, carry and throw it. <b>Grab label</b> replaces the default prompt ("Ancient Tome — [G] to read"); <b>Grab distance</b> sets the reach.</td></tr>
+<tr><td>🔥 On fire</td><td>off</td><td>Burns with flames from level load and hurts anyone touching it (<b>Burn dmg</b> 0–60/s). For a barrel you <i>shoot</i> to ignite, leave this OFF and give it an Explosive <b>Fuse</b> instead.</td></tr>
+<tr><td>Breakable</td><td>on</td><td>Shatters when shot. <b>Health</b> (1–2000) sets shots-to-break (refills each Deploy); <b>Break style</b>: Shatter = physics debris (with <b>Pieces</b> 3–90, <b>Size</b> 6–30%, <b>Shards/Cubes</b> shape), Puff = a quick burst + vanish (cheaper — use it for clutter).</td></tr>
+<tr><td>🎯 Objective target</td><td>off</td><td>Must be destroyed to win a <b>Destroy</b> mission; glows with a red beacon in play.</td></tr>
+<tr><td>💥 Explosive</td><td>off</td><td>Detonates when destroyed or on hard impact. <b>Radius</b> (2–20 m) + <b>Damage</b> (10–200) with falloff — hurts you too, and chain-reacts nearby explosives. <b>Impact</b> = the collision speed that sets it off (0 = shoot-only); <b>Fuse</b> = 0 blows instantly, above 0 a shot <i>lights</i> it and it blows after the fuse — shoot it, watch it catch, run.</td></tr>
 </table></div>
 </section>
 
@@ -264,10 +290,12 @@ Launch power (0.25–4, jump-pad multiplier) · Gravity (5–80) · Eye height (
 <p>Tip: the day/night cycle can't dim an HDRI sky texture (only fog, lights and flat-color skies) — for
 convincing nights, use a plain sky. Sun direction still sets where dawn breaks when the cycle is on.</p>
 <h4>Camera &amp; view</h4>
-<p>Field of view (50–110) · View distance (60–2000) · Fog density &amp; colour · ground grid toggle.
-<b>Depth of field</b>: focus distance, in-focus range, blur strength.
-<b>Post-processing</b>: bloom (+ threshold), motion blur, vignette, film grain, saturation, contrast —
-all compose together, and DoF still works with effects on.</p>
+<p>Field of view (50–110) · View distance (60–2000 — the hard cutoff where geometry stops drawing; raise it for
+big racing arenas) · Fog density (lower = see farther into the dark) &amp; colour · ground grid toggle.
+<b>Depth of field</b>: Focus distance = how far away stays sharp, In-focus range = the depth kept sharp around
+it, Blur strength = how soft everything else goes. <b>Post-processing</b>: Bloom + Bloom threshold (how bright a
+surface must be before it glows), Motion blur (trail strength), Vignette, Film grain, Saturation, Contrast —
+they all compose, DoF included, and they save with the level (the on/off switch is each player's preference).</p>
 <h4>Sky</h4>
 <p>Browse <b>Poly Haven HDRIs</b> in-editor or paste any equirectangular <code>.hdr</code>/<code>.jpg</code> URL
 (an .hdr lights reflections too); presets Park / Mountain / Room / None (None = flat fog-colored sky).
@@ -360,6 +388,20 @@ combination is safe to ride down; onto dry ground, the landing is on you.</p>
   <li><b>Spawn markers</b> — place exact spawn points with patrol/hunt mode, patrol radius, detect radius, facing, a patrol route, and “Appears on wave N” (0 = every wave). No markers = classic random waves.</li>
   <li><b>Enemy gunfire</b> — how enemy fire looks: bolt tip, streak, trail and muzzle flash.</li>
 </ul>
+<h3>The eight enemy types — how each one fights</h3>
+<div class="tblwrap"><table>
+<tr><th>Type</th><th>HP</th><th>Speed</th><th>Hit</th><th>Behaviour — and how to fight it</th></tr>
+<tr><td>Grunt</td><td>30</td><td>6–9</td><td>9</td><td>The baseline melee beeliner. Cannon fodder that teaches spacing.</td></tr>
+<tr><td>Runner</td><td>16</td><td>11–13</td><td>6</td><td>Fast and fragile — closes distance alarmingly. Dies to almost anything if you hit it first.</td></tr>
+<tr><td>Brute</td><td>90</td><td>3.5–5</td><td>18</td><td>Slow, heavy, hits like a truck. Kite it; never let it corner you.</td></tr>
+<tr><td>Gunner</td><td>24</td><td>4–6</td><td>4×4</td><td>Ranged: holds an 11&nbsp;m standoff and fires 4-round bursts while <i>strafing sideways</i> — harder to hit than it looks. Close the gap or take cover between bursts.</td></tr>
+<tr><td>Sapper</td><td>20</td><td>9.5–12.5</td><td>blast 40</td><td>A fast rusher that never swings — it <b>detonates</b> (6&nbsp;m blast with falloff) when it reaches you, <i>and also when killed</i>. Drop it at range; never melee one.</td></tr>
+<tr><td>Shieldbearer</td><td>60</td><td>3–4.5</td><td>14</td><td>Soaks frontal shots (they deal ~18% damage). It turns slowly, so strafe around its guard and flank. The shield stops bullets and melee — not explosions that engulf it.</td></tr>
+<tr><td>Charger</td><td>75</td><td>4.5–6</td><td>20</td><td>At mid-range with line of sight it <b>telegraphs a wind-up</b> (~half a second) then lunges 16&nbsp;m at high speed to slam you. Sidestep the dash during the wind-up. Up close it just melees.</td></tr>
+<tr><td>BOSS</td><td>900</td><td>2.8–4.2</td><td>28</td><td>A ranged artillery piece with a 14&nbsp;m standoff. Joins every Nth wave per the <b>Boss every N waves</b> rule (or wherever you place a boss spawn marker).</td></tr>
+</table></div>
+<p>Later waves bias toward the tougher and ranged types automatically in Random mode. Water slows all of them
+to about half pace — terrain is a weapon.</p>
 </section>
 
 <section id="tab-gameplay">
@@ -383,19 +425,34 @@ combination is safe to ride down; onto dry ground, the landing is on you.</p>
 set its <b>shoot &amp; reload sounds</b>, override its <b>damage</b>, and disable the muzzle flash.
 <b>Effects</b> covers your own gunfire's look: <b>Impacts</b> (sparks, marks &amp; debris where shots land) and
 <b>Tracer</b> (the streak your fire leaves).</p>
-<h3>The arsenal</h3>
+<h3>The arsenal — full stats</h3>
 <div class="tblwrap"><table>
-<tr><th>Weapon</th><th>Mag / reserve</th><th>Damage</th><th>Character</th></tr>
-<tr><td>RIFLE</td><td>30 / 90</td><td>12</td><td>Full-auto all-rounder</td></tr>
-<tr><td>SMG</td><td>40 / 120</td><td>8</td><td>Fast full-auto, close range</td></tr>
-<tr><td>SHOTGUN</td><td>6 / 24</td><td>9 × 8 pellets</td><td>Devastating up close</td></tr>
-<tr><td>SNIPER</td><td>5 / 20</td><td>95</td><td>Scoped (right-click), one-shot potential</td></tr>
-<tr><td>ROCKET</td><td>1 / 6</td><td>90 + splash</td><td>Projectile with a 7&nbsp;m blast radius</td></tr>
-<tr><td>CROWBAR</td><td>—</td><td>60</td><td>Melee, long reach</td></tr>
-<tr><td>FISTS</td><td>—</td><td>24</td><td>Always available; the <i>Start unarmed</i> loadout</td></tr>
+<tr><th>Weapon</th><th>Mag / reserve</th><th>Dmg</th><th>Rate</th><th>Reload</th><th>Character</th></tr>
+<tr><td>RIFLE</td><td>30 / 90</td><td>12</td><td>95 ms auto</td><td>1.1 s</td><td>Zero-spread full-auto all-rounder</td></tr>
+<tr><td>SMG</td><td>40 / 120</td><td>8</td><td>55 ms auto</td><td>1.0 s</td><td>Fastest fire, slight spread, quietest gun (draws less aggro)</td></tr>
+<tr><td>SHOTGUN</td><td>6 / 24</td><td>9 × 8 pellets</td><td>0.65 s</td><td>1.3 s</td><td>72 damage point-blank, wide spread — brutal in doorways</td></tr>
+<tr><td>SNIPER</td><td>5 / 20</td><td>95</td><td>1.4 s</td><td>1.6 s</td><td>Scoped (right-click), one-shots most types; loudest weapon</td></tr>
+<tr><td>ROCKET</td><td>1 / 6</td><td>90 + splash</td><td>0.9 s</td><td>1.7 s</td><td>Projectile, 7 m blast — mind your own feet</td></tr>
+<tr><td>CROWBAR</td><td>—</td><td>60</td><td>0.5 s</td><td>—</td><td>Melee with 3.4 m reach and big knockback, no ammo ever</td></tr>
+<tr><td>FISTS</td><td>—</td><td>24</td><td>0.36 s</td><td>—</td><td>Always available; the <i>Start unarmed</i> loadout (G grabs/throws)</td></tr>
 </table></div>
-<p><b>Attachments</b> are bought with credits at the in-game Weapon loadout screen — optic (Red Dot, 2× Scope),
-muzzle (Compensator, Suppressor), magazine (Extended, Drum), tactical (Laser Sight, Angled Grip).</p>
+<h3>The economy: attachments, upgrades, shop</h3>
+<p><b>Attachments</b> — bought once with credits at the Weapon loadout screen, one per slot per weapon:</p>
+<div class="tblwrap"><table>
+<tr><th>Slot</th><th>Options (cost)</th><th>Effect</th></tr>
+<tr><td>Optic</td><td>Red Dot ◆120 · 2× Scope ◆260</td><td>Cleaner ADS zoom · magnified + slightly tighter fire</td></tr>
+<tr><td>Muzzle</td><td>Compensator ◆200 · Suppressor ◆240</td><td>30% tighter spread · quieter shots + 15% tighter</td></tr>
+<tr><td>Magazine</td><td>Extended ◆180 · Drum ◆340</td><td>+50% mag · double mag</td></tr>
+<tr><td>Tactical</td><td>Laser ◆160 · Angled Grip ◆150</td><td>40% tighter fire (+ visible beam) · 15% steadier</td></tr>
+</table></div>
+<p><b>Between-wave upgrade cards</b> (solo, pick 1 of 3 after each cleared wave, if enabled in the rules):
+High-Velocity Rounds (+25% damage) · Trigger Job (+15% fire rate) · Reinforced Plating (+25 max HP, heals) ·
+Combat Stims (+12% move speed) · Vampiric Rounds (heal 4/kill) · Scavenger (+30% credits) ·
+Field Medic (heal 25 each wave) · Munitions Cache (+1 grenade now &amp; each wave).</p>
+<p><b>Supply chests</b> spawn periodically (one purchase each, then consumed): Medkit ◆60 · Overshield ◆100 ·
+Damage Core ◆120 · Speed Cell ◆80 · 3 Frags ◆90 · Ammo Crate ◆50 — plus one-time weapon unlocks
+(SMG ◆200, Shotgun ◆220, Rocket ◆320, Sniper ◆400, Crowbar ◆140). The <b>Ammo Station</b> (if enabled)
+refills your current weapon for its listed price.</p>
 </section>
 
 <section id="tab-hud">
@@ -406,7 +463,7 @@ muzzle (Compensator, Suppressor), magazine (Extended, Drum), tactical (Laser Sig
   <li><b>Fonts</b> — separate UI and display fonts from an 18-font set (Chakra Petch, Orbitron, Rajdhani, Press Start 2P, VT323, Russo One, Bungee, JetBrains Mono…).</li>
   <li><b>Panels</b> — shape (<i>Angular</i> / <i>Rounded</i> / <i>Square</i>), background opacity, border.</li>
   <li><b>Show in play</b> — toggle each element: minimap, score, wave counter, ammo, health, crosshair, kill feed, interact prompt, grab hint, objective banner, NPC dialogue.</li>
-  <li><b>Per-element layout</b> — pick an element and adjust its size, X/Y offset, opacity, font and tint, or drag the dashed outlines live. Reset per element or the whole HUD.</li>
+  <li><b>Per-element layout</b> — pick an element, then: Size (0.4–2.5×), X/Y offset (±2000 px), Opacity, plus Font and Tint for the text elements. While the HUD tab is open you're in live preview: <b>drag the dashed outlines</b> to position elements directly. Reset per element or the whole HUD. These settings save with the level — everyone who plays it sees your HUD.</li>
   <li><b>Crosshair</b> — style <b>✛ Classic · + Cross · • Dot · ◯ Circle · ⊤ T-shape · ∅ None</b>, with size, thickness, gap, center dot and colour.</li>
 </ul>
 </section>
@@ -419,8 +476,18 @@ muzzle (Compensator, Suppressor), magazine (Extended, Drum), tactical (Laser Sig
   <li><b>🔗 Copy share link</b> — the whole level compressed into a URL. See <a href="#sharing">Saving &amp; sharing</a>.</li>
   <li><b>⬇ Export / ⬆ Import .json</b> — the level as a file you can back up, edit or send.</li>
   <li><b>🗑 Delete all objects</b> — fresh scene (undoable).</li>
-  <li><b>Issues panel</b> — validation warnings (e.g. a race objective without a start line) so a broken level tells you why.</li>
-  <li><b>Campaign</b> — chain several levels into a sequence with carry-over loadout; export/import the campaign as one file.</li>
+  <li><b>Issues panel</b> — live validation that catches the classic mistakes before a playtest does:
+  locks with no matching key pad (and orphaned keys), pickup spots placed while pickups are off, audio zones
+  with no sound URL, cutscene shots with fewer than 2 waypoints, signals targeting a tag no prop carries,
+  signals with no target (only <i>Win level</i> and <i>Play cutscene</i> work targetless), contact signals
+  filtered to a tag that doesn't exist, signals playing a cutscene that doesn't exist, and Signals-only
+  mechanisms that nothing can ever trigger.</li>
+  <li><b>Autosave</b> — saves every few seconds while editing (never mid-PvP-match); the status line shows
+  the last save time, or a storage-full warning that means "export a backup now". Undo holds the last 60 snapshots.</li>
+  <li><b>Campaign</b> — chain levels into a solo campaign: build a level → <b>➕ Add current level</b> → repeat →
+  <b>▶ Play campaign</b>. Each level ends on its own win condition and loads the next; weapons, health and
+  inventory carry over. Per-level: rename, <b>Edit</b> (loads it back into the editor with a "Save changes"
+  button), ▲/▼ reorder, ✕ remove; <b>Export/Import campaign</b> moves the whole sequence as one file.</li>
 </ul>
 </section>
 
@@ -467,19 +534,58 @@ don't stop — if one finishes your remaining laps first, you get the RACE LOST 
 </section>
 
 <section id="vehicles">
-<h2><span class="tag">Systems</span>Vehicle tuning</h2>
-<p>Any prop can be a car: select it → <b>Object &amp; selection</b> → <b>Vehicle (drivable)</b> → enable.
-Readouts switch between km/h and mph. The full control set:</p>
+<h2><span class="tag">Systems</span>Vehicle tuning — the deep dive</h2>
+<p>Any prop can be a car: select it → <b>Object &amp; selection</b> → <b>Vehicle (drivable)</b> → tick
+<b>Drivable vehicle</b> (this also makes the prop non-dynamic — the car system owns its physics).
+A units toggle switches every speed field and the in-game speedometer between km/h and mph.</p>
+<div class="box"><b>How the handling actually works</b> — three separate systems, not one "handling" number:
+<b>Braking</b> fires when your throttle opposes your direction of travel: you slow with real stopping distance
+(an ABS-like ease-off in the last couple of m/s) and only then does reverse engage — you can never snap from
+forward into reverse. <b>Cornering grip (G)</b> is the lateral force the tyres hold: your achievable turn rate
+shrinks as speed rises, so corners widen like a real car (understeer) — but steering never drops below 35% of
+what you ask, so it never "bricks". Flooring the throttle mid-corner spends tyre on acceleration instead of
+cornering (a traction circle). <b>Grip</b> is how fast your direction of travel chases your heading: low grip =
+the car slides and drifts; the handbrake cuts it to ~16% for deliberate slides; pushing past ~90% of the
+cornering limit steps the rear out progressively, and counter-steering recovers grip 1.4× faster.</div>
+<h3>Performance</h3>
 <div class="tblwrap"><table>
-<tr><th>Group</th><th>Controls</th></tr>
-<tr><td>Performance</td><td>Top speed (5–200) · Acceleration (1–80) · Turn rate °/s (20–400) · Reverse (2–120) · Boost × (1–4) with boost time &amp; cooldown</td></tr>
-<tr><td>Handling</td><td>Grip (1–12) · Cornering grip G (0.6–4, the understeer limit) · Suspension (0–2) · Body lean (0–2) · Launch (0–3) · Braking (0.2–3)</td></tr>
-<tr><td>Feel &amp; FX</td><td>Tyre smoke · Skid marks · Ram damage (0–300) · boost flames (size, density, position, colour)</td></tr>
-<tr><td>Fitting</td><td>Model facing° · Pivot m (put it near the rear axle for realistic steering; <b>Center pivot on model</b> auto-centers) · Ride height · Hit area (width/height/length + offsets)</td></tr>
-<tr><td>Camera</td><td>Chase or Cockpit default (<kbd>C</kbd> flips) · camera back/up distance · cockpit seat forward/up/side · follow-cam toggle (<kbd>V</kbd> flips)</td></tr>
-<tr><td>Lights</td><td>Headlights (<kbd>H</kbd>): beam colour, brightness, range, spread, position, start-on · Brake lights: colour, size, spread, position</td></tr>
-<tr><td>Wheels</td><td><b>Auto-detect wheels</b> or pick named parts · which wheels steer · spin axle X/Y/Z · steer angle (0–60°) · spin rate</td></tr>
-<tr><td>Misc</td><td>Enter radius (0.5–12&nbsp;m) · keep rolling on exit · animation-clip mapping (idle/forward/backward/turn) for models that ship clips</td></tr>
+<tr><th>Control</th><th>Range (default)</th><th>What it does / how to use it</th></tr>
+<tr><td>Top speed</td><td>5–200 (16)</td><td>Flat-out speed in your chosen units. ~36 km/h suits an arena runabout; 120+ needs a big arena and raised View distance.</td></tr>
+<tr><td>Acceleration</td><td>1–80 (18)</td><td>How hard it pulls to top speed. Also scales braking force (below).</td></tr>
+<tr><td>Turn rate °/s</td><td>20–400 (120)</td><td>How fast the car swings toward where you're steering. This is your <i>requested</i> rate — Cornering grip decides how much of it you get at speed.</td></tr>
+<tr><td>Reverse</td><td>2–120 (7)</td><td>Reverse top speed. Engages only from a stop (braking always comes first).</td></tr>
+<tr><td>Boost ×</td><td>1–4 (1 = off)</td><td>Hold <kbd>Shift</kbd> to multiply speed. With <b>Boost time</b> (0.5–15 s) and <b>Cooldown</b> (0–30 s). <b>Flames on boost</b> adds exhaust fire — size, density, position offsets (use Side for a single tailpipe) and colour; the core glows white-hot and cools toward your colour, so try blue for an afterburner.</td></tr>
+</table></div>
+<h3>Handling</h3>
+<div class="tblwrap"><table>
+<tr><th>Control</th><th>Range (default)</th><th>What it does / how to use it</th></tr>
+<tr><td>Grip</td><td>1–12 (6)</td><td>How hard the tyres bite. Lower = loose and <i>drifty</i> (slides in turns); higher = planted. Hold <kbd>Space</kbd> to handbrake-drift regardless.</td></tr>
+<tr><td>Cornering grip (G)</td><td>0.6–4 (2.2)</td><td>The lateral G the tyres hold before the car pushes wide. Sports car ≈ 3, truck ≈ 1.2. This is the setting that decides how fast you can take a banked track curve.</td></tr>
+<tr><td>Braking</td><td>0.2–3 (1)</td><td>Brake bite when pressing against your travel. 1 = normal, low = long lazy stops, high = race-car stoppers. The nose dives under braking.</td></tr>
+<tr><td>Suspension</td><td>0–2 (1)</td><td>Body compression/rebound over kerbs, bumps and landings. 0 = rigid kart, 2 = soft off-roader.</td></tr>
+<tr><td>Body lean</td><td>0–2 (0.5)</td><td>Roll in turns and dive under braking. Purely visual — lower it if the car feels like a boat.</td></tr>
+<tr><td>Launch</td><td>0–3 (1)</td><td>How hard ramps throw the car. 0 = never leaves the ground (go-kart), raise it for big-air buggies. The nose follows the arc; suspension soaks the landing.</td></tr>
+</table></div>
+<h3>Fitting a model</h3>
+<div class="tblwrap"><table>
+<tr><th>Control</th><th>What it does / how to use it</th></tr>
+<tr><td>Model facing °</td><td>Rotate until the yellow arrow points out the <b>front</b> of your model — the car drives nose-first. Doesn't move the prop.</td></tr>
+<tr><td>Pivot (m)</td><td>The red dot marks where the car spins when steering. Slide it toward the nose (+) if the model's origin sits at the tail, so it turns around its centre. <b>Center pivot on model</b> computes it from the bounding box in one click. For the most natural feel, land the dot near the rear axle.</td></tr>
+<tr><td>Ride height (±m)</td><td>Trim if the model floats or sinks. 0 = auto-fit.</td></tr>
+<tr><td>Hit area</td><td>The orange outline is the collision footprint props/enemies/rivals react to — Hit width/height/length (0.3–3×) scale each axis, Offset X/Y/Z recenters it. Fit it to the visible bodywork so contact looks honest.</td></tr>
+<tr><td>Enter radius (m)</td><td>0.5–12 (2.5): how close you must be for the "press E to drive" prompt — measured to the model's footprint, not its centre, so big trucks work.</td></tr>
+<tr><td>Keep rolling on exit</td><td>Bail out at speed and the car coasts on (on by default). Off = it stops with you.</td></tr>
+</table></div>
+<h3>Camera, lights, effects, wheels</h3>
+<div class="tblwrap"><table>
+<tr><th>Control</th><th>What it does / how to use it</th></tr>
+<tr><td>Camera view</td><td>Chase (third person) or Cockpit (driver POV); <kbd>C</kbd> flips while driving. Cockpit uses <b>Seat forward/up/side</b> to place your eyes inside the model. <b>Camera back/up</b> trim the chase distance (0 = auto-fit to model size).</td></tr>
+<tr><td>Camera follows the car</td><td>On: the chase cam trails behind and re-centres when you stop moving the mouse (mouse still free-orbits). Off: a pure free orbit that stays where you point it. <kbd>V</kbd> flips it live.</td></tr>
+<tr><td>Headlights</td><td><kbd>H</kbd> toggles forward spotlights: beam colour, brightness (0–20), range (4–120 m), spread/height/forward placement, and "Start on when you get in". At night in a day/night-cycle level they switch on automatically.</td></tr>
+<tr><td>Brake lights</td><td>Red tail glow while braking or reversing — colour, size, spread, height, back offset.</td></tr>
+<tr><td>Tyre smoke / Skid marks</td><td>0–2 each: 1 = normal, 0 = off; raise for dusty surfaces, lower for clean tarmac.</td></tr>
+<tr><td>Ram damage</td><td>0–300 (50): damage to enemies/bots/rival players you plough into, scaling with speed. 0 disables vehicular mayhem.</td></tr>
+<tr><td>Wheels (procedural)</td><td>Spins + steers the model's wheel meshes <i>by name</i> — no animation clips needed. <b>Auto-detect wheels</b> guesses the wheel parts, the steered front pair and the spin axle from the model's named parts (you can still edit after). The <b>Detected parts</b> chips preview on hover — click to add to Wheels, Shift-click to mark as Front. Then <b>Steer angle</b> (0–60°) and <b>Spin rate</b> (negative if they roll backwards). If the model has no separate wheel parts, use the <b>Animations</b> rows instead to map drive-state clips (Idle/Forward/Backward/Turn left/Turn right).</td></tr>
 </table></div>
 </section>
 
@@ -515,7 +621,17 @@ a Pivot offset, and Duration (s):</p>
 <tr><td>Set checkpoint</td><td>Drop a respawn checkpoint here</td></tr>
 <tr><td>Play sound</td><td>Play a sound URL</td></tr>
 </table></div>
-<p>A rule can also require an <b>inventory item</b> — “On E, if the player carries the fuse, do Open”.</p>
+<h4>The advanced gates</h4>
+<ul>
+  <li><b>Needs N different senders</b> — the receiving prop only reacts once N <i>different</i> props have signalled
+  it (the same sender firing twice counts once). Both pressure plates; all three generators.</li>
+  <li><b>Needs item</b> — a rule can require the player to be carrying an inventory item, with an optional
+  <b>consume</b>: “On E, if carrying the fuse, do Open — and spend the fuse.” A locked prop without the item
+  shows a LOCKED toast naming what's missing.</li>
+  <li><b>On object placed</b> extras — filter by a <b>from</b> tag (only the tagged object triggers it, blank =
+  any physical prop), choose <i>Touching it</i> vs <i>Inside it</i>, and optionally <b>consume</b> the placed
+  object (it vanishes when it lands — sacrificial offerings).</li>
+</ul>
 <h3>Locks &amp; keys</h3>
 <p>The <b>Lock</b> fold requires a key (red / blue / gold / green) before <kbd>E</kbd> works on the prop, with optional
 <b>Consume key on unlock</b>. Keys are granted by key pickup pads (one-shot — they don't respawn), appear as HUD chips,
@@ -536,10 +652,19 @@ and can carry a custom display name set on the pickup.</p>
 <tr><td>Red / Blue / Gold / Green Key</td><td>The matching key (one-shot; see <a href="#signals">Locks</a>)</td></tr>
 <tr><td>Inventory Item</td><td>A specific item from your catalog</td></tr>
 </table></div>
-<h3>Inventory</h3>
+<h3>Inventory — the Use actions</h3>
 <p>Items defined under <b>Inventory items</b> land in the player's inventory (<kbd>I</kbd>): 3D objects open in a
-rotate/zoom inspector, journals open as text pages. An item's <i>use</i> action can heal, grant ammo, or act as a
-consumable key for signal rules. In campaigns, inventory carries between levels.</p>
+rotate/zoom inspector, journals open as text pages. Each item's <b>Use action</b> decides what the Use button does:</p>
+<div class="tblwrap"><table>
+<tr><th>Use action</th><th>What happens</th></tr>
+<tr><td>Not usable</td><td>Pure lore/collectible — inspect and carry only.</td></tr>
+<tr><td>Unlock (acts as a key)</td><td>Behaves as the chosen key colour for locked props — a story-flavoured alternative to the colored key pads ("Rusty Cellar Key").</td></tr>
+<tr><td>Heal the player</td><td>Restores the set HP (1–999).</td></tr>
+<tr><td>Refill all ammo</td><td>Tops up every weapon.</td></tr>
+<tr><td>Place in the world</td><td>The deep one: using it puts the item's model in the player's hands; <kbd>G</kbd> places it (and can pick it back up). The placed object carries its own <b>signals</b> — so placing the idol on the altar can open a door, win the level, or fire a cutscene. This is the machinery behind fetch-and-place puzzles.</td></tr>
+</table></div>
+<p><b>Consumed on use</b> (default on) spends the item; off makes it reusable. Journal items get a text page;
+3D items get a model + scale (1 ≈ 2 m across in the inspector). In campaigns, inventory carries between levels.</p>
 <h3>Loot &amp; coins</h3>
 <p><b>Loot</b> sets what enemies and loot boxes drop. <b>Coins</b> (spawned on kills) are the in-run currency for the
 shop and weapon attachments.</p>
@@ -549,15 +674,15 @@ shop and weapon attachments.</p>
 <h2><span class="tag">Systems</span>Objectives &amp; rules</h2>
 <h3>The eight objectives</h3>
 <div class="tblwrap"><table>
-<tr><th>Objective</th><th>Win condition</th></tr>
-<tr><td>Eliminate</td><td>Classic waves — survive and clear; <b>Win after N waves</b> (0 = endless), boss waves every N</td></tr>
-<tr><td>Survival</td><td>Stay alive until the timer runs out</td></tr>
-<tr><td>Extraction</td><td>Reach the beacon and hold it to extract</td></tr>
-<tr><td>Defend</td><td>Keep the target alive through the assault</td></tr>
-<tr><td>Destroy</td><td>Destroy the marked targets</td></tr>
-<tr><td>Escort</td><td>Protect the convoy to its destination</td></tr>
-<tr><td>Puzzle</td><td>No enemies ever spawn — you win via a <b>Win level</b> signal. Pairs well with <i>Start unarmed</i> + flashlight</td></tr>
-<tr><td>Race</td><td>First to the lap count — see <a href="#racing">Racing</a></td></tr>
+<tr><th>Objective</th><th>Settings &amp; the fine print</th></tr>
+<tr><td>Eliminate</td><td>Classic waves — <b>Win after N waves</b> (0 = endless), boss every N waves, Random or Pre-built spawns.</td></tr>
+<tr><td>Survival</td><td><b>Survive seconds</b> (10–999, default 120): hostiles spawn endlessly; outlast the countdown.</td></tr>
+<tr><td>Extraction</td><td>The beacon auto-places across the arena from your spawn. <b>Hold seconds</b> (1–30) inside <b>Zone radius</b> (1.5–10 m) — leaving lets the progress drift back down, so commit.</td></tr>
+<tr><td>Defend</td><td>Hold the zone for a total of <b>Hold seconds</b> — the clock <i>pauses</i> while nobody stands in it, so you can rotate out to clear pressure, but the mission only advances while you hold.</td></tr>
+<tr><td>Destroy</td><td>Blow up every prop flagged <b>🎯 Objective target</b> (Physics &amp; destruction fold). They glow with a red beacon.</td></tr>
+<tr><td>Escort</td><td>A payload travels from your spawn to the delivery beacon — it only moves while a player stays within <b>Escort radius</b>. Step away and it stops.</td></tr>
+<tr><td>Puzzle</td><td>No enemies ever spawn — you win via a <b>Win level</b> signal (a contact plate, an E-activated exit). Pairs with <i>Start unarmed</i> + flashlight for pure adventure.</td></tr>
+<tr><td>Race</td><td>First to the lap count — full settings in <a href="#racing">Racing</a>.</td></tr>
 </table></div>
 <h3>Rules that shape the run</h3>
 <ul>
@@ -573,21 +698,28 @@ shop and weapon attachments.</p>
 </section>
 
 <section id="cutscenes">
-<h2><span class="tag">Systems</span>Cutscenes</h2>
-<p>Gameplay tab → <b>Cutscenes</b>. A cutscene is a list of camera <b>shots</b>; each shot flies through its waypoints
-with cinematic controls. Cutscene <b>#1 is the intro</b> — toggle <b>Play intro flythrough on deploy</b> —
-and any cutscene can be fired mid-run by a signal's <i>Play cutscene</i> action.</p>
-<ul>
-  <li><b>Waypoints</b> — fly the editor camera somewhere and click <b>+ Add camera waypoint (current view)</b>; per-point Go&nbsp;to / Set / 👁&nbsp;look-target / clear / delete.</li>
-  <li><b>Lens</b> — start/end focal length (14–120&nbsp;mm) for slow zooms.</li>
-  <li><b>Rack focus</b> — focus start/end distance, blur start/end, focus band: real depth-of-field pulls.</li>
-  <li><b>Timing</b> — duration (1–120&nbsp;s), hold at start/end.</li>
-  <li><b>Dutch</b> — roll the camera up to ±60° across the shot.</li>
-  <li><b>Framing</b> — <i>Aim at player start</i> or <i>Look along path</i>.</li>
-  <li><b>Motion</b> — Smooth (ease in+out) / Constant speed / Ease in / Ease out, on a <i>Linear</i> or <i>Smooth (curved)</i> path.</li>
-  <li><b>Audio</b> — a per-cutscene sound URL, searchable on Freesound.</li>
-  <li><b>Preview</b> — ▶ the whole cutscene or just the current shot, with a live <b>camera preview window</b> while you edit.</li>
-</ul>
+<h2><span class="tag">Systems</span>Cutscenes — shot by shot</h2>
+<p>Gameplay tab → <b>Cutscenes</b>. A cutscene is a list of camera <b>shots</b> played back-to-back with hard cuts;
+each shot flies through its own waypoints. Cutscene <b>#1 is the intro</b> (toggle <b>Play intro flythrough on
+deploy</b>); every additional cutscene is named and fired by a signal's <i>Play cutscene</i> action. Any key or
+tap skips playback.</p>
+<p><b>Waypoints</b>: fly the editor camera to a spot, click <b>+ Add camera waypoint (current view)</b>, repeat —
+2+ points move the camera; a single point is a held shot. Per point: <b>Go to</b> (jump the editor view there),
+<b>Set</b> (overwrite with the current view), <b>👁</b> (aim the editor at your subject, then click to store a
+look-target), <b>⊘</b> (clear it), <b>✕</b> (delete).</p>
+<div class="tblwrap"><table>
+<tr><th>Shot control</th><th>Range</th><th>What it does / how to use it</th></tr>
+<tr><td>Lens start / end</td><td>14–120 mm</td><td>Different values = a zoom across the shot. 35 → 85 pushes in on the subject; wide 18 for establishing vistas.</td></tr>
+<tr><td>Rack focus</td><td>on/off</td><td>The shot carries its <i>own</i> depth of field, separate from the world's: Focus start/end (the cyan disc is sharp at the start, the orange at the end), Blur start/end (0–4×), Focus band (how much depth stays sharp). A slow focus pull from foreground prop to distant door is pure cinema. (DoF is off on mobile.)</td></tr>
+<tr><td>Duration</td><td>1–120 s</td><td>The move itself, one-way.</td></tr>
+<tr><td>Hold start / end</td><td>0–10 s</td><td>Freezes the framing before the move starts (establish) and after it ends (settle). Total shot = hold + duration + hold.</td></tr>
+<tr><td>Dutch start / end</td><td>±60°</td><td>Tilts the horizon. Equal values hold the tilt; different values roll the camera across the shot — unease on demand.</td></tr>
+<tr><td>Framing</td><td>—</td><td><i>Aim at player start</i> (or a per-point 👁 target) vs <i>Look along path</i> (a fly-through that looks where it's going).</td></tr>
+<tr><td>Motion / Path</td><td>—</td><td>Smooth (ease in+out) / Constant / Ease in / Ease out, on a Linear path or a Smooth curve (needs 3+ waypoints — it curves through them at constant speed).</td></tr>
+<tr><td>Cutscene audio</td><td>URL</td><td>A one-shot track (voiceover, sting) that starts with the cutscene and stops when it ends or is skipped. Searchable on Freesound; the file must allow CORS.</td></tr>
+</table></div>
+<p><b>▶ Cutscene</b> previews all shots, <b>▶ This shot</b> just one, and the <b>camera preview window</b> shows
+live framing while you scrub. <b>Show character at the player start</b> puts your avatar in frame for intros.</p>
 </section>
 
 <section id="multiplayer">
@@ -595,17 +727,25 @@ and any cutscene can be fired mid-run by a signal's <i>Play cutscene</i> action.
 <p>Peer-to-peer over WebRTC — no accounts, no servers to rent. One player <b>hosts</b> and shares the 5-character
 room code (or joiners pick from the <b>Open games</b> list); everyone else <b>joins</b>, and the host's level transfers
 automatically — including custom models and sounds.</p>
-<h3>Modes</h3>
+<h3>Modes — the actual rules</h3>
 <div class="tblwrap"><table>
-<tr><th>Mode</th><th>Rules</th></tr>
-<tr><td>CO-OP</td><td>Waves and objectives vs the AI, together — including <b>multiplayer racing</b> on race levels</td></tr>
-<tr><td>1 v 1 DUEL</td><td>First to N kills</td></tr>
-<tr><td>FREE-FOR-ALL</td><td>Everyone vs everyone (3+)</td></tr>
-<tr><td>TEAM DEATHMATCH</td><td>Red vs Blue, no friendly fire</td></tr>
-<tr><td>KING OF THE HILL</td><td>Hold the point — first to N points</td></tr>
+<tr><th>Mode</th><th>Win condition</th></tr>
+<tr><td>CO-OP</td><td>Waves and objectives vs the AI, together — including <b>multiplayer racing</b> on race levels (standings sync live; first to finish wins on every screen)</td></tr>
+<tr><td>1 v 1 DUEL</td><td>First to 5 kills. No bots allowed; the editor is locked during a duel.</td></tr>
+<tr><td>FREE-FOR-ALL</td><td>Everyone vs everyone — first player to the kill target takes it</td></tr>
+<tr><td>TEAM DEATHMATCH</td><td>Red vs Blue, no friendly fire — first team total to the kill target</td></tr>
+<tr><td>KING OF THE HILL</td><td>Scored by <b>holding the zone</b>, not kills — capture accrues points; first to the target wins. Bots actually play it: they prioritize capturing an unowned point over chasing fights.</td></tr>
 </table></div>
-<p>PvP hosts can add <b>AI bots</b> (0–7) at Recruit / Regular / Veteran / Elite difficulty, or <b>Fill with bots</b> from
-the lobby. Players pick a name, character and colour; the lobby shows ready-up state and the host starts the match.</p>
+<h3>Bot difficulty — what the presets actually change</h3>
+<div class="tblwrap"><table>
+<tr><th>Preset</th><th>Speed</th><th>Aim accuracy</th><th>HP</th><th>Engage range</th><th>Feel</th></tr>
+<tr><td>Recruit</td><td>62%</td><td>34%, wide spray</td><td>80</td><td>38 m</td><td>Wanders, misses, dies — a warm-up</td></tr>
+<tr><td>Regular</td><td>85%</td><td>60%</td><td>100</td><td>52 m</td><td>An honest opponent</td></tr>
+<tr><td>Veteran</td><td>100%</td><td>78%, tight</td><td>120</td><td>60 m</td><td>Punishes open ground</td></tr>
+<tr><td>Elite</td><td>112%</td><td>90%, laser</td><td>150</td><td>70 m</td><td>Faster than you and barely misses — bring cover</td></tr>
+</table></div>
+<p>PvP hosts pick bot count (0–7) and difficulty when hosting, or <b>Fill with bots</b> from the lobby.
+Players pick a name, character and colour; the lobby shows ready-up state and the host starts the match.</p>
 <p>What syncs: player movement and state, enemies, kill credit, coins and pickups, prop animations and mechanisms,
 unlocks and keys, objective progress, race standings, chat, and the host's custom HUD/sounds.</p>
 </section>
