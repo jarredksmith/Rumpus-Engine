@@ -3,18 +3,20 @@
 // The light orbits the origin at the same ~90m radius so the ±80 ortho shadow box and 200 far plane
 // still cover the arena; the defaults (63°/61°) reproduce the historical position so every existing
 // level looks unchanged. Elevation is floored at 5° — a horizontal sun degenerates the shadow map.
-import { gameSource, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 
 // defaults ship (and reproduce the historical fixed position)
 assert(/sunAzim:63, sunElev:61,/.test(src.match(/const DEFAULT_WORLD = \{[^\n]*/)[0]), 'defaults 63°/61° in DEFAULT_WORLD');
 
 // run the REAL apply snippet: sanitize + position math, against a stub moon
+// (build 861 factored the orbit into _sunOrbit so the day/night cycle can drive it — include it)
 const snip = src.match(/worldCfg\.sunAzim = \(\(\(\(worldCfg\.sunAzim[\s\S]*?_dirtyShadows\(3\)[^\n]*\n  \}/)[0];
+const orbitFn = extractFunction('_sunOrbit');
 const run = (azim, elev)=>{
   const moon={ position:{ set(x,y,z){ this.x=x; this.y=y; this.z=z; } }, color:{ setHex(){} } };
-  const ctx={ worldCfg:{ sun:1, sunColor:0, sunAzim:azim, sunElev:elev }, DEFAULT_WORLD:{ sunAzim:63, sunElev:61 }, moon, _dirtyShadows:()=>{}, Math };
-  new Function(...Object.keys(ctx), snip)(...Object.values(ctx));
+  const ctx={ worldCfg:{ sun:1, sunColor:0, sunAzim:azim, sunElev:elev, dayLen:240, dayStart:0.25 }, DEFAULT_WORLD:{ sunAzim:63, sunElev:61, dayLen:240, dayStart:0.25 }, moon, _dirtyShadows:()=>{}, Math };
+  new Function(...Object.keys(ctx), orbitFn + '\n' + snip)(...Object.values(ctx));
   return { p:moon.position, cfg:ctx.worldCfg };
 };
 const def = run(null, null);

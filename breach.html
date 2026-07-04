@@ -6516,6 +6516,50 @@ let _shadowDirtyFrames = 2;
 let _shadowTick = 0;   // build 808: 3-frame cadence for TRANSIENT shadow movers (corpses / settling props)
 let _adaptLast = 0;
 function _dirtyShadows(n){ _shadowDirtyFrames = Math.max(_shadowDirtyFrames, n||2); }   // call whenever something the sun casts moves/spawns/breaks
+// Place the sun on its 90m orbit (build 855 math, factored in 861 so the day/night cycle can drive it too).
+function _sunOrbit(azimDeg, elevDeg){
+  const az=azimDeg*Math.PI/180, el=elevDeg*Math.PI/180, r=90, h=Math.cos(el)*r;
+  moon.position.set(Math.sin(az)*h, Math.sin(el)*r, Math.cos(az)*h);
+}
+// ---- Day/night cycle (build 861) ----
+// One pure function models the sky: phase 0=dawn, 0.25=noon, 0.5=dusk, 0.75=midnight.
+//   elDeg  — solar elevation (70° at noon, -70° at midnight)
+//   dayF   — light factor 0.06 (night floor: "moonlight") … 1 (noon), smooth through twilight
+//   duskF  — golden-hour warmth 0…1, peaking as the sun crosses the horizon
+function _dayCalc(phase){
+  const p=((phase%1)+1)%1;
+  const elDeg=70*Math.sin(2*Math.PI*p);
+  const t=Math.max(0, Math.min(1, (elDeg+6)/24));            // -6°…18° twilight band
+  const dayF=0.06 + 0.94*(t*t*(3-2*t));                      // smoothstep
+  const duskF=Math.max(0, 1-Math.abs(elDeg)/15) * (elDeg>-8?1:0);
+  return { elDeg, dayF, duskF };
+}
+let _dayPhase=null, _dayShadowT=0, _dayActive=false;
+const _dayCol=new THREE.Color(), _dayWarm=new THREE.Color(0xffb070), _dayNight=new THREE.Color(0x8fb0d8);
+function _dayIsNight(){ return _dayActive && _dayPhase!=null && _dayCalc(_dayPhase).elDeg < 2; }
+function updateDayNight(dt){
+  const on = (typeof worldCfg!=='undefined') && worldCfg.dayCycle && (typeof gameOn!=='undefined' && gameOn) && !(typeof editorOpen!=='undefined' && editorOpen);
+  if(!on){
+    if(_dayActive){ _dayActive=false; _dayPhase=null; if(typeof applyWorldCfg==='function') applyWorldCfg(); }   // hand the sky back to the authored settings
+    return;
+  }
+  if(_dayPhase==null) _dayPhase=((+worldCfg.dayStart||0)%1+1)%1;
+  const len=Math.max(30, Math.min(1200, +worldCfg.dayLen||240));
+  if(!(typeof paused!=='undefined' && paused)) _dayPhase=(_dayPhase + dt/len)%1;
+  _dayActive=true;
+  const d=_dayCalc(_dayPhase);
+  _sunOrbit((+worldCfg.sunAzim||0) + _dayPhase*360, Math.max(5, d.elDeg));
+  _dayShadowT+=dt; if(_dayShadowT>=0.4){ _dayShadowT=0; _dirtyShadows(2); }   // the sun crawls — re-render shadows on a throttle, not per frame
+  moon.intensity=(+worldCfg.sun||0.9)*d.dayF;
+  _dayCol.setHex((worldCfg.sunColor==null?0x9fd8ff:worldCfg.sunColor)>>>0);
+  if(d.elDeg<2) _dayCol.lerp(_dayNight, Math.min(1,(2-d.elDeg)/20));   // cool blue moonlight
+  else if(d.duskF>0) _dayCol.lerp(_dayWarm, d.duskF*0.7);              // golden hour
+  moon.color.copy(_dayCol);
+  if(typeof skyLight!=='undefined') skyLight.intensity=(+worldCfg.sky||0.55)*(0.18+0.82*d.dayF);
+  const dim=0.22+0.78*d.dayF;   // fog + flat-sky darken toward night (an HDRI sky can't be dimmed — prefer a plain sky for convincing nights)
+  if(typeof SCENE_FOG!=='undefined'){ SCENE_FOG.color.setHex(worldCfg.fogColor>>>0).multiplyScalar(dim); }
+  if(typeof scene!=='undefined' && scene.background && scene.background.isColor) scene.background.setHex(worldCfg.fogColor>>>0).multiplyScalar(dim);
+}
 
 // ---------- Light budget ----------
 // Forward-rendered WebGL slows down fast with many lit lights. Emissive props register their point
@@ -8947,7 +8991,7 @@ const player = {
 };
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
-const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
+const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -9151,11 +9195,12 @@ function applyWorldCfg(){
   // far plane still cover the arena. Elevation is floored at 5° — a horizontal sun degenerates the shadows.
   worldCfg.sunAzim = ((((worldCfg.sunAzim == null ? DEFAULT_WORLD.sunAzim : +worldCfg.sunAzim) % 360) + 360) % 360);
   worldCfg.sunElev = Math.max(5, Math.min(89, worldCfg.sunElev == null ? DEFAULT_WORLD.sunElev : +worldCfg.sunElev));
+  worldCfg.dayCycle = !!worldCfg.dayCycle;   // build 861: day/night cycle (updateDayNight drives the sky during play)
+  worldCfg.dayLen = Math.max(30, Math.min(1200, worldCfg.dayLen==null ? DEFAULT_WORLD.dayLen : +worldCfg.dayLen||240));
+  worldCfg.dayStart = ((((worldCfg.dayStart==null ? DEFAULT_WORLD.dayStart : +worldCfg.dayStart)||0)%1)+1)%1;
   if(typeof moon!=='undefined'){
     moon.intensity = worldCfg.sun; moon.color.setHex(worldCfg.sunColor>>>0);
-    const _saz = worldCfg.sunAzim*Math.PI/180, _sel = worldCfg.sunElev*Math.PI/180, _sr = 90;
-    const _sh = Math.cos(_sel)*_sr;
-    moon.position.set(Math.sin(_saz)*_sh, Math.sin(_sel)*_sr, Math.cos(_saz)*_sh);
+    _sunOrbit(worldCfg.sunAzim, worldCfg.sunElev);
     if(typeof _dirtyShadows==='function') _dirtyShadows(3);   // re-render the shadow map from the new angle
   }
   if(typeof skyLight!=='undefined'){ skyLight.intensity = worldCfg.sky; skyLight.color.setHex(((worldCfg.skyColor==null?DEFAULT_WORLD.skyColor:worldCfg.skyColor)>>>0)); }   // build 584: sky hemisphere color is now adjustable (was a hardcoded teal that tinted everything green)
@@ -15566,7 +15611,7 @@ function enterCar(o){
   // so a model authored facing any direction drives nose-first.
   o.userData.carYaw = o.rotation.y + (o.userData.vehicle.modelYaw||0)*RAD;
   o.userData.carVelYaw = o.userData.carYaw;   // build 725: travel direction starts aligned with the heading (no drift until you turn)
-  _carHeadOn = (o.userData.vehicle.headStart!==false);   // build 781: headlights start per the vehicle default
+  _carHeadOn = (o.userData.vehicle.headStart!==false) || (typeof _dayIsNight==='function' && _dayIsNight() && !!o.userData.vehicle.headlights);   // build 781: headlights start per the vehicle default; 861: night in the day/night cycle switches them on
   o.userData.leanRoll=0; o.userData.leanPitch=0; o.userData._prevSpeed=0;   // build 729: suspension lean starts neutral
   o.userData.hitShake=0; o.userData._hitCd=0;   // build 733: impact feedback state
   { o.updateMatrixWorld(true); const _bb=new THREE.Box3().setFromObject(o); o.userData.carBaseOff = _bb.isEmpty()?0:(o.position.y - _bb.min.y); }   // build 722: how far the origin sits above the model's lowest point (so wheels rest on the ground)
@@ -16938,7 +16983,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 860 · 2026-07-04';
+const BUILD_VERSION = 'build 861 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20494,7 +20539,7 @@ function loop(){
     if(_shDirty || (_shSlow && _shadowTick===0)) _dirtyShadows(1);
   }
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
   if(_cineAvatar && _cineAvatar.visible && !editorOpen && !_cineActive){ _hideCineAvatar(); }   // editor authoring body never lingers into play
@@ -23859,6 +23904,22 @@ function renderEditorFields(){
       slider(b,'Sun (directional)','sun',0,4,0.05); slider(b,'Sky (ambient fill)','sky',0,3,0.05); slider(b,'Brightness lift','ambient',0,2,0.05);
       slider(b,'Sun direction °','sunAzim',0,360,1); slider(b,'Sun height °','sunElev',5,89,1);   // build 855: rotate the sun — shadows follow live
       hint(b,'','1px 0 4px').textContent='Direction spins the sun around the map (match it to your HDRI sky’s sun); Height is the angle above the horizon — low = long dramatic shadows, high = short noon shadows.';
+      { const dcLab=document.createElement('label'); dcLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 2px;cursor:pointer;';
+        const dcCb=document.createElement('input'); dcCb.type='checkbox'; dcCb.checked=!!worldCfg.dayCycle; dcCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+        dcCb.onchange=()=>{ pushUndoSnapshot(); worldCfg.dayCycle=dcCb.checked; applyWorldCfg(); renderEditorFields(); };
+        const dcSp=document.createElement('span'); dcSp.innerHTML='<b>Day/night cycle</b> — the sun crosses the sky during play';
+        dcLab.appendChild(dcCb); dcLab.appendChild(dcSp); b.appendChild(dcLab); }
+      if(worldCfg.dayCycle){
+        slider(b,'Cycle length s','dayLen',30,1200,10);
+        { const row=document.createElement('div'); row.className='row2'; row.style.margin='4px 0';
+          [['Dawn',0],['Noon',0.25],['Dusk',0.5],['Night',0.75]].forEach(([lab,ph])=>{
+            const bt=document.createElement('button'); bt.textContent=lab;
+            if(Math.abs((+worldCfg.dayStart||0)-ph)<0.01){ bt.style.background='rgba(var(--accent-rgb),0.30)'; bt.style.color='#eafff7'; }
+            bt.onclick=()=>{ pushUndoSnapshot(); worldCfg.dayStart=ph; applyWorldCfg(); renderEditorFields(); };
+            row.appendChild(bt); });
+          b.appendChild(row); }
+        hint(b,'','1px 0 4px').textContent='Deploys start at the chosen time; a full day+night takes Cycle length seconds. Nights dim the sun, sky and fog (an HDRI sky itself can\u2019t be dimmed \u2014 use a plain sky for convincing nights); cars with headlights switch them on automatically after dark. Direction above sets where dawn breaks.';
+      }
       const scRow=document.createElement('label'); scRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0 4px;';
       const scSp=document.createElement('span'); scSp.textContent='Sun color'; scSp.style.minWidth='86px';
       const sc=document.createElement('input'); sc.type='color'; sc.value=hexStr(worldCfg.sunColor); sc.style.cssText='width:48px;height:24px;background:#0c1418;border:1px solid #2a3a42;border-radius:4px;cursor:pointer;';
