@@ -42,11 +42,14 @@ export function parseIssue(body){
 const _plain = (s, max)=>String(s||'').replace(/[<>`*_[\]#|]/g,'').replace(/\s+/g,' ').trim().slice(0,max);
 
 // Validates a parsed submission. Returns { ok:true, entry, level } or { ok:false, reason }.
-export function validateSubmission(parsed, issueNumber){
-  const name = _plain(parsed.name, LIMITS.name);
+// build 870: `titleFallback` = the issue title — if the Level name field is empty, the title
+// (minus any [Level] prefix) becomes the name, so title-only submitters still publish cleanly.
+export function validateSubmission(parsed, issueNumber, titleFallback){
+  let name = _plain(parsed.name, LIMITS.name);
+  if(!name && titleFallback) name = _plain(String(titleFallback).replace(/^\s*\[Level\]\s*/i, ''), LIMITS.name);
   const author = _plain(parsed.author, LIMITS.author);
   const desc = _plain(parsed.desc, LIMITS.desc);
-  if(!name) return { ok:false, reason:'the **Level name** field is empty' };
+  if(!name) return { ok:false, reason:'the **Level name** field is empty (a filled-in issue title works too)' };
   if(!author) return { ok:false, reason:'the **Your name** field is empty' };
   if(!parsed.json) return { ok:false, reason:'the **Level JSON** field is empty — in the game: editor → Save tab → Submit to community library fills it' };
   let jsonText = parsed.json;
@@ -82,7 +85,7 @@ function main(){
   const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
   const body = process.env.ISSUE_BODY || '';
   const setOut = (k,v)=>appendFileSync(process.env.GITHUB_OUTPUT, `${k}<<__EOV__\n${v}\n__EOV__\n`);
-  const res = validateSubmission(parseIssue(body), issueNumber);
+  const res = validateSubmission(parseIssue(body), issueNumber, process.env.ISSUE_TITLE || '');
   if(!res.ok){ setOut('ok','false'); setOut('reason', res.reason); console.log('rejected:', res.reason); return; }
   writeFileSync('community/levels/' + res.entry.file, JSON.stringify(res.level));
   const idx = JSON.parse(readFileSync('community/index.json','utf8'));
