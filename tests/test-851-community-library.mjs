@@ -42,7 +42,7 @@ assert(/pushUndoSnapshot\(\)/.test(src.match(/async function _commLoad[\s\S]{0,9
 
 // ---- the submit path ----
 assert(/id="edSubmitComm"/.test(src), 'Save tab has the submit button');
-assert(/navigator\.clipboard\.writeText\(str\)/.test(src.match(/#edSubmitComm[\s\S]{0,900}/)[0]), 'it copies the level JSON');
+assert(/navigator\.clipboard\.writeText\(str\)/.test(src.match(/#edSubmitComm[\s\S]{0,2400}/)[0]), 'it copies the level JSON');   // build 869: the prefill path sits above the clipboard fallback
 assert(/template=submit-level\.yml/.test(src), '...and opens the issue form');
 
 // ---- the publish pipeline (executable) ----

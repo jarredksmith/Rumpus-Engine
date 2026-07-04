@@ -3,8 +3,20 @@
 // Import-safe: the test suite imports parseIssue/validateSubmission directly; main() only runs in CI.
 import { readFileSync, writeFileSync } from 'fs';
 import { appendFileSync } from 'fs';
+import { gunzipSync } from 'zlib';
 
 const LIMITS = { json: 400_000, name: 60, author: 40, desc: 200 };
+
+// build 869: the game pre-fills the form with `BREACHLVL:` + the share-link codec
+// ('g' + base64url(gzip(json)) or 'r' + base64url(json)). Decode it back to JSON text.
+export function decodeLevelCode(code){
+  const s = String(code).trim();
+  const tag = s[0];
+  let b64 = s.slice(1).replace(/-/g, '+').replace(/_/g, '/');
+  while(b64.length % 4) b64 += '=';
+  const bytes = Buffer.from(b64, 'base64');
+  return (tag === 'g' ? gunzipSync(bytes) : bytes).toString('utf8');
+}
 
 // The issue-form body renders as "### <field label>\n\n<value>" sections; the JSON textarea
 // (render: json) arrives fenced. Returns { name, author, desc, json } (raw strings, untrimmed sizes capped later).
@@ -36,11 +48,16 @@ export function validateSubmission(parsed, issueNumber){
   const desc = _plain(parsed.desc, LIMITS.desc);
   if(!name) return { ok:false, reason:'the **Level name** field is empty' };
   if(!author) return { ok:false, reason:'the **Your name** field is empty' };
-  if(!parsed.json) return { ok:false, reason:'the **Level JSON** field is empty — in the game: editor → Save tab → Submit to community library copies it' };
-  if(parsed.json.length > LIMITS.json) return { ok:false, reason:`the level JSON is ${parsed.json.length.toLocaleString()} bytes — the library caps levels at ${LIMITS.json.toLocaleString()}` };
+  if(!parsed.json) return { ok:false, reason:'the **Level JSON** field is empty — in the game: editor → Save tab → Submit to community library fills it' };
+  let jsonText = parsed.json;
+  if(/^BREACHLVL:/.test(jsonText)){   // build 869: the pre-filled compressed code
+    try{ jsonText = decodeLevelCode(jsonText.replace(/^BREACHLVL:/, '')); }
+    catch(e){ return { ok:false, reason:'the pre-filled level code did not decode — re-open the form from the game’s Submit button (don’t edit the code)' }; }
+  }
+  if(jsonText.length > LIMITS.json) return { ok:false, reason:`the level JSON is ${jsonText.length.toLocaleString()} bytes — the library caps levels at ${LIMITS.json.toLocaleString()}` };
   let level;
-  try{ level = JSON.parse(parsed.json); }
-  catch(e){ return { ok:false, reason:'the level JSON does not parse ('+e.message.slice(0,120)+') — paste it exactly as the game copied it' }; }
+  try{ level = JSON.parse(jsonText); }
+  catch(e){ return { ok:false, reason:'the level JSON does not parse ('+e.message.slice(0,120)+') — paste it exactly as the game provided it' }; }
   if(!level || typeof level!=='object' || Array.isArray(level) || (!level.props && !level.world))
     return { ok:false, reason:'that JSON is not a BREACH level (no `props`/`world` keys) — use Submit to community library or Export .json' };
   // build 854: the game embeds a screenshot as `thumb` — lift it into the gallery index and strip it

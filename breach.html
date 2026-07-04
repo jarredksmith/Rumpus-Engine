@@ -17144,7 +17144,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 868 · 2026-07-04';
+const BUILD_VERSION = 'build 869 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23645,11 +23645,24 @@ function buildEditorPanel(){
   const submitBtn = p.querySelector('#edSubmitComm');
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
-    let str; try{ const lvl = serializeLevel(); const th = _commCaptureThumb(); if(th) lvl.thumb = th; str = JSON.stringify(lvl); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
+    let lvl, str; try{ lvl = serializeLevel(); const th = _commCaptureThumb(); if(th) lvl.thumb = th; str = JSON.stringify(lvl); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
+    // build 869: PRE-FILL the issue form via URL — the share-link codec compresses the whole level into a
+    // few KB, which fits GitHub's ~8K URL budget for most levels. The publish Action decodes BREACHLVL:
+    // codes. Too big to fit -> the old clipboard+paste flow.
+    try{
+      const mkUrl = async (obj)=>{ const code='BREACHLVL:' + await encodeLevel(obj); const u=COMM_SUBMIT_URL + '&level-json=' + encodeURIComponent(code); return u.length<=7600 ? u : null; };
+      let u = await mkUrl(lvl), dropped=false;
+      if(!u && lvl.thumb){ const noThumb=Object.assign({}, lvl); delete noThumb.thumb; u=await mkUrl(noThumb); dropped=!!u; }   // the JPEG thumb barely compresses — shed it before giving up on the pre-fill
+      if(u){
+        if(note){ note.textContent = dropped ? 'Opening GitHub — level pre-filled ✓ (thumbnail skipped: too big for the link)' : 'Opening GitHub — your level is pre-filled, just name it and submit ✓'; clearTimeout(note._t); note._t=setTimeout(()=>{ note.textContent=''; }, 6000); }
+        try{ window.open(u, '_blank'); }catch(e){}
+        return;
+      }
+    }catch(e){ /* codec unavailable -> clipboard path */ }
     let copied = false;
     try{ await navigator.clipboard.writeText(str); copied = true; }
     catch(e){ try{ const ta=document.createElement('textarea'); ta.value=str; document.body.appendChild(ta); ta.select(); copied=document.execCommand('copy'); ta.remove(); }catch(_){} }
-    if(note){ note.textContent = copied ? 'Level JSON copied ✓ — paste it into the GitHub form' : 'Copy failed — use Copy code below and paste that instead'; clearTimeout(note._t); note._t=setTimeout(()=>{ note.textContent=''; }, 6000); }
+    if(note){ note.textContent = copied ? 'Level too big to pre-fill — JSON copied ✓, paste it into the GitHub form' : 'Copy failed — use Copy code below and paste that instead'; clearTimeout(note._t); note._t=setTimeout(()=>{ note.textContent=''; }, 6000); }
     try{ window.open(COMM_SUBMIT_URL, '_blank'); }catch(e){}
   };
   setEditorMode(editorMode);   // apply mode visibility + render (replaces the bare initial render)
