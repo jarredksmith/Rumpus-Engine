@@ -6516,6 +6516,9 @@ let _shadowDirtyFrames = 2;
 let _shadowTick = 0;   // build 808: 3-frame cadence for TRANSIENT shadow movers (corpses / settling props)
 let _adaptLast = 0;
 function _dirtyShadows(n){ _shadowDirtyFrames = Math.max(_shadowDirtyFrames, n||2); }   // call whenever something the sun casts moves/spawns/breaks
+// Weather state (build 863) — declared HERE because applyWorldCfg touches it during boot (TDZ otherwise).
+let _weatherPts=null, _weatherKind='none', _weatherData=null, _weatherT=0;
+const _WEATHER_BOX = { w:46, h:30 };
 // Place the sun on its 90m orbit (build 855 math, factored in 861 so the day/night cycle can drive it too).
 function _sunOrbit(azimDeg, elevDeg){
   const az=azimDeg*Math.PI/180, el=elevDeg*Math.PI/180, r=90, h=Math.cos(el)*r;
@@ -8991,7 +8994,7 @@ const player = {
 };
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
-const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
+const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -9198,6 +9201,9 @@ function applyWorldCfg(){
   worldCfg.dayCycle = !!worldCfg.dayCycle;   // build 861: day/night cycle (updateDayNight drives the sky during play)
   worldCfg.dayLen = Math.max(30, Math.min(1200, worldCfg.dayLen==null ? DEFAULT_WORLD.dayLen : +worldCfg.dayLen||240));
   worldCfg.dayStart = ((((worldCfg.dayStart==null ? DEFAULT_WORLD.dayStart : +worldCfg.dayStart)||0)%1)+1)%1;
+  worldCfg.weather = (worldCfg.weather==='rain'||worldCfg.weather==='snow') ? worldCfg.weather : 'none';   // build 863
+  worldCfg.weatherAmt = Math.max(0.1, Math.min(1, worldCfg.weatherAmt==null ? DEFAULT_WORLD.weatherAmt : +worldCfg.weatherAmt||0.6));
+  if(typeof refreshWeather==='function' && (worldCfg.weather!==_weatherKind || (_weatherPts && Math.abs((_weatherPts.userData._amt||0)-worldCfg.weatherAmt)>0.001) || (!_weatherPts && worldCfg.weather!=='none'))){ refreshWeather(); if(_weatherPts) _weatherPts.userData._amt=worldCfg.weatherAmt; }
   if(typeof moon!=='undefined'){
     moon.intensity = worldCfg.sun; moon.color.setHex(worldCfg.sunColor>>>0);
     _sunOrbit(worldCfg.sunAzim, worldCfg.sunElev);
@@ -11130,6 +11136,54 @@ function _waterPropsStep(dt){
       const av=body.angvel(); body.setAngvel({ x:av.x*k, y:av.y*k, z:av.z*k }, true);
     }catch(e){}
   }
+}
+// ---- Weather (build 863): rain / snow as ONE recycled THREE.Points cloud that follows the camera.
+// No per-frame allocation: each drop carries a fall speed + sway phase; anything that falls below the
+// camera box respawns at the top. Count scales with Amount and halves on touch devices. ----
+// (weather state lives up beside the sun light — applyWorldCfg reads it at boot; see build 855's TDZ lesson)
+function refreshWeather(){
+  if(_weatherPts){ scene.remove(_weatherPts); _weatherPts.geometry.dispose(); _weatherPts.material.dispose(); _weatherPts=null; _weatherData=null; }
+  const kind=(typeof worldCfg!=='undefined' && worldCfg.weather)||'none';
+  _weatherKind=kind;
+  if(kind!=='rain' && kind!=='snow') return;
+  const amt=Math.max(0.1, Math.min(1, +worldCfg.weatherAmt||0.6));
+  const base=(kind==='rain'?1400:900)*amt;
+  const n=Math.max(60, Math.round(IS_COARSE ? base/2 : base));
+  const pos=new Float32Array(n*3); _weatherData=new Float32Array(n*2);   // per drop: fall speed, sway phase
+  for(let i=0;i<n;i++){
+    pos[i*3]=(Math.random()-0.5)*_WEATHER_BOX.w; pos[i*3+1]=Math.random()*_WEATHER_BOX.h; pos[i*3+2]=(Math.random()-0.5)*_WEATHER_BOX.w;
+    _weatherData[i*2]=(kind==='rain'? 16+Math.random()*8 : 1.1+Math.random()*0.9);
+    _weatherData[i*2+1]=Math.random()*Math.PI*2;
+  }
+  const geo=new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const mat=new THREE.PointsMaterial({
+    color: kind==='rain' ? 0xa8c8e8 : 0xffffff,
+    size: kind==='rain' ? 0.07 : 0.14, sizeAttenuation:true,
+    transparent:true, opacity: kind==='rain' ? 0.55 : 0.85, depthWrite:false,
+  });
+  _weatherPts=new THREE.Points(geo, mat); _weatherPts.frustumCulled=false; _weatherPts.renderOrder=3;
+  scene.add(_weatherPts);
+}
+function updateWeather(dt){
+  if(!_weatherPts){ return; }
+  const showing=((typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver)) || (typeof editorOpen!=='undefined'&&editorOpen);
+  _weatherPts.visible=showing; if(!showing) return;
+  _weatherT+=dt;
+  const cam=(typeof activeCam==='function' && activeCam()) || camera;
+  const cx=cam.position.x, cy=cam.position.y, cz=cam.position.z;
+  _weatherPts.position.set(cx, cy-6, cz);   // the box rides the camera; drops live in box-local coords
+  const a=_weatherPts.geometry.attributes.position.array, d=_weatherData, snow=(_weatherKind==='snow');
+  const half=_WEATHER_BOX.w/2;
+  for(let i=0;i<d.length/2;i++){
+    let y=a[i*3+1]-d[i*2]*dt;
+    if(snow){ a[i*3]+=Math.sin(_weatherT*1.3+d[i*2+1])*0.55*dt; a[i*3+2]+=Math.cos(_weatherT*1.1+d[i*2+1])*0.45*dt; }
+    else { a[i*3]+=1.6*dt; }   // rain leans with a touch of wind
+    if(y<0 || Math.abs(a[i*3])>half || Math.abs(a[i*3+2])>half){
+      a[i*3]=(Math.random()-0.5)*_WEATHER_BOX.w; a[i*3+2]=(Math.random()-0.5)*_WEATHER_BOX.w; y=_WEATHER_BOX.h*(0.8+Math.random()*0.2);
+    }
+    a[i*3+1]=y;
+  }
+  _weatherPts.geometry.attributes.position.needsUpdate=true;
 }
 // ---------- build 557: auto-generate maze level ----------
 // One click builds a fresh, fully-connected maze out of box props + point lights, sets a player start, and
@@ -17034,7 +17088,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 862 · 2026-07-04';
+const BUILD_VERSION = 'build 863 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20591,7 +20645,7 @@ function loop(){
     if(_shDirty || (_shSlow && _shadowTick===0)) _dirtyShadows(1);
   }
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
   if(_cineAvatar && _cineAvatar.visible && !editorOpen && !_cineActive){ _hideCineAvatar(); }   // editor authoring body never lingers into play
@@ -24014,6 +24068,15 @@ function renderEditorFields(){
       b.appendChild(presetRow);
       slider(b,'Reflection strength','skyBright',0,3,0.05); hint(b,'How strongly the sky reflects on metal floors/walls. Lower = more matte; 0 = no sky reflection.','0 0 4px');
       slider(b,'Sky rotation\u00b0','skyRot',0,360,5); hint(b,'Spin the sky to aim the sun / horizon. Rebuilds a moment after you release the slider.','0 0 4px');
+      hint(b,'<b>Weather</b>','8px 0 3px');
+      { const wrow=document.createElement('div'); wrow.className='row2';
+        [['none','None'],['rain','Rain'],['snow','Snow']].forEach(([k,lab])=>{
+          const bn=document.createElement('button'); bn.textContent=lab;
+          if((worldCfg.weather||'none')===k){ bn.style.background='rgba(var(--accent-rgb),0.30)'; bn.style.color='#eafff7'; }
+          bn.onclick=()=>{ pushUndoSnapshot(); worldCfg.weather=k; applyWorldCfg(); renderEditorFields(); };
+          wrow.appendChild(bn); });
+        b.appendChild(wrow); }
+      if((worldCfg.weather||'none')!=='none'){ slider(b,'Amount','weatherAmt',0.1,1,0.05); hint(b,'A particle layer that follows the camera — rain leans with the wind, snow drifts. Halved on phones for frame rate. It falls indoors too; keep sheltered scenes on None.','1px 0 4px'); }
       const skStatus=document.createElement('div'); skStatus.id='edSkyStatus'; skStatus.className='hint'; skStatus.style.cssText='margin:-2px 0 6px;font-size:10px;'; b.appendChild(skStatus); }
     { const b=subSec('Floor','floor',true);
       colorRow(b,'Floor color','floorColor'); slider(b,'Floor roughness','floorRough',0,1,0.05); slider(b,'Floor metalness','floorMetal',0,1,0.05);
