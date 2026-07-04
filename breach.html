@@ -7822,6 +7822,11 @@ function primitiveMat(){ return new THREE.MeshStandardMaterial({ color:PRIM_DEFA
 // Which primitives accept material edits (the pillar is a pre-built composite, so it's excluded).
 const SHAPE_PRIMS = { box:1, sphere:1, cylinder:1, cone:1 };
 function isShapePrimitive(src){ return SHAPE_PRIMS.hasOwnProperty(src); }
+// build 871: shapes whose MATERIAL is editable. Broader than SHAPE_PRIMS on purpose: the new prims keep
+// TRIMESH physics colliders (a ramp you can't walk up is a wall) and stay out of instancing, but colour /
+// texture / glow / opacity all apply. SHAPE_PRIMS itself still gates exact colliders + instancing.
+const MAT_PRIMS = { wedge:1, stairs:1, dome:1, tube:1, torus:1 };
+function isMatPrimitive(src){ return SHAPE_PRIMS.hasOwnProperty(src) || MAT_PRIMS.hasOwnProperty(src); }
 // Cache loaded image textures by URL so repeated/added textured props don't refetch.
 const texCache = {};
 function loadTextureCached(url){
@@ -7853,7 +7858,7 @@ function eachPrimMesh(obj, fn){ obj.traverse(o=>{ if(o.isMesh && o.material) fn(
 
 // --- base color (tint) ---
 function applyPropColor(obj, hex){
-  if(!obj || !isShapePrimitive(obj.userData.src)) return;
+  if(!obj || !isMatPrimitive(obj.userData.src)) return;
   obj.userData.col = hex;
   eachPrimMesh(obj, o=>{ o.material.color.setHex(hex); o.material.needsUpdate=true; });   // tints the texture too (MeshStandard multiplies map by color)
 }
@@ -7861,12 +7866,12 @@ function applyPropColor(obj, hex){
 // Returns the selected shape-primitives; falls back to the primary props target when nothing's multi-selected.
 function _matTargets(){
   const list = (selProps && selProps.length) ? selProps : [ (editorTargets && editorTargets.props && typeof editorTargets.props.obj==='function' ? editorTargets.props.obj() : null) ];
-  return list.filter(o=>o && isShapePrimitive(o.userData.src));
+  return list.filter(o=>o && isMatPrimitive(o.userData.src));
 }
 
 // --- image texture + tiling ---
 function applyPropTexture(obj, url){
-  if(!obj || !isShapePrimitive(obj.userData.src)) return;   // textures only for the built-in shapes
+  if(!obj || !isMatPrimitive(obj.userData.src)) return;   // textures only for the built-in shapes
   obj.userData.tex = url || '';
   if(!url){ obj.userData.texN = ''; obj.userData.texR = ''; }   // clearing color clears the PBR maps too
   const rep = obj.userData.texRepeat || [1,1];
@@ -7973,7 +7978,7 @@ function renderTexSearch(host, onPick){
 
 // --- emissive glow + real point light (the "light emitter") ---
 function applyPropEmissive(obj, hex, intensity){
-  if(!obj || !isShapePrimitive(obj.userData.src)) return;
+  if(!obj || !isMatPrimitive(obj.userData.src)) return;
   obj.userData.emit = { c: hex, i: intensity };
   eachPrimMesh(obj, o=>{ o.material.emissive.setHex(hex); o.material.emissiveIntensity = Math.min(2, intensity); o.material.needsUpdate = true; });
   // Distribute real point lights ALONG THE LONGEST AXIS so a stretched primitive lights its whole length,
@@ -8010,10 +8015,18 @@ function clearPropEmissive(obj){
 // --- surface finish (roughness / metalness): how shiny vs. matte the prop reads ---
 const PRIM_DEFAULT_ROUGH = 0.65, PRIM_DEFAULT_METAL = 0.35;   // matches primitiveMat()
 function applyPropShine(obj, rough, metal){
-  if(!obj || !isShapePrimitive(obj.userData.src)) return;
+  if(!obj || !isMatPrimitive(obj.userData.src)) return;
   const r = Math.max(0, Math.min(1, rough)), m = Math.max(0, Math.min(1, metal));
   obj.userData.shine = { r, m };
   eachPrimMesh(obj, o=>{ o.material.roughness = r; o.material.metalness = m; o.material.envMapIntensity = m; o.material.needsUpdate = true; });   // metal 0 => no environment reflection
+}
+// build 871: opacity — glass, plastic, force fields. <1 turns on alpha blending; depthWrite stays on
+// down to ~0.6 (solid-ish plastic sorts fine) and turns off below (true glass never occludes itself).
+function applyPropOpacity(obj, op){
+  if(!obj || !isMatPrimitive(obj.userData.src)) return;
+  op = Math.max(0.15, Math.min(1, +op||1));
+  obj.userData.op = op;
+  eachPrimMesh(obj, o=>{ o.material.transparent = op < 1; o.material.opacity = op; o.material.depthWrite = op >= 0.6; o.material.needsUpdate = true; });
 }
 // Apply any stored material props after a (re)spawn — used by load + level-sync.
 function applyStoredMaterial(obj, mat){
@@ -8026,9 +8039,55 @@ function applyStoredMaterial(obj, mat){
   if(mat.tex) applyPropTexture(obj, mat.tex);
   if(mat.emit) applyPropEmissive(obj, mat.emit.c, mat.emit.i);
   if(mat.shine) applyPropShine(obj, mat.shine.r, mat.shine.m);
+  if(mat.op!=null) applyPropOpacity(obj, mat.op);   // build 871: glass carries through save/share/net
 }
 // Each primitive is authored to fit a 1×1×1 footprint with its base at y=0, so scale + floor-snapping
 // behave exactly like the box (and the collider/heightfield raycast works the same way).
+// build 871: five construction primitives. All unit-footprint, base y=0, trimesh-collided so slopes
+// and steps are actually walkable/drivable (the same machinery as the track ramps).
+function _pushBoxVerts(a, cx, cy, cz, sx, sy, sz){   // append one axis-aligned box (36 verts) to a flat array
+  const x0=cx-sx/2, x1=cx+sx/2, y0=cy, y1=cy+sy, z0=cz-sz/2, z1=cz+sz/2;
+  const q=(p1,p2,p3,p4)=>{ a.push(...p1,...p2,...p3, ...p1,...p3,...p4); };
+  q([x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]);   // +z
+  q([x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0]);   // -z
+  q([x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1]);   // +x
+  q([x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0]);   // -x
+  q([x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[x0,y1,z0]);   // top
+  q([x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]);   // bottom
+}
+function buildWedgeProp(){   // a ramp: flat at +Z rising to full height at -Z (drives/walks up the slope)
+  const a=[];
+  const q=(p1,p2,p3,p4)=>{ a.push(...p1,...p2,...p3, ...p1,...p3,...p4); };
+  q([-0.5,0,0.5],[0.5,0,0.5],[0.5,1,-0.5],[-0.5,1,-0.5]);      // slope
+  q([0.5,0,-0.5],[-0.5,0,-0.5],[-0.5,1,-0.5],[0.5,1,-0.5]);    // tall back
+  q([-0.5,0,-0.5],[0.5,0,-0.5],[0.5,0,0.5],[-0.5,0,0.5]);      // bottom
+  a.push(-0.5,0,0.5, -0.5,1,-0.5, -0.5,0,-0.5);                 // -x side
+  a.push(0.5,0,0.5, 0.5,0,-0.5, 0.5,1,-0.5);                    // +x side
+  const geo=new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(a),3));
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, primitiveMat());
+}
+function buildStairsProp(){   // six steps rising toward -Z, one merged mesh
+  const a=[], N=6;
+  for(let i=0;i<N;i++){ const d=1/N; _pushBoxVerts(a, 0, 0, 0.5 - d/2 - i*d, 1, (i+1)/N, d); }
+  const geo=new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(a),3));
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, primitiveMat());
+}
+function buildDomeProp(){
+  const geo=new THREE.SphereGeometry(0.5, 24, 12, 0, Math.PI*2, 0, Math.PI/2);   // hemisphere, base circle at y=0
+  const m=primitiveMat(); m.side=THREE.DoubleSide;   // visible from inside — domes make rooms
+  return new THREE.Mesh(geo, m);
+}
+function buildTubeProp(){
+  const geo=new THREE.CylinderGeometry(0.5, 0.5, 1, 20, 1, true); geo.translate(0, 0.5, 0);   // open pipe
+  const m=primitiveMat(); m.side=THREE.DoubleSide;
+  return new THREE.Mesh(geo, m);
+}
+function buildTorusProp(){
+  const geo=new THREE.TorusGeometry(0.35, 0.15, 12, 24); geo.rotateX(-Math.PI/2); geo.translate(0, 0.15, 0);   // a flat-lying ring
+  return new THREE.Mesh(geo, primitiveMat());
+}
 function buildSphereProp(){
   const geo = new THREE.SphereGeometry(0.5, 20, 16); geo.translate(0, 0.5, 0);
   return new THREE.Mesh(geo, primitiveMat());
@@ -8171,6 +8230,7 @@ function trackApply(o, trk){
   if(typeof refreshPropCollider==='function') refreshPropCollider(o);
 }
 const PRIMITIVE_BUILDERS = { box:buildBoxProp, sphere:buildSphereProp, cylinder:buildCylinderProp, cone:buildConeProp, pillar:buildPillar,
+  wedge:buildWedgeProp, stairs:buildStairsProp, dome:buildDomeProp, tube:buildTubeProp, torus:buildTorusProp,   // build 871
   track_start:()=>_buildTrackPiece('track_start'), track_straight:()=>_buildTrackPiece('track_straight'), track_short:()=>_buildTrackPiece('track_short'),
   track_curve45_l:()=>_buildTrackPiece('track_curve45_l'), track_curve45_r:()=>_buildTrackPiece('track_curve45_r'),
   track_curve_l:()=>_buildTrackPiece('track_curve_l'), track_curve_r:()=>_buildTrackPiece('track_curve_r'),
@@ -8506,7 +8566,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   if(slot != null) propModels[slot] = obj;   // keep saved order even with async GLB loads
   else propModels.push(obj);
   if(gltf){ obj.userData.animClip = animClip || ''; playModelAnimations(obj, gltf, obj.userData.animMode); }
-  if(mat && isShapePrimitive(src)) applyStoredMaterial(obj, mat);   // color / texture / emissive
+  if(mat && isMatPrimitive(src)) applyStoredMaterial(obj, mat);   // color / texture / emissive
   if(gltf && !obj.userData.phys && typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();   // build 643: a model loaded late (e.g. on a joiner) -> rebuild physics so it's solid (you can't walk through it)
   return obj;
 }
@@ -17144,7 +17204,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 870 · 2026-07-04';
+const BUILD_VERSION = 'build 871 · 2026-07-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21847,6 +21907,11 @@ const PRIM_ICON = {
   sphere:   _svgIcon('<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="9" ry="3.4"/>'),
   cylinder: _svgIcon('<ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12M19 6v12"/><ellipse cx="12" cy="18" rx="7" ry="2.6"/>'),
   cone:     _svgIcon('<ellipse cx="12" cy="18" rx="7.5" ry="2.6"/><path d="M12 3 4.5 18M12 3l7.5 15"/>'),
+  wedge:    _svgIcon('<path d="M3 19h18L3 6v13Z"/>'),
+  stairs:   _svgIcon('<path d="M3 21v-4h5v-4h5V9h5V5h3"/>'),
+  dome:     _svgIcon('<path d="M3 18a9 9 0 0 1 18 0"/><path d="M2 18h20"/>'),
+  tube:     _svgIcon('<ellipse cx="12" cy="5.5" rx="6.5" ry="2.4"/><path d="M5.5 5.5v13M18.5 5.5v13"/><path d="M5.5 18.5a6.5 2.4 0 0 0 13 0"/><ellipse cx="12" cy="5.5" rx="3" ry="1.1"/>'),
+  torus:    _svgIcon('<ellipse cx="12" cy="12" rx="9" ry="5"/><ellipse cx="12" cy="12" rx="3.6" ry="1.8"/>'),
 };
 const MODE_SECTIONS = {
   build:   ['gizmo','object','material','transform'],
@@ -22389,7 +22454,7 @@ function duplicateSelectedTurret(){
 // ---------- Save / restore the whole level to the browser ----------
 // Compact material descriptor for a prop (null if it's a plain default-material prop or a model).
 function propMaterialDesc(o){
-  if(!isShapePrimitive(o.userData.src)) return null;
+  if(!isMatPrimitive(o.userData.src)) return null;
   const m = {};
   if(o.userData.col != null && o.userData.col !== PRIM_DEFAULT_COLOR) m.col = o.userData.col;
   if(o.userData.tex) m.tex = o.userData.tex;
@@ -22399,6 +22464,7 @@ function propMaterialDesc(o){
   if(o.userData.texRepeat && (o.userData.texRepeat[0]!==1 || o.userData.texRepeat[1]!==1)) m.texRepeat = o.userData.texRepeat.slice();
   if(o.userData.emit) m.emit = { c:o.userData.emit.c, i:o.userData.emit.i };
   if(o.userData.shine && (Math.abs(o.userData.shine.r-PRIM_DEFAULT_ROUGH)>1e-3 || Math.abs(o.userData.shine.m-PRIM_DEFAULT_METAL)>1e-3)) m.shine = { r:o.userData.shine.r, m:o.userData.shine.m };
+  if(o.userData.op!=null && +o.userData.op < 1) m.op = +o.userData.op;   // build 871
   return Object.keys(m).length ? m : null;
 }
 // Authored position for save/export. build 713: ONLY fall back to physHome while a dynamic prop is actually being
@@ -23481,6 +23547,8 @@ function buildEditorPanel(){
         ['\u25cf Sphere',   ()=>{ jump('build','props');   addSceneProp('sphere'); }],
         ['\u25ac Cylinder', ()=>{ jump('build','props');   addSceneProp('cylinder'); }],
         ['\u25b2 Cone',     ()=>{ jump('build','props');   addSceneProp('cone'); }],
+        ['\u25e2 Ramp',     ()=>{ jump('build','props');   addSceneProp('wedge'); }],
+        ['\u2630 Stairs',   ()=>{ jump('build','props');   addSceneProp('stairs'); }],
         ['\ud83d\udca1 Light',       ()=>{ jump('build','lights');  addSceneLight(); }],
         ['\ud83d\udee1 Turret',      ()=>{ jump('build','turrets'); if(typeof addSceneTurret==='function') addSceneTurret(); }],
         ['\ud83d\udc7e Enemy spawn', ()=>{ jump('enemies','spawns'); addSceneSpawn(); }],
@@ -25928,7 +25996,7 @@ function renderEditorFields(){
       const shapeHead = document.createElement('div'); shapeHead.className='hint'; shapeHead.style.margin='2px 0 3px'; shapeHead.innerHTML='<b>Add shape</b> — drops in front of you, then move/scale it';
       shapesHost.appendChild(shapeHead);
       const srow = document.createElement('div'); srow.className='row2';
-      for(const [src,label] of [['box','Box'],['sphere','Sphere'],['cylinder','Cylinder'],['cone','Cone']]){
+      for(const [src,label] of [['box','Box'],['sphere','Sphere'],['cylinder','Cylinder'],['cone','Cone'],['wedge','Ramp'],['stairs','Stairs'],['dome','Dome'],['tube','Tube'],['torus','Ring']]){
         const b=document.createElement('button'); b.className='primBtn'; b.innerHTML=(PRIM_ICON[src]||'')+'<span>+ '+label+'</span>'; b.onclick=()=>{ addSceneProp(src); };
         srow.appendChild(b);
       }
@@ -25982,17 +26050,17 @@ function renderEditorFields(){
     matHost.innerHTML = '';
     const selObj = (editorActive==='props' && editorTargets.props.obj) ? editorTargets.props.obj() : null;
     const matInMode = (MODE_SECTIONS[editorMode]||[]).indexOf('material')>=0;   // only the Build tab owns Material; without this it leaks onto Save/etc.
-    const matOn = matInMode && !!(selObj && isShapePrimitive(selObj.userData.src));
+    const matOn = matInMode && !!(selObj && isMatPrimitive(selObj.userData.src));
     // build 844: an imported model used to HIDE the whole Material section (first-timers thought colour wasn't
     // editable at all). Now the section stays and explains itself.
     const matNote = matInMode && !matOn && !!selObj;
     const matSec = matHost.closest('.edSection'); if(matSec) matSec.style.display = (matOn||matNote) ? '' : 'none';
     if(matNote){ const nn=document.createElement('div'); nn.className='hint';
-      nn.textContent='Imported models keep their own materials. Colour, texture and glow editing applies to the built-in shapes (Box / Sphere / Cylinder / Cone).';
+      nn.textContent='Imported models keep their own materials. Colour, texture, glow and opacity editing applies to the built-in shapes (Box / Sphere / Cylinder / Cone / Ramp / Stairs / Dome / Tube / Ring).';
       matHost.appendChild(nn); }
     if(matOn){
       const toHex = n => '#' + ('000000'+(n>>>0).toString(16)).slice(-6);
-      const _matN = (selProps && selProps.length) ? selProps.filter(o=>o&&isShapePrimitive(o.userData.src)).length : 1;
+      const _matN = (selProps && selProps.length) ? selProps.filter(o=>o&&isMatPrimitive(o.userData.src)).length : 1;
       if(_matN>1){ const mn=document.createElement('div'); mn.className='hint'; mn.style.cssText='margin:0 0 6px;color:var(--accent);'; mn.innerHTML='<b>Editing '+_matN+' selected props</b> \u2014 changes apply to all.'; matHost.appendChild(mn); }
 
       // base color
@@ -26069,11 +26137,12 @@ function renderEditorFields(){
       // shininess shown 0 (matte) .. 1 (glossy); stored as roughness = 1 - shininess
       slider('Shininess', (1 - sh.r), '#7cc6ff', (v)=>{ for(const o of _matTargets()){ const cur=o.userData.shine||{ r:PRIM_DEFAULT_ROUGH, m:PRIM_DEFAULT_METAL }; applyPropShine(o, 1 - v, cur.m); } });
       slider('Metalness', sh.m, '#d6b35a', (v)=>{ for(const o of _matTargets()){ const cur=o.userData.shine||{ r:PRIM_DEFAULT_ROUGH, m:PRIM_DEFAULT_METAL }; applyPropShine(o, cur.r, v); } });
+      slider('Opacity', (selObj.userData.op!=null?+selObj.userData.op:1), '#9fd8ff', (v)=>{ for(const o of _matTargets()) applyPropOpacity(o, v); });   // build 871: glass/plastic
       const sHint=document.createElement('div'); sHint.className='hint'; sHint.style.margin='2px 0 0';
-      sHint.textContent='Shininess: 0 = flat/matte, 1 = glossy highlights. Metalness pushes toward a polished-metal look (best with some shininess).';
+      sHint.textContent='Shininess: 0 = flat/matte, 1 = glossy highlights. Metalness pushes toward a polished-metal look (best with some shininess). Opacity under 1 makes it see-through — glass = low opacity + high shininess, frosted plastic = mid opacity + low shininess. It stays solid to walk on and shoot.';
       matHost.appendChild(sHint);
     } else {
-      const none=document.createElement('div'); none.className='hint'; none.textContent='Select a shape (box / sphere / cylinder / cone) to edit its color, texture, or light.';
+      const none=document.createElement('div'); none.className='hint'; none.textContent='Select a shape (box, sphere, ramp, stairs…) to edit its color, texture, opacity, or light.';
       matHost.appendChild(none);
     }
   }

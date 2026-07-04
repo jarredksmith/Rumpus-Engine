@@ -7,7 +7,7 @@ const src = gameSource();
 const mt = extractFunction('_matTargets');
 assert(/selProps && selProps\.length/.test(mt), 'uses the multi-selection when present');
 assert(/editorTargets\.props\.obj\(\)/.test(mt), 'falls back to the primary props target');
-assert(/\.filter\(o=>o && isShapePrimitive\(o\.userData\.src\)\)/.test(mt), 'restricts to shape primitives (textures/colors only apply to those)');
+assert(/\.filter\(o=>o && isMatPrimitive\(o\.userData\.src\)\)/.test(mt), 'restricts to material-editable primitives (build 871: incl. ramp/stairs/dome/tube/torus)');
 
 // every material handler loops over _matTargets()
 assert(/for\(const o of _matTargets\(\)\) applyPropColor\(o, hex\);/.test(src), 'color is bulk');

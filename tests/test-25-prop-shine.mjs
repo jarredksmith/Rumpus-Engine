@@ -5,8 +5,10 @@ import { extractFunction, extractConst, gameSource, done, assert, near } from '.
 // Build applyPropShine with its helpers/constants in scope (real game source).
 const env = [
   'const SHAPE_PRIMS = ' + extractConst('SHAPE_PRIMS') + ';',
+  'const MAT_PRIMS = ' + extractConst('MAT_PRIMS') + ';',   // build 871: shine now covers the material-editable set
   'const PRIM_DEFAULT_ROUGH=0.65, PRIM_DEFAULT_METAL=0.35;',
   extractFunction('isShapePrimitive'),
+  extractFunction('isMatPrimitive'),
   extractFunction('eachPrimMesh'),
   extractFunction('applyPropShine'),
   'return { applyPropShine, PRIM_DEFAULT_ROUGH, PRIM_DEFAULT_METAL };'
