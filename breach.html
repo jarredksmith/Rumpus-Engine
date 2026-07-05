@@ -17379,7 +17379,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 880 · 2026-07-05';
+const BUILD_VERSION = 'build 881 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24497,12 +24497,16 @@ function renderEditorFields(){
             useB.onclick=()=>{ const o=(selProps&&selProps[0])||((editorTargets.props&&editorTargets.props.obj)?editorTargets.props.obj():null);
               if(!o){ if(typeof toast==='function') toast('Select a prop on the Build tab first'); return; }
               const nm=(o.userData.name||'').slice(0,14) || (isModelSrc(o.userData.src)?'model':String(o.userData.src));
-              scatterBrush.slots[si]={ src:o.userData.src, label:nm, sx:o.scale.x, sy:o.scale.y, sz:o.scale.z, fit:false }; renderEditorFields(); };
+              scatterBrush.slots[si]={ src:o.userData.src, label:nm, sx:o.scale.x, sy:o.scale.y, sz:o.scale.z, fit:false, size:1 }; renderEditorFields(); };
             const clrB=document.createElement('button'); clrB.textContent='Clear'; clrB.style.cssText='padding:4px 10px;font-size:11px;cursor:pointer;';
             clrB.onclick=()=>{ scatterBrush.slots[si]=null; renderEditorFields(); };
             arow.appendChild(useB); arow.appendChild(clrB); bw.appendChild(arow);
             { const mh=document.createElement('div'); mh.style.marginTop='6px'; bw.appendChild(mh);
-              renderModelSearch(mh,(m,st)=>{ if(!m||!m.glb) return; scatterBrush.slots[si]={ src:m.glb, label:(m.title||'model').slice(0,14), fit:true }; if(typeof creditAsset==='function') creditAsset(m.attribution); if(st) st.textContent='Slot '+(si+1)+' \u2192 '+(m.title||'model'); renderEditorFields(); }, { placeholder:'e.g. tree, bush, rock, fern' }); }
+              renderModelSearch(mh,(m,st)=>{ if(!m||!m.glb) return; scatterBrush.slots[si]={ src:m.glb, label:(m.title||'model').slice(0,14), fit:true, size:7 }; if(typeof creditAsset==='function') creditAsset(m.attribution); if(st) st.textContent='Slot '+(si+1)+' \u2192 '+(m.title||'model'); renderEditorFields(); }, { placeholder:'e.g. tree, bush, rock, fern' }); }
+            { const S=scatterBrush.slots[si];
+              if(S && S.fit)  bw.appendChild(mkBSlider('Size (m)', S.size!=null?S.size:7, 1, 25, 0.5, v=>{ S.size=v; }));   // build 881: searched models were stuck at the 2m fit — tiny trees
+              if(S && !S.fit) bw.appendChild(mkBSlider('Size \u00d7', S.size!=null?S.size:1, 0.2, 5, 0.1, v=>{ S.size=v; }));
+            }
             bw.appendChild(mkBSlider('Density', scatterBrush.density, 1, 6, 1, v=>scatterBrush.density=v));
             bw.appendChild(mkBSlider('Size jitter', scatterBrush.jitter, 0, 0.6, 0.05, v=>scatterBrush.jitter=v));
             const sh2=document.createElement('div'); sh2.className='hint'; sh2.style.marginTop='5px'; sh2.textContent='Drag on the floor to plant. Each pass drops Density props at random spots in the brush circle, randomly turned and sized, sat on the terrain. They\u2019re normal props \u2014 marquee-select to move or delete. Searched models add ~1 draw call each: a few dozen trees is fine, hundreds will cost frames (scattered primitives are basically free).'; bw.appendChild(sh2);
@@ -26769,8 +26773,10 @@ function _scatterDab(cx, cz){
     const yaw=Math.random()*Math.PI*2;
     const j=Math.max(0.2, 1 - scatterBrush.jitter + Math.random()*scatterBrush.jitter*2);
     spawnProp(slot.src, [px, 0, pz, 0, yaw, 0, 1], (obj)=>{
-      if(slot.fit){ if(typeof _fitPropToSize==='function') _fitPropToSize(obj); }
-      else if(slot.sx!=null) obj.scale.set(slot.sx, slot.sy, slot.sz);
+      // build 881: per-slot Size — searched models fit to `size` METRES (the default 2m fit made trees
+      // tiny); cloned props multiply their captured scale by it.
+      if(slot.fit){ if(typeof _fitPropToSize==='function') _fitPropToSize(obj, Math.max(0.5, +slot.size||7)); }
+      else if(slot.sx!=null){ const m=(+slot.size>0)?+slot.size:1; obj.scale.set(slot.sx*m, slot.sy*m, slot.sz*m); }
       obj.scale.multiplyScalar(j);
       // re-ground after the jitter rescale: base of the bounding box onto the terrain (any model origin)
       obj.updateMatrixWorld(true);
