@@ -17442,7 +17442,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 886 · 2026-07-05';
+const BUILD_VERSION = 'build 887 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19692,7 +19692,7 @@ let _raceStartO=null; const _raceCk=[]; const _raceVisited=new Set();
 const _raceTimes=[];   // build 832: every completed lap's time, for the results breakdown
 let _raceCountT=0, _raceCountShown='';   // build 832: 3-2-1-GO standing start (throttle locked while >1)
 function _fmtRace(t){ if(!isFinite(t)) return '--:--.-'; const m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
-function _raceClear(){ _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); _raceWinner=null; _raceNetAcc=0; for(const k in _raceNet) delete _raceNet[k]; if(typeof _raceHudHide==='function') _raceHudHide(); }
+function _raceClear(){ _offTrackT=0; _raceLastS=0; if(typeof _offTrackHide==='function') _offTrackHide(); _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); _raceWinner=null; _raceNetAcc=0; for(const k in _raceNet) delete _raceNet[k]; if(typeof _raceHudHide==='function') _raceHudHide(); }
 // build 832: the big centre countdown. One lazily-created element; numbers pop in accent, GO flashes green.
 function _raceCountEl(){
   let el=document.getElementById('raceCount');
@@ -19702,6 +19702,51 @@ function _raceCountEl(){
   return el;
 }
 function _raceCountHide(){ const el=document.getElementById('raceCount'); if(el) el.style.display='none'; }
+// ---------- build 887: RETURN TO TRACK — off-course warning + 3s auto-respawn ----------
+// Driving off the road (or off a ramp/ledge with no way back) shows a red countdown; if you're not back
+// on the course in 3 seconds the car is placed back on the racing line at the last on-track spot, using
+// the same ground-snap + modelYaw recipe as the standing-start grid. On foot / countdown / non-race: inert.
+let _offTrackT=0, _raceLastS=0;
+function _offTrackEl(){
+  let el=document.getElementById('offTrack');
+  if(!el){ el=document.createElement('div'); el.id='offTrack';
+    el.style.cssText='position:fixed;left:50%;top:24%;transform:translate(-50%,-50%);text-align:center;font:800 34px Rajdhani,system-ui,sans-serif;letter-spacing:0.1em;color:#ff5a5a;text-shadow:0 0 26px rgba(255,60,60,0.55);z-index:60;pointer-events:none;display:none;';
+    document.body.appendChild(el); }
+  return el;
+}
+function _offTrackHide(){ const el=document.getElementById('offTrack'); if(el) el.style.display='none'; }
+function _raceOffTrackTick(dt){
+  if(!_racePath || !drivingCar || _raceCountT>0 || (typeof gameOver!=='undefined' && gameOver)){
+    if(_offTrackT){ _offTrackT=0; _offTrackHide(); }
+    return;
+  }
+  const o=drivingCar, pts=_racePath.pts;
+  let bi=0, bd=Infinity;
+  for(let i=0;i<pts.length;i++){ const dx=o.position.x-pts[i].x, dz=o.position.z-pts[i].z; const d=dx*dx+dz*dz; if(d<bd){ bd=d; bi=i; } }
+  const near=pts[bi];
+  // off = clearly beside the road (margin covers the sample spacing) OR fallen well below it (ledge)
+  const off = Math.sqrt(bd) > (TRACK_W/2 + 3.5) || o.position.y < near.y - 3;
+  if(!off){ _raceLastS=near.s; if(_offTrackT){ _offTrackT=0; _offTrackHide(); } return; }
+  _offTrackT += dt;
+  const left=Math.max(0, 3 - _offTrackT);
+  const el=_offTrackEl(), label='RETURN TO TRACK<div style="font-size:64px;margin-top:2px;">'+Math.ceil(Math.max(0.001,left))+'</div>';
+  if(el._lbl!==label || el.style.display!=='block'){ el._lbl=label; el.innerHTML=label; el.style.display='block';   // display check: the label cache must not survive a hide (a 2nd excursion at the same second stayed invisible)
+    if(el.animate) el.animate([{opacity:0.35},{opacity:1}],{duration:180,easing:'ease-out'}); }
+  if(_offTrackT>=3){
+    _offTrackT=0; _offTrackHide();
+    const pose=_racePathAt(_raceLastS, 0);
+    let _gy=(typeof surfaceTopAt==='function') ? surfaceTopAt(pose.x, pose.z, o, true, pose.y+6, true) : -Infinity;
+    o.position.set(pose.x, (_gy>-Infinity?_gy:pose.y)+0.15, pose.z);
+    o.rotation.set(0, pose.yaw - (((o.userData.vehicle&&o.userData.vehicle.modelYaw)||0)*RAD), 0);
+    o.userData.carSpeed=0; o.userData.carVelY=0; o.userData.carPitch=0; o.userData.carRoll=0;
+    o.userData._suspOff=0; o.userData._suspVel=0;
+    if(o.userData.carVelYaw!=null) o.userData.carVelYaw=o.userData.carYaw;   // no phantom drift on the way back
+    o.updateMatrixWorld(true);
+    if(typeof addShake==='function') addShake(0.18);
+    if(typeof flashToast==='function') flashToast('Returned to the track');
+    if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
+  }
+}
 // build 839: the RACE HUD — a top-centre pill with position, lap, live time and best. The old readout hid in
 // the tiny wave indicator; racing needs its numbers in your face.
 function _raceHudEl(){
@@ -20115,6 +20160,7 @@ function _raceTick(dt){
   _ghostRecordTick(dt); _ghostPlayTick();   // build 834: record this lap; replay the best one
   _raceNetTick(dt);     // build 836: share progress with the other racers
   _raceHudTick();       // build 839: the top-centre position/lap/time pill
+  _raceOffTrackTick(dt);   // build 887: off-course warning + 3s return-to-track
   if(_raceCrossCd>0) _raceCrossCd-=dt;
   if(_raceLap>=1) _raceLapT+=dt;
   const px=player.pos.x, pz=player.pos.z;
