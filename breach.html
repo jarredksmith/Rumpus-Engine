@@ -8724,8 +8724,9 @@ function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip)
 }
 // Delete EVERYTHING placed in the editor — a fresh scene. Uses the per-item removers so physics bodies,
 // emitter lights, and markers are cleaned up properly. Keeps world/terrain/sky/gameplay settings intact.
-function wipeScene(){
-  pushUndoSnapshot();
+function wipeScene(){ pushUndoSnapshot(); _wipeSceneCore(); }
+// build 879: the wipe body, callable without its own undo snapshot (the example loader pushes one first)
+function _wipeSceneCore(){
   for(let i=propModels.length-1;i>=0;i--) removeProp(i);
   if(typeof removeLight==='function') for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
   if(typeof removeSpawnMarker==='function') for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
@@ -13501,7 +13502,7 @@ function replayMatch(){
     if(typeof flashToast==='function') flashToast('Rematch requested \u2014 waiting for the host\u2026'); }
 }
 function showDuelResult(winnerId, winnerTeam){
-  gameOn=false; gameOver=true; safeExitPointerLock();
+  if(typeof drivingCar!=='undefined' && drivingCar && typeof exitCar==='function') exitCar(); gameOn=false; gameOver=true; safeExitPointerLock();
   { const sb=document.getElementById('scoreboard'); if(sb) sb.style.display='none'; }
   clearKillFeed();
   const win = teamMode() ? (NET.team===winnerTeam) : (winnerId===NET.myId);
@@ -13537,7 +13538,7 @@ function loadLevelFromNet(level){
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
   pickupsOn = (level.pickupsOn !== false);
-  pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health' })) : [];
+  pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact })) : [];   // build 879: joiners used to lose pickup transforms/items
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
   if(typeof refreshLootMarkers==='function') refreshLootMarkers(); pickupModels = (level.pickupModels && typeof level.pickupModels==='object') ? JSON.parse(JSON.stringify(level.pickupModels)) : {}; keyNames = (level.keyNames && typeof level.keyNames==='object') ? JSON.parse(JSON.stringify(level.keyNames)) : {}; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); _skyHdriUrl = null; applyWorldCfg(); }   // adopt the host's sky / ground / fog (reset the sky guard so each level's sky re-applies cleanly, even mid-campaign)
@@ -17365,7 +17366,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 878 · 2026-07-05';
+const BUILD_VERSION = 'build 879 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20942,7 +20943,7 @@ function loop(){
   if(_levelLoaderActive){ pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // hold the world frozen behind the level loading screen until assets finish loading — checked BEFORE the cutscene so the intro cinematic can't advance while loading
   if(_cineActive){ updateCinematic(rawDt); if(mixers.length){ for(const m of mixers) m.update(rawDt); } if(typeof updateXAnim==='function') updateXAnim(rawDt); renderScene(scene,camera); return; }   // keep GLB clips AND mechanism/waypoint motion (doors, platforms, elevators) alive on camera   // keep prop/GLB animations alive on camera (raw time — no hitstop during a cutscene)   // intro/preview flythrough owns the camera; freeze the sim
   if(_interActive){ pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // campaign transition card owns the screen; hold the won level frozen behind it
-  if(!gameOn) { pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }
+  if(!gameOn) { if(drivingCar && typeof exitCar==='function') exitCar(); pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // build 879: a stranded drive state (win/death mid-drive) self-heals at the menu
   if((shopOpen || choosingUpgrade || (paused && NET.mode==='off') || (mapOpen && NET.mode==='off') || (invOpen && NET.mode==='off')) && !(duelDead && pvpMode())) { pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); if(mapOpen) drawBigMap(); return; }  // freeze world while shopping / picking an upgrade / paused / inventory open (solo) — but never while waiting to respawn
 
   pollGamepad(dt);   // controller input feeds the same flags as keyboard/mouse
@@ -23282,6 +23283,15 @@ function restoreLevel(level){
   if(level.station && station){ if(level.station.url && level.station.url!==stationModelUrl) swapStationModel(level.station.url); Object.assign(editorTargets.station.state, level.station.state||{}); editorTargets.station.apply(); }
   // world + loot
   if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); applyWorldCfg(); }
+  // build 879: pickups / loot / inventory were NEVER restored on this path (community levels, share
+  // links, .json import, undo) — the previous level's pads persisted and the loaded level's own never
+  // arrived. Same field map as the boot loader, so transforms/interact round-trip identically.
+  pickupsOn = (level.pickupsOn !== false);
+  pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact })) : [];
+  selPickup=-1; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
+  lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
+  selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
+  if(level.invItems && typeof level.invItems==='object'){ try{ invCatalog = JSON.parse(JSON.stringify(level.invItems)); if(typeof renderInvItems==='function' && editorOpen) renderEditorFields(); }catch(e){} }
   if(level.audio){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
   _applyCine(level.cine);
   if(level.player) applyPlayerLevel(level.player);
@@ -27680,7 +27690,7 @@ function gameWon(){
   stopMusic();
   if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false;
   if(typeof closeUpgradePicker==='function') closeUpgradePicker();
-  gameOn=false; gameOver=true; safeExitPointerLock();
+  if(typeof drivingCar!=='undefined' && drivingCar && typeof exitCar==='function') exitCar(); gameOn=false; gameOver=true; safeExitPointerLock();
   if(typeof _raceHudHide==='function') _raceHudHide();   // build 839: the race pill doesn't outlive the race
   firing=false; ads=false; shopOpen=false;
   if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false);
@@ -27705,7 +27715,7 @@ function endGame(){
   releaseHeld(); closeRadial(false);
   if(typeof closeDialogue==='function') closeDialogue();   // build 695: drop any open NPC dialogue
   stopMusic();
-  gameOn=false; gameOver=true; safeExitPointerLock(); if(typeof _raceHudHide==='function') _raceHudHide(); if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false; if(typeof closeUpgradePicker==='function') closeUpgradePicker();
+  if(typeof drivingCar!=='undefined' && drivingCar && typeof exitCar==='function') exitCar(); gameOn=false; gameOver=true; safeExitPointerLock(); if(typeof _raceHudHide==='function') _raceHudHide(); if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false; if(typeof closeUpgradePicker==='function') closeUpgradePicker();
   firing=false; ads=false; shopOpen=false;
   editorOpen=false; _editorOpenFlag=false; editorAimPreview=false; editorFreeFly=false; editorTopView=false;
   if(typeof updateGizmo==='function') updateGizmo();   // editorOpen now false -> updateGizmo hides the handles (it only hides when called, and nothing else calls it on this path)
@@ -28321,7 +28331,19 @@ function _helpLoadExample(kind){
 }
 function _helpBuildExample(kind){
   pushUndoSnapshot();
-  for(let i=propModels.length-1;i>=0;i--) removeProp(i);   // fresh canvas for the example (level settings kept; undo restores)
+  // build 879: a FULL fresh canvas. Examples used to clear only props, so zones, pickups, terrain,
+  // paint, turrets and even the camera view bled from whatever was loaded before ("it loads elements
+  // from the previous loaded levels"). One undo still restores everything.
+  _wipeSceneCore();
+  if(typeof clearTurrets==='function') clearTurrets();
+  worldCfg = Object.assign({}, DEFAULT_WORLD);   // stock world: terrain/paint/sky/floor/arena reset
+  if(typeof applyWorldCfg==='function') applyWorldCfg();
+  gameCfg.view='fps'; gameCfg.viewDist=0; gameCfg.viewAxis='x';
+  gameCfg.mode='random'; gameCfg.objective='eliminate'; gameCfg.winWaves=0;
+  gameCfg.goalText=''; gameCfg.winText=''; gameCfg.loseText='';
+  gameCfg.unarmed=false; gameCfg.flashlight=false; gameCfg.noRespawn=false; gameCfg.respawnOnDeath=false;
+  gameCfg.spawnRegion={ on:false, shape:'circle', x:0, z:0, r:30, poly:[] };
+  playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; if(typeof refreshPlayerSpawnMarker==='function') refreshPlayerSpawnMarker();
   selProps.length=0; if(editorTargets.props) editorTargets.props.idx=-1;
   if(kind==='race'){
     // a closed stadium: Start(16)+Short(8) vs Straight(24), four 90° lefts — exact closure (mod-8 lengths)

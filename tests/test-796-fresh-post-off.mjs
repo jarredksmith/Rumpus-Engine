@@ -20,7 +20,7 @@ const po = extractFunction('_postOffWorld');
 assert(/if\(!\(savedLevel && savedLevel\.world\)\) _postOffWorld\(worldCfg\);/.test(src), 'a first-time scene (no saved world) starts with post FX off');
 
 // --- clearing the scene applies it + re-applies the world ---
-const ws = extractFunction('wipeScene');
+const ws = extractFunction('_wipeSceneCore') + extractFunction('wipeScene');   // build 879: wipeScene = pushUndoSnapshot + _wipeSceneCore
 assert(/_postOffWorld\(worldCfg\); if\(typeof applyWorldCfg==='function'\) applyWorldCfg\(\);/.test(ws), 'clearing the scene turns post FX off and re-applies the world');
 
 // --- but the authored DEFAULT_WORLD look is NOT changed (reset-to-defaults still restores the designed look) ---

@@ -20,7 +20,7 @@ assert(/const drop=bottom-surf; tgt\.state\.py = o\.position\.y - drop;/.test(sr
 assert(/if\(tgt===editorTargets\.props && tgt\.fields/.test(src), 'snap button only appears for props');
 
 // --- 3) delete all ---
-const ws = extractFunction('wipeScene');
+const ws = extractFunction('_wipeSceneCore') + extractFunction('wipeScene');   // build 879: wipeScene = pushUndoSnapshot + _wipeSceneCore
 assert(/for\(let i=propModels\.length-1;i>=0;i--\) removeProp\(i\);/.test(ws), 'removes every prop via the proper remover');
 assert(/lootSpots\.length=0;[\s\S]*?refreshLootMarkers/.test(ws) && /deathZones\.length=0;[\s\S]*?refreshDeathZoneMarkers/.test(ws), 'clears loot + death zones too');
 assert(/audioZones\.length=0;[\s\S]*?refreshAudioZoneMarkers/.test(ws) && /pickupSpots\.length=0;/.test(ws), 'clears audio zones + pickups');

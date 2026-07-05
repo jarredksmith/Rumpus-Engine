@@ -51,5 +51,5 @@ assert(pi>=0 && gi>=0 && pi<gi, 'prewarm runs before the loader gate');
 assert(/_modelTouch\(url\)/.test(gameSource()), 'every cache resolve touches the refcount');
 assert(/function _disposeGLTF\(gltf\)/.test(gameSource()) && /geos\.forEach\(g=>\{ if\(g\.dispose\)/.test(gameSource()), 'eviction disposes geometry/material/textures');
 assert(/_modelRelease\(obj\.userData\.src\)/.test(gameSource()), 'removeProp releases the model reference');
-assert(/_enforceModelCacheCap\(\)/.test(extractFunction('wipeScene')), 'wipe frees unreferenced model VRAM');
+assert(/_enforceModelCacheCap\(\)/.test(extractFunction('_wipeSceneCore')), 'wipe frees unreferenced model VRAM');   // build 879: body moved to _wipeSceneCore (wipeScene = snapshot + core)
 done();
