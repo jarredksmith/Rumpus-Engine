@@ -50,13 +50,13 @@ assert(!/new THREE\.WebGLRenderTarget/.test(extractFunction('_applyPaintCfg', sr
 // ---- persistence + load paths ----
 assert(/if\(typeof _applyPaintCfg==='function'\) _applyPaintCfg\(\);/.test(src), 'applyWorldCfg repaints — boot, load, share, MP-adopt and undo all pass through it');
 assert(/worldCfg\.paint\.map=_paintCanvas\.toDataURL\('image\/png'\);/.test(src), 'a finished stroke commits the splat as a PNG dataURL');
-assert(/if\(_brushing\)\{ _brushing = false; editorDragMoved = true; if\(terrainBrush\.mode==='paint' && typeof _paintCommit==='function'\) _paintCommit\(\); \}/.test(src),
+assert(/if\(_brushing\)\{ _brushing = false; editorDragMoved = true; if\(terrainBrush\.mode==='paint' && typeof _paintCommit==='function'\) _paintCommit\(\);/.test(src),   // build 876 appended the scatter reset to this handler
   'the commit fires on mouse-up (end of stroke), not per dab');
 assert(/if\(_paintLoadedFor!==map\) return;/.test(src), 'a stale async image decode cannot clobber a newer level’s paint');
 
 // ---- brush + editor wiring ----
 assert(/if\(terrainBrush\.mode==='paint'\)\{\s+\/\/ build 875[\s\S]{0,200}_paintStroke\(hitP\.x, hitP\.z\); return true;/.test(src), 'paint mode strokes without needing a height grid (flat floors paint too)');
-assert(/\[\['raise','Raise'\],\['lower','Lower'\],\['smooth','Smooth'\],\['paint','Paint'\]\]/.test(src), 'Paint joins the brush-mode row');
+assert(/\[\['raise','Raise'\],\['lower','Lower'\],\['smooth','Smooth'\],\['paint','Paint'\],\['scatter','Scatter'\]\]/.test(src), 'Paint joins the brush-mode row (Scatter joined in 876)');
 assert(/paintLayer:0, soft:0\.5, flow:0\.55, paintErase:false/.test(src), 'brush defaults: layer 1, half-soft edge, moderate flow');
 assert(/mkBSlider\('Soft edge', /.test(src) && /mkBSlider\('Flow', /.test(src) && /mkBSlider\('Tiles', /.test(src), 'Soft edge / Flow / Tiles controls exist');
 assert(/Erase \(remove this layer\\u2019s paint\)/.test(src), 'erase toggle exists');
