@@ -46,7 +46,7 @@ assert(/const _t = drivingCar \? drivingCar\.position : player\.pos;/.test(src),
 
 // ---- combat: shots through the cursor, body-relative melee/rockets, avatar shown ----
 assert(/if\(tpMode \|\| activeViewMode\(\)!=='fps'\)\{\s*\n\s*tpMuzzleWorld\(muzzleWorld\);/.test(src), 'tracers start at the avatar barrel');
-assert(/raycaster\.setFromCamera\(new THREE\.Vector2\(\(_vmA\?_vmA\.x:0\)\+sx, \(_vmA\?_vmA\.y:0\)\+sy\), camera\);/.test(src), 'hitscan rays pass through the cursor NDC (+spread)');
+assert(/raycaster\.set\(_vmOrig, _pd\);/.test(src) && /\} else raycaster\.setFromCamera\(new THREE\.Vector2\(sx, sy\), camera\);/.test(src), 'hitscan: body-origin pellets in fixed views, screen-centre in fps (reworked in 885)');
 assert(/o\.set\(player\.pos\.x, player\.pos\.y-0\.2, player\.pos\.z\); d\.copy\(_vAimPt\)\.sub\(o\)\.normalize\(\);/.test(src), 'rockets launch from the body toward the cursor point');
 assert(/if\(activeViewMode\(\)!=='fps'\) fwd\.set\(-Math\.sin\(player\.yaw\), 0, -Math\.cos\(player\.yaw\)\);/.test(src), 'melee swings where the body faces');
 assert(/if\(!\(\(tpMode \|\| activeViewMode\(\)!=='fps'\) && gameOn && !editorOpen\)\)/.test(src), 'the player body renders in the fixed views');

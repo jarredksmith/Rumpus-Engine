@@ -17415,7 +17415,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 884 · 2026-07-05';
+const BUILD_VERSION = 'build 885 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18873,11 +18873,31 @@ function shoot(){
     raycaster.ray.at(2.2, muzzleWorld);
   }
   const spread = w.spread * (1 - adsBlend*0.8);   // aiming tightens spread up to 80%
-  const _vmA = (activeViewMode()!=='fps') ? _vAimNdc : null;   // build 874: shots resolve through the twin-stick cursor, not screen centre
+  // build 885: true twin-stick ballistics. Build 874 cast pellets from the CAMERA through the cursor
+  // with the weapon's screen-space spread — from a bird's-eye camera an enemy is a few pixels wide, so
+  // hip spread threw most pellets clean past a dead-on cursor ("the gun doesn't hurt enemies"). Now the
+  // cursor ray resolves WHAT you're aiming at (one raycast per shot), and every pellet fires from the
+  // player's chest toward it with an angular cone — walls between YOU and the target block shots too.
+  const _vmA = (activeViewMode()!=='fps') ? _vAimNdc : null;
+  let _vmOrig=null, _vmTgt=null;
+  if(_vmA){
+    _vmOrig = new THREE.Vector3(player.pos.x, player.pos.y-0.2, player.pos.z);
+    raycaster.setFromCamera(_vAimTmpNdc.set(_vmA.x, _vmA.y), camera);
+    const _cHits = raycaster.intersectObjects(rayTargets, true);
+    _vmTgt = _cHits.length ? _cHits[0].point.clone() : _vAimPt.clone();
+    if(_vmTgt.distanceToSquared(_vmOrig) < 1) _vmTgt.copy(_vmOrig).addScaledVector(new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw)), 4);   // cursor on top of yourself: shoot where you face
+  }
 
   for(let p=0; p<w.pellets; p++){
     const sx = (Math.random()-0.5)*spread, sy = (Math.random()-0.5)*spread;
-    raycaster.setFromCamera(new THREE.Vector2((_vmA?_vmA.x:0)+sx, (_vmA?_vmA.y:0)+sy), camera);
+    if(_vmA){   // build 885: pellet = body -> cursor target, spread as an angular cone (matches the fps feel at any camera height)
+      const _pd=_vmTgt.clone().sub(_vmOrig).normalize();
+      const _pu=(Math.abs(_pd.y)<0.99) ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+      const _pr=new THREE.Vector3().crossVectors(_pd,_pu).normalize();
+      const _pv=new THREE.Vector3().crossVectors(_pr,_pd);
+      _pd.addScaledVector(_pr, sx*0.6).addScaledVector(_pv, sy*0.6).normalize();   // 0.6: twin-stick assist — the cursor IS the aim, missing a dead-on cursor feels broken
+      raycaster.set(_vmOrig, _pd);
+    } else raycaster.setFromCamera(new THREE.Vector2(sx, sy), camera);
     const hits = raycaster.intersectObjects(rayTargets, true);
     let endPoint = raycaster.ray.at(120, new THREE.Vector3());
     if(hits.length){
