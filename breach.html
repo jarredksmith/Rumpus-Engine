@@ -9011,6 +9011,11 @@ let gameCfg = {
     dot: c.dot!=null ? !!c.dot : true,
     color: c.color || 'accent',           // 'accent' or a #rrggbb hex
   }; })(),
+  // build 874: per-level camera view — 'fps' (default) | 'top' (isometric twin-stick) | 'side' (2.5D side-scroller).
+  // viewDist 0 = the mode's own default distance; viewAxis picks the side-scroller's running direction.
+  view: (savedLevel && savedLevel.game && (savedLevel.game.view==='top'||savedLevel.game.view==='side')) ? savedLevel.game.view : 'fps',
+  viewDist: (savedLevel && savedLevel.game && savedLevel.game.viewDist!=null) ? +savedLevel.game.viewDist : 0,
+  viewAxis: (savedLevel && savedLevel.game && savedLevel.game.viewAxis==='z') ? 'z' : 'x',
 };
 
 // ---------- Player start (where you/co-op players spawn each run; authored in-editor) ----------
@@ -9604,6 +9609,7 @@ document.addEventListener('mousemove', e=>{
   // clamp per-event deltas as a final backstop in case a value slips past the spike test
   const mx = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, e.movementX));
   const my = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, e.movementY));
+  if(typeof activeViewMode==='function' && activeViewMode()!=='fps' && !drivingCar){ _vcX += mx; _vcY += my; return; }   // build 874: the pointer steers the twin-stick cursor, not the head
   const sens = ads ? ((typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].scope) ? SCOPE_SENS : ADS_SENS) : HIP_SENS;
   player.yaw   -= mx * sens;
   player.pitch -= my * sens;
@@ -13442,7 +13448,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x';
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -13728,6 +13734,45 @@ function buildAvatarVisual(g, cfg){
 function rebuildAvatars(){ for(const id in NET.players){ const rp=NET.players[id]; if(rp && rp.mesh) buildAvatarVisual(rp.mesh, rp.modelCfg); } if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar); if(typeof _ownAvatar!=='undefined' && _ownAvatar){ _ownAvatarKey=''; if(typeof ensureOwnAvatar==='function') ensureOwnAvatar(); }   /* refresh the live third-person body too */ _scheduleCharBroadcast(); }
 // ---- Third-person chase camera (toggle in the pause menu) ----
 let tpMode = (()=>{ try{ return localStorage.getItem('breach_tp')==='1'; }catch(e){ return false; } })();
+// ---- build 874: per-level camera views (top-down twin-stick / 2.5D side-scroll) ----
+// activeViewMode() is the single gate: it only reports 'top'/'side' during LIVE play (never in the
+// editor, cutscenes or menus), so every other camera/aim path stays untouched in those states.
+function activeViewMode(){
+  if(typeof gameCfg==='undefined' || !gameCfg.view || gameCfg.view==='fps') return 'fps';
+  if(!(typeof gameOn!=='undefined' && gameOn) || (typeof editorOpen!=='undefined' && editorOpen) || (typeof _cineActive!=='undefined' && _cineActive)) return 'fps';
+  return gameCfg.view;
+}
+let _vcX=0, _vcY=0, _vcActive=false, _sideLock=null;   // twin-stick cursor (px from screen centre) + side-scroll lane
+const _vAimNdc={ x:0, y:0 }, _vAimPt=new THREE.Vector3(), _vAimTmpNdc=new THREE.Vector2();
+// Steers the virtual cursor, aims the body at it, and (side mode) captures the lane. Runs every live
+// frame BEFORE the movement basis; uses last frame's camera pose for the unproject (1 frame, invisible).
+function _updateViewAim(){
+  const vm = activeViewMode();
+  if(vm==='fps'){
+    _sideLock=null;
+    if(_vcActive){ _vcActive=false; _vcX=0; _vcY=0; crosshairEl.style.left='50%'; crosshairEl.style.top='50%'; }
+    return;
+  }
+  _vcActive=true;
+  const W=innerWidth, H=innerHeight;
+  _vcX=Math.max(-W*0.48, Math.min(W*0.48, _vcX)); _vcY=Math.max(-H*0.48, Math.min(H*0.48, _vcY));
+  _vAimNdc.x=(_vcX*2)/W; _vAimNdc.y=-(_vcY*2)/H;
+  crosshairEl.style.left='calc(50% + '+_vcX.toFixed(0)+'px)'; crosshairEl.style.top='calc(50% + '+_vcY.toFixed(0)+'px)';
+  raycaster.setFromCamera(_vAimTmpNdc.set(_vAimNdc.x, _vAimNdc.y), camera);
+  const o=raycaster.ray.origin, d=raycaster.ray.direction;
+  const axis=(gameCfg.viewAxis==='z')?'z':'x';
+  if(vm==='side' && _sideLock==null) _sideLock=(axis==='x') ? player.pos.z : player.pos.x;
+  let t;
+  if(vm==='top'){ const py=player.pos.y-0.4; t=(Math.abs(d.y)>1e-4) ? (py-o.y)/d.y : 0; }               // chest-height plane
+  else if(axis==='x'){ t=(Math.abs(d.z)>1e-4) ? (_sideLock-o.z)/d.z : 0; }                              // the play plane itself
+  else { t=(Math.abs(d.x)>1e-4) ? (_sideLock-o.x)/d.x : 0; }
+  if(!(t>0.1 && t<400)) t=60;
+  _vAimPt.copy(o).addScaledVector(d, t);
+  const dx=_vAimPt.x-player.pos.x, dz=_vAimPt.z-player.pos.z;
+  player.yaw=Math.atan2(-dx, -dz);                                    // face the cursor (forward = (-sin,0,-cos))
+  if(vm==='top') player.pitch=0;                                      // shots resolve through the cursor ray, body stays level
+  else { const dh=Math.hypot(dx,dz)||1e-4; player.pitch=Math.max(-1.3, Math.min(1.3, Math.atan2(_vAimPt.y-(player.pos.y-0.2), dh))); }
+}
 const TP_DIST = 4.2, TP_HEIGHT = 0.55, TP_MIN = 1.1;   // chase distance back / lift / closest pull-in past walls
 let _sprintMode = 'hold';   // 'hold' = press Shift to run; 'toggle' = tap Shift to lock running (helps keyboards that ghost W+Shift+Space)
 try{ const v=localStorage.getItem('breach_sprint_mode'); if(v==='toggle'||v==='hold') _sprintMode=v; }catch(e){}
@@ -13908,7 +13953,7 @@ function ensureOwnAvatar(){
 }
 function updateOwnAvatar(dt){
   if(mountedTurret || drivingCar){ if(_ownAvatar) _ownAvatar.visible=false; return; }   // build 747: no third-person body while on a turret or driving (it would stand inside the car)
-  if(!(tpMode && gameOn && !editorOpen)){ if(_ownAvatar) _ownAvatar.visible=false; return; }
+  if(!((tpMode || activeViewMode()!=='fps') && gameOn && !editorOpen)){ if(_ownAvatar) _ownAvatar.visible=false; return; }   // build 874: top/side views show the body too
   const a=ensureOwnAvatar(); a.visible=true;
   attachAvatarGun(a, curWep, activeCharGrip(curWep));   // hold the model for the active weapon (swaps when you change guns); authored character grip wins over the personal map
   let footY = player.pos.y-EYE;   // group origin is at the feet; player.pos is the eye
@@ -15133,6 +15178,7 @@ function fireRocket(o, dir, by, auth, R, dmg){
 function fireRocketShot(){
   const o=new THREE.Vector3(); camera.getWorldPosition(o);
   const d=new THREE.Vector3(); camera.getWorldDirection(d); d.normalize();
+  if(activeViewMode()!=='fps'){ o.set(player.pos.x, player.pos.y-0.2, player.pos.z); d.copy(_vAimPt).sub(o).normalize(); }   // build 874: from the body, at the cursor point
   o.addScaledVector(d, 1.2);                 // spawn just ahead of the camera
   addShake(0.22); player.pitch += 0.02;      // chunky launch kick
   if(!WEAPONS.launcher.noMuzzle){ muzzle.intensity=8; flashMat.opacity=1; playFlipbook('muzzle', new THREE.Vector3(0,0,-0.05), 0.7, vmMuzzle); }   // build 684: per-weapon muzzle-flash toggle
@@ -17223,7 +17269,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 873 · 2026-07-05';
+const BUILD_VERSION = 'build 874 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18599,6 +18645,7 @@ function meleeAttack(wep){
   const RANGE = (wep && wep.reach) || MELEE_RANGE, DMG = (wep && wep.dmg) || MELEE_DMG;
   if(typeof tone==='function') tone({ freq:320, type:'sine', dur:0.07, vol:0.07, slideTo:150 });   // swing whoosh
   const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
+  if(activeViewMode()!=='fps') fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));   // build 874: punch toward the cursor
   const fh = Math.hypot(fwd.x, fwd.z) || 1;
   const px=player.pos.x, py=player.pos.y, pz=player.pos.z;
   const LP=(worldCfg && +worldCfg.launchPower)||1, KB=11*LP, UP=5*LP;
@@ -18671,7 +18718,7 @@ function shoot(){
   // The gun is drawn in the viewmodel overlay, so find where its barrel appears on screen and map that to a
   // world point a couple metres ahead — the world-space tracer then visibly emanates from the weapon.
   const muzzleWorld = new THREE.Vector3();
-  if(tpMode){
+  if(tpMode || activeViewMode()!=='fps'){
     tpMuzzleWorld(muzzleWorld);   // shared with the live tuning marker so the dot you align is exactly where the streak starts
   } else {
     vmMuzzle.getWorldPosition(muzzleWorld); muzzleWorld.project(vmCam);
@@ -18680,10 +18727,11 @@ function shoot(){
     raycaster.ray.at(2.2, muzzleWorld);
   }
   const spread = w.spread * (1 - adsBlend*0.8);   // aiming tightens spread up to 80%
+  const _vmA = (activeViewMode()!=='fps') ? _vAimNdc : null;   // build 874: shots resolve through the twin-stick cursor, not screen centre
 
   for(let p=0; p<w.pellets; p++){
     const sx = (Math.random()-0.5)*spread, sy = (Math.random()-0.5)*spread;
-    raycaster.setFromCamera(new THREE.Vector2(sx, sy), camera);
+    raycaster.setFromCamera(new THREE.Vector2((_vmA?_vmA.x:0)+sx, (_vmA?_vmA.y:0)+sy), camera);
     const hits = raycaster.intersectObjects(rayTargets, true);
     let endPoint = raycaster.ray.at(120, new THREE.Vector3());
     if(hits.length){
@@ -20803,8 +20851,11 @@ function loop(){
   pollGamepad(dt);   // controller input feeds the same flags as keyboard/mouse
   if(isTouch && !shopOpen && !choosingUpgrade){   // touch look (also drives the editor fly camera): applied here since there's no pointer lock on mobile
     const tsens = (ads||touchAds) ? (TOUCH_ADS_SENS*touchAdsMul) : (TOUCH_LOOK_SENS*touchLookMul);
+    if(typeof activeViewMode==='function' && activeViewMode()!=='fps'){ _vcX += touchLookDX*1.4; _vcY += touchLookDY*1.4; }   // build 874
+    else {
     player.yaw   -= touchLookDX * tsens;
     player.pitch  = Math.max(-1.5, Math.min(1.5, player.pitch - touchLookDY * tsens));
+    }
   }
   touchLookDX = 0; touchLookDY = 0;
   if(isTouch){ const tu=document.getElementById('touchUI'); if(tu){ const d=(gameOn && !shopOpen && !choosingUpgrade)?'block':'none'; if(tu.style.display!==d) tu.style.display=d; } }
@@ -20833,19 +20884,21 @@ function loop(){
   // weapon aim (build 494): pitch the held gun (and a spine/chest bone) toward the view so the gun and its tracer
   // point where you're actually aiming. The body only yaws, so without this the gun stays level. Local uses the
   // live pitch; remote players use their synced pitch. Runs after the mixer + seat re-pin.
-  if(_ownAvatar && tpMode) _aimAvatarGun(_ownAvatar, player.yaw, player.pitch);
+  if(_ownAvatar && (tpMode || activeViewMode()!=='fps')) _aimAvatarGun(_ownAvatar, player.yaw, player.pitch);
   for(const id in NET.players){ const rp=NET.players[id]; if(rp && rp.mesh) _aimAvatarGun(rp.mesh, rp.yaw||0, rp.pitch||0); }
 
   // aim-down-sights: smoothly blend toward aimed state, drive FOV + crosshair
   const adsTarget = (ads || padAds || touchAds || editorAimPreview) ? 1 : 0;
   adsBlend += (adsTarget - adsBlend) * Math.min(1, dt*14);
   if(Math.abs(adsBlend - adsTarget) < 0.002) adsBlend = adsTarget;
-  _scopedNow = !!(ads && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen);
+  _scopedNow = !!(ads && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen); if(_scopedNow && activeViewMode()!=='fps') _scopedNow=false;   // build 874: no optic tunnel from a bird's-eye camera
   _setScopeOverlay(_scopedNow);
   const hipFov = (worldCfg && worldCfg.fov) ? worldCfg.fov : BASE_FOV;
   const wantFov = hipFov + (adsFovLive - hipFov) * adsBlend;
   if(Math.abs(camera.fov - wantFov) > 0.01){ camera.fov = wantFov; camera.updateProjectionMatrix(); }
   crosshairEl.style.opacity = _scopedNow ? '0' : (1 - adsBlend*0.85).toFixed(2);
+
+  _updateViewAim();   // build 874: twin-stick cursor -> body yaw/pitch (no-op in first person)
 
   // look
   camera.rotation.order='YXZ';
@@ -20855,6 +20908,11 @@ function loop(){
   // movement relative to yaw
   const forward = new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
   const right = new THREE.Vector3(Math.cos(player.yaw),0,-Math.sin(player.yaw));
+  // build 874: in the fixed-camera views WASD is screen-relative, not facing-relative (the body faces
+  // the cursor). Top: W = up-screen (world -Z), D = right-screen (world +X). Side: only the lane axis.
+  const _vm874 = activeViewMode();
+  if(_vm874==='top'){ forward.set(0,0,-1); right.set(1,0,0); }
+  else if(_vm874==='side'){ if(gameCfg.viewAxis==='z'){ right.set(0,0,-1); } else { right.set(1,0,0); } forward.set(0,0,0); }
   const wish = new THREE.Vector3();
   let moveScale = 1;   // analog when using the stick, full when using keys
   const mvx = padMoveX || touchMoveX, mvz = padMoveZ || touchMoveZ;
@@ -20886,6 +20944,12 @@ function loop(){
   const sp = speedBase * (buffs.speed>0?1.4:1) * moveScale * run.speedMul;
   player.vel.x = wish.x * sp;
   player.vel.z = wish.z * sp;
+  // build 874: side-scroll lane hold — kill off-lane velocity and ease back onto the lane (knockback
+  // and slides can push off it; the lane is captured at deploy by _updateViewAim). Cars roam free.
+  if(_vm874==='side' && _sideLock!=null && !drivingCar){
+    if(gameCfg.viewAxis==='z'){ player.vel.x=0; player.pos.x += (_sideLock-player.pos.x)*Math.min(1, dt*10); }
+    else { player.vel.z=0; player.pos.z += (_sideLock-player.pos.z)*Math.min(1, dt*10); }
+  }
 
   // --- slide: tap crouch while sprinting + running on the ground ---
   const _sprinting = sprinting();
@@ -21150,6 +21214,24 @@ function loop(){
     } else { shake = 0; camera.rotation.z = 0; }
     if(tpMode && gameOn && !duelDead){ gun.visible=false; tpCameraPushback(); }   // third-person chase cam (first-person above is the default)
   }
+  // build 874: per-level camera views. Placed AFTER the branch ladder so it wins over first/third-person
+  // and the car chase cam; the turret seat, PvP killcam and cutscenes keep their own cameras.
+  { const _vmC=activeViewMode();
+    if(_vmC!=='fps' && !mountedTurret && !(duelDead && pvpMode())){
+      gun.visible=false;   // renderViewmodel() keys off this — no floating first-person gun overlay
+      const _t = drivingCar ? drivingCar.position : player.pos;
+      const _vd = +gameCfg.viewDist||0;
+      if(_vmC==='top'){
+        const D=Math.max(8, Math.min(80, _vd||26));
+        camera.position.set(_t.x, _t.y+D, _t.z+D*0.55);   // pulled toward +Z: ~61° tilt reads isometric, not map-flat
+        camera.lookAt(_t.x, _t.y, _t.z); camera.rotation.z=0;
+      } else {
+        const D=Math.max(6, Math.min(60, _vd||16)), _cy=_t.y+1.0;
+        if(gameCfg.viewAxis==='z') camera.position.set(_t.x+D, _cy, _t.z);
+        else camera.position.set(_t.x, _cy, _t.z+D);
+        camera.lookAt(_t.x, _cy, _t.z); camera.rotation.z=0;
+      }
+    } }
   updateOwnAvatar(dt);   // show + place the player's own body in third person (hidden otherwise)
   _updateMuzMarker();   // live gunfire-origin marker when tuning (third-person, opt-in)
 
@@ -22587,7 +22669,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color } },
+    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x' },
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -23071,7 +23153,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll;
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x';
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -24844,6 +24926,31 @@ function renderEditorFields(){
     ugLab.appendChild(ugCb); ugLab.appendChild(ugSp); bWav.appendChild(ugLab);
     hint(bWav, '', '2px 0 0').textContent = 'On: clearing a wave in solo lets you pick 1 of 3 upgrades. Off: waves flow straight through.';
     // build 672: hands / unarmed — turns BREACH into a fist-fight / adventure / puzzle base
+    // ---- build 874: per-level camera view ----
+    hint(bPly, '<b>Camera view</b> — how players see your level', '2px 0 4px');
+    { const _curView=(gameCfg.view==='top'||gameCfg.view==='side')?gameCfg.view:'fps';
+      const vRow=document.createElement('div'); vRow.className='row2';
+      const vBtn=(key,txt)=>{ const b=document.createElement('button'); b.textContent=txt; if(_curView===key){ b.style.background='rgba(var(--accent-rgb),0.30)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); gameCfg.view=key; _levelDirty=true; renderEditorFields(); }; return b; };
+      vRow.appendChild(vBtn('fps','First person')); vRow.appendChild(vBtn('top','Top-down')); vRow.appendChild(vBtn('side','Side-scroller')); bPly.appendChild(vRow);
+      if(_curView!=='fps'){
+        const w=document.createElement('div'); w.style.cssText='display:flex;align-items:center;gap:8px;margin:5px 0 3px;color:#9fe6cf;font-size:12px;';
+        const sp2=document.createElement('span'); sp2.textContent='Camera distance'; sp2.style.cssText='flex:0 0 110px;';
+        const rr=document.createElement('input'); rr.type='range'; rr.min=(_curView==='top')?'8':'6'; rr.max=(_curView==='top')?'80':'60'; rr.step='1'; rr.value=String(+gameCfg.viewDist || (_curView==='top'?26:16)); rr.style.cssText='flex:1 1 auto;accent-color:var(--accent);';
+        const nn=document.createElement('span'); nn.style.cssText='flex:0 0 34px;text-align:right;color:#cfeee2;'; nn.textContent=rr.value;
+        rr.addEventListener('pointerdown',()=>pushUndoSnapshot()); rr.oninput=()=>{ gameCfg.viewDist=+rr.value; nn.textContent=rr.value; _levelDirty=true; };
+        w.appendChild(sp2); w.appendChild(rr); w.appendChild(nn); bPly.appendChild(w);
+      }
+      if(_curView==='side'){
+        const aw=document.createElement('div'); aw.className='row2';
+        const aBtn=(key,txt)=>{ const b=document.createElement('button'); b.textContent=txt; if(((gameCfg.viewAxis==='z')?'z':'x')===key){ b.style.background='rgba(var(--accent-rgb),0.30)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); gameCfg.viewAxis=key; _sideLock=null; _levelDirty=true; renderEditorFields(); }; return b; };
+        aw.appendChild(aBtn('x','Lane runs east\u2013west')); aw.appendChild(aBtn('z','Lane runs north\u2013south')); bPly.appendChild(aw);
+      }
+      hint(bPly, '', '2px 0 8px').textContent = _curView==='top'
+        ? 'Twin-stick: WASD moves on the map, the mouse steers a cursor and shots hit whatever is under it. Cars keep their handling \u2014 instant chase levels.'
+        : (_curView==='side'
+          ? 'Side-scroller: A/D run along the lane, Space jumps, the mouse aims within the plane. Players are held on the lane they deploy on \u2014 build along it (ramps and stairs shine here).'
+          : 'Classic BREACH first-person. Players can still toggle third-person from the pause menu.');
+    }
     hint(bPly, '<b>Hands / unarmed</b>', '12px 0 4px');
     const _chk=(label, checked, on)=>{ const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;'; cb.onchange=()=>{ pushUndoSnapshot(); on(cb.checked); }; const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); bPly.appendChild(lab); return cb; };
     _chk('<b>Start unarmed</b> (fists only — punch, carry, no guns)', gameCfg.unarmed, v=>{ gameCfg.unarmed=v; renderEditorFields(); });
