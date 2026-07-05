@@ -8317,13 +8317,39 @@ function _trackMats(){
   const barrier=mk(0xb9bdc2,0.9);                                                        // concrete barrier base
   const screen=mk(0x9fd8ff,0.4); screen.transparent=true; screen.opacity=0.16; screen.depthWrite=false;   // clear catch-screen above it
   _trkM={ road, line, kerb, chk, barrier, screen };
+  _applyTrackCfg();   // build 886: bake any saved appearance into the first build
   return _trkM;
+}
+// build 886: per-level track appearance — road colour/roughness/texture, painted-line colour, kerb
+// stripe pair, barrier colour. Every piece shares _trkM, so mutating it restyles the whole course
+// live; worldCfg.track rides world through save/share/undo/MP like everything else. Absent = stock.
+function _applyTrackCfg(){
+  if(!_trkM) return;   // not built yet — _trackMats() calls back in when it is
+  const T=(typeof worldCfg!=='undefined' && worldCfg && worldCfg.track) || {};
+  const M=_trkM;
+  M.road.color.setHex(T.road!=null?(+T.road>>>0):0x24272c);
+  M.road.roughness=Math.max(0, Math.min(1, T.roadRough!=null?+T.roadRough:0.95));
+  const url=(T.roadTex||'');
+  if(url){ const t=loadTextureCached(url); if(t){ t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(Math.max(0.2, +T.roadTile||1), 1); t.needsUpdate=true; M.road.map=t; } }
+  else if(M.road.map){ M.road.map=null; }
+  M.road.needsUpdate=true;
+  M.line.color.setHex(T.line!=null?(+T.line>>>0):0xe8ecef); M.line.needsUpdate=true;
+  M.barrier.color.setHex(T.barrier!=null?(+T.barrier>>>0):0xb9bdc2); M.barrier.needsUpdate=true;
+  const ka=T.kerbA!=null?(+T.kerbA>>>0):0xd8402f, kb=T.kerbB!=null?(+T.kerbB>>>0):0xeef0f2;
+  try{
+    const c=document.createElement('canvas'); c.width=64; c.height=8; const g=c.getContext('2d');
+    const hx=(n)=>'#'+('000000'+(n>>>0).toString(16)).slice(-6);
+    g.fillStyle=hx(ka); g.fillRect(0,0,64,8); g.fillStyle=hx(kb); g.fillRect(32,0,32,8);
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping;
+    if(M.kerb.map && M.kerb.map.dispose) M.kerb.map.dispose();
+    M.kerb.map=t; M.kerb.needsUpdate=true;
+  }catch(e){}
 }
 function _buildTrackPiece(key){
   const def=TRACK_PIECES[key], M=_trackMats(), g=new THREE.Group();
   const segs = def.arc!=null ? Math.max(10, Math.round(def.arc*16)) : (def.rise ? 12 : 2);
   const half=TRACK_W/2, KW=0.9;   // kerb strip width along each edge
-  g.add(new THREE.Mesh(_trackRibbon(def, -half+KW,  half-KW, 0, TRACK_T,      segs, 0),      M.road));   // asphalt deck
+  g.add(new THREE.Mesh(_trackRibbon(def, -half+KW,  half-KW, 0, TRACK_T,      segs, 1/6),    M.road));   // asphalt deck (build 886: u = metres/6 so a road texture tracks the course; unused until a map is set)
   g.add(new THREE.Mesh(_trackRibbon(def, -half,    -half+KW, 0, TRACK_T+0.07, segs, 1/1.8), M.kerb));    // kerbs (striped, slightly proud)
   g.add(new THREE.Mesh(_trackRibbon(def,  half-KW,  half,    0, TRACK_T+0.07, segs, 1/1.8), M.kerb));
   const yl=TRACK_T+0.015;                                                                                 // painted edge lines (flat strips)
@@ -9375,6 +9401,7 @@ function skyStatus(msg, isErr){
 let SPEED, SPRINT, JUMP, GRAV, CROUCH_SPEED;   // live values derived from worldCfg
 function applyWorldCfg(){
   if(typeof _applyPaintCfg==='function') _applyPaintCfg();   // build 875: floor paint layers + splat
+  if(typeof _applyTrackCfg==='function') _applyTrackCfg();   // build 886: track appearance
   worldCfg.walk   = Math.max(2,  +worldCfg.walk   || DEFAULT_WORLD.walk);
   worldCfg.run    = Math.max(worldCfg.walk, +worldCfg.run || DEFAULT_WORLD.run);
   worldCfg.jump   = Math.max(0,  +worldCfg.jump   || DEFAULT_WORLD.jump);
@@ -17415,7 +17442,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 885 · 2026-07-05';
+const BUILD_VERSION = 'build 886 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26387,6 +26414,40 @@ function renderEditorFields(){
             wrow.appendChild(wb);
           }
           shapesHost.appendChild(wrow);
+        }
+        // ---- build 886: Track appearance — the shared course materials, saved with the level ----
+        if(_allTrk.length){
+          if(!worldCfg.track) worldCfg.track={};
+          const T=worldCfg.track;
+          const ah=document.createElement('div'); ah.className='hint'; ah.style.margin='9px 0 3px'; ah.innerHTML='<b>Track appearance</b> \u2014 restyles every placed piece';
+          shapesHost.appendChild(ah);
+          const _upd=()=>{ _applyTrackCfg(); if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+          const crow=document.createElement('div'); crow.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center;';
+          const colPick=(label, key, dflt)=>{ const w=document.createElement('label'); w.style.cssText='display:flex;align-items:center;gap:5px;color:#9fe6cf;font-size:11px;cursor:pointer;';
+            const ci=document.createElement('input'); ci.type='color'; ci.value='#'+(((T[key]!=null?+T[key]:dflt)>>>0).toString(16).padStart(6,'0').slice(-6)); ci.style.cssText='width:30px;height:22px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#0c1418;cursor:pointer;';
+            ci.addEventListener('pointerdown',()=>pushUndoSnapshot()); ci.oninput=()=>{ T[key]=parseInt(ci.value.slice(1),16); _upd(); };
+            const sp=document.createElement('span'); sp.textContent=label; w.appendChild(ci); w.appendChild(sp); crow.appendChild(w); };
+          colPick('Road','road',0x24272c); colPick('Lines','line',0xe8ecef); colPick('Kerb A','kerbA',0xd8402f); colPick('Kerb B','kerbB',0xeef0f2); colPick('Barrier','barrier',0xb9bdc2);
+          shapesHost.appendChild(crow);
+          const srow=document.createElement('label'); srow.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:11px;margin-top:5px;';
+          const ss=document.createElement('span'); ss.textContent='Road roughness'; ss.style.minWidth='92px';
+          const sr=document.createElement('input'); sr.type='range'; sr.min='0'; sr.max='1'; sr.step='0.05'; sr.value=String(T.roadRough!=null?T.roadRough:0.95); sr.style.cssText='flex:1;accent-color:var(--accent);';
+          sr.addEventListener('pointerdown',()=>pushUndoSnapshot()); sr.oninput=()=>{ T.roadRough=+sr.value; _upd(); };
+          srow.appendChild(ss); srow.appendChild(sr); shapesHost.appendChild(srow);
+          const ti=document.createElement('input'); ti.type='text'; ti.placeholder='https://\u2026/asphalt.jpg \u2014 road texture (optional)'; ti.value=T.roadTex||''; ti.style.cssText='width:100%;margin-top:5px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:11px;';
+          ti.onchange=()=>{ pushUndoSnapshot(); T.roadTex=ti.value.trim(); _upd(); renderEditorFields(); };
+          shapesHost.appendChild(ti);
+          { const th=document.createElement('div'); shapesHost.appendChild(th); renderTexSearch(th,(maps)=>{ pushUndoSnapshot(); T.roadTex=maps.map||''; _upd(); renderEditorFields(); }); }
+          if(T.roadTex){
+            const trow=document.createElement('label'); trow.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:11px;margin-top:5px;';
+            const ts=document.createElement('span'); ts.textContent='Texture tiles'; ts.style.minWidth='92px';
+            const tr2=document.createElement('input'); tr2.type='range'; tr2.min='0.2'; tr2.max='8'; tr2.step='0.2'; tr2.value=String(T.roadTile!=null?T.roadTile:1); tr2.style.cssText='flex:1;accent-color:var(--accent);';
+            tr2.addEventListener('pointerdown',()=>pushUndoSnapshot()); tr2.oninput=()=>{ T.roadTile=+tr2.value; _upd(); };
+            trow.appendChild(ts); trow.appendChild(tr2); shapesHost.appendChild(trow);
+          }
+          const rst=document.createElement('button'); rst.className='primBtn'; rst.style.cssText='margin-top:6px;padding:4px 10px;font-size:11px;'; rst.textContent='Reset to stock';
+          rst.onclick=()=>{ pushUndoSnapshot(); worldCfg.track=null; _applyTrackCfg(); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
+          shapesHost.appendChild(rst);
         }
       }
     }
