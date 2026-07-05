@@ -34,6 +34,6 @@ assert(h[idx(center, farCol)] === 0, 'cells beyond the radius stay flat');
 assert(/if\(terrainBrush\.on && terrainPointUnderPointer\(e\)\)\{ pushUndoSnapshot\(\); _brushStroke\(e\); _brushing = true;/.test(src), 'mousedown does not start a brush stroke');
 assert(/if\(_brushing\)\{ _brushStroke\(e\); editorDragMoved = true; return; \}/.test(src), 'mousemove does not continue the stroke');
 assert(/if\(_brushing\)\{ _brushing = false;/.test(src), 'mouseup does not end the stroke');
-assert(/Sculpt brush \(drag on the floor\)/.test(src), 'brush UI toggle missing');
+assert(/Terrain brush \\u2014 sculpt & paint \(drag on the floor\)/.test(src), 'brush UI toggle missing');   // build 875: renamed when Paint joined
 assert(/raycaster\.intersectObject\(floor, false\)/.test(src), 'terrainPointUnderPointer must raycast the floor mesh');
 done();

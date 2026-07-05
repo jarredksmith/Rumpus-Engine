@@ -6612,6 +6612,96 @@ const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), floorMat);
 floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
 scene.add(floor);
 
+// ---------- build 875: floor material painting (splat map) ----------
+// Paint up to THREE extra textures over the base floor (grass -> a soft-edged dirt path) with a brush.
+// One 256x256 RGBA canvas holds the blend weights (R/G/B = layers 1-3); the floor's own standard
+// material blends them in onBeforeCompile, so lighting/shadows/fog/tone-mapping are untouched.
+// Cheap by construction: no render targets, no extra draw calls — four texture fetches on one surface.
+const _PAINT_N = 256;
+const _paintCanvas = document.createElement('canvas'); _paintCanvas.width = _paintCanvas.height = _PAINT_N;
+const _paintCtx = _paintCanvas.getContext('2d');
+const _paintData = new Uint8ClampedArray(_PAINT_N*_PAINT_N*4);
+for(let i=3;i<_paintData.length;i+=4) _paintData[i]=255;   // opaque alpha; RGB weights start at 0
+const _paintImg = new ImageData(_paintData, _PAINT_N, _PAINT_N);   // shares _paintData's buffer
+const _paintTex = new THREE.CanvasTexture(_paintCanvas);
+_paintTex.flipY = false;   // canvas row 0 == uv v 0, so painting and the dataURL round-trip stay aligned
+_paintTex.minFilter = THREE.LinearFilter; _paintTex.magFilter = THREE.LinearFilter; _paintTex.generateMipmaps = false;
+const _paintWhite = new THREE.DataTexture(new Uint8Array([255,255,255,255]), 1, 1); _paintWhite.needsUpdate = true;
+const _paintU = {
+  uSplat:{ value:_paintTex }, uPL0:{ value:_paintWhite }, uPL1:{ value:_paintWhite }, uPL2:{ value:_paintWhite },
+  uPHas:{ value:new THREE.Vector3(0,0,0) }, uPRep:{ value:new THREE.Vector3(40,40,40) },
+};
+let _paintLoadedFor = null;   // which paint.map dataURL is currently uploaded (skips redundant reloads)
+floorMat.onBeforeCompile = (shader)=>{
+  Object.assign(shader.uniforms, _paintU);
+  // raw uv varying of our own: material.map's vUv carries the floor texture's tiling transform, ours must not
+  shader.vertexShader = 'varying vec2 vPaintUv;\n' + shader.vertexShader.replace('#include <begin_vertex>', 'vPaintUv = uv;\n#include <begin_vertex>');
+  shader.fragmentShader = 'varying vec2 vPaintUv;\nuniform sampler2D uSplat; uniform sampler2D uPL0; uniform sampler2D uPL1; uniform sampler2D uPL2; uniform vec3 uPHas; uniform vec3 uPRep;\n'
+    + shader.fragmentShader.replace('#include <map_fragment>', [
+      '#include <map_fragment>',
+      '{',
+      '  vec3 pw = texture2D(uSplat, vPaintUv).rgb * uPHas;',
+      '  if(pw.r>0.004) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPL0, vPaintUv*uPRep.x).rgb, pw.r);',
+      '  if(pw.g>0.004) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPL1, vPaintUv*uPRep.y).rgb, pw.g);',
+      '  if(pw.b>0.004) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(uPL2, vPaintUv*uPRep.z).rgb, pw.b);',
+      '}',
+    ].join('\n'));
+};
+function _paintLayerTexFor(url){ const t=loadTextureCached(url); if(t){ t.wrapS=t.wrapT=THREE.RepeatWrapping; t.needsUpdate=true; return t; } return _paintWhite; }
+// Sync uniforms + splat pixels from worldCfg.paint. Called from applyWorldCfg, so every path that loads
+// a level (boot autosave, editor load, share link, multiplayer host-adopt, undo) repaints correctly.
+function _applyPaintCfg(){
+  const p = (typeof worldCfg!=='undefined' && worldCfg) ? worldCfg.paint : null;
+  const has=_paintU.uPHas.value, rep=_paintU.uPRep.value;
+  for(let i=0;i<3;i++){
+    const L=(p && p.l && p.l[i]) || null, url=(L && L.t) || '';
+    _paintU['uPL'+i].value = url ? _paintLayerTexFor(url) : _paintWhite;
+    const on=url?1:0, r=Math.max(1, (L && +L.r) || 40);
+    if(i===0){ has.x=on; rep.x=r; } else if(i===1){ has.y=on; rep.y=r; } else { has.z=on; rep.z=r; }
+  }
+  const map=(p && p.map) || '';
+  if(map===_paintLoadedFor) return;
+  _paintLoadedFor = map;
+  if(!map){ _paintData.fill(0); for(let i=3;i<_paintData.length;i+=4) _paintData[i]=255; _paintCtx.putImageData(_paintImg,0,0); _paintTex.needsUpdate=true; return; }
+  const im=new Image();
+  im.onload=()=>{ if(_paintLoadedFor!==map) return;   // a newer level loaded while this image decoded
+    _paintCtx.clearRect(0,0,_PAINT_N,_PAINT_N); _paintCtx.drawImage(im,0,0,_PAINT_N,_PAINT_N);
+    const d=_paintCtx.getImageData(0,0,_PAINT_N,_PAINT_N).data; _paintData.set(d);
+    _paintCtx.putImageData(_paintImg,0,0); _paintTex.needsUpdate=true; };
+  im.src=map;
+}
+// One brush dab in world space. Weights ACCUMULATE per event, so a slow drag builds up like a real
+// airbrush; 'Soft edge' is the falloff band width, 'Flow' the per-dab strength; erase subtracts.
+function _paintStroke(cx, cz){
+  const br=terrainBrush, layer=Math.min(2, Math.max(0, br.paintLayer|0));
+  const span=ARENA*2, N=_PAINT_N;
+  const rPx=Math.max(1.5, (br.radius/span)*N);
+  const soft=Math.min(0.95, Math.max(0.05, br.soft!=null?br.soft:0.5));
+  const flow=Math.max(0.05, Math.min(1, br.flow!=null?br.flow:0.55));
+  const sgn=br.paintErase?-1:1;
+  const cpx=((cx+ARENA)/span)*N, cpz=((ARENA-cz)/span)*N;   // world -> texel (v=(A-z)/2A with flipY off)
+  const x0=Math.max(0, Math.floor(cpx-rPx)), x1=Math.min(N-1, Math.ceil(cpx+rPx));
+  const z0=Math.max(0, Math.floor(cpz-rPx)), z1=Math.min(N-1, Math.ceil(cpz+rPx));
+  const hard=1-soft;
+  for(let py=z0; py<=z1; py++){
+    for(let px=x0; px<=x1; px++){
+      const dd=Math.hypot(px-cpx, py-cpz)/rPx; if(dd>1) continue;
+      const f=(dd<=hard) ? 1 : (1-(dd-hard)/soft);
+      const i=(py*N+px)*4+layer;
+      _paintData[i]=_paintData[i] + sgn*f*flow*90;   // Uint8Clamped does the 0..255 clamp
+    }
+  }
+  _paintCtx.putImageData(_paintImg,0,0); _paintTex.needsUpdate=true;
+}
+// Stroke finished: persist the splat into the level (autosave / share / undo snapshots read worldCfg).
+function _paintCommit(){
+  if(typeof worldCfg==='undefined' || !worldCfg) return;
+  if(!worldCfg.paint) worldCfg.paint={ l:[{t:'',r:40},{t:'',r:40},{t:'',r:40}], map:'' };
+  worldCfg.paint.map=_paintCanvas.toDataURL('image/png');
+  _paintLoadedFor=worldCfg.paint.map;   // it's already on screen — don't reload it
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+}
+
 // grid glow (rebuilt with the arena so its extent + divisions track the size)
 let grid = null;
 
@@ -9252,6 +9342,7 @@ function skyStatus(msg, isErr){
 
 let SPEED, SPRINT, JUMP, GRAV, CROUCH_SPEED;   // live values derived from worldCfg
 function applyWorldCfg(){
+  if(typeof _applyPaintCfg==='function') _applyPaintCfg();   // build 875: floor paint layers + splat
   worldCfg.walk   = Math.max(2,  +worldCfg.walk   || DEFAULT_WORLD.walk);
   worldCfg.run    = Math.max(worldCfg.walk, +worldCfg.run || DEFAULT_WORLD.run);
   worldCfg.jump   = Math.max(0,  +worldCfg.jump   || DEFAULT_WORLD.jump);
@@ -9624,7 +9715,7 @@ renderer.domElement.addEventListener('mousedown', e=>{
   if(e.altKey){ const o=_pickPropAt(e); if(o){ e.preventDefault(); pushUndoSnapshot(); _dupPropForDrag(o); _altDupActive = true; editorDragMoved = true; return; } }   // Alt+drag = duplicate the prop under the cursor and drag the copy
   if(editorTopView) _marqueeStart(e); else editorDragLook = true;   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag)
 });
-addEventListener('mouseup', e=>{ if(e.button===0){ if(_marqueeOn){ _marqueeFinish(e); } if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); } if(_brushing){ _brushing = false; editorDragMoved = true; } editorDragLook = false; editorDragPan = false; const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } });
+addEventListener('mouseup', e=>{ if(e.button===0){ if(_marqueeOn){ _marqueeFinish(e); } if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); } if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); } editorDragLook = false; editorDragPan = false; const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } });
 
 // ---------- build 563: top-view marquee drag-select ----------
 // In top view, a left-drag on empty space draws a selection box and selects every prop whose center projects
@@ -17269,7 +17360,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 874 · 2026-07-05';
+const BUILD_VERSION = 'build 875 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24341,14 +24432,35 @@ function renderEditorFields(){
         const bw=document.createElement('div'); bw.style.cssText='margin-top:8px;border-top:1px solid #1e3a3a;padding-top:7px;';
         const bl=document.createElement('label'); bl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;';
         const bcb=document.createElement('input'); bcb.type='checkbox'; bcb.checked=terrainBrush.on; bcb.onchange=()=>{ terrainBrush.on=bcb.checked; renderEditorFields(); };
-        bl.appendChild(bcb); bl.appendChild(document.createTextNode('Sculpt brush (drag on the floor)')); bw.appendChild(bl);
+        bl.appendChild(bcb); bl.appendChild(document.createTextNode('Terrain brush \u2014 sculpt & paint (drag on the floor)')); bw.appendChild(bl);
         if(terrainBrush.on){
           const mrow=document.createElement('div'); mrow.style.cssText='display:flex;gap:6px;margin-top:6px;';
-          [['raise','Raise'],['lower','Lower'],['smooth','Smooth']].forEach(([m,lab])=>{ const mb=document.createElement('button'); mb.textContent=lab; mb.style.cssText='flex:1;padding:4px 6px;font-size:11px;cursor:pointer;'+(terrainBrush.mode===m?'background:#13494a;color:#cffaf0;border:1px solid #2aa;':''); mb.onclick=()=>{ terrainBrush.mode=m; renderEditorFields(); }; mrow.appendChild(mb); });
+          [['raise','Raise'],['lower','Lower'],['smooth','Smooth'],['paint','Paint']].forEach(([m,lab])=>{ const mb=document.createElement('button'); mb.textContent=lab; mb.style.cssText='flex:1;padding:4px 6px;font-size:11px;cursor:pointer;'+(terrainBrush.mode===m?'background:#13494a;color:#cffaf0;border:1px solid #2aa;':''); mb.onclick=()=>{ terrainBrush.mode=m; renderEditorFields(); }; mrow.appendChild(mb); });
           bw.appendChild(mrow);
           bw.appendChild(mkBSlider('Brush size', terrainBrush.radius, 2, 40, 1, v=>terrainBrush.radius=v));
-          bw.appendChild(mkBSlider('Strength', terrainBrush.strength, 0.1, 3, 0.1, v=>terrainBrush.strength=v));
-          const hint=document.createElement('div'); hint.className='hint'; hint.style.marginTop='5px'; hint.textContent='Dragging the floor now sculpts instead of selecting. Uncheck to move objects again. Physics catches up to the new shape when you start a game.'; bw.appendChild(hint);
+          if(terrainBrush.mode==='paint'){
+            // build 875: material painting — pick a layer, give it a texture, drag on the floor to paint
+            if(!worldCfg.paint) worldCfg.paint = { l:[{t:'',r:40},{t:'',r:40},{t:'',r:40}], map:'' };
+            const P=worldCfg.paint, li=Math.min(2, terrainBrush.paintLayer|0);
+            const lrow=document.createElement('div'); lrow.style.cssText='display:flex;gap:6px;margin-top:6px;';
+            for(let i=0;i<3;i++){ const lb=document.createElement('button'); lb.textContent='Layer '+(i+1)+((P.l[i]&&P.l[i].t)?' \u25cf':''); lb.style.cssText='flex:1;padding:4px 6px;font-size:11px;cursor:pointer;'+(li===i?'background:#13494a;color:#cffaf0;border:1px solid #2aa;':''); lb.onclick=((k)=>()=>{ terrainBrush.paintLayer=k; renderEditorFields(); })(i); lrow.appendChild(lb); }
+            bw.appendChild(lrow);
+            const L=P.l[li];
+            const ti=document.createElement('input'); ti.type='text'; ti.placeholder='https://\u2026/dirt.jpg \u2014 this layer\u2019s texture'; ti.value=L.t||''; ti.style.cssText='width:100%;margin-top:6px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:11px;';
+            ti.onchange=()=>{ pushUndoSnapshot(); L.t=ti.value.trim(); _applyPaintCfg(); _levelDirty=true; renderEditorFields(); };
+            bw.appendChild(ti);
+            { const sh=document.createElement('div'); bw.appendChild(sh); renderTexSearch(sh,(maps)=>{ pushUndoSnapshot(); L.t=maps.map||''; _applyPaintCfg(); _levelDirty=true; renderEditorFields(); }); }
+            bw.appendChild(mkBSlider('Tiles', L.r||40, 2, 120, 1, v=>{ L.r=v; _applyPaintCfg(); _levelDirty=true; }));
+            bw.appendChild(mkBSlider('Soft edge', terrainBrush.soft!=null?terrainBrush.soft:0.5, 0.05, 0.95, 0.05, v=>terrainBrush.soft=v));
+            bw.appendChild(mkBSlider('Flow', terrainBrush.flow!=null?terrainBrush.flow:0.55, 0.05, 1, 0.05, v=>terrainBrush.flow=v));
+            const er=document.createElement('label'); er.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;margin-top:6px;';
+            const ec=document.createElement('input'); ec.type='checkbox'; ec.checked=!!terrainBrush.paintErase; ec.onchange=()=>{ terrainBrush.paintErase=ec.checked; };
+            er.appendChild(ec); er.appendChild(document.createTextNode('Erase (remove this layer\u2019s paint)')); bw.appendChild(er);
+            const ph=document.createElement('div'); ph.className='hint'; ph.style.marginTop='5px'; ph.textContent='Give a layer a texture, then drag on the floor to paint it over the base ground \u2014 the soft edge blends it in (grass \u2192 dirt path). Up to 3 layers; later layers paint over earlier ones. Saves with the level.'; bw.appendChild(ph);
+          } else {
+            bw.appendChild(mkBSlider('Strength', terrainBrush.strength, 0.1, 3, 0.1, v=>terrainBrush.strength=v));
+            const hint=document.createElement('div'); hint.className='hint'; hint.style.marginTop='5px'; hint.textContent='Dragging the floor now sculpts instead of selecting. Uncheck to move objects again. Physics catches up to the new shape when you start a game.'; bw.appendChild(hint);
+          }
         }
         tb.appendChild(bw);
         b.appendChild(tb); } }
@@ -26552,7 +26664,7 @@ function groundPointUnderPointer(e){
   return raycaster.ray.intersectPlane(_groundPlane, p) ? p : null;
 }
 // ---- Terrain sculpt brush (editor): drag on the terrain to raise / lower / smooth it ----
-let terrainBrush = { on:false, mode:'raise', radius:12, strength:0.6 };
+let terrainBrush = { on:false, mode:'raise', radius:12, strength:0.6, paintLayer:0, soft:0.5, flow:0.55, paintErase:false };   // build 875: + material painting
 let _brushing = false;
 // Pure: modify height grid h (N*N, spanning [-ARENA,ARENA] on both axes) within `radius` of world (cx,cz).
 // raise/lower add or subtract amount*falloff; smooth blends each cell toward its 4-neighbour average.
@@ -26607,6 +26719,10 @@ function _ensureTerrainGrid(){
 // One brush dab at the pointer; returns true if it landed on the terrain (so the drag is swallowed).
 function _brushStroke(e){
   if(!terrainBrush.on || typeof worldCfg==='undefined') return false;
+  if(terrainBrush.mode==='paint'){   // build 875: texture painting works on a flat floor too — no height grid needed
+    const hitP = terrainPointUnderPointer(e); if(!hitP) return false;
+    _paintStroke(hitP.x, hitP.z); return true;
+  }
   _ensureTerrainGrid();
   const hit = terrainPointUnderPointer(e); if(!hit) return false;
   const t = worldCfg.terrain;
