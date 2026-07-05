@@ -11154,6 +11154,17 @@ function refreshWaterfalls(){
   waterfallFx.length=0;
   for(let i=0;i<waterfalls.length;i++){ const g=buildWaterfallGroup(waterfalls[i]); g.userData.fallIdx=i; scene.add(g); waterfallFx.push(g); }
 }
+// build 873: BOOT-RESTORE GAP — the startup path fills every zone array straight from the browser
+// autosave (savedLevel), but nothing ever built their scene visuals: after ANY page refresh, water
+// surfaces, waterfalls, fire flames and the editor's death/jump-pad/ladder markers were simply not
+// there until a panel edit forced a rebuild. The levels still WORKED (physics reads the arrays, not
+// the meshes) which is exactly why this hid so long. Build them once, now that all builders exist.
+if(waterZones.length) refreshWaterZones();
+if(waterfalls.length) refreshWaterfalls();
+if(fireZones.length) refreshFireZones();
+if(deathZones.length) refreshDeathZoneMarkers();
+if(jumpPads.length) refreshJumpPadMarkers();
+if(ladders.length) refreshLadderMarkers();
 function addWaterfall(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)};
   const by=(typeof terrainHeightAt==='function')?terrainHeightAt(_dp.x,_dp.z):0;
   waterfalls.push(_migrateWaterfall({ x:_dp.x, z:_dp.z, y:+(by+8).toFixed(2), h:8, w:6 }));
@@ -17212,7 +17223,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 872 · 2026-07-04';
+const BUILD_VERSION = 'build 873 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
