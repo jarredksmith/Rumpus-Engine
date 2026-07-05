@@ -17365,7 +17365,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 877 · 2026-07-05';
+const BUILD_VERSION = 'build 878 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28126,6 +28126,29 @@ const HELP_TOPICS = [
   +'6. <b>Gameplay tab</b> → Objective <b>Puzzle</b> (no enemies) + a goal text.<br>'
   +'7. Optional: an NPC with <b>Dialogue</b> lines that hint where the key is.<br>'
   +'8. <code>P</code>: find key → unlock the vault → claim the prize → MISSION COMPLETE. Chain more signals for bigger puzzles.' },
+ { id:'tut-topdown', title:'Tutorial: top-down shooter', example:'topdown', html:
+   'Turn BREACH into a twin-stick shooter (build 874\u2019s camera views):<br><br>'
+  +'1. <b>Gameplay tab</b> \u2192 Player options \u2192 <b>Camera view: Top-down</b>. Set Camera distance \u2248 30.<br>'
+  +'2. Build streets: Boxes as city blocks (scale tall with <code>R</code>), leave lanes between them.<br>'
+  +'3. Scatter crates for cover; add a <b>drivable car</b> (any box + the Vehicle fold) \u2014 cars keep full handling from above.<br>'
+  +'4. Objective <b>Eliminate</b>, win after N waves.<br>'
+  +'5. <code>P</code>: WASD moves on the map, the mouse steers the cursor \u2014 you shoot whatever is under it. Hop in the car to reposition between waves.' },
+ { id:'tut-side', title:'Tutorial: 2.5D side-scroller', example:'sidescroller', html:
+   'A platformer lane out of ramps, stairs and glass (builds 871 + 874):<br><br>'
+  +'1. <b>Gameplay tab</b> \u2192 Player options \u2192 <b>Camera view: Side-scroller</b>, lane <i>east\u2013west</i>.<br>'
+  +'2. Build ALONG one line: the player is held on the lane they deploy on.<br>'
+  +'3. Climb with <b>+ Stairs</b> and <b>+ Ramp</b> (rotate 90\u00b0 so they rise along the lane), platforms from Boxes \u2014 gaps of 3\u20134m are jumpable.<br>'
+  +'4. Glass bridges: a thin Box + Material \u2192 <b>Opacity</b> \u2248 0.35 with high Shininess. Still solid.<br>'
+  +'5. Finish with a prize: Mechanism (E&nbsp;Activate, Once) + Signals \u2192 when <b>Interacted</b> \u2192 <b>Win level</b>; Objective <b>Puzzle</b>.<br>'
+  +'6. <code>P</code>: A/D run, Space jumps, the mouse aims in the plane.' },
+ { id:'tut-landscape', title:'Tutorial: living landscape', example:'landscape', html:
+   'Terrain + paint + scatter + water, composed (builds 856\u2013877):<br><br>'
+  +'1. <b>World tab</b> \u2192 Terrain \u2192 <b>Generate</b> gentle hills (Height \u2248 5).<br>'
+  +'2. Terrain brush \u2192 <b>Lower</b> \u2014 sink a bowl for a pond; add a <b>Water zone</b> in it and a <b>Waterfall</b> at its edge (Zones + water section).<br>'
+  +'3. Brush \u2192 <b>Paint</b>: give Layer 1 a dirt texture and drag a soft-edged path through the grass.<br>'
+  +'4. Brush \u2192 <b>Scatter</b>: pines from tinted Cones over Cylinder trunks (or searched tree models), boulders from grey Spheres.<br>'
+  +'5. This example paints its own textures (tiny generated canvases) so it loads with zero downloads \u2014 swap in Poly&nbsp;Haven textures any time.<br>'
+  +'6. <code>P</code> and follow the dirt path to the falls.' },
  { id:'share', title:'Save & share', html:
    '<b style="color:#eafff7">Save tab</b>:<br><br>'
   +'· <b>Save/load .json</b> — your level as a file (also autosaved in the browser).<br>'
@@ -28352,6 +28375,101 @@ function _helpBuildExample(kind){
     if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
     gameCfg.objective='puzzle'; gameCfg.goalText='Recover the idol from the locked vault.'; gameCfg.winText='The idol is yours. The Curator nods approvingly.';
     if(typeof flashToast==='function') flashToast('Puzzle room loaded — press P: find the key, open the vault, claim the idol');
+  } else if(kind==='topdown'){
+    // build 878: a top-down twin-stick city block — streets of tall boxes, crates for cover, a car to commandeer
+    const _tint=(o,c)=>{ if(typeof applyPropColor==='function') applyPropColor(o, c); };
+    let s=20260705; const rnd=()=>{ s=(s*1103515245+12345)&0x7fffffff; return s/0x7fffffff; };
+    const PAL=[0x2c3540, 0x3a4652, 0x24303a, 0x455163, 0x384250];
+    for(let gx=-2; gx<=2; gx++) for(let gz=-2; gz<=2; gz++){
+      if(Math.abs(gx)<=0 && Math.abs(gz)<=0) continue;   // the spawn plaza stays open
+      const bx=gx*20 + (rnd()-0.5)*3, bz=gz*20 + (rnd()-0.5)*3;
+      const w=7+rnd()*4, d=7+rnd()*4, h=5+rnd()*8;
+      spawnProp('box', [bx, 0, bz, 0, (rnd()-0.5)*0.16, 0, w, h, d], (o)=>_tint(o, PAL[(rnd()*PAL.length)|0]));
+    }
+    for(let i=0;i<12;i++){ const a=rnd()*Math.PI*2, r=12+rnd()*30;
+      spawnProp('box', [Math.cos(a)*r, 0, Math.sin(a)*r, 0, rnd()*Math.PI, 0, 1.6+rnd(), 1.2+rnd()*0.8, 1.6+rnd()], (o)=>_tint(o, 0x6b5136)); }
+    spawnProp('box', [6, 0, 5, 0, 0, 0, 1.9, 1.1, 4.4], (o)=>{ _tint(o, 0xff4757);
+      vehicleApply(o, { maxSpeed:34, accel:20, turn:150, reverse:9, grip:7, latG:2.6, boost:1.5, brakeLights:true, headlights:true }); });
+    gameCfg.view='top'; gameCfg.viewDist=32;
+    gameCfg.objective='eliminate'; gameCfg.mode='random'; gameCfg.winWaves=3;
+    if(typeof worldCfg!=='undefined' && (+worldCfg.arena||0) < 90){ worldCfg.arena=90; if(typeof applyWorldCfg==='function') applyWorldCfg(); }
+    if(typeof flashToast==='function') flashToast('Top-down city loaded \u2014 press P: WASD moves, the mouse aims the cursor (3 waves)');
+  } else if(kind==='sidescroller'){
+    // build 878: a 2.5D ascent along the east-west lane — stairs, a jump gap with a ring, a ramp,
+    // a glass bridge (871's opacity) and a beacon that wins the level. All at z=0: the deploy lane.
+    const _tint=(o,c)=>{ if(typeof applyPropColor==='function') applyPropColor(o, c); };
+    const _glass=(o)=>{ _tint(o, 0xbfe4ff); if(typeof applyPropShine==='function') applyPropShine(o, 0.05, 0.6); if(typeof applyPropOpacity==='function') applyPropOpacity(o, 0.35); };
+    spawnProp('box',   [3, 0, 0, 0, 0, 0, 4, 0.4, 6], (o)=>_tint(o, 0x2c3540));                     // start pad
+    spawnProp('stairs',[9, 0, 0, 0, -Math.PI/2, 0, 4, 2, 6], (o)=>_tint(o, 0x455163));              // climbs to y=2 (rises along +X)
+    spawnProp('box',   [15, 0, 0, 0, 0, 0, 5, 2, 5], (o)=>_tint(o, 0x384250));                      // platform A (top 2)
+    spawnProp('torus', [19.5, 2.2, 0, 0, 0, Math.PI/2, 5, 5, 5], (o)=>_tint(o, 0xffd166));          // a standing ring over the gap — jump through it
+    spawnProp('box',   [23, 0, 0, 0, 0, 0, 4, 3, 4], (o)=>_tint(o, 0x384250));                      // platform B (top 3) — a 3m gap jump
+    spawnProp('box',   [27.5, 0, 0, 0, 0, 0, 5, 3, 4], (o)=>_tint(o, 0x2c3540));                    // ramp footing
+    spawnProp('wedge', [27.5, 3, 0, 0, -Math.PI/2, 0, 4, 2, 6], (o)=>_tint(o, 0x455163));           // ramp 3 -> 5
+    spawnProp('box',   [35, 4.6, 0, 0, 0, 0, 8, 0.4, 3], _glass);                                   // the glass bridge (top 5)
+    spawnProp('box',   [43, 0, 0, 0, 0, 0, 6, 5, 6], (o)=>_tint(o, 0x384250));                      // summit (top 5)
+    spawnProp('dome',  [43, 0, 9, 0, 0, 0, 11, 6, 11], (o)=>_tint(o, 0x24303a));                    // skyline backdrop behind the lane
+    spawnProp('cone',  [43, 5, 0, 0, 0, 0, 1.2, 2.4, 1.2], (o)=>{ _tint(o, 0xffd166);               // the beacon
+      xaApply(o, { trig:'interact', mode:'once', my:1.2, dur:0.9 });
+      o.userData.signals=[{ when:'interacted', do:'win' }];
+      if(typeof applyPropEmissive==='function') applyPropEmissive(o, 0xffd166, 1.2);
+    });
+    gameCfg.view='side'; gameCfg.viewAxis='x'; gameCfg.viewDist=16;
+    gameCfg.objective='puzzle'; gameCfg.goalText='Reach the beacon at the top of the ascent.'; gameCfg.winText='Summit claimed. The beacon is yours.';
+    if(typeof flashToast==='function') flashToast('2.5D ascent loaded \u2014 press P: A/D run, Space jumps, mouse aims. Head east!');
+  } else if(kind==='landscape'){
+    // build 878: a living landscape — sculpted hills, a painted dirt path (self-generated textures, zero
+    // downloads), pine trees + boulders from primitives (instanced: basically free), a pond and a waterfall.
+    const _tint=(o,c)=>{ if(typeof applyPropColor==='function') applyPropColor(o, c); };
+    let s=97; const rnd=()=>{ s=(s*1103515245+12345)&0x7fffffff; return s/0x7fffffff; };
+    const _exTex=(base, flecks, seed)=>{ const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
+      x.fillStyle=base; x.fillRect(0,0,64,64); let q=seed; const r2=()=>{ q=(q*1103515245+12345)&0x7fffffff; return q/0x7fffffff; };
+      for(let i=0;i<460;i++){ x.fillStyle=flecks[i%flecks.length]; x.globalAlpha=0.22+r2()*0.4; x.fillRect(r2()*64, r2()*64, 0.7+r2()*1.8, 0.7+r2()*1.8); }
+      x.globalAlpha=1; return c.toDataURL('image/png'); };
+    // hills, then sink the pond bowl before anything is placed on the surface
+    worldCfg.terrain = { seg:48, amp:5, freq:3, seed:20260705, h:generateTerrain(48, 5, 3, 20260705) };
+    for(let i=0;i<3;i++) _terrainPaint(worldCfg.terrain.h, 49, ARENA, 26, -18, 14, 1.3, 'lower');
+    setTerrainFromCfg(true);
+    // grass base + a painted dirt path winding to the pond
+    worldCfg.floorColor=0x53773f; worldCfg.floorTex=_exTex('#3e6b2f', ['#4e7d3a','#35592a','#5d8a45','#2f4f26'], 11);
+    worldCfg.floorTileU=48; worldCfg.floorTileV=48;
+    worldCfg.paint = { l:[{ t:_exTex('#6b5136', ['#7d6141','#59422c','#8a6d4a','#4e3a26'], 23), r:48 },{ t:'', r:40 },{ t:'', r:40 }], map:'' };
+    if(typeof applyWorldCfg==='function') applyWorldCfg();
+    { const keep={ radius:terrainBrush.radius, soft:terrainBrush.soft, flow:terrainBrush.flow, layer:terrainBrush.paintLayer, erase:terrainBrush.paintErase };
+      terrainBrush.radius=4.5; terrainBrush.soft=0.6; terrainBrush.flow=1; terrainBrush.paintLayer=0; terrainBrush.paintErase=false;
+      for(let t=0;t<=1;t+=0.04){ const px=t*24 + Math.sin(t*5)*4, pz=6 - t*22 + Math.cos(t*4)*3; _paintStroke(px, pz); _paintStroke(px, pz); }
+      terrainBrush.radius=keep.radius; terrainBrush.soft=keep.soft; terrainBrush.flow=keep.flow; terrainBrush.paintLayer=keep.layer; terrainBrush.paintErase=keep.erase;
+      if(typeof _paintCommit==='function') _paintCommit();
+    }
+    // pines (cone over trunk) + boulders, kept off the path corridor and out of the pond
+    for(let i=0;i<22;i++){
+      let px, pz, tries=0;
+      do{ px=(rnd()-0.5)*116; pz=(rnd()-0.5)*116; tries++; }
+      while(tries<20 && (Math.hypot(px-26, pz+18)<16 || (px>-6 && px<30 && pz>-20 && pz<12)));
+      const py=(typeof terrainHeightAt==='function') ? terrainHeightAt(px, pz) : 0;
+      const k=0.8+rnd()*0.7, rot=rnd()*Math.PI;
+      spawnProp('cylinder', [px, py, pz, 0, rot, 0, 0.45*k, 1.5*k, 0.45*k], (o)=>_tint(o, 0x5a4028));
+      spawnProp('cone', [px, py+1.1*k, pz, 0, rot, 0, 2.3*k, 3.4*k, 2.3*k], (o)=>_tint(o, [0x2f6b33,0x3c7a3a,0x28582c][(rnd()*3)|0]));
+    }
+    for(let i=0;i<6;i++){ const a=rnd()*Math.PI*2, r=18+rnd()*36, px=Math.cos(a)*r, pz=Math.sin(a)*r;
+      const py=(typeof terrainHeightAt==='function') ? terrainHeightAt(px, pz) : 0; const k=0.9+rnd()*1.4;
+      spawnProp('sphere', [px, py-0.5*k, pz, 0, rnd()*Math.PI, 0, 2*k, 1.3*k, 2*k], (o)=>{ _tint(o, 0x7a7f85); if(typeof applyPropShine==='function') applyPropShine(o, 0.95, 0.05); }); }
+    // the pond in its bowl + a waterfall feeding it
+    waterZones.push(_migrateWaterZone({ x:26, z:-18, r:11, y:-3, h:2.6, color:0x14586e, op:0.72, wave:1 }));
+    if(typeof refreshWaterZones==='function') refreshWaterZones();
+    waterfalls.push(_migrateWaterfall({ x:26, z:-28.5, y:4.5, h:7, w:5, yaw:0, pool:1.25, spd:1 }));
+    if(typeof refreshWaterfalls==='function') refreshWaterfalls();
+    // the idol on the far bank, by the falls
+    { const px=32.5, pz=-27, py=(typeof terrainHeightAt==='function') ? terrainHeightAt(px, pz) : 0;
+      spawnProp('cone', [px, py, pz, 0, 0, 0, 1, 1.9, 1], (o)=>{ _tint(o, 0xffd166);
+        xaApply(o, { trig:'interact', mode:'once', my:0.9, dur:0.8 });
+        o.userData.signals=[{ when:'interacted', do:'win' }];
+        if(typeof applyPropEmissive==='function') applyPropEmissive(o, 0xffd166, 1);
+      }); }
+    gameCfg.view='fps'; gameCfg.objective='puzzle';
+    gameCfg.goalText='Follow the dirt path to the falls and claim the golden idol.';
+    gameCfg.winText='The glade keeps its secret no longer.';
+    if(typeof flashToast==='function') flashToast('Landscape loaded \u2014 press P and follow the dirt path to the falls');
   }
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
   if(typeof renderEditorFields==='function') renderEditorFields();
