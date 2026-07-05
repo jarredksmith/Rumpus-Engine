@@ -6632,6 +6632,10 @@ const _paintU = {
   uPHas:{ value:new THREE.Vector3(0,0,0) }, uPRep:{ value:new THREE.Vector3(40,40,40) },
 };
 let _paintLoadedFor = null;   // which paint.map dataURL is currently uploaded (skips redundant reloads)
+// build 877: brush-cursor state, declared here (well above the render loop's first synchronous tick)
+// because the loop's leak-guard reads it every frame — a later `let` would be a boot-time TDZ crash.
+let _brushRingGrp=null, _brushRingOuter=null, _brushRingInner=null;
+const _BRUSH_RING_COL = { raise:0x38f5b5, lower:0xff8a5c, smooth:0xd6c05a, paint:0x36c6ff, scatter:0x7ddb6a };
 floorMat.onBeforeCompile = (shader)=>{
   Object.assign(shader.uniforms, _paintU);
   // raw uv varying of our own: material.map's vUv carries the floor texture's tiling transform, ours must not
@@ -9666,6 +9670,7 @@ addEventListener('pagehide', ()=>{ try{ if(drivingCar && typeof exitCar==='funct
 document.addEventListener('mousemove', e=>{
   if(radialOpen){ radialMove(e.movementX, e.movementY); return; }
   if(editorOpen){
+    if(typeof _updateBrushRing==='function') _updateBrushRing(e);   // build 877: live brush cursor
     if(_brushing){ _brushStroke(e); editorDragMoved = true; return; }    // painting the terrain
     if(gizmoDrag){ gizmoDragMove(e); editorDragMoved = true; return; }   // dragging an axis handle
     if(_altDupActive){ if(_altDup){ const gp = groundPointUnderPointer(e); if(gp){ _altDup.position.x = gp.x; _altDup.position.z = gp.z; } } editorDragMoved = true; return; }   // Alt-drag: move the fresh duplicate under the cursor
@@ -17360,7 +17365,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 876 · 2026-07-05';
+const BUILD_VERSION = 'build 877 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20920,6 +20925,7 @@ function loop(){
   }
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
   if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
   if(_cineAvatar && _cineAvatar.visible && !editorOpen && !_cineActive){ _hideCineAvatar(); }   // editor authoring body never lingers into play
@@ -26692,6 +26698,38 @@ let terrainBrush = { on:false, mode:'raise', radius:12, strength:0.6, paintLayer
 // Scattered props are ORDINARY props — select, move, delete, serialize and undo like anything placed by hand.
 let scatterBrush = { slots:[null,null,null], slot:0, density:2, jitter:0.35 };
 let _scatLast = null;   // last dab centre: spaces dabs out along a drag (reset on mouse-up)
+// build 877: a live brush cursor — you can finally SEE the tool before committing a stroke. The outer
+// ring is the brush radius; the inner ring marks where paint is still full-strength (the hard core
+// inside the soft edge) or the scatter dab spacing. depthTest off so it reads on slopes and through
+// props; the colour follows the mode. Built lazily, hidden the instant the editor closes or brush is off.
+function _ensureBrushRing(){
+  if(_brushRingGrp) return _brushRingGrp;
+  const mk=(op)=>{ const m=new THREE.Mesh(new THREE.RingGeometry(0.955, 1, 56),
+    new THREE.MeshBasicMaterial({ color:0x38f5b5, transparent:true, opacity:op, side:THREE.DoubleSide, depthWrite:false, depthTest:false }));
+    m.rotation.x=-Math.PI/2; m.renderOrder=6; return m; };
+  _brushRingGrp=new THREE.Group(); _brushRingGrp.visible=false;
+  _brushRingOuter=mk(0.9); _brushRingInner=mk(0.45);
+  _brushRingGrp.add(_brushRingOuter); _brushRingGrp.add(_brushRingInner);
+  scene.add(_brushRingGrp);
+  return _brushRingGrp;
+}
+function _updateBrushRing(e){
+  if(!(typeof editorOpen!=='undefined' && editorOpen) || !terrainBrush.on){ if(_brushRingGrp) _brushRingGrp.visible=false; return; }
+  const hit=terrainPointUnderPointer(e);
+  const g=_ensureBrushRing();
+  if(!hit){ g.visible=false; return; }
+  g.visible=true;
+  g.position.set(hit.x, hit.y+0.06, hit.z);   // ride the sculpted surface, not y=0
+  const r=Math.max(0.5, terrainBrush.radius);
+  _brushRingOuter.scale.set(r, r, 1);
+  const col=_BRUSH_RING_COL[terrainBrush.mode]||0x38f5b5;
+  _brushRingOuter.material.color.setHex(col); _brushRingInner.material.color.setHex(col);
+  let inner=0;
+  if(terrainBrush.mode==='paint') inner=r*(1-Math.min(0.95, Math.max(0.05, terrainBrush.soft!=null?terrainBrush.soft:0.5)));
+  else if(terrainBrush.mode==='scatter') inner=r*0.55;
+  _brushRingInner.visible = inner>0.3;
+  if(inner>0.3) _brushRingInner.scale.set(inner, inner, 1);
+}
 function _scatterDab(cx, cz){
   const live = scatterBrush.slots.filter(s=>s && s.src);
   if(!live.length) return;
