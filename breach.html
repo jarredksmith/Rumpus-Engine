@@ -6294,6 +6294,12 @@ let _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
 // lands within 6s of an upshift marks the climb as failed and doubles the required good streak
 // (3s → 6s → 12s → 24s); 45s of stability at any step forgives the backoff so scene changes stay responsive.
 let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
+// build 883: MSAA is its own LADDER RUNG, shed before any resolution drop and re-armed only as the very
+// last climb. Build 880 spaced the probes out but never stopped them — on a GPU that simply can't afford
+// step-0 MSAA, the 45s forgiveness restarted the cycle and the game dipped every backoff period, forever
+// ("FPS is jittering again for no reason"). Three failed re-arms now lock MSAA off for the session:
+// the machine settles at full-resolution-no-MSAA and is never probed again.
+let _msaaOn=true, _msaaFails=0;
 const ADAPT_ENABLED_DEFAULT = true;   // build 810: on by default everywhere (was touch-only) — desktop laptops need the relief too; opt out via the setting
 let _adaptOn = ADAPT_ENABLED_DEFAULT;
 try{ const v=localStorage.getItem('breach_adaptres'); if(v==='on') _adaptOn=true; else if(v==='off') _adaptOn=false; }catch(e){}
@@ -6305,11 +6311,18 @@ function _adaptResTick(frameMs, now){
   if(_adaptN < 8){ _adaptAcc=0; _adaptN=0; return; }   // need a real sample
   const avg = _adaptAcc/_adaptN; _adaptAcc=0; _adaptN=0;
   if(now < _adaptCool) return;            // settling after a change
-  if(avg > 20 && _prStepI < _PR_STEPS.length-1){       // worse than ~50fps -> downshift now
+  if(avg > 20 && _prStepI===0 && _msaaOn){             // build 883: first relief is the cheap one — drop the 4x MSAA, keep full resolution
+    if(_adaptUpAt>0 && now - _adaptUpAt < 6000){ _adaptUpNeed = Math.min(48, _adaptUpNeed*2); _msaaFails++; }   // a re-arm that failed this fast counts a strike
+    _msaaOn=false; _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;   // no _applyPixelRatio: the post pipeline swaps targets on its own
+  } else if(avg > 20 && _prStepI < _PR_STEPS.length-1){   // still slow -> now trade resolution
     if(_adaptUpAt>0 && now - _adaptUpAt < 6000) _adaptUpNeed = Math.min(48, _adaptUpNeed*2);   // build 880: that climb failed — retry later, not sooner (guard: a session's FIRST downshift is not a failed climb)
     _prStepI++; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;
-  } else if(avg < 17 && _prStepI > 0){                 // better than ~58fps -> bank headroom, then upshift
-    if(++_adaptGood >= _adaptUpNeed){ _prStepI--; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; _adaptUpAt=now; _adaptShiftAt=now; }
+  } else if(avg < 17 && (_prStepI > 0 || (!_msaaOn && _msaaFails < 3))){   // headroom -> climb; MSAA is the final rung, and 3 failed re-arms lock it off for the session
+    if(++_adaptGood >= _adaptUpNeed){
+      if(_prStepI > 0){ _prStepI--; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); }
+      else _msaaOn=true;
+      _adaptGood=0; _adaptCool=now+900; _adaptUpAt=now; _adaptShiftAt=now;
+    }
   } else { _adaptGood=0; if(_adaptUpNeed>6 && now-_adaptShiftAt>45000){ _adaptUpNeed=6; _adaptShiftAt=now; } }
 }
 renderer.shadowMap.enabled = true;
@@ -6418,7 +6431,8 @@ function _postSize(){ return [Math.max(2, Math.floor(innerWidth * renderer.getPi
 // so lower steps are dramatically cheaper and the machine finds a stable step instead of ping-ponging.
 function _desiredPostSamples(){
   if(!(renderer.capabilities && renderer.capabilities.isWebGL2)) return 0;
-  return (typeof _prStepI==='undefined' || _prStepI===0) ? 4 : 0;
+  if(typeof _prStepI==='undefined') return 4;
+  return (_prStepI===0 && (typeof _msaaOn==='undefined' || _msaaOn)) ? 4 : 0;   // build 883: the MSAA rung
 }
 function ensurePost(){
   if(_postRT) return true;
@@ -17392,7 +17406,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 882 · 2026-07-05';
+const BUILD_VERSION = 'build 883 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28058,7 +28072,7 @@ function bindPauseMenu(){
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
   // build 872: adaptive resolution gets a visible switch (it was on-by-default with only a localStorage
   // escape hatch since build 810). Turning it OFF also snaps back to full resolution immediately.
-  const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
+  const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); /* build 883: full quality — MSAA strike-out cleared */ _msaaOn=true; _msaaFails=0; } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vMu=document.getElementById('volMusic'); if(vMu){ vMu.value=Math.round(audioSettings.music*100); vMu.oninput=()=>{ audioSettings.music=(+vMu.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vS=document.getElementById('volSfx'); if(vS){ vS.value=Math.round(audioSettings.sfx*100); vS.oninput=()=>{ audioSettings.sfx=(+vS.value)/100; applyAudioSettings(); saveAudioSettings(); initAudio(); SFX.coin(); }; }   // tick so it's

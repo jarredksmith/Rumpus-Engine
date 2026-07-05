@@ -9,6 +9,7 @@ const setup = `
   let _adaptOn=true, _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
   let _prStepI=0, _prScale=1, applied=0;
   let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;   // build 880: upshift-backoff state the tick now reads
+  let _msaaOn=false, _msaaFails=3;   // build 883: MSAA rung pre-shed so this test exercises the pure resolution ladder as before
   const _PR_STEPS=[1,0.85,0.72,0.6,0.5];
   function _applyPixelRatio(){ applied++; }
   ${extractFunction('_adaptResTick')}

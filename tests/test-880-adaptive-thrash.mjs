@@ -14,41 +14,52 @@ const src = gameSource();
 const code = `
 let _adaptOn=true, _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
 let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
+let _msaaOn=true, _msaaFails=0;   // build 883: the MSAA rung + strike-out
 let _prStepI=0, _prScale=1;
 const _PR_STEPS=[1,0.85,0.72,0.66];
 function _applyPixelRatio(){}
 ${extractFunction('_adaptResTick', src)}
-function harness(){ return { tick:_adaptResTick, get:()=>({ step:_prStepI, upNeed:_adaptUpNeed, good:_adaptGood }) }; }`;
+function harness(){ return { tick:_adaptResTick, get:()=>({ step:_prStepI, upNeed:_adaptUpNeed, good:_adaptGood, msaa:_msaaOn, fails:_msaaFails }) }; }`;
 const { tick, get } = evalDecl(code, 'harness', { Math })();
 let t = 10000;   // mid-session: past any boot grace
 const win = (avg) => { for (let i = 0; i < 9; i++) tick(avg, t); t += 501; tick(avg, t); };   // one evaluated 500ms window
 const settle = () => { t += 1000; };   // clear the 900ms post-shift cooldown
 
-// slow at full res -> downshift (a first downshift is NOT a failed climb)
-win(25); eq(get().step, 1, 'over-budget frames downshift immediately');
-eq(get().upNeed, 6, "a session's first downshift keeps the default climb requirement");
-// six good windows -> climb back
+// build 883: slow at full res sheds MSAA FIRST — full resolution is kept
+win(25); eq(get().step, 0, 'over-budget frames shed MSAA before any resolution drop');
+eq(get().msaa, false, 'the 4x samples are the first relief');
+eq(get().upNeed, 6, "a session's first shed keeps the default climb requirement");
+// still slow without MSAA -> now resolution drops
+settle(); win(25); eq(get().step, 1, 'still over budget -> the resolution rung');
+// six good windows -> climb resolution back (MSAA stays off: it is the LAST rung)
 settle(); for (let i = 0; i < 6; i++) win(15);
-eq(get().step, 0, 'six good windows climb one step (the original 3s rule)');
-// the climb fails fast -> backoff doubles
+eq(get().step, 0, 'six good windows climb one resolution step');
+eq(get().msaa, false, 'MSAA does not ride along — it re-arms as its own final climb');
+// six more -> the MSAA rung re-arms
+settle(); for (let i = 0; i < 6; i++) win(15);
+eq(get().msaa, true, 'the final climb re-arms MSAA');
+// it fails fast -> a strike + doubled backoff, MSAA shed again at full res
 settle(); win(25);
-eq(get().step, 1, 'failed climb drops again');
-eq(get().upNeed, 12, 'and doubles the required good streak');
-// six good windows are no longer enough...
-settle(); for (let i = 0; i < 6; i++) win(15);
-eq(get().step, 1, 'six good windows no longer re-climb after a failed attempt');
-for (let i = 0; i < 6; i++) win(15);
-eq(get().step, 0, '...twelve are');
-// fail again -> 24
-settle(); win(25); eq(get().upNeed, 24, 'each failed climb doubles again (capped at 48)');
-// 45s of dead-band stability forgives the backoff
-settle(); for (let i = 0; i < 95; i++) win(18);   // ~47s of "fine at this step" windows
+eq(get().step, 0, 'the failed MSAA re-arm sheds samples, not resolution');
+eq(get().msaa, false, '...');
+eq(get().fails, 1, 'strike one'); eq(get().upNeed, 12, 'and the climb requirement doubles');
+// two more failed re-arms -> struck out: NO more MSAA probes this session
+settle(); for (let i = 0; i < 12; i++) win(15); eq(get().msaa, true, 're-arm two');
+settle(); win(25); eq(get().fails, 2, 'strike two');
+settle(); for (let i = 0; i < 24; i++) win(15); eq(get().msaa, true, 're-arm three');
+settle(); win(25); eq(get().fails, 3, 'strike three');
+settle(); for (let i = 0; i < 60; i++) win(15);
+eq(get().msaa, false, 'struck out: fast frames no longer tempt an MSAA re-arm — the jitter is OVER');
+eq(get().step, 0, 'settled at full resolution, no MSAA, permanently stable');
+// 45s of dead-band stability still forgives the RESOLUTION backoff
+settle(); for (let i = 0; i < 95; i++) win(18);
 eq(get().upNeed, 6, '45s of stability resets the climb requirement (scene changes stay responsive)');
-eq(get().step, 1, 'without ever leaving the stable step');
 
 // ---- MSAA rides the top step only ----
-assert(/function _desiredPostSamples\(\)\{[\s\S]{0,220}return \(typeof _prStepI==='undefined' \|\| _prStepI===0\) \? 4 : 0;/.test(src),
-  '4x MSAA at full resolution only — a downshift sheds it (the relief the scaler is looking for)');
+assert(/return \(_prStepI===0 && \(typeof _msaaOn==='undefined' \|\| _msaaOn\)\) \? 4 : 0;/.test(src),
+  '4x MSAA only at full resolution AND with the MSAA rung armed (build 883)');
+assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \/\* build 883[^*]*\*\/ _msaaOn=true; _msaaFails=0; \}/.test(src),
+  'turning adaptive res off restores full quality and clears the strike-out');
 assert(/\|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost\(\); ensurePost\(\); \}/.test(src),
   'the per-frame size check also rebuilds when the desired sample count changes');
 

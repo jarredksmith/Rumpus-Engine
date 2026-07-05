@@ -31,7 +31,7 @@ assert(/const arc=document\.getElementById\('adaptResCb'\); if\(arc\)\{ arc\.che
   'checkbox reflects the live state');
 assert(/localStorage\.setItem\('breach_adaptres', _adaptOn\?'on':'off'\)/.test(src),
   'persists to the same key build 810 introduced (existing opt-outs keep working)');
-assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \}/.test(src),
-  'turning it OFF snaps back to full resolution immediately (not stuck at a downshifted step)');
+assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \/\* build 883[^*]*\*\/ _msaaOn=true; _msaaFails=0; \}/.test(src),
+  'turning it OFF snaps back to full resolution immediately (build 883: and re-arms MSAA)');
 
 done('build 872: post-FX keeps MSAA (4x scene target) + adaptive resolution is a real setting');
