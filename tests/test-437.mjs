@@ -5,7 +5,7 @@ const src = gameSource();
 
 // --- the pipeline builds its targets + passes ---
 const ep = extractFunction('ensurePost');
-assert(/if\(_postScene\) return true;/.test(ep) && /if\(!THREE\.WebGLRenderTarget\) return false;/.test(ep), 'lazy build, guarded on RT support');
+assert(/if\(_postRT\) return true;/.test(ep) && /if\(!THREE\.WebGLRenderTarget\) return false;/.test(ep), 'lazy build, guarded on RT support');   // build 880: keys on targets (materials persist)
 assert(/_postRT=mkRT\(w,h\)/.test(ep) && /_bloomRT=mkRT\(hw,hh\)/.test(ep) && /_compRT=mkRT\(w,h\)/.test(ep) && /_afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\)/.test(ep), 'full-res scene/comp, half-res bloom, two afterimage buffers');
 assert(/_matBright=new THREE\.ShaderMaterial/.test(ep) && /_matComp=new THREE\.ShaderMaterial/.test(ep) && /_matAfter=new THREE\.ShaderMaterial/.test(ep) && /_matCopy=new THREE\.ShaderMaterial/.test(ep), 'four passes: bright, composite, afterimage, copy');
 assert(/max\(nw, od\)/.test(ep), 'motion blur keeps the brighter of new vs decayed-old (afterimage trails)');
@@ -21,7 +21,7 @@ assert(rp.lastIndexOf('setRenderTarget(null)') > last, 'the present-to-screen pa
 assert(/const _mbOn = _postMotion>0\.01 && !\(_adaptOn && _prStepI>=_PR_STEPS\.length-1\);/.test(rp), 'motion chain is skipped when motion is ~0 or adaptive res is at its floor');
 assert(/if\(!_mbOn\)\{\s*\n?\s*_postQuad\.material=_matComp; renderer\.setRenderTarget\(null\); renderer\.render\(_postScene,_postCam\);\s*\n?\s*return;\s*\n?\s*\}/.test(rp), 'no-motion path composites straight to the screen (saves 2 full-res passes)');
 assert(/const t=_afterA; _afterA=_afterB; _afterB=t;/.test(rp), 'accumulation buffers swap each frame');
-assert(/if\(_postRT\.width!==w \|\| _postRT\.height!==h\)\{ disposePost\(\); ensurePost\(\); \}/.test(rp), 'targets rebuild on resolution change');
+assert(/if\(_postRT\.width!==w \|\| _postRT\.height!==h \|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost\(\); ensurePost\(\); \}/.test(rp), 'targets rebuild on resolution change (and on the MSAA step, build 880)');
 
 // --- the fallback: renderScene tries post first, reverts on any throw, never re-tries after failure ---
 const rs = extractFunction('renderScene');

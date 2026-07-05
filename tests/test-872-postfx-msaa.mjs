@@ -9,14 +9,14 @@ import { gameSource, html, assert, done } from './harness.mjs';
 const src = gameSource();
 
 // ---- the MSAA fix itself ----
-assert(/if\(renderer\.capabilities && renderer\.capabilities\.isWebGL2\) _postRT\.samples = 4;/.test(src),
-  'the post-FX scene target is 4x multisampled on WebGL2');
+assert(/function _desiredPostSamples\(\)\{\s*\n\s*if\(!\(renderer\.capabilities && renderer\.capabilities\.isWebGL2\)\) return 0;/.test(src) && /_postRT\.samples = _desiredPostSamples\(\);/.test(src),
+  'the post-FX scene target is 4x multisampled on WebGL2 (build 880: only at the full-res step)');
 // it must land inside ensurePost, AFTER the target exists and BEFORE the pass materials
-assert(/_postRT=mkRT\(w,h\); _bloomRT=mkRT\(hw,hh\); _compRT=mkRT\(w,h\); _afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\);[\s\S]{0,800}_postRT\.samples = 4;[\s\S]{0,2000}_matBright=new THREE\.ShaderMaterial/.test(src),
+assert(/_postRT=mkRT\(w,h\); _bloomRT=mkRT\(hw,hh\); _compRT=mkRT\(w,h\); _afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\);[\s\S]{0,900}_postRT\.samples = _desiredPostSamples\(\);/.test(src),
   'samples set at target creation inside ensurePost');
 // ONLY the scene pass is multisampled — the quad passes draw no geometry, and the DoF target carries a
 // DepthTexture (can't be multisampled in r149). Exactly one `.samples =` assignment exists.
-const sampleAssigns = src.match(/\.samples\s*=\s*\d/g) || [];
+const sampleAssigns = src.match(/_postRT\.samples = _desiredPostSamples\(\)/g) || [];
 assert(sampleAssigns.length === 1, `exactly one render target is multisampled (got ${sampleAssigns.length})`);
 assert(!/_bloomRT\.samples|_compRT\.samples|_afterA\.samples|_afterB\.samples|_dofRT\.samples/.test(src),
   'quad-pass and depth-texture targets stay single-sample');

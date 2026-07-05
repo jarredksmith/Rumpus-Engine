@@ -18,6 +18,8 @@ const deps = {
   _brushRingGrp: grp, _brushRingOuter: outer, _brushRingInner: inner,
   _BRUSH_RING_COL: { raise:0x38f5b5, lower:0xff8a5c, smooth:0xd6c05a, paint:0x36c6ff, scatter:0x7ddb6a },
   Math,
+  performance: { now: (() => { let t = 0; return () => (t += 1000); })() },   // build 880: each call is far past the 33Hz throttle
+  _brushRingT: 0,
 };
 const bind = () => evalDecl(extractFunction('_updateBrushRing', src), '_updateBrushRing', deps);   // deps are captured at creation — rebind after changing them
 let update = bind();

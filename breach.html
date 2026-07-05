@@ -6289,6 +6289,11 @@ _applyPixelRatio();
 // Rolling frame-time monitor (always on, ~free). Targets ~50fps; if we miss it for a stretch, drop a
 // step; if we beat ~58fps comfortably for longer, climb back. Asymmetric: quick to relieve, slow to push.
 let _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
+// build 880: upshift backoff. The scaler used to climb back after 3 good seconds into the EXACT state
+// that just failed, producing a 60↔20fps ping-pong ("jittery even on a clear level"). A downshift that
+// lands within 6s of an upshift marks the climb as failed and doubles the required good streak
+// (3s → 6s → 12s → 24s); 45s of stability at any step forgives the backoff so scene changes stay responsive.
+let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
 const ADAPT_ENABLED_DEFAULT = true;   // build 810: on by default everywhere (was touch-only) — desktop laptops need the relief too; opt out via the setting
 let _adaptOn = ADAPT_ENABLED_DEFAULT;
 try{ const v=localStorage.getItem('breach_adaptres'); if(v==='on') _adaptOn=true; else if(v==='off') _adaptOn=false; }catch(e){}
@@ -6301,10 +6306,11 @@ function _adaptResTick(frameMs, now){
   const avg = _adaptAcc/_adaptN; _adaptAcc=0; _adaptN=0;
   if(now < _adaptCool) return;            // settling after a change
   if(avg > 20 && _prStepI < _PR_STEPS.length-1){       // worse than ~50fps -> downshift now
-    _prStepI++; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900;
+    if(_adaptUpAt>0 && now - _adaptUpAt < 6000) _adaptUpNeed = Math.min(48, _adaptUpNeed*2);   // build 880: that climb failed — retry later, not sooner (guard: a session's FIRST downshift is not a failed climb)
+    _prStepI++; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;
   } else if(avg < 17 && _prStepI > 0){                 // better than ~58fps -> bank headroom, then upshift
-    if(++_adaptGood >= 6){ _prStepI--; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; }
-  } else _adaptGood=0;
+    if(++_adaptGood >= _adaptUpNeed){ _prStepI--; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; _adaptUpAt=now; _adaptShiftAt=now; }
+  } else { _adaptGood=0; if(_adaptUpNeed>6 && now-_adaptShiftAt>45000){ _adaptUpNeed=6; _adaptShiftAt=now; } }
 }
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;   // static by default; _dirtyShadows() requests a refresh
@@ -6407,19 +6413,26 @@ let _postBloom = 0.65, _postMotion = 0.62, _postVig = 0.42, _postGrain = 0.05, _
 let _postRT=null, _bloomRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
 let _matBright=null, _matComp=null, _matAfter=null, _matCopy=null;
 function _postSize(){ return [Math.max(2, Math.floor(innerWidth * renderer.getPixelRatio())), Math.max(2, Math.floor(innerHeight * renderer.getPixelRatio()))]; }
+// build 880: MSAA only at the FULL-resolution step. 4x multisample (build 872's aliasing fix) is exactly
+// the load a struggling GPU needs shed — when the adaptive scaler drops a step, the samples go with it,
+// so lower steps are dramatically cheaper and the machine finds a stable step instead of ping-ponging.
+function _desiredPostSamples(){
+  if(!(renderer.capabilities && renderer.capabilities.isWebGL2)) return 0;
+  return (typeof _prStepI==='undefined' || _prStepI===0) ? 4 : 0;
+}
 function ensurePost(){
-  if(_postScene) return true;
+  if(_postRT) return true;
   if(!THREE.WebGLRenderTarget) return false;
   const [w,h] = _postSize(); const hw=Math.max(1,w>>1), hh=Math.max(1,h>>1);
   const mkRT = (rw,rh)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:THREE.UnsignedByteType });
   _postRT=mkRT(w,h); _bloomRT=mkRT(hw,hh); _compRT=mkRT(w,h); _afterA=mkRT(w,h); _afterB=mkRT(w,h);
   // build 872: the scene pass is the ONLY place geometry rasterizes when effects are on, and a plain render
   // target gets zero antialiasing — the canvas's antialias:true never applied, so effects-on meant jagged
-  // edges everywhere. 4x MSAA on this one target restores it (WebGL2 resolves via blitFramebuffer; ~free on
-  // desktop GPUs). The quad passes (bloom/composite/afterimage) draw no geometry and stay single-sample.
-  // Known gap: with DoF active the scene rasterizes into the DoF target instead (it carries a DepthTexture,
-  // which can't be multisampled in r149) — DoF's own blur hides most of the difference.
-  if(renderer.capabilities && renderer.capabilities.isWebGL2) _postRT.samples = 4;
+  // edges everywhere. MSAA on this one target restores it (WebGL2 resolves via blitFramebuffer). The quad
+  // passes (bloom/composite/afterimage) draw no geometry and stay single-sample. Known gap: with DoF active
+  // the scene rasterizes into the DoF target instead (DepthTexture can't be multisampled in r149).
+  _postRT.samples = _desiredPostSamples();
+  if(_postScene) return true;   // build 880: materials + scene survive disposePost — a resolution shift rebuilds TARGETS only (no shader recompiles, no hitch)
   const vert='varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }';
   // bright-pass + blur into the half-res bloom buffer (a 5x5 thresholded box gather)
   _matBright=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
@@ -6461,12 +6474,12 @@ function ensurePost(){
 }
 function disposePost(){
   for(const rt of [_postRT,_bloomRT,_compRT,_afterA,_afterB]){ if(rt && rt.dispose) rt.dispose(); }
-  _postRT=_bloomRT=_compRT=_afterA=_afterB=null; _postScene=null;
+  _postRT=_bloomRT=_compRT=_afterA=_afterB=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
 }
-function resizePost(){ if(_postScene) disposePost(); }   // rebuilt lazily on next render
+function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next render
 function _renderPostFX(scn, cam){
   const [w,h]=_postSize();
-  if(_postRT.width!==w || _postRT.height!==h){ disposePost(); ensurePost(); }
+  if(_postRT.width!==w || _postRT.height!==h || (_postRT.samples||0)!==_desiredPostSamples()){ disposePost(); ensurePost(); }   // build 880: samples follow the adaptive step
   const hw=Math.max(1,w>>1), hh=Math.max(1,h>>1);
   // 1) scene -> full-res color (run DoF first when active, so bloom/grade operate on the focus-blurred image)
   if(dofEnabled && ensureDof()){ _runDofTo(scn, cam, _postRT); }
@@ -6634,7 +6647,7 @@ const _paintU = {
 let _paintLoadedFor = null;   // which paint.map dataURL is currently uploaded (skips redundant reloads)
 // build 877: brush-cursor state, declared here (well above the render loop's first synchronous tick)
 // because the loop's leak-guard reads it every frame — a later `let` would be a boot-time TDZ crash.
-let _brushRingGrp=null, _brushRingOuter=null, _brushRingInner=null;
+let _brushRingGrp=null, _brushRingOuter=null, _brushRingInner=null, _brushRingT=0;
 const _BRUSH_RING_COL = { raise:0x38f5b5, lower:0xff8a5c, smooth:0xd6c05a, paint:0x36c6ff, scatter:0x7ddb6a };
 floorMat.onBeforeCompile = (shader)=>{
   Object.assign(shader.uniforms, _paintU);
@@ -17366,7 +17379,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 879 · 2026-07-05';
+const BUILD_VERSION = 'build 880 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26725,6 +26738,9 @@ function _ensureBrushRing(){
 }
 function _updateBrushRing(e){
   if(!(typeof editorOpen!=='undefined' && editorOpen) || !terrainBrush.on){ if(_brushRingGrp) _brushRingGrp.visible=false; return; }
+  // build 880: throttle to ~33Hz. mousemove fires per pointer report (hundreds/s on gaming mice) and this
+  // raycasts the whole terrain mesh each call — with the brush armed it was a real drag on editor scrolling.
+  const _nowT=performance.now(); if(_nowT-_brushRingT<30) return; _brushRingT=_nowT;
   const hit=terrainPointUnderPointer(e);
   const g=_ensureBrushRing();
   if(!hit){ g.visible=false; return; }
