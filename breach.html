@@ -9601,6 +9601,19 @@ addEventListener('keydown', e=>{
       return;
     }
   }
+  // build 882: B toggles the terrain brush (sculpt/paint/scatter) — same guard pattern as F/T above.
+  // Editor-only, so driving's B-handbrake is untouched (you can't drive with the editor open).
+  if(editorOpen && !e.repeat && e.code==='KeyB' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){
+      terrainBrush.on = !terrainBrush.on;
+      if(typeof renderEditorFields==='function') renderEditorFields();
+      if(typeof toast==='function') toast(terrainBrush.on ? ('Brush on \u2014 '+terrainBrush.mode+' (B toggles)') : 'Brush off');
+      keys['KeyB']=false;
+      e.preventDefault();
+      return;
+    }
+  }
   // build 660: Shift+A opens the quick-add (+) menu. Guarded against text-input focus; the held A is consumed
   // so it doesn't also strafe in fly mode.
   if(editorOpen && e.shiftKey && e.code==='KeyA' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey){
@@ -17379,7 +17392,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 881 · 2026-07-05';
+const BUILD_VERSION = 'build 882 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24461,7 +24474,7 @@ function renderEditorFields(){
         const bw=document.createElement('div'); bw.style.cssText='margin-top:8px;border-top:1px solid #1e3a3a;padding-top:7px;';
         const bl=document.createElement('label'); bl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;';
         const bcb=document.createElement('input'); bcb.type='checkbox'; bcb.checked=terrainBrush.on; bcb.onchange=()=>{ terrainBrush.on=bcb.checked; renderEditorFields(); };
-        bl.appendChild(bcb); bl.appendChild(document.createTextNode('Terrain brush \u2014 sculpt & paint (drag on the floor)')); bw.appendChild(bl);
+        bl.appendChild(bcb); bl.appendChild(document.createTextNode('Terrain brush \u2014 sculpt / paint / scatter (drag the floor \u00b7 B toggles)')); bw.appendChild(bl);
         if(terrainBrush.on){
           const mrow=document.createElement('div'); mrow.style.cssText='display:flex;gap:6px;margin-top:6px;';
           [['raise','Raise'],['lower','Lower'],['smooth','Smooth'],['paint','Paint'],['scatter','Scatter']].forEach(([m,lab])=>{ const mb=document.createElement('button'); mb.textContent=lab; mb.style.cssText='flex:1;padding:4px 6px;font-size:11px;cursor:pointer;'+(terrainBrush.mode===m?'background:#13494a;color:#cffaf0;border:1px solid #2aa;':''); mb.onclick=()=>{ terrainBrush.mode=m; renderEditorFields(); }; mrow.appendChild(mb); });
