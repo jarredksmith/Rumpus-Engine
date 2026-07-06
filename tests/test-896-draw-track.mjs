@@ -56,7 +56,7 @@ for(const [name, pts] of Object.entries(shapes)){
 }
 
 // ---- wiring pins ----
-assert(/dtb\.textContent='✏ Draw track';/.test(src) && /dtb\.onclick=\(\)=>\{ _trackSketchStart\(\); \};/.test(src), 'the track panel has the Draw track button');
+assert(/dtb\.textContent='✏ Draw track — sketch your circuit';/.test(src) && /dtb\.onclick=\(\)=>\{ _trackSketchStart\(\); \};/.test(src), 'the track panel has the Draw track button (always visible — build 897 ungated it from needing existing pieces)');
 assert(/function _trackSketchStart\(\)/.test(src) && /raycaster\.setFromCamera\(_vAimTmpNdc\.set\(\(p\.x\/innerWidth\)\*2-1, -\(p\.y\/innerHeight\)\*2\+1\), camera\);/.test(src),
   'the overlay unprojects the drawn stroke to the ground plane');
 assert(/editorTopView=true; editorFreeFly=false; topPanX=0; topPanZ=0;/.test(src), 'drawing flips to top view (restored after)');

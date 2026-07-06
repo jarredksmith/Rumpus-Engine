@@ -17590,7 +17590,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 896 · 2026-07-06';
+const BUILD_VERSION = 'build 897 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27019,6 +27019,13 @@ function renderEditorFields(){
       const tHead=document.createElement('div'); tHead.className='hint'; tHead.style.margin='9px 0 3px';
       tHead.innerHTML='<b>Track builder</b> — easiest: <b>Draw track</b> and sketch your loop; it lays every piece and closes itself. Or place pieces by hand — they snap onto the <b>selected</b> piece’s exit (or the last one placed), best in <b>top view</b> (T); <b>Del</b> removes the selected piece; <b>Close loop</b> bridges the final gap (it now solves curves + a stretched straight, not just straight-ahead).';
       shapesHost.appendChild(tHead);
+      { // build 897: the Draw-track entry point is ALWAYS visible — it was gated behind "a track piece
+        // already exists", so a fresh level never showed it (the one place you need it most).
+        const dtb=document.createElement('button'); dtb.className='primBtn'; dtb.style.cssText='width:100%;margin:0 0 6px;font-weight:700;';
+        dtb.textContent='✏ Draw track — sketch your circuit';
+        dtb.title='Sketch your loop on screen — the builder lays the pieces and closes the loop itself (replaces the current track)';
+        dtb.onclick=()=>{ _trackSketchStart(); };
+        shapesHost.appendChild(dtb); }
       const tgrid=document.createElement('div'); tgrid.style.cssText='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;';
       for(const tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[tk];
         const b=document.createElement('button'); b.className='primBtn'; b.innerHTML=_svgIcon(d.icon||'')+'<span>'+d.label+'</span>'; b.title='Add '+d.label+' track piece (snaps to the chain)'; b.onclick=()=>{ addTrackPiece(tk); };
@@ -27040,10 +27047,6 @@ function renderEditorFields(){
             const wsp=document.createElement('span'); wsp.innerHTML='<b>Barrier walls</b> (selected piece)';
             wl.appendChild(wcb); wl.appendChild(wsp); wrow.appendChild(wl);
           }
-          { const dtb=document.createElement('button'); dtb.className='primBtn'; dtb.style.flex='1'; dtb.textContent='✏ Draw track';
-            dtb.title='Sketch your loop on screen — the builder lays the pieces and closes the loop itself (replaces the current track)';
-            dtb.onclick=()=>{ _trackSketchStart(); };
-            wrow.appendChild(dtb); }
           if(_allTrk.length){
             const clb=document.createElement('button'); clb.className='primBtn'; clb.style.flex='1'; clb.textContent='Close loop';
             clb.title='Bridge the gap between the chain’s end and its start — solves curve combos + a stretched straight (build 896)';
