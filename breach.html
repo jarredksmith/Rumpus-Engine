@@ -17590,7 +17590,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 897 · 2026-07-06';
+const BUILD_VERSION = 'build 898 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22853,7 +22853,7 @@ function _fitTrackFromSketch(pts){
       runs[0].L+=runs[runs.length-1].L; runs[0].at=runs[runs.length-1].at; runs.pop(); changed=true;
     }
     for(let i=runs.length-1;i>=0 && runs.length>3;i--){
-      if(runs[i].L<9){ runs.splice(i,1); changed=true; }
+      if(runs[i].L<6){ runs.splice(i,1); changed=true; }   // build 898: 9 -> 6, keep more drawn detail
     }
     for(let i=runs.length-1;i>=1;i--){
       if(Math.abs(wrap(runs[i].th-runs[i-1].th))<1e-6){ runs[i-1].L+=runs[i].L; runs.splice(i,1); changed=true; }
@@ -22921,9 +22921,20 @@ function _fitTrackFromSketch(pts){
     for(const i of free){ if(units[i].L+units[i].c < units[i].minL-1e-6){ units[i].L=units[i].minL; units[i].lock=true; bad=true; } }
     if(!bad){ for(const i of free) units[i].L+=units[i].c; break; }
   }
-  for(const i of runIdx){ const u=units[i];
-    u.fill=Math.round(Math.max(0, u.L-u.minL)/8)*8;
-    u.L=u.minL+u.fill;
+  for(let round=0; round<2; round++){   // build 898: solve -> quantize, twice — the second pass re-solves from the 8m grid
+    for(const i of runIdx){ const u=units[i];
+      u.fill=Math.round(Math.max(0, u.L-u.minL)/8)*8;
+      u.L=u.minL+u.fill;
+    }
+    if(round===0){
+      for(const i of runIdx) units[i].lock=false;
+      const e=closureErr();
+      const free=runIdx.slice();
+      const lam=lsq(free, -e.ex, -e.ez);
+      if(!lam) break;
+      for(const i of free){ const f=fw(units[i].th); const c=f.x*lam.lx+f.z*lam.lz;
+        units[i].L=Math.max(units[i].minL, units[i].L+c); }
+    }
   }
   if(!runIdx.some(i=>units[i].fill>=16)){
     let big=runIdx[0];
@@ -22937,7 +22948,7 @@ function _fitTrackFromSketch(pts){
     if(lam){
       let ok=true;
       for(const i of free){ const f=fw(units[i].th); const c=f.x*lam.lx+f.z*lam.lz;
-        if(Math.abs(c) > units[i].fill*0.2+0.01){ ok=false; break; } units[i].stretch=c; }
+        if(Math.abs(c) > units[i].fill*0.35+0.01){ ok=false; break; } units[i].stretch=c; }   // build 898: cap 0.35
       if(ok) for(const i of free) units[i].L+=units[i].stretch||0;
       else for(const i of free) units[i].stretch=0;
     }
@@ -22974,21 +22985,36 @@ function _fitTrackFromSketch(pts){
   if(!startPlaced) return { fail:'Could not fit a start line — draw a bigger loop' };
   const gx=startAt.x-px, gz=startAt.z-pz;
   const err=Math.hypot(gx,gz);
-  if(err>1e-4){ const n=pieces.length; for(let i=0;i<n;i++){ pieces[i].x+=gx*(i/n); pieces[i].z+=gz*(i/n); } }
-  return { pieces, err, runs:runIdx.length };
+  // build 898: only smear a residual nobody can see (<=2m over the whole chain). A bigger gap stays
+  // REAL — _placeSketchTrack bridges it with the Close-loop solver, so 'closed' is never a lie.
+  if(err>1e-4 && err<=2){ const n=pieces.length; for(let i=0;i<n;i++){ pieces[i].x+=gx*(i/n); pieces[i].z+=gz*(i/n); } }
+  // build 898: MIRROR THE SKETCH — dead-reckoning from one anchor piles all quantization drift onto the
+  // far side of the loop. Translate the whole chain so its centroid sits on the sketch's centroid,
+  // splitting the drift evenly around the shape.
+  { let scx=0, scz=0; for(const q of sp){ scx+=q.x; scz+=q.z; } scx/=sp.length; scz/=sp.length;
+    let pcx=0, pcz=0; for(const q of pieces){ pcx+=q.x; pcz+=q.z; } pcx/=pieces.length; pcz/=pieces.length;
+    const ox=scx-pcx, oz=scz-pcz;
+    for(const q of pieces){ q.x+=ox; q.z+=oz; } }
+  return { pieces, err:(err<=2?0:err), runs:runIdx.length };
 }
 // Place a fitted loop: replaces any existing track (one undo step covers everything).
 function _placeSketchTrack(fit){
   if(!fit || !fit.pieces || !fit.pieces.length) return false;
   pushUndoSnapshot();
   for(let i=propModels.length-1;i>=0;i--){ const p=propModels[i]; if(p && p.userData && TRACK_PIECES[p.userData.src]) removeProp(i); }
-  let firstObj=null;
+  let firstObj=null, lastObj=null;
   for(const pc of fit.pieces){
-    spawnProp(pc.key, [pc.x, 0, pc.z, 0, pc.yaw, 0, 1, 1, pc.sz||1], (obj)=>{ trackApply(obj, { w:1 }); if(!firstObj) firstObj=obj; });
+    spawnProp(pc.key, [pc.x, 0, pc.z, 0, pc.yaw, 0, 1, 1, pc.sz||1], (obj)=>{ trackApply(obj, { w:1 }); if(!firstObj) firstObj=obj; lastObj=obj; });
+  }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(fit.err>0.5 && lastObj){
+    // build 898: an over-2m fit residual is a REAL gap between the last exit and the first entry —
+    // bridge it with the Close-loop solver (exact) instead of smearing it across every junction.
+    editorActive='props'; editorTargets.props.idx=propModels.indexOf(lastObj); selProps=[lastObj];
+    closeTrackLoop();
   }
   if(firstObj){ editorActive='props'; editorTargets.props.idx=propModels.indexOf(firstObj); selProps=[firstObj]; }
-  if(typeof _levelDirty!=='undefined') _levelDirty=true;
-  if(typeof flashToast==='function') flashToast('Track built — '+fit.pieces.length+' pieces, loop closed');
+  if(typeof flashToast==='function') flashToast('Track built — '+(fit.err>0.5?'sketch fitted + gap bridged':(fit.pieces.length+' pieces, loop closed')));
   if(typeof renderEditorFields==='function') renderEditorFields();
   return true;
 }

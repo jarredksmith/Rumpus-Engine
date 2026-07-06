@@ -46,7 +46,7 @@ for(const [name, pts] of Object.entries(shapes)){
     maxGap=Math.max(maxGap, Math.hypot(e.x-nx.x, e.z-nx.z));
   }
   assert(maxGap < 2.5, name+': every junction within the race chain tolerance (worst '+maxGap.toFixed(2)+'m)');
-  assert(r.pieces.every(p=>Math.abs(p.sz-1)<0.21), name+': stretches stay subtle (<=20%)');
+  assert(r.pieces.every(p=>Math.abs(p.sz-1)<0.36), name+': stretches stay subtle (<=35%, build 898 cap)');
 }
 // a scribble that is not a loop is refused with advice, not garbage
 {
