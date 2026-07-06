@@ -14,7 +14,7 @@ assert(/userData\.noHit=true/.test(eoa), 'own avatar must be noHit');
 assert(/if\(g\.userData\.noHit\) hpx\.raycast=\(\)=>\{\};/.test(src), 'head proxy must skip raycast when noHit');
 assert(/if\(g\.userData\.noHit\) px\.raycast=\(\)=>\{\};/.test(src), 'hit proxy must skip raycast when noHit');
 // loop must invoke it, gun hidden in TP
-assert(/if\(tpMode && gameOn && !duelDead\)\{ gun\.visible=false; tpCameraPushback\(\); \}/.test(src), 'loop drives the chase cam + hides the gun');
+assert(/if\(tpActive\(\) && gameOn && !duelDead\)\{ gun\.visible=false; tpCameraPushback\(dt\); \}/.test(src), 'loop drives the chase cam + hides the gun (tpActive + dt for the damped follow, build 894)');
 assert(/updateOwnAvatar\(dt\);/.test(src), 'loop updates the own avatar (dt drives landing timers, build 488)');
 // pause menu toggle present + wired
 assert(/id="pauseCamMode"/.test(html), 'pause menu needs a camera toggle button');

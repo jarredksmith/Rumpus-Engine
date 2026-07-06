@@ -18,10 +18,10 @@ eq(mk({ gameCfg:{ view:'top' }, gameOn:true, editorOpen:false, _cineActive:true 
 eq(mk({ gameCfg:{ view:'fps' }, gameOn:true, editorOpen:false, _cineActive:false })(), 'fps', 'default is unchanged');
 
 // ---- persistence: config, serialize, and BOTH load paths ----
-assert(/view: \(savedLevel && savedLevel\.game && \(savedLevel\.game\.view==='top'\|\|savedLevel\.game\.view==='side'\)\) \? savedLevel\.game\.view : 'fps',/.test(src), 'gameCfg.view boots from the autosave');
+assert(/view: \(savedLevel && savedLevel\.game && \(savedLevel\.game\.view==='top'\|\|savedLevel\.game\.view==='side'\|\|savedLevel\.game\.view==='chase'\)\) \? savedLevel\.game\.view : 'fps',/.test(src), 'gameCfg.view boots from the autosave (chase joined in build 894)');
 assert(/viewAxis: \(savedLevel && savedLevel\.game && savedLevel\.game\.viewAxis==='z'\) \? 'z' : 'x',/.test(src), 'gameCfg.viewAxis boots from the autosave');
-assert(/view: \(gameCfg\.view==='top'\|\|gameCfg\.view==='side'\)\?gameCfg\.view:'fps', viewDist: \+gameCfg\.viewDist\|\|0, viewAxis: \(gameCfg\.viewAxis==='z'\)\?'z':'x' \},/.test(src), 'serializeLevel writes all three fields');
-const loads = src.match(/gameCfg\.view = \(level\.game\.view==='top'\|\|level\.game\.view==='side'\) \? level\.game\.view : 'fps';/g) || [];
+assert(/view: \(gameCfg\.view==='top'\|\|gameCfg\.view==='side'\|\|gameCfg\.view==='chase'\)\?gameCfg\.view:'fps', viewDist: \+gameCfg\.viewDist\|\|0, viewAxis: \(gameCfg\.viewAxis==='z'\)\?'z':'x' \},/.test(src), 'serializeLevel writes all three fields');
+const loads = src.match(/gameCfg\.view = \(level\.game\.view==='top'\|\|level\.game\.view==='side'\|\|level\.game\.view==='chase'\) \? level\.game\.view : 'fps';/g) || [];
 eq(loads.length, 2, 'both load paths (local load + multiplayer host-adopt) apply the view');
 
 // ---- input rerouting: pointer + touch steer the cursor, not the head ----
@@ -45,15 +45,15 @@ assert(/if\(gameCfg\.viewAxis==='z'\) camera\.position\.set\(_t\.x\+D, _cy, _t\.
 assert(/const _t = drivingCar \? drivingCar\.position : player\.pos;/.test(src), 'driving keeps the view — cars work top-down');
 
 // ---- combat: shots through the cursor, body-relative melee/rockets, avatar shown ----
-assert(/if\(tpMode \|\| activeViewMode\(\)!=='fps'\)\{\s*\n\s*tpMuzzleWorld\(muzzleWorld\);/.test(src), 'tracers start at the avatar barrel');
+assert(/if\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\)\{\s*\n\s*tpMuzzleWorld\(muzzleWorld\);/.test(src), 'tracers start at the avatar barrel (tpActive since build 894)');
 assert(/raycaster\.set\(_vmOrig, _pd\);/.test(src) && /\} else raycaster\.setFromCamera\(new THREE\.Vector2\(sx, sy\), camera\);/.test(src), 'hitscan: body-origin pellets in fixed views, screen-centre in fps (reworked in 885)');
 assert(/o\.set\(player\.pos\.x, player\.pos\.y-0\.2, player\.pos\.z\); d\.copy\(_vAimPt\)\.sub\(o\)\.normalize\(\);/.test(src), 'rockets launch from the body toward the cursor point');
 assert(/if\(activeViewMode\(\)!=='fps'\) fwd\.set\(-Math\.sin\(player\.yaw\), 0, -Math\.cos\(player\.yaw\)\);/.test(src), 'melee swings where the body faces');
-assert(/if\(!\(\(tpMode \|\| activeViewMode\(\)!=='fps'\) && gameOn && !editorOpen\)\)/.test(src), 'the player body renders in the fixed views');
+assert(/if\(!\(\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\) && gameOn && !editorOpen\)\)/.test(src), 'the player body renders in the fixed views');
 assert(/if\(_scopedNow && activeViewMode\(\)!=='fps'\) _scopedNow=false;/.test(src), 'no sniper-optic tunnel from a bird’s-eye camera');
 
 // ---- editor UI ----
-assert(/vRow\.appendChild\(vBtn\('fps','First person'\)\); vRow\.appendChild\(vBtn\('top','Top-down'\)\); vRow\.appendChild\(vBtn\('side','Side-scroller'\)\);/.test(src), 'three-way picker in Player options');
+assert(/vRow\.appendChild\(vBtn\('fps','First person'\)\); vRow\.appendChild\(vBtn\('chase','Third-person'\)\); vRow\.appendChild\(vBtn\('top','Top-down'\)\); vRow\.appendChild\(vBtn\('side','Side-scroller'\)\);/.test(src), 'four-way picker in Player options (chase joined in build 894)');
 assert(/aw\.appendChild\(aBtn\('x','Lane runs east\\u2013west'\)\); aw\.appendChild\(aBtn\('z','Lane runs north\\u2013south'\)\);/.test(src), 'side mode picks its lane axis');
 assert(/gameCfg\.viewDist=\+rr\.value;/.test(src), 'camera distance slider writes viewDist');
 
