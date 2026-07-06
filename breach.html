@@ -17442,7 +17442,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 887 · 2026-07-05';
+const BUILD_VERSION = 'build 888 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27825,7 +27825,21 @@ function recordRun(){   // compare this run to the stored best, persist the new 
   try{ localStorage.setItem(BEST_KEY, JSON.stringify(nb)); }catch(e){}
   return res;
 }
-function runSummaryHTML(){   // stats line + best line for the win/death screens
+function runSummaryHTML(){   // stats + best lines for the win/death screens, tailored to the objective
+  // build 888: a finished RACE used to read "SCORE 0 · KILLS 0" plus the shooter's best score/wave/kills —
+  // each objective now shows only what applies to it. recordRun (the shooter bests) is skipped entirely
+  // for race/puzzle so those runs never touch the combat records.
+  const ob=(typeof objectiveActive==='function') ? objectiveActive() : ((gameCfg&&gameCfg.objective)||'eliminate');
+  if(ob==='race'){
+    // laps, session-best and per-lap times live in the headline; here: money + the persistent track record
+    let rec='';
+    try{ if(typeof _ghostBest!=='undefined' && _ghostBest && _ghostBest.lapT>0) rec='<div class="bestLine">★ TRACK RECORD '+_fmtRace(_ghostBest.lapT)+'</div>'; }catch(e){}
+    return '<div class="runStats">◆'+credits+'</div>'+rec;
+  }
+  if(ob==='puzzle'){
+    // no enemies ever spawn: kills/waves are meaningless. Score only when something actually scored.
+    return '<div class="runStats">'+(score>0?('SCORE '+score+' &nbsp;·&nbsp; '):'')+'◆'+credits+'</div>';
+  }
   const r=recordRun(), st=(v,is)=>v+(is?' ★':'');
   return '<div class="runStats">SCORE '+st(score,r.isBest.score)+' &nbsp;·&nbsp; KILLS '+st(runKills,r.isBest.kills)+' &nbsp;·&nbsp; ◆'+credits+'</div>'
        + '<div class="bestLine">'+(r.anyBest?'★ NEW BEST':('BEST · score '+r.best.score+' · wave '+r.best.wave+' · kills '+r.best.kills))+'</div>';

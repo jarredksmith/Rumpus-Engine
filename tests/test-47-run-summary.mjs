@@ -13,6 +13,7 @@ function mkStore(init){ let v = init ? JSON.stringify(init) : null; return { get
 function build(store, score, wave, kills, credits){
   return new Function('localStorage','score','wave','runKills','credits', `
     const BEST_KEY='breach_best';
+    const gameCfg={ objective:'eliminate' };   // build 888: the summary branches by objective; this test covers the shooter block
     ${extractFunction('loadBest')}
     ${extractFunction('recordRun')}
     ${extractFunction('runSummaryHTML')}
