@@ -6279,6 +6279,11 @@ const camera = new THREE.PerspectiveCamera(78, innerWidth/innerHeight, 0.1, 400)
 const IS_COARSE = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);   // touch/mobile -> trade visual polish for frame rate
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });   // smooth edges + ask dual-GPU laptops for the discrete card
 renderer.setSize(innerWidth, innerHeight, false);
+// build 892: the one true viewport size. On phones the browser bar hides/shows around gameplay and the
+// canvas's displayed box (CSS 100% of the LAYOUT viewport) diverges from innerWidth/innerHeight — often
+// with NO window resize event — leaving camera.aspect stale and the whole world vertically squished.
+// Everything (aspect, drawing buffer, post/DoF targets) now sizes from the canvas's own client box.
+let _vpW = innerWidth, _vpH = innerHeight;
 const _prBase = Math.min(devicePixelRatio, IS_COARSE ? 2.0 : 1.5);   // the ceiling: native-ish, capped for FPS
 let _prScale = 1;                       // adaptive multiplier on top of the base, 1.0 down to the floor
 const _PR_FLOOR = IS_COARSE ? 0.5 : 0.66;   // never blurrier than this
@@ -6337,7 +6342,7 @@ document.body.appendChild(renderer.domElement);
 // blur cheaply. Toggled by worldCfg.dof; when off, we render straight to the screen (zero cost).
 let dofEnabled = false, dofFocus = 18, dofRange = 14, dofStrength = 1.4;
 let _dofRT = null, _dofRT2 = null, _dofScene = null, _dofCam = null, _dofMatH = null, _dofMatV = null, _dofQuad = null;
-function _dofSize(){ return [Math.max(2, Math.floor(innerWidth * renderer.getPixelRatio())), Math.max(2, Math.floor(innerHeight * renderer.getPixelRatio()))]; }
+function _dofSize(){ return [Math.max(2, Math.floor(_vpW * renderer.getPixelRatio())), Math.max(2, Math.floor(_vpH * renderer.getPixelRatio()))]; }   // build 892: track the canvas box, not the window
 function ensureDof(){
   if(_dofScene) return true;
   if(!THREE.WebGLRenderTarget || !THREE.DepthTexture) return false;
@@ -6425,7 +6430,7 @@ let _postFail = false;
 let _postBloom = 0.65, _postMotion = 0.62, _postVig = 0.42, _postGrain = 0.05, _postSat = 1.08, _postCon = 1.05, _postThresh = 0.62;
 let _postRT=null, _bloomRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
 let _matBright=null, _matComp=null, _matAfter=null, _matCopy=null;
-function _postSize(){ return [Math.max(2, Math.floor(innerWidth * renderer.getPixelRatio())), Math.max(2, Math.floor(innerHeight * renderer.getPixelRatio()))]; }
+function _postSize(){ return [Math.max(2, Math.floor(_vpW * renderer.getPixelRatio())), Math.max(2, Math.floor(_vpH * renderer.getPixelRatio()))]; }   // build 892: track the canvas box, not the window
 // build 880: MSAA only at the FULL-resolution step. 4x multisample (build 872's aliasing fix) is exactly
 // the load a struggling GPU needs shed — when the adaptive scaler drops a step, the samples go with it,
 // so lower steps are dramatically cheaper and the machine finds a stable step instead of ping-ponging.
@@ -6521,10 +6526,28 @@ function _renderPostFX(scn, cam){
   // 6) swap accumulation buffers (this frame's result becomes next frame's "old")
   const t=_afterA; _afterA=_afterB; _afterB=t;
 }
-function _fitViewport(){ camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight, false); if(typeof resizeDof==='function') resizeDof(); if(typeof resizePost==='function') resizePost(); }
+function _fitViewport(){
+  // build 892: size from the canvas's DISPLAYED box, not innerWidth/innerHeight — on phones the two
+  // disagree while the browser bar animates, and trusting the window numbers squished the world.
+  const cv = renderer.domElement;
+  _vpW = (cv && cv.clientWidth)  || innerWidth;
+  _vpH = (cv && cv.clientHeight) || innerHeight;
+  camera.aspect = _vpW/_vpH; camera.updateProjectionMatrix();
+  renderer.setSize(_vpW, _vpH, false);
+  if(typeof resizeDof==='function') resizeDof(); if(typeof resizePost==='function') resizePost();
+}
 addEventListener('resize', _fitViewport);
 addEventListener('load', _fitViewport);                 // a fresh tab/window can mis-report height until fully laid out
 setTimeout(_fitViewport, 200); setTimeout(_fitViewport, 800);   // catch late layout/devtools docking
+if(window.visualViewport) visualViewport.addEventListener('resize', _fitViewport);   // build 892: phone bar/keyboard changes that never fire a window resize
+// build 892: drift watchdog — some bar transitions fire NO resize event anywhere; the render loop calls
+// this ~2x/second and refits if the canvas's displayed box moved out from under the last fit.
+let _vpCheckAt = 0;
+function _vpDriftTick(now){
+  if(now < _vpCheckAt) return; _vpCheckAt = now + 500;
+  const cv = renderer.domElement;
+  if(cv && cv.clientWidth && (cv.clientWidth !== _vpW || cv.clientHeight !== _vpH)) _fitViewport();
+}
 
 // ---------- Lighting ----------
 const skyLight = new THREE.HemisphereLight(0x4a6c7a, 0x0a0f14, 0.55);
@@ -17469,7 +17492,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 891 · 2026-07-06';
+const BUILD_VERSION = 'build 892 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21104,7 +21127,7 @@ function loop(){
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
   let dt = rawDt;
-  { const _anow=_pnow(); if(_adaptLast) _adaptResTick(_anow-_adaptLast, _anow); _adaptLast=_anow; }   // adaptive resolution: its own always-on timer
+  { const _anow=_pnow(); if(_adaptLast) _adaptResTick(_anow-_adaptLast, _anow); _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish)
   updatePerfHud();   // measure real frame time every frame (before any early-out)
   if(editorOpen || _cineActive) _dirtyShadows(1);   // authoring + camera moves: keep shadows current
   else {
