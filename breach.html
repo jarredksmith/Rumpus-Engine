@@ -16212,6 +16212,10 @@ function _driveHudEl(){
 }
 function enterCar(o){
   if(drivingCar || !o || !o.userData.vehicle) return;
+  if(o.userData.nid && typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids[o.userData.nid]!=null){   // build 899: that seat is TAKEN — you can't hijack another player's car
+    if(typeof flashToast==='function'){ const _rp=(typeof NET!=='undefined' && NET.players) ? NET.players[_remoteDrivenNids[o.userData.nid]] : null; flashToast(((_rp&&_rp.name)||'Another player')+' is driving that car'); }
+    return;
+  }
   { const _ci=_coastingCars.indexOf(o); if(_ci>=0) _coastingCars.splice(_ci,1); o.userData._coastT=0; }   // build 770: jumping back in stops the coast
   drivingCar = o; o.userData.carSpeed = 0; o.userData.carVelY = 0; o.userData.carPitch = 0; o.userData.carRoll = 0; o.userData.boostT = 0; o.userData.boostCdT = 0; o.userData._suspOff = 0; o.userData._suspVel = 0;   // build 821: suspension starts settled
   // build 720: carYaw is the LOGICAL heading the car drives along. It starts pointing out the model's nose (placement yaw + modelYaw),
@@ -17041,6 +17045,7 @@ function checkProximity(){
   if(!nearTarget && !drivingCar){   // build 766: prompt when within enterDist of ANY part of the model (its footprint), not a fixed radius from the origin
     const px=player.pos.x, pz=player.pos.z; let best=null, bd=Infinity;
     for(const o of ((typeof _gridCars!=='undefined' && _gridCars.length) ? propModels.concat(_gridCars) : propModels)){ if(!o || !o.userData.vehicle) continue;   // build 893: grid clones are enterable too
+      if(o.userData.nid && typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids[o.userData.nid]!=null) continue;   // build 899: no enter prompt on a car someone else is driving
       const _k=o.position.x+o.position.z*4096;   // recompute the footprint box only when the car has moved (a parked car: once)
       if(!o.userData._enterBox || o.userData._enterBoxKey!==_k){ o.userData._enterBox=(o.userData._enterBox||new THREE.Box3()).setFromObject(o); o.userData._enterBoxKey=_k; }
       const bx=o.userData._enterBox; if(bx.isEmpty()) continue;
@@ -17590,7 +17595,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 898 · 2026-07-06';
+const BUILD_VERSION = 'build 899 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20270,7 +20275,11 @@ function _raceAutoSeat(tries){
   if(mp && NET.gameMode!=='coop') return;   // duel/FFA rooms never auto-seat
   const authored=propModels.filter(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
   const cars=authored.concat(_gridCars);
-  if(!cars.length){ if((tries|0)<12) setTimeout(()=>_raceAutoSeat((tries|0)+1), 500); return; }
+  // build 899: a fresh JOINER is still downloading the level's models — the host seats instantly (warm
+  // cache) but the client's car GLB can take far longer than the old 6s retry window, so auto-seat gave
+  // up silently and joiners had to walk to a car. Retries don't count while assets are pending.
+  const _pend = typeof _levelAssetsPending==='function' && _levelAssetsPending();
+  if(!cars.length){ if(_pend || (tries|0)<12) setTimeout(()=>_raceAutoSeat(_pend?0:(tries|0)+1), 500); return; }
   let car=cars[0];
   if(mp){
     // build 890: every participant grids into their OWN car. All clients share the level, so gridding
@@ -20295,7 +20304,7 @@ function _raceAutoSeat(tries){
     }
     if(idx>=cars.length){
       // roster can still be filling in — and a grid clone may still be loading — retry before giving up
-      if((tries|0)<12){ setTimeout(()=>_raceAutoSeat((tries|0)+1), 500); return; }
+      if(_pend || (tries|0)<12){ setTimeout(()=>_raceAutoSeat(_pend?0:(tries|0)+1), 500); return; }
       if(typeof toast==='function') toast('Grid full \u2014 your car is still loading (press E by a free car)');
       return;
     }

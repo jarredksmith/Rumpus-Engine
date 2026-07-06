@@ -31,8 +31,8 @@ assert(/const pose=_racePathAt\(_racePath\.total-4-6\*Math\.floor\(i\/2\), \(i%2
 assert(/const ids=\[0, \+NET\.myId\]; for\(const k in NET\.players\) ids\.push\(\+k\);/.test(seat) && /const uniq=\[\.\.\.new Set\(ids\)\]\.sort\(\(a,b\)=>a-b\);/.test(seat),
   'participant order = sorted ids (host 0 first) — the same ranking everywhere');
 assert(/const idx=uniq\.indexOf\(\+NET\.myId\);/.test(seat) && /car=cars\[idx\];/.test(seat), 'each player takes the car at their rank');
-assert(/if\(idx>=cars\.length\)\{[\s\S]{0,300}setTimeout\(\(\)=>_raceAutoSeat\(\(tries\|0\)\+1\), 500\)/.test(seat),
-  'a fresh joiner retries while the roster fills before declaring the grid full');
+assert(/if\(idx>=cars\.length\)\{[\s\S]{0,340}setTimeout\(\(\)=>_raceAutoSeat\(_pend\?0:\(tries\|0\)\+1\), 500\)/.test(seat),
+  'a fresh joiner retries while the roster fills — and retries are FREE while level assets download (build 899)');
 assert(/toast\('Grid full \\u2014 your car is still loading \(press E by a free car\)'\)/.test(seat), 'a rare failed clone still explains itself (build 893: the grid normally clones a seat for everyone)');
 // solo behaviour unchanged: first car, same seat flow
 assert(/let car=cars\[0\];/.test(seat), 'solo still takes the (pole-gridded) first car');
