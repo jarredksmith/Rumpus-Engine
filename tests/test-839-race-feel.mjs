@@ -49,7 +49,7 @@ assert(/_raceHudTick\(\);\s*\/\/ build 839/.test(extractFunction('_raceTick')), 
 {
   const as=extractFunction('_raceAutoSeat');
   assert(/if\(objectiveActive\(\)!=='race' \|\| !gameOn \|\| editorOpen \|\| gameOver \|\| drivingCar\) return;/.test(as), 'only on a live solo race deploy, never twice');
-  assert(/if\(typeof NET!=='undefined' && NET\.mode!=='off'\) return;/.test(as), 'multiplayer keeps manual seating (one seat, many players)');
+  assert(/if\(mp && NET\.gameMode!=='coop'\) return;/.test(as), 'duel/FFA keep manual seating — co-op races auto-seat per player rank (build 890)');
   assert(/if\(\(tries\|0\)<12\) setTimeout\(\(\)=>_raceAutoSeat\(\(tries\|0\)\+1\), 500\);/.test(as), 'retries while a GLB vehicle is still downloading');
   assert(/enterCar\(car\);/.test(as), 'and actually seats you');
   assert(/setTimeout\(\(\)=>_raceAutoSeat\(0\), 350\);\s*\/\/ build 839/.test(src), 'wired into startGame after the objective starts');

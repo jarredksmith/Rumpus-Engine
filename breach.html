@@ -829,7 +829,7 @@
       <div class="mpSection coop">
         <div class="mpTitle"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>CO-OP</div>
         <div class="mpDesc">Team up and clear waves together. You host — friends join with your room code.</div>
-        <div class="mpActions"><button id="mpHost" class="mpBtn coop">Host co-op</button></div>
+        <div class="mpActions"><button id="mpHost" class="mpBtn coop">Host co-op</button><button id="mpHostRace" class="mpBtn coop" title="Host the loaded race level — everyone grids up and races">Host race</button></div>
       </div>
     </div>
     <div class="mpModes">
@@ -17446,7 +17446,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 889 · 2026-07-05';
+const BUILD_VERSION = 'build 890 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20107,12 +20107,39 @@ function _raceBotObstacle(st, o, yaw){
 // deploy, so it retries for ~6 s before giving up quietly.
 function _raceAutoSeat(tries){
   if(objectiveActive()!=='race' || !gameOn || editorOpen || gameOver || drivingCar) return;
-  if(typeof NET!=='undefined' && NET.mode!=='off') return;
-  const car=propModels.find(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
-  if(!car){ if((tries|0)<12) setTimeout(()=>_raceAutoSeat((tries|0)+1), 500); return; }
+  const mp = typeof NET!=='undefined' && NET.mode!=='off';
+  if(mp && NET.gameMode!=='coop') return;   // duel/FFA rooms never auto-seat
+  const cars=propModels.filter(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
+  if(!cars.length){ if((tries|0)<12) setTimeout(()=>_raceAutoSeat((tries|0)+1), 500); return; }
+  let car=cars[0];
+  if(mp){
+    // build 890: every participant grids into their OWN car. All clients share the level, so gridding
+    // every authored car to a staggered slot is the SAME computation everywhere — a consistent field —
+    // and each player takes cars[their rank] (participant ids sorted; the host is always 0).
+    if(_racePath){
+      cars.forEach((c,i)=>{
+        const pose=_racePathAt(_racePath.total-4-6*Math.floor(i/2), (i%2)?-2.7:2.7);
+        let _gy=(typeof surfaceTopAt==='function') ? surfaceTopAt(pose.x, pose.z, c, true, pose.y+6, true) : -Infinity;
+        c.position.set(pose.x, (_gy>-Infinity?_gy:pose.y)+0.15, pose.z);
+        c.rotation.set(0, pose.yaw - (((c.userData.vehicle&&c.userData.vehicle.modelYaw)||0)*RAD), 0);
+        c.userData.carSpeed=0; c.userData.carVelY=0; c.userData.carPitch=0; c.userData.carRoll=0;
+        c.updateMatrixWorld(true);
+      });
+    }
+    const ids=[0, +NET.myId]; for(const k in NET.players) ids.push(+k);
+    const uniq=[...new Set(ids)].sort((a,b)=>a-b);
+    const idx=uniq.indexOf(+NET.myId);
+    if(idx>=cars.length){
+      // roster can still be filling in on a fresh join — retry before declaring the grid full
+      if((tries|0)<12){ setTimeout(()=>_raceAutoSeat((tries|0)+1), 500); return; }
+      if(typeof toast==='function') toast('Grid full \u2014 add more cars to the level to race more players');
+      return;
+    }
+    car=cars[idx];
+  }
   player.pos.set(car.position.x+2, car.position.y+EYE, car.position.z);
   enterCar(car);
-  if(typeof toast==='function') toast('On the grid');
+  if(typeof toast==='function') toast(mp ? ('On the grid \u2014 slot '+(cars.indexOf(car)+1)) : 'On the grid');
 }
 function _racePlace(){   // player's live position in the field (AI rivals solo; humans in MP), by laps + fraction
   const entries=[];
@@ -27961,6 +27988,19 @@ function startHost(){
   netStatus('Loading network…');
   ensurePeerJS(ok=>{ if(!ok){ netStatus('Could not load networking (are you offline?)'); return; } hostStart(genRoomCode(), 'coop'); });
 }
+// build 890: Host race — the same co-op room, but the loaded level is checked FIRST so nobody hosts a
+// "race" that can't start (wrong objective, no start line, or no car to sit in).
+function startHostRace(){
+  const probs=[];
+  if(!(typeof gameCfg!=='undefined' && gameCfg.objective==='race')) probs.push('set Objective to Race (Gameplay tab)');
+  const hasStart = typeof propModels!=='undefined' && propModels.some(p=>p && p.userData && TRACK_PIECES[p.userData.src] && TRACK_PIECES[p.userData.src].start);
+  if(!hasStart) probs.push('lay a track with a Start line (Build tab \u2192 Track builder)');
+  const carN = typeof propModels!=='undefined' ? propModels.filter(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime).length : 0;
+  if(!carN) probs.push('place at least one drivable vehicle');
+  if(probs.length){ netStatus('Not a race level yet \u2014 '+probs.join('; ')+'.'); if(typeof flashToast==='function') flashToast('Load or build a race level first'); return; }
+  if(carN===1 && typeof flashToast==='function') flashToast('Tip: place one car per racer \u2014 extra players spectate on foot');
+  startHost();
+}
 function startDuel(){
   const nm=document.getElementById('mpName'); NET.name=(nm&&nm.value.trim())||'Host';
   const kt=document.getElementById('mpKills'); let n=parseInt(kt&&kt.value,10); if(!(n>=1)) n=5; n=Math.min(99,n);
@@ -28133,6 +28173,7 @@ function bindMenu(){
   if(lcb && lcf){ lcb.onclick=()=>lcf.click(); lcf.onchange=()=>{ const f=lcf.files && lcf.files[0]; lcf.value=''; if(!f) return; _importCampaignFile(f, ()=>{ if(typeof flashToast==='function') flashToast('Loaded ' + campaign.levels.length + ' level' + (campaign.levels.length>1?'s':'')); if(typeof startCampaign==='function') startCampaign(); }); }; }
   const eb=document.getElementById('editBtn'); if(eb) eb.onclick=enterEditor;
   const h=document.getElementById('mpHost'); if(h) h.onclick=startHost;
+  const hr=document.getElementById('mpHostRace'); if(hr) hr.onclick=startHostRace;   // build 890
   const d=document.getElementById('mpDuel'); if(d) d.onclick=startDuel;
   const j=document.getElementById('mpJoin'); if(j) j.onclick=startJoin;
   const fs=document.getElementById('fsBtn');
