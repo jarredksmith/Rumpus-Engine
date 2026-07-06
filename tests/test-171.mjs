@@ -24,7 +24,7 @@ near(samp(g,2,0.5,0.5), 3, 1e-9);
 
 // integration is wired + gated
 assert(/function terrainHeightAt\(/.test(src), 'no terrainHeightAt');
-assert(/let t=null; try \{ t=\(typeof worldCfg!=='undefined' && worldCfg\) \? worldCfg\.terrain : null; \} catch\(e\)\{ return 0; \}/.test(src), 'terrainHeightAt not TDZ-safe');
+assert(/let t=null; try \{ t=\(typeof worldCfg!=='undefined' && worldCfg\) \? worldCfg\.terrain : null; \}\s*\n\s*catch\(e\)\{ t=\(typeof savedLevel!=='undefined' && savedLevel && savedLevel\.world\) \? savedLevel\.world\.terrain : null; \}/.test(src), 'terrainHeightAt not TDZ-safe (build 893: the TDZ path samples the autosave so boot placement lifts correctly)');
 assert(/let t=null; try \{ t=\(typeof worldCfg!=='undefined' && worldCfg\) \? \(worldCfg\.terrain\|\|null\) : null; \} catch\(e\)\{ t=null; \}/.test(src), 'setTerrainFromCfg not TDZ-safe');
 const gh = extractFunction('groundHeightAt');
 assert(/const g = terrainHeightAt\(x, z\)/.test(gh) && /return g;/.test(gh) && /Math\.max\(g, top\)/.test(gh), 'groundHeightAt not terrain-aware');

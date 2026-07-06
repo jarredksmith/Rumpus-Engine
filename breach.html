@@ -6820,7 +6820,8 @@ function turnToward(cur, target, dt, rate){
 const TURN_RATE = 9;   // shared default turn speed for bots + enemies (rad/sec)
 
 function terrainHeightAt(x, z){
-  let t=null; try { t=(typeof worldCfg!=='undefined' && worldCfg) ? worldCfg.terrain : null; } catch(e){ return 0; }   // worldCfg can be in its TDZ during the first rebuildArena()
+  let t=null; try { t=(typeof worldCfg!=='undefined' && worldCfg) ? worldCfg.terrain : null; }
+  catch(e){ t=(typeof savedLevel!=='undefined' && savedLevel && savedLevel.world) ? savedLevel.world.terrain : null; }   // worldCfg in its TDZ = boot prop loading — sample the AUTOSAVE's terrain so restored props get the same lift serialization subtracted (build 893; returning 0 sank every primitive/track piece into the hills on refresh)
   if(!t || !t.h || !t.h.length || !t.seg) return 0;
   const N=(t.seg|0)+1;
   return _sampleHeightGrid(t.h, N, (x+ARENA)/(ARENA*2), (z+ARENA)/(ARENA*2));
@@ -8843,7 +8844,8 @@ function _bumpGroupSeq(gid){ if(typeof gid==='string' && gid[0]==='g'){ const n=
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  const _tRel = !!(savedLevel && savedLevel.tRel);
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -13630,11 +13632,17 @@ function loadLevelFromNet(level){
   propModels.length = 0;
   // clear current lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
+  // build 893: adopt the host's world (TERRAIN above all) BEFORE spawning props. Prop y is stored
+  // relative to the terrain under it (propTuple subtracts the lift, finalizeProp re-adds it) — placing
+  // props against the joiner's PREVIOUS level's terrain scattered every prop/track piece vertically,
+  // then seeded NET.sentProps with mismatched tuples, and the reconciler "corrected" the HOST's level
+  // with the junk ("all of the tracks and props moved y position randomly").
+  if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); _skyHdriUrl = null; applyWorldCfg(); }
   // rebuild from the host's data
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -13644,7 +13652,7 @@ function loadLevelFromNet(level){
   pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact })) : [];   // build 879: joiners used to lose pickup transforms/items
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
   if(typeof refreshLootMarkers==='function') refreshLootMarkers(); pickupModels = (level.pickupModels && typeof level.pickupModels==='object') ? JSON.parse(JSON.stringify(level.pickupModels)) : {}; keyNames = (level.keyNames && typeof level.keyNames==='object') ? JSON.parse(JSON.stringify(level.keyNames)) : {}; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
-  if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); _skyHdriUrl = null; applyWorldCfg(); }   // adopt the host's sky / ground / fog (reset the sky guard so each level's sky re-applies cleanly, even mid-campaign)
+  // (world/terrain adopted ABOVE the prop rebuild — build 893)
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
@@ -14428,7 +14436,14 @@ function netApplyDelProp(nid){
 }
 function netApplyMovProp(nid, x){
   const o = propByNid(nid); if(!o || !x) return false;
+  if(typeof drivingCar!=='undefined' && o===drivingCar) return false;   // build 893: your own seat is authoritative — a late grid/echo must not teleport the car out from under you
+  // build 893: the tuple's y is TERRAIN-RELATIVE (propTuple subtracts the lift; finalizeProp re-adds it).
+  // This applier used to set the raw y, so on hilly levels every synced edit SANK the prop by the terrain
+  // height — and the receiver's reconciler, seeing its own tuple disagree, echoed a further-sunk pMov back:
+  // a cross-machine sinking loop ("all of the tracks and props moved y position randomly").
   o.position.set(x[0],x[1],x[2]); o.rotation.set(x[3],x[4],x[5]); o.scale.set(x[6],x[7],x[8]);
+  o.updateMatrixWorld(true); o.userData.footR = _propFootR(o);          // scale first — the footprint (and so the lift) depends on it
+  o.position.y = x[1] + _maxTerrainOver(x[0], x[2], o.userData.footR);
   refreshPropCollider(o); NET.sentProps.set(nid, x.slice());
   if(editorOpen && editorActive==='props' && editorTargets.props.obj()===o && !gizmoDrag){ syncPropStateFromObj(); updateFieldDisplays(); }
   return true;
@@ -16942,7 +16957,7 @@ function checkProximity(){
   }
   if(!nearTarget && !drivingCar){   // build 766: prompt when within enterDist of ANY part of the model (its footprint), not a fixed radius from the origin
     const px=player.pos.x, pz=player.pos.z; let best=null, bd=Infinity;
-    for(const o of propModels){ if(!o || !o.userData.vehicle) continue;
+    for(const o of ((typeof _gridCars!=='undefined' && _gridCars.length) ? propModels.concat(_gridCars) : propModels)){ if(!o || !o.userData.vehicle) continue;   // build 893: grid clones are enterable too
       const _k=o.position.x+o.position.z*4096;   // recompute the footprint box only when the car has moved (a parked car: once)
       if(!o.userData._enterBox || o.userData._enterBoxKey!==_k){ o.userData._enterBox=(o.userData._enterBox||new THREE.Box3()).setFromObject(o); o.userData._enterBoxKey=_k; }
       const bx=o.userData._enterBox; if(bx.isEmpty()) continue;
@@ -17492,7 +17507,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 892 · 2026-07-06';
+const BUILD_VERSION = 'build 893 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19742,7 +19757,7 @@ let _raceStartO=null; const _raceCk=[]; const _raceVisited=new Set();
 const _raceTimes=[];   // build 832: every completed lap's time, for the results breakdown
 let _raceCountT=0, _raceCountShown='';   // build 832: 3-2-1-GO standing start (throttle locked while >1)
 function _fmtRace(t){ if(!isFinite(t)) return '--:--.-'; const m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
-function _raceClear(){ _offTrackT=0; _raceLastS=0; if(typeof _offTrackHide==='function') _offTrackHide(); _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); _raceWinner=null; _raceNetAcc=0; for(const k in _raceNet) delete _raceNet[k]; if(typeof _raceHudHide==='function') _raceHudHide(); }
+function _raceClear(){ _offTrackT=0; _raceLastS=0; if(typeof _offTrackHide==='function') _offTrackHide(); _raceLap=0; _raceLapT=0; _raceLastT=0; _raceBestT=Infinity; _raceCrossCd=0; _racePrevLz=null; _raceStartO=null; _raceCk.length=0; _raceVisited.clear(); _raceTimes.length=0; _raceCountT=0; _raceCountShown=''; _raceCountHide(); if(typeof _raceClearBots==='function') _raceClearBots(); if(typeof _gridCarsClear==='function') _gridCarsClear(); _raceWinner=null; _raceNetAcc=0; for(const k in _raceNet) delete _raceNet[k]; if(typeof _raceHudHide==='function') _raceHudHide(); }
 // build 832: the big centre countdown. One lazily-created element; numbers pop in accent, GO flashes green.
 function _raceCountEl(){
   let el=document.getElementById('raceCount');
@@ -20151,17 +20166,40 @@ function _raceBotObstacle(st, o, yaw){
 // build 839: AUTO-SEAT — a race deploy puts you straight in the car on the grid (no walk-over-and-press-E).
 // Solo only: in multiplayer everyone would fight over the same seat. GLB vehicles can still be downloading at
 // deploy, so it retries for ~6 s before giving up quietly.
+// build 893: when racers outnumber authored cars, the grid FILLS ITSELF — each machine clones the first
+// car locally (runtime-only: never serialized, never net-synced; every peer clones its own identical
+// copies), so a one-car level still seats every joiner instead of leaving them on foot.
+let _gridCars=[], _gridCloneReq=0;
+function _gridCarsClear(){ for(const c of _gridCars){ try{ if(c.userData && c.userData.mixer){ const mi=mixers.indexOf(c.userData.mixer); if(mi>=0) mixers.splice(mi,1); } scene.remove(c); }catch(e){} } _gridCars.length=0; _gridCloneReq=0; }
+function _gridCloneCar(tmpl){
+  const src=tmpl.userData.src, sc=tmpl.scale, veh=tmpl.userData.vehicle;
+  spawnProp(src, [0,-1000,0, 0,0,0, sc.x, sc.y, sc.z], (obj)=>{
+    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // local-only extras: no rays/physics
+    { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }   // ...and never serialized or net-synced
+    obj.userData.runtime=true; obj.userData.gridClone=true;
+    obj.userData.vehicle=Object.assign({}, veh);
+    _gridCars.push(obj);
+  });
+}
 function _raceAutoSeat(tries){
   if(objectiveActive()!=='race' || !gameOn || editorOpen || gameOver || drivingCar) return;
   const mp = typeof NET!=='undefined' && NET.mode!=='off';
   if(mp && NET.gameMode!=='coop') return;   // duel/FFA rooms never auto-seat
-  const cars=propModels.filter(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
+  const authored=propModels.filter(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime);
+  const cars=authored.concat(_gridCars);
   if(!cars.length){ if((tries|0)<12) setTimeout(()=>_raceAutoSeat((tries|0)+1), 500); return; }
   let car=cars[0];
   if(mp){
     // build 890: every participant grids into their OWN car. All clients share the level, so gridding
     // every authored car to a staggered slot is the SAME computation everywhere — a consistent field —
     // and each player takes cars[their rank] (participant ids sorted; the host is always 0).
+    const ids=[0, +NET.myId]; for(const k in NET.players) ids.push(+k);
+    const uniq=[...new Set(ids)].sort((a,b)=>a-b);
+    const idx=uniq.indexOf(+NET.myId);
+    if(uniq.length>cars.length && authored.length && _gridCloneReq<uniq.length){   // build 893: not enough seats -> grow the field locally
+      _gridCloneReq=uniq.length;
+      for(let i=cars.length;i<uniq.length;i++) _gridCloneCar(authored[0]);
+    }
     if(_racePath){
       cars.forEach((c,i)=>{
         const pose=_racePathAt(_racePath.total-4-6*Math.floor(i/2), (i%2)?-2.7:2.7);
@@ -20172,13 +20210,10 @@ function _raceAutoSeat(tries){
         c.updateMatrixWorld(true);
       });
     }
-    const ids=[0, +NET.myId]; for(const k in NET.players) ids.push(+k);
-    const uniq=[...new Set(ids)].sort((a,b)=>a-b);
-    const idx=uniq.indexOf(+NET.myId);
     if(idx>=cars.length){
-      // roster can still be filling in on a fresh join — retry before declaring the grid full
+      // roster can still be filling in — and a grid clone may still be loading — retry before giving up
       if((tries|0)<12){ setTimeout(()=>_raceAutoSeat((tries|0)+1), 500); return; }
-      if(typeof toast==='function') toast('Grid full \u2014 add more cars to the level to race more players');
+      if(typeof toast==='function') toast('Grid full \u2014 your car is still loading (press E by a free car)');
       return;
     }
     car=cars[idx];
@@ -22904,7 +22939,11 @@ function _homeSync(o){
 // One prop's serialized descriptor (used by both level save and live prop sync). Carries the network id.
 function propEntry(o){
   const h = _authoredHome(o);
-  const e={ src:o.userData.src||PROP_MODEL_URL, t:[ h.x, h.y, h.z, o.rotation.x,o.rotation.y,o.rotation.z,o.scale.x,o.scale.y,o.scale.z] };
+  // build 893: y is stored TERRAIN-RELATIVE (matching propTuple + finalizeProp's re-add). propEntry used
+  // to store the raw world y, which only round-tripped because boot placement sampled no terrain (worldCfg
+  // TDZ) — every RUNTIME load of a terrain level lifted props by the ground height again. Levels saved this
+  // way carry tRel:1; loaders pin legacy levels to their raw stored y instead.
+  const e={ src:o.userData.src||PROP_MODEL_URL, t:[ h.x, h.y - _maxTerrainOver(h.x, h.z, o.userData.footR||0), h.z, o.rotation.x,o.rotation.y,o.rotation.z,o.scale.x,o.scale.y,o.scale.z] };
   if(o.userData.animMode==='trigger') e.anim='trigger';
   if(o.userData.animTrigger && o.userData.animTrigger!=='auto') e.animTrig=o.userData.animTrigger;
   if(o.userData.animPlay && o.userData.animPlay!=='loop') e.animPlay=o.userData.animPlay;
@@ -22963,6 +23002,7 @@ function serializeLevel(){
     chest:   { url: chestModelUrl, scale: chestModelScale, randomOff: !randomLootOn },
     coin:    { url: coinCfg.url, scale: coinCfg.scale, on: coinCfg.on !== false },
     enemies: ENEMY_TYPE_KEYS.reduce((a,k)=>{ const m=enemyModelCfg(k); a[k]={ url:m.url, scale:m.scale, face:m.face, cr:m.cr, ch:m.ch, yoff:m.yoff, xoff:m.xoff, zoff:m.zoff, clip:m.clip, clips:Object.assign({}, m.clips), clipSpeed:Object.assign({}, m.clipSpeed||{}), clipHold:Object.assign({}, m.clipHold||{}), clipInPlace:Object.assign({}, m.clipInPlace||{}) }; return a; }, {}),
+    tRel: 1,   // build 893: prop t[1] is terrain-relative (legacy levels without this stored raw world y)
     props:   propModels.filter(o=>o && !o.userData.runtime).map(propEntry),
     lights:  lightModels.map(g=>_lightOpts(g)),
     turret:  { url: turretModelUrl, scale: turretModelScale, modelYaw: turretModelYaw, muz: { fwd:turretMuzzle.fwd, up:turretMuzzle.up, side:turretMuzzle.side } },
@@ -23455,13 +23495,16 @@ function pushUndoSnapshot(){
 }
 function restoreLevel(level){
   if(!level) return;
+  // build 893: world (TERRAIN) first — prop y is stored relative to the terrain under it, so placement
+  // must lift against THIS level's terrain, not whatever the previous level left behind.
+  if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); applyWorldCfg(); }
   // props
   for(let i=propModels.length-1;i>=0;i--){ if(propModels[i]) removeProp(i); }
   propModels.length = 0;
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -23500,8 +23543,7 @@ function restoreLevel(level){
   applyWeaponAim(curWep); if(editorTargets.aim.syncFromWeapon) editorTargets.aim.syncFromWeapon();
   setStationEnabled(!(level.stationEnabled===false));   // build 654: build or tear down to match the level
   if(level.station && station){ if(level.station.url && level.station.url!==stationModelUrl) swapStationModel(level.station.url); Object.assign(editorTargets.station.state, level.station.state||{}); editorTargets.station.apply(); }
-  // world + loot
-  if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); applyWorldCfg(); }
+  // world + loot (world/terrain itself is adopted at the TOP of this function — build 893)
   // build 879: pickups / loot / inventory were NEVER restored on this path (community levels, share
   // links, .json import, undo) — the previous level's pads persisted and the loaded level's own never
   // arrived. Same field map as the boot loader, so transforms/interact round-trip identically.
@@ -28044,7 +28086,7 @@ function startHostRace(){
   const carN = typeof propModels!=='undefined' ? propModels.filter(p=>p && p.userData && p.userData.vehicle && !p.userData.runtime).length : 0;
   if(!carN) probs.push('place at least one drivable vehicle');
   if(probs.length){ netStatus('Not a race level yet \u2014 '+probs.join('; ')+'.'); if(typeof flashToast==='function') flashToast('Load or build a race level first'); return; }
-  if(carN===1 && typeof flashToast==='function') flashToast('Tip: place one car per racer \u2014 extra players spectate on foot');
+  if(carN===1 && typeof flashToast==='function') flashToast('One car placed \u2014 extra racers get a cloned copy on the grid automatically');
   startHost();
 }
 function startDuel(){

@@ -23,7 +23,7 @@ const hs = new Function(extractFunction('_homeSync') + '\nreturn _homeSync;')();
 { const o2 = { position:{}, quaternion:{}, userData:{} }; hs(o2); assert(true, 'no-op (no throw) for a non-dynamic prop'); }
 
 // --- the serializer + code export use _authoredHome ---
-assert(/const h = _authoredHome\(o\);\s*\n\s*const e=\{ src:o\.userData\.src\|\|PROP_MODEL_URL, t:\[ h\.x, h\.y, h\.z,/.test(src), 'propEntry serializes the authored home');
+assert(/const h = _authoredHome\(o\);[\s\S]{0,700}const e=\{ src:o\.userData\.src\|\|PROP_MODEL_URL, t:\[ h\.x, h\.y - _maxTerrainOver\(h\.x, h\.z, o\.userData\.footR\|\|0\), h\.z,/.test(src), 'propEntry serializes the authored home (y terrain-relative since build 893)');
 assert(/const _h = _authoredHome\(o\);[\s\S]*?const hx = _h\.x, hy = _h\.y, hz = _h\.z;/.test(src), 'code export uses the authored home too');
 
 // --- every editor move chokepoint keeps the home in sync ---

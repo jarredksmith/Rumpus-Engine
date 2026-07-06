@@ -21,7 +21,7 @@ assert(/gameCfg\.objective==='race'/.test(hostRace), 'checks the objective');
 assert(/TRACK_PIECES\[p\.userData\.src\] && TRACK_PIECES\[p\.userData\.src\]\.start/.test(hostRace), 'checks for a start line');
 assert(/p\.userData\.vehicle && !p\.userData\.runtime/.test(hostRace), 'checks for a drivable car');
 assert(/netStatus\('Not a race level yet/.test(hostRace), 'explains exactly what is missing instead of hosting a dud room');
-assert(/carN===1[\s\S]{0,120}one car per racer/.test(hostRace), 'nudges toward one car per racer');
+assert(/carN===1[\s\S]{0,140}cloned copy on the grid automatically/.test(hostRace), 'one-car levels: the tip says the grid clones itself (build 893)');
 assert(/startHost\(\);\s*\n\}/.test(hostRace), 'a valid level hosts the normal co-op room (joiners get the level automatically)');
 
 // ---- per-player gridding + seating ----
@@ -33,7 +33,7 @@ assert(/const ids=\[0, \+NET\.myId\]; for\(const k in NET\.players\) ids\.push\(
 assert(/const idx=uniq\.indexOf\(\+NET\.myId\);/.test(seat) && /car=cars\[idx\];/.test(seat), 'each player takes the car at their rank');
 assert(/if\(idx>=cars\.length\)\{[\s\S]{0,300}setTimeout\(\(\)=>_raceAutoSeat\(\(tries\|0\)\+1\), 500\)/.test(seat),
   'a fresh joiner retries while the roster fills before declaring the grid full');
-assert(/toast\('Grid full \\u2014 add more cars to the level to race more players'\)/.test(seat), 'grid-full players are told why they are on foot');
+assert(/toast\('Grid full \\u2014 your car is still loading \(press E by a free car\)'\)/.test(seat), 'a rare failed clone still explains itself (build 893: the grid normally clones a seat for everyone)');
 // solo behaviour unchanged: first car, same seat flow
 assert(/let car=cars\[0\];/.test(seat), 'solo still takes the (pole-gridded) first car');
 assert(/c\.userData\.carSpeed=0; c\.userData\.carVelY=0; c\.userData\.carPitch=0; c\.userData\.carRoll=0;/.test(seat), 'gridded cars start settled');
