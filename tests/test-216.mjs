@@ -4,7 +4,7 @@ const src = gameSource();
 // airborne flag in all three send paths
 assert(/hp:Math\.max\(0,player\.hp\), j:player\.onGround\?0:1, sl:sliding\?1:0, ad:\(ads\|\|padAds\|\|touchAds\)\?1:0, cr:crouching\?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET\.name\|\|'Host'/.test(src), 'host sends its own airborne + slide flags');
 assert(/hp:rp\.hp, j:rp\.air\?1:0, sl:rp\.slide\?1:0, ad:rp\.ads\?1:0, cr:rp\.crouch\?1:0, hd:rp\.hd\|\|0, hs:rp\.hs\|\|0, n:rp\.name/.test(src), 'host relays each peer airborne + slide flag');
-assert(/hp:Math\.max\(0,player\.hp\), j:player\.onGround\?0:1, sl:sliding\?1:0, ad:\(ads\|\|padAds\|\|touchAds\)\?1:0, cr:crouching\?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET\.name, mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\) \}/.test(src), 'client sends its own airborne + slide flags (build 497: + hd/hs; build 548: + mt)');
+assert(/hp:Math\.max\(0,player\.hp\), j:player\.onGround\?0:1, sl:sliding\?1:0, ad:\(ads\|\|padAds\|\|touchAds\)\?1:0, cr:crouching\?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET\.name, mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\), c:_packCar\(\) \}/.test(src), 'client sends its own airborne + slide flags (build 497: + hd/hs; build 548: + mt; build 895: + driven car)');
 // stored on receive (both directions)
 const srs = extractFunction('setRemoteState');
 assert(/rp\.air = !!msg\.j;/.test(srs), 'host stores peer airborne flag');

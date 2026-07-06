@@ -14344,7 +14344,7 @@ function ensureRemotePlayer(id, name){
   if(!rp){ const cfg=(NET.charById&&NET.charById[id])||null; rp={ mesh:makeRemotePlayer(name||('P'+id), cfg), posEye:new THREE.Vector3(), target:new THREE.Vector3(), yaw:0, pitch:0, hp:100, wep:0, name:name||('P'+id), modelCfg:cfg, mt:-1, ready:false }; NET.players[id]=rp; if(teamMode() && NET.teams[id]!=null) tintAvatar(rp.mesh, NET.teams[id]); }
   return rp;
 }
-function removeRemotePlayer(id){ const rp=NET.players[id]; if(rp){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); scene.remove(rp.mesh); delete NET.players[id]; } }   // build 813: free the name-tag texture
+function removeRemotePlayer(id){ const rp=NET.players[id]; if(rp){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); scene.remove(rp.mesh); if(rp.carGhost){ scene.remove(rp.carGhost.mesh); rp.carGhost=null; } if(rp._drivenNid && typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids[rp._drivenNid]===+id) delete _remoteDrivenNids[rp._drivenNid]; delete NET.players[id]; } }   // build 813: free the name-tag texture; build 895: drop the ghost car + release the driven-car claim
 // build 578: host-side cleanup when a client leaves (clean close, error, or a liveness timeout). The next world
 // snapshot omits them, so every other client prunes the avatar automatically (see the snapshot handler).
 function dropClient(pid, why){
@@ -14372,7 +14372,7 @@ function setRemoteState(id, msg){
   const rp=ensureRemotePlayer(id, msg.n);
   rp.posEye.set(msg.p[0], msg.p[1], msg.p[2]);
   rp.target.set(msg.p[0], msg.p[1]-EYE, msg.p[2]);   // synced feet (no flat-0 clamp; netInterpolate glues grounded avatars to the LOCAL terrain)
-  rp.yaw = msg.y; rp.pitch = msg.pi||0; if(msg.hp!=null) rp.hp=msg.hp; if(msg.w!=null) rp.wep=msg.w; if(msg.g) rp.grip=_unpackGrip(msg.g); rp.air = !!msg.j; rp.slide = !!msg.sl; rp.ads = !!msg.ad; rp.crouch = !!msg.cr; rp.hd = msg.hd||0; rp.hs = msg.hs||0; rp.mt = (msg.mt!=null?msg.mt:-1); rp.cl = msg.cl||0;   // build 548/644: turret index + climbing anim code travel in the state
+  rp.yaw = msg.y; rp.pitch = msg.pi||0; if(msg.hp!=null) rp.hp=msg.hp; if(msg.w!=null) rp.wep=msg.w; if(msg.g) rp.grip=_unpackGrip(msg.g); rp.air = !!msg.j; rp.slide = !!msg.sl; rp.ads = !!msg.ad; rp.crouch = !!msg.cr; rp.hd = msg.hd||0; rp.hs = msg.hs||0; rp.mt = (msg.mt!=null?msg.mt:-1); rp.cl = msg.cl||0; rp.car = msg.c||null;   // build 548/644: turret index + climbing anim code travel in the state; build 895: the car they're driving
 }
 
 // ---- client-side display meshes for the host's enemies & coins ----
@@ -14395,12 +14395,22 @@ function upsertCoinMesh(c){
 }
 
 // ---- host: build + send the authoritative world snapshot ----
+// build 895: while driving, the state packet carries the CAR — pose + identity. Receivers render the
+// car and hide the avatar. n = the car's network id (authored cars resolve everywhere); grid clones
+// don't resolve remotely, so s/sc (model + scale) let receivers build a local ghost car instead.
+function _packCar(){
+  if(typeof drivingCar==='undefined' || !drivingCar) return undefined;
+  const o=drivingCar;
+  return { n:(o.userData.nid||''), s:(o.userData.src||''), sc:[+o.scale.x.toFixed(3),+o.scale.y.toFixed(3),+o.scale.z.toFixed(3)],
+           p:[+o.position.x.toFixed(2),+o.position.y.toFixed(2),+o.position.z.toFixed(2)],
+           r:[+o.rotation.x.toFixed(3),+o.rotation.y.toFixed(3),+o.rotation.z.toFixed(3)] };
+}
 function _packGrip(){ const wk=(typeof curWep!=='undefined'?curWep:'rifle'); const g=activeCharGrip(wk)||tpGunGrip(wk); return [ +(+g.x).toFixed(3), +(+g.y).toFixed(3), +(+g.z).toFixed(3), +(+g.yaw).toFixed(3), +(+g.pitch).toFixed(3), +(+g.roll).toFixed(3), +((g.scale==null?1:+g.scale)).toFixed(3) ]; }
 function _unpackGrip(a){ return (a && a.length>=7) ? { x:+a[0], y:+a[1], z:+a[2], yaw:+a[3], pitch:+a[4], roll:+a[5], scale:+a[6] } : null; }
 function serializeWorld(){
-  const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode() }];   // build 644: cl = climbing anim code
+  const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar() }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving
   for(const id in NET.players){ const rp=NET.players[id];
-    P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1), cl:(rp.cl||0) }); }
+    P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1), cl:(rp.cl||0), c:(rp.car||undefined) }); }
   for(const b of bots){ if(b.dead && !b._dying) continue; P.push({ id:b.id, p:[b.pos.x,EYE,b.pos.z], y:b.yaw, pi:0, w:'rifle', hp:(b.dead?0:b.hp), hd:b._netHitDir||0, hs:b._netHitSeq||0, n:b.name }); }   // build 502: keep dead-but-dying bots in the snapshot (+ hd/hs) so clients play the directional death, then they prune on respawn
   const E=enemies.map(e=>({ id:e.id, p:[e.mesh.position.x,e.mesh.position.y,e.mesh.position.z], hd:e._netHitDir||0, hs:e._netHitSeq||0 }));
   const C=coins.map(c=>({ id:c.id, p:[c.mesh.position.x,c.mesh.position.z] }));
@@ -14434,6 +14444,8 @@ function reconcileProps(dt){
   const cur = new Map();
   for(const o of propModels){ if(!o) continue; const nid=o.userData.nid; if(!nid) continue; cur.set(nid, o); }
   for(const [nid,o] of cur){
+    if(typeof drivingCar!=='undefined' && o===drivingCar) continue;         // build 895: MY driven car rides the state channel; the parking pMov goes out when I exit (sentProps still holds the pre-drive tuple)
+    if(_remoteDrivenNids[nid]!=null) continue;                              // build 895: THEIR driven car — don't echo the motion back as edits
     const dyn = !!o.userData.phys;                      // dynamic props: existence synced here, motion via the host's D snapshot
     const prev = NET.sentProps.get(nid);
     if(prev===undefined){ NET.sentProps.set(nid, dyn?'dyn':propTuple(o)); netSendProp({ t:'pAdd', d:propEntry(o) }); }
@@ -14461,6 +14473,7 @@ function netApplyDelProp(nid){
 function netApplyMovProp(nid, x){
   const o = propByNid(nid); if(!o || !x) return false;
   if(typeof drivingCar!=='undefined' && o===drivingCar) return false;   // build 893: your own seat is authoritative — a late grid/echo must not teleport the car out from under you
+  if(typeof _remoteDrivenNids!=='undefined' && _remoteDrivenNids[nid]!=null) return false;   // build 895: a driven car follows its driver's state sync, not stale pMovs
   // build 893: the tuple's y is TERRAIN-RELATIVE (propTuple subtracts the lift; finalizeProp re-adds it).
   // This applier used to set the raw y, so on hilly levels every synced edit SANK the prop by the terrain
   // height — and the receiver's reconciler, seeing its own tuple disagree, echoed a further-sunk pMov back:
@@ -14525,7 +14538,7 @@ function applyWorld(msg){
   const seen=new Set();
   for(const pl of msg.P){ if(pl.id===NET.myId) continue; seen.add(pl.id);
     const rp=ensureRemotePlayer(pl.id, pl.n);
-    rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); rp.cl=pl.cl||0; }   // build 548/644: turret index + climbing anim code travel in the snapshot
+    rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); rp.cl=pl.cl||0; rp.car=pl.c||null; }   // build 548/644: turret index + climbing anim code travel in the snapshot; build 895: driven car
   for(const id in NET.players){ if(!seen.has(+id)) removeRemotePlayer(+id); }
   const es=new Set();
   for(const e of msg.E){ es.add(e.id); upsertEnemyMesh(e); }
@@ -14559,11 +14572,57 @@ function applyWorld(msg){
   }
 }
 
+// ---- build 895: remote DRIVEN cars — "other players actually just be the car" ----
+// While a remote player drives, their avatar hides and their car renders instead: the authored car
+// resolves by nid on every machine; a grid clone (local-only, no shared nid) gets a per-player GHOST
+// car built from the synced model + scale. Driven cars are driver-authoritative: the reconciler and
+// pMov leave them alone until the driver exits (whose machine then sends the one parking pMov).
+const _remoteDrivenNids = {};   // nid -> remote player id currently driving it
+function _ensureCarGhost(rp){
+  const c=rp.car; if(!c || !c.s) return null;
+  if(rp.carGhost && rp.carGhost.src===c.s) return rp.carGhost.mesh;
+  if(rp.carGhost){ scene.remove(rp.carGhost.mesh); rp.carGhost=null; }
+  if(rp._carGhostLoading===c.s) return null;
+  rp._carGhostLoading=c.s;
+  const fin=(m)=>{ m.traverse(o=>{ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
+    if(c.sc) m.scale.set(c.sc[0]||1, c.sc[1]||1, c.sc[2]||1);
+    m.position.set(c.p[0], c.p[1], c.p[2]); m.rotation.set(c.r[0], c.r[1], c.r[2]);
+    scene.add(m); rp.carGhost={ src:c.s, mesh:m }; rp._carGhostLoading=null; };
+  if(typeof isPrimitive==='function' && isPrimitive(c.s) && PRIMITIVE_BUILDERS[c.s]) fin(PRIMITIVE_BUILDERS[c.s]());
+  else loadGLTFCached(c.s, (gltf)=>fin(THREE.cloneSkinned(gltf.scene)), ()=>{ rp._carGhostLoading=null; });
+  return rp.carGhost ? rp.carGhost.mesh : null;
+}
+function _syncRemoteCar(rp, id, k){
+  const c=rp.car;
+  if(!c){   // on foot: avatar back, release any claim, park the ghost
+    if(rp._drivenNid){ if(_remoteDrivenNids[rp._drivenNid]===id) delete _remoteDrivenNids[rp._drivenNid]; rp._drivenNid=null; }
+    if(rp.carGhost) rp.carGhost.mesh.visible=false;
+    if(rp._carHidden){ rp.mesh.visible=true; rp._carHidden=false; }
+    return;
+  }
+  rp.mesh.visible=false; rp._carHidden=true;   // "just be the car"
+  let car = c.n ? propByNid(c.n) : null;       // re-resolve every frame: the level's GLB car may finish loading late
+  if(car){
+    if(rp.carGhost) rp.carGhost.mesh.visible=false;
+    if(rp._drivenNid!==c.n){ if(rp._drivenNid && _remoteDrivenNids[rp._drivenNid]===id) delete _remoteDrivenNids[rp._drivenNid]; rp._drivenNid=c.n; }
+    _remoteDrivenNids[c.n]=id;
+  } else {
+    car=_ensureCarGhost(rp); if(!car) return; car.visible=true;
+    if(rp._drivenNid){ if(_remoteDrivenNids[rp._drivenNid]===id) delete _remoteDrivenNids[rp._drivenNid]; rp._drivenNid=null; }
+  }
+  _netLerpV.set(c.p[0], c.p[1], c.p[2]);
+  if(car.position.distanceToSquared(_netLerpV) > 400) car.position.copy(_netLerpV);   // >20m jump (grid snap, respawn) -> teleport, don't glide
+  else car.position.lerp(_netLerpV, k);
+  car.rotation.x=c.r[0]; car.rotation.z=c.r[2];
+  let dy=c.r[1]-car.rotation.y; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI;
+  car.rotation.y += dy*k;
+}
 // ---- per-frame smoothing for everything I don't simulate locally ----
 const _netLerpV = new THREE.Vector3();   // build 843: netInterpolate scratch (was a fresh Vector3 per dynamic prop per frame)
 function netInterpolate(dt){
   const k=Math.min(1, dt*14);
   for(const id in NET.players){ const rp=NET.players[id];
+    if(typeof _syncRemoteCar==='function') _syncRemoteCar(rp, +id, k);   // build 895: driving -> render the car, hide the avatar
     const _px=rp.mesh.position.x, _pz=rp.mesh.position.z;
     rp.mesh.position.lerp(rp.target, k);
     // build 639: glue a GROUNDED remote avatar to the LOCAL ground (terrain + walkable surfaces / prop tops) at its
@@ -14628,7 +14687,7 @@ function netTick(dt){
   if(NET.sendTimer<=0){
     NET.sendTimer=0.05;
     if(NET.mode==='client' && NET.conn && NET.conn.open){
-      try{ NET.conn.send({ t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode() }); }catch(e){}
+      try{ NET.conn.send({ t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar() }); }catch(e){}
       if(heldProp && heldNidLocal!=null){ const tgt=_localHoldTarget(); try{ NET.conn.send({ t:'hold', nid:heldNidLocal, p:[tgt.x,tgt.y,tgt.z] }); }catch(e){} }
     } else if(NET.mode==='host'){
       broadcastWorld();
@@ -17531,7 +17590,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 894 · 2026-07-06';
+const BUILD_VERSION = 'build 895 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
