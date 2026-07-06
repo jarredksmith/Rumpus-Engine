@@ -15025,10 +15025,33 @@ function throwGrenade(){
   if(grenadeCount<=0 || shopOpen) return;
   grenadeCount--; SFX.throw(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim('throw', 480);
   const mesh = makeGrenadeMesh();
-  const origin = new THREE.Vector3(); camera.getWorldPosition(origin);
+  // build 891: cursor-aimed lobs in top-down / side view. The old throw launched from the CAMERA along
+  // its forward vector — from a bird's-eye camera the grenade spawned in the sky and slammed straight
+  // down. Now (like build 885 gunfire) the throw starts at the player's chest and solves the ballistic
+  // arc (g=30, matching updateGrenades) that lands ON the cursor — range-capped by throwForce so the
+  // grenade tuning dial still limits reach.
+  let origin, vel;
+  if(typeof activeViewMode==='function' && activeViewMode()!=='fps'){
+    origin = new THREE.Vector3(player.pos.x, player.pos.y-0.2, player.pos.z);
+    raycaster.setFromCamera(_vAimTmpNdc.set(_vAimNdc.x, _vAimNdc.y), camera);
+    const _em = (typeof NET!=='undefined' && NET.mode==='client') ? Object.values(NET.enemyMeshes).map(o=>o.mesh) : enemies.map(e=>e.mesh);
+    const _hits = raycaster.intersectObjects([..._em, ...colliders, ...dynamicProps, floor].filter(o=>o&&o.isObject3D), true);
+    const tgt = _hits.length ? _hits[0].point.clone() : _vAimPt.clone();
+    if(tgt.distanceToSquared(origin) < 1) tgt.copy(origin).addScaledVector(new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw)), 4);   // cursor on top of yourself: lob where you face
+    const maxR = Math.max(6, (+GRENADE.throwForce||26)*1.1);
+    let dx=tgt.x-origin.x, dz=tgt.z-origin.z; const d0=Math.hypot(dx,dz)||1e-4;
+    const d = Math.min(d0, maxR); dx*=d/d0; dz*=d/d0;
+    const dy = (d0>maxR) ? 0 : (tgt.y-origin.y);      // out of range: land short at your own height, not a far target's
+    const apex = Math.max(0, dy) + 2.2 + d*0.10;      // clear low cover; longer lobs arc higher
+    const vy = Math.sqrt(60*apex);                    // v² = 2·g·apex, g = 30 (updateGrenades)
+    const t  = vy/30 + Math.sqrt(Math.max(0.01, 2*(apex-dy)/30));
+    vel = new THREE.Vector3(dx/t, vy, dz/t);
+  } else {
+    origin = new THREE.Vector3(); camera.getWorldPosition(origin);
+    const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+    vel = dir.multiplyScalar(GRENADE.throwForce); vel.y += 5; // arc
+  }
   mesh.position.copy(origin);
-  const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
-  const vel = dir.multiplyScalar(GRENADE.throwForce); vel.y += 5; // arc
   scene.add(mesh);
   // build 670: grenades are networked like rockets. The thrower's machine + the host author damage (auth);
   // relayed copies on other machines are visual-only. Without this, only the thrower ever saw the grenade/blast.
@@ -17446,7 +17469,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 890 · 2026-07-06';
+const BUILD_VERSION = 'build 891 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
