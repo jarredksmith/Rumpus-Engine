@@ -21,7 +21,8 @@ assert(/if\(M\.kerb\.map && M\.kerb\.map\.dispose\) M\.kerb\.map\.dispose\(\);/.
 assert(/if\(!_trkM\) return;/.test(fn), 'safe before the materials exist — _trackMats() bakes the cfg on first build instead');
 
 // ---- wiring: first build + every load path ----
-assert(/_trkM=\{ road, line, kerb, chk, barrier, screen \};\s*\n\s*_applyTrackCfg\(\);/.test(src), '_trackMats bakes the saved appearance on first build');
+assert(/_trkM=\{ road, line, kerb, chk, barrier, screen \};[\s\S]{0,600}try\{ _applyTrackCfg\(\); \}catch\(e\)\{\}/.test(src),
+  '_trackMats bakes the saved appearance on first build — inside try/catch (build 889: a track-piece autosave builds at boot BEFORE worldCfg exists; even typeof throws in the TDZ)');
 assert(/if\(typeof _applyTrackCfg==='function'\) _applyTrackCfg\(\);   \/\/ build 886/.test(src), 'applyWorldCfg restyles — boot, load, share, MP-adopt and undo all pass through it');
 // the road deck now carries arc-length UVs so a texture rides the course
 assert(/_trackRibbon\(def, -half\+KW,  half-KW, 0, TRACK_T,      segs, 1\/6\),    M\.road\)/.test(src), 'road deck UVs: u = metres/6 (unused until a map is set)');

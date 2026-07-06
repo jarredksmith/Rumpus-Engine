@@ -8317,7 +8317,11 @@ function _trackMats(){
   const barrier=mk(0xb9bdc2,0.9);                                                        // concrete barrier base
   const screen=mk(0x9fd8ff,0.4); screen.transparent=true; screen.opacity=0.16; screen.depthWrite=false;   // clear catch-screen above it
   _trkM={ road, line, kerb, chk, barrier, screen };
-  _applyTrackCfg();   // build 886: bake any saved appearance into the first build
+  // build 889: try/catch, not a typeof guard — typeof STILL throws on a let in its temporal dead zone.
+  // A saved level with track pieces builds them at boot (loadHostedProps, line ~8821) BEFORE worldCfg
+  // initializes (~9223), which crashed the whole boot ("cannot access 'worldCfg' before initialization").
+  // Missing the style here is harmless: applyWorldCfg runs moments later and re-applies it.
+  try{ _applyTrackCfg(); }catch(e){}
   return _trkM;
 }
 // build 886: per-level track appearance — road colour/roughness/texture, painted-line colour, kerb
@@ -17442,7 +17446,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 888 · 2026-07-05';
+const BUILD_VERSION = 'build 889 · 2026-07-05';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
