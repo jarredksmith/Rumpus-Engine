@@ -14,7 +14,7 @@ assert(/topZoom = Math\.max\(6, Math\.min\(Math\.max\(110, ARENA\*1\.3\), topZoo
 // --- entering top view fits the whole arena (both the T key and the toolbar button) ---
 {
   const m = src.match(/topZoom=Math\.min\(Math\.max\(75, ARENA\*1\.12\), 2600\);/g);
-  assert(m && m.length===2, 'both top-view toggles (T key + toolbar) enter fitted to the arena (found '+(m?m.length:0)+')');
+  assert(m && m.length===3, 'every top-view entry (T key, toolbar, build 896 Draw-track) enters fitted to the arena (found '+(m?m.length:0)+')');
 }
 
 // --- executable: the clamp math at both scales ---

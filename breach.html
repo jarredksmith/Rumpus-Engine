@@ -17590,7 +17590,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 895 · 2026-07-06';
+const BUILD_VERSION = 'build 896 · 2026-07-06';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22749,6 +22749,311 @@ function _trackExitPose(o){
            y:o.position.y + (e.dy||0)*o.scale.y,
            yaw:ry + e.yaw };
 }
+
+// ---------- build 896: DRAW-A-TRACK — sketch a loop, get a closed course ----------
+// The fitter is pure geometry (fully unit-tested): resample+smooth the sketch, find its corners (RDP),
+// quantize edge headings to 45°, split corners into 45°/90° curve units (radius TRACK_R fillets), solve
+// run lengths for closure (least-squares), quantize straight fills to the 8m piece grid, then absorb the
+// rounding residual by minutely STRETCHING each run's straights (scaled straights are first-class — the
+// Close-loop bridge is one) so the loop closes EXACTLY. Convention: forward(yaw) = (-sin, -cos); a left
+// curve (dir=+1) adds +arc; curve exit offset = (-dir*R*(1-cos a), -R*sin a) — same math as TRACK_PIECES.
+function _tkResample(pts, step){
+  const src = pts.slice();
+  if(Math.hypot(src[0].x-src[src.length-1].x, src[0].z-src[src.length-1].z) > 1e-6) src.push({ x:src[0].x, z:src[0].z });
+  const out=[]; let acc=0;
+  out.push({ x:src[0].x, z:src[0].z });
+  for(let i=1;i<src.length;i++){
+    let ax=src[i-1].x, az=src[i-1].z; const bx=src[i].x, bz=src[i].z;
+    let seg=Math.hypot(bx-ax, bz-az);
+    while(acc+seg >= step){
+      const t=(step-acc)/seg;
+      const nx=ax+(bx-ax)*t, nz=az+(bz-az)*t;
+      out.push({ x:nx, z:nz });
+      ax=nx; az=nz; seg=Math.hypot(bx-ax, bz-az); acc=0;
+    }
+    acc+=seg;
+  }
+  if(out.length>2 && Math.hypot(out[0].x-out[out.length-1].x, out[0].z-out[out.length-1].z)<step*0.5) out.pop();
+  return out;
+}
+function _tkSmooth(pts, passes){
+  let cur=pts;
+  for(let p=0;p<passes;p++){
+    const n=cur.length, out=[];
+    for(let i=0;i<n;i++){
+      let sx=0, sz=0;
+      for(let k=-2;k<=2;k++){ const q=cur[(i+k+n)%n]; sx+=q.x; sz+=q.z; }
+      out.push({ x:sx/5, z:sz/5 });
+    }
+    cur=out;
+  }
+  return cur;
+}
+function _tkRdp(pts, eps, out){
+  if(pts.length<3) return;
+  const a=pts[0], b=pts[pts.length-1];
+  let mi=-1, md=-1;
+  const abx=b.x-a.x, abz=b.z-a.z, ab2=abx*abx+abz*abz||1e-9;
+  for(let i=1;i<pts.length-1;i++){
+    const t=Math.max(0, Math.min(1, ((pts[i].x-a.x)*abx+(pts[i].z-a.z)*abz)/ab2));
+    const dx=pts[i].x-(a.x+abx*t), dz=pts[i].z-(a.z+abz*t);
+    const d=dx*dx+dz*dz;
+    if(d>md){ md=d; mi=i; }
+  }
+  if(md > eps*eps){
+    _tkRdp(pts.slice(0,mi+1), eps, out);
+    out.push(pts[mi]);
+    _tkRdp(pts.slice(mi), eps, out);
+  }
+}
+function _tkSimplify(pts, eps){
+  const n=pts.length; let cx=0, cz=0;
+  for(const p of pts){ cx+=p.x; cz+=p.z; } cx/=n; cz/=n;
+  let i0=0, d0=-1;
+  for(let i=0;i<n;i++){ const d=(pts[i].x-cx)*(pts[i].x-cx)+(pts[i].z-cz)*(pts[i].z-cz); if(d>d0){ d0=d; i0=i; } }
+  let i1=0, d1=-1;
+  for(let i=0;i<n;i++){ const d=(pts[i].x-pts[i0].x)*(pts[i].x-pts[i0].x)+(pts[i].z-pts[i0].z)*(pts[i].z-pts[i0].z); if(d>d1){ d1=d; i1=i; } }
+  const a=Math.min(i0,i1), b=Math.max(i0,i1);
+  const out=[pts[a]];
+  _tkRdp(pts.slice(a,b+1), eps, out); out.push(pts[b]);
+  _tkRdp(pts.slice(b).concat(pts.slice(0,a+1)), eps, out);
+  return out;
+}
+function _tkArea(pts){
+  let sa=0;
+  for(let i=0;i<pts.length;i++){ const a=pts[i], b=pts[(i+1)%pts.length]; sa += a.x*b.z - b.x*a.z; }
+  return sa/2;
+}
+function _fitTrackFromSketch(pts){
+  const wrap=(a)=>Math.atan2(Math.sin(a),Math.cos(a));
+  const fw=(th)=>({ x:-Math.sin(th), z:-Math.cos(th) });
+  if(!pts || pts.length<8) return { fail:'Sketch too short' };
+  let sp=_tkResample(pts, 2);
+  if(sp.length<12) return { fail:'Sketch too small — draw a bigger loop' };
+  sp=_tkSmooth(sp, 2);
+  const V=_tkSimplify(sp, 5);
+  if(V.length<3) return { fail:'Could not find corners — draw a clear loop' };
+  const Q=Math.PI/4;
+  let runs=[];
+  for(let i=0;i<V.length;i++){
+    const a=V[i], b=V[(i+1)%V.length];
+    const ex=b.x-a.x, ez=b.z-a.z;
+    if(Math.hypot(ex,ez)<1e-3) continue;
+    const thq=wrap(Math.round(Math.atan2(-ex,-ez)/Q)*Q);
+    const f=fw(thq);
+    const proj=ex*f.x+ez*f.z;
+    if(proj<=0.5) continue;
+    const last=runs[runs.length-1];
+    if(last && Math.abs(wrap(last.th-thq))<1e-6) last.L+=proj;
+    else runs.push({ th:thq, L:proj, at:{ x:a.x, z:a.z } });
+  }
+  for(let guard=0; guard<8; guard++){
+    let changed=false;
+    if(runs.length>=2 && Math.abs(wrap(runs[0].th-runs[runs.length-1].th))<1e-6){
+      runs[0].L+=runs[runs.length-1].L; runs[0].at=runs[runs.length-1].at; runs.pop(); changed=true;
+    }
+    for(let i=runs.length-1;i>=0 && runs.length>3;i--){
+      if(runs[i].L<9){ runs.splice(i,1); changed=true; }
+    }
+    for(let i=runs.length-1;i>=1;i--){
+      if(Math.abs(wrap(runs[i].th-runs[i-1].th))<1e-6){ runs[i-1].L+=runs[i].L; runs.splice(i,1); changed=true; }
+    }
+    if(!changed) break;
+  }
+  if(runs.length<3) return { fail:'Too few sides — draw a bigger loop' };
+  const orient=_tkArea(sp)>0 ? 1 : -1;
+  const units=[];
+  for(let i=0;i<runs.length;i++){
+    units.push({ run:true, th:runs[i].th, L:runs[i].L, at:runs[i].at });
+    let d=wrap(runs[(i+1)%runs.length].th - runs[i].th);
+    if(Math.abs(d)<1e-6) continue;
+    if(Math.abs(Math.abs(d)-Math.PI)<1e-6) d=orient*Math.PI;
+    const sgn=Math.sign(d);
+    let rem=Math.abs(d), firstCorner=true;
+    while(rem>1e-6){
+      const step=rem>=Q*2-1e-6 ? Q*2 : Q;
+      if(!firstCorner) units.push({ run:true, th:null, L:0, synth:true });
+      units.push({ corner:true, d:sgn*step });
+      rem-=step;
+      firstCorner=false;
+    }
+  }
+  { let th=units[0].th, sum=0;
+    for(const u of units){
+      if(u.corner){ sum+=u.d; th=wrap(th+u.d); }
+      else if(u.synth) u.th=th;
+      else th=u.th;
+    }
+    // accept either winding: the area-based orient only tie-breaks 180° corners, and its sign
+    // convention needn't match the yaw convention — a full loop is |sum| = 2π in EITHER direction.
+    if(Math.abs(Math.abs(sum)-2*Math.PI)>1e-6) return { fail:'That sketch does not close into a loop — end near where you started' };
+  }
+  const tang=(d)=>TRACK_R*Math.tan(Math.abs(d)/2);
+  const N=units.length, runIdx=[];
+  for(let i=0;i<N;i++) if(units[i].run) runIdx.push(i);
+  const cornerNear=(i,dirn)=>{ for(let k=1;k<=N;k++){ const u=units[(i+dirn*k+N*k)%N]; if(u.corner) return u; if(u.run) return null; } return null; };
+  for(const i of runIdx){
+    const u=units[i], cb=cornerNear(i,-1), ca=cornerNear(i,1);
+    u.minL=(cb?tang(cb.d):0)+(ca?tang(ca.d):0);
+    if(u.synth) u.L=u.minL;
+    u.L=Math.max(u.L, u.minL);
+  }
+  // closure error = sum(L_i * f_i): L are vertex-to-vertex, and the fillet identity
+  // curveVec = t*(f_in + f_out) puts every corner's displacement inside its two runs already.
+  const closureErr=()=>{ let ex=0, ez=0;
+    for(const u of units){ if(u.run){ const f=fw(u.th); ex+=u.L*f.x; ez+=u.L*f.z; } }
+    return { ex, ez }; };
+  const lsq=(free, bx, bz)=>{
+    let a11=0,a12=0,a22=0;
+    for(const i of free){ const f=fw(units[i].th); a11+=f.x*f.x; a12+=f.x*f.z; a22+=f.z*f.z; }
+    const det=a11*a22-a12*a12;
+    if(Math.abs(det)<1e-9) return null;
+    return { lx:( a22*bx - a12*bz)/det, lz:(-a12*bx + a11*bz)/det };
+  };
+  for(let pass=0; pass<4; pass++){
+    const e=closureErr();
+    const free=runIdx.filter(i=>!units[i].lock);
+    if(!free.length) break;
+    const lam=lsq(free, -e.ex, -e.ez);
+    if(!lam) break;
+    let bad=false;
+    for(const i of free){ const f=fw(units[i].th); units[i].c=f.x*lam.lx+f.z*lam.lz; }
+    for(const i of free){ if(units[i].L+units[i].c < units[i].minL-1e-6){ units[i].L=units[i].minL; units[i].lock=true; bad=true; } }
+    if(!bad){ for(const i of free) units[i].L+=units[i].c; break; }
+  }
+  for(const i of runIdx){ const u=units[i];
+    u.fill=Math.round(Math.max(0, u.L-u.minL)/8)*8;
+    u.L=u.minL+u.fill;
+  }
+  if(!runIdx.some(i=>units[i].fill>=16)){
+    let big=runIdx[0];
+    for(const i of runIdx) if(units[i].fill>units[big].fill) big=i;
+    units[big].fill+=16; units[big].L+=16;
+  }
+  // absorb the 8m-rounding residual by stretching each run's straights a hair -> exact closure
+  { const e=closureErr();
+    const free=runIdx.filter(i=>(units[i].fill||0)>=8);
+    const lam=free.length>=2 ? lsq(free, -e.ex, -e.ez) : null;
+    if(lam){
+      let ok=true;
+      for(const i of free){ const f=fw(units[i].th); const c=f.x*lam.lx+f.z*lam.lz;
+        if(Math.abs(c) > units[i].fill*0.2+0.01){ ok=false; break; } units[i].stretch=c; }
+      if(ok) for(const i of free) units[i].L+=units[i].stretch||0;
+      else for(const i of free) units[i].stretch=0;
+    }
+  }
+  const cornerVec=(th, d)=>{
+    const dir=Math.sign(d), a=Math.abs(d);
+    const lx=-dir*TRACK_R*(1-Math.cos(a)), lz=-TRACK_R*Math.sin(a);
+    const c=Math.cos(th), sn=Math.sin(th);
+    return { x: lx*c + lz*sn, z: -lx*sn + lz*c };
+  };
+  const startAt=units[0].at||{ x:0, z:0 };
+  let px=startAt.x, pz=startAt.z, th=units[0].th;
+  const pieces=[];
+  let startPlaced=false;
+  const put=(key, len, arc, dir, sz)=>{
+    pieces.push({ key, x:px, z:pz, yaw:th, sz:(sz&&Math.abs(sz-1)>1e-6)?+sz.toFixed(5):1 });
+    if(arc!=null){ const v=cornerVec(th, dir*arc); px+=v.x; pz+=v.z; th=wrap(th+dir*arc); }
+    else { const l=len*(sz||1), f=fw(th); px+=l*f.x; pz+=l*f.z; }
+  };
+  for(const u of units){
+    if(u.corner){
+      const dir=Math.sign(u.d);
+      if(Math.abs(u.d)>Q+1e-6) put(dir>0?'track_curve_l':'track_curve_r', null, Math.PI/2, dir);
+      else put(dir>0?'track_curve45_l':'track_curve45_r', null, Math.PI/4, dir);
+    } else {
+      let fill=u.fill||0;
+      const sz=(fill>0 && u.stretch) ? (fill+u.stretch)/fill : 1;
+      if(!startPlaced && fill>=16){ put('track_start', 16, null, null, sz); fill-=16; startPlaced=true; }
+      while(fill>=24){ put('track_straight', 24, null, null, sz); fill-=24; }
+      if(fill>=16){ put('track_short', 8, null, null, sz); put('track_short', 8, null, null, sz); fill-=16; }
+      while(fill>=8){ put('track_short', 8, null, null, sz); fill-=8; }
+    }
+  }
+  if(!startPlaced) return { fail:'Could not fit a start line — draw a bigger loop' };
+  const gx=startAt.x-px, gz=startAt.z-pz;
+  const err=Math.hypot(gx,gz);
+  if(err>1e-4){ const n=pieces.length; for(let i=0;i<n;i++){ pieces[i].x+=gx*(i/n); pieces[i].z+=gz*(i/n); } }
+  return { pieces, err, runs:runIdx.length };
+}
+// Place a fitted loop: replaces any existing track (one undo step covers everything).
+function _placeSketchTrack(fit){
+  if(!fit || !fit.pieces || !fit.pieces.length) return false;
+  pushUndoSnapshot();
+  for(let i=propModels.length-1;i>=0;i--){ const p=propModels[i]; if(p && p.userData && TRACK_PIECES[p.userData.src]) removeProp(i); }
+  let firstObj=null;
+  for(const pc of fit.pieces){
+    spawnProp(pc.key, [pc.x, 0, pc.z, 0, pc.yaw, 0, 1, 1, pc.sz||1], (obj)=>{ trackApply(obj, { w:1 }); if(!firstObj) firstObj=obj; });
+  }
+  if(firstObj){ editorActive='props'; editorTargets.props.idx=propModels.indexOf(firstObj); selProps=[firstObj]; }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof flashToast==='function') flashToast('Track built — '+fit.pieces.length+' pieces, loop closed');
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  return true;
+}
+// The drawing overlay: freehand a loop over the (top) view; release to build. ESC or the button cancels.
+let _tkSketchOn=false;
+function _trackSketchStart(){
+  if(_tkSketchOn) return;
+  _tkSketchOn=true;
+  const wasTop=editorTopView, wasFly=editorFreeFly;
+  if(!editorTopView){ editorTopView=true; editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=Math.min(Math.max(75, ARENA*1.12), 2600); }
+  const ov=document.createElement('div');
+  ov.id='tkSketch';
+  ov.style.cssText='position:fixed;inset:0;z-index:78;cursor:crosshair;touch-action:none;';
+  const cv=document.createElement('canvas');
+  cv.width=innerWidth; cv.height=innerHeight;
+  cv.style.cssText='position:absolute;inset:0;width:100%;height:100%;';
+  const tip=document.createElement('div');
+  tip.style.cssText='position:absolute;left:50%;top:14px;transform:translateX(-50%);background:rgba(10,16,20,0.92);border:1px solid var(--line,#2a3a42);border-radius:8px;padding:8px 14px;color:#cfeee2;font:600 13px system-ui;display:flex;gap:12px;align-items:center;';
+  tip.innerHTML='<span>✏ Draw your track as one loop — release to build it</span>';
+  const cancel=document.createElement('button');
+  cancel.textContent='Cancel';
+  cancel.style.cssText='background:rgba(255,45,85,0.18);color:#ffb3bd;border:1px solid rgba(255,45,85,0.4);border-radius:6px;padding:3px 10px;cursor:pointer;font:600 12px system-ui;';
+  tip.appendChild(cancel);
+  ov.appendChild(cv); ov.appendChild(tip); document.body.appendChild(ov);
+  const g=cv.getContext('2d');
+  let drawing=false; const scr=[];
+  const done=(build)=>{
+    if(!_tkSketchOn) return;
+    _tkSketchOn=false;
+    document.body.removeChild(ov);
+    removeEventListener('keydown', onKey, true);
+    editorTopView=wasTop; editorFreeFly=wasFly;
+    if(build && scr.length>7){
+      const pts=[];
+      for(const p of scr){
+        raycaster.setFromCamera(_vAimTmpNdc.set((p.x/innerWidth)*2-1, -(p.y/innerHeight)*2+1), camera);
+        const o=raycaster.ray.origin, d=raycaster.ray.direction;
+        if(Math.abs(d.y)<1e-5) continue;
+        const t=(0-o.y)/d.y;
+        if(t>0) pts.push({ x:o.x+d.x*t, z:o.z+d.z*t });
+      }
+      const fit=_fitTrackFromSketch(pts);
+      if(fit.fail){ if(typeof flashToast==='function') flashToast(fit.fail); }
+      else _placeSketchTrack(fit);
+    }
+  };
+  const onKey=(e)=>{ if(e.code==='Escape'){ e.stopPropagation(); done(false); } };
+  addEventListener('keydown', onKey, true);
+  cancel.onclick=(e)=>{ e.stopPropagation(); done(false); };
+  ov.addEventListener('pointerdown',(e)=>{ if(e.target!==cv) return; drawing=true; scr.length=0; scr.push({ x:e.clientX, y:e.clientY }); ov.setPointerCapture&&ov.setPointerCapture(e.pointerId); e.preventDefault(); });
+  ov.addEventListener('pointermove',(e)=>{
+    if(!drawing) return;
+    const last=scr[scr.length-1];
+    if(Math.hypot(e.clientX-last.x, e.clientY-last.y)<3) return;
+    scr.push({ x:e.clientX, y:e.clientY });
+    g.clearRect(0,0,cv.width,cv.height);
+    g.strokeStyle='rgba('+UI_ACCENT_RGB+',0.9)'; g.lineWidth=3; g.lineJoin='round'; g.lineCap='round';   // canvas 2D can't read CSS vars — UI_ACCENT_RGB is the theme bridge
+    g.beginPath(); g.moveTo(scr[0].x,scr[0].y);
+    for(const p of scr) g.lineTo(p.x,p.y);
+    g.stroke();
+    g.setLineDash([6,6]); g.strokeStyle='rgba('+UI_ACCENT_RGB+',0.35)';
+    g.beginPath(); g.moveTo(last.x,last.y); g.lineTo(scr[0].x,scr[0].y); g.stroke(); g.setLineDash([]);
+  });
+  ov.addEventListener('pointerup',()=>{ if(drawing){ drawing=false; done(true); } });
+}
 // build 828: add a track piece, SNAPPED to the chain. Anchor = the selected track piece if there is one
 // (so you can branch from anywhere), else the last track piece placed. No anchor -> drop at the editor
 // drop point (top view: the pan centre) facing north. The new piece inherits the anchor's scale and is
@@ -22795,17 +23100,99 @@ function closeTrackLoop(){
   const dx=first.position.x-ex.x, dz=first.position.z-ex.z, dy=first.position.y-ex.y;
   const fwd = dx*(-Math.sin(ex.yaw)) + dz*(-Math.cos(ex.yaw));   // gap along the exit's forward
   const lat = dx*( Math.cos(ex.yaw)) + dz*(-Math.sin(ex.yaw));   // sideways miss (+ = right)
-  if(Math.abs(dyaw)>0.06){ if(typeof flashToast==='function') flashToast('Ends face different directions ('+Math.round(Math.abs(dyaw)*180/Math.PI)+'°) — add curves until the headings match'); return; }
   if(Math.abs(dy)>0.3){ if(typeof flashToast==='function') flashToast('Ends differ in height by '+Math.abs(dy).toFixed(1)+' m — add a matching ramp first'); return; }
-  if(Math.abs(lat)>0.35){ if(typeof flashToast==='function') flashToast('Ends are offset sideways by '+Math.abs(lat).toFixed(1)+' m — a pair of opposite 45° curves shifts the line over'); return; }
-  if(fwd<0.4){ if(typeof flashToast==='function') flashToast(fwd>-0.4 ? 'Loop already closed' : 'The ends overlap — remove a piece'); return; }
+  if(Math.abs(dyaw)<=0.06 && Math.abs(lat)<=0.35){
+    // fast path (build 837): aligned and in line -> ONE exactly-stretched straight
+    if(fwd<0.4){ if(typeof flashToast==='function') flashToast(fwd>-0.4 ? 'Loop already closed' : 'The ends overlap — remove a piece'); return; }
+    pushUndoSnapshot();
+    spawnProp('track_straight', [ex.x, ex.y, ex.z, 0, ex.yaw, 0, anchor.scale.x, anchor.scale.y, fwd/24], (obj)=>{
+      editorActive='props'; editorTargets.props.idx=propModels.indexOf(obj); selProps=[obj];
+      if(typeof _levelDirty!=='undefined') _levelDirty=true;
+      if(typeof flashToast==='function') flashToast('Loop closed — bridged '+fwd.toFixed(1)+' m');
+      renderEditorFields();
+    });
+    return;
+  }
+  // build 896: the general gap — search curve combos around ONE stretched straight. For every split
+  // (A curves after the open exit, B curves before the loop start), walk A forward from the exit and B
+  // BACKWARD from the start entry; if the two middle poses agree in heading, the straight between them
+  // solves analytically. Best (least lateral miss, fewest pieces) wins; a sub-metre leftover is diffused
+  // across the inserted pieces (the race chain tolerates 3 m).
+  const CURVES=[['track_curve45_l',Math.PI/4,1],['track_curve45_r',Math.PI/4,-1],['track_curve_l',Math.PI/2,1],['track_curve_r',Math.PI/2,-1]];
+  const stepFwd=(p, cv)=>{
+    const a=cv[1], dir=cv[2];
+    const lx=-dir*TRACK_R*(1-Math.cos(a)), lz=-TRACK_R*Math.sin(a);
+    const c=Math.cos(p.yaw), sn=Math.sin(p.yaw);
+    return { x:p.x+lx*c+lz*sn, z:p.z-lx*sn+lz*c, yaw:p.yaw+dir*a };
+  };
+  const stepBack=(p, cv)=>{
+    const a=cv[1], dir=cv[2];
+    const ey=p.yaw-dir*a;
+    const lx=-dir*TRACK_R*(1-Math.cos(a)), lz=-TRACK_R*Math.sin(a);
+    const c=Math.cos(ey), sn=Math.sin(ey);
+    return { x:p.x-(lx*c+lz*sn), z:p.z+(lx*sn-lz*c), yaw:ey };
+  };
+  const combos=(n)=>{ const out=[[]]; for(let k=1;k<=n;k++){ const prev=out.filter(c=>c.length===k-1); for(const c of prev) for(const cv of CURVES) out.push(c.concat([cv])); } return out; };
+  const T={ x:first.position.x, z:first.position.z, yaw:first.rotation.y };
+  const E={ x:ex.x, z:ex.z, yaw:ex.yaw };
+  // Candidate bridges: A curves, a stretched straight s1, M curves, a stretched straight s2, B curves
+  // (any group may be empty). With A/M/B fixed the two straight lengths are a 2x2 linear solve — that
+  // spans ANY reachable 2D offset, not just an in-line one. Fewest pieces + shortest detour wins.
+  let best=null;
+  const seqs=combos(2);
+  const consider=(A, M, B, p1, p2)=>{
+    const h1=p1.yaw;
+    let mo={ x:0, z:0, yaw:h1 };
+    for(const cv of M) mo=stepFwd(mo, cv);
+    let dw=(mo.yaw)-(p2.yaw); dw=Math.atan2(Math.sin(dw),Math.cos(dw));
+    if(Math.abs(dw)>0.05) return;
+    const h2=p2.yaw;
+    const rx=p2.x-p1.x-mo.x, rz=p2.z-p1.z-mo.z;
+    const f1x=-Math.sin(h1), f1z=-Math.cos(h1), f2x=-Math.sin(h2), f2z=-Math.cos(h2);
+    let s1, s2;
+    const det=f1x*f2z-f2x*f1z;
+    if(Math.abs(det)>1e-6){ s1=(rx*f2z-f2x*rz)/det; s2=(f1x*rz-rx*f1z)/det; }
+    else { // parallel headings: the offset must lie along them
+      const along=rx*f1x+rz*f1z, side=rx*f2z*0+Math.abs(rx*f1z-rz*f1x);
+      if(side>0.6) return; s1=Math.max(0,along); s2=0;
+    }
+    if(s1<-0.4 || s2<-0.4 || s1>500 || s2>500) return;
+    s1=Math.max(0,s1); s2=Math.max(0,s2);
+    const nPieces=A.length+M.length+B.length+(s1>0.4?1:0)+(s2>0.4?1:0);
+    if(!nPieces) return;
+    const score=nPieces*10 + (s1+s2)*0.05 + Math.abs(dw)*100;
+    if(!best || score<best.score) best={ score, A, M, B, s1, s2 };
+  };
+  for(const A of seqs){
+    let p1=E; for(const cv of A) p1=stepFwd(p1, cv);
+    for(const B of seqs){
+      if(A.length+B.length>4) continue;
+      let p2=T; for(let i=B.length-1;i>=0;i--) p2=stepBack(p2, B[i]);
+      for(const M of seqs){
+        if(A.length+M.length+B.length>4) continue;
+        consider(A, M, B, p1, p2);
+      }
+    }
+  }
+  if(!best){ if(typeof flashToast==='function') flashToast('No bridge found — the ends are too tangled; delete a piece or two and try again (or just Draw track)'); return; }
   pushUndoSnapshot();
-  spawnProp('track_straight', [ex.x, ex.y, ex.z, 0, ex.yaw, 0, anchor.scale.x, anchor.scale.y, fwd/24], (obj)=>{
-    editorActive='props'; editorTargets.props.idx=propModels.indexOf(obj); selProps=[obj];
-    if(typeof _levelDirty!=='undefined') _levelDirty=true;
-    if(typeof flashToast==='function') flashToast('Loop closed — bridged '+fwd.toFixed(1)+' m');
-    renderEditorFields();
-  });
+  const placed=[];
+  let cur=E;
+  const putStraight=(len)=>{ if(len<=0.4) return; placed.push({ key:'track_straight', x:cur.x, z:cur.z, yaw:cur.yaw, sz:len/24 });
+    cur={ x:cur.x+len*(-Math.sin(cur.yaw)), z:cur.z+len*(-Math.cos(cur.yaw)), yaw:cur.yaw }; };
+  for(const cv of best.A){ placed.push({ key:cv[0], x:cur.x, z:cur.z, yaw:cur.yaw, sz:1 }); cur=stepFwd(cur, cv); }
+  putStraight(best.s1);
+  for(const cv of best.M){ placed.push({ key:cv[0], x:cur.x, z:cur.z, yaw:cur.yaw, sz:1 }); cur=stepFwd(cur, cv); }
+  putStraight(best.s2);
+  for(const cv of best.B){ placed.push({ key:cv[0], x:cur.x, z:cur.z, yaw:cur.yaw, sz:1 }); cur=stepFwd(cur, cv); }
+  const gapx=T.x-cur.x, gapz=T.z-cur.z, n=placed.length;
+  for(let i=0;i<n;i++){ placed[i].x+=gapx*((i+1)/(n+1)); placed[i].z+=gapz*((i+1)/(n+1)); }
+  let lastObj=null;
+  for(const pc of placed) spawnProp(pc.key, [pc.x, ex.y, pc.z, 0, pc.yaw, 0, anchor.scale.x, anchor.scale.y, pc.sz], (obj)=>{ trackApply(obj, { w:1 }); lastObj=obj; });
+  if(lastObj){ editorActive='props'; editorTargets.props.idx=propModels.indexOf(lastObj); selProps=[lastObj]; }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof flashToast==='function') flashToast('Loop closed — bridged with '+placed.length+' piece'+(placed.length===1?'':'s'));
+  renderEditorFields();
 }
 function deleteSelectedProp(){
   pushUndoSnapshot();
@@ -26630,7 +27017,7 @@ function renderEditorFields(){
       // SELECTED track piece (select any piece to branch from it), or the last one placed. Best laid out in
       // top view (T): click a piece, watch the course grow, Delete removes the selected piece.
       const tHead=document.createElement('div'); tHead.className='hint'; tHead.style.margin='9px 0 3px';
-      tHead.innerHTML='<b>Track builder</b> — pieces snap onto the <b>selected</b> piece’s exit (or the last one placed). Lay the course in <b>top view</b> (T); <b>Del</b> removes the selected piece. When the ends nearly meet, <b>Close loop</b> bridges the final gap exactly.';
+      tHead.innerHTML='<b>Track builder</b> — easiest: <b>Draw track</b> and sketch your loop; it lays every piece and closes itself. Or place pieces by hand — they snap onto the <b>selected</b> piece’s exit (or the last one placed), best in <b>top view</b> (T); <b>Del</b> removes the selected piece; <b>Close loop</b> bridges the final gap (it now solves curves + a stretched straight, not just straight-ahead).';
       shapesHost.appendChild(tHead);
       const tgrid=document.createElement('div'); tgrid.style.cssText='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;';
       for(const tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[tk];
@@ -26653,9 +27040,13 @@ function renderEditorFields(){
             const wsp=document.createElement('span'); wsp.innerHTML='<b>Barrier walls</b> (selected piece)';
             wl.appendChild(wcb); wl.appendChild(wsp); wrow.appendChild(wl);
           }
+          { const dtb=document.createElement('button'); dtb.className='primBtn'; dtb.style.flex='1'; dtb.textContent='✏ Draw track';
+            dtb.title='Sketch your loop on screen — the builder lays the pieces and closes the loop itself (replaces the current track)';
+            dtb.onclick=()=>{ _trackSketchStart(); };
+            wrow.appendChild(dtb); }
           if(_allTrk.length){
             const clb=document.createElement('button'); clb.className='primBtn'; clb.style.flex='1'; clb.textContent='Close loop';
-            clb.title='Bridge the gap between the chain’s end and its start with one exactly-stretched straight';
+            clb.title='Bridge the gap between the chain’s end and its start — solves curve combos + a stretched straight (build 896)';
             clb.onclick=()=>{ closeTrackLoop(); };
             wrow.appendChild(clb);
             const anyOff=_allTrk.some(p=>!(p.userData.trk && p.userData.trk.w));
@@ -28529,9 +28920,9 @@ const HELP_TOPICS = [
   +'The <b>?</b> button on the editor toolbar (and <b>Field manual</b> on the home menu) opens the full manual — every tab, section and slider documented.' },
  { id:'tut-race', title:'Tutorial: race circuit', example:'race', html:
    'Build a racing level in ~2 minutes:<br><br>'
-  +'1. <b>Build tab</b> → Track builder → press <code>T</code> for top-down view.<br>'
-  +'2. Click <b>Start line</b>, then chain pieces — each snaps to the last. Classic oval: Start → Short → 90°&nbsp;L → 90°&nbsp;L → Straight → 90°&nbsp;L → 90°&nbsp;L.<br>'
-  +'3. Ends almost meeting? <b>Close loop</b> bridges the gap exactly.<br>'
+  +'1. <b>Build tab</b> → Track builder → <b>✏ Draw track</b>: sketch your circuit as one loop and release — every piece is placed and the loop closes itself.<br>'
+  +'2. Prefer hand-building? Press <code>T</code> for top view and chain pieces — each snaps to the last. Classic oval: Start → Short → 90°&nbsp;L → 90°&nbsp;L → Straight → 90°&nbsp;L → 90°&nbsp;L.<br>'
+  +'3. Ends not meeting? <b>Close loop</b> bridges the gap — it solves curves + stretched straights now, not just straight-ahead.<br>'
   +'4. Click <b>Walls: whole track</b> so cars can\'t fall off.<br>'
   +'5. Place a vehicle: add any shape or model near the start, then in its settings open <b>Vehicle (drivable)</b> and enable it.<br>'
   +'6. <b>Gameplay tab</b> → Objective → <b>Race</b>. Set laps + AI rivals.<br>'

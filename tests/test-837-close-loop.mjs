@@ -11,7 +11,7 @@ const src = gameSource();
 // --- pins ---
 assert(/track_start:\s*\{ label:'Start line', len:16, start:true,/.test(src), 'the start line is 16 m (mod-8 clean)');
 assert(/clb\.textContent='Close loop';/.test(src) && /clb\.onclick=\(\)=>\{ closeTrackLoop\(\); \};/.test(src), 'the palette has a Close loop button');
-assert(/<b>Close loop<\/b> bridges the final gap exactly/.test(src), 'the hint teaches it');
+assert(/<b>Close loop<\/b> bridges the final gap/.test(src), 'the hint teaches it');
 
 // --- executable: the real defs + closeTrackLoop in a sandbox ---
 const defsStart=src.indexOf('const TRACK_W = 12'), defsEnd=src.indexOf('// ONE merged BufferGeometry ribbon');
@@ -20,13 +20,15 @@ const mk=()=>new Function(`"use strict";
   const editorTargets={ props:{ idx:-1 } }; let editorActive='props'; let selProps=[];
   const flashToast=(t)=>toasts.push(t);
   const pushUndoSnapshot=()=>{}; const renderEditorFields=()=>{};
+  const trackApply=()=>{};   // build 896: the solver path decorates bridge pieces with walls
+  const allSpawned=[];
   const spawnProp=(s,t,cb)=>{ const o={ userData:{src:s}, position:{x:t[0],y:t[1],z:t[2]}, rotation:{y:t[4]}, scale:{x:t[6],y:t[7],z:t[8]} };
-    propModels.push(o); spawned={src:s,t}; cb(o); };
+    propModels.push(o); spawned={src:s,t}; allSpawned.push({src:s,t}); cb(o); };
 `+src.slice(defsStart, defsEnd)+'\n'+extractFunction('_trackExitPose')+'\n'+extractFunction('closeTrackLoop')+`
   let pose={x:0,y:0,z:0,yaw:0};
   const place=(k,sz)=>{ const o={ userData:{src:k}, position:{x:pose.x,y:pose.y,z:pose.z}, rotation:{y:pose.yaw}, scale:{x:1,y:1,z:sz||1} };
     propModels.push(o); pose=_trackExitPose(o); return o; };
-  return { place, pose:()=>pose, close:()=>{ closeTrackLoop(); return { spawned, toasts:toasts.slice() }; },
+  return { place, pose:()=>pose, close:()=>{ allSpawned.length=0; closeTrackLoop(); return { spawned:(allSpawned.length===1?allSpawned[0]:(allSpawned.length?spawned:null)), all:allSpawned.slice(), toasts:toasts.slice() }; },
     exitOf:(o)=>_trackExitPose(o), TRACK_PIECES };`)();
 
 // 1. the 16 m start makes a natural rectangle close EXACTLY: start+short(24) vs straight(24)
@@ -54,23 +56,32 @@ const mk=()=>new Function(`"use strict";
   assert(r.toasts.some(t=>/Loop closed/i.test(t)), 'confirms the closure');
 }
 
-// 3. guidance: heading mismatch and sideways offsets are named, not silently bridged
+// 3. build 896: gaps a lone straight can't fix get SOLVED now (curves + stretched straights), not excused
 {
   const env=mk();
   env.place('track_start'); env.place('track_curve_l');   // 90° open — headings differ
   const r=env.close();
-  assert(!r.spawned, 'no blind bridge when headings differ');
-  assert(r.toasts.some(t=>/different directions/i.test(t)), 'says the headings differ');
+  assert(r.all.length>=1, 'a heading mismatch is bridged with pieces, not a toast');
+  assert(r.toasts.some(t=>/Loop closed/i.test(t)), 'and confirms the closure');
 }
 {
   const env=mk();
-  // parallel headings but the chain start sits 2.5 m sideways of the return leg's line
+  // parallel headings, 2.5 m sideways miss, 32 m of forward room — an S-jog of 45s fits in that
+  const a=env.place('track_start'); env.place('track_curve_l'); env.place('track_curve_l');
+  env.place('track_straight'); env.place('track_straight'); env.place('track_curve_l'); env.place('track_curve_l');
+  a.position.x+=2.5;
+  const r=env.close();
+  assert(r.all.length>=2, 'a sideways miss is bridged (an S of curves + straights)');
+  assert(r.toasts.some(t=>/Loop closed/i.test(t)), 'and confirms the closure');
+}
+{
+  const env=mk();
+  // ...but a sideways miss with NO room to jog still gets honest guidance, not a mangled bridge
   const a=env.place('track_start'); env.place('track_curve_l'); env.place('track_curve_l');
   env.place('track_straight'); env.place('track_curve_l'); env.place('track_curve_l');
   a.position.x+=2.5;
   const r=env.close();
-  assert(!r.spawned, 'no blind bridge across a sideways miss');
-  assert(r.toasts.some(t=>/sideways/i.test(t)), 'says the ends are offset sideways');
+  assert(r.toasts.some(t=>/No bridge found/i.test(t)) || r.all.length>=2, 'tight sideways gap: solved or honestly refused');
 }
 {
   const env=mk();

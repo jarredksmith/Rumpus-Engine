@@ -20,7 +20,7 @@ const topics=src.match(/const HELP_TOPICS = \[[\s\S]*?\n\];/)[0];
 for(const id of ['play','editor','tut-race','tut-arena','tut-puzzle','share']) assert(topics.includes("id:'"+id+"'"), 'topic: '+id);
 assert(/<b style="color:#eafff7">HUD<\/b> — colours, fonts, visibility, <b>crosshair<\/b>/.test(topics), 'the tour matches build 845 (crosshair under HUD)');
 assert(/build menu, <b>cutscenes<\/b>/.test(topics), 'the tour matches build 846 (cutscenes under Gameplay)');
-assert(/Close loop<\/b> bridges the gap exactly/.test(topics), 'the race tutorial teaches Close loop');
+assert(/Close loop<\/b> bridges the gap/.test(topics) && /Draw track<\/b>/.test(topics), 'the race tutorial teaches Draw track + Close loop (build 896)');
 
 // example loaders: confirm-gated, editor-ensured, undo-friendly
 assert(/uiConfirm\('Load the example into the editor\? This replaces the current level \(undo works\)\.'/.test(src), 'loading is confirm-gated');
