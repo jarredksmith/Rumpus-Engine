@@ -8765,6 +8765,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   // always draw. (Static props keep culling — their bounds are correct.)
   obj.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; if(o.isSkinnedMesh) o.frustumCulled = false; } });
   obj.userData.src = src;
+  if(nid && typeof propByNid==='function' && propByNid(nid)) nid = genNid();   // build 905: stored levels can carry DUPLICATE nids (props copied across saves) — nid-keyed sync (pDel/pMov/the reconciler's maps) then hits the wrong prop, so a live collision gets a fresh id (the next save writes it back, healing the level)
   obj.userData.nid = nid || genNid();   // assign once; load/net paths pass an existing id to keep peers aligned
   if(animMode && typeof animMode==='object'){ obj.userData.animTrigger = animMode.trig||'auto'; obj.userData.animPlay = animMode.play||'loop'; obj.userData.animMode = (obj.userData.animTrigger==='auto')?'loop':'trigger'; }
   else obj.userData.animMode = (animMode === 'trigger') ? 'trigger' : 'loop';
@@ -13670,7 +13671,7 @@ function loadLevelFromNet(level){
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -14465,6 +14466,21 @@ function netSendProp(msg){
 }
 function relayProp(msg, exceptId){ for(const id in NET.conns){ if(+id===exceptId) continue; try{ NET.conns[id].send(msg); }catch(e){} } }
 function seedPropSync(){ NET.sentProps.clear(); for(const o of propModels){ if(o && o.userData.nid) NET.sentProps.set(o.userData.nid, o.userData.phys ? 'dyn' : propTuple(o)); } }
+// build 905: nids whose model spawn is still IN FLIGHT (claimed in sentProps, not yet landed in
+// propModels). Without this the reconciler read "claimed but still downloading" as "deleted here"
+// and answered every incoming pAdd of a slow model (sketchfab / big GLB) with a pDel within one
+// 0.08s tick — the DUEL HOST watched its level props get deleted remotely while the static shadow
+// map kept their baked shadows on the ground ("only shadows and no meshes"). A pDel that arrives
+// while the download is in flight flags the entry so the landing object is discarded instead of
+// resurrected; a failed download keeps the claim (a prop missing HERE must never delete it THERE).
+const _nidPending = new Map();   // nid -> { del }
+function _nidSpawnStart(nid){ if(nid) _nidPending.set(nid, { del:false }); }
+function _nidSpawnEnd(nid, obj){   // -> true when the landing object was discarded (pDel raced the download)
+  if(!nid) return false;
+  const p=_nidPending.get(nid); _nidPending.delete(nid);
+  if(p && p.del && obj){ const i=propModels.indexOf(obj); if(i>=0) removeProp(i); NET.sentProps.delete(nid); return true; }
+  return false;
+}
 let propSyncTimer = 0;
 function reconcileProps(dt){
   if(NET.mode==='off') return;
@@ -14481,12 +14497,14 @@ function reconcileProps(dt){
     else if(!dyn && prev==='dyn'){ const t=propTuple(o); NET.sentProps.set(nid,t); netSendProp({ t:'pDel', nid }); netSendProp({ t:'pAdd', d:propEntry(o) }); }   // became static
     else if(!dyn){ const t=propTuple(o); if(!tupleEq(prev,t)){ NET.sentProps.set(nid,t); netSendProp({ t:'pMov', nid, x:t }); } }   // static edit
   }
-  for(const nid of Array.from(NET.sentProps.keys())){ if(!cur.has(nid)){ NET.sentProps.delete(nid); netSendProp({ t:'pDel', nid }); } }   // removed
+  for(const nid of Array.from(NET.sentProps.keys())){ if(!cur.has(nid)){ if(_nidPending.has(nid)) continue; NET.sentProps.delete(nid); netSendProp({ t:'pDel', nid }); } }   // removed — build 905: never pDel a peer's prop just because our copy is still downloading
 }
 function netApplyAddProp(d){
   if(!d || !d.nid || propByNid(d.nid)) return false;            // skip dupes
   NET.sentProps.set(d.nid, d.dyn ? 'dyn' : (d.t||[]).slice());  // claim immediately so our reconciler won't echo it
+  _nidSpawnStart(d.nid);   // build 905: and mark the spawn in flight so the claim can't read as "deleted here"
   spawnProp(d.src, d.t, (obj)=>{
+    if(_nidSpawnEnd(d.nid, obj)) return;   // build 905: a pDel raced the download — discard, don't resurrect
     if(d.att) obj.userData.attribution=d.att;
     applyPropDynState(obj, { dyn:d.dyn, mass:d.mass, brk:d.brk, hp:d.hp, bst:d.bst, fc:d.fc, fz:d.fz, dsh:d.dsh, ng:d.ng });   // host simulates; clients interpolate it from the D snapshot
     netFixSelection();
@@ -14495,6 +14513,7 @@ function netApplyAddProp(d){
 }
 function netApplyDelProp(nid){
   NET.sentProps.delete(nid);
+  { const p=_nidPending.get(nid); if(p){ p.del=true; return true; } }   // build 905: still downloading here — flag it so the landing object is discarded instead of resurrected
   const i = propIndexByNid(nid); if(i<0) return false;
   removeProp(i); netFixSelection(); return true;
 }
@@ -17624,7 +17643,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 904 · 2026-07-07';
+const BUILD_VERSION = 'build 905 · 2026-07-07';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24097,7 +24116,7 @@ function restoreLevel(level){
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
-    level.props.forEach((p,i)=>{ try{ spawnProp(p.src, p.t, (obj)=>{ try{ if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
