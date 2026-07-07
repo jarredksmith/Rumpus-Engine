@@ -17,7 +17,7 @@ assert(!/☠ BOSS<\/div>/.test(html), 'boss bar no longer uses an emoji');
 
 // ---- representative buttons/labels now carry an eico SVG ----
 assert(/id="campaignBtn" class="secBtn"><svg class="eico"[^>]*>[\s\S]*?<\/svg>Play campaign/.test(html), 'campaign button has an icon');
-assert(/class="mpTitle"><svg class="eico"[^>]*>[\s\S]*?<\/svg>FREE-FOR-ALL/.test(html), 'FFA title has an icon');
+assert(/data-pane="ffa"/.test(html) && /id="mpFFA"/.test(html), 'FFA lives in its mode pane (build 900: one host section, mode tabs)');
 assert(/<label class="paLbl"><svg class="eico"[^>]*>[\s\S]*?<\/svg>Master/.test(html), 'the Master volume label has an icon');
 assert(/<div id="bossBarName"><svg class="eico"/.test(html), 'the boss bar has an icon');
 

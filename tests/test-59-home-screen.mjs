@@ -17,8 +17,8 @@ assert(/id="mpModal" class="modalBack hidden"/.test(html), 'multiplayer modal ex
 assert(/\.modalBack \{/.test(html) && /\.modalCard \{/.test(html), 'shared modal styling exists');
 
 // co-op vs duel visual distinction
-assert(/<div class="mpSection coop">[\s\S]*?id="mpHost"/.test(html), 'co-op section hosts the co-op button');
-assert(/<div class="mpSection duel">[\s\S]*?id="mpDuel"/.test(html), 'duel section hosts the duel button');
+assert(/<div class="mpSection coop" id="mpHostPane">[\s\S]*?id="mpHost"/.test(html), 'the host pane hosts the co-op button (build 900: one section, mode tabs)');
+assert(/data-pane="duel"[\s\S]*?id="mpDuel"/.test(html), 'the duel pane hosts the duel button (build 900)');
 assert(/\.mpSection\.coop \{[^}]*var\(--accent\)/.test(html) && /\.mpSection\.duel \{[^}]*#ff5da2/.test(html), 'co-op and duel use distinct accent colors');
 
 // audio sliders moved OUT of the home overlay and INTO the pause menu

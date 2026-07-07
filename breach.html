@@ -410,9 +410,11 @@
   .secBtn:hover, #chalBtn:hover { border-color:var(--accent); color:#eafff7; background:rgba(var(--accent-rgb),.10); }
   #chalBtn { margin-top:10px; display:inline-flex; align-items:center; justify-content:center; gap:8px; }
   #chalBtn .eico { width:16px; height:16px; }
-  .menuBtns.menuSub { margin-top: 10px; gap: 8px; }
-  .secBtn.ghost { font-size:12px; padding:7px 16px; color:#7fb3a3; border-color:#1f4d42; background:rgba(8,18,18,.32); letter-spacing:1.5px; }
-  .secBtn.ghost:hover { border-color:var(--accent); color:#eafff7; background:rgba(var(--accent-rgb),.08); }
+  /* build 900: the utility row is a quiet footer strip — text links under a hairline, not seven boxed buttons */
+  .menuBtns.menuSub { margin-top: 22px; gap: 2px 18px; border-top: 1px solid rgba(var(--accent-rgb),.14); padding-top: 12px; width: min(620px, 88vw); margin-left:auto; margin-right:auto; }
+  .secBtn.ghost { font-size:11px; padding:5px 4px; color:#6f9f90; border:none; background:transparent; letter-spacing:1.4px; }
+  .secBtn.ghost:hover { border:none; color:#eafff7; background:transparent; }
+  .secBtn.ghost .eico { opacity:.75; }
   .menuCard {
     max-width: 640px; margin-left:auto; margin-right:auto;
     border:1px solid rgba(var(--accent-rgb),.14); background:rgba(8,16,18,.45);
@@ -433,6 +435,14 @@
   .charName{ font-size:13px; letter-spacing:.04em; color:#e6f4ee; opacity:1; }
   @media(max-width:560px){ #charGrid{ grid-template-columns:repeat(2,1fr); } }
   #lobby .modalCard{ max-width:440px; }
+  /* build 900: the joiner flow is a numbered checklist — 1 pick a character, 2 ready up */
+  .lobbyStep{ display:flex; align-items:center; gap:10px; margin-top:8px; }
+  .lobbyStep .stepN{ flex:0 0 26px; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font:800 13px var(--ui-font); color:var(--accent); border:1px solid rgba(var(--accent-rgb),.5); background:rgba(var(--accent-rgb),.08); }
+  .lobbyStep .mpBtn{ flex:1 1 auto; text-align:left; }
+  #lobbyCharBtn:not(.stepDone){ animation:stepPulse 1.6s ease-in-out infinite; }
+  #lobbyReady:not(.readied):not(:disabled){ animation:stepPulse 1.6s ease-in-out infinite; }
+  #lobbyReady.readied{ background:rgba(var(--accent-rgb),.22); border-color:var(--accent); color:#eafff7; }
+  @keyframes stepPulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(var(--accent-rgb),.0); } 50%{ box-shadow:0 0 0 4px rgba(var(--accent-rgb),.22); border-color:var(--accent); } }
   .lobbyCode{ font-size:26px; letter-spacing:.22em; font-weight:700; color:var(--accent); text-align:center; margin:2px 0; }
   .lobbyCode:empty{ display:none; }
   #lobbyPlayers{ display:flex; flex-direction:column; gap:6px; margin-top:10px; }
@@ -565,7 +575,17 @@
   #mpModal .modalCard{ max-width:880px; width:100%; }
   #mpModal .mpModes{ display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:start; }
   #mpModal .mpModes .mpSection{ margin:0; height:100%; box-sizing:border-box; }
-  #mpModal .mpTop{ display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:start; margin-bottom:10px; }
+  #mpModal .mpTop{ display:grid; grid-template-columns:1fr 1.15fr; gap:10px; align-items:start; margin-bottom:10px; }
+  /* build 900: identity row + a mode picker instead of six competing host sections */
+  #mpModal .mpIdRow{ display:flex; gap:8px; margin-bottom:10px; }
+  #mpModal .mpIdRow input{ flex:1 1 auto; min-width:0; }
+  #mpModal .mpIdRow .mpBtn{ flex:0 0 auto; }
+  .mpModeTabs{ display:flex; gap:4px; flex-wrap:wrap; margin:2px 0 10px; }
+  .mpModeTabs button{ flex:1 1 0; min-width:52px; background:rgba(8,18,18,.55); border:1px solid #24443c; color:#8fbfb0; border-radius:6px; padding:6px 4px; font:700 10.5px var(--ui-font); letter-spacing:1.5px; cursor:pointer; }
+  .mpModeTabs button:hover{ color:#eafff7; border-color:var(--accent); }
+  .mpModeTabs button.on{ border-color:var(--accent); color:#06120e; background:var(--accent); }
+  #mpModal .mpMode{ display:none; }
+  #mpModal .mpMode.on{ display:block; }
   #mpModal .mpTop .mpSection{ margin:0; }
   @media (max-width:680px){ #mpModal .mpModes, #mpModal .mpTop{ grid-template-columns:1fr; } }
   .mpSection.coop { border-left-color:var(--accent); background:rgba(var(--accent-rgb),.05); }
@@ -745,8 +765,10 @@
     <button id="mpOpenBtn" class="secBtn"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>Multiplayer</button>
     <button id="editBtn" class="secBtn"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Build / edit level</button>
   </div>
+  <div class="menuBtns">
+    <button id="commBtn" class="secBtn"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/></svg>Community levels</button>
+  </div>
   <div class="menuBtns menuSub">
-    <button id="commBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/></svg>Community levels</button>
     <button id="loadCampBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>Load campaign</button>
     <button id="instrBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>Instructions</button>
     <button id="manualBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Field manual</button>
@@ -817,8 +839,7 @@
   <div class="modalCard">
     <button class="modalClose" data-close="mpModal">✕</button>
     <h2>MULTIPLAYER</h2>
-    <div class="mpRow" style="margin-bottom:6px"><input id="mpName" type="text" maxlength="14" placeholder="your name" autocomplete="off"></div>
-    <div class="mpRow" style="margin-bottom:6px"><button id="charBtn" class="mpBtn" style="width:100%;text-align:left">CHARACTER ▸</button></div>
+    <div class="mpIdRow"><input id="mpName" type="text" maxlength="14" placeholder="your name" autocomplete="off"><button id="charBtn" class="mpBtn">CHARACTER ▸</button></div>
     <div class="mpTop">
       <div class="mpSection join">
         <div class="mpTitle">→ JOIN A ROOM</div>
@@ -826,28 +847,36 @@
         <div class="mpActions"><input id="mpCode" type="text" maxlength="5" placeholder="room code" autocomplete="off"><button id="mpJoin" class="mpBtn">Join</button></div>
         <div id="mpGamesRow" style="display:none;flex-direction:column;align-items:stretch;gap:6px;margin-top:8px"><div style="display:flex;align-items:center;justify-content:space-between"><span class="mpHint">Open games</span><button id="mpRefresh" class="mpBtn" style="padding:3px 10px;font-size:12px">Refresh</button></div><div id="mpGames"></div></div>
       </div>
-      <div class="mpSection coop">
-        <div class="mpTitle"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>CO-OP</div>
-        <div class="mpDesc">Team up and clear waves together. You host — friends join with your room code.</div>
-        <div class="mpActions"><button id="mpHost" class="mpBtn coop">Host co-op</button><button id="mpHostRace" class="mpBtn coop" title="Host the loaded race level — everyone grids up and races">Host race</button></div>
-      </div>
-    </div>
-    <div class="mpModes">
-      <div class="mpSection duel">
-        <div class="mpTitle"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" y1="19" x2="19" y2="13"/><line x1="16" y1="16" x2="20" y2="20"/><line x1="19" y1="21" x2="21" y2="19"/><polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5"/><line x1="5" y1="14" x2="9" y2="18"/><line x1="7" y1="17" x2="4" y2="20"/><line x1="3" y1="19" x2="5" y2="21"/></svg>1 v 1 DUEL</div>
-        <div class="mpDesc">Head-to-head arena fight — first to the kill target wins.</div>
-        <div class="mpActions"><button id="mpDuel" class="mpBtn duel">Host duel</button><span class="mpHint">first to</span><input id="mpKills" type="number" min="1" max="99" value="5"><span class="mpHint">kills</span></div>
-      </div>
-      <div class="mpSection duel">
-        <div class="mpTitle"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>FREE-FOR-ALL</div>
-        <div class="mpDesc">Everyone vs everyone (3+ players). Most kills to the target wins. Share your code with the whole group.</div>
-        <div class="mpActions"><button id="mpFFA" class="mpBtn duel">Host FFA</button><span class="mpHint">first to</span><input id="mpFFAKills" type="number" min="1" max="99" value="15"><span class="mpHint">kills</span></div>
-      </div>
-      <div class="mpSection duel" style="grid-column:1 / -1">
-        <div class="mpTitle"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>TEAM DEATHMATCH</div>
-        <div class="mpDesc">Auto-balanced Red vs Blue, no friendly fire. First team to the kill target wins. Players are assigned as they join.</div>
-        <div class="mpActions"><button id="mpTDM" class="mpBtn duel">Host TDM</button><span class="mpHint">first to</span><input id="mpTDMKills" type="number" min="1" max="199" value="30"><span class="mpHint">kills</span><button id="mpCP" class="mpBtn duel" style="margin-left:14px">Host KOTH</button><span class="mpHint">first to</span><input id="mpCPScore" type="number" min="50" max="999" value="200"><span class="mpHint">pts</span></div>
-        <div class="mpActions" style="margin-top:6px"><span class="mpHint">add</span><input id="mpBots" type="number" min="0" max="7" value="3"><span class="mpHint">AI bots ·</span><select id="mpBotDiff" style="background:#0b1a18;color:#cfe;border:1px solid #2a5d52;border-radius:6px;padding:3px 6px;font:inherit;cursor:pointer"><option value="recruit">Recruit</option><option value="regular" selected>Regular</option><option value="veteran">Veteran</option><option value="elite">Elite</option></select></div>
+      <div class="mpSection coop" id="mpHostPane">
+        <div class="mpTitle"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>HOST A GAME</div>
+        <div class="mpModeTabs" id="mpModeTabs">
+          <button data-mode="coop" class="on">CO-OP</button><button data-mode="race">RACE</button><button data-mode="duel">DUEL</button><button data-mode="ffa">FFA</button><button data-mode="tdm">TDM</button><button data-mode="koth">KOTH</button>
+        </div>
+        <div class="mpMode on" data-pane="coop">
+          <div class="mpDesc">Team up and clear waves together. Friends join with your room code.</div>
+          <div class="mpActions"><button id="mpHost" class="mpBtn coop">Host co-op</button></div>
+        </div>
+        <div class="mpMode" data-pane="race">
+          <div class="mpDesc">Host the loaded race level — everyone grids up in their own car and races.</div>
+          <div class="mpActions"><button id="mpHostRace" class="mpBtn coop" title="Host the loaded race level — everyone grids up and races">Host race</button></div>
+        </div>
+        <div class="mpMode" data-pane="duel">
+          <div class="mpDesc">1v1 head-to-head arena fight — first to the kill target wins.</div>
+          <div class="mpActions"><button id="mpDuel" class="mpBtn duel">Host duel</button><span class="mpHint">first to</span><input id="mpKills" type="number" min="1" max="99" value="5"><span class="mpHint">kills</span></div>
+        </div>
+        <div class="mpMode" data-pane="ffa">
+          <div class="mpDesc">Everyone vs everyone (3+ players). Most kills to the target wins.</div>
+          <div class="mpActions"><button id="mpFFA" class="mpBtn duel">Host FFA</button><span class="mpHint">first to</span><input id="mpFFAKills" type="number" min="1" max="99" value="15"><span class="mpHint">kills</span></div>
+        </div>
+        <div class="mpMode" data-pane="tdm">
+          <div class="mpDesc">Auto-balanced Red vs Blue, no friendly fire. First team to the target wins.</div>
+          <div class="mpActions"><button id="mpTDM" class="mpBtn duel">Host TDM</button><span class="mpHint">first to</span><input id="mpTDMKills" type="number" min="1" max="199" value="30"><span class="mpHint">kills</span></div>
+        </div>
+        <div class="mpMode" data-pane="koth">
+          <div class="mpDesc">King of the hill — hold the zone to score. First team to the target wins.</div>
+          <div class="mpActions"><button id="mpCP" class="mpBtn duel">Host KOTH</button><span class="mpHint">first to</span><input id="mpCPScore" type="number" min="50" max="999" value="200"><span class="mpHint">pts</span></div>
+        </div>
+        <div class="mpActions" id="mpBotsRow" style="display:none;margin-top:6px"><span class="mpHint">add</span><input id="mpBots" type="number" min="0" max="7" value="3"><span class="mpHint">AI bots ·</span><select id="mpBotDiff" style="background:#0b1a18;color:#cfe;border:1px solid #2a5d52;border-radius:6px;padding:3px 6px;font:inherit;cursor:pointer"><option value="recruit">Recruit</option><option value="regular" selected>Regular</option><option value="veteran">Veteran</option><option value="elite">Elite</option></select></div>
       </div>
     </div>
     <div id="mpStatus"></div>
@@ -870,10 +899,9 @@
     <div id="lobbyPlayers"></div>
     <div id="lobbyCount" class="mpHint" style="text-align:center;margin-top:6px"></div>
     <div id="lobbyBots" class="mpRow hidden" style="margin-top:10px;align-items:center;gap:8px;justify-content:center"><span class="mpHint">Fill with bots</span><input id="lobbyBotN" type="number" min="0" max="7" value="0" style="width:56px"></div>
-    <div class="mpRow" style="margin-top:10px"><button id="lobbyCharBtn" class="mpBtn" style="width:100%;text-align:left">CHARACTER ▸</button></div>
-    <div class="mpActions" style="margin-top:14px;justify-content:center;gap:10px">
-      <button id="lobbyStart" class="mpBtn coop hidden">START MATCH</button>
-      <button id="lobbyReady" class="mpBtn coop hidden">READY UP</button>
+    <div class="lobbyStep" style="margin-top:12px"><span class="stepN">1</span><button id="lobbyCharBtn" class="mpBtn">CHARACTER ▸</button></div>
+    <div class="lobbyStep"><span class="stepN">2</span><button id="lobbyStart" class="mpBtn coop hidden">START MATCH</button><button id="lobbyReady" class="mpBtn coop hidden">READY UP</button></div>
+    <div class="mpActions" style="margin-top:12px;justify-content:center">
       <button id="lobbyLeave" class="mpBtn">Leave</button>
     </div>
   </div>
@@ -14918,6 +14946,7 @@ function showClientLobby(){
 }
 let _charChosen=false, _imReady=false;   // build 552: client lobby gating — must choose a character before READY
 function _updateReadyBtn(){
+  { const cb=document.getElementById('lobbyCharBtn'); if(cb) cb.classList.toggle('stepDone', _charChosen); }   // build 900: step 1's pulse stops once a character is picked
   const rb=document.getElementById('lobbyReady'); if(!rb) return;
   if(NET.mode!=='client'){ rb.classList.add('hidden'); return; }
   rb.classList.remove('hidden');
@@ -17595,7 +17624,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 899 · 2026-07-06';
+const BUILD_VERSION = 'build 900 · 2026-07-07';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28777,6 +28806,19 @@ function bindMenu(){
   const eb=document.getElementById('editBtn'); if(eb) eb.onclick=enterEditor;
   const h=document.getElementById('mpHost'); if(h) h.onclick=startHost;
   const hr=document.getElementById('mpHostRace'); if(hr) hr.onclick=startHostRace;   // build 890
+  { // build 900: the host pane is ONE section with a mode picker — tabs swap the visible pane
+    const tabs=document.getElementById('mpModeTabs');
+    if(tabs){
+      const btns=tabs.querySelectorAll('button'), panes=document.querySelectorAll('#mpModal .mpMode');
+      const botsRow=document.getElementById('mpBotsRow');
+      btns.forEach(b=>{ b.onclick=()=>{
+        btns.forEach(x=>x.classList.toggle('on', x===b));
+        const m=b.dataset.mode;
+        panes.forEach(p=>p.classList.toggle('on', p.dataset.pane===m));
+        if(botsRow) botsRow.style.display=(m==='duel'||m==='ffa'||m==='tdm'||m==='koth')?'flex':'none';
+      }; });
+    }
+  }
   const d=document.getElementById('mpDuel'); if(d) d.onclick=startDuel;
   const j=document.getElementById('mpJoin'); if(j) j.onclick=startJoin;
   const fs=document.getElementById('fsBtn');
