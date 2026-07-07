@@ -17624,7 +17624,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 901 · 2026-07-07';
+const BUILD_VERSION = 'build 902 · 2026-07-07';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23040,6 +23040,48 @@ function _fitTrackFromSketch(pts){
     for(const q of pieces){ q.x+=ox; q.z+=oz; } }
   return { pieces, err:(err<=2?0:err), runs:runIdx.length };
 }
+// build 902: RANDOM TRACK — a one-click closed circuit that uses the whole kit. A random smooth blob
+// (harmonic polar wobble) goes through the sketch fitter (closure guaranteed), then the loop is spiced:
+// some 90° curves become BANKED (identical exit geometry — drop-in swaps), and one full straight pair
+// becomes a ramp UP + ramp DOWN with every piece between them raised to the +6m upper deck.
+function _randomTrackFit(rng){
+  for(let attempt=0; attempt<10; attempt++){
+    const base=48+rng()*34, squash=0.72+rng()*0.28, n=96;
+    const h=[]; for(let k=0;k<3;k++) h.push({ f:2+k, a:(7+rng()*9)/(k+1), p:rng()*Math.PI*2 });
+    const pts=[];
+    for(let i=0;i<n;i++){ const a=i/n*2*Math.PI;
+      let r=base; for(const w of h) r+=w.a*Math.sin(w.f*a+w.p);
+      pts.push({ x:r*Math.cos(a), z:r*Math.sin(a)*squash });
+    }
+    const fit=_fitTrackFromSketch(pts);
+    if(fit.fail || fit.err>0.5) continue;   // random shapes are free — only take the exactly-closed ones
+    const ps=fit.pieces;
+    // banked corners: same arc + exit as the plain 90s, so they swap in place
+    let banks=0;
+    for(const p of ps){ if((p.key==='track_curve_l'||p.key==='track_curve_r') && rng()<0.45){ p.key=(p.key==='track_curve_l')?'track_bank_l':'track_bank_r'; banks++; } }
+    if(!banks){ const c=ps.find(p=>p.key==='track_curve_l'||p.key==='track_curve_r'); if(c) c.key=(c.key==='track_curve_l')?'track_bank_l':'track_bank_r'; banks=1; }
+    // a ramp pair on two full straights: up at a, down at b, the run between rides the upper deck
+    const idxs=[]; ps.forEach((p,i)=>{ if(p.key==='track_straight') idxs.push(i); });
+    let ramps=false;
+    if(idxs.length>=2){
+      const a=idxs[Math.floor(rng()*(idxs.length-1))];
+      const later=idxs.filter(i=>i>a);
+      const b=later[Math.floor(rng()*later.length)];
+      ps[a].key='track_ramp_up'; ps[b].key='track_ramp_dn';
+      for(let i=a+1;i<=b;i++) ps[i].y=6;   // includes the down ramp's ENTRY (it descends back to grade)
+      ramps=true;
+    }
+    fit.banks=banks; fit.ramps=ramps;
+    return fit;
+  }
+  return null;
+}
+function buildRandomTrack(){
+  const fit=_randomTrackFit(Math.random);
+  if(!fit){ if(typeof flashToast==='function') flashToast('Could not roll a clean circuit — try again'); return; }
+  _placeSketchTrack(fit);
+  if(typeof flashToast==='function') flashToast('Random circuit — '+fit.pieces.length+' pieces'+(fit.ramps?', ramps':'')+(fit.banks?', '+fit.banks+' banked':''));
+}
 // Place a fitted loop: replaces any existing track (one undo step covers everything).
 function _placeSketchTrack(fit){
   if(!fit || !fit.pieces || !fit.pieces.length) return false;
@@ -23047,7 +23089,7 @@ function _placeSketchTrack(fit){
   for(let i=propModels.length-1;i>=0;i--){ const p=propModels[i]; if(p && p.userData && TRACK_PIECES[p.userData.src]) removeProp(i); }
   let firstObj=null, lastObj=null;
   for(const pc of fit.pieces){
-    spawnProp(pc.key, [pc.x, 0, pc.z, 0, pc.yaw, 0, 1, 1, pc.sz||1], (obj)=>{ trackApply(obj, { w:1 }); if(!firstObj) firstObj=obj; lastObj=obj; });
+    spawnProp(pc.key, [pc.x, pc.y||0, pc.z, 0, pc.yaw, 0, 1, 1, pc.sz||1], (obj)=>{ trackApply(obj, { w:1 }); if(!firstObj) firstObj=obj; lastObj=obj; });   // build 902: pc.y — pieces between a ramp pair ride at +6
   }
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
   if(fit.err>0.5 && lastObj){
@@ -27094,7 +27136,12 @@ function renderEditorFields(){
         dtb.textContent='✏ Draw track — sketch your circuit';
         dtb.title='Sketch your loop on screen — the builder lays the pieces and closes the loop itself (replaces the current track)';
         dtb.onclick=()=>{ _trackSketchStart(); };
-        shapesHost.appendChild(dtb); }
+        shapesHost.appendChild(dtb);
+        const rtb=document.createElement('button'); rtb.className='primBtn'; rtb.style.cssText='width:100%;margin:0 0 6px;';
+        rtb.innerHTML=_svgIcon('<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1"/><circle cx="15.5" cy="8.5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="8.5" cy="15.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/>')+'<span>Random track</span>';
+        rtb.title='Roll a random closed circuit using the whole kit — banked corners + a ramp section included (replaces the current track)';
+        rtb.onclick=()=>{ buildRandomTrack(); };
+        shapesHost.appendChild(rtb); }
       const tgrid=document.createElement('div'); tgrid.style.cssText='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;';
       for(const tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[tk];
         const b=document.createElement('button'); b.className='primBtn'; b.innerHTML=_svgIcon(d.icon||'')+'<span>'+d.label+'</span>'; b.title='Add '+d.label+' track piece (snaps to the chain)'; b.onclick=()=>{ addTrackPiece(tk); };
