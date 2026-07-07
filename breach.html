@@ -17624,7 +17624,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 900 · 2026-07-07';
+const BUILD_VERSION = 'build 901 · 2026-07-07';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20451,6 +20451,11 @@ function setGoal(text){ _curGoal=(text||'').slice(0,160); showGoalBanner(_curGoa
 function tickGoalBanner(dt){ if(_goalBannerT>0){ _goalBannerT-=dt; if(_goalBannerT<=0){ const el=document.getElementById('goalBanner'); if(el) el.style.setProperty('--goal-vis','0'); } } }
 function objectiveHUD(){
   const wn=$('waveNum'); if(!wn) return;
+  // build 901: with a start line placed, the raceHud pill (build 839) owns the live race readout — the
+  // wave banner duplicated it right underneath (plus a pointless HOSTILES count; races spawn none), so
+  // it hides during a race and only returns for the 'PLACE A START LINE' nudge. KOTH keeps its own hide.
+  { const wp=$('wavePanel');
+    if(wp && wp.style && !(typeof NET!=='undefined' && NET.gameMode==='cp')) wp.style.display=(objectiveActive()==='race' && _raceStartO)?'none':''; }
   if(objectiveActive()==='survival'){ wn.textContent = 'SURVIVE ' + fmtClock(surviveLeft); }
   else if(objectiveActive()==='extraction'){ const H=gameCfg.extractHold||5; wn.textContent = (extractHoldT>0.05) ? ('EXTRACTING '+extractHoldT.toFixed(1)+' / '+H) : 'REACH EXTRACTION'; }
   else if(objectiveActive()==='defend'){ wn.textContent = _defendInZone ? ('DEFEND '+fmtClock(surviveLeft)) : ('HOLD THE ZONE \u2014 '+fmtClock(surviveLeft)); }
