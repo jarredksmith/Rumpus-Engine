@@ -17624,7 +17624,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 902 · 2026-07-07';
+const BUILD_VERSION = 'build 903 · 2026-07-07';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27124,30 +27124,42 @@ function renderEditorFields(){
         srow.appendChild(b);
       }
       shapesHost.appendChild(srow);
+      // build 903: EVERYTHING race-track lives in one collapsible section — builder, draw/random tools,
+      // walls and Track appearance were ~half the Object panel for non-racers. State remembered.
+      const tkOpen=(()=>{ try{ return localStorage.getItem('breach_fold_track')==='1'; }catch(e){ return false; } })();
+      const tkHead=document.createElement('button'); tkHead.className='primBtn';
+      tkHead.style.cssText='width:100%;margin:10px 0 4px;display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:1px;';
+      tkHead.innerHTML=_svgIcon('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>')
+        +'<span style="flex:1;text-align:left">Race track</span><span class="tkChev">'+(tkOpen?'\u25be':'\u25b8')+'</span>';
+      const tkWrap=document.createElement('div'); tkWrap.style.display=tkOpen?'':'none';
+      tkHead.onclick=()=>{ const open=tkWrap.style.display==='none'; tkWrap.style.display=open?'':'none';
+        const ch=tkHead.querySelector('.tkChev'); if(ch) ch.textContent=open?'\u25be':'\u25b8';
+        try{ localStorage.setItem('breach_fold_track', open?'1':'0'); }catch(e){} };
+      shapesHost.appendChild(tkHead); shapesHost.appendChild(tkWrap);
       // build 828: TRACK BUILDER — snap-together race track pieces. Each new piece snaps to the exit of the
       // SELECTED track piece (select any piece to branch from it), or the last one placed. Best laid out in
       // top view (T): click a piece, watch the course grow, Delete removes the selected piece.
       const tHead=document.createElement('div'); tHead.className='hint'; tHead.style.margin='9px 0 3px';
       tHead.innerHTML='<b>Track builder</b> — easiest: <b>Draw track</b> and sketch your loop; it lays every piece and closes itself. Or place pieces by hand — they snap onto the <b>selected</b> piece’s exit (or the last one placed), best in <b>top view</b> (T); <b>Del</b> removes the selected piece; <b>Close loop</b> bridges the final gap (it now solves curves + a stretched straight, not just straight-ahead).';
-      shapesHost.appendChild(tHead);
+      tkWrap.appendChild(tHead);
       { // build 897: the Draw-track entry point is ALWAYS visible — it was gated behind "a track piece
         // already exists", so a fresh level never showed it (the one place you need it most).
         const dtb=document.createElement('button'); dtb.className='primBtn'; dtb.style.cssText='width:100%;margin:0 0 6px;font-weight:700;';
         dtb.textContent='✏ Draw track — sketch your circuit';
         dtb.title='Sketch your loop on screen — the builder lays the pieces and closes the loop itself (replaces the current track)';
         dtb.onclick=()=>{ _trackSketchStart(); };
-        shapesHost.appendChild(dtb);
+        tkWrap.appendChild(dtb);
         const rtb=document.createElement('button'); rtb.className='primBtn'; rtb.style.cssText='width:100%;margin:0 0 6px;';
         rtb.innerHTML=_svgIcon('<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1"/><circle cx="15.5" cy="8.5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="8.5" cy="15.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/>')+'<span>Random track</span>';
         rtb.title='Roll a random closed circuit using the whole kit — banked corners + a ramp section included (replaces the current track)';
         rtb.onclick=()=>{ buildRandomTrack(); };
-        shapesHost.appendChild(rtb); }
+        tkWrap.appendChild(rtb); }
       const tgrid=document.createElement('div'); tgrid.style.cssText='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;';
       for(const tk of Object.keys(TRACK_PIECES)){ const d=TRACK_PIECES[tk];
         const b=document.createElement('button'); b.className='primBtn'; b.innerHTML=_svgIcon(d.icon||'')+'<span>'+d.label+'</span>'; b.title='Add '+d.label+' track piece (snaps to the chain)'; b.onclick=()=>{ addTrackPiece(tk); };
         tgrid.appendChild(b);
       }
-      shapesHost.appendChild(tgrid);
+      tkWrap.appendChild(tgrid);
       // build 830: BARRIER WALLS — toggle on the selected piece, or the whole course at once. Walls keep cars
       // on the road (a concrete base + clear screen, solid at car body height) and follow banking/ramps.
       {
@@ -27174,14 +27186,14 @@ function renderEditorFields(){
             wb.onclick=()=>{ pushUndoSnapshot(); for(const p of _allTrk) trackApply(p, {w:anyOff}); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
             wrow.appendChild(wb);
           }
-          shapesHost.appendChild(wrow);
+          tkWrap.appendChild(wrow);
         }
         // ---- build 886: Track appearance — the shared course materials, saved with the level ----
         if(_allTrk.length){
           if(!worldCfg.track) worldCfg.track={};
           const T=worldCfg.track;
           const ah=document.createElement('div'); ah.className='hint'; ah.style.margin='9px 0 3px'; ah.innerHTML='<b>Track appearance</b> \u2014 restyles every placed piece';
-          shapesHost.appendChild(ah);
+          tkWrap.appendChild(ah);
           const _upd=()=>{ _applyTrackCfg(); if(typeof _levelDirty!=='undefined') _levelDirty=true; };
           const crow=document.createElement('div'); crow.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center;';
           const colPick=(label, key, dflt)=>{ const w=document.createElement('label'); w.style.cssText='display:flex;align-items:center;gap:5px;color:#9fe6cf;font-size:11px;cursor:pointer;';
@@ -27189,26 +27201,26 @@ function renderEditorFields(){
             ci.addEventListener('pointerdown',()=>pushUndoSnapshot()); ci.oninput=()=>{ T[key]=parseInt(ci.value.slice(1),16); _upd(); };
             const sp=document.createElement('span'); sp.textContent=label; w.appendChild(ci); w.appendChild(sp); crow.appendChild(w); };
           colPick('Road','road',0x24272c); colPick('Lines','line',0xe8ecef); colPick('Kerb A','kerbA',0xd8402f); colPick('Kerb B','kerbB',0xeef0f2); colPick('Barrier','barrier',0xb9bdc2);
-          shapesHost.appendChild(crow);
+          tkWrap.appendChild(crow);
           const srow=document.createElement('label'); srow.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:11px;margin-top:5px;';
           const ss=document.createElement('span'); ss.textContent='Road roughness'; ss.style.minWidth='92px';
           const sr=document.createElement('input'); sr.type='range'; sr.min='0'; sr.max='1'; sr.step='0.05'; sr.value=String(T.roadRough!=null?T.roadRough:0.95); sr.style.cssText='flex:1;accent-color:var(--accent);';
           sr.addEventListener('pointerdown',()=>pushUndoSnapshot()); sr.oninput=()=>{ T.roadRough=+sr.value; _upd(); };
-          srow.appendChild(ss); srow.appendChild(sr); shapesHost.appendChild(srow);
+          srow.appendChild(ss); srow.appendChild(sr); tkWrap.appendChild(srow);
           const ti=document.createElement('input'); ti.type='text'; ti.placeholder='https://\u2026/asphalt.jpg \u2014 road texture (optional)'; ti.value=T.roadTex||''; ti.style.cssText='width:100%;margin-top:5px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:11px;';
           ti.onchange=()=>{ pushUndoSnapshot(); T.roadTex=ti.value.trim(); _upd(); renderEditorFields(); };
-          shapesHost.appendChild(ti);
-          { const th=document.createElement('div'); shapesHost.appendChild(th); renderTexSearch(th,(maps)=>{ pushUndoSnapshot(); T.roadTex=maps.map||''; _upd(); renderEditorFields(); }); }
+          tkWrap.appendChild(ti);
+          { const th=document.createElement('div'); tkWrap.appendChild(th); renderTexSearch(th,(maps)=>{ pushUndoSnapshot(); T.roadTex=maps.map||''; _upd(); renderEditorFields(); }); }
           if(T.roadTex){
             const trow=document.createElement('label'); trow.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:11px;margin-top:5px;';
             const ts=document.createElement('span'); ts.textContent='Texture tiles'; ts.style.minWidth='92px';
             const tr2=document.createElement('input'); tr2.type='range'; tr2.min='0.2'; tr2.max='8'; tr2.step='0.2'; tr2.value=String(T.roadTile!=null?T.roadTile:1); tr2.style.cssText='flex:1;accent-color:var(--accent);';
             tr2.addEventListener('pointerdown',()=>pushUndoSnapshot()); tr2.oninput=()=>{ T.roadTile=+tr2.value; _upd(); };
-            trow.appendChild(ts); trow.appendChild(tr2); shapesHost.appendChild(trow);
+            trow.appendChild(ts); trow.appendChild(tr2); tkWrap.appendChild(trow);
           }
           const rst=document.createElement('button'); rst.className='primBtn'; rst.style.cssText='margin-top:6px;padding:4px 10px;font-size:11px;'; rst.textContent='Reset to stock';
           rst.onclick=()=>{ pushUndoSnapshot(); worldCfg.track=null; _applyTrackCfg(); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
-          shapesHost.appendChild(rst);
+          tkWrap.appendChild(rst);
         }
       }
     }
