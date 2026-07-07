@@ -17624,7 +17624,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 903 · 2026-07-07';
+const BUILD_VERSION = 'build 904 · 2026-07-07';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20103,7 +20103,18 @@ function _raceBotsTick(dt){
         if(typeof toast==='function') toast('A rival takes the chequered flag');
         objectiveHUD(); if(typeof endGame==='function') endGame(); return; }
     }
-    const pose=_racePathAt(st.s, st.lat + (st.latOff||0));
+    // build 904: intelligent reroute — a (near-)stopped blocker (recorded by _raceBotObstacle) triggers a
+    // lane swing to the clear side (opposite the blocker, clamped inside the kerbs); once alongside/past,
+    // the hold expires and the bot eases back to its own lane instead of parking in a queue.
+    if(st.dodge==null) st.dodge=0;
+    const _blk=st.blk;
+    if(_blk && _blk.speed<2.5 && _blk.fwd<14){
+      const room=TRACK_W/2-1.6;
+      st.dodgeTgt=Math.max(-room-st.lat, Math.min(room-st.lat, (_blk.side>=0?-1:1)*4.6));
+      st.dodgeHold=0.9;
+    } else if(st.dodgeHold>0) st.dodgeHold-=dt; else st.dodgeTgt=0;
+    st.dodge += Math.max(-3.2*dt, Math.min(3.2*dt, (st.dodgeTgt||0)-st.dodge));
+    const pose=_racePathAt(st.s, st.lat + (st.latOff||0) + st.dodge);
     // build 839: rest on the REAL deck via the shared ground query (banked curves, scaled pieces, ramps all
     // included) instead of a computed height — this is what had rival wheels clipping through the track mesh.
     let _gy=(typeof surfaceTopAt==='function') ? surfaceTopAt(pose.x, pose.z, o, true, pose.y+6, true) : -Infinity;
@@ -20270,10 +20281,11 @@ function _raceBotBump(st, spd, self){
 function _raceBotObstacle(st, o, yaw){
   let lim=Infinity;
   const fx=-Math.sin(yaw), fz=-Math.cos(yaw), c=Math.cos(yaw), s=Math.sin(yaw);
+  st.blk=null;   // build 904: remember WHAT is limiting us (side + speed) so a stalled car gets overtaken, not queued behind
   const check=(x,z,speed)=>{
     const dx=x-o.position.x, dz=z-o.position.z;
-    const fwd=dx*fx+dz*fz, lat=Math.abs(dx*c - dz*s);
-    if(fwd>0.5 && fwd<9+st.v*0.4 && lat<2.3) lim=Math.min(lim, Math.max(0, speed*0.92 + Math.max(0, fwd-4)*1.2));
+    const fwd=dx*fx+dz*fz, latS=dx*c - dz*s, lat=Math.abs(latS);
+    if(fwd>0.5 && fwd<9+st.v*0.4 && lat<2.3){ const l=Math.max(0, speed*0.92 + Math.max(0, fwd-4)*1.2); if(l<lim){ lim=l; st.blk={ side:latS, speed, fwd }; } }
   };
   if(typeof drivingCar!=='undefined' && drivingCar) check(drivingCar.position.x, drivingCar.position.z, Math.abs(drivingCar.userData.carSpeed||0));
   for(const ot of _raceBots){ if(ot===st || !ot.obj) continue; check(ot.obj.position.x, ot.obj.position.z, ot.v); }
