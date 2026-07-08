@@ -6116,12 +6116,12 @@ const UI_DISPLAY_CHOICES = [
   { label:'Chakra Petch', v:"'Chakra Petch', monospace" },
   { label:'Share Tech Mono', v:"'Share Tech Mono', monospace" },
 ];
+let _extraFontsReq=false;   // build 906: declared BEFORE the boot applyUiTheme() below — _ensureHudFonts is hoisted but this `let` wasn't, so a saved CUSTOM font hit the TDZ and the whole theme (fonts + accent) silently failed to re-apply on load
 let uiTheme = (function(){ try{ const v=JSON.parse(localStorage.getItem(UI_THEME_KEY)||'null'); return v ? Object.assign({}, UI_THEME_DEFAULT, v) : Object.assign({}, UI_THEME_DEFAULT); }catch(e){ return Object.assign({}, UI_THEME_DEFAULT); } })();
 let UI_ACCENT = '#38f5b5', UI_ACCENT_RGB = '56,245,181';   // canvas-drawn HUD reads these (CSS vars don't reach a 2D canvas)
 function _hexToRgbTriplet(hex){ try{ hex=String(hex||'').replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join(''); const n=parseInt(hex,16); return ((n>>16)&255)+','+((n>>8)&255)+','+(n&255); }catch(e){ return '56,245,181'; } }
 function applyUiTheme(){
   try{
-    if(typeof _ensureHudFonts==='function'){ const _f=String(uiTheme.uiFont||'')+String(uiTheme.displayFont||''); if(_f && !/^'Chakra Petch', monospace'Major Mono Display', monospace$/.test(_f)) _ensureHudFonts(); }   // build 817: a customised theme font pulls the lazy pack
     UI_ACCENT = uiTheme.accent||UI_THEME_DEFAULT.accent;
     UI_ACCENT_RGB = _hexToRgbTriplet(UI_ACCENT);
     const r=document.documentElement.style;
@@ -6130,6 +6130,7 @@ function applyUiTheme(){
     r.setProperty('--ui-font', uiTheme.uiFont||UI_THEME_DEFAULT.uiFont);
     r.setProperty('--display-font', uiTheme.displayFont||UI_THEME_DEFAULT.displayFont);
   }catch(e){}
+  try{ if(typeof _ensureHudFonts==='function'){ const _f=String(uiTheme.uiFont||'')+String(uiTheme.displayFont||''); if(_f && !/^'Chakra Petch', monospace'Major Mono Display', monospace$/.test(_f)) _ensureHudFonts(); } }catch(e){}   // build 817: a customised theme font pulls the lazy pack — build 906: in its OWN guard, AFTER the vars, so a hiccup here can never block the theme apply again
 }
 function saveUiTheme(){ try{ localStorage.setItem(UI_THEME_KEY, JSON.stringify(uiTheme)); }catch(e){} }
 function resetUiTheme(){ uiTheme = Object.assign({}, UI_THEME_DEFAULT); applyUiTheme(); saveUiTheme(); }
@@ -6145,8 +6146,7 @@ const HUD_TOGGLE_LABEL = { minimap:'Minimap', score:'Score', wave:'Wave counter'
 const HUD_FONTS = ['Chakra Petch','Major Mono Display','Orbitron','Rajdhani','Press Start 2P','Share Tech Mono','Audiowide','Teko','Exo 2','Saira Condensed','Aldrich','Syncopate','VT323','Michroma','Russo One','Bungee','Space Mono','JetBrains Mono'];
 // build 817: the 16 optional HUD fonts were a blocking @import of 18 families at boot. Load them ON DEMAND — when the
 // font pickers open, or when a saved theme / loaded level actually USES a non-default family. display=swap keeps text
-// visible while they arrive.
-let _extraFontsReq=false;
+// visible while they arrive. (The `_extraFontsReq` flag is declared up by the UI theme block — see build 906.)
 function _ensureHudFonts(){
   if(_extraFontsReq) return; _extraFontsReq=true;
   const l=document.createElement('link'); l.rel='stylesheet';
@@ -17643,7 +17643,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 905 · 2026-07-07';
+const BUILD_VERSION = 'build 906 · 2026-07-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
