@@ -17,7 +17,7 @@ assert(/if\(edge9\(0\)\) buyFromShop\(_shopSelIdx\);/.test(pg), 'A buys the focu
 assert(/if\(edge9\(0\)\) _upgradePickFocused\(\);/.test(pg), 'A takes the focused upgrade');
 assert(/getElementById\('interGo'\); if\(g\) g\.click\(\);/.test(pg), 'any button continues the campaign card');
 assert(/if\(edge9\(9\)\)/.test(pg) && /openPause/.test(pg) && /toggleMatchMenu/.test(pg), 'Start opens pause (solo) / match menu (MP)');
-assert(/if\(paused\)\{ if\(edge9\(9\)[\s\S]{0,60}resumeGame/.test(pg), 'Start resumes from pause; gameplay reads are suppressed while paused');
+assert(/if\(paused\)\{ _padMenuNavTick/.test(pg) && /sf\.id==='pauseMenu' && typeof resumeGame==='function'\) resumeGame/.test(extractFunction('_padMenuNavTick', src)), 'Start resumes from pause (via the 911 navigator); gameplay reads are suppressed while paused');
 
 // on-foot D-pad quartet
 assert(/edge\(12\)[\s\S]{0,60}toggleInventory/.test(pg) && /edge\(13\)[\s\S]{0,80}openBigMap/.test(pg) &&

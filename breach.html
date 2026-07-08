@@ -490,6 +490,7 @@
   #chatLog .chatName.chatMine { color:var(--accent); }
   #chatLog .chatText { color:#dfeef2; }
   .shopItem.padSel { border-color:var(--accent) !important; background:rgba(var(--accent-rgb),.12) !important; }   /* build 909: controller focus in the cache */
+  .padFocus { outline:2px solid var(--accent) !important; outline-offset:2px; box-shadow:0 0 14px rgba(var(--accent-rgb),.55) !important; border-radius:6px; }   /* build 911: controller focus ring in menus */
   #chatInput { display:none; width:min(300px, 86vw); background:rgba(5,10,12,0.92); border:1px solid #4fd0ff; color:#eafff7; border-radius:5px; padding:5px 8px; font:600 12px ui-monospace,monospace; outline:none; pointer-events:auto; }
   #chatBox.chatOpen #chatInput { display:block; }
   #padDebug { display:none; position:fixed; top:12px; left:12px; z-index:60; background:rgba(5,10,12,0.85); color:#9fe6cf; border:1px solid rgba(var(--accent-rgb),0.4); border-radius:6px; padding:8px 12px; font:11px/1.5 ui-monospace,monospace; white-space:pre; pointer-events:none; max-width:340px; }
@@ -17697,6 +17698,88 @@ function scorePad(p){
   if(nBt < 6) s -= 200;            // a real controller has plenty of buttons
   return s;
 }
+// ---- build 911: pad MENU navigation. One spatial navigator serves every menu surface. ----
+let _padFocusEl=null; const _padAxLatch={ x:0, y:0 };
+function _padNavSurface(){
+  const vis=(el)=>{ if(!el) return false; const cs=getComputedStyle(el); if(cs.display==='none' || cs.visibility==='hidden') return false; const r=el.getBoundingClientRect(); return r.width>0 && r.height>0; };   // NOTE: offsetParent is null for position:fixed — every surface here is fixed
+  const mods=[...document.querySelectorAll('.modalBack')].filter(m=>!m.classList.contains('hidden') && vis(m));
+  if(mods.length) return mods[mods.length-1];   // topmost modal wins (e.g. character picker over the lobby)
+  const kb=document.getElementById('kbModal'); if(kb && vis(kb)) return kb;
+  const pm=document.getElementById('pauseMenu'); if(pm && !pm.classList.contains('hidden') && vis(pm)) return pm;
+  const mm=document.getElementById('matchMenu'); if(mm && vis(mm)) return mm;
+  if(!gameOn){ const ov=document.getElementById('overlay'); if(ov && !ov.classList.contains('hidden') && vis(ov)) return ov; }
+  return null;
+}
+function _padNavItems(surface){
+  const sel='button, select, input[type=checkbox], input[type=range], input[type=number], input[type=text], .shopItem, .kbRow, .charCard';
+  return [...surface.querySelectorAll(sel)].filter(el=>{
+    if(el.disabled) return false;
+    const cs=getComputedStyle(el); if(cs.display==='none'||cs.visibility==='hidden') return false;
+    const r=el.getBoundingClientRect(); return r.width>=4 && r.height>=4;
+  });
+}
+function _padFocusSet(el){
+  if(_padFocusEl && _padFocusEl!==el){ try{ _padFocusEl.classList.remove('padFocus'); }catch(e){} }
+  _padFocusEl=el||null;
+  if(el){ el.classList.add('padFocus'); try{ el.scrollIntoView({ block:'nearest' }); }catch(e){} }
+}
+function _padNavMove(dx, dy){
+  const sf=_padNavSurface(); if(!sf) return false;
+  const items=_padNavItems(sf); if(!items.length) return false;
+  if(!_padFocusEl || !items.includes(_padFocusEl)){ _padFocusSet(sf.querySelector('#startBtn') || items[0]); return true; }   // first input lands on Deploy when on the menu
+  const r0=_padFocusEl.getBoundingClientRect(), c0x=r0.left+r0.width/2, c0y=r0.top+r0.height/2;
+  let best=null, bs=Infinity;
+  const pick=(coned)=>{
+    for(const el of items){ if(el===_padFocusEl) continue;
+      const r=el.getBoundingClientRect(), vx=(r.left+r.width/2)-c0x, vy=(r.top+r.height/2)-c0y;
+      const along=vx*dx+vy*dy; if(along<=4) continue;                     // must lie in the pressed direction
+      const ortho=Math.abs(vx*dy)+Math.abs(vy*dx);                        // sideways drift is penalized
+      if(coned && along <= ortho*0.9) continue;                           // ±45° cone first: no wild diagonal hops (near-ties flipped on pixel drift)
+      const score=along + ortho*(coned?1.5:2.6);
+      if(score<bs){ bs=score; best=el; }
+    }
+  };
+  pick(true);
+  if(!best) pick(false);   // corner elements: when the cone is empty, allow the nearest off-diagonal control (never strand the focus)
+  if(best) _padFocusSet(best);
+  return true;
+}
+function _padNavAdjust(dir){   // left/right tunes the focused slider / select / number field
+  const el=_padFocusEl; if(!el || !el.matches) return false;
+  if(el.matches('input[type=range], input[type=number]')){
+    const st=+el.step || 1, lo=(el.min!==''? +el.min : -1e9), hi=(el.max!==''? +el.max : 1e9);
+    el.value=String(Math.max(lo, Math.min(hi, (+el.value||0) + dir*st)));
+    el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+    return true;
+  }
+  if(el.matches('select')){ const n=el.options.length; if(n){ el.selectedIndex=(((el.selectedIndex+dir)%n)+n)%n; el.dispatchEvent(new Event('change',{bubbles:true})); } return true; }
+  return false;
+}
+function _padNavBack(sf){
+  const s2=sf||_padNavSurface(); if(!s2) return;
+  if(s2.id==='pauseMenu'){ if(typeof resumeGame==='function') resumeGame(); return; }
+  if(s2.id==='matchMenu'){ if(typeof closeMatchMenu==='function') closeMatchMenu(); return; }
+  if(s2.id==='lobby') return;   // leaving a live room is deliberate — use the Leave button
+  const c=s2.querySelector('.modalClose, [data-close], #kbClose'); if(c){ c.click(); return; }
+}
+function _padMenuNavTick(bt, ax, edge){   // -> true when a menu surface consumed the pad this frame
+  const sf=_padNavSurface();
+  if(!sf){ if(_padFocusEl) _padFocusSet(null); return false; }
+  let mx=0, my=0;
+  const LX=ax[0]||0, LY=ax[1]||0;
+  if(Math.abs(LX)>0.6){ if(_padAxLatch.x===0){ mx=Math.sign(LX); _padAxLatch.x=mx; } } else if(Math.abs(LX)<0.4) _padAxLatch.x=0;
+  if(Math.abs(LY)>0.6){ if(_padAxLatch.y===0){ my=Math.sign(LY); _padAxLatch.y=my; } } else if(Math.abs(LY)<0.4) _padAxLatch.y=0;
+  if(edge(12)) my=-1; if(edge(13)) my=1; if(edge(14)) mx=-1; if(edge(15)) mx=1;
+  if(mx!==0){ if(!(_padFocusEl && _padFocusEl.matches && _padFocusEl.matches('input[type=range], input[type=number], select') && _padNavAdjust(mx))) _padNavMove(mx, 0); }
+  if(my!==0) _padNavMove(0, my);
+  if(edge(0)){ const el=_padFocusEl;
+    if(!el){ _padNavMove(0, 1); }
+    else if(!el.matches || !el.matches('input[type=range], input[type=number], select, input[type=text]')){ try{ el.click(); }catch(e){} }
+  }
+  if(edge(1)) _padNavBack(sf);
+  if(edge(9)){ if(sf.id==='pauseMenu' && typeof resumeGame==='function') resumeGame(); else if(sf.id==='matchMenu' && typeof closeMatchMenu==='function') closeMatchMenu(); }
+  return true;
+}
 function pickGamepad(pads){
   if(padForceIndex!=null && pads[padForceIndex] && pads[padForceIndex].connected!==false) return pads[padForceIndex];
   let best=null, bestScore=-1e9;
@@ -17704,7 +17787,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 910 · 2026-07-08';
+const BUILD_VERSION = 'build 911 · 2026-07-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17737,8 +17820,12 @@ function pollGamepad(dt){
   const aval = i => bt[i] ? bt[i].value : 0;
   const snapshot = ()=> bt.map(b=>!!b.pressed);
 
-  // Menu: any button press deploys solo (mapping-agnostic, so an odd A index can't block starting)
+  // Menu / lobby / end screens: the focus navigator owns the pad (build 911). First A lands on
+  // Deploy, so the old "any button starts" muscle memory still works. If no surface is visible
+  // (edge states), fall back to the mapping-agnostic any-button deploy.
   if(!gameOn){
+    const edgeM = i => down(i) && !padPrev[i];
+    if(_padMenuNavTick(bt, ax, edgeM)){ padPrev = snapshot(); return; }
     const anyNow = bt.some(b=>b && b.pressed), anyPrev = padPrev.some(v=>v);
     if(anyNow && !anyPrev) startGame();
     padPrev = snapshot(); return;
@@ -17755,7 +17842,8 @@ function pollGamepad(dt){
     if(edge9(0)) _upgradePickFocused();
     padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padSprint=false; padJump=false; padPrev=snapshot(); return;
   }
-  if(paused){ if(edge9(9) && typeof resumeGame==='function') resumeGame(); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }
+  if(paused){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 911: full pause-menu navigation (Start/B still resume)
+  if(typeof _matchMenuOpen!=='undefined' && _matchMenuOpen){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 911
   if(edge9(9)){   // Start: pause (solo) / match menu (MP)
     if(NET.mode==='off'){ if(typeof openPause==='function') openPause(); }
     else if(typeof toggleMatchMenu==='function') toggleMatchMenu();
