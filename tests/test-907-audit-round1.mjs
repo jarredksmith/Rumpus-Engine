@@ -32,7 +32,7 @@ assert(/e\.target===m && m\.id!=='lobby'/.test(src), 'the lobby is excluded from
 assert(/window\._menuOnceBound/.test(src), 'menu poller/unload hook bind once, not once per menu visit');
 
 // accessibility: every modal ✕ carries a name; icon-only touch buttons too
-eq((html.match(/aria-label="Close"/g)||[]).length, 7, 'all seven ✕ buttons have an accessible name');
+assert((html.match(/aria-label="Close"/g)||[]).length >= 7, 'every ✕ button has an accessible name (7 modals; build 910 adds the keybind modal)');
 assert(/id="tReload" aria-label="Reload"/.test(html) && /id="tNade" aria-label="Grenade"/.test(html) && /id="tWeapon" aria-label="Swap weapon"/.test(html),
   'icon-only touch buttons are labelled');
 

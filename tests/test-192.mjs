@@ -4,7 +4,7 @@ const src = gameSource();
 // state + DOM + keybind
 assert(/let chatOpen=false;/.test(src), 'chatOpen state missing');
 assert(/<div id="chatBox"><div id="chatLog"><\/div><input id="chatInput"/.test(html), 'chat DOM missing');
-assert(/if\(e\.code==='KeyT' && NET\.mode!=='off' && gameOn/.test(src), 'T keybind not wired / not gated to multiplayer + play');
+assert(/if\(e\.code===BINDS\.chat && NET\.mode!=='off' && gameOn/.test(src) && /chat:'KeyT'/.test(src), 'T keybind (rebindable) wired + gated to multiplayer + play');
 
 // pause guard: releasing the lock for chat must NOT open the pause menu
 assert(/&& !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen\) openPause\(\);/.test(src), 'pointerlock pause not guarded by chatOpen');

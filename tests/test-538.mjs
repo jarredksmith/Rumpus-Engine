@@ -13,7 +13,7 @@ assert(/function showGoalBanner\(text\)\{/.test(src) && /function tickGoalBanner
 assert(/text=_creditEsc\?|_creditEsc\(text\)/.test(src), 'the banner escapes author text');
 const so = extractFunction('startObjective');
 assert(/_curGoal = \(gameCfg\.goalText\|\|''\)\.slice\(0,160\);/.test(so) && /if\(_curGoal\) showGoalBanner\(_curGoal\);/.test(so), 'the goal shows at the start of the run');
-assert(/if\(e\.code==='KeyJ' && !e\.repeat && _curGoal\) showGoalBanner\(_curGoal\);/.test(src), 'J recalls the objective');
+assert(/if\(e\.code===BINDS\.objective && !e\.repeat && _curGoal\) showGoalBanner\(_curGoal\);/.test(src) && /objective:'KeyJ'/.test(src), 'J (rebindable) recalls the objective');
 assert(/tickGoalBanner\(dt\)/.test(src), 'the banner fades in the main loop');
 
 // --- puzzle HUD shows the goal ---

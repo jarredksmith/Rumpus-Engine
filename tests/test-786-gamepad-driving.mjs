@@ -11,8 +11,8 @@ assert(/if\(typeof padDriveRev!=='undefined' && padDriveRev\) throttle -= 1;/.te
 assert(!/padMoveZ/.test(du), 'the left stick Y (padMoveZ) no longer drives the car — steering only');
 
 // --- boost = LT, handbrake = B (plus keyboard + mobile buttons) ---
-assert(/boostKey=\(keys\['ShiftLeft'\]\|\|keys\['ShiftRight'\]\|\|\(typeof padDriveBoost!=='undefined'&&padDriveBoost\)\|\|\(typeof touchBoost!=='undefined'&&touchBoost\)\)/.test(du), 'LT (padDriveBoost) + mobile Boost button engage boost');
-assert(/const handbrake=\(keys\['Space'\]\|\|keys\['KeyB'\]\|\|\(typeof padDriveBrake!=='undefined'&&padDriveBrake\)\|\|\(typeof touchHandbrake!=='undefined'&&touchHandbrake\)\);/.test(du), 'B (padDriveBrake) + mobile Brake button engage the handbrake');
+assert(/boostKey=\(keys\[BINDS\.sprint\]\|\|keys\['ShiftRight'\]\|\|\(typeof padDriveBoost!=='undefined'&&padDriveBoost\)\|\|\(typeof touchBoost!=='undefined'&&touchBoost\)\)/.test(du), 'LT (padDriveBoost) + mobile Boost button engage boost (sprint bind, build 910)');
+assert(/const handbrake=\(keys\[BINDS\.jump\]\|\|keys\['KeyB'\]\|\|\(typeof padDriveBrake!=='undefined'&&padDriveBrake\)\|\|\(typeof touchHandbrake!=='undefined'&&touchHandbrake\)\);/.test(du), 'B (padDriveBrake) + mobile Brake button engage the handbrake (jump bind, build 910)');
 
 // --- mobile: the virtual joystick still drives the car (throttle + steer) ---
 assert(/if\(typeof touchMoveZ!=='undefined' && touchMoveZ\) throttle \+= -touchMoveZ;/.test(du), 'mobile joystick Y = throttle/reverse');

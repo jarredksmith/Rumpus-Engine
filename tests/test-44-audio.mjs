@@ -21,7 +21,7 @@ assert(/if\(_musicOn\) setMusicIntensity\(musicTargetFor\(\{ enemies: enemies\.l
 // controls
 assert(/id="muteCb"/.test(html) && /id="volMaster"/.test(html) && /id="volMusic"/.test(html), 'launch menu has mute + volume sliders');
 assert(/audioSettings\.muted=mc\.checked; applyAudioSettings\(\); saveAudioSettings\(\)/.test(src), 'mute persists + applies live');
-assert(/if\(e\.code==='KeyM' && !e\.repeat\)\{ if\(gameOn[\s\S]*?openBigMap\(\)/.test(src), 'M now opens the tactical map (build 500; mute moved to the settings checkbox)');
+assert(/if\(e\.code===BINDS\.map && !e\.repeat\)\{ if\(gameOn[\s\S]*?openBigMap\(\)/.test(src), 'M (rebindable) now opens the tactical map (build 500; mute moved to the settings checkbox)');
 
 // --- runnable: settings load/clamp + intensity mapping ---
 const S = new Function('localStorage', `

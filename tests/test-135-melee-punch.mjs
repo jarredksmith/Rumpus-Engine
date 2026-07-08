@@ -14,7 +14,7 @@ assert(/damageProp\(o, DMG,.*\); if\(!broke\) pushDynamic\(o, dir, 8/.test(m), '
 
 // dry-fire routes to a punch; V key bound; jab thrust in the viewmodel
 assert(/if\(w\.mag<=0\)\{ if\(w\.reserve<=0\)\{ meleeAttack\(\); return; \}/.test(src), 'firing fully dry throws a punch');
-assert(/if\(e\.code==='KeyV'\) meleeAttack\(\);/.test(src), 'V key bound to melee');
+assert(/if\(e\.code===BINDS\.melee\) meleeAttack\(\);/.test(src) && /melee:'KeyV'/.test(src), 'V (rebindable) bound to melee');
 assert(/const j=Math\.sin\(_mp\*Math\.PI\); gun\.position\.z -= j\*0\.55/.test(src), 'viewmodel does a punch thrust');
 
 done();

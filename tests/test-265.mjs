@@ -6,8 +6,10 @@ const page = readFileSync(new URL('../breach.html', import.meta.url), 'utf8');
 // while running FORWARD). Tap Shift to lock running, so you hold just W+Space (no third key) to jump.
 
 // executable: sprinting() resolves correctly in each mode
-const fn = new Function('padSprint','touchSprint','_sprintMode','_sprintToggled','keys',
+const fn0 = new Function('padSprint','touchSprint','_sprintMode','_sprintToggled','keys','BINDS',
   extractFunction('sprinting') + '\nreturn sprinting;');
+const BINDS={ sprint:'ShiftLeft' };   // build 910: sprinting() reads the bind map
+const fn = (a,b,c,d,k)=>fn0(a,b,c,d,k,BINDS);
 const S = (mode, toggled, shift) => fn(false, false, mode, toggled, shift?{ShiftLeft:true}:{})();   // build+call
 assert(S('hold', false, true) === true && S('hold', false, false) === false, 'hold mode tracks the Shift key');
 assert(S('toggle', true, false) === true && S('toggle', false, true) === false, 'toggle mode tracks the latch, ignores held Shift');

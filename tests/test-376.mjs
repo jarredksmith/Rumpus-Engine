@@ -11,11 +11,11 @@ assert(/function drawBigMap\(\)\{/.test(src), 'the map renderer exists');
 assert(/function _w2s\(wx,wz,v\)\{/.test(src) && /function _s2w\(sx,sy,v\)\{/.test(src), 'world<->screen transforms exist');
 
 // ---- M opens it; mute moved off the M key ----
-assert(/if\(e\.code==='KeyM' && !e\.repeat\)\{ if\(gameOn && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade\)\{ openBigMap\(\)/.test(src), 'M opens the tactical map during play');
+assert(/if\(e\.code===BINDS\.map && !e\.repeat\)\{ if\(gameOn && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade\)\{ openBigMap\(\)/.test(src) && /map:'KeyM'/.test(src), 'M (rebindable) opens the tactical map during play');
 assert(!/if\(e\.code==='KeyM'\)\{ const m=toggleMute\(\)/.test(src), 'the old M=mute keybind is gone (mute stays in settings)');
 
 // ---- the map owns the keyboard while open (Esc/M close, C clears, everything else swallowed) ----
-assert(/if\(mapOpen\)\{[\s\S]*?if\(e\.code==='KeyM' \|\| e\.code==='Escape'\) closeBigMap\(\);[\s\S]*?else if\(e\.code==='KeyC'\) mapWaypoint=null;[\s\S]*?e\.preventDefault\(\); return;/.test(src), 'while open: Esc/M close, C clears the waypoint, other keys are swallowed');
+assert(/if\(mapOpen\)\{[\s\S]*?if\(e\.code===BINDS\.map \|\| e\.code==='Escape'\) closeBigMap\(\);[\s\S]*?else if\(e\.code==='KeyC'\) mapWaypoint=null;[\s\S]*?e\.preventDefault\(\); return;/.test(src), 'while open: Esc/map-bind close, C clears the waypoint, other keys are swallowed');
 
 // ---- live-play gating: no fire while the map is up; releasing the lock for the map doesn't open pause ----
 assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\) return;/.test(src), 'firing is blocked while the map is open');

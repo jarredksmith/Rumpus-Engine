@@ -15,7 +15,7 @@ assert(/id="tFlash"[^>]*style="display:none"/.test(html) && /id="tChat"[^>]*styl
 
 // crouch reaches the sim: the touch flag ORs into the crouch want AND the ledge-drop read
 assert(/\|\| padCrouch \|\| touchCrouch/.test(src), 'touchCrouch feeds _wantCrouch (crouch/slide/crouch-jump)');
-assert(/padCrouch\|\|touchCrouch\|\|keys\['KeyS'\]/.test(src), 'touchCrouch feeds the ledge-drop read');
+assert(/padCrouch\|\|touchCrouch\|\|keys\[BINDS\.back\]/.test(src), 'touchCrouch feeds the ledge-drop read (back bind, build 910)');
 assert(/touchCrouch=false; \{ const cb=document\.getElementById\('tCrouch'\)/.test(src), 'clearMovementInput resets the crouch toggle + its lit state');
 
 // wiring: melee / radial / flashlight / inventory / chat

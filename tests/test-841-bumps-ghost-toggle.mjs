@@ -16,7 +16,7 @@ const src = gameSource();
 }
 
 // --- 3. ghost toggle ---
-assert(/if\(e\.code==='KeyG'\)\{ if\(drivingCar && typeof _ghostToggle==='function' && typeof objectiveActive==='function' && objectiveActive\(\)==='race' && !e\.repeat\) _ghostToggle\(\); else grabAction\(\); \}/.test(src), 'G toggles the ghost in a race car, grabs on foot');
+assert(/if\(e\.code===BINDS\.grab\)\{ if\(drivingCar && typeof _ghostToggle==='function' && typeof objectiveActive==='function' && objectiveActive\(\)==='race' && !e\.repeat\) _ghostToggle\(\); else grabAction\(\); \}/.test(src), 'G (rebindable) toggles the ghost in a race car, grabs on foot');
 assert(/localStorage\.setItem\('breachGhostOn', _ghostOn\?'1':'0'\);/.test(extractFunction('_ghostToggle')), 'the preference persists');
 assert(/if\(!G \|\| _raceLap<1 \|\| !_ghostOn\)\{ W\.visible=false; return; \}/.test(extractFunction('_ghostPlayTick')), 'a disabled ghost never renders');
 

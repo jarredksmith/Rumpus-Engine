@@ -38,7 +38,7 @@ assert(/\} else if\(drivingCar\)\{[\s\S]*?const o=drivingCar, yaw=player\.yaw[\s
 
 // --- build 764: A/D steer the car DIRECTLY; the mouse is a free-orbit camera only (no longer steers) ---
 const du = extractFunction('driveUpdate');
-assert(/let steer=0; if\(keys\['KeyA'\]\) steer\+=1; if\(keys\['KeyD'\]\) steer-=1;/.test(du), 'A/D set the steer input');
+assert(/let steer=0; if\(keys\[BINDS\.left\]\) steer\+=1; if\(keys\[BINDS\.right\]\) steer-=1;/.test(du), 'A/D (rebindable) set the steer input');
 assert(/o\.userData\.carYaw \+= _cmdYaw \* \(r\.speed<-0\.05\?-1:1\) \* dt;/.test(du) && /const _wantYaw=steer\*\(cfg\.turn\*RAD\)\*speedFrac;/.test(du), 'steer turns the heading (build 820: capped by lateral G), scaled by speed, inverted in reverse');
 assert(!/player\.yaw \+= steer/.test(du) && !/diff = player\.yaw/.test(du), 'A/D no longer move the camera (player.yaw), and the car no longer chases the look');
 
@@ -251,7 +251,7 @@ assert(/if\(_react>0\)\{ const CARM=8, _slow=Math\.min\(0\.55, \(_react\/CARM\)\
 // --- build 725: A/D steering + grip/drift model (travel direction lags the heading; handbrake to slide) ---
 assert(/grip:Math\.max\(0\.5, \+v\.grip\|\|6\)/.test(extractFunction('vehicleApply')), 'vehicleApply stores grip (default 6)');
 assert(/o\.userData\.carVelYaw = o\.userData\.carYaw;/.test(extractFunction('enterCar')), 'entering aligns the travel direction with the heading (no drift until you turn)');
-assert(/const handbrake=\(keys\['Space'\]\|\|keys\['KeyB'\]\|\|\(typeof padDriveBrake!=='undefined'&&padDriveBrake\)\|\|\(typeof touchHandbrake!=='undefined'&&touchHandbrake\)\);/.test(du), 'Space / B / gamepad B / mobile Brake is the handbrake (build 789)');
+assert(/const handbrake=\(keys\[BINDS\.jump\]\|\|keys\['KeyB'\]\|\|\(typeof padDriveBrake!=='undefined'&&padDriveBrake\)\|\|\(typeof touchHandbrake!=='undefined'&&touchHandbrake\)\);/.test(du), 'Space (jump bind) / B / gamepad B / mobile Brake is the handbrake (build 789/910)');
 assert(/const gripBase=Math\.max\(0\.5,\+cfg\.grip\|\|6\); let grip=handbrake\?gripBase\*0\.16:gripBase;/.test(du), 'the handbrake cuts grip so the travel dir lags far behind the heading (big slide)');
 assert(/const vstep=grip\*dt; o\.userData\.carVelYaw \+= Math\.max\(-vstep,Math\.min\(vstep,vd\)\);/.test(du), 'the travel direction chases the heading at the grip rate');
 assert(/const vYaw=o\.userData\.carVelYaw, fx=-Math\.sin\(vYaw\), fz=-Math\.cos\(vYaw\);/.test(du), 'the car MOVES along the travel direction (which may differ from the heading = drift)');

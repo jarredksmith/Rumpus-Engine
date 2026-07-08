@@ -18,7 +18,7 @@ const ftAt = src.indexOf("(e.code==='KeyF' || e.code==='KeyT')");
 const bAt = src.indexOf("e.code==='KeyB' && !e.ctrlKey");
 assert(ftAt > -1 && bAt > ftAt && bAt - ftAt < 2500, 'lives beside the other editor view keys');
 // the handbrake binding is untouched
-assert(/keys\['Space'\]\|\|keys\['KeyB'\]/.test(src), "driving's B-handbrake still works in play");
+assert(/keys\[BINDS\.jump\]\|\|keys\['KeyB'\]/.test(src), "driving's B-handbrake still works in play (jump bind, build 910)");
 // the panel label teaches the key
 assert(/drag the floor \\u00b7 B toggles/.test(src), 'the checkbox label mentions the hotkey');
 

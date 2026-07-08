@@ -6,11 +6,11 @@ const page = readFileSync(new URL('../breach.html', import.meta.url), 'utf8');
 // They used to share Ctrl||C, so either key did both and they fought.
 
 // crouch reads Ctrl (+ gamepad), NOT C
-assert(/_crouchMode==='toggle'\) \? _crouchToggled : \(keys\['ControlLeft'\]\|\|keys\['ControlRight'\]\)\) \|\| padCrouch \|\| touchCrouch;/.test(src), 'crouch resolves from Ctrl hold OR Ctrl-tap toggle (or gamepad, or the touch toggle — build 908), not C (build 527)');
+assert(/_crouchMode==='toggle'\) \? _crouchToggled : \(keys\[BINDS\.crouch\]\|\|\(BINDS\.crouch==='ControlLeft'&&keys\['ControlRight'\]\)\)\) \|\| padCrouch \|\| touchCrouch;/.test(src), 'crouch resolves from the crouch bind (Ctrl default, R-Ctrl alias) OR toggle (or gamepad/touch — builds 908/910), not C (build 527)');
 assert(!/let _wantCrouch = \([^;]*KeyC/.test(src), 'C no longer triggers crouch');
 
 // slide reads C (+ gamepad), NOT Ctrl
-assert(/const _slideKey = \(keys\['KeyC'\]\|\|padCrouch\);/.test(src), 'slide is C (or gamepad), not Ctrl');
+assert(/const _slideKey = \(keys\[BINDS\.slide\]\|\|padCrouch\);/.test(src) && /slide:'KeyC'/.test(src), 'slide is C (rebindable; or gamepad), not Ctrl');
 assert(!/const _slideKey = \([^;]*ControlLeft/.test(src), 'Ctrl no longer triggers slide');
 
 // slide is still an edge (tap), still gated on sprint + grounded + moving

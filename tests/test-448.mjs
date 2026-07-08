@@ -28,7 +28,7 @@ assert(/invItems:/.test(extractFunction('serializeLevel')), 'catalog saves with 
 assert(/function openInventory\(\)/.test(src) && /safeExitPointerLock/.test(extractFunction('openInventory')), 'opening the inventory releases the pointer lock');
 assert(/cell\.onclick=\(\)=>openInspect\(slot\.id\)/.test(src), 'clicking a slot opens the inspector');
 assert(/_renderCharThumb\(\{ url:it\.model, thumb:it\.thumb/.test(src), 'slots render a model/preview thumbnail');
-assert(/e\.code==='KeyI' && !e\.repeat && gameOn/.test(src) && /toggleInventory\(\)/.test(src), 'I toggles the inventory');
+assert(/e\.code===BINDS\.inventory && !e\.repeat && gameOn/.test(src) && /toggleInventory\(\)/.test(src) && /inventory:'KeyI'/.test(src), 'I (rebindable) toggles the inventory');
 assert(/if\(invOpen\) return;/.test(src), 'inventory open swallows other game keys');
 
 // --- inspector: 3D rotate/zoom for objects, page for journals ---

@@ -931,6 +931,7 @@
     <h2>PAUSED</h2>
     <button id="pauseResume" class="pBtnPrimary">Resume</button>
     <button id="pauseEditHud" class="pBtnGhost" style="display:none">✿ Customize controls</button>
+    <button id="pauseKeys" class="pBtnGhost" style="display:none">⌨ Keyboard bindings</button>
     <button id="pauseCamMode" class="pBtnGhost">Camera: First person</button>
     <button id="pauseSprintMode" class="pBtnGhost">Sprint: Hold</button>
     <button id="pauseCrouchMode" class="pBtnGhost">Crouch: Hold</button>
@@ -9602,6 +9603,23 @@ let _stepT=0;   // footstep cadence timer
 const CROUCH_DIP = 0.8;     // how far the camera lowers when fully crouched
 const keys = {};
 const GAME_KEYS = { Space:1, ShiftLeft:1, ShiftRight:1, ControlLeft:1, ControlRight:1, KeyW:1, KeyA:1, KeyS:1, KeyD:1, KeyC:1, KeyE:1, KeyF:1, KeyG:1, KeyR:1, KeyV:1, KeyQ:1, Digit1:1, Digit2:1, Digit3:1, Digit4:1, Digit5:1 };   // keys the game owns: preventDefault so the browser doesn't intercept them (esp. Space during Shift combos)
+// build 910: rebindable keyboard actions. BINDS maps action -> e.code; every gameplay read goes
+// through it. Weapon slots (1-5), Escape and the editor's own keys stay fixed. Prompts/tutorials
+// still print the DEFAULT keys — rebinding is a power-user feature; the capture UI shows yours.
+const BIND_DEFAULTS = { fwd:'KeyW', back:'KeyS', left:'KeyA', right:'KeyD', jump:'Space', sprint:'ShiftLeft', crouch:'ControlLeft', slide:'KeyC',
+  reload:'KeyR', melee:'KeyV', interact:'KeyE', grab:'KeyG', flashlight:'KeyL', grenade:'KeyF', inventory:'KeyI', map:'KeyM', chat:'KeyT', radial:'Tab', objective:'KeyJ' };
+const BIND_LABEL = { fwd:'Move forward', back:'Move back', left:'Strafe left', right:'Strafe right', jump:'Jump', sprint:'Sprint', crouch:'Crouch', slide:'Slide',
+  reload:'Reload', melee:'Melee', interact:'Use / interact', grab:'Grab / drop prop', flashlight:'Flashlight', grenade:'Grenade', inventory:'Inventory', map:'Tactical map', chat:'Chat (multiplayer)', radial:'Deploy menu', objective:'Recall objective' };
+const BINDS = Object.assign({}, BIND_DEFAULTS);
+try{ const _bv=JSON.parse(localStorage.getItem('breach_binds_v1')||'null'); if(_bv && typeof _bv==='object'){ for(const k in BIND_DEFAULTS){ if(typeof _bv[k]==='string' && _bv[k]) BINDS[k]=_bv[k]; } } }catch(e){}
+function saveBinds(){ try{ localStorage.setItem('breach_binds_v1', JSON.stringify(BINDS)); }catch(e){} }
+function _rebuildGameKeys(){
+  for(const k in GAME_KEYS) delete GAME_KEYS[k];
+  for(const k of ['Space','ShiftLeft','ShiftRight','ControlLeft','ControlRight','KeyW','KeyA','KeyS','KeyD','KeyC','KeyE','KeyF','KeyG','KeyR','KeyV','KeyQ','Digit1','Digit2','Digit3','Digit4','Digit5']) GAME_KEYS[k]=1;
+  for(const a in BINDS){ const c=BINDS[a]; if(c && c!=='Escape') GAME_KEYS[c]=1; }
+}
+_rebuildGameKeys();
+function _keyLabel(code){ if(!code) return '?'; return String(code).replace(/^Key/,'').replace(/^Digit/,'').replace(/^Arrow/,'').replace('ControlLeft','Ctrl').replace('ControlRight','R-Ctrl').replace('ShiftLeft','Shift').replace('ShiftRight','R-Shift').replace('AltLeft','Alt').replace('AltRight','R-Alt'); }
 // ---- Touch / mobile input ----
 let isTouch = (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);   // primary input is a touchscreen
 // Control mode override: 'auto' trusts detection (+ touch promotion below); 'touch'/'desktop' force it.
@@ -9635,7 +9653,7 @@ addEventListener('keydown', e=>{
   if(typingInField(e)) return;
   if(_cineActive){ endCinematic(); return; }   // any key skips the intro flythrough
   if(mapOpen){   // the tactical map owns the keyboard while open
-    if(e.code==='KeyM' || e.code==='Escape') closeBigMap();
+    if(e.code===BINDS.map || e.code==='Escape') closeBigMap();
     else if(e.code==='KeyC') mapWaypoint=null;   // clear the waypoint
     e.preventDefault(); return;
   }
@@ -9655,10 +9673,10 @@ addEventListener('keydown', e=>{
   if(_sprintMode==='toggle' && (e.code==='ShiftLeft'||e.code==='ShiftRight') && !e.repeat){ _sprintToggled = !_sprintToggled; }   // tap toggles run (no need to HOLD Shift while pressing W+Space)
   if(_crouchMode==='toggle' && (e.code==='ControlLeft'||e.code==='ControlRight') && !e.repeat){ _crouchToggled = !_crouchToggled; }   // tap toggles crouch -> no need to HOLD Ctrl+W (the browser close-tab combo)
   if(e.code==='Escape' && invOpen){ if(_inspEl && _inspEl.style.display!=='none') closeInspect(); else closeInventory(); e.preventDefault(); return; }   // Esc backs out of the inspector / inventory
-  if(e.code==='KeyI' && !e.repeat && gameOn && !gameOver && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade && !mapOpen){ toggleInventory(); e.preventDefault(); return; }   // I: inventory
+  if(e.code===BINDS.inventory && !e.repeat && gameOn && !gameOver && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade && !mapOpen){ toggleInventory(); e.preventDefault(); return; }   // inventory (rebindable)
   if(invOpen) return;   // inventory open: swallow other game keys
-  if(e.code==='Tab'){ if(!e.repeat) openRadial(); e.preventDefault(); return; }   // radial deploy menu
-  if(e.code==='KeyT' && NET.mode!=='off' && gameOn && !gameOver && !editorOpen && !shopOpen && !choosingUpgrade && !radialOpen){ openChat(); e.preventDefault(); return; }   // T: open multiplayer text chat
+  if(e.code===BINDS.radial){ if(!e.repeat) openRadial(); e.preventDefault(); return; }   // radial deploy menu (rebindable)
+  if(e.code===BINDS.chat && NET.mode!=='off' && gameOn && !gameOver && !editorOpen && !shopOpen && !choosingUpgrade && !radialOpen){ openChat(); e.preventDefault(); return; }   // multiplayer text chat (rebindable)
   // Crouch is Ctrl, so crouch+WASD lands on browser shortcuts: Ctrl+S (save page), Ctrl+D (bookmark),
   // Ctrl+A (select all). Swallow those so moving while crouched doesn't trigger them. Ctrl+W (close tab)
   // is browser-reserved and can't be cancelled here — the beforeunload guard below catches that one.
@@ -9753,20 +9771,20 @@ addEventListener('keydown', e=>{
     else if(e.code==='KeyE' || e.code==='Escape') closeShop();
     return;
   }
-  if(e.code==='KeyM' && !e.repeat){ if(gameOn && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade){ openBigMap(); e.preventDefault(); return; } }
+  if(e.code===BINDS.map && !e.repeat){ if(gameOn && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade){ openBigMap(); e.preventDefault(); return; } }
   if(choosingUpgrade && !e.repeat){ const _um=e.code.match(/^Digit([1-9])$/); if(_um){ const _uc=_upgradeCards()[+_um[1]-1]; if(_uc){ _uc.click(); e.preventDefault(); return; } } }   // build 909: 1/2/3 take an upgrade (keyboard had no path either)
   if(e.code==='KeyC' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carViewOverride = (_carViewMode(drivingCar)==='cockpit')?'chase':'cockpit'; e.preventDefault(); return; }   // build 745: toggle chase <-> cockpit view while driving
   if(e.code==='KeyV' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carFollowOverride = !_carFollowMode(drivingCar); if(typeof flashToast==='function') flashToast('Camera: '+(_carFollowOverride?'follows the car':'free orbit')); e.preventDefault(); return; }   // build 765: toggle follow-cam <-> free orbit while driving
   if(e.code==='KeyH' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ if(drivingCar.userData.vehicle && drivingCar.userData.vehicle.headlights){ _carHeadOn=!_carHeadOn; if(typeof flashToast==='function') flashToast('Headlights '+(_carHeadOn?'on':'off')); } e.preventDefault(); return; }   // build 781: toggle headlights
   if(e.code==='KeyN' && !e.repeat){ navOverlayToggle(); e.preventDefault(); return; }   // debug: toggle the bot nav grid overlay
   if(editorOpen) return;   // ignore gameplay keys while editing
-  if(e.code==='KeyR') reload();
-  if(e.code==='KeyV') meleeAttack();
-  if(e.code==='KeyE') interact();
-  if(e.code==='KeyG'){ if(drivingCar && typeof _ghostToggle==='function' && typeof objectiveActive==='function' && objectiveActive()==='race' && !e.repeat) _ghostToggle(); else grabAction(); }   // build 841: G in a race car toggles the ghost; on foot it's still grab/drop
-  if(e.code==='KeyL' && !e.repeat) toggleFlashlight();   // build 672: held flashlight (when the level enables it)
-  if(e.code==='KeyJ' && !e.repeat && _curGoal) showGoalBanner(_curGoal);   // build 692: recall the current objective
-  if(e.code==='KeyF') throwGrenade();
+  if(e.code===BINDS.reload) reload();
+  if(e.code===BINDS.melee) meleeAttack();
+  if(e.code===BINDS.interact) interact();
+  if(e.code===BINDS.grab){ if(drivingCar && typeof _ghostToggle==='function' && typeof objectiveActive==='function' && objectiveActive()==='race' && !e.repeat) _ghostToggle(); else grabAction(); }   // build 841: G in a race car toggles the ghost; on foot it's still grab/drop
+  if(e.code===BINDS.flashlight && !e.repeat) toggleFlashlight();   // build 672: held flashlight (when the level enables it)
+  if(e.code===BINDS.objective && !e.repeat && _curGoal) showGoalBanner(_curGoal);   // build 692: recall the current objective
+  if(e.code===BINDS.grenade) throwGrenade();
   // weapon switching by owned slot
   if(e.code==='Digit1' && owned[0]) switchWeapon(owned[0]);
   if(e.code==='Digit2' && owned[1]) switchWeapon(owned[1]);
@@ -9774,7 +9792,7 @@ addEventListener('keydown', e=>{
   if(e.code==='Digit4' && owned[3]) switchWeapon(owned[3]);
   if(e.code==='Digit5' && owned[4]) switchWeapon(owned[4]);
 });
-addEventListener('keyup', e=>{ keys[e.code]=false; if(e.code==='Tab' && radialOpen) closeRadial(true); });
+addEventListener('keyup', e=>{ keys[e.code]=false; if(e.code===BINDS.radial && radialOpen) closeRadial(true); });
 // Clear held movement input. A wave-end / death transition can swallow the keyup (or hide the touch stick
 // before its pointer-release fires), leaving a key/stick stuck so the next round auto-walks. Call this when
 // a wave or round starts. (Gamepad axes re-poll every frame, so they self-correct and aren't cleared here.)
@@ -11315,8 +11333,8 @@ function _waterPlayerStep(dt){
   player.vel.y += GRAV*dt;                                     // undo this frame's gravity
   player.vel.y *= Math.max(0, 1-3.2*dt);                       // water drag (also what makes deep water a safe landing)
   const eyeUnder = player.pos.y < w.surfY+0.12;
-  if(keys['Space'])      player.vel.y += (3.4-player.vel.y)*Math.min(1,dt*6);   // stroke up
-  else if(keys['KeyC'])  player.vel.y += (-2.6-player.vel.y)*Math.min(1,dt*6);  // dive
+  if(keys[BINDS.jump])      player.vel.y += (3.4-player.vel.y)*Math.min(1,dt*6);   // stroke up
+  else if(keys[BINDS.slide])  player.vel.y += (-2.6-player.vel.y)*Math.min(1,dt*6);  // dive
   else if(eyeUnder)      player.vel.y += 2.1*dt;                                // gentle float-up
   else                   player.vel.y += (0-player.vel.y)*Math.min(1,dt*4);     // tread at the surface
   if(player.pos.y > w.surfY+0.35 && player.vel.y>0) player.vel.y=0;             // don't hover out of the pool
@@ -14050,7 +14068,7 @@ let _crouchMode = 'hold';   // 'hold' = hold Ctrl to crouch; 'toggle' = tap Ctrl
 let _crouchToggled = false;
 try{ const v=localStorage.getItem('breach_crouch_mode'); if(v==='toggle'||v==='hold') _crouchMode=v; }catch(e){}
 let _sprintToggled = false;
-function sprinting(){ if(padSprint || touchSprint) return true; if(_sprintMode==='toggle') return _sprintToggled; return !!keys['ShiftLeft']; }
+function sprinting(){ if(padSprint || touchSprint) return true; if(_sprintMode==='toggle') return _sprintToggled; return !!(keys[BINDS.sprint]||(BINDS.sprint==='ShiftLeft'&&keys['ShiftRight'])); }
 // Third-person camera framing (all in camera-local space): side pushes the body left/right of screen,
 // dist is how far back the camera sits, height lifts/drops it. Looking PARALLEL to forward means a nonzero
 // side genuinely moves the character off-center (true over-the-shoulder), not just orbits around it.
@@ -16747,7 +16765,7 @@ function driveUpdate(dt){
   if(!gameOn || gameOver || (player.hp!=null && player.hp<=0)){ exitCar(); return; }   // died / match over -> get out
   const cfg=o.userData.vehicle; if(!cfg){ exitCar(); return; }
   let throttle=0;
-  if(keys['KeyW']) throttle+=1; if(keys['KeyS']) throttle-=1;
+  if(keys[BINDS.fwd]) throttle+=1; if(keys[BINDS.back]) throttle-=1;
   // build 789: on a controller the RIGHT TRIGGER is the gas (analog) and A is reverse — the left stick steers only, no speed.
   if(typeof padDriveGas!=='undefined' && padDriveGas>0.06) throttle += padDriveGas;
   if(typeof padDriveRev!=='undefined' && padDriveRev) throttle -= 1;
@@ -16755,7 +16773,7 @@ function driveUpdate(dt){
   throttle=Math.max(-1,Math.min(1,throttle));
   if(typeof _raceCountT!=='undefined' && _raceCountT>1) throttle=0;   // build 832: the grid holds you until GO (the last second is the GO flash — throttle live)
   // build 719: BOOST — hold Shift to surge for boostDur seconds, then a boostCd cooldown before it's ready again.
-  const bMult=+cfg.boost||1, boostKey=(keys['ShiftLeft']||keys['ShiftRight']||(typeof padDriveBoost!=='undefined'&&padDriveBoost)||(typeof touchBoost!=='undefined'&&touchBoost));   // build 789: Shift / LT / the mobile Boost button engage boost
+  const bMult=+cfg.boost||1, boostKey=(keys[BINDS.sprint]||keys['ShiftRight']||(typeof padDriveBoost!=='undefined'&&padDriveBoost)||(typeof touchBoost!=='undefined'&&touchBoost));   // build 789: Shift / LT / the mobile Boost button engage boost
   if(o.userData.boostCdT>0) o.userData.boostCdT=Math.max(0, o.userData.boostCdT-dt);
   if(o.userData.boostT>0){ o.userData.boostT-=dt; if(o.userData.boostT<=0){ o.userData.boostT=0; o.userData.boostCdT=+cfg.boostCd||0; } }
   else if(boostKey && bMult>1.01 && (o.userData.boostCdT||0)<=0 && throttle>0){ o.userData.boostT=+cfg.boostDur||3; if(typeof playSample==='function') playSample(curSounds().carBoost); }   // engage (forward only) + build 749 boost SFX
@@ -16782,12 +16800,12 @@ function driveUpdate(dt){
   if(o.userData.carYaw==null) o.userData.carYaw = o.rotation.y + (cfg.modelYaw||0)*RAD;
   // build 764: A / D (and the left-stick X) steer the car DIRECTLY. The mouse no longer steers — it's a free-orbit camera
   // (it moves player.yaw, which the chase cam orbits on, but does not turn the car). So you can look around while driving.
-  let steer=0; if(keys['KeyA']) steer+=1; if(keys['KeyD']) steer-=1;
+  let steer=0; if(keys[BINDS.left]) steer+=1; if(keys[BINDS.right]) steer-=1;
   if(typeof padMoveX!=='undefined' && padMoveX) steer-=padMoveX;
   else if(typeof touchMoveX!=='undefined' && touchMoveX) steer-=touchMoveX;   // build 786: mobile joystick steers (left/right)
   steer=Math.max(-1,Math.min(1,steer));
   const _yawOld = o.userData.carYaw;
-  const handbrake=(keys['Space']||keys['KeyB']||(typeof padDriveBrake!=='undefined'&&padDriveBrake)||(typeof touchHandbrake!=='undefined'&&touchHandbrake));   // build 789 (moved up in 820: the grip cap below needs it): Space / B / gamepad B / mobile Brake
+  const handbrake=(keys[BINDS.jump]||keys['KeyB']||(typeof padDriveBrake!=='undefined'&&padDriveBrake)||(typeof touchHandbrake!=='undefined'&&touchHandbrake));   // build 789 (moved up in 820: the grip cap below needs it): Space / B / gamepad B / mobile Brake
   if(handbrake && !o.userData._hbWas && o.userData._carGrounded!==false && Math.abs(o.userData.carSpeed||0)>3 && typeof playSample==='function') playSample(curSounds().carBrake);   // build 749: brake SFX on the rising edge (754: grounded only)
   o.userData._hbWas=handbrake;
   // build 820: LATERAL-G HANDLING — tires hold at most latG of lateral acceleration, and a = v*yawRate, so the achievable
@@ -17686,7 +17704,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 909 · 2026-07-08';
+const BUILD_VERSION = 'build 910 · 2026-07-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21534,10 +21552,10 @@ function loop(){
     wish.add(forward.clone().multiplyScalar(-mvz));   // stick up (-Y) = forward
     moveScale = Math.min(1, Math.hypot(mvx, mvz));
   } else {
-    if(keys['KeyW']) wish.add(forward);
-    if(keys['KeyS']) wish.sub(forward);
-    if(keys['KeyD']) wish.add(right);
-    if(keys['KeyA']) wish.sub(right);
+    if(keys[BINDS.fwd]) wish.add(forward);
+    if(keys[BINDS.back]) wish.sub(forward);
+    if(keys[BINDS.right]) wish.add(right);
+    if(keys[BINDS.left]) wish.sub(right);
   }
   if(pvpMode() && duelDead){ wish.set(0,0,0); moveScale=0; }   // frozen until respawn
   if(_levelLoaderActive){ wish.set(0,0,0); moveScale=0; }   // frozen while the level is still loading
@@ -21545,7 +21563,7 @@ function loop(){
   if(mountedTurret){ wish.set(0,0,0); moveScale=0; }   // frozen while manning a turret
   if(drivingCar){ wish.set(0,0,0); moveScale=0; }      // foot movement off while driving — driveUpdate moves the car
   wish.normalize();
-  let _wantCrouch = ((_crouchMode==='toggle') ? _crouchToggled : (keys['ControlLeft']||keys['ControlRight'])) || padCrouch || touchCrouch;   // Ctrl = crouch (C is slide, kept separate); toggle mode avoids holding Ctrl+W · build 908: + the touch toggle
+  let _wantCrouch = ((_crouchMode==='toggle') ? _crouchToggled : (keys[BINDS.crouch]||(BINDS.crouch==='ControlLeft'&&keys['ControlRight']))) || padCrouch || touchCrouch;   // Ctrl = crouch (C is slide, kept separate); toggle mode avoids holding Ctrl+W · build 908: + the touch toggle
   if(!_wantCrouch && crouchT > 0.4){   // releasing crouch: only stand if there's headroom for the full body
     const _feetY = player.pos.y - EYE;
     if(ceilingAt(player.pos.x, player.pos.z, _feetY) < _feetY + PLAYER_HEIGHT + 0.05) _wantCrouch = true;
@@ -21566,7 +21584,7 @@ function loop(){
 
   // --- slide: tap crouch while sprinting + running on the ground ---
   const _sprinting = sprinting();
-  const _slideKey = (keys['KeyC']||padCrouch);   // C = slide (Ctrl is crouch, kept separate)
+  const _slideKey = (keys[BINDS.slide]||padCrouch);   // slide (crouch is separate); rebindable — build 910
   if(slideCD>0) slideCD -= dt;
   const _slideEdge = _slideKey && !_prevSlideKey; _prevSlideKey = _slideKey;
   if(!sliding && slideCD<=0 && _slideEdge && _sprinting && player.onGround && wish.lengthSq()>0.01 && !shopOpen && !editorOpen){
@@ -21583,13 +21601,13 @@ function loop(){
 
   // jump + gravity — edge-triggered (a fresh press) and rate-limited, so holding the key can't bunny-hop
   if(player.jumpCd>0) player.jumpCd-=dt;
-  const _jHeld = !!(keys['Space']||padJump);
+  const _jHeld = !!(keys[BINDS.jump]||padJump);
   const _jPressed = (_jHeld && !_jumpHeldPrev) || touchJump;   // rising edge for held inputs; the touch button is already a one-frame pulse
   // build 645: ladder detection — you're ON a ladder once you're inside its volume and pressing up/down (W/S).
   { const _fyL = player.pos.y - EYE;
     const _L = (gameOn && !editorOpen && !mountedTurret && !duelDead && !sliding && !_ledge && typeof ladderAt==='function') ? ladderAt(player.pos.x, player.pos.z, _fyL) : null;
     if(!_L){ _onLadder=false; _ladderEngaged=false; _ladder=null; }
-    else { _ladder=_L; if(_ladderEngaged || keys['KeyW'] || keys['KeyS']){ _onLadder=true; _ladderEngaged=true; } else _onLadder=false; }
+    else { _ladder=_L; if(_ladderEngaged || keys[BINDS.fwd] || keys[BINDS.back]){ _onLadder=true; _ladderEngaged=true; } else _onLadder=false; }
   }
   // build 640/644: ledge grab — jumping or falling toward a chest/head-high ledge while pushing FORWARD grabs it
   // and you HANG. From the hang: Space (or keep holding forward) PULLS UP onto the top; Ctrl/back DROPS down.
@@ -21610,8 +21628,8 @@ function loop(){
       const _e=_ss(Math.min(1,_ledge.t/0.18));   // ease into the hang pose
       player.pos.y = _ledge.fy0 + (_ledge.hy-_ledge.fy0)*_e;
       _climbAnim = 'ledgeHang';
-      const _wantDrop = (keys['ControlLeft']||keys['ControlRight']||padCrouch||touchCrouch||keys['KeyS']);
-      const _wantUp = _jPressed || (keys['KeyW'] && _ledge.t>0.25) || _ledge.t>LEDGE_HANG_AUTO;
+      const _wantDrop = (keys[BINDS.crouch]||(BINDS.crouch==='ControlLeft'&&keys['ControlRight'])||padCrouch||touchCrouch||keys[BINDS.back]);
+      const _wantUp = _jPressed || (keys[BINDS.fwd] && _ledge.t>0.25) || _ledge.t>LEDGE_HANG_AUTO;
       if(_wantDrop){ _ledge.ph='drop'; _ledge.t=0; }
       else if(_wantUp){ _ledge.ph='pull'; _ledge.t=0; _ledge.sx=player.pos.x; _ledge.sz=player.pos.z; _ledge.fy0=player.pos.y; }
     } else if(_ledge.ph==='pull'){
@@ -21632,7 +21650,7 @@ function loop(){
     player.vel.x=0; player.vel.z=0;
     if(_jPressed){ player.vel.y=JUMP*0.7; player.pos.x+=Math.sin(fy2)*0.3; player.pos.z+=Math.cos(fy2)*0.3; player.onGround=false; _onLadder=false; _ladderEngaged=false; _climbAnim=0; }
     else {
-      const climb=(keys['KeyW']?1:0)-(keys['KeyS']?1:0);
+      const climb=(keys[BINDS.fwd]?1:0)-(keys[BINDS.back]?1:0);
       player.pos.x += ((+_ladder.x||0)-player.pos.x)*Math.min(1,dt*10);   // glide onto the ladder line
       player.pos.z += ((+_ladder.z||0)-player.pos.z)*Math.min(1,dt*10);
       player.pos.y += climb*CLIMB_SPEED*dt; player.vel.y=0; player.onGround=false;
@@ -24595,7 +24613,7 @@ function buildEditorPanel(){
       + '<button id="edCollapse" title="Collapse panel">\u2304</button>'
     + '</div>'
     + '<div class="hint" id="edHint"></div>'
-    + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
+    + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;min-width:44px">↶</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
     + '<div class="row2" id="edView" style="margin-bottom:10px"></div>'
     + '<div class="edModes" id="edModes"></div>'
     + '<div class="tabs" id="edTabs"></div>'
@@ -24828,6 +24846,7 @@ function buildEditorPanel(){
   const modeRow = p.querySelector('#edModes');
   if(modeRow){ for(const m of EDITOR_MODES){ const mb=document.createElement('div'); mb.className='edMode'; mb.dataset.mode=m; mb.innerHTML=(MODE_ICON[m]||'')+'<span class="edModeLbl">'+MODE_LABEL[m]+'</span>'; mb.title=MODE_LABEL[m]; mb.onclick=()=>setEditorMode(m); modeRow.appendChild(mb); } }
   p.querySelector('#edReset').onclick = ()=>{ resetEditorTarget(editorActive); };
+  { const ub=p.querySelector('#edUndo'); if(ub) ub.onclick=()=>{ if(typeof performUndo==='function') performUndo(); }; }   // build 910: undo without a keyboard (touch authors had none)
   p.querySelector('#edPlay').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); startGame(); };           // test the live-built level immediately (no save/reload)
   p.querySelector('#edMenu').onclick = ()=>{ editorToMenu(); };        // back to the start overlay
   { const ac=p.querySelector('#edAutoSave'); if(ac){ ac.checked=_autoSaveOn; ac.onchange=()=>{ setAutoSaveOn(ac.checked); const st=p.querySelector('#edAutoStatus'); if(st) st.textContent=ac.checked?'Saves automatically as you work.':'Autosave off — remember to Save.'; }; } }
@@ -29079,6 +29098,47 @@ function editorToMenu(){
 }
 // ---- Pause: opened by the ❚❚ button or by losing pointer lock (Esc) mid-game. Freezes solo play; in a
 // live co-op/duel session the world keeps running (others aren't paused), so it acts as a quick menu. ----
+// build 910: keyboard-binding capture UI. Click an action, press the new key (Escape cancels).
+// Picking a key another action holds SWAPS the two, so no action is ever left unbound.
+let _kbCapture=null;
+function _kbRow(a){
+  return '<div class="kbRow" data-a="'+a+'" style="display:flex;align-items:center;gap:10px;padding:6px 8px;border:1px solid rgba(var(--accent-rgb),.18);border-radius:6px;cursor:pointer;background:rgba(8,16,18,.5)">'
+    + '<span style="flex:1;color:#cfeee2;font-size:12px">'+BIND_LABEL[a]+'</span>'
+    + '<kbd data-k="'+a+'" style="min-width:54px;text-align:center;padding:3px 8px;border:1px solid rgba(var(--accent-rgb),.4);border-radius:5px;color:var(--accent);font:700 12px ui-monospace,monospace;background:#0a1416">'+_keyLabel(BINDS[a])+'</kbd></div>';
+}
+function _kbRefresh(){ const m=document.getElementById('kbModal'); if(!m) return; for(const a in BINDS){ const k=m.querySelector('[data-k="'+a+'"]'); if(k) k.textContent = (_kbCapture===a) ? 'press a key…' : _keyLabel(BINDS[a]); } }
+function openKbBinds(){
+  let m=document.getElementById('kbModal');
+  if(!m){
+    m=document.createElement('div'); m.id='kbModal';
+    m.style.cssText='position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(3,8,10,.8);backdrop-filter:blur(3px)';
+    const card=document.createElement('div');
+    card.style.cssText='width:min(560px,94vw);max-height:calc(100dvh - 24px);overflow-y:auto;background:rgba(8,16,18,.96);border:1px solid rgba(var(--accent-rgb),.3);border-radius:14px;padding:18px 20px;display:flex;flex-direction:column;gap:8px';
+    card.innerHTML='<div style="display:flex;align-items:center;margin-bottom:4px"><b style="color:var(--accent);letter-spacing:3px;font-size:15px">KEYBOARD BINDINGS</b><button id="kbClose" aria-label="Close" style="margin-left:auto;background:none;border:1px solid rgba(var(--accent-rgb),.4);color:var(--accent);border-radius:6px;width:30px;height:30px;cursor:pointer">\u2715</button></div>'
+      + '<div class="hint" style="color:#8fc7b6;font-size:11px;margin-bottom:4px">Click an action, then press the new key. Esc cancels. Choosing a key already in use swaps the two. Weapon slots 1\u20135 and Esc are fixed. On-screen prompts keep showing the default keys.</div>'
+      + '<div id="kbRows" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>'
+      + '<button id="kbReset" style="margin-top:8px;padding:7px 0;background:rgba(var(--accent-rgb),.1);border:1px solid rgba(var(--accent-rgb),.4);color:var(--accent);border-radius:7px;cursor:pointer;font-weight:700">Reset to defaults</button>';
+    m.appendChild(card); document.body.appendChild(m);
+    const rows=card.querySelector('#kbRows'); rows.innerHTML=Object.keys(BIND_DEFAULTS).map(_kbRow).join('');
+    rows.addEventListener('click', e=>{ const r=e.target.closest('.kbRow'); if(!r) return; _kbCapture=r.dataset.a; _kbRefresh(); });
+    card.querySelector('#kbClose').onclick=()=>{ _kbCapture=null; m.style.display='none'; };
+    card.querySelector('#kbReset').onclick=()=>{ Object.assign(BINDS, BIND_DEFAULTS); saveBinds(); _rebuildGameKeys(); _kbCapture=null; _kbRefresh(); };
+    m.addEventListener('click', e=>{ if(e.target===m){ _kbCapture=null; m.style.display='none'; } });
+    addEventListener('keydown', e=>{
+      if(!_kbCapture || m.style.display==='none') return;
+      e.preventDefault(); e.stopPropagation();
+      const RESERVED={ Escape:1, KeyP:1, Backquote:1, BracketRight:1, Digit1:1, Digit2:1, Digit3:1, Digit4:1, Digit5:1 };   // editor toggle / debug / pad-switch / weapon slots stay fixed
+      if(e.code!=='Escape' && RESERVED[e.code]){ const k=m.querySelector('[data-k="'+_kbCapture+'"]'); if(k){ k.textContent='reserved!'; setTimeout(_kbRefresh, 700); } _kbCapture=null; return; }
+      if(e.code!=='Escape'){
+        const a=_kbCapture, old=BINDS[a];
+        for(const o in BINDS){ if(o!==a && BINDS[o]===e.code) BINDS[o]=old; }   // swap, never orphan
+        BINDS[a]=e.code; saveBinds(); _rebuildGameKeys();
+      }
+      _kbCapture=null; _kbRefresh();
+    }, true);
+  }
+  m.style.display='flex'; _kbCapture=null; _kbRefresh();
+}
 function openPause(){
   if(!gameOn || gameOver || paused || shopOpen || editorOpen || choosingUpgrade) return;
   if(typeof bindPauseMenu==='function') try{ bindPauseMenu(); }catch(e){}   // build 907: re-sync every control from live state (they were bound once at boot and went stale)
@@ -29127,6 +29187,7 @@ function bindPauseMenu(){
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vMu=document.getElementById('volMusic'); if(vMu){ vMu.value=Math.round(audioSettings.music*100); vMu.oninput=()=>{ audioSettings.music=(+vMu.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vS=document.getElementById('volSfx'); if(vS){ vS.value=Math.round(audioSettings.sfx*100); vS.oninput=()=>{ audioSettings.sfx=(+vS.value)/100; applyAudioSettings(); saveAudioSettings(); initAudio(); SFX.coin(); }; }   // tick so it's
+  { const kb=document.getElementById('pauseKeys'); if(kb){ kb.style.display = isTouch ? 'none' : ''; kb.onclick=()=>openKbBinds(); } }   // build 910
   // ---- controller (build 909: shown once a pad exists; values re-sync on every open) ----
   { const pc=document.getElementById('pauseCtl'); if(pc) pc.style.display = padSeen ? '' : 'none';
     const sr=document.getElementById('padSensRng'); if(sr){ sr.value=String(padPrefs.sens); sr.oninput=()=>{ padPrefs.sens=Math.max(0.3,Math.min(3,parseFloat(sr.value)||1)); savePadPrefs(); }; }

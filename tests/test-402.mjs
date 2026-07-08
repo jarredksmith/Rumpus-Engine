@@ -20,7 +20,7 @@ eq(loco(mx,mz,0,'run'), 'run', 'no-incumbent diagonal leans forward');
 // build 527b: crouch hold/toggle mode (mirrors sprint) so players can crouch-walk without Ctrl+W
 assert(/let _crouchMode = 'hold';/.test(src), 'crouch mode var exists (defaults hold)');
 assert(/_crouchMode==='toggle'.*ControlLeft.*ControlRight.*!e\.repeat.*_crouchToggled = !_crouchToggled/.test(src), 'tap Ctrl toggles crouch in toggle mode');
-assert(/_crouchMode==='toggle'\) \? _crouchToggled : \(keys\['ControlLeft'\]\|\|keys\['ControlRight'\]\)/.test(src), 'crouch resolves from toggle or hold');
+assert(/_crouchMode==='toggle'\) \? _crouchToggled : \(keys\[BINDS\.crouch\]\|\|\(BINDS\.crouch==='ControlLeft'&&keys\['ControlRight'\]\)\)/.test(src), 'crouch resolves from toggle or hold (crouch bind, build 910)');
 assert(/localStorage\.setItem\('breach_crouch_mode'/.test(src), 'crouch mode persists');
 assert(/pauseCrouchMode/.test(gameSource()) || true, 'crouch-mode handler wired');
 done();

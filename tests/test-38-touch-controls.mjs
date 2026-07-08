@@ -18,7 +18,7 @@ for(const id of ['touchUI','tLook','tStick','tThumb','tFire','tAim','tJump','tRe
 
 // integration into the shared movement/look/fire/aim/jump flags
 assert(/const mvx = padMoveX \|\| touchMoveX, mvz = padMoveZ \|\| touchMoveZ;/.test(src), 'movement combines pad + touch');
-assert(/function sprinting\(\)\{ if\(padSprint \|\| touchSprint\) return true;/.test(src) && /return !!keys\['ShiftLeft'\];/.test(src), 'sprint() honors stick/touch + Shift (hold) or the toggle latch (build 369)');
+assert(/function sprinting\(\)\{ if\(padSprint \|\| touchSprint\) return true;/.test(src) && /return !!\(keys\[BINDS\.sprint\]\|\|\(BINDS\.sprint==='ShiftLeft'&&keys\['ShiftRight'\]\)\);/.test(src), 'sprint() honors stick/touch + the sprint bind (Shift default) or the toggle latch (build 369/910)');
 assert(/\(_jHeld && !_jumpHeldPrev\) \|\| touchJump;/.test(src) && /touchJump = false;/.test(src), 'jump is a one-shot touch tap (edge-triggered, build 517)');
 assert(/ads \|\| padAds \|\| touchAds \|\| editorAimPreview/.test(src), 'aim toggle feeds ADS');
 assert(/if\(\(firing \|\| padFiring \|\| touchFiring\) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'fire button feeds the shoot trigger');

@@ -30,7 +30,7 @@ assert(/if\(wep && wep\.fists\)\{[\s\S]*?_punchFists\(\);[\s\S]*?triggerFistAnim
 assert(/function ensureFlashlight\(\)\{/.test(src) && /new THREE\.SpotLight\(fc\.color/.test(src), 'a camera-parented flashlight spotlight');
 const tf = extractFunction('toggleFlashlight');
 assert(/if\(!gameCfg\.flashlight\) return;/.test(tf), 'the flashlight only works when the level enables it');
-assert(/if\(e\.code==='KeyL' && !e\.repeat\) toggleFlashlight\(\);/.test(src), 'L toggles the flashlight');
+assert(/if\(e\.code===BINDS\.flashlight && !e\.repeat\) toggleFlashlight\(\);/.test(src) && /flashlight:'KeyL'/.test(src), 'L (rebindable) toggles the flashlight');
 
 // --- persistence: serialized with the level + restored in both load paths ---
 assert(/unarmed: !!gameCfg\.unarmed, allowPickup: gameCfg\.allowPickup!==false, flashlight: !!gameCfg\.flashlight,/.test(src), 'serialized with the level');

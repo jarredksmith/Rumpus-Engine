@@ -15,7 +15,7 @@ const stepSrc = extractFunction('_waterPlayerStep');
 const atSrc = extractFunction('_waterAt');
 const mkCtx = (zones, pos, vel, ks)=>({
   waterZones: zones, player: { pos, vel, onGround: true },
-  keys: ks||{}, GRAV: 30, EYE: 1.7, RAD: Math.PI/180,
+  keys: ks||{}, BINDS: { jump:'Space', slide:'KeyC' }, GRAV: 30, EYE: 1.7, RAD: Math.PI/180,
   drivingCar: false, mountedTurret: null, _waterSwimming: false, Math,
 });
 const runStep = (zones, pos, vel, ks, dt=0.016)=>{

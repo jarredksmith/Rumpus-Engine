@@ -18,8 +18,8 @@ assert(/spawnProp\(slot\.src\|\|'box', \[px, 1\.1, pz, 0,0,0, sc\], \(obj\)=>\{\
 assert(/const mat = \{\}; if\(slot\.col!=null\) mat\.col=slot\.col; if\(slot\.tex\) mat\.tex=slot\.tex;/.test(dp), 'the slot’s colour/texture ride the prop (and sync via the reconciler)');
 assert(/if\(slot\.exp\)\{ obj\.userData\.explosive=true; obj\.userData\.blastRadius=7; obj\.userData\.blastDmg=70; obj\.userData\.impactVel=10; \}/.test(dp), 'explosive option flags the prop');
 
-assert(/if\(e\.code==='Tab'\)\{ if\(!e\.repeat\) openRadial\(\); e\.preventDefault\(\); return; \}/.test(src), 'hold Tab opens the wheel');
-assert(/if\(e\.code==='Tab' && radialOpen\) closeRadial\(true\);/.test(src), 'releasing Tab confirms the highlighted wedge');
+assert(/if\(e\.code===BINDS\.radial\)\{ if\(!e\.repeat\) openRadial\(\); e\.preventDefault\(\); return; \}/.test(src) && /radial:'Tab'/.test(src), 'hold Tab (rebindable, build 910) opens the wheel');
+assert(/if\(e\.code===BINDS\.radial && radialOpen\) closeRadial\(true\);/.test(src), 'releasing Tab (the radial bind) confirms the highlighted wedge');
 assert(/if\(radialOpen\)\{ radialMove\(e\.movementX, e\.movementY\); return; \}/.test(src), 'mouse aims the wheel + freezes look');
 assert(/if\(radialOpen\)\{ if\(e\.button===0\) closeRadial\(true\); return; \}/.test(src), 'click deploys the highlighted wedge');
 assert(/<div id="radial"><div id="radialRing">/.test(html) && /#radial \.radItem\.hot/.test(html), 'radial overlay element + style');
