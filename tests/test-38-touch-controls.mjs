@@ -34,7 +34,7 @@ assert(/const d=\(gameOn && !shopOpen && !choosingUpgrade\)\?'block':'none'/.tes
 assert(/stick\.addEventListener\('pointermove'/.test(src) && /touchMoveX=nx\/R; touchMoveZ=ny\/R; touchSprint=\(d\/R\)>0\.85/.test(src), 'joystick sets move vector + edge sprint');
 assert(/look\.addEventListener\('pointermove'/.test(src) && /const dx=e\.clientX-lx, dy=e\.clientY-ly/.test(src) && /touchLookDX\+=dx/.test(src), 'look pad accumulates drag');
 assert(/const fire=document\.getElementById\('tFire'\);[\s\S]*?touchFiring=true/.test(src) && /touchLookDX\+=\(e\.clientX-fx\)/.test(src), 'fire is hold-to-fire and drag-to-aim');
-assert(/tap\('tJump', \(\)=>\{ touchJump=true; \}\)/.test(src) && /tap\('tReload'/.test(src) && /tap\('tNade'/.test(src) && /tap\('tUse'/.test(src) && /tap\('tWeapon'/.test(src), 'action buttons wired');
+assert(/tap\('tJump', \(\)=>\{ touchJump=true; \}\)/.test(src) && /tap\('tReload'/.test(src) && /tap\('tNade'/.test(src) && /getElementById\('tUse'\)/.test(src) && /tap\('tWeapon'/.test(src), 'action buttons wired (USE moved to a tap-or-hold binding in build 908)');
 assert(/aim\.addEventListener\('pointerdown', e=>\{[^}]*touchAds=!touchAds;/.test(src), 'aim toggles ADS (and now drags to look)');
 
 // --- runnable: joystick vector (clamped to radius, normalized, edge = sprint) ---

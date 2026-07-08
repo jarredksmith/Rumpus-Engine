@@ -12,7 +12,7 @@ assert(/class="tBtn dBtn" id="tBoost"/.test(html), 'the driving buttons carry th
 // --- CSS: hidden by default, shown (and combat buttons hidden) only while driving on touch ---
 assert(/\.dBtn \{ display:none; \}/.test(html), 'driving buttons are hidden by default');
 assert(/body\.touch\.driving \.dBtn \{ display:flex; \}/.test(html), 'the cluster shows while driving on touch');
-assert(/body\.touch\.driving #tFire, body\.touch\.driving #tAim,[\s\S]*?#tUse \{ display:none !important; \}/.test(html), 'the combat buttons hide while driving');
+assert(/body\.touch\.driving #tFire, body\.touch\.driving #tAim,[\s\S]*?#tChat \{ display:none !important; \}/.test(html), 'the combat buttons (including the build-908 six) hide while driving');
 
 // --- held flags declared + reset ---
 assert(/let touchBoost=false, touchHandbrake=false;/.test(src), 'the mobile driving hold flags are declared');

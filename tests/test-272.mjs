@@ -6,7 +6,7 @@ const page = readFileSync(new URL('../breach.html', import.meta.url), 'utf8');
 // They used to share Ctrl||C, so either key did both and they fought.
 
 // crouch reads Ctrl (+ gamepad), NOT C
-assert(/_crouchMode==='toggle'\) \? _crouchToggled : \(keys\['ControlLeft'\]\|\|keys\['ControlRight'\]\)\) \|\| padCrouch;/.test(src), 'crouch resolves from Ctrl hold OR Ctrl-tap toggle (or gamepad), not C (build 527)');
+assert(/_crouchMode==='toggle'\) \? _crouchToggled : \(keys\['ControlLeft'\]\|\|keys\['ControlRight'\]\)\) \|\| padCrouch \|\| touchCrouch;/.test(src), 'crouch resolves from Ctrl hold OR Ctrl-tap toggle (or gamepad, or the touch toggle — build 908), not C (build 527)');
 assert(!/let _wantCrouch = \([^;]*KeyC/.test(src), 'C no longer triggers crouch');
 
 // slide reads C (+ gamepad), NOT Ctrl

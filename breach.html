@@ -359,9 +359,15 @@
   body.touch #tWeapon { left: calc(150px + env(safe-area-inset-left));  bottom: calc(90px + env(safe-area-inset-bottom)); width:54px; height:54px; }
   body.touch #tUse    { left: calc(150px + env(safe-area-inset-left));  bottom: calc(26px + env(safe-area-inset-bottom)); width:54px; height:54px; }
   body.touch #tNade   { left: calc(208px + env(safe-area-inset-left));  right:auto; bottom: calc(26px + env(safe-area-inset-bottom)); width:54px; height:54px; }
+  body.touch #tCrouch { right: calc(30px + env(safe-area-inset-right)); bottom: calc(186px + env(safe-area-inset-bottom)); width:54px; height:54px; font-size:9px; }
+  body.touch #tMelee  { right: calc(96px + env(safe-area-inset-right)); bottom: calc(192px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
+  body.touch #tBuild  { left: calc(20px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
+  body.touch #tFlash  { left: calc(78px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
+  body.touch #tInv    { left: calc(136px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
+  body.touch #tChat   { left: calc(194px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
   /* build 788: mobile driving cluster — hidden by default, swapped in for the combat buttons while in a car */
   .dBtn { display:none; }
-  body.touch.driving #tFire, body.touch.driving #tAim, body.touch.driving #tJump, body.touch.driving #tReload, body.touch.driving #tNade, body.touch.driving #tWeapon, body.touch.driving #tUse { display:none !important; }
+  body.touch.driving #tFire, body.touch.driving #tAim, body.touch.driving #tJump, body.touch.driving #tReload, body.touch.driving #tNade, body.touch.driving #tWeapon, body.touch.driving #tUse, body.touch.driving #tCrouch, body.touch.driving #tMelee, body.touch.driving #tBuild, body.touch.driving #tFlash, body.touch.driving #tInv, body.touch.driving #tChat { display:none !important; }
   body.touch.driving .dBtn { display:flex; }
   body.touch #tBoost  { right: calc(22px + env(safe-area-inset-right));  bottom: calc(22px + env(safe-area-inset-bottom));  width:88px; height:88px; font-size:13px; }
   body.touch #tBrake  { right: calc(118px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom));  width:64px; height:64px; font-size:11px; }
@@ -688,6 +694,13 @@
     <button class="tBtn" id="tNade" aria-label="Grenade"></button>
     <button class="tBtn" id="tWeapon" aria-label="Swap weapon"></button>
     <button class="tBtn" id="tUse">USE</button>
+    <!-- build 908: audit gaps — crouch/melee/build always; flashlight/inventory/chat appear when the level/session uses them -->
+    <button class="tBtn" id="tCrouch" aria-label="Crouch">CROUCH</button>
+    <button class="tBtn" id="tMelee" aria-label="Melee">MELEE</button>
+    <button class="tBtn" id="tBuild" aria-label="Build menu">BUILD</button>
+    <button class="tBtn" id="tFlash" aria-label="Flashlight" style="display:none">LIGHT</button>
+    <button class="tBtn" id="tInv" aria-label="Inventory" style="display:none">BAG</button>
+    <button class="tBtn" id="tChat" aria-label="Chat" style="display:none">CHAT</button>
     <!-- build 788: driving cluster — shown only while in a car (body.driving), replacing the combat buttons -->
     <button class="tBtn dBtn" id="tBoost">BOOST</button>
     <button class="tBtn dBtn" id="tBrake">BRAKE</button>
@@ -9597,6 +9610,7 @@ applyControlMode();
 if(isTouch && document.body) document.body.classList.add('touch');
 addEventListener('touchstart', ()=>{ if(_ctrlPref==='desktop') return; isTouch = true; if(document.body) document.body.classList.add('touch'); }, { once:true, passive:true });          // or reveal as soon as a real touch happens
 let touchMoveX=0, touchMoveZ=0, touchSprint=false, touchFiring=false, touchAds=false, touchJump=false, touchLookDX=0, touchLookDY=0;
+let touchCrouch=false;   // build 908: on-screen crouch TOGGLE (touch players finally crouch/slide/ledge-drop)
 let touchBoost=false, touchHandbrake=false;   // build 788: dedicated mobile driving buttons (held) for boost + handbrake
 let _jumpHeldPrev=false; const JUMP_CD=0.5;   // jump must be a fresh press, and at least JUMP_CD seconds apart — stops hold-to-bunny-hop
 const TOUCH_LOOK_SENS = 0.0042, TOUCH_ADS_SENS = 0.0022;
@@ -9761,6 +9775,7 @@ function clearMovementInput(){
   _crouchToggled=false;
   for(const k in keys) keys[k]=false;
   touchMoveX=0; touchMoveZ=0; touchSprint=false; touchFiring=false; touchAds=false; touchJump=false; touchLookDX=0; touchLookDY=0;
+  touchCrouch=false; { const cb=document.getElementById('tCrouch'); if(cb) cb.classList.remove('on'); }
   touchBoost=false; touchHandbrake=false;
   sliding=false; firing=false;
   if(player && player.vel){ player.vel.x=0; player.vel.z=0; }
@@ -17643,7 +17658,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 907 · 2026-07-08';
+const BUILD_VERSION = 'build 908 · 2026-07-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17822,8 +17837,20 @@ addEventListener('contextmenu', e=>{ if(gameOn) e.preventDefault(); });
   tap('tJump', ()=>{ touchJump=true; });
   tap('tReload', ()=>{ if(typeof reload==='function') reload(); });
   tap('tNade', ()=>{ if(typeof throwGrenade==='function') throwGrenade(); });
-  tap('tUse', ()=>{ if(typeof interact==='function') interact(); });
+  // build 908: USE = tap to interact, HOLD (400ms) to grab / drop a physics prop
+  { const ub=document.getElementById('tUse'); if(ub){ let ut=null, uheld=false;
+      ub.addEventListener('pointerdown', e=>{ uheld=false; clearTimeout(ut); ut=setTimeout(()=>{ uheld=true; ub.classList.add('on'); if(typeof grabAction==='function') grabAction(); }, 400); e.preventDefault(); });
+      const uend=e=>{ clearTimeout(ut); ub.classList.remove('on'); if(!uheld && typeof interact==='function') interact(); uheld=false; };
+      ub.addEventListener('pointerup', uend);
+      ub.addEventListener('pointercancel', ()=>{ clearTimeout(ut); ub.classList.remove('on'); uheld=false; }); } }
   tap('tWeapon', ()=>{ if(typeof cycleWeapon==='function') cycleWeapon(1); });
+  // build 908: the audit's missing actions
+  { const cb=document.getElementById('tCrouch'); if(cb) cb.addEventListener('pointerdown', e=>{ touchCrouch=!touchCrouch; cb.classList.toggle('on', touchCrouch); e.preventDefault(); }); }
+  tap('tMelee', ()=>{ if(typeof meleeAttack==='function') meleeAttack(); });
+  tap('tBuild', ()=>{ if(typeof openRadial!=='function') return; if(radialOpen) closeRadial(false); else openRadial(); });
+  tap('tFlash', ()=>{ if(typeof toggleFlashlight==='function') toggleFlashlight(); });
+  tap('tInv',   ()=>{ if(typeof toggleInventory==='function') toggleInventory(); });
+  tap('tChat',  ()=>{ if(typeof openChat==='function') openChat(); });
   // build 788: mobile driving cluster — held gas/boost/brake + tap toggles, shown only while in a car
   hold('tBoost', ()=>touchBoost=true, ()=>touchBoost=false);
   hold('tBrake', ()=>touchHandbrake=true, ()=>touchHandbrake=false);
@@ -17847,8 +17874,8 @@ addEventListener('contextmenu', e=>{ if(gameOn) e.preventDefault(); });
 // the viewport (so they hold up across screen sizes / rotation) and override the CSS defaults inline.
 // Editing happens under a full-screen overlay that intercepts all touches, so a control's own
 // fire/aim/move handlers never trigger while you are arranging the layout.
-const TOUCH_EDITABLE = ['tStick','tFire','tAim','tJump','tReload','tNade','tWeapon','tUse'];
-const TOUCH_LABEL = { tStick:'Move', tFire:'Fire', tAim:'Aim', tJump:'Jump', tReload:'Reload', tNade:'Grenade', tWeapon:'Weapon', tUse:'Use', stats:'Health', ammoPanel:'Ammo', minimap:'Map', score:'Score' };
+const TOUCH_EDITABLE = ['tStick','tFire','tAim','tJump','tReload','tNade','tWeapon','tUse','tCrouch','tMelee','tBuild','tFlash','tInv','tChat'];   // build 908: new buttons are arrangeable too
+const TOUCH_LABEL = { tStick:'Move', tFire:'Fire', tAim:'Aim', tJump:'Jump', tReload:'Reload', tNade:'Grenade', tWeapon:'Weapon', tUse:'Use', tCrouch:'Crouch', tMelee:'Melee', tBuild:'Build', tFlash:'Light', tInv:'Bag', tChat:'Chat', stats:'Health', ammoPanel:'Ammo', minimap:'Map', score:'Score' };
 const TSTICK_BASE = 120;   // px (matches body.touch #tStick); user scale multiplies this
 const HUD_EDITABLE = ['stats','ammoPanel','minimap','score','scoreboard'];   // read-only HUD panels: movable + sizable, no gameplay handlers ('scoreboard' = the MP kill list)
 const ALL_EDITABLE = TOUCH_EDITABLE.concat(HUD_EDITABLE);
@@ -17857,6 +17884,24 @@ let touchHand = (localStorage.getItem('breach_touch_hand')==='left') ? 'left' : 
 // Per-player touch sensitivity (multiplies the base look/aim turn rate). Default 1 = current feel; 0.3–3x range.
 let touchLookMul = (()=>{ const v=parseFloat(localStorage.getItem('breach_touch_looksens')); return (v>=0.3 && v<=3)?v:1; })();
 let touchAdsMul  = (()=>{ const v=parseFloat(localStorage.getItem('breach_touch_adssens'));  return (v>=0.3 && v<=3)?v:1; })();
+// build 908: flashlight/inventory/chat buttons appear only when the level/session actually uses
+// them (a flashlight level, an inventory in play, a multiplayer room) — zero clutter otherwise.
+let _tcxAt=0;
+function _touchCtxTick(now){
+  if(!isTouch || now<_tcxAt) return; _tcxAt=now+500;
+  const s=(id,on)=>{ const b=document.getElementById(id); if(b) b.style.display = on?'':'none'; };
+  s('tFlash', !!(typeof gameCfg!=='undefined' && gameCfg && gameCfg.flashlight));
+  s('tInv', !!((typeof inventory!=='undefined' && inventory.length) || (typeof invCatalog!=='undefined' && invCatalog && Object.keys(invCatalog).length)));
+  s('tChat', typeof NET!=='undefined' && NET.mode!=='off');
+}
+// build 908: keep the phone awake during play — thumbs don't move the "activity" needle and the
+// screen used to dim/sleep mid-match. Best-effort; re-acquired when the tab returns.
+let _wakeLock=null;
+function _wakeLockTry(){
+  try{ if(!isTouch || !navigator.wakeLock || _wakeLock || !gameOn) return;
+    navigator.wakeLock.request('screen').then(w=>{ _wakeLock=w; w.addEventListener('release', ()=>{ _wakeLock=null; }); }).catch(()=>{});
+  }catch(e){}
+}
 function applyTouchChrome(){
   const tu=document.getElementById('touchUI'); if(tu) tu.style.opacity = touchOpacity;     // global control transparency
   const lk=document.getElementById('tLook'); if(lk){ if(touchHand==='left'){ lk.style.left='0'; lk.style.right='42%'; } else { lk.style.left=''; lk.style.right=''; } }   // look-drag side
@@ -18420,8 +18465,8 @@ function updateGrabHint(){
   let txt='';
   // build 679/681: a grabbable prop can carry a custom label that replaces the default prompt \u2014 both when aiming
   // at it AND while carrying it (the author opts in, so their text wins over the default drop/throw/scroll controls).
-  if(heldProp) txt = (heldProp.userData && heldProp.userData.grabLabel) || '[G / MMB] Drop \u00b7 Click Throw \u00b7 Scroll Distance';
-  else if(_grabAvail) txt = _grabLabel || '[G / MMB] Grab';
+  if(heldProp) txt = (heldProp.userData && heldProp.userData.grabLabel) || (isTouch ? 'Hold USE to drop \u00b7 FIRE to throw' : '[G / MMB] Drop \u00b7 Click Throw \u00b7 Scroll Distance');
+  else if(_grabAvail) txt = _grabLabel || (isTouch ? 'Hold USE to grab' : '[G / MMB] Grab');   // build 908: touch grabs by holding USE
   if(txt){ if(el.textContent!==txt) el.textContent=txt; el.style.display='block'; } else el.style.display='none';
 }
 function tickGrabHint(dt){
@@ -18552,7 +18597,9 @@ function openRadial(){
   if(host){ host.innerHTML=''; const N=radialCfg.length;
     radialCfg.forEach((it,i)=>{ const a=(-90 + i*(360/N))*Math.PI/180, x=Math.cos(a)*RADIAL_R, y=Math.sin(a)*RADIAL_R;
       const d=document.createElement('div'); d.className='radItem'; d.dataset.i=i; d.style.left='calc(50% + '+x+'px)'; d.style.top='calc(50% + '+y+'px)';
-      d.innerHTML='<div class="radIcon">'+radialIconHTML(it.icon)+'</div><div class="radName">'+_escHtml(it.label)+'</div>'; host.appendChild(d); });
+      d.innerHTML='<div class="radIcon">'+radialIconHTML(it.icon)+'</div><div class="radName">'+_escHtml(it.label)+'</div>';
+      d.style.pointerEvents='auto'; d.addEventListener('pointerdown', ev=>{ ev.preventDefault(); ev.stopPropagation(); radialSel=i; updateRadialSel(); closeRadial(true); });   // build 908: tap a slice to deploy (touch had no way to pick)
+      host.appendChild(d); });
   }
   const r=document.getElementById('radial'); if(r) r.style.display='block';
   updateRadialSel();
@@ -21309,7 +21356,7 @@ addEventListener('visibilitychange', ()=>{
   _tabHidden = (document.visibilityState === 'hidden');
   if(typeof clearMovementInput==='function') clearMovementInput();   // build 843: a keyup lost to alt-tab can't leave the player auto-walking/firing
   if(_tabHidden){ try{ if(typeof _suspendAudioForHide==='function') _suspendAudioForHide(); }catch(e){} }
-  else { try{ clock.getDelta(); }catch(e){} try{ if(typeof actx!=='undefined' && actx && actx.state==='suspended') actx.resume(); }catch(e){} _dirtyShadows(2); _adaptLast=0; _adaptNext=0; }   // returning: drop the huge dt (don't let it trip the scaler) + refresh shadows · build 907: iOS suspends the AudioContext on background — resume it
+  else { try{ clock.getDelta(); }catch(e){} try{ if(typeof actx!=='undefined' && actx && actx.state==='suspended') actx.resume(); }catch(e){} try{ if(typeof _wakeLockTry==='function') _wakeLockTry(); }catch(e){} _dirtyShadows(2); _adaptLast=0; _adaptNext=0; }   // returning: drop the huge dt (don't let it trip the scaler) + refresh shadows · build 907: iOS suspends the AudioContext on background — resume it
 });
 addEventListener('blur', ()=>{ if(typeof clearMovementInput==='function') clearMovementInput(); });   // build 843: same for focus loss without a tab switch (e.g. clicking another window)
 function loop(){
@@ -21319,7 +21366,7 @@ function loop(){
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
   let dt = rawDt;
-  { const _anow=_pnow(); if(_adaptLast) _adaptResTick(_anow-_adaptLast, _anow); _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish)
+  { const _anow=_pnow(); if(_adaptLast) _adaptResTick(_anow-_adaptLast, _anow); _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); if(typeof _touchCtxTick==='function') _touchCtxTick(_anow); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish) · build 908: context touch buttons
   updatePerfHud();   // measure real frame time every frame (before any early-out)
   if(editorOpen || _cineActive) _dirtyShadows(1);   // authoring + camera moves: keep shadows current
   else {
@@ -21441,7 +21488,7 @@ function loop(){
   if(mountedTurret){ wish.set(0,0,0); moveScale=0; }   // frozen while manning a turret
   if(drivingCar){ wish.set(0,0,0); moveScale=0; }      // foot movement off while driving — driveUpdate moves the car
   wish.normalize();
-  let _wantCrouch = ((_crouchMode==='toggle') ? _crouchToggled : (keys['ControlLeft']||keys['ControlRight'])) || padCrouch;   // Ctrl = crouch (C is slide, kept separate); toggle mode avoids holding Ctrl+W
+  let _wantCrouch = ((_crouchMode==='toggle') ? _crouchToggled : (keys['ControlLeft']||keys['ControlRight'])) || padCrouch || touchCrouch;   // Ctrl = crouch (C is slide, kept separate); toggle mode avoids holding Ctrl+W · build 908: + the touch toggle
   if(!_wantCrouch && crouchT > 0.4){   // releasing crouch: only stand if there's headroom for the full body
     const _feetY = player.pos.y - EYE;
     if(ceilingAt(player.pos.x, player.pos.z, _feetY) < _feetY + PLAYER_HEIGHT + 0.05) _wantCrouch = true;
@@ -21506,7 +21553,7 @@ function loop(){
       const _e=_ss(Math.min(1,_ledge.t/0.18));   // ease into the hang pose
       player.pos.y = _ledge.fy0 + (_ledge.hy-_ledge.fy0)*_e;
       _climbAnim = 'ledgeHang';
-      const _wantDrop = (keys['ControlLeft']||keys['ControlRight']||padCrouch||keys['KeyS']);
+      const _wantDrop = (keys['ControlLeft']||keys['ControlRight']||padCrouch||touchCrouch||keys['KeyS']);
       const _wantUp = _jPressed || (keys['KeyW'] && _ledge.t>0.25) || _ledge.t>LEDGE_HANG_AUTO;
       if(_wantDrop){ _ledge.ph='drop'; _ledge.t=0; }
       else if(_wantUp){ _ledge.ph='pull'; _ledge.t=0; _ledge.sx=player.pos.x; _ledge.sz=player.pos.z; _ledge.fy0=player.pos.y; }
@@ -28467,6 +28514,7 @@ function startGame(){
   if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); if(typeof _clearDust==='function') _clearDust(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/728/732/738: kill engine + HUD + skid + dust + restore crosshair on (re)deploy
   if(typeof preloadSignalSounds==='function') preloadSignalSounds();   // build 750: warm up custom signal clips so the first trigger plays
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
+  if(typeof _wakeLockTry==='function') setTimeout(_wakeLockTry, 0);   // build 908: keep the phone awake during play (gameOn is set below; next tick reads it true)
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
   if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
   clearMovementInput();   // start fresh: no input held over from a previous round/death

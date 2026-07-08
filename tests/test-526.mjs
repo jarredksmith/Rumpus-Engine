@@ -5,8 +5,8 @@ const src = gameSource();
 
 // --- the live prompt uses the prop's label, falling back to the default, both aiming AND carrying ---
 const ug = extractFunction('updateGrabHint');
-assert(/if\(heldProp\) txt = \(heldProp\.userData && heldProp\.userData\.grabLabel\) \|\| '\[G \/ MMB\] Drop (?:·|\\u00b7) Click Throw (?:·|\\u00b7) Scroll Distance';/.test(ug), 'while carrying, a custom label replaces the drop/throw/scroll controls (build 681)');
-assert(/else if\(_grabAvail\) txt = _grabLabel \|\| '\[G \/ MMB\] Grab';/.test(ug), 'the grab prompt prefers a custom label');
+assert(/if\(heldProp\) txt = \(heldProp\.userData && heldProp\.userData\.grabLabel\) \|\| \(isTouch \? 'Hold USE to drop (?:·|\\u00b7) FIRE to throw' : '\[G \/ MMB\] Drop (?:·|\\u00b7) Click Throw (?:·|\\u00b7) Scroll Distance'\);/.test(ug), 'while carrying, a custom label replaces the drop/throw/scroll controls (build 681; touch wording build 908)');
+assert(/else if\(_grabAvail\) txt = _grabLabel \|\| \(isTouch \? 'Hold USE to grab' : '\[G \/ MMB\] Grab'\);/.test(ug), 'the grab prompt prefers a custom label');
 assert(/el\.textContent=txt/.test(ug), 'the label is rendered as text (no markup injection)');
 const tg = extractFunction('tickGrabHint');
 assert(/const aimed = \(gameOn && !editorOpen && !shopOpen && !paused && !duelDead\) \? _aimedProp\(\) : null;/.test(tg), 'the aimed prop is tracked');
