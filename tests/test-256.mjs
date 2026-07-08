@@ -23,7 +23,7 @@ assert(/addEventListener\('visibilitychange', \(\)=>\{/.test(src), 'listens for 
 assert(/_tabHidden = \(document\.visibilityState === 'hidden'\);/.test(src), 'tracks hidden state');
 assert(/if\(_tabHidden\) return;/.test(loop), 'loop fully early-outs when hidden (no render, no physics step)');
 // returning from background must drop the giant accumulated dt so nothing teleports
-assert(/else \{ try\{ clock\.getDelta\(\); \}catch\(e\)\{\} _dirtyShadows\(2\); _adaptLast=0; _adaptNext=0; \}/.test(src), 'on return: flush accumulated dt, refresh shadows, reset the scaler timer (build 359)');
+assert(/else \{ try\{ clock\.getDelta\(\); \}catch\(e\)\{\}.*_dirtyShadows\(2\); _adaptLast=0; _adaptNext=0; \}/.test(src), 'on return: flush accumulated dt, refresh shadows, reset the scaler timer (build 359; build 907 adds the iOS AudioContext resume in between)');
 // the early-out sits before the heavy work but after the rAF re-arm (so the loop keeps polling to detect un-hide)
 assert(loop.indexOf('requestAnimationFrame(loop);') < loop.indexOf('if(_tabHidden) return;'), 'rAF re-armed before the early-out');
 done();

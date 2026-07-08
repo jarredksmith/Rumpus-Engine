@@ -21,7 +21,7 @@
 
   /* Transform editor */
   #editor {
-    position: absolute; top: 0; right: 0; width: 320px; min-width: 260px; max-width: 92vw; max-height: 100vh;
+    position: absolute; top: 0; right: 0; width: 320px; min-width: 260px; max-width: 92vw; max-height: 100vh; max-height: 100dvh;
     overflow-y: auto; pointer-events: auto;
     background: rgba(7,13,18,0.92); border-left: 1px solid rgba(var(--accent-rgb),0.35);
     color: #d6f5e8; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
@@ -49,7 +49,7 @@
   #editor .hint { color: #5a7d72; font-size: 11px; margin-bottom: 10px; }
   #editor .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
   /* primary mode switch — groups the panel so only the relevant tabs+sections show at once */
-  #editor .edModes { display:flex; gap:2px; margin-bottom:12px; border-bottom:2px solid rgba(var(--accent-rgb),0.28); }
+  #editor .edModes { display:flex; flex-wrap:wrap; gap:2px; margin-bottom:12px; border-bottom:2px solid rgba(var(--accent-rgb),0.28); }   /* build 907: 8 tabs at min-content overflowed the 320px panel — HUD/Files were clipped off on every device */
   #editor .edMode { flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; text-align:center; padding:7px 2px 8px; cursor:pointer; font:700 11px var(--ui-font); letter-spacing:.4px;
     background:transparent; border:1px solid transparent; border-bottom:none; border-radius:7px 7px 0 0; color:#7fb6a8; margin-bottom:-2px; transition:background .12s,color .12s,opacity .12s; }
   #editor .edMode svg { width:17px; height:17px; display:block; }
@@ -74,7 +74,7 @@
   #editor .field label { display: flex; justify-content: space-between; color: #9fdcc9; }
   #editor .field .val { color: var(--gold); }
   #editor input[type=range] { width: 100%; accent-color: var(--accent); }
-  #editor .row2 { display: flex; gap: 6px; }
+  #editor .row2 { display: flex; gap: 6px; flex-wrap: wrap; }   /* build 907: the 9-shape add row ran off the panel edge (Cone..Ring unreachable) */
   #editor button {
     pointer-events: auto; cursor: pointer; background: rgba(var(--accent-rgb),0.14);
     border: 1px solid rgba(var(--accent-rgb),0.35); color: #eafff7; border-radius: 4px;
@@ -483,7 +483,7 @@
   #chatLog .chatName { color:#4fd0ff; }
   #chatLog .chatName.chatMine { color:var(--accent); }
   #chatLog .chatText { color:#dfeef2; }
-  #chatInput { display:none; width:300px; background:rgba(5,10,12,0.92); border:1px solid #4fd0ff; color:#eafff7; border-radius:5px; padding:5px 8px; font:600 12px ui-monospace,monospace; outline:none; pointer-events:auto; }
+  #chatInput { display:none; width:min(300px, 86vw); background:rgba(5,10,12,0.92); border:1px solid #4fd0ff; color:#eafff7; border-radius:5px; padding:5px 8px; font:600 12px ui-monospace,monospace; outline:none; pointer-events:auto; }
   #chatBox.chatOpen #chatInput { display:block; }
   #padDebug { display:none; position:fixed; top:12px; left:12px; z-index:60; background:rgba(5,10,12,0.85); color:#9fe6cf; border:1px solid rgba(var(--accent-rgb),0.4); border-radius:6px; padding:8px 12px; font:11px/1.5 ui-monospace,monospace; white-space:pre; pointer-events:none; max-width:340px; }
   #controls b { color:#a8d6c8; }
@@ -684,9 +684,9 @@
     <button class="tBtn" id="tFire">FIRE</button>
     <button class="tBtn" id="tAim">AIM</button>
     <button class="tBtn" id="tJump">JUMP</button>
-    <button class="tBtn" id="tReload"></button>
-    <button class="tBtn" id="tNade"></button>
-    <button class="tBtn" id="tWeapon"></button>
+    <button class="tBtn" id="tReload" aria-label="Reload"></button>
+    <button class="tBtn" id="tNade" aria-label="Grenade"></button>
+    <button class="tBtn" id="tWeapon" aria-label="Swap weapon"></button>
     <button class="tBtn" id="tUse">USE</button>
     <!-- build 788: driving cluster — shown only while in a car (body.driving), replacing the combat buttons -->
     <button class="tBtn dBtn" id="tBoost">BOOST</button>
@@ -783,7 +783,7 @@
 <!-- Instructions modal -->
 <div id="instrModal" class="modalBack hidden">
   <div class="modalCard">
-    <button class="modalClose" data-close="instrModal">✕</button>
+    <button class="modalClose" aria-label="Close" data-close="instrModal">✕</button>
     <h2>INSTRUCTIONS</h2>
     <div id="controls">
       <b>WASD</b> move &nbsp;·&nbsp; <b>MOUSE</b> look &nbsp;·&nbsp; <b>L-CLICK</b> fire &nbsp;·&nbsp; <b>R-CLICK</b> aim &nbsp;·&nbsp; <b>SHIFT</b> sprint &nbsp;·&nbsp; <b>SPACE</b> jump &nbsp;·&nbsp; <b>CTRL</b> crouch &nbsp;·&nbsp; <b>SPRINT+C</b> slide<br>
@@ -806,7 +806,7 @@
 <!-- Help & tutorials modal (build 848) -->
 <div id="helpModal" class="modalBack hidden">
   <div class="modalCard" style="max-width:720px">
-    <button class="modalClose" data-close="helpModal">✕</button>
+    <button class="modalClose" aria-label="Close" data-close="helpModal">✕</button>
     <h2>HELP &amp; TUTORIALS</h2>
     <div style="display:flex;gap:12px;text-align:left;min-height:300px;flex-wrap:wrap">
       <div id="helpNav" style="flex:0 0 172px;display:flex;flex-direction:column;gap:4px"></div>
@@ -818,7 +818,7 @@
 <!-- Community level library (build 851): levels served from community/ beside the game -->
 <div id="communityModal" class="modalBack hidden">
   <div class="modalCard" style="max-width:640px">
-    <button class="modalClose" data-close="communityModal">✕</button>
+    <button class="modalClose" aria-label="Close" data-close="communityModal">✕</button>
     <h2>COMMUNITY LEVELS</h2>
     <div id="commNote" style="margin:2px 0 12px;color:#cfe9df;font-size:13px;line-height:1.5">Player-built levels, hosted with the game. Load one, remix it, or submit your own from the editor's <b style="color:#eafff7">Save</b> tab.</div>
     <div id="commList" style="text-align:left;max-height:56vh;overflow:auto;display:flex;flex-direction:column;gap:8px;color:#d6f5e8"></div>
@@ -828,7 +828,7 @@
 <!-- Credits & attribution modal (build 549) -->
 <div id="creditsModal" class="modalBack hidden">
   <div class="modalCard">
-    <button class="modalClose" data-close="creditsModal">✕</button>
+    <button class="modalClose" aria-label="Close" data-close="creditsModal">✕</button>
     <h2>CREDITS &amp; ATTRIBUTION</h2>
     <div id="creditsBody" style="text-align:left;font-size:13px;line-height:1.6;max-height:60vh;overflow:auto;padding-right:6px;color:#cfe9df"></div>
   </div>
@@ -837,14 +837,14 @@
 <!-- Multiplayer modal -->
 <div id="mpModal" class="modalBack hidden">
   <div class="modalCard">
-    <button class="modalClose" data-close="mpModal">✕</button>
+    <button class="modalClose" aria-label="Close" data-close="mpModal">✕</button>
     <h2>MULTIPLAYER</h2>
-    <div class="mpIdRow"><input id="mpName" type="text" maxlength="14" placeholder="your name" autocomplete="off"><button id="charBtn" class="mpBtn">CHARACTER ▸</button></div>
+    <div class="mpIdRow"><input id="mpName" aria-label="Your player name" type="text" maxlength="14" placeholder="your name" autocomplete="off"><button id="charBtn" class="mpBtn">CHARACTER ▸</button></div>
     <div class="mpTop">
       <div class="mpSection join">
         <div class="mpTitle">→ JOIN A ROOM</div>
         <div class="mpDesc">Got a code from the host? Drop in to their game.</div>
-        <div class="mpActions"><input id="mpCode" type="text" maxlength="5" placeholder="room code" autocomplete="off"><button id="mpJoin" class="mpBtn">Join</button></div>
+        <div class="mpActions"><input id="mpCode" aria-label="Room code" type="text" maxlength="5" placeholder="room code" autocomplete="off"><button id="mpJoin" class="mpBtn">Join</button></div>
         <div id="mpGamesRow" style="display:none;flex-direction:column;align-items:stretch;gap:6px;margin-top:8px"><div style="display:flex;align-items:center;justify-content:space-between"><span class="mpHint">Open games</span><button id="mpRefresh" class="mpBtn" style="padding:3px 10px;font-size:12px">Refresh</button></div><div id="mpGames"></div></div>
       </div>
       <div class="mpSection coop" id="mpHostPane">
@@ -884,7 +884,7 @@
 </div>
 <div id="charPicker" class="modalBack hidden" style="z-index:90">
   <div class="modalCard">
-    <button class="modalClose" data-close="charPicker">✕</button>
+    <button class="modalClose" aria-label="Close" data-close="charPicker">✕</button>
     <h2>CHOOSE A CHARACTER</h2>
     <div class="mpDesc">Pick your character and color — other players see them in co-op and PvP.</div>
     <div id="charGrid"></div>
@@ -910,7 +910,7 @@
 <div id="roomBadge"></div>
 <div id="scoreboard"></div>
 <div id="killFeed"></div>
-<div id="chatBox"><div id="chatLog"></div><input id="chatInput" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Say something (Enter to send, Esc to cancel)"></div>
+<div id="chatBox"><div id="chatLog"></div><input id="chatInput" aria-label="Chat message" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Say something (Enter to send, Esc to cancel)"></div>
 <button id="pauseBtn" title="Pause (Esc)" style="display:none">❚❚</button>
 <div id="pauseMenu" class="hidden">
   <div class="pauseCard">
@@ -13682,7 +13682,7 @@ function loadLevelFromNet(level){
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
   if(typeof refreshLootMarkers==='function') refreshLootMarkers(); pickupModels = (level.pickupModels && typeof level.pickupModels==='object') ? JSON.parse(JSON.stringify(level.pickupModels)) : {}; keyNames = (level.keyNames && typeof level.keyNames==='object') ? JSON.parse(JSON.stringify(level.keyNames)) : {}; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   // (world/terrain adopted ABOVE the prop rebuild — build 893)
-  if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
+  if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
   if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x';
@@ -17643,7 +17643,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 906 · 2026-07-08';
+const BUILD_VERSION = 'build 907 · 2026-07-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21309,7 +21309,7 @@ addEventListener('visibilitychange', ()=>{
   _tabHidden = (document.visibilityState === 'hidden');
   if(typeof clearMovementInput==='function') clearMovementInput();   // build 843: a keyup lost to alt-tab can't leave the player auto-walking/firing
   if(_tabHidden){ try{ if(typeof _suspendAudioForHide==='function') _suspendAudioForHide(); }catch(e){} }
-  else { try{ clock.getDelta(); }catch(e){} _dirtyShadows(2); _adaptLast=0; _adaptNext=0; }   // returning: drop the huge dt (don't let it trip the scaler) + refresh shadows
+  else { try{ clock.getDelta(); }catch(e){} try{ if(typeof actx!=='undefined' && actx && actx.state==='suspended') actx.resume(); }catch(e){} _dirtyShadows(2); _adaptLast=0; _adaptNext=0; }   // returning: drop the huge dt (don't let it trip the scaler) + refresh shadows · build 907: iOS suspends the AudioContext on background — resume it
 });
 addEventListener('blur', ()=>{ if(typeof clearMovementInput==='function') clearMovementInput(); });   // build 843: same for focus loss without a tab switch (e.g. clicking another window)
 function loop(){
@@ -24165,7 +24165,7 @@ function restoreLevel(level){
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
   selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
   if(level.invItems && typeof level.invItems==='object'){ try{ invCatalog = JSON.parse(JSON.stringify(level.invItems)); if(typeof renderInvItems==='function' && editorOpen) renderEditorFields(); }catch(e){} }
-  if(level.audio){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }
+  if(level.audio){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply, don't persist (see loadLevelFromNet)
   _applyCine(level.cine);
   if(level.player) applyPlayerLevel(level.player);
   if(level.chest){ chestModelUrl = level.chest.url||''; chestModelScale = level.chest.scale||1; randomLootOn = !level.chest.randomOff; }
@@ -27123,9 +27123,9 @@ function renderEditorFields(){
           const num=document.createElement('input'); num.type='number'; num.step=String(step); num.style.cssText='flex:0 0 70px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
           const fit=(v)=>{ const lo=Math.min(softLo, v-step), hi=Math.max(softHi, v+step); rng.min=String(lo); rng.max=String(hi); };   // grow the track to include the current value
           const sync=()=>{ const v=get(); fit(v); rng.value=String(v); num.value=String(+v.toFixed(4)); };
-          const commit=(v)=>{ if(isNaN(v)) return; set(v); _saveTpGun(); refreshAvatarGunGrips(); try{ localStorage.setItem(key, String(v)); }catch(e){} sync(); };
+          const commit=(v)=>{ if(isNaN(v)) return; set(v); _saveTpGun(); refreshAvatarGunGrips(); sync(); };   // build 907: _saveTpGun persists the per-weapon blob; the old flat keys were never read
           rng.oninput=()=>commit(parseFloat(rng.value));
-          num.oninput=()=>{ const v=parseFloat(num.value); if(!isNaN(v)){ set(v); _saveTpGun(); refreshAvatarGunGrips(); try{ localStorage.setItem(key, String(v)); }catch(e){} fit(v); rng.value=String(v); } };   // typing: no clamp, slider follows
+          num.oninput=()=>{ const v=parseFloat(num.value); if(!isNaN(v)){ set(v); _saveTpGun(); refreshAvatarGunGrips(); fit(v); rng.value=String(v); } };   // typing: no clamp, slider follows
           sync();
           row.appendChild(sp); row.appendChild(rng); row.appendChild(num); urlHost.appendChild(row);
         };
@@ -28527,7 +28527,13 @@ function startGame(){
   heldProp=null; heldNidLocal=null; for(const k in _remoteHold) delete _remoteHold[k];
   for(const rk of rockets) scene.remove(rk.mesh); rockets.length=0;
   // client: adopt the host's level (props + lights) so everyone shares the same map
-  if(NET.pendingLevel){ loadLevelFromNet(NET.pendingLevel); NET.pendingLevel=null; }
+  if(NET.pendingLevel){ loadLevelFromNet(NET.pendingLevel); NET.pendingLevel=null;
+    // build 907: the startObjective/auto-seat calls above ran against the JOINER's old level (the
+    // host's level only just landed) — with a race level that meant no race chain, no race HUD and
+    // no grid seat for fresh joiners. Re-init the objective now that the real level is in.
+    if(typeof startObjective==='function') startObjective();
+    if(typeof _raceAutoSeat==='function' && typeof objectiveActive==='function' && objectiveActive()==='race') setTimeout(()=>_raceAutoSeat(0), 350);
+  }
   if(typeof xaSnapToBase==='function') xaSnapToBase();   // restore animated props to their base FIRST, so a run that ended mid-swing doesn't bake the half-open pose in as the new home
   if(typeof xaCapture==='function') xaCapture();
   if(NET.pendingSounds){ NET.sounds=_sanitizeSounds(NET.pendingSounds); NET.pendingSounds=null; if(typeof preloadCustomSounds==='function') preloadCustomSounds(); }   // play the host's SFX this session
@@ -28892,7 +28898,11 @@ function bindMenu(){
   { const cb=document.getElementById('charBtn'); if(cb) cb.onclick=openCharPicker; const lcb=document.getElementById('lobbyCharBtn'); if(lcb) lcb.onclick=openCharPicker; updateCharBtnLabel(); }
   { const ccf=document.getElementById('charConfirm'); if(ccf) ccf.onclick=()=>{ _charChosen=true; closeModal('charPicker'); if(NET.mode!=='off') broadcastMyChar(); _updateReadyBtn(); }; }   // build 552: confirming the picker counts as choosing (covers a returning player keeping their current character)
   { const sb=document.getElementById('lobbyStart'); if(sb) sb.onclick=startMatch; const lv=document.getElementById('lobbyLeave'); if(lv) lv.onclick=()=>{ unannounceRoom(); location.reload(); }; const rb=document.getElementById('lobbyReady'); if(rb) rb.onclick=()=>setReady(!_imReady); }
-  { const rf=document.getElementById('mpRefresh'); if(rf) rf.onclick=refreshGamesList; refreshGamesList(); setInterval(()=>{ const m=document.getElementById('mpModal'); if(m && !m.classList.contains('hidden') && lobbyEnabled()) refreshGamesList(); }, 4000); window.addEventListener('beforeunload', ()=>{ try{ unannounceRoom(); }catch(e){} }); }
+  { const rf=document.getElementById('mpRefresh'); if(rf) rf.onclick=refreshGamesList; refreshGamesList();
+    if(!window._menuOnceBound){ window._menuOnceBound=true;   // build 907: bindMenu re-runs on every menu return — the poller + unload hook stacked one copy per visit
+      setInterval(()=>{ const m=document.getElementById('mpModal'); if(m && !m.classList.contains('hidden') && lobbyEnabled()) refreshGamesList(); }, 4000);
+      window.addEventListener('beforeunload', ()=>{ try{ unannounceRoom(); }catch(e){} });
+    } }
   if(MENU_HTML===null){ const ov0=document.getElementById('overlay'); if(ov0) MENU_HTML = ov0.innerHTML; }   // capture the full start menu once, before any death/win screen overwrites it
   const sb=document.getElementById('startBtn'); if(sb) sb.onclick=()=>{ campaignActive=false; _campaignComplete=false; startGame(); };
   const cpb=document.getElementById('campaignBtn'); if(cpb) cpb.onclick=()=>{ if(typeof startCampaign==='function') startCampaign(); };
@@ -28966,6 +28976,7 @@ function editorToMenu(){
 // live co-op/duel session the world keeps running (others aren't paused), so it acts as a quick menu. ----
 function openPause(){
   if(!gameOn || gameOver || paused || shopOpen || editorOpen || choosingUpgrade) return;
+  if(typeof bindPauseMenu==='function') try{ bindPauseMenu(); }catch(e){}   // build 907: re-sync every control from live state (they were bound once at boot and went stale)
   paused = true; firing = false; ads = false;
   safeExitPointerLock();
   const eh=document.getElementById('pauseEditHud'); if(eh) eh.style.display = isTouch ? '' : 'none';
@@ -29485,7 +29496,7 @@ function openModal(id){ const m=document.getElementById(id); if(m) m.classList.r
 function closeModal(id){ const m=document.getElementById(id); if(m) m.classList.add('hidden'); }
 function bindModals(){
   document.querySelectorAll('.modalClose').forEach(b=>{ b.onclick=()=>closeModal(b.dataset.close); });
-  document.querySelectorAll('.modalBack').forEach(m=>{ m.addEventListener('click', e=>{ if(e.target===m) m.classList.add('hidden'); }); });
+  document.querySelectorAll('.modalBack').forEach(m=>{ m.addEventListener('click', e=>{ if(e.target===m && m.id!=='lobby') m.classList.add('hidden'); }); });   // build 907: the lobby represents a LIVE room (announced + heartbeating) — dismissing it by backdrop stranded a zombie room with no way back; use Leave
 }
 // suspended (wave 0) while the editor is open; closing it (P) begins wave 1. Solo only.
 function enterEditor(){

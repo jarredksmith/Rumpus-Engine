@@ -16,7 +16,7 @@ assert(/c\.innerHTML = '<div class="upIcon">'\+u\.icon/.test(src), 'the upgrade 
 // ---- mobile action buttons get clean icons; no emoji glyph in the static markup ----
 assert(/_b\('tNade', GAME_ICON\.nade\); _b\('tWeapon', GAME_ICON\.weapon\); _b\('tReload', GAME_ICON\.reload\);/.test(src),
   'grenade / weapon-swap / reload buttons are populated with SVG icons');
-assert(/<button class="tBtn" id="tNade"><\/button>/.test(html) && /<button class="tBtn" id="tWeapon"><\/button>/.test(html),
+assert(/<button class="tBtn" id="tNade"[^>]*><\/button>/.test(html) && /<button class="tBtn" id="tWeapon"[^>]*><\/button>/.test(html),
   'the static touch buttons no longer carry an emoji glyph');
 
 // ---- the icons are sized by CSS in both contexts ----
