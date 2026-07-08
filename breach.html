@@ -12,6 +12,12 @@
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #05070a; font-family:var(--ui-font); }
+  /* build 912: a game is not a document — long-pressing a touch button or sliding a slider raised
+     the iOS text-selection loupe/callout. No selection anywhere, no touch callout, no gray tap
+     flash; typing fields get selection back below. */
+  html, body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  input[type=text], input[type=number], input[type=password], input[type=url], input[type=search], input:not([type]), textarea {
+    -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
   canvas { display:block; position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; }
 
   #hud {
@@ -17787,7 +17793,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 911 · 2026-07-08';
+const BUILD_VERSION = 'build 912 · 2026-07-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17950,7 +17956,10 @@ addEventListener('mouseup', e=>{
   if(e.button===0){ firing=false; firingLatch=false; }
   else if(e.button===2) ads = false;
 });
-addEventListener('contextmenu', e=>{ if(gameOn) e.preventDefault(); });
+addEventListener('contextmenu', e=>{
+  if(gameOn){ e.preventDefault(); return; }
+  if(isTouch && !(e.target && e.target.matches && e.target.matches('input[type=text], input[type=number], input[type=password], input[type=url], input[type=search], input:not([type]), textarea'))) e.preventDefault();   // build 912: no long-press callout on touch menus/buttons/SLIDERS — only typing fields keep their menu (paste)
+});
 
 // ---- On-screen touch controls: left thumbstick (move + sprint at the edge), right pad (look),
 //      and action buttons. Pointer events give clean multitouch (move + look + fire at once). ----
