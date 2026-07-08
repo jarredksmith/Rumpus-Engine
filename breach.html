@@ -489,6 +489,7 @@
   #chatLog .chatName { color:#4fd0ff; }
   #chatLog .chatName.chatMine { color:var(--accent); }
   #chatLog .chatText { color:#dfeef2; }
+  .shopItem.padSel { border-color:var(--accent) !important; background:rgba(var(--accent-rgb),.12) !important; }   /* build 909: controller focus in the cache */
   #chatInput { display:none; width:min(300px, 86vw); background:rgba(5,10,12,0.92); border:1px solid #4fd0ff; color:#eafff7; border-radius:5px; padding:5px 8px; font:600 12px ui-monospace,monospace; outline:none; pointer-events:auto; }
   #chatBox.chatOpen #chatInput { display:block; }
   #padDebug { display:none; position:fixed; top:12px; left:12px; z-index:60; background:rgba(5,10,12,0.85); color:#9fe6cf; border:1px solid rgba(var(--accent-rgb),0.4); border-radius:6px; padding:8px 12px; font:11px/1.5 ui-monospace,monospace; white-space:pre; pointer-events:none; max-width:340px; }
@@ -947,6 +948,12 @@
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>UI font<select id="uiFontSel" style="margin-left:auto;background:#0c1418;color:#cfeee2;border:1px solid #2a3a42;border-radius:5px;padding:2px 4px"></select></label>
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20 12 4l7 16"/><path d="M7.7 14h8.6"/></svg>Title font<select id="uiDispSel" style="margin-left:auto;background:#0c1418;color:#cfeee2;border:1px solid #2a3a42;border-radius:5px;padding:2px 4px"></select></label>
       <button id="uiThemeReset" class="pBtnGhost" style="font-size:11px;padding:4px 8px">↺ Reset appearance</button>
+    </div>
+    <div class="pauseAudio" id="pauseCtl" style="display:none">
+      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/><path d="M7 6h10a5 5 0 0 1 5 5v3a4 4 0 0 1-4 4c-1.2 0-2.3-.5-3-1.4L14 15h-4l-1 1.6A4 4 0 0 1 2 14v-3a5 5 0 0 1 5-5z"/></svg>Pad look<input type="range" id="padSensRng" min="0.3" max="3" step="0.05" style="margin-left:auto;flex:1"></label>
+      <label class="paLbl">Pad aim (ADS)<input type="range" id="padAdsRng" min="0.2" max="1.5" step="0.05" style="margin-left:auto;flex:1"></label>
+      <label class="paLbl">Stick deadzone<input type="range" id="padDeadRng" min="0.05" max="0.4" step="0.01" style="margin-left:auto;flex:1"></label>
+      <label class="paLbl"><input type="checkbox" id="padInvCb"> Invert look Y (controller)</label>
     </div>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
     <button id="pauseCredits" class="pBtnGhost">Credits &amp; licenses</button>
@@ -9747,6 +9754,7 @@ addEventListener('keydown', e=>{
     return;
   }
   if(e.code==='KeyM' && !e.repeat){ if(gameOn && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade){ openBigMap(); e.preventDefault(); return; } }
+  if(choosingUpgrade && !e.repeat){ const _um=e.code.match(/^Digit([1-9])$/); if(_um){ const _uc=_upgradeCards()[+_um[1]-1]; if(_uc){ _uc.click(); e.preventDefault(); return; } } }   // build 909: 1/2/3 take an upgrade (keyboard had no path either)
   if(e.code==='KeyC' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carViewOverride = (_carViewMode(drivingCar)==='cockpit')?'chase':'cockpit'; e.preventDefault(); return; }   // build 745: toggle chase <-> cockpit view while driving
   if(e.code==='KeyV' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carFollowOverride = !_carFollowMode(drivingCar); if(typeof flashToast==='function') flashToast('Camera: '+(_carFollowOverride?'follows the car':'free orbit')); e.preventDefault(); return; }   // build 765: toggle follow-cam <-> free orbit while driving
   if(e.code==='KeyH' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ if(drivingCar.userData.vehicle && drivingCar.userData.vehicle.headlights){ _carHeadOn=!_carHeadOn; if(typeof flashToast==='function') flashToast('Headlights '+(_carHeadOn?'on':'off')); } e.preventDefault(); return; }   // build 781: toggle headlights
@@ -15159,7 +15167,15 @@ function beginUpgradeChoice(){
     try{ tryPointerLock(); }catch(e){}
   });
 }
+// build 909: the picker was mouse-only — a solo controller (or keyboard-only) run stalled here.
+let _upSel = -1;
+function _upgradeCards(){ const el=document.getElementById('upgrade'); return el ? Array.from(el.querySelectorAll('button')) : []; }
+function _upgradeFocusSet(i){ const cards=_upgradeCards(); if(!cards.length) return; _upSel=((i%cards.length)+cards.length)%cards.length;
+  cards.forEach((c,j)=>{ const on=(j===_upSel); c.style.borderColor=on?'var(--accent)':'rgba(var(--accent-rgb),.35)'; c.style.transform=on?'translateY(-4px)':'none'; }); }
+function _upgradeFocusMove(d){ _upgradeFocusSet(_upSel<0 ? (d>0?0:0) : _upSel+d); }
+function _upgradePickFocused(){ const cards=_upgradeCards(); if(_upSel>=0 && cards[_upSel]) cards[_upSel].click(); else if(cards.length) _upgradeFocusSet(0); }
 function showUpgradePicker(opts, onPick){
+  _upSel = -1;
   const stale = document.getElementById('upgrade'); if(stale) stale.remove();   // clear any old overlay WITHOUT touching the choosingUpgrade flag
   const el = document.createElement('div'); el.id='upgrade';
   el.style.cssText = 'position:absolute;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:rgba(4,10,12,.72);backdrop-filter:blur(3px);';
@@ -17227,9 +17243,14 @@ function interact(){
 // (and is what the touch Use button routes through), so this just adds the new bindings.
 function grabAction(){ if(heldProp) releaseHeld(); else tryGrabProp(); if(_isFistsWep(curWep) && typeof triggerFistAnim==='function') triggerFistAnim('grab'); }   // build 678: play the fists grab clip
 
+let _shopSelIdx = 0;   // build 909: pad focus in the cache
+function _shopPadSel(d){ const items=document.querySelectorAll('#shopItems .shopItem'); if(!items.length) return;
+  _shopSelIdx=(((_shopSelIdx+d)%items.length)+items.length)%items.length;
+  items.forEach((el,i)=>el.classList.toggle('padSel', i===_shopSelIdx)); }
 function openShop(chest){
   if(duelDead) return;   // no shopping while waiting to respawn
   shopOpen = true; shopMode = chest;
+  _shopSelIdx = 0;
   firing = false; ads = false;
   safeExitPointerLock();
   $('shopTitle').textContent = 'SUPPLY CACHE';
@@ -17252,6 +17273,7 @@ function renderShopItems(items){
   });
   const host = $('shopItems'); host.innerHTML = html;
   host.querySelectorAll('.shopItem').forEach((el)=>{ el.addEventListener('click', ()=> buyFromShop(+el.dataset.idx)); });   // tap to buy (touch + mouse)
+  if(padSeen) _shopPadSel(0);   // build 909: seed the pad highlight
 }
 
 function buyFromShop(index){
@@ -17635,9 +17657,15 @@ let padFiring=false, padAds=false, padSprint=false, padJump=false, padCrouch=fal
 let padDriveGas=0, padDriveRev=false, padDriveBoost=false, padDriveBrake=false;   // build 789: driving-only controller state — RT=gas, LT=boost, A=reverse, B=handbrake (left stick = steering only)
 const PAD_DEADZONE = 0.18;
 const PAD_LOOK_YAW = 2.8, PAD_LOOK_PITCH = 2.1;   // rad/sec at full right-stick deflection
-addEventListener('gamepadconnected', e=>{ padIndex = e.gamepad.index; const b=$('roomBadge'); /* noop */ const c=$('padNote'); if(c){ c.style.display='block'; } });
-addEventListener('gamepaddisconnected', e=>{ if(padForceIndex===e.gamepad.index) padForceIndex=null; if(padIndex===e.gamepad.index){ padIndex=null; padFiring=padAds=padSprint=padJump=false; padMoveX=padMoveZ=0; const c=$('padNote'); if(c) c.style.display='none'; } });
-function padDead(v){ v=v||0; return Math.abs(v) < PAD_DEADZONE ? 0 : (v - Math.sign(v)*PAD_DEADZONE)/(1-PAD_DEADZONE); }
+// build 909: per-player controller prefs (the pad had NO settings; touch has had them since 812)
+let padPrefs = { sens:1, ads:0.7, dead:PAD_DEADZONE, invertY:false };
+try{ const _pp=JSON.parse(localStorage.getItem('breach_pad')||'null'); if(_pp && typeof _pp==='object') padPrefs=Object.assign(padPrefs, _pp); }catch(e){}
+function savePadPrefs(){ try{ localStorage.setItem('breach_pad', JSON.stringify(padPrefs)); }catch(e){} }
+let padSeen = false;   // a real controller has appeared this session (shows the pause-menu panel)
+addEventListener('gamepadconnected', e=>{ padIndex = e.gamepad.index; padSeen=true; const b=$('roomBadge'); /* noop */ const c=$('padNote'); if(c){ c.style.display='block'; } });
+addEventListener('gamepaddisconnected', e=>{ if(padForceIndex===e.gamepad.index) padForceIndex=null; if(padIndex===e.gamepad.index){ padIndex=null; padFiring=padAds=padSprint=padJump=false; padMoveX=padMoveZ=0; const c=$('padNote'); if(c) c.style.display='none';
+  if(gameOn && !editorOpen && NET.mode==='off' && !paused && typeof openPause==='function') openPause(); } });   // build 909: console convention — losing the pad pauses a solo run
+function padDead(v){ v=v||0; const dz=(padPrefs.dead>0.02 && padPrefs.dead<0.5)?padPrefs.dead:PAD_DEADZONE; return Math.abs(v) < dz ? 0 : (v - Math.sign(v)*dz)/(1-dz); }   // build 909: adjustable
 // Many systems expose phantom "gamepads" (headsets, RGB devices, motion sensors). Score each so we
 // pick the real controller — one with actual sticks + buttons, ideally a standard mapping or an
 // Xbox/PlayStation id — over devices with no axes (a dead giveaway for non-controllers).
@@ -17658,7 +17686,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 908 · 2026-07-08';
+const BUILD_VERSION = 'build 909 · 2026-07-08';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -17697,8 +17725,32 @@ function pollGamepad(dt){
     if(anyNow && !anyPrev) startGame();
     padPrev = snapshot(); return;
   }
-  // Shop / editor: pad idles (no movement/fire) but keep edge state fresh
-  if(shopOpen || editorOpen){ padMoveX=0; padMoveZ=0; padSprint=false; padFiring=false; padAds=false; padJump=false; padDriveGas=0; padDriveRev=false; padDriveBoost=false; padDriveBrake=false; padPrev=snapshot(); return; }
+  // build 909: overlays that used to TRAP a controller get their own input, ahead of the idles.
+  const edge9 = i => down(i) && !padPrev[i];
+  if(typeof _interActive!=='undefined' && _interActive){   // campaign transition card: any button continues
+    if(bt.some((b,i)=>b && b.pressed && !padPrev[i])){ const g=document.getElementById('interGo'); if(g) g.click(); }
+    padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return;
+  }
+  if(choosingUpgrade){   // upgrade picker: LB/RB or D-pad to focus, A to take it
+    if(edge9(14)||edge9(4)) _upgradeFocusMove(-1);
+    if(edge9(15)||edge9(5)) _upgradeFocusMove(1);
+    if(edge9(0)) _upgradePickFocused();
+    padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padSprint=false; padJump=false; padPrev=snapshot(); return;
+  }
+  if(paused){ if(edge9(9) && typeof resumeGame==='function') resumeGame(); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }
+  if(edge9(9)){   // Start: pause (solo) / match menu (MP)
+    if(NET.mode==='off'){ if(typeof openPause==='function') openPause(); }
+    else if(typeof toggleMatchMenu==='function') toggleMatchMenu();
+    padPrev=snapshot(); return;
+  }
+  if(shopOpen){   // supply cache: D-pad picks, A buys, B/Y closes (Y used to be swallowed — a pad was trapped here)
+    if(edge9(12)||edge9(14)) _shopPadSel(-1);
+    if(edge9(13)||edge9(15)) _shopPadSel(1);
+    if(edge9(0)) buyFromShop(_shopSelIdx);
+    if(edge9(1)||edge9(3)) closeShop();
+    padMoveX=0; padMoveZ=0; padSprint=false; padFiring=false; padAds=false; padJump=false; padDriveGas=0; padDriveRev=false; padDriveBoost=false; padDriveBrake=false; padPrev=snapshot(); return;
+  }
+  if(editorOpen){ padMoveX=0; padMoveZ=0; padSprint=false; padFiring=false; padAds=false; padJump=false; padDriveGas=0; padDriveRev=false; padDriveBoost=false; padDriveBrake=false; padPrev=snapshot(); return; }
 
   // Sticks
   const lx=padDead(ax[0]), ly=padDead(ax[1]), rx=padDead(ax[2]), ry=padDead(ax[3]);
@@ -17711,8 +17763,9 @@ function pollGamepad(dt){
       if(padFiringPrev) firingLatch=false; padFiringPrev=false; padPrev=snapshot(); return; } }
   padMoveX = lx; padMoveZ = ly;
   // Look with a squared response curve for fine aim near center
-  player.yaw   -= (rx*Math.abs(rx)) * PAD_LOOK_YAW   * dt;
-  player.pitch -= (ry*Math.abs(ry)) * PAD_LOOK_PITCH * dt;
+  { const _sm=(padPrefs.sens||1) * ((ads||padAds) ? (padPrefs.ads||0.7) : 1);   // build 909: look sens + gentler ADS, both tunable
+    player.yaw   -= (rx*Math.abs(rx)) * PAD_LOOK_YAW   * _sm * dt;
+    player.pitch -= (ry*Math.abs(ry)) * PAD_LOOK_PITCH * _sm * (padPrefs.invertY?-1:1) * dt; }
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
 
   // Triggers + sprint (held)
@@ -17743,6 +17796,10 @@ function pollGamepad(dt){
     if(edge(1)) throwGrenade(); // B
     if(edge(5)) cycleWeapon(1); // RB
     if(edge(4)) cycleWeapon(-1);// LB
+    if(edge(12) && typeof toggleInventory==='function') toggleInventory();     // D-pad up — build 909
+    if(edge(13) && typeof openBigMap==='function' && !chatOpen) openBigMap();  // D-pad down
+    if(edge(14) && typeof meleeAttack==='function') meleeAttack();             // D-pad left
+    if(edge(15) && typeof toggleFlashlight==='function') toggleFlashlight();   // D-pad right
   }
 
   // releasing the fire trigger re-arms semi-auto (mirrors mouseup)
@@ -29070,6 +29127,12 @@ function bindPauseMenu(){
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vMu=document.getElementById('volMusic'); if(vMu){ vMu.value=Math.round(audioSettings.music*100); vMu.oninput=()=>{ audioSettings.music=(+vMu.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vS=document.getElementById('volSfx'); if(vS){ vS.value=Math.round(audioSettings.sfx*100); vS.oninput=()=>{ audioSettings.sfx=(+vS.value)/100; applyAudioSettings(); saveAudioSettings(); initAudio(); SFX.coin(); }; }   // tick so it's
+  // ---- controller (build 909: shown once a pad exists; values re-sync on every open) ----
+  { const pc=document.getElementById('pauseCtl'); if(pc) pc.style.display = padSeen ? '' : 'none';
+    const sr=document.getElementById('padSensRng'); if(sr){ sr.value=String(padPrefs.sens); sr.oninput=()=>{ padPrefs.sens=Math.max(0.3,Math.min(3,parseFloat(sr.value)||1)); savePadPrefs(); }; }
+    const ar=document.getElementById('padAdsRng'); if(ar){ ar.value=String(padPrefs.ads); ar.oninput=()=>{ padPrefs.ads=Math.max(0.2,Math.min(1.5,parseFloat(ar.value)||0.7)); savePadPrefs(); }; }
+    const dr=document.getElementById('padDeadRng'); if(dr){ dr.value=String(padPrefs.dead); dr.oninput=()=>{ padPrefs.dead=Math.max(0.05,Math.min(0.4,parseFloat(dr.value)||0.18)); savePadPrefs(); }; }
+    const iv=document.getElementById('padInvCb'); if(iv){ iv.checked=!!padPrefs.invertY; iv.onchange=()=>{ padPrefs.invertY=iv.checked; savePadPrefs(); }; } }
   // ---- appearance controls ----
   { const ac=document.getElementById('uiAccent'); if(ac){ ac.value=uiTheme.accent||'var(--accent)'; ac.oninput=()=>{ uiTheme.accent=ac.value; applyUiTheme(); saveUiTheme(); }; }
     const fillSel=(sel, choices, cur)=>{ if(!sel) return; sel.innerHTML=''; for(const c of choices){ const o=document.createElement('option'); o.value=c.v; o.textContent=c.label; if(c.v===cur) o.selected=true; sel.appendChild(o); } };
