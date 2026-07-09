@@ -336,7 +336,8 @@
   body.editing #tFire, body.editing #tAim, body.editing #tJump, body.editing #tReload, body.editing #tNade, body.editing #tWeapon, body.editing #tUse { display:none !important; }
   body.editing:not(.hudPreview) #stats { display:none !important; }   /* the integrity box is gameplay-only; hide it so it never sits over the camera-preview window (HUD preview re-shows it) */
   body.editing #tLook { left:0; right:330px; }   /* keep look-drag off the right-side editor panel */
-  body.touch #wavePanel { top: calc(30px + env(safe-area-inset-top)); transform: translateX(-50%) scale(.82); transform-origin:top center; padding:2px 12px; min-width:170px; }
+  body.touch #roomBadge { top: calc(4px + env(safe-area-inset-top)); }   /* build 913: the badge (~26px tall at top:8) overlapped the banner at top:30 */
+  body.touch #wavePanel { top: calc(42px + env(safe-area-inset-top)); transform: translateX(-50%) scale(.82); transform-origin:top center; padding:2px 12px; min-width:170px; }
   body.touch #waveNum { font-size:16px; }
   body.touch #cpHud { top: calc(30px + env(safe-area-inset-top)); transform: translateX(-50%) scale(.82); transform-origin:top center; padding:5px 10px; }
   body.touch #minimap { background: rgba(7,13,18,0.88); border-color: rgba(var(--accent-rgb),0.6); box-shadow: 0 0 10px rgba(0,0,0,0.55), inset 0 0 14px rgba(var(--accent-rgb),0.08); }
@@ -17793,7 +17794,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 912 · 2026-07-08';
+const BUILD_VERSION = 'build 913 · 2026-07-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18047,9 +18048,9 @@ addEventListener('contextmenu', e=>{
 // Editing happens under a full-screen overlay that intercepts all touches, so a control's own
 // fire/aim/move handlers never trigger while you are arranging the layout.
 const TOUCH_EDITABLE = ['tStick','tFire','tAim','tJump','tReload','tNade','tWeapon','tUse','tCrouch','tMelee','tBuild','tFlash','tInv','tChat'];   // build 908: new buttons are arrangeable too
-const TOUCH_LABEL = { tStick:'Move', tFire:'Fire', tAim:'Aim', tJump:'Jump', tReload:'Reload', tNade:'Grenade', tWeapon:'Weapon', tUse:'Use', tCrouch:'Crouch', tMelee:'Melee', tBuild:'Build', tFlash:'Light', tInv:'Bag', tChat:'Chat', stats:'Health', ammoPanel:'Ammo', minimap:'Map', score:'Score' };
+const TOUCH_LABEL = { tStick:'Move', tFire:'Fire', tAim:'Aim', tJump:'Jump', tReload:'Reload', tNade:'Grenade', tWeapon:'Weapon', tUse:'Use', tCrouch:'Crouch', tMelee:'Melee', tBuild:'Build', tFlash:'Light', tInv:'Bag', tChat:'Chat', stats:'Health', ammoPanel:'Ammo', minimap:'Map', score:'Score', wavePanel:'Mode banner', roomBadge:'Room code', scoreboard:'Kill list' };
 const TSTICK_BASE = 120;   // px (matches body.touch #tStick); user scale multiplies this
-const HUD_EDITABLE = ['stats','ammoPanel','minimap','score','scoreboard'];   // read-only HUD panels: movable + sizable, no gameplay handlers ('scoreboard' = the MP kill list)
+const HUD_EDITABLE = ['stats','ammoPanel','minimap','score','scoreboard','wavePanel','roomBadge'];   // read-only HUD panels: movable + sizable, no gameplay handlers ('scoreboard' = the MP kill list; build 913 adds the mode banner + room-code badge)
 const ALL_EDITABLE = TOUCH_EDITABLE.concat(HUD_EDITABLE);
 let touchOpacity = (()=>{ const v=parseFloat(localStorage.getItem('breach_touch_opacity')); return (v>=0.2 && v<=1)?v:1; })();
 let touchHand = (localStorage.getItem('breach_touch_hand')==='left') ? 'left' : 'right';
@@ -18091,8 +18092,9 @@ function applyTouchLayout(){
       if(sc!==1){ el.style.width=(TSTICK_BASE*sc)+'px'; el.style.height=(TSTICK_BASE*sc)+'px'; } else { el.style.width=''; el.style.height=''; }
       el.style.transform=''; el.style.transformOrigin='';
     } else {
-      el.style.transform = sc!==1 ? ('scale('+sc+')') : '';
-      el.style.transformOrigin = sc!==1 ? 'top left' : '';   // grow from the anchored corner so left/top stays put
+      const _centered = (id==='wavePanel'||id==='roomBadge') && typeof o.fx!=='number';   // build 913: CSS centers these with translateX(-50%) — a bare scale() threw them half a width right
+      el.style.transform = sc!==1 ? (_centered ? ('translateX(-50%) scale('+sc+')') : ('scale('+sc+')')) : '';
+      el.style.transformOrigin = sc!==1 ? (_centered ? 'top center' : 'top left') : '';   // grow from the anchored corner so left/top stays put
     }
   }
 }
@@ -18119,8 +18121,22 @@ function enterTouchEdit(){
     ov.style.cssText='position:fixed;inset:0;z-index:60;background:rgba(3,8,10,0.45);touch-action:none;-webkit-user-select:none;user-select:none;';
     const bar=document.createElement('div');
     bar.style.cssText='position:absolute;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translateX(-50%);display:flex;flex-direction:column;gap:7px;background:rgba(6,12,14,0.92);border:1px solid rgba(var(--accent-rgb),0.4);border-radius:10px;padding:8px 10px;max-width:94vw;';
+    // build 913: the bar sat exactly over the top-centre HUD (room code + mode banner) with no way
+    // to grab what's underneath — the bar itself is now draggable, and presses on it never fall
+    // through to the element-drag handlers beneath.
+    bar.addEventListener('pointerdown', e=>{
+      e.stopPropagation();
+      if(e.target && e.target.matches && e.target.matches('button, input, select')) return;   // controls keep their own behavior
+      const r=bar.getBoundingClientRect(), ox=e.clientX-r.left, oy=e.clientY-r.top, pid=e.pointerId;
+      try{ bar.setPointerCapture(pid); }catch(_){ }
+      const mv=(ev)=>{ if(ev.pointerId!==pid) return;
+        const x=Math.max(4, Math.min(innerWidth-r.width-4, ev.clientX-ox)), y=Math.max(4, Math.min(innerHeight-r.height-4, ev.clientY-oy));
+        bar.style.left=x+'px'; bar.style.top=y+'px'; bar.style.transform='none'; ev.preventDefault(); };
+      const up=(ev)=>{ if(ev.pointerId!==pid) return; bar.removeEventListener('pointermove', mv); bar.removeEventListener('pointerup', up); bar.removeEventListener('pointercancel', up); };
+      bar.addEventListener('pointermove', mv); bar.addEventListener('pointerup', up); bar.addEventListener('pointercancel', up);
+    });
     const row1=document.createElement('div'); row1.style.cssText='display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;';
-    const lbl=document.createElement('span'); lbl.textContent='Drag to move \u00b7 tap to size'; lbl.style.cssText='color:#eafff7;font:600 12px/1.2 ui-monospace,monospace;margin-right:4px;';
+    const lbl=document.createElement('span'); lbl.textContent='\u2630 Drag this bar aside \u00b7 drag a control to move \u00b7 tap to size'; lbl.style.cssText='color:#eafff7;font:600 12px/1.2 ui-monospace,monospace;margin-right:4px;';
     const reset=document.createElement('button'); reset.textContent='Reset'; reset.style.cssText='padding:5px 12px;font:600 12px ui-monospace,monospace;background:#0c1418;color:#cfeee2;border:1px solid #2a3a42;border-radius:6px;';
     reset.onclick=(e)=>{ e.stopPropagation(); touchLayout={}; _teSel=null; touchOpacity=1; touchHand='right'; touchLookMul=1; touchAdsMul=1; try{ localStorage.setItem('breach_touch_opacity','1'); localStorage.setItem('breach_touch_hand','right'); localStorage.setItem('breach_touch_looksens','1'); localStorage.setItem('breach_touch_adssens','1'); }catch(_){} saveTouchLayout(); applyTouchLayout(); applyTouchChrome(); oSlider.value=1; if(lookSl){ lookSl.value=1; lookSl.oninput(); } if(adsSl){ adsSl.value=1; adsSl.oninput(); } _teHighlight(); _teSyncSize(); };
     const done=document.createElement('button'); done.textContent='Done'; done.style.cssText='padding:5px 14px;font:600 12px ui-monospace,monospace;background:var(--accent);color:#04110c;border:none;border-radius:6px;';
@@ -21619,7 +21635,7 @@ function loop(){
   const adsTarget = (ads || padAds || touchAds || editorAimPreview) ? 1 : 0;
   adsBlend += (adsTarget - adsBlend) * Math.min(1, dt*14);
   if(Math.abs(adsBlend - adsTarget) < 0.002) adsBlend = adsTarget;
-  _scopedNow = !!(ads && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen); if(_scopedNow && activeViewMode()!=='fps') _scopedNow=false;   // build 874: no optic tunnel from a bird's-eye camera
+  _scopedNow = !!((ads || padAds || touchAds) && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen); if(_scopedNow && activeViewMode()!=='fps') _scopedNow=false;   // build 874: no optic tunnel from a bird's-eye camera · build 913: touch AIM + controller LT scope too (the sniper never zoomed on mobile)
   _setScopeOverlay(_scopedNow);
   const hipFov = (worldCfg && worldCfg.fov) ? worldCfg.fov : BASE_FOV;
   const wantFov = hipFov + (adsFovLive - hipFov) * adsBlend;

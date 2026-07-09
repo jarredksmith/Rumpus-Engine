@@ -13,7 +13,7 @@ assert(/max-height:86vh; overflow:auto;/.test(html), 'the shared modal cards alr
 
 // ---- the MP kill list is constrained on touch and editable ----
 assert(/body\.touch #scoreboard \{[^}]*max-width:46vw; max-height:40vh; overflow:hidden;/.test(html), 'the touch scoreboard is size-capped so a long roster cannot blanket the screen');
-assert(/const HUD_EDITABLE = \['stats','ammoPanel','minimap','score','scoreboard'\];/.test(src), 'the scoreboard is now a movable/sizable HUD element');
+assert(/const HUD_EDITABLE = \['stats','ammoPanel','minimap','score','scoreboard','wavePanel','roomBadge'\]/.test(src), 'the scoreboard is now a movable/sizable HUD element (banner + badge joined in build 913)');
 
 // ---- and the editor is reachable from the MP match menu on touch ----
 assert(/if\(isTouch\) mk\('[\s\S]*?Customize controls',[\s\S]*?closeMatchMenu\(\); if\(typeof enterTouchEdit==='function'\) enterTouchEdit\(\)/.test(src),

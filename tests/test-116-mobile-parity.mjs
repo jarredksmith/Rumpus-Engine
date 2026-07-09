@@ -23,6 +23,6 @@ assert(/pr\.addEventListener\('pointerdown', e=>\{ if\(isTouch\)\{ if\(typeof in
 assert(/body\.touch #prompt \{ pointer-events:auto; z-index:45; cursor:pointer;/.test(html), 'prompt is tappable on touch');
 assert(/body\.editing #tFire, body\.editing #tAim,[^}]*display:none !important;/.test(html), 'combat buttons hide while editing');
 assert(/body\.editing #tLook \{ left:0; right:330px; \}/.test(html), 'look-drag stays off the editor panel');
-assert(/body\.touch #wavePanel \{ top: calc\(30px \+ env\(safe-area-inset-top\)\); transform: translateX\(-50%\) scale\(\.82\)/.test(html), 'wave HUD lifted + shrunk on mobile');
+assert(/body\.touch #wavePanel \{ top: calc\(42px \+ env\(safe-area-inset-top\)\); transform: translateX\(-50%\) scale\(\.82\)/.test(html), 'wave HUD lifted + shrunk on mobile (42px since build 913 — it overlapped the room badge at 30)');
 assert(/body\.touch #cpHud \{ top: calc\(30px \+ env\(safe-area-inset-top\)\); transform: translateX\(-50%\) scale\(\.82\)/.test(html), 'control-point HUD lifted + shrunk on mobile');
 done('mobile touch parity');

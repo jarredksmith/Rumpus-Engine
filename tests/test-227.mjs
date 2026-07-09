@@ -17,7 +17,7 @@ assert(/WEAPONS\[curWep\]\.scope\) \? SCOPE_SENS : ADS_SENS/.test(src), 'look se
 const so = extractFunction('_setScopeOverlay');
 assert(/radial-gradient\(circle at 50% 50%, transparent/.test(so), 'circular vignette');
 assert(/border-radius:50%/.test(so), 'center reticle ring');
-assert(/_scopedNow = !!\(ads && WEAPONS\[curWep\] && WEAPONS\[curWep\]\.scope && adsBlend > 0\.6 && gameOn && !editorOpen\)/.test(src), 'scope state derived from ADS blend in the loop');
+assert(/_scopedNow = !!\(\(ads \|\| padAds \|\| touchAds\) && WEAPONS\[curWep\] && WEAPONS\[curWep\]\.scope && adsBlend > 0\.6 && gameOn && !editorOpen\)/.test(src), 'scope state derived from ADS blend in the loop (every aim input since build 913)');
 assert(/_setScopeOverlay\(_scopedNow\)/.test(src), 'overlay toggled each frame');
 assert(/crosshairEl\.style\.opacity = _scopedNow \? '0'/.test(src), 'normal crosshair hidden under the scope');
 assert(/_scopedNow\) return;   \/\/ looking through the optic: no viewmodel/.test(src), 'gun viewmodel hidden while scoped');
