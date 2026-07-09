@@ -11523,8 +11523,10 @@ function _waterPropsStep(dt){
     let t; try{ t=body.translation(); }catch(e){ continue; }
     const w=_waterAt(t.x, t.y, t.z); if(!w || w.sub<=0.05) continue;
     try{
-      const m=(body.mass && body.mass())||1, sub=Math.min(1.2, w.sub);
-      body.applyImpulse({ x:0, y: m*GRAV*1.3*(sub/1.2)*dt, z:0 }, true);   // slightly over-buoyant -> props bob up and settle at the surface
+      const m=(body.mass && body.mass())||1;
+      const bx=o.userData.box, hh=Math.max(0.3, bx ? (bx.max.y-bx.min.y)/2 : 0.6);   // build 914: submersion relative to the prop's own height — small props used to reach equilibrium ~1m under and hover there
+      const f=Math.min(1, w.sub/hh);
+      body.applyImpulse({ x:0, y: m*GRAV*1.3*f*dt, z:0 }, true);   // slightly over-buoyant -> props bob up and settle at the surface
       const lv=body.linvel(), k=Math.max(0, 1-2.4*dt);
       body.setLinvel({ x:lv.x*k, y:lv.y*Math.max(0, 1-3.0*dt), z:lv.z*k }, true);
       const av=body.angvel(); body.setAngvel({ x:av.x*k, y:av.y*k, z:av.z*k }, true);
@@ -17794,7 +17796,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 913 · 2026-07-09';
+const BUILD_VERSION = 'build 914 · 2026-07-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19040,7 +19042,7 @@ function stepClientPlayerPhys(dt){
     if(b.setLinvel) b.setLinvel({x:0,y:0,z:0}, false); if(b.setAngvel) b.setAngvel({x:0,y:0,z:0}, false);
   }
   physAccum += Math.min(dt, 0.1);
-  if(typeof _waterPropsStep==='function') _waterPropsStep(dt);   // build 862: buoyancy before the step
+  // (build 914: the buoyancy call moved to updatePhysics — here the bodies are pinned to host poses and the impulse was wiped)
   let n=0; while(physAccum >= PHYS_DT && n < PHYS_MAX_SUBSTEPS){ physWorld.step(); physAccum -= PHYS_DT; n++; }
 }
 function updatePhysics(dt){
@@ -19059,6 +19061,7 @@ function updatePhysics(dt){
       const _ty=(o.userData.carYaw - ((o.userData.vehicle.modelYaw||0)*RAD))*0.5;
       kb.setNextKinematicRotation({ x:0, y:Math.sin(_ty), z:0, w:Math.cos(_ty) });
     } else { const q = o.quaternion; kb.setNextKinematicRotation({ x:q.x, y:q.y, z:q.z, w:q.w }); } }
+  if(typeof _waterPropsStep==='function') _waterPropsStep(dt);   // build 914: buoyancy belongs to the OWNED simulation — it was wired only into the client's pinned-body path, where the pin wiped it, so props never floated anywhere
   let n = 0;
   while(physAccum >= PHYS_DT && n < PHYS_MAX_SUBSTEPS){ physWorld.step(); physAccum -= PHYS_DT; n++; }
   let _impactList=null;

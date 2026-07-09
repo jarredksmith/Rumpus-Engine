@@ -39,7 +39,7 @@ assert(/_spawnDust\(o\.position\.x \+ fx\*1\.4/.test(src), 'bow spray reuses the
 assert(/_fallPushStep\(dt\);   \/\/ build 862/.test(src), 'the fall push runs right after the swim step');
 assert(/_waterSlowFor\(en\.mesh\.position\.x/.test(src), 'enemies wade');
 assert(/step=spd\*dt\*\(typeof _waterSlowFor/.test(src), 'bots wade');
-assert(/_waterPropsStep\(dt\);   \/\/ build 862/.test(src.match(/_waterPropsStep\(dt\);[^\n]*/)[0]), 'prop buoyancy applies before the physics step');
-assert(/applyImpulse\(\{ x:0, y: m\*GRAV\*1\.3\*\(sub\/1\.2\)\*dt, z:0 \}, true\)/.test(src), 'over-buoyant impulse (props bob up and settle)');
+assert(/_waterPropsStep==='function'\) _waterPropsStep\(dt\);   \/\/ build 914/.test(src), 'prop buoyancy applies before the physics step (in the OWNED simulation since build 914 — the client path pinned bodies and wiped it)');
+assert(/applyImpulse\(\{ x:0, y: m\*GRAV\*1\.3\*f\*dt, z:0 \}, true\)/.test(src), 'over-buoyant impulse (props bob up and settle; height-scaled since build 914)');
 
 done('build 862: water drags cars (with spray), falls push down, props float, enemies + bots wade — pure math verified');
