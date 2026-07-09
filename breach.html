@@ -8602,11 +8602,29 @@ function _scheduleWarmCompile(){
 // to a capsule. Pull the transcoder from CDN the first time such a texture is actually seen (zero cost
 // for models that don't use it), register it on every loader, and — if the CDN can't be reached — let
 // the loader skip the texture so the geometry still loads untextured instead of vanishing.
-let _ktx2Loader=null, _ktx2Promise=null;
+let _ktx2Loader=null, _ktx2Promise=null, _meshoptDecoder=null, _meshoptPromise=null;
 function _mkGLTFLoader(mgr){
   const l = mgr ? new THREE.GLTFLoader(mgr) : new THREE.GLTFLoader();
   try{ if(_ktx2Loader) l.setKTX2Loader(_ktx2Loader); }catch(e){}
+  try{ if(_meshoptDecoder) l.setMeshoptDecoder(_meshoptDecoder); }catch(e){}   // build 918: meshopt-compressed geometry (EXT_meshopt_compression)
   return l;
+}
+function _ensureMeshopt(){
+  if(_meshoptPromise) return _meshoptPromise;
+  _meshoptPromise = (async ()=>{
+    // the decoder module is self-contained (no `three` import), so jsdelivr serves it directly.
+    for(const url of ['https://cdn.jsdelivr.net/npm/three@0.149.0/examples/jsm/libs/meshopt_decoder.module.js',
+                      'https://unpkg.com/three@0.149.0/examples/jsm/libs/meshopt_decoder.module.js']){
+      try{
+        const mod = await import(url);
+        const D = mod.MeshoptDecoder || (mod.default && mod.default.MeshoptDecoder) || mod.default;
+        if(D){ try{ if(D.ready && D.ready.then) await D.ready; }catch(e){} _meshoptDecoder = D; return D; }
+      }catch(e){ /* next source */ }
+    }
+    console.warn('[BREACH] Meshopt decoder unavailable — meshopt-compressed models will fall back to a capsule.');
+    return null;
+  })();
+  return _meshoptPromise;
 }
 function _ensureKTX2(){
   if(_ktx2Promise) return _ktx2Promise;
@@ -8635,10 +8653,11 @@ function loadGLTFCached(url, cb, errcb){
   let _fin=false; const _done=()=>{ if(_fin) return; _fin=true; _glbPending=Math.max(0,_glbPending-1); delete _glbWaiters[url]; };
   const _release=()=>{ _glbActive=Math.max(0,_glbActive-1); _glbPump(); };
   const _cb=(g)=>{ _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
-  let _tries=0, _ktx2Retried=false;
+  let _tries=0, _ktx2Retried=false, _meshoptRetried=false;
   const _ec=(e)=>{
     const _m=(e&&e.message)||'';
     if(/setKTX2Loader/.test(_m) && !_ktx2Retried){ _ktx2Retried=true; _release(); _ensureKTX2().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 917: KTX2/Basis textures — pull the transcoder in, then retry the load
+    if(/setMeshoptDecoder/.test(_m) && !_meshoptRetried){ _meshoptRetried=true; _release(); _ensureMeshopt().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 918: meshopt-compressed geometry — pull the decoder in, then retry
     if(++_tries<=2){ _release(); setTimeout(()=>{ _glbQueue.push(start); _glbPump(); }, 500*_tries + Math.random()*400); return; }   // retry transient failures (429 rate-limit) with backoff
     _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(e); }catch(_){} }
   };
@@ -17828,7 +17847,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 917 · 2026-07-09';
+const BUILD_VERSION = 'build 918 · 2026-07-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
