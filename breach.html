@@ -2382,7 +2382,7 @@ class GLTFTextureBasisUExtension {
 
 		if ( ! loader ) {
 
-			if ( json.extensionsRequired && json.extensionsRequired.indexOf( this.name ) >= 0 ) {
+			if ( json.extensionsRequired && json.extensionsRequired.indexOf( this.name ) >= 0 && ! ( typeof window !== 'undefined' && window.__KTX2_UNAVAILABLE ) ) {
 
 				throw new Error( 'THREE.GLTFLoader: setKTX2Loader must be called before loading KTX2 textures' );
 
@@ -8597,6 +8597,36 @@ function _scheduleWarmCompile(){
   if(_warmCompileT) clearTimeout(_warmCompileT);
   _warmCompileT=setTimeout(()=>{ _warmCompileT=0; try{ renderer.compile(scene, (typeof camera!=='undefined'?camera:null)); }catch(e){} }, 250);
 }
+// build 917: GLBs whose textures are KTX2/Basis-compressed (KHR_texture_basisu) need a KTX2Loader on
+// the GLTFLoader; without one the loader threw "setKTX2Loader must be called" and the model fell back
+// to a capsule. Pull the transcoder from CDN the first time such a texture is actually seen (zero cost
+// for models that don't use it), register it on every loader, and — if the CDN can't be reached — let
+// the loader skip the texture so the geometry still loads untextured instead of vanishing.
+let _ktx2Loader=null, _ktx2Promise=null;
+function _mkGLTFLoader(mgr){
+  const l = mgr ? new THREE.GLTFLoader(mgr) : new THREE.GLTFLoader();
+  try{ if(_ktx2Loader) l.setKTX2Loader(_ktx2Loader); }catch(e){}
+  return l;
+}
+function _ensureKTX2(){
+  if(_ktx2Promise) return _ktx2Promise;
+  _ktx2Promise = (async ()=>{
+    // esm.sh is the only CDN that rewrites KTX2Loader's bare `three` import to a resolvable URL; the
+    // Basis transcoder (worker js + wasm) is a plain fetch, so jsdelivr serves it directly.
+    try{
+      const mod = await import('https://esm.sh/three@0.149.0/examples/jsm/loaders/KTX2Loader.js');
+      const K = mod.KTX2Loader || (mod.default && mod.default.KTX2Loader);
+      if(K){
+        const l = new K().setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.149.0/examples/jsm/libs/basis/');
+        if(typeof renderer!=='undefined' && renderer && l.detectSupport) l.detectSupport(renderer);
+        _ktx2Loader = l; return l;
+      }
+    }catch(e){ console.warn('[BREACH] KTX2 loader unavailable:', e && e.message); }
+    try{ window.__KTX2_UNAVAILABLE = true; }catch(e){}   // no transcoder -> the loader drops the texture (untextured geometry) instead of throwing to a capsule
+    return null;
+  })();
+  return _ktx2Promise;
+}
 function loadGLTFCached(url, cb, errcb){
   if(gltfCache[url]){ _modelTouch(url); cb(gltfCache[url]); return; }   // cached: synchronous, nothing to wait on
   if(_glbWaiters[url]){ _glbWaiters[url].push({cb:cb,errcb:errcb}); return; }   // a load for this url is already in flight; ride along instead of fetching again
@@ -8605,8 +8635,10 @@ function loadGLTFCached(url, cb, errcb){
   let _fin=false; const _done=()=>{ if(_fin) return; _fin=true; _glbPending=Math.max(0,_glbPending-1); delete _glbWaiters[url]; };
   const _release=()=>{ _glbActive=Math.max(0,_glbActive-1); _glbPump(); };
   const _cb=(g)=>{ _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
-  let _tries=0;
+  let _tries=0, _ktx2Retried=false;
   const _ec=(e)=>{
+    const _m=(e&&e.message)||'';
+    if(/setKTX2Loader/.test(_m) && !_ktx2Retried){ _ktx2Retried=true; _release(); _ensureKTX2().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 917: KTX2/Basis textures — pull the transcoder in, then retry the load
     if(++_tries<=2){ _release(); setTimeout(()=>{ _glbQueue.push(start); _glbPump(); }, 500*_tries + Math.random()*400); return; }   // retry transient failures (429 rate-limit) with backoff
     _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(e); }catch(_){} }
   };
@@ -8617,9 +8649,9 @@ function loadGLTFCached(url, cb, errcb){
     if(mgr){
       // Pass the ORIGINAL url: the manager proxies it (and sub-resources resolve against the real origin,
       // then get proxied too). Pre-proxying here would double-encode via the modifier.
-      new THREE.GLTFLoader(mgr).load(url, (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, undefined, _ec);
+      _mkGLTFLoader(mgr).load(url, (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, undefined, _ec);
     } else {
-      new THREE.GLTFLoader().load(proxied(url), (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, undefined, _ec);   // fallback: main file only
+      _mkGLTFLoader().load(proxied(url), (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, undefined, _ec);   // fallback: main file only
     }
   };
   _glbQueue.push(start); _glbPump();
@@ -8733,7 +8765,7 @@ function loadSketchfabModel(uid, cb, errcb){
     const base=u=>decodeURIComponent(String(u)).split('?')[0].replace(/^.*[\/\\]/,''); const byBase={}; for(const nm of names) byBase[base(nm)]=blobs[nm];
     const mgr=new THREE.LoadingManager(); mgr.setURLModifier(u=>{ if(/^data:/.test(u)) return u; const _m=byBase[base(u)]; return _m || u; });
     const revoke=()=>{ for(const nm of names) try{ URL.revokeObjectURL(blobs[nm]); }catch(e){} };
-    return new Promise((res,rej)=>{ new THREE.GLTFLoader(mgr).load(blobs[main], (gltf)=>{ setTimeout(revoke, 6000); res(gltf); }, undefined, e=>{ revoke(); rej(e); }); });
+    return new Promise((res,rej)=>{ _mkGLTFLoader(mgr).load(blobs[main], (gltf)=>{ setTimeout(revoke, 6000); res(gltf); }, undefined, e=>{ revoke(); rej(e); }); });
   });
   const _cacheKey='sf:'+uid;
   // 1) try the on-disk cache first — instant on repeat sessions, no network at all
@@ -17796,7 +17828,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 916 · 2026-07-09';
+const BUILD_VERSION = 'build 917 · 2026-07-09';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
