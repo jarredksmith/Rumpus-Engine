@@ -8613,6 +8613,7 @@ const ANIM_LIB_PACKS = {
       jumpStart:'Jump_Start', jump:'Jump_Loop', fall:'Jump_Loop', jumpLand:'Jump_Land', hardLand:'Jump_Land',
       aim:'Pistol_Aim_Neutral', attack:'Pistol_Shoot', reload:'Pistol_Reload',
       meleeLight:'Punch_Jab', meleeHeavy:'Punch_Cross', meleeCombo:'Sword_Attack', dodge:'Roll', slide:'Roll',
+      walkFire:'Walk_Fire', runFire:'Jog_Fire', crouchFire:'Crouch_Fire', sprintFire:'Sprint_Fire',
       hitFront:'Hit_Chest', hitBack:'Hit_Chest', hitLeft:'Hit_Chest', hitRight:'Hit_Chest', stagger:'Hit_Head',
       die:'Death01', dieFront:'Death01', dieBack:'Death01', knockdown:'Death01' } },
   ualpro: { label:'Universal Animation Library Pro', by:'Quaternius', lic:'CC0', url:'anims/UAL1.glb',
@@ -8630,7 +8631,7 @@ const ANIM_LIB_PACKS = {
       ladderIdle:'Climb_Idle_Loop', ladderUp:'Climb_Up_Loop', ladderDown:'Climb_Down_Loop',
       attack:'Pistol_Shoot', reload:'Pistol_Reload', meleeLight:'Punch_Jab', meleeHeavy:'Punch_Cross', meleeCombo:'Sword_Attack',
       block:'PunchKick_Enter', parry:'Sword_Attack_Standing', dodge:'Dodge_Left', equip:'Sword_Enter', holster:'Sword_Exit', throw:'Spell_Simple_Shoot',
-      walkFire:'Pistol_Shoot', runFire:'Pistol_Shoot', crouchFire:'Pistol_Shoot', sprintFire:'Pistol_Shoot',
+      walkFire:'Walk_Fire', runFire:'Jog_Fire', crouchFire:'Crouch_Fire', sprintFire:'Sprint_Fire',
       hitFront:'Hit_Chest', hitBack:'Hit_Stomach', hitLeft:'Hit_Shoulder_L', hitRight:'Hit_Shoulder_R', stagger:'Hit_Head',
       knockdown:'Death02', getup:'Crawl_Exit', die:'Death01', dieFront:'Death02', dieBack:'Death01' } }
 };
@@ -8737,6 +8738,39 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
   if(!tracks.length) return null;
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
+// build 925: synthesize armed / move-fire clips the pack doesn't ship. A composite takes the
+// LOCOMOTION clip's tracks below the hips (legs, feet, hips incl. position) and the WEAPON-POSE
+// clip's tracks above them (spine, head, arms, fingers), split by the canonical bone mapper; the
+// pose loops across the locomotion clip's duration. Idempotent (skips names that already exist).
+function _composePackClips(anims){
+  if(!Array.isArray(anims) || !anims.length) return;
+  const byName={}; for(const c of anims) byName[c.name]=c;
+  const side=(tn)=>{ const node=tn.slice(0, tn.lastIndexOf('.')); const k=_canonBoneKey(node); if(!k) return 0;
+    if(k==='head' || k.indexOf('neck@')===0 || k.indexOf('spine@')===0 || /^(L|R):(shoulder|uparm|forearm|hand|thumb\d|index\d|middle\d|ring\d|pinky\d)$/.test(k)) return 1;   // upper: weapon pose
+    return -1; };                                                                  // lower (and unknowns): locomotion
+  const mk=(locoName, poseName, outName)=>{
+    if(byName[outName]) return; const A=byName[locoName], B=byName[poseName]; if(!A || !B) return;
+    const dur=A.duration, fps=24, frames=Math.max(2, Math.round(dur*fps)+1);
+    const tracks=[];
+    for(const t of A.tracks){ if(side(t.name)!==1) tracks.push(t.clone()); }
+    for(const t of B.tracks){ if(side(t.name)!==1) continue;
+      const inter=t.createInterpolant(); const stride=t.getValueSize();
+      const times=new Float32Array(frames), values=new Float32Array(frames*stride);
+      for(let f=0; f<frames; f++){ const tt=Math.min(dur-1e-5, f/fps); times[f]=tt;
+        const v=inter.evaluate((B.duration>1e-4) ? (tt % Math.max(1e-4, B.duration-1e-5)) : 0);
+        for(let j=0;j<stride;j++) values[f*stride+j]=v[j];
+      }
+      tracks.push(new t.constructor(t.name, times, values));
+    }
+    if(tracks.length){ const c=new THREE.AnimationClip(outName, dur, tracks); anims.push(c); byName[outName]=c; }
+  };
+  mk('Walk_Loop','Pistol_Shoot','Walk_Fire');       mk('Jog_Fwd_Loop','Pistol_Shoot','Jog_Fire');
+  mk('Sprint_Loop','Pistol_Shoot','Sprint_Fire');   mk('Crouch_Idle_Loop','Pistol_Shoot','Crouch_Fire');
+  mk('Crouch_Fwd_Loop','Pistol_Shoot','CrouchWalk_Fire');
+  mk('Idle_Loop','Pistol_Idle_Loop','Idle_Armed');  mk('Walk_Loop','Pistol_Idle_Loop','Walk_Armed');
+  mk('Jog_Fwd_Loop','Pistol_Idle_Loop','Jog_Armed'); mk('Crouch_Idle_Loop','Pistol_Idle_Loop','Crouch_Armed');
+  mk('Crouch_Fwd_Loop','Pistol_Idle_Loop','CrouchWalk_Armed');
+}
 // Attach (retarget + cache) a pack's clips onto a model's gltf. Idempotent per (gltf, pack).
 let _libToastAt = 0;
 function _animLibAttach(gltf, packId, cb){
@@ -8744,6 +8778,7 @@ function _animLibAttach(gltf, packId, cb){
   const pack = ANIM_LIB_PACKS[packId]; if(!pack || !gltf || !gltf.scene){ cb(false, 0); return; }
   loadGLTFCached(pack.url, (pk)=>{
     try{
+      _composePackClips(pk.animations);   // build 925: synthesize armed / move-fire composites once per pack
       const srcScene = THREE.cloneSkinned ? THREE.cloneSkinned(pk.scene) : pk.scene.clone(true);   // fresh clone = rest pose, and sampling never dirties the cached pack
       const map = _buildBoneMap(gltf.scene, srcScene);
       if(!map){ gltf.userData._libFailed='rig'; if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — auto-rig it (e.g. on Mixamo) and re-import'); } cb(false, 0); return; }
@@ -8762,6 +8797,7 @@ function _withLibAnims(gltf, cfg, done){
   if(!packId || !ANIM_LIB_PACKS[packId] || !gltf || !gltf.scene){ done(gltf); return; }
   _animLibAttach(gltf, packId, (ok)=>{
     if(!ok){ done(gltf); return; }
+    try{ _animLibApplyPicks(cfg, packId); }catch(e){}   // build 925: pack defaults are living — new default picks (e.g. the move-fire composites) reach saved models without touching the selector; hand-picked overrides still survive
     done({ scene:gltf.scene, scenes:gltf.scenes, animations:(gltf.animations||[]).concat(gltf.userData._libAnims), userData:gltf.userData, parser:gltf.parser });
   });
 }
@@ -14566,7 +14602,7 @@ function updateOwnAvatar(dt){
       const _ts = _turnInPlaceSlot(a.userData._turn || (a.userData._turn={}), _dyaw, dt||0.016);   // standing still + rotating -> footwork step (turnL / turnR / turn180)
       if(_ts) playOwnAnim(_ts, _ts==='turn180' ? 420 : 340);
     } else if(a.userData._turn){ const _t=a.userData._turn; _t.turning=false; _t.accum=0; _t.last=''; }   // left the idle-stand state -> disarm the turn burst so it re-arms cleanly
-    if(!dead){ if(crouching && !_ownPrevCrouch) playOwnAnim('standToCrouch', 300); else if(!crouching && _ownPrevCrouch) playOwnAnim('crouchToStand', 300); }   // crouch toggle edge -> transition stab, then settle into crouch/stand
+    if(!dead && !sliding && !(slideCD>0.35)){ if(crouching && !_ownPrevCrouch) playOwnAnim('standToCrouch', 300); else if(!crouching && _ownPrevCrouch) playOwnAnim('crouchToStand', 300); }   // crouch toggle edge -> transition stab, then settle into crouch/stand. build 925: a slide forces crouching=true, and this stab (an event, which outranks states) was eating the whole slide window — no stabs during or right after a slide
     _ownPrevCrouch = crouching;
     const air = _airborneSlot(a.userData._air || (a.userData._air={}), player.onGround, player.vel.y, dt||0.016);
     let st;
@@ -18099,7 +18135,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 924 · 2026-07-10';
+const BUILD_VERSION = 'build 925 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
