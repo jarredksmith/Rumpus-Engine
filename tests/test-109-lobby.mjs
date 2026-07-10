@@ -17,7 +17,7 @@ assert(/NET\.phase='playing';/.test(sm) && /NET\.conns\[id\]\.send\(\{t:'begin'\
 
 // welcome carries the phase so a joiner knows lobby vs in-progress
 assert(/phase:NET\.phase\}\);/.test(src), 'welcome carries the phase');
-assert(/if\(msg\.phase==='lobby'\)\{ showClientLobby\(\); \} else \{ startGame\(\); \}/.test(src), 'client waits in lobby, or late-joins a running game');
+assert(/if\(msg\.phase==='lobby'\)\{ showClientLobby\(\); _lobbyDlWatch\(\); \} else \{ startGame\(\); \}/.test(src), 'client waits in lobby (with the download ticker, build 927), or late-joins a running game');
 
 // client reacts to begin + lobby roster
 assert(/else if\(msg\.t==='begin'\)\{ NET\.phase='playing'; closeModal\('lobby'\); if\(typeof closeMatchMenu==='function'\) closeMatchMenu\(\); startGame\(\); \}/.test(src), 'client begins on host start (and dismisses the match menu, build 512)');

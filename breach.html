@@ -9929,7 +9929,7 @@ let crouching = false, crouchT = 0;
 // Used by the KCC capsule, the classic wall/clearance bands, the head-bump, and enemy targeting.
 function effPlayerHeight(){ return PLAYER_HEIGHT - crouchT*CROUCH_DIP; }
 function effEyeY(){ return player.pos.y - crouchT*CROUCH_DIP; }
-let sliding=false, slideT=0, slideCD=0, _prevSlideKey=false, _slideBufT=0; const slideDir=new THREE.Vector3(); const SLIDE_DUR=0.55;
+let sliding=false, slideT=0, slideCD=0, _prevSlideKey=false, _slideBufT=0, _sprintGraceT=0; const slideDir=new THREE.Vector3(); const SLIDE_DUR=0.55;
 let _stepT=0;   // footstep cadence timer
 const CROUCH_DIP = 0.8;     // how far the camera lowers when fully crouched
 const keys = {};
@@ -14028,6 +14028,33 @@ function showDuelResult(winnerId, winnerTeam){
 }
 
 // ---- apply a host-built level on a joining client (props + lights), through the real spawn path ----
+// build 927: warm the model caches the moment the host's level lands (lobby), instead of when the
+// round starts. Every URL loadGLTFCached pulls here is an instant cache hit at spawn time.
+function _prefetchLevelAssets(level, chars){
+  try{
+    const urls = new Set();
+    const PRIMS = /^(box|sphere|cylinder|cone|pillar|ramp|stairs|dome|tube|torus)$/;
+    const add = (u)=>{ if(u && typeof u==='string' && !PRIMS.test(u)) urls.add(u); };
+    const addPack = (p)=>{ if(p && typeof ANIM_LIB_PACKS!=='undefined' && ANIM_LIB_PACKS[p]) urls.add(ANIM_LIB_PACKS[p].url); };
+    if(level){
+      (level.props||[]).forEach(p=>{ if(p && p.src) add(p.src); });
+      const en = level.enemies||{}; for(const k in en){ if(en[k]){ add(en[k].url); addPack(en[k].animLib); } }
+      if(level.player){ add(level.player.url); addPack(level.player.animLib); }
+      (level.roster||[]).forEach(c=>{ if(c){ add(c.url); addPack(c.animLib); } });
+    }
+    if(chars){ for(const k in chars){ const c=chars[k]; if(c){ add(c.url); addPack(c.animLib); } } }
+    let n=0; for(const u of urls){ n++; try{ loadGLTFCached(u, ()=>{}, ()=>{}); }catch(e){} }
+    return n;
+  }catch(e){ return 0; }
+}
+// Lobby download ticker: surfaces how many models are still in flight while players ready up.
+let _lobbyDlT=null;
+function _lobbyDlTick(){
+  if(NET.phase!=='lobby'){ if(_lobbyDlT){ clearInterval(_lobbyDlT); _lobbyDlT=null; } return; }
+  const n = (typeof _glbPending!=='undefined') ? _glbPending : 0;
+  netStatus(n>0 ? ('Downloading level models \u2014 '+n+' left\u2026') : 'Connected \u00b7 level models loaded');
+}
+function _lobbyDlWatch(){ if(_lobbyDlT) clearInterval(_lobbyDlT); _lobbyDlT=setInterval(_lobbyDlTick, 500); _lobbyDlTick(); }
 function loadLevelFromNet(level){
   if(!level) return;
   NET.sentProps.clear();   // rebuild the "what peers already have" baseline from the host's level
@@ -14675,7 +14702,9 @@ function tpCameraPushback(dt){
 }
 // ---- per-player characters: each player owns + broadcasts their avatar config; others build from it ----
 function myCharCfg(){ const c=(myRosterIdx>=0 && charRoster[myRosterIdx]) ? charRoster[myRosterIdx] : playerModelCfg; return { url:c.url||'', scale:c.scale||1, face:c.face||0, rx:c.rx||0, rz:c.rz||0, xoff:c.xoff||0, yoff:c.yoff||0, zoff:c.zoff||0, thumb:c.thumb||'', animLib:(typeof c.animLib==='string' && ANIM_LIB_PACKS[c.animLib])?c.animLib:'', clips:Object.assign({}, c.clips||{}), clipSpeed:Object.assign({}, c.clipSpeed||{}), clipHold:Object.assign({}, c.clipHold||{}), clipInPlace:Object.assign({}, c.clipInPlace||{}), tint:(CHARACTERS[myCharIdx]?CHARACTERS[myCharIdx].color:null) }; }
-function applyRemoteChar(id, cfg){ if(cfg==null || +id===NET.myId) return; NET.charById[id]=cfg; const rp=NET.players[id]; if(rp){ rp.modelCfg=cfg; if(rp.mesh){ buildAvatarVisual(rp.mesh, cfg); if(teamMode() && NET.teams[id]!=null) tintAvatar(rp.mesh, NET.teams[id]); } } }
+function applyRemoteChar(id, cfg){ if(cfg==null || +id===NET.myId) return; NET.charById[id]=cfg;
+  /* build 927: warm their model before the round starts */ try{ if(cfg.url) loadGLTFCached(cfg.url, ()=>{}, ()=>{}); if(cfg.animLib && ANIM_LIB_PACKS[cfg.animLib]) loadGLTFCached(ANIM_LIB_PACKS[cfg.animLib].url, ()=>{}, ()=>{}); }catch(e){}
+ const rp=NET.players[id]; if(rp){ rp.modelCfg=cfg; if(rp.mesh){ buildAvatarVisual(rp.mesh, cfg); if(teamMode() && NET.teams[id]!=null) tintAvatar(rp.mesh, NET.teams[id]); } } }
 function broadcastMyChar(){ const cfg=myCharCfg(); if(NET.mode==='host'){ NET.charById[0]=cfg; for(const id in NET.conns){ try{ NET.conns[id].send({t:'char', from:0, cfg}); }catch(e){} } } else if(NET.mode==='client' && NET.conn){ try{ NET.conn.send({t:'char', cfg}); }catch(e){} } }
 let _charBcT=null;
 function _scheduleCharBroadcast(){ if(NET.mode==='off') return; if(_charBcT) clearTimeout(_charBcT); _charBcT=setTimeout(()=>{ _charBcT=null; broadcastMyChar(); }, 400); }
@@ -15202,7 +15231,8 @@ function handleHostMsg(msg){
     if(msg.sounds) NET.pendingSounds=msg.sounds;
     if(msg.music!=null) NET.pendingMusic=msg.music;
     netStatus('Connected'); showRoomBadge(NET.roomCode);
-    if(msg.phase==='lobby'){ showClientLobby(); } else { startGame(); }
+    try{ _prefetchLevelAssets(NET.pendingLevel, NET.charById); }catch(e){}   // build 927: downloads overlap the lobby, not the round
+    if(msg.phase==='lobby'){ showClientLobby(); _lobbyDlWatch(); } else { startGame(); }
   }
   else if(msg.t==='begin'){ NET.phase='playing'; closeModal('lobby'); if(typeof closeMatchMenu==='function') closeMatchMenu(); startGame(); }
   else if(msg.t==='warmup'){ matchWarmup = (msg.secs!=null ? +msg.secs : 3); _clientWarmupHold=false; }   // build 624: host's synced start count — resyncs our countdown so 3-2-1-GO lands together
@@ -18135,7 +18165,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 926 · 2026-07-10';
+const BUILD_VERSION = 'build 927 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22050,7 +22080,8 @@ function loop(){
   if(slideCD>0) slideCD -= dt;
   const _slideEdge = _slideKey && !_prevSlideKey; _prevSlideKey = _slideKey;
   if(_slideEdge) _slideBufT = 0.25; else if(_slideBufT>0) _slideBufT -= dt;   // build 926: buffer the tap — demanding sprint+grounded on the EXACT press frame ate ~half of all slides (onGround flickers mid-stride); the slide starts on the first good frame, incl. touchdown after a press in the air
-  if(!sliding && slideCD<=0 && _slideBufT>0 && _sprinting && player.onGround && wish.lengthSq()>0.01 && !shopOpen && !editorOpen){
+  if(_sprinting) _sprintGraceT = 0.3; else if(_sprintGraceT>0) _sprintGraceT -= dt;   // build 927: easing off Shift a hair before C still counted as "not sprinting" — the grace window matches how the hand actually leaves the key
+  if(!sliding && slideCD<=0 && _slideBufT>0 && (_sprinting || _sprintGraceT>0) && player.onGround && wish.lengthSq()>0.01 && !shopOpen && !editorOpen){
     _slideBufT = 0; sliding = true; slideT = SLIDE_DUR; slideDir.copy(wish).normalize(); SFX.slide();
   }
   if(sliding){
