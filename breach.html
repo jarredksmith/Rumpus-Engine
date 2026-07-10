@@ -14010,6 +14010,7 @@ function loadLevelFromNet(level){
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
+    _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
     level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
@@ -14806,6 +14807,17 @@ function netSendProp(msg){
 }
 function relayProp(msg, exceptId){ for(const id in NET.conns){ if(+id===exceptId) continue; try{ NET.conns[id].send(msg); }catch(e){} } }
 function seedPropSync(){ NET.sentProps.clear(); for(const o of propModels){ if(o && o.userData.nid) NET.sentProps.set(o.userData.nid, o.userData.phys ? 'dyn' : propTuple(o)); } }
+// build 923: levels can carry duplicate nids (old clones). Heal them BEFORE spawning, deterministically
+// (same array order on every machine -> host and client agree on the healed ids). The old land-time
+// healing rolled a random nid per machine, so each side pAdd'd "its" healed prop to the other: duplicates.
+function _healLevelNids(props){
+  if(!Array.isArray(props)) return;
+  const seen = new Set();
+  for(const p of props){ if(!p || !p.nid) continue;
+    if(seen.has(p.nid)){ let k=2; while(seen.has(p.nid+'~'+k)) k++; p.nid = p.nid+'~'+k; }
+    seen.add(p.nid);
+  }
+}
 // build 905: nids whose model spawn is still IN FLIGHT (claimed in sentProps, not yet landed in
 // propModels). Without this the reconciler read "claimed but still downloading" as "deleted here"
 // and answered every incoming pAdd of a slow model (sketchfab / big GLB) with a pDel within one
@@ -14841,6 +14853,7 @@ function reconcileProps(dt){
 }
 function netApplyAddProp(d){
   if(!d || !d.nid || propByNid(d.nid)) return false;            // skip dupes
+  if(_nidPending.has(d.nid)) return false;                      // build 923: our own copy of this nid is mid-download (level loader) — landing it twice was the other duplicate
   NET.sentProps.set(d.nid, d.dyn ? 'dyn' : (d.t||[]).slice());  // claim immediately so our reconciler won't echo it
   _nidSpawnStart(d.nid);   // build 905: and mark the spawn in flight so the claim can't read as "deleted here"
   spawnProp(d.src, d.t, (obj)=>{
@@ -15111,6 +15124,7 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), id, true); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'nade', o:msg.o, v:msg.v, by:id}); }catch(e){} } } }   // build 670: a client threw a grenade: host simulates it (authors damage) + relays the visual to the others
   else if(msg.t==='push'){ const o=propByNid(msg.nid); if(o) pushDynamic(o, new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]), msg.s||6, msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null); }   // a client shot a dynamic prop (legacy knockback-only)
   else if(msg.t==='propHit'){ const o=propByNid(msg.nid); if(o){ const dir=new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]); const pt=msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null; const broke=damageProp(o, msg.d||0, pt, dir, msg.s||6, id); if(!broke) pushDynamic(o, dir, msg.s||6, pt); } }   // a client shot a prop: damage (breaks/detonates) + knockback, credited to the client
+  else if(msg.t==='pPush'){ const o=propByNid(msg.nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ const sh=Math.max(0, Math.min(9, +msg.s||0)); try{ b.applyImpulse({ x:(+msg.nx||0)*sh*0.6, y:0, z:(+msg.nz||0)*sh*0.6 }, true); }catch(e){} } }   // build 923: a client walked into a dynamic prop — apply their shove here (clamped), the D snapshot carries it back
   else if(msg.t==='grab'){ const _go=dynamicById(msg.nid); if(_go && _go.userData.noGrab) return; if(!_remoteHold[msg.nid]) _remoteHold[msg.nid]={by:id}; }   // a client grabbed a prop
   else if(msg.t==='hold'){ const _ho=dynamicById(msg.nid); if(_ho && _ho.userData.noGrab) return; const h=_remoteHold[msg.nid]; if(!h) _remoteHold[msg.nid]={by:id, target:msg.p}; else if(h.by===id) h.target=msg.p; }   // ...and is carrying it
   else if(msg.t==='holdEnd'){ const h=_remoteHold[msg.nid]; if(h && h.by===id){ if(msg.v){ const o=dynamicById(msg.nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ b.setLinvel({x:msg.v[0],y:msg.v[1],z:msg.v[2]}, true); o.userData._thrownT=performance.now()+THROW_ARM_MS; o.userData._thrownBy=id; } } delete _remoteHold[msg.nid]; } }   // ...and dropped/threw it
@@ -18085,7 +18099,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 922 · 2026-07-10';
+const BUILD_VERSION = 'build 923 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19470,6 +19484,13 @@ function resolvePlayerProps(dt){
       const into = -(player.vel.x*nx + player.vel.z*nz);
       const shove = Math.max(into, 2.5);
       p.body.applyImpulse({ x:-nx*shove*0.6, y:0, z:-nz*shove*0.6 }, true);
+    } else if(NET.conn && obj.userData.nid){                      // build 923: a client can't author physics — relay the shove to the host (like propHit for shooting); motion returns via the D snapshot
+      const _now = performance.now();
+      if(!(obj.userData._pushAt > _now)){ obj.userData._pushAt = _now + 120;
+        const into = -(player.vel.x*nx + player.vel.z*nz);
+        const shove = Math.max(into, 2.5);
+        try{ NET.conn.send({ t:'pPush', nid:obj.userData.nid, nx:-nx, nz:-nz, s:shove }); }catch(e){}
+      }
     }
   }
 }
@@ -24643,7 +24664,8 @@ function restoreLevel(level){
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
