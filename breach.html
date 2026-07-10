@@ -8614,7 +8614,25 @@ const ANIM_LIB_PACKS = {
       aim:'Pistol_Aim_Neutral', attack:'Pistol_Shoot', reload:'Pistol_Reload',
       meleeLight:'Punch_Jab', meleeHeavy:'Punch_Cross', meleeCombo:'Sword_Attack', dodge:'Roll', slide:'Roll',
       hitFront:'Hit_Chest', hitBack:'Hit_Chest', hitLeft:'Hit_Chest', hitRight:'Hit_Chest', stagger:'Hit_Head',
-      die:'Death01', dieFront:'Death01', dieBack:'Death01', knockdown:'Death01' } }
+      die:'Death01', dieFront:'Death01', dieBack:'Death01', knockdown:'Death01' } },
+  ualpro: { label:'Universal Animation Library Pro', by:'Quaternius', lic:'CC0', url:'anims/UAL1.glb',
+    // 120 clips — every slot gets a real pick (8-direction locomotion, climb set, turns, dodges,
+    // five hit reactions, two deaths). block/parry/throw are the closest reads Pro has (guard-up
+    // stance / standing sword swipe / one-hand cast) — override per state if you'd rather.
+    picks: { idle:'Idle_Loop', idleFidget:'Idle_LookAround_Loop', idleToCombat:'PunchKick_Enter', turnL:'Turn90_L', turnR:'Turn90_R', turn180:'Turn90_L', aim:'Pistol_Aim_Neutral',
+      walk:'Walk_Loop', walkBack:'Jog_Bwd_Loop', strafeL:'Jog_Left_Loop', strafeR:'Jog_Right_Loop',
+      run:'Jog_Fwd_Loop', runBack:'Jog_Bwd_Loop', runStrafeL:'Jog_Left_Loop', runStrafeR:'Jog_Right_Loop',
+      sprint:'Sprint_Loop', moveStart:'Sprint_Enter', moveStop:'Sprint_Exit', pivot180:'Turn90_L',
+      crouch:'Crouch_Idle_Loop', crouchWalk:'Crouch_Fwd_Loop', crouchBack:'Crouch_Bwd_Loop', crouchStrafeL:'Crouch_Left_Loop', crouchStrafeR:'Crouch_Right_Loop',
+      standToCrouch:'Crouch_Enter', crouchToStand:'Crouch_Exit',
+      jumpStart:'Jump_Start', jump:'Jump_Loop', jumpLand:'Jump_Land', hardLand:'Jump_Land', fall:'Jump_Loop', slide:'Roll',
+      ledgeHang:'Climb_Idle_Loop', ledgeUp:'ClimbLedge', ledgeDrop:'Climb_Down_Loop',
+      ladderIdle:'Climb_Idle_Loop', ladderUp:'Climb_Up_Loop', ladderDown:'Climb_Down_Loop',
+      attack:'Pistol_Shoot', reload:'Pistol_Reload', meleeLight:'Punch_Jab', meleeHeavy:'Punch_Cross', meleeCombo:'Sword_Attack',
+      block:'PunchKick_Enter', parry:'Sword_Attack_Standing', dodge:'Dodge_Left', equip:'Sword_Enter', holster:'Sword_Exit', throw:'Spell_Simple_Shoot',
+      walkFire:'Pistol_Shoot', runFire:'Pistol_Shoot', crouchFire:'Pistol_Shoot', sprintFire:'Pistol_Shoot',
+      hitFront:'Hit_Chest', hitBack:'Hit_Stomach', hitLeft:'Hit_Shoulder_L', hitRight:'Hit_Shoulder_R', stagger:'Hit_Head',
+      knockdown:'Death02', getup:'Crawl_Exit', die:'Death01', dieFront:'Death02', dieBack:'Death01' } }
 };
 // Canonical bone key across naming conventions: 'mixamorig:LeftForeArm' / 'lowerarm_l' / 'forearm.L'
 // all -> 'L:forearm'. Returns null for helpers we never retarget (leaf/end/twist/ik/eyes/root).
@@ -8753,6 +8771,15 @@ function _animLibDefaultPicks(cfg, packId){
   const pack = ANIM_LIB_PACKS[packId]; if(!pack || !pack.picks) return;
   if(!cfg.clips) cfg.clips = { idle:'', walk:'', run:'', attack:'' };
   for(const st in pack.picks){ if(!cfg.clips[st]) cfg.clips[st] = pack.picks[st]; }
+}
+// build 922: switching packs — a slot still holding ANY pack's default is "untouched" and upgrades to
+// the new pack's default (Standard reused Walk_Loop for strafes; Pro has the real directional clips).
+// A hand-picked clip name survives the switch.
+function _animLibApplyPicks(cfg, packId){
+  const pack = ANIM_LIB_PACKS[packId]; if(!pack || !pack.picks) return;
+  if(!cfg.clips) cfg.clips = { idle:'', walk:'', run:'', attack:'' };
+  const isDefault = (st, v)=>{ if(!v) return true; for(const k in ANIM_LIB_PACKS){ const p=ANIM_LIB_PACKS[k].picks; if(p && p[st]===v) return true; } return false; };
+  for(const st in pack.picks){ if(isDefault(st, cfg.clips[st])) cfg.clips[st] = pack.picks[st]; }
 }
 // ---------- Heavy-character safety net (build 920) ----------
 // Character/enemy models over the triangle budget are decimated automatically with the meshopt
@@ -18058,7 +18085,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 921 · 2026-07-10';
+const BUILD_VERSION = 'build 922 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26053,15 +26080,15 @@ function renderEditorFields(){
     eFaceRow.appendChild(efSp); eFaceRow.appendChild(efSel); eHost.appendChild(eFaceRow);
     // animation states — map each baked clip to a behavior; auto = picked by clip name. Switches live in-game.
     hint(eHost, '<b>Animation states</b> — auto-matched by clip name; override per state. In-game: walk/run while moving, attack in melee or fire range, idle when still.', '6px 0 2px');
-    { // build 919: built-in animation library — retargets the CC0 pack onto this enemy's skeleton
-      const libRow=document.createElement('label'); libRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;cursor:pointer;';
-      const libCb=document.createElement('input'); libCb.type='checkbox'; libCb.style.cssText='width:14px;height:14px;accent-color:var(--accent);'; libCb.checked = mc.animLib==='ual1';
-      libCb.onchange=()=>{ pushUndoSnapshot();
-        if(libCb.checked){ mc.animLib='ual1'; _animLibDefaultPicks(mc,'ual1'); }
-        else { mc.animLib=''; }
+    { // build 919/922: built-in animation library — retargets a CC0 pack onto this enemy's skeleton
+      const libRow=document.createElement('label'); libRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;';
+      const libSp=document.createElement('span'); libSp.textContent='Use built-in animation library'; libSp.style.minWidth='86px';
+      const libSel=document.createElement('select'); libSel.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+      for(const [v,l] of [['','Off — model\u2019s own clips only'],['ual1','Standard — 43 clips (Quaternius, CC0)'],['ualpro','Pro — 120 clips, every slot filled (Quaternius, CC0)']]){ const o=document.createElement('option'); o.value=v; o.textContent=l; if((mc.animLib||'')===v) o.selected=true; libSel.appendChild(o); }
+      libSel.onchange=()=>{ pushUndoSnapshot(); mc.animLib=libSel.value;
+        if(libSel.value) _animLibApplyPicks(mc, libSel.value);
         refreshEnemyVisuals(); };
-      const libSp=document.createElement('span'); libSp.innerHTML='Use built-in animation library <span style="color:#7fb8a6">(retargeted onto this rig; Quaternius, CC0)</span>';
-      libRow.appendChild(libCb); libRow.appendChild(libSp); eHost.appendChild(libRow);
+      libRow.appendChild(libSp); libRow.appendChild(libSel); eHost.appendChild(libRow);
     }
     _animSlotFolds(eHost, 'eAnim', { 'Idle & standing':true, 'Locomotion (ground)':true }, (foldBody, _slot)=>{
       const stKey=_slot.k, stLabel=_slot.l;
@@ -27523,15 +27550,15 @@ function renderEditorFields(){
     if(tgt===editorTargets.player){   // avatar animation states (mirror the enemy state machine)
       const acHead=document.createElement('div'); acHead.className='hint'; acHead.style.margin='10px 0 2px'; acHead.innerHTML='<b>Animation states</b> — auto-matched by clip name; override per state. Walk/run switch with the avatar\u2019s movement in-game.';
       urlHost.appendChild(acHead);
-      { // build 919: built-in animation library — retargets the CC0 pack onto this model's skeleton
-        const libRow=document.createElement('label'); libRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;cursor:pointer;';
-        const libCb=document.createElement('input'); libCb.type='checkbox'; libCb.style.cssText='width:14px;height:14px;accent-color:var(--accent);'; libCb.checked = playerModelCfg.animLib==='ual1';
-        libCb.onchange=()=>{ pushUndoSnapshot();
-          if(libCb.checked){ playerModelCfg.animLib='ual1'; _animLibDefaultPicks(playerModelCfg,'ual1'); }
-          else { playerModelCfg.animLib=''; }
+      { // build 919/922: built-in animation library — retargets a CC0 pack onto this model's skeleton
+        const libRow=document.createElement('label'); libRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;';
+        const libSp=document.createElement('span'); libSp.textContent='Use built-in animation library'; libSp.style.minWidth='86px';
+        const libSel=document.createElement('select'); libSel.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+        for(const [v,l] of [['','Off — model\u2019s own clips only'],['ual1','Standard — 43 clips (Quaternius, CC0)'],['ualpro','Pro — 120 clips, every slot filled (Quaternius, CC0)']]){ const o=document.createElement('option'); o.value=v; o.textContent=l; if((playerModelCfg.animLib||'')===v) o.selected=true; libSel.appendChild(o); }
+        libSel.onchange=()=>{ pushUndoSnapshot(); playerModelCfg.animLib=libSel.value;
+          if(libSel.value) _animLibApplyPicks(playerModelCfg, libSel.value);
           rebuildAvatars(); };
-        const libSp=document.createElement('span'); libSp.innerHTML='Use built-in animation library <span style="color:#7fb8a6">(walk/run/jump/shoot/melee/death + more — retargeted onto this rig; Quaternius, CC0)</span>';
-        libRow.appendChild(libCb); libRow.appendChild(libSp); urlHost.appendChild(libRow);
+        libRow.appendChild(libSp); libRow.appendChild(libSel); urlHost.appendChild(libRow);
       }
       _animSlotFolds(urlHost, 'pAnim', { 'Idle & standing':true, 'Locomotion (ground)':true }, (foldBody, _slot)=>{
         const stKey=_slot.k, stLabel=_slot.l;
