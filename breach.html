@@ -4032,6 +4032,8 @@ class GLTFParser {
 		const sourceIndex = textureDef.source;
 		const sourceDef = json.images[ sourceIndex ];
 
+		if ( sourceDef === undefined ) return Promise.resolve( null );   // build 920: texture whose ONLY source is a skipped extension (e.g. KTX2 with no transcoder) — drop the map instead of crashing to a capsule
+
 		let loader = this.textureLoader;
 
 		if ( sourceDef.uri ) {
@@ -8752,6 +8754,58 @@ function _animLibDefaultPicks(cfg, packId){
   if(!cfg.clips) cfg.clips = { idle:'', walk:'', run:'', attack:'' };
   for(const st in pack.picks){ if(!cfg.clips[st]) cfg.clips[st] = pack.picks[st]; }
 }
+// ---------- Heavy-character safety net (build 920) ----------
+// Character/enemy models over the triangle budget are decimated automatically with the meshopt
+// simplifier (lazy CDN wasm). Index-only: vertices/skin weights/UVs are untouched, so skinned
+// animation is unaffected. Spawned copies share the template geometry, so one pass fixes every
+// bot/remote player at once. Why it matters: BOTS wear the player model — a heavy avatar times a
+// lobby of bots is how a 92k-triangle import turns 60fps into 10.
+let CHAR_TRI_HEAVY = 60000;    // above this a character model gets decimated…
+let CHAR_TRI_BUDGET = 40000;   // …down to roughly this
+let _simpPromise=null;
+function _ensureSimplifier(){
+  if(_simpPromise) return _simpPromise;
+  _simpPromise = (async ()=>{
+    for(const url of ['https://cdn.jsdelivr.net/npm/meshoptimizer@0.20.0/meshopt_simplifier.module.js',
+                      'https://unpkg.com/meshoptimizer@0.20.0/meshopt_simplifier.module.js']){
+      try{ const mod = await import(url); const S = mod.MeshoptSimplifier || (mod.default && mod.default.MeshoptSimplifier);
+        if(S){ try{ if(S.ready && S.ready.then) await S.ready; }catch(e){} return S; }
+      }catch(e){ /* next source */ }
+    }
+    return null;
+  })();
+  return _simpPromise;
+}
+function _gltfTriCount(root){ let t=0; try{ root.traverse(o=>{ if(o.isMesh && o.geometry){ const g=o.geometry; t += g.index ? g.index.count/3 : (g.attributes.position ? g.attributes.position.count/3 : 0); } }); }catch(e){} return Math.round(t); }
+function _autoSimplifyChar(gltf, label){
+  try{
+    if(!gltf || !gltf.scene || gltf.userData._simplified!=null) return;
+    const tris = _gltfTriCount(gltf.scene);
+    if(tris <= CHAR_TRI_HEAVY){ gltf.userData._simplified = false; return; }
+    gltf.userData._simplified = false;   // claim immediately so concurrent builds don't double-run
+    _ensureSimplifier().then(S=>{
+      if(!S){ if(typeof toast==='function') toast('\u26a0 "'+(label||'model')+'" is heavy ('+Math.round(tris/1000)+'k triangles) and may reduce FPS'); return; }
+      try{
+        const ratio = CHAR_TRI_BUDGET / tris; let after=0;
+        gltf.scene.traverse(o=>{
+          if(!(o.isMesh && o.geometry && o.geometry.index && o.geometry.attributes.position)) return;
+          const g=o.geometry, pa=g.attributes.position, n=pa.count;
+          const P=new Float32Array(n*3); for(let i=0;i<n;i++){ P[i*3]=pa.getX(i); P[i*3+1]=pa.getY(i); P[i*3+2]=pa.getZ(i); }   // tight copy — handles interleaved attributes (gltfpack interleaves)
+          const idx=g.index.array, idx32=(idx instanceof Uint32Array)?idx:new Uint32Array(idx);
+          const target=Math.max(3, Math.floor(idx32.length*ratio/3)*3);
+          const out=S.simplify(idx32, P, 3, target, 0.05, [])[0];
+          if(out && out.length && out.length < idx32.length){
+            g.setIndex(new THREE.BufferAttribute(n<=65535 ? new Uint16Array(out) : new Uint32Array(out), 1));
+            try{ g.computeBoundingSphere(); g.computeBoundingBox(); }catch(e){}
+            after += out.length/3;
+          } else after += idx32.length/3;
+        });
+        gltf.userData._simplified = true;
+        if(typeof toast==='function') toast('\u26a1 Optimized heavy character model: '+Math.round(tris/1000)+'k \u2192 '+Math.round(after/1000)+'k triangles (automatic)');
+      }catch(e){ console.warn('Model simplify failed:', e && e.message); }
+    });
+  }catch(e){}
+}
 // build 917: GLBs whose textures are KTX2/Basis-compressed (KHR_texture_basisu) need a KTX2Loader on
 // the GLTFLoader; without one the loader threw "setKTX2Loader must be called" and the model fell back
 // to a capsule. Pull the transcoder from CDN the first time such a texture is actually seen (zero cost
@@ -10672,6 +10726,7 @@ function buildEnemyVisual(body){
   _loadGLTFWithLib(mc.url, mc,
     (gltf)=>{
       if(enemyModelCfg(body.userData.enemyType).url !== mc.url) return;   // the type's URL changed before this load resolved — drop the stale model
+      if(typeof _autoSimplifyChar==='function') _autoSimplifyChar(gltf, (mc.url||'').split('/').pop());   // build 920: heavy imports get decimated (a wave of enemies multiplies model cost)
       enemyModelClips[body.userData.enemyType] = (gltf.animations||[]).map(a=>a.name||'');   // expose clip names to the editor
       if(enemyModelClips[body.userData.enemyType].length && mc.clips && !(gltf.userData && gltf.userData._libFailed)){ for(const _st in mc.clips){ const _v=mc.clips[_st]; if(_v && enemyModelClips[body.userData.enemyType].indexOf(_v)<0) mc.clips[_st]=''; } }   // build 501: a different model arrived -> drop per-state picks that named the previous model's clips (build 919: not when the anim library failed to attach)
       if(body.userData.visual){ body.remove(body.userData.visual); body.userData.visual=null; }
@@ -14193,6 +14248,7 @@ function buildAvatarVisual(g, cfg){
   _loadGLTFWithLib(mc.url, mc,
     (gltf)=>{
       if(g.userData._loadingUrl!==mc.url) return;   // a newer model was requested for THIS avatar before the load resolved
+      if(typeof _autoSimplifyChar==='function') _autoSimplifyChar(gltf, (mc.url||'').split('/').pop());   // build 920: heavy imports get decimated (bots multiply avatar cost)
       if(g.userData.visual){ g.remove(g.userData.visual); g.userData.visual=null; }
       const model=THREE.cloneSkinned(gltf.scene);
       model.scale.setScalar(mc.scale||1);
@@ -18002,7 +18058,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 919 · 2026-07-10';
+const BUILD_VERSION = 'build 920 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
