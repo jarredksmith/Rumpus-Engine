@@ -9929,7 +9929,7 @@ let crouching = false, crouchT = 0;
 // Used by the KCC capsule, the classic wall/clearance bands, the head-bump, and enemy targeting.
 function effPlayerHeight(){ return PLAYER_HEIGHT - crouchT*CROUCH_DIP; }
 function effEyeY(){ return player.pos.y - crouchT*CROUCH_DIP; }
-let sliding=false, slideT=0, slideCD=0, _prevSlideKey=false; const slideDir=new THREE.Vector3(); const SLIDE_DUR=0.55;
+let sliding=false, slideT=0, slideCD=0, _prevSlideKey=false, _slideBufT=0; const slideDir=new THREE.Vector3(); const SLIDE_DUR=0.55;
 let _stepT=0;   // footstep cadence timer
 const CROUCH_DIP = 0.8;     // how far the camera lowers when fully crouched
 const keys = {};
@@ -18135,7 +18135,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 925 · 2026-07-10';
+const BUILD_VERSION = 'build 926 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22049,8 +22049,9 @@ function loop(){
   const _slideKey = (keys[BINDS.slide]||padCrouch);   // slide (crouch is separate); rebindable — build 910
   if(slideCD>0) slideCD -= dt;
   const _slideEdge = _slideKey && !_prevSlideKey; _prevSlideKey = _slideKey;
-  if(!sliding && slideCD<=0 && _slideEdge && _sprinting && player.onGround && wish.lengthSq()>0.01 && !shopOpen && !editorOpen){
-    sliding = true; slideT = SLIDE_DUR; slideDir.copy(wish).normalize(); SFX.slide();
+  if(_slideEdge) _slideBufT = 0.25; else if(_slideBufT>0) _slideBufT -= dt;   // build 926: buffer the tap — demanding sprint+grounded on the EXACT press frame ate ~half of all slides (onGround flickers mid-stride); the slide starts on the first good frame, incl. touchdown after a press in the air
+  if(!sliding && slideCD<=0 && _slideBufT>0 && _sprinting && player.onGround && wish.lengthSq()>0.01 && !shopOpen && !editorOpen){
+    _slideBufT = 0; sliding = true; slideT = SLIDE_DUR; slideDir.copy(wish).normalize(); SFX.slide();
   }
   if(sliding){
     slideT -= dt;

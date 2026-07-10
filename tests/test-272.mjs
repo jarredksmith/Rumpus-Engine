@@ -15,7 +15,7 @@ assert(!/const _slideKey = \([^;]*ControlLeft/.test(src), 'Ctrl no longer trigge
 
 // slide is still an edge (tap), still gated on sprint + grounded + moving
 assert(/const _slideEdge = _slideKey && !_prevSlideKey; _prevSlideKey = _slideKey;/.test(src), 'slide is edge-detected off the C key');
-assert(/if\(!sliding && slideCD<=0 && _slideEdge && _sprinting && player\.onGround && wish\.lengthSq\(\)>0\.01/.test(src), 'slide still requires sprint + grounded + moving');
+assert(/if\(!sliding && slideCD<=0 && _slideBufT>0 && _sprinting && player\.onGround && wish\.lengthSq\(\)>0\.01/.test(src), 'slide still requires sprint + grounded + moving (build 926: fired from the buffered tap)');
 
 // the on-screen legend reflects the split
 assert(/<b>CTRL<\/b> crouch/.test(page) && /<b>SPRINT\+C<\/b> slide/.test(page), 'controls legend shows Ctrl crouch + Sprint+C slide');
