@@ -15125,9 +15125,9 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='push'){ const o=propByNid(msg.nid); if(o) pushDynamic(o, new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]), msg.s||6, msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null); }   // a client shot a dynamic prop (legacy knockback-only)
   else if(msg.t==='propHit'){ const o=propByNid(msg.nid); if(o){ const dir=new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]); const pt=msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null; const broke=damageProp(o, msg.d||0, pt, dir, msg.s||6, id); if(!broke) pushDynamic(o, dir, msg.s||6, pt); } }   // a client shot a prop: damage (breaks/detonates) + knockback, credited to the client
   else if(msg.t==='pPush'){ const o=propByNid(msg.nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ const sh=Math.max(0, Math.min(9, +msg.s||0)); try{ b.applyImpulse({ x:(+msg.nx||0)*sh*0.6, y:0, z:(+msg.nz||0)*sh*0.6 }, true); }catch(e){} } }   // build 923: a client walked into a dynamic prop — apply their shove here (clamped), the D snapshot carries it back
-  else if(msg.t==='grab'){ const _go=dynamicById(msg.nid); if(_go && _go.userData.noGrab) return; if(!_remoteHold[msg.nid]) _remoteHold[msg.nid]={by:id}; }   // a client grabbed a prop
-  else if(msg.t==='hold'){ const _ho=dynamicById(msg.nid); if(_ho && _ho.userData.noGrab) return; const h=_remoteHold[msg.nid]; if(!h) _remoteHold[msg.nid]={by:id, target:msg.p}; else if(h.by===id) h.target=msg.p; }   // ...and is carrying it
-  else if(msg.t==='holdEnd'){ const h=_remoteHold[msg.nid]; if(h && h.by===id){ if(msg.v){ const o=dynamicById(msg.nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ b.setLinvel({x:msg.v[0],y:msg.v[1],z:msg.v[2]}, true); o.userData._thrownT=performance.now()+THROW_ARM_MS; o.userData._thrownBy=id; } } delete _remoteHold[msg.nid]; } }   // ...and dropped/threw it
+  else if(msg.t==='grab'){ const _go=propByNid(msg.nid); if(!_go || !_go.userData.phys || _go.userData.noGrab) return; if(heldProp===_go) return; if(!_remoteHold[msg.nid]) _remoteHold[msg.nid]={by:id}; }   // a client grabbed a prop (build 924: look it up by NET nid — dynamicById matches the numeric snapshot id and always missed)
+  else if(msg.t==='hold'){ const _ho=propByNid(msg.nid); if(!_ho || !_ho.userData.phys || _ho.userData.noGrab || heldProp===_ho) return; const h=_remoteHold[msg.nid]; if(!h) _remoteHold[msg.nid]={by:id, target:msg.p}; else if(h.by===id) h.target=msg.p; }   // ...and is carrying it (build 924: nid lookup)
+  else if(msg.t==='holdEnd'){ const h=_remoteHold[msg.nid]; if(h && h.by===id){ if(msg.v){ const o=propByNid(msg.nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ b.setLinvel({x:msg.v[0],y:msg.v[1],z:msg.v[2]}, true); o.userData._thrownT=performance.now()+THROW_ARM_MS; o.userData._thrownBy=id; } } delete _remoteHold[msg.nid]; } }   // ...and dropped/threw it (build 924: nid lookup, so the throw impulse actually lands)
   else if(msg.t==='break'){   // host shattered a prop — show the debris locally (pDel removes the prop itself)
     const ctr=new THREE.Vector3(msg.ctr[0],msg.ctr[1],msg.ctr[2]); const sz=new THREE.Vector3(msg.sz[0],msg.sz[1],msg.sz[2]);
     if(msg.st==='puff'){ spark(ctr, msg.c||0xcfeee6); if(typeof SFX!=='undefined' && SFX.puff) SFX.puff(); }
@@ -18099,7 +18099,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 923 · 2026-07-10';
+const BUILD_VERSION = 'build 924 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18898,7 +18898,7 @@ const _holdTarget=new THREE.Vector3(), _holdRay=new THREE.Raycaster(), _hFwd=new
 function _aimedProp(){
   camera.getWorldPosition(_hPos); camera.getWorldDirection(_hFwd);
   _holdRay.set(_hPos, _hFwd); _holdRay.far=HOLD_GRAB_RANGE;
-  const meshes=[]; for(const o of dynamicProps){ if(o.userData.phys && o.userData.nid!=null && !o.userData.noGrab) meshes.push(o); }
+  const meshes=[]; for(const o of dynamicProps){ if(o.userData.phys && o.userData.nid!=null && !o.userData.noGrab && !(_remoteHold[o.userData.nid])) meshes.push(o); }   // build 924: a prop a client is carrying isn't up for grabs
   const hits=_holdRay.intersectObjects(meshes, true);
   if(!hits.length) return null;
   let node=hits[0].object; while(node && !(node.userData && node.userData.phys)) node=node.parent;
@@ -18938,7 +18938,7 @@ function _driveOneHeld(body, target){
 function driveAllHeld(){
   if(NET.mode==='client') return;   // a pure client doesn't own physics; the host drives bodies
   if(heldProp){ const b=heldProp.userData.phys && heldProp.userData.phys.body; if(b){ if(_driveOneHeld(b, _localHoldTarget()) > HOLD_BREAK) releaseHeld(); } else heldProp=null; }
-  for(const nid in _remoteHold){ const h=_remoteHold[nid]; if(!h.target) continue; const o=dynamicById(nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ _holdTarget.set(h.target[0],h.target[1],h.target[2]); { const _hMin=terrainHeightAt(_holdTarget.x,_holdTarget.z)+0.6; if(_holdTarget.y<_hMin) _holdTarget.y=_hMin; } if(_driveOneHeld(b, _holdTarget) > HOLD_BREAK*1.5) delete _remoteHold[nid]; } else delete _remoteHold[nid]; }
+  for(const nid in _remoteHold){ const h=_remoteHold[nid]; if(!h.target) continue; const o=propByNid(nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ _holdTarget.set(h.target[0],h.target[1],h.target[2]); { const _hMin=terrainHeightAt(_holdTarget.x,_holdTarget.z)+0.6; if(_holdTarget.y<_hMin) _holdTarget.y=_hMin; } if(_driveOneHeld(b, _holdTarget) > HOLD_BREAK*1.5) delete _remoteHold[nid]; } else delete _remoteHold[nid]; }
 }
 function releaseHeld(){
   if(!heldProp) return;

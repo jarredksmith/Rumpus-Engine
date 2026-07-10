@@ -6,8 +6,8 @@ const src = gameSource();
 const aim = extractFunction('_aimedProp');
 assert(/o\.userData\.phys && o\.userData\.nid!=null && !o\.userData\.noGrab/.test(aim), 'gravity gun skips no-grab props');
 
-assert(/else if\(msg\.t==='grab'\)\{ const _go=dynamicById\(msg\.nid\); if\(_go && _go\.userData\.noGrab\) return;/.test(src), 'host rejects a no-grab grab');
-assert(/else if\(msg\.t==='hold'\)\{ const _ho=dynamicById\(msg\.nid\); if\(_ho && _ho\.userData\.noGrab\) return;/.test(src), 'host rejects a no-grab hold');
+assert(/else if\(msg\.t==='grab'\)\{ const _go=propByNid\(msg\.nid\); if\(!_go \|\| !_go\.userData\.phys \|\| _go\.userData\.noGrab\) return;/.test(src), 'host rejects a no-grab grab (build 924: nid lookup, and unknown/non-dynamic props refuse too)');
+assert(/else if\(msg\.t==='hold'\)\{ const _ho=propByNid\(msg\.nid\); if\(!_ho \|\| !_ho\.userData\.phys \|\| _ho\.userData\.noGrab \|\| heldProp===_ho\) return;/.test(src), 'host rejects a no-grab hold (build 924: nid lookup + host-carry contention)');
 
 assert(/grbcb\.checked=\(sel\.userData\.noGrab!==true\)/.test(src) && /sel\.userData\.noGrab = !grbcb\.checked;/.test(src), 'editor Grabbable checkbox toggles noGrab');
 assert(/<b>Grabbable<\/b>/.test(src), 'checkbox is labelled');
