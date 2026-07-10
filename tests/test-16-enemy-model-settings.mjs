@@ -3,7 +3,7 @@
 import { extractFunction, extractConst, gameSource, done, assert, eq } from './harness.mjs';
 const src = gameSource();
 
-assert(/const ENEMY_MODEL0 = \{ url:'', scale:1, face:0, cr:0, ch:0, yoff:0, xoff:0, zoff:0, clip:'', clips:\{ idle:'', walk:'', run:'', attack:'' \}, clipSpeed:\{\}, clipHold:\{\}, clipInPlace:\{\} \}/.test(src), 'per-type model defaults (build 501: + per-clip maps)');
+assert(/const ENEMY_MODEL0 = \{ url:'', scale:1, face:0, cr:0, ch:0, yoff:0, xoff:0, zoff:0, clip:'', animLib:'', clips:\{ idle:'', walk:'', run:'', attack:'' \}, clipSpeed:\{\}, clipHold:\{\}, clipInPlace:\{\} \}/.test(src), 'per-type model defaults (build 501: + per-clip maps; build 919: + animLib)');
 assert(/const enemyModels = \{\};/.test(src), 'per-type model map');
 assert(/applyEnemyModelData\(savedLevel && savedLevel\.enemies, savedLevel && savedLevel\.enemy\)/.test(src), 'loads per-type (legacy fallback) at startup');
 
@@ -36,7 +36,7 @@ eq(S.enemyModelCfg('runner').url, '', 'runner stays capsule when no model + no l
 const bev = extractFunction('buildEnemyVisual');
 assert(/const mc = enemyModelCfg\(body\.userData\.enemyType\)/.test(bev), 'visual uses the type config');
 assert(/if\(!mc\.url\)\{ useCapsule\(\); return; \}/.test(bev), 'no url -> capsule');
-assert(/loadGLTFCached\(mc\.url/.test(bev), 'loads the type model');
+assert(/_loadGLTFWithLib\(mc\.url, mc/.test(bev), 'loads the type model (via the anim-library shim, build 919)');
 assert(/-\s*lbox\.min\.y\s*-\s*1\.4\s*\+\s*mc\.yoff/.test(bev), 'seating adds the type Y offset');
 assert(/setEnemyHitProxy\(body, mc\.cr > 0 \? mc\.cr : body\.userData\.footprint/.test(bev), 'collider radius sizes the hit cylinder per type');
 assert(/footprint = 0\.9\*ty\.scale/.test(bev), 'capsule movement footprint is auto (decoupled from collider radius)');

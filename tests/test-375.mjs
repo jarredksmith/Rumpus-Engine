@@ -7,7 +7,7 @@ const src = gameSource();
 
 // ---- the reconciliation runs on the player's own model load ----
 assert(/playerModelClips = \(gltf\.animations\|\|\[\]\)\.map\(a=>a\.name\|\|''\);/.test(src), 'player model load discovers the new clip names');
-assert(/if\(playerModelClips\.length && playerModelCfg\.clips\)\{ for\(const _st in playerModelCfg\.clips\)\{ const _v=playerModelCfg\.clips\[_st\]; if\(_v && playerModelClips\.indexOf\(_v\)<0\) playerModelCfg\.clips\[_st\]=''; \} \}/.test(src),
+assert(/if\(playerModelClips\.length && playerModelCfg\.clips && !\(gltf\.userData && gltf\.userData\._libFailed\)\)\{ for\(const _st in playerModelCfg\.clips\)\{ const _v=playerModelCfg\.clips\[_st\]; if\(_v && playerModelClips\.indexOf\(_v\)<0\) playerModelCfg\.clips\[_st\]=''; \} \}/.test(src),
   'a new model prunes per-state picks that named the previous model\u2019s clips');
 
 // ---- the dropdown still merges saved picks (so a pre-discovery pick still shows) ----

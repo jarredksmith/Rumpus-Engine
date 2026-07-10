@@ -8597,6 +8597,161 @@ function _scheduleWarmCompile(){
   if(_warmCompileT) clearTimeout(_warmCompileT);
   _warmCompileT=setTimeout(()=>{ _warmCompileT=0; try{ renderer.compile(scene, (typeof camera!=='undefined'?camera:null)); }catch(e){} }, 250);
 }
+// ---------- Built-in animation library (build 919) ----------
+// One CC0 clip pack (Quaternius' Universal Animation Library) ships with the game; ticking "Use
+// built-in animation library" on a character/enemy model RETARGETS every clip onto that model's own
+// skeleton, so a rigged humanoid needs no Mixamo round-trips. Retarget = world-space rotation deltas
+// resampled at 24fps (works across bind-pose/axis conventions, unlike bare track renaming).
+const ANIM_LIB_PACKS = {
+  ual1: { label:'Universal Animation Library', by:'Quaternius', lic:'CC0', url:'anims/UAL1_Standard.glb',
+    // default per-state picks written into empty slots at attach (auto-by-name would mismatch, e.g. idle -> Crouch_Idle_Loop)
+    picks: { idle:'Idle_Loop', idleFidget:'Idle_Talking_Loop', walk:'Walk_Loop', walkBack:'Walk_Loop', strafeL:'Walk_Loop', strafeR:'Walk_Loop',
+      run:'Jog_Fwd_Loop', runBack:'Jog_Fwd_Loop', runStrafeL:'Jog_Fwd_Loop', runStrafeR:'Jog_Fwd_Loop', sprint:'Sprint_Loop',
+      crouch:'Crouch_Idle_Loop', crouchWalk:'Crouch_Fwd_Loop', crouchBack:'Crouch_Fwd_Loop', crouchStrafeL:'Crouch_Fwd_Loop', crouchStrafeR:'Crouch_Fwd_Loop',
+      jumpStart:'Jump_Start', jump:'Jump_Loop', fall:'Jump_Loop', jumpLand:'Jump_Land', hardLand:'Jump_Land',
+      aim:'Pistol_Aim_Neutral', attack:'Pistol_Shoot', reload:'Pistol_Reload',
+      meleeLight:'Punch_Jab', meleeHeavy:'Punch_Cross', meleeCombo:'Sword_Attack', dodge:'Roll', slide:'Roll',
+      hitFront:'Hit_Chest', hitBack:'Hit_Chest', hitLeft:'Hit_Chest', hitRight:'Hit_Chest', stagger:'Hit_Head',
+      die:'Death01', dieFront:'Death01', dieBack:'Death01', knockdown:'Death01' } }
+};
+// Canonical bone key across naming conventions: 'mixamorig:LeftForeArm' / 'lowerarm_l' / 'forearm.L'
+// all -> 'L:forearm'. Returns null for helpers we never retarget (leaf/end/twist/ik/eyes/root).
+function _canonBoneKey(name){
+  if(!name) return null;
+  let n = String(name);
+  n = n.slice(n.lastIndexOf('|')+1); n = n.slice(n.lastIndexOf(':')+1);          // 'Armature|mixamorig:LeftArm' -> 'LeftArm'
+  n = n.replace(/([a-z0-9])([A-Z])/g, '$1_$2');                                   // camelCase -> snake
+  let toks = n.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  toks = toks.filter(t => !/^(mixamorig\d*|armature|rig|skeleton|def|bip\d*|b)$/.test(t));
+  let side = '';
+  toks = toks.filter(t => { if(t==='l'||t==='left'){ side='L'; return false; } if(t==='r'||t==='right'){ side='R'; return false; } return true; });
+  if(!toks.length) return null;
+  let rest = toks.join('');
+  if(/leaf|end|top|twist|roll|^ik|ik$|eye|jaw|weapon|prop|attach|^root\d*$/.test(rest)) return null;
+  rest = rest.replace(/^hand(?=(thumb|index|middle|ring|pinky|little))/, '');      // Mixamo 'LeftHandThumb1' -> 'thumb1'
+  let m;
+  if(/^(hips?|pelvis)$/.test(rest)) return 'hips';
+  if(m = rest.match(/^spine(\d*)$/)) return 'spine@' + (parseInt(m[1]||'0',10));
+  if(/^(chest|upperchest)$/.test(rest)) return 'spine@' + (rest==='chest' ? 90 : 91);   // chest ranks after any numbered spine
+  if(m = rest.match(/^neck(\d*)$/)) return 'neck@' + (parseInt(m[1]||'0',10));
+  if(/^head$/.test(rest)) return 'head';
+  if(m = rest.match(/^(thumb|index|middle|ring|pinky|little)0?([1-3])$/)) return side ? (side+':'+(m[1]==='little'?'pinky':m[1])+m[2]) : null;
+  if(!side) return null;                                                           // limbs below are side-only
+  if(/^(shoulder|clavicle|collarbone|collar)$/.test(rest)) return side+':shoulder';
+  if(/^(upperarm|uparm|arm|bicep)$/.test(rest)) return side+':uparm';
+  if(/^(forearm|lowerarm|elbow)$/.test(rest)) return side+':forearm';
+  if(/^(hand|wrist)$/.test(rest)) return side+':hand';
+  if(/^(upleg|thigh|upperleg)$/.test(rest)) return side+':upleg';
+  if(/^(leg|calf|shin|lowerleg|knee)$/.test(rest)) return side+':lowleg';          // Mixamo 'LeftLeg' = shin
+  if(/^(foot|ankle)$/.test(rest)) return side+':foot';
+  if(/^(toe|toes|ball|toebase)$/.test(rest)) return side+':toe';
+  return null;
+}
+// Pair the two skeletons by canonical key. Spine/neck chains of different lengths pair proportionally.
+// Returns { pairs:[{dst,src}], hips:{dst,src} } or null when the rigs don't share a humanoid core.
+function _buildBoneMap(dstRoot, srcRoot){
+  const gather = (root)=>{ const m=new Map(); root.traverse(o=>{ if(!o.name) return; const k=_canonBoneKey(o.name); if(!k) return;
+    const cur=m.get(k); if(!cur || (o.isBone && !cur.isBone)) m.set(k,o); }); return m; };
+  const D=gather(dstRoot), S=gather(srcRoot);
+  const pairs=[]; const used=new Set();
+  const chain=(base)=>{ const dk=[...D.keys()].filter(k=>k.indexOf(base+'@')===0).sort((a,b)=>(+a.split('@')[1])-(+b.split('@')[1]));
+    const sk=[...S.keys()].filter(k=>k.indexOf(base+'@')===0).sort((a,b)=>(+a.split('@')[1])-(+b.split('@')[1]));
+    if(!dk.length || !sk.length) return;
+    for(let i=0;i<dk.length;i++){ const j=Math.round(i*(sk.length-1)/Math.max(1,dk.length-1)); pairs.push({ dst:D.get(dk[i]), src:S.get(sk[j]) }); used.add(dk[i]); }
+  };
+  chain('spine'); chain('neck');
+  for(const [k,dst] of D){ if(used.has(k) || k.indexOf('@')>=0) continue; const src=S.get(k); if(src) pairs.push({ dst, src }); }
+  const has=(k)=>pairs.some(p=>_canonBoneKey(p.dst.name)===k);
+  if(!(has('hips') && has('head') && has('L:uparm') && has('R:uparm') && has('L:upleg') && has('R:upleg'))) return null;
+  const hp=pairs.find(p=>_canonBoneKey(p.dst.name)==='hips');
+  return { pairs, hips:hp };
+}
+// Retarget one clip: world-space rotation delta per mapped bone, resampled at `fps`, written as
+// quaternion tracks named for the TARGET rig's bones (+ a hip-position track scaled to hip height).
+// Neither skeleton is left mutated; the source root is posed by a throwaway mixer during sampling.
+function _retargetClip(dstRoot, srcRoot, clip, map, fps){
+  fps = fps || 24;
+  dstRoot.updateWorldMatrix(true, true); srcRoot.updateWorldMatrix(true, true);
+  const P = map.pairs.map(p=>({ dst:p.dst, src:p.src,
+    srcRestInv: p.src.getWorldQuaternion(new THREE.Quaternion()).invert(),
+    dstRestW:   p.dst.getWorldQuaternion(new THREE.Quaternion()),
+    times:[], q:[] }));
+  const byDst = new Map(P.map(p=>[p.dst, p]));
+  const hips = map.hips; const hd = byDst.get(hips.dst);
+  const srcHipRest = hips.src.getWorldPosition(new THREE.Vector3());
+  const dstHipRest = hips.dst.getWorldPosition(new THREE.Vector3());
+  const dstHipRestLocal = hips.dst.position.clone();
+  const hipParentInv = new THREE.Matrix4(); if(hips.dst.parent){ hips.dst.parent.updateWorldMatrix(true,false); hipParentInv.copy(hips.dst.parent.matrixWorld).invert(); }
+  const hipScale = (Math.abs(srcHipRest.y) > 1e-4) ? (dstHipRest.y / srcHipRest.y) : 1;
+  const hipPos = [];
+  const mixer = new THREE.AnimationMixer(srcRoot);
+  const action = mixer.clipAction(clip); action.play();
+  const frames = Math.max(2, Math.round(clip.duration * fps) + 1);
+  const _qa=new THREE.Quaternion(), _qb=new THREE.Quaternion(), _v=new THREE.Vector3();
+  const walk = (node, parentWQ, t)=>{
+    const pr = byDst.get(node);
+    let local = node.quaternion;                       // unmapped bones hold their rest local
+    if(pr){
+      pr.src.getWorldQuaternion(_qa);                  // src world now
+      _qa.multiply(pr.srcRestInv).multiply(pr.dstRestW);       // delta * dstRest = target dst WORLD
+      _qb.copy(parentWQ).invert().multiply(_qa);               // -> dst LOCAL under the posed parent
+      pr.times.push(t); pr.q.push(_qb.x,_qb.y,_qb.z,_qb.w);
+      local = _qb;
+    }
+    const w = new THREE.Quaternion().copy(parentWQ).multiply(local);
+    for(const c of node.children) walk(c, w, t);
+  };
+  const rootWQ = new THREE.Quaternion(); if(dstRoot.parent) dstRoot.parent.getWorldQuaternion(rootWQ);
+  for(let f=0; f<frames; f++){
+    const t = Math.min(clip.duration - 1e-5, f / fps);
+    mixer.setTime(t); srcRoot.updateWorldMatrix(true, true);
+    walk(dstRoot, rootWQ, t);
+    hips.src.getWorldPosition(_v).sub(srcHipRest).multiplyScalar(hipScale).add(dstHipRest);   // world target
+    _v.applyMatrix4(hipParentInv);                                                            // into the hips' (rest) parent space
+    hipPos.push(_v.x, _v.y, _v.z);
+  }
+  mixer.stopAllAction(); mixer.uncacheRoot(srcRoot);
+  const tracks = [];
+  for(const pr of P){ if(pr.times.length) tracks.push(new THREE.QuaternionKeyframeTrack(pr.dst.name+'.quaternion', pr.times.slice(), pr.q)); }
+  if(hd) tracks.push(new THREE.VectorKeyframeTrack(hips.dst.name+'.position', hd.times.slice(), hipPos));
+  if(!tracks.length) return null;
+  return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+}
+// Attach (retarget + cache) a pack's clips onto a model's gltf. Idempotent per (gltf, pack).
+let _libToastAt = 0;
+function _animLibAttach(gltf, packId, cb){
+  if(gltf.userData && gltf.userData._libFor === packId && gltf.userData._libAnims){ cb(true, gltf.userData._libAnims.length); return; }
+  const pack = ANIM_LIB_PACKS[packId]; if(!pack || !gltf || !gltf.scene){ cb(false, 0); return; }
+  loadGLTFCached(pack.url, (pk)=>{
+    try{
+      const srcScene = THREE.cloneSkinned ? THREE.cloneSkinned(pk.scene) : pk.scene.clone(true);   // fresh clone = rest pose, and sampling never dirties the cached pack
+      const map = _buildBoneMap(gltf.scene, srcScene);
+      if(!map){ gltf.userData._libFailed='rig'; if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — auto-rig it (e.g. on Mixamo) and re-import'); } cb(false, 0); return; }
+      const out = [];
+      for(const c of (pk.animations||[])){ if(/t.?pose|bind.?pose/i.test(c.name||'')) continue;
+        try{ const rc=_retargetClip(gltf.scene, srcScene, c, map); if(rc) out.push(rc); }catch(e){} }
+      gltf.userData._libAnims = out; gltf.userData._libFor = packId; delete gltf.userData._libFailed;
+      cb(out.length > 0, out.length);
+    }catch(e){ console.warn('Animation library attach failed:', e && e.message); gltf.userData._libFailed='err'; cb(false, 0); }
+  }, ()=>{ gltf.userData._libFailed='net'; if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library could not be downloaded — model keeps its own clips'); } cb(false, 0); });
+}
+// Load-path shim: when the model's cfg opts into a pack, hand the builder an augmented gltf view whose
+// animations include the retargeted library clips (the pickers + state machine see them as the model's own).
+function _withLibAnims(gltf, cfg, done){
+  const packId = cfg && cfg.animLib;
+  if(!packId || !ANIM_LIB_PACKS[packId] || !gltf || !gltf.scene){ done(gltf); return; }
+  _animLibAttach(gltf, packId, (ok)=>{
+    if(!ok){ done(gltf); return; }
+    done({ scene:gltf.scene, scenes:gltf.scenes, animations:(gltf.animations||[]).concat(gltf.userData._libAnims), userData:gltf.userData, parser:gltf.parser });
+  });
+}
+function _loadGLTFWithLib(url, cfg, cb, errcb){ loadGLTFCached(url, (g)=>_withLibAnims(g, cfg, cb), errcb); }
+// Write the pack's default per-state picks into slots the author hasn't set (auto-by-name would mismatch).
+function _animLibDefaultPicks(cfg, packId){
+  const pack = ANIM_LIB_PACKS[packId]; if(!pack || !pack.picks) return;
+  if(!cfg.clips) cfg.clips = { idle:'', walk:'', run:'', attack:'' };
+  for(const st in pack.picks){ if(!cfg.clips[st]) cfg.clips[st] = pack.picks[st]; }
+}
 // build 917: GLBs whose textures are KTX2/Basis-compressed (KHR_texture_basisu) need a KTX2Loader on
 // the GLTFLoader; without one the loader threw "setKTX2Loader must be called" and the model fell back
 // to a capsule. Pull the transcoder from CDN the first time such a texture is actually seen (zero cost
@@ -10451,7 +10606,7 @@ const enemyGeo = new THREE.CapsuleGeometry(0.7, 1.4, 4, 10);
 // AI / collision / networking code is unchanged — only the visual child swaps.
 // Per-enemy-type model config: each type (grunt/runner/brute/gunner) gets its own GLB + framing.
 // Back-compat: an old single-model level (savedLevel.enemy) is applied to every type.
-const ENEMY_MODEL0 = { url:'', scale:1, face:0, cr:0, ch:0, yoff:0, xoff:0, zoff:0, clip:'', clips:{ idle:'', walk:'', run:'', attack:'' }, clipSpeed:{}, clipHold:{}, clipInPlace:{} };   // clip='' legacy single; clips = per-state overrides ('' = auto by name)
+const ENEMY_MODEL0 = { url:'', scale:1, face:0, cr:0, ch:0, yoff:0, xoff:0, zoff:0, clip:'', animLib:'', clips:{ idle:'', walk:'', run:'', attack:'' }, clipSpeed:{}, clipHold:{}, clipInPlace:{} };   // clip='' legacy single; clips = per-state overrides ('' = auto by name)
 const enemyModels = {};
 const enemyModelClips = {};   // typeKey -> animation clip names discovered when its model loads
 function enemyModelCfg(typeKey){
@@ -10464,7 +10619,7 @@ function enemyModelCfg(typeKey){
 function applyEnemyModelData(perType, legacy){   // perType = new map, legacy = old single config
   for(const k of ENEMY_TYPE_KEYS){
     const src = (perType && perType[k]) || legacy || {};
-    enemyModels[k] = { url: src.url||'', scale: src.scale||1, face: src.face||0, cr: src.cr||0, ch: src.ch||0, yoff: src.yoff||0, xoff: src.xoff||0, zoff: src.zoff||0, clip: src.clip||'', clips: Object.assign({ idle:'', walk:'', run:'', attack:'' }, src.clips||{}), clipSpeed: Object.assign({}, src.clipSpeed||{}), clipHold: Object.assign({}, src.clipHold||{}), clipInPlace: Object.assign({}, src.clipInPlace||{}) };
+    enemyModels[k] = { url: src.url||'', scale: src.scale||1, face: src.face||0, cr: src.cr||0, ch: src.ch||0, yoff: src.yoff||0, xoff: src.xoff||0, zoff: src.zoff||0, clip: src.clip||'', animLib: (typeof src.animLib==='string' && ANIM_LIB_PACKS[src.animLib]) ? src.animLib : '', clips: Object.assign({ idle:'', walk:'', run:'', attack:'' }, src.clips||{}), clipSpeed: Object.assign({}, src.clipSpeed||{}), clipHold: Object.assign({}, src.clipHold||{}), clipInPlace: Object.assign({}, src.clipInPlace||{}) };
   }
 }
 applyEnemyModelData(savedLevel && savedLevel.enemies, savedLevel && savedLevel.enemy);
@@ -10514,11 +10669,11 @@ function buildEnemyVisual(body){
   };
   if(!mc.url){ useCapsule(); return; }
   useCapsule();   // show the capsule immediately; replace it when the GLB arrives
-  loadGLTFCached(mc.url,
+  _loadGLTFWithLib(mc.url, mc,
     (gltf)=>{
       if(enemyModelCfg(body.userData.enemyType).url !== mc.url) return;   // the type's URL changed before this load resolved — drop the stale model
       enemyModelClips[body.userData.enemyType] = (gltf.animations||[]).map(a=>a.name||'');   // expose clip names to the editor
-      if(enemyModelClips[body.userData.enemyType].length && mc.clips){ for(const _st in mc.clips){ const _v=mc.clips[_st]; if(_v && enemyModelClips[body.userData.enemyType].indexOf(_v)<0) mc.clips[_st]=''; } }   // build 501: a different model arrived -> drop per-state picks that named the previous model's clips
+      if(enemyModelClips[body.userData.enemyType].length && mc.clips && !(gltf.userData && gltf.userData._libFailed)){ for(const _st in mc.clips){ const _v=mc.clips[_st]; if(_v && enemyModelClips[body.userData.enemyType].indexOf(_v)<0) mc.clips[_st]=''; } }   // build 501: a different model arrived -> drop per-state picks that named the previous model's clips (build 919: not when the anim library failed to attach)
       if(body.userData.visual){ body.remove(body.userData.visual); body.userData.visual=null; }
       const model = THREE.cloneSkinned(gltf.scene);
       const ty = ENEMY_TYPES[body.userData.enemyType] || ENEMY_TYPES.grunt;
@@ -13828,11 +13983,11 @@ function disposeAvatarLabel(mesh){
 }
 const remoteBodyGeo = new THREE.CapsuleGeometry(0.5, 1.2, 4, 8);
 // ---- Player avatar (what teammates / duel opponents see). Default = blue capsule; swappable for a GLB. ----
-const PLAYER_MODEL0 = { url:'', scale:1, face:0, rx:0, rz:0, yoff:0, xoff:0, zoff:0, thumb:'', clips:{ idle:'', walk:'', run:'', attack:'' } };   // thumb = Poly Pizza/Sketchfab preview image; face/rx/rz in radians
+const PLAYER_MODEL0 = { url:'', scale:1, face:0, rx:0, rz:0, yoff:0, xoff:0, zoff:0, thumb:'', animLib:'', clips:{ idle:'', walk:'', run:'', attack:'' } };   // thumb = Poly Pizza/Sketchfab preview image; face/rx/rz in radians
 let playerModelCfg = Object.assign({}, PLAYER_MODEL0, { clips:{ idle:'', walk:'', run:'', attack:'' }, clipSpeed:{}, clipHold:{}, clipInPlace:{} });
 function _sanitizeGrip1(g){ if(!g||typeof g!=='object') return null; const n=(v,d)=>{ const x=+v; return isFinite(x)?x:d; }; return { x:n(g.x,0), y:n(g.y,0), z:n(g.z,0), yaw:n(g.yaw,0), pitch:n(g.pitch,0), roll:n(g.roll,0), scale:n(g.scale,1) }; }
 function _sanitizeGripMap(m){ const o={}; if(m && typeof m==='object'){ for(const k in m){ const g=_sanitizeGrip1(m[k]); if(g) o[k]=g; } } return o; }   // build 524: per-weapon held-gun grips baked into a roster character travel with the level
-function _sanitizeCharCfg(c){ c=c||{}; return { name:(typeof c.name==='string'&&c.name)||'Character', url:c.url||'', scale:+c.scale||1, face:+c.face||0, rx:+c.rx||0, rz:+c.rz||0, xoff:+c.xoff||0, yoff:+c.yoff||0, zoff:+c.zoff||0, thumb:(typeof c.thumb==='string'?c.thumb:''), clips:Object.assign({idle:'',walk:'',run:'',attack:''}, (c.clips&&typeof c.clips==='object')?c.clips:{}), clipSpeed:Object.assign({}, (c.clipSpeed&&typeof c.clipSpeed==='object')?c.clipSpeed:{}), clipHold:Object.assign({}, (c.clipHold&&typeof c.clipHold==='object')?c.clipHold:{}), clipInPlace:Object.assign({}, (c.clipInPlace&&typeof c.clipInPlace==='object')?c.clipInPlace:{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) }; }
+function _sanitizeCharCfg(c){ c=c||{}; return { name:(typeof c.name==='string'&&c.name)||'Character', url:c.url||'', scale:+c.scale||1, face:+c.face||0, rx:+c.rx||0, rz:+c.rz||0, xoff:+c.xoff||0, yoff:+c.yoff||0, zoff:+c.zoff||0, thumb:(typeof c.thumb==='string'?c.thumb:''), animLib:(typeof c.animLib==='string' && ANIM_LIB_PACKS[c.animLib])?c.animLib:'', clips:Object.assign({idle:'',walk:'',run:'',attack:''}, (c.clips&&typeof c.clips==='object')?c.clips:{}), clipSpeed:Object.assign({}, (c.clipSpeed&&typeof c.clipSpeed==='object')?c.clipSpeed:{}), clipHold:Object.assign({}, (c.clipHold&&typeof c.clipHold==='object')?c.clipHold:{}), clipInPlace:Object.assign({}, (c.clipInPlace&&typeof c.clipInPlace==='object')?c.clipInPlace:{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) }; }
 let charRoster = (savedLevel && Array.isArray(savedLevel.roster)) ? savedLevel.roster.map(_sanitizeCharCfg) : [];   // authored multiplayer character models
 let myRosterIdx = -1;   // which roster character the local player picked (-1 = default player model)
 const CHARACTERS = [
@@ -14035,7 +14190,7 @@ function buildAvatarVisual(g, cfg){
   if(!mc.url){ useCapsule(); return; }
   useCapsule();   // placeholder until the GLB arrives
   g.userData._loadingUrl = mc.url;   // per-group token so a stale load is discarded (NOT tied to the local player's model)
-  loadGLTFCached(mc.url,
+  _loadGLTFWithLib(mc.url, mc,
     (gltf)=>{
       if(g.userData._loadingUrl!==mc.url) return;   // a newer model was requested for THIS avatar before the load resolved
       if(g.userData.visual){ g.remove(g.userData.visual); g.userData.visual=null; }
@@ -14062,7 +14217,7 @@ function buildAvatarVisual(g, cfg){
       const hb=h*0.82; const px=new THREE.Mesh(new THREE.CylinderGeometry(fr,fr,hb,10), _ENEMY_PROXY_MAT); px.position.y=hb/2; g.add(px); g.userData.hitProxy=px; if(g.userData.noHit) px.raycast=()=>{};
       const rs=Math.min(Math.max(fr*0.7,0.26),0.45); const hpx=_mkHeadProxy(h-rs, rs); g.add(hpx); g.userData.headProxy=hpx; if(g.userData.noHit) hpx.raycast=()=>{};
       if(mc===playerModelCfg){ playerModelClips = (gltf.animations||[]).map(a=>a.name||'');
-        if(playerModelClips.length && playerModelCfg.clips){ for(const _st in playerModelCfg.clips){ const _v=playerModelCfg.clips[_st]; if(_v && playerModelClips.indexOf(_v)<0) playerModelCfg.clips[_st]=''; } }   // a different model arrived: drop per-state picks that named the PREVIOUS model's clips so the picker stops listing stale options (those states fall back to Auto-by-name)
+        if(playerModelClips.length && playerModelCfg.clips && !(gltf.userData && gltf.userData._libFailed)){ for(const _st in playerModelCfg.clips){ const _v=playerModelCfg.clips[_st]; if(_v && playerModelClips.indexOf(_v)<0) playerModelCfg.clips[_st]=''; } }   // a different model arrived: drop per-state picks that named the PREVIOUS model's clips so the picker stops listing stale options (those states fall back to Auto-by-name). build 919: skip when the anim library failed to attach, so a transient pack-download failure can't erase library picks
         if(typeof refreshPlayerClipOptions==='function') refreshPlayerClipOptions(); }   // clip names feed the editor for the local model only
       const mx=playEnemyStates(model, gltf, mc.clips); model.userData.animCfg = mc;   // idle/walk/run, crossfaded by the avatar's movement
       if(mx) g.userData.mixer=mx;
@@ -17847,7 +18002,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 918 · 2026-07-09';
+const BUILD_VERSION = 'build 919 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22467,7 +22622,7 @@ function prsTransform(min,max,perAxisScale){
 }
 
 function applyPlayerLevel(pl){ if(!pl) return; if(pl.state) Object.assign(editorTargets.player.state, pl.state);
-  playerModelCfg.url=(pl.url||'').trim(); playerModelCfg.thumb=(pl.thumb||''); const s=editorTargets.player.state;
+  playerModelCfg.url=(pl.url||'').trim(); playerModelCfg.thumb=(pl.thumb||''); playerModelCfg.animLib=(typeof pl.animLib==='string' && ANIM_LIB_PACKS[pl.animLib])?pl.animLib:''; const s=editorTargets.player.state;
   playerModelCfg.scale=s.s||1; playerModelCfg.face=(s.face||0)*RAD; playerModelCfg.yoff=s.yoff||0; playerModelCfg.xoff=s.xoff||0; playerModelCfg.zoff=s.zoff||0;
   playerModelCfg.clips=Object.assign({ idle:'', walk:'', run:'', attack:'' }, pl.clips||{}); playerModelCfg.clipSpeed=Object.assign({}, pl.clipSpeed||{}); playerModelCfg.clipHold=Object.assign({}, pl.clipHold||{}); playerModelCfg.clipInPlace=Object.assign({}, pl.clipInPlace||{}); rebuildAvatars(); }
 const editorTargets = {
@@ -23898,7 +24053,7 @@ function serializeLevel(){
     stationEnabled: !!stationEnabled,   // build 654: the ammo station is optional per level
     hud: _sanitizeHud(hudCfg),   // build 665: per-level HUD theme + visibility
     radial: _sanitizeRadial(radialCfg),   // build 671: the in-game build/deploy menu
-    player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}) },
+    player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', animLib: playerModelCfg.animLib||'', state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}) },
     world:   Object.assign({}, worldCfg),
     chest:   { url: chestModelUrl, scale: chestModelScale, randomOff: !randomLootOn },
     coin:    { url: coinCfg.url, scale: coinCfg.scale, on: coinCfg.on !== false },
@@ -25842,6 +25997,16 @@ function renderEditorFields(){
     eFaceRow.appendChild(efSp); eFaceRow.appendChild(efSel); eHost.appendChild(eFaceRow);
     // animation states — map each baked clip to a behavior; auto = picked by clip name. Switches live in-game.
     hint(eHost, '<b>Animation states</b> — auto-matched by clip name; override per state. In-game: walk/run while moving, attack in melee or fire range, idle when still.', '6px 0 2px');
+    { // build 919: built-in animation library — retargets the CC0 pack onto this enemy's skeleton
+      const libRow=document.createElement('label'); libRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;cursor:pointer;';
+      const libCb=document.createElement('input'); libCb.type='checkbox'; libCb.style.cssText='width:14px;height:14px;accent-color:var(--accent);'; libCb.checked = mc.animLib==='ual1';
+      libCb.onchange=()=>{ pushUndoSnapshot();
+        if(libCb.checked){ mc.animLib='ual1'; _animLibDefaultPicks(mc,'ual1'); }
+        else { mc.animLib=''; }
+        refreshEnemyVisuals(); };
+      const libSp=document.createElement('span'); libSp.innerHTML='Use built-in animation library <span style="color:#7fb8a6">(retargeted onto this rig; Quaternius, CC0)</span>';
+      libRow.appendChild(libCb); libRow.appendChild(libSp); eHost.appendChild(libRow);
+    }
     _animSlotFolds(eHost, 'eAnim', { 'Idle & standing':true, 'Locomotion (ground)':true }, (foldBody, _slot)=>{
       const stKey=_slot.k, stLabel=_slot.l;
       const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;';
@@ -27302,6 +27467,16 @@ function renderEditorFields(){
     if(tgt===editorTargets.player){   // avatar animation states (mirror the enemy state machine)
       const acHead=document.createElement('div'); acHead.className='hint'; acHead.style.margin='10px 0 2px'; acHead.innerHTML='<b>Animation states</b> — auto-matched by clip name; override per state. Walk/run switch with the avatar\u2019s movement in-game.';
       urlHost.appendChild(acHead);
+      { // build 919: built-in animation library — retargets the CC0 pack onto this model's skeleton
+        const libRow=document.createElement('label'); libRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;cursor:pointer;';
+        const libCb=document.createElement('input'); libCb.type='checkbox'; libCb.style.cssText='width:14px;height:14px;accent-color:var(--accent);'; libCb.checked = playerModelCfg.animLib==='ual1';
+        libCb.onchange=()=>{ pushUndoSnapshot();
+          if(libCb.checked){ playerModelCfg.animLib='ual1'; _animLibDefaultPicks(playerModelCfg,'ual1'); }
+          else { playerModelCfg.animLib=''; }
+          rebuildAvatars(); };
+        const libSp=document.createElement('span'); libSp.innerHTML='Use built-in animation library <span style="color:#7fb8a6">(walk/run/jump/shoot/melee/death + more — retargeted onto this rig; Quaternius, CC0)</span>';
+        libRow.appendChild(libCb); libRow.appendChild(libSp); urlHost.appendChild(libRow);
+      }
       _animSlotFolds(urlHost, 'pAnim', { 'Idle & standing':true, 'Locomotion (ground)':true }, (foldBody, _slot)=>{
         const stKey=_slot.k, stLabel=_slot.l;
         const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;';
@@ -29385,7 +29560,8 @@ const LIB_CREDITS = [
   { name:'three.js', by:'Ricardo Cabello (mrdoob) & contributors', lic:'MIT', url:'https://threejs.org' },
   { name:'Rapier (@dimforge/rapier3d-compat)', by:'Dimforge', lic:'Apache-2.0', url:'https://rapier.rs' },
   { name:'PeerJS', by:'PeerJS contributors', lic:'MIT', url:'https://peerjs.com' },
-  { name:'Google Fonts (Rajdhani, Orbitron, JetBrains Mono + the HUD faces)', by:'their type designers', lic:'SIL OFL 1.1', url:'https://fonts.google.com' }   // build 835: the HUD font stack is a shipped dependency too
+  { name:'Google Fonts (Rajdhani, Orbitron, JetBrains Mono + the HUD faces)', by:'their type designers', lic:'SIL OFL 1.1', url:'https://fonts.google.com' },   // build 835: the HUD font stack is a shipped dependency too
+  { name:'Universal Animation Library (built-in character animations)', by:'Quaternius', lic:'CC0', url:'https://quaternius.com' }   // build 919: the retargetable clip pack shipped in /anims
 ];
 const ASSET_SOURCES = [
   { name:'Poly Pizza', note:'low-poly 3D models (CC0 / CC-BY)', url:'https://poly.pizza' },

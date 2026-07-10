@@ -12,7 +12,7 @@ assert(/clips: Object\.assign\(\{ idle:'', walk:'', run:'', attack:'' \}, src\.c
 assert(/clips:Object\.assign\(\{\}, m\.clips\), clipSpeed:Object\.assign\(\{\}, m\.clipSpeed\|\|\{\}\), clipHold:Object\.assign\(\{\}, m\.clipHold\|\|\{\}\), clipInPlace:Object\.assign\(\{\}, m\.clipInPlace\|\|\{\}\)/.test(src), 'the level save persists the enemy maps');
 
 // ---- prune stale picks when a different enemy model loads (mirror of build 499) ----
-assert(/if\(enemyModelClips\[body\.userData\.enemyType\]\.length && mc\.clips\)\{ for\(const _st in mc\.clips\)\{ const _v=mc\.clips\[_st\]; if\(_v && enemyModelClips\[body\.userData\.enemyType\]\.indexOf\(_v\)<0\) mc\.clips\[_st\]=''; \} \}/.test(src), 'a new enemy model drops per-state picks that named the previous model\u2019s clips');
+assert(/if\(enemyModelClips\[body\.userData\.enemyType\]\.length && mc\.clips && !\(gltf\.userData && gltf\.userData\._libFailed\)\)\{ for\(const _st in mc\.clips\)\{ const _v=mc\.clips\[_st\]; if\(_v && enemyModelClips\[body\.userData\.enemyType\]\.indexOf\(_v\)<0\) mc\.clips\[_st\]=''; \} \}/.test(src), 'a new enemy model drops per-state picks that named the previous model\u2019s clips');
 
 // ---- the enemy editor exposes the same per-clip controls + clickable preview ----
 assert(/if\(typeof previewEnemy!=='undefined' && previewEnemy\) setEnemyAnimState\(previewEnemy, stKey\)/.test(src), 'enemy state label previews the clip on click');
