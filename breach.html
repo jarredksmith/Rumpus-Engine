@@ -8638,6 +8638,7 @@ const ANIM_LIB_PACKS = {
 };
 // Canonical bone key across naming conventions: 'mixamorig:LeftForeArm' / 'lowerarm_l' / 'forearm.L'
 // all -> 'L:forearm'. Returns null for helpers we never retarget (leaf/end/twist/ik/eyes/root).
+function _canonSuffixRetry(name){ const _s=String(name).replace(/[_\.]\d+$/, ''); return (_s!==String(name)) ? _canonBoneKey(_s) : null; }   // build 930: Sketchfab dedup suffixes ('Hips_01') — strip and retry
 function _canonBoneKey(name){
   if(!name) return null;
   let n = String(name);
@@ -8657,8 +8658,8 @@ function _canonBoneKey(name){
   if(/^(chest|upperchest)$/.test(rest)) return 'spine@' + (rest==='chest' ? 90 : 91);   // chest ranks after any numbered spine
   if(m = rest.match(/^neck(\d*)$/)) return 'neck@' + (parseInt(m[1]||'0',10));
   if(/^head$/.test(rest)) return 'head';
-  if(m = rest.match(/^(thumb|index|middle|ring|pinky|little)0?([1-3])$/)) return side ? (side+':'+(m[1]==='little'?'pinky':m[1])+m[2]) : null;
-  if(!side) return null;                                                           // limbs below are side-only
+  if(m = rest.match(/^(thumb|index|middle|ring|pinky|little)0?([1-3])$/)) return side ? (side+':'+(m[1]==='little'?'pinky':m[1])+m[2]) : _canonSuffixRetry(name);
+  if(!side) return _canonSuffixRetry(name);                                        // limbs below are side-only (build 930: sideless misses retry without the Sketchfab suffix)
   if(/^(shoulder|clavicle|collarbone|collar)$/.test(rest)) return side+':shoulder';
   if(/^(upperarm|uparm|arm|bicep)$/.test(rest)) return side+':uparm';
   if(/^(forearm|lowerarm|elbow)$/.test(rest)) return side+':forearm';
@@ -8667,7 +8668,11 @@ function _canonBoneKey(name){
   if(/^(leg|calf|shin|lowerleg|knee)$/.test(rest)) return side+':lowleg';          // Mixamo 'LeftLeg' = shin
   if(/^(foot|ankle)$/.test(rest)) return side+':foot';
   if(/^(toe|toes|ball|toebase)$/.test(rest)) return side+':toe';
-  return null;
+  // build 930: Sketchfab's glTF pipeline dedupes node names with numeric suffixes
+  // ('mixamorig:Hips_01', 'LeftArm_07'), which broke every exact match above — the whole rig read
+  // as "no humanoid bones". Retry with the trailing suffix stripped. UE-style meaningful indices
+  // (spine_01, thumb_01_l) match on the FIRST pass, so they never reach this.
+  return _canonSuffixRetry(name);
 }
 // Pair the two skeletons by canonical key. Spine/neck chains of different lengths pair proportionally.
 // Returns { pairs:[{dst,src}], hips:{dst,src} } or null when the rigs don't share a humanoid core.
@@ -8782,7 +8787,9 @@ function _animLibAttach(gltf, packId, cb){
       _composePackClips(pk.animations);   // build 925: synthesize armed / move-fire composites once per pack
       const srcScene = THREE.cloneSkinned ? THREE.cloneSkinned(pk.scene) : pk.scene.clone(true);   // fresh clone = rest pose, and sampling never dirties the cached pack
       const map = _buildBoneMap(gltf.scene, srcScene);
-      if(!map){ gltf.userData._libFailed='rig'; if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — auto-rig it (e.g. on Mixamo) and re-import'); } cb(false, 0); return; }
+      if(!map){ gltf.userData._libFailed='rig';
+        try{ const _nm=[]; gltf.scene.traverse(o=>{ if(o.isBone && _nm.length<12) _nm.push(o.name); }); console.warn('[BREACH] Animation library: no humanoid core in this rig. Bone names sampled:', _nm.join(', ') || '(no bones found at all)'); }catch(e){}
+        if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — auto-rig it (e.g. on Mixamo) and re-import'); } cb(false, 0); return; }
       const out = [];
       for(const c of (pk.animations||[])){ if(/t.?pose|bind.?pose/i.test(c.name||'')) continue;
         try{ const rc=_retargetClip(gltf.scene, srcScene, c, map); if(rc) out.push(rc); }catch(e){} }
@@ -18168,7 +18175,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 929 · 2026-07-10';
+const BUILD_VERSION = 'build 930 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
