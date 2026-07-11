@@ -12,6 +12,6 @@ const val = extractFunction('_bmValidate', src);
 assert(/if\(!o \|\| !o\.userData \|\| !o\.userData\.runtime\) continue;/.test(val),
   'occupancy counts only player-built pieces — a level prop cannot veto placements inside its huge AABB');
 assert(/bx\.intersectsBox\(_bmBox\)/.test(val), 'occupied runtime cells still refuse');
-assert(/player\.radius\+0\.05/.test(val), 'the self-overlap veto is untouched');
+assert(/feet\+STEP/.test(val) && /M=0\.12/.test(val), 'the self-overlap veto mirrors insideSolid (centre column, step band — build 932)');
 
 done('build 931: you can build on top of anything again — occupancy only guards your own blocks');

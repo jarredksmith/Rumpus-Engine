@@ -18175,7 +18175,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 931 · 2026-07-10';
+const BUILD_VERSION = 'build 932 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19269,9 +19269,9 @@ function _bmValidate(){
   _bmBox.min.set(g.x-hx+0.06, g.y+b.foot+0.06, g.z-hz+0.06);          // shrunken ghost box: flush neighbours never read as overlap
   _bmBox.max.set(g.x+hx-0.06, g.y+b.foot+b.size.y-0.06, g.z+hz-0.06);
   let bad=false;
-  { const R=player.radius+0.05, feet=player.pos.y-EYE, head=feet+effPlayerHeight();   // the player's own body
-    if(player.pos.x>_bmBox.min.x-R && player.pos.x<_bmBox.max.x+R && player.pos.z>_bmBox.min.z-R && player.pos.z<_bmBox.max.z+R
-       && _bmBox.min.y<head && _bmBox.max.y>feet) bad=true; }
+  { const feet=player.pos.y-EYE, lo=feet+STEP, hi=feet+effPlayerHeight(), M=0.12;   // build 932: mirror insideSolid EXACTLY — the phase-out allowance only fires when the player's CENTER column is inside a solid above step height. The old radius-padded test vetoed any stack placed while standing beside the base block ("still not letting me stack"); grazing your shoulder is harmless (clearAt just blocks you), so only a center overlap refuses.
+    if(player.pos.x>_bmBox.min.x-M && player.pos.x<_bmBox.max.x+M && player.pos.z>_bmBox.min.z-M && player.pos.z<_bmBox.max.z+M
+       && _bmBox.min.y<hi && _bmBox.max.y>lo) bad=true; }
   if(!bad){ for(const o of propModels){ if(!o || !o.userData || !o.userData.runtime) continue; const bx=o.userData.box; if(bx && bx.intersectsBox(_bmBox)){ bad=true; break; } } }   // an occupied cell — build 931: only PLAYER-BUILT pieces count; a level prop's whole-object box (an arena floor, a stadium shell) encloses everything on it and was vetoing every stacked placement
   b.invalid=bad;
   _GHOST_OK.color.setHex(bad?0xff5566:0x39ff88); _GHOST_OK.opacity=bad?0.45:0.35;

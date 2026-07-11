@@ -33,7 +33,7 @@ assert(/_bmMeasure\(\); _bmHint\(\); return;/.test(src) && /rot/.test(extractFun
 
 // placement validity: no self-embed, no double-fill
 const val = extractFunction('_bmValidate', src);
-assert(/player\.radius\+0\.05/.test(val) && /_bmBox\.min\.y<head && _bmBox\.max\.y>feet/.test(val),
+assert(/feet\+STEP/.test(val) && /_bmBox\.min\.y<hi && _bmBox\.max\.y>lo/.test(val),
   'a ghost overlapping the player is invalid (embedding lets you phase through walls)');
 assert(/bx\.intersectsBox\(_bmBox\)/.test(val), 'a ghost intersecting an existing prop is invalid');
 assert(/setHex\(bad\?0xff5566:0x39ff88\)/.test(val), 'the ghost shows red when invalid');
