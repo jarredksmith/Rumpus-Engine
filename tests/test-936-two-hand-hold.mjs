@@ -25,8 +25,8 @@ assert(/_ikRotateWorld\(arm\.up, _ikE, _ikP\);/.test(pin) && /_ikRotateWorld\(ar
 const hold = extractFunction('_weaponHoldIK', src);
 assert(/if\(!w \|\| w\.melee\) return;/.test(hold), 'fists/crowbar keep both hands free');
 assert(/death\|die\|slide\|climb\|melee\|punch\|swim\|grab\|roll\|reload/.test(hold), 'clips that own the arms are left alone');
-assert(/_ikT2\.copy\(_ikS\)\.add\(_ikN\)\.multiplyScalar\(0\.5\);/.test(hold),
-  'the trigger hand anchors on the chest centerline (mid-shoulders), not the right shoulder');
+assert(/const t0 = disc0>0 \? -B0 \+ Math\.sqrt\(disc0\) : -1;/.test(hold),
+  'the trigger hand is only moved when the forestock is genuinely unreachable (build 937: the authored pose survives into play)');
 assert(/const t = disc>0 \? Math\.min\(reach, -B \+ Math\.sqrt\(disc\)\) : -1;/.test(hold),
   'the forestock grip slides back ALONG THE BARREL into the support arm\'s reach');
 assert(/vis\.userData\._rArm=_findArm\(vis,'R'\)/.test(hold) && /vis\.userData\._lArm=_findArm\(vis,'L'\)/.test(hold),
