@@ -240,6 +240,13 @@
   #cpHud .cpFill.red { background:#ff4d5e; } #cpHud .cpFill.blue { background:#3a9bff; }
   #cpMid { font-size:13px; letter-spacing:1px; font-weight:700; color:#9fe6cf; min-width:112px; text-align:center; }
   #grabHint { position:fixed; left:50%; top:58%; transform:translateX(-50%) translate(var(--el-grab-dx,0px),var(--el-grab-dy,0px)) scale(var(--el-grab-s,1)); transform-origin:center; opacity:var(--el-grab-op,1); z-index:8; display:none; color:var(--el-tint,#cfeee2); background:rgba(6,12,15,calc(.55*var(--hud-panel-op,1))); border:1px solid rgba(var(--accent-rgb,120,200,180),.3); border-radius:6px; padding:3px 10px; font:600 12px var(--el-font, ui-monospace), monospace; letter-spacing:1px; pointer-events:none; }
+  /* build 938: first-run tutorial pill */
+  #tutHint { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); z-index:60; display:none; align-items:center; gap:10px; color:var(--el-tint,#cfeee2); background:rgba(6,12,15,calc(.72*var(--hud-panel-op,1))); border:1px solid rgba(var(--accent-rgb,120,200,180),.45); border-radius:8px; padding:8px 12px; font:600 13px var(--el-font, ui-monospace), monospace; letter-spacing:.5px; max-width:88vw; }
+  #tutHint b { color:var(--accent,#7fd6b8); }
+  #tutHint #tutStep { color:#7fb8a6; font-size:11px; flex:0 0 auto; }
+  #tutHint #tutX { background:none; border:none; color:#7fb8a6; font-size:14px; cursor:pointer; padding:2px 4px; min-width:32px; min-height:32px; flex:0 0 auto; }
+  #tutHint #tutX:hover { color:var(--accent,#7fd6b8); }
+  body.editing #tutHint { display:none !important; }
   /* build 701: the objective banner + NPC dialogue are themeable HUD elements. Their visible opacity is the per-element
      op times a JS-driven --goal-vis/--dlg-vis (the fade / show), so size, position, tint, font + panel theme all apply. */
   #goalBanner { position:fixed; left:50%; top:18%; transform:translateX(-50%) translate(var(--el-goal-dx,0px),var(--el-goal-dy,0px)) scale(var(--el-goal-s,1)); transform-origin:center top; z-index:9; max-width:80%; text-align:center; pointer-events:none; opacity:calc(var(--el-goal-op,1) * var(--goal-vis,0)); transition:opacity .4s; color:var(--el-tint,#eafff7); font:600 18px var(--el-font, var(--hud-display-font, var(--ui-font))), ui-monospace, monospace; letter-spacing:.5px; text-shadow:0 2px 14px rgba(0,0,0,.8); background:rgba(6,12,15,calc(.55*var(--hud-panel-op,1))); border:1px solid rgba(var(--accent-rgb,120,200,180),.3); border-radius:9px; padding:9px 18px; }
@@ -18289,7 +18296,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 937 · 2026-07-11';
+const BUILD_VERSION = 'build 938 · 2026-07-11';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19168,6 +19175,74 @@ function tickGrabHint(dt){
   const aimed = (gameOn && !editorOpen && !shopOpen && !paused && !duelDead) ? _aimedProp() : null;
   const avail = !!aimed, lbl = (aimed && aimed.userData.grabLabel) || '';
   if(avail!==_grabAvail || lbl!==_grabLabel){ _grabAvail=avail; _grabLabel=lbl; updateGrabHint(); }
+}
+// ---- build 938: first-run tutorial — a do-to-advance coach pill. One instruction at a time; each
+// step completes when the player actually performs it (a 15s timeout advances anyway, so it never
+// blocks), the wording follows the device in use (keyboard / touch / pad), it runs ONCE per browser
+// and the x dismisses it forever. Solo only; hides in the editor / pause / cinematics / dialogue. ----
+const TUT_KEY='breach_tut_done';
+let TUT=null;
+const TUT_STEPS=[
+  { id:'move',  kb:'Move \u2014 <b>W A S D</b>', touch:'Move \u2014 drag the <b>left stick</b>', pad:'Move \u2014 <b>left stick</b>' },
+  { id:'look',  kb:'Look around \u2014 move the <b>mouse</b>', touch:'Look \u2014 drag the <b>right half</b> of the screen', pad:'Look \u2014 <b>right stick</b>' },
+  { id:'fire',  kb:'Fire \u2014 <b>click</b>', touch:'Fire \u2014 the <b>FIRE</b> button', pad:'Fire \u2014 <b>RT</b>' },
+  { id:'jump',  kb:'Jump \u2014 <b>Space</b>', touch:'Jump \u2014 the <b>JUMP</b> button', pad:'Jump \u2014 <b>A</b>' },
+  { id:'sprint',kb:'Sprint \u2014 hold <b>Shift</b> while moving', touch:'Sprint \u2014 the <b>RUN</b> button', pad:'Sprint \u2014 press <b>L3</b>' },
+  { id:'wep',   kb:'Switch weapons \u2014 <b>scroll</b> or <b>1\u20134</b>', touch:'Switch weapons \u2014 tap the <b>weapon panel</b>', pad:'Switch weapons \u2014 <b>LB / RB</b>' },
+  { id:'build', kb:'Build menu \u2014 hold <b>Tab</b>', touch:'Build \u2014 the <b>BUILD</b> button', pad:'Build menu \u2014 hold <b>View</b>' },
+];
+function _tutLabel(st){ const pad=(typeof padRecent==='function' && padRecent()); return pad ? st.pad : (isTouch ? st.touch : st.kb); }
+function _tutEl(){
+  let el=document.getElementById('tutHint');
+  if(!el){ el=document.createElement('div'); el.id='tutHint';
+    el.innerHTML='<span id="tutStep"></span><span id="tutTxt"></span><button id="tutX" title="Dismiss the tutorial" aria-label="Dismiss the tutorial">\u2715</button>';
+    document.body.appendChild(el);
+    el.querySelector('#tutX').onclick=(e)=>{ e.stopPropagation(); endTutorial(true); };
+  }
+  return el;
+}
+function startTutorial(){
+  try{ if(localStorage.getItem(TUT_KEY)) return; }catch(e){}
+  if(NET.mode!=='off') return;   // solo only — a lobby/joiner flow is the wrong moment
+  // only steps the player can actually PERFORM right now: no fire/switch on a fists-only level,
+  // and no "switch weapons" while they own a single gun (a fresh run starts rifle-only)
+  const steps=TUT_STEPS.filter(st=>!(gameCfg.unarmed && (st.id==='fire'||st.id==='wep')) && !(st.id==='wep' && owned.length<2));
+  if(!steps.length) return;
+  TUT={ steps, i:0, t:0, sx:player.pos.x, sz:player.pos.z, look:0, wep0:curWep, py:player.yaw, pp:player.pitch };
+  _tutRender();
+}
+function endTutorial(dismissed){
+  TUT=null; const el=document.getElementById('tutHint'); if(el) el.style.display='none';
+  try{ localStorage.setItem(TUT_KEY,'1'); }catch(e){}
+  flashToast(dismissed ? 'Tutorial dismissed \u2014 the field manual (pause menu) has everything.' : 'You\u2019re ready \u2014 the field manual (pause menu) has the rest.');
+}
+function _tutRender(){
+  if(!TUT || TUT.i>=TUT.steps.length) return; const el=_tutEl(), st=TUT.steps[TUT.i];
+  const sc=el.querySelector('#tutStep'), tx=el.querySelector('#tutTxt');
+  const stepTxt=(TUT.i+1)+'/'+TUT.steps.length, lbl=_tutLabel(st);
+  if(sc.textContent!==stepTxt) sc.textContent=stepTxt;
+  if(tx.dataset.lbl!==lbl){ tx.dataset.lbl=lbl; tx.innerHTML=lbl; }
+  el.style.display='flex';
+}
+function updateTutorial(dt){
+  if(!TUT) return;
+  const hidden = !gameOn || editorOpen || paused || shopOpen || (typeof _cineActive!=='undefined' && _cineActive) || (typeof _dlg!=='undefined' && _dlg.open);
+  if(hidden){ const el=document.getElementById('tutHint'); if(el) el.style.display='none'; return; }
+  _tutRender();   // live re-render: the wording follows the device actually in use
+  const st=TUT.steps[TUT.i]; TUT.t+=dt;
+  let done=false;
+  if(st.id==='move') done = Math.hypot(player.pos.x-TUT.sx, player.pos.z-TUT.sz) > 3;
+  else if(st.id==='look'){ TUT.look += Math.abs(player.yaw-TUT.py)+Math.abs(player.pitch-TUT.pp); TUT.py=player.yaw; TUT.pp=player.pitch; done = TUT.look > 1.2; }
+  else if(st.id==='fire') done = (performance.now()-lastShot) < 400;
+  else if(st.id==='jump') done = !player.onGround && player.vel.y > 1.5;
+  else if(st.id==='sprint') done = sprinting() && Math.hypot(player.pos.x-TUT.sx, player.pos.z-TUT.sz) > 0.5;
+  else if(st.id==='wep') done = curWep!==TUT.wep0;
+  else if(st.id==='build') done = radialOpen || !!(typeof buildMode!=='undefined' && buildMode);
+  if(done || TUT.t>15){
+    TUT.i++; TUT.t=0; TUT.sx=player.pos.x; TUT.sz=player.pos.z; TUT.look=0; TUT.wep0=curWep; TUT.py=player.yaw; TUT.pp=player.pitch;
+    if(TUT.i>=TUT.steps.length){ endTutorial(false); return; }
+    _tutRender(); if(done && typeof SFX!=='undefined' && SFX.coin) SFX.coin();   // a little chirp for a step actually done
+  }
 }
 // ---------- Radial deploy menu: hold Tab to open a wheel of buildable props; aim a wedge + click (or
 // release Tab) to spawn it in front of you. Spawned props are dynamic, so they ride the prop reconciler
@@ -22657,6 +22732,7 @@ function loop(){
   updateXAnim(dt);                       // moving platforms / doors (all peers)
   updateLights(dt);                      // build 699: fade signal-controlled scene lights on/off
   tickGrabHint(dt);                      // "[E] Grab" / carry prompt
+  updateTutorial(dt);                    // build 938: first-run coach pill
   tickContactSignals(dt);                // build 682: prop-on-prop contact / containment signals
   tickGoalBanner(dt);                    // build 692: objective banner fade
   updateControlPoint(dt); cpRender();   // KOTH zone capture/score + HUD
@@ -29428,6 +29504,7 @@ function startGame(){
   chestTimer = 20;
   if(!station) buildStation();
   gameOn=true; gameOver=false; shopOpen=false; if(typeof spawnPlacedLoot==='function') spawnPlacedLoot();
+  if(typeof startTutorial==='function') startTutorial();   // build 938: first-run coach pill (solo, once per browser)
   $('shop').classList.add('hidden');
   $('overlay').classList.add('hidden');
   $('hud').classList.remove('hidden');
