@@ -18175,7 +18175,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 933 · 2026-07-10';
+const BUILD_VERSION = 'build 934 · 2026-07-11';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18286,8 +18286,12 @@ function pollGamepad(dt){
     padDriveGas = 0; padDriveRev = false; padDriveBoost = false; padDriveBrake = false;
     padJump = edge(0);          // A — consumed by the jump check this frame
     if(edge(2)) reload();       // X
-    if(edge(3)) interact();     // Y
-    if(edge(1)) throwGrenade(); // B
+    if(edge(3)){                // Y — build 934: grab when aiming at a grabbable prop; otherwise interact (which drops a held prop)
+      if(!heldProp && typeof _grabAvail!=='undefined' && _grabAvail && !drivingCar && !mountedTurret && !(typeof _dlg!=='undefined' && _dlg.open) && typeof grabAction==='function') grabAction();
+      else interact();
+    }
+    if(heldProp && (down(7) || aval(7)>0.5) && !padPrev[7]) throwHeld();   // RT — build 934: throw the carried prop (the fire gate excludes heldProp, so RT was dead while carrying)
+    if(edge(1)){ if(typeof buildMode!=='undefined' && buildMode) exitBuildMode(); else throwGrenade(); }   // B — build 934: leaves build mode (RT places); grenade otherwise
     if(edge(5)) cycleWeapon(1); // RB
     if(edge(4)) cycleWeapon(-1);// LB
     if(edge(12) && typeof toggleInventory==='function') toggleInventory();     // D-pad up — build 909
@@ -19035,8 +19039,9 @@ function updateGrabHint(){
   let txt='';
   // build 679/681: a grabbable prop can carry a custom label that replaces the default prompt \u2014 both when aiming
   // at it AND while carrying it (the author opts in, so their text wins over the default drop/throw/scroll controls).
-  if(heldProp) txt = (heldProp.userData && heldProp.userData.grabLabel) || (isTouch ? 'Hold USE to drop \u00b7 FIRE to throw' : '[G / MMB] Drop \u00b7 Click Throw \u00b7 Scroll Distance');
-  else if(_grabAvail) txt = _grabLabel || (isTouch ? 'Hold USE to grab' : '[G / MMB] Grab');   // build 908: touch grabs by holding USE
+  const _pad = (typeof padSeen!=='undefined' && padSeen);   // build 934: a controller player sees controller keys
+  if(heldProp) txt = (heldProp.userData && heldProp.userData.grabLabel) || (isTouch ? 'Hold USE to drop \u00b7 FIRE to throw' : _pad ? '[Y] Drop \u00b7 [RT] Throw' : '[G / MMB] Drop \u00b7 Click Throw \u00b7 Scroll Distance');
+  else if(_grabAvail) txt = _grabLabel || (isTouch ? 'Hold USE to grab' : _pad ? '[Y] Grab' : '[G / MMB] Grab');   // build 908: touch grabs by holding USE
   if(txt){ if(el.textContent!==txt) el.textContent=txt; el.style.display='block'; } else el.style.display='none';
 }
 function tickGrabHint(dt){

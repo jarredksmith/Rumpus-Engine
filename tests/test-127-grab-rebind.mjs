@@ -10,5 +10,5 @@ assert(!/if\(e\.code==='KeyG'\) throwGrenade\(\)/.test(src), 'G no longer throws
 assert(/else if\(e\.button===1\)\{ e\.preventDefault\(\); grabAction\(\); \}/.test(src), 'middle-mouse (scroll-wheel push) grabs / drops');
 // E still works (grab fallback + use) so touch Use keeps grabbing
 assert(/if\(e\.code===BINDS\.interact\) interact\(\);/.test(src) && /interact:'KeyE'/.test(src) && /if\(!nearTarget\)\{ tryGrabProp\(\); return; \}/.test(extractFunction('interact')), 'E (rebindable) still grabs+uses');
-assert(/txt = _grabLabel \|\| \(isTouch \? 'Hold USE to grab' : '\[G \/ MMB\] Grab'\)/.test(src), 'prompt shows the new grab keys (or a custom grab label; touch says Hold USE — build 908)');
+assert(/txt = _grabLabel \|\| \(isTouch \? 'Hold USE to grab' : _pad \? '\[Y\] Grab' : '\[G \/ MMB\] Grab'\)/.test(src), 'prompt shows the new grab keys (custom label wins; touch says Hold USE; pad says [Y] — builds 908/934)');
 done('grab rebind: G + middle-mouse, grenade -> F');
