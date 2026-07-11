@@ -60,5 +60,5 @@ assert(/\[\['','None'\],\['red',keyDisplayName\('red'\)\],\['blue',keyDisplayNam
   assert(!/\bhint\(/.test(lockBlock), 'no hint() call — that helper is block-scoped elsewhere (build 333)');
   assert(!/[^a-zA-Z]host\./.test(lockBlock.replace(/animHost/g,'AH')), 'no stray host references in the lock block'); }
 assert(/\['key_red','Red Key'\],\['key_blue','Blue Key'\],\['key_gold','Gold Key'\],\['key_green','Green Key'\]/.test(src), 'key pads in the pickup dropdown');
-assert(/playerKeys\[lk\] \? `<b>E<\/b> Unlock/.test(src), 'prompt distinguishes unlockable vs locked');
+assert(/playerKeys\[lk\] \? `<b>\$\{_uk\}<\/b> Unlock/.test(src), 'prompt distinguishes unlockable vs locked (key named per device since build 935)');
 done();

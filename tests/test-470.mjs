@@ -15,7 +15,7 @@ assert(/if\(near && nd < 2\.0 && !\(p\.interact && near\.id===NET\.myId\)\)\{ gr
 const cp = extractFunction('checkProximity');
 assert(/for\(const p of powerups\)\{ if\(!p \|\| !p\.interact \|\| !p\.ready\) continue;/.test(cp), 'scans only ready interact pickups');
 assert(/nearTarget = \{ type:'pickup', pu:best \}/.test(cp), 'sets a pickup target');
-assert(/prompt\.innerHTML = `<b>E<\/b> Pick up \\u2014 \$\{_pickupLabel\(nearTarget\.pu\)\}`/.test(cp), 'shows a "Pick up — name" prompt');
+assert(/prompt\.innerHTML = `<b>\$\{_uk\}<\/b> Pick up \\u2014 \$\{_pickupLabel\(nearTarget\.pu\)\}`/.test(cp), 'shows a "Pick up — name" prompt (key named per device since build 935)');
 
 // interact() collects it for the local player + consumes the pad
 const it = extractFunction('interact');

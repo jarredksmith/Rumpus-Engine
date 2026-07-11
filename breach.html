@@ -17549,23 +17549,24 @@ function checkProximity(){
   }
   const prompt = $('prompt');
   if(nearTarget){
+    const _uk = (typeof padRecent==='function' && padRecent()) ? 'Y' : (isTouch ? 'USE' : 'E');   // build 935: the prompt names the key on the device in use
     if(nearTarget.type==='station'){
       const w=W();
-      prompt.innerHTML = `AMMO STATION — <b>E</b> Buy ${w.refillAmt} ${w.name} rounds &nbsp;·&nbsp; ◆${w.refillCost}`;
+      prompt.innerHTML = `AMMO STATION — <b>${_uk}</b> Buy ${w.refillAmt} ${w.name} rounds &nbsp;·&nbsp; ◆${w.refillCost}`;
     } else if(nearTarget.type==='anim' || nearTarget.type==='xanim'){
       const lo=nearTarget.obj, lk=lo&&lo.userData.lockId;
-      if(lk && !lo.userData.unlocked) prompt.innerHTML = playerKeys[lk] ? `<b>E</b> Unlock \u2014 ${keyDisplayName(lk)}` : `LOCKED \u2014 needs ${keyDisplayName(lk)}`;
-      else prompt.innerHTML = `<b>E</b> Activate`;
+      if(lk && !lo.userData.unlocked) prompt.innerHTML = playerKeys[lk] ? `<b>${_uk}</b> Unlock \u2014 ${keyDisplayName(lk)}` : `LOCKED \u2014 needs ${keyDisplayName(lk)}`;
+      else prompt.innerHTML = `<b>${_uk}</b> Activate`;
     } else if(nearTarget.type==='npc'){
-      const nm=nearTarget.obj.userData.npcName; prompt.innerHTML = nm ? `<b>E</b> Talk to ${_creditEsc(nm)}` : `<b>E</b> Talk`;
+      const nm=nearTarget.obj.userData.npcName; prompt.innerHTML = nm ? `<b>${_uk}</b> Talk to ${_creditEsc(nm)}` : `<b>${_uk}</b> Talk`;
     } else if(nearTarget.type==='turret'){
-      prompt.innerHTML = `<b>E</b> Man the turret`;
+      prompt.innerHTML = `<b>${_uk}</b> Man the turret`;
     } else if(nearTarget.type==='vehicle'){
-      prompt.innerHTML = `<b>E</b> Drive`;
+      prompt.innerHTML = `<b>${_uk}</b> Drive`;
     } else if(nearTarget.type==='pickup'){
-      prompt.innerHTML = `<b>E</b> Pick up \u2014 ${_pickupLabel(nearTarget.pu)}`;
+      prompt.innerHTML = `<b>${_uk}</b> Pick up \u2014 ${_pickupLabel(nearTarget.pu)}`;
     } else {
-      prompt.innerHTML = `SUPPLY CACHE — <b>E</b> Open`;
+      prompt.innerHTML = `SUPPLY CACHE — <b>${_uk}</b> Open`;
     }
     prompt.style.display='block';
   } else {
@@ -17594,7 +17595,8 @@ function _renderDialogue(){
   const el=_ensureDialogueEl();
   const line=_creditEsc(_dlg.lines[_dlg.i]||'');
   const nm=_dlg.name ? '<div class="dlgName">'+_creditEsc(_dlg.name)+'</div>' : '';
-  const more=(_dlg.i < _dlg.lines.length-1) ? 'click / E ▸' : 'click / E to close';
+  const _ukd=(typeof padRecent==='function' && padRecent()) ? 'Y' : 'E';   // build 935
+  const more=(_dlg.i < _dlg.lines.length-1) ? ('click / '+_ukd+' ▸') : ('click / '+_ukd+' to close');
   el.innerHTML=nm+'<div class="dlgText">'+line+'</div><div class="dlgMore">'+more+'</div>';
   el.style.display='block';
 }
@@ -18069,6 +18071,8 @@ let padPrefs = { sens:1, ads:0.7, dead:PAD_DEADZONE, invertY:false };
 try{ const _pp=JSON.parse(localStorage.getItem('breach_pad')||'null'); if(_pp && typeof _pp==='object') padPrefs=Object.assign(padPrefs, _pp); }catch(e){}
 function savePadPrefs(){ try{ localStorage.setItem('breach_pad', JSON.stringify(padPrefs)); }catch(e){} }
 let padSeen = false;   // a real controller has appeared this session (shows the pause-menu panel)
+let _padLastActive = 0;    // build 935: when the pad last gave real input (buttons/sticks)
+function padRecent(){ return padSeen && (performance.now() - _padLastActive) < 6000; }   // the pad is the device in use — prompts speak controller
 addEventListener('gamepadconnected', e=>{ padIndex = e.gamepad.index; padSeen=true; const b=$('roomBadge'); /* noop */ const c=$('padNote'); if(c){ c.style.display='block'; } });
 addEventListener('gamepaddisconnected', e=>{ if(padForceIndex===e.gamepad.index) padForceIndex=null; if(padIndex===e.gamepad.index){ padIndex=null; padFiring=padAds=padSprint=padJump=false; padMoveX=padMoveZ=0; const c=$('padNote'); if(c) c.style.display='none';
   if(gameOn && !editorOpen && NET.mode==='off' && !paused && typeof openPause==='function') openPause(); } });   // build 909: console convention — losing the pad pauses a solo run
@@ -18175,7 +18179,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 934 · 2026-07-11';
+const BUILD_VERSION = 'build 935 · 2026-07-11';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18207,6 +18211,9 @@ function pollGamepad(dt){
   const down = i => !!(bt[i] && bt[i].pressed);
   const aval = i => bt[i] ? bt[i].value : 0;
   const snapshot = ()=> bt.map(b=>!!b.pressed);
+  // build 935: some browsers never fire gamepadconnected — detect real input from the poll itself,
+  // and remember WHEN, so hints can follow the device actually in use (pad beats touch beats keys).
+  if(bt.some(b=>b && (b.pressed || b.value>0.3)) || ax.some(a=>Math.abs(a)>0.25)){ padSeen=true; _padLastActive=performance.now(); }
 
   // Menu / lobby / end screens: the focus navigator owns the pad (build 911). First A lands on
   // Deploy, so the old "any button starts" muscle memory still works. If no surface is visible
@@ -19039,9 +19046,9 @@ function updateGrabHint(){
   let txt='';
   // build 679/681: a grabbable prop can carry a custom label that replaces the default prompt \u2014 both when aiming
   // at it AND while carrying it (the author opts in, so their text wins over the default drop/throw/scroll controls).
-  const _pad = (typeof padSeen!=='undefined' && padSeen);   // build 934: a controller player sees controller keys
-  if(heldProp) txt = (heldProp.userData && heldProp.userData.grabLabel) || (isTouch ? 'Hold USE to drop \u00b7 FIRE to throw' : _pad ? '[Y] Drop \u00b7 [RT] Throw' : '[G / MMB] Drop \u00b7 Click Throw \u00b7 Scroll Distance');
-  else if(_grabAvail) txt = _grabLabel || (isTouch ? 'Hold USE to grab' : _pad ? '[Y] Grab' : '[G / MMB] Grab');   // build 908: touch grabs by holding USE
+  const _pad = (typeof padRecent==='function' && padRecent());   // build 935: the device IN USE wins — a controller on a touch device still gets pad keys
+  if(heldProp) txt = (heldProp.userData && heldProp.userData.grabLabel) || (_pad ? '[Y] Drop \u00b7 [RT] Throw' : isTouch ? 'Hold USE to drop \u00b7 FIRE to throw' : '[G / MMB] Drop \u00b7 Click Throw \u00b7 Scroll Distance');
+  else if(_grabAvail) txt = _grabLabel || (_pad ? '[Y] Grab' : isTouch ? 'Hold USE to grab' : '[G / MMB] Grab');   // build 908: touch grabs by holding USE
   if(txt){ if(el.textContent!==txt) el.textContent=txt; el.style.display='block'; } else el.style.display='none';
 }
 function tickGrabHint(dt){

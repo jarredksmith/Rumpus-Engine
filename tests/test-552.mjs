@@ -29,7 +29,7 @@ const va = new Function('o','v', extractFunction('vehicleApply') + '\nreturn (o,
 
 // --- enter/exit + drive are wired into proximity, interact, update, deploy ---
 assert(/if\(!nearTarget && !drivingCar\)\{[\s\S]*?o\.userData\.vehicle[\s\S]*?nearTarget = \{ type:'vehicle', obj:best \};/.test(src), 'a nearby vehicle prop becomes an E-target');
-assert(/nearTarget\.type==='vehicle'[\s\S]*?prompt\.innerHTML = `<b>E<\/b> Drive`;/.test(src), 'the prompt reads "E Drive"');
+assert(/nearTarget\.type==='vehicle'[\s\S]*?prompt\.innerHTML = `<b>\$\{_uk\}<\/b> Drive`;/.test(src), 'the prompt reads "Drive" with the key named per device (build 935)');
 assert(/if\(drivingCar\)\{ exitCar\(\); return; \}/.test(extractFunction('interact')), 'E gets you out while driving');
 assert(/nearTarget\.type==='vehicle'\)\{\s*enterCar\(nearTarget\.obj\);/.test(extractFunction('interact')), 'E on a vehicle gets you in');
 assert(/if\(drivingCar\)\{ wish\.set\(0,0,0\); moveScale=0; \}/.test(src), 'foot movement is frozen while driving');
