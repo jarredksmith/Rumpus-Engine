@@ -10158,6 +10158,7 @@ addEventListener('wheel', e=>{
     return;   // no weapon switching while editing
   }
   if(heldProp) return;   // while holding a prop the wheel controls its distance only (see the held-prop wheel handler), not weapon switching
+  if(typeof buildMode!=='undefined' && buildMode) return;   // build 929: in build mode the wheel ROTATES the ghost — it must not also cycle weapons
   if(gameOn && !shopOpen && !invOpen) cycleWeapon(e.deltaY>0?1:-1);
 }, {passive:false});
 
@@ -18167,7 +18168,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 928 · 2026-07-10';
+const BUILD_VERSION = 'build 929 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18318,7 +18319,7 @@ if(savedLevel && savedLevel.aim && savedLevel.aim.state){
 }
 const HIP_SENS = 0.0022, ADS_SENS = 0.0012;  // slower look while aiming for precision
 const SCOPE_SENS = 0.00045;                   // much slower under the scope's hard zoom
-addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ buildMode.yaw += (e.deltaY>0?1:-1)*Math.PI/2; _bmMeasure(); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
+addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ buildMode.yaw += (e.deltaY>0?1:-1)*Math.PI/2; _bmMeasure(); _bmHint(); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
 addEventListener('mousedown', e=>{
   if(radialOpen){ if(e.button===0) closeRadial(true); return; }
   if(typeof buildMode!=='undefined' && buildMode){ if(e.button===0){ placeBuild(); } else if(e.button===2){ buildSnap=!buildSnap; try{ localStorage.setItem('breach_buildsnap', buildSnap?'1':'0'); }catch(_e){} _bmHint(); } e.preventDefault(); return; }
@@ -19221,7 +19222,7 @@ let buildSnap = (function(){ try{ return localStorage.getItem('breach_buildsnap'
 const _bmRay=new THREE.Raycaster(), _bmPos=new THREE.Vector3(), _bmDir=new THREE.Vector3(), _bmN=new THREE.Vector3();
 const _GHOST_OK = new THREE.MeshBasicMaterial({ color:0x39ff88, transparent:true, opacity:0.35, depthWrite:false });
 function _bmGhostify(root){ root.traverse(o=>{ if(o.isMesh){ o.material=_GHOST_OK; o.castShadow=false; o.receiveShadow=false; o.raycast=()=>{}; } }); }
-function _bmMeasure(){ const b=buildMode; if(!b || !b.ghost) return; b.ghost.updateMatrixWorld(true);
+function _bmMeasure(){ const b=buildMode; if(!b || !b.ghost) return; b.ghost.rotation.set(0, b.yaw, 0); b.ghost.updateMatrixWorld(true);   // build 929: size must reflect the CURRENT rotation (a rotated ramp swaps x/z extents)
   const box=new THREE.Box3().setFromObject(b.ghost); if(!box.isEmpty()){ b.size={ x:Math.max(0.1,box.max.x-box.min.x), y:Math.max(0.1,box.max.y-box.min.y), z:Math.max(0.1,box.max.z-box.min.z) }; b.foot=(box.min.y - b.ghost.position.y); } }
 function enterBuildMode(slot){
   if(!slot || !gameOn || editorOpen) return;
@@ -19243,14 +19244,30 @@ function exitBuildMode(){
 function _bmHint(){
   const el=document.getElementById('buildHint'); if(!el) return;
   const key=(typeof _keyLabel==='function') ? _keyLabel(BINDS.radial) : 'Tab';
+  const rot=buildMode ? ((Math.round(buildMode.yaw/(Math.PI/2))*90)%360+360)%360 : 0;
   el.textContent = (typeof isTouch!=='undefined' && isTouch)
-    ? ('FIRE place \u00b7 BUILD done \u00b7 snap '+(buildSnap?'ON':'OFF'))
-    : ('Click place \u00b7 R-click snap: '+(buildSnap?'ON':'OFF')+' \u00b7 Scroll rotate \u00b7 ['+key+'/Esc] done');
+    ? ('FIRE place \u00b7 BUILD done \u00b7 snap '+(buildSnap?'ON':'OFF')+(rot?(' \u00b7 rot '+rot+'\u00b0'):''))
+    : ('Click place \u00b7 R-click snap: '+(buildSnap?'ON':'OFF')+' \u00b7 Scroll rotate'+(rot?(' ('+rot+'\u00b0)'):'')+' \u00b7 ['+key+'/Esc] done');
   el.style.display='block';
 }
 function placeBuild(){
   const b=buildMode; if(!b || !b.ghost || _deployCD>0) return;
+  if(b.invalid){ if(typeof SFX!=='undefined' && SFX.deny) SFX.deny(); return; }   // build 929: never place into your own body or an occupied cell — an embedded player phases through walls (the walk-out allowance)
   deployProp(b.slot, { x:b.ghost.position.x, y:b.ghost.position.y, z:b.ghost.position.z, yaw:b.yaw });
+}
+const _bmBox=new THREE.Box3();
+function _bmValidate(){
+  const b=buildMode; if(!b || !b.ghost) return;
+  const g=b.ghost.position, hx=b.size.x/2, hy=b.size.y/2, hz=b.size.z/2;
+  _bmBox.min.set(g.x-hx+0.06, g.y+b.foot+0.06, g.z-hz+0.06);          // shrunken ghost box: flush neighbours never read as overlap
+  _bmBox.max.set(g.x+hx-0.06, g.y+b.foot+b.size.y-0.06, g.z+hz-0.06);
+  let bad=false;
+  { const R=player.radius+0.05, feet=player.pos.y-EYE, head=feet+effPlayerHeight();   // the player's own body
+    if(player.pos.x>_bmBox.min.x-R && player.pos.x<_bmBox.max.x+R && player.pos.z>_bmBox.min.z-R && player.pos.z<_bmBox.max.z+R
+       && _bmBox.min.y<head && _bmBox.max.y>feet) bad=true; }
+  if(!bad){ for(const o of propModels){ if(!o || o===b.ghost) continue; const bx=o.userData && o.userData.box; if(bx && bx.intersectsBox(_bmBox)){ bad=true; break; } } }   // an occupied cell
+  b.invalid=bad;
+  _GHOST_OK.color.setHex(bad?0xff5566:0x39ff88); _GHOST_OK.opacity=bad?0.45:0.35;
 }
 function _buildModeTick(){
   const b=buildMode; if(!b) return;
@@ -19274,13 +19291,14 @@ function _buildModeTick(){
       else if(_bmN.y<0){ px=hit.point.x; pz=hit.point.z; py=hit.point.y - b.foot - b.size.y - 0.001; }   // ceiling: the ghost's TOP touches it
       else { px=hit.point.x+_bmN.x*(half.x+0.001); pz=hit.point.z+_bmN.z*(half.z+0.001); py=hit.point.y; }   // side face: flush along the normal, row height from the hit (grid snap tidies it)
       if(buildSnap){
-        // grid-align the two tangent axes to the ghost's own size (Minecraft: same-size blocks line up)
-        let node=hit.object; while(node && !(node.userData && node.userData.nid) && node.parent) node=node.parent;
-        const org=(node && node.userData && node.userData.nid) ? node.position : null;
-        const snapAxis=(v, o, g2)=> o + Math.round((v-o)/g2)*g2;
-        if(!_bmN.x) px=snapAxis(px, org?org.x:0, Math.max(0.25,b.size.x));
-        if(!_bmN.y) py=snapAxis(py, org?org.y:0, Math.max(0.25,b.size.y));
-        if(!_bmN.z) pz=snapAxis(pz, org?org.z:0, Math.max(0.25,b.size.z));
+        // build 929: ONE GLOBAL WORLD LATTICE (cell = the ghost's own size). The old grid anchored
+        // to whatever you aimed at — floor-anchored and block-anchored grids never coincided, so
+        // neighbouring placements couldn't line up. Tangent axes snap to the lattice; the normal
+        // axis stays flush-exact against the aimed face. Block BOTTOMS land on whole y-cells.
+        const gx=Math.max(0.25,b.size.x), gy=Math.max(0.25,b.size.y), gz=Math.max(0.25,b.size.z);
+        if(!_bmN.x) px=Math.round(px/gx)*gx;
+        if(!_bmN.y) py=Math.round((py+b.foot)/gy)*gy - b.foot;
+        if(!_bmN.z) pz=Math.round(pz/gz)*gz;
       }
       g.position.set(px,py,pz); placed=true;
     }
@@ -19292,6 +19310,7 @@ function _buildModeTick(){
     g.position.set(px, ty - b.foot + 0.001, pz);
   }
   g.rotation.set(0, b.yaw, 0);
+  _bmValidate();
 }
 
 

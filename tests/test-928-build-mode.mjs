@@ -34,7 +34,7 @@ const tick = extractFunction('_buildModeTick', src);
 assert(/if\(firing\)\{ firing=false; firingLatch=false; placeBuild\(\); \}/.test(tick), 'mouse, touch FIRE and pad trigger all place');
 assert(/transformDirection\(hit\.object\.matrixWorld\)/.test(tick), 'the hit normal is taken in world space');
 assert(/py=hit\.point\.y - b\.foot \+ 0\.001/.test(tick), 'top faces seat the ghost bottom flush (stacking)');
-assert(/Math\.round\(\(v-o\)\/g2\)\*g2/.test(tick), 'tangent axes grid-snap to the ghost size');
+assert(/Math\.round\(px\/gx\)\*gx/.test(tick), 'tangent axes grid-snap to the ghost size (build 929: one global world lattice)');
 assert(/enterBuildMode\(radialCfg\[radialSel\]\)/.test(src), 'the radial enters build mode instead of insta-dropping');
 
 // 5) inputs: right-click snap toggle, scroll rotate, Esc + Deploy key + touch BUILD exit
