@@ -9,7 +9,7 @@ const DEFAULT_RADIAL = (new Function('return ('+extractConstArr('DEFAULT_RADIAL'
 function extractConstArr(name, s){ const m = s.match(new RegExp('const '+name+' = (\\[[\\s\\S]*?\\n\\]);')); return m?m[1]:'[]'; }
 const RADIAL_PRIMS = (new Function('return ('+(src.match(/const RADIAL_PRIMS = (\[[^\]]*\]);/)||[])[1]+')'))();
 assert(Array.isArray(DEFAULT_RADIAL) && DEFAULT_RADIAL.length===5, 'five default slots');
-assert(RADIAL_PRIMS.join(',')==='box,cylinder,sphere,cone', 'the built-in shapes');
+assert(RADIAL_PRIMS.join(',')==='box,cylinder,sphere,cone,pillar,wedge,stairs,dome,tube,torus', 'the built-in shapes (build 928: the full 871 primitive set)');
 
 const _sanitizeRadial = new Function('DEFAULT_RADIAL','RADIAL_PRIMS', extractFunction('_sanitizeRadial') + '; return _sanitizeRadial;')(DEFAULT_RADIAL, RADIAL_PRIMS);
 {
@@ -30,7 +30,7 @@ const _sanitizeRadial = new Function('DEFAULT_RADIAL','RADIAL_PRIMS', extractFun
 
 // --- deployProp uses the slot (material + scale + explosive) ---
 const dp = extractFunction('deployProp');
-assert(/function deployProp\(slot\)\{/.test(src), 'deployProp takes a slot');
+assert(/function deployProp\(slot, at\)\{/.test(src), 'deployProp takes a slot (+ aimed placement, build 928)');
 assert(/const sc = \(slot\.scale>0\) \? slot\.scale : 0\.9;/.test(dp), 'per-slot scale');
 assert(/\(mat\.col!=null \|\| mat\.tex\) \? mat : null/.test(dp), 'the material descriptor (or null) is passed to spawnProp');
 

@@ -775,6 +775,7 @@
 <div id="lowhp"></div>
 <div id="hurtDir"><svg viewBox="-50 -50 100 100"><path d="M -13 -43 A 45 45 0 0 1 13 -43" fill="none" stroke="#ff4d5e" stroke-width="2.6" stroke-linecap="round"/></svg></div>
 <div id="grabHint"></div>
+<div id="buildHint" style="display:none;position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:12;background:rgba(6,12,14,0.82);border:1px solid rgba(57,255,136,0.5);color:#aef7cf;border-radius:8px;padding:5px 14px;font:600 12px/1.3 ui-monospace,monospace;pointer-events:none;"></div>
 <div id="radial"><div id="radialRing"></div><div id="radialCursor"></div><div id="radialLabel">Deploy</div></div>
 <div id="cpHud"><div class="cpSide"><span id="cpR">0</span><div class="cpBar"><div id="cpRfill" class="cpFill red"></div></div></div><div id="cpMid">NEUTRAL</div><div class="cpSide"><span id="cpB">0</span><div class="cpBar"><div id="cpBfill" class="cpFill blue"></div></div></div></div>
 
@@ -9990,6 +9991,7 @@ addEventListener('keydown', e=>{
   }
   // Universal escape hatch in multiplayer: Esc always opens a match menu, even while dead or on the result
   // screen, so you can never get trapped with no way out.
+  if(e.code==='Escape' && typeof buildMode!=='undefined' && buildMode){ e.preventDefault(); exitBuildMode(); return; }   // build 928
   if(e.code==='Escape' && mountedTurret){ e.preventDefault(); dismountTurret(); return; }
   if(e.code==='Escape' && drivingCar){ e.preventDefault(); exitCar(); return; }
   if(e.code==='Escape' && NET.mode && NET.mode!=='off' && !editorOpen){
@@ -10006,7 +10008,7 @@ addEventListener('keydown', e=>{
   if(e.code==='Escape' && invOpen){ if(_inspEl && _inspEl.style.display!=='none') closeInspect(); else closeInventory(); e.preventDefault(); return; }   // Esc backs out of the inspector / inventory
   if(e.code===BINDS.inventory && !e.repeat && gameOn && !gameOver && !editorOpen && !shopOpen && !chatOpen && !radialOpen && !choosingUpgrade && !mapOpen){ toggleInventory(); e.preventDefault(); return; }   // inventory (rebindable)
   if(invOpen) return;   // inventory open: swallow other game keys
-  if(e.code===BINDS.radial){ if(!e.repeat) openRadial(); e.preventDefault(); return; }   // radial deploy menu (rebindable)
+  if(e.code===BINDS.radial){ if(buildMode){ exitBuildMode(); e.preventDefault(); return; } if(!e.repeat) openRadial(); e.preventDefault(); return; }   // radial deploy menu (rebindable); a second press ends build mode (build 928)
   if(e.code===BINDS.chat && NET.mode!=='off' && gameOn && !gameOver && !editorOpen && !shopOpen && !choosingUpgrade && !radialOpen){ openChat(); e.preventDefault(); return; }   // multiplayer text chat (rebindable)
   // Crouch is Ctrl, so crouch+WASD lands on browser shortcuts: Ctrl+S (save page), Ctrl+D (bookmark),
   // Ctrl+A (select all). Swallow those so moving while crouched doesn't trigger them. Ctrl+W (close tab)
@@ -18165,7 +18167,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 927 · 2026-07-10';
+const BUILD_VERSION = 'build 928 · 2026-07-10';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18316,9 +18318,10 @@ if(savedLevel && savedLevel.aim && savedLevel.aim.state){
 }
 const HIP_SENS = 0.0022, ADS_SENS = 0.0012;  // slower look while aiming for precision
 const SCOPE_SENS = 0.00045;                   // much slower under the scope's hard zoom
-addEventListener('wheel', e=>{ if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
+addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ buildMode.yaw += (e.deltaY>0?1:-1)*Math.PI/2; _bmMeasure(); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
 addEventListener('mousedown', e=>{
   if(radialOpen){ if(e.button===0) closeRadial(true); return; }
+  if(typeof buildMode!=='undefined' && buildMode){ if(e.button===0){ placeBuild(); } else if(e.button===2){ buildSnap=!buildSnap; try{ localStorage.setItem('breach_buildsnap', buildSnap?'1':'0'); }catch(_e){} _bmHint(); } e.preventDefault(); return; }
   if(shopOpen || editorOpen || paused || mapOpen || duelDead || invOpen) return;   // no actions while eliminated or while the inventory is open
   if(e.button===0){ if(heldProp){ throwHeld(); return; } firing=true; }
   else if(e.button===1){ e.preventDefault(); grabAction(); }   // middle-click (scroll-wheel push): grab / drop
@@ -18391,7 +18394,7 @@ addEventListener('contextmenu', e=>{
   // build 908: the audit's missing actions
   { const cb=document.getElementById('tCrouch'); if(cb) cb.addEventListener('pointerdown', e=>{ touchCrouch=!touchCrouch; cb.classList.toggle('on', touchCrouch); e.preventDefault(); }); }
   tap('tMelee', ()=>{ if(typeof meleeAttack==='function') meleeAttack(); });
-  tap('tBuild', ()=>{ if(typeof openRadial!=='function') return; if(radialOpen) closeRadial(false); else openRadial(); });
+  tap('tBuild', ()=>{ if(typeof buildMode!=='undefined' && buildMode){ exitBuildMode(); return; } if(typeof openRadial!=='function') return; if(radialOpen) closeRadial(false); else openRadial(); });
   tap('tFlash', ()=>{ if(typeof toggleFlashlight==='function') toggleFlashlight(); });
   tap('tInv',   ()=>{ if(typeof toggleInventory==='function') toggleInventory(); });
   tap('tChat',  ()=>{ if(typeof openChat==='function') openChat(); });
@@ -19043,7 +19046,7 @@ function tickGrabHint(dt){
 // a custom model URL, with its own colour / texture / scale / explosive / label-icon. Deployed props already
 // sync to all players (the prop reconciler broadcasts them with their material), so a creator's custom build
 // kit is shared in multiplayer. Serialized with the level.
-const RADIAL_PRIMS = ['box','cylinder','sphere','cone'];
+const RADIAL_PRIMS = ['box','cylinder','sphere','cone','pillar','wedge','stairs','dome','tube','torus'];   // build 928: the full 871 primitive set is buildable
 const DEFAULT_RADIAL = [
   { src:'box',      label:'Crate',     icon:'crate',  exp:false, col:null,    tex:'', scale:0.9 },
   { src:'cylinder', label:'Barrel',    icon:'barrel', exp:false, col:null,    tex:'', scale:0.9 },
@@ -19139,6 +19142,8 @@ function _sanitizeRadial(arr){
       label: (typeof s.label==='string' && s.label) ? s.label.slice(0,18) : 'Prop',
       icon:  (typeof s.icon==='string' && s.icon) ? s.icon.slice(0,24) : 'box',   // an SVG icon key (build 676), or a legacy glyph
       exp:   !!s.exp,
+      unb:   !!s.unb,   // build 928: unbreakable — shots can't shatter it
+      anc:   !!s.anc,   // build 928: anchored — a static building block (no physics tumble)
       col:   (s.col!=null && isFinite(+s.col)) ? ((+s.col)&0xffffff) : null,
       tex:   (typeof s.tex==='string') ? s.tex : '',
       scale: Math.max(0.2, Math.min(4, isNaN(+s.scale)?0.9:+s.scale)),
@@ -19166,7 +19171,7 @@ function openRadial(){
 function closeRadial(deploy){
   if(!radialOpen) return; radialOpen=false;
   const r=document.getElementById('radial'); if(r) r.style.display='none';
-  if(deploy && radialSel>=0 && radialCfg[radialSel]){ deployProp(radialCfg[radialSel]); }
+  if(deploy && radialSel>=0 && radialCfg[radialSel]){ enterBuildMode(radialCfg[radialSel]); }   // build 928: aimed ghost placement (repeat-build) instead of an instant drop
   radialSel=-1;
 }
 function radialMove(dx,dy){
@@ -19191,20 +19196,104 @@ function radialStick(x,y){
     for(let i=0;i<N;i++){ const a=(-90+i*(360/N))*Math.PI/180; let dd=Math.abs(((ang-a+Math.PI*3)%(Math.PI*2))-Math.PI); if(dd<bd){ bd=dd; best=i; } } radialSel=best; }
   updateRadialSel();
 }
-function deployProp(slot){
+function deployProp(slot, at){
   if(!slot) return;
-  if(!gameOn || editorOpen || shopOpen || paused || duelDead || _deployCD>0) return; _deployCD=0.5;
+  if(!gameOn || editorOpen || shopOpen || paused || duelDead || _deployCD>0) return; _deployCD = at ? 0.2 : 0.5;   // build 928: aimed placement builds fast
   const fwd=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
-  const px=player.pos.x+fwd.x*3.5, pz=player.pos.z+fwd.z*3.5;
+  const px = at ? at.x : player.pos.x+fwd.x*3.5, py = at ? at.y : 1.1, pz = at ? at.z : player.pos.z+fwd.z*3.5, yaw = at ? (at.yaw||0) : 0;
   const sc = (slot.scale>0) ? slot.scale : 0.9;
   const mat = {}; if(slot.col!=null) mat.col=slot.col; if(slot.tex) mat.tex=slot.tex;   // build 671: per-slot look; propEntry sends it to peers
-  spawnProp(slot.src||'box', [px, 1.1, pz, 0,0,0, sc], (obj)=>{
+  spawnProp(slot.src||'box', [px, py, pz, 0,yaw,0, sc], (obj)=>{
     obj.userData.runtime = true;   // radial-deployed: session-only (never saved, hidden from the editor, cleared on redeploy)
-    setPropDynamic(obj, true);
+    if(!slot.anc) setPropDynamic(obj, true);                             // build 928: anchored = a static building block — it stays exactly where placed
+    if(slot.unb) obj.userData.breakable = false;                         // build 928: unbreakable — shots can't shatter it
     if(slot.exp){ obj.userData.explosive=true; obj.userData.blastRadius=7; obj.userData.blastDmg=70; obj.userData.impactVel=10; }
   }, undefined, 'loop', (mat.col!=null || mat.tex) ? mat : null);
   if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
 }
+
+// ---------- Build mode (build 928): ghost preview + face snapping + repeat placement ----------
+// Picking a radial slot enters placement: a translucent ghost follows the aim, snapping flush to the
+// face you point at (grid-aligned to the ghost's own size) or to a ground grid. FIRE places and stays
+// in build mode; scroll rotates 90°; right-click toggles snap; Esc / Deploy key / BUILD exits.
+let buildMode=null;   // { slot, ghost, yaw, size:{x,y,z} }
+let buildSnap = (function(){ try{ return localStorage.getItem('breach_buildsnap')!=='0'; }catch(e){ return true; } })();
+const _bmRay=new THREE.Raycaster(), _bmPos=new THREE.Vector3(), _bmDir=new THREE.Vector3(), _bmN=new THREE.Vector3();
+const _GHOST_OK = new THREE.MeshBasicMaterial({ color:0x39ff88, transparent:true, opacity:0.35, depthWrite:false });
+function _bmGhostify(root){ root.traverse(o=>{ if(o.isMesh){ o.material=_GHOST_OK; o.castShadow=false; o.receiveShadow=false; o.raycast=()=>{}; } }); }
+function _bmMeasure(){ const b=buildMode; if(!b || !b.ghost) return; b.ghost.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(b.ghost); if(!box.isEmpty()){ b.size={ x:Math.max(0.1,box.max.x-box.min.x), y:Math.max(0.1,box.max.y-box.min.y), z:Math.max(0.1,box.max.z-box.min.z) }; b.foot=(box.min.y - b.ghost.position.y); } }
+function enterBuildMode(slot){
+  if(!slot || !gameOn || editorOpen) return;
+  exitBuildMode();
+  const sc=(slot.scale>0)?slot.scale:0.9; let ghost=null;
+  if(isPrimitive(slot.src||'box')){ ghost=PRIMITIVE_BUILDERS[slot.src||'box'](); }
+  else { const g=gltfCache[slot.src]; ghost = g ? (THREE.cloneSkinned?THREE.cloneSkinned(g.scene):g.scene.clone(true)) : new THREE.Mesh(new THREE.BoxGeometry(1,1,1)); if(!g) loadGLTFCached(slot.src, ()=>{ if(buildMode && buildMode.slot===slot){ enterBuildMode(slot); } }, ()=>{}); }
+  ghost.scale.setScalar(sc); _bmGhostify(ghost); scene.add(ghost);
+  buildMode={ slot, ghost, yaw:0, size:{x:sc,y:sc,z:sc}, foot:0 };
+  _bmMeasure();
+  _bmHint();
+}
+function exitBuildMode(){
+  if(!buildMode) return;
+  const g=buildMode.ghost; buildMode=null;
+  if(g){ scene.remove(g); try{ g.traverse(o=>{ if(o.isMesh && o.geometry && isPrimitive) o.geometry.dispose && o.geometry.dispose(); }); }catch(e){} }
+  const el=document.getElementById('buildHint'); if(el) el.style.display='none';
+}
+function _bmHint(){
+  const el=document.getElementById('buildHint'); if(!el) return;
+  const key=(typeof _keyLabel==='function') ? _keyLabel(BINDS.radial) : 'Tab';
+  el.textContent = (typeof isTouch!=='undefined' && isTouch)
+    ? ('FIRE place \u00b7 BUILD done \u00b7 snap '+(buildSnap?'ON':'OFF'))
+    : ('Click place \u00b7 R-click snap: '+(buildSnap?'ON':'OFF')+' \u00b7 Scroll rotate \u00b7 ['+key+'/Esc] done');
+  el.style.display='block';
+}
+function placeBuild(){
+  const b=buildMode; if(!b || !b.ghost || _deployCD>0) return;
+  deployProp(b.slot, { x:b.ghost.position.x, y:b.ghost.position.y, z:b.ghost.position.z, yaw:b.yaw });
+}
+function _buildModeTick(){
+  const b=buildMode; if(!b) return;
+  if(!gameOn || editorOpen || shopOpen || paused || duelDead || invOpen || mapOpen || chatOpen){ exitBuildMode(); return; }
+  if(firing){ firing=false; firingLatch=false; placeBuild(); }              // mouse, touch FIRE and pad trigger all set `firing`
+  const g=b.ghost;
+  camera.getWorldPosition(_bmPos); camera.getWorldDirection(_bmDir);
+  _bmRay.set(_bmPos, _bmDir); _bmRay.far=10;
+  const hits=(typeof colliders!=='undefined' && colliders.length) ? _bmRay.intersectObjects(colliders, true) : [];
+  let placed=false;
+  if(hits.length){
+    const hit=hits[0];
+    if(hit.face){
+      _bmN.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+      // dominant-axis normal -> tidy flush stacking
+      const ax=Math.abs(_bmN.x), ay=Math.abs(_bmN.y), az=Math.abs(_bmN.z);
+      if(ax>=ay && ax>=az) _bmN.set(Math.sign(_bmN.x)||1,0,0); else if(ay>=az) _bmN.set(0,Math.sign(_bmN.y)||1,0); else _bmN.set(0,0,Math.sign(_bmN.z)||1);
+      const half={ x:b.size.x/2, y:b.size.y/2, z:b.size.z/2 };
+      let px, py, pz;
+      if(_bmN.y>0){ px=hit.point.x; pz=hit.point.z; py=hit.point.y - b.foot + 0.001; }            // top face: the ghost's BOTTOM rests on it
+      else if(_bmN.y<0){ px=hit.point.x; pz=hit.point.z; py=hit.point.y - b.foot - b.size.y - 0.001; }   // ceiling: the ghost's TOP touches it
+      else { px=hit.point.x+_bmN.x*(half.x+0.001); pz=hit.point.z+_bmN.z*(half.z+0.001); py=hit.point.y; }   // side face: flush along the normal, row height from the hit (grid snap tidies it)
+      if(buildSnap){
+        // grid-align the two tangent axes to the ghost's own size (Minecraft: same-size blocks line up)
+        let node=hit.object; while(node && !(node.userData && node.userData.nid) && node.parent) node=node.parent;
+        const org=(node && node.userData && node.userData.nid) ? node.position : null;
+        const snapAxis=(v, o, g2)=> o + Math.round((v-o)/g2)*g2;
+        if(!_bmN.x) px=snapAxis(px, org?org.x:0, Math.max(0.25,b.size.x));
+        if(!_bmN.y) py=snapAxis(py, org?org.y:0, Math.max(0.25,b.size.y));
+        if(!_bmN.z) pz=snapAxis(pz, org?org.z:0, Math.max(0.25,b.size.z));
+      }
+      g.position.set(px,py,pz); placed=true;
+    }
+  }
+  if(!placed){
+    const d=6; let px=_bmPos.x+_bmDir.x*d, pz=_bmPos.z+_bmDir.z*d;
+    if(buildSnap){ const gx=Math.max(0.25,b.size.x), gz=Math.max(0.25,b.size.z); px=Math.round(px/gx)*gx; pz=Math.round(pz/gz)*gz; }
+    const ty=(typeof terrainHeightAt==='function') ? terrainHeightAt(px,pz) : 0;
+    g.position.set(px, ty - b.foot + 0.001, pz);
+  }
+  g.rotation.set(0, b.yaw, 0);
+}
+
 
 // ---------- Destruction (breakable dynamic props) ----------
 // A dynamic prop can be flagged breakable with a hit-point pool. Shots (and hard impacts) deduct HP;
@@ -21933,7 +22022,7 @@ function loop(){
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
   let dt = rawDt;
-  { const _anow=_pnow(); if(_adaptLast) _adaptResTick(_anow-_adaptLast, _anow); _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); if(typeof _touchCtxTick==='function') _touchCtxTick(_anow); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish) · build 908: context touch buttons
+  { const _anow=_pnow(); if(_adaptLast) _adaptResTick(_anow-_adaptLast, _anow); _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); if(typeof _touchCtxTick==='function') _touchCtxTick(_anow); if(typeof _buildModeTick==='function') _buildModeTick(); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish) · build 908: context touch buttons
   updatePerfHud();   // measure real frame time every frame (before any early-out)
   if(editorOpen || _cineActive) _dirtyShadows(1);   // authoring + camera moves: keep shadows current
   else {
@@ -24468,6 +24557,8 @@ function renderBuildMenuPanel(){
     // scale + explosive
     { const rr=document.createElement('input'); rr.type='range'; rr.min='0.2'; rr.max='4'; rr.step='0.05'; rr.value=String(s.scale); rr.style.cssText='flex:1 1 auto;accent-color:var(--accent);max-width:110px;'; const nn=document.createElement('span'); nn.style.cssText='flex:0 0 auto;width:34px;text-align:right;color:#9fdcc9;font-size:11px;'; nn.textContent=(+s.scale).toFixed(2); rr.addEventListener('pointerdown',touch); rr.oninput=()=>{ s.scale=+rr.value; nn.textContent=(+s.scale).toFixed(2); _levelDirty=true; }; const r=row('Scale', rr); r.appendChild(nn); }
     { const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!s.exp; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent);flex:0 0 auto;'; cb.onchange=()=>{ touch(); s.exp=cb.checked; }; row('Explosive', cb); }
+    { const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!s.unb; cb.title='Shots can\u2019t shatter this prop'; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent);flex:0 0 auto;'; cb.onchange=()=>{ touch(); s.unb=cb.checked; }; row('Unbreakable', cb); }
+    { const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!s.anc; cb.title='A static building block \u2014 no physics tumble, stays exactly where placed'; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent);flex:0 0 auto;'; cb.onchange=()=>{ touch(); s.anc=cb.checked; }; row('Anchored (static)', cb); }
     wrap.appendChild(card);
   });
   const btnRow=document.createElement('div'); btnRow.className='row2'; btnRow.style.marginTop='4px';

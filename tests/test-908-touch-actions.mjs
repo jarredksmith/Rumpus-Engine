@@ -20,7 +20,7 @@ assert(/touchCrouch=false; \{ const cb=document\.getElementById\('tCrouch'\)/.te
 
 // wiring: melee / radial / flashlight / inventory / chat
 assert(/tap\('tMelee', \(\)=>\{ if\(typeof meleeAttack==='function'\) meleeAttack\(\); \}\);/.test(src), 'MELEE taps meleeAttack');
-assert(/tap\('tBuild', \(\)=>\{ if\(typeof openRadial!=='function'\) return; if\(radialOpen\) closeRadial\(false\); else openRadial\(\); \}\);/.test(src), 'BUILD toggles the radial (cancel on second tap)');
+assert(/tap\('tBuild', \(\)=>\{ if\(typeof buildMode!=='undefined' && buildMode\)\{ exitBuildMode\(\); return; \} if\(typeof openRadial!=='function'\) return; if\(radialOpen\) closeRadial\(false\); else openRadial\(\); \}\);/.test(src), 'BUILD toggles the radial (and ends build mode, build 928)');
 assert(/tap\('tFlash', \(\)=>\{ if\(typeof toggleFlashlight==='function'\) toggleFlashlight\(\); \}\);/.test(src), 'LIGHT taps the flashlight');
 assert(/tap\('tInv',\s+\(\)=>\{ if\(typeof toggleInventory==='function'\) toggleInventory\(\); \}\);/.test(src), 'BAG opens the inventory');
 assert(/tap\('tChat',\s+\(\)=>\{ if\(typeof openChat==='function'\) openChat\(\); \}\);/.test(src), 'CHAT opens MP chat');

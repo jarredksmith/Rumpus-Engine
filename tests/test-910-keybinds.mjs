@@ -24,7 +24,7 @@ for(const pat of [
   /if\(e\.code===BINDS\.reload\) reload\(\);/,                          // reload
   /if\(e\.code===BINDS\.interact\) interact\(\);/,                      // use
   /if\(e\.code===BINDS\.grenade\) throwGrenade\(\);/,                   // grenade
-  /e\.code===BINDS\.radial\)\{ if\(!e\.repeat\) openRadial\(\);/,       // deploy menu
+  /e\.code===BINDS\.radial\)\{ if\(buildMode\)\{ exitBuildMode\(\); e\.preventDefault\(\); return; \} if\(!e\.repeat\) openRadial\(\);/,       // deploy menu (build 928: second press ends build mode)
   /e\.code===BINDS\.map && !e\.repeat/,                                 // big map
 ]) assert(pat.test(src), 'BINDS-routed read present: '+pat.source.slice(0,44));
 eq((src.match(/keys\['KeyW'\]/g)||[]).length, 1, 'exactly one raw KeyW read remains: the editor fly-cam (deliberately unbound)');
