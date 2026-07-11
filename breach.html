@@ -14254,6 +14254,7 @@ function _aimAvatarGun(group, yaw, pitch){
   const spine=(group.userData.visual && group.userData.visual.userData.aimSpine) || null;
   let spineApplied=0;
   if(spine){ spineApplied=Math.max(-AIM_SPINE_LIMIT, Math.min(AIM_SPINE_LIMIT, pitch*AIM_SPINE_FRAC)); _applyAimToBone(spine, rightX, rightZ, spineApplied); }
+  _weaponHoldIK(group, yaw, pitch);   // build 936: two-handed stance BEFORE the gun re-aims (the aim is world-space, so the barrel stays exact)
   const gunApplied = pitch - spineApplied;   // the gun covers whatever the (clamped) spine didn't, so the barrel hits the exact view pitch
   const base=gun.userData.gripQuat; if(base) gun.quaternion.copy(base);   // reset to the grip rotation so the aim can't accumulate
   gun.getWorldQuaternion(_aimCur);
@@ -14262,6 +14263,98 @@ function _aimAvatarGun(group, yaw, pitch){
   if(gun.parent){ gun.parent.getWorldQuaternion(_aimParent).invert(); gun.quaternion.copy(_aimParent).multiply(_aimNew); }
   else gun.quaternion.copy(_aimNew);
   gun.updateWorldMatrix(false,true);
+}
+// ---- build 936: two-handed weapon hold. The animation library's armed poses are one-handed (pistol
+// grip, arm fully extended) so the left arm hangs free — wrong for rifles, and the extended pose puts
+// the forestock beyond the support arm's reach. Both arms are solved per frame with 2-bone IK in WORLD
+// space (rotation deltas, like the retargeter, so bone-axis conventions never matter): the trigger hand
+// is pulled back to the shoulder pocket (stock at the shoulder, like a real rifle stance), then the left
+// wrist lands on the forestock — a point ahead of the trigger hand along the exact aim direction — so
+// both hands track the aim pitch. Runs BEFORE the gun re-aim, which is world-space, so the barrel stays
+// exact. Non-destructive and animation-LOD-safe via the same base/applied pattern as the aim bones. ----
+const _ikS=new THREE.Vector3(), _ikE=new THREE.Vector3(), _ikW=new THREE.Vector3(), _ikT=new THREE.Vector3();
+const _ikD=new THREE.Vector3(), _ikP=new THREE.Vector3(), _ikN=new THREE.Vector3(), _ikQ=new THREE.Quaternion();
+const _ikF=new THREE.Vector3(), _ikT2=new THREE.Vector3();
+function _findArm(root, side){
+  if(!root || typeof _canonBoneKey!=='function') return null;
+  const by={}; root.traverse(o=>{ if(o.isBone){ const k=_canonBoneKey(o.name||''); if(k && by[k]===undefined) by[k]=o; } });
+  const up=by[side+':uparm'], fo=by[side+':forearm'], ha=by[side+':hand'];
+  return (up && fo && ha) ? { up, fo, ha } : null;
+}
+function _ikRotateWorld(bone, fromDir, toDir){   // premultiply a world-space delta rotation onto a bone
+  _ikQ.setFromUnitVectors(fromDir, toDir);
+  bone.getWorldQuaternion(_aimCur);
+  _aimNew.copy(_ikQ).multiply(_aimCur);
+  if(bone.parent){ bone.parent.getWorldQuaternion(_aimParent).invert(); bone.quaternion.copy(_aimParent).multiply(_aimNew); }
+  else bone.quaternion.copy(_aimNew);
+  bone.updateWorldMatrix(false,true);
+}
+// 2-bone IK: put arm's wrist on the world target. Undoes last frame's solve first if the mixer skipped
+// these bones (animation LOD), keeps the animated elbow's off-axis flavor as the pole hint.
+function _armPinTo(arm, tx, ty, tz){
+  for(const b of [arm.up, arm.fo]){ const ud=b.userData;
+    if(ud._ikApplied && ud._ikBase && b.quaternion.equals(ud._ikApplied)) b.quaternion.copy(ud._ikBase);
+    ud._ikBase=(ud._ikBase||new THREE.Quaternion()).copy(b.quaternion);
+  }
+  arm.up.updateWorldMatrix(true,true);
+  arm.up.getWorldPosition(_ikS); arm.fo.getWorldPosition(_ikE); arm.ha.getWorldPosition(_ikW);
+  const a=_ikS.distanceTo(_ikE), b=_ikE.distanceTo(_ikW); if(a<1e-4 || b<1e-4) return false;
+  _ikD.set(tx,ty,tz).sub(_ikS); let d=_ikD.length(); const maxD=(a+b)*0.97, minD=Math.abs(a-b)*1.05+1e-3;
+  if(d>maxD){ _ikD.multiplyScalar(maxD/d); d=maxD; } else if(d<minD){ if(d<1e-4) return false; _ikD.multiplyScalar(minD/d); d=minD; }
+  _ikT.copy(_ikS).add(_ikD); _ikD.multiplyScalar(1/d);
+  _ikP.copy(_ikE).sub(_ikS); _ikP.addScaledVector(_ikD, -_ikP.dot(_ikD));
+  if(_ikP.lengthSq()<1e-6){ _ikP.set(0,-1,0); _ikP.addScaledVector(_ikD, -_ikP.dot(_ikD)); }
+  if(_ikP.lengthSq()<1e-6) return false;
+  _ikP.normalize();
+  const cosA=Math.max(-1, Math.min(1, (a*a + d*d - b*b)/(2*a*d)));   // law of cosines at the shoulder
+  const sinA=Math.sqrt(Math.max(0, 1-cosA*cosA));
+  _ikN.copy(_ikS).addScaledVector(_ikD, a*cosA).addScaledVector(_ikP, a*sinA);   // where the elbow belongs
+  _ikE.sub(_ikS).normalize(); _ikP.copy(_ikN).sub(_ikS).normalize();
+  _ikRotateWorld(arm.up, _ikE, _ikP);                                // upper arm: shoulder->elbow delta
+  arm.fo.getWorldPosition(_ikE); arm.ha.getWorldPosition(_ikW);
+  _ikW.sub(_ikE).normalize(); _ikP.copy(_ikT).sub(_ikE).normalize();
+  _ikRotateWorld(arm.fo, _ikW, _ikP);                                // forearm: elbow->wrist onto the target
+  for(const b2 of [arm.up, arm.fo]){ const ud=b2.userData; ud._ikApplied=(ud._ikApplied||new THREE.Quaternion()).copy(b2.quaternion); }
+  return true;
+}
+function _weaponHoldIK(group, yaw, pitch){
+  const gun=group.userData.gun; if(!gun || !gun.parent) return;
+  const w=WEAPONS[group.userData.gunKey]; if(!w || w.melee) return;          // fists/crowbar keep both hands free
+  const vis=group.userData.visual; if(!vis) return;
+  if(vis.userData._rArm===undefined) vis.userData._rArm=_findArm(vis,'R');   // cached (null = no usable arm)
+  if(vis.userData._lArm===undefined) vis.userData._lArm=_findArm(vis,'L');
+  const R=vis.userData._rArm, L=vis.userData._lArm; if(!R && !L) return;
+  const st=vis.userData.animState;
+  if(st && /death|die|slide|climb|melee|punch|swim|grab|roll|reload/i.test(st)) return;   // those clips own the arms
+  const cp=Math.cos(pitch);
+  _ikF.set(-Math.sin(yaw)*cp, Math.sin(pitch), -Math.cos(yaw)*cp);           // view forward
+  // trigger hand: stock into the shoulder pocket. Anchored on the CHEST centerline (mid-shoulders,
+  // nudged a hand's width toward the gun side) — posing it straight out of the right shoulder leaves
+  // the trigger hand beyond the support arm's reach on wide-shouldered rigs.
+  if(R && group.userData.gunBone){
+    R.up.updateWorldMatrix(true,true);
+    R.up.getWorldPosition(_ikS); R.fo.getWorldPosition(_ikE); R.ha.getWorldPosition(_ikW);
+    const rl=_ikS.distanceTo(_ikE)+_ikE.distanceTo(_ikW);
+    if(L){ L.up.updateWorldMatrix(true,true); L.up.getWorldPosition(_ikN); _ikT2.copy(_ikS).add(_ikN).multiplyScalar(0.5); }
+    else _ikT2.copy(_ikS);
+    _ikT2.addScaledVector(_ikF, rl*0.45);
+    _ikT2.x += Math.cos(yaw)*rl*0.18; _ikT2.z += -Math.sin(yaw)*rl*0.18;
+    _ikT2.y -= rl*0.07;
+    _armPinTo(R, _ikT2.x, _ikT2.y, _ikT2.z);
+  }
+  // support hand: the forestock — ahead of the trigger hand along the barrel, slid back into reach
+  if(!L) return;
+  const anchor = group.userData.gunBone ? group.userData.gunBone.getWorldPosition(_ikT2) : gun.getWorldPosition(_ikT2);
+  L.up.updateWorldMatrix(true,true);
+  L.up.getWorldPosition(_ikS); L.fo.getWorldPosition(_ikE); L.ha.getWorldPosition(_ikW);
+  const ll=_ikS.distanceTo(_ikE)+_ikE.distanceTo(_ikW);
+  const reach=Math.min(0.32, ll*0.42), maxD=ll*0.97;
+  _ikP.copy(anchor).sub(_ikS);
+  const B=_ikP.dot(_ikF), disc=B*B - _ikP.lengthSq() + maxD*maxD;            // |anchor + t*fwd - shoulder| = maxD
+  const t = disc>0 ? Math.min(reach, -B + Math.sqrt(disc)) : -1;
+  if(t<0.02) return;                                                         // even the trigger hand is out of reach
+  _ikT2.addScaledVector(_ikF, t); _ikT2.y -= 0.02;                           // (anchor aliases _ikT2)
+  _armPinTo(L, _ikT2.x, _ikT2.y, _ikT2.z);
 }
 function _applyGunGrip(gun, weaponKey, gripOverride){
   if(!gun) return;
@@ -18179,7 +18272,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 935 · 2026-07-11';
+const BUILD_VERSION = 'build 936 · 2026-07-11';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
