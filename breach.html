@@ -14147,11 +14147,16 @@ function disposeAvatarLabel(mesh){
 }
 const remoteBodyGeo = new THREE.CapsuleGeometry(0.5, 1.2, 4, 8);
 // ---- Player avatar (what teammates / duel opponents see). Default = blue capsule; swappable for a GLB. ----
-const PLAYER_MODEL0 = { url:'', scale:1, face:0, rx:0, rz:0, yoff:0, xoff:0, zoff:0, thumb:'', animLib:'', ikHold:true, clips:{ idle:'', walk:'', run:'', attack:'' } };   // thumb = Poly Pizza/Sketchfab preview image; face/rx/rz in radians
+const PLAYER_MODEL0 = { url:'', scale:1, face:0, rx:0, rz:0, yoff:0, xoff:0, zoff:0, thumb:'', animLib:'', ikHold:true, jointFix:{}, clips:{ idle:'', walk:'', run:'', attack:'' } };   // thumb = Poly Pizza/Sketchfab preview image; face/rx/rz in radians
 let playerModelCfg = Object.assign({}, PLAYER_MODEL0, { clips:{ idle:'', walk:'', run:'', attack:'' }, clipSpeed:{}, clipHold:{}, clipInPlace:{} });
 function _sanitizeGrip1(g){ if(!g||typeof g!=='object') return null; const n=(v,d)=>{ const x=+v; return isFinite(x)?x:d; }; return { x:n(g.x,0), y:n(g.y,0), z:n(g.z,0), yaw:n(g.yaw,0), pitch:n(g.pitch,0), roll:n(g.roll,0), scale:n(g.scale,1) }; }
 function _sanitizeGripMap(m){ const o={}; if(m && typeof m==='object'){ for(const k in m){ const g=_sanitizeGrip1(m[k]); if(g) o[k]=g; } } return o; }   // build 524: per-weapon held-gun grips baked into a roster character travel with the level
-function _sanitizeCharCfg(c){ c=c||{}; return { name:(typeof c.name==='string'&&c.name)||'Character', url:c.url||'', scale:+c.scale||1, face:+c.face||0, rx:+c.rx||0, rz:+c.rz||0, xoff:+c.xoff||0, yoff:+c.yoff||0, zoff:+c.zoff||0, thumb:(typeof c.thumb==='string'?c.thumb:''), animLib:(typeof c.animLib==='string' && ANIM_LIB_PACKS[c.animLib])?c.animLib:'', ikHold:(c.ikHold===false)?false:true, clips:Object.assign({idle:'',walk:'',run:'',attack:''}, (c.clips&&typeof c.clips==='object')?c.clips:{}), clipSpeed:Object.assign({}, (c.clipSpeed&&typeof c.clipSpeed==='object')?c.clipSpeed:{}), clipHold:Object.assign({}, (c.clipHold&&typeof c.clipHold==='object')?c.clipHold:{}), clipInPlace:Object.assign({}, (c.clipInPlace&&typeof c.clipInPlace==='object')?c.clipInPlace:{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) }; }
+function _sanitizeJointFix(f){ const out={}; if(!f || typeof f!=='object') return out; let n=0;
+  for(const k in f){ if(n>=24) break; const v=f[k]; if(!Array.isArray(v)) continue;
+    const a=[Math.max(-180,Math.min(180,+v[0]||0)), Math.max(-180,Math.min(180,+v[1]||0)), Math.max(-180,Math.min(180,+v[2]||0))];
+    if(!a[0] && !a[1] && !a[2]) continue; out[String(k).slice(0,24)]=a; n++; }
+  return out; }   // build 942
+function _sanitizeCharCfg(c){ c=c||{}; return { name:(typeof c.name==='string'&&c.name)||'Character', url:c.url||'', scale:+c.scale||1, face:+c.face||0, rx:+c.rx||0, rz:+c.rz||0, xoff:+c.xoff||0, yoff:+c.yoff||0, zoff:+c.zoff||0, thumb:(typeof c.thumb==='string'?c.thumb:''), animLib:(typeof c.animLib==='string' && ANIM_LIB_PACKS[c.animLib])?c.animLib:'', ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({idle:'',walk:'',run:'',attack:''}, (c.clips&&typeof c.clips==='object')?c.clips:{}), clipSpeed:Object.assign({}, (c.clipSpeed&&typeof c.clipSpeed==='object')?c.clipSpeed:{}), clipHold:Object.assign({}, (c.clipHold&&typeof c.clipHold==='object')?c.clipHold:{}), clipInPlace:Object.assign({}, (c.clipInPlace&&typeof c.clipInPlace==='object')?c.clipInPlace:{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) }; }
 let charRoster = (savedLevel && Array.isArray(savedLevel.roster)) ? savedLevel.roster.map(_sanitizeCharCfg) : [];   // authored multiplayer character models
 let myRosterIdx = -1;   // which roster character the local player picked (-1 = default player model)
 const CHARACTERS = [
@@ -14327,6 +14332,33 @@ function _armPinTo(arm, tx, ty, tz, ox, oz){
   _ikRotateWorld(arm.fo, _ikW, _ikP);                                // forearm: elbow->wrist onto the target
   for(const b2 of [arm.up, arm.fo]){ const ud=b2.userData; ud._ikApplied=(ud._ikApplied||new THREE.Quaternion()).copy(b2.quaternion); }
   return true;
+}
+// ---- build 942: JOINT TWEAKS — per-character bone rotation offsets, applied every frame ON TOP of
+// the animation and BEFORE the weapon-hold IK (which then builds on the corrected pose). The escape
+// hatch for rigs that import with odd rest poses — bent wrists, A-pose arms, twisted forearms —
+// which the retargeter cannot distinguish from intent. LOD-safe via the base/applied pattern. ----
+const JF_LABELS={ 'head':'Head', 'neck@0':'Neck', 'neck@1':'Neck (alt)', 'spine@90':'Chest', 'spine@3':'Spine 3', 'spine@2':'Spine 2', 'spine@1':'Spine 1', 'spine@0':'Spine base', 'hips':'Hips',
+  'L:shoulder':'L shoulder', 'L:uparm':'L upper arm', 'L:forearm':'L forearm', 'L:hand':'L hand',
+  'R:shoulder':'R shoulder', 'R:uparm':'R upper arm', 'R:forearm':'R forearm', 'R:hand':'R hand',
+  'L:upleg':'L thigh', 'L:lowleg':'L shin', 'L:foot':'L foot', 'R:upleg':'R thigh', 'R:lowleg':'R shin', 'R:foot':'R foot' };
+const _jfQ=new THREE.Quaternion(), _jfE=new THREE.Euler();
+function _myJointFix(){ const c=(typeof myRosterIdx!=='undefined' && myRosterIdx>=0 && charRoster[myRosterIdx]) ? charRoster[myRosterIdx] : playerModelCfg; return c.jointFix; }
+function _applyJointFix(group, fix){
+  const vis=group && group.userData && group.userData.visual; if(!vis) return;
+  fix = fix || (vis.userData.animCfg && vis.userData.animCfg.jointFix);
+  if(!fix) return; let any=false; for(const k in fix){ any=true; break; } if(!any) return;
+  let bones=vis.userData._jfBones;
+  if(!bones){ bones=vis.userData._jfBones={}; vis.traverse(o=>{ if(o.isBone){ const k=(typeof _canonBoneKey==='function')?_canonBoneKey(o.name||''):null; if(k && !bones[k]) bones[k]=o; } }); }
+  for(const k in fix){
+    const b=bones[k]; if(!b) continue;
+    const v=fix[k]; if(!v || (!v[0] && !v[1] && !v[2])) continue;
+    const ud=b.userData;
+    if(ud._jfApplied && ud._jfBase && b.quaternion.equals(ud._jfApplied)) b.quaternion.copy(ud._jfBase);   // mixer skipped (anim LOD) -> undo last offset first
+    ud._jfBase=(ud._jfBase||new THREE.Quaternion()).copy(b.quaternion);
+    _jfE.set(v[0]*Math.PI/180, v[1]*Math.PI/180, v[2]*Math.PI/180);
+    b.quaternion.multiply(_jfQ.setFromEuler(_jfE));   // local-space additive rotation
+    ud._jfApplied=(ud._jfApplied||new THREE.Quaternion()).copy(b.quaternion);
+  }
 }
 function _weaponHoldIK(group, yaw, pitch){
   const gun=group.userData.gun; if(!gun || !gun.parent) return;
@@ -14829,7 +14861,7 @@ function tpCameraPushback(dt){
   if(side || height){ _tpLookAt.set(camx + fx, camy + fy, camz + fz); camera.lookAt(_tpLookAt); }
 }
 // ---- per-player characters: each player owns + broadcasts their avatar config; others build from it ----
-function myCharCfg(){ const c=(myRosterIdx>=0 && charRoster[myRosterIdx]) ? charRoster[myRosterIdx] : playerModelCfg; return { url:c.url||'', scale:c.scale||1, face:c.face||0, rx:c.rx||0, rz:c.rz||0, xoff:c.xoff||0, yoff:c.yoff||0, zoff:c.zoff||0, thumb:c.thumb||'', animLib:(typeof c.animLib==='string' && ANIM_LIB_PACKS[c.animLib])?c.animLib:'', ikHold:(c.ikHold===false)?false:true, clips:Object.assign({}, c.clips||{}), clipSpeed:Object.assign({}, c.clipSpeed||{}), clipHold:Object.assign({}, c.clipHold||{}), clipInPlace:Object.assign({}, c.clipInPlace||{}), tint:(CHARACTERS[myCharIdx]?CHARACTERS[myCharIdx].color:null) }; }
+function myCharCfg(){ const c=(myRosterIdx>=0 && charRoster[myRosterIdx]) ? charRoster[myRosterIdx] : playerModelCfg; return { url:c.url||'', scale:c.scale||1, face:c.face||0, rx:c.rx||0, rz:c.rz||0, xoff:c.xoff||0, yoff:c.yoff||0, zoff:c.zoff||0, thumb:c.thumb||'', animLib:(typeof c.animLib==='string' && ANIM_LIB_PACKS[c.animLib])?c.animLib:'', ikHold:(c.ikHold===false)?false:true, jointFix:Object.assign({}, c.jointFix||{}), clips:Object.assign({}, c.clips||{}), clipSpeed:Object.assign({}, c.clipSpeed||{}), clipHold:Object.assign({}, c.clipHold||{}), clipInPlace:Object.assign({}, c.clipInPlace||{}), tint:(CHARACTERS[myCharIdx]?CHARACTERS[myCharIdx].color:null) }; }
 function applyRemoteChar(id, cfg){ if(cfg==null || +id===NET.myId) return; NET.charById[id]=cfg;
   /* build 927: warm their model before the round starts */ try{ if(cfg.url) loadGLTFCached(cfg.url, ()=>{}, ()=>{}); if(cfg.animLib && ANIM_LIB_PACKS[cfg.animLib]) loadGLTFCached(ANIM_LIB_PACKS[cfg.animLib].url, ()=>{}, ()=>{}); }catch(e){}
  const rp=NET.players[id]; if(rp){ rp.modelCfg=cfg; if(rp.mesh){ buildAvatarVisual(rp.mesh, cfg); if(teamMode() && NET.teams[id]!=null) tintAvatar(rp.mesh, NET.teams[id]); } } }
@@ -18300,7 +18332,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 941 · 2026-07-12';
+const BUILD_VERSION = 'build 942 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22353,8 +22385,8 @@ function loop(){
   // weapon aim (build 494): pitch the held gun (and a spine/chest bone) toward the view so the gun and its tracer
   // point where you're actually aiming. The body only yaws, so without this the gun stays level. Local uses the
   // live pitch; remote players use their synced pitch. Runs after the mixer + seat re-pin.
-  if(_ownAvatar && (tpActive() || activeViewMode()!=='fps')) _aimAvatarGun(_ownAvatar, player.yaw, player.pitch);
-  for(const id in NET.players){ const rp=NET.players[id]; if(rp && rp.mesh) _aimAvatarGun(rp.mesh, rp.yaw||0, rp.pitch||0); }
+  if(_ownAvatar && (tpActive() || activeViewMode()!=='fps')){ if(typeof _applyJointFix==='function') _applyJointFix(_ownAvatar, _myJointFix()); _aimAvatarGun(_ownAvatar, player.yaw, player.pitch); }   // build 942: joint tweaks ride under the aim/IK
+  for(const id in NET.players){ const rp=NET.players[id]; if(rp && rp.mesh){ if(typeof _applyJointFix==='function') _applyJointFix(rp.mesh); _aimAvatarGun(rp.mesh, rp.yaw||0, rp.pitch||0); } }
 
   // aim-down-sights: smoothly blend toward aimed state, drive FOV + crosshair
   const adsTarget = (ads || padAds || touchAds || editorAimPreview) ? 1 : 0;
@@ -22654,6 +22686,7 @@ function loop(){
     camera.rotation.z = 0;
   } else if(editorOpen && editorActive==='player' && previewAvatar){
     if(typeof attachAvatarGun==='function') attachAvatarGun(previewAvatar, (typeof curWep!=='undefined'?curWep:'rifle'));   // show the held gun so the grip sliders can be tuned live
+    if(typeof _applyJointFix==='function') _applyJointFix(previewAvatar, _myJointFix());   // build 942: joint tweaks are WYSIWYG in the preview
     if(typeof _weaponHoldIK==='function') _weaponHoldIK(previewAvatar, previewAvatar.rotation.y||0, 0);   // build 937: preview the SAME two-handed hold play applies
     // Player tab default: a live third-person view of the preview avatar, framed with the SAME pivot/offset
     // the in-game chase cam uses, so what you tune here is exactly what you get in play. Drag to orbit, wheel to zoom.
@@ -23142,7 +23175,7 @@ function prsTransform(min,max,perAxisScale){
 }
 
 function applyPlayerLevel(pl){ if(!pl) return; if(pl.state) Object.assign(editorTargets.player.state, pl.state);
-  playerModelCfg.url=(pl.url||'').trim(); playerModelCfg.thumb=(pl.thumb||''); playerModelCfg.animLib=(typeof pl.animLib==='string' && ANIM_LIB_PACKS[pl.animLib])?pl.animLib:''; playerModelCfg.ikHold=(pl.ikHold===false)?false:true; const s=editorTargets.player.state;
+  playerModelCfg.url=(pl.url||'').trim(); playerModelCfg.thumb=(pl.thumb||''); playerModelCfg.animLib=(typeof pl.animLib==='string' && ANIM_LIB_PACKS[pl.animLib])?pl.animLib:''; playerModelCfg.ikHold=(pl.ikHold===false)?false:true; playerModelCfg.jointFix=_sanitizeJointFix(pl.jointFix); const s=editorTargets.player.state;
   playerModelCfg.scale=s.s||1; playerModelCfg.face=(s.face||0)*RAD; playerModelCfg.yoff=s.yoff||0; playerModelCfg.xoff=s.xoff||0; playerModelCfg.zoff=s.zoff||0;
   playerModelCfg.clips=Object.assign({ idle:'', walk:'', run:'', attack:'' }, pl.clips||{}); playerModelCfg.clipSpeed=Object.assign({}, pl.clipSpeed||{}); playerModelCfg.clipHold=Object.assign({}, pl.clipHold||{}); playerModelCfg.clipInPlace=Object.assign({}, pl.clipInPlace||{}); rebuildAvatars(); }
 const editorTargets = {
@@ -24573,7 +24606,7 @@ function serializeLevel(){
     stationEnabled: !!stationEnabled,   // build 654: the ammo station is optional per level
     hud: _sanitizeHud(hudCfg),   // build 665: per-level HUD theme + visibility
     radial: _sanitizeRadial(radialCfg),   // build 671: the in-game build/deploy menu
-    player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', animLib: playerModelCfg.animLib||'', ikHold:(playerModelCfg.ikHold===false)?false:true, state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}) },
+    player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', animLib: playerModelCfg.animLib||'', ikHold:(playerModelCfg.ikHold===false)?false:true, jointFix:_sanitizeJointFix(playerModelCfg.jointFix), state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}) },
     world:   Object.assign({}, worldCfg),
     chest:   { url: chestModelUrl, scale: chestModelScale, randomOff: !randomLootOn },
     coin:    { url: coinCfg.url, scale: coinCfg.scale, on: coinCfg.on !== false },
@@ -24599,7 +24632,7 @@ function serializeLevel(){
     deathFx: Object.assign({}, deathFxCfg),
     tracer: Object.assign({}, tracerCfg),
     bolt: Object.assign({}, boltCfg),
-    roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
+    roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
     game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x' },
@@ -24716,8 +24749,8 @@ function showCampaignInterstitial(fromName, clearedNum, toIdx, total, onContinue
   _interTimer=setTimeout(tick,1000);
 }
 function _restoreLoadout(c){ if(!c) return; owned.length=0; for(const k of c.owned) owned.push(k); for(const k in c.ammo){ if(WEAPONS[k]){ WEAPONS[k].mag=c.ammo[k].mag; WEAPONS[k].reserve=c.ammo[k].reserve; } } curWep=(c.wep && owned.includes(c.wep))?c.wep:owned[0]; player.hp=Math.max(1, c.hp||player.hp); if(typeof switchWeapon==='function') switchWeapon(curWep); if(typeof updateHUD==='function') updateHUD(); }
-function _snapshotPlayerCharCfg(name){ const c=playerModelCfg; return _sanitizeCharCfg({ name:name||'Character', url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb, animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(tpGunGrips), view:_snapshotView() }); }
-function _loadCharIntoEditor(i){ const c=charRoster[i]; if(!c) return; pushUndoSnapshot(); Object.assign(playerModelCfg, { url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}) }); if(c.grip){ for(const k in c.grip){ tpGunGrips[k]=Object.assign({}, TP_GUN_DEFAULT, c.grip[k]); } _saveTpGun(); if(typeof refreshAvatarGunGrips==='function') refreshAvatarGunGrips(); } if(c.view) _applyView(c.view); editorActive='player'; if(typeof ensurePlayerPreview==='function') ensurePlayerPreview(true); if(typeof previewAvatar!=='undefined' && previewAvatar && typeof buildAvatarVisual==='function') buildAvatarVisual(previewAvatar); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof flashToast==='function') flashToast('Loaded "'+(c.name||'Character')+'" onto the Player tab'); }
+function _snapshotPlayerCharCfg(name){ const c=playerModelCfg; return _sanitizeCharCfg({ name:name||'Character', url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb, animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, jointFix:Object.assign({}, c.jointFix||{}), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(tpGunGrips), view:_snapshotView() }); }
+function _loadCharIntoEditor(i){ const c=charRoster[i]; if(!c) return; pushUndoSnapshot(); Object.assign(playerModelCfg, { url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, jointFix:Object.assign({}, c.jointFix||{}), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}) }); if(c.grip){ for(const k in c.grip){ tpGunGrips[k]=Object.assign({}, TP_GUN_DEFAULT, c.grip[k]); } _saveTpGun(); if(typeof refreshAvatarGunGrips==='function') refreshAvatarGunGrips(); } if(c.view) _applyView(c.view); editorActive='player'; if(typeof ensurePlayerPreview==='function') ensurePlayerPreview(true); if(typeof previewAvatar!=='undefined' && previewAvatar && typeof buildAvatarVisual==='function') buildAvatarVisual(previewAvatar); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof flashToast==='function') flashToast('Loaded "'+(c.name||'Character')+'" onto the Player tab'); }
 function renderCharRosterPanel(){
   const host = editorEl && editorEl.querySelector('#edCharRoster'); if(!host) return;
   host.innerHTML='';
@@ -28007,6 +28040,27 @@ function renderEditorFields(){
         ik.onchange=()=>{ pushUndoSnapshot(); playerModelCfg.ikHold=ik.checked; rebuildAvatars(); };
         const ikSp=document.createElement('span'); ikSp.textContent='Two-handed weapon hold (IK)';
         ikRow.appendChild(ik); ikRow.appendChild(ikSp); urlHost.appendChild(ikRow);
+      }
+      { // build 942: JOINT TWEAKS — per-bone rotation offsets to fix odd rigs (bent wrists, A-pose arms).
+        const jf=()=>{ if(!playerModelCfg.jointFix) playerModelCfg.jointFix={}; return playerModelCfg.jointFix; };
+        const wrap=document.createElement('div'); wrap.style.cssText='margin:4px 0 6px;padding:6px 8px;border:1px solid #22323a;border-radius:6px;';
+        const head=document.createElement('div'); head.style.cssText='font-size:12px;color:#9fe6cf;margin-bottom:4px;'; head.title='Degrees, applied on top of every animation — use it when a model imports with bent wrists, A-pose arms or a twisted forearm. Saved with the character.'; head.textContent='Joint tweaks \u2014 fix odd rigs'; wrap.appendChild(head);
+        const row=document.createElement('div'); row.style.cssText='display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+        const sel=document.createElement('select'); sel.style.cssText='flex:1 1 130px;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+        for(const k in JF_LABELS){ const o=document.createElement('option'); o.value=k; o.textContent=JF_LABELS[k]; sel.appendChild(o); }
+        let refresh;
+        const mk=(ax,i)=>{ const inp=document.createElement('input'); inp.type='number'; inp.step='5'; inp.min='-180'; inp.max='180'; inp.title=ax+'\u00b0 offset'; inp.style.cssText='flex:0 0 58px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 4px;font-size:11px;';
+          inp.onchange=()=>{ pushUndoSnapshot(); const m=jf(); const a=m[sel.value]||(m[sel.value]=[0,0,0]); a[i]=Math.max(-180,Math.min(180,parseFloat(inp.value)||0)); if(!a[0]&&!a[1]&&!a[2]) delete m[sel.value]; refresh(); if(typeof _scheduleCharBroadcast==='function') _scheduleCharBroadcast(); };
+          return inp; };
+        const ix=mk('X',0), iy=mk('Y',1), iz=mk('Z',2);
+        const clr=document.createElement('button'); clr.textContent='Clear'; clr.title='Remove this bone\u2019s offsets'; clr.style.cssText='padding:2px 8px;font-size:11px;';
+        clr.onclick=()=>{ pushUndoSnapshot(); delete jf()[sel.value]; refresh(); if(typeof _scheduleCharBroadcast==='function') _scheduleCharBroadcast(); };
+        const sum=document.createElement('div'); sum.style.cssText='font-size:10px;color:#7fb8a6;margin-top:3px;';
+        refresh=()=>{ const a=jf()[sel.value]||[0,0,0]; ix.value=String(a[0]); iy.value=String(a[1]); iz.value=String(a[2]);
+          const keys=Object.keys(jf()); sum.textContent=keys.length ? ('Active: '+keys.map(k=>(JF_LABELS[k]||k)).join(', ')) : 'Pick a bone, nudge X/Y/Z (degrees) \u2014 the preview updates live.'; };
+        sel.onchange=refresh; refresh();
+        row.appendChild(sel); row.appendChild(ix); row.appendChild(iy); row.appendChild(iz); row.appendChild(clr);
+        wrap.appendChild(row); wrap.appendChild(sum); urlHost.appendChild(wrap);
       }
       _animSlotFolds(urlHost, 'pAnim', { 'Idle & standing':true, 'Locomotion (ground)':true }, (foldBody, _slot)=>{
         const stKey=_slot.k, stLabel=_slot.l;
