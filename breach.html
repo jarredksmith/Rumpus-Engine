@@ -17937,7 +17937,7 @@ function openInventory(){ if(invOpen) return; invOpen=true; if(typeof safeExitPo
 function closeInventory(){ invOpen=false; if(_invEl) _invEl.style.display='none'; closeInspect(); if(typeof gameOn!=='undefined' && gameOn && !paused && !isTouch && typeof tryPointerLock==='function') tryPointerLock(); }
 function toggleInventory(){ invOpen?closeInventory():openInventory(); }
 function _invCloseX(onclick){   // build 601: a stylized round close button (red on hover)
-  const b=document.createElement('button'); b.textContent='\u2715'; b.setAttribute('aria-label','Close');
+  const b=document.createElement('button'); b.textContent='\u2715'; b.setAttribute('aria-label','Close'); b.dataset.close='1';   // build 940: the pad navigator's B backs out via [data-close]
   b.style.cssText='width:30px;height:30px;flex:0 0 auto;border-radius:50%;border:1px solid #2a3a42;background:#0c1822;color:#9fe6cf;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .15s,color .15s,border-color .15s,transform .15s;';
   b.onmouseenter=()=>{ b.style.background='#ff3b30'; b.style.color='#fff'; b.style.borderColor='#ff3b30'; b.style.transform='scale(1.08)'; };
   b.onmouseleave=()=>{ b.style.background='#0c1822'; b.style.color='#9fe6cf'; b.style.borderColor='#2a3a42'; b.style.transform='none'; };
@@ -18211,6 +18211,8 @@ function scorePad(p){
 let _padFocusEl=null; const _padAxLatch={ x:0, y:0 };
 function _padNavSurface(){
   const vis=(el)=>{ if(!el) return false; const cs=getComputedStyle(el); if(cs.display==='none' || cs.visibility==='hidden') return false; const r=el.getBoundingClientRect(); return r.width>0 && r.height>0; };   // NOTE: offsetParent is null for position:fixed — every surface here is fixed
+  const insp=document.getElementById('inspect'); if(insp && vis(insp)) return insp.querySelector('#inspectCard')||insp;   // build 940: item inspector (renders above the bag)
+  const inv=document.getElementById('inventory'); if(inv && vis(inv)) return inv;                                          // build 940: inventory grid
   const mods=[...document.querySelectorAll('.modalBack')].filter(m=>!m.classList.contains('hidden') && vis(m));
   if(mods.length) return mods[mods.length-1];   // topmost modal wins (e.g. character picker over the lobby)
   const kb=document.getElementById('kbModal'); if(kb && vis(kb)) return kb;
@@ -18296,7 +18298,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 939 · 2026-07-12';
+const BUILD_VERSION = 'build 940 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18356,6 +18358,7 @@ function pollGamepad(dt){
   }
   if(paused){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 911: full pause-menu navigation (Start/B still resume)
   if(typeof _matchMenuOpen!=='undefined' && _matchMenuOpen){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 911
+  if(typeof invOpen!=='undefined' && invOpen){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 940: the bag + item inspector are pad-navigable — stick/D-pad focus, A opens/uses ("Use — hold & place"), B backs out
   if(edge9(9)){   // Start: pause (solo) / match menu (MP)
     if(NET.mode==='off'){ if(typeof openPause==='function') openPause(); }
     else if(typeof toggleMatchMenu==='function') toggleMatchMenu();
@@ -18528,7 +18531,12 @@ addEventListener('contextmenu', e=>{
       ub.addEventListener('pointercancel', ()=>{ clearTimeout(ut); ub.classList.remove('on'); uheld=false; }); } }
   tap('tWeapon', ()=>{ if(typeof cycleWeapon==='function') cycleWeapon(1); });
   // build 908: the audit's missing actions
-  { const cb=document.getElementById('tCrouch'); if(cb) cb.addEventListener('pointerdown', e=>{ touchCrouch=!touchCrouch; cb.classList.toggle('on', touchCrouch); e.preventDefault(); }); }
+  { const cb=document.getElementById('tCrouch'); if(cb) cb.addEventListener('pointerdown', e=>{
+      // build 940: tapping CROUCH at a sprint is a SLIDE (same tap-buffer as the C key) — mobile had
+      // no way to slide at all. A standing tap keeps the crouch toggle.
+      if(typeof sprinting==='function' && sprinting() && !touchCrouch && typeof _slideBufT!=='undefined'){ _slideBufT=0.25; }
+      else { touchCrouch=!touchCrouch; cb.classList.toggle('on', touchCrouch); }
+      e.preventDefault(); }); }
   tap('tMelee', ()=>{ if(typeof meleeAttack==='function') meleeAttack(); });
   tap('tBuild', ()=>{ if(typeof buildMode!=='undefined' && buildMode){ exitBuildMode(); return; } if(typeof openRadial!=='function') return; if(radialOpen) closeRadial(false); else openRadial(); });
   tap('tFlash', ()=>{ if(typeof toggleFlashlight==='function') toggleFlashlight(); });
