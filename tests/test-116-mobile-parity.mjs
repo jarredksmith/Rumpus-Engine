@@ -5,7 +5,7 @@ import { gameSource, html, done, assert } from './harness.mjs';
 const src = gameSource();
 
 // never fire while editing
-assert(/\(firing \|\| padFiring \|\| touchFiring\) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'no firing in the editor');
+assert(/\(firing \|\| padFiring \|\| touchFiring\) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar && !\(typeof buildMode!=='undefined' && buildMode\)\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'no firing in the editor');
 
 // touch look + touch UI work in the editor
 assert(/if\(isTouch && !shopOpen && !choosingUpgrade\)\{   \/\/ touch look/.test(src), 'touch look applies in the editor');

@@ -18445,7 +18445,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 946 · 2026-07-12';
+const BUILD_VERSION = 'build 947 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18506,6 +18506,7 @@ function pollGamepad(dt){
   if(paused){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 911: full pause-menu navigation (Start/B still resume)
   if(typeof _matchMenuOpen!=='undefined' && _matchMenuOpen){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 911
   if(typeof invOpen!=='undefined' && invOpen){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 940: the bag + item inspector are pad-navigable — stick/D-pad focus, A opens/uses ("Use — hold & place"), B backs out
+  if(typeof mapOpen!=='undefined' && mapOpen){ if(edge9(1)||edge9(13)){ closeBigMap(); } padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 947: the big map closes on B or D-pad down (a pad could open it but never close it)
   if(edge9(9)){   // Start: pause (solo) / match menu (MP)
     if(NET.mode==='off'){ if(typeof openPause==='function') openPause(); }
     else if(typeof toggleMatchMenu==='function') toggleMatchMenu();
@@ -19655,7 +19656,11 @@ function _bmValidate(){
 function _buildModeTick(){
   const b=buildMode; if(!b) return;
   if(!gameOn || editorOpen || shopOpen || paused || duelDead || invOpen || mapOpen || chatOpen){ exitBuildMode(); return; }
-  if(firing){ firing=false; firingLatch=false; placeBuild(); }              // mouse, touch FIRE and pad trigger all set `firing`
+  if(firing){ firing=false; firingLatch=false; placeBuild(); }              // keyboard/mouse `firing`
+  // build 947: the pad trigger and touch FIRE set their OWN flags — they never set `firing`, so RT
+  // "placed" by shooting your gun at the ghost. Place on any of them; holding keeps placing at the
+  // deploy cooldown's pace (placeBuild refuses while _deployCD runs).
+  if((typeof padFiring!=='undefined' && padFiring) || (typeof touchFiring!=='undefined' && touchFiring)) placeBuild();
   const g=b.ghost;
   camera.getWorldPosition(_bmPos); camera.getWorldDirection(_bmDir);
   _bmRay.set(_bmPos, _bmDir); _bmRay.far=10;
@@ -22890,7 +22895,7 @@ function loop(){
   recoil *= 0.85;
   muzzle.intensity *= 0.6; flashMat.opacity *= 0.5;
 
-  if((firing || padFiring || touchFiring) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar){ if(mountedTurret) turretFire(); else shoot(); }   // hands on the wheel — no shooting while driving (Phase 1)
+  if((firing || padFiring || touchFiring) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar && !(typeof buildMode!=='undefined' && buildMode)){ if(mountedTurret) turretFire(); else shoot(); }   // hands on the wheel — no shooting while driving (Phase 1); build 947: fire PLACES while building, never shoots
 
   // tracers
   for(let i=tracers.length-1;i>=0;i--){

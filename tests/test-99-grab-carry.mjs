@@ -24,7 +24,7 @@ assert(/THROW_SPEED\*m/.test(thr), 'throw force scales with prop mass for consis
 assert(/if\(heldProp\)\{ releaseHeld\(\); return; \}   \/\/ carrying a prop -> drop it/.test(src), 'E drops while carrying');
 assert(/if\(!nearTarget\)\{ tryGrabProp\(\); return; \}/.test(src), 'E grabs when not aiming at a crate/station');
 assert(/if\(e\.button===0\)\{ if\(heldProp\)\{ throwHeld\(\); return; \} firing=true; \}/.test(src), 'click throws while carrying');
-assert(/if\(\(firing \|\| padFiring \|\| touchFiring\) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'no shooting while carrying');
+assert(/if\(\(firing \|\| padFiring \|\| touchFiring\) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar && !\(typeof buildMode!=='undefined' && buildMode\)\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'no shooting while carrying');
 assert(/heldDist=Math\.max\(HOLD_MIN, Math\.min\(HOLD_MAX, heldDist - e\.deltaY\*0\.003\)\)/.test(src), 'scroll adjusts carry distance');
 assert(/function updatePhysics\(dt\)\{\n  if\(!physWorld\) return;\n  driveAllHeld\(\);/.test(src), 'physics step drives held bodies');
 assert(/if\(obj===heldProp\) continue;   \/\/ carried prop is driven by the grab system/.test(src), 'carried prop skips the collision resolver');
