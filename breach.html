@@ -18376,7 +18376,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 943 · 2026-07-12';
+const BUILD_VERSION = 'build 944 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28086,25 +28086,43 @@ function renderEditorFields(){
         ikRow.appendChild(ik); ikRow.appendChild(ikSp); urlHost.appendChild(ikRow);
       }
       { // build 942: JOINT TWEAKS — per-bone rotation offsets to fix odd rigs (bent wrists, A-pose arms).
+        // build 944: X/Y/Z are SLIDERS — drag and watch the preview move; undo captures once per drag,
+        // the MP character broadcast fires on release.
         const jf=()=>{ if(!playerModelCfg.jointFix) playerModelCfg.jointFix={}; return playerModelCfg.jointFix; };
         const wrap=document.createElement('div'); wrap.style.cssText='margin:4px 0 6px;padding:6px 8px;border:1px solid #22323a;border-radius:6px;';
         const head=document.createElement('div'); head.style.cssText='font-size:12px;color:#9fe6cf;margin-bottom:4px;'; head.title='Degrees, applied on top of every animation — use it when a model imports with bent wrists, A-pose arms or a twisted forearm. Saved with the character.'; head.textContent='Joint tweaks \u2014 fix odd rigs'; wrap.appendChild(head);
-        const row=document.createElement('div'); row.style.cssText='display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+        const top=document.createElement('div'); top.style.cssText='display:flex;align-items:center;gap:6px;';
         const sel=document.createElement('select'); sel.style.cssText='flex:1 1 130px;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
         for(const k in JF_LABELS){ const o=document.createElement('option'); o.value=k; o.textContent=JF_LABELS[k]; sel.appendChild(o); }
-        let refresh;
-        const mk=(ax,i)=>{ const inp=document.createElement('input'); inp.type='number'; inp.step='5'; inp.min='-180'; inp.max='180'; inp.title=ax+'\u00b0 offset'; inp.style.cssText='flex:0 0 58px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 4px;font-size:11px;';
-          inp.onchange=()=>{ pushUndoSnapshot(); const m=jf(); const a=m[sel.value]||(m[sel.value]=[0,0,0]); a[i]=Math.max(-180,Math.min(180,parseFloat(inp.value)||0)); if(!a[0]&&!a[1]&&!a[2]) delete m[sel.value]; refresh(); if(typeof _scheduleCharBroadcast==='function') _scheduleCharBroadcast(); };
-          return inp; };
+        const clr=document.createElement('button'); clr.textContent='Clear'; clr.title='Remove this bone\u2019s offsets'; clr.style.cssText='padding:2px 8px;font-size:11px;flex:0 0 auto;';
+        top.appendChild(sel); top.appendChild(clr); wrap.appendChild(top);
+        let refresh, sumUp, _drag=false;
+        const mk=(ax,i)=>{
+          const line=document.createElement('div'); line.style.cssText='display:flex;align-items:center;gap:7px;margin-top:4px;';
+          const lb=document.createElement('span'); lb.textContent=ax; lb.style.cssText='flex:0 0 12px;font-size:11px;color:#7fb8a6;';
+          const rng=document.createElement('input'); rng.type='range'; rng.min='-180'; rng.max='180'; rng.step='1'; rng.value='0'; rng.title=ax+'\u00b0 offset \u2014 drag; the preview follows live';
+          rng.style.cssText='flex:1;min-width:0;accent-color:var(--accent);height:18px;';
+          const val=document.createElement('span'); val.style.cssText='flex:0 0 44px;text-align:right;font-size:11px;color:#cfeee2;'; val.textContent='0\u00b0';
+          rng.oninput=()=>{ if(!_drag){ pushUndoSnapshot(); _drag=true; }   // one undo step per drag, not per pixel
+            const m=jf(); const a=m[sel.value]||(m[sel.value]=[0,0,0]);
+            a[i]=Math.max(-180,Math.min(180,parseFloat(rng.value)||0));
+            val.textContent=a[i]+'\u00b0';
+            if(!a[0]&&!a[1]&&!a[2]) delete m[sel.value];
+            sumUp(); };
+          rng.onchange=()=>{ _drag=false; if(typeof _scheduleCharBroadcast==='function') _scheduleCharBroadcast(); };
+          line.appendChild(lb); line.appendChild(rng); line.appendChild(val); wrap.appendChild(line);
+          return { rng, val };
+        };
         const ix=mk('X',0), iy=mk('Y',1), iz=mk('Z',2);
-        const clr=document.createElement('button'); clr.textContent='Clear'; clr.title='Remove this bone\u2019s offsets'; clr.style.cssText='padding:2px 8px;font-size:11px;';
+        const sum=document.createElement('div'); sum.style.cssText='font-size:10px;color:#7fb8a6;margin-top:4px;';
+        sumUp=()=>{ const keys=Object.keys(jf()); sum.textContent=keys.length ? ('Active: '+keys.map(k=>(JF_LABELS[k]||k)).join(', ')) : 'Pick a bone, drag X/Y/Z \u2014 the preview updates live.'; };
+        refresh=()=>{ const a=jf()[sel.value]||[0,0,0];
+          ix.rng.value=String(a[0]); iy.rng.value=String(a[1]); iz.rng.value=String(a[2]);
+          ix.val.textContent=a[0]+'\u00b0'; iy.val.textContent=a[1]+'\u00b0'; iz.val.textContent=a[2]+'\u00b0';
+          sumUp(); };
         clr.onclick=()=>{ pushUndoSnapshot(); delete jf()[sel.value]; refresh(); if(typeof _scheduleCharBroadcast==='function') _scheduleCharBroadcast(); };
-        const sum=document.createElement('div'); sum.style.cssText='font-size:10px;color:#7fb8a6;margin-top:3px;';
-        refresh=()=>{ const a=jf()[sel.value]||[0,0,0]; ix.value=String(a[0]); iy.value=String(a[1]); iz.value=String(a[2]);
-          const keys=Object.keys(jf()); sum.textContent=keys.length ? ('Active: '+keys.map(k=>(JF_LABELS[k]||k)).join(', ')) : 'Pick a bone, nudge X/Y/Z (degrees) \u2014 the preview updates live.'; };
         sel.onchange=refresh; refresh();
-        row.appendChild(sel); row.appendChild(ix); row.appendChild(iy); row.appendChild(iz); row.appendChild(clr);
-        wrap.appendChild(row); wrap.appendChild(sum); urlHost.appendChild(wrap);
+        wrap.appendChild(sum); urlHost.appendChild(wrap);
       }
       _animSlotFolds(urlHost, 'pAnim', { 'Idle & standing':true, 'Locomotion (ground)':true }, (foldBody, _slot)=>{
         const stKey=_slot.k, stLabel=_slot.l;
