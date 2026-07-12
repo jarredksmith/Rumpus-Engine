@@ -8499,8 +8499,31 @@ const _modelRefs = {};       // url -> live reference count
 const _modelUsedAt = {};     // url -> recency clock
 let _modelClock = 0;
 const _MODEL_CACHE_CAP = 24; // keep this many recent models warm; evict zero-ref ones beyond it
+const _modelBytes = {};      // build 946: url -> estimated bytes of the cached master (geometry + textures)
+const _MODEL_BUDGET_MB = (typeof matchMedia==='function' && matchMedia('(pointer: coarse)').matches) ? 192 : 640;   // total warm-cache byte budget
+const _EVICT_NOW_MB = 24;    // deleting the last instance of a model bigger than this frees it right away
+function _estimateGLTFBytes(gltf){
+  let b=0; try{ if(!gltf || !gltf.scene || !gltf.scene.traverse) return 0;
+    const geos=new Set(), texs=new Set();
+    gltf.scene.traverse(o=>{ if(o.geometry) geos.add(o.geometry); const m=o.material; if(m){ (Array.isArray(m)?m:[m]).forEach(x=>{ if(x) for(const k in x){ const v=x[k]; if(v && v.isTexture && v.image) texs.add(v); } }); } });
+    geos.forEach(g=>{ for(const k in g.attributes){ const a=g.attributes[k]; if(a && a.array && a.array.byteLength) b+=a.array.byteLength; } if(g.index && g.index.array) b+=g.index.array.byteLength; });
+    texs.forEach(t=>{ const im=t.image; const w=(im&&(im.width||im.videoWidth))||0, h=(im&&(im.height||im.videoHeight))||0; b+=w*h*4*1.34; });   // RGBA + mip chain
+  }catch(e){}
+  return Math.round(b);
+}
+function _evictModel(u){ try{ _disposeGLTF(gltfCache[u]); }catch(e){} delete gltfCache[u]; delete _modelRefs[u]; delete _modelUsedAt[u]; delete _modelBytes[u]; }
+function _modelMemStats(){
+  let n=0, used=0, ub=0, free=0, fb=0;
+  for(const u in gltfCache){ n++; const bb=_modelBytes[u]||0; if((_modelRefs[u]||0)>0){ used++; ub+=bb; } else { free++; fb+=bb; } }
+  return { n, used, usedBytes:ub, free, freeBytes:fb, total:ub+fb };
+}
+function freeUnusedModels(){ let n=0, b=0; for(const u of Object.keys(gltfCache)){ if((_modelRefs[u]||0)<=0){ b+=_modelBytes[u]||0; _evictModel(u); n++; } } return { n, bytes:b }; }
 function _modelTouch(url){ _modelRefs[url]=(_modelRefs[url]||0)+1; _modelUsedAt[url]=++_modelClock; }
-function _modelRelease(url){ if(url!=null && _modelRefs[url]!=null) _modelRefs[url]=Math.max(0, _modelRefs[url]-1); }
+function _modelRelease(url){ if(url!=null && _modelRefs[url]!=null){ _modelRefs[url]=Math.max(0, _modelRefs[url]-1);
+  // build 946: deleting the last instance of a BIG model frees its memory after a short grace
+  // (an undo/re-add inside it is still instant); small ones stay warm under the byte budget.
+  if(_modelRefs[url]===0 && (_modelBytes[url]||0) > _EVICT_NOW_MB*1048576){ setTimeout(()=>{ if(gltfCache[url] && (_modelRefs[url]||0)===0) _evictModel(url); }, 3000); }
+} }
 function _disposeGLTF(gltf){
   if(!gltf || !gltf.scene || !gltf.scene.traverse) return;
   const geos=new Set(), mats=new Set(), texs=new Set();
@@ -8510,10 +8533,12 @@ function _disposeGLTF(gltf){
   geos.forEach(g=>{ if(g.dispose) try{ g.dispose(); }catch(e){} });
 }
 function _enforceModelCacheCap(){
-  const urls=Object.keys(gltfCache); if(urls.length<=_MODEL_CACHE_CAP) return;
-  let over=urls.length-_MODEL_CACHE_CAP;
+  const urls=Object.keys(gltfCache);
+  let total=0; for(const u of urls) total+=_modelBytes[u]||0;
+  let overCount=urls.length-_MODEL_CACHE_CAP, overBytes=total-_MODEL_BUDGET_MB*1048576;   // build 946: bytes matter, not just count
+  if(overCount<=0 && overBytes<=0) return;
   const evictable=urls.filter(u=>(_modelRefs[u]||0)<=0).sort((a,b)=>(_modelUsedAt[a]||0)-(_modelUsedAt[b]||0));   // oldest first
-  for(const u of evictable){ if(over<=0) break; try{ _disposeGLTF(gltfCache[u]); }catch(e){} delete gltfCache[u]; delete _modelRefs[u]; delete _modelUsedAt[u]; over--; }
+  for(const u of evictable){ if(overCount<=0 && overBytes<=0) break; overBytes-=(_modelBytes[u]||0); overCount--; _evictModel(u); }
 }
 // Optional CORS proxy (a Cloudflare Worker) for loading cross-origin models whose host blocks
 // cross-origin fetches (e.g. Poly Pizza). Same-origin loads are never proxied.
@@ -8599,7 +8624,18 @@ function _modelTexCapControl(host){
       b.onclick=()=>{ _modelTexCap=val; try{ localStorage.setItem('breach_model_texcap', String(val)); }catch(e){} build(); if(typeof toast==='function') toast(val?('New models use up to '+val+'px textures'):'Full-resolution model textures (mobile still caps at 1024)'); };
       row.appendChild(b); }); };
   build();
-  tc.appendChild(lab); tc.appendChild(row); host.appendChild(tc);
+  tc.appendChild(lab); tc.appendChild(row);
+  { // build 946: live model-memory readout + manual free
+    const mem=document.createElement('div'); mem.style.cssText='display:flex;align-items:center;gap:6px;margin-top:5px;';
+    const ml=document.createElement('div'); ml.style.cssText='flex:1;font-size:10px;color:#7fb8a6;';
+    const mb=document.createElement('button'); mb.textContent='Free unused'; mb.title='Dispose cached models nothing in the scene uses any more. They re-download if used again (Sketchfab from the on-disk cache).';
+    mb.style.cssText='padding:3px 9px;font-size:10px;border-radius:4px;border:1px solid #2a3a42;background:#0c1418;color:#9fd8c8;cursor:pointer;flex:0 0 auto;';
+    const fmt=(x)=>{ const m=x/1048576; return m>=100 ? Math.round(m)+' MB' : m.toFixed(1)+' MB'; };
+    const meRefresh=()=>{ const st=_modelMemStats(); ml.textContent='Models in memory: '+st.n+' ('+fmt(st.total)+' est) \u00b7 unused: '+st.free+' ('+fmt(st.freeBytes)+')'; };
+    mb.onclick=()=>{ const r=freeUnusedModels(); meRefresh(); if(typeof toast==='function') toast(r.n ? ('Freed '+r.n+' model'+(r.n===1?'':'s')+' ('+fmt(r.bytes)+' est)') : 'Nothing unused to free'); };
+    mem.appendChild(ml); mem.appendChild(mb); tc.appendChild(mem); meRefresh();
+  }
+  host.appendChild(tc);
   const nt=document.createElement('div'); nt.className='hint'; nt.style.cssText='font-size:10px;opacity:0.7;margin:2px 0 0;'; nt.textContent='Higher = sharper but more GPU memory. Applies to models loaded after you change it — reload the page (F5) to re-apply to ones already in the scene. Mobile always caps at 1024.';
   host.appendChild(nt);
   return tc;
@@ -8946,7 +8982,7 @@ function loadGLTFCached(url, cb, errcb){
   const _prog=(ev)=>{ if(!ev) return; _glbProg[url]={ l:ev.loaded||0, t:(ev.total && ev.total>=(ev.loaded||0))?ev.total:0 }; };   // build 943
   const _release=()=>{ _glbActive=Math.max(0,_glbActive-1); _glbPump(); };
   const _cxl=()=>{ delete _glbCancel[url]; _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(new Error('cancelled')); }catch(_){} } };   // build 945
-  const _cb=(g)=>{ if(_glbCancel[url]){ _cxl(); return; } _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
+  const _cb=(g)=>{ if(_glbCancel[url]){ _cxl(); return; } _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} try{ _modelBytes[url]=_estimateGLTFBytes(g); }catch(e){} for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
   let _tries=0, _ktx2Retried=false, _meshoptRetried=false;
   const _ec=(e)=>{
     const _m=(e&&e.message)||'';
@@ -18409,7 +18445,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 945 · 2026-07-12';
+const BUILD_VERSION = 'build 946 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
