@@ -18445,7 +18445,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 947 · 2026-07-12';
+const BUILD_VERSION = 'build 948 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18506,7 +18506,18 @@ function pollGamepad(dt){
   if(paused){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 911: full pause-menu navigation (Start/B still resume)
   if(typeof _matchMenuOpen!=='undefined' && _matchMenuOpen){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 911
   if(typeof invOpen!=='undefined' && invOpen){ _padMenuNavTick(bt, ax, edge9); padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 940: the bag + item inspector are pad-navigable — stick/D-pad focus, A opens/uses ("Use — hold & place"), B backs out
-  if(typeof mapOpen!=='undefined' && mapOpen){ if(edge9(1)||edge9(13)){ closeBigMap(); } padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }   // build 947: the big map closes on B or D-pad down (a pad could open it but never close it)
+  if(typeof mapOpen!=='undefined' && mapOpen){   // build 947: B / D-pad down close; build 948: stick pans, triggers zoom, A waypoint, X recenter, Y clear
+    if(edge9(1)||edge9(13)){ closeBigMap(); }
+    else {
+      const _px=padDead(ax[0]||0), _pz=padDead(ax[1]||0);
+      if(_px||_pz){ mapPanX += _px*mapZoom*1.8*dt; mapPanZ += _pz*mapZoom*1.8*dt; }   // pan speed scales with zoom
+      const _zi=(bt[7]?bt[7].value:0), _zo=(bt[6]?bt[6].value:0);                     // RT in, LT out (analog)
+      if(_zi||_zo) mapZoom=Math.max(MAP_ZMIN, Math.min(MAP_ZMAX, mapZoom*(1 - _zi*1.4*dt + _zo*1.4*dt)));
+      if(edge9(0)) mapWaypoint={ x:mapPanX, z:mapPanZ };                              // A: waypoint at the view center
+      if(edge9(2)){ mapPanX=player.pos.x; mapPanZ=player.pos.z; }                     // X: recenter on the player
+      if(edge9(3)) mapWaypoint=null;                                                  // Y: clear the waypoint
+    }
+    padMoveX=0; padMoveZ=0; padFiring=false; padAds=false; padJump=false; padPrev=snapshot(); return; }
   if(edge9(9)){   // Start: pause (solo) / match menu (MP)
     if(NET.mode==='off'){ if(typeof openPause==='function') openPause(); }
     else if(typeof toggleMatchMenu==='function') toggleMatchMenu();
@@ -20623,6 +20634,15 @@ function drawBigMap(){
   { const s=_w2s(player.pos.x,player.pos.z,v); const fx=-Math.sin(player.yaw), fz=-Math.cos(player.yaw);
     ctx.save(); ctx.translate(s[0],s[1]); ctx.rotate(Math.atan2(fz,fx)); ctx.fillStyle='#eafff7'; ctx.strokeStyle='#0a1014'; ctx.lineWidth=1.5;
     ctx.beginPath(); ctx.moveTo(11,0); ctx.lineTo(-7,7); ctx.lineTo(-7,-7); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
+  // build 948: with a pad in use, a center crosshair shows where A drops the waypoint
+  if(typeof padRecent==='function' && padRecent()){
+    ctx.save(); ctx.strokeStyle='rgba(234,255,247,0.85)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(v.cx-11,v.cy); ctx.lineTo(v.cx-4,v.cy); ctx.moveTo(v.cx+4,v.cy); ctx.lineTo(v.cx+11,v.cy);
+    ctx.moveTo(v.cx,v.cy-11); ctx.lineTo(v.cx,v.cy-4); ctx.moveTo(v.cx,v.cy+4); ctx.lineTo(v.cx,v.cy+11); ctx.stroke();
+    ctx.font='600 11px ui-monospace, monospace'; ctx.fillStyle='rgba(159,230,207,0.8)'; ctx.textAlign='center';
+    ctx.fillText('Stick pan \u00b7 RT/LT zoom \u00b7 A waypoint \u00b7 X me \u00b7 Y clear \u00b7 B close', v.cx, H-10);
+    ctx.restore();
+  }
 }
 
 bigmapEl.addEventListener('pointerdown', e=>{ if(!mapOpen || e.button!==0) return; _mapDown={ sx:e.clientX, sy:e.clientY, panX:mapPanX, panZ:mapPanZ, moved:false }; try{ bigmapEl.setPointerCapture(e.pointerId); }catch(_){} });

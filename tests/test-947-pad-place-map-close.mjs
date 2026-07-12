@@ -21,7 +21,7 @@ assert(/&& !\(typeof buildMode!=='undefined' && buildMode\)\)\{ if\(mountedTurre
   'the weapon gate skips while build mode is up — fire can never shoot through the ghost');
 
 // map closes
-assert(/if\(typeof mapOpen!=='undefined' && mapOpen\)\{ if\(edge9\(1\)\|\|edge9\(13\)\)\{ closeBigMap\(\); \}/.test(src),
-  'with the big map open, B or D-pad down closes it (a pad could open it but never close it)');
+assert(/if\(edge9\(1\)\|\|edge9\(13\)\)\{ closeBigMap\(\); \}/.test(src),
+  'with the big map open, B or D-pad down closes it (a pad could open it but never close it; pan/zoom joined in 948)');
 
 done('build 947: RT places blocks in build mode (never fires), and the big map closes on a controller');
