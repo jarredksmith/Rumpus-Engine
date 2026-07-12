@@ -35,7 +35,7 @@ assert(/stick\.addEventListener\('pointermove'/.test(src) && /touchMoveX=nx\/R; 
 assert(/look\.addEventListener\('pointermove'/.test(src) && /const dx=e\.clientX-lx, dy=e\.clientY-ly/.test(src) && /touchLookDX\+=dx/.test(src), 'look pad accumulates drag');
 assert(/const fire=document\.getElementById\('tFire'\);[\s\S]*?touchFiring=true/.test(src) && /touchLookDX\+=\(e\.clientX-fx\)/.test(src), 'fire is hold-to-fire and drag-to-aim');
 assert(/tap\('tJump', \(\)=>\{ touchJump=true; \}\)/.test(src) && /tap\('tReload'/.test(src) && /tap\('tNade'/.test(src) && /getElementById\('tUse'\)/.test(src) && /tap\('tWeapon'/.test(src), 'action buttons wired (USE moved to a tap-or-hold binding in build 908)');
-assert(/aim\.addEventListener\('pointerdown', e=>\{[^}]*touchAds=!touchAds;/.test(src), 'aim toggles ADS (and now drags to look)');
+assert(/aim\.addEventListener\('pointerdown', e=>\{[\s\S]{0,420}?touchAds=!touchAds;/.test(src), 'aim toggles ADS (and now drags to look; in build mode the tap deletes instead — build 941)');
 
 // --- runnable: joystick vector (clamped to radius, normalized, edge = sprint) ---
 const R = 60;

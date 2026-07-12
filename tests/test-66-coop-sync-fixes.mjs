@@ -8,7 +8,7 @@ assert(/#bossBar \{[^}]*top:122px/.test(html), 'boss bar sits below the wave pan
 assert(/body\.touch #bossBar \{ top:158px/.test(html), 'boss bar below the wave panel (mobile)');
 
 // 95: paused blocks the fire input
-assert(/addEventListener\('mousedown', e=>\{\n  if\(radialOpen\)\{ if\(e\.button===0\) closeRadial\(true\); return; \}\n  if\(typeof buildMode!=='undefined' && buildMode\)\{[\s\S]{0,220}?\n  if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\) return;/.test(src), 'mousedown ignores fire while paused (build 928: the build-mode branch sits between)');
+assert(/addEventListener\('mousedown', e=>\{\n  if\(radialOpen\)\{ if\(e\.button===0\) closeRadial\(true\); return; \}\n  if\(typeof buildMode!=='undefined' && buildMode\)\{[\s\S]{0,340}?\n  if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\) return;/.test(src), 'mousedown ignores fire while paused (build 928: the build-mode branch sits between)');
 
 // 96: client adopts host world + hides spawn/route visuals
 const ll = extractFunction('loadLevelFromNet');

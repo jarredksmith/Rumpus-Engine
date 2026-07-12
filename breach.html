@@ -10006,6 +10006,7 @@ addEventListener('keydown', e=>{
   // Universal escape hatch in multiplayer: Esc always opens a match menu, even while dead or on the result
   // screen, so you can never get trapped with no way out.
   if(e.code==='Escape' && typeof buildMode!=='undefined' && buildMode){ e.preventDefault(); exitBuildMode(); return; }   // build 928
+  if(e.code==='KeyX' && typeof buildMode!=='undefined' && buildMode && gameOn && !editorOpen){ e.preventDefault(); _bmDeleteAimed(); return; }   // build 941: delete the aimed placed block
   if(e.code==='Escape' && mountedTurret){ e.preventDefault(); dismountTurret(); return; }
   if(e.code==='Escape' && drivingCar){ e.preventDefault(); exitCar(); return; }
   if(e.code==='Escape' && NET.mode && NET.mode!=='off' && !editorOpen){
@@ -15316,6 +15317,7 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), id, true); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'nade', o:msg.o, v:msg.v, by:id}); }catch(e){} } } }   // build 670: a client threw a grenade: host simulates it (authors damage) + relays the visual to the others
   else if(msg.t==='push'){ const o=propByNid(msg.nid); if(o) pushDynamic(o, new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]), msg.s||6, msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null); }   // a client shot a dynamic prop (legacy knockback-only)
   else if(msg.t==='propHit'){ const o=propByNid(msg.nid); if(o){ const dir=new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]); const pt=msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null; const broke=damageProp(o, msg.d||0, pt, dir, msg.s||6, id); if(!broke) pushDynamic(o, dir, msg.s||6, pt); } }   // a client shot a prop: damage (breaks/detonates) + knockback, credited to the client
+  else if(msg.t==='bDel'){ const o=propByNid(msg.nid); if(o && o.userData.runtime && !o.userData._shattered) shatterProp(o, null, null, 5, id); }   // build 941: a client deleted a build-placed prop (authored level props are refused)
   else if(msg.t==='pPush'){ const o=propByNid(msg.nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ const sh=Math.max(0, Math.min(9, +msg.s||0)); try{ b.applyImpulse({ x:(+msg.nx||0)*sh*0.6, y:0, z:(+msg.nz||0)*sh*0.6 }, true); }catch(e){} } }   // build 923: a client walked into a dynamic prop — apply their shove here (clamped), the D snapshot carries it back
   else if(msg.t==='grab'){ const _go=propByNid(msg.nid); if(!_go || !_go.userData.phys || _go.userData.noGrab) return; if(heldProp===_go) return; if(!_remoteHold[msg.nid]) _remoteHold[msg.nid]={by:id}; }   // a client grabbed a prop (build 924: look it up by NET nid — dynamicById matches the numeric snapshot id and always missed)
   else if(msg.t==='hold'){ const _ho=propByNid(msg.nid); if(!_ho || !_ho.userData.phys || _ho.userData.noGrab || heldProp===_ho) return; const h=_remoteHold[msg.nid]; if(!h) _remoteHold[msg.nid]={by:id, target:msg.p}; else if(h.by===id) h.target=msg.p; }   // ...and is carrying it (build 924: nid lookup)
@@ -18298,7 +18300,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 940 · 2026-07-12';
+const BUILD_VERSION = 'build 941 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18419,6 +18421,7 @@ function pollGamepad(dt){
     }
     if(heldProp && (down(7) || aval(7)>0.5) && !padPrev[7]) throwHeld();   // RT — build 934: throw the carried prop (the fire gate excludes heldProp, so RT was dead while carrying)
     if(edge(1)){ if(typeof buildMode!=='undefined' && buildMode) exitBuildMode(); else throwGrenade(); }   // B — build 934: leaves build mode (RT places); grenade otherwise
+    if(typeof buildMode!=='undefined' && buildMode){ padAds=false; if((down(6) || aval(6)>0.5) && !padPrev[6]) _bmDeleteAimed(); }   // LT — build 941: delete the aimed placed block
     if(edge(5)) cycleWeapon(1); // RB
     if(edge(4)) cycleWeapon(-1);// LB
     if(edge(12) && typeof toggleInventory==='function') toggleInventory();     // D-pad up — build 909
@@ -18460,7 +18463,7 @@ const SCOPE_SENS = 0.00045;                   // much slower under the scope's h
 addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ buildMode.yaw += (e.deltaY>0?1:-1)*Math.PI/2; _bmMeasure(); _bmHint(); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
 addEventListener('mousedown', e=>{
   if(radialOpen){ if(e.button===0) closeRadial(true); return; }
-  if(typeof buildMode!=='undefined' && buildMode){ if(e.button===0){ placeBuild(); } else if(e.button===2){ buildSnap=!buildSnap; try{ localStorage.setItem('breach_buildsnap', buildSnap?'1':'0'); }catch(_e){} _bmHint(); } e.preventDefault(); return; }
+  if(typeof buildMode!=='undefined' && buildMode){ if(e.button===0){ placeBuild(); } else if(e.button===1){ _bmDeleteAimed(); } else if(e.button===2){ buildSnap=!buildSnap; try{ localStorage.setItem('breach_buildsnap', buildSnap?'1':'0'); }catch(_e){} _bmHint(); } e.preventDefault(); return; }
   if(shopOpen || editorOpen || paused || mapOpen || duelDead || invOpen) return;   // no actions while eliminated or while the inventory is open
   if(e.button===0){ if(heldProp){ throwHeld(); return; } firing=true; }
   else if(e.button===1){ e.preventDefault(); grabAction(); }   // middle-click (scroll-wheel push): grab / drop
@@ -18553,7 +18556,9 @@ addEventListener('contextmenu', e=>{
   (function(){
     const aim=document.getElementById('tAim'); if(!aim) return;
     let aid=null, ax=0, ay=0;
-    aim.addEventListener('pointerdown', e=>{ if(_ctrlPref!=='desktop') isTouch=true; aid=e.pointerId; ax=e.clientX; ay=e.clientY; touchAds=!touchAds; aim.classList.toggle('on', touchAds); try{aim.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
+    aim.addEventListener('pointerdown', e=>{ if(_ctrlPref!=='desktop') isTouch=true;
+      if(typeof buildMode!=='undefined' && buildMode){ _bmDeleteAimed(); e.preventDefault(); return; }   // build 941: AIM deletes the aimed placed block while building
+      aid=e.pointerId; ax=e.clientX; ay=e.clientY; touchAds=!touchAds; aim.classList.toggle('on', touchAds); try{aim.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
     aim.addEventListener('pointermove', e=>{ if(e.pointerId!==aid) return; touchLookDX+=(e.clientX-ax); touchLookDY+=(e.clientY-ay); ax=e.clientX; ay=e.clientY; e.preventDefault(); });   // drag to aim the camera
     const aimEnd=e=>{ if(e.pointerId!==aid) return; aid=null; };
     aim.addEventListener('pointerup', aimEnd); aim.addEventListener('pointercancel', aimEnd);
@@ -19457,10 +19462,31 @@ function _bmHint(){
   const el=document.getElementById('buildHint'); if(!el) return;
   const key=(typeof _keyLabel==='function') ? _keyLabel(BINDS.radial) : 'Tab';
   const rot=buildMode ? ((Math.round(buildMode.yaw/(Math.PI/2))*90)%360+360)%360 : 0;
-  el.textContent = (typeof isTouch!=='undefined' && isTouch)
-    ? ('FIRE place \u00b7 BUILD done \u00b7 snap '+(buildSnap?'ON':'OFF')+(rot?(' \u00b7 rot '+rot+'\u00b0'):''))
-    : ('Click place \u00b7 R-click snap: '+(buildSnap?'ON':'OFF')+' \u00b7 Scroll rotate'+(rot?(' ('+rot+'\u00b0)'):'')+' \u00b7 ['+key+'/Esc] done');
+  el.textContent = (typeof padRecent==='function' && padRecent())
+    ? ('RT place \u00b7 LT delete \u00b7 snap '+(buildSnap?'ON':'OFF')+(rot?(' \u00b7 rot '+rot+'\u00b0'):'')+' \u00b7 B done')
+    : (typeof isTouch!=='undefined' && isTouch)
+    ? ('FIRE place \u00b7 AIM delete \u00b7 BUILD done \u00b7 snap '+(buildSnap?'ON':'OFF')+(rot?(' \u00b7 rot '+rot+'\u00b0'):''))
+    : ('Click place \u00b7 X/MMB delete \u00b7 R-click snap: '+(buildSnap?'ON':'OFF')+' \u00b7 Scroll rotate'+(rot?(' ('+rot+'\u00b0)'):'')+' \u00b7 ['+key+'/Esc] done');
   el.style.display='block';
+}
+// build 941: Minecraft-style undo — delete the session-placed prop under the crosshair. The ray
+// intersects ALL props so authored geometry in front blocks a runtime prop behind it; the hit must
+// itself be runtime (authored level props are never deletable from build mode).
+const _bmDelRay=new THREE.Raycaster(); let _bmDelCD=0;
+function _bmDeleteAimed(){
+  if(!buildMode) return false;
+  if(performance.now()<_bmDelCD) return false;
+  camera.getWorldPosition(_hPos); camera.getWorldDirection(_hFwd);
+  _bmDelRay.set(_hPos, _hFwd); _bmDelRay.far=10;
+  const cands=[]; for(const o of propModels){ if(o && o.visible && o.userData && !o.userData._destroyed && !o.userData._shattered) cands.push(o); }
+  const hits=_bmDelRay.intersectObjects(cands, true);
+  if(!hits.length) return false;
+  let node=hits[0].object; while(node && !(node.userData && node.userData.nid!=null && propModels.indexOf(node)>=0)) node=node.parent;
+  if(!node || !node.userData.runtime){ if(typeof SFX!=='undefined' && SFX.deny) SFX.deny(); return false; }
+  _bmDelCD=performance.now()+180;
+  if(typeof NET!=='undefined' && NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({ t:'bDel', nid:node.userData.nid }); }catch(e){} }
+  else shatterProp(node, null, null, 5, (typeof NET!=='undefined'?NET.myId:0));
+  return true;
 }
 function placeBuild(){
   const b=buildMode; if(!b || !b.ghost || _deployCD>0) return;

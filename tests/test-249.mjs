@@ -13,7 +13,7 @@ assert(/if\(!isTouch\)\{ const tu=document\.getElementById\('touchUI'\); if\(tu\
 // every touch promotion respects a forced desktop choice
 assert(/touchstart', \(\)=>\{ if\(_ctrlPref==='desktop'\) return; isTouch = true;/.test(src), 'first-touch promotion gated');
 for(const tail of ['stickId=e\\.pointerId;','lookId=e\\.pointerId;','fid=e\\.pointerId;','aid=e\\.pointerId;'])
-  assert(new RegExp("if\\(_ctrlPref!=='desktop'\\) isTouch=true; "+tail).test(src), 'promotion gated at '+tail);
+  assert(new RegExp("if\\(_ctrlPref!=='desktop'\\) isTouch=true;[\\s\\S]{0,220}?"+tail).test(src), 'promotion gated at '+tail);
 assert(!/[^)] isTouch=true; (stickId|lookId|fid|aid)/.test(src), 'no ungated promotions remain');
 
 // menu button cycles and applies live
