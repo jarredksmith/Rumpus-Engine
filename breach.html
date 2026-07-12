@@ -8541,6 +8541,7 @@ function gltfManager(){
   _gltfMgr = m; return m;
 }
 let _glbPending = 0;   // in-flight async GLB loads (drives the level loading screen so assets don't pop in)
+const _glbProg = Object.create(null);   // build 943: url -> {l:bytes loaded, t:bytes total (0 = unknown)} for the editor loading bar
 let _skyPending = false;   // sky HDRI / panorama load in flight
 let _texPending = 0;       // world floor/wall surface-map loads in flight
 let _levelLoaderEl=null, _levelLoaderActive=false;   // declared early: loop() reads _levelLoaderActive before the loader-UI section runs
@@ -8937,7 +8938,8 @@ function loadGLTFCached(url, cb, errcb){
   if(_glbWaiters[url]){ _glbWaiters[url].push({cb:cb,errcb:errcb}); return; }   // a load for this url is already in flight; ride along instead of fetching again
   const waiters=[{cb:cb,errcb:errcb}]; _glbWaiters[url]=waiters;
   _glbPending++;
-  let _fin=false; const _done=()=>{ if(_fin) return; _fin=true; _glbPending=Math.max(0,_glbPending-1); delete _glbWaiters[url]; };
+  let _fin=false; const _done=()=>{ if(_fin) return; _fin=true; _glbPending=Math.max(0,_glbPending-1); delete _glbWaiters[url]; delete _glbProg[url]; };
+  const _prog=(ev)=>{ if(!ev) return; _glbProg[url]={ l:ev.loaded||0, t:(ev.total && ev.total>=(ev.loaded||0))?ev.total:0 }; };   // build 943
   const _release=()=>{ _glbActive=Math.max(0,_glbActive-1); _glbPump(); };
   const _cb=(g)=>{ _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
   let _tries=0, _ktx2Retried=false, _meshoptRetried=false;
@@ -8955,13 +8957,42 @@ function loadGLTFCached(url, cb, errcb){
     if(mgr){
       // Pass the ORIGINAL url: the manager proxies it (and sub-resources resolve against the real origin,
       // then get proxied too). Pre-proxying here would double-encode via the modifier.
-      _mkGLTFLoader(mgr).load(url, (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, undefined, _ec);
+      _mkGLTFLoader(mgr).load(url, (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, _prog, _ec);
     } else {
-      _mkGLTFLoader().load(proxied(url), (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, undefined, _ec);   // fallback: main file only
+      _mkGLTFLoader().load(proxied(url), (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, _prog, _ec);   // fallback: main file only
     }
   };
   _glbQueue.push(start); _glbPump();
 }
+// ---- build 943: editor loading bar — while the editor is open with any GLB in flight, a pill shows
+// live byte progress ("Loading model — 42% (3.2 / 7.6 MB)") or a dim indeterminate fill when the
+// server sends no size. Covers Player/Enemy/roster/prop model picks from Sketchfab and Poly Pizza. ----
+(function(){
+  let el=null, fill=null, txt=null;
+  function ensure(){ if(el) return;
+    el=document.createElement('div'); el.id='edLoadBar';
+    el.style.cssText='position:fixed;top:52px;left:50%;transform:translateX(-50%);z-index:95;display:none;min-width:250px;max-width:70vw;background:rgba(6,12,15,.92);border:1px solid rgba(var(--accent-rgb,120,200,180),.45);border-radius:8px;padding:7px 12px 9px;font:600 12px var(--el-font, ui-monospace), monospace;color:#cfeee2;letter-spacing:.5px;pointer-events:none;';
+    txt=document.createElement('div'); el.appendChild(txt);
+    const tr=document.createElement('div'); tr.style.cssText='margin-top:5px;height:5px;border-radius:3px;background:#12242b;overflow:hidden;';
+    fill=document.createElement('div'); fill.style.cssText='height:100%;width:0%;border-radius:3px;background:var(--accent,#39ff88);transition:width .2s;';
+    tr.appendChild(fill); el.appendChild(tr); document.body.appendChild(el);
+  }
+  setInterval(()=>{
+    const on = (typeof editorOpen!=='undefined' && editorOpen) && _glbPending>0;
+    if(!on){ if(el && el.style.display!=='none') el.style.display='none'; return; }
+    ensure();
+    let l=0, t=0; for(const u in _glbProg){ const p=_glbProg[u]; if(p.t>0){ l+=p.l; t+=p.t; } }
+    const n=_glbPending, mb=(x)=>(x/1048576).toFixed(1);
+    if(t>0){ const pct=Math.min(99, Math.round(l/t*100));
+      txt.textContent='Loading model'+(n>1?'s ('+n+')':'')+' \u2014 '+pct+'% ('+mb(l)+' / '+mb(t)+' MB)';
+      fill.style.width=pct+'%'; fill.style.opacity='1';
+    } else {
+      txt.textContent='Downloading model'+(n>1?'s ('+n+')':'')+'\u2026';
+      fill.style.width='100%'; fill.style.opacity='0.35';
+    }
+    el.style.display='block';
+  }, 250);
+})();
 // ---------- Sketchfab (optional model source) ----------
 // Auth is the user's personal API token (sketchfab.com -> Settings -> Password & API). Search is public-ish;
 // downloading requires the token. Models arrive as a zipped glTF, so we unzip (fflate, lazy-loaded) and feed
@@ -9027,8 +9058,21 @@ function ensureFflate(){
   _fflateP=new Promise((res,rej)=>{ let i=0; const go=()=>{ if(i>=urls.length){ rej(new Error('could not load the unzip helper (fflate) from CDN')); return; } const sc=document.createElement('script'); sc.src=urls[i++]; sc.onload=()=>{ if(window.fflate && window.fflate.unzipSync) res(window.fflate); else go(); }; sc.onerror=go; document.head.appendChild(sc); }; go(); });
   return _fflateP;
 }
-function _sfFetchArchive(z){
-  const grab=(u,lbl)=> fetch(u).catch(()=>{ throw new Error('archive fetch failed'+lbl+' (CORS/network)'); }).then(r=>{ if(!r.ok) throw new Error('archive HTTP '+r.status+lbl); return r.arrayBuffer(); });
+function _sfFetchArchive(z, progKey){
+  const grab=(u,lbl)=> fetch(u).catch(()=>{ throw new Error('archive fetch failed'+lbl+' (CORS/network)'); }).then(r=>{
+    if(!r.ok) throw new Error('archive HTTP '+r.status+lbl);
+    if(!r.body || !r.body.getReader) return r.arrayBuffer();
+    // build 943: stream the zip so the editor loading bar gets real byte progress
+    const total=+(r.headers.get('content-length')||0);
+    const reader=r.body.getReader(); const chunks=[]; let got=0;
+    const pump=()=> reader.read().then(({done,value})=>{
+      if(done){ const buf=new Uint8Array(got); let o=0; for(const c of chunks){ buf.set(c,o); o+=c.length; } return buf.buffer; }
+      chunks.push(value); got+=value.length;
+      if(progKey) _glbProg[progKey]={ l:got, t:(total>=got)?total:0 };
+      return pump();
+    });
+    return pump();
+  });
   return grab(z, '').catch(()=> grab(proxied(z), ' via proxy'));   // signed CDN URLs rarely allow CORS, so fall back through the proxy
 }
 // ---- Persistent model cache (IndexedDB) ----------------------------------------------------------------
@@ -9089,7 +9133,7 @@ function loadSketchfabModel(uid, cb, errcb){
         ? fetch(_px + '&sftoken=' + encodeURIComponent(tok))
         : Promise.reject(new Error('download request blocked (CORS/network) at api.sketchfab.com')))
       .then(r=>{ if(!r.ok) throw new Error('download HTTP '+r.status+(r.status===401?' (check token)':r.status===403?' (login / not downloadable)':'')); return r.json(); })
-      .then(d=>{ const z=d.gltf&&d.gltf.url; if(!z) throw new Error('no downloadable glTF for this model'); return _sfFetchArchive(z); })
+      .then(d=>{ const z=d.gltf&&d.gltf.url; if(!z) throw new Error('no downloadable glTF for this model'); return _sfFetchArchive(z, 'sketchfab:'+uid); })
       .then(buf=>{ try{ _modelCachePut(_cacheKey, buf); }catch(e){} return _process(buf); })   // save bytes for next time
       .then(g=>cb(g))
       .catch(e=>{ errcb && errcb(e); });
@@ -18332,7 +18376,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 942 · 2026-07-12';
+const BUILD_VERSION = 'build 943 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
