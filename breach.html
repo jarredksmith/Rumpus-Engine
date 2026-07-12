@@ -806,7 +806,7 @@
     <button id="creditsBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>Credits</button>
     <button id="ctrlBtn" class="secBtn ghost"></button>
     <button id="fsBtn" class="secBtn ghost" style="display:none"></button>
-    <input type="file" id="menuCampFile" accept=".json,application/json" style="display:none">
+    <input type="file" id="menuCampFile" accept=".breach,.json,application/json" style="display:none">
   </div>
 </div>
 
@@ -18296,7 +18296,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 938 · 2026-07-11';
+const BUILD_VERSION = 'build 939 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24619,10 +24619,10 @@ function _exportCampaign(){
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
-    a.href = url; a.download = 'breach-campaign-' + stamp + '.json';
+    a.href = url; a.download = 'breach-campaign-' + stamp + '.breach';   // build 939: BREACH's own extension (plain JSON inside)
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url), 4000);
-    if(typeof flashToast==='function') flashToast('Exported ' + campaign.levels.length + ' level' + (campaign.levels.length>1?'s':'') + ' - share the .json');
+    if(typeof flashToast==='function') flashToast('Exported ' + campaign.levels.length + ' level' + (campaign.levels.length>1?'s':'') + ' - share the .breach file');
   }catch(e){ if(typeof flashToast==='function') flashToast('Export failed'); }
 }
 function _importCampaignFile(file, onDone){
@@ -25002,7 +25002,7 @@ function renderCampaignPanel(){
   const expB=document.createElement('button'); expB.textContent='Export campaign'; expB.title='Download all levels as one .json file to share'; expB.onclick=()=>{ _exportCampaign(); };
   const impB=document.createElement('button'); impB.textContent='Import campaign'; impB.title='Load a campaign .json (replaces the current campaign)'; impB.onclick=()=>{ _campImp.value=''; _campImp.click(); };
   r3.appendChild(expB); r3.appendChild(impB); host.appendChild(r3);
-  const _campImp=document.createElement('input'); _campImp.type='file'; _campImp.accept='.json,application/json'; _campImp.style.display='none'; _campImp.onchange=()=>{ _importCampaignFile(_campImp.files && _campImp.files[0]); }; host.appendChild(_campImp);
+  const _campImp=document.createElement('input'); _campImp.type='file'; _campImp.accept='.breach,.json,application/json'; _campImp.style.display='none'; _campImp.onchange=()=>{ _importCampaignFile(_campImp.files && _campImp.files[0]); }; host.appendChild(_campImp);
   if(campaignEditIdx>=0 && campaign.levels[campaignEditIdx]){
     const _enm=campaign.levels[campaignEditIdx].name||('Level '+(campaignEditIdx+1));
     const er=document.createElement('div'); er.className='row2'; er.style.marginTop='6px';
@@ -25464,7 +25464,7 @@ function buildEditorPanel(){
       + '<div class="hint" id="edAutoStatus" style="font-size:10px;opacity:0.75;margin:0 0 4px">Saves automatically as you work.</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edShare">'+_icn('link')+'Copy share link</button></div>'
       + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .json</button><button id="edImport">'+_icn('upload')+'Import .json</button></div>'
-      + '<input type="file" id="edImportFile" accept=".json,application/json" style="display:none">'
+      + '<input type="file" id="edImportFile" accept=".breach,.json,application/json" style="display:none">'
       + '<div class="row2" style="margin-top:6px"><button id="edSubmitComm" style="width:100%">'+_icn('upload')+'Submit to community library</button></div>'
       + '<div class="hint" style="font-size:10px;opacity:0.75;margin:2px 0 0">Copies the level JSON, then opens the submission form on GitHub — paste it there. Levels go live in the in-game library once approved.</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edReset">Reset target</button><button id="edCopy">Copy code</button></div>'
@@ -25698,10 +25698,10 @@ function buildEditorPanel(){
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
-      a.href = url; a.download = 'breach-level-' + stamp + '.json';
+      a.href = url; a.download = 'breach-level-' + stamp + '.breach';   // build 939: BREACH's own extension (plain JSON inside)
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(url), 4000);
-      note.textContent = 'Exported — share the .json file ✓';
+      note.textContent = 'Exported — share the .breach file ✓';
     } catch(e){ note.textContent = 'Export failed'; }
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 2800);
   };

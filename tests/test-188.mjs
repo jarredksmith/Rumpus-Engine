@@ -1,7 +1,7 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
 
-// export: wraps all levels in a tagged payload and downloads a .json
+// export: wraps all levels in a tagged payload and downloads a .breach file (build 939)
 const exp = extractFunction('_exportCampaign');
 assert(/kind:'breach-campaign', version:1, levels: campaign\.levels/.test(exp), 'export payload shape wrong');
 assert(/a\.download = 'breach-campaign-'/.test(exp), 'export does not download a campaign .json');
@@ -20,5 +20,5 @@ assert(/uiConfirm\('Replace your current campaign/.test(imp) && /if\(campaign\.l
 const rcp = extractFunction('renderCampaignPanel');
 assert(/Export campaign/.test(rcp) && /_exportCampaign\(\)/.test(rcp), 'export button missing');
 assert(/Import campaign/.test(rcp) && /_importCampaignFile\(/.test(rcp), 'import button missing');
-assert(/_campImp\.accept='\.json,application\/json'/.test(rcp), 'import file input missing');
+assert(/_campImp\.accept='\.breach,\.json,application\/json'/.test(rcp), 'import file input missing (accepts .breach and legacy .json, build 939)');
 done();
