@@ -12,7 +12,7 @@ const src = gameSource();
 
 // the tracker: fed by the loader, cleaned on completion
 assert(/const _glbProg = Object\.create\(null\);/.test(src), 'byte-progress tracker exists');
-assert(/delete _glbWaiters\[url\]; delete _glbProg\[url\]; \};/.test(src), 'progress entries are cleaned up when a load finishes');
+assert(/delete _glbWaiters\[url\]; delete _glbProg\[url\]; delete _glbAborters\[url\]; \};/.test(src), 'progress entries (and aborters, build 945) are cleaned up when a load finishes');
 assert(/const _prog=\(ev\)=>\{ if\(!ev\) return; _glbProg\[url\]=\{ l:ev\.loaded\|\|0, t:\(ev\.total && ev\.total>=\(ev\.loaded\|\|0\)\)\?ev\.total:0 \}; \};/.test(src),
   'GLTFLoader progress events feed it (total 0 = unknown size)');
 assert(/\.load\(url, \(gltf\)=>\{ gltfCache\[url\]=gltf; _cb\(gltf\); \}, _prog, _ec\);/.test(src) &&
@@ -23,7 +23,7 @@ assert(/\.load\(url, \(gltf\)=>\{ gltfCache\[url\]=gltf; _cb\(gltf\); \}, _prog,
 const sf = extractFunction('_sfFetchArchive', src);
 assert(/r\.body\.getReader\(\)/.test(sf) && /content-length/.test(sf), 'the archive fetch streams with a reader and reads content-length');
 assert(/_glbProg\[progKey\]=\{ l:got, t:\(total>=got\)\?total:0 \};/.test(sf), 'streamed bytes feed the tracker under the sketchfab: key');
-assert(/_sfFetchArchive\(z, 'sketchfab:'\+uid\)/.test(src), 'loadSketchfabModel passes its cache key as the progress key');
+assert(/_sfFetchArchive\(z, 'sketchfab:'\+uid, signal\)/.test(src), 'loadSketchfabModel passes its cache key as the progress key (and the abort signal, build 945)');
 
 // the pill: editor-only, percentage + MB when sized, indeterminate otherwise, self-hiding
 assert(/el\.id='edLoadBar';/.test(src), 'the pill element exists');

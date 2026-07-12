@@ -6,7 +6,7 @@ const src = gameSource();
 
 // central loader recognizes the sketchfab: scheme (covers props, gun, station)
 const lg = extractFunction('loadGLTFCached');
-assert(/url\.indexOf\('sketchfab:'\)===0\)\{ loadSketchfabModel\(url\.slice\(10\)/.test(lg), 'loadGLTFCached routes sketchfab: URLs to the Sketchfab loader');
+assert(/url\.indexOf\('sketchfab:'\)===0\)\{ const _ac=new AbortController\(\); _glbAborters\[url\]=_ac; loadSketchfabModel\(url\.slice\(10\)/.test(lg), 'loadGLTFCached routes sketchfab: URLs to the Sketchfab loader (with an abort controller, build 945)');
 
 // data layer
 assert(/function sfGetToken\(\)/.test(src) && /function sfSetToken\(/.test(src), 'token storage helpers');
