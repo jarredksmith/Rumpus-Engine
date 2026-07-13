@@ -9,7 +9,7 @@ assert(/if\(heldProp\) txt = \(heldProp\.userData && heldProp\.userData\.grabLab
 assert(/else if\(_grabAvail\) txt = _grabLabel \|\| \(_pad \? '\[Y\] Grab' : isTouch \? 'Hold USE to grab' : '\[G \/ MMB\] Grab'\);/.test(ug), 'the grab prompt prefers a custom label (pad wording, builds 934/935)');
 assert(/el\.textContent=txt/.test(ug), 'the label is rendered as text (no markup injection)');
 const tg = extractFunction('tickGrabHint');
-assert(/const aimed = \(gameOn && !editorOpen && !shopOpen && !paused && !duelDead\) \? _aimedProp\(\) : null;/.test(tg), 'the aimed prop is tracked');
+assert(/const aimed = \(gameOn && !editorOpen && !shopOpen && !paused && !duelDead && !\(typeof buildMode!=='undefined' && \(buildMode \|\| radialOpen\)\)\) \? _aimedProp\(\) : null;/.test(tg), 'the aimed prop is tracked (and skipped while building, build 955)');
 assert(/lbl = \(aimed && aimed\.userData\.grabLabel\) \|\| ''/.test(tg), 'its grabLabel feeds the prompt');
 assert(/if\(avail!==_grabAvail \|\| lbl!==_grabLabel\)\{ _grabAvail=avail; _grabLabel=lbl;/.test(tg), 'prompt refreshes when the label changes');
 

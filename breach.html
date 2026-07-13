@@ -18455,7 +18455,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 954 · 2026-07-13';
+const BUILD_VERSION = 'build 955 · 2026-07-13';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19303,6 +19303,7 @@ function grabSpecificProp(obj){
 }
 function tryGrabProp(){
   if(!gameOn || editorOpen || shopOpen || paused || duelDead) return false;
+  if(typeof buildMode!=='undefined' && (buildMode || radialOpen)) return false;   /* build 955: no grabbing while building — the ghost is the thing in your hands */
   const obj=_aimedProp(); if(!obj) return false;
   return grabSpecificProp(obj);
 }
@@ -19352,7 +19353,7 @@ function tickGrabHint(dt){
   if(_deployCD>0) _deployCD-=dt;
   if(heldProp){ _grabHintT=0; updateGrabHint(); return; }
   _grabHintT-=dt; if(_grabHintT>0) return; _grabHintT=0.12;
-  const aimed = (gameOn && !editorOpen && !shopOpen && !paused && !duelDead) ? _aimedProp() : null;
+  const aimed = (gameOn && !editorOpen && !shopOpen && !paused && !duelDead && !(typeof buildMode!=='undefined' && (buildMode || radialOpen))) ? _aimedProp() : null;   /* build 955: hint hides while building */
   const avail = !!aimed, lbl = (aimed && aimed.userData.grabLabel) || '';
   if(avail!==_grabAvail || lbl!==_grabLabel){ _grabAvail=avail; _grabLabel=lbl; updateGrabHint(); }
 }
@@ -19611,6 +19612,7 @@ function _bmMeasure(){ const b=buildMode; if(!b || !b.ghost) return; b.ghost.rot
 function enterBuildMode(slot){
   if(!slot || !gameOn || editorOpen) return;
   exitBuildMode();
+  if(typeof releaseHeld==='function') releaseHeld();   /* build 955: a carried prop drops when the build ghost comes out */
   const sc=(slot.scale>0)?slot.scale:0.9; let ghost=null;
   if(isPrimitive(slot.src||'box')){ ghost=PRIMITIVE_BUILDERS[slot.src||'box'](); }
   else { const g=gltfCache[slot.src]; ghost = g ? (THREE.cloneSkinned?THREE.cloneSkinned(g.scene):g.scene.clone(true)) : new THREE.Mesh(new THREE.BoxGeometry(1,1,1)); if(!g) loadGLTFCached(slot.src, ()=>{ if(buildMode && buildMode.slot===slot){ enterBuildMode(slot); } }, ()=>{}); }
