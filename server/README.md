@@ -20,6 +20,30 @@ The game's endpoint is set by `LOBBY_DB` in `breach.html`. Self-hosters can poin
 their copy elsewhere with `localStorage.setItem('breach_lobby_db', 'https://their-host/api/lobbies.php')`
 (or `'off'` to disable the browser), no rebuild needed.
 
+## Deploying community submissions (`api/submit.php` + `api/admin.php`) — build 958
+
+1. **Edit `api/admin.php` first**: change the `$ADMIN_PASSWORD = 'CHANGE-ME';` line near the
+   top to your own password. The page refuses to do anything until you do.
+2. Upload `api/_community_lib.php`, `api/submit.php`, and `api/admin.php` into the same
+   `public_html/api/` folder as the lobby service.
+3. Upload the repo's `community/` folder (index.json + levels/ + .htaccess) to
+   `public_html/community/` — the `.htaccess` inside it makes the catalog readable
+   cross-origin so the GitHub Pages copy of the game shares the same live library.
+4. Review queue: open `https://www.rumpusengine.com/api/admin.php`, enter your password,
+   **Load queue**. Each submission has **▶ Test play** (opens the actual level in the game),
+   **Approve** (publishes: writes `community/levels/<slug>.json`, updates `index.json`,
+   thumbnail lifted into the gallery) and **Reject**. Published levels can be **Unpublish**ed
+   later. Nothing goes live without you pressing Approve.
+
+Hardening: submissions are fully validated at the door (decode, 500 KB level cap, shape
+check, name/author sanitization) so junk never enters the queue; per-IP limits (30s between
+submissions, 5 pending max), 200-entry queue cap; admin brute-force brake (30 attempts/hour
+per IP); the level slug and file writes are whitelisted patterns under flock.
+
+Back up `public_html/community/` now and then — with submissions moving here, GoDaddy holds
+the master copy of the library (levels also remain in the GitHub repo up to the point you
+switched, and you can commit new ones there whenever you like as an archive).
+
 ## What it does / limits
 
 - Hosts heartbeat every 5s while their pre-game lobby is open; entries expire

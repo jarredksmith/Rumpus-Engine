@@ -18464,7 +18464,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 957 · 2026-07-13';
+const BUILD_VERSION = 'build 958 · 2026-07-13';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25955,6 +25955,26 @@ function buildEditorPanel(){
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
     let lvl, str; try{ lvl = serializeLevel(); const th = _commCaptureThumb(); if(th) lvl.thumb = th; str = JSON.stringify(lvl); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
+    // build 958: PRIMARY path — submit straight to our own server for review (no GitHub account
+    // needed). Real rejections (too big / rate-limited / queue full) surface as-is and stop; only
+    // an unreachable server falls through to the GitHub-issue flow below.
+    try{
+      let name=''; try{ name=(localStorage.getItem('breach_last_level_name')||'').trim(); }catch(e){}
+      name=(prompt('Level name for the library:', name)||'').trim();
+      if(!name){ if(note) note.textContent='Submission needs a level name.'; return; }
+      try{ localStorage.setItem('breach_last_level_name', name); }catch(e){}
+      let author=''; try{ author=(localStorage.getItem('breach_author_name')||'').trim(); }catch(e){}
+      if(!author) author=(prompt('Your author name (shown in the library):')||'').trim();
+      if(!author){ if(note) note.textContent='Submission needs an author name.'; return; }
+      try{ localStorage.setItem('breach_author_name', author); }catch(e){}
+      if(note) note.textContent='Submitting for review\u2026';
+      const code='RUMPUSLVL:' + await encodeLevel(lvl);
+      const r=await fetch(_commApi()+'submit.php', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ name, author, code }) });
+      const d=await r.json().catch(()=>null);
+      if(r.ok && d && d.ok){ if(note) note.textContent='Submitted for review \u2713 \u2014 it appears in Community levels once approved.'; return; }
+      if(r.status===400 || r.status===429 || r.status===503){ if(note) note.textContent='\u2715 '+((d&&d.error)||('HTTP '+r.status)); return; }
+      throw new Error((d&&d.error)||('HTTP '+r.status));
+    }catch(e){ if(note) note.textContent='Server unreachable \u2014 opening the GitHub form instead\u2026'; }
     // build 869: PRE-FILL the issue form via URL when the level is tiny. build 950: GitHub 500s on
     // long prefill URLs FAR below its documented 8K ("Whoops, something went wrong") — real-world
     // safe is ~2K, so the cap drops to 1900 and everything bigger goes clipboard-first: the COMPACT
@@ -30481,7 +30501,14 @@ function openHelp(){ renderHelp(); openModal('helpModal'); }
 // (same origin), so the gallery is one relative fetch — no API, no keys, works on any fork.
 // Submissions arrive as GitHub issues; a repo Action publishes them once the owner approves (see
 // .github/workflows/publish-level.yml).
-const COMM_INDEX_URL = 'community/index.json';
+// build 958: ONE live catalog for both hosts — the gallery reads our server first (CORS-open),
+// then falls back to the community/ folder hosted beside the game (repo copy) if unreachable.
+const COMM_BASE_DEFAULT = 'https://www.rumpusengine.com/community/';
+const COMM_API_DEFAULT  = 'https://www.rumpusengine.com/api/';
+function _commBase(){ try{ const o=(localStorage.getItem('breach_comm_base')||'').trim(); if(o==='local') return ''; if(/^https?:\/\//.test(o)) return o; }catch(e){} return COMM_BASE_DEFAULT; }
+function _commApi(){ try{ const o=(localStorage.getItem('breach_comm_api')||'').trim(); if(/^https?:\/\//.test(o)) return o; }catch(e){} return COMM_API_DEFAULT; }
+let _commBaseActive = 'community/';   // whichever base the index actually loaded from — level fetches follow it
+const COMM_INDEX_URL = 'community/index.json';   // beside-the-game fallback catalog
 const COMM_SUBMIT_URL = 'https://github.com/jarredksmith/breach/issues/new?template=submit-level.yml&title=' + encodeURIComponent('[Level] ');
 function openCommunity(){ openModal('communityModal'); renderCommunity(); }
 // build 854: a small JPEG of the current view, captured through a render target (reliable regardless of
@@ -30520,9 +30547,13 @@ async function renderCommunity(){
   list.innerHTML='<div style="color:#cfe9df;font-size:13px">Loading the library…</div>';
   let idx=null;
   try{
-    const r=await fetch(COMM_INDEX_URL, { cache:'no-cache' });
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    idx=await r.json();
+    const bases=[]; { const b=_commBase(); if(b) bases.push(b); } bases.push('community/');   // build 958: server first, beside-the-game second
+    let err=null;
+    for(const base of bases){
+      try{ const r=await fetch(base+'index.json', { cache:'no-cache' }); if(!r.ok) throw new Error('HTTP '+r.status); idx=await r.json(); _commBaseActive=base; err=null; break; }
+      catch(e2){ err=e2; idx=null; }
+    }
+    if(!idx) throw (err||new Error('unreachable'));
   }catch(e){
     list.innerHTML='<div style="color:#ffc9a3;font-size:13px;line-height:1.5">Could not reach the library ('+(e&&e.message)+'). It needs the game to be served over http(s) — on the hosted site this always works; offline or file:// it cannot.</div>';
     return;
@@ -30587,7 +30618,7 @@ async function _commLoad(entry, toEditor){
   const file=String(entry.file||'').replace(/[^a-zA-Z0-9._-]/g,'');   // belt & braces: index is trusted, but keep the path boring
   let level=null;
   try{
-    const r=await fetch('community/levels/'+file, { cache:'no-cache' });
+    const r=await fetch(_commBaseActive+'levels/'+file, { cache:'no-cache' });   // build 958: same base as the index
     if(!r.ok) throw new Error('HTTP '+r.status);
     level=await r.json();
   }catch(e){ if(typeof flashToast==='function') flashToast('Could not load "'+(entry.name||file)+'": '+(e&&e.message)); return; }

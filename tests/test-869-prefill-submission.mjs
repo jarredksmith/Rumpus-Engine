@@ -26,7 +26,7 @@ const bad = validateSubmission(parseIssue(FIX.replace(gCode, 'g%%%not-base64%%%'
 assert(!bad.ok && /did not decode/.test(bad.reason), 'a mangled code is rejected with a clear reason');
 
 // ---- the game side: prefill first, thumb-shedding retry, clipboard fallback retained ----
-const sub = src.match(/#edSubmitComm[\s\S]{0,2200}/)[0];
+const sub = src.match(/#edSubmitComm[\s\S]{0,4600}/)[0];   // build 958 put the native-submit path first; the GitHub flow sits below it
 assert(/'RUMPUSLVL:' \+ await encodeLevel\(lvl\)/.test(sub), 'prefill uses the share-link codec (RUMPUSLVL since build 952; the Action accepts BREACHLVL forever)');
 assert(/&level-json=/.test(sub) && /u\.length<=1900/.test(sub), 'prefills the level-json field, capped under GitHub\'s REAL budget (build 950: it 500s far below the documented 8K — safe is ~2K)');
 assert(/delete noThumb\.thumb; const u2=mk\('RUMPUSLVL:' \+ await encodeLevel\(noThumb\)\)/.test(sub), 'retries without the thumbnail before giving up');

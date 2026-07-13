@@ -35,14 +35,14 @@ assert(/id="communityModal"/.test(html) && /COMMUNITY LEVELS/.test(html), 'the g
 assert(/<button id="commBtn"/.test(html), 'home-menu button');
 assert(/const cmb=document\.getElementById\('commBtn'\); if\(cmb\) cmb\.onclick=openCommunity;/.test(src), '...wired to openCommunity');
 assert(/const COMM_INDEX_URL = 'community\/index\.json';/.test(src), 'the index is fetched RELATIVE (same origin, any fork)');
-assert(/fetch\(COMM_INDEX_URL, \{ cache:'no-cache' \}\)/.test(src), 'index fetch skips the HTTP cache so new approvals appear');
-assert(/fetch\('community\/levels\/'\+file, \{ cache:'no-cache' \}\)/.test(src), 'level fetch is relative too');
+assert(/fetch\(base\+'index\.json', \{ cache:'no-cache' \}\)/.test(src), 'index fetch skips the HTTP cache so new approvals appear (server base first since build 958)');
+assert(/fetch\(_commBaseActive\+'levels\/'\+file, \{ cache:'no-cache' \}\)/.test(src), 'level fetch follows the base the index came from (build 958)');
 assert(/\(!level\.props && !level\.world\)/.test(src.match(/async function _commLoad[\s\S]{0,900}/)[0]), 'loaded JSON is validated like an import');
 assert(/pushUndoSnapshot\(\)/.test(src.match(/async function _commLoad[\s\S]{0,900}/)[0]), 'loading a community level is undoable');
 
 // ---- the submit path ----
 assert(/id="edSubmitComm"/.test(src), 'Save tab has the submit button');
-assert(/navigator\.clipboard\.writeText\(str\)/.test(src.match(/#edSubmitComm[\s\S]{0,2400}/)[0]), 'it copies the level JSON');   // build 869: the prefill path sits above the clipboard fallback
+assert(/navigator\.clipboard\.writeText\(str\)/.test(src.match(/#edSubmitComm[\s\S]{0,4800}/)[0]), 'it copies the level JSON');   // build 869: the prefill path sits above the clipboard fallback
 assert(/template=submit-level\.yml/.test(src), '...and opens the issue form');
 
 // ---- the publish pipeline (executable) ----
