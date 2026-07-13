@@ -478,6 +478,9 @@
   #mpCode { width:90px; text-transform:lowercase; }
   #mpKills { width:54px; text-align:center; }
   .mpBtn { background:rgba(var(--accent-rgb),0.12); color:var(--accent); border:1px solid rgba(var(--accent-rgb),0.5); border-radius:6px; padding:8px 16px; font:600 13px ui-monospace,monospace; letter-spacing:2px; cursor:pointer; }
+  /* build 951: the lobby START is always GO-green, whatever the HUD theme says */
+  #lobbyStart { background:#12351f !important; color:#8affc0 !important; border-color:#39ff88 !important; }
+  #lobbyStart:hover { background:#1a4a2c !important; }
   .mpBtn:hover { background:rgba(var(--accent-rgb),0.22); }
   .mpBtn:disabled { opacity:.45; cursor:not-allowed; }
   .mpBtn.readied { background:var(--accent); color:#05241c; border-color:var(--accent); }
@@ -9753,7 +9756,7 @@ const player = {
 };
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
-const DEFAULT_WORLD = { walk:28, run:47, jump:13, grav:30, crouch:14, launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
+const DEFAULT_WORLD = { walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -18449,7 +18452,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 950 · 2026-07-12';
+const BUILD_VERSION = 'build 951 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26427,7 +26430,7 @@ function renderEditorFields(){
       hint(b,'Equirectangular panorama: <b>.hdr</b> (full HDR lighting) or .jpg/.png. Lights reflections too. Blank = flat color.','2px 0 4px');
       const phBtn=document.createElement('button'); phBtn.textContent='\ud83d\udd2d Browse Poly Haven HDRIs'; phBtn.style.cssText='width:100%;padding:6px;font-size:12px;margin:0 0 5px;'; phBtn.onclick=openHdriBrowser; b.appendChild(phBtn);
       texRow(b,'https://\u2026/sky.hdr or .jpg (equirectangular)','sky_hdri');
-      const skyPresets=[['Park','https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/2294472375_24a3b8ef46_o.jpg'],['Mountain','https://raw.githubusercontent.com/aframevr/aframe/master/examples/boilerplate/panorama/puydesancy.jpg'],['Room','https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/kandao3.jpg'],['None','']];
+      const skyPresets=[['Cloudy','https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_puresky_1k.hdr'],['Clear Day','https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/mpumalanga_veld_puresky_1k.hdr'],['Sunset','https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/belfast_sunset_puresky_1k.hdr'],['None','']];   // build 951: Poly Haven pure-sky HDRs (real HDR lighting) replace the old JPG panoramas
       const presetRow=document.createElement('div'); presetRow.style.cssText='display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 4px;';
       for(const [label,purl] of skyPresets){ const bn=document.createElement('button'); bn.textContent=label; bn.style.cssText='flex:0 0 auto;padding:4px 10px;font-size:11px;'; bn.onclick=()=>{ pushUndoSnapshot(); worldCfg.sky_hdri=purl; applyWorldCfg(); renderEditorFields(); }; presetRow.appendChild(bn); }
       b.appendChild(presetRow);
