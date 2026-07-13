@@ -14265,7 +14265,7 @@ let playerModelCfg = Object.assign({}, PLAYER_MODEL0, { clips:{ idle:'', walk:''
 function _sanitizeGrip1(g){ if(!g||typeof g!=='object') return null; const n=(v,d)=>{ const x=+v; return isFinite(x)?x:d; }; return { x:n(g.x,0), y:n(g.y,0), z:n(g.z,0), yaw:n(g.yaw,0), pitch:n(g.pitch,0), roll:n(g.roll,0), scale:n(g.scale,1) }; }
 function _sanitizeGripMap(m){ const o={}; if(m && typeof m==='object'){ for(const k in m){ const g=_sanitizeGrip1(m[k]); if(g) o[k]=g; } } return o; }   // build 524: per-weapon held-gun grips baked into a roster character travel with the level
 function _sanitizeJointFix(f){ const out={}; if(!f || typeof f!=='object') return out; let n=0;
-  for(const k in f){ if(n>=24) break; const v=f[k]; if(!Array.isArray(v)) continue;
+  for(const k in f){ if(n>=64) break; const v=f[k]; if(!Array.isArray(v)) continue;   // build 949: raised from 24 — both hands of fingers alone are 30 keys
     const a=[Math.max(-180,Math.min(180,+v[0]||0)), Math.max(-180,Math.min(180,+v[1]||0)), Math.max(-180,Math.min(180,+v[2]||0))];
     if(!a[0] && !a[1] && !a[2]) continue; out[String(k).slice(0,24)]=a; n++; }
   return out; }   // build 942
@@ -14454,6 +14454,10 @@ const JF_LABELS={ 'head':'Head', 'neck@0':'Neck', 'neck@1':'Neck (alt)', 'spine@
   'L:shoulder':'L shoulder', 'L:uparm':'L upper arm', 'L:forearm':'L forearm', 'L:hand':'L hand',
   'R:shoulder':'R shoulder', 'R:uparm':'R upper arm', 'R:forearm':'R forearm', 'R:hand':'R hand',
   'L:upleg':'L thigh', 'L:lowleg':'L shin', 'L:foot':'L foot', 'R:upleg':'R thigh', 'R:lowleg':'R shin', 'R:foot':'R foot' };
+// build 949: finger bones — thumb/index/middle/ring/pinky, three segments each, both hands (the
+// canonicalizer already names them L:thumb1 … R:pinky3; Mixamo 'LeftHandIndex2' and UE 'index_02_l'
+// both land on the same keys). 30 entries, generated instead of written out.
+(function(){ const F=['thumb','index','middle','ring','pinky']; for(const sd of ['L','R']) for(const f of F) for(let i=1;i<=3;i++) JF_LABELS[sd+':'+f+i]=sd+' '+f+' '+i; })();
 const _jfQ=new THREE.Quaternion(), _jfE=new THREE.Euler();
 function _myJointFix(){ const c=(typeof myRosterIdx!=='undefined' && myRosterIdx>=0 && charRoster[myRosterIdx]) ? charRoster[myRosterIdx] : playerModelCfg; return c.jointFix; }
 function _applyJointFix(group, fix){
@@ -18445,7 +18449,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 948 · 2026-07-12';
+const BUILD_VERSION = 'build 949 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
