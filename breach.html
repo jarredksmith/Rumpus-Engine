@@ -416,6 +416,14 @@
   #overlay h1 img { width:min(560px, 84vw); height:auto; display:block; margin:0 auto; filter:drop-shadow(0 0 26px rgba(var(--accent-rgb),.35)); }  /* build 960: SVG wordmark, theme-glow to match the menu */
   #overlay .sub { color:#7fa99c; letter-spacing: 4px; margin-top: 10px; font-size: 14px; }
   @media (max-width: 480px) { #overlay .sub { letter-spacing: 2px; font-size: 12px; } }  /* build 952: keep the tagline on one line on phones */
+  /* build 961: boot veil — the giant single file wires its buttons only once fully parsed, so until
+     then the menu says so instead of feeling broken (and an early click is queued + replayed). */
+  body.booting #overlay button { opacity:.55; cursor:progress; }
+  #bootPill { margin:14px auto 0; width:max-content; max-width:86vw; padding:6px 14px; border:1px solid rgba(var(--accent-rgb),.4);
+    border-radius:14px; font-size:11px; letter-spacing:2px; color:var(--accent); background:rgba(var(--accent-rgb),.07);
+    animation:bootPulse 1.2s ease-in-out infinite; }
+  body:not(.booting) #bootPill { display:none; }
+  @keyframes bootPulse { 0%,100%{opacity:.55} 50%{opacity:1} }
   #startBtn, #replayBtn {
     margin-top: 28px; pointer-events:auto; cursor: pointer;
     font-family:var(--ui-font); font-size: 18px; font-weight:700; letter-spacing: 3px;
@@ -796,6 +804,7 @@
 <div id="overlay">
   <h1><img id="menuLogo" src="img/RumpusEngine.svg" alt="RUMPUS ENGINE"></h1>  <!-- build 960: brand logo; the Kaph alt-text renders if the file is missing -->
   <div class="sub">// BUILD IT · BREAK IT · SHARE IT</div>
+  <div id="bootPill">LOADING ENGINE&#8230;</div>
   <button id="startBtn">Deploy</button>
   <div class="menuBtns">
     <button id="campaignBtn" class="secBtn"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.5 12.9 17 22l-5-3-5 3 1.5-9.1"/></svg>Play campaign</button>
@@ -985,6 +994,20 @@
   </div>
 </div>
 <div id="padDebug"></div>
+
+<script>
+// build 961: boot veil — this runs ~3% into the document, long before the game script at the end
+// has downloaded and wired the buttons. Until GAME_START flips it off, menu clicks are queued
+// (last one wins) and replayed the moment the engine is ready.
+document.body.classList.add('booting');
+window.__earlyClick = null;
+document.addEventListener('click', function(e){
+  if(!document.body.classList.contains('booting')) return;
+  var b = e.target && e.target.closest && e.target.closest('#overlay button');
+  if(b){ window.__earlyClick = b; e.preventDefault(); e.stopPropagation();
+    var p = document.getElementById('bootPill'); if(p) p.textContent = 'LOADING \u2014 your click lands as soon as the engine is ready\u2026'; }
+}, true);
+</script>
 
 <script>
 // Surface any module/runtime error on screen instead of a black screen
@@ -18495,7 +18518,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 960 · 2026-07-13';
+const BUILD_VERSION = 'build 961 · 2026-07-13';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30870,6 +30893,11 @@ if(savedLevel && savedLevel.player) applyPlayerLevel(savedLevel.player);   // se
     }catch(e){ console.warn('Could not load shared level from URL:', e && e.message); flashToast('Shared level link looks invalid'); }
   } else if(challenge){ flashToast('Challenge: beat '+(challenge.s||0)+' pts. Press Deploy'); }
 })();
+// build 961: everything above is wired — drop the boot veil and replay a click that landed early.
+try{
+  document.body.classList.remove('booting');
+  if(window.__earlyClick && window.__earlyClick.click){ const _ec = window.__earlyClick; window.__earlyClick = null; setTimeout(()=>{ try{ _ec.click(); }catch(e){} }, 60); }
+}catch(e){}
 };
 </script>
 </body>

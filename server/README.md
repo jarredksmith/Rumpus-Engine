@@ -44,6 +44,29 @@ Back up `public_html/community/` now and then — with submissions moving here, 
 the master copy of the library (levels also remain in the GitHub repo up to the point you
 switched, and you can commit new ones there whenever you like as an archive).
 
+## Speeding up first load on the cPanel host (build 961)
+
+- Upload **`rapier3d-compat.js`** (repo root, ~2.2 MB) next to `breach.html` — the game now
+  loads physics from this local file instead of a CDN, which removes the biggest download
+  from the boot path (and the console 404).
+- Recommended `public_html/.htaccess` additions so repeat visits are fast while updates still
+  arrive immediately:
+
+  ```
+  <IfModule mod_headers.c>
+    <FilesMatch "\.html$">
+      Header set Cache-Control "no-cache"
+    </FilesMatch>
+    <FilesMatch "\.(js|svg|woff|glb)$">
+      Header set Cache-Control "public, max-age=604800"
+    </FilesMatch>
+  </IfModule>
+  ```
+
+  (`no-cache` still allows ETag revalidation — browsers get a tiny 304 instead of the full
+  file when nothing changed; the week-long cache on js/svg/woff/glb covers the physics build,
+  logo, font and animation library.)
+
 ## What it does / limits
 
 - Hosts heartbeat every 5s while their pre-game lobby is open; entries expire
