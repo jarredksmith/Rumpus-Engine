@@ -7043,6 +7043,36 @@ function _uiDialog(msg, buttons){
   addEventListener('keydown', onKey, true);
 }
 function uiConfirm(msg, onYes, yesLabel){ _uiDialog(msg, [ { label:'Cancel' }, { label:yesLabel||'Confirm', primary:true, fn:onYes } ]); }
+// build 959: themed form dialog — the _uiDialog look with text inputs, so flows like the community
+// submit never call window.prompt() (a browser-chrome dialog that kicks the page out of fullscreen).
+// cb(null) on cancel (Escape / backdrop / Cancel), cb([values...]) on submit (Enter works too).
+function uiPromptForm(title, fields, cb){
+  const back=document.createElement('div');
+  back.style.cssText='position:fixed;inset:0;z-index:120;background:rgba(3,7,10,0.66);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
+  const card=document.createElement('div');
+  card.style.cssText='background:rgba(9,17,21,0.97);border:1px solid rgba(var(--accent-rgb),0.45);border-radius:12px;padding:20px 24px;width:min(440px,86vw);color:#cfeee2;font-size:14px;line-height:1.55;box-shadow:0 18px 60px rgba(0,0,0,0.55);';
+  const txt=document.createElement('div'); txt.textContent=title; txt.style.cssText='font-weight:700;letter-spacing:0.4px;'; card.appendChild(txt);
+  const inputs=[];
+  for(const f of fields){
+    const lab=document.createElement('div'); lab.textContent=f.label; lab.style.cssText='margin:12px 0 4px;font-size:11px;letter-spacing:0.6px;color:#9fc4ba;'; card.appendChild(lab);
+    const inp=document.createElement('input'); inp.type='text'; inp.value=f.value||''; if(f.max) inp.maxLength=f.max;
+    inp.style.cssText='width:100%;box-sizing:border-box;background:#0c161b;color:#eafff7;border:1px solid rgba(var(--accent-rgb),0.35);border-radius:7px;padding:9px 11px;font-size:14px;';
+    card.appendChild(inp); inputs.push(inp);
+  }
+  const row=document.createElement('div'); row.style.cssText='display:flex;gap:10px;justify-content:flex-end;margin-top:16px;';
+  const close=(vals)=>{ try{ document.body.removeChild(back); }catch(e){} removeEventListener('keydown', onKey, true); cb(vals); };
+  const onKey=(e)=>{ if(e.key==='Escape'){ e.stopPropagation(); e.preventDefault(); close(null); }
+    else if(e.key==='Enter' && inputs.indexOf(document.activeElement)>=0){ e.stopPropagation(); e.preventDefault(); close(inputs.map(i=>i.value)); } };
+  const mkBtn=(label, primary, fn)=>{ const b=document.createElement('button'); b.textContent=label;
+    b.style.cssText='padding:7px 18px;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;min-height:34px;border:1px solid '+(primary?'var(--accent)':'rgba(255,255,255,0.25)')+';background:'+(primary?'rgba(var(--accent-rgb),0.16)':'transparent')+';color:'+(primary?'var(--accent)':'#cfeee2')+';';
+    b.onclick=fn; return b; };
+  row.appendChild(mkBtn('Cancel', false, ()=>close(null)));
+  row.appendChild(mkBtn('Submit', true, ()=>close(inputs.map(i=>i.value))));
+  card.appendChild(row); back.appendChild(card); document.body.appendChild(back);
+  back.addEventListener('pointerdown', (e)=>{ if(e.target===back) close(null); });
+  addEventListener('keydown', onKey, true);
+  setTimeout(()=>{ try{ inputs[0].focus(); inputs[0].select(); }catch(e){} }, 30);
+}
 function uiNotice(msg){ _uiDialog(msg, [ { label:'OK', primary:true } ]); }
 // build 816: inline SVG icons for dynamically-built buttons — the same 24x24 currentColor stroke language (.eico) the
 // static HTML already uses. Color emoji (💾🗑🔍…) render differently on every OS and can't inherit the theme; these do.
@@ -18464,7 +18494,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 958 · 2026-07-13';
+const BUILD_VERSION = 'build 959 · 2026-07-13';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25959,14 +25989,17 @@ function buildEditorPanel(){
     // needed). Real rejections (too big / rate-limited / queue full) surface as-is and stop; only
     // an unreachable server falls through to the GitHub-issue flow below.
     try{
-      let name=''; try{ name=(localStorage.getItem('breach_last_level_name')||'').trim(); }catch(e){}
-      name=(prompt('Level name for the library:', name)||'').trim();
-      if(!name){ if(note) note.textContent='Submission needs a level name.'; return; }
-      try{ localStorage.setItem('breach_last_level_name', name); }catch(e){}
-      let author=''; try{ author=(localStorage.getItem('breach_author_name')||'').trim(); }catch(e){}
-      if(!author) author=(prompt('Your author name (shown in the library):')||'').trim();
-      if(!author){ if(note) note.textContent='Submission needs an author name.'; return; }
-      try{ localStorage.setItem('breach_author_name', author); }catch(e){}
+      let name='', author='';   // build 959: one themed modal (fullscreen survives), not window.prompt()
+      try{ name=(localStorage.getItem('breach_last_level_name')||'').trim(); }catch(e){}
+      try{ author=(localStorage.getItem('breach_author_name')||'').trim(); }catch(e){}
+      const vals = await new Promise(res=>uiPromptForm('Submit to the community library', [
+        { label:'LEVEL NAME', value:name, max:60 },
+        { label:'YOUR AUTHOR NAME (shown in the library)', value:author, max:40 },
+      ], res));
+      if(!vals){ if(note) note.textContent='Submission cancelled.'; return; }
+      name=(vals[0]||'').trim(); author=(vals[1]||'').trim();
+      if(!name || !author){ if(note) note.textContent='Submission needs a level name and an author name.'; return; }
+      try{ localStorage.setItem('breach_last_level_name', name); localStorage.setItem('breach_author_name', author); }catch(e){}
       if(note) note.textContent='Submitting for review\u2026';
       const code='RUMPUSLVL:' + await encodeLevel(lvl);
       const r=await fetch(_commApi()+'submit.php', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ name, author, code }) });
