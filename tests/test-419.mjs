@@ -19,9 +19,9 @@ assert(px >= 24, 'the blur is substantial (>= 24px), got '+px);
 // the gradient must stay translucent (center alpha < 1) so there is something to blur THROUGH
 const center = rule.match(/radial-gradient\(circle at 50% 40%,\s*rgba\([^)]*,\s*\.(\d+)\)/);
 assert(!!center, '#overlay keeps a translucent radial gradient over the blur');
-assert(+('0.'+center[1]) < 0.6, 'the gradient center is light enough to let the blurred scene show through');
+assert(+('0.'+center[1]) >= 0.7 && +('0.'+center[1]) < 1, 'the gradient center is DARK but still translucent (build 962: the scene reads as a faint glow, not a picture)');
 
 // the gradient vignette is still present (darker toward the edges for legibility)
-assert(/rgba\(3,5,8,\.\d+\)\)/.test(rule), 'a dark outer vignette is kept for title/button contrast');
+assert(/rgba\(2,3,5,\.\d+\)\)/.test(rule), 'a near-black outer vignette is kept for title/button contrast (build 962)');
 
 done('home menu blurs the scene behind it into shapes + colors (build 550)');
