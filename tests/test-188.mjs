@@ -4,7 +4,7 @@ const src = gameSource();
 // export: wraps all levels in a tagged payload and downloads a .breach file (build 939)
 const exp = extractFunction('_exportCampaign');
 assert(/kind:'breach-campaign', version:1, levels: campaign\.levels/.test(exp), 'export payload shape wrong');
-assert(/a\.download = 'breach-campaign-'/.test(exp), 'export does not download a campaign .json');
+assert(/a\.download = 'rumpus-campaign-'/.test(exp), 'export does not download a campaign .json (rumpus-branded since build 952)');
 assert(/JSON\.stringify\(payload/.test(exp), 'export does not serialize the payload');
 
 // import: accepts a campaign file (levels array) OR a single-level file (props/world), saves + re-renders
@@ -20,5 +20,5 @@ assert(/uiConfirm\('Replace your current campaign/.test(imp) && /if\(campaign\.l
 const rcp = extractFunction('renderCampaignPanel');
 assert(/Export campaign/.test(rcp) && /_exportCampaign\(\)/.test(rcp), 'export button missing');
 assert(/Import campaign/.test(rcp) && /_importCampaignFile\(/.test(rcp), 'import button missing');
-assert(/_campImp\.accept='\.breach,\.json,application\/json'/.test(rcp), 'import file input missing (accepts .breach and legacy .json, build 939)');
+assert(/_campImp\.accept='\.rumpus,\.breach,\.json,application\/json'/.test(rcp), 'import file input missing (accepts .rumpus + legacy .breach/.json, builds 939/952)');
 done();

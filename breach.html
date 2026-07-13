@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>BREACH // FPS</title>
+<title>RUMPUS ENGINE — build & play worlds in your browser</title>
 <style>
   /* build 817: only the two DEFAULT families load at boot — the other 16 HUD-picker fonts lazy-load on first use (see _ensureHudFonts) */
   @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Major+Mono+Display&display=swap');
@@ -412,6 +412,7 @@
     line-height: .9;
   }
   #overlay .sub { color:#7fa99c; letter-spacing: 4px; margin-top: 10px; font-size: 14px; }
+  @media (max-width: 480px) { #overlay .sub { letter-spacing: 2px; font-size: 12px; } }  /* build 952: keep the tagline on one line on phones */
   #startBtn, #replayBtn {
     margin-top: 28px; pointer-events:auto; cursor: pointer;
     font-family:var(--ui-font); font-size: 18px; font-weight:700; letter-spacing: 3px;
@@ -790,8 +791,8 @@
 <div id="cpHud"><div class="cpSide"><span id="cpR">0</span><div class="cpBar"><div id="cpRfill" class="cpFill red"></div></div></div><div id="cpMid">NEUTRAL</div><div class="cpSide"><span id="cpB">0</span><div class="cpBar"><div id="cpBfill" class="cpFill blue"></div></div></div></div>
 
 <div id="overlay">
-  <h1>BREACH</h1>
-  <div class="sub">// TACTICAL INCURSION PROTOCOL</div>
+  <h1>RUMPUS ENGINE</h1>
+  <div class="sub">// BUILD IT · BREAK IT · SHARE IT</div>
   <button id="startBtn">Deploy</button>
   <div class="menuBtns">
     <button id="campaignBtn" class="secBtn"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.5 12.9 17 22l-5-3-5 3 1.5-9.1"/></svg>Play campaign</button>
@@ -809,7 +810,7 @@
     <button id="creditsBtn" class="secBtn ghost"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>Credits</button>
     <button id="ctrlBtn" class="secBtn ghost"></button>
     <button id="fsBtn" class="secBtn ghost" style="display:none"></button>
-    <input type="file" id="menuCampFile" accept=".breach,.json,application/json" style="display:none">
+    <input type="file" id="menuCampFile" accept=".rumpus,.breach,.json,application/json" style="display:none">
   </div>
 </div>
 
@@ -1061,7 +1062,7 @@ window.__PHYSICS_READY = (async function(){
       return R;
     } catch(e){ /* try next source */ }
   }
-  console.warn('[BREACH] Rapier physics unavailable — dynamic props will not simulate. ' +
+  console.warn('[RUMPUS] Rapier physics unavailable — dynamic props will not simulate. ' +
                'Serve this file over http(s) (e.g. GitHub Pages or `python3 -m http.server`); file:// blocks the engine.');
   return null;
 })();
@@ -8839,7 +8840,7 @@ function _animLibAttach(gltf, packId, cb){
       const srcScene = THREE.cloneSkinned ? THREE.cloneSkinned(pk.scene) : pk.scene.clone(true);   // fresh clone = rest pose, and sampling never dirties the cached pack
       const map = _buildBoneMap(gltf.scene, srcScene);
       if(!map){ gltf.userData._libFailed='rig';
-        try{ const _nm=[]; gltf.scene.traverse(o=>{ if(o.isBone && _nm.length<12) _nm.push(o.name); }); console.warn('[BREACH] Animation library: no humanoid core in this rig. Bone names sampled:', _nm.join(', ') || '(no bones found at all)'); }catch(e){}
+        try{ const _nm=[]; gltf.scene.traverse(o=>{ if(o.isBone && _nm.length<12) _nm.push(o.name); }); console.warn('[RUMPUS] Animation library: no humanoid core in this rig. Bone names sampled:', _nm.join(', ') || '(no bones found at all)'); }catch(e){}
         if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — auto-rig it (e.g. on Mixamo) and re-import'); } cb(false, 0); return; }
       const out = [];
       for(const c of (pk.animations||[])){ if(/t.?pose|bind.?pose/i.test(c.name||'')) continue;
@@ -8952,7 +8953,7 @@ function _ensureMeshopt(){
         if(D){ try{ if(D.ready && D.ready.then) await D.ready; }catch(e){} _meshoptDecoder = D; return D; }
       }catch(e){ /* next source */ }
     }
-    console.warn('[BREACH] Meshopt decoder unavailable — meshopt-compressed models will fall back to a capsule.');
+    console.warn('[RUMPUS] Meshopt decoder unavailable — meshopt-compressed models will fall back to a capsule.');
     return null;
   })();
   return _meshoptPromise;
@@ -8970,7 +8971,7 @@ function _ensureKTX2(){
         if(typeof renderer!=='undefined' && renderer && l.detectSupport) l.detectSupport(renderer);
         _ktx2Loader = l; return l;
       }
-    }catch(e){ console.warn('[BREACH] KTX2 loader unavailable:', e && e.message); }
+    }catch(e){ console.warn('[RUMPUS] KTX2 loader unavailable:', e && e.message); }
     try{ window.__KTX2_UNAVAILABLE = true; }catch(e){}   // no transcoder -> the loader drops the texture (untextured geometry) instead of throwing to a capsule
     return null;
   })();
@@ -9655,7 +9656,7 @@ let gameCfg = {
   extractRadius: (savedLevel && savedLevel.game && savedLevel.game.extractRadius!=null) ? savedLevel.game.extractRadius : 3.5,
   bossWave: (savedLevel && savedLevel.game && savedLevel.game.bossWave!=null) ? savedLevel.game.bossWave : 5,   // random mode: spawn a BOSS every Nth wave (0 = never)
   noRespawn: !!(savedLevel && savedLevel.game && savedLevel.game.noRespawn),   // pre-built: spawn authored markers once, don't respawn cleared waves
-  // build 672: "hands" / unarmed support — turns BREACH into a fist-fight / adventure / puzzle base
+  // build 672: "hands" / unarmed support — turns the game into a fist-fight / adventure / puzzle base
   unarmed: !!(savedLevel && savedLevel.game && savedLevel.game.unarmed),        // start with fists only (no guns)
   allowPickup: (savedLevel && savedLevel.game && savedLevel.game.allowPickup!=null) ? !!savedLevel.game.allowPickup : true,   // can still pick up weapons found in the level
   flashlight: !!(savedLevel && savedLevel.game && savedLevel.game.flashlight),  // a toggleable held flashlight (press L)
@@ -10145,7 +10146,7 @@ addEventListener('keydown', e=>{
   // Ctrl+A (select all). Swallow those so moving while crouched doesn't trigger them. Ctrl+W (close tab)
   // is browser-reserved and can't be cancelled here — the beforeunload guard below catches that one.
   if(e.ctrlKey && (e.code==='KeyW'||e.code==='KeyA'||e.code==='KeyS'||e.code==='KeyD')) e.preventDefault();
-  if(e.code==='Backquote'){ const el=$('padDebug'); let show=false; if(el){ show = el.style.display!=='block'; el.style.display = show?'block':'none'; if(show) el.textContent = 'BREACH  ' + BUILD_VERSION + '\nCONTROLLER DEBUG  (` hide · ] switch pad)'; } perfOn = el ? show : !perfOn; const ph=document.getElementById('perfHud'); if(ph) ph.classList.toggle('hidden', !perfOn); e.preventDefault(); return; }   // ` toggles the controller diagnostic + the perf meter
+  if(e.code==='Backquote'){ const el=$('padDebug'); let show=false; if(el){ show = el.style.display!=='block'; el.style.display = show?'block':'none'; if(show) el.textContent = 'RUMPUS ENGINE  ' + BUILD_VERSION + '\nCONTROLLER DEBUG  (` hide · ] switch pad)'; } perfOn = el ? show : !perfOn; const ph=document.getElementById('perfHud'); if(ph) ph.classList.toggle('hidden', !perfOn); e.preventDefault(); return; }   // ` toggles the controller diagnostic + the perf meter
   if(e.code==='BracketRight'){   // manually switch which detected gamepad is used
     const ps = navigator.getGamepads ? navigator.getGamepads() : [];
     const idxs = []; for(const p of ps){ if(p) idxs.push(p.index); }
@@ -15962,7 +15963,7 @@ const VFX = {
 const _vfxTex = {};         // kind -> {tex} | 'loading' | 'fail'
 const _flipbooks = [];
 const _vfxPng = {};         // build 631: kinds whose hosted-PNG override we've already attempted
-// build 631: BREACH ships as ONE file, but the flipbook VFX expected external vfx/*.png sheets — when those 404
+// build 631: RUMPUS ENGINE ships as ONE file, but the flipbook VFX expected external vfx/*.png sheets — when those 404
 // (a fresh host / this repo) explosions fell back to a single cheesy gradient sphere (and that fallback allocated
 // a sphere geometry per blast — a stutter). We now BAKE animated sprite sheets procedurally at load (a canvas ->
 // one shared CanvasTexture per kind), so explosions/smoke/muzzle always play as real animated sprites with no
@@ -18452,11 +18453,11 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 951 · 2026-07-12';
+const BUILD_VERSION = 'build 952 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
-  const lines = ['BREACH  ' + BUILD_VERSION, 'CONTROLLER DEBUG  (` hide · ] switch pad)'];
+  const lines = ['RUMPUS ENGINE  ' + BUILD_VERSION, 'CONTROLLER DEBUG  (` hide · ] switch pad)'];
   let count=0;
   for(let i=0;i<pads.length;i++){ const p=pads[i]; if(!p) continue; count++;
     const mark = (gp && p.index===gp.index) ? '▶' : ' ';
@@ -19039,7 +19040,7 @@ function addStaticColliderFor(o){
   try{
     const tri = trimeshDescFor(o);
     if(tri){ const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed()); physWorld.createCollider(tri.setFriction(0.9).setRestitution(0.1), rb); return; }
-  }catch(e){ console.warn('[BREACH] trimesh collider failed, falling back to box:', e && e.message); }
+  }catch(e){ console.warn('[RUMPUS] trimesh collider failed, falling back to box:', e && e.message); }
   // fallback: world-AABB cuboid (degenerate/empty geometry)
   if(!o.userData.box){ o.updateMatrixWorld(true); o.userData.box = new THREE.Box3().setFromObject(o, true); }
   o.userData.box.getSize(_psize); o.userData.box.getCenter(_pcenter);
@@ -22387,7 +22388,7 @@ function _openCinePvWindow(){
   const w = window.open('', 'breach-cine-preview', 'width=672,height=432,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no');
   if(!w){ uiNotice('Could not open a separate window — your browser blocked the popup. Allow popups for this page and try again.'); return; }
   try{
-    w.document.open(); w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>BREACH — camera preview</title></head><body></body></html>'); w.document.close();
+    w.document.open(); w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>RUMPUS ENGINE — camera preview</title></head><body></body></html>'); w.document.close();
     for(const s of document.querySelectorAll('style')){ const ns=w.document.createElement('style'); ns.textContent=s.textContent; w.document.head.appendChild(ns); }   // copy styles so --accent etc. resolve
     w.document.body.style.cssText='margin:0;background:#05080a;overflow:hidden;height:100vh;display:flex;flex-direction:column;';
     const c = w.document.createElement('canvas'); c.width=_CINEPV_RW; c.height=_CINEPV_RH; c.style.cssText='position:static;top:auto;left:auto;z-index:auto;flex:1 1 auto;min-height:0;width:100%;height:auto;object-fit:contain;display:block;background:#000;';   // build 664: override the copied global `canvas{position:fixed;inset:0}` rule (it covered the scrubber)
@@ -24831,10 +24832,10 @@ function _exportCampaign(){
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
-    a.href = url; a.download = 'breach-campaign-' + stamp + '.breach';   // build 939: BREACH's own extension (plain JSON inside)
+    a.href = url; a.download = 'rumpus-campaign-' + stamp + '.rumpus';   // build 939/952: our own extension (plain JSON inside)
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url), 4000);
-    if(typeof flashToast==='function') flashToast('Exported ' + campaign.levels.length + ' level' + (campaign.levels.length>1?'s':'') + ' - share the .breach file');
+    if(typeof flashToast==='function') flashToast('Exported ' + campaign.levels.length + ' level' + (campaign.levels.length>1?'s':'') + ' - share the .rumpus file');
   }catch(e){ if(typeof flashToast==='function') flashToast('Export failed'); }
 }
 function _importCampaignFile(file, onDone){
@@ -25214,7 +25215,7 @@ function renderCampaignPanel(){
   const expB=document.createElement('button'); expB.textContent='Export campaign'; expB.title='Download all levels as one .json file to share'; expB.onclick=()=>{ _exportCampaign(); };
   const impB=document.createElement('button'); impB.textContent='Import campaign'; impB.title='Load a campaign .json (replaces the current campaign)'; impB.onclick=()=>{ _campImp.value=''; _campImp.click(); };
   r3.appendChild(expB); r3.appendChild(impB); host.appendChild(r3);
-  const _campImp=document.createElement('input'); _campImp.type='file'; _campImp.accept='.breach,.json,application/json'; _campImp.style.display='none'; _campImp.onchange=()=>{ _importCampaignFile(_campImp.files && _campImp.files[0]); }; host.appendChild(_campImp);
+  const _campImp=document.createElement('input'); _campImp.type='file'; _campImp.accept='.rumpus,.breach,.json,application/json'; _campImp.style.display='none'; _campImp.onchange=()=>{ _importCampaignFile(_campImp.files && _campImp.files[0]); }; host.appendChild(_campImp);
   if(campaignEditIdx>=0 && campaign.levels[campaignEditIdx]){
     const _enm=campaign.levels[campaignEditIdx].name||('Level '+(campaignEditIdx+1));
     const er=document.createElement('div'); er.className='row2'; er.style.marginTop='6px';
@@ -25676,7 +25677,7 @@ function buildEditorPanel(){
       + '<div class="hint" id="edAutoStatus" style="font-size:10px;opacity:0.75;margin:0 0 4px">Saves automatically as you work.</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edShare">'+_icn('link')+'Copy share link</button></div>'
       + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .json</button><button id="edImport">'+_icn('upload')+'Import .json</button></div>'
-      + '<input type="file" id="edImportFile" accept=".breach,.json,application/json" style="display:none">'
+      + '<input type="file" id="edImportFile" accept=".rumpus,.breach,.json,application/json" style="display:none">'
       + '<div class="row2" style="margin-top:6px"><button id="edSubmitComm" style="width:100%">'+_icn('upload')+'Submit to community library</button></div>'
       + '<div class="hint" style="font-size:10px;opacity:0.75;margin:2px 0 0">Copies the level JSON, then opens the submission form on GitHub — paste it there. Levels go live in the in-game library once approved.</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edReset">Reset target</button><button id="edCopy">Copy code</button></div>'
@@ -25712,7 +25713,7 @@ function buildEditorPanel(){
         const w = window.open('', 'breach-editor', 'width=460,height=900,resizable=yes,scrollbars=yes,menubar=no,toolbar=no,location=no,status=no');
         if(!w){ uiNotice('Could not open a separate window \u2014 your browser blocked the popup. Allow popups for this page and try again.'); return; }
         try{
-          w.document.open(); w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>BREACH \u2014 editor</title></head><body></body></html>'); w.document.close();
+          w.document.open(); w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>RUMPUS ENGINE \u2014 editor</title></head><body></body></html>'); w.document.close();
           for(const s of document.querySelectorAll('style')){ const ns=w.document.createElement('style'); ns.textContent=s.textContent; w.document.head.appendChild(ns); }
           // override the panel's docked layout: in the popup it should fill the window naturally
           const ov=w.document.createElement('style'); ov.textContent='html,body{margin:0;background:#06090b;color:#cfeee2;overflow:hidden;}#editor.popped{position:static !important;top:auto !important;right:auto !important;left:auto !important;bottom:auto !important;width:100% !important;height:100vh !important;max-width:none !important;max-height:none !important;border:0 !important;border-radius:0 !important;box-shadow:none !important;overflow:auto;}#editor.popped #editorResize{display:none !important;}'; w.document.head.appendChild(ov);
@@ -25910,10 +25911,10 @@ function buildEditorPanel(){
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
-      a.href = url; a.download = 'breach-level-' + stamp + '.breach';   // build 939: BREACH's own extension (plain JSON inside)
+      a.href = url; a.download = 'rumpus-level-' + stamp + '.rumpus';   // build 939/952: our own extension (plain JSON inside)
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(url), 4000);
-      note.textContent = 'Exported — share the .breach file ✓';
+      note.textContent = 'Exported — share the .rumpus file ✓';
     } catch(e){ note.textContent = 'Export failed'; }
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 2800);
   };
@@ -25944,13 +25945,13 @@ function buildEditorPanel(){
     // build 869: PRE-FILL the issue form via URL when the level is tiny. build 950: GitHub 500s on
     // long prefill URLs FAR below its documented 8K ("Whoops, something went wrong") — real-world
     // safe is ~2K, so the cap drops to 1900 and everything bigger goes clipboard-first: the COMPACT
-    // share code (the publish Action decodes BREACHLVL:) is copied, and the bare form opens to paste
+    // share code (the publish Action decodes RUMPUSLVL:/BREACHLVL:) is copied, and the bare form opens to paste
     // into. The raw JSON only rides the clipboard if the codec itself is unavailable.
     try{
       const mk=(c)=>{ const u=COMM_SUBMIT_URL + '&level-json=' + encodeURIComponent(c); return u.length<=1900 ? u : null; };
-      const code='BREACHLVL:' + await encodeLevel(lvl);
+      const code='RUMPUSLVL:' + await encodeLevel(lvl);
       let u=mk(code), dropped=false;
-      if(!u && lvl.thumb){ const noThumb=Object.assign({}, lvl); delete noThumb.thumb; const u2=mk('BREACHLVL:' + await encodeLevel(noThumb)); if(u2){ u=u2; dropped=true; } }   // the JPEG thumb barely compresses — shed it before giving up on the pre-fill
+      if(!u && lvl.thumb){ const noThumb=Object.assign({}, lvl); delete noThumb.thumb; const u2=mk('RUMPUSLVL:' + await encodeLevel(noThumb)); if(u2){ u=u2; dropped=true; } }   // the JPEG thumb barely compresses — shed it before giving up on the pre-fill
       if(u){
         if(note){ note.textContent = dropped ? 'Opening GitHub — level pre-filled ✓ (thumbnail skipped: too big for the link)' : 'Opening GitHub — your level is pre-filled, just name it and submit ✓'; clearTimeout(note._t); note._t=setTimeout(()=>{ note.textContent=''; }, 6000); }
         try{ window.open(u, '_blank'); }catch(e){}
@@ -27110,7 +27111,7 @@ function renderEditorFields(){
     const ugSp=document.createElement('span'); ugSp.textContent='Between-wave upgrade cards (solo)';
     ugLab.appendChild(ugCb); ugLab.appendChild(ugSp); bWav.appendChild(ugLab);
     hint(bWav, '', '2px 0 0').textContent = 'On: clearing a wave in solo lets you pick 1 of 3 upgrades. Off: waves flow straight through.';
-    // build 672: hands / unarmed — turns BREACH into a fist-fight / adventure / puzzle base
+    // build 672: hands / unarmed — turns the game into a fist-fight / adventure / puzzle base
     // ---- build 874: per-level camera view ----
     hint(bPly, '<b>Camera view</b> — how players see your level', '2px 0 4px');
     { const _curView=(gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps';
@@ -27136,7 +27137,7 @@ function renderEditorFields(){
           ? 'Side-scroller: A/D run along the lane, Space jumps, the mouse aims within the plane. Players are held on the lane they deploy on \u2014 build along it (ramps and stairs shine here).'
           : (_curView==='chase'
             ? 'Over-the-shoulder chase camera with a smooth damped follow \u2014 normal mouselook and aim. Framing + follow smoothing: Player tab \u2192 Third-person framing.'
-            : 'Classic BREACH first-person. Players can still toggle third-person from the pause menu.'));
+            : 'Classic first-person. Players can still toggle third-person from the pause menu.'));
     }
     hint(bPly, '<b>Hands / unarmed</b>', '12px 0 4px');
     const _chk=(label, checked, on)=>{ const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;'; cb.onchange=()=>{ pushUndoSnapshot(); on(cb.checked); }; const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); bPly.appendChild(lab); return cb; };
@@ -29629,7 +29630,7 @@ function showLevelLoader(){
   if(!_levelLoaderEl){
     const el=document.createElement('div'); el.id='levelLoader';
     el.style.cssText='position:fixed;inset:0;z-index:120;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 42%, rgba(8,20,24,0.97), rgba(3,6,9,0.99));color:#eafff7;font:600 15px/1.4 ui-monospace,monospace;transition:opacity 0.4s;';
-    el.innerHTML='<div style="font-size:13px;letter-spacing:4px;color:var(--accent);margin-bottom:16px;">BREACH</div>'
+    el.innerHTML='<div style="font-size:13px;letter-spacing:4px;color:var(--accent);margin-bottom:16px;">RUMPUS ENGINE</div>'
       +'<div id="levelLoaderLabel" style="margin-bottom:14px;">Loading level\u2026</div>'
       +'<div style="width:240px;height:7px;background:#0c1418;border:1px solid #1c2b30;border-radius:6px;overflow:hidden;"><div style="width:38%;height:100%;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:propLoadSlide 1.05s ease-in-out infinite;"></div></div>';
     document.body.appendChild(el); _levelLoaderEl=el;
@@ -30335,7 +30336,7 @@ function _creditEsc(s){ return String(s).replace(/[&<>]/g, c=>({'&':'&amp;','<':
 function _creditLinkify(s){ return _creditEsc(s).replace(/(https?:\/\/[^\s)]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#7fe6cf">$1</a>'); }   // escape first, then linkify — safe against markup in author-supplied strings
 function renderCreditsScreen(){
   const host=document.getElementById('creditsBody'); if(!host) return;
-  let h='<div style="color:#9fc4ba;margin-bottom:10px">BREACH is built on open-source libraries and free Creative-Commons assets. Thanks to everyone below.</div>';
+  let h='<div style="color:#9fc4ba;margin-bottom:10px">RUMPUS ENGINE is built on open-source libraries and free Creative-Commons assets. Thanks to everyone below.</div>';
   h+='<div style="color:#ffd166;font-weight:700;margin:6px 0 3px;letter-spacing:.04em">ENGINE &amp; LIBRARIES</div>';
   for(const l of LIB_CREDITS) h+='<div style="margin-bottom:2px"><b style="color:#eafff7">'+_creditEsc(l.name)+'</b> — '+_creditEsc(l.by)+' <span style="color:#8fb9ad">['+_creditEsc(l.lic)+']</span> · '+_creditLinkify(l.url)+'</div>';
   h+='<div style="color:#ffd166;font-weight:700;margin:12px 0 3px;letter-spacing:.04em">ASSET SOURCES</div>';
@@ -30382,7 +30383,7 @@ const HELP_TOPICS = [
   +'6. <b>Gameplay tab</b> → Objective → <b>Race</b>. Set laps + AI rivals.<br>'
   +'7. Press <code>P</code> — you\'ll be auto-seated on the grid. 3-2-1-GO.' },
  { id:'tut-arena', title:'Tutorial: arena shootout', example:'arena', html:
-   'The classic BREACH wave fight:<br><br>'
+   'The classic wave fight:<br><br>'
   +'1. <b>World tab</b> → set Arena size (~70) and pick a sky + floor texture.<br>'
   +'2. <b>Build tab</b> → scatter Boxes for cover; scale them with <code>R</code>. Add a few Pillars for landmarks.<br>'
   +'3. <b>Enemies tab</b> → place spawn markers (or leave it on random waves).<br>'
@@ -30400,7 +30401,7 @@ const HELP_TOPICS = [
   +'7. Optional: an NPC with <b>Dialogue</b> lines that hint where the key is.<br>'
   +'8. <code>P</code>: find key → unlock the vault → claim the prize → MISSION COMPLETE. Chain more signals for bigger puzzles.' },
  { id:'tut-topdown', title:'Tutorial: top-down shooter', example:'topdown', html:
-   'Turn BREACH into a twin-stick shooter (build 874\u2019s camera views):<br><br>'
+   'Turn RUMPUS ENGINE into a twin-stick shooter (build 874\u2019s camera views):<br><br>'
   +'1. <b>Gameplay tab</b> \u2192 Player options \u2192 <b>Camera view: Top-down</b>. Set Camera distance \u2248 30.<br>'
   +'2. Build streets: Boxes as city blocks (scale tall with <code>R</code>), leave lanes between them.<br>'
   +'3. Scatter crates for cover; add a <b>drivable car</b> (any box + the Vehicle fold) \u2014 cars keep full handling from above.<br>'
@@ -30576,7 +30577,7 @@ async function _commLoad(entry, toEditor){
     if(!r.ok) throw new Error('HTTP '+r.status);
     level=await r.json();
   }catch(e){ if(typeof flashToast==='function') flashToast('Could not load "'+(entry.name||file)+'": '+(e&&e.message)); return; }
-  if(!level || typeof level!=='object' || (!level.props && !level.world)){ if(typeof flashToast==='function') flashToast('That file does not look like a BREACH level'); return; }
+  if(!level || typeof level!=='object' || (!level.props && !level.world)){ if(typeof flashToast==='function') flashToast('That file does not look like a Rumpus Engine level'); return; }
   closeModal('communityModal');
   if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();   // Ctrl+Z restores what you had
   if(toEditor){

@@ -7,7 +7,7 @@ import { gunzipSync } from 'zlib';
 
 const LIMITS = { json: 400_000, name: 60, author: 40, desc: 200 };
 
-// build 869: the game pre-fills the form with `BREACHLVL:` + the share-link codec
+// build 869/952: the game pre-fills the form with `RUMPUSLVL:` (legacy `BREACHLVL:` accepted forever) + the share-link codec
 // ('g' + base64url(gzip(json)) or 'r' + base64url(json)). Decode it back to JSON text.
 export function decodeLevelCode(code){
   const s = String(code).trim();
@@ -53,8 +53,8 @@ export function validateSubmission(parsed, issueNumber, titleFallback){
   if(!author) return { ok:false, reason:'the **Your name** field is empty' };
   if(!parsed.json) return { ok:false, reason:'the **Level JSON** field is empty — in the game: editor → Save tab → Submit to community library fills it' };
   let jsonText = parsed.json;
-  if(/^BREACHLVL:/.test(jsonText)){   // build 869: the pre-filled compressed code
-    try{ jsonText = decodeLevelCode(jsonText.replace(/^BREACHLVL:/, '')); }
+  if(/^(BREACHLVL|RUMPUSLVL):/.test(jsonText)){   // build 869/952: the pre-filled compressed code (either era's prefix)
+    try{ jsonText = decodeLevelCode(jsonText.replace(/^(BREACHLVL|RUMPUSLVL):/, '')); }
     catch(e){ return { ok:false, reason:'the pre-filled level code did not decode — re-open the form from the game’s Submit button (don’t edit the code)' }; }
   }
   if(jsonText.length > LIMITS.json) return { ok:false, reason:`the level JSON is ${jsonText.length.toLocaleString()} bytes — the library caps levels at ${LIMITS.json.toLocaleString()}` };

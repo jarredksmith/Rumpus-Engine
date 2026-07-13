@@ -14,7 +14,7 @@ const manual = readFileSync(new URL('../breach-help.html', import.meta.url), 'ut
 
 // the manual ships and is substantial
 assert(manual.length > 20000, 'breach-help.html is a real manual, not a stub');
-assert(/<title>BREACH — Field Manual<\/title>/.test(manual), 'titled');
+assert(/<title>RUMPUS ENGINE — Field Manual<\/title>/.test(manual), 'titled (Rumpus Engine since build 952)');
 for(const id of ['start','controls','editor','tab-build','folds','tab-world','tab-player','tab-enemies',
                  'tab-gameplay','tab-weapons','tab-hud','tab-save','racing','vehicles','signals',
                  'pickups','objectives','cutscenes','multiplayer','sharing','faq'])

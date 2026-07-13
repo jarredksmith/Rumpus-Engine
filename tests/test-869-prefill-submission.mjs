@@ -27,9 +27,9 @@ assert(!bad.ok && /did not decode/.test(bad.reason), 'a mangled code is rejected
 
 // ---- the game side: prefill first, thumb-shedding retry, clipboard fallback retained ----
 const sub = src.match(/#edSubmitComm[\s\S]{0,2200}/)[0];
-assert(/'BREACHLVL:' \+ await encodeLevel\(lvl\)/.test(sub), 'prefill uses the share-link codec');
+assert(/'RUMPUSLVL:' \+ await encodeLevel\(lvl\)/.test(sub), 'prefill uses the share-link codec (RUMPUSLVL since build 952; the Action accepts BREACHLVL forever)');
 assert(/&level-json=/.test(sub) && /u\.length<=1900/.test(sub), 'prefills the level-json field, capped under GitHub\'s REAL budget (build 950: it 500s far below the documented 8K — safe is ~2K)');
-assert(/delete noThumb\.thumb; const u2=mk\('BREACHLVL:' \+ await encodeLevel\(noThumb\)\)/.test(sub), 'retries without the thumbnail before giving up');
+assert(/delete noThumb\.thumb; const u2=mk\('RUMPUSLVL:' \+ await encodeLevel\(noThumb\)\)/.test(sub), 'retries without the thumbnail before giving up');
 assert(/str = code;/.test(sub) && /Level code copied/.test(sub), 'too big to prefill -> the COMPACT code rides the clipboard and the note names the paste box (build 950)');
 assert(/navigator\.clipboard\.writeText\(str\)/.test(sub), 'the clipboard+paste flow survives as the oversized fallback');
 assert(/thumbnail skipped/.test(sub), '...and the toast says when the thumb was shed');

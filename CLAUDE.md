@@ -1,11 +1,23 @@
-# BREACH — project guide for Claude Code
+# RUMPUS ENGINE (formerly BREACH) — project guide for Claude Code
 
-BREACH is a **single-file browser FPS**. Everything ships in one file, `breach.html`
-(~22,000 lines). It uses three.js **r149** (UMD global: `const THREE = window.THREE`),
+RUMPUS ENGINE is a **single-file browser game studio** — build worlds, play them (FPS,
+racing, top-down, side-scroll), share them. Everything ships in one file, `breach.html`
+(~30,000 lines). It uses three.js **r149** (UMD global: `const THREE = window.THREE`),
 the Rapier physics engine, and PeerJS/WebRTC for multiplayer. There is **no build step** —
 you open `breach.html` directly in a browser.
 
 The author is Jarred Smith. The goal is a public release.
+
+## Branding (build 952 rebrand)
+
+The **visible name** is RUMPUS ENGINE; the **compatibility identifiers** deliberately keep
+the old name — do NOT "clean these up":
+- `breach.html` / `breach-help.html` filenames = live GitHub Pages URLs.
+- `breach_*` localStorage keys = players' existing saves and settings.
+- Share codes: new exports emit `RUMPUSLVL:` and download as `.rumpus`, but `BREACHLVL:`
+  codes and `.breach` files must import forever, and the publish Action accepts both prefixes.
+- Repo/community URLs still say `jarredksmith/breach` unless the repo itself is renamed
+  (a user decision — it changes the Pages URL and would need a follow-up build).
 
 ## Repository layout
 

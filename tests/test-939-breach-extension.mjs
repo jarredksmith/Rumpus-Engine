@@ -8,15 +8,15 @@ import { gameSource, html, assert, done } from './harness.mjs';
 const src = gameSource();
 
 // exports carry the new extension
-assert(/a\.download = 'breach-level-' \+ stamp \+ '\.breach';/.test(src), 'levels export as .breach');
-assert(/a\.download = 'breach-campaign-' \+ stamp \+ '\.breach';/.test(src), 'campaigns export as .breach');
-assert(/share the \.breach file/.test(src), 'the toasts name the new extension');
+assert(/a\.download = 'rumpus-level-' \+ stamp \+ '\.rumpus';/.test(src), 'levels export as .rumpus (build 952)');
+assert(/a\.download = 'rumpus-campaign-' \+ stamp \+ '\.rumpus';/.test(src), 'campaigns export as .rumpus (build 952)');
+assert(/share the \.rumpus file/.test(src), 'the toasts name the new extension');
 assert(!/\.download = 'breach-(level|campaign)-' \+ stamp \+ '\.json'/.test(src), 'no export still hands out .json');
 
 // every picker accepts .breach AND legacy .json
-assert(/id="menuCampFile" accept="\.breach,\.json,application\/json"/.test(html), 'menu campaign picker accepts both');
-assert(/_campImp\.accept='\.breach,\.json,application\/json';/.test(src), 'campaign panel picker accepts both');
-assert(/id="edImportFile" accept="\.breach,\.json,application\/json"/.test(src), 'editor level picker accepts both');
+assert(/id="menuCampFile" accept="\.rumpus,\.breach,\.json,application\/json"/.test(html), 'menu campaign picker accepts all three');
+assert(/_campImp\.accept='\.rumpus,\.breach,\.json,application\/json';/.test(src), 'campaign panel picker accepts all three');
+assert(/id="edImportFile" accept="\.rumpus,\.breach,\.json,application\/json"/.test(src), 'editor level picker accepts all three');
 
 // the importer is content-sniffing, not extension-sniffing (why legacy files keep working)
 assert(/data = JSON\.parse\(reader\.result\)/.test(src), 'import parses the content');
