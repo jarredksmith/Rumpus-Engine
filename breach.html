@@ -18449,7 +18449,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 949 · 2026-07-12';
+const BUILD_VERSION = 'build 950 · 2026-07-12';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25938,23 +25938,27 @@ function buildEditorPanel(){
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
     let lvl, str; try{ lvl = serializeLevel(); const th = _commCaptureThumb(); if(th) lvl.thumb = th; str = JSON.stringify(lvl); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
-    // build 869: PRE-FILL the issue form via URL — the share-link codec compresses the whole level into a
-    // few KB, which fits GitHub's ~8K URL budget for most levels. The publish Action decodes BREACHLVL:
-    // codes. Too big to fit -> the old clipboard+paste flow.
+    // build 869: PRE-FILL the issue form via URL when the level is tiny. build 950: GitHub 500s on
+    // long prefill URLs FAR below its documented 8K ("Whoops, something went wrong") — real-world
+    // safe is ~2K, so the cap drops to 1900 and everything bigger goes clipboard-first: the COMPACT
+    // share code (the publish Action decodes BREACHLVL:) is copied, and the bare form opens to paste
+    // into. The raw JSON only rides the clipboard if the codec itself is unavailable.
     try{
-      const mkUrl = async (obj)=>{ const code='BREACHLVL:' + await encodeLevel(obj); const u=COMM_SUBMIT_URL + '&level-json=' + encodeURIComponent(code); return u.length<=7600 ? u : null; };
-      let u = await mkUrl(lvl), dropped=false;
-      if(!u && lvl.thumb){ const noThumb=Object.assign({}, lvl); delete noThumb.thumb; u=await mkUrl(noThumb); dropped=!!u; }   // the JPEG thumb barely compresses — shed it before giving up on the pre-fill
+      const mk=(c)=>{ const u=COMM_SUBMIT_URL + '&level-json=' + encodeURIComponent(c); return u.length<=1900 ? u : null; };
+      const code='BREACHLVL:' + await encodeLevel(lvl);
+      let u=mk(code), dropped=false;
+      if(!u && lvl.thumb){ const noThumb=Object.assign({}, lvl); delete noThumb.thumb; const u2=mk('BREACHLVL:' + await encodeLevel(noThumb)); if(u2){ u=u2; dropped=true; } }   // the JPEG thumb barely compresses — shed it before giving up on the pre-fill
       if(u){
         if(note){ note.textContent = dropped ? 'Opening GitHub — level pre-filled ✓ (thumbnail skipped: too big for the link)' : 'Opening GitHub — your level is pre-filled, just name it and submit ✓'; clearTimeout(note._t); note._t=setTimeout(()=>{ note.textContent=''; }, 6000); }
         try{ window.open(u, '_blank'); }catch(e){}
         return;
       }
-    }catch(e){ /* codec unavailable -> clipboard path */ }
+      str = code;   // clipboard carries the compact code, not the raw JSON
+    }catch(e){ /* codec unavailable -> raw JSON on the clipboard */ }
     let copied = false;
     try{ await navigator.clipboard.writeText(str); copied = true; }
     catch(e){ try{ const ta=document.createElement('textarea'); ta.value=str; document.body.appendChild(ta); ta.select(); copied=document.execCommand('copy'); ta.remove(); }catch(_){} }
-    if(note){ note.textContent = copied ? 'Level too big to pre-fill — JSON copied ✓, paste it into the GitHub form' : 'Copy failed — use Copy code below and paste that instead'; clearTimeout(note._t); note._t=setTimeout(()=>{ note.textContent=''; }, 6000); }
+    if(note){ note.textContent = copied ? 'Level code copied ✓ — paste it into the "Level JSON" box on the GitHub form' : 'Copy failed — use Copy code below and paste that into the GitHub form'; clearTimeout(note._t); note._t=setTimeout(()=>{ note.textContent=''; }, 8000); }
     try{ window.open(COMM_SUBMIT_URL, '_blank'); }catch(e){}
   };
   setEditorMode(editorMode);   // apply mode visibility + render (replaces the bare initial render)
