@@ -3,8 +3,8 @@
 import { gameSource, html, extractFunction, done, assert } from './harness.mjs';
 const src = gameSource();
 
-assert(/const LOBBY_DB = '';/.test(src) && /const LOBBY_TTL = 15000;/.test(src), 'registry config present, off by default');
-assert(/function lobbyEnabled\(\)\{ return typeof LOBBY_DB==='string' && \/\^https/.test(src), 'feature gated on a configured https URL');
+assert(/const LOBBY_DB_DEFAULT = 'https:\/\/www\.rumpusengine\.com\/api\/lobbies\.php';/.test(src) && /const LOBBY_TTL = 15000;/.test(src), 'registry config present, pointing at our own endpoint (build 956)');
+assert(/function lobbyEnabled\(\)\{ return \/\^https\?:\\\/\\\//.test(src) && /breach_lobby_db/.test(src), 'feature gated on a URL, with a localStorage override / off switch (build 956)');
 assert(/function announceRoom\(\)/.test(src) && /function unannounceRoom\(\)/.test(src) && /function fetchRooms\(cb\)/.test(src), 'publish / remove / list helpers');
 
 const an = extractFunction('announceRoom');

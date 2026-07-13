@@ -15703,17 +15703,24 @@ function startMatch(){   // host presses START
 // ---------- Optional public games list: browse open lobbies instead of typing a code ----------
 // PeerJS has no room discovery, so open lobbies are published to a shared registry. Paste a free Firebase
 // Realtime Database base URL below to enable the list; leave '' for code-only joining (nothing breaks).
-const LOBBY_DB = '';                  // e.g. 'https://yourproject-default-rtdb.firebaseio.com'
-const LOBBY_PATH = 'breach_rooms';
-const LOBBY_TTL = 15000;              // a lobby not refreshed within this window is treated as closed
-function lobbyEnabled(){ return typeof LOBBY_DB==='string' && /^https:\/\//.test(LOBBY_DB); }
-function _lobbyUrl(code){ return LOBBY_DB.replace(/\/+$/,'')+'/'+LOBBY_PATH+'/'+(code||'')+'.json'; }
-let _lobbyHbT=null, _lobbyCode=null;
+// build 956: the lobby list runs on OUR OWN endpoint (server/api/lobbies.php on rumpusengine.com —
+// flat-file PHP, no database). Heartbeats carry a per-session owner key so only the creating host
+// can update or close its entry; the server prunes stale lobbies on its own clock and returns each
+// entry's age in seconds (client clocks are never compared with the server's). localStorage
+// 'breach_lobby_db' overrides the endpoint for self-hosters ('off' disables the browser — code-only
+// joining still works).
+const LOBBY_DB_DEFAULT = 'https://www.rumpusengine.com/api/lobbies.php';
+function _lobbyDb(){ try{ const o=(localStorage.getItem('breach_lobby_db')||'').trim(); if(o==='off') return ''; if(/^https?:\/\//.test(o)) return o; }catch(e){} return LOBBY_DB_DEFAULT; }
+const LOBBY_TTL = 15000;              // fallback freshness window for ts-era entries
+function lobbyEnabled(){ return /^https?:\/\//.test(_lobbyDb()); }
+function _lobbyUrl(code){ const b=_lobbyDb(); return code ? b+(b.indexOf('?')>=0?'&':'?')+'c='+encodeURIComponent(code) : b; }
+function _mkLobbyKey(){ let s=''; for(let i=0;i<32;i++) s+='0123456789abcdef'[Math.floor(Math.random()*16)]; return s; }
+let _lobbyHbT=null, _lobbyCode=null, _lobbyKey=null;
 function announceRoom(){   // host: publish + heartbeat this open lobby
   if(!lobbyEnabled() || NET.mode!=='host') return;
-  _lobbyCode=NET.roomCode;
+  _lobbyCode=NET.roomCode; if(!_lobbyKey) _lobbyKey=_mkLobbyKey();   // build 956: per-session owner key — the server only lets this key update/close our entry
   const ping=()=>{ if(!lobbyEnabled() || NET.mode!=='host' || NET.phase!=='lobby') return;
-    const body={ code:NET.roomCode, name:(NET.name||'Host'), mode:NET.gameMode||'coop', players:1+Object.keys(NET.conns).length, ts:Date.now() };
+    const body={ code:NET.roomCode, name:(NET.name||'Host'), mode:NET.gameMode||'coop', players:1+Object.keys(NET.conns).length, ts:Date.now(), key:_lobbyKey };
     try{ fetch(_lobbyUrl(NET.roomCode), { method:'PUT', body:JSON.stringify(body) }).catch(()=>{}); }catch(e){}
   };
   ping(); if(_lobbyHbT) clearInterval(_lobbyHbT); _lobbyHbT=setInterval(ping, 5000);
@@ -15721,7 +15728,7 @@ function announceRoom(){   // host: publish + heartbeat this open lobby
 function unannounceRoom(){   // remove the lobby from the public list (match started / left)
   if(_lobbyHbT){ clearInterval(_lobbyHbT); _lobbyHbT=null; }
   stopLobbyKeepalive();
-  if(lobbyEnabled() && _lobbyCode){ try{ fetch(_lobbyUrl(_lobbyCode), { method:'DELETE' }).catch(()=>{}); }catch(e){} }
+  if(lobbyEnabled() && _lobbyCode){ try{ fetch(_lobbyUrl(_lobbyCode)+(_lobbyKey?'&k='+_lobbyKey:''), { method:'DELETE', keepalive:true }).catch(()=>{}); }catch(e){} }   // build 956: keyed close; keepalive survives unload
   _lobbyCode=null;
 }
 // build 606: keep peer connections alive WHILE in the lobby. No game traffic flows there and the in-game liveness
@@ -15747,8 +15754,10 @@ function fetchRooms(cb){
   if(!lobbyEnabled()){ cb(null); return; }
   try{ fetch(_lobbyUrl(''), { method:'GET' }).then(r=>r.json()).then(d=>{
     const now=Date.now(), out=[];
-    for(const k in (d||{})){ const r=d[k]; if(r && r.code && (now-(r.ts||0))<LOBBY_TTL) out.push(r); }
-    out.sort((a,b)=>(b.ts||0)-(a.ts||0)); cb(out);
+    for(const k in (d||{})){ const r=d[k]; if(!r || !r.code) continue;
+      if(typeof r.age==='number'){ if(r.age<=20) out.push(r); }                       // build 956: server-computed freshness (its clock, not ours)
+      else if((now-(r.ts||0))<LOBBY_TTL) out.push(r); }
+    out.sort((a,b)=> (typeof a.age==='number' && typeof b.age==='number') ? (a.age-b.age) : ((b.ts||0)-(a.ts||0))); cb(out);
   }).catch(()=>cb(null)); }catch(e){ cb(null); }
 }
 function joinByCode(code){
@@ -18455,7 +18464,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 955 · 2026-07-13';
+const BUILD_VERSION = 'build 956 · 2026-07-13';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

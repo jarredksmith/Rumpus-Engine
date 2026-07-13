@@ -24,6 +24,8 @@ the old name — do NOT "clean these up":
 ```
 breach.html          # the entire game — the one source of truth
 CLAUDE.md            # this file
+server/              # self-hosted PHP backend pieces (deployed manually to the cPanel host)
+  api/lobbies.php    # live lobby directory (build 956) — flat-file, no DB; see server/README.md
 tests/               # Node test suite (unzipped from breach-tests.zip)
   run-all.mjs        # runs every test-*.mjs and prints "N/N harnesses passed"
   harness.mjs        # exports gameSource(), html, extractFunction, extractConst, assert, eq, near, done
