@@ -13,7 +13,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 
 // visible identity
 assert(/<title>RUMPUS ENGINE — build & play worlds in your browser<\/title>/.test(html), 'page title');
-assert(/<h1>RUMPUS ENGINE<\/h1>/.test(html), 'menu wordmark');
+assert(/<h1><img id="menuLogo" src="img\/RumpusEngine\.svg" alt="RUMPUS ENGINE"><\/h1>/.test(html), 'menu wordmark (SVG logo since build 960, RUMPUS ENGINE alt fallback)');
 assert(/\/\/ BUILD IT · BREAK IT · SHARE IT/.test(html), 'tagline');
 assert(/>RUMPUS ENGINE<\/div>'/.test(src), 'loading-screen wordmark');
 assert(/RUMPUS ENGINE is built on open-source libraries/.test(src), 'credits line');
