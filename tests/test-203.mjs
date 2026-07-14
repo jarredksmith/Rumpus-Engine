@@ -7,7 +7,7 @@ const tcp = extractFunction('tpCameraPushback');
 assert(/_cameraCollide\(px, py, pz, camx, camy, camz, TP_MIN/.test(tcp), 'chase cam must pull in past walls (build 799: full-offset recursive collision)');
 assert(/let camx = px - fx\*dist \+ rx\*side, camy = py - fy\*dist \+ height, camz = pz - fz\*dist \+ rz\*side;/.test(tcp), 'chase cam pulls back with blended side/distance/height framing (build 373)');
 const uoa = extractFunction('updateOwnAvatar');
-assert(/_ownAvatar\.visible=false/.test(uoa) && /a\.rotation\.y = player\.yaw/.test(uoa), 'own avatar shown/hidden + faced');
+assert(/_ownAvatar\.visible=false/.test(uoa) && /a\.rotation\.y = \(typeof _ledge!=='undefined' && _ledge && _ledge\.yaw!=null\) \? _ledge\.yaw : player\.yaw/.test(uoa), 'own avatar shown/hidden + faced');
 // own avatar must be flagged noHit and its proxies must not raycast
 const eoa = extractFunction('ensureOwnAvatar');
 assert(/userData\.noHit=true/.test(eoa), 'own avatar must be noHit');
