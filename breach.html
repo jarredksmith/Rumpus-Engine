@@ -10868,6 +10868,9 @@ function equipAttachment(weaponKey, id){ const a=ATTACHMENTS[id]; if(!a||!_owned
 applyAttachments();   // apply any saved loadout at startup
 let reloading = false;
 let lastShot = 0, recoil = 0;
+const DRAW_MS = 300;   // build 965: weapon draw time — the gun rises for this long after a switch, trigger held
+let _drawUntil = 0;    // performance.now() timestamp when the current draw completes
+let _rlP = 0;          // build 965: smoothed reload pose (0 = up, 1 = fully dipped) — recovery gates the trigger
 // Top up every weapon to a full mag + full reserve (used by solo start and duel respawn).
 function refillAllWeapons(){
   for(const k in WEAPONS){ const w=WEAPONS[k]; w.mag=w.magSize; w.reserve=w.reserveMax; }
@@ -10878,6 +10881,7 @@ function giveDuelLoadout(){ owned=['rifle','smg','shotgun','sniper','launcher','
 function switchWeapon(key){
   if(!owned.includes(key) || key===curWep || reloading) return;
   curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim('equip', 320);   // third-person draw/equip pose
+  _drawUntil = performance.now() + DRAW_MS;   // build 965: the viewmodel rises before the trigger works
   showWeaponModel(key);   // show this weapon's own viewmodel (loads on first use)
   applyWeaponAim(key);    // load this weapon's saved ADS pose
   applyWeaponMuzzle(key); // load this weapon's saved muzzle position
@@ -18532,7 +18536,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 964 · 2026-07-14';
+const BUILD_VERSION = 'build 965 · 2026-07-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20267,6 +20271,8 @@ function shoot(){
   const w = W();
   const now = performance.now();
   if(now - lastShot < w.fireRate * run.fireMul || reloading) return;
+  if(now < _drawUntil) return;                 // build 965: still drawing — the gun is coming up
+  if(_rlP > 0.35) return;                      // build 965: still recovering from the reload dip
   if(w.melee){ if(!w.auto && firingLatch) return; firingLatch=true; lastShot=now; triggerGunAnim('shoot'); meleeAttack(w); return; }   // equipped melee weapon: swing it
   if(w.mag<=0){ if(w.reserve<=0){ meleeAttack(); return; } SFX.empty(); reload(); return; }   // out of ammo entirely -> throw hands
   if(!w.auto && firingLatch) return;     // semi-auto: one shot per click
@@ -22993,11 +22999,14 @@ function loop(){
   const aimY = -off.y + ADS_AIM.y;        // bring up to ~crosshair height
   const aimZ = ADS_AIM.z;                 // pull the gun in closer to the eye
   gun.position.x = aimX * adsBlend;
-  gun.position.y = move - recoil*0.5 + (reloading?-0.25:0) + aimY*adsBlend;
+  _rlP += ((reloading?1:0) - _rlP) * Math.min(1, dt*12);   // build 965: the reload dip eases in AND back out
+  gun.position.y = move - recoil*0.5 + _rlP*-0.25 + aimY*adsBlend;
   gun.position.z = recoil + aimZ*adsBlend;
-  gun.rotation.x = (reloading?0.5:0) + ADS_ROT.x*adsBlend;
+  gun.rotation.x = _rlP*0.5 + ADS_ROT.x*adsBlend;
   gun.rotation.y = ADS_ROT.y*adsBlend;
   gun.rotation.z = ADS_ROT.z*adsBlend;
+  { const _dw = Math.max(0, Math.min(1, (_drawUntil - performance.now()) / DRAW_MS));   // build 965: draw — 1 = just switched (down), 0 = up
+    if(_dw>0){ gun.position.y -= _dw*0.45; gun.rotation.x += _dw*0.85; } }
   // build 678: the built-in "punch thrust" shoves the whole viewmodel forward on a melee swing. Fists rely on their
   // own (imported or procedural) punch animation instead, so skip it for a fists weapon.
   const _mp = _isFistsWep(curWep) ? 0 : (1 - Math.min(1, (performance.now()-_meleeT)/250));   // quick out-and-back punch thrust
