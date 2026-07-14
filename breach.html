@@ -15607,6 +15607,19 @@ function handleHostMsg(msg){
 }
 
 // ---- connection lifecycle ----
+// build 968: STUN finds the direct path; the Open Relay TURN servers relay when both peers sit
+// behind strict NATs (that failure looked like "Connecting to <code>…" then "Connection error").
+// localStorage 'breach_ice' (a JSON iceServers array) overrides for self-hosters.
+function _peerIce(){
+  try{ const o=JSON.parse(localStorage.getItem('breach_ice')||'null'); if(Array.isArray(o)&&o.length) return o; }catch(e){}
+  return [
+    { urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302'] },
+    { urls:'turn:openrelay.metered.ca:80',  username:'openrelayproject', credential:'openrelayproject' },
+    { urls:'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
+    { urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject' },
+  ];
+}
+function _peerOpts(){ return { config:{ iceServers:_peerIce() } }; }
 function netReset(){
   for(const id in NET.players) removeRemotePlayer(+id);
   for(const id in NET.enemyMeshes){ scene.remove(NET.enemyMeshes[id].mesh); }
@@ -15623,7 +15636,7 @@ function hostStart(code, mode, killTarget){
   if(killTarget!=null) NET.killTarget = killTarget;
   NET.duelScore = {0:0};
   NET.teams = {0:0}; NET.team = 0;   // host starts on RED in team modes
-  NET.peer=new Peer('breachfps-'+code);
+  NET.peer=new Peer('breachfps-'+code, _peerOpts());   // build 968: STUN+TURN — joins survive strict NATs
   NET.peer.on('open', ()=>{ netStatus((pvpMode()?('Hosting '+pvpLabel().toLowerCase()+' · '):'Hosting · ')+'room code: '+code+' · share it with friends'); showRoomBadge(code); enterLobby(); });
   NET.peer.on('connection', conn=>{
     conn._pid = NET.nextId++;
@@ -15651,7 +15664,7 @@ function hostStart(code, mode, killTarget){
 }
 function clientStart(code){
   NET.mode='client'; NET.roomCode=code; NET.joined=false;
-  NET.peer=new Peer();
+  NET.peer=new Peer(_peerOpts());   // build 968: STUN+TURN — joins survive strict NATs
   NET.peer.on('open', ()=>{
     netStatus('Connecting to '+code+'…');
     const conn=NET.peer.connect('breachfps-'+code, { reliable:true });
@@ -18530,7 +18543,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 967 · 2026-07-14';
+const BUILD_VERSION = 'build 968 · 2026-07-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
