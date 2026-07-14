@@ -6,11 +6,11 @@
 <title>RUMPUS ENGINE — build & play worlds in your browser</title>
 <style>
   /* build 817: only the two DEFAULT families load at boot — the other 16 HUD-picker fonts lazy-load on first use (see _ensureHudFonts) */
-  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Major+Mono+Display&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap');   /* build 967: Rajdhani is the default face for everything */
   /* build 954: brand wordmark face — served from fonts/ beside the game (works on any host, no CORS) */
   @font-face { font-family:'Kaph'; src:url('fonts/Kaph-Regular.woff') format('woff'); font-display:swap; }
 
-  :root{ --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Chakra Petch', monospace; --display-font:'Major Mono Display', monospace; }
+  :root{ --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Rajdhani', sans-serif; --display-font:'Rajdhani', sans-serif; }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #05070a; font-family:var(--ui-font); }
@@ -975,12 +975,6 @@
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>Master<input type="range" id="volMaster" min="0" max="100" value="80"></label>
       <label class="paLbl">♪ Music<input type="range" id="volMusic" min="0" max="100" value="60"></label>
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>SFX<input type="range" id="volSfx" min="0" max="100" value="100"></label>
-    </div>
-    <div class="pauseAudio" id="pauseTheme">
-      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".6"/><circle cx="17.5" cy="10.5" r=".6"/><circle cx="8.5" cy="7.5" r=".6"/><circle cx="6.5" cy="12.5" r=".6"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>Accent<input type="color" id="uiAccent" value="#38f5b5" style="margin-left:auto;width:38px;height:24px;border:none;background:none;cursor:pointer"></label>
-      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>UI font<select id="uiFontSel" style="margin-left:auto;background:#0c1418;color:#cfeee2;border:1px solid #2a3a42;border-radius:5px;padding:2px 4px"></select></label>
-      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20 12 4l7 16"/><path d="M7.7 14h8.6"/></svg>Title font<select id="uiDispSel" style="margin-left:auto;background:#0c1418;color:#cfeee2;border:1px solid #2a3a42;border-radius:5px;padding:2px 4px"></select></label>
-      <button id="uiThemeReset" class="pBtnGhost" style="font-size:11px;padding:4px 8px">↺ Reset appearance</button>
     </div>
     <div class="pauseAudio" id="pauseCtl" style="display:none">
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/><path d="M7 6h10a5 5 0 0 1 5 5v3a4 4 0 0 1-4 4c-1.2 0-2.3-.5-3-1.4L14 15h-4l-1 1.6A4 4 0 0 1 2 14v-3a5 5 0 0 1 5-5z"/></svg>Pad look<input type="range" id="padSensRng" min="0.3" max="3" step="0.05" style="margin-left:auto;flex:1"></label>
@@ -6152,7 +6146,7 @@ let masterBus=null, sfxBus=null, musicBus=null;
 const AUDIO_KEY='breach_audio';
 // ---- UI theme (accent color + fonts) so players can make the interface their own ----
 const UI_THEME_KEY='breach_ui_theme';
-const UI_THEME_DEFAULT = { accent:'#38f5b5', uiFont:"'Chakra Petch', monospace", displayFont:"'Major Mono Display', monospace" };
+const UI_THEME_DEFAULT = { accent:'#38f5b5', uiFont:"'Rajdhani', sans-serif", displayFont:"'Rajdhani', sans-serif" };   // build 967
 const UI_FONT_CHOICES = [
   { label:'Chakra Petch (default)', v:"'Chakra Petch', monospace" },
   { label:'Rajdhani', v:"'Rajdhani', sans-serif" },
@@ -6220,10 +6214,10 @@ const HUD_FONTS = ['Chakra Petch','Major Mono Display','Orbitron','Rajdhani','Pr
 function _ensureHudFonts(){
   if(_extraFontsReq) return; _extraFontsReq=true;
   const l=document.createElement('link'); l.rel='stylesheet';
-  l.href='https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Press+Start+2P&family=Share+Tech+Mono&family=Audiowide&family=Teko:wght@500;600;700&family=Exo+2:wght@500;700&family=Saira+Condensed:wght@600;700&family=Aldrich&family=Syncopate:wght@700&family=VT323&family=Michroma&family=Russo+One&family=Bungee&family=Space+Mono:wght@700&family=JetBrains+Mono:wght@500;700&display=swap';
+  l.href='https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Major+Mono+Display&family=Orbitron:wght@500;700;900&family=Press+Start+2P&family=Share+Tech+Mono&family=Audiowide&family=Teko:wght@500;600;700&family=Exo+2:wght@500;700&family=Saira+Condensed:wght@600;700&family=Aldrich&family=Syncopate:wght@700&family=VT323&family=Michroma&family=Russo+One&family=Bungee&family=Space+Mono:wght@700&family=JetBrains+Mono:wght@500;700&display=swap';
   document.head.appendChild(l);
 }
-function _fontNeedsLoad(f){ return f && f!=='Chakra Petch' && f!=='Major Mono Display'; }
+function _fontNeedsLoad(f){ return f && f!=='Rajdhani'; }   // build 967: Rajdhani is the only boot-loaded face
 // build 666: per-element placement/size/tint. Each entry's CSS rule reads --el-<k>-{s,dx,dy}; applyHudCfg sets
 // those vars on #hud, plus an optional per-element accent override directly on the element.
 const HUD_ELEMENTS = [
@@ -6239,7 +6233,7 @@ const HUD_ELEMENTS = [
   { k:'dlg',       sel:'#dialogue',  label:'NPC dialogue',    text:true },   // build 701: the NPC talk box
   { k:'speedo',    sel:'#driveHud',  label:'Speedometer' },   // build 783: the driving speed gauge — only visible while driving
 ];
-const DEFAULT_HUD = { accent:'#38f5b5', health:'#ff4d6d', score:'#ffd166', uiFont:'Chakra Petch', displayFont:'Major Mono Display', shape:'angular', panelOp:1, border:true, hide:{}, el:{} };
+const DEFAULT_HUD = { accent:'#38f5b5', health:'#ff4d6d', score:'#ffd166', uiFont:'Rajdhani', displayFont:'Rajdhani', shape:'angular', panelOp:1, border:true, hide:{}, el:{} };   // build 967
 function _sanitizeHud(h){
   h = (h && typeof h==='object') ? h : {};
   const hx = (v,d)=>{ v=String(v||'').trim(); return /^#[0-9a-fA-F]{3,8}$/.test(v) ? v : d; };
@@ -18536,7 +18530,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 966 · 2026-07-14';
+const BUILD_VERSION = 'build 967 · 2026-07-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

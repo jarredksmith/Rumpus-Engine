@@ -4,7 +4,7 @@ const page = html;
 // build 444: UI theming — players can set the accent color + UI/title fonts; persisted and applied via CSS vars.
 
 // CSS is driven by variables now
-assert(/:root\{ --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Chakra Petch', monospace; --display-font:'Major Mono Display', monospace; \}/.test(page), ':root defines the themable variables (build 814: + gold/info/danger)');
+assert(/:root\{ --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Rajdhani', sans-serif; --display-font:'Rajdhani', sans-serif; \}/.test(html), ':root defines the themable variables (build 814: + gold/info/danger; build 967: Rajdhani defaults)');
 assert(page.indexOf('var(--accent)')>=0 && page.indexOf('rgba(var(--accent-rgb)')>=0, 'CSS uses the accent variable (hex + rgba forms)');
 assert(page.indexOf('font-family:var(--ui-font)')>=0 && page.indexOf('var(--display-font)')>=0, 'CSS uses the font variables');
 // extra fonts are loaded so the choices actually render
@@ -21,7 +21,7 @@ assert(/setProperty\('--accent', UI_ACCENT\)/.test(ap) && /setProperty\('--accen
 assert(/applyUiTheme\(\);   \/\/ apply saved look/.test(src), 'saved theme is applied on load');
 
 // controls wired in the pause menu + reset
-assert(/id="pauseTheme"/.test(page) && /id="uiAccent"/.test(page) && /id="uiFontSel"/.test(page) && /id="uiDispSel"/.test(page) && /id="uiThemeReset"/.test(page), 'pause menu exposes accent + font pickers + reset');
+assert(!/id="pauseTheme"/.test(page), 'the pause-menu appearance section is deliberately gone (build 967 — the editor owns HUD styling)');
 assert(/getElementById\('uiAccent'\)[\s\S]*?uiTheme\.accent=ac\.value; applyUiTheme\(\); saveUiTheme\(\)/.test(src), 'accent picker updates + persists live');
 assert(/function resetUiTheme\(\)/.test(src), 'reset restores defaults');
 

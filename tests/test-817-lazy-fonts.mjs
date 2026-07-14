@@ -9,15 +9,15 @@ const src = gameSource();
   const imp = html.match(/@import url\('https:\/\/fonts\.googleapis\.com[^']*'\)/);
   assert(imp, 'the boot @import exists');
   const fams = (imp[0].match(/family=/g)||[]).length;
-  eq(fams, 2, 'only the two default families load at boot');
-  assert(/Chakra\+Petch/.test(imp[0]) && /Major\+Mono\+Display/.test(imp[0]), 'and they are the defaults');
+  eq(fams, 1, 'only the default family loads at boot (Rajdhani since build 967)');
+  assert(/Rajdhani/.test(imp[0]), 'and it is the default');
 }
 
 // the lazy loader carries the other 16
 {
   const el = src.match(/l\.href='https:\/\/fonts\.googleapis\.com[^']*'/);
   assert(el, 'the lazy pack href exists');
-  eq((el[0].match(/family=/g)||[]).length, 16, 'the lazy pack carries the 16 optional families');
+  eq((el[0].match(/family=/g)||[]).length, 17, 'the lazy pack carries the 17 optional families (build 967: the old defaults moved here)');
   assert(/display=swap/.test(el[0]), 'display=swap keeps text visible while they arrive');
 }
 assert(/let _extraFontsReq=false;/.test(src) && /if\(_extraFontsReq\) return; _extraFontsReq=true;/.test(src), 'the pack loads at most once');
@@ -26,6 +26,6 @@ assert(/let _extraFontsReq=false;/.test(src) && /if\(_extraFontsReq\) return; _e
 assert(/function renderHudPanel\(\)\{\s*\n\s*if\(typeof _ensureHudFonts==='function'\) _ensureHudFonts\(\);/.test(src), 'opening the HUD font picker loads the pack');
 assert(/uiFontSel'\); if\(typeof _ensureHudFonts==='function'\) _ensureHudFonts\(\);/.test(src), 'opening the pause appearance picker loads the pack');
 assert(/_fontNeedsLoad\(c\.uiFont\) \|\| _fontNeedsLoad\(c\.displayFont\) \|\| \(c\.el && Object\.keys\(c\.el\)\.some\(k=>_fontNeedsLoad\(c\.el\[k\] && c\.el\[k\]\.font\)\)\)/.test(src), 'a level/HUD config that USES a non-default font loads the pack');
-assert(/function _fontNeedsLoad\(f\)\{ return f && f!=='Chakra Petch' && f!=='Major Mono Display'; \}/.test(src), 'the two defaults never trigger a load');
+assert(/function _fontNeedsLoad\(f\)\{ return f && f!=='Rajdhani'; \}/.test(src), 'the default never triggers a load');
 
 done('build 817: 2 fonts at boot, 16 lazy — big first-paint win, zero visual change');
