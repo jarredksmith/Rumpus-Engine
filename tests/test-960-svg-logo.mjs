@@ -12,8 +12,8 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 
 assert(/<h1><img id="menuLogo" src="img\/RumpusEngine\.svg" alt="RUMPUS ENGINE"><\/h1>/.test(html),
   'the h1 holds the logo img with the text as alt fallback');
-assert(/#overlay h1 img \{ width:min\(560px, 84vw\); height:auto; display:block; margin:0 auto; filter:drop-shadow\(0 0 26px rgba\(var\(--accent-rgb\),\.35\)\); \}/.test(html),
-  'responsive sizing + theme glow');
+assert(/#overlay h1 img \{ width:min\(560px, 84vw, 82vh\); height:auto; display:block; margin:0 auto; filter:drop-shadow\(0 0 26px rgba\(var\(--accent-rgb\),\.35\)\); \}/.test(html),
+  'responsive sizing + theme glow (82vh height cap since build 963)');
 assert(/font-family:'Kaph', var\(--display-font\)/.test(html), 'the Kaph alt-text fallback styling stays');
 
 const f = path.join(dir, '..', 'img', 'RumpusEngine.svg');
