@@ -6065,6 +6065,7 @@ function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass'}={}){
 }
 const SFX = {
   shoot(){ if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;
+    if(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].suppressed){ tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass'}); return; }   // build 964: suppressed 'phut'
     if(curWep==='shotgun'){ tone({freq:150, type:'square', dur:0.15, vol:0.17, slideTo:55}); noise({dur:0.17, vol:0.30, filterFreq:1400, type:'lowpass'}); }
     else if(curWep==='smg'){ tone({freq:380, type:'square', dur:0.05, vol:0.10, slideTo:150}); noise({dur:0.05, vol:0.15, filterFreq:3000, type:'highpass'}); }
     else if(curWep==='sniper'){ tone({freq:95, type:'square', dur:0.22, vol:0.22, slideTo:38}); noise({dur:0.26, vol:0.34, filterFreq:1000, type:'lowpass'}); }
@@ -10759,7 +10760,7 @@ const ATTACHMENTS = {
   reddot:     { name:'Red Dot Sight', slot:'optic',    cost:120, desc:'Clean close-quarters optic',     mods:{ zoomMul:0.92 } },
   scope2x:    { name:'2x Scope',      slot:'optic',    cost:260, desc:'Magnified, steadier aim',         mods:{ zoomMul:0.6, spreadMul:0.92 } },
   compensator:{ name:'Compensator',   slot:'muzzle',   cost:200, desc:'Tighter spread',                  mods:{ spreadMul:0.7 } },
-  suppressor: { name:'Suppressor',    slot:'muzzle',   cost:240, desc:'Quieter, slightly tighter',       mods:{ spreadMul:0.85 } },
+  suppressor: { name:'Suppressor',    slot:'muzzle',   cost:240, desc:'Enemies hear shots at 30% range', mods:{ spreadMul:0.85, loudMul:0.3, suppressed:true } },   // build 964: wired to the enemy-hearing system + quiet SFX
   extmag:     { name:'Extended Mag',  slot:'magazine', cost:180, desc:'+50% magazine capacity',          mods:{ magMul:1.5 } },
   drum:       { name:'Drum Mag',      slot:'magazine', cost:340, desc:'Double magazine capacity',        mods:{ magMul:2.0 } },
   laser:      { name:'Laser Sight',   slot:'tactical', cost:160, desc:'Much tighter fire',               mods:{ spreadMul:0.6, laser:true } },
@@ -10772,13 +10773,13 @@ let _attAimReady = false;   // applyWeaponAim/aimByWep are defined far below; do
 try{ const o=JSON.parse(localStorage.getItem('breach_att_owned')||'{}'); if(o&&typeof o==='object') _ownedAtt=o; }catch(e){}
 try{ const l=JSON.parse(localStorage.getItem('breach_att_loadout')||'{}'); if(l&&typeof l==='object') _attLoadout=l; }catch(e){}
 function _saveAtt(){ try{ localStorage.setItem('breach_att_owned', JSON.stringify(_ownedAtt)); localStorage.setItem('breach_att_loadout', JSON.stringify(_attLoadout)); }catch(e){} }
-const _attBase = {}; for(const k in WEAPONS){ _attBase[k]={ magSize:WEAPONS[k].magSize, spread:WEAPONS[k].spread }; }   // original stats, captured once
+const _attBase = {}; for(const k in WEAPONS){ _attBase[k]={ magSize:WEAPONS[k].magSize, spread:WEAPONS[k].spread, loud:(WEAPONS[k].loud!=null?WEAPONS[k].loud:1) }; }   // original stats, captured once (build 964: + loudness)
 function _resolveAtt(weaponKey, loadout, catalog){   // pure: aggregate equipped mods for a weapon
   loadout=loadout||_attLoadout; catalog=catalog||ATTACHMENTS;
-  const eq=loadout[weaponKey]||{}; let magMul=1, spreadMul=1, zoomMul=1, laser=false;
+  const eq=loadout[weaponKey]||{}; let magMul=1, spreadMul=1, zoomMul=1, loudMul=1, laser=false, suppressed=false;
   for(const slot in eq){ const a=catalog[eq[slot]]; if(!a||!a.mods) continue; const m=a.mods;
-    if(m.magMul) magMul*=m.magMul; if(m.spreadMul) spreadMul*=m.spreadMul; if(m.zoomMul) zoomMul*=m.zoomMul; if(m.laser) laser=true; }
-  return { magMul, spreadMul, zoomMul, laser };
+    if(m.magMul) magMul*=m.magMul; if(m.spreadMul) spreadMul*=m.spreadMul; if(m.zoomMul) zoomMul*=m.zoomMul; if(m.loudMul) loudMul*=m.loudMul; if(m.laser) laser=true; if(m.suppressed) suppressed=true; }
+  return { magMul, spreadMul, zoomMul, loudMul, laser, suppressed };
 }
 // build 586: cosmetic mounting. Simple procedural meshes per attachment, parented to the viewmodel and anchored
 // off the authored muzzle point (so the muzzle-slot device lands exactly right; others use per-slot offsets the
@@ -10853,6 +10854,8 @@ function applyAttachments(){   // recompute live stats from base + equipped (ide
     WEAPONS[k].magSize=newMag; if(WEAPONS[k].mag>newMag) WEAPONS[k].mag=newMag;   // never hold more than capacity
     WEAPONS[k].spread=base.spread*r.spreadMul;
     WEAPONS[k].hasLaser=r.laser;
+    WEAPONS[k].loud=base.loud*r.loudMul;   // build 964: shoot() multiplies this into the enemy-hearing radius
+    WEAPONS[k].suppressed=r.suppressed;   // build 964: SFX.shot plays the quiet report
     _attZoom[k]=r.zoomMul;
   }
   if(_attAimReady && typeof applyWeaponAim==='function' && typeof curWep!=='undefined') applyWeaponAim(curWep);
@@ -18067,6 +18070,17 @@ function renderLoadout(){
   for(const k of owned){ if(WEAPONS[k]&&WEAPONS[k].melee) continue; const on=(k===wk);
     c.push('<button data-wep="'+k+'" style="padding:5px 11px;border-radius:6px;cursor:pointer;border:1px solid '+(on?'var(--accent)':'#2a3a42')+';background:'+(on?'#16302a':'#0c1418')+';color:'+(on?'#bff3df':'#9fe6cf')+';font-size:12px;">'+WEAPONS[k].name+'</button>'); }
   c.push('</div>');
+  // build 964: honest numbers — chips per attachment, live stat line for the selected weapon
+  const _modChips=(m)=>{ const t=[];
+    if(m.magMul) t.push((m.magMul>1?'+':'')+Math.round((m.magMul-1)*100)+'% mag');
+    if(m.spreadMul && m.spreadMul!==1) t.push(Math.round((1-m.spreadMul)*100)+'% tighter');
+    if(m.zoomMul && m.zoomMul!==1) t.push((1/m.zoomMul).toFixed(1).replace(/\.0$/,'')+'\u00d7 zoom');
+    if(m.loudMul && m.loudMul!==1) t.push('noise \u2192 '+Math.round(m.loudMul*100)+'%');
+    if(m.laser) t.push('laser beam');
+    return t; };
+  { const w=WEAPONS[wk], rs=_resolveAtt(wk);
+    c.push('<div style="margin:2px 0 6px;padding:7px 10px;border:1px solid #23414f;border-radius:7px;background:#0d1a21;color:#9fe6cf;font-size:11px;letter-spacing:0.5px;">'
+      +'MAG '+w.magSize+' \u00b7 SPREAD '+Math.round((1-rs.spreadMul)*100)+'% tighter \u00b7 ZOOM '+(1/rs.zoomMul).toFixed(1).replace(/\.0$/,'')+'\u00d7 \u00b7 NOISE '+Math.round((w.loud!=null?w.loud:1)*100)+'%'+(w.hasLaser?' \u00b7 LASER':'')+'</div>'); }
   for(const slot of ATT_SLOTS){
     c.push('<div style="font-size:10px;color:#7fa99c;text-transform:uppercase;letter-spacing:1.5px;margin:11px 0 4px;">'+slot+'</div>');
     for(const id in ATTACHMENTS){ const a=ATTACHMENTS[id]; if(a.slot!==slot) continue;
@@ -18076,7 +18090,7 @@ function renderLoadout(){
       const op = (!own && !can)?'opacity:.45;':'';
       const tc = eqp?'var(--accent)' : (own?'#9fe6cf':'#ffd166');
       c.push('<div data-att="'+id+'" style="display:flex;align-items:center;gap:10px;padding:8px 10px;margin-bottom:5px;border:1px solid '+border+';border-radius:7px;cursor:pointer;'+op+'">'
-        +'<div style="flex:1;"><div style="color:#e8fff6;font-size:13px;font-weight:600;">'+a.name+'</div><div style="color:#7fa99c;font-size:11px;">'+a.desc+'</div></div>'
+        +'<div style="flex:1;"><div style="color:#e8fff6;font-size:13px;font-weight:600;">'+a.name+'</div><div style="color:#7fa99c;font-size:11px;">'+a.desc+'</div><div style="color:#7ad7ff;font-size:10px;letter-spacing:0.5px;margin-top:1px;">'+_modChips(a.mods||{}).join(' \u00b7 ')+'</div></div>'
         +'<div style="font-size:12px;font-weight:700;color:'+tc+';">'+tag+'</div></div>');
     }
   }
@@ -18518,7 +18532,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 963 · 2026-07-13';
+const BUILD_VERSION = 'build 964 · 2026-07-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18677,7 +18691,7 @@ const AIM_DEFAULT = { x:ADS_AIM.x, y:ADS_AIM.y, z:ADS_AIM.z, rx:ADS_ROT.x*180/Ma
 const aimByWep = {};
 aimByWep.sniper = Object.assign({}, AIM_DEFAULT, { fov: 12 });   // the sniper's ADS is a true scope: hard zoom by default
 function getWeaponAim(key){ if(!aimByWep[key]) aimByWep[key]=Object.assign({}, AIM_DEFAULT); return aimByWep[key]; }
-function applyWeaponAim(key){ const a=getWeaponAim(key); ADS_AIM.set(a.x,a.y,a.z); ADS_ROT.set(a.rx*Math.PI/180, a.ry*Math.PI/180, a.rz*Math.PI/180); adsFovLive = a.fov * (typeof _attZoomMul==='function'?_attZoomMul(key):1); }
+function applyWeaponAim(key){ const a=getWeaponAim(key); ADS_AIM.set(a.x,a.y,a.z); ADS_ROT.set(a.rx*Math.PI/180, a.ry*Math.PI/180, a.rz*Math.PI/180); adsFovLive = a.fov   /* build 964: zoom now applies ONCE, live at the camera blend (it double-applied here + missed the editor aim-tune setter below) */; }
 _attAimReady = true;   // build 583: aim system is up; attachment re-applies may now refresh ADS zoom
 // apply saved aim pose if present — restore the FULL per-weapon map, not just one pose
 if(savedLevel && savedLevel.aimWep){
@@ -22608,7 +22622,8 @@ function loop(){
   _scopedNow = !!((ads || padAds || touchAds) && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen); if(_scopedNow && activeViewMode()!=='fps') _scopedNow=false;   // build 874: no optic tunnel from a bird's-eye camera · build 913: touch AIM + controller LT scope too (the sniper never zoomed on mobile)
   _setScopeOverlay(_scopedNow);
   const hipFov = (worldCfg && worldCfg.fov) ? worldCfg.fov : BASE_FOV;
-  const wantFov = hipFov + (adsFovLive - hipFov) * adsBlend;
+  const _zoomFov = Math.max(12, adsFovLive * (typeof _attZoomMul==='function' ? _attZoomMul(curWep) : 1));   // build 964: optics finally magnify — the loadout zoom was computed but never read
+  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend;
   if(Math.abs(camera.fov - wantFov) > 0.01){ camera.fov = wantFov; camera.updateProjectionMatrix(); }
   crosshairEl.style.opacity = _scopedNow ? '0' : (1 - adsBlend*0.85).toFixed(2);
 
