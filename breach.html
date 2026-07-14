@@ -18543,7 +18543,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 968 · 2026-07-14';
+const BUILD_VERSION = 'build 969 · 2026-07-14';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -18844,6 +18844,18 @@ function _touchCtxTick(now){
   s('tFlash', !!(typeof gameCfg!=='undefined' && gameCfg && gameCfg.flashlight));
   s('tInv', !!((typeof inventory!=='undefined' && inventory.length) || (typeof invCatalog!=='undefined' && invCatalog && Object.keys(invCatalog).length)));
   s('tChat', typeof NET!=='undefined' && NET.mode!=='off');
+  // build 969: hide buttons the level can't use — melee/crouch/reload shouldn't sit on a race, etc.
+  if(document.body && document.body.classList.contains('hudPreview')) return;   // the layout editor shows everything so you can arrange it
+  const _oa=(typeof objectiveActive==='function')?objectiveActive():'eliminate';
+  const _race=_oa==='race';
+  const _hasGuns = !(typeof gameCfg!=='undefined' && gameCfg && gameCfg.unarmed && !gameCfg.allowPickup)
+                   || (typeof owned!=='undefined' && owned.some(k=>!(WEAPONS[k]&&WEAPONS[k].melee)));   // a real gun is owned or can be found
+  const _combat = !_race && _hasGuns;
+  const _vm=(typeof activeViewMode==='function')?activeViewMode():'fps';
+  s('tFire',   _combat); s('tAim', _combat); s('tReload', _combat); s('tWeapon', _combat); s('tNade', _combat);
+  s('tMelee',  !_race);                                   // fists still work on foot in non-driving levels
+  s('tCrouch', !_race && _vm==='fps');                    // no crouch/slide in top-down / side-scroll / racing
+  s('tBuild',  !!(typeof radialCfg!=='undefined' && radialCfg && radialCfg.length));   // nothing to place -> no BUILD
 }
 // build 908: keep the phone awake during play — thumbs don't move the "activity" needle and the
 // screen used to dim/sleep mid-match. Best-effort; re-acquired when the tab returns.
