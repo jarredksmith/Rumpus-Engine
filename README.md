@@ -1,7 +1,5 @@
 # RUMPUS ENGINE
 
-*(formerly BREACH)*
-
 **A single-file browser game studio — build worlds, play them (FPS, driving & racing, top-down, side-scroll), and share them with peer-to-peer multiplayer and a community level library.**
 Everything — engine glue, editor, netcode, assets pipeline — ships in one `breach.html`. No build step, no server.
 
