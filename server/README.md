@@ -29,7 +29,16 @@ their copy elsewhere with `localStorage.setItem('breach_lobby_db', 'https://thei
 3. Upload the repo's `community/` folder (index.json + levels/ + .htaccess) to
    `public_html/community/` — the `.htaccess` inside it makes the catalog readable
    cross-origin so the GitHub Pages copy of the game shares the same live library.
-4. Review queue: open `https://www.rumpusengine.com/api/admin.php`, enter your password,
+4. **Get alerted about new submissions** (optional, recommended): near the bottom of
+   `api/submit.php`, inside `notifyModerator()`, set either or both:
+   - `$NOTIFY_EMAIL` — any address; sent via the server's mail() as `noreply@rumpusengine.com`.
+     Check your spam folder for the first one and mark it Not Spam.
+   - `$NOTIFY_DISCORD` — a Discord channel webhook URL (in Discord: Server Settings →
+     Integrations → Webhooks → New Webhook → Copy URL). This one pushes to your phone
+     instantly via the Discord app and can't land in spam — the better option.
+   Each alert includes the level name, author, size, queue length, and the admin.php link.
+   Alert failures never affect the player's submission.
+5. Review queue: open `https://www.rumpusengine.com/api/admin.php`, enter your password,
    **Load queue**. Each submission has **▶ Test play** (opens the actual level in the game),
    **Approve** (publishes: writes `community/levels/<slug>.json`, updates `index.json`,
    thumbnail lifted into the gallery) and **Reject**. Published levels can be **Unpublish**ed

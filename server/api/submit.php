@@ -57,4 +57,35 @@ if (@file_put_contents($pend . '/' . $id . '.json', json_encode($rec), LOCK_EX) 
   jsonOut(500, ['error' => 'could not store the submission']);
 $rate[$ip] = $now;
 @file_put_contents($rateFile, json_encode($rate), LOCK_EX);
+notifyModerator($rec, $total + 1);
 jsonOut(200, ['ok' => true, 'id' => $id]);
+
+// ---- moderator alerts (both optional; failures never affect the submission) ----
+// $NOTIFY_EMAIL: any address — sent via PHP mail() from noreply@<your domain>. Check spam the
+// first time. $NOTIFY_DISCORD: a Discord channel webhook URL (Server Settings -> Integrations ->
+// Webhooks -> Copy URL) — instant push on your phone via the Discord app, never lands in spam.
+function notifyModerator($rec, $queueLen) {
+  $NOTIFY_EMAIL   = 'CHANGE-ME';   // e.g. 'you@example.com'  ('' or CHANGE-ME = off)
+  $NOTIFY_DISCORD = '';            // e.g. 'https://discord.com/api/webhooks/…'  ('' = off)
+
+  $host = preg_replace('/[^a-z0-9.\-]/i', '', preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST'] ?? 'www.rumpusengine.com'));
+  $review = 'https://' . $host . '/api/admin.php';
+  $line = '"' . $rec['name'] . '" by ' . $rec['author']
+        . ($rec['desc'] !== '' ? ' — ' . $rec['desc'] : '')
+        . ' (' . max(1, round(strlen($rec['code']) / 1024)) . ' KB, ' . $queueLen . ' pending)';
+
+  if ($NOTIFY_EMAIL !== '' && strpos($NOTIFY_EMAIL, 'CHANGE-ME') === false) {
+    // plain() already stripped control chars from name/author/desc, so headers can't be injected
+    @mail($NOTIFY_EMAIL,
+          'RUMPUS ENGINE: level awaiting review — ' . $rec['name'],
+          "A new community level was submitted.\n\n" . $line . "\n\nReview + test play: " . $review . "\n",
+          'From: noreply@' . preg_replace('/^www\./', '', $host) . "\r\nContent-Type: text/plain; charset=utf-8");
+  }
+  if ($NOTIFY_DISCORD !== '' && strpos($NOTIFY_DISCORD, 'discord.com/api/webhooks/') !== false) {
+    $payload = json_encode(['content' => "🕹️ **New level awaiting review**\n" . $line . "\n" . $review]);
+    @file_get_contents($NOTIFY_DISCORD, false, stream_context_create(['http' => [
+      'method' => 'POST', 'header' => "Content-Type: application/json\r\n",
+      'content' => $payload, 'timeout' => 4, 'ignore_errors' => true,
+    ]]));
+  }
+}
