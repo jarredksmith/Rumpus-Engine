@@ -31,7 +31,8 @@ const v3 = validateSubmission(parseIssue(mk({ world:{}, props:[] })), 9);
 assert(v3.ok && !v3.entry.sketchfab && !v3.entry.thumb, 'no false flags on a plain level');
 
 // gallery rendering
-const gal = src.match(/async function renderCommunity\(\)\{[\s\S]{0,6000}?\n\}/)[0];
+// build 970 split the gallery into renderCommunity -> _commRenderUI -> _commRenderRows; span all three
+const gal = src.match(/async function renderCommunity\(\)\{[\s\S]{0,9500}?\nasync function _commLoad/)[0];
 assert(/L\.thumb && \/\^data:image\\\/\(jpeg\|png\);base64,\/\.test\(L\.thumb\)/.test(gal), 'gallery only renders data-URI image thumbs');
 assert(/charAt\(0\)\.toUpperCase\(\)/.test(gal), 'entries without a thumb get a monogram placeholder');
 assert(/needs Sketchfab token/.test(gal), 'the Sketchfab badge renders');

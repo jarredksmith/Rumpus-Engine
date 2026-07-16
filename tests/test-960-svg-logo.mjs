@@ -19,6 +19,10 @@ assert(/font-family:'Kaph', var\(--display-font\)/.test(html), 'the Kaph alt-tex
 const f = path.join(dir, '..', 'img', 'RumpusEngine.svg');
 assert(statSync(f).size > 1000, 'the SVG ships in the repo');
 const svg = readFileSync(f, 'utf8');
-assert(/<svg[^>]*viewBox="0 0 631\.82 183\.14"/.test(svg), 'it is the real logo (631x183 viewBox)');
+// the artist re-uploads this file (e.g. 9e941ac changed 631.82x183.14 -> 564.78x155.68), so pin
+// "it is a real vector logo" rather than exact dimensions: a landscape viewBox + actual path data
+const vb = svg.match(/<svg[^>]*viewBox="0 0 ([\d.]+) ([\d.]+)"/);
+assert(vb && parseFloat(vb[1]) > parseFloat(vb[2]), 'it is a real landscape-format logo (viewBox present, wider than tall)');
+assert(/<path[^>]*d="/.test(svg), '...with vector path data, not a placeholder');
 
 done('build 960: home-screen wordmark is the brand SVG logo');

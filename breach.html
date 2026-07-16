@@ -18543,7 +18543,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 969 · 2026-07-14';
+const BUILD_VERSION = 'build 970 · 2026-07-16';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30649,7 +30649,7 @@ function _commCaptureThumb(){
     return (uri && uri.length<80000) ? uri : '';   // stay well under the publish pipeline's cap
   }catch(e){ return ''; }
 }
-let _commFilter='all';
+let _commFilter='all', _commSearch='', _commSort='new', _commLevels=null;
 async function renderCommunity(){
   const list=document.getElementById('commList'); if(!list) return;
   list.innerHTML='<div style="color:#cfe9df;font-size:13px">Loading the library…</div>';
@@ -30667,24 +30667,62 @@ async function renderCommunity(){
     return;
   }
   const levels=(idx && Array.isArray(idx.levels)) ? idx.levels : [];
-  if(!levels.length){ list.innerHTML='<div style="color:#cfe9df;font-size:13px;line-height:1.5">The library is empty — be the first: build a level, then Save tab → Submit to community library.</div>'; return; }
+  _commLevels=levels.map((L,i)=>Object.assign({_i:i}, L));   // _i = catalog position; the index is newest-first
+  _commRenderUI();
+}
+// build 970: search + sort. The chips/search/sort controls rebuild only the row area below them,
+// so typing in the search box re-filters live without ever losing input focus.
+function _commRenderUI(){
+  const list=document.getElementById('commList'); if(!list) return;
+  const levels=_commLevels||[];
   list.innerHTML='';
+  if(!levels.length){ list.innerHTML='<div style="color:#cfe9df;font-size:13px;line-height:1.5">The library is empty — be the first: build a level, then Save tab → Submit to community library.</div>'; return; }
   // objective filter chips — only shown when the library spans more than one objective
   const kinds=[...new Set(levels.map(L=>String(L.objective||'other')))];
   if(kinds.length>1){
     if(_commFilter!=='all' && !kinds.includes(_commFilter)) _commFilter='all';
-    const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin:0 0 4px;';
+    const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:6px;flex-wrap:wrap;';
     for(const k of ['all', ...kinds]){
       const b=document.createElement('button'); b.textContent=(k==='all'?'All':k.toUpperCase());
       const on=(_commFilter===k);
       b.style.cssText='padding:4px 11px;font-size:11px;letter-spacing:0.5px;border-radius:12px;cursor:pointer;border:1px solid '+(on?'rgba(var(--accent-rgb),0.55)':'#2a3a42')+';background:'+(on?'rgba(var(--accent-rgb),0.22)':'#0c1418')+';color:'+(on?'#eafff7':'#a9d3c6')+';';
-      b.onclick=()=>{ _commFilter=k; renderCommunity(); };
+      b.onclick=()=>{ _commFilter=k; _commRenderUI(); };
       bar.appendChild(b);
     }
     list.appendChild(bar);
   }
-  const shown=levels.filter(L=>_commFilter==='all' || String(L.objective||'other')===_commFilter);
-  if(!shown.length){ const d=document.createElement('div'); d.style.cssText='color:#cfe9df;font-size:13px;'; d.textContent='No '+_commFilter+' levels yet.'; list.appendChild(d); }
+  if(levels.length>1){
+    const ctl=document.createElement('div'); ctl.style.cssText='display:flex;gap:8px;align-items:center;';
+    const q=document.createElement('input'); q.type='search'; q.placeholder='Search name, author, description…'; q.value=_commSearch;
+    q.setAttribute('aria-label','Search levels');
+    q.style.cssText='flex:1;min-width:120px;padding:7px 10px;font-size:13px;border-radius:6px;border:1px solid #2a3a42;background:#0c1418;color:#eafff7;outline:none;';
+    q.oninput=()=>{ _commSearch=q.value; _commRenderRows(); };
+    const s=document.createElement('select');
+    s.setAttribute('aria-label','Sort levels');
+    s.style.cssText='padding:7px 8px;font-size:12px;border-radius:6px;border:1px solid #2a3a42;background:#0c1418;color:#9fc4ba;cursor:pointer;';
+    for(const [v,t] of [['new','Newest'],['old','Oldest'],['az','A – Z'],['author','By author']]){
+      const o=document.createElement('option'); o.value=v; o.textContent=t; s.appendChild(o);
+    }
+    s.value=_commSort;
+    s.onchange=()=>{ _commSort=s.value; _commRenderRows(); };
+    ctl.appendChild(q); ctl.appendChild(s);
+    list.appendChild(ctl);
+  }
+  const rows=document.createElement('div'); rows.id='commRows'; rows.style.cssText='display:flex;flex-direction:column;gap:8px;';
+  list.appendChild(rows);
+  _commRenderRows();
+}
+function _commRenderRows(){
+  const rows=document.getElementById('commRows'); if(!rows) return;
+  rows.innerHTML='';
+  const q=_commSearch.trim().toLowerCase();
+  const hit=L=>!q || ((L.name||'')+' '+(L.author||'')+' '+(L.desc||'')).toLowerCase().includes(q);
+  const shown=(_commLevels||[]).filter(L=>(_commFilter==='all' || String(L.objective||'other')===_commFilter) && hit(L));
+  const by={ new:(a,b)=>a._i-b._i, old:(a,b)=>b._i-a._i,
+             az:(a,b)=>String(a.name||'').localeCompare(String(b.name||'')),
+             author:(a,b)=>String(a.author||'').localeCompare(String(b.author||'')) || String(a.name||'').localeCompare(String(b.name||'')) };
+  shown.sort(by[_commSort]||by.new);
+  if(!shown.length){ const d=document.createElement('div'); d.style.cssText='color:#cfe9df;font-size:13px;'; d.textContent=q?('Nothing matches “'+_commSearch.trim()+'”.'):('No '+_commFilter+' levels yet.'); rows.appendChild(d); return; }
   for(const L of shown){
     const row=document.createElement('div');
     row.style.cssText='border:1px solid #24323a;border-radius:8px;padding:9px 12px;background:#0c1418;display:flex;align-items:center;gap:12px;flex-wrap:wrap;';
@@ -30719,7 +30757,7 @@ async function renderCommunity(){
     row.appendChild(info);
     row.appendChild(mkBtn('Play', true, ()=>_commLoad(L, false)));
     row.appendChild(mkBtn('Open in editor', false, ()=>_commLoad(L, true)));
-    list.appendChild(row);
+    rows.appendChild(row);
   }
 }
 async function _commLoad(entry, toEditor){
