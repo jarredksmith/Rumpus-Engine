@@ -7,6 +7,9 @@ const COMM_LIMITS = ['json' => 500000, 'name' => 60, 'author' => 40, 'desc' => 2
 
 function commDir()    { return dirname(__DIR__) . '/community'; }
 function pendingDir() { $d = __DIR__ . '/pending'; if (!is_dir($d)) @mkdir($d, 0755, true); return $d; }
+// build 972: unlisted games — levels served CORS-open beside the library, metadata web-denied under api/
+function gamesDir()     { $d = commDir() . '/games'; if (!is_dir($d)) @mkdir($d, 0755, true); return $d; }
+function gamesMetaDir() { $d = __DIR__ . '/gamesmeta'; if (!is_dir($d)) @mkdir($d, 0755, true); return $d; }
 
 function jsonOut($http, $obj) { http_response_code($http); echo json_encode($obj); exit; }
 

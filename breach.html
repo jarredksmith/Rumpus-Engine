@@ -18561,7 +18561,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 971 · 2026-07-16';
+const BUILD_VERSION = 'build 972 · 2026-07-16';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30350,6 +30350,7 @@ function _sanitizeHomepage(h){
     title:  ok ? String(h.title||'').replace(/[<>]/g,'').slice(0,48) : '',
     tag:    ok ? String(h.tag||'').replace(/[<>]/g,'').slice(0,90) : '',
     accent: (ok && /^#[0-9a-fA-F]{6}$/.test(h.accent||'')) ? h.accent : '',
+    slug:   (ok && typeof h.slug==='string' && /^[a-z0-9\-]{1,64}$/.test(h.slug)) ? h.slug : '',   // build 972: the published /game/ URL
     bg:     (ok && typeof h.bg==='string' && /^data:image\/(jpeg|png);base64,/.test(h.bg) && h.bg.length<=150000) ? h.bg : '',
     showMp: ok ? h.showMp!==false : true,
   };
@@ -30422,6 +30423,9 @@ function renderHomePanel(){
     +   '<div class="row2" style="margin-top:8px"><button id="hpShot">Capture backdrop</button><button id="hpShotClear"'+(h.bg?'':' disabled')+'>Remove</button></div>'
     +   '<div class="hint" id="hpShotNote" style="font-size:10px;margin:2px 0 0">'+(h.bg?('Backdrop captured \u2713 ('+Math.round(h.bg.length/1024)+' KB)'):'No backdrop \u2014 the title screen uses a dark gradient.')+'</div>'
     +   '<div class="row2" style="margin-top:8px"><button id="hpPreviewBtn" style="width:100%">Preview title screen</button></div>'
+    +   '<div class="row2" style="margin-top:8px"><button id="hpPublish" style="width:100%">Publish game page (instant URL)</button></div>'
+    +   (h.slug?'<div class="row2" style="margin-top:6px"><button id="hpUnpub" style="width:100%;border-color:#7a2630;color:#ff9b93">Unpublish /game/'+h.slug+'</button></div>':'')
+    +   '<div class="hint" id="hpPubNote" style="font-size:10px;margin:2px 0 0">'+(h.slug?('Live at /game/'+h.slug+' \u2014 publishing again updates the same URL.'):'Gets an instant, unlisted link like rumpusengine.com/game/your-game \u2014 no review, yours to share.')+'</div>'
     + '</div>';
   const q=s=>host.querySelector(s);
   const dirty=()=>{ if(typeof _levelDirty!=='undefined') _levelDirty=true; };
@@ -30433,6 +30437,64 @@ function renderHomePanel(){
   q('#hpShot').onclick=()=>{ const shot=_commCaptureThumb(640,360,0.62,150000); if(shot){ homepageCfg.bg=shot; dirty(); renderHomePanel(); } else { const n=q('#hpShotNote'); if(n) n.textContent='Capture failed \u2014 nothing is rendering yet; try again with the scene on screen.'; } };
   q('#hpShotClear').onclick=()=>{ homepageCfg.bg=''; dirty(); renderHomePanel(); };
   q('#hpPreviewBtn').onclick=()=>_hpPreview();
+  // build 972: instant unlisted publishing — same validation as the library, no review, not listed.
+  // The owner key (client-generated, kept in this browser, hashed at rest server-side) makes the
+  // slug updatable/deletable by its creator only.
+  const _gameKeys=()=>{ try{ return JSON.parse(localStorage.getItem('breach_game_keys')||'{}')||{}; }catch(e){ return {}; } };
+  q('#hpPublish').onclick=async ()=>{
+    const noteEl=q('#hpPubNote');
+    if(!homepageCfg.on){ noteEl.textContent='Turn on the custom title screen first.'; return; }
+    let lvl; try{ lvl=serializeLevel(); const th=_commCaptureThumb(); if(th) lvl.thumb=th; }catch(e){ noteEl.textContent='Could not serialize the level'; return; }
+    let name=homepageCfg.title, author='';
+    try{ author=(localStorage.getItem('breach_author_name')||'').trim(); }catch(e){}
+    const vals=await new Promise(res=>uiPromptForm('Publish your game page', [
+      { label:'GAME NAME (becomes the URL)', value:name, max:48 },
+      { label:'YOUR AUTHOR NAME', value:author, max:40 },
+    ], res));
+    if(!vals) return;
+    name=(vals[0]||'').trim(); author=(vals[1]||'').trim();
+    if(!name || !author){ noteEl.textContent='Publishing needs a game name and an author name.'; return; }
+    try{ localStorage.setItem('breach_author_name', author); }catch(e){}
+    const keys=_gameKeys();
+    const oldSlug=(homepageCfg.slug && keys[homepageCfg.slug]) ? homepageCfg.slug : '';
+    let key=oldSlug ? keys[oldSlug] : '';
+    if(!/^[0-9a-f]{16,64}$/.test(key||'')){ key=''; const a=new Uint8Array(16); crypto.getRandomValues(a); for(const b of a) key+=b.toString(16).padStart(2,'0'); }
+    noteEl.textContent='Publishing\u2026';
+    try{
+      const code='RUMPUSLVL:' + await encodeLevel(lvl);
+      const body={ name, author, desc:(homepageCfg.tag||''), code, key };
+      if(oldSlug) body.slug=oldSlug;
+      const r=await fetch(_commApi()+'publish.php', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
+      const d=await r.json().catch(()=>null);
+      if(r.ok && d && d.ok && d.slug){
+        homepageCfg.slug=d.slug; keys[d.slug]=key;
+        try{ localStorage.setItem('breach_game_keys', JSON.stringify(keys)); }catch(e){}
+        if(typeof _levelDirty!=='undefined') _levelDirty=true;
+        renderHomePanel();
+        const url=d.url||d.playUrl;
+        uiConfirm('Your game is LIVE at '+url+' \u2014 unlisted, so only people with the link find it. Publishing again from this browser updates the same URL.', ()=>{ try{ navigator.clipboard.writeText(url); flashToast('LINK COPIED'); }catch(e){} }, 'Copy link');
+        return;
+      }
+      noteEl.textContent='\u2715 '+((d&&d.error)||('HTTP '+r.status));
+    }catch(e){ noteEl.textContent='\u2715 server unreachable \u2014 '+(e&&e.message); }
+  };
+  const up=q('#hpUnpub');
+  if(up) up.onclick=()=>{
+    const keys=_gameKeys(), k=keys[homepageCfg.slug]||'';
+    if(!k){ q('#hpPubNote').textContent='This browser does not hold the owner key for that URL.'; return; }
+    uiConfirm('Take down /game/'+homepageCfg.slug+'? The link will stop working.', async ()=>{
+      try{
+        const r=await fetch(_commApi()+'publish.php?slug='+encodeURIComponent(homepageCfg.slug)+'&k='+k, { method:'DELETE' });
+        const d=await r.json().catch(()=>null);
+        if(r.ok && d && d.ok){
+          delete keys[homepageCfg.slug];
+          try{ localStorage.setItem('breach_game_keys', JSON.stringify(keys)); }catch(e){}
+          homepageCfg.slug=''; if(typeof _levelDirty!=='undefined') _levelDirty=true;
+          renderHomePanel(); if(typeof flashToast==='function') flashToast('GAME PAGE REMOVED');
+        } else q('#hpPubNote').textContent='\u2715 '+((d&&d.error)||('HTTP '+r.status));
+      }catch(e){ q('#hpPubNote').textContent='\u2715 server unreachable'; }
+    }, 'Unpublish');
+  };
 }
 // Restore the full start page (Deploy / Build / multiplayer) — used by the editor's "Main menu" button.
 function showMainMenu(){

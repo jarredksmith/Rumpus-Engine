@@ -49,7 +49,16 @@ if ($method === 'POST') {
     foreach ((is_array($idx) ? ($idx['levels'] ?? []) : []) as $l) {
       if (is_array($l)) $published[] = ['file' => $l['file'] ?? '', 'name' => $l['name'] ?? '', 'author' => $l['author'] ?? '', 'date' => $l['date'] ?? ''];
     }
-    jsonOut(200, ['pending' => $pending, 'published' => $published]);
+    // build 972: unlisted games (published instantly via publish.php) — listed for spot-checks
+    $games = [];
+    foreach (glob(gamesMetaDir() . '/*.json') ?: [] as $f) {
+      $m = json_decode((string)@file_get_contents($f), true);
+      if (!is_array($m)) continue;
+      $games[] = ['slug' => $m['slug'] ?? basename($f, '.json'), 'name' => $m['name'] ?? '',
+                  'author' => $m['author'] ?? '', 'desc' => $m['desc'] ?? '', 'date' => $m['date'] ?? ''];
+    }
+    usort($games, function ($x, $y) { return strcmp($y['date'], $x['date']); });
+    jsonOut(200, ['pending' => $pending, 'published' => $published, 'games' => $games]);
   }
 
   if ($a === 'approve') {
@@ -85,6 +94,14 @@ if ($method === 'POST') {
     jsonOut(200, ['ok' => true]);
   }
 
+  if ($a === 'unpublish_game') {   // build 972: take down an unlisted game (level + meta)
+    $slug = (string)($b['slug'] ?? '');
+    if (!preg_match('/^[a-z0-9\-]{1,64}$/', $slug)) jsonOut(400, ['error' => 'bad slug']);
+    @unlink(gamesDir() . '/' . $slug . '.json');
+    @unlink(gamesMetaDir() . '/' . $slug . '.json');
+    jsonOut(200, ['ok' => true]);
+  }
+
   jsonOut(400, ['error' => 'unknown action']);
 }
 
@@ -111,6 +128,7 @@ button.ghost{background:transparent;color:#9fc4ba;border-color:#2a3a42}
 <div id="msg"></div>
 <h2>PENDING REVIEW</h2><div id="pending" class="meta">—</div>
 <h2>PUBLISHED</h2><div id="published" class="meta">—</div>
+<h2>UNLISTED GAMES <span style="letter-spacing:0;color:#5a7d72">(published instantly — spot-check, unpublish anything that shouldn't be here)</span></h2><div id="games" class="meta">—</div>
 <script>
 const $=id=>document.getElementById(id);
 function pw(){ const v=$('pw').value; try{ sessionStorage.setItem('rumpus_admin_pw', v); }catch(e){} return v; }
@@ -151,6 +169,18 @@ async function load(){
     const rm=document.createElement('button'); rm.className='warn'; rm.textContent='Unpublish';
     rm.onclick=()=>{ if(confirm('Remove "'+l.name+'" from the library?')) act({a:'unpublish',file:l.file,pw:pw()},'removed'); };
     div.appendChild(rm); pub.appendChild(div);
+  }
+  const gm=$('games');
+  gm.innerHTML = (d.games&&d.games.length) ? '' : 'No unlisted games yet.';
+  for(const g of (d.games||[])){
+    const div=document.createElement('div'); div.className='card';
+    div.innerHTML='<div class="grow"><b>'+esc(g.name)+'</b> <span class="meta">by '+esc(g.author)+' · '+esc(g.date)+' · /game/'+esc(g.slug)+'</span>'
+      +(g.desc?'<div class="meta">'+esc(g.desc)+'</div>':'')+'</div>';
+    const test=document.createElement('a'); test.textContent='▶ Test play'; test.target='_blank';
+    test.href='../breach.html?game='+encodeURIComponent(g.slug);
+    const rm=document.createElement('button'); rm.className='warn'; rm.textContent='Unpublish';
+    rm.onclick=()=>{ if(confirm('Take down /game/'+g.slug+'? The creator\'s link will stop working.')) act({a:'unpublish_game',slug:g.slug,pw:pw()},'taken down'); };
+    div.appendChild(test); div.appendChild(rm); gm.appendChild(div);
   }
 }
 </script></body></html>

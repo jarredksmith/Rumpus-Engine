@@ -53,6 +53,35 @@ Back up `public_html/community/` now and then — with submissions moving here, 
 the master copy of the library (levels also remain in the GitHub repo up to the point you
 switched, and you can commit new ones there whenever you like as an archive).
 
+## Deploying unlisted game pages (`api/publish.php` + `game.php`) — build 972
+
+Creators can publish a game with its own title screen to an instant URL — no review, and it
+never appears in the community library (unlisted: only people with the link find it).
+
+1. Upload `api/publish.php` into `public_html/api/` (beside the other services).
+2. Upload `game.php` into `public_html/` (beside `breach.html`).
+3. Add the pretty-URL rewrite to `public_html/.htaccess` (create the file if needed):
+
+   ```
+   RewriteEngine On
+   RewriteRule ^game/([a-z0-9-]{1,64})/?$ game.php?slug=$1 [L,QSA]
+   ```
+
+That's it. Levels land in `public_html/community/games/` (served with the same CORS-open
+`.htaccess` as the library); creator records live in `public_html/api/gamesmeta/` (blocked
+from the web by `api/.htaccess`). `https://www.rumpusengine.com/game/<slug>` serves
+OpenGraph tags — shared links unfurl on Discord/Reddit/social with the game's own name and
+screenshot — then drops the visitor straight into the game.
+
+Smoke test: in the game, editor → Files → Title screen → enable, then **Publish game page**.
+Open the URL it returns; you should land on the creator's title screen.
+
+Moderation: these are live WITHOUT review, so `admin.php` has an **UNLISTED GAMES** section —
+spot-check it now and then; **Unpublish** kills a link instantly. Creators can update or
+unpublish their own game from the same browser they published from (an owner key, stored
+hashed, protects each slug). Abuse caps: 60s between publishes per IP, 20 games per IP,
+500 global, and the exact validation + text sanitizer the reviewed library uses.
+
 ## Speeding up first load on the cPanel host (build 961)
 
 - Upload **`rapier3d-compat.js`** (repo root, ~2.2 MB) next to `breach.html` — the game now

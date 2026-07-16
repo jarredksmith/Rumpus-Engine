@@ -3,7 +3,7 @@
 **A single-file browser game studio — build worlds, play them (FPS, driving & racing, top-down, side-scroll), and share them with peer-to-peer multiplayer and a community level library.**
 Everything — engine glue, editor, netcode, assets pipeline — ships in one `breach.html`. No build step, no server.
 
-### ▶ [Play now](https://jarredksmith.github.io/breach/breach.html)
+### ▶ [Play now](https://www.rumpusengine.com)
 
 ## What's inside
 
@@ -26,7 +26,7 @@ Everything — engine glue, editor, netcode, assets pipeline — ships in one `b
 | Driving | `E` enter/exit · `W/S` gas/brake · `A/D` steer · `Space` handbrake · `Shift` boost |
 | Editor | `P` open/play · `F` fly · `T` top view · `Ctrl+Z` undo |
 
-Tutorials: **Help & tutorials** on the home menu. Full reference: **[Field manual](https://jarredksmith.github.io/breach/breach-help.html)** — every editor tab, section and slider documented.
+Tutorials: **Help & tutorials** on the home menu. Full reference: **[Field manual](https://www.rumpusengine.com/breach-help.html)** — every editor tab, section and slider documented.
 
 ## Tech
 
