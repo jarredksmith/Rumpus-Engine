@@ -17,7 +17,7 @@ const run = (touch)=>{ const els={controls:{style:{}}, controlsTouch:{style:{}}}
 
 // ---- opening the instructions syncs first; first-run auto-opens exactly once ----
 assert(/ib\.onclick=\(\)=>\{ syncInstrControls\(\); openModal\('instrModal'\); \};/.test(src), 'the Instructions button syncs controls before opening');
-assert(/if\(!localStorage\.getItem\('breach_seen'\)\)\{ localStorage\.setItem\('breach_seen','1'\); syncInstrControls\(\); openModal\('instrModal'\); \}/.test(src),
-  'first run auto-opens the instructions once and marks the visitor as seen');
+assert(/if\(!localStorage\.getItem\('breach_seen'\) && !_sharedArrival\)\{ localStorage\.setItem\('breach_seen','1'\); syncInstrControls\(\); openModal\('instrModal'\); \}/.test(src),
+  'first run auto-opens the instructions once and marks the visitor as seen (build 971: not over a shared game\'s title screen)');
 
 done();

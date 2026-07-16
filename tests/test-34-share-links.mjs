@@ -44,6 +44,7 @@ globalThis.location.hash = '#nothing'; eq(api.levelCodeFromUrl(), null, 'no code
 assert(/id="edShare"/.test(src) && /_icn\('link'\)\+'Copy share link/.test(src), 'editor has a share button (build 816: SVG icon)');
 assert(/buildShareLink\(await encodeLevel\(serializeLevel\(\)\)\)/.test(src), 'share encodes the live level into a link');
 assert(/navigator\.clipboard\.writeText\(link\)/.test(src), 'copies to clipboard (with a visible fallback box)');
-assert(/const code = levelCodeFromUrl\(\);/.test(src) && /restoreLevel\(lvl\); flashToast/.test(src), 'startup loads a shared level via restoreLevel');
+assert(/const code = levelCodeFromUrl\(\);/.test(src) && /restoreLevel\(lvl\);\s*\n\s*if\(homepageCfg\.on\) _syncGameHome\(\);/.test(src)
+  && /else flashToast\(challenge \?/.test(src), 'startup loads a shared level via restoreLevel (build 971: title screen fronts the toast)');
 assert(/\(tag === 'g'\) \? await _gunzip\(bytes\) : bytes/.test(src), 'decode handles gzip + raw');
 done('shareable level links (gzip round-trip + url-safe + wiring)');

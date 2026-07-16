@@ -11,10 +11,11 @@ import { parseIssue, validateSubmission } from '../.github/scripts/publish-level
 const src = gameSource();
 
 // capture + embed on submit
-const cap = src.match(/function _commCaptureThumb\(\)\{[\s\S]{0,2600}?\n\}/)[0];
+const cap = src.match(/function _commCaptureThumb\([^)]*\)\{[\s\S]{0,2700}?\n\}/)[0];   // build 971: params for larger title-screen backdrops
 assert(/readRenderTargetPixels/.test(cap), 'thumb reads through a render target, not the main canvas');
 assert(/setViewport\(0,0,sz\.x,sz\.y\)/.test(cap), 'the full-screen viewport is restored after the off-screen render');
-assert(/toDataURL\('image\/jpeg', 0\.55\)/.test(cap) && /length<80000/.test(cap), 'small JPEG, capped size');
+assert(/q=q\|\|0\.55; cap=cap\|\|80000/.test(cap) && /toDataURL\('image\/jpeg', q\)/.test(cap) && /length<cap/.test(cap),
+  'small JPEG, capped size by default (build 971: callers may raise both for backdrops)');
 assert(/const th = _commCaptureThumb\(\); if\(th\) lvl\.thumb = th;/.test(src), 'submit embeds the thumb in the copied JSON');
 
 // publish pipeline lifts thumb + flags sketchfab (executable, through the real validator)
