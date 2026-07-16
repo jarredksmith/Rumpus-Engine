@@ -52,22 +52,24 @@ function validateSubmission($name, $author, $desc, $code, $uniq) {
   $jsonText = decodeLevelCode($code);
   if ($jsonText === null) return ['ok' => false, 'reason' => 'the level code did not decode — submit straight from the game'];
   if (strlen($jsonText) > COMM_LIMITS['json']) return ['ok' => false, 'reason' => 'the level is ' . number_format(strlen($jsonText)) . ' bytes — the library caps levels at ' . number_format(COMM_LIMITS['json'])];
-  $level = json_decode($jsonText, true);
-  if (!is_array($level) || array_is_list($level) || (!isset($level['props']) && !isset($level['world'])))
+  // OBJECT mode, not assoc: assoc decoding turns every empty JSON object {} into [] on re-encode,
+  // which corrupts the game's empty maps (weapons/invItems/clip tables…) in published levels (build 973)
+  $level = json_decode($jsonText);
+  if (!is_object($level) || (!isset($level->props) && !isset($level->world)))
     return ['ok' => false, 'reason' => 'that code is not a level (no props/world keys)'];
   // lift the screenshot into the gallery index; strip it from the level file itself
   $thumb = '';
-  if (isset($level['thumb']) && is_string($level['thumb'])
-      && preg_match('#^data:image/(jpeg|png);base64,[A-Za-z0-9+/=]+$#', $level['thumb'])
-      && strlen($level['thumb']) <= 100000) $thumb = $level['thumb'];
-  unset($level['thumb']);
+  if (isset($level->thumb) && is_string($level->thumb)
+      && preg_match('#^data:image/(jpeg|png);base64,[A-Za-z0-9+/=]+$#', $level->thumb)
+      && strlen($level->thumb) <= 100000) $thumb = $level->thumb;
+  unset($level->thumb);
   $levelJson = json_encode($level);
   $sketchfab = strpos($levelJson, 'sketchfab:') !== false;
   $slug = strtolower(preg_replace('/^-+|-+$/', '', preg_replace('/[^a-z0-9]+/', '-', strtolower($name))));
   $slug = (substr($slug, 0, 40) ?: 'level') . '-' . $uniq;
   $entry = ['file' => $slug . '.json', 'name' => $name, 'author' => $author];
   if ($desc !== '') $entry['desc'] = $desc;
-  $entry['objective'] = (isset($level['game']['objective']) && is_string($level['game']['objective'])) ? $level['game']['objective'] : 'eliminate';
+  $entry['objective'] = (isset($level->game->objective) && is_string($level->game->objective)) ? $level->game->objective : 'eliminate';
   $entry['date'] = gmdate('Y-m-d');
   if ($sketchfab) $entry['sketchfab'] = true;
   if ($thumb !== '') $entry['thumb'] = $thumb;

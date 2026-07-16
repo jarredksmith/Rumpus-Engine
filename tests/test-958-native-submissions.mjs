@@ -39,9 +39,9 @@ assert(/breach_author_name/.test(src), 'author name is remembered');
 const lib = readFileSync(path.join(dir, '..', 'server', 'api', '_community_lib.php'), 'utf8');
 assert(/gzdecode\(/.test(lib), 'PHP decodes the gzip share codec');
 assert(/'json' => 500000/.test(lib) && /'name' => 60/.test(lib) && /'author' => 40/.test(lib), 'caps match the pipeline');
-assert(/isset\(\$level\['props'\]\) && !isset\(\$level\['world'\]\)/.test(lib), 'level shape check (props/world)');
+assert(/isset\(\$level->props\) && !isset\(\$level->world\)/.test(lib), 'level shape check (props/world)');   // build 973: object mode ({} must survive re-encode)
 assert(/preg_match\('#\^data:image\/\(jpeg\|png\);base64,/.test(lib), 'thumbnail lifted only when it is a real image data-url');
-assert(/unset\(\$level\['thumb'\]\)/.test(lib), 'thumb stripped from the published level file');
+assert(/unset\(\$level->thumb\)/.test(lib), 'thumb stripped from the published level file');
 
 const sub = readFileSync(path.join(dir, '..', 'server', 'api', 'submit.php'), 'utf8');
 assert(/Access-Control-Allow-Origin: \*/.test(sub), 'submit endpoint is CORS-open');

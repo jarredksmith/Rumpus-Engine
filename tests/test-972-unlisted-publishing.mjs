@@ -22,7 +22,7 @@ assert(/RUMPUS_PUBLISH_INTERVAL/.test(pub) && /RUMPUS_MAX_GAMES/.test(pub) && /R
   'rate + volume caps, all env-tunable');
 assert(/is_file\(gamesMetaDir\(\) \. '\/' \. \$slug \. '\.json'\) \|\| is_file\(commDir\(\) \. '\/levels\/' \. \$slug \. '\.json'\)/.test(pub),
   'slugs are uniquified and can never shadow a community library level');
-assert(/\$level\['homepage'\]\['slug'\] = \$slug/.test(pub), 'the served copy knows its own URL (first publish serializes before the slug exists)');
+assert(/\$level->homepage->slug = \$slug/.test(pub), 'the served copy knows its own URL (first publish serializes before the slug exists)');
 assert(!/index\.json/.test(pub), 'publish.php NEVER touches the library index — unlisted means unlisted');
 assert(/function gamesDir\(\)/.test(lib) && /function gamesMetaDir\(\)/.test(lib) && /__DIR__ \. '\/gamesmeta'/.test(lib),
   'levels served beside the library; metadata (key hashes, ip hashes) lives under api/ where .htaccess denies the web');

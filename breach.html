@@ -423,6 +423,9 @@
     border-radius:14px; font-size:11px; letter-spacing:2px; color:var(--accent); background:rgba(var(--accent-rgb),.07);
     animation:bootPulse 1.2s ease-in-out infinite; }
   body:not(.booting) #bootPill { display:none; }
+  /* build 973: shared arrivals — hide the menu (not the pill) until the shared level applies */
+  body.sharedBoot #overlay > :not(#bootPill) { visibility:hidden; }
+  body.sharedBoot #bootPill { display:block; }
   @keyframes bootPulse { 0%,100%{opacity:.55} 50%{opacity:1} }
   #startBtn, #replayBtn {
     margin-top: 28px; pointer-events:auto; cursor: pointer;
@@ -1012,6 +1015,12 @@
 // has downloaded and wired the buttons. Until GAME_START flips it off, menu clicks are queued
 // (last one wins) and replayed the moment the engine is ready.
 document.body.classList.add('booting');
+// build 973: arriving via a shared game (?game=/#lvl=) — visitors should see LOADING and then the
+// creator's title screen, never the engine menu first. The cover drops when the level has applied.
+try{ if(/[?&]game=/.test(location.search||'') || /[#&]lvl=/.test(location.hash||'')){
+  document.body.classList.add('sharedBoot');
+  var _bp0 = document.getElementById('bootPill'); if(_bp0) _bp0.textContent = 'LOADING GAME\u2026';
+} }catch(e){}
 window.__earlyClick = null;
 document.addEventListener('click', function(e){
   if(!document.body.classList.contains('booting')) return;
@@ -8123,6 +8132,7 @@ function isMatPrimitive(src){ return SHAPE_PRIMS.hasOwnProperty(src) || MAT_PRIM
 // Cache loaded image textures by URL so repeated/added textured props don't refetch.
 const texCache = {};
 function loadTextureCached(url){
+  url = _migrateAssetUrl(url);   // build 973
   if(texCache[url]) return texCache[url];
   const loader = new THREE.TextureLoader(); loader.crossOrigin = 'anonymous';
   const tex = loader.load(url, undefined, undefined, (err)=>{ console.warn('Texture load failed for', url, '-', err && err.message); });
@@ -8135,6 +8145,7 @@ function loadTextureCached(url){
 // you set on one prop never bleeds onto another.
 const _texInst = {};
 function texInstance(url, u, v, srgb, rot){
+  url = _migrateAssetUrl(url);   // build 973
   srgb = (srgb !== false);   // color maps are sRGB; normal/roughness maps must stay linear
   rot = +rot || 0;           // radians, rotated about the texture center (planks/bricks running a new way)
   const key = url + '|' + u + '|' + v + '|' + (srgb?'s':'l') + '|' + rot;
@@ -8621,7 +8632,16 @@ const PP_DEFAULT_KEY = 'f30b70c7929147a2a7c7f38671f33a87';
 const PP_DEFAULT_PROXY = 'https://polypizza-proxy.jarredksmith.workers.dev';
 function ppProxy(){ try{ return ((localStorage.getItem('pp_proxy')||'').trim()) || PP_DEFAULT_PROXY; }catch(e){ return PP_DEFAULT_PROXY; } }
 function ppSetProxy(u){ try{ localStorage.setItem('pp_proxy', (u||'').trim()); }catch(e){} }
+// build 973: the repo rename (breach -> Rumpus-Engine) moved the GitHub Pages asset host, and
+// Pages URLs don't redirect — every level that pinned a model at the old address 404s (it looked
+// fine in the author's browser only because the GLBs were cached). Heal at load time so saved
+// levels, share codes, library levels and published games all work without re-editing.
+function _migrateAssetUrl(u){
+  return (typeof u==='string' && u.indexOf('jarredksmith.github.io/breach/')>=0)
+    ? u.replace('jarredksmith.github.io/breach/', 'jarredksmith.github.io/Rumpus-Engine/') : u;
+}
 function proxied(url){
+  url = _migrateAssetUrl(url);
   const base = ppProxy(); if(!base) return url;
   try{ if(new URL(url, location.href).origin === location.origin) return url; }catch(e){ return url; }
   return base + (base.indexOf('?')>=0 ? '&' : '?') + 'url=' + encodeURIComponent(url);
@@ -9047,6 +9067,7 @@ function _ensureKTX2(){
   return _ktx2Promise;
 }
 function loadGLTFCached(url, cb, errcb){
+  url = _migrateAssetUrl(url);   // build 973: dead-host heal — one choke point for every model load
   if(gltfCache[url]){ _modelTouch(url); cb(gltfCache[url]); return; }   // cached: synchronous, nothing to wait on
   if(_glbWaiters[url]){ _glbWaiters[url].push({cb:cb,errcb:errcb}); return; }   // a load for this url is already in flight; ride along instead of fetching again
   const waiters=[{cb:cb,errcb:errcb}]; _glbWaiters[url]=waiters;
@@ -18561,7 +18582,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 972 · 2026-07-16';
+const BUILD_VERSION = 'build 973 · 2026-07-16';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31191,6 +31212,7 @@ if(savedLevel && savedLevel.player) applyPlayerLevel(savedLevel.player);   // se
     }
     if(!loaded) flashToast('Could not find the game "'+slug+'"');
   } else if(challenge){ flashToast('Challenge: beat '+(challenge.s||0)+' pts. Press Deploy'); }
+  try{ document.body.classList.remove('sharedBoot'); }catch(e){}   // build 973: reveal — the title screen (or menu + toast) is ready
 })();
 // build 961: everything above is wired — drop the boot veil and replay a click that landed early.
 try{

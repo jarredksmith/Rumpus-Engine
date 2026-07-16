@@ -82,15 +82,15 @@ if ($isUpdate) {
   for ($n = 2; is_file(gamesMetaDir() . '/' . $slug . '.json') || is_file(commDir() . '/levels/' . $slug . '.json'); $n++) $slug = $base . '-' . $n;
 }
 
-$level = json_decode($v['levelJson'], true);
+$level = json_decode($v['levelJson']);   // object mode — assoc would turn empty {} maps into [] (build 973)
 // the served copy knows its own URL — a first publish serializes before the slug exists client-side
-if (isset($level['homepage']) && is_array($level['homepage'])) $level['homepage']['slug'] = $slug;
+if (isset($level->homepage) && is_object($level->homepage)) $level->homepage->slug = $slug;
 if (@file_put_contents(gamesDir() . '/' . $slug . '.json', json_encode($level), LOCK_EX) === false) jsonOut(500, ['error' => 'could not write the game file']);
 // the unfurl image: the submit-time screenshot, or the title screen's own backdrop
 $og = (string)($v['entry']['thumb'] ?? '');
-if ($og === '' && isset($level['homepage']['bg']) && is_string($level['homepage']['bg'])
-    && preg_match('#^data:image/(jpeg|png);base64,[A-Za-z0-9+/=]+$#', $level['homepage']['bg'])
-    && strlen($level['homepage']['bg']) <= 150000) $og = $level['homepage']['bg'];
+if ($og === '' && isset($level->homepage->bg) && is_string($level->homepage->bg)
+    && preg_match('#^data:image/(jpeg|png);base64,[A-Za-z0-9+/=]+$#', $level->homepage->bg)
+    && strlen($level->homepage->bg) <= 150000) $og = $level->homepage->bg;
 $meta = [
   'slug' => $slug, 'name' => $v['entry']['name'], 'author' => $v['entry']['author'],
   'desc' => (string)($v['entry']['desc'] ?? ''), 'objective' => $v['entry']['objective'],
