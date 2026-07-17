@@ -10,6 +10,9 @@ function pendingDir() { $d = __DIR__ . '/pending'; if (!is_dir($d)) @mkdir($d, 0
 // build 972: unlisted games — levels served CORS-open beside the library, metadata web-denied under api/
 function gamesDir()     { $d = commDir() . '/games'; if (!is_dir($d)) @mkdir($d, 0755, true); return $d; }
 function gamesMetaDir() { $d = __DIR__ . '/gamesmeta'; if (!is_dir($d)) @mkdir($d, 0755, true); return $d; }
+// build 974: creator model uploads — .glb files served CORS-open, metadata web-denied under api/
+function modelsDir()     { $d = commDir() . '/models'; if (!is_dir($d)) @mkdir($d, 0755, true); return $d; }
+function modelsMetaDir() { $d = __DIR__ . '/modelsmeta'; if (!is_dir($d)) @mkdir($d, 0755, true); return $d; }
 
 function jsonOut($http, $obj) { http_response_code($http); echo json_encode($obj); exit; }
 

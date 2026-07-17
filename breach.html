@@ -18582,7 +18582,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 973 · 2026-07-16';
+const BUILD_VERSION = 'build 974 · 2026-07-17';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28308,6 +28308,7 @@ function renderEditorFields(){
       row.appendChild(addUrl);
     }
     urlHost.appendChild(row);
+    if(typeof renderModelUpload==='function') renderModelUpload(urlHost, inp, tgt);   // build 974: upload your own .glb
     if(tgt.urlField && !tgt.addable){   // Poly Pizza search for single-slot models (gun/station/grenade/player)
       const psHead=document.createElement('div'); psHead.className='hint'; psHead.style.margin='10px 0 3px'; psHead.innerHTML='<b>'+_icn('search')+'Search free models</b> — Poly Pizza / Sketchfab, click one to use it';
       urlHost.appendChild(psHead);
@@ -30825,6 +30826,83 @@ function _commApi(){ try{ const o=(localStorage.getItem('breach_comm_api')||'').
 let _commBaseActive = 'community/';   // whichever base the index actually loaded from — level fetches follow it
 const COMM_INDEX_URL = 'community/index.json';   // beside-the-game fallback catalog
 const COMM_SUBMIT_URL = 'https://github.com/jarredksmith/breach/issues/new?template=submit-level.yml&title=' + encodeURIComponent('[Level] ');
+// ---- build 974: creator model uploads ----------------------------------------------------------
+// Upload a .glb once and it hosts on the community server — the returned URL drops straight into
+// the model field, so it works everywhere URLs already do: saves, share codes, published games,
+// multiplayer transfer. The client checks the GLB header + size before spending bandwidth; the
+// server re-verifies the magic bytes and enforces quotas. One owner key per browser (stored
+// hashed server-side) lets you replace (same filename) or delete your own uploads.
+const UPLOAD_MAX_MB = 8;
+function _uploadKey(){
+  let k=''; try{ k=localStorage.getItem('breach_upload_key')||''; }catch(e){}
+  if(!/^[0-9a-f]{16,64}$/.test(k)){ k=''; const a=new Uint8Array(16); crypto.getRandomValues(a); for(const b of a) k+=b.toString(16).padStart(2,'0'); try{ localStorage.setItem('breach_upload_key', k); }catch(e){} }
+  return k;
+}
+function _myModels(){ try{ const v=JSON.parse(localStorage.getItem('breach_my_models')||'[]'); return Array.isArray(v)?v:[]; }catch(e){ return []; } }
+function _myModelsSave(v){ try{ localStorage.setItem('breach_my_models', JSON.stringify(v.slice(0,50))); }catch(e){} }
+async function _uploadModelFile(file, say, inp, tgt){
+  if(!file) return;
+  if(file.size > UPLOAD_MAX_MB*1048576){ say('\u2715 '+(file.size/1048576).toFixed(1)+' MB \u2014 the cap is '+UPLOAD_MAX_MB+' MB. Compress it (gltf.report / gltfpack) and retry.'); return; }
+  const head = new Uint8Array(await file.slice(0,12).arrayBuffer());
+  const magic = String.fromCharCode(head[0]||0,head[1]||0,head[2]||0,head[3]||0);
+  const ver = (head[4]|(head[5]<<8)|(head[6]<<16)|(head[7]<<24))>>>0;
+  if(magic!=='glTF' || ver!==2){ say('\u2715 not a .glb (binary glTF 2.0) file \u2014 export as .glb, not .gltf/.fbx/.obj'); return; }
+  say('Uploading '+(file.size/1048576).toFixed(1)+' MB\u2026');
+  try{
+    const r=await fetch(_commApi()+'upload.php?name='+encodeURIComponent(file.name)+'&k='+_uploadKey(), { method:'POST', headers:{'content-type':'model/gltf-binary'}, body:file });
+    const d=await r.json().catch(()=>null);
+    if(r.ok && d && d.ok && d.url){
+      const mine=_myModels().filter(m=>m.slug!==d.slug);
+      mine.unshift({ slug:d.slug, url:d.url, name:file.name, bytes:d.bytes||file.size });
+      _myModelsSave(mine);
+      inp.value=d.url;
+      if(tgt && tgt.setUrl && !tgt.addable) tgt.setUrl(d.url);   // single-slot (gun/player/station): apply now; props keep it in the field for Add model
+      if(typeof _levelDirty!=='undefined') _levelDirty=true;
+      if(typeof flashToast==='function') flashToast('MODEL UPLOADED \u2713');
+      renderEditorFields();   // the My uploads picker gains the new entry
+      const ni = editorEl && editorEl.querySelector('#edUrlInput'); if(ni) ni.value=d.url;   // the re-render rebuilt the field \u2014 restore the uploaded URL so Swap/Add use it
+      return;
+    }
+    say('\u2715 '+((d&&d.error)||('HTTP '+r.status)));
+  }catch(e){ say('\u2715 server unreachable \u2014 '+(e&&e.message)); }
+}
+function renderModelUpload(urlHost, inp, tgt){
+  const head=document.createElement('div'); head.className='hint'; head.style.margin='8px 0 3px';
+  head.innerHTML='<b>Or upload your own .glb</b> \u2014 hosted on the community server (max '+UPLOAD_MAX_MB+' MB), works in shared & published levels';
+  urlHost.appendChild(head);
+  const urow=document.createElement('div'); urow.className='row2';
+  const fi=document.createElement('input'); fi.type='file'; fi.accept='.glb,model/gltf-binary'; fi.style.display='none';
+  const up=document.createElement('button'); up.textContent='Upload .glb'; up.onclick=()=>fi.click();
+  urow.appendChild(up); urow.appendChild(fi);
+  const st=document.createElement('div'); st.className='hint'; st.style.cssText='font-size:10px;margin:3px 0 0;min-height:12px;';
+  const say=(t)=>{ st.textContent=t; };
+  fi.onchange=()=>{ const f=fi.files&&fi.files[0]; fi.value=''; if(f) _uploadModelFile(f, say, inp, tgt); };
+  const mine=_myModels();
+  if(mine.length){
+    const sel=document.createElement('select'); sel.style.cssText='flex:1;font-size:11px;';
+    const o0=document.createElement('option'); o0.value=''; o0.textContent='My uploads ('+mine.length+')\u2026'; sel.appendChild(o0);
+    for(const m of mine){ const o=document.createElement('option'); o.value=m.url; o.textContent=m.slug+'.glb \u00b7 '+((m.bytes||0)/1048576).toFixed(1)+' MB'; sel.appendChild(o); }
+    sel.onchange=()=>{ if(sel.value){ inp.value=sel.value; say('URL filled \u2014 use Swap model'+(tgt&&tgt.addable?' / Add model':'')+' to apply it.'); } };
+    urow.appendChild(sel);
+    const del=document.createElement('button'); del.textContent='\u2715'; del.title='Delete the selected upload from the server';
+    del.style.cssText='flex:0 0 auto;padding:4px 10px;border-color:#7a2630;color:#ff9b93;';
+    del.onclick=()=>{
+      const url=sel.value; if(!url){ say('Pick one of your uploads first.'); return; }
+      const m=_myModels().find(x=>x.url===url); if(!m) return;
+      uiConfirm('Delete '+m.slug+'.glb from the server? Levels using it will lose the model.', async ()=>{
+        try{
+          const r=await fetch(_commApi()+'upload.php?slug='+encodeURIComponent(m.slug)+'&k='+_uploadKey(), { method:'DELETE' });
+          const d=await r.json().catch(()=>null);
+          if(r.ok && d && d.ok){ _myModelsSave(_myModels().filter(x=>x.slug!==m.slug)); if(typeof flashToast==='function') flashToast('UPLOAD DELETED'); renderEditorFields(); }
+          else say('\u2715 '+((d&&d.error)||('HTTP '+r.status)));
+        }catch(e){ say('\u2715 server unreachable'); }
+      }, 'Delete');
+    };
+    urow.appendChild(del);
+  }
+  urlHost.appendChild(urow);
+  urlHost.appendChild(st);
+}
 function openCommunity(){ openModal('communityModal'); renderCommunity(); }
 // build 854: a small JPEG of the current view, captured through a render target (reliable regardless of
 // preserveDrawingBuffer — same technique as the cine preview window). Returns a data URI, or '' on any failure.

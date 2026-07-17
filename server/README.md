@@ -82,6 +82,28 @@ unpublish their own game from the same browser they published from (an owner key
 hashed, protects each slug). Abuse caps: 60s between publishes per IP, 20 games per IP,
 500 global, and the exact validation + text sanitizer the reviewed library uses.
 
+## Deploying model uploads (`api/upload.php`) — build 974
+
+Creators can upload their own `.glb` models straight from the editor's model widget; the file
+hosts on your server and the URL works in shared and published levels.
+
+1. Upload `api/upload.php` into `public_html/api/`.
+2. Create `public_html/community/models/` and upload the repo's `community/models/.htaccess`
+   into it — this is the security piece (nothing executes from that folder, and nothing but
+   `.glb` files is ever served).
+
+Caps (env-tunable, see the top of `upload.php`): 8 MB per file, 10 files / 40 MB per creator,
+500 files / 2 GB global, 20s between uploads per IP. Uploads must pass a binary-glTF header
+check on both client and server, so only real models land. `admin.php` gains an **UPLOADED
+MODELS** section with sizes, a disk total, an Inspect link and one-click Delete.
+
+If large uploads fail with "empty upload": raise `post_max_size` (cPanel → MultiPHP INI
+Editor) to at least the file cap.
+
+Bandwidth note: every fresh player downloads a level's models (then caches them for a week).
+If a popular game strains the host, putting the domain behind Cloudflare's free proxy serves
+these cached `.glb`s from their CDN instead — a later, no-code step.
+
 ## Speeding up first load on the cPanel host (build 961)
 
 - Upload **`rapier3d-compat.js`** (repo root, ~2.2 MB) next to `breach.html` — the game now
