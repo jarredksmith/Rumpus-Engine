@@ -27,5 +27,5 @@ assert(/\(w\.scope\?2\.4:1\)/.test(src), 'scoped shot kicks harder');
 assert(/curWep==='sniper'/.test(src), 'sniper has its own shot sound');
 assert(/Digit4' && owned\[3\]/.test(src) && /Digit5' && owned\[4\]/.test(src), 'weapon slots 4+5 bound');
 assert(/WEAPONS\.sniper\.mag=5; WEAPONS\.sniper\.reserve=20;/.test(src), 'fresh-run ammo reset');
-assert(/owned=\['rifle','smg','shotgun','sniper','launcher','crowbar'\]/.test(src), 'duel loadout includes the sniper');
+assert(/owned=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\]/.test(src), 'duel loadout includes the sniper');
 done();

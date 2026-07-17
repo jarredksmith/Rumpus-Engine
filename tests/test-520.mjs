@@ -12,7 +12,7 @@ assert(/allowPickup: \(savedLevel && savedLevel\.game && savedLevel\.game\.allow
 assert(/flashlight: !!\(savedLevel && savedLevel\.game && savedLevel\.game\.flashlight\)/.test(src), 'gameCfg.flashlight defaults off');
 
 // --- the unarmed loadout: start on fists, no guns; otherwise the usual rifle ---
-assert(/if\(gameCfg\.unarmed\)\{ owned = \['hands'\]; curWep='hands'; \} else \{ owned = \['rifle'\]; curWep='rifle'; \}/.test(src), 'startGame picks the fists/rifle loadout');
+assert(/if\(gameCfg\.unarmed\)\{ owned = \['hands'\]; curWep='hands'; \} else \{ const _sw=\(gameCfg\.startWeapon && WEAPONS\[gameCfg\.startWeapon\] && !WEAPONS\[gameCfg\.startWeapon\]\.melee\) \? gameCfg\.startWeapon : 'rifle'; owned = \[_sw\]; curWep=_sw; \}/.test(src), 'startGame picks the fists/starting-weapon loadout');
 
 // --- a strict unarmed level (no pickups) refuses guns ---
 const gw = extractFunction('giveWeapon');
@@ -33,8 +33,8 @@ assert(/if\(!gameCfg\.flashlight\) return;/.test(tf), 'the flashlight only works
 assert(/if\(e\.code===BINDS\.flashlight && !e\.repeat\) toggleFlashlight\(\);/.test(src) && /flashlight:'KeyL'/.test(src), 'L (rebindable) toggles the flashlight');
 
 // --- persistence: serialized with the level + restored in both load paths ---
-assert(/unarmed: !!gameCfg\.unarmed, allowPickup: gameCfg\.allowPickup!==false, flashlight: !!gameCfg\.flashlight,/.test(src), 'serialized with the level');
-assert((src.match(/gameCfg\.unarmed = !!level\.game\.unarmed; gameCfg\.allowPickup = level\.game\.allowPickup!==false; gameCfg\.flashlight = !!level\.game\.flashlight;/g)||[]).length===2, 'restored in both load paths');
+assert(/unarmed: !!gameCfg\.unarmed, startWeapon: [^,]+, allowPickup: gameCfg\.allowPickup!==false, flashlight: !!gameCfg\.flashlight,/.test(src), 'serialized with the level');
+assert((src.match(/gameCfg\.unarmed = !!level\.game\.unarmed; gameCfg\.startWeapon = [^;]+; gameCfg\.allowPickup = level\.game\.allowPickup!==false; gameCfg\.flashlight = !!level\.game\.flashlight;/g)||[]).length===2, 'restored in both load paths');
 
 // --- editor exposes the toggles in the Gameplay panel ---
 assert(/Start unarmed<\/b> \(fists only/.test(src), 'editor: Start unarmed toggle');

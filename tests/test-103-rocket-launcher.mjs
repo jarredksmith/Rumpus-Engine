@@ -5,7 +5,7 @@ import { gameSource, extractFunction, done, assert } from './harness.mjs';
 const src = gameSource();
 
 assert(/launcher:\{ name:'ROCKET',.*projectile:true, blastRadius:7, loud:1\.2 \}/.test(src), 'launcher weapon defined');
-assert(/owned=\['rifle','smg','shotgun','sniper','launcher','crowbar'\]/.test(src), 'launcher in the duel loadout');
+assert(/owned=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\]/.test(src), 'launcher in the duel loadout');
 assert(/id:'launcher', name:'ROCKET LAUNCHER'.*giveWeapon\('launcher'\), oneTime:true/.test(src), 'launcher sold in the co-op shop');
 assert(/if\(w\.projectile\)\{ fireRocketShot\(\); firingLatch=true; return; \}/.test(src), 'launcher fires a projectile instead of hitscan');
 
