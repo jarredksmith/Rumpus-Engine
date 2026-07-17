@@ -7064,6 +7064,22 @@ function _showToast(msg){
     const next=_toastQ.shift(); if(next!=null) setTimeout(()=>_showToast(next), 180);   // small gap so back-to-back messages read as separate
   }, _toastQ.length ? 1500 : 2600);
 }
+// build 975: a big, animated success confirmation for deliberate actions (uploads) — far more
+// noticeable than the small status toast. Text is set via textContent (safe for user filenames).
+function flashBigToast(title, sub){
+  let t=document.getElementById('bigToast');
+  if(!t){ t=document.createElement('div'); t.id='bigToast';
+    t.style.cssText='position:fixed;top:74px;left:50%;z-index:130;display:flex;align-items:center;gap:13px;background:rgba(8,20,24,.98);border:1px solid var(--accent);border-left:5px solid var(--accent);color:#eafff7;padding:14px 22px;border-radius:11px;box-shadow:0 14px 44px rgba(0,0,0,.6);opacity:0;transform:translateX(-50%) translateY(-10px);transition:opacity .25s, transform .25s;pointer-events:none;max-width:min(92vw,480px);';
+    const ic=document.createElement('div'); ic.className='bigToastIcon'; ic.textContent='✓'; ic.style.cssText='font-size:28px;line-height:1;color:var(--accent);flex:0 0 auto;';
+    const tx=document.createElement('div'); const h=document.createElement('div'); h.className='bigToastTitle'; h.style.cssText='font-weight:800;letter-spacing:1px;font-size:15px;';
+    const sb=document.createElement('div'); sb.className='bigToastSub'; sb.style.cssText='font-size:12px;color:#bfe3d8;margin-top:2px;overflow-wrap:anywhere;';
+    tx.appendChild(h); tx.appendChild(sb); t.appendChild(ic); t.appendChild(tx); document.body.appendChild(t);
+  }
+  t.querySelector('.bigToastTitle').textContent=title||'';
+  const sb=t.querySelector('.bigToastSub'); sb.textContent=sub||''; sb.style.display=sub?'block':'none';
+  requestAnimationFrame(()=>{ t.style.opacity='1'; t.style.transform='translateX(-50%) translateY(0)'; });
+  clearTimeout(t._t); t._t=setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(-10px)'; }, 3400);
+}
 function flashToast(msg){
   if(_toastBusy){ if(_toastQ[_toastQ.length-1]!==msg){ _toastQ.push(msg); if(_toastQ.length>4) _toastQ.shift(); } return; }   // dedupe repeats; cap the backlog
   _showToast(msg);
@@ -18582,7 +18598,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 974 · 2026-07-17';
+const BUILD_VERSION = 'build 975 · 2026-07-17';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28698,6 +28714,9 @@ function renderEditorFields(){
       const applyB=document.createElement('button'); applyB.textContent='Apply texture'; applyB.onclick=()=>{ pushUndoSnapshot(); const url=tinp.value.trim(); for(const o of _matTargets()){ o.userData.texN=''; o.userData.texR=''; applyPropTexture(o, url); } renderEditorFields(); };
       const clearB=document.createElement('button'); clearB.textContent='Clear'; clearB.onclick=()=>{ pushUndoSnapshot(); tinp.value=''; for(const o of _matTargets()) applyPropTexture(o, ''); renderEditorFields(); };
       trow.appendChild(applyB); trow.appendChild(clearB); matHost.appendChild(trow);
+      renderUploadRow(matHost, 'texture', (url)=>{   // build 975: upload your own image texture
+        tinp.value=url; pushUndoSnapshot(); for(const o of _matTargets()){ o.userData.texN=''; o.userData.texR=''; applyPropTexture(o, url); }
+      }, { headText:'Or upload your own image', btnText:'Upload image', applyHint:'applied' });
       // tiling U/V
       const rep=selObj.userData.texRepeat||[1,1];
       const rrow=document.createElement('div'); rrow.style.cssText='display:flex;align-items:center;gap:8px;margin-top:6px;';
@@ -30201,6 +30220,10 @@ function _sndRow(label, get, set){
   const u0=get(); if(u0){ const b=_soundBuffers[u0]; if(b && b.duration!==undefined) mark('ok'); else { mark('loading'); loadSound(u0, mark); } }
   line.appendChild(inp); line.appendChild(test); line.appendChild(st);
   row.appendChild(lab); row.appendChild(line);
+  if(typeof renderUploadRow==='function'){   // build 975: upload your own sound straight into this slot
+    renderUploadRow(row, 'sound', (url)=>{ inp.value=url; set(url); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof initAudio==='function') initAudio(); if(typeof loadSound==='function') loadSound(url, mark); },
+      { tight:true, noHead:true, btnText:'Upload sound', applyHint:'applied' });
+  }
   return row;
 }
 // ---------- Freesound: search free CC sound effects and assign them to any event ----------
@@ -30826,82 +30849,118 @@ function _commApi(){ try{ const o=(localStorage.getItem('breach_comm_api')||'').
 let _commBaseActive = 'community/';   // whichever base the index actually loaded from — level fetches follow it
 const COMM_INDEX_URL = 'community/index.json';   // beside-the-game fallback catalog
 const COMM_SUBMIT_URL = 'https://github.com/jarredksmith/breach/issues/new?template=submit-level.yml&title=' + encodeURIComponent('[Level] ');
-// ---- build 974: creator model uploads ----------------------------------------------------------
-// Upload a .glb once and it hosts on the community server — the returned URL drops straight into
-// the model field, so it works everywhere URLs already do: saves, share codes, published games,
-// multiplayer transfer. The client checks the GLB header + size before spending bandwidth; the
-// server re-verifies the magic bytes and enforces quotas. One owner key per browser (stored
-// hashed server-side) lets you replace (same filename) or delete your own uploads.
-const UPLOAD_MAX_MB = 8;
+// ---- build 974/975: creator asset uploads (models, textures, sounds) ---------------------------
+// Upload a file once and it hosts on the community server — the returned URL drops straight into
+// the field, so it works everywhere URLs already do: saves, share codes, published games,
+// multiplayer transfer. The client sniffs the file signature + size before spending bandwidth; the
+// server re-verifies and enforces quotas. One owner key per browser (stored hashed server-side)
+// lets you replace (same filename) or delete your own uploads.
+const UPLOAD_MAX = { model:8, texture:4, sound:4 };   // MB, mirrors the server caps
+const UPLOAD_ACCEPT = { model:'.glb,model/gltf-binary', texture:'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp', sound:'audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav' };
+const UPLOAD_NOUN = { model:'model', texture:'image', sound:'sound' };
 function _uploadKey(){
   let k=''; try{ k=localStorage.getItem('breach_upload_key')||''; }catch(e){}
   if(!/^[0-9a-f]{16,64}$/.test(k)){ k=''; const a=new Uint8Array(16); crypto.getRandomValues(a); for(const b of a) k+=b.toString(16).padStart(2,'0'); try{ localStorage.setItem('breach_upload_key', k); }catch(e){} }
   return k;
 }
-function _myModels(){ try{ const v=JSON.parse(localStorage.getItem('breach_my_models')||'[]'); return Array.isArray(v)?v:[]; }catch(e){ return []; } }
-function _myModelsSave(v){ try{ localStorage.setItem('breach_my_models', JSON.stringify(v.slice(0,50))); }catch(e){} }
-async function _uploadModelFile(file, say, inp, tgt){
-  if(!file) return;
-  if(file.size > UPLOAD_MAX_MB*1048576){ say('\u2715 '+(file.size/1048576).toFixed(1)+' MB \u2014 the cap is '+UPLOAD_MAX_MB+' MB. Compress it (gltf.report / gltfpack) and retry.'); return; }
-  const head = new Uint8Array(await file.slice(0,12).arrayBuffer());
-  const magic = String.fromCharCode(head[0]||0,head[1]||0,head[2]||0,head[3]||0);
-  const ver = (head[4]|(head[5]<<8)|(head[6]<<16)|(head[7]<<24))>>>0;
-  if(magic!=='glTF' || ver!==2){ say('\u2715 not a .glb (binary glTF 2.0) file \u2014 export as .glb, not .gltf/.fbx/.obj'); return; }
-  say('Uploading '+(file.size/1048576).toFixed(1)+' MB\u2026');
+function _uploadList(type){ try{ const v=JSON.parse(localStorage.getItem('breach_my_'+type+'s')||'[]'); return Array.isArray(v)?v:[]; }catch(e){ return []; } }   // 'model'->breach_my_models (build 974 key), texture/sound too
+function _uploadListSave(type, v){ try{ localStorage.setItem('breach_my_'+type+'s', JSON.stringify(v.slice(0,50))); }catch(e){} }
+// signature sniff -> canonical extension, mirroring the server; '' means "not the claimed media".
+function _sniffUpload(b, type){
+  const s=(o,n)=>{ let r=''; for(let x=0;x<n;x++) r+=String.fromCharCode(b[o+x]||0); return r; };
+  if(type==='model'){ const ver=(b[4]|(b[5]<<8)|(b[6]<<16)|(b[7]<<24))>>>0; return (s(0,4)==='glTF' && ver===2)?'glb':''; }
+  if(type==='texture'){
+    if(b[0]===0x89&&b[1]===0x50&&b[2]===0x4E&&b[3]===0x47) return 'png';
+    if(b[0]===0xFF&&b[1]===0xD8&&b[2]===0xFF) return 'jpg';
+    if(s(0,4)==='RIFF' && s(8,4)==='WEBP') return 'webp';
+    return '';
+  }
+  if(type==='sound'){
+    if(s(0,4)==='OggS') return 'ogg';
+    if(s(0,4)==='RIFF' && s(8,4)==='WAVE') return 'wav';
+    if(s(0,3)==='ID3') return 'mp3';
+    if(b[0]===0xFF && (b[1]&0xE0)===0xE0) return 'mp3';
+    return '';
+  }
+  return '';
+}
+async function _uploadAsset(file, type, say){
+  if(!file) return null;
+  const max=UPLOAD_MAX[type]||8;
+  if(file.size > max*1048576){ say('✕ '+(file.size/1048576).toFixed(1)+' MB — cap is '+max+' MB. '+(type==='model'?'Compress it (gltf.report / gltfpack).':type==='texture'?'Resize it or save as JPEG.':'Shorten or re-encode it.')); return null; }
+  const head=new Uint8Array(await file.slice(0,16).arrayBuffer());
+  if(!_sniffUpload(head, type)){ say('✕ not a valid '+UPLOAD_NOUN[type]+' file'+(type==='model'?' (.glb)':type==='texture'?' (.png/.jpg/.webp)':' (.mp3/.ogg/.wav)')); return null; }
+  say('Uploading '+(file.size/1048576).toFixed(1)+' MB…');
   try{
-    const r=await fetch(_commApi()+'upload.php?name='+encodeURIComponent(file.name)+'&k='+_uploadKey(), { method:'POST', headers:{'content-type':'model/gltf-binary'}, body:file });
+    const r=await fetch(_commApi()+'upload.php?type='+type+'&name='+encodeURIComponent(file.name)+'&k='+_uploadKey(), { method:'POST', headers:{'content-type':'application/octet-stream'}, body:file });
     const d=await r.json().catch(()=>null);
     if(r.ok && d && d.ok && d.url){
-      const mine=_myModels().filter(m=>m.slug!==d.slug);
+      const mine=_uploadList(type).filter(m=>m.slug!==d.slug);
       mine.unshift({ slug:d.slug, url:d.url, name:file.name, bytes:d.bytes||file.size });
-      _myModelsSave(mine);
-      inp.value=d.url;
-      if(tgt && tgt.setUrl && !tgt.addable) tgt.setUrl(d.url);   // single-slot (gun/player/station): apply now; props keep it in the field for Add model
+      _uploadListSave(type, mine);
       if(typeof _levelDirty!=='undefined') _levelDirty=true;
-      if(typeof flashToast==='function') flashToast('MODEL UPLOADED \u2713');
-      renderEditorFields();   // the My uploads picker gains the new entry
-      const ni = editorEl && editorEl.querySelector('#edUrlInput'); if(ni) ni.value=d.url;   // the re-render rebuilt the field \u2014 restore the uploaded URL so Swap/Add use it
-      return;
+      return d;
     }
-    say('\u2715 '+((d&&d.error)||('HTTP '+r.status)));
-  }catch(e){ say('\u2715 server unreachable \u2014 '+(e&&e.message)); }
+    say('✕ '+((d&&d.error)||('HTTP '+r.status))); return null;
+  }catch(e){ say('✕ server unreachable — '+(e&&e.message)); return null; }
 }
-function renderModelUpload(urlHost, inp, tgt){
-  const head=document.createElement('div'); head.className='hint'; head.style.margin='8px 0 3px';
-  head.innerHTML='<b>Or upload your own .glb</b> \u2014 hosted on the community server (max '+UPLOAD_MAX_MB+' MB), works in shared & published levels';
-  urlHost.appendChild(head);
-  const urow=document.createElement('div'); urow.className='row2';
-  const fi=document.createElement('input'); fi.type='file'; fi.accept='.glb,model/gltf-binary'; fi.style.display='none';
-  const up=document.createElement('button'); up.textContent='Upload .glb'; up.onclick=()=>fi.click();
-  urow.appendChild(up); urow.appendChild(fi);
+function _deleteUpload(type, slug, cb){
+  fetch(_commApi()+'upload.php?type='+type+'&slug='+encodeURIComponent(slug)+'&k='+_uploadKey(), { method:'DELETE' })
+    .then(r=>r.json().catch(()=>null).then(d=>({r,d})))
+    .then(({r,d})=>{ if(r.ok && d && d.ok){ _uploadListSave(type, _uploadList(type).filter(x=>x.slug!==slug)); cb&&cb(true); } else cb&&cb(false, (d&&d.error)||('HTTP '+r.status)); })
+    .catch(()=>cb&&cb(false, 'server unreachable'));
+}
+// Shared Upload button + My-uploads picker + delete. fill(url,name) puts the URL where it belongs
+// and applies it; opts tunes the layout for the model widget vs. the compact texture/sound rows.
+function renderUploadRow(host, type, fill, opts){
+  opts=opts||{};
+  const NOUN={ model:'model (.glb)', texture:'image (.png/.jpg/.webp)', sound:'sound (.mp3/.ogg/.wav)' }[type];
+  const wrap=document.createElement('div'); wrap.style.marginTop=opts.tight?'4px':'8px'; wrap.className='uploadRow';
+  if(!opts.noHead){ const head=document.createElement('div'); head.className='hint'; head.style.margin='0 0 3px';
+    head.innerHTML='<b>'+(opts.headText||('Or upload your own '+NOUN))+'</b> — hosted on the community server (max '+UPLOAD_MAX[type]+' MB), works in shared & published levels'; wrap.appendChild(head); }
+  const row=document.createElement('div'); row.className='row2';
+  const fi=document.createElement('input'); fi.type='file'; fi.accept=UPLOAD_ACCEPT[type]; fi.style.display='none';
+  const up=document.createElement('button'); up.textContent=opts.btnText||('Upload '+UPLOAD_NOUN[type]);
+  up.onclick=()=>fi.click();
+  row.appendChild(up); row.appendChild(fi);
   const st=document.createElement('div'); st.className='hint'; st.style.cssText='font-size:10px;margin:3px 0 0;min-height:12px;';
   const say=(t)=>{ st.textContent=t; };
-  fi.onchange=()=>{ const f=fi.files&&fi.files[0]; fi.value=''; if(f) _uploadModelFile(f, say, inp, tgt); };
-  const mine=_myModels();
+  fi.onchange=async ()=>{ const f=fi.files&&fi.files[0]; fi.value=''; if(!f) return;
+    const d=await _uploadAsset(f, type, say); if(!d) return;
+    fill(d.url, d.name);
+    if(typeof flashBigToast==='function') flashBigToast(UPLOAD_NOUN[type].toUpperCase()+' UPLOADED', d.slug+' — hosted & added to your uploads');
+    renderEditorFields();
+    if(opts.afterRender) opts.afterRender(d.url);
+  };
+  const mine=_uploadList(type);
   if(mine.length){
-    const sel=document.createElement('select'); sel.style.cssText='flex:1;font-size:11px;';
-    const o0=document.createElement('option'); o0.value=''; o0.textContent='My uploads ('+mine.length+')\u2026'; sel.appendChild(o0);
-    for(const m of mine){ const o=document.createElement('option'); o.value=m.url; o.textContent=m.slug+'.glb \u00b7 '+((m.bytes||0)/1048576).toFixed(1)+' MB'; sel.appendChild(o); }
-    sel.onchange=()=>{ if(sel.value){ inp.value=sel.value; say('URL filled \u2014 use Swap model'+(tgt&&tgt.addable?' / Add model':'')+' to apply it.'); } };
-    urow.appendChild(sel);
-    const del=document.createElement('button'); del.textContent='\u2715'; del.title='Delete the selected upload from the server';
+    const sel=document.createElement('select'); sel.style.cssText='flex:1;min-width:0;font-size:11px;';
+    const o0=document.createElement('option'); o0.value=''; o0.textContent='My uploads ('+mine.length+')…'; sel.appendChild(o0);
+    for(const m of mine){ const o=document.createElement('option'); o.value=m.url; o.textContent=m.slug+' · '+((m.bytes||0)/1048576).toFixed(1)+' MB'; sel.appendChild(o); }
+    sel.onchange=()=>{ if(sel.value){ fill(sel.value); const m=mine.find(x=>x.url===sel.value); say('Using '+((m&&m.slug)||'upload')+(opts.applyHint?(' — '+opts.applyHint):'')); } };
+    row.appendChild(sel);
+    const del=document.createElement('button'); del.textContent='✕'; del.title='Delete the selected upload from the server';
     del.style.cssText='flex:0 0 auto;padding:4px 10px;border-color:#7a2630;color:#ff9b93;';
     del.onclick=()=>{
       const url=sel.value; if(!url){ say('Pick one of your uploads first.'); return; }
-      const m=_myModels().find(x=>x.url===url); if(!m) return;
-      uiConfirm('Delete '+m.slug+'.glb from the server? Levels using it will lose the model.', async ()=>{
-        try{
-          const r=await fetch(_commApi()+'upload.php?slug='+encodeURIComponent(m.slug)+'&k='+_uploadKey(), { method:'DELETE' });
-          const d=await r.json().catch(()=>null);
-          if(r.ok && d && d.ok){ _myModelsSave(_myModels().filter(x=>x.slug!==m.slug)); if(typeof flashToast==='function') flashToast('UPLOAD DELETED'); renderEditorFields(); }
-          else say('\u2715 '+((d&&d.error)||('HTTP '+r.status)));
-        }catch(e){ say('\u2715 server unreachable'); }
+      const m=mine.find(x=>x.url===url); if(!m) return;
+      uiConfirm('Delete '+m.slug+' from the server? Levels using it will lose it.', ()=>{
+        _deleteUpload(type, m.slug, (ok,err)=>{ if(ok){ if(typeof flashToast==='function') flashToast('UPLOAD DELETED'); renderEditorFields(); } else say('✕ '+(err||'')); });
       }, 'Delete');
     };
-    urow.appendChild(del);
+    row.appendChild(del);
   }
-  urlHost.appendChild(urow);
-  urlHost.appendChild(st);
+  wrap.appendChild(row); wrap.appendChild(st);
+  host.appendChild(wrap);
+}
+// The model widget's upload control (build 974 behaviour, now on the shared helper).
+function renderModelUpload(urlHost, inp, tgt){
+  renderUploadRow(urlHost, 'model', (url)=>{
+    inp.value=url;
+    if(tgt && tgt.setUrl && !tgt.addable) tgt.setUrl(url);   // single-slot (gun/player/station) applies now; props keep it for Add model
+  }, { btnText:'Upload .glb', headText:'Or upload your own model',
+       applyHint:'use Swap model'+(tgt&&tgt.addable?' / Add model':''),
+       afterRender:(url)=>{ const ni=editorEl && editorEl.querySelector('#edUrlInput'); if(ni) ni.value=url; } });   // the re-render rebuilt the field
 }
 function openCommunity(){ openModal('communityModal'); renderCommunity(); }
 // build 854: a small JPEG of the current view, captured through a render target (reliable regardless of

@@ -58,18 +58,21 @@ if ($method === 'POST') {
                   'author' => $m['author'] ?? '', 'desc' => $m['desc'] ?? '', 'date' => $m['date'] ?? ''];
     }
     usort($games, function ($x, $y) { return strcmp($y['date'], $x['date']); });
-    // build 974: creator model uploads — listed with sizes for spot-checks + disk visibility
-    $models = []; $modelBytes = 0;
-    foreach (glob(modelsMetaDir() . '/*.json') ?: [] as $f) {
-      $m = json_decode((string)@file_get_contents($f), true);
-      if (!is_array($m)) continue;
-      $modelBytes += (int)($m['bytes'] ?? 0);
-      $models[] = ['slug' => $m['slug'] ?? basename($f, '.json'), 'name' => $m['name'] ?? '',
-                   'bytes' => (int)($m['bytes'] ?? 0), 'date' => $m['date'] ?? '', 'owner' => substr((string)($m['keyHash'] ?? ''), 0, 8)];
+    // build 974/975: creator uploads (models, textures, sounds) — listed with sizes + disk total
+    $uploads = []; $uploadBytes = 0;
+    foreach (assetTypes() as $t) {
+      foreach (glob(assetMetaDir($t) . '/*.json') ?: [] as $f) {
+        $m = json_decode((string)@file_get_contents($f), true);
+        if (!is_array($m)) continue;
+        $uploadBytes += (int)($m['bytes'] ?? 0);
+        $uploads[] = ['slug' => $m['slug'] ?? basename($f, '.json'), 'type' => $m['type'] ?? $t,
+                      'ext' => $m['ext'] ?? '', 'name' => $m['name'] ?? '', 'bytes' => (int)($m['bytes'] ?? 0),
+                      'date' => $m['date'] ?? '', 'owner' => substr((string)($m['keyHash'] ?? ''), 0, 8)];
+      }
     }
-    usort($models, function ($x, $y) { return strcmp($y['date'], $x['date']); });
+    usort($uploads, function ($x, $y) { return strcmp($y['date'], $x['date']); });
     jsonOut(200, ['pending' => $pending, 'published' => $published, 'games' => $games,
-                  'models' => $models, 'modelBytes' => $modelBytes]);
+                  'uploads' => $uploads, 'uploadBytes' => $uploadBytes]);
   }
 
   if ($a === 'approve') {
@@ -113,11 +116,14 @@ if ($method === 'POST') {
     jsonOut(200, ['ok' => true]);
   }
 
-  if ($a === 'delete_model') {   // build 974: remove an uploaded model (file + meta)
+  if ($a === 'delete_upload') {   // build 975: remove any uploaded asset (file + meta)
     $slug = (string)($b['slug'] ?? '');
-    if (!preg_match('/^[a-z0-9\-]{1,64}$/', $slug)) jsonOut(400, ['error' => 'bad slug']);
-    @unlink(modelsDir() . '/' . $slug . '.glb');
-    @unlink(modelsMetaDir() . '/' . $slug . '.json');
+    $type = (string)($b['type'] ?? '');
+    if (!preg_match('/^[a-z0-9\-]{1,64}$/', $slug) || !in_array($type, assetTypes(), true)) jsonOut(400, ['error' => 'bad slug/type']);
+    $meta = json_decode((string)@file_get_contents(assetMetaDir($type) . '/' . $slug . '.json'), true);
+    $ext = is_array($meta) ? ($meta['ext'] ?? '') : '';
+    if ($ext !== '') @unlink(assetFilesDir($type) . '/' . $slug . '.' . $ext);
+    @unlink(assetMetaDir($type) . '/' . $slug . '.json');
     jsonOut(200, ['ok' => true]);
   }
 
@@ -148,7 +154,7 @@ button.ghost{background:transparent;color:#9fc4ba;border-color:#2a3a42}
 <h2>PENDING REVIEW</h2><div id="pending" class="meta">—</div>
 <h2>PUBLISHED</h2><div id="published" class="meta">—</div>
 <h2>UNLISTED GAMES <span style="letter-spacing:0;color:#5a7d72">(published instantly — spot-check, unpublish anything that shouldn't be here)</span></h2><div id="games" class="meta">—</div>
-<h2>UPLOADED MODELS <span id="modelDisk" style="letter-spacing:0;color:#5a7d72"></span></h2><div id="models" class="meta">—</div>
+<h2>UPLOADED ASSETS <span id="uploadDisk" style="letter-spacing:0;color:#5a7d72"></span></h2><div id="uploads" class="meta">—</div>
 <script>
 const $=id=>document.getElementById(id);
 function pw(){ const v=$('pw').value; try{ sessionStorage.setItem('rumpus_admin_pw', v); }catch(e){} return v; }
@@ -202,16 +208,17 @@ async function load(){
     rm.onclick=()=>{ if(confirm('Take down /game/'+g.slug+'? The creator\'s link will stop working.')) act({a:'unpublish_game',slug:g.slug,pw:pw()},'taken down'); };
     div.appendChild(test); div.appendChild(rm); gm.appendChild(div);
   }
-  const md=$('models');
-  $('modelDisk').textContent = (d.models&&d.models.length) ? '('+d.models.length+' files · '+(d.modelBytes/1048576).toFixed(1)+' MB)' : '';
-  md.innerHTML = (d.models&&d.models.length) ? '' : 'No uploaded models yet.';
-  for(const m of (d.models||[])){
+  const md=$('uploads'); const DIR={model:'models',texture:'textures',sound:'sounds'};
+  $('uploadDisk').textContent = (d.uploads&&d.uploads.length) ? '('+d.uploads.length+' files · '+(d.uploadBytes/1048576).toFixed(1)+' MB)' : '';
+  md.innerHTML = (d.uploads&&d.uploads.length) ? '' : 'No uploaded assets yet.';
+  for(const m of (d.uploads||[])){
+    const file=m.slug+'.'+m.ext;
     const div=document.createElement('div'); div.className='card';
-    div.innerHTML='<div class="grow"><b>'+esc(m.slug)+'.glb</b> <span class="meta">'+(m.bytes/1048576).toFixed(2)+' MB · '+esc(m.date)+' · uploader '+esc(m.owner)+'…'+(m.name?' · as "'+esc(m.name)+'"':'')+'</span></div>';
+    div.innerHTML='<div class="grow"><b>['+esc(m.type)+'] '+esc(file)+'</b> <span class="meta">'+(m.bytes/1048576).toFixed(2)+' MB · '+esc(m.date)+' · uploader '+esc(m.owner)+'…'+(m.name?' · as "'+esc(m.name)+'"':'')+'</span></div>';
     const dl=document.createElement('a'); dl.textContent='⬇ Inspect'; dl.target='_blank';
-    dl.href='../community/models/'+encodeURIComponent(m.slug)+'.glb';
+    dl.href='../community/'+(DIR[m.type]||m.type)+'/'+encodeURIComponent(file);
     const rm=document.createElement('button'); rm.className='warn'; rm.textContent='Delete';
-    rm.onclick=()=>{ if(confirm('Delete '+m.slug+'.glb? Levels using it will lose the model.')) act({a:'delete_model',slug:m.slug,pw:pw()},'deleted'); };
+    rm.onclick=()=>{ if(confirm('Delete '+file+'? Levels using it will lose it.')) act({a:'delete_upload',type:m.type,slug:m.slug,pw:pw()},'deleted'); };
     div.appendChild(dl); div.appendChild(rm); md.appendChild(div);
   }
 }
