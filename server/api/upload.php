@@ -9,9 +9,9 @@
 // model/image/sound can land. Files serve from community/<models|textures|sounds>/ (CORS-open,
 // script execution hard-off via .htaccess); metadata lives in api/<type>smeta/ (web-denied).
 // Owner key stored hashed: same filename + same key replaces in place; delete is key-gated.
-// Caps (env-tunable): model 8 MB, texture/sound 4 MB; 20 files + 60 MB per key (shared across
-// types); 1000 files + 3 GB global; 20s between uploads per IP. NOTE: PHP's post_max_size must be
-// >= the largest cap (see server/README.md).
+// Caps (env-tunable): model 12 MB (8 before build 988), texture/sound 4 MB; 20 files + 60 MB per
+// key (shared across types); 1000 files + 3 GB global; 20s between uploads per IP. NOTE: PHP's
+// post_max_size must be >= the largest cap (see server/README.md).
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: content-type');
@@ -21,7 +21,7 @@ header('Cache-Control: no-store');
 define('RUMPUS_COMM', 1);
 require __DIR__ . '/_community_lib.php';
 
-$MAX = ['model' => (int)(getenv('RUMPUS_MODEL_MAX') ?: 8388608),
+$MAX = ['model' => (int)(getenv('RUMPUS_MODEL_MAX') ?: 12582912),
         'texture' => (int)(getenv('RUMPUS_TEXTURE_MAX') ?: 4194304),
         'sound' => (int)(getenv('RUMPUS_SOUND_MAX') ?: 4194304)];
 $PER_KEY   = (int)(getenv('RUMPUS_UPLOADS_PER_KEY') ?: 20);

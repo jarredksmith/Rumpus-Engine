@@ -28,7 +28,7 @@ eq(_sniff(bytes([0x3C,0x68,0x74,0x6D,0x6C]), 'texture'), '', 'HTML is not an ima
 eq(_sniff(bytes([0x3C,0x68,0x74,0x6D,0x6C]), 'sound'), '', 'HTML is not a sound');
 
 // ---- shared control + per-type wiring ----
-assert(/const UPLOAD_MAX = \{ model:8, texture:4, sound:4 \};/.test(src), 'per-type size caps');
+assert(/const UPLOAD_MAX = \{ model:12, texture:4, sound:4 \};/.test(src), 'per-type size caps (model 8->12 MB in build 988)');
 assert(/localStorage\.getItem\('breach_my_'\+type\+'s'\)/.test(src), "per-type upload lists ('breach_my_models' stays back-compatible)");
 assert(/function renderUploadRow\(host, type, fill, opts\)/.test(src), 'one shared Upload+picker+delete control');
 assert(/fetch\(_commApi\(\)\+'upload\.php\?type='\+type\+'&name='/.test(src), 'the type rides on the POST');

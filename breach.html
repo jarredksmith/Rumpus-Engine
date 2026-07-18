@@ -9140,6 +9140,35 @@ function _ensureGltfTransform(){
   })();
   return _gtPromise;
 }
+// build 988: optional codecs for the bake. The meshopt ENCODER packs the output GLB
+// (EXT_meshopt_compression — typically 60-90% smaller geometry; the game's loader has decoded it
+// since build 918, so published levels load it everywhere). The draco DECODER lets the optimizer
+// READ models that arrive already Draco-compressed (before, those failed with "can't repack").
+// Both are best-effort: whatever fails to load is skipped and the bake still runs uncompressed.
+let _glbCodecsPromise=null;
+function _ensureGlbCodecs(){
+  if(_glbCodecsPromise) return _glbCodecsPromise;
+  _glbCodecsPromise = (async ()=>{
+    const out={ meshoptEncoder:null, meshoptDecoder:null, dracoDecoder:null };
+    try{ out.meshoptDecoder = await _ensureMeshopt(); }catch(e){}
+    for(const url of ['https://cdn.jsdelivr.net/npm/meshoptimizer@0.20.0/meshopt_encoder.module.js',
+                      'https://unpkg.com/meshoptimizer@0.20.0/meshopt_encoder.module.js']){
+      try{ const mod=await import(url); const E=mod.MeshoptEncoder||(mod.default&&mod.default.MeshoptEncoder);
+        if(E){ try{ if(E.ready&&E.ready.then) await E.ready; }catch(e){} out.meshoptEncoder=E; break; }
+      }catch(e){ /* next source */ }
+    }
+    try{   // draco: the emscripten factory + its wasm fetched explicitly (relative wasm lookups fail cross-CDN)
+      const mod=await import('https://esm.sh/draco3dgltf@1.5.7');
+      const fac=(mod.default&&mod.default.createDecoderModule)?mod.default:mod;
+      if(fac.createDecoderModule){
+        const wasm=await fetch('https://cdn.jsdelivr.net/npm/draco3dgltf@1.5.7/draco_decoder_gltf.wasm').then(r=>r.ok?r.arrayBuffer():null);
+        if(wasm) out.dracoDecoder=await fac.createDecoderModule({ wasmBinary:wasm });
+      }
+    }catch(e){ /* draco inputs will still report "can't repack" */ }
+    return out;
+  })();
+  return _glbCodecsPromise;
+}
 const MOBILE_TRI_BUDGET = 40000;   // per-model triangle target for the bake (mirrors CHAR_TRI_BUDGET)
 const MOBILE_TEX_MAX    = 1024;    // longest texture edge on mobile (the 1024 guideline)
 function _fmtMB(b){ return (b/1048576).toFixed(1)+' MB'; }
@@ -9169,8 +9198,14 @@ async function optimizeModelForMobile(input, opts){
   const triBudget=opts.triBudget||MOBILE_TRI_BUDGET, texMax=opts.texMax||MOBILE_TEX_MAX;
   const GT=await _ensureGltfTransform(); if(!GT) throw new Error('optimizer library unavailable (offline?)');
   const S=await _ensureSimplifier();
+  const codecs=await _ensureGlbCodecs();   // build 988: read draco/meshopt inputs, write meshopt output
   const { WebIO }=GT.core, { dedup, weld, simplify, prune }=GT.funcs;
   const io=new WebIO().registerExtensions(GT.ext.ALL_EXTENSIONS);
+  const deps={};
+  if(codecs.dracoDecoder) deps['draco3d.decoder']=codecs.dracoDecoder;
+  if(codecs.meshoptDecoder) deps['meshopt.decoder']=codecs.meshoptDecoder;
+  if(codecs.meshoptEncoder) deps['meshopt.encoder']=codecs.meshoptEncoder;
+  io.registerDependencies(deps);
   const inBytes=(input instanceof Uint8Array)?input:new Uint8Array(input);
   let doc; try{ doc=await io.readBinary(inBytes); }catch(e){ throw new Error('couldn\'t read this model (a compression we can\'t repack yet)'); }
   const root=doc.getRoot();
@@ -9178,6 +9213,7 @@ async function optimizeModelForMobile(input, opts){
   const passes=[dedup(), weld()];
   if(S && before.tris>triBudget) passes.push(simplify({ simplifier:S, ratio:Math.max(0.01, triBudget/before.tris), error:0.05 }));   // meshopt keeps skins/UVs intact (unlike the crude runtime index rewrite)
   passes.push(prune());
+  if(codecs.meshoptEncoder && GT.funcs.meshopt) passes.push(GT.funcs.meshopt({ encoder:codecs.meshoptEncoder }));   // build 988: pack the output (game decodes since build 918)
   try{ await doc.transform.apply(doc, passes); }catch(e){ /* geometry pass failed — still shrink textures */ }
   let texChanged=0;
   for(const t of root.listTextures()){
@@ -18831,7 +18867,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 987 · 2026-07-18';
+const BUILD_VERSION = 'build 988 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31357,7 +31393,7 @@ const COMM_SUBMIT_URL = 'https://github.com/jarredksmith/breach/issues/new?templ
 // multiplayer transfer. The client sniffs the file signature + size before spending bandwidth; the
 // server re-verifies and enforces quotas. One owner key per browser (stored hashed server-side)
 // lets you replace (same filename) or delete your own uploads.
-const UPLOAD_MAX = { model:8, texture:4, sound:4 };   // MB, mirrors the server caps
+const UPLOAD_MAX = { model:12, texture:4, sound:4 };   // MB, mirrors the server caps (model 8->12 in build 988)
 const UPLOAD_ACCEPT = { model:'.glb,model/gltf-binary', texture:'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp', sound:'audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav' };
 const UPLOAD_NOUN = { model:'model', texture:'image', sound:'sound' };
 function _uploadKey(){

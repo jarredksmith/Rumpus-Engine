@@ -95,14 +95,15 @@ and published levels.
    - `public_html/community/textures/` ← `community/textures/.htaccess` (.png/.jpg/.webp)
    - `public_html/community/sounds/`   ← `community/sounds/.htaccess`   (.mp3/.ogg/.wav)
 
-Caps (env-tunable, see the top of `upload.php`): 8 MB per model, 4 MB per texture/sound; 20
+Caps (env-tunable, see the top of `upload.php`): 12 MB per model (8 before build 988), 4 MB per texture/sound; 20
 files / 60 MB per creator (shared across types); 1000 files / 3 GB global; 20s between uploads
 per IP. Every upload must pass a file-signature check on both client and server, so only real
 models/images/sounds land. `admin.php` gains an **UPLOADED ASSETS** section (type-tagged, with
 sizes, a disk total, an Inspect link and one-click Delete).
 
 If large uploads fail with "empty upload": raise `post_max_size` (cPanel → MultiPHP INI
-Editor) to at least the largest cap (8 MB).
+Editor) to at least the largest cap (12 MB) — REQUIRED for the build-988 cap raise: a
+`post_max_size` still at 8M silently truncates bigger uploads before PHP sees them.
 
 Bandwidth note: every fresh player downloads a level's assets (then caches them for a week).
 If a popular game strains the host, putting the domain behind Cloudflare's free proxy serves
