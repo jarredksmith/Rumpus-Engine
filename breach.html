@@ -457,6 +457,7 @@
   }
   #overlay h1 img { width:min(560px, 84vw, 82vh); height:auto; display:block; margin:0 auto; }   /* build 966: no glow */  /* build 960/963: SVG wordmark, theme-glow; the 90vh term caps height ~24vh at the logo's 3.45:1 aspect, so landscape phones keep a short menu (the SVG has no intrinsic size, so width must stay explicit) */
   #overlay .sub { color:#7fa99c; letter-spacing: 4px; margin-top: 10px; font-size: 14px; }
+  #buildTag { position:absolute; right:calc(10px + env(safe-area-inset-right)); bottom:calc(8px + env(safe-area-inset-bottom)); color:#44625a; font:500 10px var(--ui-font), sans-serif; letter-spacing:1px; pointer-events:none; }   /* build 979: which build is this device actually running? */
   @media (max-width: 480px) { #overlay .sub { letter-spacing: 2px; font-size: 12px; } }  /* build 952: keep the tagline on one line on phones */
   /* build 961: boot veil — the giant single file wires its buttons only once fully parsed, so until
      then the menu says so instead of feeling broken (and an early click is queued + replayed). */
@@ -865,6 +866,7 @@
 <div id="cpHud"><div class="cpSide"><span id="cpR">0</span><div class="cpBar"><div id="cpRfill" class="cpFill red"></div></div></div><div id="cpMid">NEUTRAL</div><div class="cpSide"><span id="cpB">0</span><div class="cpBar"><div id="cpBfill" class="cpFill blue"></div></div></div></div>
 
 <div id="overlay">
+  <div id="buildTag"></div>
   <h1><img id="menuLogo" src="img/RumpusEngine.svg" alt="RUMPUS ENGINE"></h1>  <!-- build 960: brand logo; the Kaph alt-text renders if the file is missing -->
   <div class="sub">// BUILD IT · BREAK IT · SHARE IT</div>
   <div id="bootPill">LOADING ENGINE&#8230;</div>
@@ -18647,7 +18649,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 978 · 2026-07-18';
+const BUILD_VERSION = 'build 979 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31480,6 +31482,7 @@ function enterEditor(){
   if(!editorOpen) toggleEditor();
   const note=$('edCopied'); if(note){ note.textContent='Build mode — place props, lights & enemy spawns, then press P to start wave 1.'; }
 }
+{ const bt=document.getElementById('buildTag'); if(bt) bt.textContent=BUILD_VERSION; }   // build 979: version visible on the menu (was backquote-debug only — unreachable on phones)
 bindMenu();
 bindPauseMenu();
 bindModals();
