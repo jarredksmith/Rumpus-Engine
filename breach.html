@@ -13420,8 +13420,10 @@ function updateJumpPads(dt){
       if(dx*dx+dz*dz<=r2){ const feetY=player.pos.y-EYE; if(inBand(feetY,z) && (player.onGround || player.vel.y<=0.5)){ player.vel.y=pw; player.onGround=false; _jpPlayerCd=0.45; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); } } }
     // bots (host-simulated PvP AI)
     if(typeof bots!=='undefined'){ for(const b of bots){ if(b.dead) continue; const dx=b.pos.x-(+z.x||0), dz=b.pos.z-(+z.z||0); if(dx*dx+dz*dz>r2) continue; if(!inBand(b.pos.y,z)) continue; if((b._jpCd||0)>0){ b._jpCd=Math.max(0,b._jpCd-dt); continue; } if(b.grounded || (b.vy||0)<=0.5){ b.vy=pw; b.grounded=false; b._jpCd=0.45; } } }
-    // wave enemies (vertical via vy/launchY)
-    if(typeof enemies!=='undefined'){ for(const en of enemies){ if(!en || en.hp<=0 || !en.mesh) continue; const ep=en.mesh.position; const dx=ep.x-(+z.x||0), dz=ep.z-(+z.z||0); if(dx*dx+dz*dz>r2) continue; if(!inBand(ep.y,z)) continue; if((en._jpCd||0)>0){ en._jpCd=Math.max(0,en._jpCd-dt); continue; } if(en.grounded || (en.vy||0)<=0.5){ en.vy=pw; en.grounded=false; en._jpCd=0.45; } } }
+    // wave enemies (vertical via vy/launchY). build 993: the band test wants FEET — ep.y is the body
+    // CENTRE (~1.4 up), so a pad shorter than ~1.5 could never catch an enemy while catching the
+    // player fine. And the cooldown decays every frame now, not only while standing in the pad.
+    if(typeof enemies!=='undefined'){ for(const en of enemies){ if(!en || en.hp<=0 || !en.mesh) continue; if((en._jpCd||0)>0) en._jpCd=Math.max(0,en._jpCd-dt); const ep=en.mesh.position; const dx=ep.x-(+z.x||0), dz=ep.z-(+z.z||0); if(dx*dx+dz*dz>r2) continue; if(!inBand(ep.y-1.4,z)) continue; if((en._jpCd||0)>0) continue; if(en.grounded || (en.vy||0)<=0.5){ en.vy=pw; en.grounded=false; en._jpCd=0.45; } } }
   }
 }
 // ---- Multiplayer spawn-region marker (a ring showing where MP/bot spawns are confined) ----
@@ -18988,7 +18990,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 992 · 2026-07-18';
+const BUILD_VERSION = 'build 993 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
