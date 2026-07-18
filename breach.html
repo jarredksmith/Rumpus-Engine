@@ -112,6 +112,11 @@
   #editor .edSecBody { padding: 8px 10px; }
   #editor .edSection.collapsed .edSecBody { display: none; }
   #editor .edSecSub { margin: -2px 0 8px; color: #8fc7b6; font: 400 10.5px/1.4 ui-monospace, monospace; letter-spacing: 0.2px; opacity: 0.85; }
+  /* build 983: a primary call-to-action (Publish to community) — filled accent, unmissable */
+  #editor button.edCTA { width:100%; background:linear-gradient(180deg, rgba(var(--accent-rgb),0.95), rgba(var(--accent-rgb),0.72)); color:#04120e; border:none; border-radius:8px; padding:11px 12px; font:800 12.5px var(--ui-font); letter-spacing:.6px; display:flex; align-items:center; justify-content:center; gap:8px; box-shadow:0 3px 14px rgba(var(--accent-rgb),0.25); }
+  #editor button.edCTA:hover { filter:brightness(1.08); color:#04120e; }
+  #editor button.edCTA svg { width:16px; height:16px; }
+  #editor .edPublishCard { border:1px solid rgba(var(--accent-rgb),0.4); border-radius:9px; padding:11px; margin:0 0 10px; background:rgba(var(--accent-rgb),0.06); }
   /* build 981: command palette — Ctrl+K "do anything": actions + every settings section, one jump box */
   #edPal { position:fixed; inset:0; z-index:110; display:none; align-items:flex-start; justify-content:center; padding-top:12vh; background:rgba(3,7,10,0.55); backdrop-filter:blur(2px); }
   #edPal.on { display:flex; }
@@ -18686,7 +18691,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 982 · 2026-07-18';
+const BUILD_VERSION = 'build 983 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26007,19 +26012,19 @@ function buildEditorPanel(){
     + sec('HUD', 'hud', '<div id="edHud"></div>')
     + sec('Title screen', 'titlescreen', '<div id="edHomePanel"></div>')
     + sec('Level file', 'levelfile',
-        '<div id="edIssues"></div>'
-      + '<div class="row2"><button id="edSave">'+_icn('save')+'Save</button><button id="edClear">Clear save</button></div>'
-      + '<label style="display:flex;align-items:center;gap:7px;margin:6px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer"><input type="checkbox" id="edAutoSave" style="width:15px;height:15px;accent-color:var(--accent)"><b>Autosave</b> while editing</label>'
-      + '<div class="hint" id="edAutoStatus" style="font-size:10px;opacity:0.75;margin:0 0 4px">Saves automatically as you work.</div>'
-      + '<div class="row2" style="margin-top:6px"><button id="edShare">'+_icn('link')+'Copy share link</button></div>'
+        '<div class="edPublishCard">'
+      +   '<button id="edSubmitComm" class="edCTA">'+_icn('upload')+'Publish to community</button>'
+      +   '<div class="hint" style="font-size:10px;margin:6px 0 0;text-align:center">Share your level with everyone \u2014 it appears in the in-game library once approved. No account needed.</div>'
+      + '</div>'
+      + '<div id="edIssues"></div>'
+      + '<div class="row2"><button id="edSave">'+_icn('save')+'Save</button><button id="edShare">'+_icn('link')+'Share link</button></div>'
+      + '<label style="display:flex;align-items:center;gap:7px;margin:8px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer"><input type="checkbox" id="edAutoSave" style="width:15px;height:15px;accent-color:var(--accent)"><b>Autosave</b> while editing</label>'
+      + '<div class="hint" id="edAutoStatus" style="font-size:10px;opacity:0.75;margin:0 0 6px">Saves automatically as you work.</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .json</button><button id="edImport">'+_icn('upload')+'Import .json</button></div>'
       + '<input type="file" id="edImportFile" accept=".rumpus,.breach,.json,application/json" style="display:none">'
-      + '<div class="row2" style="margin-top:6px"><button id="edSubmitComm" style="width:100%">'+_icn('upload')+'Submit to community library</button></div>'
-      + '<div class="hint" style="font-size:10px;opacity:0.75;margin:2px 0 0">Copies the level JSON, then opens the submission form on GitHub — paste it there. Levels go live in the in-game library once approved.</div>'
-      + '<div class="row2" style="margin-top:6px"><button id="edReset">Reset target</button><button id="edCopy">Copy code</button></div>'
+      + '<div class="row2" style="margin-top:6px"><button id="edClear">Clear save</button><button id="edReset">Reset target</button></div>'
       + '<div class="row2" style="margin-top:10px"><button id="edWipe" style="width:100%;border-color:#7a2630;color:#ff9b93">'+_icn('trash')+'Delete all objects (fresh scene)</button></div>'
-      + '<div class="copied" id="edCopied"></div>'
-      + '<textarea id="edOut" readonly></textarea>')
+      + '<div class="copied" id="edCopied"></div>')
     + sec('Campaign', 'campaign', '<div id="edCampaign"></div>')
     + '</div></div>'
     ;
@@ -26249,7 +26254,6 @@ function buildEditorPanel(){
   p.querySelector('#edPlay').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); startGame(); };           // test the live-built level immediately (no save/reload)
   p.querySelector('#edMenu').onclick = ()=>{ editorToMenu(); };        // back to the start overlay
   { const ac=p.querySelector('#edAutoSave'); if(ac){ ac.checked=_autoSaveOn; ac.onchange=()=>{ setAutoSaveOn(ac.checked); const st=p.querySelector('#edAutoStatus'); if(st) st.textContent=ac.checked?'Saves automatically as you work.':'Autosave off — remember to Save.'; }; } }
-  p.querySelector('#edCopy').onclick = ()=>{ copyEditorCode(); };
   { const wb=p.querySelector('#edWipe'); if(wb){ let armed=false, t=null; wb.onclick=()=>{
       if(!armed){ armed=true; wb.innerHTML=_icn('warn')+'Click again to delete ALL objects'; wb.style.background='#7a2630'; t=setTimeout(()=>{ armed=false; wb.innerHTML=_icn('trash')+'Delete all objects (fresh scene)'; wb.style.background=''; }, 3500); return; }
       clearTimeout(t); armed=false; wb.innerHTML=_icn('trash')+'Delete all objects (fresh scene)'; wb.style.background='';
@@ -26267,8 +26271,8 @@ function buildEditorPanel(){
       const link = buildShareLink(await encodeLevel(serializeLevel()));
       let copied = false;
       try{ await navigator.clipboard.writeText(link); copied = true; }catch(e){}
-      const out = editorEl.querySelector('#edOut'); if(out){ out.value = link; out.focus(); out.select(); }   // always show it so it's copyable by hand
-      note.textContent = copied ? ('Share link copied ✓  (' + link.length + ' chars)') : 'Link is in the box below — select + copy it';
+      note.textContent = copied ? ('Share link copied ✓  (' + link.length + ' chars)') : '';
+      if(!copied && typeof uiPromptForm==='function') uiPromptForm('Your share link', [{ label:'COPY THIS LINK', value:link, max:100000 }], ()=>{});   // clipboard blocked -> a selectable modal field
     }catch(e){ note.textContent = 'Could not build a share link here'; }
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 5000);
   };
@@ -29907,11 +29911,7 @@ renderer.domElement.addEventListener('click', (e)=>{
   } else if(picked){ selProps.length=0; selLights.length=0; editorActive=picked; syncModeToActive(); renderEditorFields(); }
 });
 
-function updateEditorOut(){
-  if(!editorEl) return;
-  const all = Object.keys(editorTargets).map(k=>editorTargets[k].code()).join('\n\n');
-  editorEl.querySelector('#edOut').value = all;
-}
+function updateEditorOut(){ /* build 983: the raw-JSON textarea is gone; kept as a no-op so its many transform-commit callers stay simple */ }
 
 function resetEditorTarget(key){
   const t = editorTargets[key];
@@ -29926,19 +29926,8 @@ function resetEditorTarget(key){
   renderEditorFields();
 }
 
-function copyEditorCode(){
-  const out = editorEl.querySelector('#edOut');
-  const note = editorEl.querySelector('#edCopied');
-  out.select();
-  let ok=false;
-  try { ok = document.execCommand && document.execCommand('copy'); } catch(e){}
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(out.value).then(()=>{ note.textContent='Copied to clipboard'; }, ()=>{});
-    ok = true;
-  }
-  note.textContent = ok ? 'Copied to clipboard' : 'Select the text below and copy manually';
-  clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 2500);
-}
+// build 983: copyEditorCode + the raw-JSON #edOut textarea were removed — a project-genesis holdover.
+// Share links, Export .json and Publish to community all replace it.
 
 // Toggle wireframe rendering across the whole scene (used by the top-down editor view).
 let _wfList = null;

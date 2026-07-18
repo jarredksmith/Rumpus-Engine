@@ -11,7 +11,7 @@ for(const k of ['save','link','download','upload','trash','search','eye','eyeOff
 
 // the swapped sites
 assert(/id="edSave">'\+_icn\('save'\)\+'Save<\/button>/.test(src), 'Save uses the SVG icon');
-assert(/id="edShare">'\+_icn\('link'\)\+'Copy share link<\/button>/.test(src), 'Copy-link uses the SVG icon');
+assert(/id="edShare">'\+_icn\('link'\)\+'Share link<\/button>/.test(src), 'Share-link uses the SVG icon');
 assert(/id="edExport">'\+_icn\('download'\)\+'Export \.json<\/button>/.test(src) && /id="edImport">'\+_icn\('upload'\)\+'Import \.json<\/button>/.test(src), 'Export/Import use SVG icons');
 assert(/id="edWipe"[^>]*>'\+_icn\('trash'\)\+'Delete all objects/.test(src), 'Delete-all uses the SVG icon');
 assert(/wb\.innerHTML=_icn\('warn'\)\+'Click again to delete ALL objects'/.test(src), 'the armed wipe state uses the warning icon');

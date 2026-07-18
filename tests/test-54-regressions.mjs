@@ -13,5 +13,5 @@ assert(/renderer\.setSize\(innerWidth, innerHeight, false\)/.test(src), 'setSize
 assert(!/renderer\.setSize\(innerWidth, innerHeight\);/.test(src), 'no setSize call still writes inline style');
 assert(/addEventListener\('load', _fitViewport\)/.test(src) && /setTimeout\(_fitViewport/.test(src), 're-fits after the window settles');
 // the editor's Copy-code button was also swallowed into a comment by the same lost-newline class of bug
-assert(/p\.querySelector\('#edCopy'\)\.onclick = \(\)=>\{ copyEditorCode\(\); \}/.test(src), 'editor Copy button wiring is live code, not commented out');
+assert(!/id=\"edCopy\"/.test(src) && !/copyEditorCode\(\)/.test(src), 'the raw-JSON Copy code button + textarea were removed (build 983)');
 done('deploy + canvas regression fixes');
