@@ -5,7 +5,7 @@ const src = gameSource();
 // the rest unchecked), wiping the user's choices. Now speed + hold ride every save/restore path.
 
 // the player-model SAVE includes speed + hold
-assert(/clipSpeed: Object\.assign\(\{\}, playerModelCfg\.clipSpeed\|\|\{\}\), clipHold: Object\.assign\(\{\}, playerModelCfg\.clipHold\|\|\{\}\), clipInPlace: Object\.assign\(\{\}, playerModelCfg\.clipInPlace\|\|\{\}\) \}/.test(src), 'player save serializes clipSpeed + clipHold + clipInPlace (build 493)');
+assert(/clipSpeed: Object\.assign\(\{\}, playerModelCfg\.clipSpeed\|\|\{\}\), clipHold: Object\.assign\(\{\}, playerModelCfg\.clipHold\|\|\{\}\), clipInPlace: Object\.assign\(\{\}, playerModelCfg\.clipInPlace\|\|\{\}\), grip: _sanitizeGripMap\(tpGunGrips\), view: _snapshotView\(\) \}/.test(src), 'player save serializes clipSpeed + clipHold + clipInPlace (build 493)');
 // the player-model RESTORE reads them back
 assert(/playerModelCfg\.clipSpeed=Object\.assign\(\{\}, pl\.clipSpeed\|\|\{\}\); playerModelCfg\.clipHold=Object\.assign\(\{\}, pl\.clipHold\|\|\{\}\);/.test(src), 'player restore reads clipSpeed + clipHold');
 

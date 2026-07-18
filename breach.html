@@ -10601,7 +10601,7 @@ function ensureFlashlight(){
   const fc = gameCfg.flashCfg || (gameCfg.flashCfg=_sanitizeFlash(null));
   _flashlight=new THREE.SpotLight(fc.color, 0, fc.distance, fc.angle*Math.PI/180, fc.penumbra, 1.1);
   const tgt=new THREE.Object3D(); tgt.position.set(0,0,-1); camera.add(_flashlight); camera.add(tgt); _flashlight.target=tgt;
-  _flashlight.position.set(0.18,-0.12,0.1); _flashlight.visible=false; _flashlight.castShadow=false;
+  _flashlight.position.set(0.18,-0.12,0.1); _flashlight.visible=true; _flashlight.castShadow=false;   // build 977: ALWAYS visible at intensity 0 — toggling .visible changes the light count and recompiles every shader (the first-L freeze)
 }
 // Push the current flashCfg onto the live light (used by the editor sliders for instant feedback).
 function applyFlashCfg(){
@@ -10615,7 +10615,7 @@ function applyFlashCfg(){
 }
 function toggleFlashlight(){
   if(!gameCfg.flashlight) return;
-  ensureFlashlight(); flashlightOn=!flashlightOn; _flashlight.visible=flashlightOn;
+  ensureFlashlight(); flashlightOn=!flashlightOn;   // build 977: intensity-only toggle (see ensureFlashlight)
   const fc = gameCfg.flashCfg || (gameCfg.flashCfg=_sanitizeFlash(null));
   _flashlight.intensity = flashlightOn ? fc.intensity : 0;
   if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
@@ -13967,7 +13967,7 @@ function updateBots(dt){
     let _gSurf;   // surface height under the bot's resting cell, computed once and shared by the move-test AND the ground resolve (one raycast instead of two)
     if(b.grounded!==false){   // walk only with feet on a surface; while airborne, momentum carries it
       // stuck recovery: if we've been blocked a while, steer perpendicular for a moment to get around it
-      if(b._stuckT>0.5){ if(!b._stuckSide) b._stuckSide=(Math.random()<0.5?1:-1); const px=-mvz*b._stuckSide, pz=mvx*b._stuckSide; mvx=mvx*0.5+px*1.2; mvz=mvz*0.5+pz*1.2; const ml=Math.hypot(mvx,mvz)||1; mvx/=ml; mvz/=ml; }   // jammed -> follow the wall to ONE consistent side until it slides clear (instead of oscillating in place)
+      if(b._stuckT>0.5){ if(!b._stuckSide) b._stuckSide=(Math.random()<0.5?1:-1); if(b._stuckT>1.8 && !b._sFlip){ b._sFlip=1; b._stuckSide*=-1; } const px=-mvz*b._stuckSide, pz=mvx*b._stuckSide; mvx=mvx*0.5+px*1.2; mvz=mvz*0.5+pz*1.2; const ml=Math.hypot(mvx,mvz)||1; mvx/=ml; mvz/=ml; }   // jammed -> follow the wall to ONE side; build 977: flip the side if it isn't working (concave corners)
       const step=spd*dt*(typeof _waterSlowFor==='function' ? _waterSlowFor(b.pos.x, b.pos.y, b.pos.z) : 1);   // build 862: bots wade at half pace too
       const cx=Math.max(-lim,Math.min(lim, b.pos.x+mvx*step)), cz=Math.max(-lim,Math.min(lim, b.pos.z+mvz*step));
       // The arena walls + props are the only movement boundary; the spawn region never blocks motion, so a
@@ -13982,7 +13982,7 @@ function updateBots(dt){
         else { b.strafe*=-1; }   // boxed in -> reverse strafe and let stuck recovery kick in
       }
       const moved=Math.hypot(b.pos.x-ox, b.pos.z-oz);
-      if(moved < step*0.25){ b._stuckT=(b._stuckT||0)+dt; } else { b._stuckT=0; b._stuckSide=0; }   // accrue stuck time when barely moving; clear the wall-follow side once it's moving again
+      if(moved < step*0.25){ b._stuckT=(b._stuckT||0)+dt; } else { b._stuckT=0; b._stuckSide=0; b._sFlip=0; }   // accrue stuck time when barely moving; clear the wall-follow side once it's moving again
       if(b._stuckT>3.5 && typeof randomSpawn==='function'){   // wall-following failed for a long time -> hop to a fresh open spawn rather than stay frozen
         const sp=randomSpawn(); b.pos.set(sp.x,(sp.y||0),sp.z); b.vy=0; b.evx=0; b.evz=0; b.grounded=true; b._stuckT=0; b._stuckSide=0; b._wander=null; b.aiState='engage'; b.aiT=0; b.path=null;
         if(b.mesh) b.mesh.position.set(sp.x,(sp.y||0),sp.z);
@@ -14712,6 +14712,7 @@ function refreshAvatarGunGrips(){
   if(typeof previewAvatar!=='undefined') reapply(previewAvatar);
 }
 function buildAvatarVisual(g, cfg){
+  const _rearmGun = g.userData.gunKey || null, _rearmGrip = g.userData.gripOverride || null;   // build 977: re-seat the held gun once the real skeleton lands
   if(g.userData.gun){ if(g.userData.gun.parent) g.userData.gun.parent.remove(g.userData.gun); g.userData.gun=null; g.userData.gunBone=null; g.userData.gunKey=null; }   // body is rebuilding; the held gun (maybe parented to an old bone) must be re-attached afterward
   if(g.userData.visual){ if(g.userData.mixer){ const mi=mixers.indexOf(g.userData.mixer); if(mi>=0) mixers.splice(mi,1); g.userData.mixer=null; } g.remove(g.userData.visual); g.userData.visual=null; }
   if(g.userData.hitProxy){ g.remove(g.userData.hitProxy); g.userData.hitProxy=null; }
@@ -14730,7 +14731,8 @@ function buildAvatarVisual(g, cfg){
     const hpx=_mkHeadProxy(1.66, 0.32); g.add(hpx); g.userData.headProxy=hpx; if(g.userData.noHit) hpx.raycast=()=>{};
   };
   if(!mc.url){ useCapsule(); return; }
-  useCapsule();   // placeholder until the GLB arrives
+  useCapsule();   // structural fallback (hit proxies, chase pivot) while the GLB is in flight
+  if(g.userData.visual) g.userData.visual.visible=false;   // build 977: never flash the capsule when a model is coming — it reveals only if the load FAILS
   g.userData._loadingUrl = mc.url;   // per-group token so a stale load is discarded (NOT tied to the local player's model)
   _loadGLTFWithLib(mc.url, mc,
     (gltf)=>{
@@ -14764,8 +14766,10 @@ function buildAvatarVisual(g, cfg){
         if(typeof refreshPlayerClipOptions==='function') refreshPlayerClipOptions(); }   // clip names feed the editor for the local model only
       const mx=playEnemyStates(model, gltf, mc.clips); model.userData.animCfg = mc;   // idle/walk/run, crossfaded by the avatar's movement
       if(mx) g.userData.mixer=mx;
+      { const _wk = g.userData.gunKey || _rearmGun;   // build 977: a gun that loaded BEFORE the model was body-gripped to the placeholder (it sat at the feet) — re-attach so it finds the hand bone
+        if(_wk){ if(g.userData.gun && g.userData.gun.parent) g.userData.gun.parent.remove(g.userData.gun); g.userData.gun=null; g.userData.gunBone=null; g.userData.gunKey=null; attachAvatarGun(g, _wk, g.userData.gripOverride || _rearmGrip); } }
     },
-    (err)=>{ console.warn('Player model load failed, using capsule:', err && err.message); }
+    (err)=>{ console.warn('Player model load failed, using capsule:', err && err.message); if(g.userData._loadingUrl===mc.url && g.userData.visual) g.userData.visual.visible=true; }   // build 977: the hidden placeholder becomes the fallback body
   );
 }
 function rebuildAvatars(){ for(const id in NET.players){ const rp=NET.players[id]; if(rp && rp.mesh) buildAvatarVisual(rp.mesh, rp.modelCfg); } if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar); if(typeof _ownAvatar!=='undefined' && _ownAvatar){ _ownAvatarKey=''; if(typeof ensureOwnAvatar==='function') ensureOwnAvatar(); }   /* refresh the live third-person body too */ _scheduleCharBroadcast(); }
@@ -18601,7 +18605,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 976 · 2026-07-17';
+const BUILD_VERSION = 'build 977 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23295,7 +23299,14 @@ function loop(){
           if(_wp){ const _pdx=_wp.x-en.mesh.position.x, _pdz=_wp.z-en.mesh.position.z, _pl=Math.hypot(_pdx,_pdz);
             if(_pl > 0.5){ _mvx=_pdx/_pl; _mvz=_pdz/_pl; } }
         }
-        if(en._stuckT>0.2){ if(!en._stuckSide) en._stuckSide=((en.id%2)?1:-1); const _px=-_mvz*en._stuckSide, _pz=_mvx*en._stuckSide; _mvx=_mvx*0.5+_px*1.2; _mvz=_mvz*0.5+_pz*1.2; const _l=Math.hypot(_mvx,_mvz)||1; _mvx/=_l; _mvz/=_l; }   // build 540/546/620: wedged -> wall-follow to one side; faster trigger (0.2s) so a head-on pin clears quickly (applies to wandering enemies too)
+        if(en._stuckT>0.2){   // build 540/546/620 wall-follow; build 977: ESCALATE instead of grinding one side forever (concave corners beat a fixed side)
+          if(!en._stuckSide) en._stuckSide=((en.id%2)?1:-1);
+          if(en._stuckT>1.2 && !en._sFlip1){ en._sFlip1=1; en._stuckSide*=-1; }            // this side isn't working -> try the other
+          if(en._stuckT>2.4 && !en._sFlip2){ en._sFlip2=1; en._stuckSide*=-1; }            // ...and back again before giving up on following
+          const _fw = (en._stuckT>2.0 && en._stuckT<2.6) ? -0.9 : 0.5;                      // between flips: back straight OUT of the pocket
+          const _px=-_mvz*en._stuckSide, _pz=_mvx*en._stuckSide; _mvx=_mvx*_fw+_px*1.2; _mvz=_mvz*_fw+_pz*1.2; const _l=Math.hypot(_mvx,_mvz)||1; _mvx/=_l; _mvz/=_l;
+          if(en._stuckT>3.6){ en._nav=null; en._pathBlk=true; en._pbT=0; en._stuckT=0.3; en._sFlip1=0; en._sFlip2=0; }   // both sides failed -> recompute the route from scratch
+        }
         // build 546: integrate directly and let Phase 3 resolve real penetration. The build-542 per-step clearAt
         // (up to 3 collider-scans + a raycast PER enemy PER frame) tanked wave framerates to single digits and
         // over-rejected on imported meshes ("invisible collider"). Pathfinding routes around walls; the nudge
@@ -23435,8 +23446,8 @@ function loop(){
       // No teleport: yanking a co-op enemy to a random spawn made them vanish in front of the player.
       if(en._wantMove){   // build 620: any enemy actively trying to translate — chasing OR wandering/searching — can wedge on a corner and needs the wall-follow unstick (was chase-only). _wantMove still excludes an enemy attacking or holding standoff, which are legitimately still.
         const _mv = Math.hypot(en.mesh.position.x - (en._spx!=null?en._spx:en.mesh.position.x), en.mesh.position.z - (en._spz!=null?en._spz:en.mesh.position.z));
-        if(_mv < (en.speed||3)*dt*0.3){ en._stuckT=(en._stuckT||0)+dt; } else { en._stuckT=0; en._stuckSide=0; }
-      } else { en._stuckT=0; en._stuckSide=0; }
+        if(_mv < (en.speed||3)*dt*0.3){ en._stuckT=(en._stuckT||0)+dt; } else { en._stuckT=0; en._stuckSide=0; en._sFlip1=0; en._sFlip2=0; }
+      } else { en._stuckT=0; en._stuckSide=0; en._sFlip1=0; en._sFlip2=0; }
       en._spx = en.mesh.position.x; en._spz = en.mesh.position.z;
       // drive the animation state machine: attack window > running (chasing) > walking (patrol) > idle
       if(en.mesh.userData.hasModel && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
@@ -23499,7 +23510,12 @@ function prsTransform(min,max,perAxisScale){
 function applyPlayerLevel(pl){ if(!pl) return; if(pl.state) Object.assign(editorTargets.player.state, pl.state);
   playerModelCfg.url=(pl.url||'').trim(); playerModelCfg.thumb=(pl.thumb||''); playerModelCfg.animLib=(typeof pl.animLib==='string' && ANIM_LIB_PACKS[pl.animLib])?pl.animLib:''; playerModelCfg.ikHold=(pl.ikHold===false)?false:true; playerModelCfg.jointFix=_sanitizeJointFix(pl.jointFix); const s=editorTargets.player.state;
   playerModelCfg.scale=s.s||1; playerModelCfg.face=(s.face||0)*RAD; playerModelCfg.yoff=s.yoff||0; playerModelCfg.xoff=s.xoff||0; playerModelCfg.zoff=s.zoff||0;
-  playerModelCfg.clips=Object.assign({ idle:'', walk:'', run:'', attack:'' }, pl.clips||{}); playerModelCfg.clipSpeed=Object.assign({}, pl.clipSpeed||{}); playerModelCfg.clipHold=Object.assign({}, pl.clipHold||{}); playerModelCfg.clipInPlace=Object.assign({}, pl.clipInPlace||{}); rebuildAvatars(); }
+  playerModelCfg.clips=Object.assign({ idle:'', walk:'', run:'', attack:'' }, pl.clips||{}); playerModelCfg.clipSpeed=Object.assign({}, pl.clipSpeed||{}); playerModelCfg.clipHold=Object.assign({}, pl.clipHold||{}); playerModelCfg.clipInPlace=Object.assign({}, pl.clipInPlace||{});
+  // build 977: the author's chase-camera framing + per-weapon gun grips apply on load (session-only —
+  // never written to the viewer's saved personal framing). Old levels carry neither field: no change.
+  if(pl.view && typeof _applyView==='function') _applyView(pl.view);
+  if(pl.grip && typeof pl.grip==='object' && typeof _sanitizeGripMap==='function'){ const _g=_sanitizeGripMap(pl.grip); for(const _k in _g){ tpGunGrips[_k]=Object.assign({}, TP_GUN_DEFAULT, _g[_k]); } }
+  rebuildAvatars(); }
 const editorTargets = {
   gun: {
     label: 'Gun',
@@ -24930,7 +24946,7 @@ function serializeLevel(){
     hud: _sanitizeHud(hudCfg),   // build 665: per-level HUD theme + visibility
     homepage: (homepageCfg && homepageCfg.on) ? _sanitizeHomepage(homepageCfg) : undefined,   // build 971: creator title screen
     radial: _sanitizeRadial(radialCfg),   // build 671: the in-game build/deploy menu
-    player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', animLib: playerModelCfg.animLib||'', ikHold:(playerModelCfg.ikHold===false)?false:true, jointFix:_sanitizeJointFix(playerModelCfg.jointFix), state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}) },
+    player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', animLib: playerModelCfg.animLib||'', ikHold:(playerModelCfg.ikHold===false)?false:true, jointFix:_sanitizeJointFix(playerModelCfg.jointFix), state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}), grip: _sanitizeGripMap(tpGunGrips), view: _snapshotView() },   // build 977: authored chase framing + held-gun grips ship with the level (they only lived on roster characters)
     world:   Object.assign({}, worldCfg),
     chest:   { url: chestModelUrl, scale: chestModelScale, randomOff: !randomLootOn },
     coin:    { url: coinCfg.url, scale: coinCfg.scale, on: coinCfg.on !== false },
@@ -29923,7 +29939,8 @@ function startGame(){
   // reset weapons — build 672: an "unarmed" level starts you on fists, no guns
   if(gameCfg.unarmed){ owned = ['hands']; curWep='hands'; } else { const _sw=(gameCfg.startWeapon && WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle'; owned = [_sw]; curWep=_sw; }   // build 976: per-level starting weapon
   if(typeof showWeaponModel==='function') showWeaponModel(curWep);   // show fists / gun for the chosen loadout
-  flashlightOn=false; if(_flashlight){ _flashlight.visible=false; _flashlight.intensity=0; }   // flashlight off at the start of a run
+  flashlightOn=false; if(_flashlight){ _flashlight.intensity=0; }   // flashlight off at the start of a run (stays visible at 0 — see ensureFlashlight)
+  if(gameCfg.flashlight && typeof ensureFlashlight==='function') ensureFlashlight();   // build 977: pre-warm — the spotlight joins the scene during level start, so shaders compile once here, not on the first L press
   WEAPONS.rifle.mag=30; WEAPONS.rifle.reserve=90;
   WEAPONS.smg.mag=40; WEAPONS.smg.reserve=120;
   WEAPONS.shotgun.mag=6; WEAPONS.shotgun.reserve=24;

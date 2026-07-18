@@ -18,7 +18,7 @@ assert(/if\(okX\)\{ b\.pos\.x=cx; \} else if\(okZ\)\{ b\.pos\.z=cz; \}/.test(ub)
 assert(!/regionOK/.test(ub), 'movement is never gated by the spawn region');
 
 // --- stuck recovery ---
-assert(/if\(moved < step\*0\.25\)\{ b\._stuckT=\(b\._stuckT\|\|0\)\+dt; \} else \{ b\._stuckT=0; b\._stuckSide=0; \}/.test(ub), 'accrues stuck time when barely moving; clears wall-follow side when moving');
+assert(/if\(moved < step\*0\.25\)\{ b\._stuckT=\(b\._stuckT\|\|0\)\+dt; \} else \{ b\._stuckT=0; b\._stuckSide=0; b\._sFlip=0; \}/.test(ub), 'accrues stuck time when barely moving; clears wall-follow side when moving (build 977: + the flip flag)');
 assert(/if\(b\._stuckT>0\.5\)\{ if\(!b\._stuckSide\) b\._stuckSide=\(Math\.random\(\)<0\.5\?1:-1\);/.test(ub), 'picks a wall-follow side after being stuck ~0.5s');
 assert(/const px=-mvz\*b\._stuckSide, pz=mvx\*b\._stuckSide;/.test(ub), 'wall-follow steers consistently along one side');
 assert(/if\(b\._stuckT>3\.5 && typeof randomSpawn==='function'\)/.test(ub), 'a truly-jammed bot relocates only as a rare last resort');
