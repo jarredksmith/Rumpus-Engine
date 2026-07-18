@@ -15,7 +15,7 @@ assert(/else \{ editorTopView=!editorTopView; if\(editorTopView\)\{ editorFreeFl
 assert(/keys\['KeyF'\]=false;/.test(src), 'the F keydown is consumed so it does not also strafe');
 
 // discoverability: the toolbar buttons advertise the keys, and the hint line lists them
-assert(/shortcut: T/.test(src) && /shortcut: F/.test(src), 'the Top view / Fly buttons show their shortcut in a tooltip');
+assert(/marquee-select \(T\)/.test(src) && /WASD \+ mouse look \(F\)/.test(src), 'the Top view / Fly buttons show their shortcut in a tooltip (build 980: on the viewport toolbar)');
 assert(/<b>F<\/b> fly · <b>T<\/b> top view/.test(src), 'the editor hint lists the F / T shortcuts');
 
 done('build 656: F = fly, T = top view editor shortcuts');

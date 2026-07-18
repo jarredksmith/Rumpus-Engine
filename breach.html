@@ -98,6 +98,16 @@
   #editor .edSecBody { padding: 8px 10px; }
   #editor .edSection.collapsed .edSecBody { display: none; }
   #editor .edSecSub { margin: -2px 0 8px; color: #8fc7b6; font: 400 10.5px/1.4 ui-monospace, monospace; letter-spacing: 0.2px; opacity: 0.85; }
+  /* build 980: floating viewport toolbar — the scene view gets its own chrome (gizmo mode, camera,
+     visibility) the way Unity/Unreal put controls ON the viewport instead of burying them in a panel */
+  #edToolbar { position:fixed; top:calc(10px + env(safe-area-inset-top)); left:calc(12px + env(safe-area-inset-left)); z-index:29; display:none; gap:8px; pointer-events:auto; }
+  body:has(#editor.dockLeft) #edToolbar { left:auto; right:calc(12px + env(safe-area-inset-right)); }
+  #edToolbar .tbGroup { display:flex; gap:2px; background:rgba(9,15,19,0.92); border:1px solid #223039; border-radius:8px; padding:3px; box-shadow:0 6px 20px rgba(0,0,0,0.45); }
+  #edToolbar button { width:34px; height:32px; display:flex; align-items:center; justify-content:center; background:transparent; border:none; border-radius:6px; color:#8fb0a6; cursor:pointer; padding:0; }
+  #edToolbar button svg { width:17px; height:17px; }
+  #edToolbar button:hover { background:rgba(255,255,255,0.06); color:#eafff7; }
+  #edToolbar button.on { background:rgba(var(--accent-rgb),0.25); color:var(--accent); }
+  @media (max-width:760px) { #edToolbar { flex-wrap:wrap; max-width:52vw; } }
   /* ---- build 978: pro-inspector reskin — flat details list, tooltips, settings search ---- */
   #editor { font: 12px/1.45 var(--ui-font), system-ui, sans-serif; background: rgba(9,14,18,0.96); border-left: 1px solid #1c2a31; padding: 10px 12px 14px; }
   #editor.dockLeft { border-right: 1px solid #1c2a31; }
@@ -18649,7 +18659,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 979 · 2026-07-18';
+const BUILD_VERSION = 'build 980 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24078,7 +24088,6 @@ function applyEditorMode(){
   const tgts = MODE_TARGETS[editorMode] || [];
   editorEl.querySelectorAll('#edTabs .tab').forEach(t=>{ t.style.display = (tgts.indexOf(t.dataset.key)>=0) ? '' : 'none'; });
   const tabRow = editorEl.querySelector('#edTabs'); if(tabRow) tabRow.style.display = tgts.length ? 'flex' : 'none';   // no target picker in Scene/Rules/Save
-  const view = editorEl.querySelector('#edView'); if(view) view.style.display = 'flex';   // global view toolbar (sits above the tabs)
   const hint = editorEl.querySelector('#edHint'); if(hint){ hint.innerHTML = (MODE_HINT[editorMode]||'') + HINT_SHORTCUTS; hint.classList.add('hintClamp','tipped'); hint.setAttribute('data-tip', (hint.textContent||'').trim()); }   // build 651 mode one-liner; build 978: one clamped line, full text on hover
   document.body.classList.toggle('hudPreview', editorMode==='hud');   // build 665: live-preview the real HUD while theming it (overrides the editor's hide-all)
   // build 696/698: the interact prompt + grab hint are gameplay-only (proximity drives their display). While theming
@@ -25935,7 +25944,6 @@ function buildEditorPanel(){
     + '</div>'
     + '<div class="hint" id="edHint"></div>'
     + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;min-width:44px">↶</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
-    + '<div class="row2" id="edView" style="margin-bottom:10px"></div>'
     + '<div class="edModes" id="edModes"></div>'
     + '<div id="edSearchRow"><input id="edSearch" type="search" placeholder="Search settings\u2026" spellcheck="false" aria-label="Search settings"></div>'
     + '<div id="edSearchChips"></div>'
@@ -27642,18 +27650,8 @@ function renderEditorFields(){
     hint(lHost, '', '4px 0 0').textContent = (coinCfg.on!==false) ? 'Apply clears current coins so new drops use the new model.' : 'Coins off: kills drop no credits, so the ammo station can not be used.';
   }
 
-  // global view toggles (overhead camera, hide enemies)
-  const view = editorEl.querySelector('#edView');
-  if(view){
-    view.innerHTML = '';
-    const mk = (label, on, fn)=>{ const b=document.createElement('button'); b.textContent=label;
-      if(on){ b.style.background='rgba(var(--accent-rgb),0.28)'; b.style.color='#eafff7'; }
-      b.onclick=fn; return b; };
-    { const b=mk(editorTopView?'◉ Top view':'○ Top view', editorTopView, ()=>{ editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=Math.min(Math.max(75, ARENA*1.12), 2600); } renderEditorFields(); }); b.title='Overhead view  ·  shortcut: T'; view.appendChild(b); }
-    { const b=mk(editorFreeFly?'◉ Fly mode':'○ Fly mode', editorFreeFly, ()=>{ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } renderEditorFields(); }); b.title='Free-fly camera (WASD + mouse)  ·  shortcut: F'; view.appendChild(b); }
-    view.appendChild(mk(editorHideEnemies?'◉ Hide enemies':'○ Hide enemies', editorHideEnemies, ()=>{ editorHideEnemies=!editorHideEnemies; renderEditorFields(); }));
-    view.appendChild(mk(editorShowColliders?'◉ Show colliders':'○ Show colliders', editorShowColliders, ()=>{ editorShowColliders=!editorShowColliders; renderEditorFields(); }));
-  }
+  // build 980: the view toggles moved to the floating viewport toolbar — keep its state in step
+  if(typeof _edToolbarSync==='function') _edToolbarSync();
 
   // prop picker (only for the selectable Props target)
   const picker = editorEl.querySelector('#edPicker');
@@ -29926,6 +29924,59 @@ function setSceneWireframe(on){
   }
 }
 
+// ---- build 980: floating viewport toolbar --------------------------------------------------------
+// Gizmo mode (Move/Rotate/Scale), camera (Top/Fly) and visibility (enemies/colliders) lived as text
+// buttons inside the panel; real editors put viewport controls ON the viewport. Grouped icon pills,
+// tooltips via the build-978 engine, active states synced from the same globals the panel reads.
+function _edToolbarEnsure(){
+  let t=document.getElementById('edToolbar');
+  if(t) return t;
+  t=document.createElement('div'); t.id='edToolbar';
+  const S='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+  const I={
+    move:S+'<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>',
+    rotate:S+'<path d="M21.5 2v6h-6"/><path d="M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>',
+    scale:S+'<path d="M21 3 9 15"/><path d="M12 3H3v18h18v-9"/><path d="M16 3h5v5"/></svg>',
+    top:S+'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></svg>',
+    fly:S+'<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>',
+    eye:S+'<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>',
+    col:S+'<ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14a7 3 0 0 0 14 0V5"/></svg>',
+  };
+  const mk=(id,icon,tip)=>{ const b=document.createElement('button'); b.id=id; b.innerHTML=icon; b.setAttribute('data-tip', tip); b.setAttribute('aria-label', tip); return b; };
+  const g1=document.createElement('div'); g1.className='tbGroup';
+  g1.appendChild(mk('tbMove', I.move, 'Move \u2014 drag the arrows in the scene (1)'));
+  g1.appendChild(mk('tbRot', I.rotate, 'Rotate (2)'));
+  g1.appendChild(mk('tbScale', I.scale, 'Scale (3) \u00b7 4 toggles proportional'));
+  const g2=document.createElement('div'); g2.className='tbGroup';
+  g2.appendChild(mk('tbTop', I.top, 'Top view \u2014 overhead camera; drag to marquee-select (T)'));
+  g2.appendChild(mk('tbFly', I.fly, 'Fly camera \u2014 WASD + mouse look (F)'));
+  const g3=document.createElement('div'); g3.className='tbGroup';
+  g3.appendChild(mk('tbHideEn', I.eye, 'Hide enemies while editing'));
+  g3.appendChild(mk('tbCol', I.col, 'Show colliders \u2014 the pink damage hit-cylinders'));
+  t.appendChild(g1); t.appendChild(g2); t.appendChild(g3);
+  document.body.appendChild(t);
+  const q=id=>t.querySelector('#'+id);
+  q('tbMove').onclick=()=>{ gizmoMode='translate'; updateGizmo(); renderEditorFields(); };
+  q('tbRot').onclick=()=>{ gizmoMode='rotate'; updateGizmo(); renderEditorFields(); };
+  q('tbScale').onclick=()=>{ gizmoMode='scale'; updateGizmo(); renderEditorFields(); };
+  q('tbTop').onclick=()=>{ editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=Math.min(Math.max(75, ARENA*1.12), 2600); } renderEditorFields(); };
+  q('tbFly').onclick=()=>{ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } renderEditorFields(); };
+  q('tbHideEn').onclick=()=>{ editorHideEnemies=!editorHideEnemies; renderEditorFields(); };
+  q('tbCol').onclick=()=>{ editorShowColliders=!editorShowColliders; renderEditorFields(); };
+  if(typeof _edBindTips==='function') _edBindTips(t);
+  return t;
+}
+function _edToolbarSync(){
+  const t=document.getElementById('edToolbar'); if(!t || t.style.display==='none') return;
+  const on=(id,v)=>{ const b=t.querySelector('#'+id); if(b) b.classList.toggle('on', !!v); };
+  on('tbMove', gizmoMode==='translate'); on('tbRot', gizmoMode==='rotate'); on('tbScale', gizmoMode==='scale');
+  on('tbTop', editorTopView); on('tbFly', editorFreeFly);
+  on('tbHideEn', editorHideEnemies); on('tbCol', editorShowColliders);
+}
+function _edToolbarShow(v){
+  if(v){ const t=_edToolbarEnsure(); t.style.display='flex'; _edToolbarSync(); }
+  else { const t=document.getElementById('edToolbar'); if(t) t.style.display='none'; }
+}
 function toggleEditor(){
   releaseHeld();
   if(!editorOpen && pvpMode()){ if(typeof flashToast==='function') flashToast('Editor is disabled in this mode'); return; }   // no mid-match settings changes / cheating
@@ -29940,6 +29991,7 @@ function toggleEditor(){
     if(typeof applyAudioSettings==='function') applyAudioSettings();   // force the music bus to 0 so nothing can re-start audible music
     _levelDirty = false; if(typeof startAutoSave==='function') startAutoSave();   // autosave while editing
     { const fb=document.getElementById('edAddFab'); if(fb) fb.style.display='block'; }
+    _edToolbarShow(true);   // build 980: viewport chrome rides the editor session
     firing=false; ads=false;
     safeExitPointerLock();
     teardownInstancing();   // show individual props so they can be edited/selected
@@ -29972,6 +30024,7 @@ function toggleEditor(){
     if(typeof _closeCinePvWindow==='function') _closeCinePvWindow();   // build 662: close the camera-preview pop-out too
     if(editorEl) editorEl.style.display = 'none';
     { const fb=document.getElementById('edAddFab'); if(fb) fb.style.display='none'; }
+    _edToolbarShow(false);
     editorAimPreview = false;
     spawnRouteEdit = null;
     if(typeof clearPreviewEnemy==='function') clearPreviewEnemy();
@@ -30109,7 +30162,7 @@ function startGame(){
   if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
   if(typeof lightModels!=='undefined') for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; }
   if(typeof setTurretMarkersVisible==='function') setTurretMarkersVisible(false);
-  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; }   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
+  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; } if(typeof _edToolbarShow==='function') _edToolbarShow(false);   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   camera.fov = (worldCfg && worldCfg.fov) || BASE_FOV; camera.updateProjectionMatrix(); camera.rotation.z = 0;
   // clear entities
   enemies.slice().forEach(e=>{ scene.remove(e.mesh); if(e.mesh.userData.mixer){ const mi=mixers.indexOf(e.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } }); enemies.length=0;
@@ -30287,7 +30340,7 @@ function endGame(){
   if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false;
   if(typeof lightModels!=='undefined') for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; }
   if(typeof setTurretMarkersVisible==='function') setTurretMarkersVisible(false);
-  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; }   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
+  if(typeof _cinePreviewGroup!=='undefined' && _cinePreviewGroup) _cinePreviewGroup.visible=false; if(typeof selBox!=='undefined' && selBox) selBox.visible=false; if(typeof editorEl!=='undefined' && editorEl) editorEl.style.display='none'; { const _fb=document.getElementById('edAddFab'); if(_fb) _fb.style.display='none'; } if(typeof _edToolbarShow==='function') _edToolbarShow(false);   // the + lives outside the panel — hide it on this direct-close path too gun.visible=true; if(typeof lightModels!=='undefined'){ for(const g of lightModels){ if(g.userData.marker) g.userData.marker.visible=false; } } if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof _pathPreviewGroup!=='undefined' && _pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; } if(typeof clearPreviewEnemy==='function') clearPreviewEnemy(); if(typeof setSceneWireframe!=='undefined') setSceneWireframe(false); if(typeof editorBrightLight!=='undefined') editorBrightLight.intensity=0; if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false; if(typeof SCENE_FOG!=='undefined') scene.fog=SCENE_FOG; if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(false); if(typeof setPickupMarkersVisible==='function') setPickupMarkersVisible(false); if(typeof setLootMarkersVisible==='function') setLootMarkersVisible(false); if(typeof setAudioZoneMarkersVisible==='function') setAudioZoneMarkersVisible(false); if(typeof setDeathZoneMarkersVisible==='function') setDeathZoneMarkersVisible(false); if(typeof setJumpPadMarkersVisible==='function') setJumpPadMarkersVisible(false); if(typeof setLadderMarkersVisible==='function') setLadderMarkersVisible(false); if(typeof setSpawnRegionMarkerVisible==='function') setSpawnRegionMarkerVisible(false); spawnPolyEdit=false; if(typeof gr!=='undefined' && gr){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; } if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   $('shop').classList.add('hidden');
   $('prompt').style.display='none';
   const ov=$('overlay'); ov.classList.remove('hidden');
