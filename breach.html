@@ -9296,6 +9296,122 @@ async function _optimizeSceneModels(say, done){
   }finally{ _mobSweepBusy=false; }
 }
 
+// ---- build 990: LEVEL SIZE AUDIT ----------------------------------------------------------------
+// Phones crash on heavy levels by running out of memory, and the biggest waste hides in plain
+// sight: slots that still point at a model the level never uses (the loaders gate on the URL, not
+// on whether the feature is on), plus files nobody realizes are huge. This audits the SERIALIZED
+// level — the same truth the share code ships — so nothing escapes the inventory.
+function _fmtKB(b){ return b>=1048576 ? (b/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(b/1024))+' KB'; }
+// Pure collector: level in, rows out. {url, kind, where, note, unused} — unused rows are safe to
+// clear (the feature that would use them is off/empty; the engine still downloads them today).
+function _auditCollect(L){
+  L=L||{}; const items=[]; const seen={};
+  const add=(url, kind, where, note, unused)=>{
+    if(!url || typeof url!=='string' || !/^https?:/i.test(url)) return;
+    const k=url+'|'+where; if(seen[k]) return; seen[k]=1;
+    items.push({ url, kind, where, note:note||'', unused:!!unused });
+  };
+  const counts={};
+  (Array.isArray(L.props)?L.props:[]).forEach(p=>{ if(p && typeof p.src==='string' && /^https?:/i.test(p.src)) counts[p.src]=(counts[p.src]||0)+1; });
+  for(const u in counts) add(u, 'model', 'Prop ×'+counts[u]);
+  add(L.player&&L.player.url, 'model', 'Player model');
+  (Array.isArray(L.roster)?L.roster:[]).forEach((c,i)=>{ if(c) add(c.url, 'model', 'Character: '+(c.name||('#'+(i+1))), 'loads when a player picks it'); });
+  for(const k in (L.enemies||{})){ const e=L.enemies[k]; if(e) add(e.url, 'model', 'Enemy: '+k, 'loads when this type spawns'); }
+  add(L.gun&&L.gun.url, 'model', 'Weapon in hand');
+  for(const k in (L.weapons||{})){ const w=L.weapons[k]; if(w) add(w.model, 'model', 'Weapon: '+k); }
+  for(const k in (L.attModels||{})){ const a=L.attModels[k]; add(typeof a==='string'?a:(a&&a.url), 'model', 'Attachment: '+k); }
+  for(const k in (L.invItems||{})){ const it=L.invItems[k]; if(it) add(it.model, 'model', 'Item: '+k); }
+  for(const k in (L.pickupModels||{})){ const p=L.pickupModels[k]; if(p) add(p.url, 'model', 'Pickup: '+k); }
+  add(L.chest&&L.chest.url, 'model', 'Loot chest');
+  add(L.grenade&&L.grenade.model, 'model', 'Grenade');
+  const stOff = !L.stationEnabled;
+  add(L.station&&L.station.url, 'model', 'Ammo station', stOff?'station is OFF — still downloads':'', stOff);
+  const coinOff = !!(L.coin && L.coin.on===false);
+  add(L.coin&&L.coin.url, 'model', 'Coin', coinOff?'coins are OFF — still downloads':'', coinOff);
+  const noTurrets = !(Array.isArray(L.turrets) && L.turrets.length);
+  add(L.turret&&L.turret.url, 'model', 'Turret', noTurrets?'no turrets placed — still downloads':'', noTurrets);
+  const W=L.world||{};
+  add(W.sky_hdri, 'image', 'Sky (HDR)');
+  [['floorTex','Floor texture'],['floorTexN','Floor normal'],['floorTexR','Floor roughness'],
+   ['wallTex','Wall texture'],['wallTexN','Wall normal'],['wallTexR','Wall roughness']].forEach(([k,lab])=>add(W[k],'image',lab));
+  const A=L.audio||{};
+  add(A.musicUrl, 'sound', 'Music');
+  for(const g in (A.sounds||{})){ const grp=A.sounds[g]; if(grp && typeof grp==='object'){ for(const k in grp) add(grp[k], 'sound', 'Sound: '+g+'/'+k); } else add(grp, 'sound', 'Sound: '+g); }
+  (Array.isArray(L.audioZones)?L.audioZones:[]).forEach((z,i)=>{ if(z) add(z.url, 'sound', 'Audio zone #'+(i+1)); });
+  (Array.isArray(L.waterfalls)?L.waterfalls:[]).forEach((f,i)=>{ if(f) add(f.snd, 'sound', 'Waterfall sound #'+(i+1)); });
+  // inline data-URIs ride in the level JSON itself (share code weight, not a download)
+  let inline=0;
+  const dlen=s=>(typeof s==='string' && s.indexOf('data:')===0) ? Math.round(s.length*0.75) : 0;
+  inline += dlen(L.homepage&&L.homepage.bg) + dlen(L.player&&L.player.thumb);
+  (Array.isArray(L.roster)?L.roster:[]).forEach(c=>{ inline += dlen(c&&c.thumb); });
+  return { items, inlineBytes: inline };
+}
+// Best-effort remote size: HEAD first, then a GET we abort after the headers. Cross-origin goes
+// through the same CORS proxy the model loader uses. 0 = unknown (shown as "?").
+async function _assetHeadSize(url){
+  const u = (typeof proxied==='function') ? proxied(url) : url;
+  try{ const r=await fetch(u, { method:'HEAD' }); if(r.ok){ const n=+(r.headers.get('content-length')||0); if(n>0) return n; } }catch(e){}
+  try{ const ac=new AbortController(); const r=await fetch(u, { signal:ac.signal }); const n=+(r.headers.get('content-length')||0); try{ ac.abort(); }catch(e){} if(n>0) return n; }catch(e){}
+  return 0;
+}
+let _auditBusy=false;
+async function _renderLevelAudit(host){
+  if(_auditBusy || !host) return; _auditBusy=true;
+  try{
+    host.innerHTML = '<div class="hint" style="margin:6px 0">Scanning the level…</div>';
+    const { items, inlineBytes } = _auditCollect(serializeLevel());
+    // fetch sizes a few at a time (phones included — keep it gentle)
+    let done=0;
+    for(let i=0;i<items.length;i+=4){
+      const batch=items.slice(i,i+4);
+      await Promise.all(batch.map(async it=>{ it.bytes=await _assetHeadSize(it.url); done++; }));
+      host.innerHTML = '<div class="hint" style="margin:6px 0">Sizing assets… '+done+'/'+items.length+'</div>';
+    }
+    items.sort((a,b)=>(b.bytes||0)-(a.bytes||0));
+    const total=items.reduce((s,it)=>s+(it.bytes||0),0);
+    const modelTotal=items.filter(it=>it.kind==='model').reduce((s,it)=>s+(it.bytes||0),0);
+    const unknown=items.filter(it=>!it.bytes).length;
+    const wrap=document.createElement('div'); wrap.style.cssText='margin:6px 0 4px;border:1px solid #22323b;border-radius:8px;padding:8px;';
+    // verdict: models are what phones decode into GPU memory — judge on those
+    const mb=modelTotal/1048576;
+    const verdict = mb>50 ? ['#ff9b93','Heavy — phones will likely crash loading this ('+_fmtKB(modelTotal)+' of models)']
+                  : mb>25 ? ['#ffd166','Risky on phones — '+_fmtKB(modelTotal)+' of models; older devices may run out of memory']
+                          : ['#9fe6cf','Phone-friendly — '+_fmtKB(modelTotal)+' of models'];
+    const vd=document.createElement('div'); vd.style.cssText='font-weight:700;font-size:11.5px;margin-bottom:6px;color:'+verdict[0]+';'; vd.textContent=verdict[1]; wrap.appendChild(vd);
+    const sum=document.createElement('div'); sum.className='hint'; sum.style.margin='0 0 6px';
+    sum.textContent = items.length+' asset'+(items.length===1?'':'s')+' · '+_fmtKB(total)+' total download'
+      + (inlineBytes ? ' · '+_fmtKB(inlineBytes)+' of inline thumbnails in the level file' : '')
+      + (unknown ? ' · '+unknown+' size-unknown' : '');
+    wrap.appendChild(sum);
+    for(const it of items.slice(0,40)){
+      const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;align-items:center;font-size:10.5px;padding:2px 0;border-top:1px solid #16222a;';
+      const tail=decodeURIComponent((it.url.split('/').pop()||'').split('?')[0]).slice(0,34);
+      const lab=document.createElement('span'); lab.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:'+(it.unused?'#ffd166':'#9fe6cf')+';';
+      lab.title=it.url+(it.note?(' — '+it.note):''); lab.textContent=it.where+' — '+tail+(it.note?(' ('+it.note+')'):'');
+      const sz=document.createElement('span'); sz.style.cssText='flex:0 0 auto;color:#cfeee2;'; sz.textContent=it.bytes?_fmtKB(it.bytes):'?';
+      row.appendChild(lab); row.appendChild(sz);
+      if(it.unused){
+        const cl=document.createElement('button'); cl.textContent='Clear'; cl.title='Remove this unused model from the level';
+        cl.style.cssText='flex:0 0 auto;padding:1px 8px;font-size:10px;border-color:#7a2630;color:#ff9b93;';
+        cl.onclick=()=>{ pushUndoSnapshot();
+          if(it.where==='Ammo station') stationModelUrl='';
+          else if(it.where==='Coin') coinCfg.url='';
+          else if(it.where==='Turret') turretModelUrl='';
+          _levelDirty=true; renderEditorFields(); _renderLevelAudit(host);
+        };
+        row.appendChild(cl);
+      }
+      wrap.appendChild(row);
+    }
+    if(items.length>40){ const more=document.createElement('div'); more.className='hint'; more.textContent='…and '+(items.length-40)+' more (smallest)'; wrap.appendChild(more); }
+    const tip=document.createElement('div'); tip.className='hint'; tip.style.cssText='margin-top:6px;font-size:10px;';
+    tip.innerHTML='<b>Shrink it:</b> ⚡ Optimize all models for mobile (above) bakes every model down — the biggest single win for phones.';
+    wrap.appendChild(tip);
+    host.innerHTML=''; host.appendChild(wrap);
+  }catch(e){ host.innerHTML='<div class="hint" style="color:#ff9b93">Audit failed — '+((e&&e.message)||'')+'</div>';
+  }finally{ _auditBusy=false; }
+}
+
 // build 917: GLBs whose textures are KTX2/Basis-compressed (KHR_texture_basisu) need a KTX2Loader on
 // the GLTFLoader; without one the loader threw "setKTX2Loader must be called" and the model fell back
 // to a capsule. Pull the transcoder from CDN the first time such a texture is actually seen (zero cost
@@ -18867,7 +18983,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 989 · 2026-07-18';
+const BUILD_VERSION = 'build 990 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26213,6 +26329,8 @@ function buildEditorPanel(){
       + '</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edOptimizeAll" style="width:100%;border-color:rgba(var(--accent-rgb),0.6);color:#bff5e2">\u26a1 Optimize all models for mobile</button></div>'
       + '<div class="hint" id="edOptStatus" style="font-size:10px;margin:3px 0 8px;min-height:12px">Preflight: bakes every model in the level down for phones (slim re-hosted copies; originals untouched). Check third-party model licenses before re-hosting.</div>'
+      + '<div class="row2"><button id="edAuditBtn">Audit level size</button></div>'
+      + '<div id="edAudit"></div>'
       + '<div id="edIssues"></div>'
       + '<div class="row2"><button id="edSave">'+_icn('save')+'Save</button><button id="edShare">'+_icn('link')+'Share link</button></div>'
       + '<label style="display:flex;align-items:center;gap:7px;margin:8px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer"><input type="checkbox" id="edAutoSave" style="width:15px;height:15px;accent-color:var(--accent)"><b>Autosave</b> while editing</label>'
@@ -26531,6 +26649,8 @@ function buildEditorPanel(){
   if(optAllBtn){ const ost=p.querySelector('#edOptStatus'); const osay=t=>{ if(ost) ost.textContent=t; };
     optAllBtn.onclick=()=>{ uiConfirm('Optimize every model in this level for mobile? Each one is decimated + texture-shrunk, re-hosted as a slim copy, and the level switches to it (originals stay in place).', ()=>{ optAllBtn.disabled=true; _optimizeSceneModels(osay, ()=>{ optAllBtn.disabled=false; }); }, 'Optimize'); };
   }
+  const auditBtn = p.querySelector('#edAuditBtn');
+  if(auditBtn) auditBtn.onclick=()=>_renderLevelAudit(p.querySelector('#edAudit'));
   const submitBtn = p.querySelector('#edSubmitComm');
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
