@@ -19029,7 +19029,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 998 · 2026-07-18';
+const BUILD_VERSION = 'build 999 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31866,8 +31866,34 @@ async function _bakeModelEdits(url, edits, name, say, done){
 function renderModelParts(host, tgt){
   const obj=tgt && tgt.obj && tgt.obj(); if(!host || !obj) return;
   const url=(obj.userData && obj.userData.src)||'';
-  if(!/^https?:/i.test(url) || !/\.glb(\?|#|$)/i.test(url)) return;   // primitives / non-GLB props have no parts to edit
-  const parts=_meshOrderOf(obj); if(!parts.length) return;
+  if(typeof isPrimitive==='function' && isPrimitive(url)) return;   // built-in shapes: nothing to edit
+  // build 999: never hide silently — imports we can't repack say WHY
+  if(!/^https?:/i.test(url) || !/\.glb(\?|#|$)/i.test(url)){
+    if(url){ const b=edFold(host, 'modelparts', 'Edit model parts', false, 'Not available for this import');
+      const n=document.createElement('div'); n.className='hint'; n.style.cssText='font-size:10px;margin:2px 0 4px;';
+      n.textContent = url.indexOf('sketchfab:')===0
+        ? 'Sketchfab imports can\u2019t be re-edited here (their download is a one-time archive). Download the .glb from Sketchfab and use Upload .glb above \u2014 then this fold unlocks.'
+        : 'Part editing works on direct .glb models.';
+      b.appendChild(n); }
+    return;
+  }
+  const parts=_meshOrderOf(obj);
+  if(!parts.length){   // build 999: the model is still downloading — say so and refresh when it lands
+    const b=edFold(host, 'modelparts', 'Edit model parts', false, 'Waiting for the model to finish loading\u2026');
+    const n=document.createElement('div'); n.className='hint'; n.style.cssText='font-size:10px;margin:2px 0 4px;';
+    n.textContent='Model still downloading \u2014 this fold fills in automatically when it arrives.';
+    b.appendChild(n);
+    if(!obj.userData._mpeWaiting){   // one poller per prop: re-render the panel the moment the meshes land
+      obj.userData._mpeWaiting=true; let _tries=0;
+      const _poll=()=>{ try{
+        if(!editorOpen || !tgt.obj || tgt.obj()!==obj){ obj.userData._mpeWaiting=false; return; }
+        if(_meshOrderOf(obj).length){ obj.userData._mpeWaiting=false; renderEditorFields(); return; }
+        if(++_tries<40) setTimeout(_poll, 700); else obj.userData._mpeWaiting=false;
+      }catch(e){ obj.userData._mpeWaiting=false; } };
+      setTimeout(_poll, 700);
+    }
+    return;
+  }
   const body=edFold(host, 'modelparts', 'Edit model parts', false, 'Recolor or delete pieces of this model, then save it as a new model');
   const edits=obj.userData.modelEdits || (obj.userData.modelEdits={ del:{}, tint:{}, add:[] });
   const st=document.createElement('div'); st.className='hint'; st.style.cssText='font-size:10px;margin:2px 0 4px;min-height:12px;';
