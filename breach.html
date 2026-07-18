@@ -19029,7 +19029,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 997 · 2026-07-18';
+const BUILD_VERSION = 'build 998 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31747,8 +31747,42 @@ function renderUploadRow(host, type, fill, opts){
 // objects in glTF node order, one Mesh per primitive), so a plain ordinal is a stable part id:
 // the i-th Mesh in the three scene ~ the i-th (node, primitive) pair in the gltf-transform doc.
 function _meshOrderOf(root){
-  const out=[]; if(root && root.traverse) root.traverse(o=>{ if(o.isMesh) out.push(o); });
+  const out=[]; if(root && root.traverse) root.traverse(o=>{ if(o.isMesh && !(o.userData && o.userData._mpeAdded!=null)) out.push(o); });   // build 998: kitbash parts are managed separately — the ordinals must keep matching the SOURCE glb
   return out;
+}
+// ---- build 998: kitbash primitives ----
+function _primGeomArrays(shape){
+  const g = shape==='cylinder' ? new THREE.CylinderGeometry(0.5,0.5,1,20) : shape==='sphere' ? new THREE.SphereGeometry(0.5,20,14) : new THREE.BoxGeometry(1,1,1);
+  const pos=new Float32Array(g.attributes.position.array), nor=new Float32Array(g.attributes.normal.array);
+  const idx=g.index ? ((g.attributes.position.count<=65535)?new Uint16Array(g.index.array):new Uint32Array(g.index.array)) : null;
+  g.dispose();
+  return { pos, nor, idx };
+}
+function _mkKitMesh(a){
+  const g = a.shape==='cylinder' ? new THREE.CylinderGeometry(0.5,0.5,1,20) : a.shape==='sphere' ? new THREE.SphereGeometry(0.5,20,14) : new THREE.BoxGeometry(1,1,1);
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color:a.color||'#9fb2c8', roughness:0.9, metalness:0.05 }));
+  m.position.fromArray(a.p||[0,0,0]); m.scale.fromArray(a.s||[1,1,1]);
+  m.castShadow=true; m.receiveShadow=true;
+  return m;
+}
+// Bake side: copy THREE's generated buffers into the doc as new nodes on scene 0.
+function _addPartsToDoc(doc, adds, linearOf){
+  const root=doc.getRoot(); const scene0=root.listScenes()[0]; if(!scene0) return 0;
+  const buf=root.listBuffers()[0]||doc.createBuffer();
+  let n=0;
+  for(const a of (adds||[])){
+    const ga=_primGeomArrays(a.shape);
+    const pa=doc.createAccessor().setType('VEC3').setArray(ga.pos).setBuffer(buf);
+    const na=doc.createAccessor().setType('VEC3').setArray(ga.nor).setBuffer(buf);
+    const prim=doc.createPrimitive().setAttribute('POSITION',pa).setAttribute('NORMAL',na);
+    if(ga.idx) prim.setIndices(doc.createAccessor().setType('SCALAR').setArray(ga.idx).setBuffer(buf));
+    const c=linearOf(a.color||'#9fb2c8');
+    prim.setMaterial(doc.createMaterial('kit').setBaseColorFactor([c[0],c[1],c[2],1]).setRoughnessFactor(0.9).setMetallicFactor(0.05));
+    const node=doc.createNode('kit-'+a.shape+'-'+n).setMesh(doc.createMesh('kit-'+a.shape).addPrimitive(prim));
+    node.setTranslation((a.p||[0,0,0]).slice(0,3)); node.setScale((a.s||[1,1,1]).slice(0,3));
+    scene0.addChild(node); n++;
+  }
+  return n;
 }
 function _docMeshOrder(root){   // root = gltf-transform Root (duck-typed for tests)
   const out=[], seen=new Set();
@@ -31791,6 +31825,10 @@ function _mpeApply(obj){
       m.material=m.userData._mpeMat;
     } else if(m.userData._mpeOrig){ m.material=m.userData._mpeOrig; }
   });
+  // build 998: kitbash parts — tear down and rebuild from the staged list (cheap; runs on UI events)
+  const have=[]; obj.traverse(o=>{ if(o.userData && o.userData._mpeAdded!=null) have.push(o); });
+  for(const h of have){ if(h.parent) h.parent.remove(h); if(h.geometry) h.geometry.dispose(); if(h.material && h.material.dispose) h.material.dispose(); }
+  (edits.add||[]).forEach((a,i)=>{ const m=_mkKitMesh(a); m.userData._mpeAdded=i; obj.add(m); });
 }
 // Bake: fetch the source GLB, apply the staged edits with gltf-transform, prune the orphans, and
 // re-host the result through the normal upload pipeline. done(url, name) or done(null).
@@ -31812,6 +31850,7 @@ async function _bakeModelEdits(url, edits, name, say, done){
     say('Applying edits…');
     const linearOf=(hex)=>{ const c=new THREE.Color(hex); if(c.convertSRGBToLinear) c.convertSRGBToLinear(); return [c.r,c.g,c.b]; };
     const stats=_applyModelEditsToDoc(doc.getRoot(), edits, linearOf);
+    stats.added=_addPartsToDoc(doc, edits.add, linearOf);   // build 998: kitbash parts ride into the same bake
     try{ await doc.transform(GT.funcs.dedup(), GT.funcs.prune()); }catch(e){}
     const bytes=await io.writeBinary(doc);
     const base=(name||'model').replace(/\.(glb|gltf)$/i,'').replace(/-edit$/i,'');
@@ -31819,7 +31858,7 @@ async function _bakeModelEdits(url, edits, name, say, done){
     say('Uploading edited model…');
     const d=await _uploadAsset(file, 'model', say);
     if(!d){ if(done) done(null); return; }
-    if(typeof flashBigToast==='function') flashBigToast('MODEL EDITED', d.slug+' — '+stats.del+' part'+(stats.del===1?'':'s')+' removed'+(stats.tint?(', '+stats.tint+' recolored'):'')+' (original kept)');
+    if(typeof flashBigToast==='function') flashBigToast('MODEL EDITED', d.slug+' — '+stats.del+' removed'+(stats.tint?(', '+stats.tint+' recolored'):'')+(stats.added?(', '+stats.added+' added'):'')+' (original kept)');
     if(done) done(d.url, d.name);
   }catch(e){ say('✕ '+((e&&e.message)||'edit failed')); if(done) done(null); }
 }
@@ -31830,7 +31869,7 @@ function renderModelParts(host, tgt){
   if(!/^https?:/i.test(url) || !/\.glb(\?|#|$)/i.test(url)) return;   // primitives / non-GLB props have no parts to edit
   const parts=_meshOrderOf(obj); if(!parts.length) return;
   const body=edFold(host, 'modelparts', 'Edit model parts', false, 'Recolor or delete pieces of this model, then save it as a new model');
-  const edits=obj.userData.modelEdits || (obj.userData.modelEdits={ del:{}, tint:{} });
+  const edits=obj.userData.modelEdits || (obj.userData.modelEdits={ del:{}, tint:{}, add:[] });
   const st=document.createElement('div'); st.className='hint'; st.style.cssText='font-size:10px;margin:2px 0 4px;min-height:12px;';
   const say=t=>{ st.textContent=t; };
   const MAXROWS=40;
@@ -31850,12 +31889,38 @@ function renderModelParts(host, tgt){
     row.appendChild(nm); row.appendChild(col); row.appendChild(db); body.appendChild(row);
   });
   if(parts.length>MAXROWS){ const more=document.createElement('div'); more.className='hint'; more.textContent='…and '+(parts.length-MAXROWS)+' more parts (edit the first '+MAXROWS+')'; body.appendChild(more); }
+  // build 998: kitbash — attach primitives to the model, tweak, baked in on save
+  edits.add=edits.add||[];
+  const kb=document.createElement('div'); kb.className='row2'; kb.style.marginTop='5px';
+  for(const [sh,lab] of [['box','+ Box'],['cylinder','+ Cylinder'],['sphere','+ Sphere']]){
+    const b=document.createElement('button'); b.textContent=lab; b.style.fontSize='10.5px';
+    b.onclick=()=>{ edits.add.push({ shape:sh, p:[0,1,0], s:[0.5,0.5,0.5], color:'#9fb2c8' }); _mpeApply(obj); renderEditorFields(); };
+    kb.appendChild(b);
+  }
+  body.appendChild(kb);
+  edits.add.forEach((a,ai)=>{
+    const row=document.createElement('div'); row.style.cssText='display:flex;gap:3px;align-items:center;font-size:10px;padding:2px 0;border-top:1px solid #16222a;flex-wrap:wrap;';
+    const nm=document.createElement('span'); nm.style.cssText='flex:0 0 52px;color:#9fe6cf;'; nm.textContent=a.shape; row.appendChild(nm);
+    const num=(get,set,tip)=>{ const i=document.createElement('input'); i.type='number'; i.step='0.1'; i.value=get(); i.title=tip;
+      i.style.cssText='width:44px;font-size:10px;padding:1px 2px;'; i.onchange=()=>{ set(parseFloat(i.value)||0); _mpeApply(obj); }; return i; };
+    row.appendChild(num(()=>a.p[0], v=>a.p[0]=v, 'Offset X'));
+    row.appendChild(num(()=>a.p[1], v=>a.p[1]=v, 'Offset Y (up)'));
+    row.appendChild(num(()=>a.p[2], v=>a.p[2]=v, 'Offset Z'));
+    row.appendChild(num(()=>a.s[0], v=>{ a.s=[v,v,v]; }, 'Size'));
+    const col=document.createElement('input'); col.type='color'; col.value=a.color||'#9fb2c8'; col.title='Part color';
+    col.style.cssText='flex:0 0 26px;width:26px;height:18px;padding:0;border:none;background:none;cursor:pointer;';
+    col.oninput=()=>{ a.color=col.value; _mpeApply(obj); }; row.appendChild(col);
+    const del=document.createElement('button'); del.textContent='✕'; del.title='Remove this added part';
+    del.style.cssText='flex:0 0 auto;padding:1px 7px;font-size:10px;border-color:#7a2630;color:#ff9b93;';
+    del.onclick=()=>{ edits.add.splice(ai,1); _mpeApply(obj); renderEditorFields(); }; row.appendChild(del);
+    body.appendChild(row);
+  });
   const rowB=document.createElement('div'); rowB.className='row2'; rowB.style.marginTop='6px';
   const save=document.createElement('button'); save.innerHTML=_icn('save')+'Save as new model';
   save.title='Bake these edits into a new hosted .glb and swap this prop to it (the original stays in place)';
   save.onclick=()=>{
-    const nDel=Object.keys(edits.del).length, nTint=Object.keys(edits.tint).length;
-    if(!nDel && !nTint){ say('Nothing staged — recolor or delete a part first.'); return; }
+    const nDel=Object.keys(edits.del).length, nTint=Object.keys(edits.tint).length, nAdd=(edits.add||[]).length;
+    if(!nDel && !nTint && !nAdd){ say('Nothing staged — add, recolor or delete a part first.'); return; }
     save.disabled=true;
     const tail=decodeURIComponent((url.split('/').pop()||'model').split('?')[0]);
     _bakeModelEdits(url, edits, tail, say, (nu)=>{ save.disabled=false;
