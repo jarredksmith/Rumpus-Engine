@@ -18990,7 +18990,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 995 · 2026-07-18';
+const BUILD_VERSION = 'build 996 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28919,6 +28919,7 @@ function renderEditorFields(){
     }
     urlHost.appendChild(row);
     if(typeof renderModelUpload==='function') renderModelUpload(urlHost, inp, tgt);   // build 974: upload your own .glb
+    if(tgt===editorTargets.props && typeof renderModelParts==='function') renderModelParts(urlHost, tgt);   // build 996: recolor/delete parts of the selected imported model
     if(tgt.urlField && !tgt.addable){   // Poly Pizza search for single-slot models (gun/station/grenade/player)
       const psHead=document.createElement('div'); psHead.className='hint'; psHead.style.margin='10px 0 3px'; psHead.innerHTML='<b>'+_icn('search')+'Search free models</b> — Poly Pizza / Sketchfab, click one to use it';
       urlHost.appendChild(psHead);
@@ -31683,6 +31684,129 @@ function renderUploadRow(host, type, fill, opts){
   host.appendChild(wrap);
 }
 // The model widget's upload control (build 974 behaviour, now on the shared helper).
+// ---- build 996: MODEL PART EDITOR --------------------------------------------------------------
+// Both sides of a GLB enumerate meshes in the SAME depth-first order (three's GLTFLoader builds its
+// objects in glTF node order, one Mesh per primitive), so a plain ordinal is a stable part id:
+// the i-th Mesh in the three scene ~ the i-th (node, primitive) pair in the gltf-transform doc.
+function _meshOrderOf(root){
+  const out=[]; if(root && root.traverse) root.traverse(o=>{ if(o.isMesh) out.push(o); });
+  return out;
+}
+function _docMeshOrder(root){   // root = gltf-transform Root (duck-typed for tests)
+  const out=[], seen=new Set();
+  const visit=(node)=>{ if(seen.has(node)) return; seen.add(node);
+    const m=node.getMesh && node.getMesh();
+    if(m) m.listPrimitives().forEach(prim=>out.push({ node, mesh:m, prim }));
+    (node.listChildren?node.listChildren():[]).forEach(visit); };
+  (root.listScenes?root.listScenes():[]).forEach(s=>(s.listChildren?s.listChildren():[]).forEach(visit));
+  return out;
+}
+// Apply staged edits to a doc: delete removes the primitive from its mesh (an emptied mesh detaches
+// from its node so prune can drop the geometry); tint clones the material (they're shared) and sets
+// a linear base color. Pure doc surgery — the caller prunes and writes.
+function _applyModelEditsToDoc(root, edits, linearOf){
+  const order=_docMeshOrder(root);
+  let del=0, tint=0;
+  order.forEach((e,i)=>{
+    if(edits.del && edits.del[i]){ e.mesh.removePrimitive(e.prim); if(e.mesh.listPrimitives().length===0 && e.node.setMesh) e.node.setMesh(null); del++; return; }
+    if(edits.tint && edits.tint[i] && e.prim.getMaterial && e.prim.getMaterial()){
+      const c=linearOf(edits.tint[i]);
+      e.prim.setMaterial(e.prim.getMaterial().clone().setBaseColorFactor([c[0],c[1],c[2],1])); tint++;
+    }
+  });
+  return { total:order.length, del, tint };
+}
+// Live preview on the in-scene prop: hide deleted parts, clone+tint recolored ones, restore the rest.
+function _mpeApply(obj){
+  const edits=(obj && obj.userData && obj.userData.modelEdits)||{};
+  _meshOrderOf(obj).forEach((m,i)=>{
+    m.visible = !(edits.del && edits.del[i]);
+    const hex = edits.tint && edits.tint[i];
+    if(hex){
+      if(!m.userData._mpeOrig) m.userData._mpeOrig = m.material;
+      if(!m.userData._mpeMat || m.userData._mpeHex!==hex){
+        const base=Array.isArray(m.userData._mpeOrig)?m.userData._mpeOrig[0]:m.userData._mpeOrig;
+        const cl=base.clone(); if(cl.color) cl.color.set(hex); if('map' in cl) cl.map=null;   // a flat recolor reads better without the old texture fighting it
+        if(m.userData._mpeMat && m.userData._mpeMat.dispose) try{ m.userData._mpeMat.dispose(); }catch(e){}
+        m.userData._mpeMat=cl; m.userData._mpeHex=hex;
+      }
+      m.material=m.userData._mpeMat;
+    } else if(m.userData._mpeOrig){ m.material=m.userData._mpeOrig; }
+  });
+}
+// Bake: fetch the source GLB, apply the staged edits with gltf-transform, prune the orphans, and
+// re-host the result through the normal upload pipeline. done(url, name) or done(null).
+async function _bakeModelEdits(url, edits, name, say, done){
+  try{
+    if(!url || !/^https?:/i.test(url)){ say('This model has no fetchable URL to edit.'); if(done) done(null); return; }
+    say('Reading model…');
+    let buf; try{ const r=await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); buf=await r.arrayBuffer(); }
+    catch(e){ say('✕ couldn’t fetch the model'); if(done) done(null); return; }
+    const GT=await _ensureGltfTransform(); if(!GT){ say('✕ editor library unavailable (offline?)'); if(done) done(null); return; }
+    const codecs=await _ensureGlbCodecs();
+    const io=new GT.core.WebIO().registerExtensions(GT.ext.ALL_EXTENSIONS);
+    const deps={};
+    if(codecs.dracoDecoder) deps['draco3d.decoder']=codecs.dracoDecoder;
+    if(codecs.meshoptDecoder) deps['meshopt.decoder']=codecs.meshoptDecoder;
+    if(codecs.meshoptEncoder) deps['meshopt.encoder']=codecs.meshoptEncoder;
+    io.registerDependencies(deps);
+    let doc; try{ doc=await io.readBinary(new Uint8Array(buf)); }catch(e){ say('✕ couldn’t read this model (a compression we can’t repack yet)'); if(done) done(null); return; }
+    say('Applying edits…');
+    const linearOf=(hex)=>{ const c=new THREE.Color(hex); if(c.convertSRGBToLinear) c.convertSRGBToLinear(); return [c.r,c.g,c.b]; };
+    const stats=_applyModelEditsToDoc(doc.getRoot(), edits, linearOf);
+    try{ await doc.transform(GT.funcs.dedup(), GT.funcs.prune()); }catch(e){}
+    const bytes=await io.writeBinary(doc);
+    const base=(name||'model').replace(/\.(glb|gltf)$/i,'').replace(/-edit$/i,'');
+    const file=new File([bytes], base+'-edit.glb', { type:'model/gltf-binary' });
+    say('Uploading edited model…');
+    const d=await _uploadAsset(file, 'model', say);
+    if(!d){ if(done) done(null); return; }
+    if(typeof flashBigToast==='function') flashBigToast('MODEL EDITED', d.slug+' — '+stats.del+' part'+(stats.del===1?'':'s')+' removed'+(stats.tint?(', '+stats.tint+' recolored'):'')+' (original kept)');
+    if(done) done(d.url, d.name);
+  }catch(e){ say('✕ '+((e&&e.message)||'edit failed')); if(done) done(null); }
+}
+// The panel: one row per part with a recolor swatch and a stage-delete toggle; Save bakes + swaps.
+function renderModelParts(host, tgt){
+  const obj=tgt && tgt.obj && tgt.obj(); if(!host || !obj) return;
+  const url=(obj.userData && obj.userData.src)||'';
+  if(!/^https?:/i.test(url) || !/\.glb(\?|#|$)/i.test(url)) return;   // primitives / non-GLB props have no parts to edit
+  const parts=_meshOrderOf(obj); if(!parts.length) return;
+  const body=edFold(host, 'modelparts', 'Edit model parts', false, 'Recolor or delete pieces of this model, then save it as a new model');
+  const edits=obj.userData.modelEdits || (obj.userData.modelEdits={ del:{}, tint:{} });
+  const st=document.createElement('div'); st.className='hint'; st.style.cssText='font-size:10px;margin:2px 0 4px;min-height:12px;';
+  const say=t=>{ st.textContent=t; };
+  const MAXROWS=40;
+  parts.slice(0,MAXROWS).forEach((m,i)=>{
+    const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;align-items:center;font-size:10.5px;padding:2px 0;border-top:1px solid #16222a;';
+    const del=!!edits.del[i];
+    const nm=document.createElement('span'); nm.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(del?'opacity:0.45;text-decoration:line-through;':'');
+    nm.textContent=(m.name||('part '+(i+1)));
+    nm.title='Click to flash this part in the scene';
+    nm.onclick=()=>{ const old=m.visible; let n=0; const t=setInterval(()=>{ m.visible=!m.visible; if(++n>=6){ clearInterval(t); m.visible=old && !edits.del[i]; } }, 90); };
+    const col=document.createElement('input'); col.type='color'; col.style.cssText='flex:0 0 26px;width:26px;height:18px;padding:0;border:none;background:none;cursor:pointer;';
+    col.value=edits.tint[i]||'#ffffff'; col.title='Recolor this part';
+    col.oninput=()=>{ edits.tint[i]=col.value; _mpeApply(obj); };
+    const db=document.createElement('button'); db.textContent=del?'↩':'✕'; db.title=del?'Restore this part':'Delete this part';
+    db.style.cssText='flex:0 0 auto;padding:1px 8px;font-size:10px;'+(del?'':'border-color:#7a2630;color:#ff9b93;');
+    db.onclick=()=>{ if(edits.del[i]) delete edits.del[i]; else edits.del[i]=true; _mpeApply(obj); renderEditorFields(); };
+    row.appendChild(nm); row.appendChild(col); row.appendChild(db); body.appendChild(row);
+  });
+  if(parts.length>MAXROWS){ const more=document.createElement('div'); more.className='hint'; more.textContent='…and '+(parts.length-MAXROWS)+' more parts (edit the first '+MAXROWS+')'; body.appendChild(more); }
+  const rowB=document.createElement('div'); rowB.className='row2'; rowB.style.marginTop='6px';
+  const save=document.createElement('button'); save.innerHTML=_icn('save')+'Save as new model';
+  save.title='Bake these edits into a new hosted .glb and swap this prop to it (the original stays in place)';
+  save.onclick=()=>{
+    const nDel=Object.keys(edits.del).length, nTint=Object.keys(edits.tint).length;
+    if(!nDel && !nTint){ say('Nothing staged — recolor or delete a part first.'); return; }
+    save.disabled=true;
+    const tail=decodeURIComponent((url.split('/').pop()||'model').split('?')[0]);
+    _bakeModelEdits(url, edits, tail, say, (nu)=>{ save.disabled=false;
+      if(nu){ obj.userData.modelEdits=undefined; if(tgt.setUrl) tgt.setUrl(nu); _levelDirty=true; renderEditorFields(); } });
+  };
+  const reset=document.createElement('button'); reset.textContent='Reset';
+  reset.onclick=()=>{ obj.userData.modelEdits={ del:{}, tint:{} }; _mpeApply(obj); renderEditorFields(); };
+  rowB.appendChild(save); rowB.appendChild(reset); body.appendChild(rowB); body.appendChild(st);
+}
 function renderModelUpload(urlHost, inp, tgt){
   renderUploadRow(urlHost, 'model', (url)=>{
     inp.value=url;
