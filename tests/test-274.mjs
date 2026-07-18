@@ -10,7 +10,7 @@ assert(/let tpMuzSide = 0\.5, tpMuzUp = -0\.2, tpMuzFwd = 0\.6;/.test(src), 'TP 
 assert(/localStorage\.getItem\('breach_tp_muz_side'\)/.test(src) && /localStorage\.getItem\('breach_tp_muz_up'\)/.test(src) && /localStorage\.getItem\('breach_tp_muz_fwd'\)/.test(src), 'all three persist');
 
 // the shoot path branches on tpMode for the streak origin
-assert(/if\(tpMode\)\{\s*\n\s*tpMuzzleWorld\(muzzleWorld\);/.test(src), 'third-person shot uses the shared origin fn (build 489)');
+assert(/if\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\)\{\s*\n\s*tpMuzzleWorld\(muzzleWorld\);/.test(src), 'third-person (and top/side view) shots use the shared origin fn (build 489; widened to view modes in build 885)');
 // the shared fn builds the origin from the player + the blended hip->aim offset
 const tmw = extractFunction('tpMuzzleWorld');
 assert(/out\.set\(player\.pos\.x \+ _rx\*_mS \+ _fx\*_mF/.test(tmw), 'tpMuzzleWorld builds origin from player + view-relative offset');

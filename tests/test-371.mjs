@@ -20,7 +20,7 @@ assert(/const gunApplied = pitch - spineApplied;/.test(aag), 'gun covers the rem
 assert(/const base=gun\.userData\.gripQuat; if\(base\) gun\.quaternion\.copy\(base\)/.test(aag), 'gun resets to grip base each frame (no accumulation)');
 
 // the aim pass runs for the own body and remote players, after the mixer/seat re-pin
-assert(/if\(_ownAvatar && tpMode\) _aimAvatarGun\(_ownAvatar, player\.yaw, player\.pitch\)/.test(src), 'own third-person body aims to the live view pitch');
+assert(/if\(_ownAvatar && \(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\)\)\{ if\(typeof _applyJointFix==='function'\) _applyJointFix\(_ownAvatar, _myJointFix\(\)\); _aimAvatarGun\(_ownAvatar, player\.yaw, player\.pitch\); \}/.test(src), 'own third-person (or top/side-view) body aims to the live view pitch, joint tweaks riding under the aim (build 942)');
 assert(/_aimAvatarGun\(rp\.mesh, rp\.yaw\|\|0, rp\.pitch\|\|0\)/.test(src), 'remote players aim to their synced pitch');
 
 // ---- remote pitch sync (was sent but dropped) ----

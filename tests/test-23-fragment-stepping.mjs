@@ -8,7 +8,7 @@ import { extractFunction, done, assert } from './harness.mjs';
 // --- structural: the step guard now counts fragments, not just dynamicProps ---
 const up = extractFunction('updatePhysics');
 assert(/if\(!physWorld\) return;/.test(up), 'guards a missing world');
-assert(/if\(!dynamicProps\.length && !fragments\.length && !\(playerPhysMode && playerBody\)\)\{ physAccum = 0; return; \}/.test(up), 'only bails when there are NO props, NO fragments, and the physics player controller is inactive');
+assert(/if\(!dynamicProps\.length && !fragments\.length && !_corpses\.length && !\(playerPhysMode && playerBody\)\)\{ physAccum = 0; return; \}/.test(up), 'only bails when there are NO props, NO fragments, NO ragdoll corpses, and the physics player controller is inactive');
 assert(/while\(physAccum >= PHYS_DT[\s\S]*physWorld\.step\(\)/.test(up), 'still steps the world when something dynamic exists');
 // the old buggy guard must be gone
 assert(!/if\(!physWorld \|\| !dynamicProps\.length\) return;/.test(up), 'the prop-only early-return is gone');
