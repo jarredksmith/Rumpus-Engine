@@ -6,9 +6,9 @@ import { gameSource, html, extractFunction, assert, eq, done } from './harness.m
 const src = gameSource();
 
 // layout: the two overflowing editor rows wrap now
-assert(/#editor \.edModes \{ display:flex; flex-wrap:wrap;/.test(html), 'editor mode tabs wrap (HUD/Files were clipped off every screen)');
+assert(/#edModes\.edModes \{ flex: 0 0 58px; flex-wrap: nowrap; flex-direction: column;/.test(html), 'editor mode tabs are a vertical rail (build 982: no more clipping — the column scrolls)');
 assert(/#editor \.row2 \{ display: flex; gap: 6px; flex-wrap: wrap; \}/.test(html), 'editor button rows wrap (the 9-shape add row overflowed)');
-assert(/max-height: 100vh; max-height: 100dvh;/.test(html), 'editor panel height uses the real (dvh) mobile viewport');
+assert(/height: 100vh; height: 100dvh; max-height: 100dvh;/.test(html), 'editor panel height uses the real (dvh) mobile viewport (build 982: full-height flex column)');
 assert(/#chatInput \{ display:none; width:min\(300px, 86vw\);/.test(html), 'chat input capped to the viewport');
 
 // MP race joiner: objective re-inits AFTER the host level lands

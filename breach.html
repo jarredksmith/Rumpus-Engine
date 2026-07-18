@@ -29,13 +29,26 @@
 
   /* Transform editor */
   #editor {
-    position: absolute; top: 0; right: 0; width: 320px; min-width: 260px; max-width: 92vw; max-height: 100vh; max-height: 100dvh;
-    overflow-y: auto; pointer-events: auto;
+    position: absolute; top: 0; right: 0; width: 344px; min-width: 288px; max-width: 92vw; height: 100vh; height: 100dvh; max-height: 100dvh;
+    display: flex; flex-direction: column; overflow: hidden; pointer-events: auto;
     background: rgba(7,13,18,0.92); border-left: 1px solid rgba(var(--accent-rgb),0.35);
     color: #d6f5e8; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
-    padding: 12px 14px; z-index: 30;
+    padding: 0; z-index: 30;
     box-shadow: -6px 0 24px rgba(0,0,0,0.5);
   }
+  /* build 982: Blender-style layout — header on top, then a rail of vertical mode tabs beside the
+     scrolling content (rail sits on the panel's inner/viewport-facing edge; mirrors when docked left) */
+  #editor #edTopBar { padding: 10px 12px 5px; margin: 0; flex: 0 0 auto; }
+  #edShell { display: flex; flex: 1 1 auto; min-height: 0; }
+  #editor.dockLeft #edShell { flex-direction: row-reverse; }
+  #edMain { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 8px 12px 18px; }
+  #edMain::-webkit-scrollbar { width: 9px; } #edMain::-webkit-scrollbar-thumb { background: #22323b; border-radius: 5px; }
+  #edModes.edModes { flex: 0 0 58px; flex-wrap: nowrap; flex-direction: column; gap: 3px; margin: 0; padding: 7px 5px; overflow-y: auto; border-bottom: none; border-right: 1px solid #1c2a31; background: rgba(0,0,0,0.22); }
+  #edModes.edModes::-webkit-scrollbar { width: 0; }
+  #editor.dockLeft #edModes.edModes { border-right: none; border-left: 1px solid #1c2a31; }
+  #editor #edModes .edMode { flex: 0 0 auto; width: auto; margin: 0; padding: 8px 2px 9px; border-radius: 8px; border: 1px solid transparent; gap: 4px; }
+  #editor #edModes .edMode svg { width: 18px; height: 18px; }
+  #editor #edModes .edMode .edModeLbl { font-size: 9.5px; }
   /* drag-to-resize handle on the left edge */
   #editorResize {
     position: absolute; top: 0; left: -3px; width: 7px; height: 100%;
@@ -50,6 +63,7 @@
   #editor #edTopBar button { background:rgba(var(--accent-rgb),0.12); border:1px solid rgba(var(--accent-rgb),0.4); color:#cfeee2; border-radius:6px; width:32px; height:30px; font-size:15px; line-height:1; cursor:pointer; flex:0 0 auto; }
   #editor #edTopBar button:hover { border-color:var(--accent); color:#eafff7; }
   #editor.collapsed { max-height:none; height:auto; width:auto; min-width:0; overflow:hidden; }
+  #editor.collapsed { height:auto; }
   #editor.collapsed > *:not(#edTopBar) { display:none; }
   #editor.dockLeft { left:0; right:auto; border-left:none; border-right:1px solid rgba(var(--accent-rgb),0.35); box-shadow:6px 0 24px rgba(0,0,0,0.5); }
   #editor.dockLeft #editorResize { left:auto; right:-3px; }
@@ -18672,7 +18686,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 981 · 2026-07-18';
+const BUILD_VERSION = 'build 982 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25956,9 +25970,9 @@ function buildEditorPanel(){
       + '<button id="edDock" title="Move panel to the other side">\u21c4</button>'
       + '<button id="edCollapse" title="Collapse panel">\u2304</button>'
     + '</div>'
+    + '<div id="edShell"><div class="edModes" id="edModes"></div><div id="edMain">'
     + '<div class="hint" id="edHint"></div>'
     + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;min-width:44px">↶</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
-    + '<div class="edModes" id="edModes"></div>'
     + '<div id="edSearchRow"><input id="edSearch" type="search" placeholder="Search settings\u2026" spellcheck="false" aria-label="Search settings"></div>'
     + '<div id="edSearchChips"></div>'
     + '<div class="tabs" id="edTabs"></div>'
@@ -26007,6 +26021,7 @@ function buildEditorPanel(){
       + '<div class="copied" id="edCopied"></div>'
       + '<textarea id="edOut" readonly></textarea>')
     + sec('Campaign', 'campaign', '<div id="edCampaign"></div>')
+    + '</div></div>'
     ;
   document.body.appendChild(p);
   editorEl = p;
