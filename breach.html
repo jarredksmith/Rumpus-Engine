@@ -18990,7 +18990,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 993 · 2026-07-18';
+const BUILD_VERSION = 'build 994 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20915,7 +20915,7 @@ function killEnemy(en, sx, sz){
   if(sx!=null){ _rdx=en.mesh.position.x-sx; _rdz=en.mesh.position.z-sz; const _l=Math.hypot(_rdx,_rdz)||1; _rdx/=_l; _rdz/=_l; }
   else { const _a=Math.random()*6.2832; _rdx=Math.cos(_a); _rdz=Math.sin(_a); }
   const _rag = (gameCfg.ragdoll && typeof spawnCorpse==='function') ? spawnCorpse(en.mesh, _rdx, 0, _rdz, 4.5+Math.random()*3.5) : false;
-  if(!_rag){ scene.remove(en.mesh); if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } }   // stop animating a dead enemy
+  if(!_rag){ if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } if(typeof _poseDeath==='function') _poseDeath(en.mesh); _fallbackDeath(en.mesh, _rdx, _rdz); }   // build 994: no ragdoll -> topple + sink + fade instead of vanishing on the spot
   enemies.splice(enemies.indexOf(en),1);
   score += 100; updateHUD();
   if(en.exploder && !en._detonated){ en._detonated=true; if(typeof explodeAt==='function') explodeAt(en.mesh.position.clone(), en.blastR||6, en.blastDmg||40, en.id); }   // build 628: a downed Sapper still goes off (kill it from range)
@@ -20932,6 +20932,40 @@ function detonateExploder(en){
   const idx = enemies.indexOf(en); if(idx>=0) enemies.splice(idx,1);
   if(typeof explodeAt==='function') explodeAt(pos, en.blastR||6, en.blastDmg||40, en.id);
   if(typeof updateHUD==='function') updateHUD();
+}
+// ---- build 994: FALLBACK DEATH (no ragdoll) — topple away from the shot, lie, sink, fade -------
+// The Tier-0 ragdoll (build 779) is a per-level opt-in; without it dead enemies vanished on the
+// spot. This is the zero-physics stand-in: no bodies, no colliders — just a short world-axis
+// topple, a hold, and a sink+fade on cloned materials (clones so shared model masters stay opaque).
+let _fadeCorpses=[];
+const FADE_CORPSE_MAX=24;
+function _removeFadeCorpse(c){ try{ scene.remove(c.mesh); (c.mats||[]).forEach(m=>{ try{ m.dispose(); }catch(e){} }); }catch(e){} }
+function _fallbackDeath(mesh, dx, dz){
+  try{
+    const l=Math.hypot(dx,dz)||1;
+    const ax=new THREE.Vector3(dz/l, 0, -dx/l);   // horizontal axis perpendicular to the hit -> the body tips AWAY from the shooter
+    const mats=[];
+    mesh.traverse(o=>{ if(o.isMesh && o.material){ const arr=Array.isArray(o.material)?o.material:[o.material]; const cl=arr.map(m=>{ const c=m.clone(); c.transparent=true; return c; }); o.material=Array.isArray(o.material)?cl:cl[0]; for(const c of cl) mats.push(c); } });
+    _fadeCorpses.push({ mesh, ax, mats, t:0, y0:mesh.position.y, q0:mesh.quaternion.clone() });
+    if(_fadeCorpses.length>FADE_CORPSE_MAX) _removeFadeCorpse(_fadeCorpses.shift());
+  }catch(e){ try{ scene.remove(mesh); }catch(_e){} }
+}
+const _fcQ = new THREE.Quaternion();
+function updateFadeCorpses(dt){
+  const TOPPLE=0.45, HOLD=2.2, SINK=0.9;
+  for(let i=_fadeCorpses.length-1;i>=0;i--){ const c=_fadeCorpses[i]; c.t+=dt;
+    if(c.t<TOPPLE){
+      const k=c.t/TOPPLE, e=k*k*(3-2*k);   // smoothstep: slow tip, fast slam
+      _fcQ.setFromAxisAngle(c.ax, e*1.5);
+      c.mesh.quaternion.copy(c.q0).premultiply(_fcQ);
+      c.mesh.position.y = c.y0 - e*1.0;    // centre drops as the body lies down
+    } else if(c.t<TOPPLE+HOLD){ /* lie still */ }
+    else if(c.t<TOPPLE+HOLD+SINK){
+      const k=(c.t-TOPPLE-HOLD)/SINK;
+      c.mesh.position.y = c.y0 - 1.0 - k*1.4;
+      for(const m of c.mats){ if(m.opacity>1-k) m.opacity=1-k; }
+    } else { _removeFadeCorpse(c); _fadeCorpses.splice(i,1); }
+  }
 }
 // build 779: TIER-0 RAGDOLL ("physics corpse"). On death the character's FROZEN mesh is rigidly attached to one dynamic
 // capsule that tumbles + collides with the world, carrying the killing hit's force. Not floppy limbs, but real physics +
@@ -23851,6 +23885,7 @@ function loop(){
   // physics: host/solo simulate dynamic props; clients receive their transforms via the snapshot.
   { const _a=perfOn?_pnow():0; if(!editorOpen){ if(NET.mode!=='client'){ updatePhysics(dt); updateThrownDamage(dt); crushPass(dt); } else if(playerPhysMode && playerBody && physWorld){ stepClientPlayerPhys(dt); } } if(perfOn)_prof.phys+=_pnow()-_a; }
   if(!editorOpen && _corpses.length) updateCorpses(dt);   // build 779: ragdoll corpses follow their tumbling bodies
+  if(!editorOpen && _fadeCorpses.length) updateFadeCorpses(dt);   // build 994: topple/fade fallback corpses
   if(typeof updateFragments==='function') updateFragments();   // advance/cleanup destruction debris
   updateLightBudget();
 
