@@ -55,9 +55,10 @@ assert(/\[\?&\]game=\(\[a-z0-9\\-\]\{1,64\}\)/.test(src), 'the slug is strictly 
 assert(/for\(const dir of \['games\/','levels\/'\]\)/.test(src),
   'unlisted games/ namespace first, reviewed community library second');
 assert(/Could not find the game/.test(src), 'a bad slug reports instead of hanging');
-assert(/const _sharedArrival = !!levelCodeFromUrl\(\) \|\| \/\[\?&\]game=\/\.test\(location\.search\|\|''\);/.test(src)
-  && /!localStorage\.getItem\('breach_seen'\) && !_sharedArrival/.test(src),
-  'first-run instructions never auto-open over a creator title screen (shared arrivals skip it)');
+// build 985: the first-run instructions modal was removed entirely, so a creator title screen is
+// never interrupted by it (nothing auto-opens on boot — the "seen" flag is just written).
+assert(!/openModal\('instrModal'\)\s*;\s*\}\s*\}catch/.test(src) && /try\{ localStorage\.setItem\('breach_seen','1'\); \}catch/.test(src),
+  'no first-run modal auto-opens over a creator title screen (build 985: pop-up removed)');
 
 // ---- CSS: layering — above the menu (20), below editor (30) & modals (60); preview above editor ----
 assert(/#gameHome \{ position:fixed; inset:0; z-index:22;/.test(html), 'layer sits just above the menu');

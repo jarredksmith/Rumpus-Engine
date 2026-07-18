@@ -30,20 +30,19 @@
   /* Transform editor */
   #editor {
     position: absolute; top: 0; right: 0; width: 344px; min-width: 288px; max-width: 92vw; height: 100vh; height: 100dvh; max-height: 100dvh;
-    display: flex; flex-direction: column; overflow: hidden; pointer-events: auto;
+    display: block; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; pointer-events: auto;
     background: rgba(7,13,18,0.92); border-left: 1px solid rgba(var(--accent-rgb),0.35);
     color: #d6f5e8; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
     padding: 0; z-index: 30;
     box-shadow: -6px 0 24px rgba(0,0,0,0.5);
   }
-  /* build 982: Blender-style layout — header on top, then a rail of vertical mode tabs beside the
-     scrolling content (rail sits on the panel's inner/viewport-facing edge; mirrors when docked left) */
-  #editor #edTopBar { padding: 10px 12px 5px; margin: 0; flex: 0 0 auto; }
-  #edShell { display: flex; flex: 1 1 auto; min-height: 0; }
+  /* build 982/985: Blender-style layout — header + rail of vertical mode tabs; the PANEL scrolls
+     natively (mobile-safe) and the rail is pinned with position:sticky so it never scrolls away. */
+  #editor #edTopBar { position: sticky; top: 0; z-index: 3; padding: 10px 12px 6px; margin: 0; background: rgba(9,14,18,0.97); }
+  #edShell { display: flex; align-items: flex-start; }
   #editor.dockLeft #edShell { flex-direction: row-reverse; }
-  #edMain { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 8px 12px 18px; }
-  #edMain::-webkit-scrollbar { width: 9px; } #edMain::-webkit-scrollbar-thumb { background: #22323b; border-radius: 5px; }
-  #edModes.edModes { flex: 0 0 58px; flex-wrap: nowrap; flex-direction: column; gap: 3px; margin: 0; padding: 7px 5px; overflow-y: auto; border-bottom: none; border-right: 1px solid #1c2a31; background: rgba(0,0,0,0.22); }
+  #edMain { flex: 1 1 auto; min-width: 0; padding: 8px 12px 40px; }   /* extra bottom pad so the last row clears mobile browser chrome */
+  #edModes.edModes { position: sticky; top: 46px; align-self: flex-start; z-index: 2; flex: 0 0 58px; flex-wrap: nowrap; flex-direction: column; gap: 3px; margin: 0; padding: 7px 5px; max-height: calc(100dvh - 46px); overflow-y: auto; border-bottom: none; border-right: 1px solid #1c2a31; background: rgba(9,14,18,0.9); }
   #edModes.edModes::-webkit-scrollbar { width: 0; }
   #editor.dockLeft #edModes.edModes { border-right: none; border-left: 1px solid #1c2a31; }
   #editor #edModes .edMode { flex: 0 0 auto; width: auto; margin: 0; padding: 8px 2px 9px; border-radius: 8px; border: 1px solid transparent; gap: 4px; }
@@ -141,7 +140,7 @@
   #edToolbar button.on { background:rgba(var(--accent-rgb),0.25); color:var(--accent); }
   @media (max-width:760px) { #edToolbar { flex-wrap:wrap; max-width:52vw; } }
   /* ---- build 978: pro-inspector reskin — flat details list, tooltips, settings search ---- */
-  #editor { font: 12px/1.45 var(--ui-font), system-ui, sans-serif; background: rgba(9,14,18,0.96); border-left: 1px solid #1c2a31; padding: 10px 12px 14px; }
+  #editor { font: 12px/1.45 var(--ui-font), system-ui, sans-serif; background: rgba(9,14,18,0.96); border-left: 1px solid #1c2a31; }   /* build 985: padding lives on #edTopBar / #edMain now (the panel scrolls as one) */
   #editor.dockLeft { border-right: 1px solid #1c2a31; }
   #editor::-webkit-scrollbar { width: 9px; }
   #editor::-webkit-scrollbar-thumb { background: #22323b; border-radius: 5px; }
@@ -18691,7 +18690,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 983 · 2026-07-18';
+const BUILD_VERSION = 'build 985 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24158,6 +24157,12 @@ function applyContextualSections(){
     const has = CTX[key].some(id=>{ const h=editorEl.querySelector('#'+id); return h && h.innerHTML.trim()!==''; });
     el.style.display = has ? '' : 'none';
   }
+  // build 984: hide a sub-fold whose hosts rendered nothing (e.g. Animation with no model loaded)
+  editorEl.querySelectorAll('.edSubSection[data-subfold]').forEach(s=>{
+    const body=s.querySelector('.edSubBody');
+    const has = body && [...body.querySelectorAll(':scope > div')].some(d=>d.innerHTML.trim()!=='');
+    s.style.display = has ? '' : 'none';
+  });
 }
 function setEditorMode(mode, fromSelection){
   if(EDITOR_MODES.indexOf(mode)<0) mode='build';
@@ -25965,6 +25970,12 @@ function buildEditorPanel(){
     '<div class="edSection" data-sec="'+key+'">'
     + '<div class="edSecHead"><span class="edCaret">▾</span>'+title+'</div>'
     + '<div class="edSecBody">'+innerHtml+'</div></div>';
+  // build 984: a static collapsible sub-fold (delegated toggle + persisted below) — breaks a long,
+  // mixed section into labelled groups so it never reads as one endless list
+  const subfold = (title, key, innerHtml, openDefault)=>
+    '<div class="edSubSection" data-subfold="'+key+'"'+(openDefault?'':' data-defclosed="1"')+'>'
+    + '<div class="edSubHead"><span class="edCaret">▾</span>'+title+'</div>'
+    + '<div class="edSubBody">'+innerHtml+'</div></div>';
   p.innerHTML = '<div id="editorResize" title="Drag to resize"></div>'
     + '<div id="edTopBar" style="display:flex;align-items:center;gap:6px;margin:0 0 6px;">'
       + '<h3 style="margin:0;flex:1;">LEVEL EDITOR</h3>'
@@ -25982,7 +25993,12 @@ function buildEditorPanel(){
     + '<div id="edSearchChips"></div>'
     + '<div class="tabs" id="edTabs"></div>'
     + sec('Handles', 'gizmo', '<div id="edGizmo"></div>')
-    + sec('Object &amp; selection', 'object', '<div id="edShapes"></div><div id="edModels"></div><div id="edUrl"></div><div id="edPicker"></div><div id="edAnim"></div><div id="edLibrary"></div>')
+    + sec('Object &amp; selection', 'object',
+          '<div id="edPicker"></div>'
+        + subfold('Add a shape', 'o_shapes', '<div id="edShapes"></div>', true)
+        + subfold('Model &amp; texture', 'o_model', '<div id="edModels"></div><div id="edUrl"></div>', true)
+        + subfold('Animation', 'o_anim', '<div id="edAnim"></div>', false)
+        + subfold('Character library', 'o_lib', '<div id="edLibrary"></div>', false))
     + sec('Material', 'material', '<div id="edMaterial"></div>')
     + sec('Transform', 'transform', '<div id="edFields"></div>')
     + sec('Environment', 'world', '<div id="edWorld"></div>')
@@ -26203,6 +26219,19 @@ function buildEditorPanel(){
       try{ localStorage.setItem('breach_editor_sections', JSON.stringify(secState)); }catch(e){}
     };
   });
+  // ---- build 984: static sub-fold toggle (delegated; JS-built folds keep their own onclick) ----
+  { let _sf={}; try{ _sf=JSON.parse(localStorage.getItem('breach_editor_subfolds')||'{}')||{}; }catch(e){}
+    p.querySelectorAll('.edSubSection[data-subfold]').forEach(s=>{
+      const key=s.dataset.subfold; const collapsed=(key in _sf)?!!_sf[key]:(s.dataset.defclosed==='1');
+      s.classList.toggle('collapsed', collapsed);
+    });
+    p.addEventListener('click', (e)=>{
+      const head=e.target && e.target.closest && e.target.closest('.edSubHead');
+      const sec=head && head.closest('.edSubSection[data-subfold]'); if(!sec) return;   // only static folds; JS-built ones bind their own handler
+      sec.classList.toggle('collapsed');
+      try{ const st=JSON.parse(localStorage.getItem('breach_editor_subfolds')||'{}')||{}; st[sec.dataset.subfold]=sec.classList.contains('collapsed'); localStorage.setItem('breach_editor_subfolds', JSON.stringify(st)); }catch(e){}
+    });
+  }
   // ---- build 978: tooltip engine + inline-help toggle + settings search ----
   _edBindTips(p);
   try{ new MutationObserver(()=>_edTipifySoon()).observe(p, { childList:true, subtree:true }); }catch(e){}
@@ -30686,10 +30715,9 @@ function bindMenu(){
   if(fs){ if(!fsSupported()){ fs.style.display='none'; } else { fs.style.display=''; fs.onclick=toggleFullscreen; syncFsBtn(); } }   // desktop only
   const ib=document.getElementById('instrBtn'); if(ib) ib.onclick=()=>{ syncInstrControls(); openModal('instrModal'); };
   // First run: greet a cold visitor with the instructions once (device-aware), then never auto-open again.
-  // build 971: not when arriving via a shared game link — the creator's title screen is the greeting
-  // there (and these generic FPS controls may not even match their level). Menu > Instructions remains.
-  const _sharedArrival = !!levelCodeFromUrl() || /[?&]game=/.test(location.search||'');
-  try{ if(!localStorage.getItem('breach_seen') && !_sharedArrival){ localStorage.setItem('breach_seen','1'); syncInstrControls(); openModal('instrModal'); } }catch(e){}
+  // build 985: no first-run instructions modal — the controls are standard (WASD/mouse, on-screen
+  // touch pads) and the pop-up got in the way. INSTRUCTIONS is still one tap from the menu button.
+  try{ localStorage.setItem('breach_seen','1'); }catch(e){}
   const hb=document.getElementById('manualBtn'); if(hb) hb.onclick=()=>{ try{ window.open('breach-help.html','_blank'); }catch(e){} };   // build 850: the field manual ships beside the game again (it was a dead link — and this button shared helpBtn's id, so Help & tutorials had stolen its click)
   const crb=document.getElementById('creditsBtn'); if(crb) crb.onclick=openCredits;   // build 549: player-facing credits + license screen
   const hlb=document.getElementById('helpBtn'); if(hlb) hlb.onclick=openHelp;   // build 848: help & tutorials from the home menu

@@ -1,21 +1,22 @@
 // (build 982) BLENDER-STYLE LEFT TAB RAIL — the 8 editor modes moved from a wrapping horizontal
 // strip (which clipped HUD/Save on phones) to a vertical icon+label column on the panel's inner
-// edge, with the content scrolling beside it. The panel is now a flex column: header on top, then
-// a row of [rail | scrolling main]. Rail mirrors to the other edge when the panel docks left.
+// edge, with the content scrolling beside it. Rail mirrors to the other edge when the panel docks
+// left. Build 985: the PANEL itself scrolls natively (mobile-safe) and the rail is pinned with
+// position:sticky, replacing the 982 nested flex-scroll that broke touch scrolling.
 import { gameSource, html, assert, done } from './harness.mjs';
 const src = gameSource();
 
-// panel is a flex column, no longer the scroll container itself
-assert(/#editor \{[^}]*display: flex; flex-direction: column; overflow: hidden;/.test(html),
-  'the panel is a flex column with a non-scrolling shell');
+// build 985: the panel is the native scroll container again (touch-safe), not a clipped flex shell
+assert(/#editor \{[^}]*overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;/.test(html),
+  'the panel scrolls natively (touch-safe), not a clipped flex shell');
 assert(/#editor \{[^}]*width: 344px; min-width: 288px;/.test(html), 'a touch wider to fit the rail + content');
 
 // the shell + rail + main
-assert(/#edShell \{ display: flex; flex: 1 1 auto; min-height: 0; \}/.test(html), 'the shell is the flex row under the header');
+assert(/#edShell \{ display: flex; align-items: flex-start; \}/.test(html), 'the shell is the flex row under the header');
 assert(/#editor\.dockLeft #edShell \{ flex-direction: row-reverse; \}/.test(html), 'docking left mirrors the rail to the other edge');
-assert(/#edMain \{ flex: 1 1 auto; min-width: 0; overflow-y: auto;/.test(html), 'the content column scrolls, not the panel');
-assert(/#edModes\.edModes \{ flex: 0 0 58px; flex-wrap: nowrap; flex-direction: column;/.test(html),
-  'the mode tabs are a fixed-width vertical rail (no wrap, no clipping)');
+assert(/#edMain \{ flex: 1 1 auto; min-width: 0;/.test(html), 'the content column sits beside the rail (panel scrolls as one)');
+assert(/#edModes\.edModes \{ position: sticky; top: 46px;[^}]*flex: 0 0 58px; flex-wrap: nowrap; flex-direction: column;/.test(html),
+  'the mode tabs are a fixed-width vertical rail (no wrap, no clipping), pinned with sticky so they never scroll away');
 assert(/#editor #edModes \.edMode \{ flex: 0 0 auto; width: auto;[^}]*border-radius: 8px;/.test(html),
   'each tab is a full rounded pill in the column (not a bottom-edge browser tab)');
 assert(/#editor\.dockLeft #edModes\.edModes \{ border-right: none; border-left: 1px solid/.test(html),

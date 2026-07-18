@@ -33,7 +33,8 @@ assert((src.match(/editorActive='props'; syncModeToActive\(\); renderEditorField
 assert(/function applyContextualSections\(\)/.test(src), 'contextual section hide exists');
 assert(/const matOn = matInMode && !!\(selObj && isMatPrimitive/.test(src) && /matSec\.style\.display = \(matOn\|\|matNote\)/.test(src), 'Material renders for primitives, EXPLAINS itself for imported models, hides off the Build tab (build 844)');
 assert(/xfSec\) xfSec\.style\.display = \(xfInMode && tgt\.fields && tgt\.fields\.length && !_stationOff\)/.test(src), 'Transform section hides when the target has no fields (Extract) or the station is toggled off');
-assert(/<div id="edShapes"><\/div><div id="edModels"><\/div><div id="edUrl"><\/div>/.test(src), 'props object hosts reordered: shapes + search on top');
+assert(/subfold\('Add a shape', 'o_shapes', '<div id="edShapes"><\/div>'/.test(src) && /subfold\('Model &amp; texture', 'o_model', '<div id="edModels"><\/div><div id="edUrl"><\/div>'/.test(src),
+  'props object hosts grouped into labelled sub-folds (build 984)');
 assert(/const SHOW_MODEL_LIBRARY = false;/.test(src), 'hardcoded model library hidden behind a flag');
 assert(/editorActive==='props' && !!editorTargets\.props\.obj\(\)/.test(src), 'gizmo only shows with an actual selection');
 

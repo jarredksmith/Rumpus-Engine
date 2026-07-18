@@ -15,9 +15,13 @@ const run = (touch)=>{ const els={controls:{style:{}}, controlsTouch:{style:{}}}
 { const e=run(true);  eq(e.controls.style.display,'none','keyboard hidden on touch'); eq(e.controlsTouch.style.display,'','touch shown on touch'); }
 { const e=run(false); eq(e.controls.style.display,'','keyboard shown on desktop'); eq(e.controlsTouch.style.display,'none','touch hidden on desktop'); }
 
-// ---- opening the instructions syncs first; first-run auto-opens exactly once ----
+// ---- opening the instructions syncs first; build 985: no first-run auto-open ----
 assert(/ib\.onclick=\(\)=>\{ syncInstrControls\(\); openModal\('instrModal'\); \};/.test(src), 'the Instructions button syncs controls before opening');
-assert(/if\(!localStorage\.getItem\('breach_seen'\) && !_sharedArrival\)\{ localStorage\.setItem\('breach_seen','1'\); syncInstrControls\(\); openModal\('instrModal'\); \}/.test(src),
-  'first run auto-opens the instructions once and marks the visitor as seen (build 971: not over a shared game\'s title screen)');
+// build 985: the first-run instructions modal no longer auto-opens (standard controls). The "seen"
+// flag is still written on boot, but openModal('instrModal') is never called automatically.
+assert(/try\{ localStorage\.setItem\('breach_seen','1'\); \}catch\(e\)\{\}/.test(src),
+  'boot marks the visitor as seen without opening any modal (build 985: first-run pop-up removed)');
+assert(!/!localStorage\.getItem\('breach_seen'\) && !_sharedArrival\)\{ localStorage\.setItem\('breach_seen','1'\); syncInstrControls\(\); openModal\('instrModal'\)/.test(src),
+  'the old first-run auto-open block is gone');
 
 done();
