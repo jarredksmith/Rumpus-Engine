@@ -33,7 +33,7 @@ assert(/function loadSketchfabModel\(uid, cb, errcb, signal\)\{/.test(src) && /f
   'the signal threads through the sketchfab api call and the archive stream');
 
 // serial in the editor + the button
-assert(/const cap=\(typeof editorOpen!=='undefined' && editorOpen\) \? 1 : GLB_MAX_CONCURRENT;/.test(src),
+assert(/const cap=\(typeof editorOpen!=='undefined' && editorOpen\) \? 1 : \(\(typeof IS_COARSE!=='undefined' && IS_COARSE\) \? 1 : GLB_MAX_CONCURRENT\);/.test(src),
   'editor downloads run one at a time (level loads keep their concurrency)');
 assert(/btn\.textContent='\\u2715 Cancel';/.test(src) && /for\(const u in _glbWaiters\)\{ cancelGLBDownload\(u\); n\+\+; \}/.test(src),
   'the loading pill has the Cancel button and it cancels everything in flight');

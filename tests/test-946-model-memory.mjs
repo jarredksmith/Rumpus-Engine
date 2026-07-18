@@ -3,7 +3,7 @@
 // monsters could pin hundreds of MB of GPU memory while unused. Now every cached model carries a
 // byte estimate (geometry buffers + RGBA texture area incl. mips); deleting the LAST instance of a
 // model bigger than 24 MB frees it after a 3s grace (small ones stay warm; undo/re-add inside the
-// grace is instant); the cache enforces a total BYTE budget (192 MB mobile / 640 MB desktop) beside
+// grace is instant); the cache enforces a total BYTE budget (96 MB mobile since build 991 / 640 MB desktop) beside
 // the count cap; and the "Model texture cap" control shows a live readout with a Free-unused button.
 // Freed models re-download on next use — Sketchfab archives come back from the on-disk IndexedDB
 // cache, direct URLs from the HTTP cache.
@@ -42,7 +42,7 @@ assert(/setTimeout\(\(\)=>\{ if\(gltfCache\[url\] && \(_modelRefs\[url\]\|\|0\)=
 const cap = extractFunction('_enforceModelCacheCap', src);
 assert(/overBytes=total-_MODEL_BUDGET_MB\*1048576/.test(cap) && /overBytes-=\(_modelBytes\[u\]\|\|0\); overCount--; _evictModel\(u\);/.test(cap),
   'eviction now honors a total byte budget alongside the count cap');
-assert(/const _MODEL_BUDGET_MB = \(typeof matchMedia==='function' && matchMedia\('\(pointer: coarse\)'\)\.matches\) \? 192 : 640;/.test(src),
+assert(/const _MODEL_BUDGET_MB = \(typeof matchMedia==='function' && matchMedia\('\(pointer: coarse\)'\)\.matches\) \? 96 : 640;/.test(src),
   'budget: 192 MB on touch devices, 640 MB on desktop');
 
 // estimate recorded at cache time; UI present

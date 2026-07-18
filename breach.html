@@ -8685,7 +8685,7 @@ const _modelUsedAt = {};     // url -> recency clock
 let _modelClock = 0;
 const _MODEL_CACHE_CAP = 24; // keep this many recent models warm; evict zero-ref ones beyond it
 const _modelBytes = {};      // build 946: url -> estimated bytes of the cached master (geometry + textures)
-const _MODEL_BUDGET_MB = (typeof matchMedia==='function' && matchMedia('(pointer: coarse)').matches) ? 192 : 640;   // total warm-cache byte budget
+const _MODEL_BUDGET_MB = (typeof matchMedia==='function' && matchMedia('(pointer: coarse)').matches) ? 96 : 640;   // total warm-cache byte budget (phones halved to 96 in build 991 — headroom beats warm reloads on a device that dies at ~1 GB)
 const _EVICT_NOW_MB = 24;    // deleting the last instance of a model bigger than this frees it right away
 function _estimateGLTFBytes(gltf){
   let b=0; try{ if(!gltf || !gltf.scene || !gltf.scene.traverse) return 0;
@@ -8771,7 +8771,7 @@ let _levelLoaderEl=null, _levelLoaderActive=false;   // declared early: loop() r
 // to fire every GLB at once, bursting the CORS proxy / model host into HTTP 429 (rate-limited) so most models
 // silently failed. The queue keeps concurrency low; transient failures (esp. 429) retry with backoff.
 const _glbQueue = []; let _glbActive = 0; const GLB_MAX_CONCURRENT = 3;
-function _glbPump(){ const cap=(typeof editorOpen!=='undefined' && editorOpen) ? 1 : GLB_MAX_CONCURRENT;   // build 945: in the editor, downloads run ONE at a time (a second pick queues behind the current one)
+function _glbPump(){ const cap=(typeof editorOpen!=='undefined' && editorOpen) ? 1 : ((typeof IS_COARSE!=='undefined' && IS_COARSE) ? 1 : GLB_MAX_CONCURRENT);   // build 945: editor loads run ONE at a time; build 991: phones too — every model's textures decode at FULL size before the 1024 cap shrinks them, and three concurrent heavy models is a decode spike that crashes mobile tabs
   while(_glbActive < cap && _glbQueue.length){ const task = _glbQueue.shift(); _glbActive++; task(); } }
 const _glbWaiters = {};   // url -> [{cb,errcb}] all riding a single in-flight load, so a model shared by several avatars (or a prewarm + the real build) is fetched once
 const _shrunkTex = (typeof WeakSet!=='undefined') ? new WeakSet() : null;   // each texture is shared via the cache; shrink once
@@ -14689,6 +14689,10 @@ function loadLevelFromNet(level){
   // clear current props
   for(let i=propModels.length-1;i>=0;i--){ if(propModels[i]) removeProp(i); }
   propModels.length = 0;
+  // build 991: on phones, free the previous level's now-unreferenced model masters BEFORE loading
+  // this one — two levels' models never coexist in memory. The browser's HTTP cache still makes a
+  // return trip cheap (only the GLB parse repeats, not the download).
+  if(typeof IS_COARSE!=='undefined' && IS_COARSE && typeof freeUnusedModels==='function'){ try{ freeUnusedModels(); }catch(e){} }
   // clear current lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
   // build 893: adopt the host's world (TERRAIN above all) BEFORE spawning props. Prop y is stored
@@ -18983,7 +18987,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 990 · 2026-07-18';
+const BUILD_VERSION = 'build 991 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25892,6 +25896,10 @@ function restoreLevel(level){
   // props
   for(let i=propModels.length-1;i>=0;i--){ if(propModels[i]) removeProp(i); }
   propModels.length = 0;
+  // build 991: on phones, free the previous level's now-unreferenced model masters BEFORE loading
+  // this one — two levels' models never coexist in memory. The browser's HTTP cache still makes a
+  // return trip cheap (only the GLB parse repeats, not the download).
+  if(typeof IS_COARSE!=='undefined' && IS_COARSE && typeof freeUnusedModels==='function'){ try{ freeUnusedModels(); }catch(e){} }
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
