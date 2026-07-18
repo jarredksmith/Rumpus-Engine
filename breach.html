@@ -10583,6 +10583,7 @@ applyControlMode();
 if(isTouch && document.body) document.body.classList.add('touch');
 addEventListener('touchstart', ()=>{ if(_ctrlPref==='desktop') return; isTouch = true; if(document.body) document.body.classList.add('touch'); }, { once:true, passive:true });          // or reveal as soon as a real touch happens
 let touchMoveX=0, touchMoveZ=0, touchSprint=false, touchFiring=false, touchAds=false, touchJump=false, touchLookDX=0, touchLookDY=0;
+let touchFireBufT=0;   // build 992: a FIRE tap is valid until this timestamp — a tap that starts and ends between two frames (or during the fire-rate cooldown) still fires instead of vanishing
 let touchCrouch=false;   // build 908: on-screen crouch TOGGLE (touch players finally crouch/slide/ledge-drop)
 let touchBoost=false, touchHandbrake=false;   // build 788: dedicated mobile driving buttons (held) for boost + handbrake
 let _jumpHeldPrev=false; const JUMP_CD=0.5;   // jump must be a fresh press, and at least JUMP_CD seconds apart — stops hold-to-bunny-hop
@@ -10750,7 +10751,7 @@ function clearMovementInput(){
   _sprintToggled=false;
   _crouchToggled=false;
   for(const k in keys) keys[k]=false;
-  touchMoveX=0; touchMoveZ=0; touchSprint=false; touchFiring=false; touchAds=false; touchJump=false; touchLookDX=0; touchLookDY=0;
+  touchMoveX=0; touchMoveZ=0; touchSprint=false; touchFiring=false; touchAds=false; touchJump=false; touchLookDX=0; touchLookDY=0; touchFireBufT=0;
   touchCrouch=false; { const cb=document.getElementById('tCrouch'); if(cb) cb.classList.remove('on'); }
   touchBoost=false; touchHandbrake=false;
   sliding=false; firing=false;
@@ -18987,7 +18988,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 991 · 2026-07-18';
+const BUILD_VERSION = 'build 992 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19217,9 +19218,9 @@ addEventListener('contextmenu', e=>{
   (function(){
     const fire=document.getElementById('tFire'); if(!fire) return;
     let fid=null, fx=0, fy=0;
-    fire.addEventListener('pointerdown', e=>{ if(_ctrlPref!=='desktop') isTouch=true; fid=e.pointerId; fx=e.clientX; fy=e.clientY; touchFiring=true; fire.classList.add('on'); try{fire.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
+    fire.addEventListener('pointerdown', e=>{ if(_ctrlPref!=='desktop') isTouch=true; fid=e.pointerId; fx=e.clientX; fy=e.clientY; touchFiring=true; firingLatch=false; touchFireBufT=performance.now()+160; fire.classList.add('on'); try{fire.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });   // build 992: a fresh press re-arms semi-auto + buffers the tap (160ms < every fireRate, and the buffer clears on the shot — no double-fires)
     fire.addEventListener('pointermove', e=>{ if(e.pointerId!==fid) return; touchLookDX+=(e.clientX-fx); touchLookDY+=(e.clientY-fy); fx=e.clientX; fy=e.clientY; e.preventDefault(); });   // drag while firing -> aim
-    const fireEnd=e=>{ if(e.pointerId!==fid) return; fid=null; touchFiring=false; fire.classList.remove('on'); };
+    const fireEnd=e=>{ if(e.pointerId!==fid) return; fid=null; touchFiring=false; firingLatch=false; fire.classList.remove('on'); };   // build 992: releasing the touch trigger re-arms semi-auto (mirrors mouseup / pad release — it used to depend on a compatibility mouseup the browser may skip)
     fire.addEventListener('pointerup', fireEnd); fire.addEventListener('pointercancel', fireEnd);
   })();
   tap('tJump', ()=>{ touchJump=true; });
@@ -20736,10 +20737,10 @@ function shoot(){
   if(now - lastShot < w.fireRate * run.fireMul || reloading) return;
   if(now < _drawUntil) return;                 // build 965: still drawing — the gun is coming up
   if(_rlP > 0.35) return;                      // build 965: still recovering from the reload dip
-  if(w.melee){ if(!w.auto && firingLatch) return; firingLatch=true; lastShot=now; triggerGunAnim('shoot'); meleeAttack(w); return; }   // equipped melee weapon: swing it
+  if(w.melee){ if(!w.auto && firingLatch) return; firingLatch=true; touchFireBufT=0; lastShot=now; triggerGunAnim('shoot'); meleeAttack(w); return; }   // equipped melee weapon: swing it
   if(w.mag<=0){ if(w.reserve<=0){ meleeAttack(); return; } SFX.empty(); reload(); return; }   // out of ammo entirely -> throw hands
   if(!w.auto && firingLatch) return;     // semi-auto: one shot per click
-  firingLatch = true;
+  firingLatch = true; touchFireBufT = 0;   // build 992: this press's buffered tap is spent
   lastShot = now; w.mag--; updateHUD();
   triggerGunAnim('shoot');   // fire the model's shoot clip if it has one
   if(w.projectile){ fireRocketShot(); firingLatch=true; return; }   // rocket launcher: fire a projectile, skip hitscan
@@ -23485,7 +23486,7 @@ function loop(){
   recoil *= 0.85;
   muzzle.intensity *= 0.6; flashMat.opacity *= 0.5;
 
-  if((firing || padFiring || touchFiring) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar && !(typeof buildMode!=='undefined' && buildMode)){ if(mountedTurret) turretFire(); else shoot(); }   // hands on the wheel — no shooting while driving (Phase 1); build 947: fire PLACES while building, never shoots
+  if((firing || padFiring || touchFiring || touchFireBufT>performance.now()) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar && !(typeof buildMode!=='undefined' && buildMode)){ if(mountedTurret) turretFire(); else shoot(); }   // hands on the wheel — no shooting while driving (Phase 1); build 947: fire PLACES while building, never shoots
 
   // tracers
   for(let i=tracers.length-1;i>=0;i--){

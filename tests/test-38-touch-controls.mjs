@@ -21,7 +21,7 @@ assert(/const mvx = padMoveX \|\| touchMoveX, mvz = padMoveZ \|\| touchMoveZ;/.t
 assert(/function sprinting\(\)\{ if\(padSprint \|\| touchSprint\) return true;/.test(src) && /return !!\(keys\[BINDS\.sprint\]\|\|\(BINDS\.sprint==='ShiftLeft'&&keys\['ShiftRight'\]\)\);/.test(src), 'sprint() honors stick/touch + the sprint bind (Shift default) or the toggle latch (build 369/910)');
 assert(/\(_jHeld && !_jumpHeldPrev\) \|\| touchJump;/.test(src) && /touchJump = false;/.test(src), 'jump is a one-shot touch tap (edge-triggered, build 517)');
 assert(/ads \|\| padAds \|\| touchAds \|\| editorAimPreview/.test(src), 'aim toggle feeds ADS');
-assert(/if\(\(firing \|\| padFiring \|\| touchFiring\) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar && !\(typeof buildMode!=='undefined' && buildMode\)\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'fire button feeds the shoot trigger');
+assert(/if\(\(firing \|\| padFiring \|\| touchFiring \|\| touchFireBufT>performance\.now\(\)\) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar && !\(typeof buildMode!=='undefined' && buildMode\)\)\{ if\(mountedTurret\) turretFire\(\); else shoot\(\); \}/.test(src), 'fire button feeds the shoot trigger');
 assert(/if\(!isTouch && gameOn && !locked/.test(src), 'no pointer-lock grab on touch devices');
 
 // touch look is applied in the loop (no pointer lock on mobile) and reset each frame
