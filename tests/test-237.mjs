@@ -52,13 +52,13 @@ assert(/msg\.t==='unlock'\)\{ const o=propModels\[msg\.i\]; if\(o\) o\.userData\
 assert(/if\(o\.userData\.lockId\)\{ e\.lk=o\.userData\.lockId; if\(o\.userData\.lockConsume\) e\.lkc=1; \}/.test(extractFunction('propEntry')), 'lock fields serialize');
 assert(src.split("if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }").length - 1 === 3, 'lock restored at all three prop-load sites');
 assert(/\[\['','None'\],\['red',keyDisplayName\('red'\)\],\['blue',keyDisplayName\('blue'\)\],\['gold',keyDisplayName\('gold'\)\],\['green',keyDisplayName\('green'\)\]\]/.test(src), 'editor lock dropdown shows custom key names (build 334)');
-// build 332 regression: the lock UI must append to animHost (its section's container) — a bare `host`
+// build 332 regression: the lock UI must append to its fold host (behaveHost since build 989) — a bare `host`
 // here is a later-declared binding in renderEditorFields and throws a TDZ ReferenceError in the browser.
 { const li = src.indexOf("// ---- Lock: this prop's E-activation");
   const lockBlock = src.slice(li, src.indexOf('// ---- Mechanism: move/rotate', li));
-  assert(li > 0 && /lHost\.appendChild\(lr\)/.test(lockBlock) && /lHost\.appendChild\(cr\)/.test(lockBlock) && /lHost\.appendChild\(lh\)/.test(lockBlock) && /edFold\(animHost, 'lock', 'Lock'/.test(lockBlock), 'lock UI lives in its own Lock accordion (build 414)');
+  assert(li > 0 && /lHost\.appendChild\(lr\)/.test(lockBlock) && /lHost\.appendChild\(cr\)/.test(lockBlock) && /lHost\.appendChild\(lh\)/.test(lockBlock) && /edFold\(behaveHost, 'lock', 'Lock'/.test(lockBlock), 'lock UI lives in its own Lock accordion (build 414)');
   assert(!/\bhint\(/.test(lockBlock), 'no hint() call — that helper is block-scoped elsewhere (build 333)');
-  assert(!/[^a-zA-Z]host\./.test(lockBlock.replace(/animHost/g,'AH')), 'no stray host references in the lock block'); }
+  assert(!/[^a-zA-Z]host\./.test(lockBlock.replace(/animHost|behaveHost|motionHost/g,'AH')), 'no stray host references in the lock block'); }
 assert(/\['key_red','Red Key'\],\['key_blue','Blue Key'\],\['key_gold','Gold Key'\],\['key_green','Green Key'\]/.test(src), 'key pads in the pickup dropdown');
 assert(/playerKeys\[lk\] \? `<b>\$\{_uk\}<\/b> Unlock/.test(src), 'prompt distinguishes unlockable vs locked (key named per device since build 935)');
 done();

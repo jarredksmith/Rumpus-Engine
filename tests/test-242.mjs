@@ -51,7 +51,7 @@ assert(/e\.sg=o\.userData\.signals\.map\(s=>\{ const x=\{ w:s\.when, d:s\.do, t:
 assert(src.split('if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; });').length - 1 === 3, 'restored at all three prop-load sites (clip + cutscene + contact + objective + needItem + consume + sound)');
 
 // --- editor + level check ---
-assert(/edFold\(animHost, 'signals', 'Signals', false, 'Tag this prop/.test(src), 'Signals fold in the inspector (title + subtitle, build 362)');
+assert(/edFold\(behaveHost, 'signals', 'Signals', false, 'Tag this prop/.test(src), 'Signals fold in the inspector (title + subtitle, build 362)');
 assert(/\[\['destroyed','On destroyed'\],\['interacted','On E'\],\['contact','On object placed'\]\]/.test(src) && /\[\['toggle','Toggle'\],\['open','Open'\],\['close','Close'\],\['anim','Play anim'\],\['unlock','Unlock'\],\['win','Win level'\],\['cutscene','Play cutscene'\],\['objective','Set objective'\],\['checkpoint','Set checkpoint'\],\['sound','Play sound'\]\]/.test(src), 'when/do dropdowns (incl. Play sound, build 750)');
 assert(/A signal targets tag '"\+s\.target\+"', but no prop carries that tag\./.test(extractFunction('levelIssues')), 'Level check flags dangling signal targets');
 // --- build 750: "Play sound" signal action (light switch / button click) ---

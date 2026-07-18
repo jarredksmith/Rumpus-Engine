@@ -18867,7 +18867,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 988 · 2026-07-18';
+const BUILD_VERSION = 'build 989 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24326,7 +24326,7 @@ function applyEditorMode(){
 // a manual mode click instead snaps editorActive to the mode's first target so its Transform shows something valid.
 function applyContextualSections(){
   if(!editorEl) return;
-  const CTX = { gizmo:['edGizmo'], object:['edShapes','edModels','edUrl','edPicker','edAnim','edLibrary'] };
+  const CTX = { gizmo:['edGizmo'], object:['edShapes','edModels','edUrl','edPicker','edAnim','edBehave','edMotion','edLibrary'] };
   const modeSecs = MODE_SECTIONS[editorMode] || [];
   for(const key in CTX){
     if(modeSecs.indexOf(key)<0) continue;
@@ -26175,6 +26175,8 @@ function buildEditorPanel(){
         + subfold('Add a shape', 'o_shapes', '<div id="edShapes"></div>', true)
         + subfold('Model &amp; texture', 'o_model', '<div id="edModels"></div><div id="edUrl"></div>', true)
         + subfold('Animation', 'o_anim', '<div id="edAnim"></div>', false)
+        + subfold('Interaction &amp; logic', 'o_logic', '<div id="edBehave"></div>', false)
+        + subfold('Motion &amp; physics', 'o_motion', '<div id="edMotion"></div>', false)
         + subfold('Character library', 'o_lib', '<div id="edLibrary"></div>', false))
     + sec('Material', 'material', '<div id="edMaterial"></div>')
     + sec('Transform', 'transform', '<div id="edFields"></div>')
@@ -28136,8 +28138,15 @@ function renderEditorFields(){
 
   // animation behavior toggles (Props tab): default for new props + live switch for the selected animated prop
   const animHost = editorEl.querySelector('#edAnim');
+  // build 989: Lock/Signals/Dialogue and Vehicle/Joint/Mechanism/Waypath/Physics were all buried
+  // under the Animation drop-down. They now render into their own Object sub-folds — "Interaction &
+  // logic" (responds to the player) and "Motion & physics" (makes it move). Same folds, honest homes.
+  const behaveHost = editorEl.querySelector('#edBehave') || animHost;
+  const motionHost = editorEl.querySelector('#edMotion') || animHost;
   if(animHost){
     animHost.innerHTML = '';
+    if(behaveHost!==animHost) behaveHost.innerHTML='';
+    if(motionHost!==animHost) motionHost.innerHTML='';
     if(tgt.addable && tgt.urlField){
       const pair = (title, mode, onLoop, onTrig)=>{
         const head = document.createElement('div'); head.className='hint'; head.style.margin='6px 0 3px'; head.innerHTML = title; animHost.appendChild(head);
@@ -28187,13 +28196,13 @@ function renderEditorFields(){
         const ni=document.createElement('div'); ni.className='hint'; ni.style.cssText='margin:6px 0 2px;font-size:10px;opacity:0.8;';
         const isPrim = (typeof isPrimitive==='function') && isPrimitive(sel.userData.src||'');
         ni.textContent = isPrim
-          ? 'This is a built-in shape (no animation). Use the Mechanism section below to move/rotate it.'
-          : 'This model has no animation clips, so there\u2019s nothing to play/loop. To animate it, use the Mechanism section below, or import a model that includes animations (try \u201cAnimated only\u201d in the Sketchfab search).';
+          ? 'This is a built-in shape (no animation). To move/rotate it, open Motion & physics \u2192 Mechanism below.'
+          : 'This model has no animation clips, so there\u2019s nothing to play/loop. To move it, open Motion & physics \u2192 Mechanism below \u2014 or import a model that includes animations (try \u201cAnimated only\u201d in the Sketchfab search).';
         animHost.appendChild(ni);
       }
       // ---- Lock: this prop's E-activation (triggered animation or mechanism) needs a key ----
       if(sel){
-        const lHost = edFold(animHost, 'lock', 'Lock', false, 'Require a key to E-activate this prop');
+        const lHost = edFold(behaveHost, 'lock', 'Lock', false, 'Require a key to E-activate this prop');
         const lr=document.createElement('div'); lr.style.cssText='display:flex;gap:6px;align-items:center;margin:8px 0 2px;font-size:11px;color:#9fe6cf;';
         const lsp=document.createElement('span'); lsp.innerHTML='<b>Lock</b>'; lsp.style.minWidth='56px';
         const lsel=document.createElement('select'); lsel.style.cssText='flex:1;font-size:11px;';
@@ -28214,12 +28223,12 @@ function renderEditorFields(){
       }
       // ---- Signals: tag this prop / make it trigger other tagged props ----
       if(sel){
-        const sgBody = edFold(animHost, 'signals', 'Signals', false, 'Tag this prop, or have it trigger others');
+        const sgBody = edFold(behaveHost, 'signals', 'Signals', false, 'Tag this prop, or have it trigger others');
         buildSignalsUI(sgBody, sel.userData, renderEditorFields);   // build 688: shared with inventory-item signals
       }
       // ---- Dialogue (build 695): make this prop a talkable NPC ----
       if(sel){
-        const dBody = edFold(animHost, 'dialogue', 'Dialogue (NPC)', true, 'Talk to this prop with E — one line per row');
+        const dBody = edFold(behaveHost, 'dialogue', 'Dialogue (NPC)', true, 'Talk to this prop with E — one line per row');
         const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 4px;font-size:11px;color:#9fe6cf;';
         const nsp=document.createElement('span'); nsp.textContent='Name'; nsp.style.minWidth='42px';
         const nin=document.createElement('input'); nin.type='text'; nin.maxLength=40; nin.placeholder='e.g. Old Hermit (optional)'; nin.value=sel.userData.npcName||''; nin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
@@ -28232,7 +28241,7 @@ function renderEditorFields(){
       }
       // ---- Vehicle (drivable, build 709): flag this prop as a car you can enter + drive ----
       if(sel){
-        const vBody = edFold(animHost, 'vehicle', 'Vehicle (drivable)', true, 'Make this prop a car — press E to drive it (W/S throttle, A/D steer)');
+        const vBody = edFold(motionHost, 'vehicle', 'Vehicle (drivable)', true, 'Make this prop a car — press E to drive it (W/S throttle, A/D steer)');
         const von=document.createElement('label'); von.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;';
         const vcb=document.createElement('input'); vcb.type='checkbox'; vcb.checked=!!sel.userData.vehicle; vcb.style.accentColor='#7ad7ff';
         vcb.onchange=()=>{ pushUndoSnapshot(); if(vcb.checked){ vehicleApply(sel, sel.userData.vehicle||{}); if(typeof setPropDynamic==='function') setPropDynamic(sel,false); } else delete sel.userData.vehicle; renderEditorFields(); };
@@ -28409,7 +28418,7 @@ function renderEditorFields(){
       }
       // ---- Joint (physics, build 707): hinge a DYNAMIC prop to a world point or another tagged body ----
       if(sel){
-        const jBody = edFold(animHost, 'joint', 'Joint (physics)', true, 'Hinge this object so it swings under physics — doors, levers, see-saws');
+        const jBody = edFold(motionHost, 'joint', 'Joint (physics)', true, 'Hinge this object so it swings under physics — doors, levers, see-saws');
         const jon=document.createElement('label'); jon.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;';
         const jcb=document.createElement('input'); jcb.type='checkbox'; jcb.checked=!!sel.userData.joint; jcb.style.accentColor='#7ad7ff';
         jcb.onchange=()=>{ pushUndoSnapshot(); if(jcb.checked) jointApply(sel, sel.userData.joint||{}); else delete sel.userData.joint; renderEditorFields(); };
@@ -28442,7 +28451,7 @@ function renderEditorFields(){
       if(sel){
         if(!sel.userData.xa) sel.userData.xa = { on:false, mode:'loop', trig:'auto', mx:0,my:0,mz:0, rx:0,ry:0,rz:0, pvx:0,pvy:0,pvz:0, dur:2 };
         const xa=sel.userData.xa;
-        const xBody = edFold(animHost, 'mech', 'Mechanism', false, 'Move / rotate this object \u2014 platforms, doors, elevators');
+        const xBody = edFold(motionHost, 'mech', 'Mechanism', false, 'Move / rotate this object \u2014 platforms, doors, elevators');
         const xon=document.createElement('label'); xon.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;';
         const xcb=document.createElement('input'); xcb.type='checkbox'; xcb.checked=!!xa.on; xcb.style.accentColor='#7ad7ff';
         xcb.onchange=()=>{ pushUndoSnapshot(); xa.on=xcb.checked; renderEditorFields(); };
@@ -28461,7 +28470,7 @@ function renderEditorFields(){
           seg('Playback','mode',[['loop','\u27f3 Loop'],['pingpong','\u21c4 Ping-pong'],['once','\u2192 Once']]);
           seg('Trigger','trig',[['auto','Auto'],['interact','E Activate'],['signal','Signals only']]);   // signal: no autoplay, no E prompt — moves only when a signal drives it
           // ---- Waypoint path: prop travels through a series of points (ping-pong by default) ----
-          { const wpBody = edFold(animHost, 'waypath', 'Waypoint path', false, 'Travels through points \u2014 overrides Move offset');
+          { const wpBody = edFold(motionHost, 'waypath', 'Waypoint path', false, 'Travels through points \u2014 overrides Move offset');
             xa.path = xa.path || [];
             const addB=document.createElement('button'); addB.textContent='+ Add waypoint (current spot)'; addB.style.cssText='width:100%;padding:5px;font-size:12px;margin:2px 0;';
             addB.onclick=()=>{ pushUndoSnapshot(); xa.path.push([+sel.position.x.toFixed(3), +sel.position.y.toFixed(3), +sel.position.z.toFixed(3)]); if(xa.path.length===1 && xa.mode==='loop') xa.mode='pingpong'; renderEditorFields(); };
@@ -28482,7 +28491,7 @@ function renderEditorFields(){
       // physics toggle (selected prop)
       if(sel){
         const phead=document.createElement('div'); phead.className='hint'; phead.style.margin='8px 0 3px'; phead.innerHTML='<b>Physics</b> — dynamic objects fall, tumble, stack & react to shots';
-        const pdBody = edFold(animHost, 'physdest', 'Physics & destruction', false, 'Dynamic, grabbable, breakable, explosive, debris');
+        const pdBody = edFold(motionHost, 'physdest', 'Physics & destruction', false, 'Dynamic, grabbable, breakable, explosive, debris');
         const plab=document.createElement('label'); plab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;cursor:pointer;';
         const pcb=document.createElement('input'); pcb.type='checkbox'; pcb.checked=!!sel.userData.phys; pcb.style.accentColor='var(--accent)';
         pcb.onchange=()=>{ pushUndoSnapshot(); setPropDynamic(sel, pcb.checked); renderEditorFields(); };

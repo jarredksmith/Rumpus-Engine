@@ -23,7 +23,7 @@ assert(/if\(nearTarget && nearTarget\.type==='npc'\)\{ openDialogue\(nearTarget\
 
 // --- editor authoring ---
 const panel = extractFunction('renderEditorFields');
-assert(/edFold\(animHost, 'dialogue', 'Dialogue \(NPC\)'/.test(panel), 'a Dialogue fold in the prop inspector');
+assert(/edFold\(behaveHost, 'dialogue', 'Dialogue \(NPC\)'/.test(panel), 'a Dialogue fold in the prop inspector');
 assert(/sel\.userData\.dialogue=lines/.test(panel) && /sel\.userData\.npcName=v/.test(panel), 'it writes dialogue lines + name');
 
 // --- persistence (serialize + 3 load paths) ---

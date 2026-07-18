@@ -55,7 +55,7 @@ assert(/if\(o\.userData\.joint\)\{ const J=o\.userData\.joint; e\.j=\{ type:J\.t
 eq(src.split('if(p.j) jointApply(obj, p.j);').length - 1, 3, 'joint restored at all three prop-load sites');
 
 // --- editor: a Joint fold with anchor / axis / hinge offset / motor ---
-assert(/edFold\(animHost, 'joint', 'Joint \(physics\)'/.test(src), 'a Joint (physics) fold in the inspector');
+assert(/edFold\(motionHost, 'joint', 'Joint \(physics\)'/.test(src), 'a Joint (physics) fold in the inspector');
 assert(/seg\('Hinge axis','axis',\[\['y','Y \(door\)'\],\['x','X \(see-saw\)'\],\['z','Z'\]\]\)/.test(src), 'hinge-axis picker');
 assert(/num\('Motor speed \(°\/s\)','mspeed',-720,720,5\)/.test(src), 'motor-speed control (the wheel/driving basis)');
 

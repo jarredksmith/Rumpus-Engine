@@ -13,8 +13,8 @@ assert(/body\.appendChild\(sub\)/.test(ef), 'subtitle goes inside the body so lo
 assert(/sec\.classList\.toggle\('collapsed'\)/.test(ef), 'toggle flips the collapsed class (CSS rotates the caret)');
 
 // the four inspector folds pass a clean (title, false, subtitle) triple — no embedded <b>/em-dash
-for(const [id, title] of [['signals','Signals'],['mech','Mechanism'],['waypath','Waypoint path'],['physdest','Physics & destruction']]){
-  assert(src.indexOf("edFold(animHost, '"+id+"', '"+title+"', false, '") >= 0, id+' fold uses title + subtitle');
+for(const [id, title, host] of [['signals','Signals','behaveHost'],['mech','Mechanism','motionHost'],['waypath','Waypoint path','motionHost'],['physdest','Physics & destruction','motionHost']]){   // build 989 homes
+  assert(src.indexOf("edFold("+host+", '"+id+"', '"+title+"', false, '") >= 0, id+' fold uses title + subtitle');
 }
 assert(!/edFold\([^)]*<b>/.test(src), 'no fold still jams a bold title into the header string');
 done();

@@ -19,7 +19,7 @@ assert(/head\.onclick/.test(ef) && /sec\.classList\.toggle\('collapsed'\)/.test(
 
 // --- the three folds exist with stable ids ---
 for(const [id, title] of [['mech','Mechanism'],['waypath','Waypoint path'],['physdest','Physics & destruction']]){
-  const re = new RegExp("edFold\\(animHost, '"+id+"', '"+title+"'");
+  const re = new RegExp("edFold\\(motionHost, '"+id+"', '"+title+"'");   // build 989: these three live in Motion & physics now
   assert(re.test(src), id+' fold created');
 }
 

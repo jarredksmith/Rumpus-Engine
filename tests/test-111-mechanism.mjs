@@ -31,7 +31,7 @@ assert(/function broadcastXAnim\(i\)/.test(src), 'toggle broadcast helper');
 assert((src.match(/msg\.t==='xa'/g)||[]).length>=2, 'host + client handle xa toggles');
 
 // editor UI
-assert(/edFold\(animHost, 'mech', 'Mechanism'/.test(src) && /seg\('Playback','mode'/.test(src) && /seg\('Trigger','trig'/.test(src), 'editor Mechanism section (title + playback + trigger), build 362');
+assert(/edFold\(motionHost, 'mech', 'Mechanism'/.test(src) && /seg\('Playback','mode'/.test(src) && /seg\('Trigger','trig'/.test(src), 'editor Mechanism section (title + playback + trigger), build 362');
 // deploy/editor hooks
 assert(/if\(typeof xaCapture==='function'\) xaCapture\(\)/.test(src), 'deploy captures base');
 assert(/if\(typeof xaSnapToBase==='function'\) xaSnapToBase\(\)/.test(src), 'editor open snaps to base');
