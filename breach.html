@@ -98,6 +98,19 @@
   #editor .edSecBody { padding: 8px 10px; }
   #editor .edSection.collapsed .edSecBody { display: none; }
   #editor .edSecSub { margin: -2px 0 8px; color: #8fc7b6; font: 400 10.5px/1.4 ui-monospace, monospace; letter-spacing: 0.2px; opacity: 0.85; }
+  /* build 981: command palette — Ctrl+K "do anything": actions + every settings section, one jump box */
+  #edPal { position:fixed; inset:0; z-index:110; display:none; align-items:flex-start; justify-content:center; padding-top:12vh; background:rgba(3,7,10,0.55); backdrop-filter:blur(2px); }
+  #edPal.on { display:flex; }
+  #edPalCard { width:min(520px,92vw); background:rgba(10,16,20,0.98); border:1px solid rgba(var(--accent-rgb),0.45); border-radius:12px; box-shadow:0 22px 70px rgba(0,0,0,0.65); overflow:hidden; }
+  #edPalInput { width:100%; box-sizing:border-box; background:transparent; border:none; border-bottom:1px solid #1d2b32; color:#eafff7; padding:13px 16px; font:500 14px var(--ui-font), sans-serif; outline:none; letter-spacing:.3px; }
+  #edPalList { max-height:46vh; overflow:auto; padding:6px; }
+  #edPalList::-webkit-scrollbar { width:9px; } #edPalList::-webkit-scrollbar-thumb { background:#22323b; border-radius:5px; }
+  .palItem { display:flex; align-items:center; gap:10px; padding:8px 11px; border-radius:7px; cursor:pointer; color:#c9ded6; font:500 12.5px var(--ui-font), sans-serif; }
+  .palItem .palKind { margin-left:auto; color:#54726a; font-size:10px; letter-spacing:1px; text-transform:uppercase; flex:none; }
+  .palItem.sel, .palItem:hover { background:rgba(var(--accent-rgb),0.16); color:#eafff7; }
+  .palItem.sel .palKind { color:#7d9a90; }
+  .palEmpty { padding:14px; color:#5d7a70; font:500 12px var(--ui-font), sans-serif; text-align:center; }
+  #edPalHint { padding:7px 14px; border-top:1px solid #1d2b32; color:#54726a; font:500 10.5px var(--ui-font), sans-serif; letter-spacing:.4px; }
   /* build 980: floating viewport toolbar — the scene view gets its own chrome (gizmo mode, camera,
      visibility) the way Unity/Unreal put controls ON the viewport instead of burying them in a panel */
   #edToolbar { position:fixed; top:calc(10px + env(safe-area-inset-top)); left:calc(12px + env(safe-area-inset-left)); z-index:29; display:none; gap:8px; pointer-events:auto; }
@@ -18659,7 +18672,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 980 · 2026-07-18';
+const BUILD_VERSION = 'build 981 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25936,6 +25949,7 @@ function buildEditorPanel(){
   p.innerHTML = '<div id="editorResize" title="Drag to resize"></div>'
     + '<div id="edTopBar" style="display:flex;align-items:center;gap:6px;margin:0 0 6px;">'
       + '<h3 style="margin:0;flex:1;">LEVEL EDITOR</h3>'
+      + '<button id="edPalBtn" title="Command palette — jump to any setting or action (Ctrl+K)">\u2318</button>'
       + '<button id="edHelpTxt" title="Inline help — show full explanations in the panel instead of (i) tooltips">\u24d8</button>'
       + '<button id="edHelp" title="Open the field manual (new tab)">?</button>'
       + '<button id="edPopOut" title="Open the editor in its own window (re-dock by closing it)">\u2197</button>'
@@ -26174,6 +26188,7 @@ function buildEditorPanel(){
   try{ new MutationObserver(()=>_edTipifySoon()).observe(p, { childList:true, subtree:true }); }catch(e){}
   _edTipifySoon();
   try{ if(localStorage.getItem('breach_editor_helptext')==='1') document.body.classList.add('edHelpFull'); }catch(e){}
+  { const pb=p.querySelector('#edPalBtn'); if(pb) pb.onclick=()=>_palToggle(); }
   { const hb=p.querySelector('#edHelpTxt');
     if(hb){ const syncHT=()=>{ hb.style.background=document.body.classList.contains('edHelpFull')?'rgba(var(--accent-rgb),0.35)':''; };
       hb.onclick=()=>{ document.body.classList.toggle('edHelpFull'); try{ localStorage.setItem('breach_editor_helptext', document.body.classList.contains('edHelpFull')?'1':'0'); }catch(e){} syncHT(); };
@@ -29977,6 +29992,89 @@ function _edToolbarShow(v){
   if(v){ const t=_edToolbarEnsure(); t.style.display='flex'; _edToolbarSync(); }
   else { const t=document.getElementById('edToolbar'); if(t) t.style.display='none'; }
 }
+// ---- build 981: command palette ------------------------------------------------------------------
+// Ctrl/Cmd+K while the editor is open (or the ⌘ topbar button): one box that jumps ANYWHERE —
+// curated actions (play, undo, save, share, camera + gizmo toggles, add shapes, mode switches) and
+// every settings section, matched by header + body text, opening + scrolling to the section.
+function _palItems(){
+  const items=[];
+  const A=(label,kw,run)=>items.push({ label, kw:(label+' '+kw).toLowerCase(), kind:'Action', run });
+  A('Play level','test run deploy start', ()=>{ const b=document.getElementById('edPlay'); if(b) b.click(); });
+  A('Undo','revert ctrl+z back', ()=>{ if(typeof performUndo==='function') performUndo(); });
+  A('Save level','store keep', ()=>{ const b=document.getElementById('edSave'); if(b) b.click(); else if(typeof saveLevel==='function'){ saveLevel(); flashToast('SAVED'); } });
+  A('Copy share link','url send friend', ()=>{ const b=document.getElementById('edShare'); if(b) b.click(); });
+  A('Main menu','exit leave quit home', ()=>{ if(typeof editorToMenu==='function') editorToMenu(); });
+  A('Toggle Top view','overhead camera bird t', ()=>{ const b=document.getElementById('tbTop'); if(b) b.click(); });
+  A('Toggle Fly camera','free wasd f', ()=>{ const b=document.getElementById('tbFly'); if(b) b.click(); });
+  A('Toggle Hide enemies','show visibility', ()=>{ const b=document.getElementById('tbHideEn'); if(b) b.click(); });
+  A('Toggle Show colliders','hitbox cylinder physics', ()=>{ const b=document.getElementById('tbCol'); if(b) b.click(); });
+  A('Gizmo: Move','translate grab 1', ()=>{ gizmoMode='translate'; updateGizmo(); renderEditorFields(); });
+  A('Gizmo: Rotate','turn spin 2', ()=>{ gizmoMode='rotate'; updateGizmo(); renderEditorFields(); });
+  A('Gizmo: Scale','size resize 3', ()=>{ gizmoMode='scale'; updateGizmo(); renderEditorFields(); });
+  for(const s of ['box','sphere','cylinder','cone','ramp','stairs','dome','tube','torus'])
+    A('Add '+s,'shape place spawn primitive new', ((sh)=>()=>{ if(typeof addSceneProp==='function') addSceneProp(sh); })(s));
+  for(const m of EDITOR_MODES)
+    A('Go to '+(MODE_LABEL[m]||m)+' tab','mode switch open', ((mm)=>()=>setEditorMode(mm))(m));
+  // every settings section, jumpable from anywhere
+  if(editorEl){
+    editorEl.querySelectorAll('.edSection').forEach(sx=>{
+      const key=sx.dataset.sec; if(!key) return;
+      const head=sx.querySelector('.edSecHead'); const title=head?(head.textContent||'').trim():key;
+      let owner=null; for(const m of EDITOR_MODES){ if((MODE_SECTIONS[m]||[]).indexOf(key)>=0){ owner=m; break; } }
+      if(!owner) return;
+      items.push({ label:title, kw:(title+' '+(SEC_SUB[key]||'')+' '+(sx.textContent||'').slice(0,900)).toLowerCase(), kind:MODE_LABEL[owner]||owner,
+        run:()=>{ setEditorMode(owner); sx.classList.remove('collapsed'); setTimeout(()=>{ try{ sx.scrollIntoView({ block:'start', behavior:'smooth' }); }catch(e){ sx.scrollIntoView(); } }, 60); } });
+    });
+  }
+  return items;
+}
+let _palSel=0, _palShown=[];
+function _palRender(term){
+  const list=document.getElementById('edPalList'); if(!list) return;
+  term=(term||'').trim().toLowerCase();
+  const items=_palItems();
+  _palShown = term ? items.filter(it=>it.kw.indexOf(term)>=0) : items.slice(0, 14);
+  _palSel=Math.max(0, Math.min(_palSel, _palShown.length-1));
+  list.innerHTML='';
+  if(!_palShown.length){ const d=document.createElement('div'); d.className='palEmpty'; d.textContent='No matches \u2014 try \u201cfog\u201d, \u201cadd box\u201d, \u201cplay\u201d\u2026'; list.appendChild(d); return; }
+  _palShown.forEach((it,i)=>{
+    const d=document.createElement('div'); d.className='palItem'+(i===_palSel?' sel':'');
+    const lb=document.createElement('span'); lb.textContent=it.label; d.appendChild(lb);
+    const k=document.createElement('span'); k.className='palKind'; k.textContent=it.kind; d.appendChild(k);
+    d.onclick=()=>{ _palClose(); it.run(); };
+    d.onpointerenter=()=>{ _palSel=i; list.querySelectorAll('.palItem').forEach((x,xi)=>x.classList.toggle('sel', xi===i)); };
+    list.appendChild(d);
+  });
+  const sel=list.children[_palSel]; if(sel && sel.scrollIntoView) sel.scrollIntoView({ block:'nearest' });
+}
+function _palOpen(){
+  let pal=document.getElementById('edPal');
+  if(!pal){
+    pal=document.createElement('div'); pal.id='edPal';
+    pal.innerHTML='<div id="edPalCard"><input id="edPalInput" type="text" placeholder="Jump to a setting or run an action\u2026" spellcheck="false" autocomplete="off">'
+      +'<div id="edPalList"></div><div id="edPalHint">\u2191\u2193 select \u00b7 Enter run \u00b7 Esc close</div></div>';
+    document.body.appendChild(pal);
+    pal.addEventListener('pointerdown', (e)=>{ if(e.target===pal) _palClose(); });
+    const inp=pal.querySelector('#edPalInput');
+    inp.addEventListener('input', ()=>{ _palSel=0; _palRender(inp.value); });
+    inp.addEventListener('keydown', (e)=>{
+      e.stopPropagation();
+      if(e.key==='Escape'){ e.preventDefault(); _palClose(); }
+      else if(e.key==='ArrowDown'){ e.preventDefault(); _palSel=Math.min(_palShown.length-1,_palSel+1); _palRender(inp.value); }
+      else if(e.key==='ArrowUp'){ e.preventDefault(); _palSel=Math.max(0,_palSel-1); _palRender(inp.value); }
+      else if(e.key==='Enter'){ e.preventDefault(); const it=_palShown[_palSel]; if(it){ _palClose(); it.run(); } }
+    });
+    pal.querySelector('#edPalCard').addEventListener('keyup', (e)=>e.stopPropagation());
+  }
+  pal.classList.add('on');
+  const inp=pal.querySelector('#edPalInput'); inp.value=''; _palSel=0; _palRender('');
+  setTimeout(()=>{ try{ inp.focus(); }catch(e){} }, 30);
+}
+function _palClose(){ const pal=document.getElementById('edPal'); if(pal) pal.classList.remove('on'); }
+function _palToggle(){ const pal=document.getElementById('edPal'); if(pal && pal.classList.contains('on')) _palClose(); else _palOpen(); }
+document.addEventListener('keydown', (e)=>{
+  if((e.ctrlKey||e.metaKey) && (e.key==='k'||e.key==='K') && typeof editorOpen!=='undefined' && editorOpen){ e.preventDefault(); e.stopPropagation(); _palToggle(); }
+}, true);
 function toggleEditor(){
   releaseHeld();
   if(!editorOpen && pvpMode()){ if(typeof flashToast==='function') flashToast('Editor is disabled in this mode'); return; }   // no mid-match settings changes / cheating
@@ -30025,6 +30123,7 @@ function toggleEditor(){
     if(editorEl) editorEl.style.display = 'none';
     { const fb=document.getElementById('edAddFab'); if(fb) fb.style.display='none'; }
     _edToolbarShow(false);
+    if(typeof _palClose==='function') _palClose();
     editorAimPreview = false;
     spawnRouteEdit = null;
     if(typeof clearPreviewEnemy==='function') clearPreviewEnemy();
