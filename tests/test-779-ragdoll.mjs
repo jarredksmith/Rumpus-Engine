@@ -14,7 +14,7 @@ assert(/fdToggle\('<b>Ragdoll on death<\/b>', \(\)=>gameCfg\.ragdoll, v=>gameCfg
 assert(/if\(en\.hp<=0\)\{ killEnemy\(en, sx, sz\); return true; \}/.test(extractFunction('enemyHurt')), 'the killing hit threads its direction to killEnemy');
 const ke = extractFunction('killEnemy');
 assert(/if\(sx!=null\)\{ _rdx=en\.mesh\.position\.x-sx; _rdz=en\.mesh\.position\.z-sz;/.test(ke), 'the corpse is launched AWAY from the attacker');
-assert(/const _rag = \(gameCfg\.ragdoll && typeof spawnCorpse==='function'\) \? spawnCorpse\(en\.mesh,/.test(ke) && /if\(!_rag\)\{ scene\.remove\(en\.mesh\);/.test(ke), 'ragdoll on -> spawn a corpse; else remove the mesh as before');
+assert(/const _rag = \(gameCfg\.ragdoll && typeof spawnCorpse==='function'\) \? spawnCorpse\(en\.mesh,/.test(ke) && /if\(!_rag\)\{ if\(en\.mesh\.userData\.mixer\)/.test(ke) && /_fallbackDeath\(en\.mesh, _rdx, _rdz\);/.test(ke), 'ragdoll on -> spawn a corpse; else the build-994 topple/fade fallback (never a bare remove)');
 
 // spawnCorpse: freeze the pose, own the materials, build a dynamic capsule with the impulse
 const sc = extractFunction('spawnCorpse');

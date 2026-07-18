@@ -18990,7 +18990,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 994 · 2026-07-18';
+const BUILD_VERSION = 'build 995 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23745,7 +23745,7 @@ function loop(){
         let dx=a.x-b.x, dz=a.z-b.z, d=Math.hypot(dx,dz);
         if(d < minD){
           if(d < 1e-4){ dx=Math.cos(enemies[i].id*1.7); dz=Math.sin(enemies[i].id*1.7); d=1; }   // exact overlap: deterministic nudge
-          const push=(minD-d)*0.5, nx=dx/d, nz=dz/d;
+          const push=Math.min((minD-d)*0.5, 3.5*dt), nx=dx/d, nz=dz/d;   // build 995: cap at a slide speed — a packed huddle used to apply full corrections every frame and visibly vibrate
           a.x += nx*push; a.z += nz*push; b.x -= nx*push; b.z -= nz*push;
         }
       }
@@ -23872,11 +23872,16 @@ function loop(){
       if(en.mesh.userData.hasModel && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
         const moved = Math.hypot(en.mesh.position.x - (en._apx!=null?en._apx:en.mesh.position.x), en.mesh.position.z - (en._apz!=null?en._apz:en.mesh.position.z));
         en._apx = en.mesh.position.x; en._apz = en.mesh.position.z;
+        // build 995: judge locomotion on a ~80ms smoothed displacement with a hysteresis band —
+        // separation shoves + wall pushes made the raw per-frame value cross 0.012 every other
+        // frame, restarting the walk/run clip in a super-fast loop.
+        en._mvAvg = (en._mvAvg==null) ? moved : en._mvAvg + (moved - en._mvAvg)*Math.min(1, dt*12);
         let st;
         if(en._evt && nowMs < en._evt.until) st = en._evt.slot;   // directional hit-react flinch (wins over attack/loco)
         else if(en._attackT && nowMs < en._attackT) st = 'attack';
-        else if(moved > 0.012) st = en._chase ? 'run' : 'walk';
-        else st = 'idle';
+        else if(en._mvAvg > 0.012){ st = en._chase ? 'run' : 'walk'; en._locoSt = st; }
+        else if(en._mvAvg > 0.006 && (en._locoSt==='run' || en._locoSt==='walk')) st = en._locoSt;   // in the band: keep the current verdict (no flicker)
+        else { st = 'idle'; en._locoSt = 'idle'; }
         setEnemyAnimState(en.mesh, st);
       }
     }

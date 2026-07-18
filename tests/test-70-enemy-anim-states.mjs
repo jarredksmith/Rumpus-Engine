@@ -20,7 +20,7 @@ assert(/const re = _STATE_RE\[state\]; if\(!re\) return null;/.test(rsc) && /re\
 
 // runtime drives state from movement + attack window
 assert(/if\(en\._attackT && nowMs < en\._attackT\) st = 'attack';/.test(src), 'attack window -> attack state');
-assert(/else if\(moved > 0\.012\) st = en\._chase \? 'run' : 'walk';/.test(src), 'moving -> run (chase) / walk (patrol)');
+assert(/else if\(en\._mvAvg > 0\.012\)\{ st = en\._chase \? 'run' : 'walk'; en\._locoSt = st; \}/.test(src), 'moving -> run (chase) / walk (patrol) — judged on the build-995 smoothed displacement, not the raw frame');
 assert(/setEnemyAnimState\(en\.mesh, st\)/.test(src), 'applies the state each frame');
 assert(/en\.cooldown = 0\.8; en\._attackT = nowMs \+ 550/.test(src), 'melee attack opens the attack window');
 assert(/en\.shootCd = en\.fireCd; en\._attackT = nowMs \+ \(en\.burst>1 \? 450 \+ en\.burst\*en\.burstGap\*1000 : 450\)/.test(src), 'ranged attack opens the attack window (spanning a burst)');

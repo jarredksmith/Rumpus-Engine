@@ -5,7 +5,7 @@ import { extractBetween, gameSource, done, assert } from './harness.mjs';
 
 // Pull the real Phase-2 separation loop out of the tick and run it on synthetic enemies.
 const sepBody = extractBetween("can't push anyone through a wall.", '// Phase 3 — obstacle');
-const runSeparation = new Function('enemies', '"use strict";\n' + sepBody);
+const runSeparation = new Function('enemies', 'dt', '"use strict";\n' + sepBody);   // build 995: the pass slides at 3.5 m/s, so it needs the frame dt
 
 const mkEnemy = (id, x, z, fp = 0.9) => ({ id, mesh: { position: { x, z }, userData: { footprint: fp } } });
 function minPairDist(es) {
@@ -18,7 +18,7 @@ function minPairDist(es) {
 
 // 1) five enemies stacked on the same point must spread apart
 let es = [0,1,2,3,4].map(i => mkEnemy(i + 1, 0, 0));
-for (let k = 0; k < 80; k++) runSeparation(es);   // iterate the real pass to convergence
+for (let k = 0; k < 240; k++) runSeparation(es, 0.016);   // iterate the real pass to convergence (build 995: capped slide needs more, smaller steps)
 const target = Math.min(4, 0.9 + 0.9);             // expected min spacing (sum of footprints, capped)
 assert(minPairDist(es) >= target - 0.08, `stacked enemies separate to ~${target} (got ${minPairDist(es).toFixed(3)})`);
 assert(es.every(e => Number.isFinite(e.mesh.position.x) && Number.isFinite(e.mesh.position.z)), 'positions stay finite');
@@ -26,12 +26,12 @@ assert(es.every(e => Number.isFinite(e.mesh.position.x) && Number.isFinite(e.mes
 // 2) already well-separated enemies are not disturbed
 es = [mkEnemy(1, -10, 0), mkEnemy(2, 10, 0), mkEnemy(3, 0, 10)];
 const before = JSON.stringify(es.map(e => e.mesh.position));
-runSeparation(es);
+runSeparation(es, 0.016);
 assert(JSON.stringify(es.map(e => e.mesh.position)) === before, 'far-apart enemies are untouched');
 
 // 3) bigger footprints push to a wider spacing
 es = [mkEnemy(1, 0, 0, 1.6), mkEnemy(2, 0.2, 0, 1.6)];
-for (let k = 0; k < 80; k++) runSeparation(es);
+for (let k = 0; k < 240; k++) runSeparation(es, 0.016);
 assert(minPairDist(es) >= Math.min(4, 3.2) - 0.1, 'large-footprint enemies space out to their combined size');
 
 // --- structural: AI collides with dynamic props + uses a stop distance + real footprint ---
