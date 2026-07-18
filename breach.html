@@ -9192,27 +9192,72 @@ async function optimizeModelForMobile(input, opts){
   return { bytes:outBytes, before, after:{ bytes:outBytes.byteLength, tris:_docTriCount(root), tex:_texApproxBytes(root), texChanged } };
 }
 // UI glue: fetch the current model, bake it, re-host the slim copy, hand back its URL. Non-destructive
-// (the heavy original stays in My uploads). done(url,name) on success, done(null) if nothing to gain.
-async function _optimizeModelUpload(url, name, say, done){
-  if(!url){ say('Upload or pick a model first, then optimize it.'); if(done) done(null); return; }
+// (the heavy original stays in My uploads). done(url, name, savedBytes) on success; done(null, reason)
+// otherwise — reason 'lean' (nothing to gain) vs 'fail' so the build-987 sweep can tally honestly.
+// quiet suppresses the per-model big toast (the sweep announces once at the end).
+async function _optimizeModelUpload(url, name, say, done, quiet){
+  if(!url){ say('Upload or pick a model first, then optimize it.'); if(done) done(null, 'fail'); return; }
   try{
     say('Reading model…');
     let buf; try{ const res=await fetch(url); if(!res.ok) throw new Error('HTTP '+res.status); buf=await res.arrayBuffer(); }
-    catch(e){ say('✕ couldn\'t fetch the model'+((/^https?:/.test(url)&&!/rumpus/.test(url))?' (that host may block cross-site reads — optimize your own uploads)':'')); if(done) done(null); return; }
+    catch(e){ say('✕ couldn\'t fetch the model'+((/^https?:/.test(url)&&!/rumpus/.test(url))?' (that host may block cross-site reads — optimize your own uploads)':'')); if(done) done(null, 'fail'); return; }
     say('Optimizing — decimate + shrink textures…');
     const r=await optimizeModelForMobile(buf, {});
     const stat=_fmtMB(r.before.bytes)+' → '+_fmtMB(r.after.bytes)+' · '+Math.round(r.before.tris/1000)+'k → '+Math.round(r.after.tris/1000)+'k tris'+(r.after.texChanged?(' · '+r.after.texChanged+' texture'+(r.after.texChanged>1?'s':'')+' shrunk'):'');
-    if(r.after.bytes >= r.before.bytes*0.97){ say('Already lean — no meaningful savings ('+_fmtMB(r.before.bytes)+').'); if(done) done(null); return; }
+    if(r.after.bytes >= r.before.bytes*0.97){ say('Already lean — no meaningful savings ('+_fmtMB(r.before.bytes)+').'); if(done) done(null, 'lean'); return; }
     const base=(name||'model').replace(/\.(glb|gltf)$/i,'').replace(/-mobile$/i,'');
     const file=new File([r.bytes], base+'-mobile.glb', { type:'model/gltf-binary' });
     say('Uploading slim copy…');
     const d=await _uploadAsset(file, 'model', say);
-    if(!d){ if(done) done(null); return; }
+    if(!d){ if(done) done(null, 'fail'); return; }
     const savedPct=Math.max(0, Math.round((1-r.after.bytes/r.before.bytes)*100));
-    if(typeof flashBigToast==='function') flashBigToast('OPTIMIZED FOR MOBILE', 'saved '+savedPct+'% — '+stat);
+    if(!quiet && typeof flashBigToast==='function') flashBigToast('OPTIMIZED FOR MOBILE', 'saved '+savedPct+'% — '+stat);
     say('⚡ '+stat);
-    if(done) done(d.url, d.name);
-  }catch(e){ say('✕ '+((e&&e.message)||'optimize failed')); if(done) done(null); }
+    if(done) done(d.url, d.name, Math.max(0, r.before.bytes-r.after.bytes));
+  }catch(e){ say('✕ '+((e&&e.message)||'optimize failed')); if(done) done(null, 'fail'); }
+}
+// ---- build 987: SCENE-WIDE MOBILE PREFLIGHT --------------------------------------------------
+// One pass over the whole level: serialize, pull every distinct .glb URL (props, player, weapons,
+// enemies, roster, chest/coin/turret/pickups/grenade — anything serialized), bake each through the
+// build-986 optimizer, then rewrite the level JSON to the slim URLs and restore it. Models already
+// baked (-mobile.glb) are skipped; failures are tallied, never fatal.
+function _collectLevelModelUrls(level){
+  const json=JSON.stringify(level)||'';
+  const found=json.match(/https?:\/\/[^"\\]+?\.glb(?:\?[^"\\]*)?/g)||[];
+  const seen=new Set(), out=[];
+  for(const u of found){ if(seen.has(u)) continue; seen.add(u); if(/-mobile\.glb(\?|$)/i.test(u)) continue; out.push(u); }
+  return out;
+}
+let _mobSweepBusy=false;
+async function _optimizeSceneModels(say, done){
+  if(_mobSweepBusy){ say('A preflight is already running…'); return; }
+  _mobSweepBusy=true;
+  try{
+    const level=serializeLevel();
+    const urls=_collectLevelModelUrls(level);
+    if(!urls.length){ say('No optimizable model URLs in this level (already slim, or built-ins only).'); if(done) done(0); return; }
+    const map={}; let ok=0, lean=0, fail=0, saved=0;
+    for(let i=0;i<urls.length;i++){
+      const u=urls[i];
+      const tail=decodeURIComponent((u.split('/').pop()||'model').split('?')[0]).slice(0,60);
+      say('['+(i+1)+'/'+urls.length+'] '+tail);
+      const r=await new Promise(res=> _optimizeModelUpload(u, tail, t=>say('['+(i+1)+'/'+urls.length+'] '+tail+' — '+t), (nu, reasonOrName, sb)=> res(nu?{nu, sb:sb||0}:{skip:reasonOrName||'fail'}), true));
+      if(r.nu){ map[u]=r.nu; ok++; saved+=r.sb; } else if(r.skip==='lean') lean++; else fail++;
+    }
+    const keys=Object.keys(map);
+    if(keys.length){
+      let json=JSON.stringify(level);
+      for(const k of keys) json=json.split(JSON.stringify(k).slice(1,-1)).join(JSON.stringify(map[k]).slice(1,-1));   // JSON-escaped exact match, so a URL that is a prefix of another still swaps safely inside its quotes
+      restoreLevel(JSON.parse(json));
+      _levelDirty=true;
+      if(typeof renderEditorFields==='function') renderEditorFields();
+    }
+    const sum=ok+' optimized'+(ok?(' ('+_fmtMB(saved)+' saved)'):'')+' · '+lean+' already lean'+(fail?(' · '+fail+' failed'):'');
+    if(typeof flashBigToast==='function') flashBigToast('MOBILE PREFLIGHT DONE', sum);
+    say(keys.length ? '⚡ '+sum+' — the level now uses the slim copies.' : sum+'.');
+    if(done) done(ok);
+  }catch(e){ say('✕ preflight failed — '+((e&&e.message)||'')); if(done) done(0);
+  }finally{ _mobSweepBusy=false; }
 }
 
 // build 917: GLBs whose textures are KTX2/Basis-compressed (KHR_texture_basisu) need a KTX2Loader on
@@ -18786,7 +18831,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 986 · 2026-07-18';
+const BUILD_VERSION = 'build 987 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26128,6 +26173,8 @@ function buildEditorPanel(){
       +   '<button id="edSubmitComm" class="edCTA">'+_icn('upload')+'Publish to community</button>'
       +   '<div class="hint" style="font-size:10px;margin:6px 0 0;text-align:center">Share your level with everyone \u2014 it appears in the in-game library once approved. No account needed.</div>'
       + '</div>'
+      + '<div class="row2" style="margin-top:6px"><button id="edOptimizeAll" style="width:100%;border-color:rgba(var(--accent-rgb),0.6);color:#bff5e2">\u26a1 Optimize all models for mobile</button></div>'
+      + '<div class="hint" id="edOptStatus" style="font-size:10px;margin:3px 0 8px;min-height:12px">Preflight: bakes every model in the level down for phones (slim re-hosted copies; originals untouched). Check third-party model licenses before re-hosting.</div>'
       + '<div id="edIssues"></div>'
       + '<div class="row2"><button id="edSave">'+_icn('save')+'Save</button><button id="edShare">'+_icn('link')+'Share link</button></div>'
       + '<label style="display:flex;align-items:center;gap:7px;margin:8px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer"><input type="checkbox" id="edAutoSave" style="width:15px;height:15px;accent-color:var(--accent)"><b>Autosave</b> while editing</label>'
@@ -26442,6 +26489,10 @@ function buildEditorPanel(){
   // (far too big for a URL), the GitHub issue form receives the paste, an Action publishes on approval.
   // build 854: a small screenshot of the current view rides along as `thumb` — the publish Action lifts
   // it into the gallery index (and strips it from the level file), so entries get a real preview image.
+  const optAllBtn = p.querySelector('#edOptimizeAll');
+  if(optAllBtn){ const ost=p.querySelector('#edOptStatus'); const osay=t=>{ if(ost) ost.textContent=t; };
+    optAllBtn.onclick=()=>{ uiConfirm('Optimize every model in this level for mobile? Each one is decimated + texture-shrunk, re-hosted as a slim copy, and the level switches to it (originals stay in place).', ()=>{ optAllBtn.disabled=true; _optimizeSceneModels(osay, ()=>{ optAllBtn.disabled=false; }); }, 'Optimize'); };
+  }
   const submitBtn = p.querySelector('#edSubmitComm');
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');

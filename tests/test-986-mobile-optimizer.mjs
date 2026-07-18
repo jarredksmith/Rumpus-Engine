@@ -38,7 +38,7 @@ assert(/const hasAlpha=\(mime==='image\/png'\|\|mime==='image\/webp'\);/.test(sr
 assert(/if\(m<=maxEdge\)\{ try\{ bmp\.close&&bmp\.close\(\); \}catch\(e\)\{\} return null; \}/.test(src), 'a texture already within the edge cap is left alone');
 
 // ---- non-destructive re-host: fetch -> bake -> upload the slim copy as <name>-mobile.glb ----
-assert(/async function _optimizeModelUpload\(url, name, say, done\)\{/.test(src), '_optimizeModelUpload glue exists');
+assert(/async function _optimizeModelUpload\(url, name, say, done, quiet\)\{/.test(src), '_optimizeModelUpload glue exists (build 987: quiet flag for the scene sweep)');
 assert(/const file=new File\(\[r\.bytes\], base\+'-mobile\.glb', \{ type:'model\/gltf-binary' \}\);/.test(src),
   'the slim copy uploads as <name>-mobile.glb (the original stays in My uploads)');
 assert(/const d=await _uploadAsset\(file, 'model', say\);/.test(src), 'reuses the shared upload pipeline (server sniff + quota)');
