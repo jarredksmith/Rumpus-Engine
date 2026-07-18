@@ -9119,6 +9119,102 @@ function _autoSimplifyChar(gltf, label){
     });
   }catch(e){}
 }
+// ---- build 986: bake-once MOBILE MODEL OPTIMIZER (gltf-transform, loaded on demand) -------------
+// The runtime simplifier above decimates a heavy CHARACTER on every load, but never shrinks the
+// downloaded file or its textures — the two things that cost the most on a phone (download time +
+// texture memory). This BAKES a model once: decimate geometry to a triangle budget and shrink oversized
+// textures, then re-host a slim .glb every player downloads. Draco/KTX2 repacking is a later pass.
+let _gtPromise=null;
+function _ensureGltfTransform(){
+  if(_gtPromise) return _gtPromise;
+  _gtPromise = (async ()=>{
+    const V='4.4.1';
+    for(const base of ['https://esm.sh/@gltf-transform', 'https://esm.run/@gltf-transform']){   // both rewrite the packages' bare inter-deps; two hosts survive one CDN hiccup
+      try{
+        const [core, funcs, ext] = await Promise.all([
+          import(base+'/core@'+V), import(base+'/functions@'+V), import(base+'/extensions@'+V) ]);
+        if(core && core.WebIO && funcs && funcs.simplify && ext && ext.ALL_EXTENSIONS) return { core, funcs, ext };
+      }catch(e){ /* next host */ }
+    }
+    return null;
+  })();
+  return _gtPromise;
+}
+const MOBILE_TRI_BUDGET = 40000;   // per-model triangle target for the bake (mirrors CHAR_TRI_BUDGET)
+const MOBILE_TEX_MAX    = 1024;    // longest texture edge on mobile (the 1024 guideline)
+function _fmtMB(b){ return (b/1048576).toFixed(1)+' MB'; }
+function _docTriCount(root){ let t=0; try{ for(const m of root.listMeshes()) for(const p of m.listPrimitives()){ const i=p.getIndices(), pos=p.getAttribute('POSITION'); t += i? i.getCount()/3 : (pos? pos.getCount()/3 : 0); } }catch(e){} return Math.round(t); }
+function _texApproxBytes(root){ let b=0; try{ for(const t of root.listTextures()){ const im=t.getImage(); if(im) b+=im.byteLength; } }catch(e){} return b; }
+// Shrink one texture's pixels with a canvas (browser only). Returns {bytes,mime} or null to leave it be.
+async function _shrinkTextureBytes(bytes, mime, maxEdge){
+  if(!/^image\/(png|jpeg|webp)$/.test(mime||'')) return null;               // KTX2/basis etc. — can't canvas-decode; skip (Build C)
+  if(typeof createImageBitmap!=='function') return null;
+  let bmp; try{ bmp=await createImageBitmap(new Blob([bytes], {type:mime})); }catch(e){ return null; }
+  const w=bmp.width, h=bmp.height, m=Math.max(w,h);
+  if(m<=maxEdge){ try{ bmp.close&&bmp.close(); }catch(e){} return null; }    // already within budget
+  const scale=maxEdge/m, nw=Math.max(1,Math.round(w*scale)), nh=Math.max(1,Math.round(h*scale));
+  let cvs; try{ cvs=(typeof OffscreenCanvas!=='undefined') ? new OffscreenCanvas(nw,nh) : Object.assign(document.createElement('canvas'),{width:nw,height:nh}); }catch(e){ return null; }
+  const ctx=cvs.getContext&&cvs.getContext('2d'); if(!ctx) return null;
+  ctx.drawImage(bmp,0,0,nw,nh); try{ bmp.close&&bmp.close(); }catch(e){}
+  const hasAlpha=(mime==='image/png'||mime==='image/webp');                 // keep alpha -> webp, else jpeg is smallest
+  const outMime=hasAlpha?'image/webp':'image/jpeg';
+  let blob; try{ blob = cvs.convertToBlob ? await cvs.convertToBlob({type:outMime, quality:0.85}) : await new Promise(r=>cvs.toBlob(r, outMime, 0.85)); }catch(e){ return null; }
+  if(!blob) return null;
+  return { bytes:new Uint8Array(await blob.arrayBuffer()), mime:outMime };
+}
+// Core bake. `input` is an ArrayBuffer/Uint8Array of a .glb. Resolves to
+//   { bytes:Uint8Array, before:{bytes,tris,tex}, after:{bytes,tris,tex,texChanged} }  or throws a friendly Error.
+async function optimizeModelForMobile(input, opts){
+  opts=opts||{};
+  const triBudget=opts.triBudget||MOBILE_TRI_BUDGET, texMax=opts.texMax||MOBILE_TEX_MAX;
+  const GT=await _ensureGltfTransform(); if(!GT) throw new Error('optimizer library unavailable (offline?)');
+  const S=await _ensureSimplifier();
+  const { WebIO }=GT.core, { dedup, weld, simplify, prune }=GT.funcs;
+  const io=new WebIO().registerExtensions(GT.ext.ALL_EXTENSIONS);
+  const inBytes=(input instanceof Uint8Array)?input:new Uint8Array(input);
+  let doc; try{ doc=await io.readBinary(inBytes); }catch(e){ throw new Error('couldn\'t read this model (a compression we can\'t repack yet)'); }
+  const root=doc.getRoot();
+  const before={ bytes:inBytes.byteLength, tris:_docTriCount(root), tex:_texApproxBytes(root) };
+  const passes=[dedup(), weld()];
+  if(S && before.tris>triBudget) passes.push(simplify({ simplifier:S, ratio:Math.max(0.01, triBudget/before.tris), error:0.05 }));   // meshopt keeps skins/UVs intact (unlike the crude runtime index rewrite)
+  passes.push(prune());
+  try{ await doc.transform.apply(doc, passes); }catch(e){ /* geometry pass failed — still shrink textures */ }
+  let texChanged=0;
+  for(const t of root.listTextures()){
+    try{ const img=t.getImage(); if(!img) continue;
+      const r=await _shrinkTextureBytes(img, t.getMimeType(), texMax);
+      if(r){ t.setImage(r.bytes).setMimeType(r.mime);
+        try{ const uri=t.getURI&&t.getURI(); if(uri) t.setURI(uri.replace(/\.\w+$/,'')+(r.mime==='image/webp'?'.webp':'.jpg')); }catch(e){}
+        texChanged++; }
+    }catch(e){}
+  }
+  const outBytes=await io.writeBinary(doc);
+  return { bytes:outBytes, before, after:{ bytes:outBytes.byteLength, tris:_docTriCount(root), tex:_texApproxBytes(root), texChanged } };
+}
+// UI glue: fetch the current model, bake it, re-host the slim copy, hand back its URL. Non-destructive
+// (the heavy original stays in My uploads). done(url,name) on success, done(null) if nothing to gain.
+async function _optimizeModelUpload(url, name, say, done){
+  if(!url){ say('Upload or pick a model first, then optimize it.'); if(done) done(null); return; }
+  try{
+    say('Reading model…');
+    let buf; try{ const res=await fetch(url); if(!res.ok) throw new Error('HTTP '+res.status); buf=await res.arrayBuffer(); }
+    catch(e){ say('✕ couldn\'t fetch the model'+((/^https?:/.test(url)&&!/rumpus/.test(url))?' (that host may block cross-site reads — optimize your own uploads)':'')); if(done) done(null); return; }
+    say('Optimizing — decimate + shrink textures…');
+    const r=await optimizeModelForMobile(buf, {});
+    const stat=_fmtMB(r.before.bytes)+' → '+_fmtMB(r.after.bytes)+' · '+Math.round(r.before.tris/1000)+'k → '+Math.round(r.after.tris/1000)+'k tris'+(r.after.texChanged?(' · '+r.after.texChanged+' texture'+(r.after.texChanged>1?'s':'')+' shrunk'):'');
+    if(r.after.bytes >= r.before.bytes*0.97){ say('Already lean — no meaningful savings ('+_fmtMB(r.before.bytes)+').'); if(done) done(null); return; }
+    const base=(name||'model').replace(/\.(glb|gltf)$/i,'').replace(/-mobile$/i,'');
+    const file=new File([r.bytes], base+'-mobile.glb', { type:'model/gltf-binary' });
+    say('Uploading slim copy…');
+    const d=await _uploadAsset(file, 'model', say);
+    if(!d){ if(done) done(null); return; }
+    const savedPct=Math.max(0, Math.round((1-r.after.bytes/r.before.bytes)*100));
+    if(typeof flashBigToast==='function') flashBigToast('OPTIMIZED FOR MOBILE', 'saved '+savedPct+'% — '+stat);
+    say('⚡ '+stat);
+    if(done) done(d.url, d.name);
+  }catch(e){ say('✕ '+((e&&e.message)||'optimize failed')); if(done) done(null); }
+}
+
 // build 917: GLBs whose textures are KTX2/Basis-compressed (KHR_texture_basisu) need a KTX2Loader on
 // the GLTFLoader; without one the loader threw "setKTX2Loader must be called" and the model fell back
 // to a capsule. Pull the transcoder from CDN the first time such a texture is actually seen (zero cost
@@ -18690,7 +18786,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 985 · 2026-07-18';
+const BUILD_VERSION = 'build 986 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31280,9 +31376,11 @@ function renderUploadRow(host, type, fill, opts){
   row.appendChild(up); row.appendChild(fi);
   const st=document.createElement('div'); st.className='hint'; st.style.cssText='font-size:10px;margin:3px 0 0;min-height:12px;';
   const say=(t)=>{ st.textContent=t; };
+  let _curName='';
+  const curUrl=()=> (opts.getCurrentUrl? (opts.getCurrentUrl()||'') : '');   // build 986: what the Optimize button targets
   fi.onchange=async ()=>{ const f=fi.files&&fi.files[0]; fi.value=''; if(!f) return;
     const d=await _uploadAsset(f, type, say); if(!d) return;
-    fill(d.url, d.name);
+    fill(d.url, d.name); _curName=d.name||'';
     if(typeof flashBigToast==='function') flashBigToast(UPLOAD_NOUN[type].toUpperCase()+' UPLOADED', d.slug+' — hosted & added to your uploads');
     renderEditorFields();
     if(opts.afterRender) opts.afterRender(d.url);
@@ -31292,7 +31390,7 @@ function renderUploadRow(host, type, fill, opts){
     const sel=document.createElement('select'); sel.style.cssText='flex:1;min-width:0;font-size:11px;';
     const o0=document.createElement('option'); o0.value=''; o0.textContent='My uploads ('+mine.length+')…'; sel.appendChild(o0);
     for(const m of mine){ const o=document.createElement('option'); o.value=m.url; o.textContent=m.slug+' · '+((m.bytes||0)/1048576).toFixed(1)+' MB'; sel.appendChild(o); }
-    sel.onchange=()=>{ if(sel.value){ fill(sel.value); const m=mine.find(x=>x.url===sel.value); say('Using '+((m&&m.slug)||'upload')+(opts.applyHint?(' — '+opts.applyHint):'')); } };
+    sel.onchange=()=>{ if(sel.value){ fill(sel.value); const m=mine.find(x=>x.url===sel.value); _curName=(m&&(m.name||m.slug))||''; say('Using '+((m&&m.slug)||'upload')+(opts.applyHint?(' — '+opts.applyHint):'')); } };
     row.appendChild(sel);
     const del=document.createElement('button'); del.textContent='✕'; del.title='Delete the selected upload from the server';
     del.style.cssText='flex:0 0 auto;padding:4px 10px;border-color:#7a2630;color:#ff9b93;';
@@ -31305,7 +31403,16 @@ function renderUploadRow(host, type, fill, opts){
     };
     row.appendChild(del);
   }
-  wrap.appendChild(row); wrap.appendChild(st);
+  wrap.appendChild(row);
+  if(type==='model'){   // build 986: bake the current model down for mobile and re-host the slim copy
+    const orow=document.createElement('div'); orow.className='row2'; orow.style.marginTop='5px';
+    const opt=document.createElement('button'); opt.innerHTML='\u26a1 Optimize for mobile';
+    opt.style.cssText='flex:1 1 auto;border-color:rgba(var(--accent-rgb),0.6);color:#bff5e2;';
+    opt.title='Decimate geometry + shrink oversized textures, then re-host a slim .glb every player downloads (the original stays in My uploads)';
+    opt.onclick=()=>{ opt.disabled=true; _optimizeModelUpload(curUrl(), _curName, say, (nu,nn)=>{ opt.disabled=false; if(nu){ _curName=nn||_curName; fill(nu,nn); renderEditorFields(); } }); };
+    orow.appendChild(opt); wrap.appendChild(orow);
+  }
+  wrap.appendChild(st);
   host.appendChild(wrap);
 }
 // The model widget's upload control (build 974 behaviour, now on the shared helper).
@@ -31315,6 +31422,7 @@ function renderModelUpload(urlHost, inp, tgt){
     if(tgt && tgt.setUrl && !tgt.addable) tgt.setUrl(url);   // single-slot (gun/player/station) applies now; props keep it for Add model
   }, { btnText:'Upload .glb', headText:'Or upload your own model',
        applyHint:'use Swap model'+(tgt&&tgt.addable?' / Add model':''),
+       getCurrentUrl:()=>{ const ni=editorEl && editorEl.querySelector('#edUrlInput'); return (ni&&ni.value)||inp.value||''; },   // build 986: Optimize targets whatever model is set
        afterRender:(url)=>{ const ni=editorEl && editorEl.querySelector('#edUrlInput'); if(ni) ni.value=url; } });   // the re-render rebuilt the field
 }
 function openCommunity(){ openModal('communityModal'); renderCommunity(); }
