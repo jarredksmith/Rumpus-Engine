@@ -20,7 +20,7 @@ const aim = new Function('THREE','_UP_Y', 'return ('+extractFunction('_aimLight'
 }
 
 // ---- _lightOpts round-trips each type ----
-const lopts = new Function('return ('+extractFunction('_lightOpts')+')')();
+const lopts = new Function('THREE','scene','return ('+extractFunction('_lightOpts')+')')(THREE, null);   // build 997: world-pos serialize needs THREE; scene only gates the att branch
 { const g=new THREE.Group(); g.position.set(1,2,3);
   g.userData.light=new THREE.SpotLight(0x804020,5,30,0.6,0.4); g.userData.ltype='spot'; g.userData.dir=[0.5,-1.0];
   const o=lopts(g);

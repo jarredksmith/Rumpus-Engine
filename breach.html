@@ -9893,7 +9893,10 @@ const _UP_Y = new THREE.Vector3(0,1,0);
 function _lightOpts(g){
   const L=g.userData.light, type=g.userData.ltype||'point';
   const hx=(c)=>(Math.round(c.r*255)<<16)|(Math.round(c.g*255)<<8)|Math.round(c.b*255);
-  const o={ type, color:hx(L.color), intensity:+L.intensity, t:[g.position.x,g.position.y,g.position.z] };
+  // build 997: t is always WORLD coords (attached lights have a prop parent, so g.position is local)
+  const _wp=new THREE.Vector3(); g.getWorldPosition(_wp);
+  const o={ type, color:hx(L.color), intensity:+L.intensity, t:[_wp.x,_wp.y,_wp.z] };
+  if(g.userData.att && g.parent && g.parent!==scene) o.att={ nid:g.userData.att.nid, p:[g.position.x,g.position.y,g.position.z], q:[g.quaternion.x,g.quaternion.y,g.quaternion.z,g.quaternion.w] };
   if(type==='point'||type==='spot') o.distance=+L.distance;
   if(type==='spot'){ o.angle=+L.angle; o.penumbra=+L.penumbra; }
   if(type==='spot'||type==='dir') o.dir=(g.userData.dir||[0,-1.3]).slice();
@@ -9940,13 +9943,49 @@ function buildLight(opts){
     const d=opts.dir||[0,-1.3]; _aimLight(g, d[0], d[1]);
   }
   g.position.set(opts.t[0], opts.t[1], opts.t[2]);
+  if(opts.att && opts.att.nid) g.userData.att={ nid:String(opts.att.nid), p:(opts.att.p||[0,0,0]).slice(0,3), q:(opts.att.q||[0,0,0,1]).slice(0,4) };   // build 997: parented by _syncAttachedLights once the prop arrives (props load async)
   scene.add(g);
   lightModels.push(g);
   return g;
 }
+// ---- build 997: LIGHT-TO-PROP ATTACHMENT ------------------------------------------------------
+// A light with userData.att = { nid, p, q } belongs on the prop with that nid, at that local
+// transform. Props load async (and arrive later over MP), so a tiny per-frame reconciler does the
+// parenting: waiting lights attach when their prop appears; lights whose prop was deleted release
+// back to the scene at their last WORLD transform. Attached lights ride physics for free —
+// dynamic props write their body transform every frame and children follow.
+const _lgP=new THREE.Vector3(), _lgQ=new THREE.Quaternion();
+function _syncAttachedLights(){
+  for(const g of lightModels){
+    const att=g && g.userData && g.userData.att; if(!att) continue;
+    if(g.parent && g.parent!==scene){
+      if(propModels.indexOf(g.parent)<0){   // the pole was deleted -> keep the light, back to world
+        g.getWorldPosition(_lgP); g.getWorldQuaternion(_lgQ);
+        scene.add(g); g.position.copy(_lgP); g.quaternion.copy(_lgQ);
+        delete g.userData.att;
+      }
+      continue;
+    }
+    let host=null; for(const o of propModels){ if(o && o.userData.nid===att.nid){ host=o; break; } }
+    if(host){ host.add(g); g.position.fromArray(att.p); g.quaternion.fromArray(att.q); }
+  }
+}
+function attachLightToProp(g, host){
+  if(!g || !host) return false;
+  if(!host.userData.nid) host.userData.nid=genNid();
+  host.attach(g);   // three keeps the WORLD transform while reparenting — the light doesn't jump
+  g.userData.att={ nid:host.userData.nid, p:[g.position.x,g.position.y,g.position.z], q:[g.quaternion.x,g.quaternion.y,g.quaternion.z,g.quaternion.w] };
+  return true;
+}
+function detachLight(g){
+  if(!g || !g.userData.att) return;
+  g.getWorldPosition(_lgP); g.getWorldQuaternion(_lgQ);
+  scene.add(g); g.position.copy(_lgP); g.quaternion.copy(_lgQ);
+  delete g.userData.att;
+}
 function removeLight(idx){
   const g = lightModels[idx]; if(!g) return;
-  scene.remove(g);
+  (g.parent||scene).remove(g);   // build 997: an attached light lives under its prop, not the scene
   lightModels.splice(idx,1);
 }
 for(const L of ((savedLevel && Array.isArray(savedLevel.lights)) ? savedLevel.lights : SCENE_LIGHTS)) buildLight(L);
@@ -18990,7 +19029,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 996 · 2026-07-18';
+const BUILD_VERSION = 'build 997 · 2026-07-18';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23892,6 +23931,7 @@ function loop(){
   if(!editorOpen && _corpses.length) updateCorpses(dt);   // build 779: ragdoll corpses follow their tumbling bodies
   if(!editorOpen && _fadeCorpses.length) updateFadeCorpses(dt);   // build 994: topple/fade fallback corpses
   if(typeof updateFragments==='function') updateFragments();   // advance/cleanup destruction debris
+  if(typeof _syncAttachedLights==='function') _syncAttachedLights();   // build 997: glue attached lights to their props
   updateLightBudget();
 
   { const _a=perfOn?_pnow():0; netTick(dt); if(perfOn)_prof.net+=_pnow()-_a; }   // send/receive networked state + smooth remote entities
@@ -29382,6 +29422,24 @@ function renderEditorFields(){
     add.onclick = ()=>{ addSceneLight(); };
     row.appendChild(add);
     urlHost.appendChild(row);
+    { // build 997: glue this light to the prop selected on the Build tab (lightpoles, lamps, cars)
+      const gl=tgt.obj(); const hostProp=editorTargets.props && editorTargets.props.obj && editorTargets.props.obj();
+      const arow=document.createElement('div'); arow.className='row2'; arow.style.marginBottom='4px';
+      if(gl && gl.userData.att){
+        const det=document.createElement('button'); det.textContent='Detach from prop';
+        det.onclick=()=>{ pushUndoSnapshot(); detachLight(gl); _levelDirty=true; renderEditorFields(); };
+        arow.appendChild(det);
+      } else {
+        const att=document.createElement('button'); att.textContent='Attach to selected prop';
+        att.title='Glue this light to the prop picked on the Build tab — it rides the prop, physics falls included (lightpoles!)';
+        att.disabled=!gl || !hostProp;
+        att.onclick=()=>{ if(!gl || !hostProp) return; pushUndoSnapshot(); attachLightToProp(gl, hostProp); _levelDirty=true; renderEditorFields(); if(typeof toast==='function') toast('Light attached — it now moves with the prop'); };
+        arow.appendChild(att);
+      }
+      const hint=document.createElement('div'); hint.className='hint'; hint.style.cssText='font-size:10px;margin:2px 0 4px;';
+      hint.textContent=(gl && gl.userData.att) ? 'Attached — position sliders move it relative to the prop.' : (hostProp ? 'Target: the selected Build-tab prop.' : 'Pick a prop on the Build tab first to enable Attach.');
+      urlHost.appendChild(arow); urlHost.appendChild(hint);
+    }
     const g0 = tgt.obj();
     if(g0){   // type picker for the selected light
       const lab = document.createElement('label'); lab.className='field';
