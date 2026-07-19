@@ -648,6 +648,23 @@
   #killFeed .kfRow.kfFade { opacity:0; }
   #killFeed .kfArrow { color:var(--danger); }
   body.touch #killFeed { top: calc(76px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%); right:auto; bottom:auto; align-items:center; max-width:80vw; font-size:10px; gap:2px; }
+  .drWrap { display:flex; flex-direction:column; align-items:center; gap:10px; max-width:min(92vw,600px); }
+  .drBanner { margin:0 0 2px; font-size:54px; letter-spacing:10px; }
+  .drBanner.drVictory { color:var(--accent); text-shadow:0 0 36px rgba(var(--accent-rgb),0.55); }
+  .drBanner.drDefeat { color:#ff2d55; text-shadow:0 0 36px rgba(255,45,85,0.4); }
+  .drBoard { display:flex; flex-direction:column; gap:5px; width:min(88vw,360px); background:rgba(5,10,12,0.55); border:1px solid rgba(var(--accent-rgb),0.22); border-radius:12px; padding:12px 14px; max-height:44vh; overflow-y:auto; }
+  .drBoard.drTeams { flex-direction:row; align-items:flex-start; gap:12px; width:min(92vw,560px); }
+  .drTeamCol { flex:1; display:flex; flex-direction:column; gap:5px; border-radius:10px; padding:8px; border:1px solid transparent; min-width:0; }
+  .drTeamCol.drWin { border-color:rgba(var(--accent-rgb),0.45); background:rgba(var(--accent-rgb),0.07); }
+  .drTeamHead { font:600 12px ui-monospace,monospace; letter-spacing:2px; text-transform:uppercase; margin-bottom:2px; }
+  .drRow { display:flex; align-items:center; gap:10px; padding:5px 8px; border-radius:7px; background:rgba(255,255,255,0.03); font:600 13px ui-monospace,monospace; color:#cfeee2; }
+  .drRow.me { background:rgba(var(--accent-rgb),0.16); color:#eafff7; box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),0.35); }
+  .drPlace { width:18px; text-align:center; flex:0 0 auto; }
+  .drName { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+  .drK { color:var(--gold); flex:0 0 auto; }
+  .drMvp { font:600 11px ui-monospace,monospace; letter-spacing:2px; color:var(--gold); text-transform:uppercase; }
+  body.touch .drBanner { font-size:36px; letter-spacing:6px; }
+  body.touch .drBoard { max-height:34vh; padding:8px 10px; }
   #chatBox { position:fixed; bottom:132px; left:18px; z-index:42; display:flex; flex-direction:column; gap:3px; max-width:340px; font:600 12px ui-monospace,monospace; }
   #chatLog { display:flex; flex-direction:column; gap:3px; pointer-events:none; }
   #chatLog .chatRow { background:rgba(5,10,12,0.62); border:1px solid rgba(79,208,255,0.22); border-radius:5px; padding:2px 7px; opacity:1; transition:opacity .8s; word-break:break-word; }
@@ -14632,9 +14649,7 @@ function duelHUD(){
   renderScoreboard();
 }
 // Live standings (top-right). Works for any number of players; names come from snapshots + the welcome.
-function renderScoreboard(){
-  const el=document.getElementById('scoreboard'); if(!el) return;
-  if(!pvpMode() || !gameOn){ if(el.style.display!=='none'){ el.style.display='none'; _sbSig=''; } return; }
+function _sbRows(){   // everyone with a score or a seat, ranked by kills (shared: live scoreboard + result ceremony)
   const rows=[]; const seen={};
   const add=(id)=>{ if(seen[id]) return; seen[id]=1; const k=NET.duelScore[id]||0;
     const nm = (+id===NET.myId) ? ((NET.name||'You')+' (you)') : killName(id);
@@ -14642,6 +14657,12 @@ function renderScoreboard(){
   for(const id in NET.duelScore) add(id);
   add(NET.myId); for(const id in NET.players) add(id);
   rows.sort((a,b)=> b.k-a.k || a.id-b.id);
+  return rows;
+}
+function renderScoreboard(){
+  const el=document.getElementById('scoreboard'); if(!el) return;
+  if(!pvpMode() || !gameOn){ if(el.style.display!=='none'){ el.style.display='none'; _sbSig=''; } return; }
+  const rows=_sbRows();
   const tdm=teamMode();
   const sig=pvpLabel()+'|'+NET.killTarget+'|'+(tdm?(teamTotal(0)+'-'+teamTotal(1)+'|'):'')+rows.map(r=>r.id+':'+r.k+':'+r.nm+':'+(tdm?NET.teams[r.id]:'')).join(',');
   if(sig===_sbSig){ if(el.style.display!=='block') el.style.display='block'; return; }   // unchanged -> skip the rebuild
@@ -14775,18 +14796,43 @@ function replayMatch(){
   else if(NET.mode==='client'){ sendToPlayer(0, {t:'rematchReq'});   // ask the host to restart; we re-enter on its {t:'begin'}
     if(typeof flashToast==='function') flashToast('Rematch requested \u2014 waiting for the host\u2026'); }
 }
+// Final-standings board for the VICTORY/DEFEAT ceremony. FFA: ranked rows with podium colors.
+// Team modes: side-by-side team columns (winner glows) + an MVP callout for the top fragger.
+function _resultStandingsHTML(winnerId, winnerTeam){
+  const rows=_sbRows(); if(!rows.length) return '';
+  const medal=['#ffd75e','#c9d6e2','#d29a6b'];
+  const row=(r,place,podium)=>{ const me=r.id===NET.myId; const col=(podium && place<3)?medal[place]:'#9fb8ae';
+    return '<div class="drRow'+(me?' me':'')+'"><span class="drPlace" style="color:'+col+'">'+(place+1)+'</span>'
+      +'<span class="drName">'+_esc(r.nm)+'</span><span class="drK">'+r.k+'</span></div>'; };
+  if(teamMode()){
+    let h='<div class="drBoard drTeams">';
+    for(let tm=0; tm<2; tm++){
+      h+='<div class="drTeamCol'+(tm===winnerTeam?' drWin':'')+'"><div class="drTeamHead" style="color:'+(tm===0?'#ff8a93':'#9fd0ff')+'">'+TEAM_NAME[tm]+' \u00b7 '+teamTotal(tm)+'</div>';
+      let p=0; for(const r of rows){ if(NET.teams[r.id]!==tm) continue; h+=row(r,p++,false); }
+      h+='</div>';
+    }
+    h+='</div>';
+    const mvp=rows[0]; if(mvp && mvp.k>0) h+='<div class="drMvp">MVP \u00b7 '+_esc(mvp.nm)+' \u00b7 '+mvp.k+' kills</div>';
+    return h;
+  }
+  let h='<div class="drBoard">';
+  rows.slice(0,8).forEach((r,i)=>{ h+=row(r,i,true); });
+  if(rows.length>8) h+='<div class="drMvp" style="color:#9fb8ae">+'+(rows.length-8)+' more</div>';
+  return h+'</div>';
+}
 function showDuelResult(winnerId, winnerTeam){
   if(typeof drivingCar!=='undefined' && drivingCar && typeof exitCar==='function') exitCar(); gameOn=false; gameOver=true; safeExitPointerLock();
   { const sb=document.getElementById('scoreboard'); if(sb) sb.style.display='none'; }
   clearKillFeed();
   const win = teamMode() ? (NET.team===winnerTeam) : (winnerId===NET.myId);
   const ov=document.getElementById('overlay'); ov.classList.remove('hidden');
-  ov.innerHTML = `<h1 style="color:${win?'var(--accent)':'#ff2d55'}">${win?'VICTORY':'DEFEAT'}</h1>
+  ov.innerHTML = `<div class="drWrap"><h1 class="drBanner ${win?'drVictory':'drDefeat'}">${win?'VICTORY':'DEFEAT'}</h1>
     <div class="sub">${teamMode() ? (TEAM_NAME[winnerTeam]+' TEAM WINS') : (pvpLabel()+' TO '+NET.killTarget+' KILLS')}</div>
-    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:6px;">
+    ${_resultStandingsHTML(winnerId, winnerTeam)}
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px;">
       <button id="replayBtn">${NET.mode==='host'?'Replay match':'Rejoin / replay'}</button>
       <button id="startBtn">Back to menu</button>
-    </div>`;
+    </div></div>`;
   document.getElementById('hud').classList.add('hidden');
   document.getElementById('startBtn').onclick = ()=>{ NET.mode='off'; NET.gameMode='coop'; location.reload(); };
   { const rb=document.getElementById('replayBtn'); if(rb) rb.onclick = ()=>replayMatch(); }
@@ -19276,7 +19322,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1004 · 2026-07-19';
+const BUILD_VERSION = 'build 1005 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

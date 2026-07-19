@@ -20,7 +20,8 @@ assert(/if\(pvpMode\(\)\) broadcastDuelScore\(\);/.test(src), 'host broadcasts s
 // scoreboard
 const sb = extractFunction('renderScoreboard');
 assert(/if\(!pvpMode\(\) \|\| !gameOn\)/.test(sb), 'scoreboard only shows in a live pvp match');
-assert(/rows\.sort\(\(a,b\)=> b\.k-a\.k/.test(sb), 'sorted by kills');
+assert(/rows\.sort\(\(a,b\)=> b\.k-a\.k/.test(extractFunction('_sbRows')), 'sorted by kills (build 1005: row collection factored into _sbRows, shared with the result ceremony)');
+assert(/const rows=_sbRows\(\);/.test(sb), 'the scoreboard renders the shared ranked rows');
 assert(/if\(sig===_sbSig\)/.test(sb), 'cached so it does not rebuild every frame');
 assert(/renderScoreboard\(\);/.test(extractFunction('duelHUD')), 'duelHUD drives the scoreboard');
 
