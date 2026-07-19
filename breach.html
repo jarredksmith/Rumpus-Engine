@@ -721,6 +721,25 @@
   .pBtnExit:hover { background:rgba(255,140,60,.22); }
   .pBtnGhost:hover { border-color:var(--accent); color:#eafff7; background:rgba(var(--accent-rgb),.1); }
   /* shared modal (instructions / multiplayer) */
+  /* build 1002: the LOBBY is a full-screen match screen, not a modal card */
+  #lobby { padding:0; align-items:stretch; justify-content:stretch; }
+  #lobby .modalCard { max-width:none; max-height:none; width:100%; height:100%; border-radius:0; border:none; box-shadow:none;
+    background:radial-gradient(1100px 640px at 50% 22%, #0e1a20, #05080b 78%);
+    display:flex; flex-direction:column;
+    padding:calc(14px + env(safe-area-inset-top)) clamp(16px,4vw,48px) calc(12px + env(safe-area-inset-bottom)); }
+  #lobby .modalCard h2 { text-align:left; font-size:clamp(24px,4.5vw,40px); letter-spacing:5px; margin:0; }
+  #lobby .lobbyCode { display:inline-block; align-self:flex-start; margin:6px 0 0; padding:7px 16px; border:1px solid rgba(var(--accent-rgb),.5); border-radius:9px;
+    font-family:var(--display-font); font-size:clamp(16px,3vw,24px); letter-spacing:6px; color:#fff; background:rgba(var(--accent-rgb),.08); }
+  #lobby #lobbyHint { text-align:left; margin:6px 0 0; }
+  #lobby #lobbyPlayers { flex:1 1 auto; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; align-content:start; margin-top:12px; padding:4px 2px; }
+  #lobby .lobbyRow { display:flex; flex-direction:column; align-items:center; gap:6px; background:linear-gradient(180deg,#101a20,#0a1116); border:1px solid #22323b; border-radius:12px; padding:10px 8px 9px; }
+  #lobby .lobbyRow.ready { border-color:var(--accent); box-shadow:0 0 12px rgba(var(--accent-rgb),.25); }
+  .lobbyPortrait { width:84px; height:84px; border-radius:10px; background-color:#0c2026; background-size:cover; background-position:center; }
+  #lobby .lobbyStep { width:min(560px,100%); margin:8px auto 0; display:flex; align-items:center; gap:10px; }
+  #lobby .lobbyStep .mpBtn { flex:1; padding:13px 0; font-size:14px; letter-spacing:2px; }
+  #lobby #lobbyReady, #lobby #lobbyStart { background:linear-gradient(180deg, rgba(var(--accent-rgb),.95), rgba(var(--accent-rgb),.7)); color:#04120e; border:none; font-family:var(--display-font); box-shadow:0 3px 16px rgba(var(--accent-rgb),.3); }
+  #lobby #lobbyReady:disabled { filter:saturate(.3) brightness(.7); }
+  #lobby .mpActions { margin-top:8px; }
   .modalBack {
     position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center;
     padding:20px; background:rgba(3,5,8,.78); backdrop-filter:blur(4px);
@@ -16326,12 +16345,22 @@ function lobbyRoster(){
 function renderLobby(roster){
   const wrap=document.getElementById('lobbyPlayers'); if(!wrap) return; wrap.innerHTML='';
   (roster||[]).forEach(pl=>{
-    const row=document.createElement('div'); row.className='lobbyRow';
-    const dot=document.createElement('div'); dot.className='lobbyDot';
+    // build 1002: player CARDS — portrait (the player's actual character via the cached thumb
+    // pipeline), name + tint chip, and the same READY/PICKING/HOST tags as before
+    const row=document.createElement('div'); row.className='lobbyRow'+((pl.ready||pl.host)?' ready':'');
     const c = (pl.tint!=null) ? pl.tint : (pl.team!=null ? TEAM_COLOR[pl.team] : 0x9fe6cf);
-    dot.style.background='#'+(((c>>>0)&0xffffff).toString(16).padStart(6,'0'));
-    const nm=document.createElement('span'); nm.textContent=(pl.name||'Player')+(pl.id===NET.myId?' (you)':'');
-    row.appendChild(dot); row.appendChild(nm);
+    const hex='#'+(((c>>>0)&0xffffff).toString(16).padStart(6,'0'));
+    const pt=document.createElement('div'); pt.className='lobbyPortrait';
+    pt.style.backgroundImage='linear-gradient(160deg,'+hex+'40, rgba(10,16,20,0.9))';
+    const cfg=(pl.id===NET.myId) ? myCharCfg() : ((NET.charById && NET.charById[pl.id]) || null);
+    if(cfg && (cfg.url||cfg.thumb) && typeof _renderCharThumb==='function') _renderCharThumb(cfg, pt);
+    row.appendChild(pt);
+    const nmRow=document.createElement('div'); nmRow.style.cssText='display:flex;align-items:center;gap:6px;max-width:100%;';
+    const dot=document.createElement('div'); dot.className='lobbyDot';
+    dot.style.background=hex;
+    const nm=document.createElement('span'); nm.style.cssText='font-size:12px;color:#eafff7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    nm.textContent=(pl.name||'Player')+(pl.id===NET.myId?' (you)':'');
+    nmRow.appendChild(dot); nmRow.appendChild(nm); row.appendChild(nmRow);
     if(pl.host){ const t=document.createElement('span'); t.className='lobbyHostTag'; t.textContent='HOST'; row.appendChild(t); }
     else { const rt=document.createElement('span'); rt.className=pl.ready?'lobbyReadyTag':'lobbyWaitTag'; rt.textContent=pl.ready?'READY':'PICKING…'; row.appendChild(rt); }   // build 552: ready indicator the host (and everyone) can see
     wrap.appendChild(row);
@@ -19184,7 +19213,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1001 · 2026-07-19';
+const BUILD_VERSION = 'build 1002 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
