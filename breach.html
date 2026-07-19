@@ -14239,6 +14239,27 @@ function _botAcquire(b){
 const _losRay = (typeof THREE!=='undefined') ? new THREE.Raycaster() : null;
 const _losO = (typeof THREE!=='undefined') ? new THREE.Vector3() : null;
 const _losD = (typeof THREE!=='undefined') ? new THREE.Vector3() : null;
+// build 1003: find a standable point near the bot that BREAKS line-of-sight to the target.
+// Samples a ring biased to the away-from-target hemisphere at two radii; caps its raycasts by
+// stopping once half the ring is checked with a hit. Called only on retreat transitions and a
+// slow revalidate, so the cost is a handful of raycasts at rare moments, not per-frame.
+function _botFindCover(b, tgt){
+  const lim=ARENA-2; let best=null, bestScore=-1;
+  const baseA=Math.atan2(b.pos.z-tgt.pos.z, b.pos.x-tgt.pos.x);
+  for(let i=0;i<8;i++){
+    const a=baseA + (i-3.5)*(Math.PI/4.5);
+    for(const r of [6,10]){
+      const x=Math.max(-lim,Math.min(lim,b.pos.x+Math.cos(a)*r)), z=Math.max(-lim,Math.min(lim,b.pos.z+Math.sin(a)*r));
+      if(typeof clearAt==='function' && !clearAt(x,z,b.pos.y)) continue;      // can't stand there
+      if(_botLOS(x,z,tgt.pos.x,tgt.pos.z,b.pos.y)) continue;                  // target can still see that spot -> not cover
+      const away=((x-b.pos.x)*(b.pos.x-tgt.pos.x)+(z-b.pos.z)*(b.pos.z-tgt.pos.z))>=0 ? 1 : 0.5;   // never prefer running THROUGH the enemy to hide
+      const score=away/(1+Math.hypot(x-b.pos.x,z-b.pos.z));
+      if(score>bestScore){ bestScore=score; best={x,z}; }
+    }
+    if(best && i>=3) break;
+  }
+  return best;
+}
 function _botLOS(ex,ez,tx,tz,eyeY){
   // ONE direct sightline raycast against the real collider meshes. This is far cheaper than sampling clearAt
   // along the line (16 raycasts -> 1) AND more correct: it tests actual triangles, so it's immune to both the
@@ -14370,6 +14391,15 @@ function updateBots(dt){
     const tgtDist = tgt ? Math.hypot(tgt.pos.x-b.pos.x, tgt.pos.z-b.pos.z) : Infinity;
     if(hasLOS && tgt){ b.lkp = b.lkp||{x:0,z:0}; b.lkp.x=tgt.pos.x; b.lkp.z=tgt.pos.z; b.lkpFresh=2.5; b.sawTgt=true; }   // refresh while visible
     else { b.lkpFresh=Math.max(0, (b.lkpFresh||0)-dt); }
+    // build 1003: HUMAN AIM MODEL. Re-acquiring a target after real lost time spikes the aim error
+    // and imposes a reaction pause; unbroken time-on-target settles the error toward a floor.
+    if(!hasLOS){ b._noLosT=(b._noLosT||0)+dt; b._aimErr=1; }
+    else {
+      if((b._noLosT||0)>0.4){ b._aimErr=1; b._reactT=0.18+Math.random()*0.17; }   // fresh acquisition -> human reaction beat before the first shot
+      b._noLosT=0;
+      b._aimErr=Math.max(0.15, (b._aimErr==null?1:b._aimErr) - dt/0.9);           // ~0.9s of tracking to settle
+    }
+    if(b._reactT>0) b._reactT-=dt;
     const hpFrac = b.hp/(b.maxHp||1);
 
     // ---- state machine: engage / hunt / flank / retreat ----
@@ -14377,7 +14407,7 @@ function updateBots(dt){
       if(hpFrac < b.bravery && hasLOS && tgtDist < 16){
         b.aiState='retreat';                                   // hurt + exposed -> back off to recover
       } else if(b.aiState==='retreat' && (hpFrac > b.bravery+0.18 || !hasLOS)){
-        b.aiState='engage'; b.aiT=0;                           // recovered or safe -> re-engage
+        b.aiState='engage'; b.aiT=0; b._cover=null;            // recovered or safe -> re-engage (drop the cover claim)
       } else if(!hasLOS && b.lkpFresh>0 && b.aiState!=='retreat'){
         if(b.aiState!=='hunt' && b.aiState!=='flank'){ b.aiState = (Math.random()<b.aggr?'flank':'hunt'); b.aiT=1.2+Math.random()*1.5; }   // lost sight -> hunt the last spot, sometimes flank to it
       } else if(hasLOS && b.aiState!=='retreat'){
@@ -14392,8 +14422,16 @@ function updateBots(dt){
     let destX, destZ, wantFire = hasLOS;
     if(koth && !cpOwnedBy(b.team)){ destX=CP_POS.x; destZ=CP_POS.z; wantFire=hasLOS; }
     else if(b.aiState==='retreat' && tgt){
-      destX = b.pos.x - (tgt.pos.x-b.pos.x); destZ = b.pos.z - (tgt.pos.z-b.pos.z);   // move directly away
-      destX=Math.max(-lim,Math.min(lim,destX)); destZ=Math.max(-lim,Math.min(lim,destZ));
+      // build 1003: back off to COVER, not into open ground. Re-pick when the spot is reached,
+      // goes stale (slow revalidate), or none was found.
+      b._coverT=(b._coverT||0)-dt;
+      const _atCover = b._cover && Math.hypot(b._cover.x-b.pos.x, b._cover.z-b.pos.z)<1.2;
+      if(!b._cover || b._coverT<=0){ b._cover=_botFindCover(b, tgt); b._coverT=1.4; }
+      if(b._cover && !_atCover){ destX=b._cover.x; destZ=b._cover.z; }
+      else {
+        destX = b.pos.x - (tgt.pos.x-b.pos.x); destZ = b.pos.z - (tgt.pos.z-b.pos.z);   // no cover anywhere (open field) -> move directly away
+        destX=Math.max(-lim,Math.min(lim,destX)); destZ=Math.max(-lim,Math.min(lim,destZ));
+      }
       wantFire = hasLOS && Math.random()<0.5;   // suppressing fire while backing off
     }
     else if((b.aiState==='hunt'||b.aiState==='flank') && b.lkp){
@@ -14513,13 +14551,17 @@ function updateBots(dt){
         setEnemyAnimState(b.mesh, st);
       } }
     b.fireCd-=dt;
-    if(tgt && wantFire && b.fireCd<=0){
+    if(tgt && wantFire && b.fireCd<=0 && !(b._reactT>0)){   // build 1003: no shot inside the human reaction beat after acquiring
       const ty=(tgt.pos.y!=null?Math.min(1.5,tgt.pos.y):1.4);
       const fdist=Math.hypot(tgt.pos.x-b.pos.x, ty-1.4, tgt.pos.z-b.pos.z);
       if(fdist<D.range && hasLOS){   // reuse the cached LOS instead of a second raycast per shot
         b.fireCd=D.cdMin+Math.random()*D.cdRand;
         const aim=_bv2.set(tgt.pos.x-b.pos.x, ty-1.4, tgt.pos.z-b.pos.z).normalize();
-        aim.x+=(Math.random()*2-1)*D.spread; aim.y+=(Math.random()*2-1)*D.spread*0.75; aim.z+=(Math.random()*2-1)*D.spread; aim.normalize();
+        // build 1003: settle-in accuracy — wide right after acquiring, tightening with unbroken
+        // time-on-target; the bot's own movement this frame loosens it (run-and-gun penalty).
+        const _moved=Math.hypot(b.pos.x-ox, b.pos.z-oz);
+        const _esp=D.spread*(0.5 + 1.8*(b._aimErr==null?0.4:b._aimErr)) + (_moved>0.02 ? D.spread*0.5 : 0);
+        aim.x+=(Math.random()*2-1)*_esp; aim.y+=(Math.random()*2-1)*_esp*0.75; aim.z+=(Math.random()*2-1)*_esp; aim.normalize();
         const o=[b.pos.x,1.4,b.pos.z], d=[aim.x,aim.y,aim.z];
         remoteFire(b.id, o, d); b._fireAnimT=performance.now()+480; for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'fire', from:b.id, o, d}); }catch(e){} }
         if(Math.random()<D.hit) _botDamage(b, tgt, D.dmgMin+Math.random()*D.dmgRand);
@@ -19213,7 +19255,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1002 · 2026-07-19';
+const BUILD_VERSION = 'build 1003 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

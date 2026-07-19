@@ -19,7 +19,7 @@ assert(/hpFrac < b\.bravery && hasLOS/.test(ub), 'low health + exposed triggers 
 // no x-ray: bots only FIRE with LOS (wantFire), and only FACE the target when seen
 assert(/let destX, destZ, wantFire = hasLOS;/.test(ub), 'firing intent starts from actual line-of-sight');
 assert(/wantFire=false;/.test(ub), 'hunting/searching bots do not fire blind');
-assert(/if\(tgt && wantFire && b\.fireCd<=0\)\{/.test(ub), 'fire gate honors wantFire');
+assert(/if\(tgt && wantFire && b\.fireCd<=0 && !\(b\._reactT>0\)\)\{/.test(ub), 'fire gate honors wantFire + the build-1003 human reaction beat');
 assert(/b\.yaw = \(tgt && hasLOS\) \?/.test(ub), 'bot faces target only when visible (no x-ray facing)');
 
 // preferred-range engagement (holds distance instead of always rushing to <9m)
