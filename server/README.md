@@ -140,3 +140,12 @@ these cached files from their CDN instead — a later, no-code step.
   the same key, so nobody can overwrite or close someone else's lobby.
 - Abuse caps: 3 lobbies per IP, 200 total, 2KB request bodies, names sanitized
   server-side. IP addresses are stored only as salted hashes and never returned.
+
+## ice.php (build 1015 — optional TURN relay config)
+
+Deploy `api/ice.php` beside the other API files. By default it returns `[]` and the game
+uses its built-in STUN + free TURN relay. If same-network (same WiFi) joins are unreliable
+for your players, supply your own TURN service (e.g. Cloudflare Calls TURN, Twilio NTS, or a
+coturn box) by setting `RUMPUS_ICE_JSON` in the PHP environment to a JSON array of ICE
+servers — the game picks it up automatically on the next session. Players can also override
+locally via the `breach_ice` localStorage key.

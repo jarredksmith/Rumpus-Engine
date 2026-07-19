@@ -9,11 +9,16 @@ import { gameSource, assert, done } from './harness.mjs';
 
 const src = gameSource();
 
-assert(/function _peerIce\(\)\{/.test(src) && /function _peerOpts\(\)\{ return \{ config:\{ iceServers:_peerIce\(\) \} \}; \}/.test(src), 'ICE config helpers exist');
+assert(/function _peerIce\(\)\{/.test(src) && /return \{ config:\{ iceServers:_peerIce\(\) \} \};/.test(src), 'ICE config helpers exist');
 assert(/stun:stun\.l\.google\.com:19302/.test(src), 'STUN stays for the direct path');
-assert(/turn:openrelay\.metered\.ca:80'/.test(src) && /turn:openrelay\.metered\.ca:443'/.test(src) && /turn:openrelay\.metered\.ca:443\?transport=tcp/.test(src),
-  'the TURN fleet covers 80, 443 and TCP (firewall-hostile networks)');
-assert(/username:'openrelayproject', credential:'openrelayproject'/.test(src), 'Open Relay static credentials');
+// build 1015: openrelay.metered.ca ('openrelayproject') was RETIRED — a dead relay meant
+// same-WiFi joins failed on AP-isolated routers. Live free relay + optional remote config now.
+assert(!/turn:openrelay\.metered\.ca/.test(src), 'the dead relay is gone (the name survives only in the explanatory comment)');
+assert(/turn:freeturn\.net:3478/.test(src) && /turn:freeturn\.net:3478\?transport=tcp/.test(src) && /turns:freeturn\.tel:5349/.test(src),
+  'the TURN fleet covers UDP, TCP and TLS (firewall-hostile networks)');
+assert(/username:'free', credential:'free'/.test(src), 'static relay credentials');
+assert(/_fetchIceRemote/.test(src) && /_commApi\(\)\+'ice\.php'/.test(src) && /j\.every\(o=>o && o\.urls\)/.test(src),
+  'a hosted ice.php can supply real TURN creds per deployment (validated before use)');
 assert(/localStorage\.getItem\('breach_ice'\)/.test(src), 'self-hosters can override the ICE list');
 assert(/new Peer\('breachfps-'\+code, _peerOpts\(\)\)/.test(src), 'the host peer carries the ICE config');
 assert(/NET\.peer=new Peer\(_peerOpts\(\)\)/.test(src), 'the joining peer carries the ICE config');

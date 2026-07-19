@@ -14411,6 +14411,7 @@ let matchWarmup = 0;
 const ENEMY_MELEE_WINDUP_MS = 320;   // build 627: telegraph window — a melee enemy winds up, then strikes; back out of reach during it and the swing whiffs
 let _warmupBroadcast = false;   // build 624: host has sent the live {t:'warmup'} count to clients this match (sent once)
 let _clientWarmupHold = false;  // build 624: client is frozen on "GET READY" until the host's synced count arrives
+let _cwPeak = 0, _cwPctMax = 0;   // build 1015: loading-progress bookkeeping for that hold (peak in-flight GLBs; monotonic %)
 let _repathBudget = 0;   // A* searches allowed per frame (reset each updateBots tick) so a frame never stalls on many repaths at once   // pre-match build/countdown window (host bot matches): bots are held inert until the nav grid is ready
 // build 547: per-frame raycast budgets shared by the bot tick AND the enemy tick (they never run together —
 // bots are PvP-only, enemies are PvE-only — so each subsystem gets the full budget). The per-entity time
@@ -14443,7 +14444,19 @@ function navWarmupTick(dt){
   // build 624: a CLIENT freezes on "GET READY" and does NOT run its own clock until the host broadcasts the live
   // count ({t:'warmup'}). That message resets matchWarmup to the host's remaining seconds, so the 3-2-1-GO lands
   // together (within one message latency) instead of every client running an independent, earlier countdown.
-  if(NET.mode==='client' && _clientWarmupHold){ _setCountdown('GET READY'); return true; }
+  if(NET.mode==='client' && _clientWarmupHold){
+    // build 1015: the world's models stream in behind this screen — show real progress instead of
+    // a frozen GET READY. Percentage = completed loads + per-file byte progress over the peak
+    // in-flight count, kept monotonic so late-discovered models never run the number backwards.
+    if(typeof _glbPending!=='undefined' && _glbPending>0){
+      _cwPeak=Math.max(_cwPeak, _glbPending);
+      let frac=0; try{ for(const u in _glbProg){ const p=_glbProg[u]; if(p && p.t>0) frac+=Math.min(0.99, p.l/p.t); } }catch(e){}
+      const pct=Math.min(99, Math.round(((_cwPeak-_glbPending+frac)/Math.max(1,_cwPeak))*100));
+      _cwPctMax=Math.max(_cwPctMax, pct);
+      _setCountdown('LOADING WORLD<div style="font-size:15px;letter-spacing:2px;margin-top:8px;opacity:.8">'+_cwPctMax+'%</div>');
+    } else { _setCountdown('GET READY'); }
+    return true;
+  }
   // The bot nav grid is built hard during the countdown — but ONLY the host needs it (bots are host-side), so a
   // client (or a host with no bots) skips straight to the timer instead of waiting on a grid it never builds.
   if(!NAV.built && NET.mode==='host' && bots.length){
@@ -14648,6 +14661,7 @@ function updateBots(dt){
     }
     b.yaw = (tgt && hasLOS) ? Math.atan2(-(tgt.pos.x-b.pos.x), -(tgt.pos.z-b.pos.z)) : Math.atan2(-mvx,-mvz);   // face the target only while it's visible; otherwise face where we're moving (no x-ray tracking)
     if(b.mesh){ b.mesh.position.set(b.pos.x,b.pos.y,b.pos.z);
+      if(typeof _crouchSquash==='function') _crouchSquash(b.mesh, !!b._crouch, dt);
       // Airborne tumble is FLAVOR for a launch (trebuchet, explosion ragdoll), NOT for a path hop —
       // a bot deliberately jumping up onto a ledge should stay upright, not spin end-over-end.
       const launched = (b.grounded===false) && !b._jumpCarry;
@@ -15682,6 +15696,18 @@ function ensureOwnAvatar(){
   if(_ownAvatar.userData.charRing) _ownAvatar.userData.charRing.visible=false;   // your own ring is redundant in third person
   return _ownAvatar;
 }
+// build 1015: models WITHOUT a crouch clip resolve crouch->idle and nothing visibly moves (the
+// field report: a joiner's own crouch showed nowhere on their device). Fallback: squash the
+// avatar visual toward 72% height while crouched — skipped the moment a real crouch clip exists.
+function _crouchSquash(grp, on, dt){
+  const v = grp && grp.userData && grp.userData.visual; if(!v) return;
+  const sa = v.userData && v.userData.stateActions;
+  const hasClip = !!(sa && (sa['crouch'] || sa['crouchWalk']));
+  const tgt = (on && !hasClip) ? 0.72 : 1;
+  const cur = v.scale.y || 1;
+  const ny = cur + (tgt-cur)*Math.min(1, (dt||0.016)*10);
+  v.scale.y = (Math.abs(ny-1) < 0.002) ? 1 : ny;
+}
 function updateOwnAvatar(dt){
   if(mountedTurret || drivingCar){ if(_ownAvatar) _ownAvatar.visible=false; return; }   // build 747: no third-person body while on a turret or driving (it would stand inside the car)
   if(!((tpActive() || activeViewMode()!=='fps') && gameOn && !editorOpen)){ if(_ownAvatar) _ownAvatar.visible=false; return; }   // build 874: top/side views show the body too
@@ -15691,6 +15717,7 @@ function updateOwnAvatar(dt){
   if(player.onGround){ const r=0.4, px=player.pos.x, pz=player.pos.z; footY = Math.max(footY, terrainHeightAt(px+r,pz), terrainHeightAt(px-r,pz), terrainHeightAt(px,pz+r), terrainHeightAt(px,pz-r)); }   // clear an uphill slope instead of sinking the legs into it
   a.position.set(player.pos.x, footY, player.pos.z);
   a.userData.footY = footY;
+  _crouchSquash(a, crouching && !sliding, dt);
   a.rotation.y = (typeof _ledge!=='undefined' && _ledge && _ledge.yaw!=null) ? _ledge.yaw : player.yaw;   // build 966: while on a ledge the body faces the wall, not the camera
   // drive the animation from my own state: die > attack > jump > run/walk/idle (mirrors how peers animate me)
   if(a.userData.hasModel && a.userData.visual && a.userData.visual.userData.stateActions){
@@ -16325,6 +16352,7 @@ function netInterpolate(dt){
     if(typeof _syncRemoteCar==='function') _syncRemoteCar(rp, +id, k);   // build 895: driving -> render the car, hide the avatar
     const _px=rp.mesh.position.x, _pz=rp.mesh.position.z;
     rp.mesh.position.lerp(rp.target, k);
+    if(typeof _crouchSquash==='function') _crouchSquash(rp.mesh, !!rp.crouch && !rp.slide, dt);   // build 1015: crouch reads even without a crouch clip (capsules too)
     // build 639: glue a GROUNDED remote avatar to the LOCAL ground (terrain + walkable surfaces / prop tops) at its
     // interpolated (x,z) — exactly how bots stand — instead of trusting the raw synced feet, which floated avatars
     // over hills/valleys (the sender's terrain Y didn't line up with the floor under them here, and the old feet
@@ -16508,16 +16536,25 @@ function handleHostMsg(msg){
 // build 968: STUN finds the direct path; the Open Relay TURN servers relay when both peers sit
 // behind strict NATs (that failure looked like "Connecting to <code>…" then "Connection error").
 // localStorage 'breach_ice' (a JSON iceServers array) overrides for self-hosters.
+let _iceRemote=null;   // build 1015: optional per-deployment ICE config served by the community API
+function _fetchIceRemote(){   // fire-and-forget at boot; a hosted ice.php can supply real TURN creds
+  try{ fetch(_commApi()+'ice.php', { cache:'no-store' }).then(r=>r.ok?r.json():null).then(j=>{
+    if(Array.isArray(j) && j.length && j.every(o=>o && o.urls)) _iceRemote=j;
+  }).catch(()=>{}); }catch(e){}
+}
 function _peerIce(){
   try{ const o=JSON.parse(localStorage.getItem('breach_ice')||'null'); if(Array.isArray(o)&&o.length) return o; }catch(e){}
+  if(_iceRemote) return _iceRemote;
+  // build 1015: openrelay.metered.ca + 'openrelayproject' creds were RETIRED — with no live relay,
+  // same-WiFi joins failed on routers with AP isolation / no NAT hairpinning (direct blocked, no
+  // fallback) while cross-network joins still worked via STUN. freeturn.net is a live free relay.
   return [
-    { urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302'] },
-    { urls:'turn:openrelay.metered.ca:80',  username:'openrelayproject', credential:'openrelayproject' },
-    { urls:'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
-    { urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject' },
+    { urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun.cloudflare.com:3478'] },
+    { urls:['turn:freeturn.net:3478','turn:freeturn.net:3478?transport=tcp'], username:'free', credential:'free' },
+    { urls:'turns:freeturn.tel:5349', username:'free', credential:'free' },
   ];
 }
-function _peerOpts(){ return { config:{ iceServers:_peerIce() } }; }
+function _peerOpts(){ if(_iceRemote===null && !_peerOpts._f){ _peerOpts._f=1; _fetchIceRemote(); } return { config:{ iceServers:_peerIce() } }; }   // build 1015: kick the remote-config fetch on first use (covers later re-connects)
 function netReset(){
   for(const id in NET.players) removeRemotePlayer(+id);
   for(const id in NET.enemyMeshes){ scene.remove(NET.enemyMeshes[id].mesh); }
@@ -17228,7 +17265,7 @@ function explodeGrenade(g){
   }
   explosions.push({ mesh:blast, light:bl, life:0.35, maxR:R });
   for(let i=0;i<(usedSheet?6:14);i++) { spark(pos, 0xffaa44); }
-  if(typeof NET!=='undefined' && NET.mode==='client') return;   // build 670: clients render the blast only; the host authors the damage (its own sim of this grenade does that)
+  if(typeof NET!=='undefined' && NET.mode==='client'){ scene.remove(g.mesh); return; }   // build 670: clients render the blast only; the host authors the damage. build 1015: ...and the spent grenade prop leaves the scene (it used to linger forever)
   // AoE damage: full at the center, linear falloff to 0 at the radius
   if(typeof pvpMode==='function' && pvpMode()){
     // build 1006: grenades WORK in PvP — bots + remote players + the host take blast damage
@@ -19564,7 +19601,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1014 · 2026-07-19';
+const BUILD_VERSION = 'build 1015 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31296,7 +31333,7 @@ function startGame(){
       // build 624: every PvP host match runs the countdown (with bots OR a pure human duel), and broadcasts the
       // live count to clients so the start is synced and everyone actually sees it.
       matchWarmup=3; _warmupBroadcast=false; _clientWarmupHold=false; }
-    else if(NET.mode==='client'){ matchWarmup=3; _clientWarmupHold=true; _warmupBroadcast=false; }   // hold on GET READY until the host's synced count arrives
+    else if(NET.mode==='client'){ matchWarmup=3; _clientWarmupHold=true; _warmupBroadcast=false; _cwPeak=0; _cwPctMax=0; }   // hold on GET READY until the host's synced count arrives (build 1015: fresh loading %)
     const sp = randomSpawn();
     player.pos.set(sp.x, (sp.y!=null?sp.y:terrainHeightAt(sp.x, sp.z))+EYE, sp.z); player.yaw = sp.yaw;
     toSpawn = 0;

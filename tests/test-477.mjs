@@ -9,11 +9,14 @@ assert(/let _warmupBroadcast = false/.test(src) && /let _clientWarmupHold = fals
 assert(/else if\(msg\.t==='warmup'\)\{ matchWarmup = \(msg\.secs!=null \? \+msg\.secs : 3\); _clientWarmupHold=false; \}/.test(src), 'client applies the host\'s synced count');
 // host start: countdown on any PvP host match (bots or not); client holds
 assert(/matchWarmup=3; _warmupBroadcast=false; _clientWarmupHold=false; \}/.test(src), 'host arms the countdown for every PvP match');
-assert(/else if\(NET\.mode==='client'\)\{ matchWarmup=3; _clientWarmupHold=true; _warmupBroadcast=false; \}/.test(src), 'client freezes and waits for the synced count');
+assert(/else if\(NET\.mode==='client'\)\{ matchWarmup=3; _clientWarmupHold=true; _warmupBroadcast=false; _cwPeak=0; _cwPctMax=0; \}/.test(src), 'client freezes and waits for the synced count (build 1015: fresh loading %)');
 
 // --- navWarmupTick branches ---
 const w = extractFunction('navWarmupTick');
-assert(/if\(NET\.mode==='client' && _clientWarmupHold\)\{ _setCountdown\('GET READY'\); return true; \}/.test(w), 'client holds on GET READY until the count arrives');
+assert(/if\(NET\.mode==='client' && _clientWarmupHold\)\{/.test(w) && /_setCountdown\('GET READY'\)/.test(w),
+  'client holds on GET READY until the count arrives');
+assert(/LOADING WORLD/.test(w) && /_cwPctMax=Math\.max\(_cwPctMax, pct\);/.test(w),
+  'while models stream in, the hold shows a monotonic LOADING WORLD % (build 1015: it looked frozen)');
 assert(/if\(!NAV\.built && NET\.mode==='host' && bots\.length\)\{/.test(w), 'only a host WITH bots waits on the nav build');
 assert(/if\(NET\.mode==='host' && !_warmupBroadcast\)\{ _warmupBroadcast=true; for\(const id in NET\.conns\)\{ try\{ NET\.conns\[id\]\.send\(\{t:'warmup', secs:matchWarmup\}\); \}catch\(e\)\{\} \} \}/.test(w), 'host broadcasts the live count exactly once');
 assert(/matchWarmup=0; _clientWarmupHold=false; return false;/.test(w), 'GO clears the client hold too');

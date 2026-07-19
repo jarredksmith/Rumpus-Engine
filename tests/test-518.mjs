@@ -22,7 +22,7 @@ assert(/else if\(msg\.t==='nade'\)\{ spawnNetGrenade\(new THREE\.Vector3\(msg\.o
 
 // --- explodeGrenade is visual-only on clients (host authors damage via its own sim) ---
 const eg = extractFunction('explodeGrenade');
-assert(/if\(typeof NET!=='undefined' && NET\.mode==='client'\) return;/.test(eg), 'clients render the grenade blast but skip the damage');
+assert(/if\(typeof NET!=='undefined' && NET\.mode==='client'\)\{ scene\.remove\(g\.mesh\); return; \}/.test(eg), 'clients render the blast, remove the spent grenade prop (build 1015: it used to linger forever), and skip the damage');
 assert(/for\(const en of enemies\.slice\(\)\)\{/.test(eg), 'the host still applies AoE damage');
 
 // --- explodeAt broadcasts every blast (rockets, props, hazards) ---
