@@ -13,8 +13,9 @@ const src = gameSource();
 const rt = extractFunction('_renderCharThumb', src);
 assert(/function _renderCharThumb\(cfg, swatchEl, opts\)/.test(rt), 'thumb renderer takes options');
 assert(/\+\(\(opts&&opts\.bust\)\?'\|bust':''\)/.test(rt), 'bust renders cache separately from full-body renders');
-assert(/const focusY=size\.y\*0\.30, frameH=Math\.max\(0\.35, size\.y\*0\.46\);/.test(rt),
-  'bust crop: aim at the upper chest, frame ~46% of the height');
+assert(/const frameH=Math\.max\(0\.35, size\.y\*0\.42, size\.x\*0\.85\);/.test(rt)
+  && /const focusY=size\.y\*0\.56 - frameH\*0\.5;/.test(rt),
+  'bust crop is TOP-anchored (frame top just above the head; widens for broad shoulders — build 1008)');
 assert(/_thumbCam\.lookAt\(0, focusY, 0\);/.test(rt) && /_thumbCam\.lookAt\(0,0,0\);/.test(rt),
   'bust aims at the chest; full-body framing kept for non-portrait uses (inventory items)');
 assert(/const bg=\(swatchEl\.dataset&&swatchEl\.dataset\.bg\)\|\|''; swatchEl\.style\.backgroundImage='url\("'\+url\+'"\)'\+\(bg\?\(', '\+bg\):''\)/.test(rt),
@@ -56,7 +57,7 @@ assert(/#lobbyBots #lobbyBotN::-webkit-outer-spin-button, #lobbyBots #lobbyBotN:
 assert(/#lobbyBots\.hidden\{ display:none; \}/.test(html), 'hidden still beats the flex display (id specificity)');
 
 // executable: the bump clamps to [0,7]
-const m = src.match(/const _bump=\(d\)=>\{ if\(!bn\) return; bn\.value=([^;]+); \};/);
+const m = src.match(/const _bump=\(d\)=>\{ if\(!bn\) return; bn\.value=([^;]+);/);
 assert(m, 'stepper bump wired');
 const bump = new Function('bn','d', 'bn.value=' + m[1] + '; return bn.value;');
 eq(bump({value:'3'}, 1), 4, '+1 works');

@@ -754,14 +754,46 @@
   /* build 1002: the LOBBY is a full-screen match screen, not a modal card */
   #lobby { padding:0; align-items:stretch; justify-content:stretch; }
   #lobby .modalCard { max-width:none; max-height:none; width:100%; height:100%; border-radius:0; border:none; box-shadow:none;
-    background:radial-gradient(1100px 640px at 50% 22%, #0e1a20, #05080b 78%);
-    display:flex; flex-direction:column;
+    background:
+      radial-gradient(1200px 700px at 72% 6%, rgba(var(--accent-rgb),.14), transparent 55%),
+      radial-gradient(900px 560px at 10% 90%, rgba(var(--accent-rgb),.07), transparent 60%),
+      radial-gradient(1100px 640px at 50% 22%, #0e1a20, #05080b 78%);
+    display:flex; flex-direction:column; position:relative; overflow:hidden;
     padding:calc(14px + env(safe-area-inset-top)) clamp(16px,4vw,48px) calc(12px + env(safe-area-inset-bottom)); }
+  /* build 1008: the hangar — perspective grid floor scrolling toward the viewer + a slow accent
+     sweep, all behind the content (children get z-index:1 below); reduced-motion users get it static */
+  #lobby .modalCard::before { content:''; position:absolute; left:-40%; right:-40%; bottom:0; height:52%; z-index:0; pointer-events:none;
+    background:
+      linear-gradient(rgba(var(--accent-rgb),.5) 2px, transparent 2px),
+      linear-gradient(90deg, rgba(var(--accent-rgb),.5) 2px, transparent 2px);
+    background-size:58px 58px;
+    transform:perspective(520px) rotateX(60deg); transform-origin:50% 100%;
+    -webkit-mask-image:linear-gradient(180deg, transparent 8%, #000 60%); mask-image:linear-gradient(180deg, transparent 8%, #000 60%);
+    opacity:.55; }
+  #lobby .modalCard::after { content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(130% 100% at 50% 38%, transparent 58%, rgba(0,0,0,.5)),
+      linear-gradient(115deg, transparent 42%, rgba(var(--accent-rgb),.05) 50%, transparent 58%);
+    background-size:100% 100%, 300% 100%; }
+  #lobby .modalCard > * { position:relative; z-index:1; }
+  @media (prefers-reduced-motion:no-preference){
+    #lobby .modalCard::before { animation:lobGrid 9s linear infinite; }
+    #lobby .modalCard::after { animation:lobSweep 13s linear infinite; }
+  }
+  @keyframes lobGrid { from{ background-position:0 0, 0 0; } to{ background-position:0 46px, 0 0; } }
+  @keyframes lobSweep { from{ background-position:0 0, 300% 0; } to{ background-position:0 0, -300% 0; } }
   #lobby .modalCard h2 { text-align:left; font-size:clamp(24px,4.5vw,40px); letter-spacing:5px; margin:0; }
   #lobby .lobbyCode { display:inline-block; align-self:flex-start; margin:6px 0 0; padding:7px 16px; border:1px solid rgba(var(--accent-rgb),.5); border-radius:9px;
     font-family:var(--display-font); font-size:clamp(16px,3vw,24px); letter-spacing:6px; color:#fff; background:rgba(var(--accent-rgb),.08); }
   #lobby #lobbyHint { text-align:left; margin:6px 0 0; }
-  #lobby #lobbyPlayers { flex:1 1 auto; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; align-content:start; margin-top:12px; padding:4px 2px; }
+  #lobby #lobbyMain { flex:1 1 auto; min-height:0; display:flex; gap:14px; margin-top:12px; }
+  #lobby #lobbyPlayers { flex:1 1 auto; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; align-content:start; padding:4px 2px; }
+  #lobbySide { flex:0 0 250px; align-self:stretch; overflow-y:auto; display:flex; flex-direction:column; gap:8px; background:linear-gradient(180deg,rgba(16,26,32,.8),rgba(9,15,19,.85)); border:1px solid #22323b; border-radius:12px; padding:12px 14px; }
+  .lsTitle { font:800 10.5px var(--ui-font); letter-spacing:2.5px; color:#8fc7b6; }
+  .lsRow { display:flex; justify-content:space-between; align-items:baseline; gap:10px; font:600 11.5px ui-monospace,monospace; color:#cfeee2; padding:7px 9px; background:rgba(255,255,255,.03); border-radius:7px; }
+  .lsRow b { color:var(--accent); text-align:right; letter-spacing:.5px; }
+  #lsTip { font:500 11.5px var(--ui-font); line-height:1.55; color:#9fc4ba; padding:9px 10px; background:rgba(var(--accent-rgb),.06); border:1px solid rgba(var(--accent-rgb),.18); border-radius:8px; }
+  @media (max-width:860px), (max-height:520px) { #lobbySide { display:none; } }
   #lobby .lobbyRow { display:flex; flex-direction:column; align-items:center; gap:6px; background:linear-gradient(180deg,#101a20,#0a1116); border:1px solid #22323b; border-radius:12px; padding:10px 8px 9px; }
   #lobby .lobbyRow.ready { border-color:var(--accent); box-shadow:0 0 12px rgba(var(--accent-rgb),.25); }
   .lobbyPortrait { width:100%; max-width:150px; aspect-ratio:1/1; border-radius:10px; background-color:#0c2026; background-size:cover; background-position:center; box-shadow:inset 0 0 0 1px rgba(255,255,255,.05), inset 0 -24px 26px -18px rgba(0,0,0,.5); }
@@ -770,7 +802,8 @@
        starved flex roster clipped the cards to slivers) */
     #lobby .modalCard{ overflow-y:auto; }
     .lobbyPortrait{ max-width:64px; }
-    #lobby #lobbyPlayers{ flex:0 0 auto; overflow:visible; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:7px; margin-top:8px; }
+    #lobby #lobbyMain{ flex:0 0 auto; margin-top:8px; }
+    #lobby #lobbyPlayers{ flex:0 0 auto; overflow:visible; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:7px; margin-top:0; }
     #lobby .lobbyRow{ padding:7px 6px 6px; }
     #lobby .lobbyStep{ margin:6px auto 0; }
     .lobbyBtn{ padding:9px 14px; }
@@ -1136,7 +1169,7 @@
     <h2 id="lobbyTitle">LOBBY</h2>
     <div id="lobbyCode" class="lobbyCode"></div>
     <div class="mpDesc" id="lobbyHint">Waiting for players…</div>
-    <div id="lobbyPlayers"></div>
+    <div id="lobbyMain"><div id="lobbyPlayers"></div><aside id="lobbySide"><div class="lsTitle">MATCH INFO</div><div id="lsRows"></div><div class="lsTitle" style="margin-top:10px">INTEL</div><div id="lsTip"></div></aside></div>
     <div id="lobbyCount" class="mpHint" style="text-align:center;margin-top:6px"></div>
     <div id="lobbyBots" class="hidden"><span class="lobbyBotsLabel">FILL WITH BOTS</span><button id="lobbyBotDec" class="botStep" aria-label="Fewer bots">−</button><input id="lobbyBotN" type="number" min="0" max="7" value="0" aria-label="Bot count"><button id="lobbyBotInc" class="botStep" aria-label="More bots">+</button></div>
     <div class="lobbyStep" style="margin-top:12px"><button id="lobbyCharBtn" class="lobbyBtn">CHARACTER ▸</button></div>
@@ -15761,9 +15794,12 @@ function _renderCharThumb(cfg, swatchEl, opts){
       if(opts && opts.bust){
         // build 1007: PORTRAIT framing — a full body in a small square card read as a dark
         // sliver. Aim at the upper chest and frame ~46% of the height: head + shoulders fill.
-        const focusY=size.y*0.30, frameH=Math.max(0.35, size.y*0.46);
+        // build 1008: looser, top-anchored crop — the frame's top edge sits just above the head
+        // (hats/helmets were clipping), and broad shoulders widen the frame (showing more body)
+        const frameH=Math.max(0.35, size.y*0.42, size.x*0.85);
+        const focusY=size.y*0.56 - frameH*0.5;
         const dist=(frameH*0.5)/Math.tan(fov*Math.PI/360) + Math.max(size.z*0.6, maxd*0.12);
-        _thumbCam.position.set(dist*0.22, focusY+size.y*0.03, dist); _thumbCam.lookAt(0, focusY, 0);
+        _thumbCam.position.set(dist*0.18, focusY+size.y*0.02, dist); _thumbCam.lookAt(0, focusY, 0);
       } else {
         const dist=(Math.max(size.y,size.x)*0.5)/Math.tan(fov*Math.PI/360)*1.45 + maxd*0.25;
         _thumbCam.position.set(dist*0.4, size.y*0.1, dist); _thumbCam.lookAt(0,0,0);
@@ -15784,14 +15820,18 @@ function renderCharGrid(){ const g=document.getElementById('charGrid'); if(!g) r
     const lab2=document.createElement('div'); lab2.textContent='COLOR'; lab2.style.cssText='grid-column:1/-1;color:#7fe6cf;font-size:10px;letter-spacing:2px;margin:6px 0 1px;'; g.appendChild(lab2);
   }
   CHARACTERS.forEach((c,i)=>{ const card=document.createElement('div'); card.className='charCard'+(i===myCharIdx?' sel':''); const sw=document.createElement('div'); sw.className='charSwatch'; sw.style.background=_charHex(i); const nm=document.createElement('div'); nm.className='charName'; nm.textContent=c.name; card.appendChild(sw); card.appendChild(nm); card.onclick=()=>selectChar(i); g.appendChild(card); }); }
-function selectRosterChar(i){ myRosterIdx=(i>=0 && charRoster[i])?i:-1; if(myRosterIdx>=0 && charRoster[myRosterIdx] && charRoster[myRosterIdx].view) _applyView(charRoster[myRosterIdx].view); else _loadPersonalView(); renderCharGrid(); updateCharBtnLabel(); if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar, myCharCfg()); if(NET.mode!=='off') broadcastMyChar(); _charChosen=true; if(typeof _updateReadyBtn==='function') _updateReadyBtn(); }
-function selectChar(i){ if(i<0||i>=CHARACTERS.length) return; myCharIdx=i; try{ localStorage.setItem('breach_char', String(i)); }catch(e){} updateCharBtnLabel(); renderCharGrid(); if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar, myCharCfg()); if(NET.mode!=='off') broadcastMyChar(); _charChosen=true; if(typeof _updateReadyBtn==='function') _updateReadyBtn(); }
+// build 1008: picking a character while the lobby is open updates the lobby card immediately —
+// the host re-renders + rebroadcasts the roster; a client re-renders its local view (its own card
+// reads myCharCfg live) while broadcastMyChar carries the change to everyone else.
+function _lobbyCharSync(){ if(NET.phase!=='lobby') return; if(NET.mode==='host'){ if(typeof refreshLobby==='function') refreshLobby(); } else if(NET.lobbyRoster){ renderLobby(NET.lobbyRoster); } }
+function selectRosterChar(i){ myRosterIdx=(i>=0 && charRoster[i])?i:-1; if(myRosterIdx>=0 && charRoster[myRosterIdx] && charRoster[myRosterIdx].view) _applyView(charRoster[myRosterIdx].view); else _loadPersonalView(); renderCharGrid(); updateCharBtnLabel(); if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar, myCharCfg()); if(NET.mode!=='off') broadcastMyChar(); _charChosen=true; if(typeof _updateReadyBtn==='function') _updateReadyBtn(); if(typeof _lobbyCharSync==='function') _lobbyCharSync(); }
+function selectChar(i){ if(i<0||i>=CHARACTERS.length) return; myCharIdx=i; try{ localStorage.setItem('breach_char', String(i)); }catch(e){} updateCharBtnLabel(); renderCharGrid(); if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar, myCharCfg()); if(NET.mode!=='off') broadcastMyChar(); _charChosen=true; if(typeof _updateReadyBtn==='function') _updateReadyBtn(); if(typeof _lobbyCharSync==='function') _lobbyCharSync(); }
 // ---- build 1000: AAA CHARACTER SELECT ---------------------------------------------------------
 // Full-screen layer in the reference style: the ACTUAL character model, big, slowly turning (drag
 // to rotate; plays the model's idle clip when it ships one), name in display type, a card strip of
 // roster characters + colors, and a SELECT bar. Cards still run selectRosterChar/selectChar, so
 // multiplayer broadcast + the lobby READY gate behave exactly as before.
-let _csEl=null, _csRAF=0, _csGrp=null, _csRotY=0.5, _csSpin=true, _csKeyH=null, _csCur=null, _csW=0, _csH=0;
+let _csEl=null, _csRAF=0, _csGrp=null, _csRotY=Math.PI*0.92, _csSpin=true, _csKeyH=null, _csCur=null, _csW=0, _csH=0;
 function _csEntries(){
   const out=[];
   if(charRoster.length || (playerModelCfg && playerModelCfg.url)){
@@ -15810,7 +15850,7 @@ function _csPreview(e){
   if(sb) sb.textContent=e.sub||'';
   if(!_ensureInspectR()) return;   // no second GL context on this device -> cards + name still work
   if(!_csGrp){ _csGrp=new THREE.Group(); _inspScene.add(_csGrp); }
-  _csSpin=true; _csRotY=0.5;
+  _csSpin=true; _csRotY=Math.PI*0.92;   // build 1008: start FACING the camera (was: back turned)
   try{ buildAvatarVisual(_csGrp, myCharCfg()); }catch(err){}
 }
 function _csRenderCards(){
@@ -16323,7 +16363,7 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
   else if(msg.t==='died'){ registerDuelKill(msg.by, id); }            // a client died; credit the killer
   else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(msg.from, msg.id)){ const _s=NET.players[msg.from]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, msg.d, _sx, _sz)) registerDuelKill(msg.from, msg.id); } }   // a client shot a bot
-  else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } }   // a client changed character
+  else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } if(NET.phase==='lobby') refreshLobby(); }   // a client changed character (the lobby card updates live)
   else if(msg.t==='rocket'){ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), d=new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]); fireRocket(o,d,id,true,msg.r||7,WEAPONS.launcher.dmg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'rocket', o:msg.o, d:msg.d, r:msg.r, by:id}); }catch(e){} } } }   // a client fired a rocket: host simulates it + relays the visual
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), id, true); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'nade', o:msg.o, v:msg.v, by:id}); }catch(e){} } } }   // build 670: a client threw a grenade: host simulates it (authors damage) + relays the visual to the others
   else if(msg.t==='push'){ const o=propByNid(msg.nid); if(o) pushDynamic(o, new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]), msg.s||6, msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null); }   // a client shot a dynamic prop (legacy knockback-only)
@@ -16387,7 +16427,7 @@ function handleHostMsg(msg){
   else if(msg.t==='rocket'){ fireRocket(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]), msg.by, false, msg.r||7, 0); }   // show another player's rocket (visual)
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), msg.by, false); }   // build 670: show another player's grenade (visual only)
   else if(msg.t==='boom'){ explodeAt(new THREE.Vector3(msg.p[0],msg.p[1],msg.p[2]), msg.r||7, 0, null); }   // show a blast (host applied the damage)
-  else if(msg.t==='char'){ applyRemoteChar(msg.from, msg.cfg); }   // another player's character
+  else if(msg.t==='char'){ applyRemoteChar(msg.from, msg.cfg); if(NET.phase==='lobby' && NET.lobbyRoster) renderLobby(NET.lobbyRoster); }   // another player's character (lobby card updates live)
   else if(msg.t==='score'){ NET.duelScore=msg.s; duelHUD(); }
   else if(msg.t==='teams'){ NET.teams=msg.tm||{}; if(NET.teams[NET.myId]!=null) NET.team=NET.teams[NET.myId]; applyTeamColors(); renderScoreboard(); }
   else if(msg.t==='feed'){ addKillFeed(msg.k, msg.v); }
@@ -16515,6 +16555,41 @@ function renderLobby(roster){
   // build 579: the host's START reflects readiness — it stays clickable (host keeps control) but shows who's waiting
   const sb=document.getElementById('lobbyStart');
   if(sb && NET.mode==='host'){ const st=_lobbyReadyState(roster); if(st.all){ sb.textContent='START'; sb.style.opacity=''; } else { sb.textContent='START · '+st.waiting+' not ready'; sb.style.opacity='0.78'; } }
+  if(typeof _renderLobbySide==='function') _renderLobbySide(roster);
+}
+// ---- build 1008: lobby side panel — live match info + rotating intel tips ----
+const LOBBY_TIPS=[
+  'Grenades flush campers out of cover \u2014 G throws, and bots know the trick too.',
+  'Press T to chat with the lobby and mid-match.',
+  'The host can fill empty slots with AI bots \u2014 they hunt, flank and take cover.',
+  'Pick a character before you ready up \u2014 tap CHARACTER for the full selector.',
+  'Share the room code anywhere \u2014 friends join from the menu with JOIN.',
+  'Jump pads, water and vehicles all work in multiplayer \u2014 build wild arenas.',
+  'The match ends with a full podium \u2014 grenade kills count too.',
+  'Retreating low? Bots crouch behind cover to recover \u2014 push them before they heal up.',
+];
+let _lsTipInt=0;
+function _renderLobbySide(roster){
+  const rows=document.getElementById('lsRows'); if(!rows) return;
+  const hostP=(roster||[]).find(p=>p.host);
+  let lvl=''; try{ lvl=(typeof homepageCfg!=='undefined' && homepageCfg && homepageCfg.on && homepageCfg.title) || (localStorage.getItem('breach_last_level_name')||''); }catch(e){}
+  const r=(l,v)=>'<div class="lsRow"><span>'+l+'</span><b>'+_esc(String(v))+'</b></div>';
+  let h=r('MODE', pvpMode()?pvpLabel():(NET.gameMode==='race'?'RACE':'CO-OP'));
+  if(pvpMode() && NET.killTarget>0) h+=r('TARGET', NET.killTarget+(NET.gameMode==='cp'?' PTS':' KILLS'));
+  h+=r('MAP', (lvl||'Custom arena').toUpperCase().slice(0,22));
+  if(hostP) h+=r('HOST', hostP.name);
+  { const bn=document.getElementById('lobbyBotN'), bw=document.getElementById('lobbyBots');
+    const bc=(NET.mode==='host' && bw && !bw.classList.contains('hidden') && bn) ? (parseInt(bn.value,10)||0) : 0;
+    h+=r('PLAYERS', (roster||[]).length + (bc>0 ? ' + '+bc+' BOTS' : '')); }
+  rows.innerHTML=h;
+}
+function _startLobbyTips(){
+  const el=document.getElementById('lsTip'); if(!el) return;
+  let i=Math.floor(Math.random()*LOBBY_TIPS.length);
+  const show=()=>{ el.textContent=LOBBY_TIPS[i++ % LOBBY_TIPS.length]; };
+  show();
+  if(_lsTipInt) clearInterval(_lsTipInt);
+  _lsTipInt=setInterval(()=>{ const lb=document.getElementById('lobby'); if(!lb || lb.classList.contains('hidden')){ clearInterval(_lsTipInt); _lsTipInt=0; return; } show(); }, 6000);
 }
 function _lobbyTitle(){ return (pvpMode()?pvpLabel():'CO-OP')+' LOBBY'; }
 function enterLobby(){   // host
@@ -16526,7 +16601,7 @@ function enterLobby(){   // host
   const rdy=document.getElementById('lobbyReady'); if(rdy) rdy.classList.add('hidden');   // build 552: the host starts the match, so no Ready button for them
   const bw=document.getElementById('lobbyBots'), bn=document.getElementById('lobbyBotN');
   if(bw && bn){ if(pvpMode() && NET.gameMode==='duel'){ bw.classList.add('hidden'); } else { bw.classList.remove('hidden'); bn.value=NET.botCount||0; } }
-  updateCharBtnLabel(); _lobbyKeysHint(); openModal('lobby'); refreshLobby(); announceRoom(); startLobbyKeepalive();
+  updateCharBtnLabel(); _lobbyKeysHint(); openModal('lobby'); refreshLobby(); _startLobbyTips(); announceRoom(); startLobbyKeepalive();
 }
 function refreshLobby(){ if(NET.mode!=='host') return; renderLobby(lobbyRoster()); broadcastLobby(); }
 function broadcastLobby(){ if(NET.mode!=='host') return; const roster=lobbyRoster(); for(const id in NET.conns){ try{ NET.conns[id].send({t:'lobby', mode:NET.gameMode, players:roster}); }catch(e){} } }
@@ -16540,6 +16615,7 @@ function showClientLobby(){
   if(NET.pendingLevel && Array.isArray(NET.pendingLevel.roster)) charRoster = NET.pendingLevel.roster.map(_sanitizeCharCfg);   // make the host's character models pickable while waiting in the lobby
   updateCharBtnLabel(); _lobbyKeysHint();
   openModal('lobby');
+  _startLobbyTips();
   if(NET.lobbyRoster) renderLobby(NET.lobbyRoster);
   _imReady=false; _updateReadyBtn();
   startLobbyKeepalive();
@@ -19394,7 +19470,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1007 · 2026-07-19';
+const BUILD_VERSION = 'build 1008 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31471,7 +31547,7 @@ function bindMenu(){
   { const ccf=document.getElementById('charConfirm'); if(ccf) ccf.onclick=()=>{ _charChosen=true; closeModal('charPicker'); if(NET.mode!=='off') broadcastMyChar(); _updateReadyBtn(); }; }   // build 552: confirming the picker counts as choosing (covers a returning player keeping their current character)
   { const sb=document.getElementById('lobbyStart'); if(sb) sb.onclick=startMatch; const lv=document.getElementById('lobbyLeave'); if(lv) lv.onclick=()=>{ unannounceRoom(); location.reload(); }; const rb=document.getElementById('lobbyReady'); if(rb) rb.onclick=()=>setReady(!_imReady); }
   { const bn=document.getElementById('lobbyBotN'), bd=document.getElementById('lobbyBotDec'), bi=document.getElementById('lobbyBotInc');   // build 1007: −/+ stepper (the raw number spinner read as unstyled)
-    const _bump=(d)=>{ if(!bn) return; bn.value=Math.max(0, Math.min(7, (parseInt(bn.value,10)||0)+d)); };
+    const _bump=(d)=>{ if(!bn) return; bn.value=Math.max(0, Math.min(7, (parseInt(bn.value,10)||0)+d)); if(NET.mode==='host' && NET.phase==='lobby' && typeof refreshLobby==='function') refreshLobby(); };
     if(bd) bd.onclick=()=>_bump(-1); if(bi) bi.onclick=()=>_bump(1); }
   { const rf=document.getElementById('mpRefresh'); if(rf) rf.onclick=refreshGamesList; refreshGamesList();
     if(!window._menuOnceBound){ window._menuOnceBound=true;   // build 907: bindMenu re-runs on every menu return — the poller + unload hook stacked one copy per visit

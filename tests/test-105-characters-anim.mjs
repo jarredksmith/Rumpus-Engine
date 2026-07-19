@@ -22,6 +22,6 @@ assert(/if\(msg\.char\)\{ applyRemoteChar\(id, msg\.char\);/.test(src), 'host ap
 assert(/char:myCharCfg\(\), chars:Object\.assign\(\{\}, NET\.charById\)/.test(src), 'welcome carries host + all known characters');
 assert(/NET\.charById = Object\.assign\(\{\}, msg\.chars\|\|\{\}\); if\(msg\.char\) NET\.charById\[0\]=msg\.char;/.test(src), 'client stores everyone\\u2019s character from welcome');
 assert(/else if\(msg\.t==='char'\)\{ applyRemoteChar\(id, msg\.cfg\);/.test(src), 'host handles a character change');
-assert(/else if\(msg\.t==='char'\)\{ applyRemoteChar\(msg\.from, msg\.cfg\); \}/.test(src), 'client applies a character change');
+assert(/else if\(msg\.t==='char'\)\{ applyRemoteChar\(msg\.from, msg\.cfg\); if\(NET\.phase==='lobby' && NET\.lobbyRoster\) renderLobby\(NET\.lobbyRoster\); \}/.test(src), 'client applies a character change (and refreshes an open lobby, build 1008)');
 assert(/the client keeps its own avatar; the host's character arrives via the welcome/.test(src), 'joining no longer overwrites the client character');
 done('characters + bot anim');
