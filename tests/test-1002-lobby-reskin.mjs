@@ -14,14 +14,14 @@ assert(/#lobby #lobbyPlayers \{[^}]*grid-template-columns:repeat\(auto-fill,minm
   'players render as a responsive card grid');
 assert(/#lobby \.lobbyRow\.ready \{ border-color:var\(--accent\); box-shadow:0 0 12px rgba\(var\(--accent-rgb\),\.25\); \}/.test(html),
   'ready players glow in the accent');
-assert(/\.lobbyPortrait \{ width:84px; height:84px;/.test(html), 'portrait square on every card');
-assert(/#lobby #lobbyReady, #lobby #lobbyStart \{ background:linear-gradient\(180deg, rgba\(var\(--accent-rgb\),\.95\)/.test(html),
-  'READY/START are proper CTAs');
+assert(/\.lobbyPortrait \{ width:100%; max-width:150px; aspect-ratio:1\/1;/.test(html), 'portrait square fills the card (build 1007)');
+assert(/\.lobbyBtn\.lobbyCTA\{ background:linear-gradient\(180deg, rgba\(var\(--accent-rgb\),0\.95\)/.test(html),
+  'READY/START are proper CTAs (build 1007: the Publish-CTA button family)');
 assert(/#lobby \.modalCard \{[^}]*env\(safe-area-inset-top\)/.test(html), 'safe-area padded for phones');
 
 // ---- executable: renderLobby builds portrait cards; tags/count/START logic unchanged ----
 const rl = extractFunction('renderLobby');
-const mkEl = () => ({ children: [], style: {}, className: '', textContent: '',
+const mkEl = () => ({ children: [], style: {}, className: '', textContent: '', dataset: {},
   set innerHTML(v){ this.children.length = 0; }, get innerHTML(){ return ''; },
   appendChild(c){ this.children.push(c); } });
 const wrap = mkEl(), cnt = mkEl(), sb = mkEl();
@@ -32,7 +32,7 @@ const env = {
   NET: { myId: 1, mode: 'host', charById: { 2: { url: 'https://h/scout.glb' } } },
   TEAM_COLOR: [0xff0000, 0x0000ff],
   myCharCfg: () => ({ url: 'https://h/me.glb' }),
-  _renderCharThumb: (cfg) => thumbCalls.push(cfg.url),
+  _renderCharThumb: (cfg, el, opts) => thumbCalls.push({ url: cfg.url, bust: !!(opts && opts.bust) }),
   _lobbyReadyState: r => ({ all: r.every(p => p.ready || p.host), waiting: r.filter(p => !p.ready && !p.host).length }),
 };
 const roster = [ { id: 1, name: 'Me', host: true, tint: 0x39d3a8 }, { id: 2, name: 'Scout', ready: true }, { id: 3, name: 'Newbie', ready: false } ];
@@ -40,8 +40,9 @@ new Function(...Object.keys(env), 'roster', rl + '\nrenderLobby(roster);')(...Ob
 
 eq(wrap.children.length, 3, 'one card per player');
 eq(thumbCalls.length, 2, 'real character portraits render for me + the player with a known model');
-assert(thumbCalls.includes('https://h/me.glb') && thumbCalls.includes('https://h/scout.glb'),
+assert(thumbCalls.some(c=>c.url==='https://h/me.glb') && thumbCalls.some(c=>c.url==='https://h/scout.glb'),
   'my card uses myCharCfg, theirs uses NET.charById');
+assert(thumbCalls.every(c=>c.bust), 'lobby portraits use the head-and-shoulders crop (build 1007)');
 assert(wrap.children[0].className.includes('ready') && wrap.children[1].className.includes('ready') && !wrap.children[2].className.includes('ready'),
   'host + ready players glow; the picking player does not');
 eq(cnt.textContent, '3 in lobby · 1/3 ready', 'the N/M ready count is unchanged');

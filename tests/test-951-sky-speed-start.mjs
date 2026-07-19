@@ -22,8 +22,11 @@ assert(!/2294472375_24a3b8ef46_o\.jpg/.test(src) && !/puydesancy\.jpg/.test(src)
 // default pace
 assert(/const DEFAULT_WORLD = \{ walk:6, run:12, jump:13, grav:30, crouch:2,/.test(src), 'defaults: walk 6 / run 12 / crouch 2');
 
-// always-green START
-assert(/#lobbyStart \{ background:#12351f !important; color:#8affc0 !important; border-color:#39ff88 !important; \}/.test(html),
-  'the lobby START is green regardless of the HUD theme');
+// unmissable START (build 1007: the 951 forced-green !important override silently defeated every
+// later lobby restyle — START's prominence now comes from the filled accent CTA family instead)
+assert(!/#lobbyStart \{ background:#12351f !important;/.test(html), 'the forced-green !important override is gone');
+assert(/<button id="lobbyStart" class="lobbyBtn lobbyCTA hidden">/.test(html)
+  && /\.lobbyBtn\.lobbyCTA\{ background:linear-gradient\(180deg, rgba\(var\(--accent-rgb\),0\.95\)/.test(html),
+  'START wears the filled accent CTA (still unmissable, now restylable)');
 
 done('build 951: HDR sky presets (Cloudy/Clear Day/Sunset), calmer default pace, always-green START');

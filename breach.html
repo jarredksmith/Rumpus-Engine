@@ -605,14 +605,28 @@
   .charName{ font-size:13px; letter-spacing:.04em; color:#e6f4ee; opacity:1; }
   @media(max-width:560px){ #charGrid{ grid-template-columns:repeat(2,1fr); } }
   #lobby .modalCard{ max-width:440px; }
-  /* build 900: the joiner flow is a numbered checklist — 1 pick a character, 2 ready up */
+  /* build 1007: the joiner flow keeps its cues but drops the numbered chips — buttons are the
+     Publish-CTA family (filled accent primary, dark secondary, ghost leave) */
   .lobbyStep{ display:flex; align-items:center; gap:10px; margin-top:8px; }
-  .lobbyStep .stepN{ flex:0 0 26px; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font:800 13px var(--ui-font); color:var(--accent); border:1px solid rgba(var(--accent-rgb),.5); background:rgba(var(--accent-rgb),.08); }
-  .lobbyStep .mpBtn{ flex:1 1 auto; text-align:left; }
+  .lobbyBtn{ flex:1 1 auto; display:flex; align-items:center; justify-content:center; gap:8px; padding:13px 16px; border-radius:10px; cursor:pointer; background:linear-gradient(180deg,#18262e,#0d161c); border:1px solid rgba(var(--accent-rgb),.38); color:#eafff7; font:700 13px var(--ui-font); letter-spacing:1.6px; }
+  .lobbyBtn:hover{ border-color:var(--accent); filter:brightness(1.12); }
+  .lobbyBtn.lobbyCTA{ background:linear-gradient(180deg, rgba(var(--accent-rgb),0.95), rgba(var(--accent-rgb),0.72)); border:none; color:#04120e; font:800 14px var(--display-font); letter-spacing:2.5px; box-shadow:0 3px 14px rgba(var(--accent-rgb),0.25); }
+  .lobbyBtn.lobbyCTA:hover{ filter:brightness(1.08); }
+  .lobbyBtn.lobbyCTA:disabled{ filter:saturate(.3) brightness(.7); cursor:not-allowed; }
+  #lobbyCharBtn b{ color:var(--accent) !important; }
+  .lobbyGhost{ flex:1 1 auto; padding:10px 16px; border-radius:10px; cursor:pointer; background:transparent; border:1px solid #2a3a44; color:#8aa39b; font:600 11.5px var(--ui-font); letter-spacing:2px; }
+  .lobbyGhost:hover{ border-color:#ff8a93; color:#ffb3ba; background:rgba(255,45,85,.06); }
+  #lobbyBots{ display:flex; align-items:center; justify-content:center; gap:8px; margin-top:10px; }
+  #lobbyBots.hidden{ display:none; }
+  .lobbyBotsLabel{ font:700 10.5px var(--ui-font); letter-spacing:2px; color:#8fc7b6; margin-right:2px; }
+  #lobbyBots .botStep{ width:34px; height:34px; border-radius:9px; background:linear-gradient(180deg,#18262e,#0d161c); border:1px solid rgba(var(--accent-rgb),.38); color:var(--accent); font:800 16px var(--ui-font); cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  #lobbyBots .botStep:hover{ border-color:var(--accent); filter:brightness(1.15); }
+  #lobbyBots #lobbyBotN{ width:46px; height:34px; box-sizing:border-box; text-align:center; background:#0a1318; border:1px solid #22323b; border-radius:9px; color:#eafff7; font:700 14px ui-monospace,monospace; appearance:textfield; -moz-appearance:textfield; }
+  #lobbyBots #lobbyBotN::-webkit-outer-spin-button, #lobbyBots #lobbyBotN::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
   #lobbyCharBtn:not(.stepDone){ animation:stepPulse 1.6s ease-in-out infinite; }
   #lobbyReady:not(.readied):not(:disabled){ animation:stepPulse 1.6s ease-in-out infinite; }
-  #lobbyReady.readied{ background:rgba(var(--accent-rgb),.22); border-color:var(--accent); color:#eafff7; }
-  @keyframes stepPulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(var(--accent-rgb),.0); } 50%{ box-shadow:0 0 0 4px rgba(var(--accent-rgb),.22); border-color:var(--accent); } }
+  #lobbyReady.readied{ background:rgba(var(--accent-rgb),.2); border:1px solid var(--accent); color:#eafff7; box-shadow:none; }
+  @keyframes stepPulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(var(--accent-rgb),.0); } 50%{ box-shadow:0 0 0 4px rgba(var(--accent-rgb),.22); } }
   .lobbyCode{ font-size:26px; letter-spacing:.22em; font-weight:700; color:var(--accent); text-align:center; margin:2px 0; }
   .lobbyCode:empty{ display:none; }
   #lobbyPlayers{ display:flex; flex-direction:column; gap:6px; margin-top:10px; }
@@ -628,9 +642,8 @@
   #mpCode { width:90px; text-transform:lowercase; }
   #mpKills { width:54px; text-align:center; }
   .mpBtn { background:rgba(var(--accent-rgb),0.12); color:var(--accent); border:1px solid rgba(var(--accent-rgb),0.5); border-radius:6px; padding:8px 16px; font:600 13px ui-monospace,monospace; letter-spacing:2px; cursor:pointer; }
-  /* build 951: the lobby START is always GO-green, whatever the HUD theme says */
-  #lobbyStart { background:#12351f !important; color:#8affc0 !important; border-color:#39ff88 !important; }
-  #lobbyStart:hover { background:#1a4a2c !important; }
+  /* (build 1007) the build-951 "always GO-green" #lobbyStart !important override is gone — it
+     silently defeated every lobby restyle since; START now wears the accent CTA fill below */
   .mpBtn:hover { background:rgba(var(--accent-rgb),0.22); }
   .mpBtn:disabled { opacity:.45; cursor:not-allowed; }
   .mpBtn.readied { background:var(--accent); color:#05241c; border-color:var(--accent); }
@@ -751,11 +764,17 @@
   #lobby #lobbyPlayers { flex:1 1 auto; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; align-content:start; margin-top:12px; padding:4px 2px; }
   #lobby .lobbyRow { display:flex; flex-direction:column; align-items:center; gap:6px; background:linear-gradient(180deg,#101a20,#0a1116); border:1px solid #22323b; border-radius:12px; padding:10px 8px 9px; }
   #lobby .lobbyRow.ready { border-color:var(--accent); box-shadow:0 0 12px rgba(var(--accent-rgb),.25); }
-  .lobbyPortrait { width:84px; height:84px; border-radius:10px; background-color:#0c2026; background-size:cover; background-position:center; }
-  #lobby .lobbyStep { width:min(560px,100%); margin:8px auto 0; display:flex; align-items:center; gap:10px; }
-  #lobby .lobbyStep .mpBtn { flex:1; padding:13px 0; font-size:14px; letter-spacing:2px; }
-  #lobby #lobbyReady, #lobby #lobbyStart { background:linear-gradient(180deg, rgba(var(--accent-rgb),.95), rgba(var(--accent-rgb),.7)); color:#04120e; border:none; font-family:var(--display-font); box-shadow:0 3px 16px rgba(var(--accent-rgb),.3); }
-  #lobby #lobbyReady:disabled { filter:saturate(.3) brightness(.7); }
+  .lobbyPortrait { width:100%; max-width:150px; aspect-ratio:1/1; border-radius:10px; background-color:#0c2026; background-size:cover; background-position:center; box-shadow:inset 0 0 0 1px rgba(255,255,255,.05), inset 0 -24px 26px -18px rgba(0,0,0,.5); }
+  #lobby .lobbyStep { width:min(460px,100%); margin:8px auto 0; display:flex; align-items:center; gap:10px; }
+  @media (max-height:520px){   /* build 1007: phone-landscape — compact cards + the whole screen scrolls (a
+       starved flex roster clipped the cards to slivers) */
+    #lobby .modalCard{ overflow-y:auto; }
+    .lobbyPortrait{ max-width:64px; }
+    #lobby #lobbyPlayers{ flex:0 0 auto; overflow:visible; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:7px; margin-top:8px; }
+    #lobby .lobbyRow{ padding:7px 6px 6px; }
+    #lobby .lobbyStep{ margin:6px auto 0; }
+    .lobbyBtn{ padding:9px 14px; }
+  }
   #lobby .mpActions { margin-top:8px; }
   .modalBack {
     position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center;
@@ -1119,12 +1138,10 @@
     <div class="mpDesc" id="lobbyHint">Waiting for players…</div>
     <div id="lobbyPlayers"></div>
     <div id="lobbyCount" class="mpHint" style="text-align:center;margin-top:6px"></div>
-    <div id="lobbyBots" class="mpRow hidden" style="margin-top:10px;align-items:center;gap:8px;justify-content:center"><span class="mpHint">Fill with bots</span><input id="lobbyBotN" type="number" min="0" max="7" value="0" style="width:56px"></div>
-    <div class="lobbyStep" style="margin-top:12px"><span class="stepN">1</span><button id="lobbyCharBtn" class="mpBtn">CHARACTER ▸</button></div>
-    <div class="lobbyStep"><span class="stepN">2</span><button id="lobbyStart" class="mpBtn coop hidden">START MATCH</button><button id="lobbyReady" class="mpBtn coop hidden">READY UP</button></div>
-    <div class="mpActions" style="margin-top:12px;justify-content:center">
-      <button id="lobbyLeave" class="mpBtn">Leave</button>
-    </div>
+    <div id="lobbyBots" class="hidden"><span class="lobbyBotsLabel">FILL WITH BOTS</span><button id="lobbyBotDec" class="botStep" aria-label="Fewer bots">−</button><input id="lobbyBotN" type="number" min="0" max="7" value="0" aria-label="Bot count"><button id="lobbyBotInc" class="botStep" aria-label="More bots">+</button></div>
+    <div class="lobbyStep" style="margin-top:12px"><button id="lobbyCharBtn" class="lobbyBtn">CHARACTER ▸</button></div>
+    <div class="lobbyStep"><button id="lobbyStart" class="lobbyBtn lobbyCTA hidden">START MATCH</button><button id="lobbyReady" class="lobbyBtn lobbyCTA hidden">READY UP</button></div>
+    <div class="lobbyStep"><button id="lobbyLeave" class="lobbyGhost">LEAVE LOBBY</button></div>
     <div id="lobbyKeys" class="mpHint" style="text-align:center;margin-top:8px;letter-spacing:1px"></div>
   </div>
 </div>
@@ -15715,21 +15732,21 @@ function _ensureThumbR(){
   if(_thumbR!==null) return !!_thumbR;
   try{
     _thumbR=new THREE.WebGLRenderer({ alpha:true, antialias:true, preserveDrawingBuffer:true });
-    _thumbR.setPixelRatio(1); _thumbR.setSize(112,112); _thumbR.setClearColor(0x000000,0);
+    _thumbR.setPixelRatio(1); _thumbR.setSize(160,160); _thumbR.setClearColor(0x000000,0);   // build 1007: portrait-card resolution
     _thumbScene=new THREE.Scene();
     _thumbCam=new THREE.PerspectiveCamera(30,1,0.02,200);
-    const key=new THREE.DirectionalLight(0xffffff,1.5); key.position.set(2.5,3.5,4); _thumbScene.add(key);
+    const key=new THREE.DirectionalLight(0xffffff,1.7); key.position.set(2.5,3.5,4); _thumbScene.add(key);
     const rim=new THREE.DirectionalLight(0x9fc6ff,0.55); rim.position.set(-3,2,-2.5); _thumbScene.add(rim);
-    _thumbScene.add(new THREE.HemisphereLight(0xffffff,0x223038,0.85));
+    _thumbScene.add(new THREE.HemisphereLight(0xffffff,0x223038,1.0));
     return true;
   }catch(e){ _thumbR=false; return false; }   // a 2nd WebGL context can fail on some devices -> fall back to the gradient
 }
-function _renderCharThumb(cfg, swatchEl){
+function _renderCharThumb(cfg, swatchEl, opts){
   if(!cfg) return;
-  const apply=(url)=>{ if(swatchEl){ swatchEl.style.backgroundImage='url("'+url+'")'; swatchEl.style.backgroundSize='cover'; swatchEl.style.backgroundPosition='center'; swatchEl.style.backgroundRepeat='no-repeat'; swatchEl.style.backgroundColor='#0c2026'; } };
+  const apply=(url)=>{ if(swatchEl){ const bg=(swatchEl.dataset&&swatchEl.dataset.bg)||''; swatchEl.style.backgroundImage='url("'+url+'")'+(bg?(', '+bg):''); swatchEl.style.backgroundSize='cover'; swatchEl.style.backgroundPosition='center'; swatchEl.style.backgroundRepeat='no-repeat'; swatchEl.style.backgroundColor='#0c2026'; } };   // build 1007: a data-bg tint stays composited BEHIND the transparent render
   if(cfg.thumb){ apply(cfg.thumb); return; }   // use the source preview image (Poly Pizza / Sketchfab) directly — no CORS, no render needed
   if(!cfg.url) return;
-  const k=(cfg.url||'')+'|'+(cfg.scale||1)+'|'+(cfg.face||0);
+  const k=(cfg.url||'')+'|'+(cfg.scale||1)+'|'+(cfg.face||0)+((opts&&opts.bust)?'|bust':'');
   if(_thumbCache[k]){ apply(_thumbCache[k]); return; }
   if(!_ensureThumbR()) return;
   loadGLTFCached(cfg.url, (gltf)=>{
@@ -15741,8 +15758,16 @@ function _renderCharThumb(cfg, swatchEl){
       const box=new THREE.Box3().setFromObject(root), size=box.getSize(new THREE.Vector3()), ctr=box.getCenter(new THREE.Vector3());
       model.position.sub(ctr); root.updateMatrixWorld(true);
       const maxd=Math.max(size.x,size.y,size.z)||1, fov=30;
-      const dist=(Math.max(size.y,size.x)*0.5)/Math.tan(fov*Math.PI/360)*1.45 + maxd*0.25;
-      _thumbCam.position.set(dist*0.4, size.y*0.1, dist); _thumbCam.lookAt(0,0,0);
+      if(opts && opts.bust){
+        // build 1007: PORTRAIT framing — a full body in a small square card read as a dark
+        // sliver. Aim at the upper chest and frame ~46% of the height: head + shoulders fill.
+        const focusY=size.y*0.30, frameH=Math.max(0.35, size.y*0.46);
+        const dist=(frameH*0.5)/Math.tan(fov*Math.PI/360) + Math.max(size.z*0.6, maxd*0.12);
+        _thumbCam.position.set(dist*0.22, focusY+size.y*0.03, dist); _thumbCam.lookAt(0, focusY, 0);
+      } else {
+        const dist=(Math.max(size.y,size.x)*0.5)/Math.tan(fov*Math.PI/360)*1.45 + maxd*0.25;
+        _thumbCam.position.set(dist*0.4, size.y*0.1, dist); _thumbCam.lookAt(0,0,0);
+      }
       _thumbR.render(_thumbScene, _thumbCam);
       const url=_thumbR.domElement.toDataURL('image/png');
       _thumbScene.remove(root);
@@ -15795,7 +15820,7 @@ function _csRenderCards(){
     const card=document.createElement('div'); card.className='csCard'+(sel?' sel':'');
     const sw=document.createElement('div'); sw.className='csSwatch';
     if(e.kind==='color') sw.style.background='linear-gradient(160deg,'+e.color+', #0a1014 130%)';
-    else if(e.cfg) _renderCharThumb(e.cfg, sw);
+    else if(e.cfg) _renderCharThumb(e.cfg, sw, {bust:true});
     const nm=document.createElement('div'); nm.className='csCardName'; nm.textContent=e.name;
     card.appendChild(sw); card.appendChild(nm);
     card.onclick=()=>{ if(e.kind==='roster') selectRosterChar(e.i); else selectChar(e.i); _csRenderCards(); _csPreview(e); };
@@ -16471,9 +16496,10 @@ function renderLobby(roster){
     const c = (pl.tint!=null) ? pl.tint : (pl.team!=null ? TEAM_COLOR[pl.team] : 0x9fe6cf);
     const hex='#'+(((c>>>0)&0xffffff).toString(16).padStart(6,'0'));
     const pt=document.createElement('div'); pt.className='lobbyPortrait';
-    pt.style.backgroundImage='linear-gradient(160deg,'+hex+'40, rgba(10,16,20,0.9))';
+    pt.dataset.bg='linear-gradient(160deg,'+hex+'40, rgba(10,16,20,0.9))';
+    pt.style.backgroundImage=pt.dataset.bg;
     const cfg=(pl.id===NET.myId) ? myCharCfg() : ((NET.charById && NET.charById[pl.id]) || null);
-    if(cfg && (cfg.url||cfg.thumb) && typeof _renderCharThumb==='function') _renderCharThumb(cfg, pt);
+    if(cfg && (cfg.url||cfg.thumb) && typeof _renderCharThumb==='function') _renderCharThumb(cfg, pt, {bust:true});
     row.appendChild(pt);
     const nmRow=document.createElement('div'); nmRow.style.cssText='display:flex;align-items:center;gap:6px;max-width:100%;';
     const dot=document.createElement('div'); dot.className='lobbyDot';
@@ -19368,7 +19394,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1006 · 2026-07-19';
+const BUILD_VERSION = 'build 1007 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31444,6 +31470,9 @@ function bindMenu(){
   { const cb=document.getElementById('charBtn'); if(cb) cb.onclick=openCharPicker; const lcb=document.getElementById('lobbyCharBtn'); if(lcb) lcb.onclick=openCharPicker; updateCharBtnLabel(); }
   { const ccf=document.getElementById('charConfirm'); if(ccf) ccf.onclick=()=>{ _charChosen=true; closeModal('charPicker'); if(NET.mode!=='off') broadcastMyChar(); _updateReadyBtn(); }; }   // build 552: confirming the picker counts as choosing (covers a returning player keeping their current character)
   { const sb=document.getElementById('lobbyStart'); if(sb) sb.onclick=startMatch; const lv=document.getElementById('lobbyLeave'); if(lv) lv.onclick=()=>{ unannounceRoom(); location.reload(); }; const rb=document.getElementById('lobbyReady'); if(rb) rb.onclick=()=>setReady(!_imReady); }
+  { const bn=document.getElementById('lobbyBotN'), bd=document.getElementById('lobbyBotDec'), bi=document.getElementById('lobbyBotInc');   // build 1007: −/+ stepper (the raw number spinner read as unstyled)
+    const _bump=(d)=>{ if(!bn) return; bn.value=Math.max(0, Math.min(7, (parseInt(bn.value,10)||0)+d)); };
+    if(bd) bd.onclick=()=>_bump(-1); if(bi) bi.onclick=()=>_bump(1); }
   { const rf=document.getElementById('mpRefresh'); if(rf) rf.onclick=refreshGamesList; refreshGamesList();
     if(!window._menuOnceBound){ window._menuOnceBound=true;   // build 907: bindMenu re-runs on every menu return — the poller + unload hook stacked one copy per visit
       setInterval(()=>{ const m=document.getElementById('mpModal'); if(m && !m.classList.contains('hidden') && lobbyEnabled()) refreshGamesList(); }, 4000);

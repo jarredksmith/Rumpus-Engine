@@ -28,8 +28,10 @@ assert(/const tabs=document\.getElementById\('mpModeTabs'\);/.test(src) && /bots
   'tabs swap panes; bots only for versus modes');
 
 // (3) lobby steps
-assert(/<div class="lobbyStep" style="margin-top:12px"><span class="stepN">1<\/span><button id="lobbyCharBtn"/.test(html), 'step 1: character');
-assert(/<div class="lobbyStep"><span class="stepN">2<\/span><button id="lobbyStart"[^>]*>START MATCH<\/button><button id="lobbyReady"/.test(html), 'step 2: ready / start');
+// build 1007: the numbered chips are gone — the ORDER (character above ready/start) + the pulse
+// cues below still walk a joiner through; buttons are the Publish-CTA family.
+assert(/<div class="lobbyStep" style="margin-top:12px"><button id="lobbyCharBtn" class="lobbyBtn">/.test(html), 'step 1: character (chip-less)');
+assert(/<div class="lobbyStep"><button id="lobbyStart" class="lobbyBtn lobbyCTA hidden">START MATCH<\/button><button id="lobbyReady"/.test(html), 'step 2: ready / start (filled CTA family)');
 assert(/#lobbyCharBtn:not\(\.stepDone\)\{ animation:stepPulse/.test(html), 'step 1 pulses until a character is picked');
 assert(/#lobbyReady:not\(\.readied\):not\(:disabled\)\{ animation:stepPulse/.test(html), 'step 2 pulses once actionable');
 assert(/cb\.classList\.toggle\('stepDone', _charChosen\)/.test(src), 'picking a character hands the pulse to step 2');
