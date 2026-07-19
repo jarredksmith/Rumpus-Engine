@@ -9031,22 +9031,32 @@ function _canonBoneKey(name){
   return _canonSuffixRetry(name);
 }
 // Pair the two skeletons by canonical key. Spine/neck chains of different lengths pair proportionally.
-// Returns { pairs:[{dst,src}], hips:{dst,src} } or null when the rigs don't share a humanoid core.
+// Returns { pairs:[{key,dst,src}], hips:{dst,src} } or null when the rigs don't share a humanoid core.
+// build 1010 (field file: a Blender export whose chain is Rig>Spine>{legs, Spine.003>..>Neck}):
+//  - a rig with NO Hips/Pelvis promotes its lowest spine bone to hips (the legs hang off it — it
+//    IS the pelvis); previously the whole rig was rejected as "no recognizable humanoid bones"
+//  - chains pair by HIERARCHY DEPTH, not numeric suffix — some rigs number their chest top-down
+//    (Spine.003 sits BELOW Spine.001), and numeric order twisted the torso
 function _buildBoneMap(dstRoot, srcRoot){
   const gather = (root)=>{ const m=new Map(); root.traverse(o=>{ if(!o.name) return; const k=_canonBoneKey(o.name); if(!k) return;
     const cur=m.get(k); if(!cur || (o.isBone && !cur.isBone)) m.set(k,o); }); return m; };
   const D=gather(dstRoot), S=gather(srcRoot);
+  const depth=(o)=>{ let d=0, p=o; while(p && p.parent){ d++; p=p.parent; } return d; };
+  const promote=(M)=>{ if(M.has('hips')) return;
+    const sp=[...M.keys()].filter(k=>k.indexOf('spine@')===0).sort((a,b)=>depth(M.get(a))-depth(M.get(b)));
+    if(sp.length){ M.set('hips', M.get(sp[0])); M.delete(sp[0]); } };
+  promote(D); promote(S);
   const pairs=[]; const used=new Set();
-  const chain=(base)=>{ const dk=[...D.keys()].filter(k=>k.indexOf(base+'@')===0).sort((a,b)=>(+a.split('@')[1])-(+b.split('@')[1]));
-    const sk=[...S.keys()].filter(k=>k.indexOf(base+'@')===0).sort((a,b)=>(+a.split('@')[1])-(+b.split('@')[1]));
+  const chain=(base)=>{ const byDepth=(M)=>[...M.keys()].filter(k=>k.indexOf(base+'@')===0).sort((a,b)=>depth(M.get(a))-depth(M.get(b)));
+    const dk=byDepth(D), sk=byDepth(S);
     if(!dk.length || !sk.length) return;
-    for(let i=0;i<dk.length;i++){ const j=Math.round(i*(sk.length-1)/Math.max(1,dk.length-1)); pairs.push({ dst:D.get(dk[i]), src:S.get(sk[j]) }); used.add(dk[i]); }
+    for(let i=0;i<dk.length;i++){ const j=Math.round(i*(sk.length-1)/Math.max(1,dk.length-1)); pairs.push({ key:dk[i], dst:D.get(dk[i]), src:S.get(sk[j]) }); used.add(dk[i]); }
   };
   chain('spine'); chain('neck');
-  for(const [k,dst] of D){ if(used.has(k) || k.indexOf('@')>=0) continue; const src=S.get(k); if(src) pairs.push({ dst, src }); }
-  const has=(k)=>pairs.some(p=>_canonBoneKey(p.dst.name)===k);
+  for(const [k,dst] of D){ if(used.has(k) || k.indexOf('@')>=0) continue; const src=S.get(k); if(src) pairs.push({ key:k, dst, src }); }
+  const has=(k)=>pairs.some(p=>p.key===k);
   if(!(has('hips') && has('head') && has('L:uparm') && has('R:uparm') && has('L:upleg') && has('R:upleg'))) return null;
-  const hp=pairs.find(p=>_canonBoneKey(p.dst.name)==='hips');
+  const hp=pairs.find(p=>p.key==='hips');
   return { pairs, hips:hp };
 }
 // Retarget one clip: world-space rotation delta per mapped bone, resampled at `fps`, written as
@@ -19487,7 +19497,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1009 · 2026-07-19';
+const BUILD_VERSION = 'build 1010 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
