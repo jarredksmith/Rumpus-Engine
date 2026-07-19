@@ -521,6 +521,27 @@
   #startBtn:hover, #replayBtn:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(var(--accent-rgb),.4); }
   /* build 971: creator title screens — a shared/published level ships its own home screen */
   #gameHome { position:fixed; inset:0; z-index:22; display:none; flex-direction:column; align-items:center; justify-content:center; text-align:center; background:radial-gradient(circle at 50% 40%, #0a1412, #04070a); overflow:hidden; }
+  /* build 1000: AAA character select — full-screen layer, big live model, card strip, select bar */
+  #charSelect { position:fixed; inset:0; z-index:90; display:none; flex-direction:column; background:radial-gradient(1100px 640px at 50% 30%, #0e1a20, #05080b 78%); }
+  #charSelect.open { display:flex; }
+  #csTop { display:flex; align-items:center; justify-content:space-between; padding:14px 20px 2px; }
+  #csTitle { font-family:var(--display-font); letter-spacing:3px; color:#cfeee2; font-size:15px; }
+  #csClose { background:none; border:1px solid #2a3a42; color:#9fe6cf; border-radius:8px; width:34px; height:34px; font-size:15px; cursor:pointer; }
+  #csStage { flex:1 1 auto; min-height:0; display:flex; align-items:center; justify-content:center; position:relative; }
+  #csHold { width:min(560px,92vw); height:100%; max-height:min(56vh,520px); cursor:grab; touch-action:none; }
+  #csHold canvas { width:100% !important; height:100% !important; display:block; position:static !important; inset:auto !important; }
+  #csNameWrap { text-align:center; margin:-6px 0 0; pointer-events:none; }
+  #csSub { color:#7fa9b8; font-size:10px; letter-spacing:3px; }
+  #csName { font-family:var(--display-font); font-size:clamp(26px,5vw,44px); color:#fff; letter-spacing:2px; text-shadow:0 2px 18px rgba(0,0,0,.65); line-height:1.1; }
+  #csCards { display:flex; gap:10px; overflow-x:auto; padding:12px 18px 4px; -webkit-overflow-scrolling:touch; }
+  .csCard { flex:0 0 auto; width:86px; cursor:pointer; border:1px solid #22323b; border-radius:10px; background:linear-gradient(180deg,#101a20,#0a1116); padding:6px; transition:transform .12s, border-color .12s, box-shadow .12s; }
+  .csCard:hover { transform:translateY(-3px); }
+  .csCard.sel { border-color:var(--accent); box-shadow:0 0 14px rgba(var(--accent-rgb),.35); }
+  .csSwatch { width:100%; aspect-ratio:1; border-radius:7px; background:#0c2026; }
+  .csCardName { margin-top:5px; font-size:10px; color:#cfeee2; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #csBar { display:flex; gap:12px; align-items:center; justify-content:center; padding:10px 16px calc(14px + env(safe-area-inset-bottom)); }
+  #csSelectBtn { min-width:210px; background:linear-gradient(180deg, rgba(var(--accent-rgb),.95), rgba(var(--accent-rgb),.7)); color:#04120e; font-family:var(--display-font); letter-spacing:2px; padding:13px 26px; border:none; border-radius:9px; font-size:15px; cursor:pointer; box-shadow:0 3px 16px rgba(var(--accent-rgb),.3); }
+  #csHint { color:#5f8577; font-size:10px; letter-spacing:1px; }
   #gameHome.on { display:flex; }
   #gameHome.preview { z-index:55; }   /* above the editor panel while previewing, still under modals */
   #gameHome .hpBg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.55; }
@@ -15589,7 +15610,126 @@ function renderCharGrid(){ const g=document.getElementById('charGrid'); if(!g) r
   CHARACTERS.forEach((c,i)=>{ const card=document.createElement('div'); card.className='charCard'+(i===myCharIdx?' sel':''); const sw=document.createElement('div'); sw.className='charSwatch'; sw.style.background=_charHex(i); const nm=document.createElement('div'); nm.className='charName'; nm.textContent=c.name; card.appendChild(sw); card.appendChild(nm); card.onclick=()=>selectChar(i); g.appendChild(card); }); }
 function selectRosterChar(i){ myRosterIdx=(i>=0 && charRoster[i])?i:-1; if(myRosterIdx>=0 && charRoster[myRosterIdx] && charRoster[myRosterIdx].view) _applyView(charRoster[myRosterIdx].view); else _loadPersonalView(); renderCharGrid(); updateCharBtnLabel(); if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar, myCharCfg()); if(NET.mode!=='off') broadcastMyChar(); _charChosen=true; if(typeof _updateReadyBtn==='function') _updateReadyBtn(); }
 function selectChar(i){ if(i<0||i>=CHARACTERS.length) return; myCharIdx=i; try{ localStorage.setItem('breach_char', String(i)); }catch(e){} updateCharBtnLabel(); renderCharGrid(); if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar, myCharCfg()); if(NET.mode!=='off') broadcastMyChar(); _charChosen=true; if(typeof _updateReadyBtn==='function') _updateReadyBtn(); }
-function openCharPicker(){ renderCharGrid(); const m=document.getElementById('charPicker'); if(m) m.classList.remove('hidden'); }
+// ---- build 1000: AAA CHARACTER SELECT ---------------------------------------------------------
+// Full-screen layer in the reference style: the ACTUAL character model, big, slowly turning (drag
+// to rotate; plays the model's idle clip when it ships one), name in display type, a card strip of
+// roster characters + colors, and a SELECT bar. Cards still run selectRosterChar/selectChar, so
+// multiplayer broadcast + the lobby READY gate behave exactly as before.
+let _csEl=null, _csRAF=0, _csMixer=null, _csClock=null, _csGrp=null, _csRotY=0.4, _csRotX=0.08, _csSpin=true, _csDist=3.6, _csKeyH=null, _csCur=null;
+function _csEntries(){
+  const out=[];
+  if(charRoster.length || (playerModelCfg && playerModelCfg.url)){
+    out.push({ kind:'roster', i:-1, name:'Default', sub:'LEVEL CHARACTER', cfg:(playerModelCfg && playerModelCfg.url)?playerModelCfg:null });
+    charRoster.forEach((c,i)=>out.push({ kind:'roster', i, name:c.name||('Character '+(i+1)), sub:'CUSTOM CHARACTER', cfg:c }));
+  }
+  CHARACTERS.forEach((c,i)=>out.push({ kind:'color', i, name:c.name, sub:'COLOR', color:_charHex(i) }));
+  return out;
+}
+function _csPreview(e){
+  _csCur=e;
+  const nm=_csEl.querySelector('#csName'), sb=_csEl.querySelector('#csSub');
+  if(nm) nm.textContent=(e.name||'').toUpperCase();
+  if(sb) sb.textContent=e.sub||'';
+  _csMixer=null;
+  if(_csGrp && typeof _inspScene!=='undefined' && _inspScene){ _inspScene.remove(_csGrp); }
+  if(!_ensureInspectR()) return;   // no second GL context on this device -> cards + name still work
+  const grp=new THREE.Group(); _inspScene.add(grp); _csGrp=grp; _csSpin=true; _csRotY=0.4; _csRotX=0.08;
+  const url=e.cfg && e.cfg.url;
+  if(url){
+    loadGLTFCached(url, (gltf)=>{ if(_csGrp!==grp) return; try{
+      const m=THREE.cloneSkinned ? THREE.cloneSkinned(gltf.scene) : gltf.scene.clone(true);
+      const bb=new THREE.Box3().setFromObject(m), s=new THREE.Vector3(), c=new THREE.Vector3(); bb.getSize(s); bb.getCenter(c);
+      const md=Math.max(s.x,s.y,s.z)||1, k=2.4/md;
+      m.scale.setScalar(k); m.position.set(-c.x*k, -c.y*k, -c.z*k);
+      grp.add(m);
+      const clips=gltf.animations||[]; const idle=clips.find(cl=>/idle/i.test(cl.name||''))||clips[0];
+      if(idle){ try{ _csMixer=new THREE.AnimationMixer(m); _csMixer.clipAction(idle).play(); }catch(e2){} }
+    }catch(e2){} }, ()=>{});
+  } else {
+    const cap=new THREE.Mesh(new THREE.CapsuleGeometry(0.5,1.2,6,18),
+      new THREE.MeshStandardMaterial({ color:new THREE.Color(e.color||'#39d3a8'), roughness:0.5, metalness:0.15 }));
+    grp.add(cap);
+  }
+}
+function _csRenderCards(){
+  const host=_csEl.querySelector('#csCards'); if(!host) return; host.innerHTML='';
+  _csEntries().forEach(e=>{
+    const sel = (e.kind==='roster') ? (e.i===myRosterIdx) : (e.i===myCharIdx);
+    const card=document.createElement('div'); card.className='csCard'+(sel?' sel':'');
+    const sw=document.createElement('div'); sw.className='csSwatch';
+    if(e.kind==='color') sw.style.background='linear-gradient(160deg,'+e.color+', #0a1014 130%)';
+    else if(e.cfg) _renderCharThumb(e.cfg, sw);
+    const nm=document.createElement('div'); nm.className='csCardName'; nm.textContent=e.name;
+    card.appendChild(sw); card.appendChild(nm);
+    card.onclick=()=>{ if(e.kind==='roster') selectRosterChar(e.i); else selectChar(e.i); _csRenderCards(); _csPreview(e); };
+    if(sel && card.scrollIntoView) setTimeout(()=>{ try{ card.scrollIntoView({ block:'nearest', inline:'center' }); }catch(_e){} }, 0);
+    host.appendChild(card);
+  });
+}
+function closeCharSelect(){
+  if(_csRAF){ cancelAnimationFrame(_csRAF); _csRAF=0; }
+  if(_csKeyH){ removeEventListener('keydown', _csKeyH); _csKeyH=null; }
+  _csMixer=null;
+  if(_csGrp && typeof _inspScene!=='undefined' && _inspScene){ _inspScene.remove(_csGrp); _csGrp=null; }
+  if(_csEl) _csEl.classList.remove('open');
+}
+function openCharPicker(){
+  if(!_csEl){
+    _csEl=document.createElement('div'); _csEl.id='charSelect';
+    _csEl.innerHTML =
+      '<div id="csTop"><div id="csTitle">SELECT CHARACTER</div><button id="csClose" aria-label="Close">\u2715</button></div>'
+      + '<div id="csStage"><div id="csHold"></div></div>'
+      + '<div id="csNameWrap"><div id="csSub"></div><div id="csName"></div></div>'
+      + '<div id="csCards"></div>'
+      + '<div id="csBar"><span id="csHint">\u2190 \u2192 browse \u00b7 drag to rotate</span><button id="csSelectBtn">SELECT</button></div>';
+    document.body.appendChild(_csEl);
+    _csEl.querySelector('#csClose').onclick=closeCharSelect;
+    _csEl.querySelector('#csSelectBtn').onclick=closeCharSelect;   // selection already applied on card tap
+    const hold=_csEl.querySelector('#csHold');
+    let drag=false, lx=0, ly=0;
+    hold.onpointerdown=e=>{ drag=true; _csSpin=false; lx=e.clientX; ly=e.clientY; hold.style.cursor='grabbing'; try{ hold.setPointerCapture(e.pointerId); }catch(_e){} };
+    hold.onpointermove=e=>{ if(!drag) return; _csRotY+=(e.clientX-lx)*0.01; _csRotX=Math.max(-0.9,Math.min(0.9,_csRotX+(e.clientY-ly)*0.008)); lx=e.clientX; ly=e.clientY; };
+    hold.onpointerup=()=>{ drag=false; hold.style.cursor='grab'; }; hold.onpointercancel=hold.onpointerup;
+    hold.onwheel=e=>{ e.preventDefault(); _csDist=Math.max(2, Math.min(7, _csDist+e.deltaY*0.002)); };
+  }
+  _csEl.classList.add('open');
+  if(typeof closeInspect==='function' && typeof _inspEl!=='undefined' && _inspEl && _inspEl.style.display!=='none') closeInspect();   // the two screens share one renderer
+  _csRenderCards();
+  const es=_csEntries();
+  const cur = es.find(e=>e.kind==='roster' && e.i===myRosterIdx && (e.cfg||e.i===-1)) || es.find(e=>e.kind==='color' && e.i===myCharIdx) || es[0];
+  if(cur) _csPreview(cur);
+  if(_ensureInspectR()){
+    const hold=_csEl.querySelector('#csHold');
+    if(_invR.domElement.parentElement!==hold) hold.appendChild(_invR.domElement);
+    const w=hold.clientWidth||480, h=hold.clientHeight||420;
+    _invR.setSize(w, h, false); _inspCam.aspect=w/h; _inspCam.updateProjectionMatrix();
+    _csClock=new THREE.Clock();
+    const loop=()=>{
+      if(!_csEl || !_csEl.classList.contains('open')){ _csRAF=0; return; }
+      const dt=_csClock.getDelta();
+      if(_csSpin) _csRotY+=0.35*dt;
+      if(_csMixer) try{ _csMixer.update(dt); }catch(e){ _csMixer=null; }
+      if(_csGrp) _csGrp.rotation.set(_csRotX, _csRotY, 0);
+      _inspCam.position.set(0, 0.15, _csDist); _inspCam.lookAt(0, 0, 0);
+      _invR.render(_inspScene, _inspCam);
+      _csRAF=requestAnimationFrame(loop);
+    };
+    if(_csRAF) cancelAnimationFrame(_csRAF);
+    _csRAF=requestAnimationFrame(loop);
+  }
+  _csKeyH=(e)=>{
+    if(e.code==='Escape'||e.code==='Enter'){ closeCharSelect(); e.preventDefault(); return; }
+    if(e.code!=='ArrowLeft' && e.code!=='ArrowRight') return;
+    const list=_csEntries();
+    let idx=list.findIndex(x=>_csCur && x.kind===_csCur.kind && x.i===_csCur.i);
+    idx=(idx<0?0:idx)+(e.code==='ArrowRight'?1:-1);
+    idx=Math.max(0, Math.min(list.length-1, idx));
+    const it=list[idx];
+    if(it.kind==='roster') selectRosterChar(it.i); else selectChar(it.i);
+    _csRenderCards(); _csPreview(it); e.preventDefault();
+  };
+  addEventListener('keydown', _csKeyH);
+}
 function makeRemotePlayer(name, cfg){
   const g=new THREE.Group();
   buildAvatarVisual(g, cfg);
@@ -18696,6 +18836,10 @@ function renderInventory(){ if(!_invEl) return; _invEl.innerHTML='';
 // ---- Item inspector: rotate/zoom a 3D object, or read a journal page ----
 let _inspEl=null, _invR=null, _inspScene=null, _inspCam=null, _inspModel=null, _inspRAF=0, _inspRotX=0.25, _inspRotY=0.5, _inspDist=3, _inspSpin=true;
 function closeInspect(){ if(_inspRAF){ cancelAnimationFrame(_inspRAF); _inspRAF=0; } if(_inspEl) _inspEl.style.display='none'; if(_inspModel && _inspScene){ _inspScene.remove(_inspModel); _inspModel=null; } }
+function _ensureInspectR(){   // build 1000: shared by the inventory inspector AND the character select (one extra GL context total)
+  if(_invR===null){ try{ _invR=new THREE.WebGLRenderer({ alpha:true, antialias:true }); _invR.setPixelRatio(Math.min(2, window.devicePixelRatio||1)); _inspScene=new THREE.Scene(); _inspCam=new THREE.PerspectiveCamera(35,1,0.01,100); const k=new THREE.DirectionalLight(0xffffff,1.6); k.position.set(3,4,5); _inspScene.add(k); const r=new THREE.DirectionalLight(0x9fc6ff,0.6); r.position.set(-3,1,-3); _inspScene.add(r); _inspScene.add(new THREE.HemisphereLight(0xffffff,0x202830,0.9)); }catch(e){ _invR=false; } }
+  return !!_invR;
+}
 function openInspect(id){
   const it=invCatalog[id]; if(!it) return;
   if(!_inspEl){ _inspEl=document.createElement('div'); _inspEl.id='inspect'; _inspEl.style.cssText='position:fixed;inset:0;z-index:82;display:none;align-items:center;justify-content:center;background:rgba(3,6,8,.86);'; const cd=document.createElement('div'); cd.id='inspectCard'; cd.style.cssText='position:relative;background:#0a1016;border:1px solid #2a3a42;border-radius:14px;max-width:540px;width:92%;padding:16px 18px;'; _inspEl.appendChild(cd); document.body.appendChild(_inspEl); _inspEl.addEventListener('click', e=>{ if(e.target===_inspEl) closeInspect(); }); }
@@ -18707,7 +18851,7 @@ function openInspect(id){
     const page=document.createElement('div'); page.style.cssText='background:#1d1810;border:1px solid #3a2f1a;border-radius:8px;padding:18px 20px;color:#ece0c4;font-size:14px;line-height:1.65;max-height:62vh;overflow:auto;white-space:pre-wrap;font-family:Georgia,"Times New Roman",serif;'; page.textContent=it.journal||it.desc||'(no text)'; card.appendChild(page);
   } else {
     const holder=document.createElement('div'); holder.style.cssText='position:relative;width:100%;aspect-ratio:1;max-height:60vh;background:radial-gradient(circle at 50% 38%, #16242e, #070b0e);border-radius:10px;overflow:hidden;touch-action:none;cursor:grab;'; card.appendChild(holder);
-    if(_invR===null){ try{ _invR=new THREE.WebGLRenderer({ alpha:true, antialias:true }); _invR.setPixelRatio(Math.min(2, window.devicePixelRatio||1)); _inspScene=new THREE.Scene(); _inspCam=new THREE.PerspectiveCamera(35,1,0.01,100); const k=new THREE.DirectionalLight(0xffffff,1.6); k.position.set(3,4,5); _inspScene.add(k); const r=new THREE.DirectionalLight(0x9fc6ff,0.6); r.position.set(-3,1,-3); _inspScene.add(r); _inspScene.add(new THREE.HemisphereLight(0xffffff,0x202830,0.9)); }catch(e){ _invR=false; } }
+    _ensureInspectR();
     if(_invR){ const cv=_invR.domElement; cv.style.cssText='position:static;top:auto;left:auto;z-index:auto;width:100%;height:100%;display:block;'; holder.appendChild(cv);   // build 689: override the global `canvas{position:fixed;inset:0}` rule so the model stays inside the card (not full-screen, and the buttons stay clickable)
       const w=Math.min(440, Math.floor((window.innerWidth||420)*0.8)); _invR.setSize(w,w,false); _inspCam.aspect=1; _inspCam.updateProjectionMatrix();
       _inspRotX=0.25; _inspRotY=0.5; _inspSpin=true; _inspDist=3;
@@ -19029,7 +19173,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 999 · 2026-07-18';
+const BUILD_VERSION = 'build 1000 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

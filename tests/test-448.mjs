@@ -34,7 +34,7 @@ assert(/if\(invOpen\) return;/.test(src), 'inventory open swallows other game ke
 // --- inspector: 3D rotate/zoom for objects, page for journals ---
 const oi=extractFunction('openInspect');
 assert(/it\.type==='journal'/.test(oi), 'journal items render a readable page');
-assert(/_invR=new THREE\.WebGLRenderer/.test(oi) && /requestAnimationFrame\(loop\)/.test(oi), 'object items get a live 3D viewer');
+assert(/_ensureInspectR\(\);/.test(oi) && /requestAnimationFrame\(loop\)/.test(oi) && /_invR=new THREE\.WebGLRenderer/.test(src), 'object items get a live 3D viewer (renderer factored into _ensureInspectR in build 1000, shared with the character select)');
 assert(/_inspRotY\+=\(e\.clientX-lx\)\*0\.01/.test(oi) && /_inspDist=Math\.max\(1\.3, Math\.min\(8,/.test(oi), 'drag rotates, wheel zooms (clamped)');
 assert(/function closeInspect\(\)/.test(src) && /cancelAnimationFrame\(_inspRAF\)/.test(extractFunction('closeInspect')), 'closing stops the render loop');
 
