@@ -14292,6 +14292,7 @@ function spawnBots(n){
     bots.push({ id, team, name:nm, mesh, pos:new THREE.Vector3(sp.x,(sp.y||0),sp.z), yaw:sp.yaw, hp:D.hp, maxHp:D.hp, dead:false, respawnT:0, fireCd:Math.random()*0.6, strafe:Math.random()<0.5?1:-1, retargetT:0, target:null, vy:0, evx:0, evz:0, grounded:true,
       aiState:'engage', aiT:0, lkp:null, lkpFresh:0, sawTgt:false, flankSide:Math.random()<0.5?1:-1,
       nades:2, _nadeCd:4+Math.random()*5,   // build 1006: a small grenade stock per life; staggered first throw
+      wep: (function(){ const _w=['rifle','rifle','smg','shotgun','pistol'].filter(k=>WEAPONS[k]); return _w.length?_w[(Math.random()*_w.length)|0]:'rifle'; })(),   // build 1012: the gun it visibly holds (rifle-weighted)
       // personality: aggression (push vs hold), bravery (low hp before retreat), preferred engage distance
       aggr:0.4+Math.random()*0.6, bravery:0.18+Math.random()*0.22, prefRange:6+Math.random()*9 });
     if(teamMode()) NET.teams[id]=team;
@@ -14645,6 +14646,10 @@ function updateBots(dt){
           else { const tier = md>0.06?'run':(md>0.015?'walk':'idle'); st=(tier==='idle')?(b._crouch?'crouch':'idle'):_locoSlot(mvx,mvz,b.yaw,(b._crouch&&tier==='walk')?'crouch':tier); } }   // strafes/back-pedals show when orbiting a target it's facing; a bot holding cover ducks (build 1006)
         setEnemyAnimState(b.mesh, st);
       } }
+    // build 1012: bots HOLD their weapon — remote players re-attach like this each frame once
+    // the model lands; bots never did, so they fired from empty hands. attachAvatarGun no-ops
+    // cheaply when the gun is already the right one.
+    if(b.mesh && (b.mesh.userData.hasModel || b.mesh.userData.visual) && typeof attachAvatarGun==='function') attachAvatarGun(b.mesh, b.wep||'rifle');
     b.fireCd-=dt;
     if(tgt && wantFire && b.fireCd<=0 && !(b._reactT>0)){   // build 1003: no shot inside the human reaction beat after acquiring
       const ty=(tgt.pos.y!=null?Math.min(1.5,tgt.pos.y):1.4);
@@ -15359,6 +15364,7 @@ function refreshAvatarGunGrips(){
   const reapply=(grp)=>{ if(grp && grp.userData.gun){ const wk=grp.userData.gunKey; const ov=grp.userData.gripOverride; if(grp.userData.gunBone) _applyGunGripToHand(grp.userData.gun, grp.userData.gunBone, wk, ov); else _applyGunGrip(grp.userData.gun, wk, ov); } };
   if(typeof _ownAvatar!=='undefined') reapply(_ownAvatar);
   for(const id in NET.players){ const rp=NET.players[id]; if(rp) reapply(rp.mesh); }
+  if(typeof bots!=='undefined') for(const b of bots){ if(b && b.mesh) reapply(b.mesh); }   // build 1012: bots hold guns now
   if(typeof previewAvatar!=='undefined') reapply(previewAvatar);
 }
 function buildAvatarVisual(g, cfg){
@@ -19504,7 +19510,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1011 · 2026-07-19';
+const BUILD_VERSION = 'build 1012 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
