@@ -14237,6 +14237,7 @@ function spawnBots(n){
     const sp=randomSpawn(); const mesh=makeBot(team, nm); mesh.userData.botId=id; mesh.position.set(sp.x,(sp.y||0),sp.z); mesh.rotation.y=sp.yaw;
     bots.push({ id, team, name:nm, mesh, pos:new THREE.Vector3(sp.x,(sp.y||0),sp.z), yaw:sp.yaw, hp:D.hp, maxHp:D.hp, dead:false, respawnT:0, fireCd:Math.random()*0.6, strafe:Math.random()<0.5?1:-1, retargetT:0, target:null, vy:0, evx:0, evz:0, grounded:true,
       aiState:'engage', aiT:0, lkp:null, lkpFresh:0, sawTgt:false, flankSide:Math.random()<0.5?1:-1,
+      nades:2, _nadeCd:4+Math.random()*5,   // build 1006: a small grenade stock per life; staggered first throw
       // personality: aggression (push vs hold), bravery (low hp before retreat), preferred engage distance
       aggr:0.4+Math.random()*0.6, bravery:0.18+Math.random()*0.22, prefRange:6+Math.random()*9 });
     if(teamMode()) NET.teams[id]=team;
@@ -14380,6 +14381,26 @@ function navWarmupTick(dt){
   if(matchWarmup>0){ _setCountdown(String(Math.max(1,Math.ceil(matchWarmup)))); return true; }
   _setCountdown('GO!'); setTimeout(()=>_setCountdown(null), 650); matchWarmup=0; _clientWarmupHold=false; return false;
 }
+// build 1006: a bot lobs a grenade that LANDS on (tx,tz,ty) — the same g=30 ballistic solve as the
+// player's cursor-aimed throw (build 891), range-capped by GRENADE.throwForce. Host-simulated with
+// auth (so the PvP blast damage above credits the bot); relayed to clients as a visual {t:'nade'}.
+function _botThrowGrenade(b, tx, tz, ty){
+  const oy=b.pos.y+1.2;
+  let dx=tx-b.pos.x, dz=tz-b.pos.z; const d0=Math.hypot(dx,dz)||1e-4;
+  const maxR=Math.max(6, (+GRENADE.throwForce||26)*1.1);
+  if(d0>maxR || d0<4){ b._nadeCd=Math.max(b._nadeCd||0, 0.6); return false; }   // out of range / danger-close -> brief re-check, keep the grenade
+  const dy=(ty!=null?ty:b.pos.y)-oy;
+  const apex=Math.max(0,dy) + 2.2 + d0*0.10;
+  const vy=Math.sqrt(60*apex);
+  const t=vy/30 + Math.sqrt(Math.max(0.01, 2*(apex-dy)/30));
+  const vel=new THREE.Vector3(dx/t, vy, dz/t);
+  const mesh=makeGrenadeMesh(); mesh.position.set(b.pos.x, oy, b.pos.z); scene.add(mesh);
+  grenades.push({ mesh, vel, fuse:GRENADE.fuse, by:b.id, auth:true });
+  b.nades--; b._nadeCd=9+Math.random()*6;
+  b._evt={ slot:'throw', until:performance.now()+480 };   // play the throw clip over locomotion
+  for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'nade', o:[b.pos.x,oy,b.pos.z], v:[vel.x,vel.y,vel.z], by:b.id}); }catch(e){} }
+  return true;
+}
 function updateBots(dt){
   if(NET.mode!=='host' || !pvpMode() || !gameOn || !bots.length) return;
   if(dt>0.05) dt=0.05;   // clamp the timestep: a frame hitch must never let a bot teleport across the map
@@ -14396,7 +14417,7 @@ function updateBots(dt){
         if(b._dieT > fadeStart){ const k=Math.max(0,1-(b._dieT-fadeStart)/0.7); b.mesh.traverse(o=>{ if(o.isMesh && o.material){ const ms=Array.isArray(o.material)?o.material:[o.material]; ms.forEach(m=>{ m.transparent=true; m.opacity=k; }); } }); }
         if(b._dieT >= 2.5){ b.mesh.visible=false; b._dying=false; }
       }
-      if(b.respawnT<=0){ const sp=randomSpawn(); b.pos.set(sp.x,(sp.y||0),sp.z); b.vy=0; b.evx=0; b.evz=0; b.grounded=true; b.yaw=sp.yaw; b.hp=b.maxHp; b.dead=false; b.aiState='engage'; b.aiT=0; b.lkp=null; b.lkpFresh=0; b.sawTgt=false; b._stuckT=0; b.path=null; b.pathT=0; b._dying=false; b._dieT=0; b._air=null;
+      if(b.respawnT<=0){ const sp=randomSpawn(); b.pos.set(sp.x,(sp.y||0),sp.z); b.vy=0; b.evx=0; b.evz=0; b.grounded=true; b.yaw=sp.yaw; b.hp=b.maxHp; b.dead=false; b.aiState='engage'; b.aiT=0; b.lkp=null; b.lkpFresh=0; b.sawTgt=false; b._stuckT=0; b.path=null; b.pathT=0; b._dying=false; b._dieT=0; b._air=null; b.nades=2; b._nadeCd=4+Math.random()*5; b._crouch=false;
         if(b.mesh){ b.mesh.visible=true; b.mesh.traverse(o=>{ if(o.isMesh && o.material){ const ms=Array.isArray(o.material)?o.material:[o.material]; ms.forEach(m=>{ m.opacity=1; }); } }); b.mesh.position.set(sp.x,(sp.y||0),sp.z); if(typeof setEnemyAnimState==='function') setEnemyAnimState(b.mesh,'idle'); } } continue; }
     b.retargetT-=dt;
     if(b.retargetT<=0 || !_botTargetAlive(b.target)){ b.target=_botAcquire(b); b.retargetT=0.4+Math.random()*0.3; }
@@ -14423,9 +14444,10 @@ function updateBots(dt){
     // ---- state machine: engage / hunt / flank / retreat ----
     if(!(koth && !cpOwnedBy(b.team))){   // objective push (capturing an unowned point) overrides personal combat
       if(hpFrac < b.bravery && hasLOS && tgtDist < 16){
+        if(b.aiState!=='retreat') b._coverHold=1.4+Math.random()*1.2;   // build 1006: recovery beat to spend crouched AT the cover
         b.aiState='retreat';                                   // hurt + exposed -> back off to recover
-      } else if(b.aiState==='retreat' && (hpFrac > b.bravery+0.18 || !hasLOS)){
-        b.aiState='engage'; b.aiT=0; b._cover=null;            // recovered or safe -> re-engage (drop the cover claim)
+      } else if(b.aiState==='retreat' && (hpFrac > b.bravery+0.18 || (!hasLOS && (b._coverHold||0)<=0))){
+        b.aiState='engage'; b.aiT=0; b._cover=null; b._crouch=false;   // recovered or safe -> re-engage (drop the cover claim, stand back up)
       } else if(!hasLOS && b.lkpFresh>0 && b.aiState!=='retreat'){
         if(b.aiState!=='hunt' && b.aiState!=='flank'){ b.aiState = (Math.random()<b.aggr?'flank':'hunt'); b.aiT=1.2+Math.random()*1.5; }   // lost sight -> hunt the last spot, sometimes flank to it
       } else if(hasLOS && b.aiState!=='retreat'){
@@ -14445,7 +14467,8 @@ function updateBots(dt){
       b._coverT=(b._coverT||0)-dt;
       const _atCover = b._cover && Math.hypot(b._cover.x-b.pos.x, b._cover.z-b.pos.z)<1.2;
       if(!b._cover || b._coverT<=0){ b._cover=_botFindCover(b, tgt); b._coverT=1.4; }
-      if(b._cover && !_atCover){ destX=b._cover.x; destZ=b._cover.z; }
+      if(b._cover && !_atCover){ destX=b._cover.x; destZ=b._cover.z; b._crouch=false; }
+      else if(b._cover && _atCover){ destX=b._cover.x; destZ=b._cover.z; b._crouch=true; b._coverHold=Math.max(0,(b._coverHold||0)-dt); }   // build 1006: HOLD the cover crouched while the beat runs down (was: kept running past it)
       else {
         destX = b.pos.x - (tgt.pos.x-b.pos.x); destZ = b.pos.z - (tgt.pos.z-b.pos.z);   // no cover anywhere (open field) -> move directly away
         destX=Math.max(-lim,Math.min(lim,destX)); destZ=Math.max(-lim,Math.min(lim,destZ));
@@ -14565,7 +14588,7 @@ function updateBots(dt){
         else if(b._fireAnimT && performance.now()<b._fireAnimT){ const _bt=md>0.06?'run':(md>0.015?'walk':null); st=(_bt?(_fireSlot(_bt)||'attack'):'attack'); }   // combined move+fire while moving
         else { const air=_airborneSlot(b._air||(b._air={}), b.grounded!==false, b.vy||0, dt);   // jumpStart/jump/fall/land while path-hopping or launched
           if(air) st=air;
-          else { const tier = md>0.06?'run':(md>0.015?'walk':'idle'); st=(tier==='idle')?'idle':_locoSlot(mvx,mvz,b.yaw,tier); } }   // strafes/back-pedals show when orbiting a target it's facing
+          else { const tier = md>0.06?'run':(md>0.015?'walk':'idle'); st=(tier==='idle')?(b._crouch?'crouch':'idle'):_locoSlot(mvx,mvz,b.yaw,(b._crouch&&tier==='walk')?'crouch':tier); } }   // strafes/back-pedals show when orbiting a target it's facing; a bot holding cover ducks (build 1006)
         setEnemyAnimState(b.mesh, st);
       } }
     b.fireCd-=dt;
@@ -14584,6 +14607,14 @@ function updateBots(dt){
         remoteFire(b.id, o, d); b._fireAnimT=performance.now()+480; for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'fire', from:b.id, o, d}); }catch(e){} }
         if(Math.random()<D.hit) _botDamage(b, tgt, D.dmgMin+Math.random()*D.dmgRand);
       }
+    }
+    // ---- build 1006: grenades. The AAA move: the target ducks behind cover (contact just broke,
+    // last-known position still fresh) -> flush it out with a lob onto that spot. Secondly, a rare
+    // direct lob at medium-long range while in the open. Never inside the reaction beat or warmup.
+    if(b._nadeCd>0) b._nadeCd-=dt;
+    if((b.nades||0)>0 && (b._nadeCd||0)<=0 && tgt && !(typeof matchWarmup!=='undefined' && matchWarmup>0) && !(b._reactT>0)){
+      if(!hasLOS && b.lkpFresh>0 && b.lkpFresh<2.2 && b.lkp) _botThrowGrenade(b, b.lkp.x, b.lkp.z, b.pos.y);
+      else if(hasLOS && tgtDist>9 && tgtDist<24 && Math.random()<dt*0.15) _botThrowGrenade(b, tgt.pos.x, tgt.pos.z, (tgt.kind==='bot')?tgt.pos.y:(tgt.pos.y!=null?tgt.pos.y-1.2:b.pos.y));
     }
   }
 }
@@ -17003,6 +17034,20 @@ function explodeGrenade(g){
   for(let i=0;i<(usedSheet?6:14);i++) { spark(pos, 0xffaa44); }
   if(typeof NET!=='undefined' && NET.mode==='client') return;   // build 670: clients render the blast only; the host authors the damage (its own sim of this grenade does that)
   // AoE damage: full at the center, linear falloff to 0 at the radius
+  if(typeof pvpMode==='function' && pvpMode()){
+    // build 1006: grenades WORK in PvP — bots + remote players + the host take blast damage
+    // credited to the thrower (bot grenades ride this too). The thrower and its team-mates are
+    // immune; the local player's own blast stays a damage-free grenade-jump (block below).
+    const by=(g.by!=null)?g.by:0;
+    for(const bt of bots.slice()){ if(bt.dead || bt.id===by || sameTeam(by, bt.id)) continue;
+      const d=Math.hypot(bt.pos.x-pos.x, (bt.pos.y+1.0)-pos.y, bt.pos.z-pos.z);
+      if(d<R){ const f = 1 - d/R; const kx=bt.pos.x-pos.x, kz=bt.pos.z-pos.z, kh=Math.hypot(kx,kz)||1, LP=(worldCfg&&+worldCfg.launchPower)||1, kb=(8+R*1.2)*f*LP;
+        bt.evx=(bt.evx||0)+(kx/kh)*kb; bt.evz=(bt.evz||0)+(kz/kh)*kb; bt.vy=Math.max(bt.vy||0,(5+R*0.6)*f*LP); bt.grounded=false;
+        if(botHurt(bt, GRENADE.damage * f, pos.x, pos.z)) registerDuelKill(by, bt.id); } }
+    for(const id in NET.players){ const rp=NET.players[id]; if(!rp||!rp.posEye) continue; if(+id===by || sameTeam(by, +id)) continue; if(rp.hp!=null&&rp.hp<=0) continue;
+      const d=rp.posEye.distanceTo(pos); if(d<R) sendToPlayer(+id, {t:'pvpHit', d:GRENADE.damage*(1-d/R), from:by}); }
+    if(by!==NET.myId && !duelDead){ const d=player.pos.distanceTo(pos); if(d<R) applyPvpDamage(GRENADE.damage*(1-d/R), by); }   // someone ELSE's grenade hurts me; my own never does
+  } else {
   for(const en of enemies.slice()){
     const d = en.mesh.position.distanceTo(g.mesh.position);
     if(d < R){
@@ -17011,6 +17056,7 @@ function explodeGrenade(g){
       _blastLaunch(en, g.mesh.position.x, g.mesh.position.y, g.mesh.position.z, R, f);   // launch the enemy
       enemyHurt(en, GRENADE.damage * f, g.mesh.position.x, g.mesh.position.z);
     }
+  }
   }
   { const d=player.pos.distanceTo(pos); if(d<R){ const f=1-d/R, kx=player.pos.x-pos.x, kz=player.pos.z-pos.z, kh=Math.hypot(kx,kz)||1, LP=(worldCfg&&+worldCfg.launchPower)||1, kb=(8+R*1.2)*f*LP; player.extVel.x+=kx/kh*kb; player.extVel.z+=kz/kh*kb; player.vel.y=Math.max(player.vel.y,(5+R*0.6)*f*LP); player.onGround=false; } }   // grenade-jump: your own grenade flings you (no self-damage)
   scene.remove(g.mesh);
@@ -19322,7 +19368,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1005 · 2026-07-19';
+const BUILD_VERSION = 'build 1006 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

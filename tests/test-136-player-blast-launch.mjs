@@ -10,6 +10,9 @@ assert(/applyEnemyDamageToSelf\(pd, pos\.x, pos\.z\)/.test(ex), 'explodeAt still
 
 const eg = extractFunction('explodeGrenade');
 assert(/player\.extVel\.x\+=kx\/kh\*kb;.*player\.vel\.y=Math\.max\(player\.vel\.y,\(5\+R\*0\.6\)\*f\*LP\); player\.onGround=false;/.test(eg), 'grenade-jump: own grenade flings the player');
-assert(!/applyEnemyDamageToSelf/.test(eg) && !/applyPvpDamage/.test(eg), 'grenade-jump adds no self-damage');
+// build 1006: PvP grenades now damage the host player — but ONLY someone else's grenade. Your own
+// blast stays a damage-free grenade-jump: the sole damage call is guarded by by!==NET.myId.
+assert(!/applyEnemyDamageToSelf/.test(eg), 'grenade-jump adds no co-op self-damage');
+assert(/if\(by!==NET\.myId && !duelDead\)\{ const d=player\.pos\.distanceTo\(pos\); if\(d<R\) applyPvpDamage\(/.test(eg), 'PvP damage to self only from an OPPONENT’s grenade (own stays a free grenade-jump)');
 
 done();

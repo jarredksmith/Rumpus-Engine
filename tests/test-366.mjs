@@ -14,7 +14,7 @@ assert(/else if\(reloading\) st='reload';/.test(uoa), 'reload pose wired');
 assert(/sprinting\(\)\) tier='sprint'/.test(uoa), 'sprint tier wired');
 const ub = extractFunction('updateBots');
 assert(/_airborneSlot\(b\._air/.test(ub), 'bots resolve airborne sub-states');
-assert(/_locoSlot\(mvx,mvz,b\.yaw,tier\)/.test(ub), 'bots resolve directional locomotion (strafe/back when orbiting)');
+assert(/_locoSlot\(mvx,mvz,b\.yaw,\(b\._crouch&&tier==='walk'\)\?'crouch':tier\)/.test(ub), 'bots resolve directional locomotion (strafe/back when orbiting; crouch family while holding cover, build 1006)');
 
 // ---- executable: _locoSlot directional resolution ----
 const _locoSlot = new Function('return ('+extractFunction('_locoSlot')+')')();
