@@ -15840,7 +15840,7 @@ function selectChar(i){ if(i<0||i>=CHARACTERS.length) return; myCharIdx=i; try{ 
 // to rotate; plays the model's idle clip when it ships one), name in display type, a card strip of
 // roster characters + colors, and a SELECT bar. Cards still run selectRosterChar/selectChar, so
 // multiplayer broadcast + the lobby READY gate behave exactly as before.
-let _csEl=null, _csRAF=0, _csGrp=null, _csRotY=Math.PI*0.92, _csSpin=true, _csKeyH=null, _csCur=null, _csW=0, _csH=0, _csFitT=0, _csFitH=0, _csFitW=0, _csFitY=0;
+let _csEl=null, _csRAF=0, _csGrp=null, _csRotY=Math.PI*0.92, _csSpin=true, _csKeyH=null, _csCur=null, _csW=0, _csH=0, _csFitT=0, _csFitH=0, _csFitW=0, _csFitY=0, _csFitSig=0;
 function _csEntries(){
   const out=[];
   if(charRoster.length || (playerModelCfg && playerModelCfg.url)){
@@ -15860,7 +15860,7 @@ function _csPreview(e){
   if(!_ensureInspectR()) return;   // no second GL context on this device -> cards + name still work
   if(!_csGrp){ _csGrp=new THREE.Group(); _inspScene.add(_csGrp); }
   _csSpin=true; _csRotY=Math.PI*0.92;   // build 1008: start FACING the camera (was: back turned)
-  _csFitT=0; _csFitH=0; _csFitW=0; _csFitY=0;   // build 1009: re-measure the new model
+  _csFitT=0; _csFitH=0; _csFitW=0; _csFitY=0; _csFitSig=0;   // build 1009/1011: re-measure the new model
   try{ buildAvatarVisual(_csGrp, myCharCfg()); }catch(err){}
 }
 function _csRenderCards(){
@@ -15935,14 +15935,21 @@ function openCharPicker(){
       if(_csSpin) _csRotY+=0.35*dt;
       if(_csGrp) _csGrp.rotation.y=_csRotY;
       // build 1009: frame the REAL model — the fixed ~2m assumption beheaded tall/scaled models.
-      // The bounding box is re-measured every 0.5s (the model loads async and swaps mid-view)
-      // and smoothed so the camera never pops.
+      // build 1011: measure ONLY when the model's content changes (async load / swap), and with
+      // the turntable yaw zeroed — measuring the spinning model made the horizontal extent
+      // oscillate with rotation and the camera visibly breathed/jumped every re-measure.
       _csFitT-=dt;
-      if(_csGrp && _csFitT<=0){ _csFitT=0.5;
-        try{ const box=new THREE.Box3().setFromObject(_csGrp);
-          if(isFinite(box.min.y) && isFinite(box.max.y) && box.max.y>box.min.y){
-            const h=Math.max(0.6, box.max.y-box.min.y), w=Math.max(0.4, box.max.x-box.min.x, box.max.z-box.min.z);
-            _csFitH=_csFitH?(_csFitH+(h-_csFitH)*0.5):h; _csFitW=_csFitW?(_csFitW+(w-_csFitW)*0.5):w; _csFitY=box.min.y; } }catch(e){}
+      if(_csGrp && _csFitT<=0){ _csFitT=0.35;
+        let sig=0; _csGrp.traverse(o=>{ sig++; if(o.isMesh) sig+=100; if(o.isSkinnedMesh) sig+=10000; });
+        if(sig!==_csFitSig){ _csFitSig=sig;
+          try{ const ry=_csGrp.rotation.y; _csGrp.rotation.y=0; _csGrp.updateWorldMatrix(true,true);
+            const box=new THREE.Box3().setFromObject(_csGrp);
+            _csGrp.rotation.y=ry; _csGrp.updateWorldMatrix(true,true);
+            if(isFinite(box.min.y) && isFinite(box.max.y) && box.max.y>box.min.y){
+              _csFitH=Math.max(0.6, box.max.y-box.min.y);
+              _csFitW=Math.max(0.4, box.max.x-box.min.x, box.max.z-box.min.z);
+              _csFitY=box.min.y; } }catch(e){}
+        }
       }
       const fovV=_inspCam.fov*Math.PI/180;
       const H=_csFitH||2, W=_csFitW||0.9, baseY=_csFitY||0;
@@ -16615,7 +16622,7 @@ function _startLobbyTips(){
 }
 // ---- build 1009: creator lobby backdrop — an https image URL carried by the level, shown
 // blurred behind the lobby for the host AND every joiner (it rides the {t:'lobby'} broadcast).
-let lobbyBgUrl = '';
+let lobbyBgUrl = _sanitizeLobbyBg(typeof savedLevel!=='undefined' && savedLevel ? savedLevel.lobbyBg : '');   // build 1011: refresh boots from the saved blob, not restoreLevel
 function _sanitizeLobbyBg(u){ u=String(u||'').trim(); return (/^https:\/\/[^\s"'<>]{8,300}\.(png|jpe?g|webp)(\?[^\s"'<>]{0,80})?$/i.test(u)) ? u : ''; }
 function _applyLobbyBg(u){ const el=document.getElementById('lobbyBgImg'); if(!el) return; u=_sanitizeLobbyBg(u); if(u){ el.style.backgroundImage='url("'+u+'")'; el.style.display='block'; } else { el.style.display='none'; } }
 function _lobbyTitle(){ return (pvpMode()?pvpLabel():'CO-OP')+' LOBBY'; }
@@ -19497,7 +19504,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1010 · 2026-07-19';
+const BUILD_VERSION = 'build 1011 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

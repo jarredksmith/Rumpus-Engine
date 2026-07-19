@@ -25,9 +25,13 @@ eq(ok('data:image/png;base64,aaaa'), '', 'data URLs rejected (they would bloat t
 eq(ok(null), '', 'null -> empty');
 
 // ---- stage fit: real bbox, remeasured + smoothed ----
-assert(/_csFitT-=dt;/.test(src) && /_csFitT=0\.5;/.test(src), 'fit re-measures on a cadence, not every frame');
+assert(/_csFitT-=dt;/.test(src) && /_csFitT=0\.35;/.test(src), 'fit checks on a cadence, not every frame');
 assert(/new THREE\.Box3\(\)\.setFromObject\(_csGrp\)/.test(src), 'measures the actual preview group');
-assert(/_csFitH=_csFitH\?\(_csFitH\+\(h-_csFitH\)\*0\.5\):h;/.test(src), 'smoothed so the camera never pops');
+// build 1011: the periodic re-measure of the SPINNING model oscillated with yaw and the camera
+// breathed/jumped — now gated on a content signature and measured with the turntable yaw zeroed.
+assert(/if\(sig!==_csFitSig\)\{ _csFitSig=sig;/.test(src), 'measures only when the model content changes (async load / swap)');
+assert(/const ry=_csGrp\.rotation\.y; _csGrp\.rotation\.y=0; _csGrp\.updateWorldMatrix\(true,true\);/.test(src),
+  'measured with the turntable yaw zeroed (rotation-invariant frame)');
 assert(/const H=_csFitH\|\|2, W=_csFitW\|\|0\.9, baseY=_csFitY\|\|0;/.test(src), 'sane defaults before the first measure');
 assert(/const dist=Math\.max\(\(H\*0\.62\)\/Math\.tan\(fovV\/2\), \(W\*0\.62\)\/\(Math\.tan\(fovV\/2\)\*Math\.max\(0\.3,_inspCam\.aspect\)\)\) \+ 0\.5;/.test(src),
   'distance fits BOTH axes with ~24% headroom (no more decapitation)');
