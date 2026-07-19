@@ -54,8 +54,8 @@ assert(/else if\(hasLOS && tgtDist>9 && tgtDist<24 && Math\.random\(\)<dt\*0\.15
   'rare direct lob at medium-long range (per-second chance, not per-frame spam)');
 assert(/\(b\.nades\|\|0\)>0 && \(b\._nadeCd\|\|0\)<=0 && tgt && !\(typeof matchWarmup!=='undefined' && matchWarmup>0\) && !\(b\._reactT>0\)/.test(ub),
   'gated on stock, cooldown, warmup and the human reaction beat');
-assert(/nades:2, _nadeCd:4\+Math\.random\(\)\*5/.test(src), 'bots spawn with 2 grenades, staggered first use');
-assert(/b\.nades=2; b\._nadeCd=4\+Math\.random\(\)\*5; b\._crouch=false;/.test(ub), 'respawn refills the stock and stands the bot up');
+assert(/nades:\(MP_RULES\.nades===0\?0:2\), _nadeCd:4\+Math\.random\(\)\*5/.test(src), 'bots spawn with 2 grenades (none when the host disables them, build 1014), staggered first use');
+assert(/b\.nades=\(MP_RULES\.nades===0\?0:2\); b\._nadeCd=4\+Math\.random\(\)\*5; b\._crouch=false;/.test(ub), 'respawn refills the stock (rule-aware) and stands the bot up');
 
 // ---- PvP blast damage in explodeGrenade ----
 const eg = extractFunction('explodeGrenade', src);

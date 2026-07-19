@@ -1143,6 +1143,11 @@
           <div class="mpActions"><button id="mpCP" class="mpBtn duel">Host KOTH</button><span class="mpHint">first to</span><input id="mpCPScore" type="number" min="50" max="999" value="200"><span class="mpHint">pts</span></div>
         </div>
         <div class="mpActions" id="mpBotsRow" style="display:none;margin-top:6px"><span class="mpHint">add</span><input id="mpBots" type="number" min="0" max="7" value="3"><span class="mpHint">AI bots ·</span><select id="mpBotDiff" style="background:#0b1a18;color:#cfe;border:1px solid #2a5d52;border-radius:6px;padding:3px 6px;font:inherit;cursor:pointer"><option value="recruit">Recruit</option><option value="regular" selected>Regular</option><option value="veteran">Veteran</option><option value="elite">Elite</option></select></div>
+        <div id="mpRulesRow" style="display:none;margin-top:8px;text-align:left;border-top:1px solid #1d2b32;padding-top:8px">
+          <div class="mpHint" style="letter-spacing:1.5px">MATCH RULES</div>
+          <div id="mpWepChecks" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:5px"></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:7px"><span class="mpHint">start grenades</span><input id="mpNades" type="number" min="0" max="6" value="2" style="width:48px"><span class="mpHint">each (0 = none, bots too)</span></div>
+        </div>
       </div>
     </div>
     <div id="mpStatus"></div>
@@ -11469,10 +11474,14 @@ function refillAllWeapons(){
   for(const k in WEAPONS){ const w=WEAPONS[k]; w.mag=w.magSize; w.reserve=w.reserveMax; }
 }
 // Duel loadout: hand the player all three weapons fully loaded (duels are a gunfight, not an economy).
-function giveDuelLoadout(){ owned=['pistol','rifle','smg','shotgun','sniper','launcher','crowbar']; curWep='rifle'; refillAllWeapons(); reloading=false; applyWeaponAim('rifle'); applyWeaponMuzzle('rifle'); }
+function giveDuelLoadout(){
+  let l=['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'].filter(k=>typeof _allowedWep!=='function'||_allowedWep(k));   // build 1014: host match rules trim the arsenal
+  if(!l.length) l=['pistol','crowbar'];
+  owned=l; curWep=l.find(k=>k!=='crowbar')||l[0]; refillAllWeapons(); reloading=false; applyWeaponAim(curWep); applyWeaponMuzzle(curWep); }
 
 function switchWeapon(key){
   if(!owned.includes(key) || key===curWep || reloading) return;
+  if(typeof _allowedWep==='function' && !_allowedWep(key)) return;   // build 1014: host match rules
   curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim('equip', 320);   // third-person draw/equip pose
   _drawUntil = performance.now() + DRAW_MS;   // build 965: the viewmodel rises before the trigger works
   showWeaponModel(key);   // show this weapon's own viewmodel (loads on first use)
@@ -14303,8 +14312,8 @@ function spawnBots(n){
     if(_cfg){ NET.charById[id]=_cfg; for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'char', from:id, cfg:_cfg}); }catch(e){} } }
     bots.push({ id, team, name:nm, mesh, pos:new THREE.Vector3(sp.x,(sp.y||0),sp.z), yaw:sp.yaw, hp:D.hp, maxHp:D.hp, dead:false, respawnT:0, fireCd:Math.random()*0.6, strafe:Math.random()<0.5?1:-1, retargetT:0, target:null, vy:0, evx:0, evz:0, grounded:true,
       aiState:'engage', aiT:0, lkp:null, lkpFresh:0, sawTgt:false, flankSide:Math.random()<0.5?1:-1,
-      nades:2, _nadeCd:4+Math.random()*5,   // build 1006: a small grenade stock per life; staggered first throw
-      wep: (function(){ const _w=['rifle','rifle','smg','shotgun','pistol'].filter(k=>WEAPONS[k]); return _w.length?_w[(Math.random()*_w.length)|0]:'rifle'; })(),   // build 1012: the gun it visibly holds (rifle-weighted)
+      nades:(MP_RULES.nades===0?0:2), _nadeCd:4+Math.random()*5,   // build 1006/1014: stock per life; none when the host disables grenades
+      wep: (function(){ const _w=['rifle','rifle','smg','shotgun','pistol'].filter(k=>WEAPONS[k] && _allowedWep(k)); return _w.length?_w[(Math.random()*_w.length)|0]:(['pistol','rifle','smg','shotgun','sniper','launcher'].find(k=>WEAPONS[k]&&_allowedWep(k))||'crowbar'); })(),   // build 1012: the gun it visibly holds (rifle-weighted)
       // personality: aggression (push vs hold), bravery (low hp before retreat), preferred engage distance
       aggr:0.4+Math.random()*0.6, bravery:0.18+Math.random()*0.22, prefRange:6+Math.random()*9 });
     if(teamMode()) NET.teams[id]=team;
@@ -14484,7 +14493,7 @@ function updateBots(dt){
         if(b._dieT > fadeStart){ const k=Math.max(0,1-(b._dieT-fadeStart)/0.7); b.mesh.traverse(o=>{ if(o.isMesh && o.material){ const ms=Array.isArray(o.material)?o.material:[o.material]; ms.forEach(m=>{ m.transparent=true; m.opacity=k; }); } }); }
         if(b._dieT >= 2.5){ b.mesh.visible=false; b._dying=false; }
       }
-      if(b.respawnT<=0){ const sp=randomSpawn(); b.pos.set(sp.x,(sp.y||0),sp.z); b.vy=0; b.evx=0; b.evz=0; b.grounded=true; b.yaw=sp.yaw; b.hp=b.maxHp; b.dead=false; b.aiState='engage'; b.aiT=0; b.lkp=null; b.lkpFresh=0; b.sawTgt=false; b._stuckT=0; b.path=null; b.pathT=0; b._dying=false; b._dieT=0; b._air=null; b.nades=2; b._nadeCd=4+Math.random()*5; b._crouch=false;
+      if(b.respawnT<=0){ const sp=randomSpawn(); b.pos.set(sp.x,(sp.y||0),sp.z); b.vy=0; b.evx=0; b.evz=0; b.grounded=true; b.yaw=sp.yaw; b.hp=b.maxHp; b.dead=false; b.aiState='engage'; b.aiT=0; b.lkp=null; b.lkpFresh=0; b.sawTgt=false; b._stuckT=0; b.path=null; b.pathT=0; b._dying=false; b._dieT=0; b._air=null; b.nades=(MP_RULES.nades===0?0:2); b._nadeCd=4+Math.random()*5; b._crouch=false;
         if(b.mesh){ b.mesh.visible=true; b.mesh.traverse(o=>{ if(o.isMesh && o.material){ const ms=Array.isArray(o.material)?o.material:[o.material]; ms.forEach(m=>{ m.opacity=1; }); } }); b.mesh.position.set(sp.x,(sp.y||0),sp.z); if(typeof setEnemyAnimState==='function') setEnemyAnimState(b.mesh,'idle'); } } continue; }
     b.retargetT-=dt;
     if(b.retargetT<=0 || !_botTargetAlive(b.target)){ b.target=_botAcquire(b); b.retargetT=0.4+Math.random()*0.3; }
@@ -14835,7 +14844,7 @@ function duelRespawn(){
   const sp = randomSpawn();
   player.hp = player.maxHp; _ownEvt=null; _lastDieVariant='die'; _ownIdleT=0; _ownFidgetAt=0; _ownFidgetUntil=0; _ownPrevYaw=null; _ownPrevCrouch=false; player.pos.set(sp.x, (sp.y!=null?sp.y:terrainHeightAt(sp.x, sp.z))+EYE, sp.z); player.vel.set(0,0,0);
   player.yaw = sp.yaw; player.pitch = 0;
-  refillAllWeapons(); buffs.shield=0;
+  refillAllWeapons(); buffs.shield=0; if(typeof MP_RULES!=='undefined') grenadeCount=MP_RULES.nades;   // build 1014: grenades refill to the host-set count each life
   const ov=document.getElementById('overlay'); if(ov) ov.classList.add('hidden');
   updateHUD();
   try{ tryPointerLock(); }catch(e){}
@@ -16455,6 +16464,7 @@ function handleHostMsg(msg){
     if(msg.sfTok){ try{ const t=_sfUnpack(msg.sfTok); if(t) sfSetSessionToken(t); }catch(e){} }   // borrow the host's Sketchfab token for this session so the level's models load
     if(msg.crosshair){ NET.crosshair = msg.crosshair; if(typeof applyCrosshair==='function') applyCrosshair(msg.crosshair); }   // use the host's authored crosshair
     NET.charById = Object.assign({}, msg.chars||{}); if(msg.char) NET.charById[0]=msg.char;   // host + existing players' characters
+    if(msg.rules && typeof _applyMpRules==='function') _applyMpRules(msg.rules);   // build 1014: the host's match rules bind this client too
     if(msg.sounds) NET.pendingSounds=msg.sounds;
     if(msg.music!=null) NET.pendingMusic=msg.music;
     netStatus('Connected'); showRoomBadge(NET.roomCode);
@@ -16515,12 +16525,44 @@ function netReset(){
   NET.enemyMeshes={}; NET.coinMeshes={};
   NET.sentProps.clear();
 }
+// ---- build 1014: host match rules — allowed guns + starting grenades, for hosted PvP only ----
+let MP_RULES = { weps:null, nades:2 };   // weps null = every gun allowed
+try{ const _r=JSON.parse(localStorage.getItem('breach_mp_rules')||'null'); if(_r && typeof _r==='object'){ MP_RULES.nades=Math.max(0, Math.min(6, parseInt(_r.nades,10)||0)); MP_RULES.weps=Array.isArray(_r.weps)?_r.weps.filter(k=>typeof k==='string').slice(0,12):null; if(MP_RULES.weps && !MP_RULES.weps.length) MP_RULES.weps=null; } }catch(e){}
+function _allowedWep(k){
+  const w=WEAPONS[k]; if(!w) return false;
+  if(k==='crowbar' || k==='hands' || w.melee) return true;   // melee is never banned
+  if(NET.mode==='off' || !pvpMode()) return true;            // rules bind hosted PvP matches only
+  return !MP_RULES.weps || MP_RULES.weps.indexOf(k)>=0;
+}
+function _renderMpRules(){
+  const host=document.getElementById('mpWepChecks'); if(!host) return; host.innerHTML='';
+  for(const k of ['pistol','rifle','smg','shotgun','sniper','launcher']){ if(!WEAPONS[k]) continue;
+    const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:5px;color:#cfeee2;font-size:11px;letter-spacing:1px;cursor:pointer';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.dataset.wep=k; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent)';
+    cb.checked=!MP_RULES.weps || MP_RULES.weps.indexOf(k)>=0;
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(WEAPONS[k].name));
+    host.appendChild(lab); }
+  const ni=document.getElementById('mpNades'); if(ni) ni.value=MP_RULES.nades;
+}
+function _readMpRules(){
+  const boxes=[...document.querySelectorAll('#mpWepChecks input[type=checkbox]')];
+  let weps=boxes.filter(b=>b.checked).map(b=>b.dataset.wep);
+  if(!weps.length || weps.length===boxes.length) weps=null;   // none/all checked -> no restriction
+  const ni=document.getElementById('mpNades'); const nades=Math.max(0, Math.min(6, parseInt(ni&&ni.value,10)||0));
+  return { weps, nades };
+}
+function _applyMpRules(r){ try{
+  const w=Array.isArray(r.weps)?r.weps.filter(k=>typeof k==='string' && WEAPONS[k]).slice(0,12):null;
+  MP_RULES.weps=(w && w.length)?w:null;
+  MP_RULES.nades=Math.max(0, Math.min(6, parseInt(r.nades,10)||0));
+}catch(e){} }
 function hostStart(code, mode, killTarget){
   NET.mode='host'; NET.myId=0; NET.roomCode=code; NET.nextId=1;
   netIdPrefix='h'; seedPropSync();   // new props the host adds get 'h-' ids; existing props are already known to joiners via the welcome level
   NET.gameMode = mode || 'coop';
   { const bi=document.getElementById('mpBots'); let bn=parseInt(bi&&bi.value,10); NET.botCount=(NET.gameMode==='duel')?0:((bn>=0&&bn<=7)?bn:0); }
   { const di=document.getElementById('mpBotDiff'); if(di && BOT_DIFF[di.value]){ NET.botDiff=di.value; try{ localStorage.setItem('breach_botdiff', di.value); }catch(e){} } }   // duel is always 1v1, no bots
+  if(pvpMode()){ const _r=_readMpRules(); MP_RULES.weps=_r.weps; MP_RULES.nades=_r.nades; try{ localStorage.setItem('breach_mp_rules', JSON.stringify(_r)); }catch(e){} }   // build 1014: lock in the host's match rules
   if(killTarget!=null) NET.killTarget = killTarget;
   NET.duelScore = {0:0};
   NET.teams = {0:0}; NET.team = 0;   // host starts on RED in team modes
@@ -16538,7 +16580,7 @@ function hostStart(code, mode, killTarget){
       // If this level uses Sketchfab models and we have a token, lend it to the joiner so the models load even
       // if they have no Sketchfab account of their own. Obfuscated (not encrypted) — they don't keep it.
       let sfTok; try{ if(_levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
-      conn.send({t:'welcome', id:conn._pid, mode:NET.gameMode, killTarget:NET.killTarget, level, sfTok, crosshair:gameCfg.crosshair, sounds:audioSettings.sounds, music:audioSettings.musicUrl, teams:NET.teams, yourTeam:(teamMode()?NET.teams[conn._pid]:undefined), char:myCharCfg(), chars:Object.assign({}, NET.charById), phase:NET.phase});
+      conn.send({t:'welcome', id:conn._pid, mode:NET.gameMode, killTarget:NET.killTarget, level, sfTok, crosshair:gameCfg.crosshair, sounds:audioSettings.sounds, music:audioSettings.musicUrl, teams:NET.teams, yourTeam:(teamMode()?NET.teams[conn._pid]:undefined), char:myCharCfg(), chars:Object.assign({}, NET.charById), rules:{ weps:MP_RULES.weps, nades:MP_RULES.nades }, phase:NET.phase});
       netStatus('Player joined ('+Object.keys(NET.conns).length+' connected)');
       if(pvpMode()) broadcastDuelScore();
       if(teamMode()){ broadcastTeams(); applyTeamColors(); }
@@ -17453,7 +17495,7 @@ const ITEM_POOL = [
   { id:'crowbar', name:'CROWBAR', desc:'Heavy melee — big knockback, no ammo', cost:140, act:()=>giveWeapon('crowbar'), oneTime:true },
   { id:'ammo',    name:'AMMO CRATE',    desc:'Refill current weapon ammo',  cost:50,  act:()=>{ const w=W(); w.reserve=w.reserveMax; updateHUD(); } },
 ];
-function giveWeapon(key){ if(gameCfg.unarmed && !gameCfg.allowPickup && key!=='hands' && !(WEAPONS[key]&&WEAPONS[key].fists)) return; if(!owned.includes(key)){ owned.push(key); } switchWeapon(key); }   // build 672: a strict unarmed level refuses guns
+function giveWeapon(key){ if(typeof _allowedWep==='function' && !_allowedWep(key)){ if(typeof toast==='function') toast('The host disabled that weapon for this match'); return; } if(gameCfg.unarmed && !gameCfg.allowPickup && key!=='hands' && !(WEAPONS[key]&&WEAPONS[key].fists)) return; if(!owned.includes(key)){ owned.push(key); } switchWeapon(key); }   // build 672: a strict unarmed level refuses guns
 
 const chestGeo = new THREE.BoxGeometry(1.6, 1.1, 1.1);
 const chestMat = new THREE.MeshStandardMaterial({ color:0x3a2a10, emissive:0xffaa00, emissiveIntensity:0.5, metalness:0.5, roughness:0.5 });
@@ -19522,7 +19564,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1013 · 2026-07-19';
+const BUILD_VERSION = 'build 1014 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31196,6 +31238,7 @@ function startGame(){
   if(typeof spawnPowerups==='function') spawnPowerups();   // lay out map powerups for this run
   if(typeof preloadVfx==='function') preloadVfx();   // warm the flipbook VFX textures (no-op if already loaded)
   if(pvpMode()) credits = 150;   // starting stipend so the economy is usable from the first life
+  if(pvpMode() && typeof MP_RULES!=='undefined'){ grenadeCount = MP_RULES.nades; }   // build 1014: host-set starting grenades (0 disables them)
   buffs.damage=0; buffs.speed=0; buffs.shield=0;
   // reset aim/shake state
   firing=false; ads=false; adsBlend=0; shake=0; if(typeof _killTimes!=='undefined') _killTimes.length=0; if(typeof inventory!=='undefined'){ inventory.length=0; if(typeof closeInventory==='function') closeInventory(); }
@@ -31624,7 +31667,9 @@ function bindMenu(){
         btns.forEach(x=>x.classList.toggle('on', x===b));
         const m=b.dataset.mode;
         panes.forEach(p=>p.classList.toggle('on', p.dataset.pane===m));
-        if(botsRow) botsRow.style.display=(m==='duel'||m==='ffa'||m==='tdm'||m==='koth')?'flex':'none';
+        const _vs=(m==='duel'||m==='ffa'||m==='tdm'||m==='koth');
+        if(botsRow) botsRow.style.display=_vs?'flex':'none';
+        { const rulesRow=document.getElementById('mpRulesRow'); if(rulesRow){ rulesRow.style.display=_vs?'block':'none'; if(_vs && typeof _renderMpRules==='function') _renderMpRules(); } }
       }; });
     }
   }

@@ -14,15 +14,18 @@ assert(/if\(b\.mesh && \(b\.mesh\.userData\.hasModel \|\| b\.mesh\.userData\.vis
 assert(/if\(rp\.mesh\.userData\.hasModel \|\| rp\.mesh\.userData\.visual\) attachAvatarGun\(rp\.mesh, rp\.wep\|\|'rifle', rp\.grip\|\|null\);/.test(src),
   'the remote-player guard this mirrors is still in place');
 
-// the loadout roll: executable — only real WEAPONS keys, rifle-weighted
-const m = src.match(/wep: \(function\(\)\{ const _w=(\['rifle','rifle','smg','shotgun','pistol'\])\.filter\(k=>WEAPONS\[k\]\); return _w\.length\?_w\[\(Math\.random\(\)\*_w\.length\)\|0\]:'rifle'; \}\)\(\)/);
-assert(m, 'per-bot weapon rolled at spawn');
-const roll = new Function('WEAPONS', 'const _w=' + m[1] + '.filter(k=>WEAPONS[k]); return _w.length?_w[(Math.random()*_w.length)|0]:"rifle";');
-{ const W = { rifle:{}, smg:{}, shotgun:{}, pistol:{} };
-  const seen = new Set(); for (let i = 0; i < 200; i++) seen.add(roll(W));
+// the loadout roll: executable — only real+ALLOWED keys (build 1014 host match rules), rifle-weighted
+const m = src.match(/wep: \(function\(\)\{ const _w=(\['rifle','rifle','smg','shotgun','pistol'\])\.filter\(k=>WEAPONS\[k\] && _allowedWep\(k\)\); return _w\.length\?_w\[\(Math\.random\(\)\*_w\.length\)\|0\]:\(\['pistol','rifle','smg','shotgun','sniper','launcher'\]\.find\(k=>WEAPONS\[k\]&&_allowedWep\(k\)\)\|\|'crowbar'\); \}\)\(\)/);
+assert(m, 'per-bot weapon rolled at spawn (rule-aware)');
+const roll = new Function('WEAPONS','_allowedWep',
+  "const _w=['rifle','rifle','smg','shotgun','pistol'].filter(k=>WEAPONS[k] && _allowedWep(k)); return _w.length?_w[(Math.random()*_w.length)|0]:(['pistol','rifle','smg','shotgun','sniper','launcher'].find(k=>WEAPONS[k]&&_allowedWep(k))||'crowbar');");
+{ const W = { rifle:{}, smg:{}, shotgun:{}, pistol:{} }, all = () => true;
+  const seen = new Set(); for (let i = 0; i < 200; i++) seen.add(roll(W, all));
   assert(seen.has('rifle') && seen.size >= 3, 'the mix actually varies across bots');
   for (const w of seen) assert(W[w], 'only keys that exist in WEAPONS'); }
-eq(roll({}), 'rifle', 'a level with no matching weapons still defaults sanely');
+{ const W = { rifle:{}, smg:{}, sniper:{} }, onlySniper = (k) => k === 'sniper';
+  eq(roll(W, onlySniper), 'sniper', 'host rules bind the cosmetic roll (sniper-only match -> bots hold sniper)'); }
+eq(roll({}, () => true), 'crowbar', 'a level with no matching weapons still defaults sanely');
 
 // attachAvatarGun stays cheap on repeat calls (the per-frame no-op path)
 const ag = extractFunction('attachAvatarGun', src);

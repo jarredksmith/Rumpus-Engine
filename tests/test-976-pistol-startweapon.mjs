@@ -22,7 +22,7 @@ assert(/pistol: \{ c:0x8fb2ff, label:'PISTOL' \}/.test(src), 'its own pickup tin
 assert(/const WEAPON_PICKUP_KINDS = \{ pistol:1,/.test(src), 'a pistol pickup grants the weapon');
 assert(/\['pistol','Pistol'\],\['rifle','Rifle'\]/.test(src), 'the editor pickup dropdown offers it');
 assert(/const weps=\['pistol','rifle','smg','shotgun','sniper','launcher'\]/.test(src), 'it can appear in auto-laid-out weapon pickups');
-assert(/owned=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\]/.test(src), 'duels hand it out too');
+assert(/let l=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\]\.filter/.test(src), 'duels hand it out too');
 
 // ---- per-level starting weapon ----
 assert(/startWeapon: \(savedLevel && savedLevel\.game && typeof savedLevel\.game\.startWeapon==='string'\) \? savedLevel\.game\.startWeapon : 'rifle'/.test(src),

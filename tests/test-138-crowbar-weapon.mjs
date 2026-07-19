@@ -16,7 +16,7 @@ assert(/if\(now - _meleeT < \(wep \? 0 : MELEE_CD\)\) return;/.test(m), 'weapon 
 assert(/botHurt\(best, DMG,/.test(m) && /if\(dist>RANGE\) return -1;/.test(m), 'damage + range use the parameterized values');
 
 assert(/id:'crowbar'.*giveWeapon\('crowbar'\), oneTime:true/.test(src), 'crowbar buyable in the shop');
-assert(/owned=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\];/.test(src), 'duel loadout includes the crowbar');
+assert(/let l=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\]\.filter/.test(src), 'duel loadout includes the crowbar');
 
 const hud = extractFunction('updateHUD');
 assert(/w\.melee \? '\u221e'/.test(hud) && /w\.melee \? 'MELEE'/.test(hud), 'HUD shows a melee indicator instead of ammo');

@@ -11,7 +11,7 @@ assert(/ADS_AIM\.set\(a\.x,a\.y,a\.z\); ADS_ROT\.set\(a\.rx\*Math\.PI\/180/.test
 const sw = extractFunction('switchWeapon');
 assert(/applyWeaponAim\(key\);/.test(sw), 'switching weapons loads its aim');
 assert(/editorActive==='aim' && editorTargets\.aim\.syncFromWeapon/.test(sw), 'editor aim tab re-syncs on switch');
-assert(/applyWeaponAim\('rifle'\)/.test(extractFunction('giveDuelLoadout')), 'duel loadout applies rifle aim');
+assert(/applyWeaponAim\(curWep\)/.test(extractFunction('giveDuelLoadout')), 'duel loadout applies aim for the equipped gun (build 1014: first ALLOWED gun under host match rules)');
 
 // editor aim target
 assert(/perWeapon: true,\s*syncFromWeapon\(\)\{ Object\.assign\(this\.state, getWeaponAim\(curWep\)\); \}/.test(src), 'aim target is per-weapon + syncs');

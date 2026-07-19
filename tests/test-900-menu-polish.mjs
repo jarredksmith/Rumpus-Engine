@@ -24,7 +24,7 @@ eq((html.match(/data-mode="/g)||[]).length, 6, 'six mode tabs');
 for(const m of ['coop','race','duel','ffa','tdm','koth']) assert(html.includes('data-pane="'+m+'"'), m+' pane exists');
 for(const id of ['mpHost','mpHostRace','mpDuel','mpFFA','mpTDM','mpCP','mpKills','mpFFAKills','mpTDMKills','mpCPScore','mpBots','mpBotDiff']) assert(html.includes('id="'+id+'"'), id+' still wired');
 assert(/<button id="mpHostRace" class="mpBtn coop"[^>]*>Host race<\/button>/.test(html), 'the Host race button shape is untouched');
-assert(/const tabs=document\.getElementById\('mpModeTabs'\);/.test(src) && /botsRow\.style\.display=\(m==='duel'\|\|m==='ffa'\|\|m==='tdm'\|\|m==='koth'\)\?'flex':'none';/.test(src),
+assert(/const tabs=document\.getElementById\('mpModeTabs'\);/.test(src) && /const _vs=\(m==='duel'\|\|m==='ffa'\|\|m==='tdm'\|\|m==='koth'\);/.test(src) && /botsRow\.style\.display=_vs\?'flex':'none';/.test(src),
   'tabs swap panes; bots only for versus modes');
 
 // (3) lobby steps
