@@ -11,7 +11,7 @@ assert(/if\(b\.hp<=0\)\{ if\(_dn\)\{ b\._netHitDir=_code; b\._netHitSeq=\(\(b\._
 assert(/b\._evt = \{ slot:'hit'\+_dn, until:now\+220 \}; b\._evtCd=now\+300;\s*b\._netHitDir=_code; b\._netHitSeq=\(\(b\._netHitSeq\|\|0\)\+1\)&255;/.test(bh), 'a survived hit bumps hd/hs in lockstep with the cooldown-gated local flinch');
 
 // ---- the snapshot carries bots (incl. dead-but-dying) with hd/hs ----
-assert(/for\(const b of bots\)\{ if\(b\.dead && !b\._dying\) continue; P\.push\(\{ id:b\.id, p:\[b\.pos\.x,EYE,b\.pos\.z\], y:b\.yaw, pi:0, w:'rifle', hp:\(b\.dead\?0:b\.hp\), hd:b\._netHitDir\|\|0, hs:b\._netHitSeq\|\|0, n:b\.name \}\); \}/.test(src),
+assert(/for\(const b of bots\)\{ if\(b\.dead && !b\._dying\) continue; P\.push\(\{ id:b\.id, p:\[b\.pos\.x,EYE,b\.pos\.z\], y:b\.yaw, pi:0, w:\(b\.wep\|\|'rifle'\), hp:\(b\.dead\?0:b\.hp\), hd:b\._netHitDir\|\|0, hs:b\._netHitSeq\|\|0, n:b\.name \}\); \}/.test(src),
   'dead-but-dying bots stay in the snapshot with hp:0 + hd/hs');
 
 // ---- the client side is already wired: every P entry stores hd/hs, and absent ids prune ----

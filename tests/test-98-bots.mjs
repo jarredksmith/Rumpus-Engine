@@ -5,7 +5,7 @@ import { gameSource, extractFunction, html, done, assert } from './harness.mjs';
 const src = gameSource();
 
 assert(/let bots=\[\]; const BOT_ID_BASE=900;/.test(src), 'bots array + id base');
-assert(/function makeBot\(team, name\)/.test(src) && /function spawnBots\(n\)/.test(src) && /function botDie\(b, sx, sz\)/.test(src) && /function updateBots\(dt\)/.test(src), 'bot lifecycle fns');
+assert(/function makeBot\(team, name, cfg\)/.test(src) && /function spawnBots\(n\)/.test(src) && /function botDie\(b, sx, sz\)/.test(src) && /function updateBots\(dt\)/.test(src), 'bot lifecycle fns');
 
 const sb = extractFunction('spawnBots');
 assert(/team=\(c0<=c1\)\?0:1/.test(sb), 'bots fill the smaller team in team modes');

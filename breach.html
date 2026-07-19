@@ -14272,23 +14272,35 @@ function _cpIdOnTeam(tm){ if(NET.teams[NET.myId]===tm) return NET.myId; for(cons
 function broadcastCp(){ const m={t:'cp', o:NET.cpOwner, c:+(NET.cpCap||0).toFixed(3), ct:NET.cpCapTeam, x:NET.cpContested?1:0, s:NET.cpScore}; for(const id in NET.conns){ try{ NET.conns[id].send(m); }catch(e){} } }
 // ---------- AI bots: host-simulated PvP opponents that roam, target, shoot, die + respawn. Clients
 // see them as ordinary remote avatars (they ride the world snapshot); the host owns all their logic. ----------
-function makeBot(team, name){
-  const g=new THREE.Group(); buildAvatarVisual(g);
+function makeBot(team, name, cfg){
+  const g=new THREE.Group(); buildAvatarVisual(g, cfg||undefined);
   const label=makeNameSprite(name, teamMode()?team:undefined); label.position.y=2.5; g.add(label); g.userData.label=label;
   g.userData._name=name;
   if(teamMode() && team>=0) tintAvatar(g, team);
   scene.add(g); return g;
 }
 function botById(id){ for(const b of bots){ if(b.id===+id) return b; } return null; }
-function clearBots(){ for(const b of bots){ if(b.mesh) scene.remove(b.mesh); if(NET.teams) delete NET.teams[b.id]; if(NET.duelScore) delete NET.duelScore[b.id]; } bots=[]; }
+function clearBots(){ for(const b of bots){ if(b.mesh) scene.remove(b.mesh); if(NET.teams) delete NET.teams[b.id]; if(NET.duelScore) delete NET.duelScore[b.id]; if(NET.charById) delete NET.charById[b.id]; } bots=[]; }
+// build 1013: bots wear random characters — roster models when the level has them, color
+// presets otherwise. NET.charById makes the choice visible to clients + late joiners (welcome).
+function _botCharPool(){
+  const out=[];
+  try{ for(const c of (charRoster||[])){ if(c && (c.url||c.thumb)) out.push(_sanitizeCharCfg(c)); } }catch(e){}
+  if(!out.length){ for(let i=0;i<CHARACTERS.length;i++) out.push({ tint: CHARACTERS[i].color });
+  }
+  return out;
+}
 function spawnBots(n){
   clearBots(); if(!(n>0)) return;
   const D=botDiff();
+  const _pool=_botCharPool();
   for(let i=0;i<n;i++){
     const id=BOT_ID_BASE+i; let team=-1;
     if(teamMode()){ let c0=(NET.team===0?1:0), c1=(NET.team===1?1:0); for(const b of bots){ if(b.team===0)c0++; else if(b.team===1)c1++; } team=(c0<=c1)?0:1; }
     const nm=BOT_NAMES[i%BOT_NAMES.length]+(i>=BOT_NAMES.length?(' '+(i+1)):'');
-    const sp=randomSpawn(); const mesh=makeBot(team, nm); mesh.userData.botId=id; mesh.position.set(sp.x,(sp.y||0),sp.z); mesh.rotation.y=sp.yaw;
+    const _cfg=_pool.length?_pool[(Math.random()*_pool.length)|0]:null;
+    const sp=randomSpawn(); const mesh=makeBot(team, nm, _cfg); mesh.userData.botId=id; mesh.position.set(sp.x,(sp.y||0),sp.z); mesh.rotation.y=sp.yaw;
+    if(_cfg){ NET.charById[id]=_cfg; for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'char', from:id, cfg:_cfg}); }catch(e){} } }
     bots.push({ id, team, name:nm, mesh, pos:new THREE.Vector3(sp.x,(sp.y||0),sp.z), yaw:sp.yaw, hp:D.hp, maxHp:D.hp, dead:false, respawnT:0, fireCd:Math.random()*0.6, strafe:Math.random()<0.5?1:-1, retargetT:0, target:null, vy:0, evx:0, evz:0, grounded:true,
       aiState:'engage', aiT:0, lkp:null, lkpFresh:0, sawTgt:false, flankSide:Math.random()<0.5?1:-1,
       nades:2, _nadeCd:4+Math.random()*5,   // build 1006: a small grenade stock per life; staggered first throw
@@ -16060,7 +16072,7 @@ function serializeWorld(){
   const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar() }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving
   for(const id in NET.players){ const rp=NET.players[id];
     P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1), cl:(rp.cl||0), c:(rp.car||undefined) }); }
-  for(const b of bots){ if(b.dead && !b._dying) continue; P.push({ id:b.id, p:[b.pos.x,EYE,b.pos.z], y:b.yaw, pi:0, w:'rifle', hp:(b.dead?0:b.hp), hd:b._netHitDir||0, hs:b._netHitSeq||0, n:b.name }); }   // build 502: keep dead-but-dying bots in the snapshot (+ hd/hs) so clients play the directional death, then they prune on respawn
+  for(const b of bots){ if(b.dead && !b._dying) continue; P.push({ id:b.id, p:[b.pos.x,EYE,b.pos.z], y:b.yaw, pi:0, w:(b.wep||'rifle'), hp:(b.dead?0:b.hp), hd:b._netHitDir||0, hs:b._netHitSeq||0, n:b.name }); }   // build 502: keep dead-but-dying bots in the snapshot (+ hd/hs) so clients play the directional death, then they prune on respawn
   const E=enemies.map(e=>({ id:e.id, p:[e.mesh.position.x,e.mesh.position.y,e.mesh.position.z], hd:e._netHitDir||0, hs:e._netHitSeq||0 }));
   const C=coins.map(c=>({ id:c.id, p:[c.mesh.position.x,c.mesh.position.z] }));
   // dynamic physics props (position + orientation) so clients see them roll
@@ -19510,7 +19522,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1012 · 2026-07-19';
+const BUILD_VERSION = 'build 1013 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

@@ -9,7 +9,7 @@ const src = gameSource();
 // (1) weapon key is a string over the wire
 assert(/w:curWep,/.test(src), 'players send the weapon key string, not an index');
 assert(!/w:owned\.indexOf\(curWep\)/.test(src), 'the old numeric weapon index is gone');
-assert(/y:b\.yaw, pi:0, w:'rifle',/.test(src), 'bots send a valid weapon key string');
+assert(/y:b\.yaw, pi:0, w:\(b\.wep\|\|'rifle'\),/.test(src), 'bots send their real weapon key (build 1013: clients render the gun each bot actually holds)');
 
 // (2) the gun is size-normalized on load and the grip scale multiplies that factor
 assert(/gun\.userData\.norm=\(_md>1e-4\)\?\(0\.62\/_md\):1;/.test(src), 'the gun is size-normalized on load');
