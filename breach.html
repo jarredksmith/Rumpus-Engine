@@ -1108,6 +1108,7 @@
     <div class="mpActions" style="margin-top:12px;justify-content:center">
       <button id="lobbyLeave" class="mpBtn">Leave</button>
     </div>
+    <div id="lobbyKeys" class="mpHint" style="text-align:center;margin-top:8px;letter-spacing:1px"></div>
   </div>
 </div>
 <div id="perfHud" class="hidden"></div>
@@ -16422,7 +16423,7 @@ function enterLobby(){   // host
   const rdy=document.getElementById('lobbyReady'); if(rdy) rdy.classList.add('hidden');   // build 552: the host starts the match, so no Ready button for them
   const bw=document.getElementById('lobbyBots'), bn=document.getElementById('lobbyBotN');
   if(bw && bn){ if(pvpMode() && NET.gameMode==='duel'){ bw.classList.add('hidden'); } else { bw.classList.remove('hidden'); bn.value=NET.botCount||0; } }
-  updateCharBtnLabel(); openModal('lobby'); refreshLobby(); announceRoom(); startLobbyKeepalive();
+  updateCharBtnLabel(); _lobbyKeysHint(); openModal('lobby'); refreshLobby(); announceRoom(); startLobbyKeepalive();
 }
 function refreshLobby(){ if(NET.mode!=='host') return; renderLobby(lobbyRoster()); broadcastLobby(); }
 function broadcastLobby(){ if(NET.mode!=='host') return; const roster=lobbyRoster(); for(const id in NET.conns){ try{ NET.conns[id].send({t:'lobby', mode:NET.gameMode, players:roster}); }catch(e){} } }
@@ -16434,7 +16435,7 @@ function showClientLobby(){
   const sb=document.getElementById('lobbyStart'); if(sb) sb.classList.add('hidden');
   const bw=document.getElementById('lobbyBots'); if(bw) bw.classList.add('hidden');
   if(NET.pendingLevel && Array.isArray(NET.pendingLevel.roster)) charRoster = NET.pendingLevel.roster.map(_sanitizeCharCfg);   // make the host's character models pickable while waiting in the lobby
-  updateCharBtnLabel();
+  updateCharBtnLabel(); _lobbyKeysHint();
   openModal('lobby');
   if(NET.lobbyRoster) renderLobby(NET.lobbyRoster);
   _imReady=false; _updateReadyBtn();
@@ -16443,6 +16444,26 @@ function showClientLobby(){
   // they confirm a choice (so a first-timer with no saved character can't skip past it without noticing).
   openCharPicker();
 }
+// build 1004: lobby keyboard flow. Enter = READY/START, Esc = leave (confirmed). The hint line
+// says so on keyboard platforms; touch shows nothing (its buttons ARE the interface).
+function _lobbyKeysHint(){
+  const lk=document.getElementById('lobbyKeys'); if(!lk) return;
+  lk.textContent = (typeof isTouch!=='undefined' && isTouch) ? '' :
+    (NET.mode==='host' ? 'Enter \u2014 start \u00b7 Esc \u2014 leave' : 'Enter \u2014 ready \u00b7 Esc \u2014 leave');
+}
+addEventListener('keydown', (e)=>{
+  const lb=document.getElementById('lobby'); if(!lb || lb.classList.contains('hidden')) return;
+  const cs=document.getElementById('charSelect'); if(cs && cs.classList.contains('open')) return;   // the select screen above owns its keys
+  const ae=document.activeElement; if(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;   // typing the bot count
+  if(e.code==='Enter' || e.code==='NumpadEnter'){
+    if(NET.mode==='host'){ if(typeof startMatch==='function') startMatch(); }
+    else if(typeof setReady==='function') setReady(!_imReady);
+    e.preventDefault();
+  } else if(e.code==='Escape'){
+    uiConfirm('Leave the lobby?', ()=>{ unannounceRoom(); location.reload(); }, 'Leave');
+    e.preventDefault();
+  }
+});
 let _charChosen=false, _imReady=false;   // build 552: client lobby gating — must choose a character before READY
 function _updateReadyBtn(){
   { const cb=document.getElementById('lobbyCharBtn'); if(cb) cb.classList.toggle('stepDone', _charChosen); }   // build 900: step 1's pulse stops once a character is picked
@@ -19255,7 +19276,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1003 · 2026-07-19';
+const BUILD_VERSION = 'build 1004 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
