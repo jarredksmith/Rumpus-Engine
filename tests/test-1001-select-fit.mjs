@@ -12,10 +12,12 @@ assert(/#csCards \{ flex-wrap:wrap; overflow-x:visible; overflow-y:auto; justify
   'the card strip wraps into a grid on the landscape side panel');
 assert(/if\(Math\.abs\(w-_csW\)>2 \|\| Math\.abs\(h-_csH\)>2\)\{ _csW=w; _csH=h; _invR\.setSize\(w,h,false\); _inspCam\.aspect=w\/h; _inspCam\.updateProjectionMatrix\(\); \}/.test(src),
   'the canvas live-fits the holder every tick (no stretch after late layout or rotation)');
-assert(/const dist=Math\.max\(1\.25\/Math\.tan\(fovV\/2\), 1\.0\/\(Math\.tan\(fovV\/2\)\*Math\.max\(0\.3,_inspCam\.aspect\)\)\) \+ 0\.5;/.test(src),
-  'camera distance fits the ~2m avatar to BOTH viewport axes — the model fills the stage on any screen');
-assert(/_inspCam\.position\.set\(0, 1\.15, dist\); _inspCam\.lookAt\(0, 0\.98, 0\);/.test(src),
-  'framed at chest height like the reference screens');
+assert(/const dist=Math\.max\(\(H\*0\.62\)\/Math\.tan\(fovV\/2\), \(W\*0\.62\)\/\(Math\.tan\(fovV\/2\)\*Math\.max\(0\.3,_inspCam\.aspect\)\)\) \+ 0\.5;/.test(src),
+  'camera distance fits the model to BOTH viewport axes (build 1009: H/W from the REAL bounding box — the fixed 2m assumption beheaded tall models)');
+assert(/new THREE\.Box3\(\)\.setFromObject\(_csGrp\)/.test(src) && /_csFitT=0\.5;/.test(src),
+  'the box is re-measured on a 0.5s cadence (async model swaps) and smoothed');
+assert(/_inspCam\.position\.set\(0, baseY\+H\*0\.56, dist\); _inspCam\.lookAt\(0, baseY\+H\*0\.48, 0\);/.test(src),
+  'framed at chest height relative to the model\u2019s own base + height');
 assert(/hold\.onpointermove=e=>\{ if\(!drag\) return; _csRotY\+=\(e\.clientX-lx\)\*0\.012; lx=e\.clientX; \};/.test(src),
   'drag is a clean yaw turntable (the avatar stands on its feet)');
 assert(/const mx=_csGrp\.userData && _csGrp\.userData\.mixer;\s*\n\s*if\(mx\)\{ const mi=mixers\.indexOf\(mx\); if\(mi>=0\) mixers\.splice\(mi,1\); _csGrp\.userData\.mixer=null; \}/.test(src),

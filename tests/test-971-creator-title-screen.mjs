@@ -28,7 +28,7 @@ eq(run({ bg:'data:image/png;base64,'+'a'.repeat(160000) }).bg, '', 'oversized ba
 // ---- wiring: serialize + restore + editor section ----
 assert(/homepage: \(homepageCfg && homepageCfg\.on\) \? _sanitizeHomepage\(homepageCfg\) : undefined,/.test(src),
   'serializeLevel ships the block only when enabled');
-assert(/homepageCfg = _sanitizeHomepage\(level\.homepage\); if\(typeof renderHomePanel==='function'\) renderHomePanel\(\); if\(typeof _syncGameHome==='function'\) _syncGameHome\(\);/.test(src),
+assert(/homepageCfg = _sanitizeHomepage\(level\.homepage\); lobbyBgUrl = \(typeof _sanitizeLobbyBg==='function'\) \? _sanitizeLobbyBg\(level\.lobbyBg\) : ''; if\(typeof renderHomePanel==='function'\) renderHomePanel\(\); if\(typeof _syncGameHome==='function'\) _syncGameHome\(\);/.test(src),
   'restoreLevel restores (or resets) the block and refreshes panel + layer');
 assert(/sec\('Title screen', 'titlescreen', '<div id="edHomePanel"><\/div>'\)/.test(src), 'editor gets a Title screen section');
 assert(/files: {3}\['titlescreen','levelfile','campaign'\]/.test(src), '...living in the Files mode');

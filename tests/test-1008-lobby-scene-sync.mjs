@@ -43,14 +43,13 @@ assert(/_csRotY=Math\.PI\*0\.92, _csSpin=true/.test(src), 'initial yaw faces the
 assert(/_csSpin=true; _csRotY=Math\.PI\*0\.92;/.test(src), 'every preview swap resets to front-facing');
 
 // ---- the hangar scene ----
-assert(/#lobby \.modalCard::before \{[^}]*perspective\(520px\) rotateX\(60deg\)/.test(html)
-  && /#lobby \.modalCard::before \{[^}]*bottom:0; height:52%;/.test(html),
-  'perspective grid floor, near-edge anchored to the viewport bottom (a negative bottom hid the whole visible band below the screen)');
+assert(!/#lobby \.modalCard::before/.test(html) && !/lobGrid/.test(html),
+  'the grid floor was removed on field feedback (build 1009) — no dead rules left behind');
 assert(/#lobby \.modalCard::after \{[^}]*radial-gradient\(130% 100% at 50% 38%, transparent 58%, rgba\(0,0,0,\.5\)\)/.test(html), 'vignette layer');
 assert(/#lobby \.modalCard > \* \{ position:relative; z-index:1; \}/.test(html), 'content rides above the scene layers');
-assert(/@media \(prefers-reduced-motion:no-preference\)\{\s*\n\s*#lobby \.modalCard::before \{ animation:lobGrid/.test(html),
-  'grid scroll + sweep animate only for users who allow motion');
-assert(/@keyframes lobGrid/.test(html) && /@keyframes lobSweep/.test(html), 'both animations defined');
+assert(/@media \(prefers-reduced-motion:no-preference\)\{\s*\n\s*#lobby \.modalCard::after \{ animation:lobSweep/.test(html),
+  'the sweep animates only for users who allow motion');
+assert(/@keyframes lobSweep/.test(html), 'sweep animation defined');
 
 // ---- side panel ----
 assert(/<div id="lobbyMain"><div id="lobbyPlayers"><\/div><aside id="lobbySide">/.test(html), 'roster + side panel share the main row');

@@ -533,6 +533,7 @@
   #csNameWrap { text-align:center; margin:-6px 0 0; pointer-events:none; }
   #csSub { color:#7fa9b8; font-size:10px; letter-spacing:3px; }
   #csName { font-family:var(--display-font); font-size:clamp(26px,5vw,44px); color:#fff; letter-spacing:2px; text-shadow:0 2px 18px rgba(0,0,0,.65); line-height:1.1; }
+  .csGroupLab { flex:0 0 auto; align-self:stretch; display:flex; align-items:center; justify-content:center; writing-mode:vertical-rl; transform:rotate(180deg); font:800 9.5px var(--ui-font); letter-spacing:2px; color:#8fc7b6; padding:6px 2px; border-right:1px solid #22323b; margin-right:2px; }
   #csCards { display:flex; gap:10px; overflow-x:auto; padding:12px 18px 4px; -webkit-overflow-scrolling:touch; }
   .csCard { flex:0 0 auto; width:86px; cursor:pointer; border:1px solid #22323b; border-radius:10px; background:linear-gradient(180deg,#101a20,#0a1116); padding:6px; transition:transform .12s, border-color .12s, box-shadow .12s; }
   .csCard:hover { transform:translateY(-3px); }
@@ -760,16 +761,10 @@
       radial-gradient(1100px 640px at 50% 22%, #0e1a20, #05080b 78%);
     display:flex; flex-direction:column; position:relative; overflow:hidden;
     padding:calc(14px + env(safe-area-inset-top)) clamp(16px,4vw,48px) calc(12px + env(safe-area-inset-bottom)); }
-  /* build 1008: the hangar — perspective grid floor scrolling toward the viewer + a slow accent
-     sweep, all behind the content (children get z-index:1 below); reduced-motion users get it static */
-  #lobby .modalCard::before { content:''; position:absolute; left:-40%; right:-40%; bottom:0; height:52%; z-index:0; pointer-events:none;
-    background:
-      linear-gradient(rgba(var(--accent-rgb),.5) 2px, transparent 2px),
-      linear-gradient(90deg, rgba(var(--accent-rgb),.5) 2px, transparent 2px);
-    background-size:58px 58px;
-    transform:perspective(520px) rotateX(60deg); transform-origin:50% 100%;
-    -webkit-mask-image:linear-gradient(180deg, transparent 8%, #000 60%); mask-image:linear-gradient(180deg, transparent 8%, #000 60%);
-    opacity:.55; }
+  /* build 1009: grid floor removed (field feedback) — the scene keeps the accent glows, the slow
+     sweep and the vignette, plus an optional creator-supplied blurred backdrop image (below) */
+  #lobby #lobbyBgImg { position:absolute; inset:-24px; z-index:0; pointer-events:none; display:none;
+    background-size:cover; background-position:center; filter:blur(14px) brightness(.5) saturate(1.05); transform:scale(1.06); }
   #lobby .modalCard::after { content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
     background:
       radial-gradient(130% 100% at 50% 38%, transparent 58%, rgba(0,0,0,.5)),
@@ -777,10 +772,8 @@
     background-size:100% 100%, 300% 100%; }
   #lobby .modalCard > * { position:relative; z-index:1; }
   @media (prefers-reduced-motion:no-preference){
-    #lobby .modalCard::before { animation:lobGrid 9s linear infinite; }
     #lobby .modalCard::after { animation:lobSweep 13s linear infinite; }
   }
-  @keyframes lobGrid { from{ background-position:0 0, 0 0; } to{ background-position:0 46px, 0 0; } }
   @keyframes lobSweep { from{ background-position:0 0, 300% 0; } to{ background-position:0 0, -300% 0; } }
   #lobby .modalCard h2 { text-align:left; font-size:clamp(24px,4.5vw,40px); letter-spacing:5px; margin:0; }
   #lobby .lobbyCode { display:inline-block; align-self:flex-start; margin:6px 0 0; padding:7px 16px; border:1px solid rgba(var(--accent-rgb),.5); border-radius:9px;
@@ -1166,6 +1159,7 @@
 </div>
 <div id="lobby" class="modalBack hidden">
   <div class="modalCard">
+    <div id="lobbyBgImg"></div>
     <h2 id="lobbyTitle">LOBBY</h2>
     <div id="lobbyCode" class="lobbyCode"></div>
     <div class="mpDesc" id="lobbyHint">Waiting for players…</div>
@@ -15808,9 +15802,14 @@ function _renderCharThumb(cfg, swatchEl, opts){
       const url=_thumbR.domElement.toDataURL('image/png');
       _thumbScene.remove(root);
       _thumbCachePut(k, url); apply(url);
+      // build 1009: the lobby rebuilds its cards while a cold render is in flight — the apply
+      // above then lands on a detached element and the portrait never shows. The render is now
+      // cached, so one refresh re-renders synchronously from cache.
+      if(swatchEl && swatchEl.isConnected===false && opts && typeof opts.refresh==='function') opts.refresh();
     }catch(e){}
   }, ()=>{});
 }
+function _lobbyThumbRefresh(){ if(NET.phase!=='lobby') return; const rs=(NET.mode==='host')?lobbyRoster():NET.lobbyRoster; if(rs) renderLobby(rs); }
 function renderCharGrid(){ const g=document.getElementById('charGrid'); if(!g) return; g.innerHTML='';
   if(charRoster.length){
     const lab=document.createElement('div'); lab.textContent='CHARACTER'; lab.style.cssText='grid-column:1/-1;color:#7fe6cf;font-size:10px;letter-spacing:2px;margin:4px 0 1px;'; g.appendChild(lab);
@@ -15831,7 +15830,7 @@ function selectChar(i){ if(i<0||i>=CHARACTERS.length) return; myCharIdx=i; try{ 
 // to rotate; plays the model's idle clip when it ships one), name in display type, a card strip of
 // roster characters + colors, and a SELECT bar. Cards still run selectRosterChar/selectChar, so
 // multiplayer broadcast + the lobby READY gate behave exactly as before.
-let _csEl=null, _csRAF=0, _csGrp=null, _csRotY=Math.PI*0.92, _csSpin=true, _csKeyH=null, _csCur=null, _csW=0, _csH=0;
+let _csEl=null, _csRAF=0, _csGrp=null, _csRotY=Math.PI*0.92, _csSpin=true, _csKeyH=null, _csCur=null, _csW=0, _csH=0, _csFitT=0, _csFitH=0, _csFitW=0, _csFitY=0;
 function _csEntries(){
   const out=[];
   if(charRoster.length || (playerModelCfg && playerModelCfg.url)){
@@ -15851,11 +15850,14 @@ function _csPreview(e){
   if(!_ensureInspectR()) return;   // no second GL context on this device -> cards + name still work
   if(!_csGrp){ _csGrp=new THREE.Group(); _inspScene.add(_csGrp); }
   _csSpin=true; _csRotY=Math.PI*0.92;   // build 1008: start FACING the camera (was: back turned)
+  _csFitT=0; _csFitH=0; _csFitW=0; _csFitY=0;   // build 1009: re-measure the new model
   try{ buildAvatarVisual(_csGrp, myCharCfg()); }catch(err){}
 }
 function _csRenderCards(){
   const host=_csEl.querySelector('#csCards'); if(!host) return; host.innerHTML='';
+  let _lastKind=null;   // build 1009: label the two groups so models and color presets read apart
   _csEntries().forEach(e=>{
+    if(e.kind!==_lastKind){ _lastKind=e.kind; const gl=document.createElement('div'); gl.className='csGroupLab'; gl.textContent=(e.kind==='roster')?'CHARACTERS':'COLORS'; host.appendChild(gl); }
     const sel = (e.kind==='roster') ? (e.i===myRosterIdx) : (e.i===myCharIdx);
     const card=document.createElement('div'); card.className='csCard'+(sel?' sel':'');
     const sw=document.createElement('div'); sw.className='csSwatch';
@@ -15922,10 +15924,20 @@ function openCharPicker(){
       }
       if(_csSpin) _csRotY+=0.35*dt;
       if(_csGrp) _csGrp.rotation.y=_csRotY;
-      // frame the standard ~2m avatar: fit its height AND shoulders whatever the viewport aspect
+      // build 1009: frame the REAL model — the fixed ~2m assumption beheaded tall/scaled models.
+      // The bounding box is re-measured every 0.5s (the model loads async and swaps mid-view)
+      // and smoothed so the camera never pops.
+      _csFitT-=dt;
+      if(_csGrp && _csFitT<=0){ _csFitT=0.5;
+        try{ const box=new THREE.Box3().setFromObject(_csGrp);
+          if(isFinite(box.min.y) && isFinite(box.max.y) && box.max.y>box.min.y){
+            const h=Math.max(0.6, box.max.y-box.min.y), w=Math.max(0.4, box.max.x-box.min.x, box.max.z-box.min.z);
+            _csFitH=_csFitH?(_csFitH+(h-_csFitH)*0.5):h; _csFitW=_csFitW?(_csFitW+(w-_csFitW)*0.5):w; _csFitY=box.min.y; } }catch(e){}
+      }
       const fovV=_inspCam.fov*Math.PI/180;
-      const dist=Math.max(1.25/Math.tan(fovV/2), 1.0/(Math.tan(fovV/2)*Math.max(0.3,_inspCam.aspect))) + 0.5;
-      _inspCam.position.set(0, 1.15, dist); _inspCam.lookAt(0, 0.98, 0);
+      const H=_csFitH||2, W=_csFitW||0.9, baseY=_csFitY||0;
+      const dist=Math.max((H*0.62)/Math.tan(fovV/2), (W*0.62)/(Math.tan(fovV/2)*Math.max(0.3,_inspCam.aspect))) + 0.5;
+      _inspCam.position.set(0, baseY+H*0.56, dist); _inspCam.lookAt(0, baseY+H*0.48, 0);
       _invR.render(_inspScene, _inspCam);
       _csRAF=requestAnimationFrame(loop);
     };
@@ -16416,7 +16428,7 @@ function handleHostMsg(msg){
   }
   else if(msg.t==='begin'){ NET.phase='playing'; closeModal('lobby'); if(typeof closeMatchMenu==='function') closeMatchMenu(); startGame(); }
   else if(msg.t==='warmup'){ matchWarmup = (msg.secs!=null ? +msg.secs : 3); _clientWarmupHold=false; }   // build 624: host's synced start count — resyncs our countdown so 3-2-1-GO lands together
-  else if(msg.t==='lobby'){ NET.lobbyRoster=msg.players||[]; if(NET.phase==='lobby') renderLobby(NET.lobbyRoster); }
+  else if(msg.t==='lobby'){ NET.lobbyRoster=msg.players||[]; if(NET.phase==='lobby') renderLobby(NET.lobbyRoster); if(msg.bg!=null && typeof _applyLobbyBg==='function') _applyLobbyBg(msg.bg); }
   else if(msg.t==='world'){ applyWorld(msg); }
   else if(msg.t==='hurt'){ applyEnemyDamageToSelf(msg.d); }
   else if(msg.t==='credit'){ credits+=msg.v; SFX.coin(); updateHUD(); }
@@ -16539,7 +16551,7 @@ function renderLobby(roster){
     pt.dataset.bg='linear-gradient(160deg,'+hex+'40, rgba(10,16,20,0.9))';
     pt.style.backgroundImage=pt.dataset.bg;
     const cfg=(pl.id===NET.myId) ? myCharCfg() : ((NET.charById && NET.charById[pl.id]) || null);
-    if(cfg && (cfg.url||cfg.thumb) && typeof _renderCharThumb==='function') _renderCharThumb(cfg, pt, {bust:true});
+    if(cfg && (cfg.url||cfg.thumb) && typeof _renderCharThumb==='function') _renderCharThumb(cfg, pt, {bust:true, refresh:_lobbyThumbRefresh});
     row.appendChild(pt);
     const nmRow=document.createElement('div'); nmRow.style.cssText='display:flex;align-items:center;gap:6px;max-width:100%;';
     const dot=document.createElement('div'); dot.className='lobbyDot';
@@ -16591,6 +16603,11 @@ function _startLobbyTips(){
   if(_lsTipInt) clearInterval(_lsTipInt);
   _lsTipInt=setInterval(()=>{ const lb=document.getElementById('lobby'); if(!lb || lb.classList.contains('hidden')){ clearInterval(_lsTipInt); _lsTipInt=0; return; } show(); }, 6000);
 }
+// ---- build 1009: creator lobby backdrop — an https image URL carried by the level, shown
+// blurred behind the lobby for the host AND every joiner (it rides the {t:'lobby'} broadcast).
+let lobbyBgUrl = '';
+function _sanitizeLobbyBg(u){ u=String(u||'').trim(); return (/^https:\/\/[^\s"'<>]{8,300}\.(png|jpe?g|webp)(\?[^\s"'<>]{0,80})?$/i.test(u)) ? u : ''; }
+function _applyLobbyBg(u){ const el=document.getElementById('lobbyBgImg'); if(!el) return; u=_sanitizeLobbyBg(u); if(u){ el.style.backgroundImage='url("'+u+'")'; el.style.display='block'; } else { el.style.display='none'; } }
 function _lobbyTitle(){ return (pvpMode()?pvpLabel():'CO-OP')+' LOBBY'; }
 function enterLobby(){   // host
   NET.phase='lobby'; closeModal('mpModal');
@@ -16601,10 +16618,10 @@ function enterLobby(){   // host
   const rdy=document.getElementById('lobbyReady'); if(rdy) rdy.classList.add('hidden');   // build 552: the host starts the match, so no Ready button for them
   const bw=document.getElementById('lobbyBots'), bn=document.getElementById('lobbyBotN');
   if(bw && bn){ if(pvpMode() && NET.gameMode==='duel'){ bw.classList.add('hidden'); } else { bw.classList.remove('hidden'); bn.value=NET.botCount||0; } }
-  updateCharBtnLabel(); _lobbyKeysHint(); openModal('lobby'); refreshLobby(); _startLobbyTips(); announceRoom(); startLobbyKeepalive();
+  updateCharBtnLabel(); _lobbyKeysHint(); _applyLobbyBg(lobbyBgUrl); openModal('lobby'); refreshLobby(); _startLobbyTips(); announceRoom(); startLobbyKeepalive();
 }
 function refreshLobby(){ if(NET.mode!=='host') return; renderLobby(lobbyRoster()); broadcastLobby(); }
-function broadcastLobby(){ if(NET.mode!=='host') return; const roster=lobbyRoster(); for(const id in NET.conns){ try{ NET.conns[id].send({t:'lobby', mode:NET.gameMode, players:roster}); }catch(e){} } }
+function broadcastLobby(){ if(NET.mode!=='host') return; const roster=lobbyRoster(); const bg=(typeof lobbyBgUrl==='string')?lobbyBgUrl:''; for(const id in NET.conns){ try{ NET.conns[id].send({t:'lobby', mode:NET.gameMode, players:roster, bg}); }catch(e){} } }
 function showClientLobby(){
   NET.phase='lobby'; closeModal('mpModal');
   const t=document.getElementById('lobbyTitle'); if(t) t.textContent=_lobbyTitle();
@@ -19470,7 +19487,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1008 · 2026-07-19';
+const BUILD_VERSION = 'build 1009 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25913,6 +25930,7 @@ function serializeLevel(){
     stationEnabled: !!stationEnabled,   // build 654: the ammo station is optional per level
     hud: _sanitizeHud(hudCfg),   // build 665: per-level HUD theme + visibility
     homepage: (homepageCfg && homepageCfg.on) ? _sanitizeHomepage(homepageCfg) : undefined,   // build 971: creator title screen
+    lobbyBg: (typeof lobbyBgUrl==='string' && lobbyBgUrl) ? lobbyBgUrl : undefined,   // build 1009: blurred lobby backdrop
     radial: _sanitizeRadial(radialCfg),   // build 671: the in-game build/deploy menu
     player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', animLib: playerModelCfg.animLib||'', ikHold:(playerModelCfg.ikHold===false)?false:true, jointFix:_sanitizeJointFix(playerModelCfg.jointFix), state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}), grip: _sanitizeGripMap(tpGunGrips), view: _snapshotView() },   // build 977: authored chase framing + held-gun grips ship with the level (they only lived on roster characters)
     world:   Object.assign({}, worldCfg),
@@ -26451,7 +26469,7 @@ function restoreLevel(level){
   hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
   radialCfg = _sanitizeRadial(level.radial); if(typeof renderBuildMenuPanel==='function') renderBuildMenuPanel();   // build 671: per-level build menu
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
-  homepageCfg = _sanitizeHomepage(level.homepage); if(typeof renderHomePanel==='function') renderHomePanel(); if(typeof _syncGameHome==='function') _syncGameHome();   // build 971: creator title screen (absent = off)
+  homepageCfg = _sanitizeHomepage(level.homepage); lobbyBgUrl = (typeof _sanitizeLobbyBg==='function') ? _sanitizeLobbyBg(level.lobbyBg) : ''; if(typeof renderHomePanel==='function') renderHomePanel(); if(typeof _syncGameHome==='function') _syncGameHome();   // build 971: creator title screen (absent = off) + 1009 lobby backdrop
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
   // gun / aim / station
   if(level.gun){ if(level.gun.url && level.gun.url!==gunModelUrl) swapGunModel(level.gun.url); Object.assign(editorTargets.gun.state, level.gun.state||{}); editorTargets.gun.apply(); }
@@ -31692,6 +31710,12 @@ function renderHomePanel(){
     +   '<div class="row2" style="margin-top:8px"><button id="hpPublish" style="width:100%">Publish game page (instant URL)</button></div>'
     +   (h.slug?'<div class="row2" style="margin-top:6px"><button id="hpUnpub" style="width:100%;border-color:#7a2630;color:#ff9b93">Unpublish /game/'+h.slug+'</button></div>':'')
     +   '<div class="hint" id="hpPubNote" style="font-size:10px;margin:2px 0 0">'+(h.slug?('Live at /game/'+h.slug+' \u2014 publishing again updates the same URL.'):'Gets an instant, unlisted link like rumpusengine.com/game/your-game \u2014 no review, yours to share.')+'</div>'
+    + '</div>'
+    + '<div style="border-top:1px solid #1d2b32;margin-top:10px;padding-top:8px">'
+    +   '<div class="hint" style="font-size:10px;margin:0 0 2px">MULTIPLAYER LOBBY BACKDROP</div>'
+    +   '<div class="hint" style="font-size:10px;color:#7da395;margin:0 0 4px">An image shown blurred behind the match lobby \u2014 travels with the level, every joiner sees it.</div>'
+    +   '<div id="hpLobbyBgRow" class="row2"></div>'
+    +   '<div class="hint" id="hpLobbyBgNote" style="font-size:10px;margin:2px 0 0">'+(lobbyBgUrl?('Set \u2713 '+esc(lobbyBgUrl.split('/').pop().slice(0,34))):'None \u2014 the lobby uses the built-in scene.')+'</div>'
     + '</div>';
   const q=s=>host.querySelector(s);
   const dirty=()=>{ if(typeof _levelDirty!=='undefined') _levelDirty=true; };
@@ -31703,6 +31727,11 @@ function renderHomePanel(){
   q('#hpShot').onclick=()=>{ const shot=_commCaptureThumb(640,360,0.62,150000); if(shot){ homepageCfg.bg=shot; dirty(); renderHomePanel(); } else { const n=q('#hpShotNote'); if(n) n.textContent='Capture failed \u2014 nothing is rendering yet; try again with the scene on screen.'; } };
   q('#hpShotClear').onclick=()=>{ homepageCfg.bg=''; dirty(); renderHomePanel(); };
   q('#hpPreviewBtn').onclick=()=>_hpPreview();
+  { const row=q('#hpLobbyBgRow');
+    if(row && typeof renderUploadRow==='function'){
+      renderUploadRow(row, 'texture', (url)=>{ lobbyBgUrl=_sanitizeLobbyBg(url); dirty(); _applyLobbyBg(lobbyBgUrl); renderHomePanel(); });
+      if(lobbyBgUrl){ const cb=document.createElement('button'); cb.textContent='Clear'; cb.onclick=()=>{ lobbyBgUrl=''; dirty(); _applyLobbyBg(''); renderHomePanel(); }; row.appendChild(cb); }
+    } }
   // build 972: instant unlisted publishing — same validation as the library, no review, not listed.
   // The owner key (client-generated, kept in this browser, hashed at rest server-side) makes the
   // slug updatable/deletable by its creator only.

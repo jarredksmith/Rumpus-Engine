@@ -33,6 +33,7 @@ const env = {
   TEAM_COLOR: [0xff0000, 0x0000ff],
   myCharCfg: () => ({ url: 'https://h/me.glb' }),
   _renderCharThumb: (cfg, el, opts) => thumbCalls.push({ url: cfg.url, bust: !!(opts && opts.bust) }),
+  _lobbyThumbRefresh: () => {},
   _lobbyReadyState: r => ({ all: r.every(p => p.ready || p.host), waiting: r.filter(p => !p.ready && !p.host).length }),
 };
 const roster = [ { id: 1, name: 'Me', host: true, tint: 0x39d3a8 }, { id: 2, name: 'Scout', ready: true }, { id: 3, name: 'Newbie', ready: false } ];

@@ -21,7 +21,7 @@ assert(/if\(NET\.mode==='host'\)\{ if\(typeof startMatch==='function'\) startMat
   'Enter starts (host) or toggles ready (client) — the same functions the buttons call');
 assert(/uiConfirm\('Leave the lobby\?', \(\)=>\{ unannounceRoom\(\); location\.reload\(\); \}, 'Leave'\);/.test(src),
   'Esc leaves behind a confirm, through the same path as the Leave button');
-assert(/updateCharBtnLabel\(\); _lobbyKeysHint\(\); openModal\('lobby'\); refreshLobby\(\);/.test(src)
+assert(/updateCharBtnLabel\(\); _lobbyKeysHint\(\); _applyLobbyBg\(lobbyBgUrl\); openModal\('lobby'\); refreshLobby\(\);/.test(src)
     && /updateCharBtnLabel\(\); _lobbyKeysHint\(\);\s*\n\s*openModal\('lobby'\);/.test(src),
   'both lobby entries (host + client) refresh the hint for their role');
 

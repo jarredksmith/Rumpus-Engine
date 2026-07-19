@@ -23,7 +23,7 @@ assert(/const bg=\(swatchEl\.dataset&&swatchEl\.dataset\.bg\)\|\|''; swatchEl\.s
 assert(/_thumbR\.setSize\(160,160\)/.test(src), 'portrait-card resolution (was 112)');
 assert(/pt\.dataset\.bg='linear-gradient\(160deg,'\+hex\+'40, rgba\(10,16,20,0\.9\)\)';/.test(src),
   'lobby cards hand their tint gradient to the compositor');
-assert(/_renderCharThumb\(cfg, pt, \{bust:true\}\)/.test(src), 'lobby portraits use the bust crop');
+assert(/_renderCharThumb\(cfg, pt, \{bust:true, refresh:_lobbyThumbRefresh\}\)/.test(src), 'lobby portraits use the bust crop (build 1009: + a refresh so a cold render is never lost)');
 assert(/_renderCharThumb\(e\.cfg, sw, \{bust:true\}\)/.test(src), 'character-select fallback cards too');
 assert(/_renderCharThumb\(\{ url:it\.model, thumb:it\.thumb, scale:it\.scale \}, ico\)/.test(src),
   'inventory item icons keep full-body framing (items are not people)');
