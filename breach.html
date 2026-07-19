@@ -542,6 +542,18 @@
   #csBar { display:flex; gap:12px; align-items:center; justify-content:center; padding:10px 16px calc(14px + env(safe-area-inset-bottom)); }
   #csSelectBtn { min-width:210px; background:linear-gradient(180deg, rgba(var(--accent-rgb),.95), rgba(var(--accent-rgb),.7)); color:#04120e; font-family:var(--display-font); letter-spacing:2px; padding:13px 26px; border:none; border-radius:9px; font-size:15px; cursor:pointer; box-shadow:0 3px 16px rgba(var(--accent-rgb),.3); }
   #csHint { color:#5f8577; font-size:10px; letter-spacing:1px; }
+  #csBody { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+  #csSide { display:flex; flex-direction:column; min-height:0; }
+  /* build 1001: short-landscape phones — model on the left, name/cards/select on the right */
+  @media (orientation:landscape) and (max-height:620px){
+    #csBody { flex-direction:row; align-items:stretch; }
+    #csStage { flex:1 1 50%; min-width:0; }
+    #csHold { max-height:none; height:94%; width:96%; }
+    #csSide { flex:1 1 50%; min-width:0; justify-content:center; padding-right:10px; }
+    #csCards { flex-wrap:wrap; overflow-x:visible; overflow-y:auto; justify-content:center; max-height:38vh; }
+    #csNameWrap { margin:0; }
+    #csName { font-size:clamp(22px,4.5vh,34px); }
+  }
   #gameHome.on { display:flex; }
   #gameHome.preview { z-index:55; }   /* above the editor panel while previewing, still under modals */
   #gameHome .hpBg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.55; }
@@ -15615,7 +15627,7 @@ function selectChar(i){ if(i<0||i>=CHARACTERS.length) return; myCharIdx=i; try{ 
 // to rotate; plays the model's idle clip when it ships one), name in display type, a card strip of
 // roster characters + colors, and a SELECT bar. Cards still run selectRosterChar/selectChar, so
 // multiplayer broadcast + the lobby READY gate behave exactly as before.
-let _csEl=null, _csRAF=0, _csMixer=null, _csClock=null, _csGrp=null, _csRotY=0.4, _csRotX=0.08, _csSpin=true, _csDist=3.6, _csKeyH=null, _csCur=null;
+let _csEl=null, _csRAF=0, _csGrp=null, _csRotY=0.5, _csSpin=true, _csKeyH=null, _csCur=null, _csW=0, _csH=0;
 function _csEntries(){
   const out=[];
   if(charRoster.length || (playerModelCfg && playerModelCfg.url)){
@@ -15625,31 +15637,17 @@ function _csEntries(){
   CHARACTERS.forEach((c,i)=>out.push({ kind:'color', i, name:c.name, sub:'COLOR', color:_charHex(i) }));
   return out;
 }
+// build 1001: the preview IS the in-game avatar — buildAvatarVisual loads the model with the
+// animation library (real idle, feet at the origin) and rebuilds in place on every selection.
 function _csPreview(e){
   _csCur=e;
   const nm=_csEl.querySelector('#csName'), sb=_csEl.querySelector('#csSub');
   if(nm) nm.textContent=(e.name||'').toUpperCase();
   if(sb) sb.textContent=e.sub||'';
-  _csMixer=null;
-  if(_csGrp && typeof _inspScene!=='undefined' && _inspScene){ _inspScene.remove(_csGrp); }
   if(!_ensureInspectR()) return;   // no second GL context on this device -> cards + name still work
-  const grp=new THREE.Group(); _inspScene.add(grp); _csGrp=grp; _csSpin=true; _csRotY=0.4; _csRotX=0.08;
-  const url=e.cfg && e.cfg.url;
-  if(url){
-    loadGLTFCached(url, (gltf)=>{ if(_csGrp!==grp) return; try{
-      const m=THREE.cloneSkinned ? THREE.cloneSkinned(gltf.scene) : gltf.scene.clone(true);
-      const bb=new THREE.Box3().setFromObject(m), s=new THREE.Vector3(), c=new THREE.Vector3(); bb.getSize(s); bb.getCenter(c);
-      const md=Math.max(s.x,s.y,s.z)||1, k=2.4/md;
-      m.scale.setScalar(k); m.position.set(-c.x*k, -c.y*k, -c.z*k);
-      grp.add(m);
-      const clips=gltf.animations||[]; const idle=clips.find(cl=>/idle/i.test(cl.name||''))||clips[0];
-      if(idle){ try{ _csMixer=new THREE.AnimationMixer(m); _csMixer.clipAction(idle).play(); }catch(e2){} }
-    }catch(e2){} }, ()=>{});
-  } else {
-    const cap=new THREE.Mesh(new THREE.CapsuleGeometry(0.5,1.2,6,18),
-      new THREE.MeshStandardMaterial({ color:new THREE.Color(e.color||'#39d3a8'), roughness:0.5, metalness:0.15 }));
-    grp.add(cap);
-  }
+  if(!_csGrp){ _csGrp=new THREE.Group(); _inspScene.add(_csGrp); }
+  _csSpin=true; _csRotY=0.5;
+  try{ buildAvatarVisual(_csGrp, myCharCfg()); }catch(err){}
 }
 function _csRenderCards(){
   const host=_csEl.querySelector('#csCards'); if(!host) return; host.innerHTML='';
@@ -15669,28 +15667,32 @@ function _csRenderCards(){
 function closeCharSelect(){
   if(_csRAF){ cancelAnimationFrame(_csRAF); _csRAF=0; }
   if(_csKeyH){ removeEventListener('keydown', _csKeyH); _csKeyH=null; }
-  _csMixer=null;
-  if(_csGrp && typeof _inspScene!=='undefined' && _inspScene){ _inspScene.remove(_csGrp); _csGrp=null; }
+  if(_csGrp){
+    const mx=_csGrp.userData && _csGrp.userData.mixer;
+    if(mx){ const mi=mixers.indexOf(mx); if(mi>=0) mixers.splice(mi,1); _csGrp.userData.mixer=null; }
+    if(typeof _inspScene!=='undefined' && _inspScene) _inspScene.remove(_csGrp);
+    _csGrp=null;
+  }
+  _csW=_csH=0;
   if(_csEl) _csEl.classList.remove('open');
 }
 function openCharPicker(){
   if(!_csEl){
     _csEl=document.createElement('div'); _csEl.id='charSelect';
     _csEl.innerHTML =
-      '<div id="csTop"><div id="csTitle">SELECT CHARACTER</div><button id="csClose" aria-label="Close">\u2715</button></div>'
-      + '<div id="csStage"><div id="csHold"></div></div>'
-      + '<div id="csNameWrap"><div id="csSub"></div><div id="csName"></div></div>'
+      '<div id="csTop"><div id="csTitle">SELECT CHARACTER</div><button id="csClose" aria-label="Close">✕</button></div>'
+      + '<div id="csBody"><div id="csStage"><div id="csHold"></div></div>'
+      + '<div id="csSide"><div id="csNameWrap"><div id="csSub"></div><div id="csName"></div></div>'
       + '<div id="csCards"></div>'
-      + '<div id="csBar"><span id="csHint">\u2190 \u2192 browse \u00b7 drag to rotate</span><button id="csSelectBtn">SELECT</button></div>';
+      + '<div id="csBar"><span id="csHint">← → browse · drag to rotate</span><button id="csSelectBtn">SELECT</button></div></div></div>';
     document.body.appendChild(_csEl);
     _csEl.querySelector('#csClose').onclick=closeCharSelect;
     _csEl.querySelector('#csSelectBtn').onclick=closeCharSelect;   // selection already applied on card tap
     const hold=_csEl.querySelector('#csHold');
-    let drag=false, lx=0, ly=0;
-    hold.onpointerdown=e=>{ drag=true; _csSpin=false; lx=e.clientX; ly=e.clientY; hold.style.cursor='grabbing'; try{ hold.setPointerCapture(e.pointerId); }catch(_e){} };
-    hold.onpointermove=e=>{ if(!drag) return; _csRotY+=(e.clientX-lx)*0.01; _csRotX=Math.max(-0.9,Math.min(0.9,_csRotX+(e.clientY-ly)*0.008)); lx=e.clientX; ly=e.clientY; };
+    let drag=false, lx=0;
+    hold.onpointerdown=e=>{ drag=true; _csSpin=false; lx=e.clientX; hold.style.cursor='grabbing'; try{ hold.setPointerCapture(e.pointerId); }catch(_e){} };
+    hold.onpointermove=e=>{ if(!drag) return; _csRotY+=(e.clientX-lx)*0.012; lx=e.clientX; };   // turntable: yaw only (the avatar stands on its feet)
     hold.onpointerup=()=>{ drag=false; hold.style.cursor='grab'; }; hold.onpointercancel=hold.onpointerup;
-    hold.onwheel=e=>{ e.preventDefault(); _csDist=Math.max(2, Math.min(7, _csDist+e.deltaY*0.002)); };
   }
   _csEl.classList.add('open');
   if(typeof closeInspect==='function' && typeof _inspEl!=='undefined' && _inspEl && _inspEl.style.display!=='none') closeInspect();   // the two screens share one renderer
@@ -15701,16 +15703,25 @@ function openCharPicker(){
   if(_ensureInspectR()){
     const hold=_csEl.querySelector('#csHold');
     if(_invR.domElement.parentElement!==hold) hold.appendChild(_invR.domElement);
-    const w=hold.clientWidth||480, h=hold.clientHeight||420;
-    _invR.setSize(w, h, false); _inspCam.aspect=w/h; _inspCam.updateProjectionMatrix();
-    _csClock=new THREE.Clock();
+    const clock=new THREE.Clock();
     const loop=()=>{
       if(!_csEl || !_csEl.classList.contains('open')){ _csRAF=0; return; }
-      const dt=_csClock.getDelta();
+      const dt=clock.getDelta();
+      // build 1001: live-fit the buffer to the holder every tick — late layout and device rotation
+      // used to leave a stretched canvas (the field-reported bug)
+      const w=hold.clientWidth||2, h=hold.clientHeight||2;
+      if(Math.abs(w-_csW)>2 || Math.abs(h-_csH)>2){ _csW=w; _csH=h; _invR.setSize(w,h,false); _inspCam.aspect=w/h; _inspCam.updateProjectionMatrix(); }
+      // the mixer leaves the global LOD list (it would throttle an off-scene model) and runs here at full rate
+      if(_csGrp && _csGrp.userData && _csGrp.userData.mixer){
+        const mx=_csGrp.userData.mixer; const mi=mixers.indexOf(mx); if(mi>=0) mixers.splice(mi,1);
+        try{ mx.update(dt); }catch(e){}
+      }
       if(_csSpin) _csRotY+=0.35*dt;
-      if(_csMixer) try{ _csMixer.update(dt); }catch(e){ _csMixer=null; }
-      if(_csGrp) _csGrp.rotation.set(_csRotX, _csRotY, 0);
-      _inspCam.position.set(0, 0.15, _csDist); _inspCam.lookAt(0, 0, 0);
+      if(_csGrp) _csGrp.rotation.y=_csRotY;
+      // frame the standard ~2m avatar: fit its height AND shoulders whatever the viewport aspect
+      const fovV=_inspCam.fov*Math.PI/180;
+      const dist=Math.max(1.25/Math.tan(fovV/2), 1.0/(Math.tan(fovV/2)*Math.max(0.3,_inspCam.aspect))) + 0.5;
+      _inspCam.position.set(0, 1.15, dist); _inspCam.lookAt(0, 0.98, 0);
       _invR.render(_inspScene, _inspCam);
       _csRAF=requestAnimationFrame(loop);
     };
@@ -19173,7 +19184,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1000 · 2026-07-19';
+const BUILD_VERSION = 'build 1001 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

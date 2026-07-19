@@ -33,17 +33,14 @@ assert(/kind:'roster', i:-1, name:'Default'/.test(ce) && /charRoster\.forEach/.t
 assert(/if\(e\.kind==='roster'\) selectRosterChar\(e\.i\); else selectChar\(e\.i\);/.test(src),
   'card taps run the SAME selection functions (MP broadcast + READY gating intact)');
 
-// ---- the live preview: real model, auto-fit, idle clip, capsule fallback for colors ----
+// ---- the live preview IS the in-game avatar (build 1001: no more T-pose / tiny model) ----
 const cp = extractFunction('_csPreview');
-assert(/THREE\.cloneSkinned \? THREE\.cloneSkinned\(gltf\.scene\)/.test(cp), 'skinned models clone safely');
-assert(/const md=Math\.max\(s\.x,s\.y,s\.z\)\|\|1, k=2\.4\/md;/.test(cp), 'the model auto-fits the viewport');
-assert(/clips\.find\(cl=>\/idle\/i\.test\(cl\.name\|\|''\)\)\|\|clips\[0\]/.test(cp), 'plays the idle clip when the model ships one');
-assert(/new THREE\.CapsuleGeometry\(0\.5,1\.2,6,18\)/.test(cp), 'color characters preview as their tinted capsule');
-assert(/if\(_csGrp!==grp\) return;/.test(cp), 'a stale async load can never clobber a newer preview');
+assert(/buildAvatarVisual\(_csGrp, myCharCfg\(\)\)/.test(cp),
+  'the preview uses the game\u2019s own avatar builder (animation-library idle, feet at origin, capsule fallback, stale-load guard all inherited)');
 
 // ---- input: turntable + drag + keys ----
 assert(/if\(_csSpin\) _csRotY\+=0\.35\*dt;/.test(src), 'slow turntable until the user grabs it');
-assert(/if\(_csMixer\) try\{ _csMixer\.update\(dt\); \}/.test(src), 'the idle animation advances with the preview clock');
+assert(/const mx=_csGrp\.userData\.mixer; const mi=mixers\.indexOf\(mx\); if\(mi>=0\) mixers\.splice\(mi,1\);/.test(src) && /try\{ mx\.update\(dt\); \}/.test(src), 'the preview mixer leaves the global LOD list and runs at full rate (build 1001)');
 assert(/e\.code==='Escape'\|\|e\.code==='Enter'/.test(src) && /e\.code!=='ArrowLeft' && e\.code!=='ArrowRight'/.test(src),
   'Esc/Enter close, arrows browse');
 assert(/removeEventListener\('keydown', _csKeyH\)/.test(src), 'the key handler unbinds on close');
