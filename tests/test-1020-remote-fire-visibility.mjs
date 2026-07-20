@@ -21,8 +21,8 @@ assert(/const _rt=\[\.\.\.colliders, \.\.\.dynamicProps, floor\]\.filter\(x=>x&&
   'the relayed shot raycasts world geometry + dynamic props (actor FX ride the damage paths)');
 assert(/const _far=raycaster\.far; raycaster\.far=60; raycaster\.set\(from, dir\);/.test(rf) && /raycaster\.far=_far;/.test(rf),
   'reuses the shared raycaster, capped at the tracer reach, and restores it');
-assert(/if\(_h\.length\)\{ end=_h\[0\]\.point\.clone\(\); spark\(end, fxCfg\.color\); \}/.test(rf),
-  'impact sparks where a remote shot lands — the level-authored impact FX, same as your own');
+assert(/if\(_h\.length\)\{ end=_h\[0\]\.point\.clone\(\); spark\(end, fxCfg\.color\);/.test(rf),
+  'impact sparks where a remote shot lands — the level-authored impact FX, same as your own (build 1021 stamps a decal on the same hit)');
 assert(/tracer\(from, end \|\| from\.clone\(\)\.addScaledVector\(dir, 60\)\)/.test(rf),
   'the tracer stops at the wall; the 60m streak only on a clean miss');
 

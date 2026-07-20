@@ -5,8 +5,10 @@
 import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 
-assert(/const WEPFX_TYPES = \[\['impactfx','\\ud83d\\udca5','Impacts'\],\['tracerfx','\\ud83d\\udca8','Tracer'\]\];/.test(src), 'the Effects picker is Impacts + Tracer only');
-assert(/const WEPFX_HOST = \{ impactfx:'edImpactFx', tracerfx:'edTracerFx' \};/.test(src), 'no host mapping for the moved panel');
+const _wt = src.match(/const WEPFX_TYPES = \[.*?\];/)[0];
+assert(/impactfx/.test(_wt) && /tracerfx/.test(_wt) && !/crosshair/.test(_wt), 'the Effects picker has no Crosshair entry (build 1021: the list may grow other weapon FX, e.g. decalfx)');
+const _wh = src.match(/const WEPFX_HOST = \{.*?\};/)[0];
+assert(/impactfx:'edImpactFx'/.test(_wh) && !/crosshair/i.test(_wh), 'no host mapping for the moved crosshair panel');
 assert(/if\(_w && WEPFX_HOST\[_w\]\) activeWepFx = _w;/.test(src), 'a stale saved picker choice (crosshair) is ignored, not crashed on');
 assert(/sec\('Crosshair', 'crosshair', '<div id="edCrosshair"><\/div>'\)/.test(src), 'Crosshair is its own section');
 assert(/hud:     \['hud','crosshair'\]/.test(src), '...owned by the HUD tab');

@@ -9899,6 +9899,11 @@ let deathFxCfg = _sanitizeDeathFx(savedLevel && savedLevel.deathFx);
 // Bullet streak / tracer (tunable in the editor under Scene > Bullet streak; serialized with the level)
 const DEFAULT_TRACER = { color:0xfff1c0, width:1, life:1, opacity:0.95, glow:true, on:true };
 let tracerCfg = _sanitizeTracer(savedLevel && savedLevel.tracer);   // load saved bullet streak on boot
+// Bullet decals (build 1021) — holes stamped where shots land on world geometry; look + custom
+// image tunable per level (editor: Effects > Bullet holes) and serialized with the level.
+const DEFAULT_DECAL = { on:true, url:'', size:1, life:1 };
+function _sanitizeDecal(o){ o=o||{}; return { on:o.on!==false, url:(typeof o.url==='string'?o.url:''), size:_fxClamp(o.size,0.4,3,1), life:_fxClamp(o.life,0.3,3,1) }; }
+let decalCfg = _sanitizeDecal(savedLevel && savedLevel.decal);
 function _sanitizeTracer(o){ o=o||{}; return { color:(o.color!=null?(o.color|0):DEFAULT_TRACER.color), width:_fxClamp(o.width,0.2,6,1), life:_fxClamp(o.life,0.2,5,1), opacity:_fxClamp(o.opacity,0.1,1,0.95), glow:o.glow!==false, on:o.on!==false }; }
 // build 637: ranged-enemy gunfire look (tunable in the editor under Weapons > Enemy gunfire; serialized with the
 // level). Purely cosmetic — bolt tip + streak, trail, muzzle flash and impact. A style preset sets the base shape,
@@ -15034,6 +15039,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
+  decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
   radialCfg = _sanitizeRadial(level.radial); if(typeof renderBuildMenuPanel==='function') renderBuildMenuPanel();   // build 671: per-level build menu
@@ -17793,10 +17799,10 @@ function turretFire(){
       else if(NET.conn){ try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:dmg, dir:[dir.x,dir.y,dir.z], s:7, pt:[hit.point.x,hit.point.y,hit.point.z]}); }catch(e){} }
       spark(hit.point,0xffd166); showHitmarker(); }
     else if(clientMode){ let node=hit.object,id=null; while(node&&id==null){ if(node.userData&&node.userData.enemyId!=null) id=node.userData.enemyId; node=node.parent; }
-      if(id!=null){ if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:dmg}); }catch(e){} spark(hit.point,isHead?0xffd166:0xff6b6b); showHitmarker(isHead); } else spark(hit.point,fxCfg.color); }
+      if(id!=null){ if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:dmg}); }catch(e){} spark(hit.point,isHead?0xffd166:0xff6b6b); showHitmarker(isHead); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } }
     else { let node=hit.object,en=null; while(node&&!en){ en=enemies.find(e=>e.mesh===node); node=node.parent; }
       if(en){ alertEnemy(en,mountedTurret.position.x,mountedTurret.position.z); const k=enemyHurt(en,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,isHead?0xffd166:0xff6b6b); spawnDamageNumber(hit.point,dmg,k,isHead); flashEnemy(en); showHitmarker(k); SFX.hit(); }
-      else { let bn=hit.object,bot=null; while(bn&&!bot){ bot=bots.find(b=>b.mesh===bn); bn=bn.parent; } if(bot&&!bot.dead){ botHurt(bot,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,0xff6b6b); showHitmarker(); SFX.hit(); } else spark(hit.point,fxCfg.color); } }
+      else { let bn=hit.object,bot=null; while(bn&&!bot){ bot=bots.find(b=>b.mesh===bn); bn=bn.parent; } if(bot&&!bot.dead){ botHurt(bot,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,0xff6b6b); showHitmarker(); SFX.hit(); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } } }
   }
   tracer(origin,endPoint); muzzleFlashAt(origin);
 }
@@ -19371,7 +19377,7 @@ function remoteFire(pid, o, d, wep){
     const _rt=[...colliders, ...dynamicProps, floor].filter(x=>x&&x.isObject3D);
     const _far=raycaster.far; raycaster.far=60; raycaster.set(from, dir);
     const _h=raycaster.intersectObjects(_rt, true); raycaster.far=_far;
-    if(_h.length){ end=_h[0].point.clone(); spark(end, fxCfg.color); }
+    if(_h.length){ end=_h[0].point.clone(); spark(end, fxCfg.color); spawnBulletDecal(end, _h[0].face&&_h[0].face.normal, _h[0].object); }
   }catch(e){}
   tracer(from, end || from.clone().addScaledVector(dir, 60));
   if(!(wep && WEAPONS[wep] && WEAPONS[wep].noMuzzle)) muzzleFlashAt(from);   // build 684: respect a flash-less weapon
@@ -19390,6 +19396,64 @@ function tracer(from, to, force){
   const w=0.045*tc.width; beam.scale.set(w, len, w);
   scene.add(beam);
   const life=0.06*tc.life; tracers.push({ line: beam, life, max:life, o:tc.opacity });
+}
+
+// ---------- Bullet decals (build 1021) ----------
+// A hole where the shot landed — every shooter's, not just yours (remote + bot shots reuse the
+// build-1020 impact raycast). Optimized: one shared texture, pooled plane meshes + materials, a
+// hard cap (oldest recycled), and a lifetime with a tail fade so firefights never accumulate.
+const decals = [];
+const DECAL_MAX = 64, DECAL_LIFE = 16;   // cap + base seconds on the wall (life slider scales it)
+const _decalGeo = new THREE.PlaneGeometry(1, 1);
+const _decalPool = [];
+let _decalTex = null, _decalTexUrl = null;
+function _decalTexReset(){ _decalTex = null; _decalTexUrl = null; }   // level load / new upload -> re-resolve on the next shot
+function _makeDefaultDecalTex(){
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(32,32,2, 32,32,30);   // dark core -> charred rim -> transparent
+  g.addColorStop(0, 'rgba(8,6,4,0.95)'); g.addColorStop(0.35, 'rgba(14,11,8,0.85)');
+  g.addColorStop(0.7, 'rgba(30,26,20,0.45)'); g.addColorStop(1, 'rgba(40,36,30,0)');
+  x.fillStyle = g; x.fillRect(0,0,64,64);
+  x.globalCompositeOperation = 'destination-out';   // ragged edge so repeated holes don't read as clones
+  for(let i=0;i<7;i++){ const a=Math.random()*Math.PI*2, r=24+Math.random()*7; x.beginPath(); x.arc(32+Math.cos(a)*r, 32+Math.sin(a)*r, 5+Math.random()*6, 0, Math.PI*2); x.fill(); }
+  return new THREE.CanvasTexture(c);
+}
+function _getDecalTex(){
+  const url = (decalCfg && decalCfg.url) || '';
+  if(_decalTex && _decalTexUrl === url) return _decalTex;
+  _decalTexUrl = url;
+  if(url){ try{ _decalTex = new THREE.TextureLoader().load(url); }catch(e){ _decalTex = _makeDefaultDecalTex(); } }
+  else _decalTex = _makeDefaultDecalTex();
+  return _decalTex;
+}
+const _decalN = new THREE.Vector3(), _decalZ = new THREE.Vector3(0,0,1);
+function spawnBulletDecal(point, faceNormal, obj){
+  if(!decalCfg.on || !point) return;
+  _decalN.set(0,1,0);   // no face info (rare) -> lie flat
+  if(faceNormal && obj && obj.matrixWorld){ _decalN.copy(faceNormal).transformDirection(obj.matrixWorld); }   // face normals arrive in object space
+  else if(faceNormal){ _decalN.copy(faceNormal).normalize(); }
+  let m = _decalPool.pop();
+  if(!m){ m = new THREE.Mesh(_decalGeo, new THREE.MeshBasicMaterial({ transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-4, polygonOffsetUnits:-4 })); m.renderOrder = 2; }
+  m.material.map = _getDecalTex(); m.material.needsUpdate = true;
+  m.material.opacity = 0.92;
+  m.position.copy(point).addScaledVector(_decalN, 0.012);   // a hair off the surface (plus polygonOffset) — never z-fights
+  m.quaternion.setFromUnitVectors(_decalZ, _decalN);
+  m.rotateZ(Math.random()*Math.PI*2);                       // random spin so repeated hits don't stamp identical holes
+  const sc = 0.12*decalCfg.size*(0.8+Math.random()*0.45);
+  m.scale.set(sc, sc, 1); m.visible = true;
+  scene.add(m);
+  if(decals.length >= DECAL_MAX){ const old = decals.shift(); scene.remove(old.mesh); _decalPool.push(old.mesh); }   // hard cap: the oldest hole recycles
+  const life = DECAL_LIFE*decalCfg.life;
+  decals.push({ mesh:m, life, max:life });
+}
+function updateDecals(dt){
+  if(!decals.length) return;
+  for(let i=decals.length-1;i>=0;i--){
+    const d = decals[i]; d.life -= dt;
+    if(d.life<=0){ scene.remove(d.mesh); _decalPool.push(d.mesh); decals.splice(i,1); continue; }
+    const f = d.life/d.max; if(f<0.25) d.mesh.material.opacity = 0.92*(f/0.25);   // fade only the tail — no per-frame material churn while fresh
+  }
 }
 
 // hit particles
@@ -19638,7 +19702,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1020 · 2026-07-20';
+const BUILD_VERSION = 'build 1021 · 2026-07-20';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21534,7 +21598,7 @@ function shoot(){
           else if(pid!=null && pid>=BOT_ID_BASE && clientMode){ if(NET.conn) try{ NET.conn.send({t:'botHit', id:pid, d:dmg, from:NET.myId}); }catch(e){} }
           else sendToPlayer(pid, {t:'pvpHit', d:dmg, from:NET.myId});
           spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead); SFX.hit(); if(isHead) SFX.hit(); }
-        } else { spark(hit.point, fxCfg.color); }
+        } else { spark(hit.point, fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); }
       } else if(clientMode){
         // find the enemy id by walking up to the networked enemy mesh, then report it to the host
         let node = hit.object, id = null;
@@ -21542,7 +21606,7 @@ function shoot(){
         if(id!=null){
           if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:w.dmg*dmgMul*hsMul}); }catch(e){}
           spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead); SFX.hit(); if(isHead) SFX.hit(); }
-        } else { spark(hit.point, fxCfg.color); }
+        } else { spark(hit.point, fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); }
       } else {
         // find enemy by walking up from the hit object (handles child meshes)
         let node = hit.object, en = null;
@@ -21561,6 +21625,7 @@ function shoot(){
           if(p===0){ showHitmarker(_ek); SFX.hit(); }
         } else {
           spark(hit.point, fxCfg.color);
+          spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object);
         }
       }
     }
@@ -24318,6 +24383,7 @@ function loop(){
   updateRockets(dt);
   updateFloaters(dt);   // floating damage numbers + enemy hit-flash decay
   updateEnemyShots(dt); // ranged-enemy projectiles
+  updateDecals(dt);     // bullet holes fade + expire (pooled, hard-capped)
   updateChests(dt);
   checkProximity();   // runs in all modes; in duel it only considers trigger-animation props
 
@@ -25023,6 +25089,7 @@ const SEC_SUB = {
   waterzones: 'Lakes, ponds, puddles, streams & waterfalls — swim, wade, ride the current.',
   impactfx:   'Sparks, marks & debris where YOUR shots land.',
   tracerfx:   'The streak your own gunfire leaves in the air.',
+  decalfx:    'Bullet holes left where shots hit \u2014 size, lifetime & your own decal image.',
   crosshair:  'Reticle shape, size & colour.',
   cutscenes:  'Author camera cutscenes — play them from signals or on level start.',
   characters: 'Player & enemy character roster, models and animation slots.',
@@ -25080,8 +25147,8 @@ function renderZonePicker(){
   const sub=document.createElement('div'); sub.className='edSecSub'; sub.style.margin='0 0 4px'; sub.textContent=SEC_SUB[activeZoneType]||''; host.appendChild(sub);
 }
 // Which weapon-FX panel shows inside the grouped 'Effects' section (build 653) — same pattern as the Zones picker.
-const WEPFX_TYPES = [['impactfx','\ud83d\udca5','Impacts'],['tracerfx','\ud83d\udca8','Tracer']];   // build 845: Crosshair moved to the HUD tab \u2014 it's a reticle, not a weapon effect
-const WEPFX_HOST = { impactfx:'edImpactFx', tracerfx:'edTracerFx' };
+const WEPFX_TYPES = [['impactfx','\ud83d\udca5','Impacts'],['tracerfx','\ud83d\udca8','Tracer'],['decalfx','\ud83d\udd73\ufe0f','Bullet holes']];   // build 845: Crosshair moved to the HUD tab \u2014 it's a reticle, not a weapon effect
+const WEPFX_HOST = { impactfx:'edImpactFx', tracerfx:'edTracerFx', decalfx:'edDecalFx' };
 let activeWepFx = 'impactfx';
 try{ const _w = localStorage.getItem('breach_editor_wepfx'); if(_w && WEPFX_HOST[_w]) activeWepFx = _w; }catch(e){}
 function applyWepFxVisibility(){
@@ -26165,6 +26232,7 @@ function serializeLevel(){
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
     tracer: Object.assign({}, tracerCfg),
+    decal: Object.assign({}, decalCfg),
     bolt: Object.assign({}, boltCfg),
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
@@ -26316,6 +26384,26 @@ function renderTracerFxPanel(){
   const br=document.createElement('div'); br.className='row2'; br.style.marginTop='6px';
   const test=document.createElement('button'); test.textContent='Test streak'; test.title='Fire a sample streak across your view'; test.onclick=()=>{ const d=new THREE.Vector3(); camera.getWorldDirection(d); const right=new THREE.Vector3().crossVectors(d, new THREE.Vector3(0,1,0)).normalize(); const mid=camera.position.clone().addScaledVector(d,5); let n=0; const fire=()=>{ tracer(mid.clone().addScaledVector(right,-3), mid.clone().addScaledVector(right,3), true); if(++n<8) setTimeout(fire,55); }; fire(); };
   const rst=document.createElement('button'); rst.textContent='Reset'; rst.onclick=()=>{ tracerCfg=Object.assign({}, DEFAULT_TRACER); renderTracerFxPanel(); };
+  br.appendChild(test); br.appendChild(rst); wrap.appendChild(br);
+  host.appendChild(wrap);
+}
+function renderDecalFxPanel(){
+  const host=edDoc().getElementById('edDecalFx'); if(!host) return; host.innerHTML='';
+  const wrap=document.createElement('div');
+  const row=(label,node)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px;'; const s=document.createElement('span'); s.textContent=label; s.style.minWidth='64px'; r.appendChild(s); r.appendChild(node); wrap.appendChild(r); };
+  const on=document.createElement('input'); on.type='checkbox'; on.checked=!!decalCfg.on; on.onchange=()=>{ decalCfg.on=on.checked; }; row('Enabled', on);
+  const slider=(key,lo,hi,step)=>{ const box=document.createElement('div'); box.style.cssText='display:flex;flex:1;gap:6px;align-items:center'; const i=document.createElement('input'); i.type='range'; i.min=lo; i.max=hi; i.step=step; i.value=decalCfg[key]; i.style.flex='1'; const v=document.createElement('span'); v.style.cssText='min-width:32px;text-align:right;opacity:.8'; v.textContent=(+decalCfg[key]).toFixed(2); i.oninput=()=>{ decalCfg[key]=+i.value; v.textContent=(+i.value).toFixed(2); }; box.appendChild(i); box.appendChild(v); row(key.charAt(0).toUpperCase()+key.slice(1), box); };
+  slider('size',0.4,3,0.05); slider('life',0.3,3,0.05);
+  const hint=document.createElement('div'); hint.className='hint'; hint.style.margin='6px 0 2px'; hint.innerHTML='<b>Custom decal image</b> \u2014 a soft-edged PNG with transparency works best. Leave empty for the built-in bullet hole. Saved with the level, so everyone who plays it sees your decal.';
+  wrap.appendChild(hint);
+  if(decalCfg.url){
+    const cur=document.createElement('div'); cur.className='hint'; cur.style.cssText='word-break:break-all;opacity:.75;margin:2px 0;'; cur.textContent=decalCfg.url; wrap.appendChild(cur);
+    const cb=document.createElement('button'); cb.textContent='Clear image'; cb.onclick=()=>{ decalCfg.url=''; _decalTexReset(); renderDecalFxPanel(); }; wrap.appendChild(cb);
+  }
+  const up=document.createElement('div'); renderUploadRow(up, 'texture', (url)=>{ decalCfg.url=url||''; _decalTexReset(); renderDecalFxPanel(); }); wrap.appendChild(up);
+  const br=document.createElement('div'); br.className='row2'; br.style.marginTop='6px';
+  const test=document.createElement('button'); test.textContent='Test hole'; test.title='Stamp a sample decal on whatever you are looking at'; test.onclick=()=>{ const d=new THREE.Vector3(); camera.getWorldDirection(d); const _far=raycaster.far; raycaster.far=80; raycaster.set(camera.position, d); const _h=raycaster.intersectObjects([...colliders, ...dynamicProps, floor].filter(o=>o&&o.isObject3D), true); raycaster.far=_far; if(_h.length) spawnBulletDecal(_h[0].point, _h[0].face&&_h[0].face.normal, _h[0].object); else toast('Aim at a wall or the floor first'); };
+  const rst=document.createElement('button'); rst.textContent='Reset'; rst.onclick=()=>{ decalCfg=Object.assign({}, DEFAULT_DECAL); _decalTexReset(); renderDecalFxPanel(); };
   br.appendChild(test); br.appendChild(rst); wrap.appendChild(br);
   host.appendChild(wrap);
 }
@@ -26673,6 +26761,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
+  decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   hudCfg = _sanitizeHud(level.hud); if(typeof applyHudCfg==='function') applyHudCfg(); if(typeof renderHudPanel==='function') renderHudPanel();   // build 665: per-level HUD theme
   radialCfg = _sanitizeRadial(level.radial); if(typeof renderBuildMenuPanel==='function') renderBuildMenuPanel();   // build 671: per-level build menu
@@ -27074,7 +27163,8 @@ function buildEditorPanel(){
     + sec('Effects', 'wepfx',
           '<div id="edWepFxPicker"></div>'
         + '<div id="edImpactFx" class="wepfxHost" data-wepfx="impactfx"></div>'
-        + '<div id="edTracerFx" class="wepfxHost" data-wepfx="tracerfx"></div>')
+        + '<div id="edTracerFx" class="wepfxHost" data-wepfx="tracerfx"></div>'
+        + '<div id="edDecalFx" class="wepfxHost" data-wepfx="decalfx"></div>')
     + sec('Crosshair', 'crosshair', '<div id="edCrosshair"></div>')
     + sec('Enemy gunfire', 'boltfx', '<div id="edBoltFx"></div>')
     + sec('Characters', 'characters', '<div id="edCharRoster"></div>')
@@ -27240,6 +27330,7 @@ function buildEditorPanel(){
   if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
+  if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
   if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   if(typeof renderWepFxPicker==='function') renderWepFxPicker();          // build 653: the grouped weapon-FX type picker
   if(typeof applyWepFxVisibility==='function') applyWepFxVisibility();     // ...and reveal only the active FX panel
@@ -31392,6 +31483,7 @@ function startGame(){
   chests.slice().forEach(c=>scene.remove(c.mesh)); chests.length=0;
   grenades.slice().forEach(g=>scene.remove(g.mesh)); grenades.length=0;
   if(typeof enemyShots!=='undefined'){ enemyShots.slice().forEach(s=>scene.remove(s.mesh)); enemyShots.length=0; }
+  if(typeof decals!=='undefined'){ decals.slice().forEach(d=>{ scene.remove(d.mesh); _decalPool.push(d.mesh); }); decals.length=0; }
   if(typeof netReset==='function') netReset();   // clear stale remote avatars / mirrored enemies & coins
   if(typeof clearBots==='function') clearBots();
   heldProp=null; heldNidLocal=null; for(const k in _remoteHold) delete _remoteHold[k];
