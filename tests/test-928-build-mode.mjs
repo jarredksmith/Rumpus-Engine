@@ -39,7 +39,7 @@ assert(/enterBuildMode\(radialCfg\[radialSel\]\)/.test(src), 'the radial enters 
 
 // 5) inputs: right-click snap toggle, scroll rotate, Esc + Deploy key + touch BUILD exit
 assert(/buildSnap=!buildSnap/.test(src) && /breach_buildsnap/.test(src), 'right-click toggles snap (persisted)');
-assert(/buildMode\.yaw \+= \(e\.deltaY>0\?1:-1\)\*Math\.PI\/2/.test(src), 'scroll rotates the ghost 90 degrees');
+assert(/_bmSpin\(e\.deltaY, e\.deltaMode\)/.test(src) && /b\.yaw \+= \(dir<0\?-1:1\)\*Math\.PI\/2/.test(src), 'scroll rotates the ghost 90 degrees (build 1022: one step per NOTCH via the accumulator — hi-res wheels/trackpads fired one step per event)');
 assert(/e\.code==='Escape' && typeof buildMode!=='undefined' && buildMode/.test(src), 'Esc exits');
 assert(/if\(e\.code===BINDS\.radial\)\{ if\(buildMode\)\{ exitBuildMode\(\)/.test(src), 'the Deploy key exits too');
 assert(/tap\('tBuild', \(\)=>\{ if\(typeof buildMode!=='undefined' && buildMode\)\{ exitBuildMode\(\)/.test(src), 'touch BUILD exits');

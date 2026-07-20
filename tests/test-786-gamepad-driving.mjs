@@ -36,6 +36,6 @@ assert(/if\(edge\(3\)\) interact\(\);[\s\S]*?if\(edge\(2\)\) _carCycleHeadlights
 
 // --- on foot, the original mapping is intact + the driving state is cleared ---
 assert(/padDriveGas = 0; padDriveRev = false; padDriveBoost = false; padDriveBrake = false;/.test(pg), 'on foot the driving state resets');
-assert(/\} else \{[\s\S]*?padJump = edge\(0\);[\s\S]*?if\(edge\(2\)\) reload\(\);[\s\S]*?else throwGrenade\(\); \}[\s\S]*?if\(edge\(5\)\) cycleWeapon\(1\);/.test(pg), 'on foot keeps jump / reload / grenade / weapon-cycle (build 934: B exits build mode first, grenade otherwise)');
+assert(/\} else \{[\s\S]*?padJump = edge\(0\);[\s\S]*?if\(edge\(2\)\) reload\(\);[\s\S]*?else throwGrenade\(\); \}[\s\S]*?if\(edge\(5\)\)\{ if\(typeof buildMode!=='undefined' && buildMode\) _bmRotStep\(1\); else cycleWeapon\(1\); \}/.test(pg), 'on foot keeps jump / reload / grenade / weapon-cycle (build 934: B exits build mode first; build 1022: RB rotates the build ghost first)');
 
 done('build 786/789: car/driving controls wired for a gamepad (RT gas, LT boost, stick steers only)');

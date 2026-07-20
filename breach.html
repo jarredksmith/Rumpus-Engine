@@ -461,6 +461,7 @@
   body.touch #tCrouch { right: calc(30px + env(safe-area-inset-right)); bottom: calc(186px + env(safe-area-inset-bottom)); width:54px; height:54px; font-size:9px; }
   body.touch #tMelee  { right: calc(96px + env(safe-area-inset-right)); bottom: calc(192px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
   body.touch #tBuild  { left: calc(20px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
+  body.touch #tRot    { left: calc(20px + env(safe-area-inset-left)); bottom: calc(252px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
   body.touch #tFlash  { left: calc(78px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
   body.touch #tInv    { left: calc(136px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
   body.touch #tChat   { left: calc(194px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); width:50px; height:50px; font-size:9px; }
@@ -948,6 +949,7 @@
     <button class="tBtn" id="tCrouch" aria-label="Crouch">CROUCH</button>
     <button class="tBtn" id="tMelee" aria-label="Melee">MELEE</button>
     <button class="tBtn" id="tBuild" aria-label="Build menu">BUILD</button>
+    <button class="tBtn" id="tRot" aria-label="Rotate the build ghost" style="display:none">ROT</button>
     <button class="tBtn" id="tFlash" aria-label="Flashlight" style="display:none">LIGHT</button>
     <button class="tBtn" id="tInv" aria-label="Inventory" style="display:none">BAG</button>
     <button class="tBtn" id="tChat" aria-label="Chat" style="display:none">CHAT</button>
@@ -10901,7 +10903,7 @@ addEventListener('keydown', e=>{
   if(e.code==='KeyV' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carFollowOverride = !_carFollowMode(drivingCar); if(typeof flashToast==='function') flashToast('Camera: '+(_carFollowOverride?'follows the car':'free orbit')); e.preventDefault(); return; }   // build 765: toggle follow-cam <-> free orbit while driving
   if(e.code==='KeyH' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ if(drivingCar.userData.vehicle && drivingCar.userData.vehicle.headlights){ _carHeadOn=!_carHeadOn; if(typeof flashToast==='function') flashToast('Headlights '+(_carHeadOn?'on':'off')); } e.preventDefault(); return; }   // build 781: toggle headlights
   if(editorOpen) return;   // ignore gameplay keys while editing
-  if(e.code===BINDS.reload) reload();
+  if(e.code===BINDS.reload){ if(typeof buildMode!=='undefined' && buildMode){ e.preventDefault(); _bmRotStep(e.shiftKey?-1:1); return; } reload(); }   // build 1022: R rotates the build ghost (Shift+R backwards)
   if(e.code===BINDS.melee) meleeAttack();
   if(e.code===BINDS.interact) interact();
   if(e.code===BINDS.grab){ if(drivingCar && typeof _ghostToggle==='function' && typeof objectiveActive==='function' && objectiveActive()==='race' && !e.repeat) _ghostToggle(); else grabAction(); }   // build 841: G in a race car toggles the ghost; on foot it's still grab/drop
@@ -19702,7 +19704,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1021 · 2026-07-20';
+const BUILD_VERSION = 'build 1022 · 2026-07-20';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -19836,8 +19838,8 @@ function pollGamepad(dt){
     if(heldProp && (down(7) || aval(7)>0.5) && !padPrev[7]) throwHeld();   // RT — build 934: throw the carried prop (the fire gate excludes heldProp, so RT was dead while carrying)
     if(edge(1)){ if(typeof buildMode!=='undefined' && buildMode) exitBuildMode(); else throwGrenade(); }   // B — build 934: leaves build mode (RT places); grenade otherwise
     if(typeof buildMode!=='undefined' && buildMode){ padAds=false; if((down(6) || aval(6)>0.5) && !padPrev[6]) _bmDeleteAimed(); }   // LT — build 941: delete the aimed placed block
-    if(edge(5)) cycleWeapon(1); // RB
-    if(edge(4)) cycleWeapon(-1);// LB
+    if(edge(5)){ if(typeof buildMode!=='undefined' && buildMode) _bmRotStep(1); else cycleWeapon(1); }   // RB — rotates the build ghost (build 1022)
+    if(edge(4)){ if(typeof buildMode!=='undefined' && buildMode) _bmRotStep(-1); else cycleWeapon(-1); }  // LB
     if(edge(12) && typeof toggleInventory==='function') toggleInventory();     // D-pad up — build 909
     if(edge(13) && typeof openBigMap==='function' && !chatOpen) openBigMap();  // D-pad down
     if(edge(14) && typeof meleeAttack==='function') meleeAttack();             // D-pad left
@@ -19874,7 +19876,7 @@ if(savedLevel && savedLevel.aim && savedLevel.aim.state){
 }
 const HIP_SENS = 0.0022, ADS_SENS = 0.0012;  // slower look while aiming for precision
 const SCOPE_SENS = 0.00045;                   // much slower under the scope's hard zoom
-addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ buildMode.yaw += (e.deltaY>0?1:-1)*Math.PI/2; _bmMeasure(); _bmHint(); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
+addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ _bmSpin(e.deltaY, e.deltaMode); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
 addEventListener('mousedown', e=>{
   if(radialOpen){ if(e.button===0) closeRadial(true); return; }
   if(typeof buildMode!=='undefined' && buildMode){ if(e.button===0){ placeBuild(); } else if(e.button===1){ _bmDeleteAimed(); } else if(e.button===2){ buildSnap=!buildSnap; try{ localStorage.setItem('breach_buildsnap', buildSnap?'1':'0'); }catch(_e){} _bmHint(); } e.preventDefault(); return; }
@@ -19956,6 +19958,7 @@ addEventListener('contextmenu', e=>{
       e.preventDefault(); }); }
   tap('tMelee', ()=>{ if(typeof meleeAttack==='function') meleeAttack(); });
   tap('tBuild', ()=>{ if(typeof buildMode!=='undefined' && buildMode){ exitBuildMode(); return; } if(typeof openRadial!=='function') return; if(radialOpen) closeRadial(false); else openRadial(); });
+  tap('tRot', ()=>{ if(typeof buildMode!=='undefined' && buildMode) _bmRotStep(1); });   // build 1022: touch rotate
   tap('tFlash', ()=>{ if(typeof toggleFlashlight==='function') toggleFlashlight(); });
   tap('tInv',   ()=>{ if(typeof toggleInventory==='function') toggleInventory(); });
   tap('tChat',  ()=>{ if(typeof openChat==='function') openChat(); });
@@ -20909,17 +20912,34 @@ function exitBuildMode(){
   const g=buildMode.ghost; buildMode=null;
   if(g){ scene.remove(g); try{ g.traverse(o=>{ if(o.isMesh && o.geometry && isPrimitive) o.geometry.dispose && o.geometry.dispose(); }); }catch(e){} }
   const el=document.getElementById('buildHint'); if(el) el.style.display='none';
+  const tr=document.getElementById('tRot'); if(tr) tr.style.display='none';
 }
 function _bmHint(){
   const el=document.getElementById('buildHint'); if(!el) return;
   const key=(typeof _keyLabel==='function') ? _keyLabel(BINDS.radial) : 'Tab';
   const rot=buildMode ? ((Math.round(buildMode.yaw/(Math.PI/2))*90)%360+360)%360 : 0;
   el.textContent = (typeof padRecent==='function' && padRecent())
-    ? ('RT place \u00b7 LT delete \u00b7 snap '+(buildSnap?'ON':'OFF')+(rot?(' \u00b7 rot '+rot+'\u00b0'):'')+' \u00b7 B done')
+    ? ('RT place \u00b7 LT delete \u00b7 RB rotate'+(rot?(' ('+rot+'\u00b0)'):'')+' \u00b7 snap '+(buildSnap?'ON':'OFF')+' \u00b7 B done')
     : (typeof isTouch!=='undefined' && isTouch)
-    ? ('FIRE place \u00b7 AIM delete \u00b7 BUILD done \u00b7 snap '+(buildSnap?'ON':'OFF')+(rot?(' \u00b7 rot '+rot+'\u00b0'):''))
-    : ('Click place \u00b7 X/MMB delete \u00b7 R-click snap: '+(buildSnap?'ON':'OFF')+' \u00b7 Scroll rotate'+(rot?(' ('+rot+'\u00b0)'):'')+' \u00b7 ['+key+'/Esc] done');
+    ? ('FIRE place \u00b7 AIM delete \u00b7 ROT rotate'+(rot?(' ('+rot+'\u00b0)'):'')+' \u00b7 snap '+(buildSnap?'ON':'OFF')+' \u00b7 BUILD done')
+    : ('Click place \u00b7 X/MMB delete \u00b7 R-click snap: '+(buildSnap?'ON':'OFF')+' \u00b7 Scroll/R rotate'+(rot?(' ('+rot+'\u00b0)'):'')+' \u00b7 ['+key+'/Esc] done');
   el.style.display='block';
+  const tr=document.getElementById('tRot'); if(tr) tr.style.display=(typeof isTouch!=='undefined' && isTouch)?'flex':'none';   // build 1022: the touch rotate chip rides with the hint
+}
+// build 1022: rotation steps once per wheel NOTCH, not per EVENT. High-resolution wheels and
+// trackpads fire bursts of small-delta events — the old ±90°-per-event spun a full 360° on one
+// notch (the degrees readout changed, the ghost visibly didn't) and a trackpad swipe spun the
+// ghost ~20 times. Deltas accumulate (normalized across deltaModes) and fire one 90° step per
+// ~notch (90px) of travel. R / RB / LB / the touch ROT chip step through _bmRotStep directly.
+function _bmRotStep(dir){ const b=buildMode; if(!b) return; b.yaw += (dir<0?-1:1)*Math.PI/2; b._wAcc=0; _bmMeasure(); _bmHint(); }
+function _bmSpin(dy, mode){
+  const b=buildMode; if(!b || !dy) return;
+  if(mode===1) dy*=33; else if(mode===2) dy*=90;        // lines / pages -> pixel-ish units
+  const now=performance.now();
+  if(!b._wT || now-b._wT>250 || (b._wAcc && (dy>0)!==(b._wAcc>0)) ) b._wAcc=0;   // a new gesture (pause) or a direction flip starts clean
+  b._wT=now; b._wAcc=(b._wAcc||0)+dy;
+  if(Math.abs(b._wAcc)<90) return;                      // less than one notch of travel so far
+  _bmRotStep(b._wAcc>0?1:-1);                           // (also zeroes the accumulator)
 }
 // build 941: Minecraft-style undo — delete the session-placed prop under the crosshair. The ray
 // intersects ALL props so authored geometry in front blocks a runtime prop behind it; the hit must

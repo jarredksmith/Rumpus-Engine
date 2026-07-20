@@ -21,7 +21,7 @@ for(const pat of [
   /const _slideKey = \(keys\[BINDS\.slide\]\|\|padCrouch\);/,           // slide
   /keys\[BINDS\.fwd\]\) throttle\+=1;/,                                 // drive throttle
   /if\(keys\[BINDS\.left\]\) steer\+=1;/,                               // steering
-  /if\(e\.code===BINDS\.reload\) reload\(\);/,                          // reload
+  /if\(e\.code===BINDS\.reload\)\{ if\(typeof buildMode!=='undefined' && buildMode\)\{ e\.preventDefault\(\); _bmRotStep\(e\.shiftKey\?-1:1\); return; \} reload\(\); \}/,   // reload (build 1022: rotates the build ghost while it's out)
   /if\(e\.code===BINDS\.interact\) interact\(\);/,                      // use
   /if\(e\.code===BINDS\.grenade\) throwGrenade\(\);/,                   // grenade
   /e\.code===BINDS\.radial\)\{ if\(buildMode\)\{ exitBuildMode\(\); e\.preventDefault\(\); return; \} if\(!e\.repeat\) openRadial\(\);/,       // deploy menu (build 928: second press ends build mode)

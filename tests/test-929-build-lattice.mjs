@@ -28,8 +28,8 @@ assert(/if\(typeof buildMode!=='undefined' && buildMode\) return;   \/\/ build 9
   'weapon scroll is suppressed in build mode');
 assert(/b\.ghost\.rotation\.set\(0, b\.yaw, 0\); b\.ghost\.updateMatrixWorld\(true\)/.test(src),
   'the size measure applies the rotation first (a rotated ramp swaps extents)');
-assert(/_bmMeasure\(\); _bmHint\(\); return;/.test(src) && /rot/.test(extractFunction('_bmHint', src)),
-  'rotating refreshes the hint, which shows the angle');
+assert(/_bmMeasure\(\); _bmHint\(\); \}/.test(extractFunction('_bmRotStep', src)) && /rot/.test(extractFunction('_bmHint', src)),
+  'rotating refreshes the hint, which shows the angle (build 1022: every rotate input funnels through _bmRotStep)');
 
 // placement validity: no self-embed, no double-fill
 const val = extractFunction('_bmValidate', src);
