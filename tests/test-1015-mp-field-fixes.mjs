@@ -40,13 +40,25 @@ eq(pctOf(0, 0, 0), 0, 'degenerate peak never divides by zero (and cannot occur: 
 // ---- 3) crouch fallback — executable against real graphs ----
 const cs = extractFunction('_crouchSquash', src);
 const squash = new Function('grp', 'on', 'dt', cs + '\n_crouchSquash(grp, on, dt);');
-const mkGrp = (stateActions) => ({ userData: { visual: { scale: { y: 1 }, userData: stateActions ? { stateActions } : {} } } });
+const mkGrp = (stateActions, baseY) => ({ userData: { visual: { scale: { y: baseY == null ? 1 : baseY }, userData: stateActions ? { stateActions } : {} } } });
 {
-  const g = mkGrp(null);                       // capsule / model with no clips
-  for (let i = 0; i < 60; i++) squash(g, true, 0.016);
-  near(g.userData.visual.scale.y, 0.72, 0.01, 'no crouch clip -> visual squashes to 72%');
-  for (let i = 0; i < 60; i++) squash(g, false, 0.016);
-  eq(g.userData.visual.scale.y, 1, 'standing restores exactly 1 (snap at the end, no residue)');
+  // build 1016: a NORMALIZED model (natural scale 2.5) — the 1015 version dragged it toward 1
+  // and fought the animation system (the field report: violent vertical stretch jitter)
+  const g = mkGrp(null, 2.5);
+  for (let i = 0; i < 90; i++) squash(g, true, 0.016);
+  near(g.userData.visual.scale.y, 0.72 * 2.5, 0.02, 'squash is RELATIVE to the natural scale (2.5 -> 1.8, never toward 1)');
+  for (let i = 0; i < 90; i++) squash(g, false, 0.016);
+  eq(g.userData.visual.scale.y, 2.5, 'standing restores the natural scale exactly');
+  g.userData.visual.scale.y = 7;               // something else (mixer / rebuild) owns scale now
+  for (let i = 0; i < 30; i++) squash(g, false, 0.016);
+  eq(g.userData.visual.scale.y, 7, 'while standing the function is fully disengaged — it touches nothing');
+}
+{
+  // mixer-fight immunity: an animation re-writes scale every frame mid-crouch — our absolute
+  // write still lands deterministically (base captured once, no read-back feedback loop)
+  const g = mkGrp(null, 2.0);
+  for (let i = 0; i < 90; i++) { g.userData.visual.scale.y = 2.0; squash(g, true, 0.016); }
+  near(g.userData.visual.scale.y, 0.72 * 2.0, 0.02, 'a scale-writing mixer cannot re-inflate the base (no jitter, no compounding)');
 }
 {
   const g = mkGrp({ crouch: {} });             // model WITH a crouch clip

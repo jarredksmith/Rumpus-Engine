@@ -15700,13 +15700,26 @@ function ensureOwnAvatar(){
 // field report: a joiner's own crouch showed nowhere on their device). Fallback: squash the
 // avatar visual toward 72% height while crouched — skipped the moment a real crouch clip exists.
 function _crouchSquash(grp, on, dt){
+  // build 1016: the 1015 version assumed the visual's natural scale is 1 and lerped FROM the
+  // live value — model-normalization scales and animated poses turned that into a per-frame
+  // tug-of-war (the field report: violent vertical stretch jitter). Now: keep our own factor,
+  // capture the visual's natural scale once per crouch episode, write ABSOLUTE values, and
+  // disengage completely (touch nothing) while standing.
   const v = grp && grp.userData && grp.userData.visual; if(!v) return;
   const sa = v.userData && v.userData.stateActions;
   const hasClip = !!(sa && (sa['crouch'] || sa['crouchWalk']));
-  const tgt = (on && !hasClip) ? 0.72 : 1;
-  const cur = v.scale.y || 1;
-  const ny = cur + (tgt-cur)*Math.min(1, (dt||0.016)*10);
-  v.scale.y = (Math.abs(ny-1) < 0.002) ? 1 : ny;
+  const ud = grp.userData;
+  const want = (on && !hasClip) ? 0.72 : 1;
+  if(ud._csF==null && want===1) return;                       // standing and never squashed -> hands off
+  let f = (ud._csF==null) ? 1 : ud._csF;
+  f += (want - f) * Math.min(1, (dt||0.016)*10);
+  if(want===1 && Math.abs(f-1) < 0.01){                       // stood back up: restore exactly, then stop touching scale
+    if(v.userData._csBaseY!=null){ v.scale.y=v.userData._csBaseY; v.userData._csBaseY=null; }
+    ud._csF=null; return;
+  }
+  ud._csF = f;
+  if(v.userData._csBaseY==null) v.userData._csBaseY = v.scale.y || 1;   // natural (normalization) scale, per episode + per visual (rebuilds re-capture)
+  v.scale.y = v.userData._csBaseY * f;
 }
 function updateOwnAvatar(dt){
   if(mountedTurret || drivingCar){ if(_ownAvatar) _ownAvatar.visible=false; return; }   // build 747: no third-person body while on a turret or driving (it would stand inside the car)
@@ -19601,7 +19614,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1015 · 2026-07-19';
+const BUILD_VERSION = 'build 1016 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
