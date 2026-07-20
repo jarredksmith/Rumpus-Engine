@@ -19627,7 +19627,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1017 · 2026-07-19';
+const BUILD_VERSION = 'build 1018 · 2026-07-20';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20766,9 +20766,19 @@ function radialStick(x,y){
     for(let i=0;i<N;i++){ const a=(-90+i*(360/N))*Math.PI/180; let dd=Math.abs(((ang-a+Math.PI*3)%(Math.PI*2))-Math.PI); if(dd<bd){ bd=dd; best=i; } } radialSel=best; }
   updateRadialSel();
 }
+let _deployDiagT=0;
 function deployProp(slot, at){
   if(!slot) return;
-  if(!gameOn || editorOpen || shopOpen || paused || duelDead || _deployCD>0) return; _deployCD = at ? 0.2 : 0.5;   // build 928: aimed placement builds fast
+  if(!gameOn || editorOpen || shopOpen || paused || duelDead || _deployCD>0){
+    // build 1018: a refused BUILD-MODE placement says why (field report: green ghost, tap does
+    // nothing, no clue) — throttled, and the deploy-cooldown pacing stays silent (that's normal).
+    if(at && _deployCD<=0 && typeof toast==='function' && performance.now()-_deployDiagT>1500){
+      _deployDiagT=performance.now();
+      toast('Can\u2019t build: '+(!gameOn?'the match isn\u2019t running':editorOpen?'the editor is open':shopOpen?'a shop is open':paused?'the game is paused':duelDead?'you\u2019re eliminated':'busy'));
+    }
+    return;
+  }
+  _deployCD = at ? 0.2 : 0.5;   // build 928: aimed placement builds fast
   const fwd=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
   const px = at ? at.x : player.pos.x+fwd.x*3.5, py = at ? at.y : 1.1, pz = at ? at.z : player.pos.z+fwd.z*3.5, yaw = at ? (at.yaw||0) : 0;
   const sc = (slot.scale>0) ? slot.scale : 0.9;
@@ -20781,9 +20791,16 @@ function deployProp(slot, at){
   };
   // build 1017: a deploy whose model fails to load (cache-evicted on phones + a flaky network)
   // died as a console.warn — the player saw the ghost accept, then nothing. Retry once, then say so.
-  spawnProp(slot.src||'box', [px, py, pz, 0,yaw,0, sc], _ready, undefined, 'loop', (mat.col!=null || mat.tex) ? mat : null,
-    ()=>{ spawnProp(slot.src||'box', [px, py, pz, 0,yaw,0, sc], _ready, undefined, 'loop', (mat.col!=null || mat.tex) ? mat : null,
-      ()=>{ if(typeof toast==='function') toast('Could not load that prop\u2019s model \u2014 check your connection and try again'); }); });
+  // build 1018: and any EXCEPTION in the spawn path surfaces instead of dying in the event handler.
+  try{
+    spawnProp(slot.src||'box', [px, py, pz, 0,yaw,0, sc], _ready, undefined, 'loop', (mat.col!=null || mat.tex) ? mat : null,
+      ()=>{ spawnProp(slot.src||'box', [px, py, pz, 0,yaw,0, sc], _ready, undefined, 'loop', (mat.col!=null || mat.tex) ? mat : null,
+        ()=>{ if(typeof toast==='function') toast('Could not load that prop\u2019s model \u2014 check your connection and try again'); }); });
+    try{ console.log('[RUMPUS] deploy', slot.src||'box', '@', px.toFixed(1), py.toFixed(1), pz.toFixed(1), NET.mode!=='off'?('net:'+NET.mode):'solo'); }catch(_e){}
+  }catch(err){
+    console.error('[RUMPUS] deploy FAILED', slot.src||'box', err);
+    if(typeof toast==='function') toast('Build failed: '+String(err && err.message || err).slice(0,80));
+  }
   if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
 }
 
