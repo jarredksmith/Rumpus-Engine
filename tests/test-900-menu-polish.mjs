@@ -12,7 +12,7 @@ import { gameSource, html, extractFunction, assert, eq, done } from './harness.m
 const src = gameSource();
 
 // (1) menu structure
-assert(/<div class="menuBtns">\s*<button id="commBtn" class="secBtn">/.test(html), 'Community levels is a primary action now');
+assert(/<div class="menuBtns">\s*<button id="mpOpenBtn" class="secBtn">[\s\S]*?<button id="commBtn" class="secBtn">/.test(html), 'Community levels is a primary action — sharing a main row with Multiplayer (build 1023)');
 assert(/\.menuBtns\.menuSub \{ margin-top: 22px;[^}]*border-top: 1px solid rgba\(var\(--accent-rgb\),\.14\);/.test(html), 'the utility row is a footer strip under a hairline');
 assert(/\.secBtn\.ghost \{ font-size:11px;[^}]*border:none; background:transparent;/.test(html), 'footer links are quiet text, not boxed buttons');
 for(const id of ['loadCampBtn','instrBtn','manualBtn','helpBtn','creditsBtn','ctrlBtn','fsBtn']) assert(html.includes('id="'+id+'"'), id+' survives in the footer');
