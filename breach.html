@@ -10895,7 +10895,6 @@ addEventListener('keydown', e=>{
   if(e.code==='KeyC' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carViewOverride = (_carViewMode(drivingCar)==='cockpit')?'chase':'cockpit'; e.preventDefault(); return; }   // build 745: toggle chase <-> cockpit view while driving
   if(e.code==='KeyV' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ _carFollowOverride = !_carFollowMode(drivingCar); if(typeof flashToast==='function') flashToast('Camera: '+(_carFollowOverride?'follows the car':'free orbit')); e.preventDefault(); return; }   // build 765: toggle follow-cam <-> free orbit while driving
   if(e.code==='KeyH' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ if(drivingCar.userData.vehicle && drivingCar.userData.vehicle.headlights){ _carHeadOn=!_carHeadOn; if(typeof flashToast==='function') flashToast('Headlights '+(_carHeadOn?'on':'off')); } e.preventDefault(); return; }   // build 781: toggle headlights
-  if(e.code==='KeyN' && !e.repeat){ navOverlayToggle(); e.preventDefault(); return; }   // debug: toggle the bot nav grid overlay
   if(editorOpen) return;   // ignore gameplay keys while editing
   if(e.code===BINDS.reload) reload();
   if(e.code===BINDS.melee) meleeAttack();
@@ -16535,6 +16534,7 @@ function handleHostMsg(msg){
   else if(msg.t==='cp'){ NET.cpOwner=msg.o; NET.cpCap=msg.c; NET.cpCapTeam=msg.ct; NET.cpContested=!!msg.x; if(msg.s) NET.cpScore=msg.s; }
   else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }        // the host shot this client (build 797: a car ram also flings us)
   else if(msg.t==='fire'){ remoteFire(msg.from, msg.o, msg.d, msg.w); }       // someone fired
+  else if(msg.t==='eshot'){ if(typeof remoteEnemyShot==='function') remoteEnemyShot(msg.o, msg.v); }   // enemy gunfire (cosmetic bolt; damage rides {t:'hurt'})
   else if(msg.t==='rocket'){ fireRocket(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]), msg.by, false, msg.r||7, 0); }   // show another player's rocket (visual)
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), msg.by, false); }   // build 670: show another player's grenade (visual only)
   else if(msg.t==='boom'){ explodeAt(new THREE.Vector3(msg.p[0],msg.p[1],msg.p[2]), msg.r||7, 0, null); }   // show a blast (host applied the damage)
@@ -19362,7 +19362,18 @@ function netFire(o, d){
 function remoteFire(pid, o, d, wep){
   const from=new THREE.Vector3(o[0],o[1],o[2]);
   const dir=new THREE.Vector3(d[0],d[1],d[2]); if(dir.lengthSq()<1e-6) return; dir.normalize();
-  tracer(from, from.clone().addScaledVector(dir, 60));
+  // build 1020: remote shots drew a blind 60m streak through walls with no impact — only YOUR shots
+  // sparked where they landed. Cast the same ray locally so a joiner's / bot's gunfire stops at the
+  // wall and sparks there, matching what the shooter sees. One raycast per relayed shot (same cost
+  // as one local pellet); world geometry + dynamic props only — actor damage FX ride the hit paths.
+  let end=null;
+  try{
+    const _rt=[...colliders, ...dynamicProps, floor].filter(x=>x&&x.isObject3D);
+    const _far=raycaster.far; raycaster.far=60; raycaster.set(from, dir);
+    const _h=raycaster.intersectObjects(_rt, true); raycaster.far=_far;
+    if(_h.length){ end=_h[0].point.clone(); spark(end, fxCfg.color); }
+  }catch(e){}
+  tracer(from, end || from.clone().addScaledVector(dir, 60));
   if(!(wep && WEAPONS[wep] && WEAPONS[wep].noMuzzle)) muzzleFlashAt(from);   // build 684: respect a flash-less weapon
   const rp=NET.players[pid];
   if(rp){ rp._fireT = performance.now()+480; }   // netInterpolate owns the rp pose (attack vs move+fire); the longer hold bridges the gap between shots so it doesn't flicker shot-to-shot
@@ -19627,7 +19638,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1019 · 2026-07-20';
+const BUILD_VERSION = 'build 1020 · 2026-07-20';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -22154,7 +22165,22 @@ function fireEnemyShot(en, target, spread){
   mesh.quaternion.setFromUnitVectors(_UP, dir.clone().normalize());   // align local +Y to travel (streak shape is baked in makeEnemyBolt from boltCfg)
   scene.add(mesh);
   if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);   // muzzle flash at the enemy's gun (scaled by boltCfg)
-  enemyShots.push({ mesh, vel: dir.multiplyScalar(en.projSpeed), dmg: en.dmg, born: performance.now(), life: 3500, from: from.clone() });
+  const vel = dir.multiplyScalar(en.projSpeed);
+  enemyShots.push({ mesh, vel, dmg: en.dmg, born: performance.now(), life: 3500, from: from.clone() });
+  if(SFX && SFX.enemyShot) SFX.enemyShot();
+  // build 1020: co-op joiners never saw enemy gunfire at all — the bolts lived only on the host.
+  // Relay each shot; clients fly a cosmetic copy (damage still arrives via {t:'hurt'}).
+  if(NET.mode==='host'){ const m={ t:'eshot', o:[+from.x.toFixed(2),+from.y.toFixed(2),+from.z.toFixed(2)], v:[+vel.x.toFixed(2),+vel.y.toFixed(2),+vel.z.toFixed(2)] }; for(const cid in NET.conns){ try{ NET.conns[cid].send(m); }catch(e){} } }
+}
+function remoteEnemyShot(o, v){   // build 1020: a host-relayed enemy shot — cosmetic on the client (noDmg: the host owns damage and sends {t:'hurt'})
+  const from=new THREE.Vector3(o[0],o[1],o[2]), vel=new THREE.Vector3(v[0],v[1],v[2]);
+  if(vel.lengthSq()<1e-6) return;
+  const mesh=makeEnemyBolt();
+  mesh.position.copy(from);
+  mesh.quaternion.setFromUnitVectors(_UP, vel.clone().normalize());
+  scene.add(mesh);
+  if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);
+  enemyShots.push({ mesh, vel, dmg:0, noDmg:true, born:performance.now(), life:3500, from:from.clone() });
   if(SFX && SFX.enemyShot) SFX.enemyShot();
 }
 function updateEnemyShots(dt){
@@ -22167,7 +22193,7 @@ function updateEnemyShots(dt){
     const p = s.mesh.position;
     emitBoltTrail(p);
     let dead = (now - s.born) > s.life || p.y < terrainHeightAt(p.x,p.z)+0.1;
-    if(!dead){ for(const pl of ps){ const dx=pl.pos.x-p.x, dy=((pl.eyeY!=null?pl.eyeY:(pl.pos.y!=null?pl.pos.y:1.4)))-p.y, dz=pl.pos.z-p.z; if(dx*dx+dy*dy+dz*dz < 1.1*1.1){ if(pl.hurt) pl.hurt(s.dmg, s.from?s.from.x:null, s.from?s.from.z:null); dead=true; break; } } }
+    if(!dead){ for(const pl of ps){ const dx=pl.pos.x-p.x, dy=((pl.eyeY!=null?pl.eyeY:(pl.pos.y!=null?pl.pos.y:1.4)))-p.y, dz=pl.pos.z-p.z; if(dx*dx+dy*dy+dz*dz < 1.1*1.1){ if(pl.hurt && !s.noDmg) pl.hurt(s.dmg, s.from?s.from.x:null, s.from?s.from.z:null); dead=true; break; } } }
     if(!dead){ for(const c of colliders){ const b=c.userData.box; if(!b) continue; if(p.x>=b.min.x&&p.x<=b.max.x&&p.y>=b.min.y&&p.y<=b.max.y&&p.z>=b.min.z&&p.z<=b.max.z){ dead=true; break; } } }
     if(dead){ boltImpact(p, boltCfg.impactColor); scene.remove(s.mesh); enemyShots.splice(i,1); }
   }

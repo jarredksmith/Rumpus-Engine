@@ -25,7 +25,7 @@ assert(/if\(en\.ranged\)\{[\s\S]*en\.shootCd<=0[\s\S]*segmentBlocked\(en\.mesh\.
 
 // projectiles: travel, damage a player, blocked by cover, cleared on start, ticked in loop
 const ues = extractFunction('updateEnemyShots');
-assert(/if\(pl\.hurt\) pl\.hurt\(s\.dmg, s\.from/.test(ues), 'a hit routes damage to the player (local or remote)');
+assert(/if\(pl\.hurt && !s\.noDmg\) pl\.hurt\(s\.dmg, s\.from/.test(ues), 'a hit routes damage to the player (build 1020: unless the bolt is a cosmetic relay copy — the host already sent {t:\'hurt\'})');
 assert(/for\(const c of colliders\)\{[\s\S]*dead=true/.test(ues), 'cover stops the projectile');
 assert(/updateEnemyShots\(dt\);/.test(src), 'projectiles tick each frame');
 assert(/enemyShots\.slice\(\)\.forEach\(s=>scene\.remove\(s\.mesh\)\); enemyShots\.length=0;/.test(src), 'projectiles cleared on game start');

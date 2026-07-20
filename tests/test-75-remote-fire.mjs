@@ -14,7 +14,7 @@ assert(/NET\.conn\.send\(m\)/.test(nf) && /NET\.conns\[id\]\.send\(m\)/.test(nf)
 
 // receiver render
 const rf = extractFunction('remoteFire');
-assert(/tracer\(from, from\.clone\(\)\.addScaledVector\(dir, 60\)\)/.test(rf), 'draws a tracer from the shooter');
+assert(/tracer\(from, end \|\| from\.clone\(\)\.addScaledVector\(dir, 60\)\)/.test(rf), 'draws a tracer from the shooter (build 1020: to the surface it hit, 60m only on a miss)');
 assert(/muzzleFlashAt\(from\)/.test(rf), 'spawns a muzzle flash');
 assert(/rp\._fireT = performance\.now\(\)\+480/.test(rf) && !/setEnemyAnimState\(rp\.mesh,'attack'\)/.test(rf), 'flags the fire pose; netInterpolate owns the state (build 519)');
 assert(/SFX\.shootAt\(from\)/.test(rf), 'plays the distance-attenuated shot');

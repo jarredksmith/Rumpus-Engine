@@ -7,7 +7,7 @@ const src = gameSource();
 // module + key wiring
 assert(/const NAV = \{ cell:2\.0, nx:0, nz:0, ox:0, oz:0, walk:null, y:null, built:false, overlay:null, show:false \};/.test(src), 'NAV grid state exists');
 assert(/function buildNavGrid\(\)/.test(src) && /function navBuildAlloc\(\)/.test(src) && /function navWalkable\(x,z\)/.test(src) && /function buildNavOverlay\(\)/.test(src) && /function navOverlayToggle\(\)/.test(src), 'grid build + alloc + walkable test + overlay + toggle all defined');
-assert(/e\.code==='KeyN' && !e\.repeat\)\{ navOverlayToggle\(\)/.test(src), 'N toggles the overlay');
+assert(!/e\.code==='KeyN'/.test(src), 'build 1020: the dev N-key overlay binding is REMOVED from live play (players fat-fingered it)');
 
 // walkable definition uses the player's collision helpers (not a separate guess)
 const nw = extractFunction('navWalkable');
