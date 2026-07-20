@@ -19627,7 +19627,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1018 · 2026-07-20';
+const BUILD_VERSION = 'build 1019 · 2026-07-20';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20780,10 +20780,12 @@ function deployProp(slot, at){
   }
   _deployCD = at ? 0.2 : 0.5;   // build 928: aimed placement builds fast
   const fwd=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
-  const px = at ? at.x : player.pos.x+fwd.x*3.5, py = at ? at.y : 1.1, pz = at ? at.z : player.pos.z+fwd.z*3.5, yaw = at ? (at.yaw||0) : 0;
+  const px = at ? at.x : player.pos.x+fwd.x*3.5, pz = at ? at.z : player.pos.z+fwd.z*3.5, yaw = at ? (at.yaw||0) : 0;
+  const py = at ? at.y : 1.1;   // terrain-RELATIVE by convention: finalizeProp re-adds the ground height under the footprint
   const sc = (slot.scale>0) ? slot.scale : 0.9;
   const mat = {}; if(slot.col!=null) mat.col=slot.col; if(slot.tex) mat.tex=slot.tex;   // build 671: per-slot look; propEntry sends it to peers
   const _ready=(obj)=>{
+    if(at){ obj.position.y = at.y; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); }   // build 1019: the ghost's y IS the intended world y — finalizeProp treats t[1] as terrain-relative and re-added the ground height, double-lifting on hills (floating on peaks, buried in valleys)
     obj.userData.runtime = true;   // radial-deployed: session-only (never saved, hidden from the editor, cleared on redeploy)
     if(!slot.anc) setPropDynamic(obj, true);                             // build 928: anchored = a static building block — it stays exactly where placed
     if(slot.unb) obj.userData.breakable = false;                         // build 928: unbreakable — shots can't shatter it
@@ -20894,8 +20896,19 @@ function _buildModeTick(){
   camera.getWorldPosition(_bmPos); camera.getWorldDirection(_bmDir);
   _bmRay.set(_bmPos, _bmDir); _bmRay.far=10;
   const hits=(typeof colliders!=='undefined' && colliders.length) ? _bmRay.intersectObjects(colliders, true) : [];
+  // build 1019: the ground mesh is NOT in colliders — on hilly terrain the aim ray sailed through
+  // the landscape and the ghost fell back to a fixed 6m column (floating over valleys, buried
+  // behind crests). March the ray against the heightfield; the nearer surface wins below.
+  let terra=null;
+  if(typeof terrainHeightAt==='function' && _bmDir.y<0.35){   // aiming at the sky -> no ground ahead
+    const step=0.35, RANGE=18;
+    for(let pt=0.6; pt<=RANGE; pt+=step){
+      const x=_bmPos.x+_bmDir.x*pt, y=_bmPos.y+_bmDir.y*pt, z=_bmPos.z+_bmDir.z*pt;
+      if(y<=terrainHeightAt(x,z)){ terra={ x, z, dist:pt }; break; }
+    }
+  }
   let placed=false;
-  if(hits.length){
+  if(hits.length && (!terra || hits[0].distance <= terra.dist)){
     const hit=hits[0];
     if(hit.face){
       _bmN.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
@@ -20919,6 +20932,13 @@ function _buildModeTick(){
       }
       g.position.set(px,py,pz); placed=true;
     }
+  }
+  else if(terra){
+    // the aimed GROUND: sit the ghost's bottom on the heightfield, exactly where the ray lands
+    let px=terra.x, pz=terra.z;
+    if(buildSnap){ const gx=Math.max(0.25,b.size.x), gz=Math.max(0.25,b.size.z); px=Math.round(px/gx)*gx; pz=Math.round(pz/gz)*gz; }
+    const ty=terrainHeightAt(px,pz);   // re-sample at the SNAPPED cell so the ghost sits on that cell's ground
+    g.position.set(px, ty - b.foot + 0.001, pz); placed=true;
   }
   if(!placed){
     const d=6; let px=_bmPos.x+_bmDir.x*d, pz=_bmPos.z+_bmDir.z*d;

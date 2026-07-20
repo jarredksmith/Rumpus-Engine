@@ -16,7 +16,7 @@ const dp = extractFunction('deployProp');
 assert(/if\(.*_deployCD>0\)\{/.test(dp) && /_deployCD = at \? 0\.2 : 0\.5;/.test(dp),
   'deploy has a cooldown (build 928: faster while building; 1018: refusals from build mode explain themselves)');
 assert(/toast\('Can\\u2019t build: '/.test(dp), 'a guard refusal in build mode toasts the specific blocker (build 1018)');
-assert(/const _ready=\(obj\)=>\{\n    obj\.userData\.runtime = true;[\s\S]*?if\(!slot\.anc\) setPropDynamic\(obj, true\);/.test(dp)
+assert(/const _ready=\(obj\)=>\{[\s\S]{0,400}?obj\.userData\.runtime = true;[\s\S]*?if\(!slot\.anc\) setPropDynamic\(obj, true\);/.test(dp)
   && /spawnProp\(slot\.src\|\|'box', \[px, py, pz, 0,yaw,0, sc\], _ready,/.test(dp),
   'deploys a dynamic prop at the aim (build 928: anchored stays static; 1017: shared _ready + retry/toast on load failure)');
 assert(/Could not load that prop/.test(dp), 'a failed deploy load says so instead of dying as a console.warn (build 1017)');
