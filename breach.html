@@ -16142,8 +16142,21 @@ function broadcastWorld(){ const w=serializeWorld(); for(const id in NET.conns){
 // the difference. Host broadcasts to all clients; a client sends to the host, which applies and
 // relays to the other clients. Dynamic (physics) props are excluded — they ride the world snapshot.
 function netSendProp(msg){
-  if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send(msg); }catch(e){} } }
-  else if(NET.mode==='client' && NET.conn && NET.conn.open){ try{ NET.conn.send(msg); }catch(e){} }
+  // build 1017: report success so the reconciler can retry instead of silently losing the prop.
+  // Host: success = delivered to every open conn (nobody connected counts as success — nothing
+  // to tell). Client: success = the channel is open and the send didn't throw.
+  if(NET.mode==='host'){
+    let ok=true;
+    for(const id in NET.conns){ const c=NET.conns[id]; if(!c) continue;
+      if(c.open===false){ ok=false; continue; }
+      try{ c.send(msg); }catch(e){ ok=false; } }
+    return ok;
+  }
+  if(NET.mode==='client'){
+    if(!(NET.conn && NET.conn.open!==false)) return false;
+    try{ NET.conn.send(msg); return true; }catch(e){ return false; }
+  }
+  return true;
 }
 function relayProp(msg, exceptId){ for(const id in NET.conns){ if(+id===exceptId) continue; try{ NET.conns[id].send(msg); }catch(e){} } }
 function seedPropSync(){ NET.sentProps.clear(); for(const o of propModels){ if(o && o.userData.nid) NET.sentProps.set(o.userData.nid, o.userData.phys ? 'dyn' : propTuple(o)); } }
@@ -16184,12 +16197,12 @@ function reconcileProps(dt){
     if(_remoteDrivenNids[nid]!=null) continue;                              // build 895: THEIR driven car — don't echo the motion back as edits
     const dyn = !!o.userData.phys;                      // dynamic props: existence synced here, motion via the host's D snapshot
     const prev = NET.sentProps.get(nid);
-    if(prev===undefined){ NET.sentProps.set(nid, dyn?'dyn':propTuple(o)); netSendProp({ t:'pAdd', d:propEntry(o) }); }
-    else if(dyn && prev!=='dyn'){ NET.sentProps.set(nid,'dyn'); netSendProp({ t:'pDel', nid }); netSendProp({ t:'pAdd', d:propEntry(o) }); }       // became dynamic -> re-create as dynamic
-    else if(!dyn && prev==='dyn'){ const t=propTuple(o); NET.sentProps.set(nid,t); netSendProp({ t:'pDel', nid }); netSendProp({ t:'pAdd', d:propEntry(o) }); }   // became static
-    else if(!dyn){ const t=propTuple(o); if(!tupleEq(prev,t)){ NET.sentProps.set(nid,t); netSendProp({ t:'pMov', nid, x:t }); } }   // static edit
+    if(prev===undefined){ if(netSendProp({ t:'pAdd', d:propEntry(o) })) NET.sentProps.set(nid, dyn?'dyn':propTuple(o)); }   // build 1017: claim only on delivery — a failed send retries next tick (it used to be lost forever)
+    else if(dyn && prev!=='dyn'){ if(netSendProp({ t:'pDel', nid }) && netSendProp({ t:'pAdd', d:propEntry(o) })) NET.sentProps.set(nid,'dyn'); }       // became dynamic -> re-create as dynamic
+    else if(!dyn && prev==='dyn'){ const t=propTuple(o); if(netSendProp({ t:'pDel', nid }) && netSendProp({ t:'pAdd', d:propEntry(o) })) NET.sentProps.set(nid,t); }   // became static
+    else if(!dyn){ const t=propTuple(o); if(!tupleEq(prev,t)){ if(netSendProp({ t:'pMov', nid, x:t })) NET.sentProps.set(nid,t); } }   // static edit
   }
-  for(const nid of Array.from(NET.sentProps.keys())){ if(!cur.has(nid)){ if(_nidPending.has(nid)) continue; NET.sentProps.delete(nid); netSendProp({ t:'pDel', nid }); } }   // removed — build 905: never pDel a peer's prop just because our copy is still downloading
+  for(const nid of Array.from(NET.sentProps.keys())){ if(!cur.has(nid)){ if(_nidPending.has(nid)) continue; if(netSendProp({ t:'pDel', nid })) NET.sentProps.delete(nid); } }   // removed — build 905: never pDel a peer's prop just because our copy is still downloading; build 1017: keep the claim until the delete is actually delivered
 }
 function netApplyAddProp(d){
   if(!d || !d.nid || propByNid(d.nid)) return false;            // skip dupes
@@ -19614,7 +19627,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1016 · 2026-07-19';
+const BUILD_VERSION = 'build 1017 · 2026-07-19';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -20760,12 +20773,17 @@ function deployProp(slot, at){
   const px = at ? at.x : player.pos.x+fwd.x*3.5, py = at ? at.y : 1.1, pz = at ? at.z : player.pos.z+fwd.z*3.5, yaw = at ? (at.yaw||0) : 0;
   const sc = (slot.scale>0) ? slot.scale : 0.9;
   const mat = {}; if(slot.col!=null) mat.col=slot.col; if(slot.tex) mat.tex=slot.tex;   // build 671: per-slot look; propEntry sends it to peers
-  spawnProp(slot.src||'box', [px, py, pz, 0,yaw,0, sc], (obj)=>{
+  const _ready=(obj)=>{
     obj.userData.runtime = true;   // radial-deployed: session-only (never saved, hidden from the editor, cleared on redeploy)
     if(!slot.anc) setPropDynamic(obj, true);                             // build 928: anchored = a static building block — it stays exactly where placed
     if(slot.unb) obj.userData.breakable = false;                         // build 928: unbreakable — shots can't shatter it
     if(slot.exp){ obj.userData.explosive=true; obj.userData.blastRadius=7; obj.userData.blastDmg=70; obj.userData.impactVel=10; }
-  }, undefined, 'loop', (mat.col!=null || mat.tex) ? mat : null);
+  };
+  // build 1017: a deploy whose model fails to load (cache-evicted on phones + a flaky network)
+  // died as a console.warn — the player saw the ghost accept, then nothing. Retry once, then say so.
+  spawnProp(slot.src||'box', [px, py, pz, 0,yaw,0, sc], _ready, undefined, 'loop', (mat.col!=null || mat.tex) ? mat : null,
+    ()=>{ spawnProp(slot.src||'box', [px, py, pz, 0,yaw,0, sc], _ready, undefined, 'loop', (mat.col!=null || mat.tex) ? mat : null,
+      ()=>{ if(typeof toast==='function') toast('Could not load that prop\u2019s model \u2014 check your connection and try again'); }); });
   if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
 }
 

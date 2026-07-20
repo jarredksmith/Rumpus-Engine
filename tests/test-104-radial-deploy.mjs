@@ -14,7 +14,10 @@ assert(/if\(!gameOn \|\| editorOpen \|\| shopOpen \|\| paused \|\| duelDead \|\|
 
 const dp = extractFunction('deployProp');
 assert(/if\(.*_deployCD>0\) return; _deployCD = at \? 0\.2 : 0\.5;/.test(dp), 'deploy has a cooldown (build 928: faster while building)');
-assert(/spawnProp\(slot\.src\|\|'box', \[px, py, pz, 0,yaw,0, sc\], \(obj\)=>\{\n    obj\.userData\.runtime = true;[\s\S]*?if\(!slot\.anc\) setPropDynamic\(obj, true\);/.test(dp), 'deploys a dynamic prop at the aim (build 928: anchored slots stay static)');
+assert(/const _ready=\(obj\)=>\{\n    obj\.userData\.runtime = true;[\s\S]*?if\(!slot\.anc\) setPropDynamic\(obj, true\);/.test(dp)
+  && /spawnProp\(slot\.src\|\|'box', \[px, py, pz, 0,yaw,0, sc\], _ready,/.test(dp),
+  'deploys a dynamic prop at the aim (build 928: anchored stays static; 1017: shared _ready + retry/toast on load failure)');
+assert(/Could not load that prop/.test(dp), 'a failed deploy load says so instead of dying as a console.warn (build 1017)');
 assert(/const mat = \{\}; if\(slot\.col!=null\) mat\.col=slot\.col; if\(slot\.tex\) mat\.tex=slot\.tex;/.test(dp), 'the slot’s colour/texture ride the prop (and sync via the reconciler)');
 assert(/if\(slot\.exp\)\{ obj\.userData\.explosive=true; obj\.userData\.blastRadius=7; obj\.userData\.blastDmg=70; obj\.userData\.impactVel=10; \}/.test(dp), 'explosive option flags the prop');
 
