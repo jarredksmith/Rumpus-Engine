@@ -7910,6 +7910,131 @@ function tryUnlockProp(o){
   flashToast('LOCKED \u2014 NEEDS '+keyDisplayName(lk).toUpperCase()); if(SFX.deny) SFX.deny();
   return false;
 }
+// ---------- LOGIC GRAPH (build 1027) ----------
+// A node-based logic layer ABOVE the signal system. Entry nodes (match start, named events,
+// repeating timers, enemy kills, wave starts) send PULSES through wires into flow nodes
+// (branch / counter / delay / repeat / random / once), state nodes (set / add variables), and
+// action nodes ('do' = the full signal-verb vocabulary, toast, emit, win, lose). Reusable
+// functions = an 'event' node with a name + 'emit' nodes that call it from anywhere.
+// Authoritative on host/solo only — the resulting actions ride the signal system's existing
+// per-action broadcasts, so multiplayer converges without any new message types. A per-frame
+// pulse budget makes a mis-wired infinite loop stall the GRAPH, never the game.
+function _sanitizeLogic(g){
+  if(!g || !Array.isArray(g.nodes) || !Array.isArray(g.wires)) return { nodes:[], wires:[] };
+  const nodes=[]; const seen=new Set();
+  for(const n of g.nodes){
+    if(!n || typeof n.id!=='string' || typeof n.type!=='string' || seen.has(n.id)) continue;
+    seen.add(n.id);
+    nodes.push({ id:n.id.slice(0,12), type:n.type.slice(0,16), x:Math.round(+n.x||0), y:Math.round(+n.y||0), p:(n.p && typeof n.p==='object' && !Array.isArray(n.p)) ? n.p : {} });
+    if(nodes.length>=200) break;
+  }
+  const ids=new Set(nodes.map(n=>n.id));
+  const wires=[];
+  for(const w of g.wires){
+    if(!w || !ids.has(w.a) || !ids.has(w.b)) continue;
+    wires.push({ a:w.a, o:Math.max(0,Math.min(5,w.o|0)), b:w.b, i:(w.i==='reset')?'reset':'in' });
+    if(wires.length>=400) break;
+  }
+  return { nodes, wires };
+}
+let logicGraph = _sanitizeLogic(savedLevel && savedLevel.logic);   // authored; serialized with the level
+let logicVars = {};                                                // runtime variable store (reset every match)
+let _lgTimers = [];                                                // pending delay / interval / repeat continuations
+let _lgState = {};                                                 // per-node runtime (counter counts, once flags)
+let _lgBudget = 0, _lgWarned = false;
+function _lgNode(id){ for(const n of logicGraph.nodes){ if(n.id===id) return n; } return null; }
+// A value field accepts a NUMBER or a VARIABLE NAME — '5', '-2.5', 'score', '#i' all work.
+function _lgNum(v){
+  if(v==null) return 0;
+  const t=String(v).trim(); if(t==='') return 0;
+  const n=parseFloat(t);
+  if(!isNaN(n) && isFinite(n) && /^[-+]?[0-9.]/.test(t)) return n;
+  return +(logicVars[t]||0);
+}
+function _lgFollow(id, out){
+  for(const w of logicGraph.wires){ if(w.a===id && w.o===out) _lgPulse(w.b, w.i); }
+}
+function _lgFireEvents(kind, name){
+  for(const n of logicGraph.nodes){
+    if(n.type!==kind) continue;
+    if(kind==='event' && String((n.p&&n.p.name)||'').trim()!==name) continue;
+    _lgFollow(n.id, 0);
+  }
+}
+function logicEvent(name){   // the bridge IN: prop signals (do:'emit') and 'emit' nodes land here
+  if(typeof NET!=='undefined' && NET.mode==='client') return;
+  _lgFireEvents('event', String(name||'').trim());
+}
+function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
+  logicVars={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;
+  if(typeof NET!=='undefined' && NET.mode==='client') return;
+  for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
+  _lgFireEvents('start','');
+}
+function _lgPulse(id, pin){
+  if(++_lgBudget > 400){   // a wiring loop stalls the graph for a frame, never the game
+    if(!_lgWarned){ _lgWarned=true; console.warn('[RUMPUS] logic graph: pulse budget exceeded — is a wire looping without a Delay?'); if(typeof toast==='function') toast('Logic graph paused this frame — too many pulses (a loop without a Delay?)'); }
+    return;
+  }
+  const n=_lgNode(id); if(!n) return;
+  const p=n.p||{}, st=_lgState[id] || (_lgState[id]={});
+  switch(n.type){
+    case 'setvar': { const k=String(p.name||'').trim(); if(k){
+        if(p.rand){ const lo=Math.round(_lgNum(p.min)), hi=Math.round(_lgNum(p.max)); logicVars[k]=lo+Math.floor(Math.random()*Math.max(1,hi-lo+1)); }   // random INTEGER in [min..max]
+        else logicVars[k]=_lgNum(p.value);
+      } _lgFollow(id,0); break; }
+    case 'addvar': { const k=String(p.name||'').trim(); if(k) logicVars[k]=(+logicVars[k]||0)+_lgNum(p.value); _lgFollow(id,0); break; }
+    case 'branch': { const a=_lgNum(p.a), b=_lgNum(p.b), op=p.op||'==';
+      const ok = op==='==' ? a===b : op==='!=' ? a!==b : op==='<' ? a<b : op==='<=' ? a<=b : op==='>' ? a>b : a>=b;
+      _lgFollow(id, ok?0:1); break; }
+    case 'counter': { if(pin==='reset'){ st.c=0; break; }
+      st.c=(st.c||0)+1;
+      _lgFollow(id,1);                                            // out 1: every count
+      if(st.c>=Math.max(1,Math.round(_lgNum(p.target||1)))){ if(p.hold!==true) st.c=0; _lgFollow(id,0); }   // out 0: target reached (auto-resets unless held)
+      break; }
+    case 'delay': { _lgTimers.push({ at:Math.max(0.05,_lgNum(p.sec||1)), node:id, kind:'delay' }); break; }
+    case 'repeat': { const N=Math.max(1,Math.min(100,Math.round(_lgNum(p.times||1)))), gap=Math.max(0,_lgNum(p.gap||0));
+      if(gap<=0){ for(let i=0;i<N;i++){ logicVars['#i']=i; _lgFollow(id,1); } _lgFollow(id,0); }   // out 1 each pass (#i = index), out 0 when done
+      else { st.left=N; st.i=0; _lgTimers.push({ at:0.001, node:id, kind:'repeat', gap }); }
+      break; }
+    case 'random': { const w=[Math.max(0,_lgNum(p.w0!=null?p.w0:1)), Math.max(0,_lgNum(p.w1!=null?p.w1:1)), Math.max(0,_lgNum(p.w2||0)), Math.max(0,_lgNum(p.w3||0))];
+      const tot=w[0]+w[1]+w[2]+w[3]; if(tot<=0) break;
+      let r=Math.random()*tot;
+      for(let i=0;i<4;i++){ r-=w[i]; if(r<0){ _lgFollow(id,i); break; } }
+      break; }
+    case 'once': { if(pin==='reset'){ st.done=false; break; } if(st.done) break; st.done=true; _lgFollow(id,0); break; }
+    case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
+    case 'do': { try{ _applySignalAction({ do:p.verb||'toggle', target:String(p.target||'').trim(), clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'' }, null); }catch(e){} _lgFollow(id,0); break; }
+    case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));   // {score} interpolates live variables
+      if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
+    case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
+    case 'lose': { try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} break; }   // the death-zone path: ends the run through the normal defeat flow
+    default: break;   // start / event / interval / onkill / onwave are entries — they only ever FIRE, never receive
+  }
+}
+function updateLogic(dt){
+  if(typeof NET!=='undefined' && NET.mode==='client') return;
+  if(!gameOn || (typeof editorOpen!=='undefined' && editorOpen)) return;
+  if(!logicGraph.nodes.length) return;
+  _lgBudget=0; _lgWarned=false;   // a fresh pulse budget every frame
+  for(let i=_lgTimers.length-1;i>=0;i--){
+    const T=_lgTimers[i]; T.at-=dt; if(T.at>0) continue;
+    if(T.kind==='interval'){
+      const n=_lgNode(T.node); if(!n){ _lgTimers.splice(i,1); continue; }
+      const lim=Math.round(_lgNum(n.p.times||0));                 // 0 = forever
+      const st=_lgState[n.id]||(_lgState[n.id]={});
+      if(lim>0 && (st.fired||0)>=lim){ _lgTimers.splice(i,1); continue; }
+      st.fired=(st.fired||0)+1; T.at=Math.max(0.1,_lgNum(n.p.sec||1));
+      _lgFollow(n.id,0);
+    } else if(T.kind==='repeat'){
+      const st=_lgState[T.node];
+      if(!st || st.left<=0){ _lgTimers.splice(i,1); continue; }
+      logicVars['#i']=st.i; st.i++; st.left--;
+      _lgFollow(T.node,1);
+      if(st.left<=0){ _lgFollow(T.node,0); _lgTimers.splice(i,1); } else T.at=T.gap;
+    } else { _lgTimers.splice(i,1); _lgFollow(T.node,0); }        // delay
+  }
+}
 // Signals: a prop can carry rules like {when:'destroyed'|'interacted', do:'toggle'|'open'|'close'|'anim'|'unlock', target:'tagName'}.
 // Firing applies the action to every prop whose userData.tag matches. Each action uses the existing
 // per-action net broadcast, so peers converge without a new message type; to avoid double-fires,
@@ -7942,6 +8067,7 @@ function _applySignalAction(s, src){
     if(s.do==='objective'){ if(typeof setGoal==='function') setGoal(s.text||''); return; }   // build 692: update the on-screen objective; no target needed
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
     if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
+    if(s.do==='emit'){ if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(String(s.text||'').trim()); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed.
     if(!s.target) return;
     for(let i=0;i<propModels.length;i++){
       const t = propModels[i]; if(!t || t.userData.tag !== s.target) continue;
@@ -15353,6 +15479,7 @@ function loadLevelFromNet(level){
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
+  logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -20017,7 +20144,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1026 · 2026-07-21';
+const BUILD_VERSION = 'build 1027 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -21982,6 +22109,7 @@ function enemyHurt(en, dmg, sx, sz){
   return false;
 }
 function killEnemy(en, sx, sz){
+  if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onkill','');   // build 1027: 'On enemy killed' entries
   runKills++;
   spark(en.mesh.position, 0xff2d55); SFX.kill(en.type);   // build 752: per-enemy-type kill sound
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
@@ -23394,6 +23522,7 @@ function objectiveTick(dt){   // host/solo per-frame; may trigger the win
   }
 }
 function startWave(){
+  if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onwave','');   // build 1027: 'On wave start' entries
   clearMovementInput();   // don't carry a held key / stuck stick into the new wave (auto-move bug)
   spawnQueue = [];
   if(noEnemyMode()){ toSpawn = 0; objectiveHUD(); updateHUD(); return; }   // build 685: puzzle mode never queues enemies
@@ -24717,6 +24846,7 @@ function loop(){
   updateFloaters(dt);   // floating damage numbers + enemy hit-flash decay
   updateEnemyShots(dt); // ranged-enemy projectiles
   updateDecals(dt);     // bullet holes fade + expire (pooled, hard-capped)
+  updateLogic(dt);      // logic graph timers/delays/repeats (host/solo)
   updateChests(dt);
   checkProximity();   // runs in all modes; in duel it only considers trigger-animation props
 
@@ -26564,6 +26694,7 @@ function serializeLevel(){
     fireZones: fireZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3), dps:(+z.dps||0), den:(+z.den||1), psz:(+z.psz||1), hue:(z.hue!=null?+z.hue:30), turb:(z.turb!=null?+z.turb:1), wind:(+z.wind||0), spk:(z.spk!==false), sat:(z.sat!=null?+z.sat:1), smoke:(z.smoke===true?1:0), rx:(+z.rx||0), ry:(+z.ry||0), rz:(+z.rz||0), sx:(z.sx!=null?+z.sx:1), sy:(z.sy!=null?+z.sy:1), sz:(z.sz!=null?+z.sz:1) })),
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
+    logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
     tracer: Object.assign({}, tracerCfg),
     decal: Object.assign({}, decalCfg),
     bolt: Object.assign({}, boltCfg),
@@ -27093,6 +27224,7 @@ function restoreLevel(level){
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
+  logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -28053,7 +28185,7 @@ function buildSignalsUI(sgBody, store, rerender){
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
     r.appendChild(mkSel([['destroyed','On destroyed'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));
-    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound']], s.do, v=>{ s.do=v; }));
+    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag'; ti.value=s.target||'';
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
     ti.onchange=()=>{ pushUndoSnapshot(); s.target=ti.value.trim(); rerender(); };
@@ -28103,6 +28235,13 @@ function buildSignalsUI(sgBody, store, rerender){
       ni2.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#9fe6cf;border-radius:4px;padding:2px 5px;font-size:10px;';
       ni2.onchange=()=>{ pushUndoSnapshot(); const v=ni2.value.trim(); if(v) s.cs=v; else delete s.cs; };
       nr2.appendChild(ni2); sgBody.appendChild(nr2);
+    }
+    if(s.do==='emit'){   // build 1027: fire a named event into the logic graph (no target needed)
+      const erow=document.createElement('div'); erow.style.cssText='display:flex;gap:4px;align-items:center;margin:-1px 0 4px;padding-left:8px;';
+      const ei=document.createElement('input'); ei.type='text'; ei.maxLength=40; ei.placeholder='logic event name (e.g. platePressed)'; ei.value=s.text||'';
+      ei.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#9fe6cf;border-radius:4px;padding:2px 5px;font-size:10px;';
+      ei.onchange=()=>{ pushUndoSnapshot(); const v=ei.value.trim().slice(0,40); if(v) s.text=v; else delete s.text; };
+      erow.appendChild(ei); sgBody.appendChild(erow);
     }
     if(s.do==='objective'){   // build 692: change the on-screen objective text (no target needed)
       const orow=document.createElement('div'); orow.style.cssText='display:flex;gap:4px;align-items:center;margin:-1px 0 4px;padding-left:8px;';
@@ -31794,6 +31933,7 @@ function startGame(){
   if(typeof showWeaponModel==='function') showWeaponModel(curWep);   // show fists / gun for the chosen loadout
   flashlightOn=false; if(_flashlight){ _flashlight.intensity=0; }   // flashlight off at the start of a run (stays visible at 0 — see ensureFlashlight)
   if(gameCfg.flashlight && typeof ensureFlashlight==='function') ensureFlashlight();   // build 977: pre-warm — the spotlight joins the scene during level start, so shaders compile once here, not on the first L press
+  if(typeof logicStart==='function') logicStart();   // build 1027: fresh variables/timers, then the graph's 'On start' chains fire
   WEAPONS.rifle.mag=30; WEAPONS.rifle.reserve=90;
   WEAPONS.smg.mag=40; WEAPONS.smg.reserve=120;
   WEAPONS.shotgun.mag=6; WEAPONS.shotgun.reserve=24;

@@ -52,7 +52,7 @@ assert(src.split('if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ con
 
 // --- editor + level check ---
 assert(/edFold\(behaveHost, 'signals', 'Signals', false, 'Tag this prop/.test(src), 'Signals fold in the inspector (title + subtitle, build 362)');
-assert(/\[\['destroyed','On destroyed'\],\['interacted','On E'\],\['contact','On object placed'\]\]/.test(src) && /\[\['toggle','Toggle'\],\['open','Open'\],\['close','Close'\],\['anim','Play anim'\],\['unlock','Unlock'\],\['win','Win level'\],\['cutscene','Play cutscene'\],\['objective','Set objective'\],\['checkpoint','Set checkpoint'\],\['sound','Play sound'\]\]/.test(src), 'when/do dropdowns (incl. Play sound, build 750)');
+assert(/\[\['destroyed','On destroyed'\],\['interacted','On E'\],\['contact','On object placed'\]\]/.test(src) && /\[\['toggle','Toggle'\],\['open','Open'\],\['close','Close'\],\['anim','Play anim'\],\['unlock','Unlock'\],\['win','Win level'\],\['cutscene','Play cutscene'\],\['objective','Set objective'\],\['checkpoint','Set checkpoint'\],\['sound','Play sound'\],\['emit','\\u2192 Logic event'\]\]/.test(src), 'when/do dropdowns (incl. Play sound 750; Logic event 1027)');
 assert(/A signal targets tag '"\+s\.target\+"', but no prop carries that tag\./.test(extractFunction('levelIssues')), 'Level check flags dangling signal targets');
 // --- build 750: "Play sound" signal action (light switch / button click) ---
 assert(/if\(s\.do==='sound'\)\{ if\(s\.sound && typeof playSample==='function'\)\{ if\(!playSample\(s\.sound\) && typeof loadSound==='function'\) loadSound\(s\.sound\); \} return; \}/.test(src), 'a sound signal plays its clip (loads it if not ready), no target needed');
