@@ -15,7 +15,7 @@ for(const k of ['font-size: 18px', 'font-weight: 700', 'letter-spacing: 3px']){
   assert(hero.includes(k.replace(': ',': ')) || hero.includes(k), 'hero twin matches Deploy scale: '+k);
   assert(start.replace(/\s+/g,' ').includes(k.replace(': ',': ')) || /font-size: 18px/.test(start.replace(/:\s*/g,': ')), 'Deploy still carries '+k);
 }
-assert(/clip-path: polygon\(0 0,100% 0,100% 70%,90% 100%,0 100%\)/.test(hero), 'same angular cut as Deploy (one visual language)');
+assert(!/clip-path/.test(hero) && !/clip-path/.test(start), 'build 1024: both heroes are plain rectangles — the angular cut is gone');
 assert(/\.menuHero #startBtn \{ margin-top: 0; \}/.test(html), 'the row owns the top margin, not the button (Deploy still centers on the game-over screen)');
 
 // ---- the social row: Multiplayer + Community together ----
