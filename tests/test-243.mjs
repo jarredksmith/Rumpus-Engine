@@ -5,7 +5,7 @@ const src = gameSource();
 
 // --- pickups module ---
 assert(/sec\('Pickups', 'pickups', '<div id="edPickups"><\/div>'\)/.test(src), 'Pickups has its own section');
-assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','cutscenes'\]/.test(src), 'shown on the Gameplay tab between Game and Loot');
+assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','logic','cutscenes'\]/.test(src), 'shown on the Gameplay tab between Game and Loot');
 const pk = src.indexOf("const pkHost = (editorEl && editorEl.querySelector('#edPickups')) || gHost;");
 assert(pk > 0, 'pickups render targets its own host (gHost fallback kept)');
 assert(src.indexOf("pkHost.innerHTML=''", pk) > pk, 'module clears its own host each pass');

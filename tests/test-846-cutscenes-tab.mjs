@@ -6,7 +6,7 @@ import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 
 assert(/sec\('Cutscenes', 'cutscenes', '<div id="edCutscenes"><\/div>'\)/.test(src), 'Cutscenes is its own section');
-assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','cutscenes'\]/.test(src), '...owned by the Gameplay tab');
+assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','logic','cutscenes'\]/.test(src), '...owned by the Gameplay tab');
 assert(/cutscenes:\s*'Author camera cutscenes — play them from signals or on level start\.'/.test(src), '...with a plain-language subtitle');
 assert(/const subSec = \(title, key, collapsedDefault, host\)=>/.test(src), 'subSec takes an optional host');
 assert(/\(host\|\|worldHost\)\.appendChild\(sec\);/.test(src), '...defaulting to the World panel for every other group');

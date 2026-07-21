@@ -8035,6 +8035,212 @@ function updateLogic(dt){
     } else { _lgTimers.splice(i,1); _lgFollow(T.node,0); }        // delay
   }
 }
+// ---------- LOGIC GRAPH EDITOR (build 1028): the node canvas ----------
+// Full-screen board: drag the background to pan, wheel to zoom, drag node headers to move,
+// drag an OUT port onto an IN port to wire (click a wire to remove it). Params edit inline.
+// Every change writes straight into logicGraph, which serializes with the level.
+const LG_DEFS = {
+  start:    { t:'On start',        cat:'ev', outs:['\u25b6'],            params:[] },
+  event:    { t:'On event',        cat:'ev', outs:['\u25b6'],            params:[{k:'name',l:'name',w:86}] },
+  interval: { t:'Every X sec',     cat:'ev', outs:['tick'],             params:[{k:'sec',l:'sec',w:40},{k:'times',l:'times (0=\u221e)',w:40}] },
+  onkill:   { t:'On enemy killed', cat:'ev', outs:['\u25b6'],            params:[] },
+  onwave:   { t:'On wave start',   cat:'ev', outs:['\u25b6'],            params:[] },
+  branch:   { t:'Branch',          cat:'fl', ins:['in'], outs:['true','false'], params:[{k:'a',l:'A',w:56},{k:'op',l:'',w:44,sel:['==','!=','<','<=','>','>=']},{k:'b',l:'B',w:56}] },
+  counter:  { t:'Counter',         cat:'fl', ins:['in','reset'], outs:['reached','each'], params:[{k:'target',l:'target',w:40}] },
+  delay:    { t:'Delay',           cat:'fl', ins:['in'], outs:['then'],  params:[{k:'sec',l:'sec',w:40}] },
+  repeat:   { t:'Repeat',          cat:'fl', ins:['in'], outs:['done','each (#i)'], params:[{k:'times',l:'times',w:40},{k:'gap',l:'gap s',w:40}] },
+  random:   { t:'Random',          cat:'fl', ins:['in'], outs:['A','B','C','D'], params:[{k:'w0',l:'A%',w:32},{k:'w1',l:'B%',w:32},{k:'w2',l:'C%',w:32},{k:'w3',l:'D%',w:32}] },
+  once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
+  setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
+  addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66},{k:'value',l:'+/\u2212',w:50}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:96,sel:['toggle','open','close','anim','unlock','win','cutscene','objective','checkpoint','sound']},{k:'target',l:'tag',w:80},{k:'clip',l:'clip',w:80,ifv:['verb','anim']},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound']}] },
+  toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
+  emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86}] },
+  win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
+  lose:     { t:'Lose level',      cat:'ac', ins:['in'], outs:[],        params:[] },
+};
+const LG_CATS = { ev:['EVENTS','#35e0d6'], fl:['FLOW','#ffd75e'], st:['STATE','#8fe05a'], ac:['ACTIONS','#ff9b5b'] };
+let _lgEl=null, _lgBoard=null, _lgSvg=null, _lgPan={x:120,y:80}, _lgZoom=1, _lgSeq=1, _lgDragWire=null;
+function _lgNewId(){ let id; do{ id='n'+(_lgSeq++); }while(_lgNode(id)); return id; }
+function _lgDirty(){ if(typeof _levelDirty!=='undefined') _levelDirty=true; const c=document.getElementById('lgCount'); if(c) c.textContent=logicGraph.nodes.length+' node'+(logicGraph.nodes.length===1?'':'s'); }
+function _lgAddNode(type, x, y){
+  const d=LG_DEFS[type]; if(!d) return null;
+  const n={ id:_lgNewId(), type, x:Math.round(x!=null?x:(-_lgPan.x/_lgZoom+240+Math.random()*60)), y:Math.round(y!=null?y:(-_lgPan.y/_lgZoom+160+Math.random()*60)), p:{} };
+  if(type==='interval') n.p={ sec:'2', times:'0' };
+  if(type==='branch') n.p={ a:'', op:'==', b:'' };
+  if(type==='counter') n.p={ target:'3' };
+  if(type==='delay') n.p={ sec:'1' };
+  if(type==='repeat') n.p={ times:'3', gap:'0' };
+  if(type==='random') n.p={ w0:'1', w1:'1', w2:'0', w3:'0' };
+  if(type==='do') n.p={ verb:'toggle', target:'' };
+  logicGraph.nodes.push(n); _lgDirty();
+  return n;
+}
+function _lgDelNode(id){
+  logicGraph.nodes=logicGraph.nodes.filter(n=>n.id!==id);
+  logicGraph.wires=logicGraph.wires.filter(w=>w.a!==id && w.b!==id);
+  delete _lgState[id]; _lgDirty(); _lgRender();
+}
+function _lgAddWire(a,o,b,i){
+  if(a===b) return;                                    // no self-wires
+  for(const w of logicGraph.wires){ if(w.a===a && w.o===o && w.b===b && w.i===i) return; }   // no dupes
+  logicGraph.wires.push({ a,o,b,i }); _lgDirty(); _lgRenderWires();
+}
+function _lgPortPos(id, kind, idx){   // board coords of a port dot (kind 'out'|'in'|'reset')
+  const el=_lgBoard && _lgBoard.querySelector('[data-node="'+id+'"]'); if(!el) return null;
+  const x=parseFloat(el.style.left)||0, y=parseFloat(el.style.top)||0, w=el.offsetWidth, h=el.offsetHeight;
+  if(kind==='out'){ const n=_lgNode(id), d=n&&LG_DEFS[n.type], cnt=d?d.outs.length:1; return { x:x+w, y:y+24+(h-30)*((idx+0.5)/Math.max(1,cnt)) }; }
+  return { x, y: kind==='reset' ? y+h-14 : y+24 };
+}
+function _lgRenderWires(){
+  if(!_lgSvg) return;
+  let html='';
+  logicGraph.wires.forEach((w,wi)=>{
+    const A=_lgPortPos(w.a,'out',w.o), B=_lgPortPos(w.b, w.i==='reset'?'reset':'in', 0);
+    if(!A || !B) return;
+    const n=_lgNode(w.a), col=(n && LG_CATS[(LG_DEFS[n.type]||{}).cat]) ? LG_CATS[LG_DEFS[n.type].cat][1] : '#7fa79a';
+    const dx=Math.max(36, Math.abs(B.x-A.x)*0.5);
+    html+='<path data-wire="'+wi+'" d="M'+A.x+' '+A.y+' C'+(A.x+dx)+' '+A.y+' '+(B.x-dx)+' '+B.y+' '+B.x+' '+B.y+'" fill="none" stroke="'+col+'" stroke-width="2.5" opacity="0.85" style="pointer-events:stroke;cursor:pointer;"/>';
+  });
+  if(_lgDragWire && _lgDragWire.to){ const A=_lgPortPos(_lgDragWire.a,'out',_lgDragWire.o); if(A) html+='<path d="M'+A.x+' '+A.y+' L'+_lgDragWire.to.x+' '+_lgDragWire.to.y+'" fill="none" stroke="#eafff7" stroke-width="2" stroke-dasharray="5 4"/>'; }
+  _lgSvg.innerHTML=html;
+  _lgSvg.querySelectorAll('[data-wire]').forEach(pth=>{ pth.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); logicGraph.wires.splice(+pth.dataset.wire,1); _lgDirty(); _lgRenderWires(); }; });
+}
+function _lgBoardXY(e){ const r=_lgBoard.getBoundingClientRect(); return { x:(e.clientX-r.left)/_lgZoom, y:(e.clientY-r.top)/_lgZoom }; }
+function _lgRenderNode(n){
+  const d=LG_DEFS[n.type]; if(!d) return null;
+  const col=LG_CATS[d.cat][1];
+  const el=document.createElement('div'); el.dataset.node=n.id;
+  el.style.cssText='position:absolute;left:'+n.x+'px;top:'+n.y+'px;width:172px;background:#0d151b;border:1px solid '+col+'55;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,.45);font-size:11px;color:#cfeee2;user-select:none;';
+  const hd=document.createElement('div');
+  hd.style.cssText='display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid '+col+'33;cursor:grab;border-radius:9px 9px 0 0;background:'+col+'14;';
+  hd.innerHTML='<span style="width:8px;height:8px;border-radius:50%;background:'+col+';flex:none;"></span><span style="flex:1;font-weight:700;letter-spacing:0.5px;color:#eafff7;">'+d.t+'</span>';
+  const del=document.createElement('span'); del.textContent='\u00d7'; del.style.cssText='cursor:pointer;color:#7fa79a;padding:0 2px;'; del.title='Delete node';
+  del.onpointerdown=(e)=>e.stopPropagation();
+  del.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _lgDelNode(n.id); };
+  hd.appendChild(del); el.appendChild(hd);
+  const body=document.createElement('div'); body.style.cssText='padding:6px 8px 8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:14px;';
+  for(const pm of d.params){
+    if(pm.ifk && !n.p[pm.ifk]) continue;
+    if(pm.ifv && String(n.p[pm.ifv[0]]||'')!==pm.ifv[1]) continue;
+    const wrap=document.createElement('label'); wrap.style.cssText='display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;';
+    if(pm.l) wrap.appendChild(document.createTextNode(pm.l));
+    let inp;
+    if(pm.sel){ inp=document.createElement('select'); for(const o of pm.sel){ const op=document.createElement('option'); op.value=o; op.textContent=o; if(String(n.p[pm.k]||'')===o) op.selected=true; inp.appendChild(op); } inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
+    else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!n.p[pm.k]; inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
+    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); }; }
+    if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:100px;';
+    inp.onpointerdown=(e)=>e.stopPropagation();
+    wrap.appendChild(inp); body.appendChild(wrap);
+  }
+  el.appendChild(body);
+  const mkDot=(kind, idx, label, top)=>{
+    const dot=document.createElement('div'); dot.dataset.port=kind; dot.dataset.idx=idx;
+    dot.style.cssText='position:absolute;'+(kind==='out'?'right:-7px;':'left:-7px;')+'top:'+top+'px;width:13px;height:13px;border-radius:50%;background:#0c1418;border:2.5px solid '+(kind==='reset'?'#c9a284':col)+';cursor:crosshair;';
+    dot.title=(kind==='out'?('out: '+label):(kind==='reset'?'reset in':'in'));
+    if(kind==='out'){
+      const lab=document.createElement('span'); lab.textContent=label; lab.style.cssText='position:absolute;right:16px;top:-2px;font-size:9px;color:'+col+'cc;white-space:nowrap;pointer-events:none;'; dot.appendChild(lab);
+      dot.onpointerdown=(e)=>{ e.stopPropagation(); e.preventDefault(); _lgDragWire={ a:n.id, o:idx, to:_lgBoardXY(e) }; _lgRenderWires(); };
+    } else {
+      dot.onpointerup=(e)=>{ if(_lgDragWire){ e.stopPropagation(); pushUndoSnapshot(); _lgAddWire(_lgDragWire.a, _lgDragWire.o, n.id, kind==='reset'?'reset':'in'); _lgDragWire=null; _lgRenderWires(); } };
+    }
+    el.appendChild(dot);
+  };
+  const H=()=>el.offsetHeight;
+  requestAnimationFrame(()=>{   // ports after layout so vertical spread matches the box
+    if(!el.isConnected) return;
+    const ins=d.ins||[];
+    if(ins.length) mkDot('in', 0, '', 18);
+    if(ins.length>1) mkDot('reset', 0, '', H()-20);
+    d.outs.forEach((ol,i)=>mkDot('out', i, ol, 18+(H()-30)*((i+0.5)/Math.max(1,d.outs.length))-6));
+    _lgRenderWires();
+  });
+  hd.onpointerdown=(e)=>{
+    e.preventDefault(); e.stopPropagation();
+    const start=_lgBoardXY(e), ox=n.x, oy=n.y;
+    const mv=(ev)=>{ const p=_lgBoardXY(ev); n.x=Math.round(ox+p.x-start.x); n.y=Math.round(oy+p.y-start.y); el.style.left=n.x+'px'; el.style.top=n.y+'px'; _lgRenderWires(); };
+    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); _lgDirty(); };
+    window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
+    pushUndoSnapshot();
+  };
+  return el;
+}
+function _lgRender(){
+  if(!_lgBoard) return;
+  _lgBoard.querySelectorAll('[data-node]').forEach(e=>e.remove());
+  for(const n of logicGraph.nodes){ const el=_lgRenderNode(n); if(el) _lgBoard.appendChild(el); }
+  _lgApplyView(); _lgRenderWires(); _lgDirty();
+}
+function _lgApplyView(){ if(_lgBoard) _lgBoard.style.transform='translate('+_lgPan.x+'px,'+_lgPan.y+'px) scale('+_lgZoom+')'; const z=document.getElementById('lgZoom'); if(z) z.textContent=Math.round(_lgZoom*100)+'%'; }
+function _lgClose(){ if(_lgEl) _lgEl.style.display='none'; if(typeof renderLogicPanel==='function') renderLogicPanel(); }
+function _lgOpen(){
+  if(!_lgEl){
+    _lgEl=document.createElement('div'); _lgEl.id='lgModal';
+    _lgEl.style.cssText='position:fixed;inset:0;z-index:83;display:none;flex-direction:column;background:#070c10;';
+    _lgEl.innerHTML=
+      '<div style="display:flex;align-items:center;gap:12px;padding:9px 14px;border-bottom:1px solid #1d2b33;background:#0a1016;flex:none;">'
+      +'<div style="font-family:var(--display-font);font-size:17px;color:#9fe6cf;letter-spacing:2px;">LOGIC GRAPH</div>'
+      +'<button id="lgAdd" class="lobbyBtn lobbyCTA" style="padding:6px 14px;font-size:12px;">+ ADD NODE</button>'
+      +'<span id="lgCount" style="font-size:11px;color:#7fa79a;"></span>'
+      +'<span id="lgZoom" style="font-size:11px;color:#7fa79a;"></span>'
+      +'<span style="flex:1;font-size:10px;color:#5f8579;text-align:center;">drag board = pan \u00b7 wheel = zoom \u00b7 drag a port onto a port = wire \u00b7 click a wire = remove</span>'
+      +'<button id="lgDone" class="lobbyBtn lobbyGhost" style="padding:6px 16px;font-size:12px;">DONE</button></div>'
+      +'<div id="lgView" style="flex:1;position:relative;overflow:hidden;cursor:grab;background:radial-gradient(circle at 50% 40%, #0b1319, #060a0d);">'
+      +'<div id="lgBoard" style="position:absolute;left:0;top:0;width:4000px;height:3000px;transform-origin:0 0;">'
+      +'<svg id="lgWires" width="4000" height="3000" style="position:absolute;left:0;top:0;pointer-events:none;overflow:visible;"></svg>'
+      +'</div>'
+      +'<div id="lgMenu" style="position:absolute;left:14px;top:12px;display:none;background:#0a1016;border:1px solid #2a3a42;border-radius:10px;padding:8px;z-index:5;max-height:82%;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.6);"></div>'
+      +'</div>';
+    document.body.appendChild(_lgEl);
+    _lgBoard=_lgEl.querySelector('#lgBoard'); _lgSvg=_lgEl.querySelector('#lgWires');
+    _lgSvg.style.pointerEvents='none';   // paths opt back in individually
+    _lgEl.querySelector('#lgDone').onclick=_lgClose;
+    const view=_lgEl.querySelector('#lgView');
+    view.onpointerdown=(e)=>{
+      if(e.target.closest('[data-node]') || e.target.closest('#lgMenu')) return;
+      const sx=e.clientX, sy=e.clientY, ox=_lgPan.x, oy=_lgPan.y;
+      const mv=(ev)=>{
+        if(_lgDragWire){ _lgDragWire.to=_lgBoardXY(ev); _lgRenderWires(); return; }
+        _lgPan.x=ox+(ev.clientX-sx); _lgPan.y=oy+(ev.clientY-sy); _lgApplyView();
+      };
+      const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(_lgDragWire){ _lgDragWire=null; _lgRenderWires(); } };
+      window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
+    };
+    view.addEventListener('pointermove',(e)=>{ if(_lgDragWire){ _lgDragWire.to=_lgBoardXY(e); _lgRenderWires(); } });
+    view.addEventListener('pointerup',()=>{ if(_lgDragWire){ _lgDragWire=null; _lgRenderWires(); } });
+    view.addEventListener('wheel',(e)=>{ e.preventDefault(); _lgZoom=Math.max(0.4, Math.min(1.6, _lgZoom*(e.deltaY>0?0.9:1.1))); _lgApplyView(); }, { passive:false });
+    const menu=_lgEl.querySelector('#lgMenu');
+    _lgEl.querySelector('#lgAdd').onclick=()=>{
+      if(menu.style.display!=='none'){ menu.style.display='none'; return; }
+      menu.innerHTML='';
+      for(const ck in LG_CATS){
+        const h=document.createElement('div'); h.textContent=LG_CATS[ck][0]; h.style.cssText='font-size:9px;font-weight:800;letter-spacing:2px;color:'+LG_CATS[ck][1]+';margin:6px 4px 3px;'; menu.appendChild(h);
+        for(const ty in LG_DEFS){ if(LG_DEFS[ty].cat!==ck) continue;
+          const b=document.createElement('div'); b.textContent=LG_DEFS[ty].t;
+          b.style.cssText='padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:#cfeee2;';
+          b.onmouseenter=()=>b.style.background='rgba(57,255,136,0.10)'; b.onmouseleave=()=>b.style.background='transparent';
+          b.onclick=()=>{ pushUndoSnapshot(); _lgAddNode(ty); menu.style.display='none'; _lgRender(); };
+          menu.appendChild(b);
+        }
+      }
+      menu.style.display='block';
+    };
+  }
+  _lgEl.style.display='flex';
+  _lgRender();
+}
+function renderLogicPanel(){
+  const host=(typeof edDoc==='function') ? edDoc().getElementById('edLogic') : document.getElementById('edLogic');
+  if(!host) return; host.innerHTML='';
+  const hint=document.createElement('div'); hint.className='hint'; hint.style.margin='2px 0 6px';
+  hint.innerHTML='<b>Visual logic, no code.</b> Wire events (start, timers, kills, prop signals via <b>\u2192 Logic event</b>) through branches, counters, delays, loops and variables into actions (open/close doors, cutscenes, objectives, win/lose). Runs on the host; saved with the level.';
+  host.appendChild(hint);
+  const row=document.createElement('div'); row.style.cssText='display:flex;align-items:center;gap:8px;';
+  const b=document.createElement('button'); b.textContent='Open logic graph'; b.style.cssText='flex:1;padding:8px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
+  b.onclick=_lgOpen;
+  const ct=document.createElement('span'); ct.style.cssText='font-size:11px;color:#7fa79a;'; ct.textContent=logicGraph.nodes.length+' node'+(logicGraph.nodes.length===1?'':'s');
+  row.appendChild(b); row.appendChild(ct); host.appendChild(row);
+}
 // Signals: a prop can carry rules like {when:'destroyed'|'interacted', do:'toggle'|'open'|'close'|'anim'|'unlock', target:'tagName'}.
 // Firing applies the action to every prop whose userData.tag matches. Each action uses the existing
 // per-action net broadcast, so peers converge without a new message type; to avoid double-fires,
@@ -20144,7 +20350,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1027 · 2026-07-21';
+const BUILD_VERSION = 'build 1028 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25523,7 +25729,7 @@ const MODE_SECTIONS = {
   scene:   ['world','generate','zones'],   // the 5 placeable volumes are grouped under one 'zones' section with a type picker (build 649)
   player:  ['gizmo','object','transform','characters'],   // build 652: the player avatar, the spawn point + the character roster are their own area
   enemies: ['enemies','gizmo','object','transform','boltfx'],   // spawn points live here now; their picker/fields/gizmo sections come along. enemy gunfire FX (boltfx) moved here in build 647 — it's about enemies, not your weapons
-  rules:   ['game','pickups','loot','invitems','buildmenu','cutscenes'],   // build 846: cutscenes are story/gameplay authoring — they moved out of World > Environment
+  rules:   ['game','pickups','loot','invitems','buildmenu','logic','cutscenes'],   // build 846: cutscenes are story/gameplay authoring — they moved out of World > Environment
   kit:     ['object','transform','wepfx'],   // 'object' carries the weapon model import + per-weapon shoot sound; the FX panels (impacts/tracer) are grouped under one 'wepfx' picker (build 653); music/SFX live in Scene
   hud:     ['hud','crosshair'],   // build 665: per-level HUD theme + visibility. build 845: the crosshair is a HUD element — it moved here from Weapons > Effects
   files:   ['titlescreen','levelfile','campaign'],   // build 971: the creator title screen ships with the level file
@@ -25554,6 +25760,7 @@ const SEC_SUB = {
   tracerfx:   'The streak your own gunfire leaves in the air.',
   decalfx:    'Bullet holes left where shots hit \u2014 size, lifetime & your own decal image.',
   crosshair:  'Reticle shape, size & colour.',
+  logic:      'Node-based logic: variables, branches, timers, counters, loops — no code.',
   cutscenes:  'Author camera cutscenes — play them from signals or on level start.',
   characters: 'Player & enemy character roster, models and animation slots.',
   titlescreen: 'Your game\'s own home screen for share links & game URLs.',   // build 971
@@ -27616,6 +27823,7 @@ function buildEditorPanel(){
     + sec('Loot', 'loot', '<div id="edLoot"></div>')
     + sec('Inventory items', 'invitems', '<div id="edInvItems"></div>')
     + sec('Build menu', 'buildmenu', '<div id="edBuildMenu"></div>')
+    + sec('Logic graph', 'logic', '<div id="edLogic"></div>')
     + sec('Cutscenes', 'cutscenes', '<div id="edCutscenes"></div>')
     + sec('Zones', 'zones',
           '<div id="edZonePicker"></div>'
@@ -27796,6 +28004,7 @@ function buildEditorPanel(){
   if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
+  if(typeof renderLogicPanel==='function') renderLogicPanel();
   if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   if(typeof renderWepFxPicker==='function') renderWepFxPicker();          // build 653: the grouped weapon-FX type picker
   if(typeof applyWepFxVisibility==='function') applyWepFxVisibility();     // ...and reveal only the active FX panel

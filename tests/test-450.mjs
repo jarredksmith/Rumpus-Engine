@@ -3,7 +3,7 @@ const src = gameSource();
 // build 596: inventory item authoring in the editor — define the catalog players collect/inspect.
 
 // section is registered on the Gameplay (rules) tab
-assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','cutscenes'\]/.test(src), 'invitems section on the rules tab');
+assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','logic','cutscenes'\]/.test(src), 'invitems section on the rules tab');
 assert(/sec\('Inventory items', 'invitems', '<div id="edInvItems"><\/div>'\)/.test(src), 'panel host declared');
 assert(/const invItemsHost = editorEl\.querySelector\('#edInvItems'\); if\(invItemsHost && typeof renderInvItems==='function'\) renderInvItems\(invItemsHost\)/.test(src), 'panel renders from renderEditorFields');
 
