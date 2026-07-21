@@ -3,7 +3,7 @@
 import { extractFunction, extractConst, gameSource, done, assert, eq } from './harness.mjs';
 const src = gameSource();
 
-assert(/const ENEMY_MODEL0 = \{ url:'', scale:1, face:0, cr:0, ch:0, yoff:0, xoff:0, zoff:0, clip:'', animLib:'', clips:\{ idle:'', walk:'', run:'', attack:'' \}, clipSpeed:\{\}, clipHold:\{\}, clipInPlace:\{\} \}/.test(src), 'per-type model defaults (build 501: + per-clip maps; build 919: + animLib)');
+assert(/const ENEMY_MODEL0 = \{ url:'', scale:1, face:0, cr:0, ch:0, yoff:0, xoff:0, zoff:0, clip:'', animLib:'', autoRig:null, clips:\{ idle:'', walk:'', run:'', attack:'' \}, clipSpeed:\{\}, clipHold:\{\}, clipInPlace:\{\} \}/.test(src), 'per-type model defaults (build 501: + per-clip maps; build 919: + animLib)');
 assert(/const enemyModels = \{\};/.test(src), 'per-type model map');
 assert(/applyEnemyModelData\(savedLevel && savedLevel\.enemies, savedLevel && savedLevel\.enemy\)/.test(src), 'loads per-type (legacy fallback) at startup');
 

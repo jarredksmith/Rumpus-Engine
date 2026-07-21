@@ -9190,6 +9190,7 @@ function _animLibAttach(gltf, packId, cb){
 // Load-path shim: when the model's cfg opts into a pack, hand the builder an augmented gltf view whose
 // animations include the retargeted library clips (the pickers + state machine see them as the model's own).
 function _withLibAnims(gltf, cfg, done){
+  if(cfg && cfg.autoRig && typeof _autoRigApply==='function'){ try{ _autoRigApply(gltf, cfg.autoRig); }catch(e){ console.warn('[RUMPUS] auto-rig failed:', e && e.message); } }   // build 1025: author-marked static models grow a skeleton first
   const packId = cfg && cfg.animLib;
   if(!packId || !ANIM_LIB_PACKS[packId] || !gltf || !gltf.scene){ done(gltf); return; }
   _animLibAttach(gltf, packId, (ok)=>{
@@ -9199,6 +9200,138 @@ function _withLibAnims(gltf, cfg, done){
   });
 }
 function _loadGLTFWithLib(url, cfg, cb, errcb){ loadGLTFCached(url, (g)=>_withLibAnims(g, cfg, cb), errcb); }
+// ---------- AUTO-RIGGER (build 1025) ----------
+// Mixamo-style rigging for STATIC humanoid models: the author clicks chin/wrists/elbows/knees/
+// groin markers on the T/A-posed mesh; a mixamorig-named skeleton is fitted to those markers
+// (+ the mesh bounds) and the meshes are bound with automatic distance-falloff weights. The
+// generated bones carry Mixamo names, so the existing retarget pipeline picks the model up as
+// if it came rigged. Markers ride the char cfg (a few numbers) and the rig rebuilds
+// deterministically on every load.
+const AUTORIG_MARKERS = ['chin','wristL','wristR','elbowL','elbowR','kneeL','kneeR','groin'];
+function _sanitizeAutoRig(a){
+  if(!a || typeof a!=='object') return null;
+  const out={};
+  for(const k of AUTORIG_MARKERS){ const v=a[k]; if(!Array.isArray(v) || v.length<3) return null;
+    const x=+v[0], y=+v[1], z=+v[2]; if(!isFinite(x)||!isFinite(y)||!isFinite(z)) return null; out[k]=[x,y,z]; }
+  return out;
+}
+// The joint layout, PURE: markers + bounds -> [{ name, parent, pos:[x,y,z] }] in model-root
+// space. Everything the author didn't mark (spine chain, shoulders, ankles, toes) is derived
+// from classic humanoid proportions of the total height H. Left = the model's +x half; the
+// marker UI assigns L/R the same way, so the two always agree.
+function _autoRigJoints(mk, bbMin, bbMax, toeDirZ){
+  const Pt=(a)=>({ x:a[0], y:a[1], z:a[2] });
+  const L2=(a,b,t)=>({ x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t, z:a.z+(b.z-a.z)*t });
+  const H=Math.max(1e-6, bbMax[1]-bbMin[1]), x0=(bbMin[0]+bbMax[0])/2;
+  const chin=Pt(mk.chin), groin=Pt(mk.groin);
+  const hips={ x:x0, y:groin.y + H*0.055, z:groin.z };
+  const neck={ x:chin.x, y:chin.y - H*0.045, z:chin.z };
+  const head={ x:chin.x, y:chin.y + H*0.02, z:chin.z };
+  const sp=L2(hips,neck,0.30), sp1=L2(hips,neck,0.55), sp2=L2(hips,neck,0.80);
+  const J=[]; const add=(n,p,pos)=>{ J.push({ name:'mixamorig:'+n, parent:p?('mixamorig:'+p):null, pos:[pos.x,pos.y,pos.z] }); };
+  add('Hips',null,hips); add('Spine','Hips',sp); add('Spine1','Spine',sp1); add('Spine2','Spine1',sp2);
+  add('Neck','Spine2',neck); add('Head','Neck',head); add('HeadTop_End','Head',{ x:head.x, y:bbMax[1], z:head.z });
+  const chest={ x:x0, y:sp2.y, z:sp2.z };
+  const arm=(side, e0, w0)=>{ const e=Pt(e0), w=Pt(w0);
+    add(side+'Shoulder','Spine2', L2(chest,e,0.18));
+    add(side+'Arm', side+'Shoulder', L2(chest,e,0.45));
+    add(side+'ForeArm', side+'Arm', e);
+    add(side+'Hand', side+'ForeArm', w);
+    add(side+'Hand_End', side+'Hand', { x:w.x+(w.x-e.x)*0.35, y:w.y+(w.y-e.y)*0.35, z:w.z+(w.z-e.z)*0.35 });
+  };
+  arm('Left', mk.elbowL, mk.wristL); arm('Right', mk.elbowR, mk.wristR);
+  const leg=(side, k0)=>{ const k=Pt(k0);
+    const ankle={ x:k.x, y:bbMin[1] + Math.max(H*0.02, (k.y-bbMin[1])*0.22), z:k.z };
+    const toe={ x:k.x, y:bbMin[1] + H*0.015, z:k.z + toeDirZ*H*0.055 };
+    add(side+'UpLeg','Hips', { x:k.x, y:hips.y - H*0.02, z:k.z });
+    add(side+'Leg', side+'UpLeg', k);
+    add(side+'Foot', side+'Leg', ankle);
+    add(side+'ToeBase', side+'Foot', toe);
+    add(side+'Toe_End', side+'ToeBase', { x:toe.x, y:toe.y, z:toe.z + toeDirZ*H*0.03 });
+  };
+  leg('Left', mk.kneeL); leg('Right', mk.kneeR);
+  return J;
+}
+function _segDist2(px,py,pz, ax,ay,az, bx,by,bz){   // point -> segment, squared (the skinning falloff)
+  const abx=bx-ax, aby=by-ay, abz=bz-az;
+  const apx=px-ax, apy=py-ay, apz=pz-az;
+  const ab2=abx*abx+aby*aby+abz*abz;
+  let t = ab2>1e-12 ? (apx*abx+apy*aby+apz*abz)/ab2 : 0;
+  t = t<0?0 : t>1?1 : t;
+  const dx=px-(ax+abx*t), dy=py-(ay+aby*t), dz=pz-(az+abz*t);
+  return dx*dx+dy*dy+dz*dz;
+}
+// Fit + bind: converts the gltf's static meshes to SkinnedMeshes on a generated mixamorig
+// skeleton. Mutates the CACHED gltf in place (every later clone inherits the rig via
+// cloneSkinned); idempotent per gltf. Returns true when the model ends up rigged.
+function _autoRigApply(gltf, markersRaw){
+  const mk=_sanitizeAutoRig(markersRaw);
+  if(!mk || !gltf || !gltf.scene) return false;
+  if(gltf.userData && gltf.userData._autoRigged) return true;
+  const root=gltf.scene;
+  let hasBones=false; const meshes=[];
+  root.updateWorldMatrix(true,true);
+  root.traverse(o=>{ if(o.isBone || o.isSkinnedMesh) hasBones=true; else if(o.isMesh) meshes.push(o); });
+  if(hasBones || !meshes.length) return false;   // already rigged (or nothing to bind) — the retargeter owns it from here
+  const bb=new THREE.Box3().setFromObject(root);
+  // toe direction: foot geometry extends toward the toes — compare the z spread below the ankles
+  const ankleY=bb.min.y + (Math.min(mk.kneeL[1], mk.kneeR[1]) - bb.min.y)*0.35;
+  const ankZ=(mk.kneeL[2]+mk.kneeR[2])/2;
+  let zLo=ankZ, zHi=ankZ;
+  const _v=new THREE.Vector3();
+  for(const m of meshes){ const pa=m.geometry && m.geometry.attributes && m.geometry.attributes.position; if(!pa) continue;
+    const step=Math.max(1, Math.floor(pa.count/2000));
+    for(let i=0;i<pa.count;i+=step){ _v.fromBufferAttribute(pa,i).applyMatrix4(m.matrixWorld);
+      if(_v.y<=ankleY){ if(_v.z<zLo) zLo=_v.z; if(_v.z>zHi) zHi=_v.z; } } }
+  const toeDir=(zHi-ankZ >= ankZ-zLo) ? 1 : -1;
+  const J=_autoRigJoints(mk, [bb.min.x,bb.min.y,bb.min.z], [bb.max.x,bb.max.y,bb.max.z], toeDir);
+  const byName={}, posOf={}, bones=[];
+  for(const j of J) posOf[j.name]=j.pos;
+  for(const j of J){ const b=new THREE.Bone(); b.name=j.name; byName[j.name]=b; bones.push(b);
+    if(j.parent){ const pp=posOf[j.parent]; byName[j.parent].add(b); b.position.set(j.pos[0]-pp[0], j.pos[1]-pp[1], j.pos[2]-pp[2]); }
+    else b.position.set(j.pos[0], j.pos[1], j.pos[2]); }
+  const rigRoot=new THREE.Group(); rigRoot.name='AutoRig';
+  rigRoot.add(byName['mixamorig:Hips']); root.add(rigRoot);
+  root.updateWorldMatrix(true,true);
+  const skeleton=new THREE.Skeleton(bones);
+  // weight-bearing segments: every non-end bone reaches to its first child
+  const segs=[];
+  for(let bi=0; bi<J.length; bi++){ const j=J[bi]; if(/_End$/.test(j.name)) continue;
+    const child=J.find(q=>q.parent===j.name); if(!child) continue;
+    segs.push({ bi, a:j.pos, b:child.pos, isSide:/mixamorig:(Left|Right)/.test(j.name), sideSign:/mixamorig:Left/.test(j.name)?1:-1 }); }
+  const x0=(bb.min.x+bb.max.x)/2, W=Math.max(1e-6, bb.max.x-bb.min.x);
+  const made=[];
+  for(const m of meshes){
+    const g=m.geometry.clone();
+    g.applyMatrix4(m.matrixWorld);   // bake into root space so ONE skeleton serves every mesh
+    const pa=g.attributes.position, n=pa.count;
+    const skinIndex=new Uint16Array(n*4), skinWeight=new Float32Array(n*4);
+    const cand=[];
+    for(let i=0;i<n;i++){
+      const px=pa.getX(i), py=pa.getY(i), pz=pa.getZ(i);
+      cand.length=0;
+      for(const sg of segs){
+        const d2=_segDist2(px,py,pz, sg.a[0],sg.a[1],sg.a[2], sg.b[0],sg.b[1],sg.b[2]);
+        let w=1/(d2*d2+1e-8);   // inverse-distance^4: tight falloff keeps elbows/knees crisp
+        if(sg.isSide && (px-x0)*sg.sideSign < -W*0.02) w*=0.05;   // cross-body damping: the left thigh never grabs right-leg verts
+        cand.push([w, sg.bi]);
+      }
+      cand.sort((a,b)=>b[0]-a[0]);
+      let sum=0; for(let k=0;k<4;k++) sum+=cand[k][0];
+      for(let k=0;k<4;k++){ skinIndex[i*4+k]=cand[k][1]; skinWeight[i*4+k]=cand[k][0]/sum; }
+    }
+    g.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndex,4));
+    g.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeight,4));
+    const sm=new THREE.SkinnedMesh(g, m.material);
+    sm.name=m.name; sm.castShadow=true; sm.receiveShadow=true; sm.frustumCulled=false;   // rest-pose bounds lie once animated — same rule as imported rigs (build 642)
+    root.add(sm); sm.bind(skeleton);
+    made.push(m);
+  }
+  for(const m of made){ if(m.parent) m.parent.remove(m); }   // after ALL are bound — removing early would orphan nested child meshes mid-walk
+  gltf.userData._autoRigged=true;
+  delete gltf.userData._libFor; delete gltf.userData._libAnims; delete gltf.userData._libFailed;   // the animation library re-attaches against the NEW bones
+  return true;
+}
 // Write the pack's default per-state picks into slots the author hasn't set (auto-by-name would mismatch).
 function _animLibDefaultPicks(cfg, packId){
   const pack = ANIM_LIB_PACKS[packId]; if(!pack || !pack.picks) return;
@@ -11545,7 +11678,7 @@ const enemyGeo = new THREE.CapsuleGeometry(0.7, 1.4, 4, 10);
 // AI / collision / networking code is unchanged — only the visual child swaps.
 // Per-enemy-type model config: each type (grunt/runner/brute/gunner) gets its own GLB + framing.
 // Back-compat: an old single-model level (savedLevel.enemy) is applied to every type.
-const ENEMY_MODEL0 = { url:'', scale:1, face:0, cr:0, ch:0, yoff:0, xoff:0, zoff:0, clip:'', animLib:'', clips:{ idle:'', walk:'', run:'', attack:'' }, clipSpeed:{}, clipHold:{}, clipInPlace:{} };   // clip='' legacy single; clips = per-state overrides ('' = auto by name)
+const ENEMY_MODEL0 = { url:'', scale:1, face:0, cr:0, ch:0, yoff:0, xoff:0, zoff:0, clip:'', animLib:'', autoRig:null, clips:{ idle:'', walk:'', run:'', attack:'' }, clipSpeed:{}, clipHold:{}, clipInPlace:{} };   // clip='' legacy single; clips = per-state overrides ('' = auto by name)
 const enemyModels = {};
 const enemyModelClips = {};   // typeKey -> animation clip names discovered when its model loads
 function enemyModelCfg(typeKey){
@@ -11558,7 +11691,7 @@ function enemyModelCfg(typeKey){
 function applyEnemyModelData(perType, legacy){   // perType = new map, legacy = old single config
   for(const k of ENEMY_TYPE_KEYS){
     const src = (perType && perType[k]) || legacy || {};
-    enemyModels[k] = { url: src.url||'', scale: src.scale||1, face: src.face||0, cr: src.cr||0, ch: src.ch||0, yoff: src.yoff||0, xoff: src.xoff||0, zoff: src.zoff||0, clip: src.clip||'', animLib: (typeof src.animLib==='string' && ANIM_LIB_PACKS[src.animLib]) ? src.animLib : '', clips: Object.assign({ idle:'', walk:'', run:'', attack:'' }, src.clips||{}), clipSpeed: Object.assign({}, src.clipSpeed||{}), clipHold: Object.assign({}, src.clipHold||{}), clipInPlace: Object.assign({}, src.clipInPlace||{}) };
+    enemyModels[k] = { url: src.url||'', scale: src.scale||1, face: src.face||0, cr: src.cr||0, ch: src.ch||0, yoff: src.yoff||0, xoff: src.xoff||0, zoff: src.zoff||0, clip: src.clip||'', animLib: (typeof src.animLib==='string' && ANIM_LIB_PACKS[src.animLib]) ? src.animLib : '', autoRig: (typeof _sanitizeAutoRig==='function')?_sanitizeAutoRig(src.autoRig):null, clips: Object.assign({ idle:'', walk:'', run:'', attack:'' }, src.clips||{}), clipSpeed: Object.assign({}, src.clipSpeed||{}), clipHold: Object.assign({}, src.clipHold||{}), clipInPlace: Object.assign({}, src.clipInPlace||{}) };
   }
 }
 applyEnemyModelData(savedLevel && savedLevel.enemies, savedLevel && savedLevel.enemy);
@@ -15092,7 +15225,7 @@ function disposeAvatarLabel(mesh){
 }
 const remoteBodyGeo = new THREE.CapsuleGeometry(0.5, 1.2, 4, 8);
 // ---- Player avatar (what teammates / duel opponents see). Default = blue capsule; swappable for a GLB. ----
-const PLAYER_MODEL0 = { url:'', scale:1, face:0, rx:0, rz:0, yoff:0, xoff:0, zoff:0, thumb:'', animLib:'', ikHold:true, jointFix:{}, clips:{ idle:'', walk:'', run:'', attack:'' } };   // thumb = Poly Pizza/Sketchfab preview image; face/rx/rz in radians
+const PLAYER_MODEL0 = { url:'', scale:1, face:0, rx:0, rz:0, yoff:0, xoff:0, zoff:0, thumb:'', animLib:'', ikHold:true, jointFix:{}, autoRig:null, clips:{ idle:'', walk:'', run:'', attack:'' } };   // thumb = Poly Pizza/Sketchfab preview image; face/rx/rz in radians
 let playerModelCfg = Object.assign({}, PLAYER_MODEL0, { clips:{ idle:'', walk:'', run:'', attack:'' }, clipSpeed:{}, clipHold:{}, clipInPlace:{} });
 function _sanitizeGrip1(g){ if(!g||typeof g!=='object') return null; const n=(v,d)=>{ const x=+v; return isFinite(x)?x:d; }; return { x:n(g.x,0), y:n(g.y,0), z:n(g.z,0), yaw:n(g.yaw,0), pitch:n(g.pitch,0), roll:n(g.roll,0), scale:n(g.scale,1) }; }
 function _sanitizeGripMap(m){ const o={}; if(m && typeof m==='object'){ for(const k in m){ const g=_sanitizeGrip1(m[k]); if(g) o[k]=g; } } return o; }   // build 524: per-weapon held-gun grips baked into a roster character travel with the level
@@ -15101,7 +15234,7 @@ function _sanitizeJointFix(f){ const out={}; if(!f || typeof f!=='object') retur
     const a=[Math.max(-180,Math.min(180,+v[0]||0)), Math.max(-180,Math.min(180,+v[1]||0)), Math.max(-180,Math.min(180,+v[2]||0))];
     if(!a[0] && !a[1] && !a[2]) continue; out[String(k).slice(0,24)]=a; n++; }
   return out; }   // build 942
-function _sanitizeCharCfg(c){ c=c||{}; return { name:(typeof c.name==='string'&&c.name)||'Character', url:c.url||'', scale:+c.scale||1, face:+c.face||0, rx:+c.rx||0, rz:+c.rz||0, xoff:+c.xoff||0, yoff:+c.yoff||0, zoff:+c.zoff||0, thumb:(typeof c.thumb==='string'?c.thumb:''), animLib:(typeof c.animLib==='string' && ANIM_LIB_PACKS[c.animLib])?c.animLib:'', ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({idle:'',walk:'',run:'',attack:''}, (c.clips&&typeof c.clips==='object')?c.clips:{}), clipSpeed:Object.assign({}, (c.clipSpeed&&typeof c.clipSpeed==='object')?c.clipSpeed:{}), clipHold:Object.assign({}, (c.clipHold&&typeof c.clipHold==='object')?c.clipHold:{}), clipInPlace:Object.assign({}, (c.clipInPlace&&typeof c.clipInPlace==='object')?c.clipInPlace:{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) }; }
+function _sanitizeCharCfg(c){ c=c||{}; return { name:(typeof c.name==='string'&&c.name)||'Character', url:c.url||'', scale:+c.scale||1, face:+c.face||0, rx:+c.rx||0, rz:+c.rz||0, xoff:+c.xoff||0, yoff:+c.yoff||0, zoff:+c.zoff||0, thumb:(typeof c.thumb==='string'?c.thumb:''), animLib:(typeof c.animLib==='string' && ANIM_LIB_PACKS[c.animLib])?c.animLib:'', ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), autoRig:_sanitizeAutoRig(c.autoRig), clips:Object.assign({idle:'',walk:'',run:'',attack:''}, (c.clips&&typeof c.clips==='object')?c.clips:{}), clipSpeed:Object.assign({}, (c.clipSpeed&&typeof c.clipSpeed==='object')?c.clipSpeed:{}), clipHold:Object.assign({}, (c.clipHold&&typeof c.clipHold==='object')?c.clipHold:{}), clipInPlace:Object.assign({}, (c.clipInPlace&&typeof c.clipInPlace==='object')?c.clipInPlace:{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) }; }
 let charRoster = (savedLevel && Array.isArray(savedLevel.roster)) ? savedLevel.roster.map(_sanitizeCharCfg) : [];   // authored multiplayer character models
 let myRosterIdx = -1;   // which roster character the local player picked (-1 = default player model)
 const CHARACTERS = [
@@ -19720,7 +19853,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1024 · 2026-07-20';
+const BUILD_VERSION = 'build 1025 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24741,7 +24874,7 @@ function prsTransform(min,max,perAxisScale){
 }
 
 function applyPlayerLevel(pl){ if(!pl) return; if(pl.state) Object.assign(editorTargets.player.state, pl.state);
-  playerModelCfg.url=(pl.url||'').trim(); playerModelCfg.thumb=(pl.thumb||''); playerModelCfg.animLib=(typeof pl.animLib==='string' && ANIM_LIB_PACKS[pl.animLib])?pl.animLib:''; playerModelCfg.ikHold=(pl.ikHold===false)?false:true; playerModelCfg.jointFix=_sanitizeJointFix(pl.jointFix); const s=editorTargets.player.state;
+  playerModelCfg.url=(pl.url||'').trim(); playerModelCfg.thumb=(pl.thumb||''); playerModelCfg.animLib=(typeof pl.animLib==='string' && ANIM_LIB_PACKS[pl.animLib])?pl.animLib:''; playerModelCfg.autoRig=(typeof _sanitizeAutoRig==='function')?_sanitizeAutoRig(pl.autoRig):null; playerModelCfg.ikHold=(pl.ikHold===false)?false:true; playerModelCfg.jointFix=_sanitizeJointFix(pl.jointFix); const s=editorTargets.player.state;
   playerModelCfg.scale=s.s||1; playerModelCfg.face=(s.face||0)*RAD; playerModelCfg.yoff=s.yoff||0; playerModelCfg.xoff=s.xoff||0; playerModelCfg.zoff=s.zoff||0;
   playerModelCfg.clips=Object.assign({ idle:'', walk:'', run:'', attack:'' }, pl.clips||{}); playerModelCfg.clipSpeed=Object.assign({}, pl.clipSpeed||{}); playerModelCfg.clipHold=Object.assign({}, pl.clipHold||{}); playerModelCfg.clipInPlace=Object.assign({}, pl.clipInPlace||{});
   // build 977: the author's chase-camera framing + per-weapon gun grips apply on load (session-only —
@@ -26243,11 +26376,11 @@ function serializeLevel(){
     homepage: (homepageCfg && homepageCfg.on) ? _sanitizeHomepage(homepageCfg) : undefined,   // build 971: creator title screen
     lobbyBg: (typeof lobbyBgUrl==='string' && lobbyBgUrl) ? lobbyBgUrl : undefined,   // build 1009: blurred lobby backdrop
     radial: _sanitizeRadial(radialCfg),   // build 671: the in-game build/deploy menu
-    player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', animLib: playerModelCfg.animLib||'', ikHold:(playerModelCfg.ikHold===false)?false:true, jointFix:_sanitizeJointFix(playerModelCfg.jointFix), state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}), grip: _sanitizeGripMap(tpGunGrips), view: _snapshotView() },   // build 977: authored chase framing + held-gun grips ship with the level (they only lived on roster characters)
+    player:  { url: playerModelCfg.url, thumb: playerModelCfg.thumb||'', animLib: playerModelCfg.animLib||'', autoRig: playerModelCfg.autoRig||undefined, ikHold:(playerModelCfg.ikHold===false)?false:true, jointFix:_sanitizeJointFix(playerModelCfg.jointFix), state: Object.assign({}, editorTargets.player.state), clips: Object.assign({}, playerModelCfg.clips), clipSpeed: Object.assign({}, playerModelCfg.clipSpeed||{}), clipHold: Object.assign({}, playerModelCfg.clipHold||{}), clipInPlace: Object.assign({}, playerModelCfg.clipInPlace||{}), grip: _sanitizeGripMap(tpGunGrips), view: _snapshotView() },   // build 977: authored chase framing + held-gun grips ship with the level (they only lived on roster characters)
     world:   Object.assign({}, worldCfg),
     chest:   { url: chestModelUrl, scale: chestModelScale, randomOff: !randomLootOn },
     coin:    { url: coinCfg.url, scale: coinCfg.scale, on: coinCfg.on !== false },
-    enemies: ENEMY_TYPE_KEYS.reduce((a,k)=>{ const m=enemyModelCfg(k); a[k]={ url:m.url, scale:m.scale, face:m.face, cr:m.cr, ch:m.ch, yoff:m.yoff, xoff:m.xoff, zoff:m.zoff, clip:m.clip, animLib:m.animLib||'', clips:Object.assign({}, m.clips), clipSpeed:Object.assign({}, m.clipSpeed||{}), clipHold:Object.assign({}, m.clipHold||{}), clipInPlace:Object.assign({}, m.clipInPlace||{}) }; return a; }, {}),
+    enemies: ENEMY_TYPE_KEYS.reduce((a,k)=>{ const m=enemyModelCfg(k); a[k]={ url:m.url, scale:m.scale, face:m.face, cr:m.cr, ch:m.ch, yoff:m.yoff, xoff:m.xoff, zoff:m.zoff, clip:m.clip, animLib:m.animLib||'', autoRig:m.autoRig||undefined, clips:Object.assign({}, m.clips), clipSpeed:Object.assign({}, m.clipSpeed||{}), clipHold:Object.assign({}, m.clipHold||{}), clipInPlace:Object.assign({}, m.clipInPlace||{}) }; return a; }, {}),
     tRel: 1,   // build 893: prop t[1] is terrain-relative (legacy levels without this stored raw world y)
     props:   propModels.filter(o=>o && !o.userData.runtime).map(propEntry),
     lights:  lightModels.map(g=>_lightOpts(g)),
@@ -26270,7 +26403,7 @@ function serializeLevel(){
     tracer: Object.assign({}, tracerCfg),
     decal: Object.assign({}, decalCfg),
     bolt: Object.assign({}, boltCfg),
-    roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
+    roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', autoRig:c.autoRig||undefined, ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
     game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x' },
@@ -26387,8 +26520,8 @@ function showCampaignInterstitial(fromName, clearedNum, toIdx, total, onContinue
   _interTimer=setTimeout(tick,1000);
 }
 function _restoreLoadout(c){ if(!c) return; owned.length=0; for(const k of c.owned) owned.push(k); for(const k in c.ammo){ if(WEAPONS[k]){ WEAPONS[k].mag=c.ammo[k].mag; WEAPONS[k].reserve=c.ammo[k].reserve; } } curWep=(c.wep && owned.includes(c.wep))?c.wep:owned[0]; player.hp=Math.max(1, c.hp||player.hp); if(typeof switchWeapon==='function') switchWeapon(curWep); if(typeof updateHUD==='function') updateHUD(); }
-function _snapshotPlayerCharCfg(name){ const c=playerModelCfg; return _sanitizeCharCfg({ name:name||'Character', url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb, animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, jointFix:Object.assign({}, c.jointFix||{}), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(tpGunGrips), view:_snapshotView() }); }
-function _loadCharIntoEditor(i){ const c=charRoster[i]; if(!c) return; pushUndoSnapshot(); Object.assign(playerModelCfg, { url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, animLib:c.animLib||'', ikHold:(c.ikHold===false)?false:true, jointFix:Object.assign({}, c.jointFix||{}), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}) }); if(c.grip){ for(const k in c.grip){ tpGunGrips[k]=Object.assign({}, TP_GUN_DEFAULT, c.grip[k]); } _saveTpGun(); if(typeof refreshAvatarGunGrips==='function') refreshAvatarGunGrips(); } if(c.view) _applyView(c.view); editorActive='player'; if(typeof ensurePlayerPreview==='function') ensurePlayerPreview(true); if(typeof previewAvatar!=='undefined' && previewAvatar && typeof buildAvatarVisual==='function') buildAvatarVisual(previewAvatar); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof flashToast==='function') flashToast('Loaded "'+(c.name||'Character')+'" onto the Player tab'); }
+function _snapshotPlayerCharCfg(name){ const c=playerModelCfg; return _sanitizeCharCfg({ name:name||'Character', url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb, animLib:c.animLib||'', autoRig:c.autoRig||null, ikHold:(c.ikHold===false)?false:true, jointFix:Object.assign({}, c.jointFix||{}), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(tpGunGrips), view:_snapshotView() }); }
+function _loadCharIntoEditor(i){ const c=charRoster[i]; if(!c) return; pushUndoSnapshot(); Object.assign(playerModelCfg, { url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, animLib:c.animLib||'', autoRig:(typeof _sanitizeAutoRig==='function')?_sanitizeAutoRig(c.autoRig):null, ikHold:(c.ikHold===false)?false:true, jointFix:Object.assign({}, c.jointFix||{}), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}) }); if(c.grip){ for(const k in c.grip){ tpGunGrips[k]=Object.assign({}, TP_GUN_DEFAULT, c.grip[k]); } _saveTpGun(); if(typeof refreshAvatarGunGrips==='function') refreshAvatarGunGrips(); } if(c.view) _applyView(c.view); editorActive='player'; if(typeof ensurePlayerPreview==='function') ensurePlayerPreview(true); if(typeof previewAvatar!=='undefined' && previewAvatar && typeof buildAvatarVisual==='function') buildAvatarVisual(previewAvatar); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof flashToast==='function') flashToast('Loaded "'+(c.name||'Character')+'" onto the Player tab'); }
 function renderCharRosterPanel(){
   const host = editorEl && editorEl.querySelector('#edCharRoster'); if(!host) return;
   host.innerHTML='';

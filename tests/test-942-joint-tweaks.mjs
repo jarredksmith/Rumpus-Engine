@@ -34,7 +34,7 @@ assert(/_applyJointFix\(rp\.mesh\); _aimAvatarGun\(rp\.mesh, rp\.yaw\|\|0, rp\.p
 assert(/_applyJointFix\(previewAvatar, _myJointFix\(\)\);   \/\/ build 942/.test(src), 'the Player-tab preview is WYSIWYG');
 
 // persistence tour (the same 8 stops as animLib/ikHold)
-assert(/jointFix:_sanitizeJointFix\(c\.jointFix\), clips:/.test(extractFunction('_sanitizeCharCfg', src)), 'sanitized');
+assert(/jointFix:_sanitizeJointFix\(c\.jointFix\), autoRig:_sanitizeAutoRig\(c\.autoRig\), clips:/.test(extractFunction('_sanitizeCharCfg', src)), 'sanitized (build 1025: + auto-rig markers)');
 assert(/jointFix:Object\.assign\(\{\}, c\.jointFix\|\|\{\}\), clips:/.test(extractFunction('myCharCfg', src)), 'in the play/MP cfg');
 assert(/jointFix:_sanitizeJointFix\(playerModelCfg\.jointFix\),/.test(src), 'serialized with the level');
 assert(/playerModelCfg\.jointFix=_sanitizeJointFix\(pl\.jointFix\);/.test(src), 'restored on load');

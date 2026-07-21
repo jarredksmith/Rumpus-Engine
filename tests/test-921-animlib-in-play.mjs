@@ -18,7 +18,7 @@ assert(/animLib:\(typeof c\.animLib==='string' && ANIM_LIB_PACKS\[c\.animLib\]\)
   'myCharCfg carries animLib (the in-play T-pose leak)');
 
 // 2+3) level serializer: enemies + roster blocks keep the flag
-assert(/clip:m\.clip, animLib:m\.animLib\|\|'', clips:Object\.assign\(\{\}, m\.clips\)/.test(src),
+assert(/clip:m\.clip, animLib:m\.animLib\|\|'', autoRig:m\.autoRig\|\|undefined, clips:Object\.assign\(\{\}, m\.clips\)/.test(src),
   'serializeLevel.enemies keeps animLib');
 assert(/roster: charRoster\.map\(c=>\(\{ name:c\.name,[^}]*animLib:c\.animLib\|\|''/.test(src),
   'serializeLevel.roster keeps animLib');
