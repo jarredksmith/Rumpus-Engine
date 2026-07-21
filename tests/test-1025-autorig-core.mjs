@@ -25,8 +25,8 @@ eq(env._sanitizeAutoRig('nope'), null, 'garbage rejects');
 
 // ---- joint layout: pure geometry ----
 const J = env._autoRigJoints(MK, [-0.8,0,-0.2], [0.8,1.75,0.2], 1);
-const by = (n)=>J.find(j=>j.name==='mixamorig:'+n);
-assert(J.every(j=>j.name.startsWith('mixamorig:')), 'every joint carries the Mixamo namespace');
+const by = (n)=>J.find(j=>j.name==='mixamorig'+n);
+assert(J.every(j=>j.name.startsWith('mixamorig') && !j.name.includes(':')), 'Mixamo namespace WITHOUT the colon — three\u2019s track parser cannot drive \u2019mixamorig:X\u2019 bones (the statue bug the smoke caught)');
 assert(by('Hips') && !by('Hips').parent, 'Hips is the root');
 assert(by('Hips').pos[1] > MK.groin[1] && by('Hips').pos[1] < MK.chin[1], 'hips sit above the groin marker');
 eq(by('LeftForeArm').pos.join(','), MK.elbowL.join(','), 'the elbow marker IS the forearm joint');
@@ -36,11 +36,11 @@ assert(by('Spine').pos[1] < by('Spine1').pos[1] && by('Spine1').pos[1] < by('Spi
 assert(by('LeftFoot').pos[1] < MK.kneeL[1] && by('LeftFoot').pos[1] > 0, 'the ankle is derived between knee and floor');
 assert(by('LeftToeBase').pos[2] > by('LeftFoot').pos[2], 'toes extend along the +z toe direction');
 { const J2 = env._autoRigJoints(MK, [-0.8,0,-0.2], [0.8,1.75,0.2], -1);
-  assert(J2.find(j=>j.name==='mixamorig:LeftToeBase').pos[2] < J2.find(j=>j.name==='mixamorig:LeftFoot').pos[2], '...and flip when the model faces the other way'); }
+  assert(J2.find(j=>j.name==='mixamorigLeftToeBase').pos[2] < J2.find(j=>j.name==='mixamorigLeftFoot').pos[2], '...and flip when the model faces the other way'); }
 for(const chain of [['Hips','Spine','Spine1','Spine2','Neck','Head','HeadTop_End'],
                     ['Spine2','LeftShoulder','LeftArm','LeftForeArm','LeftHand','LeftHand_End'],
                     ['Hips','LeftUpLeg','LeftLeg','LeftFoot','LeftToeBase','LeftToe_End']]){
-  for(let i=1;i<chain.length;i++) eq(by(chain[i]).parent, 'mixamorig:'+chain[i-1], chain[i]+' hangs off '+chain[i-1]);
+  for(let i=1;i<chain.length;i++) eq(by(chain[i]).parent, 'mixamorig'+chain[i-1], chain[i]+' hangs off '+chain[i-1]);
 }
 
 // ---- the full apply on a synthetic UNRIGGED humanoid (boxes for torso/head/limbs) ----
@@ -105,8 +105,8 @@ for(const S of ['Left','Right']){
 }
 const map=_buildBoneMap(gltf.scene, srcRoot);
 assert(map, 'the auto-rigged model passes _buildBoneMap — the animation library will attach');
-eq(map.hips.dst.name, 'mixamorig:Hips', 'hips pair');
-const pair=(n)=>map.pairs.find(p=>p.dst.name==='mixamorig:'+n);
+eq(map.hips.dst.name, 'mixamorigHips', 'hips pair (colon-less dst maps to the colon\u2019d source)');
+const pair=(n)=>map.pairs.find(p=>p.dst.name==='mixamorig'+n);
 eq(pair('LeftArm').src.name, 'mixamorig:LeftArm', 'upper arms pair');
 eq(pair('RightFoot').src.name, 'mixamorig:RightFoot', 'feet pair');
 eq(pair('Spine2').src.name, 'mixamorig:Spine2', 'chest pairs');

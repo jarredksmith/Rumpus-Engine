@@ -9178,7 +9178,7 @@ function _animLibAttach(gltf, packId, cb){
       const map = _buildBoneMap(gltf.scene, srcScene);
       if(!map){ gltf.userData._libFailed='rig';
         try{ const _nm=[]; gltf.scene.traverse(o=>{ if(o.isBone && _nm.length<12) _nm.push(o.name); }); console.warn('[RUMPUS] Animation library: no humanoid core in this rig. Bone names sampled:', _nm.join(', ') || '(no bones found at all)'); }catch(e){}
-        if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — auto-rig it (e.g. on Mixamo) and re-import'); } cb(false, 0); return; }
+        if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — use Auto-rig on the Player tab (for static models) or re-rig it externally'); } cb(false, 0); return; }
       const out = [];
       for(const c of (pk.animations||[])){ if(/t.?pose|bind.?pose/i.test(c.name||'')) continue;
         try{ const rc=_retargetClip(gltf.scene, srcScene, c, map); if(rc) out.push(rc); }catch(e){} }
@@ -9228,7 +9228,10 @@ function _autoRigJoints(mk, bbMin, bbMax, toeDirZ){
   const neck={ x:chin.x, y:chin.y - H*0.045, z:chin.z };
   const head={ x:chin.x, y:chin.y + H*0.02, z:chin.z };
   const sp=L2(hips,neck,0.30), sp1=L2(hips,neck,0.55), sp2=L2(hips,neck,0.80);
-  const J=[]; const add=(n,p,pos)=>{ J.push({ name:'mixamorig:'+n, parent:p?('mixamorig:'+p):null, pos:[pos.x,pos.y,pos.z] }); };
+  // colon-LESS mixamo names ('mixamorigHips'): three's animation track parser cannot drive a
+  // bone whose name contains ':' (the track binds but never moves it) — glTF exports of real
+  // Mixamo rigs strip the colon for the same reason. The canonicalizer maps both spellings.
+  const J=[]; const add=(n,p,pos)=>{ J.push({ name:'mixamorig'+n, parent:p?('mixamorig'+p):null, pos:[pos.x,pos.y,pos.z] }); };
   add('Hips',null,hips); add('Spine','Hips',sp); add('Spine1','Spine',sp1); add('Spine2','Spine1',sp2);
   add('Neck','Spine2',neck); add('Head','Neck',head); add('HeadTop_End','Head',{ x:head.x, y:bbMax[1], z:head.z });
   const chest={ x:x0, y:sp2.y, z:sp2.z };
@@ -9291,14 +9294,14 @@ function _autoRigApply(gltf, markersRaw){
     if(j.parent){ const pp=posOf[j.parent]; byName[j.parent].add(b); b.position.set(j.pos[0]-pp[0], j.pos[1]-pp[1], j.pos[2]-pp[2]); }
     else b.position.set(j.pos[0], j.pos[1], j.pos[2]); }
   const rigRoot=new THREE.Group(); rigRoot.name='AutoRig';
-  rigRoot.add(byName['mixamorig:Hips']); root.add(rigRoot);
+  rigRoot.add(byName['mixamorigHips']); root.add(rigRoot);
   root.updateWorldMatrix(true,true);
   const skeleton=new THREE.Skeleton(bones);
   // weight-bearing segments: every non-end bone reaches to its first child
   const segs=[];
   for(let bi=0; bi<J.length; bi++){ const j=J[bi]; if(/_End$/.test(j.name)) continue;
     const child=J.find(q=>q.parent===j.name); if(!child) continue;
-    segs.push({ bi, a:j.pos, b:child.pos, isSide:/mixamorig:(Left|Right)/.test(j.name), sideSign:/mixamorig:Left/.test(j.name)?1:-1 }); }
+    segs.push({ bi, a:j.pos, b:child.pos, isSide:/mixamorig(Left|Right)/.test(j.name), sideSign:/mixamorigLeft/.test(j.name)?1:-1 }); }
   const x0=(bb.min.x+bb.max.x)/2, W=Math.max(1e-6, bb.max.x-bb.min.x);
   const made=[];
   for(const m of meshes){
@@ -9331,6 +9334,167 @@ function _autoRigApply(gltf, markersRaw){
   gltf.userData._autoRigged=true;
   delete gltf.userData._libFor; delete gltf.userData._libAnims; delete gltf.userData._libFailed;   // the animation library re-attaches against the NEW bones
   return true;
+}
+// ---------- AUTO-RIGGER UI (build 1026): Mixamo-style marker placement ----------
+// Front view of the model in a modal; click CHIN -> WRISTS -> ELBOWS -> KNEES -> GROIN (Use
+// Symmetry mirrors the pairs), colored rings mark each placement, AUTO-RIG fits the skeleton
+// (build 1025) and switches the animation library on. Markers land in playerModelCfg and
+// serialize with the level; reopening the tool re-edits them. Reuses the inspector's GL
+// context (_invR/_inspScene/_inspCam) like the character select does — no extra context.
+const AR_STEPS = [
+  { key:'chin',  label:'CHIN',   color:'#35e0d6' },
+  { key:'wrist', label:'WRISTS', color:'#8fe05a', sym:1 },
+  { key:'elbow', label:'ELBOWS', color:'#ffd75e', sym:1 },
+  { key:'knee',  label:'KNEES',  color:'#ff9b5b', sym:1 },
+  { key:'groin', label:'GROIN',  color:'#ff7bd5' },
+];
+let _arEl=null, _arGrp=null, _arModel=null, _arMarkers={}, _arStep=0, _arSym=true, _arRAF=0, _arUrl='', _arRotY=0, _arDist=3.4, _arMidY=0.9, _arX0=0, _arH=1.8, _arRings={};
+const _arTexes={}, _arNdc=new THREE.Vector2();
+function _arRingTex(color){
+  if(_arTexes[color]) return _arTexes[color];
+  const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
+  x.strokeStyle=color; x.lineWidth=7; x.beginPath(); x.arc(32,32,22,0,Math.PI*2); x.stroke();
+  x.fillStyle=color; x.beginPath(); x.arc(32,32,5,0,Math.PI*2); x.fill();
+  const t=new THREE.CanvasTexture(c); _arTexes[color]=t; return t;
+}
+function _arStepFor(mkKey){ const base=mkKey.replace(/[LR]$/,''); return AR_STEPS.find(q=>q.key===base); }
+function _arDoneStep(st){ return st.sym ? !!(_arMarkers[st.key+'L'] && _arMarkers[st.key+'R']) : !!_arMarkers[st.key]; }
+function _arSyncRings(){
+  if(!_arModel) return;
+  for(const k of AUTORIG_MARKERS){
+    const p=_arMarkers[k];
+    let sp=_arRings[k];
+    if(!p){ if(sp) sp.visible=false; continue; }
+    if(!sp){ const st=_arStepFor(k); sp=new THREE.Sprite(new THREE.SpriteMaterial({ map:_arRingTex(st.color), transparent:true, depthTest:false })); sp.renderOrder=5; _arRings[k]=sp; _arModel.add(sp); }
+    sp.visible=true; sp.position.set(p[0],p[1],p[2]); sp.scale.setScalar(_arH*0.085);
+  }
+}
+function _arRenderList(){
+  const host=_arEl && _arEl.querySelector('#arSteps'); if(!host) return;
+  host.innerHTML='';
+  AR_STEPS.forEach((st,i)=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;font:700 12px var(--ui-font);letter-spacing:2px;color:'+(i===_arStep?'#eafff7':'#7fa79a')+';background:'+(i===_arStep?'rgba(57,255,136,0.08)':'transparent')+';';
+    const dot=document.createElement('span'); dot.style.cssText='width:12px;height:12px;border-radius:50%;border:2.5px solid '+st.color+';flex:none;';
+    const lab=document.createElement('span'); lab.textContent=st.label; lab.style.flex='1';
+    const ok=document.createElement('span'); ok.textContent=_arDoneStep(st)?'\u2713':''; ok.style.color=st.color;
+    row.appendChild(dot); row.appendChild(lab); row.appendChild(ok);
+    row.onclick=()=>{ _arStep=i; _arRenderList(); };
+    host.appendChild(row);
+  });
+  const hint=_arEl.querySelector('#arHint');
+  const all=AUTORIG_MARKERS.every(k=>_arMarkers[k]);
+  if(hint){ const st=AR_STEPS[_arStep];
+    hint.textContent = all ? 'All markers placed \u2014 press AUTO-RIG' : ('Click the model to place: '+st.label+((st.sym && !_arSym)?(_arMarkers[st.key+'L']?' (right side)':' (left side)'):'')); }
+  const go=_arEl.querySelector('#arGo'); if(go){ go.disabled=!all; go.style.opacity=all?'1':'0.45'; go.style.cursor=all?'pointer':'default'; }
+}
+function _arPlace(pt){
+  const st=AR_STEPS[_arStep]; if(!st) return;
+  const p=[+pt.x.toFixed(4), +pt.y.toFixed(4), +pt.z.toFixed(4)];
+  if(st.sym){
+    const isL=p[0]>=_arX0, mir=[+(2*_arX0-p[0]).toFixed(4), p[1], p[2]];
+    if(_arSym){ _arMarkers[st.key+'L']=isL?p:mir; _arMarkers[st.key+'R']=isL?mir:p; }
+    else { _arMarkers[st.key+(isL?'L':'R')]=p; if(!_arDoneStep(st)){ _arSyncRings(); _arRenderList(); return; } }
+  } else _arMarkers[st.key]=p;
+  _arSyncRings();
+  if(_arStep<AR_STEPS.length-1 && !AUTORIG_MARKERS.every(k=>_arMarkers[k])) _arStep++;
+  _arRenderList();
+}
+function _arClose(){
+  if(_arRAF){ cancelAnimationFrame(_arRAF); _arRAF=0; }
+  if(_arGrp && _arGrp.parent) _arGrp.parent.remove(_arGrp);
+  _arGrp=null; _arModel=null; _arRings={};
+  if(_arEl) _arEl.style.display='none';
+}
+function _arFinish(){
+  const mk=_sanitizeAutoRig(_arMarkers);
+  if(!mk){ if(typeof toast==='function') toast('Place every marker first'); return; }
+  playerModelCfg.autoRig=mk;
+  if(!playerModelCfg.animLib){ playerModelCfg.animLib='ual1'; if(typeof _animLibApplyPicks==='function') _animLibApplyPicks(playerModelCfg, 'ual1'); }   // a fresh rig needs clips — default to the Standard pack
+  const g=gltfCache[_arUrl];
+  const wasRigged=!!(g && g.userData && g.userData._autoRigged);
+  if(g && !wasRigged) _autoRigApply(g, mk);
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  _arClose();
+  if(typeof rebuildAvatars==='function') rebuildAvatars();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof toast==='function') toast(wasRigged ? 'Markers updated \u2014 reload the level (or refresh) to re-fit the skeleton' : 'Auto-rig complete \u2014 the animation library is now animating this model');
+}
+function _arOpen(url){
+  if(!url){ if(typeof toast==='function') toast('Load a model URL first'); return; }
+  if(!_ensureInspectR()){ if(typeof toast==='function') toast('Preview unavailable on this device'); return; }
+  if(!_arEl){
+    _arEl=document.createElement('div'); _arEl.id='arModal';
+    _arEl.style.cssText='position:fixed;inset:0;z-index:83;display:none;align-items:center;justify-content:center;background:rgba(3,6,8,.88);';
+    const cd=document.createElement('div');
+    cd.style.cssText='position:relative;background:#0a1016;border:1px solid #2a3a42;border-radius:14px;width:min(860px,96vw);max-height:94vh;overflow:auto;padding:14px 16px;';
+    cd.innerHTML=
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+      +'<div style="font-family:var(--display-font);font-size:19px;color:#9fe6cf;letter-spacing:2px;">AUTO-RIGGER</div>'
+      +'<button id="arClose" aria-label="Close" style="background:none;border:none;color:#7fa79a;font-size:18px;cursor:pointer;">\u2715</button></div>'
+      +'<div style="display:flex;gap:12px;align-items:stretch;">'
+      +'<div style="flex:0 0 150px;display:flex;flex-direction:column;gap:2px;"><div id="arSteps"></div>'
+      +'<div class="hint" style="margin-top:8px;font-size:11px;line-height:1.5;">Place markers on your model, then press AUTO-RIG to fit a skeleton. Drag to turn \u00b7 scroll to zoom \u00b7 click a row to re-place it.</div></div>'
+      +'<div id="arHolder" style="flex:1;position:relative;aspect-ratio:1.15;background:radial-gradient(circle at 50% 38%, #18262f, #070b0e);border-radius:10px;overflow:hidden;touch-action:none;cursor:crosshair;"></div></div>'
+      +'<div style="display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap;">'
+      +'<label style="display:flex;align-items:center;gap:6px;color:#9fe6cf;font-size:12px;cursor:pointer;"><input id="arSym" type="checkbox" checked style="width:14px;height:14px;accent-color:var(--accent);">Use Symmetry</label>'
+      +'<div id="arHint" style="flex:1;min-width:180px;color:#7fb8a6;font-size:12px;"></div>'
+      +'<button id="arBack" class="lobbyBtn lobbyGhost" style="padding:8px 18px;">BACK</button>'
+      +'<button id="arGo" class="lobbyBtn lobbyCTA" style="padding:8px 22px;">AUTO-RIG</button></div>';
+    _arEl.appendChild(cd); document.body.appendChild(_arEl);
+    _arEl.addEventListener('click', e=>{ if(e.target===_arEl) _arClose(); });
+    cd.querySelector('#arClose').onclick=_arClose;
+    cd.querySelector('#arBack').onclick=_arClose;
+    cd.querySelector('#arGo').onclick=_arFinish;
+    cd.querySelector('#arSym').onchange=(e)=>{ _arSym=!!e.target.checked; _arRenderList(); };
+  }
+  _arUrl=url; _arStep=0; _arMarkers={}; _arRings={}; _arRotY=0;
+  const prev=_sanitizeAutoRig(playerModelCfg.autoRig);
+  if(prev){ for(const k in prev) _arMarkers[k]=prev[k].slice(); }
+  _arEl.style.display='flex';
+  _arEl.querySelector('#arSym').checked=_arSym;
+  const holder=_arEl.querySelector('#arHolder'); holder.innerHTML='';
+  const cv=_invR.domElement; cv.style.cssText='position:static;width:100%;height:100%;display:block;'; holder.appendChild(cv);
+  const W=Math.min(620, Math.floor((window.innerWidth||800)*0.62)); _invR.setSize(W, Math.floor(W/1.15), false);
+  _inspCam.aspect=1.15; _inspCam.updateProjectionMatrix();
+  if(_arGrp && _arGrp.parent) _arGrp.parent.remove(_arGrp);
+  _arGrp=new THREE.Group(); _inspScene.add(_arGrp); _arModel=null;
+  loadGLTFCached(url, (g)=>{
+    if(!_arEl || _arEl.style.display==='none' || !_arGrp) return;
+    let rigged=false; g.scene.traverse(o=>{ if(o.isBone || o.isSkinnedMesh) rigged=true; });
+    if(g.userData && g.userData._autoRigged) rigged=false;   // our own rig — marker re-edits are allowed (they re-fit on the next load)
+    if(rigged){ _arClose(); if(typeof toast==='function') toast('This model already has a skeleton \u2014 turn on the animation library instead'); return; }
+    const m=THREE.cloneSkinned(g.scene);
+    const bb=new THREE.Box3().setFromObject(m);
+    _arH=Math.max(0.2, bb.max.y-bb.min.y); _arX0=(bb.min.x+bb.max.x)/2; _arMidY=(bb.min.y+bb.max.y)/2;
+    _arDist=(_arH*0.62)/Math.tan(_inspCam.fov*Math.PI/360) + _arH*0.45;
+    m.position.set(-_arX0, 0, -(bb.min.z+bb.max.z)/2);   // spin about the model's own axis; markers stay in MODEL space via worldToLocal
+    _arGrp.add(m); _arModel=m;
+    _arSyncRings(); _arRenderList();
+  }, ()=>{ if(typeof toast==='function') toast('Could not load the model'); _arClose(); });
+  let down=false, moved=0, lx=0;
+  holder.onpointerdown=(e)=>{ down=true; moved=0; lx=e.clientX; try{ holder.setPointerCapture(e.pointerId); }catch(_e){} };
+  holder.onpointermove=(e)=>{ if(!down) return; const dx=e.clientX-lx; lx=e.clientX; moved+=Math.abs(dx); _arRotY+=dx*0.008; };
+  holder.onpointerup=(e)=>{
+    down=false;
+    if(moved>6 || !_arModel) return;   // that was a turn, not a placement
+    const r=holder.getBoundingClientRect();
+    _arNdc.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1);
+    raycaster.setFromCamera(_arNdc, _inspCam);
+    const hits=raycaster.intersectObject(_arModel, true);
+    if(hits.length) _arPlace(_arModel.worldToLocal(hits[0].point.clone()));
+  };
+  holder.onpointercancel=()=>{ down=false; };
+  holder.onwheel=(e)=>{ e.preventDefault(); _arDist=Math.max(_arH*0.8, Math.min(_arH*4, _arDist + e.deltaY*0.0018*_arH)); };
+  const loop=()=>{
+    if(!_arEl || _arEl.style.display==='none'){ _arRAF=0; return; }
+    if(_arGrp) _arGrp.rotation.y=_arRotY;
+    _inspCam.position.set(0, _arMidY, _arDist); _inspCam.lookAt(0, _arMidY, 0);
+    _invR.render(_inspScene, _inspCam);
+    _arRAF=requestAnimationFrame(loop);
+  };
+  if(_arRAF) cancelAnimationFrame(_arRAF); _arRAF=requestAnimationFrame(loop);
+  _arRenderList();
 }
 // Write the pack's default per-state picks into slots the author hasn't set (auto-by-name would mismatch).
 function _animLibDefaultPicks(cfg, packId){
@@ -19853,7 +20017,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1025 · 2026-07-21';
+const BUILD_VERSION = 'build 1026 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29935,6 +30099,21 @@ function renderEditorFields(){
       mkSL('Distance','lightDist',0,40,1,14);
     }
     if(tgt===editorTargets.player){   // avatar animation states (mirror the enemy state machine)
+      { // build 1026: Mixamo-style auto-rigger for STATIC (unrigged) humanoid imports
+        const arRow=document.createElement('div'); arRow.style.cssText='display:flex;align-items:center;gap:7px;margin:8px 0 2px;';
+        const arB=document.createElement('button'); arB.textContent=playerModelCfg.autoRig ? '\u2713 Auto-rigged \u2014 edit markers' : 'Auto-rig model (T-pose)';
+        arB.title='For humanoid models with NO skeleton: click chin, wrists, elbows, knees and groin on the model \u2014 a skeleton is fitted, skin weights are computed, and the animation library animates it. Saved with the level.';
+        arB.style.cssText='flex:1;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
+        arB.onclick=()=>_arOpen((playerModelCfg.url||'').trim());
+        arRow.appendChild(arB);
+        if(playerModelCfg.autoRig){
+          const cx=document.createElement('button'); cx.textContent='Clear'; cx.title='Remove the auto-rig markers (the model goes back to static on the next load)';
+          cx.style.cssText='flex:0 0 auto;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #4a3a2a;background:transparent;color:#c9a284;';
+          cx.onclick=()=>{ playerModelCfg.autoRig=null; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); if(typeof toast==='function') toast('Auto-rig markers cleared \u2014 reload the level to unbind'); };
+          arRow.appendChild(cx);
+        }
+        urlHost.appendChild(arRow);
+      }
       const acHead=document.createElement('div'); acHead.className='hint'; acHead.style.margin='10px 0 2px'; acHead.innerHTML='<b>Animation states</b> — auto-matched by clip name; override per state. Walk/run switch with the avatar\u2019s movement in-game.';
       urlHost.appendChild(acHead);
       { // build 919/922: built-in animation library — retargets a CC0 pack onto this model's skeleton
