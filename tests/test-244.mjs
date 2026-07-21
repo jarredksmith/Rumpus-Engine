@@ -38,6 +38,6 @@ assert(/\['win','Win level'\]/.test(src), 'Win level in the action dropdown');
 assert(/nin\.type='number'; nin\.min='1'; nin\.max='20'; nin\.value=store\.sigNeed\|\|1;/.test(src), 'Needs-N field (shared signals editor)');
 assert(/nsp\.innerHTML='<b>Needs<\/b>'/.test(src), 'counter label bolded with a tooltip (build 347)');
 assert(/if\(o\.userData\.sigNeed>1\) e\.snd=o\.userData\.sigNeed;/.test(extractFunction('propEntry')), 'sigNeed serialized only when >1');
-assert(src.split('if(p.snd>1) obj.userData.sigNeed=+p.snd;').length - 1 === 3, 'restored at all three prop-load sites');
+assert(src.split('if(p.snd>1) obj.userData.sigNeed=+p.snd;').length - 1 === 4, 'restored at all four entry-apply sites (+ prefab spawn, build 1030)');
 assert(/only Win level and Play cutscene work without one/.test(extractFunction('levelIssues')), 'Level check flags targetless signals (win + cutscene exempt, build 354)');
 done();

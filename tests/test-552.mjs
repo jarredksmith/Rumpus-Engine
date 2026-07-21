@@ -147,7 +147,7 @@ assert(/_carEuler\.set\(o\.userData\.carPitch \+ o\.userData\.leanPitch, carYaw,
 
 // --- serialize + restore (compact veh) at all three prop-load sites ---
 assert(/if\(o\.userData\.vehicle\)\{ const V=o\.userData\.vehicle; e\.veh=\{ maxSpeed:V\.maxSpeed, accel:V\.accel, turn:V\.turn, reverse:V\.reverse \}; if\(V\.units==='mph'\) e\.veh\.units='mph'; if\(V\.boost>1\.01\)\{ e\.veh\.boost=V\.boost; e\.veh\.boostDur=V\.boostDur; e\.veh\.boostCd=V\.boostCd; \} if\(V\.modelYaw\) e\.veh\.modelYaw=V\.modelYaw; if\(V\.pivot\) e\.veh\.pivot=V\.pivot;/.test(src), 'vehicle (+ units + boost + model facing + pivot) serialized');
-eq(src.split('if(p.veh) vehicleApply(obj, p.veh);').length - 1, 3, 'vehicle restored at all three prop-load sites');
+eq(src.split('if(p.veh) vehicleApply(obj, p.veh);').length - 1, 4, 'vehicle restored at all four entry-apply sites (+ prefab spawn, build 1030)');
 
 // --- editor fold ---
 assert(/edFold\(motionHost, 'vehicle', 'Vehicle \(drivable\)'/.test(src), 'a Vehicle (drivable) fold in the inspector');

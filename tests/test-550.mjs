@@ -52,7 +52,7 @@ assert(/num\('Trailer tracking','center',0,1,0\.05\)/.test(src), 'the joint edit
 
 // --- serialize + restore (compact j) at all three prop-load sites ---
 assert(/if\(o\.userData\.joint\)\{ const J=o\.userData\.joint; e\.j=\{ type:J\.type\|\|'hinge', to:J\.to\|\|'', ax:J\.ax\|\|0, ay:J\.ay\|\|0, az:J\.az\|\|0, axis:J\.axis\|\|'y' \};/.test(src), 'joint serialized compactly');
-eq(src.split('if(p.j) jointApply(obj, p.j);').length - 1, 3, 'joint restored at all three prop-load sites');
+eq(src.split('if(p.j) jointApply(obj, p.j);').length - 1, 4, 'joint restored at all four entry-apply sites (+ prefab spawn, build 1030)');
 
 // --- editor: a Joint fold with anchor / axis / hinge offset / motor ---
 assert(/edFold\(motionHost, 'joint', 'Joint \(physics\)'/.test(src), 'a Joint (physics) fold in the inspector');

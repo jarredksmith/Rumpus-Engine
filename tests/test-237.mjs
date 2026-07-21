@@ -50,7 +50,7 @@ assert(/msg\.t==='unlock'\)\{ const o=propModels\[msg\.i\]; if\(o\) o\.userData\
 
 // --- serialization round-trip + editor + prompt ---
 assert(/if\(o\.userData\.lockId\)\{ e\.lk=o\.userData\.lockId; if\(o\.userData\.lockConsume\) e\.lkc=1; \}/.test(extractFunction('propEntry')), 'lock fields serialize');
-assert(src.split("if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }").length - 1 === 3, 'lock restored at all three prop-load sites');
+assert(src.split("if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }").length - 1 === 4, 'lock restored at all four entry-apply sites (boot / net / restore / prefab spawn, build 1030)');
 assert(/\[\['','None'\],\['red',keyDisplayName\('red'\)\],\['blue',keyDisplayName\('blue'\)\],\['gold',keyDisplayName\('gold'\)\],\['green',keyDisplayName\('green'\)\]\]/.test(src), 'editor lock dropdown shows custom key names (build 334)');
 // build 332 regression: the lock UI must append to its fold host (behaveHost since build 989) — a bare `host`
 // here is a later-declared binding in renderEditorFields and throws a TDZ ReferenceError in the browser.

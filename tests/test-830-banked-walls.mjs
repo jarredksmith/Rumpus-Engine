@@ -53,7 +53,7 @@ assert(/refreshPropCollider\(o\);/.test(ta), 'the prop collider box is refreshed
 assert(/if\(o\.userData\.trk && o\.userData\.trk\.w\) e\.trk=1;/.test(src), 'propEntry serializes the walls flag');
 {
   const m=src.match(/if\(p\.trk\) trackApply\(obj, \{w:1\}\);/g);
-  assert(m && m.length===3, 'all three loaders (boot / net / restore) reapply walls (found '+(m?m.length:0)+')');
+  assert(m && m.length===4, 'all four entry-apply sites (boot / net / restore / prefab spawn) reapply walls (found '+(m?m.length:0)+')');
 }
 
 // --- editor UI: per-piece checkbox + whole-track button ---

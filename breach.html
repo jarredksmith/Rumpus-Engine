@@ -10642,7 +10642,7 @@ function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
   const _tRel = !!(savedLevel && savedLevel.tRel);
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -15684,7 +15684,7 @@ function loadLevelFromNet(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -15705,6 +15705,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
+  if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -20369,7 +20370,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1029 · 2026-07-21';
+const BUILD_VERSION = 'build 1031 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25744,7 +25745,7 @@ const PRIM_ICON = {
   torus:    _svgIcon('<ellipse cx="12" cy="12" rx="9" ry="5"/><ellipse cx="12" cy="12" rx="3.6" ry="1.8"/>'),
 };
 const MODE_SECTIONS = {
-  build:   ['gizmo','object','material','transform'],
+  build:   ['gizmo','object','material','transform','prefabs'],
   scene:   ['world','generate','zones'],   // the 5 placeable volumes are grouped under one 'zones' section with a type picker (build 649)
   player:  ['gizmo','object','transform','characters'],   // build 652: the player avatar, the spawn point + the character roster are their own area
   enemies: ['enemies','gizmo','object','transform','boltfx'],   // spawn points live here now; their picker/fields/gizmo sections come along. enemy gunfire FX (boltfx) moved here in build 647 — it's about enemies, not your weapons
@@ -25779,6 +25780,7 @@ const SEC_SUB = {
   tracerfx:   'The streak your own gunfire leaves in the air.',
   decalfx:    'Bullet holes left where shots hit \u2014 size, lifetime & your own decal image.',
   crosshair:  'Reticle shape, size & colour.',
+  prefabs:    'Save configured selections as reusable components — place copies anywhere.',
   logic:      'Node-based logic: variables, branches, timers, counters, loops — no code.',
   cutscenes:  'Author camera cutscenes — play them from signals or on level start.',
   characters: 'Player & enemy character roster, models and animation slots.',
@@ -26761,6 +26763,225 @@ function duplicateSelectedProp(){
     spawnProp(src, t, (obj)=>{ if(wasDyn) setPropDynamic(obj, true); if(gid) obj.userData.groupId=gid; made.push(obj); pending--; finish(); }, undefined, o.userData.animMode || 'loop', propMaterialDesc(o));
   }
 }
+// ---------- PREFABS (build 1030) ----------
+// A prefab is a named list of pivot-relative prop entries — the FULL propEntry config (signals,
+// animations, joints, vehicle tuning, locks, dialogue, materials, physics), so a configured
+// door/elevator/trap/room reuses as one unit. Instances carry pf={id,inst,slot} marks (serialized
+// with the level) and a shared group id so they select/move together. The library persists in
+// localStorage; the defs a level actually uses are embedded in the level file too, so a shared
+// level brings its prefabs along. Build 1031 layers definition updates + local overrides on top.
+let prefabLib = {};
+let _pfInstSeq = 1;
+function _pfLoadLib(){ try{ const j=JSON.parse(localStorage.getItem('breach_prefabs_v1')||'null'); if(j && typeof j==='object'){ for(const k in j){ if(j[k] && Array.isArray(j[k].props) && j[k].props.length) prefabLib[k]=j[k]; } } }catch(e){} }
+_pfLoadLib();
+function _pfSaveLib(){ try{ const keys=Object.keys(prefabLib); while(keys.length>100) delete prefabLib[keys.shift()]; localStorage.setItem('breach_prefabs_v1', JSON.stringify(prefabLib)); }catch(e){} }
+function _pfNewInst(){ return 'i'+(_pfInstSeq++)+'x'+Math.floor(Math.random()*1e4); }
+// Normalize ONE prop into a pivot-relative prefab entry. nid/gid/pf are stripped (instances get
+// fresh ones) and numbers are rounded, so build-1031 override diffs ignore float noise.
+function _pfEntryOf(o, pivot){
+  const e=JSON.parse(JSON.stringify(propEntry(o)));
+  delete e.nid; delete e.gid; delete e.pf;
+  e.t=[+(e.t[0]-pivot.x).toFixed(3), +(e.t[1]-pivot.y).toFixed(3), +(e.t[2]-pivot.z).toFixed(3),
+       +(+e.t[3]).toFixed(3), +(+e.t[4]).toFixed(3), +(+e.t[5]).toFixed(3),
+       +(+e.t[6]).toFixed(3), +(+e.t[7]).toFixed(3), +(+e.t[8]).toFixed(3)];
+  return e;
+}
+function _pfPivotOf(list){   // x/z centroid + LOWEST terrain-relative y: instances drop onto any ground
+  let sx=0, sz=0, my=Infinity, n=0;
+  for(const o of list){ const e=propEntry(o); sx+=e.t[0]; sz+=e.t[2]; if(e.t[1]<my) my=e.t[1]; n++; }
+  return n ? { x:+(sx/n).toFixed(3), y:+(my).toFixed(3), z:+(sz/n).toFixed(3) } : { x:0, y:0, z:0 };
+}
+function _pfCapture(name){
+  name=String(name||'').trim().slice(0,40);
+  if(!name) return { ok:false, why:'Give the prefab a name first' };
+  const list=(typeof selProps!=='undefined' && selProps && selProps.length) ? selProps.filter(Boolean) : [];
+  if(!list.length) return { ok:false, why:'Select the props first (Shift+click / marquee in Top view)' };
+  pushUndoSnapshot();
+  const pivot=_pfPivotOf(list);
+  const props=list.map(o=>_pfEntryOf(o, pivot));
+  prefabLib[name]={ name, props, rev: prefabLib[name] ? ((prefabLib[name].rev|0)+1) : 0 };
+  _pfSaveLib();
+  // the source selection becomes instance #1, so "update from selection" can start at the original
+  const inst=_pfNewInst();
+  if(!list.some(o=>o.userData.groupId)){ const gid=_newGroupId(); for(const o of list) o.userData.groupId=gid; }
+  list.forEach((o,i)=>{ o.userData.pf={ id:name, inst, slot:i }; });
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  return { ok:true, count:props.length };
+}
+// Spawn one prefab entry at `at` (pivot target). The config apply MIRRORS the level-load block
+// (loadHostedProps / the net level loader) — keep the three in sync when entry fields grow.
+function _pfSpawnEntry(p, at, pfMark, gid, cb){
+  const t=[ p.t[0]+at.x, p.t[1]+at.y, p.t[2]+at.z, p.t[3], p.t[4], p.t[5], p.t[6], p.t[7], p.t[8] ];
+  spawnProp(p.src, t, (obj)=>{
+    applyPropDynState(obj, p);
+    if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }
+    if(p.tg) obj.userData.tag=p.tg;
+    if(gid) obj.userData.groupId=gid;
+    if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(x=>String(x).slice(0,200));
+    if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40);
+    if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(sg=>{ const x={ when:sg.w, do:sg.d, target:sg.t }; if(sg.c) x.clip=sg.c; if(sg.n) x.cs=sg.n; if(sg.f) x.from=sg.f; if(sg.ci) x.contain=true; if(sg.tx) x.text=sg.tx; if(sg.ni) x.needItem=sg.ni; if(sg.nc) x.needConsume=true; if(sg.cn) x.consume=true; if(sg.so) x.sound=sg.so; return x; });
+    if(p.snd>1) obj.userData.sigNeed=+p.snd;
+    if(p.att) obj.userData.attribution=p.att;
+    if(p.xa) xaApply(obj, p.xa);
+    if(p.j) jointApply(obj, p.j);
+    if(p.veh) vehicleApply(obj, p.veh);
+    if(p.trk) trackApply(obj, {w:1});
+    if(pfMark) obj.userData.pf={ id:pfMark.id, inst:pfMark.inst, slot:pfMark.slot|0 };
+    if(cb) cb(obj);
+  }, undefined, { trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop')) }, p.mat || (p.tex ? {tex:p.tex} : null), undefined, undefined, p.animClip);
+}
+function _pfPlace(name, at){
+  const def=prefabLib[name]; if(!def || !def.props.length) return null;
+  if(!at){
+    const d=new THREE.Vector3(); camera.getWorldDirection(d);
+    const L=Math.hypot(d.x,d.z)||1;
+    at={ x:+(camera.position.x+(d.x/L)*8).toFixed(2), y:0, z:+(camera.position.z+(d.z/L)*8).toFixed(2) };   // 8m ahead on the ground plane; entry y is terrain-relative
+  }
+  pushUndoSnapshot();
+  const inst=_pfNewInst(), gid=_newGroupId();
+  def.props.forEach((p,slot)=>_pfSpawnEntry(p, at, { id:name, inst, slot }, gid));
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof flashToast==='function') flashToast('Placed \u201c'+name+'\u201d ('+def.props.length+' props)');
+  return inst;
+}
+function _pfInstances(name){   // instance id -> its props (pf-marked)
+  const map={};
+  for(const o of propModels){ const pf=o && o.userData && o.userData.pf; if(!pf || pf.id!==name) continue; (map[pf.inst]||(map[pf.inst]=[])).push(o); }
+  return map;
+}
+function _pfUsedDefs(){   // only the defs THIS level instantiates ride the level file
+  const used={};
+  for(const o of propModels){ const pf=o && o.userData && o.userData.pf; if(pf && prefabLib[pf.id] && !used[pf.id]) used[pf.id]=prefabLib[pf.id]; }
+  return Object.keys(used).length ? used : undefined;
+}
+function _pfMergeDefs(defs){   // a loaded level's prefabs join your library (never clobbering your own names)
+  if(!defs || typeof defs!=='object') return;
+  let added=0;
+  for(const k in defs){ const d=defs[k]; if(!d || !Array.isArray(d.props) || !d.props.length) continue;
+    if(!prefabLib[k]){ prefabLib[k]={ name:String(k).slice(0,40), props:d.props, rev:d.rev|0 }; added++; } }
+  if(added) _pfSaveLib();
+  if(typeof renderPrefabsPanel==='function') renderPrefabsPanel();
+}
+if(savedLevel && savedLevel.prefabDefs){ try{ _pfMergeDefs(savedLevel.prefabDefs); }catch(e){} }
+// The instance's pivot, recovered by VOTE: each prop that still matches its definition slot
+// "votes" for where the pivot must be (absolute - definition-relative). The majority wins, so
+// a whole-instance move (every vote agrees) is never mistaken for per-prop overrides; only
+// props that moved AGAINST their siblings diverge. Falls back to the centroid when nothing votes.
+function _pfInstancePivot(list, def){
+  const votes={};
+  for(const o of list){
+    const slot=(o.userData.pf && o.userData.pf.slot)|0; const d=def && def.props[slot]; if(!d) continue;
+    const e=propEntry(o);
+    const key=[ +(e.t[0]-d.t[0]).toFixed(2), +(e.t[1]-d.t[1]).toFixed(2), +(e.t[2]-d.t[2]).toFixed(2) ].join(',');
+    (votes[key]||(votes[key]={ n:0, p:key.split(',').map(Number) })).n++;
+  }
+  let best=null; for(const k in votes){ if(!best || votes[k].n>best.n) best=votes[k]; }
+  return best ? { x:best.p[0], y:best.p[1], z:best.p[2] } : _pfPivotOf(list);
+}
+function _pfIsOverridden(o, oldEntry, pivot){
+  if(!oldEntry) return false;                          // no old slot to differ from
+  return JSON.stringify(_pfEntryOf(o, pivot)) !== JSON.stringify(oldEntry);
+}
+// Push a definition change into ONE instance: unmodified slots are replaced from the new def,
+// overridden slots are kept exactly as the author left them, new slots spawn, removed slots
+// delete (unless overridden — those detach into plain props instead of vanishing).
+function _pfApplyDefToInstance(name, instId, oldDef, newDef){
+  const list=_pfInstances(name)[instId]||[];
+  if(!list.length) return { updated:0, kept:0 };
+  const pivot=_pfInstancePivot(list, oldDef);
+  const gid=(list[0].userData.groupId) || _newGroupId();
+  const bySlot={}; for(const o of list) bySlot[(o.userData.pf.slot)|0]=o;
+  let updated=0, kept=0;
+  const maxSlots=Math.max(newDef.props.length, oldDef.props.length);
+  for(let slot=0; slot<maxSlots; slot++){
+    const cur=bySlot[slot], oldE=oldDef.props[slot], newE=newDef.props[slot];
+    if(cur && _pfIsOverridden(cur, oldE, pivot)){
+      kept++;
+      if(newE) cur.userData.pf={ id:name, inst:instId, slot };
+      else delete cur.userData.pf;                     // its slot is gone — the override survives as a plain prop
+      continue;
+    }
+    if(cur){ const i=propModels.indexOf(cur); if(i>=0) removeProp(i); }
+    if(newE){ _pfSpawnEntry(newE, pivot, { id:name, inst:instId, slot }, gid); updated++; }
+  }
+  return { updated, kept };
+}
+// "Update prefab from this instance": the selected instance becomes the new definition; every
+// OTHER instance in the level follows, keeping its local overrides.
+function _pfUpdateFrom(o){
+  const pf=o && o.userData && o.userData.pf;
+  if(!pf || !prefabLib[pf.id]) return { ok:false, why:'Select a placed prefab instance first' };
+  const name=pf.id, oldDef=prefabLib[name];
+  const insts=_pfInstances(name);
+  const srcList=(insts[pf.inst]||[]).slice().sort((a,b)=>((a.userData.pf.slot)|0)-((b.userData.pf.slot)|0));
+  // parts the author ADDED to the instance (same group, no mark) join the definition as new slots
+  const gid=srcList.length && srcList[0].userData.groupId;
+  if(gid){ for(const p of propModels){ if(p && p.userData && p.userData.groupId===gid && !p.userData.pf && srcList.indexOf(p)<0) srcList.push(p); } }
+  if(!srcList.length) return { ok:false, why:'That instance has no props left' };
+  pushUndoSnapshot();
+  const pivot=_pfInstancePivot(srcList.filter(x=>x.userData.pf), oldDef);
+  const props=srcList.map(x=>_pfEntryOf(x, pivot));
+  srcList.forEach((x,i)=>{ x.userData.pf={ id:name, inst:pf.inst, slot:i }; });
+  prefabLib[name]={ name, props, rev:(oldDef.rev|0)+1 };
+  _pfSaveLib();
+  let updated=0, kept=0, others=0;
+  for(const instId in insts){
+    if(instId===pf.inst) continue;
+    others++;
+    const r=_pfApplyDefToInstance(name, instId, oldDef, prefabLib[name]);
+    updated+=r.updated; kept+=r.kept;
+  }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  return { ok:true, others, updated, kept };
+}
+function _pfDetach(o){
+  const pf=o && o.userData && o.userData.pf; if(!pf) return false;
+  pushUndoSnapshot();
+  const list=_pfInstances(pf.id)[pf.inst]||[];
+  for(const p of list) delete p.userData.pf;
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  return true;
+}
+function renderPrefabsPanel(){
+  const host=edDoc().getElementById('edPrefabs'); if(!host) return; host.innerHTML='';
+  const hint=document.createElement('div'); hint.className='hint'; hint.style.margin='2px 0 6px';
+  hint.innerHTML='<b>Reusable components.</b> Select configured props (a door + its trigger, a whole room) and save them as a prefab \u2014 signals, animations, physics and materials all come along. Place copies in any level; they arrive grouped. Your library follows you (and levels carry the prefabs they use).';
+  host.appendChild(hint);
+  { const row=document.createElement('div'); row.style.cssText='display:flex;gap:5px;align-items:center;margin:0 0 8px;';
+    const inp=document.createElement('input'); inp.type='text'; inp.id='pfName'; inp.placeholder='prefab name (e.g. VaultDoor)'; inp.maxLength=40;
+    inp.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:12px;';
+    const sv=document.createElement('button'); sv.textContent='Save selection'; sv.title='Capture the current prop selection as a reusable prefab';
+    sv.style.cssText='padding:4px 10px;font-size:12px;';
+    sv.onclick=()=>{ const r=_pfCapture(inp.value); if(!r.ok){ if(typeof flashToast==='function') flashToast(r.why); return; }
+      if(typeof flashToast==='function') flashToast('Saved \u201c'+inp.value.trim()+'\u201d ('+r.count+' props)'); inp.value=''; renderPrefabsPanel(); };
+    row.appendChild(inp); row.appendChild(sv); host.appendChild(row); }
+  const names=Object.keys(prefabLib).sort();
+  if(!names.length){ const e=document.createElement('div'); e.className='hint'; e.textContent='No prefabs yet \u2014 select some props and save your first.'; host.appendChild(e); return; }
+  for(const name of names){
+    const def=prefabLib[name];
+    const here=Object.keys(_pfInstances(name)).length;
+    const row=document.createElement('div'); row.style.cssText='display:flex;gap:4px;align-items:center;margin:2px 0;font-size:12px;color:#cfeee2;';
+    const lab=document.createElement('span'); lab.style.cssText='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    lab.textContent=name; lab.title=def.props.length+' props \u00b7 rev '+(def.rev|0);
+    const ct=document.createElement('span'); ct.style.cssText='flex:0 0 auto;font-size:10px;color:#7fa79a;'; ct.textContent=def.props.length+'p'+(here?(' \u00b7 '+here+' here'):'');
+    const pl=document.createElement('button'); pl.textContent='Place'; pl.style.cssText='padding:2px 9px;font-size:11px;';
+    pl.onclick=()=>{ _pfPlace(name); renderPrefabsPanel(); };
+    const selPf=(typeof selProps!=='undefined' && selProps && selProps[0] && selProps[0].userData && selProps[0].userData.pf) || null;
+    if(selPf && selPf.id===name){
+      const up=document.createElement('button'); up.textContent='Update'; up.title='Rewrite this prefab from the selected instance \u2014 every other copy in the level follows, keeping its local overrides';
+      up.style.cssText='padding:2px 9px;font-size:11px;border-color:var(--accent);';
+      up.onclick=()=>{ const r=_pfUpdateFrom(selProps[0]); if(typeof flashToast==='function') flashToast(r.ok ? ('Updated \u201c'+name+'\u201d \u2014 '+r.others+' other instance'+(r.others===1?'':'s')+(r.kept?(', '+r.kept+' local override'+(r.kept===1?'':'s')+' kept'):'')) : r.why); renderPrefabsPanel(); };
+      const dt=document.createElement('button'); dt.textContent='Detach'; dt.title='Disconnect the selected instance \u2014 its props stay, but future prefab updates skip it';
+      dt.style.cssText='padding:2px 8px;font-size:11px;';
+      dt.onclick=()=>{ _pfDetach(selProps[0]); if(typeof flashToast==='function') flashToast('Detached from \u201c'+name+'\u201d'); renderPrefabsPanel(); };
+      row.appendChild(up); row.appendChild(dt);
+    }
+    const del=document.createElement('button'); del.textContent='\u00d7'; del.title='Remove from the library (placed instances stay in levels)'; del.style.cssText='padding:2px 7px;font-size:12px;';
+    del.onclick=()=>{ delete prefabLib[name]; _pfSaveLib(); renderPrefabsPanel(); };
+    row.appendChild(lab); row.appendChild(ct); row.appendChild(pl); row.appendChild(del);
+    host.appendChild(row);
+  }
+}
 function duplicateSelectedLight(){
   const g = lightModels[editorTargets.lights.idx]; if(!g) return;
   pushUndoSnapshot();
@@ -26871,6 +27092,7 @@ function propEntry(o){
   if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(s=>{ const x={ w:s.when, d:s.do, t:s.target }; if(s.clip) x.c=s.clip; if(s.cs) x.n=s.cs; if(s.from) x.f=s.from; if(s.contain) x.ci=1; if(s.text) x.tx=s.text; if(s.needItem) x.ni=s.needItem; if(s.needConsume) x.nc=1; if(s.consume) x.cn=1; if(s.sound) x.so=s.sound; return x; });
   if(o.userData.sigNeed>1) e.snd=o.userData.sigNeed;
   if(o.userData.attribution) e.att=o.userData.attribution;
+  if(o.userData.pf && o.userData.pf.id) e.pf={ id:String(o.userData.pf.id), inst:String(o.userData.pf.inst||'i0'), slot:o.userData.pf.slot|0 };   // build 1030: prefab instance mark
   if(o.userData.nid) e.nid=o.userData.nid;
   return e;
 }
@@ -26921,6 +27143,7 @@ function serializeLevel(){
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
     logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
+    prefabDefs: _pfUsedDefs(),
     tracer: Object.assign({}, tracerCfg),
     decal: Object.assign({}, decalCfg),
     bolt: Object.assign({}, boltCfg),
@@ -27432,7 +27655,7 @@ function restoreLevel(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -27451,6 +27674,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
+  if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
   boltCfg = _sanitizeBolt(level.bolt); if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
@@ -27842,6 +28066,7 @@ function buildEditorPanel(){
     + sec('Loot', 'loot', '<div id="edLoot"></div>')
     + sec('Inventory items', 'invitems', '<div id="edInvItems"></div>')
     + sec('Build menu', 'buildmenu', '<div id="edBuildMenu"></div>')
+    + sec('Prefabs', 'prefabs', '<div id="edPrefabs"></div>')
     + sec('Logic graph', 'logic', '<div id="edLogic"></div>')
     + sec('Cutscenes', 'cutscenes', '<div id="edCutscenes"></div>')
     + sec('Zones', 'zones',
@@ -28024,6 +28249,7 @@ function buildEditorPanel(){
   if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
   if(typeof renderLogicPanel==='function') renderLogicPanel();
+  if(typeof renderPrefabsPanel==='function') renderPrefabsPanel();
   if(typeof renderBoltFxPanel==='function') renderBoltFxPanel();
   if(typeof renderWepFxPicker==='function') renderWepFxPicker();          // build 653: the grouped weapon-FX type picker
   if(typeof applyWepFxVisibility==='function') applyWepFxVisibility();     // ...and reveal only the active FX panel

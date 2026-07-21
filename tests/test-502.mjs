@@ -16,7 +16,7 @@ assert(/player:\s*\['gizmo','object','transform','characters'\]/.test(src), 'MOD
 
 // --- and they are no longer in Build ---
 assert(/build:   \['props','lights','station','extract','turrets'\]/.test(src), 'Build no longer lists player/pstart targets');
-assert(/build:\s*\['gizmo','object','material','transform'\]/.test(src), 'Build no longer lists the characters section');
+assert(/build:\s*\['gizmo','object','material','transform','prefabs'\]/.test(src), 'Build no longer lists the characters section');
 
 // --- the roster section itself is unchanged, just reassigned ---
 assert(/sec\('Characters', 'characters'/.test(src), 'the Characters section still exists');
