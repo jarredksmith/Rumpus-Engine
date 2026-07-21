@@ -9608,15 +9608,28 @@ function _autoRigApply(gltf, markersRaw){
   root.updateWorldMatrix(true,true);
   root.traverse(o=>{ if(o.isBone || o.isSkinnedMesh) hasBones=true; else if(o.isMesh) meshes.push(o); });
   if(hasBones || !meshes.length) return false;   // already rigged (or nothing to bind) — the retargeter owns it from here
-  const bb=new THREE.Box3().setFromObject(root);
+  // build 1029: EVERYTHING in root-LOCAL space. A gltf root that carries its own scale (large
+  // city-scale exports) used to mix spaces — the modal's markers arrive root-local, but the
+  // bbox/baked verts were WORLD (scale applied) and the generated bones sat under the scaled
+  // root, scaling AGAIN. Scale-1 roots made all three coincide, hiding it.
+  const rootInv=new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const relM=new THREE.Matrix4();
+  const baked=[];   // { m, g } — geometry baked into root-local, the markers' own space
+  const bb=new THREE.Box3();
+  for(const m of meshes){
+    relM.multiplyMatrices(rootInv, m.matrixWorld);
+    const g=m.geometry.clone(); g.applyMatrix4(relM);
+    g.computeBoundingBox(); bb.union(g.boundingBox);
+    baked.push({ m, g });
+  }
   // toe direction: foot geometry extends toward the toes — compare the z spread below the ankles
   const ankleY=bb.min.y + (Math.min(mk.kneeL[1], mk.kneeR[1]) - bb.min.y)*0.35;
   const ankZ=(mk.kneeL[2]+mk.kneeR[2])/2;
   let zLo=ankZ, zHi=ankZ;
   const _v=new THREE.Vector3();
-  for(const m of meshes){ const pa=m.geometry && m.geometry.attributes && m.geometry.attributes.position; if(!pa) continue;
+  for(const bk of baked){ const pa=bk.g.attributes.position; if(!pa) continue;
     const step=Math.max(1, Math.floor(pa.count/2000));
-    for(let i=0;i<pa.count;i+=step){ _v.fromBufferAttribute(pa,i).applyMatrix4(m.matrixWorld);
+    for(let i=0;i<pa.count;i+=step){ _v.fromBufferAttribute(pa,i);
       if(_v.y<=ankleY){ if(_v.z<zLo) zLo=_v.z; if(_v.z>zHi) zHi=_v.z; } } }
   const toeDir=(zHi-ankZ >= ankZ-zLo) ? 1 : -1;
   const J=_autoRigJoints(mk, [bb.min.x,bb.min.y,bb.min.z], [bb.max.x,bb.max.y,bb.max.z], toeDir);
@@ -9636,9 +9649,8 @@ function _autoRigApply(gltf, markersRaw){
     segs.push({ bi, a:j.pos, b:child.pos, isSide:/mixamorig(Left|Right)/.test(j.name), sideSign:/mixamorigLeft/.test(j.name)?1:-1 }); }
   const x0=(bb.min.x+bb.max.x)/2, W=Math.max(1e-6, bb.max.x-bb.min.x);
   const made=[];
-  for(const m of meshes){
-    const g=m.geometry.clone();
-    g.applyMatrix4(m.matrixWorld);   // bake into root space so ONE skeleton serves every mesh
+  for(const bk of baked){
+    const m=bk.m, g=bk.g;            // already baked root-local above — one skeleton serves every mesh
     const pa=g.attributes.position, n=pa.count;
     const skinIndex=new Uint16Array(n*4), skinWeight=new Float32Array(n*4);
     const cand=[];
@@ -9680,7 +9692,7 @@ const AR_STEPS = [
   { key:'knee',  label:'KNEES',  color:'#ff9b5b', sym:1 },
   { key:'groin', label:'GROIN',  color:'#ff7bd5' },
 ];
-let _arEl=null, _arGrp=null, _arModel=null, _arMarkers={}, _arStep=0, _arSym=true, _arRAF=0, _arUrl='', _arRotY=0, _arDist=3.4, _arMidY=0.9, _arX0=0, _arH=1.8, _arRings={};
+let _arEl=null, _arGrp=null, _arModel=null, _arMarkers={}, _arStep=0, _arSym=true, _arRAF=0, _arUrl='', _arRotY=0, _arDist=3.4, _arMidY=0.9, _arX0=0, _arH=1.8, _arWS=1, _arRings={};
 const _arTexes={}, _arNdc=new THREE.Vector2();
 function _arRingTex(color){
   if(_arTexes[color]) return _arTexes[color];
@@ -9698,7 +9710,7 @@ function _arSyncRings(){
     let sp=_arRings[k];
     if(!p){ if(sp) sp.visible=false; continue; }
     if(!sp){ const st=_arStepFor(k); sp=new THREE.Sprite(new THREE.SpriteMaterial({ map:_arRingTex(st.color), transparent:true, depthTest:false })); sp.renderOrder=5; _arRings[k]=sp; _arModel.add(sp); }
-    sp.visible=true; sp.position.set(p[0],p[1],p[2]); sp.scale.setScalar(_arH*0.085);
+    sp.visible=true; sp.position.set(p[0],p[1],p[2]); sp.scale.setScalar(_arH*0.085/_arWS);   // build 1029: rings live INSIDE the (possibly scaled) model — divide its scale back out
   }
 }
 function _arRenderList(){
@@ -9724,7 +9736,8 @@ function _arPlace(pt){
   const st=AR_STEPS[_arStep]; if(!st) return;
   const p=[+pt.x.toFixed(4), +pt.y.toFixed(4), +pt.z.toFixed(4)];
   if(st.sym){
-    const isL=p[0]>=_arX0, mir=[+(2*_arX0-p[0]).toFixed(4), p[1], p[2]];
+    const x0=_arX0/_arWS;   // bbox center measured in world; markers live root-local (build 1029)
+    const isL=p[0]>=x0, mir=[+(2*x0-p[0]).toFixed(4), p[1], p[2]];
     if(_arSym){ _arMarkers[st.key+'L']=isL?p:mir; _arMarkers[st.key+'R']=isL?mir:p; }
     else { _arMarkers[st.key+(isL?'L':'R')]=p; if(!_arDoneStep(st)){ _arSyncRings(); _arRenderList(); return; } }
   } else _arMarkers[st.key]=p;
@@ -9734,6 +9747,7 @@ function _arPlace(pt){
 }
 function _arClose(){
   if(_arRAF){ cancelAnimationFrame(_arRAF); _arRAF=0; }
+  if(typeof _inspCam!=='undefined' && _inspCam){ _inspCam.near=0.01; _inspCam.far=100; _inspCam.updateProjectionMatrix(); }   // build 1029: hand the shared camera back to the inventory inspector's scale
   if(_arGrp && _arGrp.parent) _arGrp.parent.remove(_arGrp);
   _arGrp=null; _arModel=null; _arRings={};
   if(_arEl) _arEl.style.display='none';
@@ -9799,7 +9813,12 @@ function _arOpen(url){
     const m=THREE.cloneSkinned(g.scene);
     const bb=new THREE.Box3().setFromObject(m);
     _arH=Math.max(0.2, bb.max.y-bb.min.y); _arX0=(bb.min.x+bb.max.x)/2; _arMidY=(bb.min.y+bb.max.y)/2;
+    { const _sv=new THREE.Vector3(); m.getWorldScale(_sv); _arWS=Math.max(_sv.x,_sv.y,_sv.z)||1; }
     _arDist=(_arH*0.62)/Math.tan(_inspCam.fov*Math.PI/360) + _arH*0.45;
+    // build 1029: the shared preview camera ships with far=100 — a large-scale model (city-scale
+    // exports are common) pushed the fitted distance past the far plane and rendered NOTHING.
+    // Scale the planes to the model; _arClose restores them for the inventory inspector.
+    _inspCam.near=Math.max(0.01, _arH*0.005); _inspCam.far=Math.max(100, _arDist + _arH*8); _inspCam.updateProjectionMatrix();
     m.position.set(-_arX0, 0, -(bb.min.z+bb.max.z)/2);   // spin about the model's own axis; markers stay in MODEL space via worldToLocal
     _arGrp.add(m); _arModel=m;
     _arSyncRings(); _arRenderList();
@@ -20350,7 +20369,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1028 · 2026-07-21';
+const BUILD_VERSION = 'build 1029 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

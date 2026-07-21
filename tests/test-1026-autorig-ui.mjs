@@ -9,7 +9,7 @@ const src = gameSource();
 // ---- executable: placement logic (symmetry, sides, step advancement) ----
 const glue = 'const AUTORIG_MARKERS = ' + extractConst('AUTORIG_MARKERS', src) + ';\n'
   + 'const AR_STEPS = ' + extractConst('AR_STEPS', src) + ';\n'
-  + 'let _arStep=0, _arSym=true, _arX0=0, _arMarkers={};\n'
+  + 'let _arStep=0, _arSym=true, _arX0=0, _arWS=1, _arMarkers={};\n'
   + 'const _arSyncRings=()=>{}, _arRenderList=()=>{};\n'
   + extractFunction('_arDoneStep', src) + '\n'
   + extractFunction('_arPlace', src) + '\n';
