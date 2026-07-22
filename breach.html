@@ -9588,17 +9588,21 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
     const pairOfDst=new Map(P.map(p=>[p.dst, p]));
     const firstMapped=(node, set)=>{ for(const c of node.children){ if(set.has(c)) return c; const d=firstMapped(c, set); if(d) return d; } return null; };
     const _wa=new THREE.Vector3(), _wb=new THREE.Vector3(), _wc=new THREE.Vector3(), _wd=new THREE.Vector3();
-    // build 1052: HIERARCHICAL alignment (the last crease — elbows crunching under pack clips).
-    // Independent per-bone shortest arcs match every bone's DIRECTION, but each arc picks its
-    // own roll — adjacent bones could disagree by a twist about the limb axis, and elbow verts
-    // blending uparm+forearm weights got candy-wrapped. Each bone now starts from its parent
-    // chain's align and adds only the minimal SWING residual that carries the transported bone
-    // direction onto the source's — the relative rotation between adjacent bones has zero
-    // twist about the child's axis, so alignment can never wring a joint.
-    // build 1051 refined: anatomy END bones (hands, feet, toes, fingers, head — their direction
-    // encodes ankle height / finger splay, not pose) still add no correction of their own, but
-    // now RIDE the chain — an A-pose wrist lifts with its arm instead of kinking at the wrist.
-    const _tv=new THREE.Vector3(), _resid=new THREE.Quaternion();
+    // build 1053: FRAME-ANCHORED alignment. 1052 composed each bone's align onto its parent
+    // chain's (zero relative twist at any one joint) — but small per-bone direction differences
+    // then ACCUMULATED down long chains: shoulders inherited the spine chain's drift and pulled
+    // the chest/back inward, thighs inherited the hips' spine-aiming arc and rolled the crouch
+    // into a smoosh. Every bone is aligned INDEPENDENTLY again (globally anchored, as in 1051),
+    // but as a full FRAME: the bone direction plus a deterministic world reference axis resolve
+    // both aim AND roll, instead of a shortest arc that picks an arbitrary roll per bone. A
+    // rigid pose difference — an A-pose arm drop is a rotation about the character's forward
+    // axis — commutes with the reference axis, so every bone of the limb maps by that same
+    // rigid rotation: no relative twist at the elbow (the 1052 win survives), no chain drift
+    // (the 1052 bug dies). Anatomy end bones (1051) keep riding their chain's align.
+    const _qs=new THREE.Quaternion(), _qd=new THREE.Quaternion();
+    const _bs=new THREE.Vector3(), _bd=new THREE.Vector3(), _ns=new THREE.Vector3(), _nd=new THREE.Vector3();
+    const _ms=new THREE.Matrix4(), _md=new THREE.Matrix4();
+    const _AX=new THREE.Vector3(1,0,0), _AY=new THREE.Vector3(0,1,0), _AZ=new THREE.Vector3(0,0,1);
     const walkAlign=(node, parentAlign)=>{
       let cur=parentAlign;
       const p=pairOfDst.get(node);
@@ -9611,9 +9615,19 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
             p.dst.getWorldPosition(_wa); cp.dst.getWorldPosition(_wb); _wb.sub(_wa);
             p.src.getWorldPosition(_wc); cp.src.getWorldPosition(_wd); _wd.sub(_wc);
             if(_wb.lengthSq()>=1e-10 && _wd.lengthSq()>=1e-10){
-              _tv.copy(_wb.normalize()).applyQuaternion(parentAlign);
-              _resid.setFromUnitVectors(_tv, _wd.normalize());
-              p.align.multiplyQuaternions(_resid, parentAlign);
+              _wb.normalize(); _wd.normalize();
+              // the reference axis: character-forward Z unless either bone runs along it, then Y, then X
+              const ref = (Math.max(Math.abs(_wb.z), Math.abs(_wd.z))<=0.9) ? _AZ
+                        : (Math.max(Math.abs(_wb.y), Math.abs(_wd.y))<=0.9) ? _AY : _AX;
+              _bd.crossVectors(ref, _wb); _bs.crossVectors(ref, _wd);
+              if(_bd.lengthSq()>1e-6 && _bs.lengthSq()>1e-6){
+                _bd.normalize(); _bs.normalize();
+                _nd.crossVectors(_wb, _bd); _ns.crossVectors(_wd, _bs);
+                _md.makeBasis(_wb, _bd, _nd); _ms.makeBasis(_wd, _bs, _ns);
+                p.align.multiplyQuaternions(_qs.setFromRotationMatrix(_ms), _qd.setFromRotationMatrix(_md).invert());
+              } else {
+                p.align.setFromUnitVectors(_wb, _wd);   // ref nearly parallel to the bone: aim-only fallback
+              }
             }
           }
         }
@@ -22002,7 +22016,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1052 · 2026-07-22';
+const BUILD_VERSION = 'build 1053 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

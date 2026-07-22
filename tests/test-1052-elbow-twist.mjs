@@ -88,17 +88,15 @@ const wq = (root, n) => root.getObjectByName(n).getWorldQuaternion(new THREE.Qua
   near(shin.y, -1, 1e-2, 'legs stay straight down — the leg chain (identical rests) is untouched');
   mixer.stopAllAction(); mixer.uncacheRoot(dstRoot);
 }
-// the machinery is pinned
+// the machinery is pinned (build 1053: frame-anchored — same guarantees, no chain composition;
+// a rigid arm drop is a rotation about the forward ref axis, which the frame method maps exactly)
 assert(/const walkAlign=\(node, parentAlign\)=>\{/.test(src) && /walkAlign\(dstRoot, new THREE\.Quaternion\(\)\);/.test(src),
-  'alignment walks the dst hierarchy top-down from an identity root');
-assert(/_tv\.copy\(_wb\.normalize\(\)\)\.applyQuaternion\(parentAlign\);/.test(src),
-  'the dst bone direction is transported through the parent chain’s align first');
-assert(/_resid\.setFromUnitVectors\(_tv, _wd\.normalize\(\)\);/.test(src)
-  && /p\.align\.multiplyQuaternions\(_resid, parentAlign\);/.test(src),
-  'each bone adds only the swing residual on top of its parent’s align — zero relative twist');
+  'alignment walks the dst hierarchy top-down (anatomy bones need their nearest aligned ancestor)');
+assert(/_md\.makeBasis\(_wb, _bd, _nd\); _ms\.makeBasis\(_wd, _bs, _ns\);/.test(src),
+  'each bone aligns a full rest frame (direction + world reference axis) — roll is determined, not arbitrary');
 assert(/p\.align\.copy\(parentAlign\);/.test(src),
   'anatomy end bones inherit the chain’s align (ride along) instead of resetting to identity');
 assert(!/p\.align\.setFromUnitVectors\(_wb\.normalize\(\), _wd\.normalize\(\)\);/.test(src),
-  'the independent per-bone arc is gone');
+  'the independent per-bone shortest arc (arbitrary roll) is gone');
 
-done('build 1052: alignment is hierarchical — elbows keep exactly the pack’s bend, wrists ride their arms');
+done('build 1052: rigid pose differences map limbs rigidly — elbows keep exactly the pack’s bend, wrists ride their arms');
