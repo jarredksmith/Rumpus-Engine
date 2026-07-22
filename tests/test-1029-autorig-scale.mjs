@@ -24,7 +24,8 @@ assert(/const x0=_arX0\/_arWS;/.test(extractFunction('_arPlace', src)), 'the sym
 // ---- executable: a x5-scaled root rigs WITHOUT double-scaling ----
 const fns = 'const AUTORIG_MARKERS = ' + extractConst('AUTORIG_MARKERS', src) + ';\n'
   + extractFunction('_sanitizeAutoRig', src) + '\n' + extractFunction('_autoRigJoints', src) + '\n'
-  + extractFunction('_segDist2', src) + '\n' + extractFunction('_autoRigApply', src);
+  + extractFunction('_segDist2', src) + '\n' + extractFunction('_arBlendR', src) + '\n'
+  + extractFunction('_arWeightKernel', src) + '\n' + extractFunction('_autoRigApply', src);   // build 1037: soft joint blending helpers
 const env = new Function('THREE', 'console', fns + '\nreturn { _autoRigApply };')(THREE, console);
 function box(w,h,d,x,y,z){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial()); m.position.set(x,y,z); return m; }
 const root=new THREE.Group();

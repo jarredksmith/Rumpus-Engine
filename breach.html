@@ -9695,6 +9695,20 @@ function _segDist2(px,py,pz, ax,ay,az, bx,by,bz){   // point -> segment, squared
   const dx=px-(ax+abx*t), dy=py-(ay+aby*t), dz=pz-(az+abz*t);
   return dx*dx+dy*dy+dz*dz;
 }
+// build 1037: how wide a joint blends. r grows with the bone (long thigh -> wide knee blend)
+// but is clamped against the model height so stubby or lanky proportions both stay sane.
+function _arBlendR(segLen, height){
+  const h=Math.max(1e-6, height);
+  return Math.min(Math.max(segLen*0.25, h*0.02), h*0.08);
+}
+// build 1037: softened skinning kernel. 1/d^4 far from the bone (unchanged reach — no
+// cross-limb bleed), but the +r^2 floor flattens the falloff near joints, so parent and
+// child bones share verts across a ~2-3-girth ramp instead of snapping (the elbow/knee
+// crease the old "tight falloff keeps elbows/knees crisp" kernel caused on many meshes).
+function _arWeightKernel(d2, r2){
+  const dd=d2+r2+1e-8;
+  return 1/(dd*dd);
+}
 // Fit + bind: converts the gltf's static meshes to SkinnedMeshes on a generated mixamorig
 // skeleton. Mutates the CACHED gltf in place (every later clone inherits the rig via
 // cloneSkinned); idempotent per gltf. Returns true when the model ends up rigged.
@@ -9743,9 +9757,12 @@ function _autoRigApply(gltf, markersRaw){
   const skeleton=new THREE.Skeleton(bones);
   // weight-bearing segments: every non-end bone reaches to its first child
   const segs=[];
+  const _rigH=Math.max(1e-6, bb.max.y-bb.min.y);
   for(let bi=0; bi<J.length; bi++){ const j=J[bi]; if(/_End$/.test(j.name)) continue;
     const child=J.find(q=>q.parent===j.name); if(!child) continue;
-    segs.push({ bi, a:j.pos, b:child.pos, isSide:/mixamorig(Left|Right)/.test(j.name), sideSign:/mixamorigLeft/.test(j.name)?1:-1 }); }
+    const _sl=Math.hypot(child.pos[0]-j.pos[0], child.pos[1]-j.pos[1], child.pos[2]-j.pos[2]);
+    const _br=_arBlendR(_sl, _rigH);   // build 1037: per-bone joint blend radius
+    segs.push({ bi, a:j.pos, b:child.pos, r2:_br*_br, isSide:/mixamorig(Left|Right)/.test(j.name), sideSign:/mixamorigLeft/.test(j.name)?1:-1 }); }
   const x0=(bb.min.x+bb.max.x)/2, W=Math.max(1e-6, bb.max.x-bb.min.x);
   const made=[];
   for(const bk of baked){
@@ -9758,7 +9775,7 @@ function _autoRigApply(gltf, markersRaw){
       cand.length=0;
       for(const sg of segs){
         const d2=_segDist2(px,py,pz, sg.a[0],sg.a[1],sg.a[2], sg.b[0],sg.b[1],sg.b[2]);
-        let w=1/(d2*d2+1e-8);   // inverse-distance^4: tight falloff keeps elbows/knees crisp
+        let w=_arWeightKernel(d2, sg.r2);   // build 1037: soft joint blending — no more knee/elbow creases
         if(sg.isSide && (px-x0)*sg.sideSign < -W*0.02) w*=0.05;   // cross-body damping: the left thigh never grabs right-leg verts
         cand.push([w, sg.bi]);
       }
@@ -20490,7 +20507,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1036 · 2026-07-22';
+const BUILD_VERSION = 'build 1037 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
