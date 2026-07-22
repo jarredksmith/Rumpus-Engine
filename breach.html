@@ -9715,7 +9715,7 @@ function _caSanitize(list){
     const dur=num(c.dur, 0.1, 60, 1);
     const fps=Math.round(num(c.fps, 5, 60, 30));
     const d={ id, v:1, name:(typeof c.name==='string' && c.name.trim()) ? c.name.trim().slice(0,40) : 'Custom clip',
-      dur, fps, loop:(c.loop==='once'||c.loop==='hold')?c.loop:'loop', tracks:{} };
+      dur, fps, loop:(c.loop==='once'||c.loop==='hold')?c.loop:'loop', interp:(c.interp==='linear'||c.interp==='step')?c.interp:'smooth', tracks:{} };   // build 1044
     const T=(c.tracks && typeof c.tracks==='object') ? c.tracks : {};
     for(const slot of CA_SLOTS){
       const t=T[slot]; if(!t || typeof t!=='object') continue;
@@ -9784,23 +9784,29 @@ function _caGatherBones(root){
   return out;
 }
 // Evaluate a quaternion track (world delta) at time t — slerp between neighbors, clamped ends.
-function _caEvalQ(keys, t, target){
+function _caEvalQ(keys, t, target, mode){
   if(!keys.length) return target.set(0,0,0,1);
   if(t<=keys[0][0]){ const k=keys[0]; return target.set(k[1],k[2],k[3],k[4]); }
   const last=keys[keys.length-1];
   if(t>=last[0]) return target.set(last[1],last[2],last[3],last[4]);
   let i=1; while(i<keys.length && keys[i][0]<t) i++;
-  const a=keys[i-1], b=keys[i], f=(t-a[0])/Math.max(1e-9, b[0]-a[0]);
+  const a=keys[i-1], b=keys[i];
+  if(mode==='step'){ return target.set(a[1],a[2],a[3],a[4]); }   // build 1044: hold the previous key
+  let f=(t-a[0])/Math.max(1e-9, b[0]-a[0]);
+  if(mode!=='linear') f=f*f*(3-2*f);   // build 1044: smooth (default) eases each segment
   target.set(a[1],a[2],a[3],a[4]);
   return target.slerp(new THREE.Quaternion(b[1],b[2],b[3],b[4]), f);   // slerp = shortest path, never Euler
 }
-function _caEvalP(keys, t, target){
+function _caEvalP(keys, t, target, mode){
   if(!keys.length) return target.set(0,0,0);
   if(t<=keys[0][0]){ const k=keys[0]; return target.set(k[1],k[2],k[3]); }
   const last=keys[keys.length-1];
   if(t>=last[0]) return target.set(last[1],last[2],last[3]);
   let i=1; while(i<keys.length && keys[i][0]<t) i++;
-  const a=keys[i-1], b=keys[i], f=(t-a[0])/Math.max(1e-9, b[0]-a[0]);
+  const a=keys[i-1], b=keys[i];
+  if(mode==='step') return target.set(a[1],a[2],a[3]);
+  let f=(t-a[0])/Math.max(1e-9, b[0]-a[0]);
+  if(mode!=='linear') f=f*f*(3-2*f);
   return target.set(a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f, a[3]+(b[3]-a[3])*f);
 }
 // Build a plain THREE.AnimationClip from clip data for THIS rig. The rig must be at rest when
@@ -9836,7 +9842,7 @@ function _caBuildClip(root, data){
       let local=node.quaternion;
       const tr=slot ? data.tracks[slot] : null;
       if(tr && tr.q && tr.q.length){
-        _caEvalQ(tr.q, t, _qd);
+        _caEvalQ(tr.q, t, _qd, data.interp);
         _qa.copy(_qd).multiply(restW.get(node));            // world delta x rest world -> target world
         _qb.copy(parentWQ).invert().multiply(_qa);          // -> local under the POSED parent
         const r=getRec(node); r.times.push(t); r.q.push(_qb.x,_qb.y,_qb.z,_qb.w);
@@ -9850,7 +9856,7 @@ function _caBuildClip(root, data){
       const t=Math.min(dur-1e-5, f/fps);
       walk(root, rootWQ, t);
       if(hasHipP){
-        _caEvalP(data.tracks.hips.p, t, _v).multiplyScalar(hipH).add(hipRestW);   // normalized offset -> this rig's world
+        _caEvalP(data.tracks.hips.p, t, _v, data.interp).multiplyScalar(hipH).add(hipRestW);   // normalized offset -> this rig's world
         _v.applyMatrix4(hipRestLocalParentInv);
         hipPosTimes.push(t); hipPos.push(_v.x, _v.y, _v.z);
       }
@@ -9920,8 +9926,44 @@ function _aeKeyTimes(clip){
     if(tr.p) for(const kk of tr.p) ts.add(kk[0]); }
   return [...ts].sort((a,b)=>a-b);
 }
+// build 1044: mirroring across the body. Canonical L:/R: slots swap; a world-space delta
+// reflects across the YZ plane as (x,y,z,w) -> (x,-y,-z,w); the hips offset flips X.
+function _aeMirrorSlot(slot){ if(slot.indexOf('L:')===0) return 'R:'+slot.slice(2); if(slot.indexOf('R:')===0) return 'L:'+slot.slice(2); return slot; }
+function _aeMirrorQK(k){ return [k[0], k[1], -k[2], -k[3], k[4]]; }
+function _aeMirrorPK(k){ return [k[0], -k[1], k[2], k[3]]; }
+function _aeMirrorClipData(data){
+  const out=JSON.parse(JSON.stringify(data)); out.tracks={};
+  for(const slot in data.tracks){
+    const src=data.tracks[slot], tr={};
+    if(src.q) tr.q=src.q.map(_aeMirrorQK);
+    if(src.p) tr.p=src.p.map(_aeMirrorPK);
+    out.tracks[_aeMirrorSlot(slot)]=tr;
+  }
+  return out;
+}
+function _aeKeysAt(clip, t, eps){   // snapshot every track's key at one time — the key clipboard
+  eps=(eps==null)?1e-3:eps;
+  const out={};
+  if(clip && clip.tracks) for(const slot in clip.tracks){ const tr=clip.tracks[slot];
+    const q=tr.q && tr.q.find(k=>Math.abs(k[0]-t)<=eps);
+    const p=tr.p && tr.p.find(k=>Math.abs(k[0]-t)<=eps);
+    if(q || p){ out[slot]={}; if(q) out[slot].q=q.slice(1); if(p) out[slot].p=p.slice(1); }
+  }
+  return out;
+}
+function _aePasteKeysAt(clip, snap, t){
+  let n=0;
+  if(!clip || !snap) return 0;
+  for(const slot in snap){
+    const tr=clip.tracks[slot]=(clip.tracks[slot]||{});
+    if(snap[slot].q){ tr.q=tr.q||[]; _aeUpsertKey(tr.q, [t].concat(snap[slot].q)); n++; }
+    if(snap[slot].p){ tr.p=tr.p||[]; _aeUpsertKey(tr.p, [t].concat(snap[slot].p)); n++; }
+  }
+  if(n && clip.dur<t) clip.dur=Math.round(t*1000)/1000;
+  return n;
+}
 function _aeNewClipData(){
-  return { id:_caNewId(), v:1, name:'Custom clip', dur:2, fps:30, loop:'loop', tracks:{} };
+  return { id:_caNewId(), v:1, name:'Custom clip', dur:2, fps:30, loop:'loop', interp:'smooth', tracks:{} };
 }
 // where a clip (by its per-model attach name) is currently assigned — the delete safety net
 function _aeAssignments(name){
@@ -10002,6 +10044,7 @@ function _aeClose(){
     if(_aeSkel){ _aeScene.remove(_aeSkel); if(_aeSkel.geometry) _aeSkel.geometry.dispose(); if(_aeSkel.material) _aeSkel.material.dispose(); }
     if(_aeGrid){ _aeScene.remove(_aeGrid); if(_aeGrid.geometry) _aeGrid.geometry.dispose(); if(_aeGrid.material) _aeGrid.material.dispose(); }
   }
+  _aeGhostClear(); _aeGhostOn=false;
   _aeDots=[]; _aeSkel=null; _aeGrid=null;
   if(_aeR){ try{ const c=_aeR.domElement; _aeR.dispose(); if(c && c.parentNode) c.parentNode.removeChild(c); }catch(e){} _aeR=null; }
   _aeScene=null; _aeRoot=null; _aeRestRoot=null; _aeGltf=null; _aeBones=null; _aeRestBones=null;
@@ -10074,6 +10117,7 @@ function _aeRebuild(){
   if(_aeClip.loop==='loop'){ _aeAction.loop=THREE.LoopRepeat; }
   else { _aeAction.loop=THREE.LoopOnce; _aeAction.clampWhenFinished=(_aeClip.loop==='hold'); }
   _aeAction.play(); _aeAction.paused=!_aePlaying;
+  if(_aeGhostA){ _aeGhostA.clip=null; } if(_aeGhostB){ _aeGhostB.clip=null; }   // build 1044: ghosts rebind to the fresh clip
   _aeApplyTime(_aeTime);
 }
 function _aeResetPose(){
@@ -10084,6 +10128,7 @@ function _aeResetPose(){
 function _aeApplyTime(t){
   _aeTime=Math.max(0, Math.min(_aeClip?_aeClip.dur:1, t));
   if(_aeAction){ _aeAction.paused=!_aePlaying; _aeAction.time=_aeTime; _aeMixer.update(0); _aeRoot.updateWorldMatrix(true,true); }
+  if(_aeGhostOn){ if(_aeGhostT) clearTimeout(_aeGhostT); _aeGhostT=setTimeout(()=>{ _aeGhostT=0; _aeGhostSync(); }, 90); }   // build 1044: onion skins follow the playhead
   _aeDrawTL(); _aeRenderInspector();
 }
 function _aeSetPlaying(v){
@@ -10118,6 +10163,109 @@ function _aeKeyPose(t){   // key every bone that moved off rest (plus the hips o
     if(moved || keyed){ _aeKeySlot(slot, t); n++; }
   }
   return n;
+}
+// build 1044: live pose operations — capture all world deltas first, then apply top-down so
+// child locals compute under already-mirrored parents.
+let _aePoseClipb=null, _aeKeyClipb=null;
+function _aeCaptureDeltas(){
+  const out={ q:{}, hip:null };
+  for(const [slot,b] of _aeBones){ const rw=_aeRestW.get(slot);
+    const d=b.getWorldQuaternion(new THREE.Quaternion()).multiply(rw.clone().invert());
+    out.q[slot]=[d.x,d.y,d.z,d.w]; }
+  const hipsB=_aeBones.get('hips');
+  if(hipsB){ const o=hipsB.getWorldPosition(new THREE.Vector3()).sub(_aeHipRestW); out.hip=[o.x,o.y,o.z]; }
+  return out;
+}
+function _aeApplyDeltas(dl){
+  if(!dl || !_aeBones) return;
+  for(const slot of CA_SLOTS){
+    const b=_aeBones.get(slot); if(!b) continue;
+    const d=dl.q[slot]; if(!d) continue;
+    const target=new THREE.Quaternion(d[0],d[1],d[2],d[3]).multiply(_aeRestW.get(slot));
+    const pq=b.parent ? b.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
+    b.quaternion.copy(pq.invert().multiply(target));
+    b.updateWorldMatrix(true, true);
+  }
+  const hipsB=_aeBones.get('hips');
+  if(hipsB && dl.hip){
+    const w=_aeHipRestW.clone().add(new THREE.Vector3(dl.hip[0],dl.hip[1],dl.hip[2]));
+    if(hipsB.parent){ hipsB.parent.updateWorldMatrix(true,false); w.applyMatrix4(new THREE.Matrix4().copy(hipsB.parent.matrixWorld).invert()); }
+    hipsB.position.copy(w);
+  }
+  _aeRoot.updateWorldMatrix(true,true);
+  _aeRenderInspector();
+}
+function _aeMirrorPoseLive(){
+  if(!_aeBones) return;
+  const cur=_aeCaptureDeltas(), mir={ q:{}, hip:cur.hip ? [-cur.hip[0], cur.hip[1], cur.hip[2]] : null };
+  for(const slot in cur.q){ const d=cur.q[_aeMirrorSlot(slot)] || cur.q[slot];
+    mir.q[slot]=[d[0], -d[1], -d[2], d[3]]; }
+  _aeApplyDeltas(mir);
+  if(typeof toast==='function') toast('Pose mirrored');
+}
+// build 1044: onion skin — ghost skeletons at the previous/next key times
+let _aeGhostA=null, _aeGhostB=null, _aeGhostOn=false, _aeGhostT=0;
+function _aeGhostClear(){
+  for(const gh of [_aeGhostA, _aeGhostB]){
+    if(!gh) continue;
+    if(gh.mx){ try{ gh.mx.stopAllAction(); gh.mx.uncacheRoot(gh.root); }catch(e){} }
+    if(_aeScene){ _aeScene.remove(gh.root); _aeScene.remove(gh.helper); }
+    if(gh.helper){ if(gh.helper.geometry) gh.helper.geometry.dispose(); if(gh.helper.material) gh.helper.material.dispose(); }
+  }
+  _aeGhostA=_aeGhostB=null;
+  if(_aeGhostT){ clearTimeout(_aeGhostT); _aeGhostT=0; }
+}
+function _aeGhostSync(){
+  if(!_aeScene || !_aeRestRoot) return;
+  if(!_aeGhostOn){ _aeGhostClear(); return; }
+  if(!_aeGhostA){
+    const mk=(col)=>{ const root=THREE.cloneSkinned(_aeRestRoot);
+      root.traverse(o=>{ if(o.isMesh || o.isSkinnedMesh) o.visible=false; });
+      const h=new THREE.SkeletonHelper(root); h.material.depthTest=false; h.material.transparent=true; h.material.opacity=0.3; h.material.color=new THREE.Color(col);
+      _aeScene.add(root); _aeScene.add(h);
+      return { root, helper:h, mx:null, act:null, clip:null }; };
+    _aeGhostA=mk(0x5a8dff); _aeGhostB=mk(0xff8a5b);   // blue = previous key, orange = next
+  }
+  const clip=_aeAction ? _aeAction.getClip() : null;
+  const ts=_aeKeyTimes(_aeClip);
+  const prev=[...ts].reverse().find(t=>t<_aeTime-1e-4), next=ts.find(t=>t>_aeTime+1e-4);
+  const pose=(gh, t)=>{
+    const on=!!(clip && t!=null);
+    gh.helper.visible=on; if(!on) return;
+    if(gh.clip!==clip){ if(gh.mx){ try{ gh.mx.stopAllAction(); gh.mx.uncacheRoot(gh.root); }catch(e){} }
+      gh.mx=new THREE.AnimationMixer(gh.root); gh.act=gh.mx.clipAction(clip); gh.act.play(); gh.clip=clip; }
+    gh.act.time=t; gh.mx.update(0); gh.root.updateWorldMatrix(true,true);
+  };
+  pose(_aeGhostA, prev); pose(_aeGhostB, next);
+}
+// build 1044: .rumpusanim export/import — a small JSON file; the sanitizer is the only door in.
+function _aeExport(){
+  if(!_aeClip) return;
+  const clean=_caSanitize([_aeClip])[0]; if(!clean){ if(typeof toast==='function') toast('Nothing to export'); return; }
+  const blob=new Blob([JSON.stringify({ format:'rumpusanim', v:1, clip:clean })], { type:'application/json' });
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=((clean.name.replace(/[^a-z0-9_\- ]/gi,'').trim())||'clip')+'.rumpusanim';
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ try{ URL.revokeObjectURL(a.href); a.remove(); }catch(e){} }, 500);
+}
+function _aeImport(){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='.rumpusanim,application/json';
+  inp.onchange=()=>{
+    const f=inp.files && inp.files[0]; if(!f) return;
+    const rd=new FileReader();
+    rd.onload=()=>{ try{
+      const j=JSON.parse(String(rd.result));
+      const clean=_caSanitize([j && j.clip ? j.clip : j])[0];   // sanitized: imported data is inert numbers, never code
+      if(!clean || !Object.keys(clean.tracks).length){ if(typeof toast==='function') toast('Not a Rumpus animation file'); return; }
+      if(customAnims.some(c=>c.id===clean.id)) clean.id=_caNewId();
+      customAnims.push(clean); _caRev++;
+      if(typeof _levelDirty!=='undefined') _levelDirty=true;
+      _aeLoadClip(clean.id);
+      if(typeof toast==='function') toast('Imported "'+clean.name+'"');
+    }catch(e){ if(typeof toast==='function') toast('Import failed — file unreadable'); } };
+    rd.readAsText(f);
+  };
+  inp.click();
 }
 // ---- clip lifecycle ----
 function _aeLoadClip(id){
@@ -10281,6 +10429,7 @@ function _aeEnsureDom(){
     +'<span class="aeTitle">ANIMATION EDITOR</span>'
     +'<select id="aeClipSel" aria-label="Clip"></select>'
     +'<button id="aeNew">+ New</button><button id="aeDup">Duplicate</button><button id="aeDel">Delete</button>'
+    +'<button id="aeExp" title="Download this clip as a .rumpusanim file">Export</button><button id="aeImp" title="Import a .rumpusanim file into this level">Import</button>'
     +'<input id="aeName" type="text" maxlength="40" aria-label="Clip name" placeholder="clip name">'
     +'<button id="aeSave" class="aeAccent">SAVE CLIP</button>'
     +'<button id="aeClose" aria-label="Close">✕</button>'
@@ -10304,6 +10453,9 @@ function _aeEnsureDom(){
     +'<label><input id="aeSnapCb" type="checkbox" checked> Snap</label>'
     +'<button id="aeKeyBone" title="Key the selected bone at the playhead (K)">Key bone</button>'
     +'<button id="aeKeyPose" title="Key every posed bone (Shift+K)">Key pose</button>'
+    +'<button id="aeCopyK" title="Copy every key at the playhead">Copy keys</button>'
+    +'<button id="aePasteK" title="Paste the copied keys at the playhead">Paste keys</button>'
+    +'<button id="aeGhost" title="Onion skin — ghost skeletons at the previous (blue) and next (orange) keys">Ghosts</button>'
     +'</div>'
     +'<canvas id="aeTL" height="64"></canvas>'
     +'</div>';
@@ -10314,6 +10466,8 @@ function _aeEnsureDom(){
   el.querySelector('#aeNew').onclick=()=>{ const d=_caSanitize([_aeNewClipData()])[0]; customAnims.push(d); _caRev++; _aeLoadClip(d.id); };
   el.querySelector('#aeDup').onclick=_aeDuplicate;
   el.querySelector('#aeDel').onclick=_aeDelete;
+  el.querySelector('#aeExp').onclick=_aeExport;
+  el.querySelector('#aeImp').onclick=_aeImport;
   el.querySelector('#aeClipSel').onchange=(e)=>_aeLoadClip(e.target.value);
   el.querySelector('#aeName').onchange=(e)=>{ if(!_aeClip) return; _aeSnapshot(); _aeClip.name=(e.target.value.trim()||'Custom clip').slice(0,40); _aeRenderClipSel(); };
   el.querySelector('#aePlay').onclick=()=>_aeSetPlaying(!_aePlaying);
@@ -10322,6 +10476,9 @@ function _aeEnsureDom(){
   el.querySelector('#aeSnapCb').onchange=(e)=>{ _aeSnap=e.target.checked; };
   el.querySelector('#aeKeyBone').onclick=()=>{ if(_aeSel){ _aeSnapshot(); _aeKeySlot(_aeSel, _aeTime); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); } };
   el.querySelector('#aeKeyPose').onclick=()=>{ _aeSnapshot(); const n=_aeKeyPose(_aeTime); if(typeof toast==='function') toast(n+' bones keyed'); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); };
+  el.querySelector('#aeCopyK').onclick=()=>{ _aeKeyClipb=_aeKeysAt(_aeClip, _aeSnapT(_aeTime, _aeClip.fps, _aeSnap)); const n=Object.keys(_aeKeyClipb).length; if(typeof toast==='function') toast(n?('Copied keys on '+n+' bones'):'No keys at the playhead'); };
+  el.querySelector('#aePasteK').onclick=()=>{ if(!_aeKeyClipb){ if(typeof toast==='function') toast('Nothing copied yet'); return; } _aeSnapshot(); const n=_aePasteKeysAt(_aeClip, _aeKeyClipb, _aeSnapT(_aeTime, _aeClip.fps, _aeSnap)); if(typeof toast==='function') toast(n?('Pasted '+n+' keys'):'Nothing to paste'); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); };
+  el.querySelector('#aeGhost').onclick=()=>{ _aeGhostOn=!_aeGhostOn; el.querySelector('#aeGhost').classList.toggle('aeAccent', _aeGhostOn); _aeGhostSync(); };
   el.querySelector('#aePrevK').onclick=()=>{ const ts=_aeKeyTimes(_aeClip).filter(t=>t<_aeTime-1e-4); if(ts.length){ _aeSetPlaying(false); _aeApplyTime(ts[ts.length-1]); } };
   el.querySelector('#aeNextK').onclick=()=>{ const ts=_aeKeyTimes(_aeClip).filter(t=>t>_aeTime+1e-4); if(ts.length){ _aeSetPlaying(false); _aeApplyTime(ts[0]); } };
   el.querySelector('#aeSearch').oninput=(e)=>{ _aeTreeFilter=e.target.value.toLowerCase(); _aeRenderTree(); };
@@ -10396,6 +10553,14 @@ function _aeRenderInspector(){
     const ra=document.createElement('button'); ra.textContent='Reset pose';
     ra.onclick=()=>{ _aeResetPose(); _aeRenderInspector(); };
     row.appendChild(kb); row.appendChild(rb); row.appendChild(ra); bSec.appendChild(row);
+    const row2=document.createElement('div'); row2.className='aeBtnRow';   // build 1044: pose tools
+    const mp=document.createElement('button'); mp.textContent='Mirror pose'; mp.title='Swap the pose left↔right (canonical bones, world-space mirror)';
+    mp.onclick=()=>{ _aeMirrorPoseLive(); };
+    const cp=document.createElement('button'); cp.textContent='Copy pose';
+    cp.onclick=()=>{ _aePoseClipb=_aeCaptureDeltas(); if(typeof toast==='function') toast('Pose copied'); };
+    const pp=document.createElement('button'); pp.textContent='Paste pose';
+    pp.onclick=()=>{ if(!_aePoseClipb){ if(typeof toast==='function') toast('Nothing copied yet'); return; } _aeApplyDeltas(_aePoseClipb); if(typeof toast==='function') toast('Pose pasted — key it to keep it'); };
+    row2.appendChild(mp); row2.appendChild(cp); row2.appendChild(pp); bSec.appendChild(row2);
   }
   // -- clip settings --
   if(_aeClip){
@@ -10413,6 +10578,16 @@ function _aeRenderInspector(){
     for(const [v,t] of [['loop','Loop'],['once','Play once'],['hold','Hold last frame']]){ const o=document.createElement('option'); o.value=v; o.textContent=t; if(_aeClip.loop===v) o.selected=true; ls.appendChild(o); }
     ls.onchange=()=>{ _aeSnapshot(); _aeClip.loop=ls.value; _aeQueueRebuild(); };
     lw.appendChild(ls); cSec.appendChild(lw);
+    const iw=document.createElement('label'); iw.className='aeNumRow';   // build 1044: interpolation mode
+    iw.innerHTML='<span>Curve</span>';
+    const isel=document.createElement('select');
+    for(const [v,t] of [['smooth','Smooth (eased)'],['linear','Linear'],['step','Step (hold)']]){ const o=document.createElement('option'); o.value=v; o.textContent=t; if((_aeClip.interp||'smooth')===v) o.selected=true; isel.appendChild(o); }
+    isel.onchange=()=>{ _aeSnapshot(); _aeClip.interp=isel.value; _aeQueueRebuild(); };
+    iw.appendChild(isel); cSec.appendChild(iw);
+    const mcb=document.createElement('button'); mcb.textContent='Mirror clip'; mcb.title='Rewrite every key mirrored left↔right (a walk becomes its opposite-foot twin)';
+    mcb.style.marginTop='4px';
+    mcb.onclick=()=>{ _aeSnapshot(); const m=_aeMirrorClipData(_aeClip); _aeClip.tracks=m.tracks; _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); if(typeof toast==='function') toast('Clip mirrored'); };
+    cSec.appendChild(mcb);
     const kt=_aeKeyTimes(_aeClip);
     const note=document.createElement('div'); note.className='aeNote';
     note.textContent = kt.length ? (kt.length+' key times · '+Object.keys(_aeClip.tracks).length+' bones keyed') : 'No keys yet — pose the model and press Key bone / Key pose.';
@@ -21557,7 +21732,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1043 · 2026-07-22';
+const BUILD_VERSION = 'build 1044 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
