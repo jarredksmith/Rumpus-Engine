@@ -9577,15 +9577,23 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
   // direction onto the SRC rest direction, so the target bone points where the source bone
   // points regardless of how either model happens to rest. Identity when the rests agree.
   {
-    const dstSet=new Set(P.map(p=>p.dst)), srcSet=new Set(P.map(p=>p.src));
+    // build 1049: BOTH rigs must measure to the SAME canonical child. 1047 picked each rig's
+    // first mapped descendant independently — when the two rigs order the hips' children
+    // differently (spine-first vs legs-first), the hips aligned "spine direction onto thigh
+    // direction": a huge bogus rotation that twisted the whole body (the mangled-soldier bug).
+    // The child is now chosen once (via the dst hierarchy) as a mapped PAIR, and both rigs
+    // measure to that pair's own ends.
+    const dstSet=new Set(P.map(p=>p.dst));
+    const pairOfDst=new Map(P.map(p=>[p.dst, p]));
     const firstMapped=(node, set)=>{ for(const c of node.children){ if(set.has(c)) return c; const d=firstMapped(c, set); if(d) return d; } return null; };
     const _wa=new THREE.Vector3(), _wb=new THREE.Vector3(), _wc=new THREE.Vector3(), _wd=new THREE.Vector3();
     for(const p of P){
       p.align=new THREE.Quaternion();
-      const dc=firstMapped(p.dst, dstSet), sc=firstMapped(p.src, srcSet);
-      if(!dc || !sc) continue;   // leaf bones: nothing to aim, identity
-      p.dst.getWorldPosition(_wa); dc.getWorldPosition(_wb); _wb.sub(_wa);
-      p.src.getWorldPosition(_wc); sc.getWorldPosition(_wd); _wd.sub(_wc);
+      const dc=firstMapped(p.dst, dstSet);
+      const cp=dc ? pairOfDst.get(dc) : null;
+      if(!cp) continue;   // leaf bones: nothing to aim, identity
+      p.dst.getWorldPosition(_wa); cp.dst.getWorldPosition(_wb); _wb.sub(_wa);
+      p.src.getWorldPosition(_wc); cp.src.getWorldPosition(_wd); _wd.sub(_wc);
       if(_wb.lengthSq()<1e-10 || _wd.lengthSq()<1e-10) continue;
       p.align.setFromUnitVectors(_wb.normalize(), _wd.normalize());
     }
@@ -21955,7 +21963,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1048 · 2026-07-22';
+const BUILD_VERSION = 'build 1049 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32367,7 +32375,8 @@ function renderEditorFields(){
         const sel=document.createElement('select'); sel.style.cssText='flex:1 1 130px;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
         for(const k in JF_LABELS){ const o=document.createElement('option'); o.value=k; o.textContent=JF_LABELS[k]; sel.appendChild(o); }
         const clr=document.createElement('button'); clr.textContent='Clear'; clr.title='Remove this bone\u2019s offsets'; clr.style.cssText='padding:2px 8px;font-size:11px;flex:0 0 auto;';
-        top.appendChild(sel); top.appendChild(clr); wrap.appendChild(top);
+        const clrA=document.createElement('button'); clrA.textContent='Clear all'; clrA.title='Remove every bone\u2019s offsets at once'; clrA.style.cssText='padding:2px 8px;font-size:11px;flex:0 0 auto;';
+        top.appendChild(sel); top.appendChild(clr); top.appendChild(clrA); wrap.appendChild(top);
         let refresh, sumUp, _drag=false;
         const mk=(ax,i)=>{
           const line=document.createElement('div'); line.style.cssText='display:flex;align-items:center;gap:7px;margin-top:4px;';
@@ -32393,6 +32402,7 @@ function renderEditorFields(){
           ix.val.textContent=a[0]+'\u00b0'; iy.val.textContent=a[1]+'\u00b0'; iz.val.textContent=a[2]+'\u00b0';
           sumUp(); };
         clr.onclick=()=>{ pushUndoSnapshot(); delete jf()[sel.value]; refresh(); if(typeof _scheduleCharBroadcast==='function') _scheduleCharBroadcast(); };
+        clrA.onclick=()=>{ pushUndoSnapshot(); const m=jf(); for(const k in m) delete m[k]; refresh(); if(typeof _scheduleCharBroadcast==='function') _scheduleCharBroadcast(); if(typeof toast==='function') toast('All joint tweaks cleared'); };   // build 1049
         sel.onchange=refresh; refresh();
         wrap.appendChild(sum); urlHost.appendChild(wrap);
       }
