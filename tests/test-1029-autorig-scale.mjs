@@ -27,7 +27,9 @@ const fns = 'const AUTORIG_MARKERS = ' + extractConst('AUTORIG_MARKERS', src) + 
   + extractFunction('_segDist2', src) + '\n' + extractFunction('_arBlendR', src) + '\n'
   + extractFunction('_arWeightKernel', src) + '\n'
   + extractFunction('_arSmoothWeights', src) + '\n'      // build 1039: surface weight smoothing
-  + extractFunction('_arSmoothIters', src) + '\n' + extractFunction('_autoRigApply', src);   // build 1037: soft joint blending helpers
+  + extractFunction('_arSmoothIters', src) + '\n'
+  + extractFunction('_arJoints', src) + '\n'      // build 1043: guaranteed-width joint ramps
+  + extractFunction('_arJointEnforce', src) + '\n' + extractFunction('_autoRigApply', src);   // build 1037: soft joint blending helpers
 const env = new Function('THREE', 'console', fns + '\nreturn { _autoRigApply };')(THREE, console);
 function box(w,h,d,x,y,z){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial()); m.position.set(x,y,z); return m; }
 const root=new THREE.Group();

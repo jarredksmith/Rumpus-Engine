@@ -16,6 +16,8 @@ const fns = 'const AUTORIG_MARKERS = ' + extractConst('AUTORIG_MARKERS', src) + 
   + extractFunction('_arWeightKernel', src) + '\n'
   + extractFunction('_arSmoothWeights', src) + '\n'      // build 1039: surface weight smoothing
   + extractFunction('_arSmoothIters', src) + '\n'
+  + extractFunction('_arJoints', src) + '\n'      // build 1043: guaranteed-width joint ramps
+  + extractFunction('_arJointEnforce', src) + '\n'
   + extractFunction('_autoRigApply', src);
 const env = new Function('THREE', 'console', fns
   + '\nreturn { _sanitizeAutoRig, _autoRigJoints, _segDist2, _autoRigApply, AUTORIG_MARKERS };')(THREE, console);

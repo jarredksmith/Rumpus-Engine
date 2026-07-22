@@ -68,9 +68,9 @@ eq(env.smooth(pos, idx, [], 3).length, 0, 'an empty mesh is a no-op');
 // ---- wiring into the bind ----
 assert(/const K=Math\.min\(6, cand\.length\), top=new Array\(K\);   \/\/ build 1039: keep 6 candidates/.test(src),
   'the bind keeps 6 raw candidates for the smoother to arbitrate');
-assert(/fin=_arSmoothWeights\(posArr, idxArr, wlist, _arSmoothIters\(posArr, idxArr, n, rAvg\)\);/.test(src),
-  'smoothing runs between the raw kernel and the final write');
-assert(/if\(n<=90000\)\{/.test(src), 'extreme meshes skip the pass instead of stalling the import');
+assert(/fin=_arSmoothWeights\(allPos, tri, allW, _arSmoothIters\(allPos, tri, totalN, rAvg\)\);/.test(src),
+  'smoothing runs between the joint ramps and the final write (build 1043: across ALL meshes at once)');
+assert(/if\(totalN<=120000\)/.test(src), 'extreme meshes skip the pass instead of stalling the import');
 assert(/const rAvg=segs\.length \? segs\.reduce/.test(src), 'the blend radius drives the smoothing depth');
 assert(/segLen\*0\.3, h\*0\.025\), h\*0\.1\)/.test(src), 'the blend radius widened (30% of bone, 2.5%..10% of height)');
 
