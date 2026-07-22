@@ -9952,9 +9952,10 @@ let _aeEl=null, _aeR=null, _aeScene=null, _aeCam=null, _aeRoot=null, _aeRestRoot
 let _aeBones=null, _aeRestBones=null, _aeRestW=null, _aeRestLocal=null, _aeHipRestW=null, _aeHipH=1, _aeH=1.8;
 let _aeSkel=null, _aeDots=[], _aeGrid=null, _aeSel='', _aeClip=null, _aeTime=0, _aePlaying=false;
 let _aeMixer=null, _aeAction=null, _aeRebuildT=0, _aeUndo=[], _aeRedo=[], _aeAutoKey=false, _aeSnap=true;
-let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKey=null, _aeAxis='';
+let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKeys=[], _aeAxis='';   // build 1046: key selection is a SET
 let _aeTreeFilter='', _aeLastTL=null;
 let _aeFireEv=true, _aePrevT=null;   // build 1045: preview event firing (sounds only, never while scrubbing)
+let _aeCfg=null, _aeCfgLabel='Player', _aeRebuildFn=null, _aeRootPath=null, _aeRootPathOn=false;   // build 1046: any-character targets + root path
 // ---- pure keyframe-list helpers (sorted by time; replace-within-epsilon) ----
 function _aeUpsertKey(arr, key, eps){
   eps = (eps==null) ? 1e-4 : eps;
@@ -10017,6 +10018,52 @@ function _aePasteKeysAt(clip, snap, t){
   if(n && clip.dur<t) clip.dur=Math.round(t*1000)/1000;
   return n;
 }
+// build 1046: move a set of keys on one bone by delta (snapped). Trailing edge moves first so
+// the group never lands on (and eats) its own members mid-move.
+function _aeMoveKeys(clip, slot, times, delta, fps, snapOn){
+  const tr=clip.tracks[slot]; if(!tr) return times.slice();
+  const ts=times.slice().sort((a,b)=> delta>0 ? b-a : a-b);
+  const out=[];
+  for(const t of ts){
+    const nt=_aeSnapT(Math.max(0, t+delta), fps, snapOn);
+    for(const kind of ['q','p']){
+      const arr=tr[kind]; if(!arr) continue;
+      const at=arr.findIndex(k=>Math.abs(k[0]-t)<=1e-4);
+      if(at>=0){ const k=arr[at].slice(); k[0]=nt; arr.splice(at,1); _aeUpsertKey(arr, k); }
+    }
+    out.push(nt);
+    if(clip.dur<nt) clip.dur=Math.round(nt*1000)/1000;
+  }
+  return out.sort((a,b)=>a-b);
+}
+// build 1046: the hips trajectory across the clip, sampled in world space — root-motion at a glance.
+function _aeRootPathPoints(clip, hipRest, hipH, n){
+  const tr=clip && clip.tracks && clip.tracks.hips;
+  if(!tr || !tr.p || !tr.p.length) return null;
+  n=n||64;
+  const out=new Float32Array((n+1)*3), v=new THREE.Vector3();
+  for(let i=0;i<=n;i++){
+    const t=(i/n)*Math.max(1e-3, clip.dur);
+    _caEvalP(tr.p, t, v, clip.interp);
+    out[i*3]=hipRest.x+v.x*hipH; out[i*3+1]=hipRest.y+v.y*hipH; out[i*3+2]=hipRest.z+v.z*hipH;
+  }
+  return out;
+}
+function _aeRootPathSync(){
+  if(!_aeScene) return;
+  if(_aeRootPath){ _aeScene.remove(_aeRootPath); _aeRootPath.geometry.dispose(); _aeRootPath.material.dispose(); _aeRootPath=null; }
+  if(!_aeRootPathOn || !_aeClip) return;
+  const pts=_aeRootPathPoints(_aeClip, _aeHipRestW, _aeHipH, 64);
+  if(!pts){
+    if(typeof toast==='function') toast('No hips position keys yet — Shift-drag the hips and key them to author root motion');
+    _aeRootPathOn=false; const b=_aeEl && _aeEl.querySelector('#aeRootP'); if(b) b.classList.remove('aeAccent');
+    return;
+  }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  _aeRootPath=new THREE.Line(g, new THREE.LineBasicMaterial({ color:0xffd166, transparent:true, opacity:0.9, depthTest:false }));
+  _aeRootPath.renderOrder=998;
+  _aeScene.add(_aeRootPath);
+}
 function _aeNewClipData(){
   return { id:_caNewId(), v:1, name:'Custom clip', dur:2, fps:30, loop:'loop', interp:'smooth', tracks:{} };
 }
@@ -10052,16 +10099,20 @@ function _aeApplyState(json){
 function _aeUndoOp(){ if(!_aeUndo.length || !_aeClip) return; _aeRedo.push(JSON.stringify(_aeClip)); _aeApplyState(_aeUndo.pop()); }
 function _aeRedoOp(){ if(!_aeRedo.length || !_aeClip) return; _aeUndo.push(JSON.stringify(_aeClip)); _aeApplyState(_aeRedo.pop()); }
 // ---- open / close ----
-function _aeOpen(){
+function _aeOpen(cfg, label, rebuildFn){   // build 1046: any character — player (default), enemies, roster
   if(typeof isTouch!=='undefined' && isTouch){ if(typeof toast==='function') toast('The Animation editor needs a desktop browser — clips still play everywhere'); return; }
-  const url=(playerModelCfg.url||'').trim();
-  if(!url){ if(typeof toast==='function') toast('Set a player model on the Player tab first'); return; }
+  _aeCfg = cfg || playerModelCfg;
+  _aeCfgLabel = label || 'Player';
+  _aeRebuildFn = rebuildFn || null;
+  const url=(_aeCfg.url||'').trim();
+  if(!url){ if(typeof toast==='function') toast('Set a model for '+_aeCfgLabel+' first'); return; }
   _aeEnsureDom();
+  const tt=_aeEl.querySelector('.aeTitle'); if(tt) tt.textContent='ANIMATION EDITOR — '+_aeCfgLabel.toUpperCase();
   _aeEl.style.display='flex';
   const holder=_aeEl.querySelector('#aeView');
   const msg=_aeEl.querySelector('#aeMsg');
   msg.textContent='Loading model…'; msg.style.display='flex';
-  _loadGLTFWithLib(url, playerModelCfg, (gltf)=>{
+  _loadGLTFWithLib(url, _aeCfg, (gltf)=>{
     if(!_aeEl || _aeEl.style.display==='none') return;   // closed while loading
     _aeGltf=gltf;
     _aeRoot=THREE.cloneSkinned(gltf.scene);
@@ -10100,10 +10151,12 @@ function _aeClose(){
     if(_aeGrid){ _aeScene.remove(_aeGrid); if(_aeGrid.geometry) _aeGrid.geometry.dispose(); if(_aeGrid.material) _aeGrid.material.dispose(); }
   }
   _aeGhostClear(); _aeGhostOn=false;
+  if(_aeRootPath && _aeScene){ _aeScene.remove(_aeRootPath); _aeRootPath.geometry.dispose(); _aeRootPath.material.dispose(); }
+  _aeRootPath=null; _aeRootPathOn=false;
   _aeDots=[]; _aeSkel=null; _aeGrid=null;
   if(_aeR){ try{ const c=_aeR.domElement; _aeR.dispose(); if(c && c.parentNode) c.parentNode.removeChild(c); }catch(e){} _aeR=null; }
   _aeScene=null; _aeRoot=null; _aeRestRoot=null; _aeGltf=null; _aeBones=null; _aeRestBones=null;
-  _aeUndo.length=0; _aeRedo.length=0; _aeClip=null; _aeSel=''; _aeSelKey=null;
+  _aeUndo.length=0; _aeRedo.length=0; _aeClip=null; _aeSel=''; _aeSelKeys=[];
 }
 function _aeInitScene(holder, bb){
   _aeScene=new THREE.Scene();
@@ -10175,6 +10228,7 @@ function _aeRebuild(){
   else { _aeAction.loop=THREE.LoopOnce; _aeAction.clampWhenFinished=(_aeClip.loop==='hold'); }
   _aeAction.play(); _aeAction.paused=!_aePlaying;
   if(_aeGhostA){ _aeGhostA.clip=null; } if(_aeGhostB){ _aeGhostB.clip=null; }   // build 1044: ghosts rebind to the fresh clip
+  if(_aeRootPathOn) _aeRootPathSync();   // build 1046: the path follows every edit
   _aeApplyTime(_aeTime);
 }
 function _aeResetPose(){
@@ -10329,7 +10383,7 @@ function _aeLoadClip(id){
   const d=customAnims.find(c=>c.id===id) || customAnims[0];
   if(!d) return;
   _aeClip=JSON.parse(JSON.stringify(d));
-  _aeUndo.length=0; _aeRedo.length=0; _aeSelKey=null; _aeTime=0; _aePlaying=false;
+  _aeUndo.length=0; _aeRedo.length=0; _aeSelKeys=[]; _aeTime=0; _aePlaying=false;
   _aeQueueRebuild(true); _aeRenderClipSel(); _aeRenderTree(); _aeRenderInspector(); _aeDrawTL();
 }
 function _aeSave(){
@@ -10344,7 +10398,7 @@ function _aeSave(){
   _aeClip=JSON.parse(JSON.stringify(clean));
   _caRev++;
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
-  if(typeof rebuildAvatars==='function') rebuildAvatars();
+  if(typeof _aeRebuildFn==='function') _aeRebuildFn(); else if(typeof rebuildAvatars==='function') rebuildAvatars();   // build 1046: rebuild THIS character's visuals
   _aeRenderClipSel();
   if(typeof toast==='function') toast('Saved — "'+clean.name+'" is in this level’s clip library');
 }
@@ -10369,7 +10423,7 @@ function _aeDelete(){
     if(typeof charRoster!=='undefined') for(const c of charRoster) clear(c);
     _caRev++;
     if(typeof _levelDirty!=='undefined') _levelDirty=true;
-    if(typeof rebuildAvatars==='function') rebuildAvatars();
+    if(typeof _aeRebuildFn==='function') _aeRebuildFn(); else if(typeof rebuildAvatars==='function') rebuildAvatars();   // build 1046: rebuild THIS character's visuals
     if(!customAnims.length) customAnims.push(_caSanitize([_aeNewClipData()])[0]);
     _aeLoadClip(customAnims[0].id);
   };
@@ -10380,12 +10434,12 @@ function _aeAssign(state){
   if(!_aeClip || !state) return;
   _aeSave();
   if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
-  playerModelCfg.clips=playerModelCfg.clips||{};
-  playerModelCfg.clips[state]=_aeAttachName();
+  _aeCfg.clips=_aeCfg.clips||{};
+  _aeCfg.clips[state]=_aeAttachName();   // build 1046: the character this editor session targets
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
-  if(typeof rebuildAvatars==='function') rebuildAvatars();
+  if(typeof _aeRebuildFn==='function') _aeRebuildFn(); else if(typeof rebuildAvatars==='function') rebuildAvatars();   // build 1046: rebuild THIS character's visuals
   const slot=(typeof ANIM_SLOTS!=='undefined' && ANIM_SLOTS.find(x=>x.k===state));
-  if(typeof toast==='function') toast('Assigned to Player · '+((slot&&slot.l)||state));
+  if(typeof toast==='function') toast('Assigned to '+_aeCfgLabel+' · '+((slot&&slot.l)||state));
   _aeRenderInspector();
 }
 // ---- viewport input: orbit / select / pose ----
@@ -10403,7 +10457,7 @@ function _aeBindViewport(cv){
         if(e.shiftKey && slot==='hips'){ _aeDrag={ kind:'move', x:e.clientX, y:e.clientY, p0:b.position.clone() }; }
         else { _aeDrag={ kind:'rot', x:e.clientX, y:e.clientY, q0:b.quaternion.clone(), axis:_aeAxis };
           if(_aeAutoKey) _aeSnapshot(); }
-      } else { _aeSel=slot; _aeSelKey=null; _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); }
+      } else { _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); }
     } else { _aeDrag={ kind:'orbit', x:e.clientX, y:e.clientY }; }
   });
   addEventListener('mousemove', (e)=>{
@@ -10462,10 +10516,11 @@ function _aeKeys(e){
   else if((e.ctrlKey||e.metaKey) && e.code==='KeyZ' && !e.shiftKey){ e.preventDefault(); _aeUndoOp(); }
   else if(((e.ctrlKey||e.metaKey) && e.code==='KeyZ' && e.shiftKey) || ((e.ctrlKey||e.metaKey) && e.code==='KeyY')){ e.preventDefault(); _aeRedoOp(); }
   else if(e.code==='Delete' || e.code==='Backspace'){
-    if(_aeSelKey){ _aeSnapshot(); const tr=_aeClip.tracks[_aeSelKey.slot];
-      if(tr){ if(tr.q) _aeDeleteKeyAt(tr.q, _aeSelKey.t); if(_aeSelKey.slot==='hips' && tr.p) _aeDeleteKeyAt(tr.p, _aeSelKey.t);
-        if((!tr.q||!tr.q.length)&&(!tr.p||!tr.p.length)) delete _aeClip.tracks[_aeSelKey.slot]; }
-      _aeSelKey=null; _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); }
+    if(_aeSelKeys.length && _aeSel && _aeClip.tracks[_aeSel]){ _aeSnapshot();   // build 1046: deletes the whole selection
+      const tr=_aeClip.tracks[_aeSel];
+      for(const st of _aeSelKeys){ if(tr.q) _aeDeleteKeyAt(tr.q, st); if(_aeSel==='hips' && tr.p) _aeDeleteKeyAt(tr.p, st); }
+      if((!tr.q||!tr.q.length)&&(!tr.p||!tr.p.length)) delete _aeClip.tracks[_aeSel];
+      _aeSelKeys=[]; _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); }
   }
   else if(e.code==='KeyK'){ _aeSnapshot(); if(e.shiftKey){ const n=_aeKeyPose(_aeTime); if(typeof toast==='function') toast(n+' bones keyed'); } else if(_aeSel) _aeKeySlot(_aeSel, _aeTime); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); }
   else if(e.code==='ArrowLeft'||e.code==='ArrowRight'){
@@ -10496,7 +10551,7 @@ function _aeEnsureDom(){
     +'<div class="aeLeft"><input id="aeSearch" type="text" placeholder="Search bones…" aria-label="Search bones"><div id="aeTree"></div></div>'
     +'<div id="aeView"><div id="aeMsg"></div>'
     +'<div class="aeHint">drag empty = orbit · wheel = zoom · middle-drag = pan · click a joint, drag it to rotate (hold X/Y/Z for an axis) · Shift-drag hips = move · K = key bone · Shift+K = key pose</div>'
-    +'<div class="aeViews"><button data-v="f">Front</button><button data-v="s">Side</button><button data-v="b">Back</button><button data-v="p">3⁄4</button></div>'
+    +'<div class="aeViews"><button data-v="f">Front</button><button data-v="s">Side</button><button data-v="b">Back</button><button data-v="p">3⁄4</button><button id="aeRootP" title="Show the hips motion path across the clip (root motion at a glance)">Root path</button></div>'
     +'</div>'
     +'<div class="aeRight"><div id="aeInsp"></div></div>'
     +'</div>'
@@ -10544,6 +10599,7 @@ function _aeEnsureDom(){
   el.querySelector('#aeSearch').oninput=(e)=>{ _aeTreeFilter=e.target.value.toLowerCase(); _aeRenderTree(); };
   for(const b of el.querySelectorAll('.aeViews button')) b.onclick=()=>{ const v=b.dataset.v;
     _aePitch=0.12; _aeYaw = v==='f'?Math.PI : v==='b'?0 : v==='s'?Math.PI/2 : 0.6; if(v==='p') _aePitch=0.3; };
+  el.querySelector('#aeRootP').onclick=()=>{ _aeRootPathOn=!_aeRootPathOn; el.querySelector('#aeRootP').classList.toggle('aeAccent', _aeRootPathOn); _aeRootPathSync(); };   // build 1046 (bound after the view loop, which would otherwise claim it)
   _aeBindTL(el.querySelector('#aeTL'));
   return el;
 }
@@ -10568,7 +10624,7 @@ function _aeRenderTree(){
     const tr=_aeClip && _aeClip.tracks[slot];
     const nK=tr ? ((tr.q?tr.q.length:0)+(tr.p?tr.p.length:0)) : 0;
     row.innerHTML='<span class="aeBoneNm">'+label+'</span><span class="aeBoneReal">'+b.name.slice(0,16)+'</span>'+(nK?('<span class="aeKeyCt">'+nK+'</span>'):'');
-    row.onclick=()=>{ _aeSel=slot; _aeSelKey=null; _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); };
+    row.onclick=()=>{ _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); };
     host.appendChild(row);
   }
 }
@@ -10683,7 +10739,7 @@ function _aeRenderInspector(){
   }
   // -- assignment --
   if(_aeClip){
-    const aSec=sec('ASSIGN TO PLAYER');
+    const aSec=sec('ASSIGN TO '+(_aeCfgLabel||'Player').toUpperCase());
     const row=document.createElement('div'); row.className='aeBtnRow';
     const sel=document.createElement('select');
     if(typeof ANIM_SLOTS!=='undefined'){
@@ -10739,7 +10795,7 @@ function _aeDrawTL(){
     if(tr.q) for(const k of tr.q) ts.add(k[0]);
     if(tr.p) for(const k of tr.p) ts.add(k[0]);
     for(const t of ts){ const x=_aeTLx(t,g);
-      const selK=_aeSelKey && _aeSelKey.slot===_aeSel && Math.abs(_aeSelKey.t-t)<1e-4;
+      const selK=_aeSelKeys.some(st=>Math.abs(st-t)<1e-4);
       ctx.fillStyle=selK?'#ffd166':UI_ACCENT;   // the canvas-side accent mirror (re-themes with the UI)
       ctx.beginPath(); ctx.moveTo(x, rowY[1]); ctx.lineTo(x+5*dpr, rowY[1]+5*dpr); ctx.lineTo(x, rowY[1]+10*dpr); ctx.lineTo(x-5*dpr, rowY[1]+5*dpr); ctx.fill(); }
   }
@@ -10762,13 +10818,18 @@ function _aeBindTL(cv){
       const tol=_aeClip.dur*0.012+0.008;
       let hit=null; for(const kt of ts) if(Math.abs(kt-t)<tol && (hit==null || Math.abs(kt-t)<Math.abs(hit-t))) hit=kt;
       if(hit!=null && e.clientY-cv.getBoundingClientRect().top>34){
-        _aeSelKey={ slot:_aeSel, t:hit };
+        if(e.shiftKey){   // build 1046: shift-click toggles membership in the key selection
+          const at=_aeSelKeys.findIndex(st=>Math.abs(st-hit)<=1e-4);
+          if(at>=0) _aeSelKeys.splice(at,1); else _aeSelKeys.push(hit);
+          _aeDrawTL(); return;
+        }
+        if(!_aeSelKeys.some(st=>Math.abs(st-hit)<=1e-4)) _aeSelKeys=[hit];   // grabbing outside the selection re-selects
         _aeSnapshot();
-        drag={ from:hit };
+        drag={ from:hit, orig:JSON.stringify(_aeClip.tracks), times:_aeSelKeys.slice() };   // build 1046: group drag restores from this snapshot every move
         _aeDrawTL(); return;
       }
     }
-    _aeSelKey=null; _aeSetPlaying(false); _aeApplyTime(t); drag={ scrub:true };
+    _aeSelKeys=[]; _aeSetPlaying(false); _aeApplyTime(t); drag={ scrub:true };
   });
   addEventListener('mousemove', (e)=>{
     if(!drag || !_aeEl || _aeEl.style.display==='none') return;
@@ -10776,14 +10837,10 @@ function _aeBindTL(cv){
     if(drag.scrub){ _aeApplyTime(t); return; }
     // move the grabbed key (both q and p entries at that time)
     const nt=_aeSnapT(t, _aeClip.fps, _aeSnap);
-    if(Math.abs(nt-drag.from)<1e-6) return;
-    const tr=_aeClip.tracks[_aeSelKey.slot]; if(!tr) return;
-    for(const kind of ['q','p']){
-      const arr=tr[kind]; if(!arr) continue;
-      const at=arr.findIndex(k=>Math.abs(k[0]-drag.from)<=1e-4);
-      if(at>=0){ const k=arr[at].slice(); k[0]=nt; arr.splice(at,1); _aeUpsertKey(arr, k); }
-    }
-    _aeSelKey.t=nt; drag.from=nt;
+    const delta=nt-drag.from;
+    if(Math.abs(delta)<1e-6) return;
+    _aeClip.tracks=JSON.parse(drag.orig);   // build 1046: re-apply the WHOLE group move from the drag-start snapshot (no cumulative drift)
+    _aeSelKeys=_aeMoveKeys(_aeClip, _aeSel, drag.times, delta, _aeClip.fps, _aeSnap);
     _aeQueueRebuild(); _aeDrawTL();
   });
   addEventListener('mouseup', ()=>{ drag=null; });
@@ -21825,7 +21882,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1045 · 2026-07-22';
+const BUILD_VERSION = 'build 1046 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30703,6 +30760,14 @@ function renderEditorFields(){
         if(libSel.value) _animLibApplyPicks(mc, libSel.value);
         refreshEnemyVisuals(); };
       libRow.appendChild(libSp); libRow.appendChild(libSel); eHost.appendChild(libRow);
+    }
+    { // build 1046: author custom clips on THIS enemy model
+      const aeRow=document.createElement('div'); aeRow.style.cssText='display:flex;gap:7px;margin:2px 0;';
+      const b=document.createElement('button'); b.textContent='\ud83c\udfac Animation editor';
+      b.title='Pose this enemy\u2019s skeleton over time and save custom clips \u2014 assignable to any of its states below (desktop only). Clips live in the level\u2019s shared library.';
+      b.style.cssText='flex:1;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #6e4a2a;background:rgba(18,12,8,.5);color:#ffc99b;';
+      b.onclick=()=>{ if(typeof _aeOpen==='function') _aeOpen(enemyModelCfg(editorEnemyType), 'Enemy '+editorEnemyType, refreshEnemyVisuals); };
+      aeRow.appendChild(b); eHost.appendChild(aeRow);
     }
     _animSlotFolds(eHost, 'eAnim', { 'Idle & standing':true, 'Locomotion (ground)':true }, (foldBody, _slot)=>{
       const stKey=_slot.k, stLabel=_slot.l;

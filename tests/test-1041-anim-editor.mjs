@@ -77,8 +77,8 @@ assert(/_aeClip\.dur=Math\.round\(last\*1000\)\/1000; if\(typeof toast==='functi
     'save: level undo snapshot, cache invalidation, dirty flag, live avatar rebuild');
   assert(/customAnims\[at\]=clean; else customAnims\.push\(clean\)/.test(save), 'clips replace by stable id, never duplicate');
 }
-assert(/playerModelCfg\.clips\[state\]=_aeAttachName\(\);/.test(extractFunction('_aeAssign', src)),
-  'assignment writes the existing per-state override map — the runtime state machine needs nothing new');
+assert(/_aeCfg\.clips\[state\]=_aeAttachName\(\);/.test(extractFunction('_aeAssign', src)),
+  'assignment writes the existing per-state override map (build 1046: of whichever character the session targets) — the runtime state machine needs nothing new');
 {
   const del = extractFunction('_aeDelete', src);
   assert(/_aeAssignments\(_aeAttachName\(\)\)/.test(del) && /uiConfirm/.test(del) && /assignments will be cleared/i.test(del),
