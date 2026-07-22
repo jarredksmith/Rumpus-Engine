@@ -146,7 +146,7 @@
   #outliner .outTitle { flex:1; font-size:11px; letter-spacing:2px; color:var(--accent); font-weight:700; }
   #outliner #outClose { background:none; border:none; color:#8fb0a6; font-size:15px; cursor:pointer; padding:0 2px; }
   #outliner .outTools { display:flex; gap:5px; padding:0 8px 6px; }
-  #outliner .outTools input, #outliner .outTools select { min-width:0; background:rgba(255,255,255,0.05); border:1px solid #223039; border-radius:6px; color:#dff5ec; font-size:11px; padding:4px 6px; }
+  #outliner .outTools input, #outliner .outTools select { min-width:0; background:rgba(255,255,255,0.05); border:1px solid #223039; border-radius:6px; color:#f2fffa; font-size:11px; padding:4px 6px; }
   #outliner .outTools input { flex:1; }
   #outliner .outTools select { flex:0 0 84px; }
   #outliner .outBody { overflow-y:auto; padding:0 4px 6px; }
@@ -175,9 +175,13 @@
   .outBtn svg { width:13px; height:13px; }
   @media (pointer:coarse) { .outBtn { opacity:1; } }
   .outMove { display:flex; align-items:center; gap:6px; padding:3px 6px 3px 16px; color:#9fd8c4; font-size:11px; }
-  .outMove select, .outMove input { flex:1; min-width:0; background:rgba(255,255,255,0.05); border:1px solid #223039; border-radius:6px; color:#dff5ec; font-size:11px; padding:3px 5px; }
+  .outMove select, .outMove input { flex:1; min-width:0; background:rgba(255,255,255,0.05); border:1px solid #223039; border-radius:6px; color:#f2fffa; font-size:11px; padding:3px 5px; }
   .outRen { background:rgba(255,255,255,0.08); border:1px solid var(--accent); border-radius:4px; color:#fff; font-size:11px; padding:1px 4px; flex:1; min-width:0; }
   .outEmpty { padding:10px; color:#5f7d72; text-align:center; }
+  /* build 1038: the native option popup renders light-on-white without explicit colors */
+  #outliner .outTools select, .outMove select { color:#f2fffa; font-weight:600; }
+  #outliner select option, .outMove select option { background:#0d151a; color:#f2fffa; font-weight:500; }
+  .outRow.dropHint, .outGrpHead.dropHint { outline:1.5px dashed var(--accent); outline-offset:-1.5px; background:rgba(var(--accent-rgb),0.10); }
   @media (max-width:760px) { #outliner { width:200px; max-height:44vh; top:calc(96px + env(safe-area-inset-top)); } }
   /* ---- build 978: pro-inspector reskin — flat details list, tooltips, settings search ---- */
   #editor { font: 12px/1.45 var(--ui-font), system-ui, sans-serif; background: rgba(9,14,18,0.96); border-left: 1px solid #1c2a31; }   /* build 985: padding lives on #edTopBar / #edMain now (the panel scrolls as one) */
@@ -11839,7 +11843,7 @@ function _marqueeFinish(e){
     const sx = r.left + (_marqueeV.x*0.5+0.5)*r.width, sy = r.top + (-_marqueeV.y*0.5+0.5)*r.height;
     if(_marqueeV.z < 1 && sx>=x0 && sx<=x1 && sy>=y0 && sy<=y1) hits.push(p);
   }
-  const _mem = (typeof _groupMembers==='function') ? (o)=>_groupMembers(o) : (o)=>[o];   // build 798: a box that catches any group member grabs the whole group
+  const _mem = (typeof _groupMembers==='function') ? (o)=>_groupMembers(o).filter(m=>!(m && m.userData && m.userData.edLock)) : (o)=>[o];   // build 798: a box that catches any group member grabs the whole group (1038: minus locked members)
   if(e.shiftKey){ for(const o of hits) for(const m of _mem(o)) if(selProps.indexOf(m)<0) selProps.push(m); }   // add to the current selection
   else { const set=[]; for(const o of hits) for(const m of _mem(o)) if(set.indexOf(m)<0) set.push(m); selProps = set; selLights = []; }   // fresh selection (empty box clears)
   editorActive='props';
@@ -20507,7 +20511,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1037 · 2026-07-22';
+const BUILD_VERSION = 'build 1038 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25649,6 +25653,9 @@ const editorTargets = {
     state: { px:0, py:0, pz:0, rx:0, ry:0, rz:0, sx:1, sy:1, sz:1 },
     fields: prsTransform(-65,65,true),
     count(){ return propModels.filter(Boolean).length; },
+    clampIdx(){ const L=propModels.length; let i=Math.max(0, Math.min(this.idx, L-1));   // build 1038: raw-index clamp that respects null holes
+      if(!propModels[i]){ let a=i; while(a>=0 && !propModels[a]) a--; if(a<0){ a=i; while(a<L && !propModels[a]) a++; } i=(a>=0 && a<L && propModels[a])?a:0; }
+      this.idx=i; },
     obj(){ return propModels[this.idx] || null; },
     urlField: true,
     addable: true,
@@ -30050,7 +30057,11 @@ function renderEditorFields(){
         : 'No props loaded yet (needs network for models). Use “Add box” below, or adjust once they appear.';
       picker.appendChild(note);
     } else {
-      tgt.idx = Math.max(0, Math.min(tgt.idx, n-1));
+      // build 1038: props' idx is a RAW propModels index, but n is the NON-NULL count — with
+      // null holes (failed model loads) the old clamp yanked the selection onto a different
+      // prop right after the outliner (or anything else) set it. Targets with holes clamp
+      // themselves; the plain clamp stays for the hole-free arrays (lights/spawns/turrets).
+      if(typeof tgt.clampIdx==='function') tgt.clampIdx(); else tgt.idx = Math.max(0, Math.min(tgt.idx, n-1));
       tgt.sync();
       const row = document.createElement('div'); row.className='row2'; row.style.marginBottom='8px';
       const prev = document.createElement('button'); prev.textContent='◀ Prev';
@@ -31942,7 +31953,13 @@ function updateGizmo(){
   if(!gizmo) gizmo = buildGizmo();
   const gr = gizmo.userData.groups;
   const movable = editorOpen && (selPickup>=0 || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || (editorActive==='deathzones'&&selDeathZone>=0) || (editorActive==='jumppads'&&selJumpPad>=0) || (editorActive==='ladders'&&selLadder>=0) || (editorActive==='firezones'&&selFireZone>=0) || (editorActive==='audiozones'&&selAudioZone>=0) || editorActive==='turrets');
-  const pos = movable ? getSelPos() : null;
+  // build 1038: a locked primary (outliner padlock) never grows handles — locked means immovable
+  const _lkO = editorActive==='props' ? propModels[editorTargets.props.idx]
+    : editorActive==='lights' ? lightModels[editorTargets.lights.idx]
+    : editorActive==='spawns' ? spawnMarkers[editorTargets.spawns.idx]
+    : editorActive==='turrets' ? turretModels[editorTargets.turrets.idx] : null;
+  const _lk = !!(_lkO && _lkO.userData && _lkO.userData.edLock);
+  const pos = (movable && !_lk) ? getSelPos() : null;
   if(!pos){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; gizmo.visible = false; return; }
   gizmo.position.copy(pos);
   if(activeCam()===camera){ const d = camera.position.distanceTo(pos); gizmo.scale.setScalar(Math.max(0.4, d*0.06) * (isTouch?1.5:1)); }
@@ -32217,7 +32234,7 @@ renderer.domElement.addEventListener('click', (e)=>{
   else if(picked==='extract'){ selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1; selLoot=-1; gizmoMode='translate'; editorActive='extract'; syncModeToActive(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateGizmo==='function') updateGizmo(); updateSelectionHighlight(); }
   else if(picked==='props'){
     const obj = propModels[editorTargets.props.idx];
-    const mem = obj ? _groupMembers(obj) : [];   // build 798: clicking a grouped prop grabs the whole group
+    const mem = obj ? _groupMembers(obj).filter(m=>!(m && m.userData && m.userData.edLock)) : [];   // build 798: clicking a grouped prop grabs the whole group (1038: minus locked members)
     if(e.shiftKey && obj){
       if(selProps.indexOf(obj)>=0){ if(selProps.length>mem.length) for(const m of mem){ const at=selProps.indexOf(m); if(at>=0) selProps.splice(at,1); } }   // toggle the group off (keep at least one)
       else { for(const m of mem) if(selProps.indexOf(m)<0) selProps.push(m); }
@@ -32343,6 +32360,28 @@ let _outEl=null, _outSearch='', _outTag='', _outFolds={}, _outRefT=0;
 let _outOn=false; try{ _outOn = localStorage.getItem('breach_outliner_on')==='1'; }catch(e){}
 try{ _outFolds = JSON.parse(localStorage.getItem('breach_outliner_folds')||'{}') || {}; }catch(e){ _outFolds={}; }
 function _outSaveFolds(){ try{ localStorage.setItem('breach_outliner_folds', JSON.stringify(_outFolds)); }catch(e){} }
+let _outDragObj=null, _outRenaming=false; const _outClickMem={ key:'', t:0 };
+// build 1038: rebuild-proof double-click. The panel redraws after every click, so a native
+// dblclick never fires (its second click lands on a brand-new node) — track by item key instead.
+function _outClick2(key, single, dbl){
+  const now=performance.now();
+  if(dbl && _outClickMem.key===key && (now-_outClickMem.t)<400){ _outClickMem.key=''; dbl(); return; }
+  _outClickMem.key=key; _outClickMem.t=now; single();
+}
+// build 1038: a folder row (or the Props header, folder='') accepts dragged rows. Dragging a
+// row that's part of the current selection files the WHOLE selection.
+function _outDropTarget(el, folder){
+  el.ondragover=(e)=>{ if(!_outDragObj) return; e.preventDefault(); if(e.dataTransfer) e.dataTransfer.dropEffect='move'; el.classList.add('dropHint'); };
+  el.ondragleave=()=>el.classList.remove('dropHint');
+  el.ondrop=(e)=>{ e.preventDefault(); el.classList.remove('dropHint'); if(!_outDragObj) return;
+    const list=(selProps.indexOf(_outDragObj)>=0) ? selProps.slice() : [_outDragObj];
+    if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+    for(const o of list){ if(!o || !o.userData) continue; if(folder) o.userData.folder=String(folder).slice(0,40); else delete o.userData.folder; }
+    if(folder) _outFolds['f:'+String(folder).slice(0,40)]=true;
+    _outSaveFolds(); if(typeof _levelDirty!=='undefined') _levelDirty=true;
+    _outDragObj=null; _outRefresh();
+  };
+}
 function _outName(o){
   const u=(o && o.userData)||{};
   if(u.name) return String(u.name);
@@ -32445,9 +32484,9 @@ function _outIconBtn(kind, on, tip){
 function _outRenameEl(o, nmEl){   // double-click a prop/light row: rename in place (serialized as e.nm)
   const inp=document.createElement('input'); inp.type='text'; inp.className='outRen'; inp.value=(o.userData&&o.userData.name)?o.userData.name:'';
   inp.placeholder=_outName(o);
-  nmEl.replaceWith(inp); inp.focus(); inp.select();
+  nmEl.replaceWith(inp); inp.focus(); inp.select(); _outRenaming=true;   // build 1038: block panel rebuilds while typing
   let done=false;
-  const fin=(commit)=>{ if(done) return; done=true;
+  const fin=(commit)=>{ if(done) return; done=true; _outRenaming=false;
     if(commit){ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); const v=inp.value.trim();
       if(v) o.userData.name=v.slice(0,60); else delete o.userData.name;
       if(typeof _levelDirty!=='undefined') _levelDirty=true; }
@@ -32457,9 +32496,9 @@ function _outRenameEl(o, nmEl){   // double-click a prop/light row: rename in pl
 }
 function _outRenameFolder(oldName, fitems, nmEl){
   const inp=document.createElement('input'); inp.type='text'; inp.className='outRen'; inp.value=oldName;
-  nmEl.replaceWith(inp); inp.focus(); inp.select();
+  nmEl.replaceWith(inp); inp.focus(); inp.select(); _outRenaming=true;   // build 1038: block panel rebuilds while typing
   let done=false;
-  const fin=(commit)=>{ if(done) return; done=true;
+  const fin=(commit)=>{ if(done) return; done=true; _outRenaming=false;
     const v=inp.value.trim().slice(0,40);
     if(commit && v && v!==oldName){ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
       for(const it of fitems){ if(it.o && it.o.userData) it.o.userData.folder=v; }
@@ -32493,7 +32532,7 @@ function _outMoveRow(){
       const inp=document.createElement('input'); inp.type='text'; inp.className='outRen'; inp.placeholder='folder name';
       sel.replaceWith(inp); inp.focus();
       let done=false;
-      const fin=(commit)=>{ if(done) return; done=true; const nm=inp.value.trim().slice(0,40); if(commit && nm) _outMoveSel(nm); else _outRefresh(); };
+      const fin=(commit)=>{ if(done) return; done=true; _outRenaming=false; const nm=inp.value.trim().slice(0,40); if(commit && nm) _outMoveSel(nm); else _outRefresh(); };
       inp.onkeydown=(e)=>{ e.stopPropagation(); if(e.key==='Enter') fin(true); else if(e.key==='Escape') fin(false); };
       inp.onblur=()=>fin(true);
       return;
@@ -32521,8 +32560,17 @@ function _outRowEl(kind, it, inFolder){
     const kb=_outIconBtn(u.edLock?'lock':'unlock', !!u.edLock, u.edLock?'Unlock':'Lock — viewport clicks pass through it');
     kb.onclick=(e)=>{ e.stopPropagation(); _outSetLock(o, !u.edLock); _outRefresh(); }; r.appendChild(kb);
   }
-  r.onclick=(e)=>{ _outSelect(kind, o, it.i, !!e.shiftKey); _outRefresh(); };
-  if(kind==='props'||kind==='lights'){ nm.ondblclick=(e)=>{ e.stopPropagation(); _outRenameEl(o, nm); }; }
+  if(kind==='props'){   // build 1038: rows drag into folders
+    r.draggable=true;
+    r.ondragstart=(e)=>{ _outDragObj=o; try{ e.dataTransfer.setData('text/plain','prop'); e.dataTransfer.effectAllowed='move'; }catch(err){} };
+    r.ondragend=()=>{ _outDragObj=null; };
+  }
+  r.onclick=(e)=>{
+    if(u.edLock){ if(typeof toast==='function') toast('Locked — click the padlock to unlock'); return; }   // build 1038: locked means untouchable — not selectable, not movable
+    _outClick2(kind+':'+it.i,
+      ()=>{ _outSelect(kind, o, it.i, !!e.shiftKey); _outRefresh(); },
+      (kind==='props'||kind==='lights') ? ()=>_outRenameEl(o, nm) : null);   // second click within 400ms renames
+  };
   return r;
 }
 function _outEnsure(){
@@ -32541,6 +32589,7 @@ function _outEnsure(){
 }
 function _outRefresh(){
   if(!_outOn) return;
+  if(_outRenaming) return;   // build 1038: never yank a rename input out from under the keyboard
   const el=_outEnsure();
   const ts=el.querySelector('#outTagSel'); const cur=_outTag;
   while(ts.options.length>1) ts.remove(1);
@@ -32563,6 +32612,7 @@ function _outRefresh(){
       h.appendChild(sa);
     }
     h.onclick=()=>{ const now=_outFolds['t:'+kind]!==false; _outFolds['t:'+kind]=!now; _outSaveFolds(); _outRefresh(); };
+    if(kind==='props') _outDropTarget(h, '');   // build 1038: dropping on the Props header un-files (back to the root)
     sec.appendChild(h);
     if(open){
       if(kind==='props'){
@@ -32584,8 +32634,10 @@ function _outRefresh(){
           fhb.onclick=(e)=>{ e.stopPropagation(); for(const it of fitems) _outSetHide(it.o, !allH); _outRefresh(); }; fh.appendChild(fhb);
           const flb=_outIconBtn(allL?'lock':'unlock', allL, allL?'Unlock the whole folder':'Lock the whole folder');
           flb.onclick=(e)=>{ e.stopPropagation(); for(const it of fitems) _outSetLock(it.o, !allL); _outRefresh(); }; fh.appendChild(flb);
-          fh.onclick=()=>{ const now=_outFolds['f:'+fname]!==false; _outFolds['f:'+fname]=!now; _outSaveFolds(); _outRefresh(); };
-          fn.ondblclick=(e)=>{ e.stopPropagation(); _outRenameFolder(fname, fitems, fn); };
+          fh.onclick=()=>{ _outClick2('folder:'+fname,
+            ()=>{ const now=_outFolds['f:'+fname]!==false; _outFolds['f:'+fname]=!now; _outSaveFolds(); _outRefresh(); },
+            ()=>{ _outFolds['f:'+fname]=true; _outSaveFolds(); _outRenameFolder(fname, fitems, fn); }); };   // build 1038: keyed double-click renames (and re-opens the fold the first click toggled)
+          _outDropTarget(fh, fname);   // build 1038: drop rows here to file them
           sec.appendChild(fh);
           if(fopen) for(const it of fitems) sec.appendChild(_outRowEl(kind, it, true));
         }

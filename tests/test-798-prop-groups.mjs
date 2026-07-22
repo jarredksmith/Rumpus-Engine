@@ -28,7 +28,7 @@ const us = extractFunction('ungroupSelectedProps');
 assert(/for\(const o of selProps\) if\(o&&o\.userData\) delete o\.userData\.groupId;/.test(us), 'ungrouping clears the id');
 
 // --- clicking a member selects the whole group; shift toggles the group ---
-assert(/const mem = obj \? _groupMembers\(obj\) : \[\];/.test(src) && /selProps = mem;/.test(src), 'a plain click selects the clicked prop’s whole group');
+assert(/const mem = obj \? _groupMembers\(obj\)\.filter\(m=>!\(m && m\.userData && m\.userData\.edLock\)\) : \[\];/.test(src) && /selProps = mem;/.test(src), 'a plain click selects the clicked prop’s whole group (build 1038: minus outliner-locked members)');
 
 // --- Ctrl+G / Ctrl+Shift+G hotkeys ---
 assert(/\(e\.ctrlKey\|\|e\.metaKey\) && e\.code==='KeyG'[\s\S]*?ungroupSelectedProps\(\)[\s\S]*?groupSelectedProps\(\)/.test(src), 'Ctrl/Cmd+G groups, +Shift ungroups');
