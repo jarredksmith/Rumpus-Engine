@@ -58,9 +58,10 @@ const restFoot = dirOf(dstRoot, 'mixamorigLeftFoot', 'mixamorigLeftToeBase').clo
   near(shin.y, -1, 1e-2, 'legs stay straight down');
   mixer.stopAllAction(); mixer.uncacheRoot(dstRoot);
 }
-// the scope rule is pinned
-assert(/if\(\/\^\(\?:\[LR\]:\(\?:hand\|foot\|toe\|thumb\|index\|middle\|ring\|pinky\)\|head\)\/\.test\(p\.key\|\|''\)\) continue;/.test(src),
-  'end bones (hands, feet, toes, fingers, head) are excluded from alignment — anatomy, not pose');
+// the scope rule is pinned (build 1052: the exclusion became a guard — anatomy bones no longer
+// aim at their child, but they now RIDE the parent chain's align instead of resetting to identity)
+assert(/if\(!\/\^\(\?:\[LR\]:\(\?:hand\|foot\|toe\|thumb\|index\|middle\|ring\|pinky\)\|head\)\/\.test\(p\.key\|\|''\)\)\{/.test(src),
+  'end bones (hands, feet, toes, fingers, head) add no alignment of their own — anatomy, not pose');
 assert(/const P = map\.pairs\.map\(p=>\(\{ key:p\.key, dst:p\.dst, src:p\.src,/.test(src),
   'pairs carry their canonical key so the scope rule can see it');
 

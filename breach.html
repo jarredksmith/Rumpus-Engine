@@ -9569,6 +9569,7 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
   const P = map.pairs.map(p=>({ key:p.key, dst:p.dst, src:p.src,
     srcRestInv: p.src.getWorldQuaternion(new THREE.Quaternion()).invert(),
     dstRestW:   p.dst.getWorldQuaternion(new THREE.Quaternion()),
+    align: new THREE.Quaternion(),
     times:[], q:[] }));
   const byDst = new Map(P.map(p=>[p.dst, p]));
   // build 1047: REST-POSE ALIGNMENT. The delta x dstRestW form silently assumed both rigs rest
@@ -9587,24 +9588,40 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
     const pairOfDst=new Map(P.map(p=>[p.dst, p]));
     const firstMapped=(node, set)=>{ for(const c of node.children){ if(set.has(c)) return c; const d=firstMapped(c, set); if(d) return d; } return null; };
     const _wa=new THREE.Vector3(), _wb=new THREE.Vector3(), _wc=new THREE.Vector3(), _wd=new THREE.Vector3();
-    for(const p of P){
-      p.align=new THREE.Quaternion();
-      // build 1051: alignment is for bones whose direction encodes POSE (arms, legs, spine —
-      // an A-pose arm is genuinely posed differently). Hands, feet, toes, fingers and the head
-      // are END bones whose direction encodes ANATOMY — the pack's foot bone slopes from a high
-      // ankle to the toe, an auto-rig's runs nearly level, and BOTH mean "foot flat". Aligning
-      // them pitched feet into the ground and curled hands (the crushed-boots-under-pack-anims
-      // bug). End bones keep pure delta retargeting: they deviate from THEIR rest exactly as
-      // the pack's deviate from its.
-      if(/^(?:[LR]:(?:hand|foot|toe|thumb|index|middle|ring|pinky)|head)/.test(p.key||'')) continue;
-      const dc=firstMapped(p.dst, dstSet);
-      const cp=dc ? pairOfDst.get(dc) : null;
-      if(!cp) continue;   // leaf bones: nothing to aim, identity
-      p.dst.getWorldPosition(_wa); cp.dst.getWorldPosition(_wb); _wb.sub(_wa);
-      p.src.getWorldPosition(_wc); cp.src.getWorldPosition(_wd); _wd.sub(_wc);
-      if(_wb.lengthSq()<1e-10 || _wd.lengthSq()<1e-10) continue;
-      p.align.setFromUnitVectors(_wb.normalize(), _wd.normalize());
-    }
+    // build 1052: HIERARCHICAL alignment (the last crease — elbows crunching under pack clips).
+    // Independent per-bone shortest arcs match every bone's DIRECTION, but each arc picks its
+    // own roll — adjacent bones could disagree by a twist about the limb axis, and elbow verts
+    // blending uparm+forearm weights got candy-wrapped. Each bone now starts from its parent
+    // chain's align and adds only the minimal SWING residual that carries the transported bone
+    // direction onto the source's — the relative rotation between adjacent bones has zero
+    // twist about the child's axis, so alignment can never wring a joint.
+    // build 1051 refined: anatomy END bones (hands, feet, toes, fingers, head — their direction
+    // encodes ankle height / finger splay, not pose) still add no correction of their own, but
+    // now RIDE the chain — an A-pose wrist lifts with its arm instead of kinking at the wrist.
+    const _tv=new THREE.Vector3(), _resid=new THREE.Quaternion();
+    const walkAlign=(node, parentAlign)=>{
+      let cur=parentAlign;
+      const p=pairOfDst.get(node);
+      if(p){
+        p.align.copy(parentAlign);
+        if(!/^(?:[LR]:(?:hand|foot|toe|thumb|index|middle|ring|pinky)|head)/.test(p.key||'')){
+          const dc=firstMapped(node, dstSet);
+          const cp=dc ? pairOfDst.get(dc) : null;
+          if(cp){   // leaf pose bones aim at nothing — they just ride the chain
+            p.dst.getWorldPosition(_wa); cp.dst.getWorldPosition(_wb); _wb.sub(_wa);
+            p.src.getWorldPosition(_wc); cp.src.getWorldPosition(_wd); _wd.sub(_wc);
+            if(_wb.lengthSq()>=1e-10 && _wd.lengthSq()>=1e-10){
+              _tv.copy(_wb.normalize()).applyQuaternion(parentAlign);
+              _resid.setFromUnitVectors(_tv, _wd.normalize());
+              p.align.multiplyQuaternions(_resid, parentAlign);
+            }
+          }
+        }
+        cur=p.align;
+      }
+      for(const c of node.children) walkAlign(c, cur);
+    };
+    walkAlign(dstRoot, new THREE.Quaternion());
   }
   const hips = map.hips; const hd = byDst.get(hips.dst);
   const srcHipRest = hips.src.getWorldPosition(new THREE.Vector3());
@@ -21985,7 +22002,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1051 · 2026-07-22';
+const BUILD_VERSION = 'build 1052 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

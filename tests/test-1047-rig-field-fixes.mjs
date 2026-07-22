@@ -86,7 +86,7 @@ near(armDir(dstA).y, -Math.SQRT1_2, 1e-3, 'sanity: the A-pose rig rests with arm
   mixer.stopAllAction(); mixer.uncacheRoot(dstT);
 }
 // the machinery is pinned
-assert(/p\.align\.setFromUnitVectors\(_wb\.normalize\(\), _wd\.normalize\(\)\);/.test(src), 'per-pair rest directions align dst -> src');
+assert(/_resid\.setFromUnitVectors\(_tv, _wd\.normalize\(\)\);/.test(src), 'per-pair rest directions align dst -> src (build 1052: as a swing residual on the parent chain)');
 assert(/multiply\(pr\.srcRestInv\)\.multiply\(pr\.align\)\.multiply\(pr\.dstRestW\)/.test(src), 'the delta flows through the alignment');
 assert(/const firstMapped=\(node, set\)=>\{/.test(src), 'bone directions aim at the first MAPPED descendant (helpers skipped)');
 
