@@ -8041,7 +8041,7 @@ function updateLogic(dt){
 // Every change writes straight into logicGraph, which serializes with the level.
 const LG_DEFS = {
   start:    { t:'On start',        cat:'ev', outs:['\u25b6'],            params:[] },
-  event:    { t:'On event',        cat:'ev', outs:['\u25b6'],            params:[{k:'name',l:'name',w:86}] },
+  event:    { t:'On event',        cat:'ev', outs:['\u25b6'],            params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   interval: { t:'Every X sec',     cat:'ev', outs:['tick'],             params:[{k:'sec',l:'sec',w:40},{k:'times',l:'times (0=\u221e)',w:40}] },
   onkill:   { t:'On enemy killed', cat:'ev', outs:['\u25b6'],            params:[] },
   onwave:   { t:'On wave start',   cat:'ev', outs:['\u25b6'],            params:[] },
@@ -8053,15 +8053,39 @@ const LG_DEFS = {
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66},{k:'value',l:'+/\u2212',w:50}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:96,sel:['toggle','open','close','anim','unlock','win','cutscene','objective','checkpoint','sound']},{k:'target',l:'tag',w:80},{k:'clip',l:'clip',w:80,ifv:['verb','anim']},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound']}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:96,sel:['toggle','open','close','anim','unlock','win','cutscene','objective','checkpoint','sound']},{k:'target',l:'tag',w:80,listId:'lgTagList'},{k:'clip',l:'clip',w:80,ifv:['verb','anim']},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound']}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
-  emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86}] },
+  emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
   lose:     { t:'Lose level',      cat:'ac', ins:['in'], outs:[],        params:[] },
 };
 const LG_CATS = { ev:['EVENTS','#35e0d6'], fl:['FLOW','#ffd75e'], st:['STATE','#8fe05a'], ac:['ACTIONS','#ff9b5b'] };
 let _lgEl=null, _lgBoard=null, _lgSvg=null, _lgPan={x:120,y:80}, _lgZoom=1, _lgSeq=1, _lgDragWire=null;
 function _lgNewId(){ let id; do{ id='n'+(_lgSeq++); }while(_lgNode(id)); return id; }
+// build 1033: every tag already carried by a prop or scene light, with how many carry it —
+// the Do-action node and the prop-signal editor offer these as a dropdown (typing still works).
+function _lgTagOptions(){
+  const counts={};
+  if(typeof propModels!=='undefined') for(const o of propModels){ const t=o && o.userData && o.userData.tag; if(t) counts[t]=(counts[t]||0)+1; }
+  if(typeof lightModels!=='undefined') for(const g of lightModels){ const t=g && g.userData && g.userData.tag; if(t) counts[t]=(counts[t]||0)+1; }
+  return Object.keys(counts).sort().map(t=>({ tag:t, n:counts[t] }));
+}
+// ...and every logic event name declared ANYWHERE: prop signals firing '\u2192 Logic event',
+// plus On-event / Send-event nodes already in the graph.
+function _lgEventOptions(){
+  const set=new Set();
+  if(typeof propModels!=='undefined') for(const o of propModels){ const sg=o && o.userData && o.userData.signals;
+    if(Array.isArray(sg)) for(const g of sg){ if(g.do==='emit' && g.text) set.add(String(g.text).trim()); } }
+  for(const n of logicGraph.nodes){ if((n.type==='event' || n.type==='emit') && n.p && n.p.name) set.add(String(n.p.name).trim()); }
+  return Array.from(set).filter(Boolean).sort();
+}
+function _lgRefreshDatalists(){
+  const mk=(id)=>{ let el=document.getElementById(id); if(!el){ el=document.createElement('datalist'); el.id=id; document.body.appendChild(el); } el.innerHTML=''; return el; };
+  const tl=mk('lgTagList');
+  for(const t of _lgTagOptions()){ const op=document.createElement('option'); op.value=t.tag; op.label=t.n+(t.n===1?' prop':' props'); tl.appendChild(op); }
+  const el=mk('lgEvtList');
+  for(const nm of _lgEventOptions()){ const op=document.createElement('option'); op.value=nm; el.appendChild(op); }
+}
 function _lgDirty(){ if(typeof _levelDirty!=='undefined') _levelDirty=true; const c=document.getElementById('lgCount'); if(c) c.textContent=logicGraph.nodes.length+' node'+(logicGraph.nodes.length===1?'':'s'); }
 function _lgAddNode(type, x, y){
   const d=LG_DEFS[type]; if(!d) return null;
@@ -8128,7 +8152,7 @@ function _lgRenderNode(n){
     let inp;
     if(pm.sel){ inp=document.createElement('select'); for(const o of pm.sel){ const op=document.createElement('option'); op.value=o; op.textContent=o; if(String(n.p[pm.k]||'')===o) op.selected=true; inp.appendChild(op); } inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
     else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!n.p[pm.k]; inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
-    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); }; }
+    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList') _lgRefreshDatalists(); }; }
     if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:100px;';
     inp.onpointerdown=(e)=>e.stopPropagation();
     wrap.appendChild(inp); body.appendChild(wrap);
@@ -8167,6 +8191,7 @@ function _lgRenderNode(n){
 }
 function _lgRender(){
   if(!_lgBoard) return;
+  _lgRefreshDatalists();
   _lgBoard.querySelectorAll('[data-node]').forEach(e=>e.remove());
   for(const n of logicGraph.nodes){ const el=_lgRenderNode(n); if(el) _lgBoard.appendChild(el); }
   _lgApplyView(); _lgRenderWires(); _lgDirty();
@@ -20370,7 +20395,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1032 · 2026-07-21';
+const BUILD_VERSION = 'build 1033 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28641,6 +28666,7 @@ function buildSignalsUI(sgBody, store, rerender){
     r.appendChild(mkSel([['destroyed','On destroyed'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));
     r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag'; ti.value=s.target||'';
+    if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagList'); }
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
     ti.onchange=()=>{ pushUndoSnapshot(); s.target=ti.value.trim(); rerender(); };
     const del=document.createElement('button'); del.textContent='×'; del.style.cssText='padding:1px 7px;font-size:12px;';
@@ -28693,6 +28719,7 @@ function buildSignalsUI(sgBody, store, rerender){
     if(s.do==='emit'){   // build 1027: fire a named event into the logic graph (no target needed)
       const erow=document.createElement('div'); erow.style.cssText='display:flex;gap:4px;align-items:center;margin:-1px 0 4px;padding-left:8px;';
       const ei=document.createElement('input'); ei.type='text'; ei.maxLength=40; ei.placeholder='logic event name (e.g. platePressed)'; ei.value=s.text||'';
+      if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ei.setAttribute('list','lgEvtList'); }
       ei.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#9fe6cf;border-radius:4px;padding:2px 5px;font-size:10px;';
       ei.onchange=()=>{ pushUndoSnapshot(); const v=ei.value.trim().slice(0,40); if(v) s.text=v; else delete s.text; };
       erow.appendChild(ei); sgBody.appendChild(erow);
