@@ -108,6 +108,6 @@ assert(/addEventListener\('keydown', _aeKeys, true\);/.test(src), '...registered
 assert(/#animEd \{ position:fixed; inset:0; z-index:300;/.test(html), 'the workspace is a full-screen layer');
 assert(/#animEd #aeTL \{ display:block; position:relative; inset:auto;/.test(html),
   'the timeline canvas overrides the global canvas{position:fixed} rule (it used to cover the header and eat clicks)');
-assert(/ctx\.fillStyle=selK\?'#ffd166':UI_ACCENT;/.test(src), 'timeline keys draw in the THEME accent (re-themes with the UI)');
+assert(/ctx\.fillStyle=selK\?'#ffd166':\(isSel\?UI_ACCENT:'#7fb8a6'\);/.test(src), 'timeline keys draw in the THEME accent (build 1048: selected row accent, other rows dimmed)');
 
 done('build 1041: pose, key, scrub, play, save, assign — custom clips authored entirely in the browser');

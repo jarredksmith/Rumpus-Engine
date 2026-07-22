@@ -10068,6 +10068,22 @@ function _aeRootPathPoints(clip, hipRest, hipH, n){
   }
   return out;
 }
+// build 1048: root motion -> in-place. Subtracts the linear hips X/Z drift across the clip so
+// the last key lands exactly on the first (a clean loop); the vertical bob survives. Returns
+// the removed drift, or null when there is nothing to flatten.
+function _aeFlattenRootMotion(clip){
+  const tr=clip && clip.tracks && clip.tracks.hips;
+  if(!tr || !tr.p || tr.p.length<2) return null;
+  const p=tr.p, a=p[0], b=p[p.length-1];
+  const t0=a[0], t1=b[0]; if(t1-t0<1e-6) return null;
+  const dx=b[1]-a[1], dz=b[3]-a[3];
+  for(const k of p){
+    const f=(k[0]-t0)/(t1-t0);
+    k[1]=Math.round((k[1]-dx*f)*1e4)/1e4;
+    k[3]=Math.round((k[3]-dz*f)*1e4)/1e4;
+  }
+  return { x:dx, z:dz };
+}
 function _aeRootPathSync(){
   if(!_aeScene) return;
   if(_aeRootPath){ _aeScene.remove(_aeRootPath); _aeRootPath.geometry.dispose(); _aeRootPath.material.dispose(); _aeRootPath=null; }
@@ -10723,6 +10739,14 @@ function _aeRenderInspector(){
     mcb.style.marginTop='4px';
     mcb.onclick=()=>{ _aeSnapshot(); const m=_aeMirrorClipData(_aeClip); _aeClip.tracks=m.tracks; _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); if(typeof toast==='function') toast('Clip mirrored'); };
     cSec.appendChild(mcb);
+    const fb=document.createElement('button'); fb.textContent='Flatten to in-place';
+    fb.title='Subtract the hips X/Z drift across the clip so it plays on the spot — an authored walk becomes clean looping locomotion. The vertical bob is kept; check the result with Root path.';
+    fb.style.marginTop='4px'; fb.style.marginLeft='5px';
+    fb.onclick=()=>{ _aeSnapshot(); const d=_aeFlattenRootMotion(_aeClip);
+      if(!d){ if(typeof toast==='function') toast('No hips position keys to flatten'); return; }
+      _aeQueueRebuild(); _aeDrawTL(); if(_aeRootPathOn) _aeRootPathSync();
+      if(typeof toast==='function') toast('Drift removed ('+d.x.toFixed(2)+', '+d.z.toFixed(2)+' hip-heights) — the clip plays in place'); };
+    cSec.appendChild(fb);
     const kt=_aeKeyTimes(_aeClip);
     const note=document.createElement('div'); note.className='aeNote';
     note.textContent = kt.length ? (kt.length+' key times · '+Object.keys(_aeClip.tracks).length+' bones keyed') : 'No keys yet — pose the model and press Key bone / Key pose.';
@@ -10777,11 +10801,23 @@ function _aeRenderInspector(){
   }
 }
 // ---- timeline (canvas): ruler + all-keys row + selected-bone row ----
+const AE_TL_RULER=20;   // css px — the frame ruler band (events live here too)
+function _aeTLRows(){   // build 1048: dope sheet — keyed bones in skeleton order; the selected bone always shows
+  const rows=[];
+  if(_aeClip) for(const slot of CA_SLOTS){ if(_aeClip.tracks[slot] || slot===_aeSel) rows.push(slot); }
+  if(!rows.length && _aeSel) rows.push(_aeSel);
+  return rows;
+}
 function _aeTLGeom(cv){
-  const W=cv.width=cv.clientWidth*(window.devicePixelRatio||1);
-  const H=cv.height=64*(window.devicePixelRatio||1);
-  const padL=10*(window.devicePixelRatio||1), padR=10*(window.devicePixelRatio||1);
-  return { W, H, padL, padR, span:W-padL-padR };
+  const dpr=window.devicePixelRatio||1;
+  const rows=_aeTLRows();
+  const rowCss=rows.length>9 ? 12 : 15;
+  const cssH=Math.max(64, AE_TL_RULER + rows.length*rowCss + 8);
+  if(cv.style.height!==cssH+'px') cv.style.height=cssH+'px';
+  const W=cv.width=cv.clientWidth*dpr;
+  const H=cv.height=cssH*dpr;
+  const padL=86*dpr, padR=10*dpr;   // the left gutter holds the row labels
+  return { W, H, padL, padR, span:W-padL-padR, rows, rowH:rowCss*dpr, ruler:AE_TL_RULER*dpr, dpr };
 }
 function _aeTLx(t, g){ return g.padL + (t/Math.max(1e-3,_aeClip.dur))*g.span; }
 function _aeTLt(x, g){ return Math.max(0, Math.min(_aeClip.dur, (x-g.padL)/Math.max(1,g.span)*_aeClip.dur)); }
@@ -10799,25 +10835,32 @@ function _aeDrawTL(){
     ctx.fillStyle='rgba(160,200,190,0.25)'; ctx.fillRect(x, 0, 1, g.H);
     ctx.fillStyle='#5f8d80'; ctx.fillText(String(f), x+2*dpr, 2*dpr);
   }
-  const rowY=[22*dpr, 42*dpr];
-  // all-key summary
-  ctx.fillStyle='#7fb8a6';
-  for(const t of _aeKeyTimes(_aeClip)){ const x=_aeTLx(t,g); ctx.beginPath(); ctx.moveTo(x, rowY[0]); ctx.lineTo(x+4*dpr, rowY[0]+4*dpr); ctx.lineTo(x, rowY[0]+8*dpr); ctx.lineTo(x-4*dpr, rowY[0]+4*dpr); ctx.fill(); }
   // events (build 1045): orange ticks on the ruler band
   if(_aeClip.events && _aeClip.events.length){
     ctx.fillStyle='#ff8a5b';
     for(const ev of _aeClip.events){ const x=_aeTLx(ev.t, g); ctx.fillRect(x-1.5*dpr, 12*dpr, 3*dpr, 7*dpr); }
   }
-  // selected bone
-  if(_aeSel && _aeClip.tracks[_aeSel]){
-    const tr=_aeClip.tracks[_aeSel]; const ts=new Set();
+  // build 1048: the dope sheet — one labeled row per bone
+  ctx.textBaseline='middle';
+  for(let i=0;i<g.rows.length;i++){
+    const slot=g.rows[i], y0=g.ruler+i*g.rowH, yc=y0+g.rowH/2;
+    const isSel=slot===_aeSel;
+    if(isSel){ ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(0, y0, g.W, g.rowH); }
+    ctx.fillStyle=isSel?UI_ACCENT:'#7fa79a'; ctx.font=(9*dpr)+'px monospace'; ctx.textAlign='right';
+    ctx.fillText(_caSlotLabel(slot).slice(0,13), g.padL-6*dpr, yc);
+    ctx.textAlign='left';
+    ctx.fillStyle='rgba(140,180,168,0.10)'; ctx.fillRect(g.padL, y0+g.rowH-1, g.span, 1);
+    const tr=_aeClip.tracks[slot]; if(!tr) continue;
+    const ts=new Set();
     if(tr.q) for(const k of tr.q) ts.add(k[0]);
     if(tr.p) for(const k of tr.p) ts.add(k[0]);
+    const r=Math.min(5*dpr, g.rowH*0.34);
     for(const t of ts){ const x=_aeTLx(t,g);
-      const selK=_aeSelKeys.some(st=>Math.abs(st-t)<1e-4);
-      ctx.fillStyle=selK?'#ffd166':UI_ACCENT;   // the canvas-side accent mirror (re-themes with the UI)
-      ctx.beginPath(); ctx.moveTo(x, rowY[1]); ctx.lineTo(x+5*dpr, rowY[1]+5*dpr); ctx.lineTo(x, rowY[1]+10*dpr); ctx.lineTo(x-5*dpr, rowY[1]+5*dpr); ctx.fill(); }
+      const selK=isSel && _aeSelKeys.some(st=>Math.abs(st-t)<1e-4);
+      ctx.fillStyle=selK?'#ffd166':(isSel?UI_ACCENT:'#7fb8a6');   // the canvas-side accent mirror (re-themes with the UI)
+      ctx.beginPath(); ctx.moveTo(x, yc-r); ctx.lineTo(x+r, yc); ctx.lineTo(x, yc+r); ctx.lineTo(x-r, yc); ctx.fill(); }
   }
+  ctx.textBaseline='top';
   // playhead
   const px=_aeTLx(_aeTime, g);
   ctx.fillStyle='#ff8a5b'; ctx.fillRect(px-1, 0, 2*dpr, g.H);
@@ -10827,16 +10870,24 @@ function _aeDrawTL(){
 function _aeBindTL(cv){
   let drag=null;
   const geomT=(e)=>{ const r=cv.getBoundingClientRect(); const g=_aeTLGeom(cv); return _aeTLt((e.clientX-r.left)*(window.devicePixelRatio||1), g); };
+  const rowAt=(e)=>{   // build 1048: which dope-sheet row is under the pointer (null = ruler / empty space)
+    const r=cv.getBoundingClientRect(); const g=_aeTLGeom(cv);
+    const y=(e.clientY-r.top)*(window.devicePixelRatio||1);
+    if(y<g.ruler) return null;
+    const i=Math.floor((y-g.ruler)/g.rowH);
+    return (i>=0 && i<g.rows.length) ? g.rows[i] : null;
+  };
   cv.addEventListener('mousedown', (e)=>{
     const t=geomT(e);
-    // grabbing a selected-bone key?
-    if(_aeSel && _aeClip && _aeClip.tracks[_aeSel]){
-      const tr=_aeClip.tracks[_aeSel]; const ts=new Set();
+    const slot=rowAt(e);
+    if(slot && _aeClip && _aeClip.tracks[slot]){   // build 1048: keys hit on WHICHEVER row you grab
+      const tr=_aeClip.tracks[slot]; const ts=new Set();
       if(tr.q) for(const k of tr.q) ts.add(k[0]);
       if(tr.p) for(const k of tr.p) ts.add(k[0]);
       const tol=_aeClip.dur*0.012+0.008;
       let hit=null; for(const kt of ts) if(Math.abs(kt-t)<tol && (hit==null || Math.abs(kt-t)<Math.abs(hit-t))) hit=kt;
-      if(hit!=null && e.clientY-cv.getBoundingClientRect().top>34){
+      if(hit!=null){
+        if(slot!==_aeSel){ _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); }   // the row IS a bone selection
         if(e.shiftKey){   // build 1046: shift-click toggles membership in the key selection
           const at=_aeSelKeys.findIndex(st=>Math.abs(st-hit)<=1e-4);
           if(at>=0) _aeSelKeys.splice(at,1); else _aeSelKeys.push(hit);
@@ -10848,6 +10899,7 @@ function _aeBindTL(cv){
         _aeDrawTL(); return;
       }
     }
+    if(slot && slot!==_aeSel){ _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); }   // empty row click: select the bone, then scrub
     _aeSelKeys=[]; _aeSetPlaying(false); _aeApplyTime(t); drag={ scrub:true };
   });
   addEventListener('mousemove', (e)=>{
@@ -10864,7 +10916,9 @@ function _aeBindTL(cv){
   });
   addEventListener('mouseup', ()=>{ drag=null; });
   cv.addEventListener('dblclick', (e)=>{
-    if(!_aeSel) return;
+    const slot=rowAt(e) || _aeSel;   // build 1048: double-click keys the row under the pointer
+    if(!slot) return;
+    if(slot!==_aeSel){ _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); }
     const t=_aeSnapT(geomT(e), _aeClip.fps, _aeSnap);
     _aeSnapshot(); const keep=_aeTime; _aeApplyTime(t); _aeKeySlot(_aeSel, t); _aeApplyTime(keep);
     _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL();
@@ -21901,7 +21955,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1047 · 2026-07-22';
+const BUILD_VERSION = 'build 1048 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

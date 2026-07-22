@@ -76,7 +76,7 @@ assert(/drag=\{ from:hit, orig:JSON\.stringify\(_aeClip\.tracks\), times:_aeSelK
 assert(/_aeClip\.tracks=JSON\.parse\(drag\.orig\);/.test(src) && /_aeSelKeys=_aeMoveKeys\(_aeClip, _aeSel, drag\.times, delta, _aeClip\.fps, _aeSnap\);/.test(src),
   '...and re-apply the whole move each mouse step (no cumulative drift)');
 assert(/for\(const st of _aeSelKeys\)\{ if\(tr\.q\) _aeDeleteKeyAt\(tr\.q, st\);/.test(src), 'Delete clears the whole selection');
-assert(/const selK=_aeSelKeys\.some\(st=>Math\.abs\(st-t\)<1e-4\);/.test(src), 'every selected key draws gold');
+assert(/const selK=isSel && _aeSelKeys\.some\(st=>Math\.abs\(st-t\)<1e-4\);/.test(src), 'every selected key draws gold (build 1048: on its own dope-sheet row)');
 
 // ---- root path lifecycle ----
 assert(/id="aeRootP"/.test(src) && /_aeRootPathOn=!_aeRootPathOn;/.test(src), 'the Root path toggle exists');
