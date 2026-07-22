@@ -183,6 +183,45 @@
   #outliner select option, .outMove select option { background:#0d151a; color:#f2fffa; font-weight:500; }
   .outRow.dropHint, .outGrpHead.dropHint { outline:1.5px dashed var(--accent); outline-offset:-1.5px; background:rgba(var(--accent-rgb),0.10); }
   @media (max-width:760px) { #outliner { width:200px; max-height:44vh; top:calc(96px + env(safe-area-inset-top)); } }
+  /* build 1041: animation editor */
+  #animEd { position:fixed; inset:0; z-index:300; display:none; flex-direction:column; background:#070b0e; color:#cfe8df; font-size:12px; }
+  #animEd .aeTop { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid #223039; background:#0a1016; }
+  #animEd .aeTitle { font-family:var(--display-font); font-size:15px; letter-spacing:2px; color:#9fe6cf; margin-right:6px; }
+  #animEd .aeTop select, #animEd .aeTop input { background:#0c1418; border:1px solid #2a3a42; color:#eafff7; border-radius:6px; padding:5px 7px; font-size:12px; }
+  #animEd .aeTop input#aeName { width:170px; }
+  #animEd button { background:rgba(255,255,255,0.05); border:1px solid #2a3a42; color:#cfeee2; border-radius:6px; padding:5px 9px; font-size:12px; cursor:pointer; }
+  #animEd button:hover { background:rgba(255,255,255,0.1); color:#fff; }
+  #animEd button.aeAccent { background:rgba(var(--accent-rgb),0.2); border-color:var(--accent); color:var(--accent); font-weight:700; }
+  #animEd #aeClose { margin-left:auto; font-size:14px; }
+  #animEd .aeMain { flex:1; display:flex; min-height:0; }
+  #animEd .aeLeft { flex:0 0 200px; display:flex; flex-direction:column; border-right:1px solid #182228; }
+  #animEd .aeLeft input { margin:8px; background:#0c1418; border:1px solid #2a3a42; color:#eafff7; border-radius:6px; padding:5px 7px; }
+  #animEd #aeTree { overflow-y:auto; flex:1; }
+  .aeBoneRow { display:flex; align-items:center; gap:6px; padding:2px 8px; cursor:pointer; border-radius:4px; min-height:19px; }
+  .aeBoneRow:hover { background:rgba(255,255,255,0.05); }
+  .aeBoneRow.sel { background:rgba(var(--accent-rgb),0.18); }
+  .aeBoneRow .aeBoneNm { color:#cfeee2; }
+  .aeBoneRow.sel .aeBoneNm { color:var(--accent); }
+  .aeBoneRow .aeBoneReal { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9.5px; color:#4e6a60; text-align:right; }
+  .aeKeyCt { flex:0 0 auto; font-size:9.5px; background:rgba(var(--accent-rgb),0.16); color:var(--accent); border-radius:4px; padding:0 4px; }
+  #animEd #aeView { flex:1; position:relative; background:radial-gradient(circle at 50% 40%, #131e25, #070b0e); min-width:0; }
+  #animEd #aeMsg { position:absolute; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:30px; color:#9fbdb2; font-size:13px; z-index:2; }
+  #animEd .aeHint { position:absolute; left:10px; bottom:8px; right:120px; color:#557468; font-size:10.5px; pointer-events:none; }
+  #animEd .aeViews { position:absolute; right:10px; top:10px; display:flex; gap:4px; }
+  #animEd .aeViews button { padding:3px 7px; font-size:10.5px; }
+  #animEd .aeRight { flex:0 0 250px; overflow-y:auto; border-left:1px solid #182228; padding-bottom:12px; }
+  .aeSecH { font-size:10.5px; letter-spacing:1.5px; color:#7fb8a6; padding:10px 10px 4px; font-weight:700; }
+  .aeSecB { padding:0 10px; }
+  .aeNumRow { display:flex; align-items:center; gap:6px; margin:3px 0; color:#9fbdb2; }
+  .aeNumRow span { flex:0 0 64px; }
+  .aeNumRow input, .aeNumRow select { flex:1; min-width:0; background:#0c1418; border:1px solid #2a3a42; color:#eafff7; border-radius:5px; padding:3px 6px; font-size:12px; }
+  .aeBtnRow { display:flex; gap:5px; margin:7px 0 2px; flex-wrap:wrap; }
+  .aeNote { color:#557468; font-size:10.5px; line-height:1.45; margin:6px 0; }
+  #animEd .aeBottom { border-top:1px solid #223039; background:#0a1016; padding:6px 12px 10px; }
+  #animEd .aeTrans { display:flex; align-items:center; gap:7px; margin-bottom:6px; flex-wrap:wrap; }
+  #animEd .aeTrans label { display:flex; align-items:center; gap:4px; color:#9fbdb2; cursor:pointer; }
+  #animEd #aeTimeLb { font-family:monospace; color:#a9dcc9; min-width:150px; }
+  #animEd #aeTL { display:block; width:100%; height:64px; cursor:crosshair; border-radius:6px; }
   /* ---- build 978: pro-inspector reskin — flat details list, tooltips, settings search ---- */
   #editor { font: 12px/1.45 var(--ui-font), system-ui, sans-serif; background: rgba(9,14,18,0.96); border-left: 1px solid #1c2a31; }   /* build 985: padding lives on #edTopBar / #edMain now (the panel scrolls as one) */
   #editor.dockLeft { border-right: 1px solid #1c2a31; }
@@ -9843,6 +9882,651 @@ function _caClipsFor(gltf){
   return out;
 }
 let customAnims = _caSanitize(savedLevel && savedLevel.customAnims);   // authored; serialized with the level
+// ---------- ANIMATION EDITOR (build 1041) ---------------------------------------------------
+// Author custom skeletal clips on the player's rigged model, entirely in the browser. Works on
+// TWO clones of the model: _aeRoot (displayed, posed, driven by the preview mixer) and
+// _aeRestRoot (pristine bind pose, never touched) — keys capture world-space deltas against the
+// rest clone, and _caBuildClip always builds from the rest clone, so the bind pose can never
+// drift into the data. Everything here is editor-side only; play cost is zero.
+let _aeEl=null, _aeR=null, _aeScene=null, _aeCam=null, _aeRoot=null, _aeRestRoot=null, _aeGltf=null;
+let _aeBones=null, _aeRestBones=null, _aeRestW=null, _aeRestLocal=null, _aeHipRestW=null, _aeHipH=1, _aeH=1.8;
+let _aeSkel=null, _aeDots=[], _aeGrid=null, _aeSel='', _aeClip=null, _aeTime=0, _aePlaying=false;
+let _aeMixer=null, _aeAction=null, _aeRebuildT=0, _aeUndo=[], _aeRedo=[], _aeAutoKey=false, _aeSnap=true;
+let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKey=null, _aeAxis='';
+let _aeTreeFilter='', _aeLastTL=null;
+// ---- pure keyframe-list helpers (sorted by time; replace-within-epsilon) ----
+function _aeUpsertKey(arr, key, eps){
+  eps = (eps==null) ? 1e-4 : eps;
+  for(let i=0;i<arr.length;i++){
+    if(Math.abs(arr[i][0]-key[0])<=eps){ arr[i]=key; return i; }
+    if(arr[i][0]>key[0]){ arr.splice(i,0,key); return i; }
+  }
+  arr.push(key); return arr.length-1;
+}
+function _aeDeleteKeyAt(arr, t, eps){
+  eps = (eps==null) ? 1e-4 : eps;
+  for(let i=0;i<arr.length;i++) if(Math.abs(arr[i][0]-t)<=eps){ arr.splice(i,1); return true; }
+  return false;
+}
+function _aeSnapT(t, fps, on){
+  t = Math.max(0, t);
+  if(!on || !(fps>0)) return Math.round(t*1000)/1000;
+  return Math.round(Math.round(t*fps)/fps*1000)/1000;
+}
+function _aeKeyTimes(clip){
+  const ts=new Set();
+  if(clip && clip.tracks) for(const k in clip.tracks){ const tr=clip.tracks[k];
+    if(tr.q) for(const kk of tr.q) ts.add(kk[0]);
+    if(tr.p) for(const kk of tr.p) ts.add(kk[0]); }
+  return [...ts].sort((a,b)=>a-b);
+}
+function _aeNewClipData(){
+  return { id:_caNewId(), v:1, name:'Custom clip', dur:2, fps:30, loop:'loop', tracks:{} };
+}
+// where a clip (by its per-model attach name) is currently assigned — the delete safety net
+function _aeAssignments(name){
+  const out=[];
+  const scan=(cfg, who)=>{ if(!cfg || !cfg.clips) return;
+    for(const st in cfg.clips){ if(cfg.clips[st]===name){ const slot=(typeof ANIM_SLOTS!=='undefined' && ANIM_SLOTS.find(x=>x.k===st)); out.push(who+' · '+((slot&&slot.l)||st)); } } };
+  if(typeof playerModelCfg!=='undefined') scan(playerModelCfg, 'Player');
+  if(typeof charRoster!=='undefined') for(const c of charRoster) scan(c, c.name||'Roster');
+  if(typeof enemyModels!=='undefined' && enemyModels && typeof enemyModels==='object'){
+    for(const k in enemyModels) scan(enemyModels[k], 'Enemy '+k);
+  }
+  return out;
+}
+// the name this clip answers to on the CURRENT model (collision suffix mirrors _caClipsFor)
+function _aeAttachName(){
+  if(!_aeClip) return '';
+  const base=new Set(); if(_aeGltf) for(const c of (_aeGltf.animations||[])) base.add(c.name);
+  for(const d of customAnims){ if(d.id!==_aeClip.id && d.name===_aeClip.name) return _aeClip.name; }   // library dupes keep the raw name; first wins at attach
+  return base.has(_aeClip.name) ? (_aeClip.name+' (custom)') : _aeClip.name;
+}
+function _aeSnapshot(){
+  if(!_aeClip) return;
+  _aeUndo.push(JSON.stringify(_aeClip));
+  if(_aeUndo.length>60) _aeUndo.shift();
+  _aeRedo.length=0;
+}
+function _aeApplyState(json){
+  try{ _aeClip=JSON.parse(json); }catch(e){ return; }
+  _aeQueueRebuild(true); _aeRenderTree(); _aeRenderInspector(); _aeDrawTL();
+}
+function _aeUndoOp(){ if(!_aeUndo.length || !_aeClip) return; _aeRedo.push(JSON.stringify(_aeClip)); _aeApplyState(_aeUndo.pop()); }
+function _aeRedoOp(){ if(!_aeRedo.length || !_aeClip) return; _aeUndo.push(JSON.stringify(_aeClip)); _aeApplyState(_aeRedo.pop()); }
+// ---- open / close ----
+function _aeOpen(){
+  if(typeof isTouch!=='undefined' && isTouch){ if(typeof toast==='function') toast('The Animation editor needs a desktop browser — clips still play everywhere'); return; }
+  const url=(playerModelCfg.url||'').trim();
+  if(!url){ if(typeof toast==='function') toast('Set a player model on the Player tab first'); return; }
+  _aeEnsureDom();
+  _aeEl.style.display='flex';
+  const holder=_aeEl.querySelector('#aeView');
+  const msg=_aeEl.querySelector('#aeMsg');
+  msg.textContent='Loading model…'; msg.style.display='flex';
+  _loadGLTFWithLib(url, playerModelCfg, (gltf)=>{
+    if(!_aeEl || _aeEl.style.display==='none') return;   // closed while loading
+    _aeGltf=gltf;
+    _aeRoot=THREE.cloneSkinned(gltf.scene);
+    _aeRestRoot=THREE.cloneSkinned(gltf.scene);
+    _aeBones=_caGatherBones(_aeRoot);
+    _aeRestBones=_caGatherBones(_aeRestRoot);
+    if(!_aeBones.size){ msg.textContent='No humanoid skeleton found in this model — rig it first (Auto-rig on the Player tab works for static humanoids).'; return; }
+    msg.style.display='none';
+    _aeRestRoot.updateWorldMatrix(true,true); _aeRoot.updateWorldMatrix(true,true);
+    _aeRestW=new Map(); _aeRestLocal=new Map();
+    for(const [slot,b] of _aeRestBones){ _aeRestW.set(slot, b.getWorldQuaternion(new THREE.Quaternion())); _aeRestLocal.set(slot, { q:b.quaternion.clone(), p:b.position.clone() }); }
+    const hipsB=_aeRestBones.get('hips');
+    _aeHipRestW=hipsB ? hipsB.getWorldPosition(new THREE.Vector3()) : new THREE.Vector3();
+    const bb=new THREE.Box3().setFromObject(_aeRoot);
+    _aeH=Math.max(0.2, bb.max.y-bb.min.y);
+    _aeHipH=Math.max(1e-4, Math.abs(_aeHipRestW.y - 0));
+    _aeTgt=new THREE.Vector3(0, bb.min.y+_aeH*0.55, 0);
+    _aeDist=_aeH*2.1; _aeYaw=0.6; _aePitch=0.16;
+    _aeInitScene(holder, bb);
+    if(!customAnims.length) customAnims.push(_caSanitize([_aeNewClipData()])[0]);
+    _aeLoadClip(customAnims[0].id);
+    _aeRenderClipSel(); _aeRenderTree(); _aeRenderInspector(); _aeDrawTL();
+    _aeLoop();
+  }, ()=>{ msg.textContent='Model failed to load — check the URL on the Player tab.'; });
+}
+function _aeClose(){
+  if(!_aeEl) return;
+  _aeEl.style.display='none';
+  _aePlaying=false;
+  if(_aeRAF){ cancelAnimationFrame(_aeRAF); _aeRAF=0; }
+  if(_aeRebuildT){ clearTimeout(_aeRebuildT); _aeRebuildT=0; }
+  if(_aeMixer){ try{ _aeMixer.stopAllAction(); _aeMixer.uncacheRoot(_aeRoot); }catch(e){} _aeMixer=null; _aeAction=null; }
+  if(_aeScene){
+    for(const d of _aeDots){ _aeScene.remove(d); if(d.geometry) d.geometry.dispose(); if(d.material) d.material.dispose(); }
+    if(_aeSkel){ _aeScene.remove(_aeSkel); if(_aeSkel.geometry) _aeSkel.geometry.dispose(); if(_aeSkel.material) _aeSkel.material.dispose(); }
+    if(_aeGrid){ _aeScene.remove(_aeGrid); if(_aeGrid.geometry) _aeGrid.geometry.dispose(); if(_aeGrid.material) _aeGrid.material.dispose(); }
+  }
+  _aeDots=[]; _aeSkel=null; _aeGrid=null;
+  if(_aeR){ try{ const c=_aeR.domElement; _aeR.dispose(); if(c && c.parentNode) c.parentNode.removeChild(c); }catch(e){} _aeR=null; }
+  _aeScene=null; _aeRoot=null; _aeRestRoot=null; _aeGltf=null; _aeBones=null; _aeRestBones=null;
+  _aeUndo.length=0; _aeRedo.length=0; _aeClip=null; _aeSel=''; _aeSelKey=null;
+}
+function _aeInitScene(holder, bb){
+  _aeScene=new THREE.Scene();
+  _aeScene.add(new THREE.HemisphereLight(0xcfe8ff, 0x2a2f33, 1.1));
+  const dl=new THREE.DirectionalLight(0xffffff, 1.4); dl.position.set(2,4,3); _aeScene.add(dl);
+  _aeGrid=new THREE.GridHelper(Math.max(4,_aeH*3), 20, 0x3a5a50, 0x22343a);
+  _aeGrid.position.y=bb.min.y; _aeScene.add(_aeGrid);
+  _aeScene.add(_aeRoot);
+  _aeSkel=new THREE.SkeletonHelper(_aeRoot); _aeSkel.material.depthTest=false; _aeScene.add(_aeSkel);
+  const dotGeo=new THREE.SphereGeometry(1, 10, 10);
+  for(const [slot,b] of _aeBones){
+    const m=new THREE.Mesh(dotGeo.clone(), new THREE.MeshBasicMaterial({ color:0x38f5b5, depthTest:false, transparent:true, opacity:0.75 }));
+    m.scale.setScalar(_aeH*0.016); m.renderOrder=999; m.userData.slot=slot; m.userData.bone=b;
+    _aeScene.add(m); _aeDots.push(m);
+  }
+  if(!_aeCam) _aeCam=new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+  _aeCam.near=Math.max(0.01,_aeH*0.01); _aeCam.far=Math.max(100,_aeH*40); _aeCam.updateProjectionMatrix();
+  _aeR=new THREE.WebGLRenderer({ antialias:true, alpha:true });
+  _aeR.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
+  holder.appendChild(_aeR.domElement);
+  _aeR.domElement.style.cssText='position:absolute;inset:0;width:100%;height:100%;cursor:grab;';
+  _aeBindViewport(_aeR.domElement);
+  _aeResize();
+}
+function _aeResize(){
+  if(!_aeR || !_aeEl) return;
+  const holder=_aeEl.querySelector('#aeView');
+  const w=holder.clientWidth||640, h=holder.clientHeight||480;
+  _aeR.setSize(w, h, false); _aeCam.aspect=w/h; _aeCam.updateProjectionMatrix();
+}
+function _aeLoop(){
+  if(!_aeEl || _aeEl.style.display==='none') return;
+  _aeRAF=requestAnimationFrame(_aeLoop);
+  const now=performance.now();
+  const dt=Math.min(0.05, (now-(_aeLastTL||now))/1000); _aeLastTL=now;
+  if(_aePlaying && _aeMixer && _aeAction){
+    _aeMixer.update(dt);
+    _aeTime=_aeAction.time % Math.max(1e-3, _aeClip.dur);
+    _aeDrawTL();
+  }
+  _aeCam.position.set(
+    _aeTgt.x + Math.sin(_aeYaw)*Math.cos(_aePitch)*_aeDist,
+    _aeTgt.y + Math.sin(_aePitch)*_aeDist,
+    _aeTgt.z + Math.cos(_aeYaw)*Math.cos(_aePitch)*_aeDist);
+  _aeCam.lookAt(_aeTgt);
+  for(const d of _aeDots){ d.position.setFromMatrixPosition(d.userData.bone.matrixWorld);
+    d.material.color.setHex(d.userData.slot===_aeSel ? 0xffd166 : 0x38f5b5);
+    d.material.opacity = d.userData.slot===_aeSel ? 1 : 0.7; }
+  _aeR.render(_aeScene, _aeCam);
+}
+// ---- preview clip (throttled rebuild; always built from the pristine rest clone) ----
+function _aeQueueRebuild(now){
+  if(_aeRebuildT){ clearTimeout(_aeRebuildT); _aeRebuildT=0; }
+  if(now){ _aeRebuild(); return; }
+  _aeRebuildT=setTimeout(()=>{ _aeRebuildT=0; _aeRebuild(); }, 150);
+}
+function _aeRebuild(){
+  if(!_aeRoot || !_aeClip) return;
+  if(_aeMixer){ try{ _aeMixer.stopAllAction(); _aeMixer.uncacheRoot(_aeRoot); }catch(e){} _aeMixer=null; _aeAction=null; }
+  _aeResetPose();
+  const clean=_caSanitize([_aeClip])[0];
+  const clip=clean ? _caBuildClip(_aeRestRoot, clean) : null;
+  if(!clip) return;   // keyless clip: free posing, no action
+  _aeMixer=new THREE.AnimationMixer(_aeRoot);
+  _aeAction=_aeMixer.clipAction(clip);
+  if(_aeClip.loop==='loop'){ _aeAction.loop=THREE.LoopRepeat; }
+  else { _aeAction.loop=THREE.LoopOnce; _aeAction.clampWhenFinished=(_aeClip.loop==='hold'); }
+  _aeAction.play(); _aeAction.paused=!_aePlaying;
+  _aeApplyTime(_aeTime);
+}
+function _aeResetPose(){
+  if(!_aeBones) return;
+  for(const [slot,b] of _aeBones){ const r=_aeRestLocal.get(slot); if(r){ b.quaternion.copy(r.q); b.position.copy(r.p); } }
+  _aeRoot.updateWorldMatrix(true,true);
+}
+function _aeApplyTime(t){
+  _aeTime=Math.max(0, Math.min(_aeClip?_aeClip.dur:1, t));
+  if(_aeAction){ _aeAction.paused=!_aePlaying; _aeAction.time=_aeTime; _aeMixer.update(0); _aeRoot.updateWorldMatrix(true,true); }
+  _aeDrawTL(); _aeRenderInspector();
+}
+function _aeSetPlaying(v){
+  _aePlaying=!!v;
+  if(_aePlaying && !_aeAction) _aeQueueRebuild(true);
+  if(_aeAction) _aeAction.paused=!_aePlaying;
+  const b=_aeEl && _aeEl.querySelector('#aePlay'); if(b) b.textContent=_aePlaying?'⏸':'▶';
+}
+// ---- keying: capture world deltas against the rest clone ----
+function _aeKeySlot(slot, t){
+  if(!_aeClip || !_aeBones.get(slot)) return;
+  const b=_aeBones.get(slot), rw=_aeRestW.get(slot);
+  const wq=b.getWorldQuaternion(new THREE.Quaternion());
+  const delta=wq.multiply(rw.clone().invert());
+  const tr=_aeClip.tracks[slot]=(_aeClip.tracks[slot]||{});
+  tr.q=tr.q||[];
+  const tt=_aeSnapT(t, _aeClip.fps, _aeSnap);
+  _aeUpsertKey(tr.q, [tt, Math.round(delta.x*1e4)/1e4, Math.round(delta.y*1e4)/1e4, Math.round(delta.z*1e4)/1e4, Math.round(delta.w*1e4)/1e4]);
+  if(slot==='hips'){
+    const wp=b.getWorldPosition(new THREE.Vector3()).sub(_aeHipRestW).divideScalar(_aeHipH);
+    if(wp.lengthSq()>1e-8 || (tr.p&&tr.p.length)){ tr.p=tr.p||[]; _aeUpsertKey(tr.p, [tt, Math.round(wp.x*1e4)/1e4, Math.round(wp.y*1e4)/1e4, Math.round(wp.z*1e4)/1e4]); }
+  }
+  if(_aeClip.dur<tt) _aeClip.dur=tt;
+}
+function _aeKeyPose(t){   // key every bone that moved off rest (plus the hips offset)
+  if(!_aeClip) return 0;
+  let n=0;
+  for(const [slot,b] of _aeBones){
+    const r=_aeRestLocal.get(slot); if(!r) continue;
+    const moved=b.quaternion.angleTo(r.q)>0.002 || (slot==='hips' && b.position.distanceTo(r.p)>1e-4);
+    const keyed=_aeClip.tracks[slot] && ((_aeClip.tracks[slot].q&&_aeClip.tracks[slot].q.length)||(_aeClip.tracks[slot].p&&_aeClip.tracks[slot].p.length));
+    if(moved || keyed){ _aeKeySlot(slot, t); n++; }
+  }
+  return n;
+}
+// ---- clip lifecycle ----
+function _aeLoadClip(id){
+  const d=customAnims.find(c=>c.id===id) || customAnims[0];
+  if(!d) return;
+  _aeClip=JSON.parse(JSON.stringify(d));
+  _aeUndo.length=0; _aeRedo.length=0; _aeSelKey=null; _aeTime=0; _aePlaying=false;
+  _aeQueueRebuild(true); _aeRenderClipSel(); _aeRenderTree(); _aeRenderInspector(); _aeDrawTL();
+}
+function _aeSave(){
+  if(!_aeClip) return;
+  const last=_aeKeyTimes(_aeClip).pop()||0;
+  if(last>_aeClip.dur){ _aeClip.dur=Math.round(last*1000)/1000; if(typeof toast==='function') toast('Duration extended to the last key ('+_aeClip.dur.toFixed(2)+'s)'); }
+  const clean=_caSanitize([_aeClip])[0];
+  if(!clean){ if(typeof toast==='function') toast('Nothing to save'); return; }
+  if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+  const at=customAnims.findIndex(c=>c.id===clean.id);
+  if(at>=0) customAnims[at]=clean; else customAnims.push(clean);
+  _aeClip=JSON.parse(JSON.stringify(clean));
+  _caRev++;
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof rebuildAvatars==='function') rebuildAvatars();
+  _aeRenderClipSel();
+  if(typeof toast==='function') toast('Saved — "'+clean.name+'" is in this level’s clip library');
+}
+function _aeDuplicate(){
+  if(!_aeClip) return;
+  _aeSave();
+  const copy=JSON.parse(JSON.stringify(customAnims.find(c=>c.id===_aeClip.id)));
+  copy.id=_caNewId(); copy.name=(copy.name+' copy').slice(0,40);
+  customAnims.push(copy); _caRev++;
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  _aeLoadClip(copy.id);
+}
+function _aeDelete(){
+  if(!_aeClip) return;
+  const used=_aeAssignments(_aeAttachName());
+  const doIt=()=>{
+    const at=customAnims.findIndex(c=>c.id===_aeClip.id);
+    if(at>=0) customAnims.splice(at,1);
+    const nm=_aeAttachName();
+    const clear=(cfg)=>{ if(cfg&&cfg.clips) for(const st in cfg.clips) if(cfg.clips[st]===nm) cfg.clips[st]=''; };
+    clear(typeof playerModelCfg!=='undefined'?playerModelCfg:null);
+    if(typeof charRoster!=='undefined') for(const c of charRoster) clear(c);
+    _caRev++;
+    if(typeof _levelDirty!=='undefined') _levelDirty=true;
+    if(typeof rebuildAvatars==='function') rebuildAvatars();
+    if(!customAnims.length) customAnims.push(_caSanitize([_aeNewClipData()])[0]);
+    _aeLoadClip(customAnims[0].id);
+  };
+  const q='Delete "'+_aeClip.name+'"?'+(used.length?(' Currently assigned to: '+used.join(', ')+' \u2014 assignments will be cleared.'):'');
+  if(typeof uiConfirm==='function') uiConfirm(q, doIt, 'Delete'); else doIt();
+}
+function _aeAssign(state){
+  if(!_aeClip || !state) return;
+  _aeSave();
+  if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+  playerModelCfg.clips=playerModelCfg.clips||{};
+  playerModelCfg.clips[state]=_aeAttachName();
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof rebuildAvatars==='function') rebuildAvatars();
+  const slot=(typeof ANIM_SLOTS!=='undefined' && ANIM_SLOTS.find(x=>x.k===state));
+  if(typeof toast==='function') toast('Assigned to Player · '+((slot&&slot.l)||state));
+  _aeRenderInspector();
+}
+// ---- viewport input: orbit / select / pose ----
+function _aeBindViewport(cv){
+  cv.addEventListener('mousedown', (e)=>{
+    if(e.button!==0){ _aeDrag={ kind:e.button===1?'pan':'orbit', x:e.clientX, y:e.clientY }; e.preventDefault(); return; }
+    const r=cv.getBoundingClientRect();
+    const nx=((e.clientX-r.left)/r.width)*2-1, ny=-((e.clientY-r.top)/r.height)*2+1;
+    const rc=new THREE.Raycaster(); rc.setFromCamera(new THREE.Vector2(nx,ny), _aeCam);
+    const hits=rc.intersectObjects(_aeDots, false);
+    if(hits.length){
+      const slot=hits[0].object.userData.slot;
+      if(slot===_aeSel){
+        const b=_aeBones.get(slot);
+        if(e.shiftKey && slot==='hips'){ _aeDrag={ kind:'move', x:e.clientX, y:e.clientY, p0:b.position.clone() }; }
+        else { _aeDrag={ kind:'rot', x:e.clientX, y:e.clientY, q0:b.quaternion.clone(), axis:_aeAxis };
+          if(_aeAutoKey) _aeSnapshot(); }
+      } else { _aeSel=slot; _aeSelKey=null; _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); }
+    } else { _aeDrag={ kind:'orbit', x:e.clientX, y:e.clientY }; }
+  });
+  addEventListener('mousemove', (e)=>{
+    if(!_aeDrag || !_aeEl || _aeEl.style.display==='none') return;
+    const dx=e.clientX-_aeDrag.x, dy=e.clientY-_aeDrag.y;
+    if(_aeDrag.kind==='orbit'){ _aeYaw+=dx*0.008; _aePitch=Math.max(-1.2, Math.min(1.4, _aePitch+dy*0.006)); _aeDrag.x=e.clientX; _aeDrag.y=e.clientY; }
+    else if(_aeDrag.kind==='pan'){
+      const right=new THREE.Vector3().setFromMatrixColumn(_aeCam.matrixWorld,0);
+      const up=new THREE.Vector3().setFromMatrixColumn(_aeCam.matrixWorld,1);
+      _aeTgt.addScaledVector(right, -dx*_aeDist*0.0016).addScaledVector(up, dy*_aeDist*0.0016);
+      _aeDrag.x=e.clientX; _aeDrag.y=e.clientY;
+    }
+    else if(_aeDrag.kind==='rot'){
+      const b=_aeBones.get(_aeSel); if(!b) return;
+      const ang=(dx-dy)*0.01;
+      let axisW;
+      if(_aeDrag.axis==='x'||_aeDrag.axis==='y'||_aeDrag.axis==='z'){
+        const unit=new THREE.Vector3(_aeDrag.axis==='x'?1:0, _aeDrag.axis==='y'?1:0, _aeDrag.axis==='z'?1:0);
+        const q0w=(b.parent?b.parent.getWorldQuaternion(new THREE.Quaternion()):new THREE.Quaternion()).multiply(_aeDrag.q0);
+        axisW=unit.applyQuaternion(q0w).normalize();
+      } else { axisW=new THREE.Vector3(); _aeCam.getWorldDirection(axisW).negate(); }
+      const pq=(b.parent?b.parent.getWorldQuaternion(new THREE.Quaternion()):new THREE.Quaternion());
+      const w0=pq.clone().multiply(_aeDrag.q0);
+      const w1=new THREE.Quaternion().setFromAxisAngle(axisW, ang).multiply(w0);
+      b.quaternion.copy(pq.invert().multiply(w1));
+      _aeRoot.updateWorldMatrix(true,true);
+      if(_aeAutoKey){ _aeKeySlot(_aeSel, _aeTime); _aeQueueRebuild(); _aeDrawTL(); }
+      _aeRenderInspector();
+    }
+    else if(_aeDrag.kind==='move'){
+      const b=_aeBones.get('hips'); if(!b) return;
+      const right=new THREE.Vector3().setFromMatrixColumn(_aeCam.matrixWorld,0);
+      const up=new THREE.Vector3().setFromMatrixColumn(_aeCam.matrixWorld,1);
+      const par=b.parent?b.parent.getWorldQuaternion(new THREE.Quaternion()).invert():new THREE.Quaternion();
+      const d=new THREE.Vector3().addScaledVector(right, dx*_aeDist*0.0012).addScaledVector(up, -dy*_aeDist*0.0012).applyQuaternion(par);
+      b.position.copy(_aeDrag.p0).add(d);
+      _aeRoot.updateWorldMatrix(true,true);
+      if(_aeAutoKey){ _aeKeySlot('hips', _aeTime); _aeQueueRebuild(); _aeDrawTL(); }
+      _aeRenderInspector();
+    }
+  });
+  addEventListener('mouseup', ()=>{ _aeDrag=null; });
+  cv.addEventListener('wheel', (e)=>{ e.preventDefault(); _aeDist=Math.max(_aeH*0.5, Math.min(_aeH*8, _aeDist*(e.deltaY>0?1.1:0.9))); }, { passive:false });
+  cv.addEventListener('contextmenu', e=>e.preventDefault());
+}
+// ---- keyboard (capture phase: the game's editor shortcuts must never fire inside the modal) ----
+function _aeKeys(e){
+  if(!_aeEl || _aeEl.style.display==='none') return;
+  const tag=(e.target&&e.target.tagName)||'';
+  if(e.key==='x'||e.key==='y'||e.key==='z'||e.key==='X'||e.key==='Y'||e.key==='Z'){ if(tag!=='INPUT'&&tag!=='TEXTAREA'){ _aeAxis=e.key.toLowerCase(); } }
+  if(tag==='INPUT'||tag==='TEXTAREA'){ e.stopPropagation(); return; }   // typing stays in the field; the game never sees it
+  e.stopPropagation();
+  if(e.code==='Space'){ e.preventDefault(); _aeSetPlaying(!_aePlaying); }
+  else if(e.code==='Escape'){ _aeClose(); }
+  else if((e.ctrlKey||e.metaKey) && e.code==='KeyZ' && !e.shiftKey){ e.preventDefault(); _aeUndoOp(); }
+  else if(((e.ctrlKey||e.metaKey) && e.code==='KeyZ' && e.shiftKey) || ((e.ctrlKey||e.metaKey) && e.code==='KeyY')){ e.preventDefault(); _aeRedoOp(); }
+  else if(e.code==='Delete' || e.code==='Backspace'){
+    if(_aeSelKey){ _aeSnapshot(); const tr=_aeClip.tracks[_aeSelKey.slot];
+      if(tr){ if(tr.q) _aeDeleteKeyAt(tr.q, _aeSelKey.t); if(_aeSelKey.slot==='hips' && tr.p) _aeDeleteKeyAt(tr.p, _aeSelKey.t);
+        if((!tr.q||!tr.q.length)&&(!tr.p||!tr.p.length)) delete _aeClip.tracks[_aeSelKey.slot]; }
+      _aeSelKey=null; _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); }
+  }
+  else if(e.code==='KeyK'){ _aeSnapshot(); if(e.shiftKey){ const n=_aeKeyPose(_aeTime); if(typeof toast==='function') toast(n+' bones keyed'); } else if(_aeSel) _aeKeySlot(_aeSel, _aeTime); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); }
+  else if(e.code==='ArrowLeft'||e.code==='ArrowRight'){
+    e.preventDefault();
+    const step=1/Math.max(5, _aeClip?_aeClip.fps:30);
+    _aeSetPlaying(false); _aeApplyTime(_aeTime+(e.code==='ArrowRight'?step:-step));
+  }
+}
+function _aeKeyUp(e){ if(e.key==='x'||e.key==='y'||e.key==='z'||e.key==='X'||e.key==='Y'||e.key==='Z') _aeAxis=''; }
+addEventListener('keydown', _aeKeys, true);
+addEventListener('keyup', _aeKeyUp, true);
+addEventListener('resize', ()=>{ if(_aeEl && _aeEl.style.display!=='none') _aeResize(); });
+// ---- DOM ----
+function _aeEnsureDom(){
+  if(_aeEl) return _aeEl;
+  const el=document.createElement('div'); el.id='animEd';
+  el.innerHTML=
+    '<div class="aeTop">'
+    +'<span class="aeTitle">ANIMATION EDITOR</span>'
+    +'<select id="aeClipSel" aria-label="Clip"></select>'
+    +'<button id="aeNew">+ New</button><button id="aeDup">Duplicate</button><button id="aeDel">Delete</button>'
+    +'<input id="aeName" type="text" maxlength="40" aria-label="Clip name" placeholder="clip name">'
+    +'<button id="aeSave" class="aeAccent">SAVE CLIP</button>'
+    +'<button id="aeClose" aria-label="Close">✕</button>'
+    +'</div>'
+    +'<div class="aeMain">'
+    +'<div class="aeLeft"><input id="aeSearch" type="text" placeholder="Search bones…" aria-label="Search bones"><div id="aeTree"></div></div>'
+    +'<div id="aeView"><div id="aeMsg"></div>'
+    +'<div class="aeHint">drag empty = orbit · wheel = zoom · middle-drag = pan · click a joint, drag it to rotate (hold X/Y/Z for an axis) · Shift-drag hips = move · K = key bone · Shift+K = key pose</div>'
+    +'<div class="aeViews"><button data-v="f">Front</button><button data-v="s">Side</button><button data-v="b">Back</button><button data-v="p">3⁄4</button></div>'
+    +'</div>'
+    +'<div class="aeRight"><div id="aeInsp"></div></div>'
+    +'</div>'
+    +'<div class="aeBottom">'
+    +'<div class="aeTrans">'
+    +'<button id="aePlay" title="Play / pause (Space)">▶</button>'
+    +'<button id="aeStop" title="Stop (back to 0)">⏹</button>'
+    +'<button id="aePrevK" title="Previous key">❘◀</button>'
+    +'<button id="aeNextK" title="Next key">▶❘</button>'
+    +'<span id="aeTimeLb">0.00 / 0.00 · f0</span>'
+    +'<label><input id="aeAutoK" type="checkbox"> Auto-key</label>'
+    +'<label><input id="aeSnapCb" type="checkbox" checked> Snap</label>'
+    +'<button id="aeKeyBone" title="Key the selected bone at the playhead (K)">Key bone</button>'
+    +'<button id="aeKeyPose" title="Key every posed bone (Shift+K)">Key pose</button>'
+    +'</div>'
+    +'<canvas id="aeTL" height="64"></canvas>'
+    +'</div>';
+  document.body.appendChild(el);
+  _aeEl=el;
+  el.querySelector('#aeClose').onclick=_aeClose;
+  el.querySelector('#aeSave').onclick=_aeSave;
+  el.querySelector('#aeNew').onclick=()=>{ const d=_caSanitize([_aeNewClipData()])[0]; customAnims.push(d); _caRev++; _aeLoadClip(d.id); };
+  el.querySelector('#aeDup').onclick=_aeDuplicate;
+  el.querySelector('#aeDel').onclick=_aeDelete;
+  el.querySelector('#aeClipSel').onchange=(e)=>_aeLoadClip(e.target.value);
+  el.querySelector('#aeName').onchange=(e)=>{ if(!_aeClip) return; _aeSnapshot(); _aeClip.name=(e.target.value.trim()||'Custom clip').slice(0,40); _aeRenderClipSel(); };
+  el.querySelector('#aePlay').onclick=()=>_aeSetPlaying(!_aePlaying);
+  el.querySelector('#aeStop').onclick=()=>{ _aeSetPlaying(false); _aeApplyTime(0); };
+  el.querySelector('#aeAutoK').onchange=(e)=>{ _aeAutoKey=e.target.checked; };
+  el.querySelector('#aeSnapCb').onchange=(e)=>{ _aeSnap=e.target.checked; };
+  el.querySelector('#aeKeyBone').onclick=()=>{ if(_aeSel){ _aeSnapshot(); _aeKeySlot(_aeSel, _aeTime); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); } };
+  el.querySelector('#aeKeyPose').onclick=()=>{ _aeSnapshot(); const n=_aeKeyPose(_aeTime); if(typeof toast==='function') toast(n+' bones keyed'); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); };
+  el.querySelector('#aePrevK').onclick=()=>{ const ts=_aeKeyTimes(_aeClip).filter(t=>t<_aeTime-1e-4); if(ts.length){ _aeSetPlaying(false); _aeApplyTime(ts[ts.length-1]); } };
+  el.querySelector('#aeNextK').onclick=()=>{ const ts=_aeKeyTimes(_aeClip).filter(t=>t>_aeTime+1e-4); if(ts.length){ _aeSetPlaying(false); _aeApplyTime(ts[0]); } };
+  el.querySelector('#aeSearch').oninput=(e)=>{ _aeTreeFilter=e.target.value.toLowerCase(); _aeRenderTree(); };
+  for(const b of el.querySelectorAll('.aeViews button')) b.onclick=()=>{ const v=b.dataset.v;
+    _aePitch=0.12; _aeYaw = v==='f'?Math.PI : v==='b'?0 : v==='s'?Math.PI/2 : 0.6; if(v==='p') _aePitch=0.3; };
+  _aeBindTL(el.querySelector('#aeTL'));
+  return el;
+}
+function _aeRenderClipSel(){
+  const sel=_aeEl && _aeEl.querySelector('#aeClipSel'); if(!sel) return;
+  sel.textContent='';
+  for(const d of customAnims){ const o=document.createElement('option'); o.value=d.id; o.textContent=d.name; if(_aeClip && d.id===_aeClip.id) o.selected=true; sel.appendChild(o); }
+  const nm=_aeEl.querySelector('#aeName'); if(nm && _aeClip) nm.value=_aeClip.name;
+}
+function _aeRenderTree(){
+  const host=_aeEl && _aeEl.querySelector('#aeTree'); if(!host || !_aeBones) return;
+  host.textContent='';
+  const IND={ hips:0, spine0:1, spine1:2, spine2:3, neck:4, head:5,
+    'L:shoulder':4,'L:uparm':5,'L:forearm':6,'L:hand':7,'L:upleg':1,'L:leg':2,'L:foot':3,'L:toe':4,
+    'R:shoulder':4,'R:uparm':5,'R:forearm':6,'R:hand':7,'R:upleg':1,'R:leg':2,'R:foot':3,'R:toe':4 };
+  for(const slot of CA_SLOTS){
+    const b=_aeBones.get(slot); if(!b) continue;
+    const label=_caSlotLabel(slot);
+    if(_aeTreeFilter && label.toLowerCase().indexOf(_aeTreeFilter)<0 && b.name.toLowerCase().indexOf(_aeTreeFilter)<0) continue;
+    const row=document.createElement('div'); row.className='aeBoneRow'+(slot===_aeSel?' sel':'');
+    row.style.paddingLeft=(8+(IND[slot]||0)*9)+'px';
+    const tr=_aeClip && _aeClip.tracks[slot];
+    const nK=tr ? ((tr.q?tr.q.length:0)+(tr.p?tr.p.length:0)) : 0;
+    row.innerHTML='<span class="aeBoneNm">'+label+'</span><span class="aeBoneReal">'+b.name.slice(0,16)+'</span>'+(nK?('<span class="aeKeyCt">'+nK+'</span>'):'');
+    row.onclick=()=>{ _aeSel=slot; _aeSelKey=null; _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); };
+    host.appendChild(row);
+  }
+}
+function _aeRenderInspector(){
+  const host=_aeEl && _aeEl.querySelector('#aeInsp'); if(!host) return;
+  host.textContent='';
+  const sec=(title)=>{ const h=document.createElement('div'); h.className='aeSecH'; h.textContent=title; host.appendChild(h); const b=document.createElement('div'); b.className='aeSecB'; host.appendChild(b); return b; };
+  // -- selected bone --
+  const bSec=sec(_aeSel ? ('BONE — '+_caSlotLabel(_aeSel)) : 'BONE');
+  if(!_aeSel){ bSec.innerHTML='<div class="aeNote">Click a joint in the viewport (or a row on the left).</div>'; }
+  else {
+    const b=_aeBones.get(_aeSel), rest=_aeRestLocal.get(_aeSel);
+    const rel=rest ? b.quaternion.clone().premultiply(rest.q.clone().invert()) : b.quaternion.clone();
+    const eu=new THREE.Euler().setFromQuaternion(rel, 'XYZ');
+    const deg=(r)=>Math.round(r*180/Math.PI*10)/10;
+    const mkNum=(lb, val, cb)=>{ const w=document.createElement('label'); w.className='aeNumRow';
+      const sp=document.createElement('span'); sp.textContent=lb;
+      const inp=document.createElement('input'); inp.type='number'; inp.step='1'; inp.value=val;
+      inp.onchange=()=>cb(parseFloat(inp.value)||0);
+      w.appendChild(sp); w.appendChild(inp); return w; };
+    const setEuler=(ax, v)=>{ const cur=new THREE.Euler().setFromQuaternion(rel,'XYZ'); cur[ax]=v*Math.PI/180;
+      const nq=new THREE.Quaternion().setFromEuler(cur);
+      b.quaternion.copy(rest.q.clone().multiply(nq)); _aeRoot.updateWorldMatrix(true,true);
+      if(_aeAutoKey){ _aeSnapshot(); _aeKeySlot(_aeSel,_aeTime); _aeQueueRebuild(); _aeDrawTL(); _aeRenderTree(); } };
+    bSec.appendChild(mkNum('Rot X°', deg(eu.x), v=>setEuler('x',v)));
+    bSec.appendChild(mkNum('Rot Y°', deg(eu.y), v=>setEuler('y',v)));
+    bSec.appendChild(mkNum('Rot Z°', deg(eu.z), v=>setEuler('z',v)));
+    if(_aeSel==='hips' && rest){
+      const off=b.position.clone().sub(rest.p);
+      const setP=(ax,v)=>{ const o2=b.position.clone().sub(rest.p); o2[ax]=v; b.position.copy(rest.p.clone().add(o2)); _aeRoot.updateWorldMatrix(true,true);
+        if(_aeAutoKey){ _aeSnapshot(); _aeKeySlot('hips',_aeTime); _aeQueueRebuild(); _aeDrawTL(); } };
+      const pr=(v)=>Math.round(v*1000)/1000;
+      bSec.appendChild(mkNum('Pos X', pr(off.x), v=>setP('x',v)));
+      bSec.appendChild(mkNum('Pos Y', pr(off.y), v=>setP('y',v)));
+      bSec.appendChild(mkNum('Pos Z', pr(off.z), v=>setP('z',v)));
+    }
+    const row=document.createElement('div'); row.className='aeBtnRow';
+    const kb=document.createElement('button'); kb.textContent='Key @ '+_aeTime.toFixed(2)+'s';
+    kb.onclick=()=>{ _aeSnapshot(); _aeKeySlot(_aeSel,_aeTime); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); };
+    const rb=document.createElement('button'); rb.textContent='Reset bone';
+    rb.onclick=()=>{ const r=_aeRestLocal.get(_aeSel); if(r){ b.quaternion.copy(r.q); b.position.copy(r.p); _aeRoot.updateWorldMatrix(true,true); _aeRenderInspector(); } };
+    const ra=document.createElement('button'); ra.textContent='Reset pose';
+    ra.onclick=()=>{ _aeResetPose(); _aeRenderInspector(); };
+    row.appendChild(kb); row.appendChild(rb); row.appendChild(ra); bSec.appendChild(row);
+  }
+  // -- clip settings --
+  if(_aeClip){
+    const cSec=sec('CLIP');
+    const mkNum2=(lb, val, min, max, step, cb)=>{ const w=document.createElement('label'); w.className='aeNumRow';
+      const sp=document.createElement('span'); sp.textContent=lb;
+      const inp=document.createElement('input'); inp.type='number'; inp.min=min; inp.max=max; inp.step=step; inp.value=val;
+      inp.onchange=()=>{ _aeSnapshot(); cb(parseFloat(inp.value)); _aeQueueRebuild(); _aeDrawTL(); };
+      w.appendChild(sp); w.appendChild(inp); return w; };
+    cSec.appendChild(mkNum2('Duration s', _aeClip.dur, 0.1, 60, 0.1, v=>{ _aeClip.dur=Math.max(0.1,Math.min(60,v||1)); }));
+    cSec.appendChild(mkNum2('FPS', _aeClip.fps, 5, 60, 1, v=>{ _aeClip.fps=Math.max(5,Math.min(60,Math.round(v||30))); }));
+    const lw=document.createElement('label'); lw.className='aeNumRow';
+    lw.innerHTML='<span>Loop</span>';
+    const ls=document.createElement('select');
+    for(const [v,t] of [['loop','Loop'],['once','Play once'],['hold','Hold last frame']]){ const o=document.createElement('option'); o.value=v; o.textContent=t; if(_aeClip.loop===v) o.selected=true; ls.appendChild(o); }
+    ls.onchange=()=>{ _aeSnapshot(); _aeClip.loop=ls.value; _aeQueueRebuild(); };
+    lw.appendChild(ls); cSec.appendChild(lw);
+    const kt=_aeKeyTimes(_aeClip);
+    const note=document.createElement('div'); note.className='aeNote';
+    note.textContent = kt.length ? (kt.length+' key times · '+Object.keys(_aeClip.tracks).length+' bones keyed') : 'No keys yet — pose the model and press Key bone / Key pose.';
+    cSec.appendChild(note);
+  }
+  // -- assignment --
+  if(_aeClip){
+    const aSec=sec('ASSIGN TO PLAYER');
+    const row=document.createElement('div'); row.className='aeBtnRow';
+    const sel=document.createElement('select');
+    if(typeof ANIM_SLOTS!=='undefined'){
+      let g='';
+      let og=null;
+      for(const slot of ANIM_SLOTS){ if(slot.g!==g){ g=slot.g; og=document.createElement('optgroup'); og.label=g; sel.appendChild(og); }
+        const o=document.createElement('option'); o.value=slot.k; o.textContent=slot.l; (og||sel).appendChild(o); }
+    }
+    const btn=document.createElement('button'); btn.className='aeAccent'; btn.textContent='Assign';
+    btn.onclick=()=>_aeAssign(sel.value);
+    row.appendChild(sel); row.appendChild(btn); aSec.appendChild(row);
+    const used=_aeAssignments(_aeAttachName());
+    const un=document.createElement('div'); un.className='aeNote';
+    un.textContent = used.length ? ('Assigned: '+used.join(', ')) : 'Not assigned yet. Saved clips also appear in every per-state clip picker.';
+    aSec.appendChild(un);
+  }
+}
+// ---- timeline (canvas): ruler + all-keys row + selected-bone row ----
+function _aeTLGeom(cv){
+  const W=cv.width=cv.clientWidth*(window.devicePixelRatio||1);
+  const H=cv.height=64*(window.devicePixelRatio||1);
+  const padL=10*(window.devicePixelRatio||1), padR=10*(window.devicePixelRatio||1);
+  return { W, H, padL, padR, span:W-padL-padR };
+}
+function _aeTLx(t, g){ return g.padL + (t/Math.max(1e-3,_aeClip.dur))*g.span; }
+function _aeTLt(x, g){ return Math.max(0, Math.min(_aeClip.dur, (x-g.padL)/Math.max(1,g.span)*_aeClip.dur)); }
+function _aeDrawTL(){
+  const cv=_aeEl && _aeEl.querySelector('#aeTL'); if(!cv || !_aeClip) return;
+  const g=_aeTLGeom(cv), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||1;
+  ctx.clearRect(0,0,g.W,g.H);
+  ctx.fillStyle='rgba(255,255,255,0.04)'; ctx.fillRect(g.padL, 0, g.span, g.H);
+  // frame ticks
+  const fps=_aeClip.fps, frames=Math.round(_aeClip.dur*fps);
+  const step=Math.max(1, Math.ceil(frames/(g.span/(26*dpr))));
+  ctx.font=(9*dpr)+'px monospace'; ctx.textBaseline='top';
+  for(let f=0; f<=frames; f+=step){
+    const x=_aeTLx(f/fps, g);
+    ctx.fillStyle='rgba(160,200,190,0.25)'; ctx.fillRect(x, 0, 1, g.H);
+    ctx.fillStyle='#5f8d80'; ctx.fillText(String(f), x+2*dpr, 2*dpr);
+  }
+  const rowY=[22*dpr, 42*dpr];
+  // all-key summary
+  ctx.fillStyle='#7fb8a6';
+  for(const t of _aeKeyTimes(_aeClip)){ const x=_aeTLx(t,g); ctx.beginPath(); ctx.moveTo(x, rowY[0]); ctx.lineTo(x+4*dpr, rowY[0]+4*dpr); ctx.lineTo(x, rowY[0]+8*dpr); ctx.lineTo(x-4*dpr, rowY[0]+4*dpr); ctx.fill(); }
+  // selected bone
+  if(_aeSel && _aeClip.tracks[_aeSel]){
+    const tr=_aeClip.tracks[_aeSel]; const ts=new Set();
+    if(tr.q) for(const k of tr.q) ts.add(k[0]);
+    if(tr.p) for(const k of tr.p) ts.add(k[0]);
+    for(const t of ts){ const x=_aeTLx(t,g);
+      const selK=_aeSelKey && _aeSelKey.slot===_aeSel && Math.abs(_aeSelKey.t-t)<1e-4;
+      ctx.fillStyle=selK?'#ffd166':UI_ACCENT;   // the canvas-side accent mirror (re-themes with the UI)
+      ctx.beginPath(); ctx.moveTo(x, rowY[1]); ctx.lineTo(x+5*dpr, rowY[1]+5*dpr); ctx.lineTo(x, rowY[1]+10*dpr); ctx.lineTo(x-5*dpr, rowY[1]+5*dpr); ctx.fill(); }
+  }
+  // playhead
+  const px=_aeTLx(_aeTime, g);
+  ctx.fillStyle='#ff8a5b'; ctx.fillRect(px-1, 0, 2*dpr, g.H);
+  const lb=_aeEl.querySelector('#aeTimeLb');
+  if(lb) lb.textContent=_aeTime.toFixed(2)+' / '+_aeClip.dur.toFixed(2)+' · f'+Math.round(_aeTime*fps);
+}
+function _aeBindTL(cv){
+  let drag=null;
+  const geomT=(e)=>{ const r=cv.getBoundingClientRect(); const g=_aeTLGeom(cv); return _aeTLt((e.clientX-r.left)*(window.devicePixelRatio||1), g); };
+  cv.addEventListener('mousedown', (e)=>{
+    const t=geomT(e);
+    // grabbing a selected-bone key?
+    if(_aeSel && _aeClip && _aeClip.tracks[_aeSel]){
+      const tr=_aeClip.tracks[_aeSel]; const ts=new Set();
+      if(tr.q) for(const k of tr.q) ts.add(k[0]);
+      if(tr.p) for(const k of tr.p) ts.add(k[0]);
+      const tol=_aeClip.dur*0.012+0.008;
+      let hit=null; for(const kt of ts) if(Math.abs(kt-t)<tol && (hit==null || Math.abs(kt-t)<Math.abs(hit-t))) hit=kt;
+      if(hit!=null && e.clientY-cv.getBoundingClientRect().top>34){
+        _aeSelKey={ slot:_aeSel, t:hit };
+        _aeSnapshot();
+        drag={ from:hit };
+        _aeDrawTL(); return;
+      }
+    }
+    _aeSelKey=null; _aeSetPlaying(false); _aeApplyTime(t); drag={ scrub:true };
+  });
+  addEventListener('mousemove', (e)=>{
+    if(!drag || !_aeEl || _aeEl.style.display==='none') return;
+    const t=geomT(e);
+    if(drag.scrub){ _aeApplyTime(t); return; }
+    // move the grabbed key (both q and p entries at that time)
+    const nt=_aeSnapT(t, _aeClip.fps, _aeSnap);
+    if(Math.abs(nt-drag.from)<1e-6) return;
+    const tr=_aeClip.tracks[_aeSelKey.slot]; if(!tr) return;
+    for(const kind of ['q','p']){
+      const arr=tr[kind]; if(!arr) continue;
+      const at=arr.findIndex(k=>Math.abs(k[0]-drag.from)<=1e-4);
+      if(at>=0){ const k=arr[at].slice(); k[0]=nt; arr.splice(at,1); _aeUpsertKey(arr, k); }
+    }
+    _aeSelKey.t=nt; drag.from=nt;
+    _aeQueueRebuild(); _aeDrawTL();
+  });
+  addEventListener('mouseup', ()=>{ drag=null; });
+  cv.addEventListener('dblclick', (e)=>{
+    if(!_aeSel) return;
+    const t=_aeSnapT(geomT(e), _aeClip.fps, _aeSnap);
+    _aeSnapshot(); const keep=_aeTime; _aeApplyTime(t); _aeKeySlot(_aeSel, t); _aeApplyTime(keep);
+    _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL();
+  });
+}
+
 // ---------- AUTO-RIGGER (build 1025) ----------
 // Mixamo-style rigging for STATIC humanoid models: the author clicks chin/wrists/elbows/knees/
 // groin markers on the T/A-posed mesh; a mixamorig-named skeleton is fitted to those markers
@@ -20818,7 +21502,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1040 · 2026-07-22';
+const BUILD_VERSION = 'build 1041 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31183,6 +31867,14 @@ function renderEditorFields(){
           arRow.appendChild(cx);
         }
         urlHost.appendChild(arRow);
+        { // build 1041: the in-game animation editor — author custom clips on this model
+          const aeRow=document.createElement('div'); aeRow.style.cssText='display:flex;align-items:center;gap:7px;margin:2px 0 2px;';
+          const aeB=document.createElement('button'); aeB.textContent='\ud83c\udfac Animation editor';
+          aeB.title='Pose this model\u2019s skeleton over time and save custom clips \u2014 idle, reload, emotes, deaths, anything. Clips save with the level and can be assigned to any animation state (desktop only).';
+          aeB.style.cssText='flex:1;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
+          aeB.onclick=()=>{ if(typeof _aeOpen==='function') _aeOpen(); };
+          aeRow.appendChild(aeB); urlHost.appendChild(aeRow);
+        }
       }
       const acHead=document.createElement('div'); acHead.className='hint'; acHead.style.margin='10px 0 2px'; acHead.innerHTML='<b>Animation states</b> — auto-matched by clip name; override per state. Walk/run switch with the avatar\u2019s movement in-game.';
       urlHost.appendChild(acHead);
@@ -33000,6 +33692,7 @@ function _palItems(){
   A('Toggle Hide enemies','show visibility', ()=>{ const b=document.getElementById('tbHideEn'); if(b) b.click(); });
   A('Toggle Show colliders','hitbox cylinder physics', ()=>{ const b=document.getElementById('tbCol'); if(b) b.click(); });
   A('Toggle Outliner','scene hierarchy list tree folders o', ()=>{ if(typeof _outToggle==='function') _outToggle(); });
+  A('Animation editor','animate pose keyframe clip skeleton custom', ()=>{ if(typeof _aeOpen==='function') _aeOpen(); });
   A('Gizmo: Move','translate grab 1', ()=>{ gizmoMode='translate'; updateGizmo(); renderEditorFields(); });
   A('Gizmo: Rotate','turn spin 2', ()=>{ gizmoMode='rotate'; updateGizmo(); renderEditorFields(); });
   A('Gizmo: Scale','size resize 3', ()=>{ gizmoMode='scale'; updateGizmo(); renderEditorFields(); });
