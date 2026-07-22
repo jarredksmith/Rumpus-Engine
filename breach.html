@@ -9626,15 +9626,223 @@ function _animLibAttach(gltf, packId, cb){
 // animations include the retargeted library clips (the pickers + state machine see them as the model's own).
 function _withLibAnims(gltf, cfg, done){
   if(cfg && cfg.autoRig && typeof _autoRigApply==='function'){ try{ _autoRigApply(gltf, cfg.autoRig); }catch(e){ console.warn('[RUMPUS] auto-rig failed:', e && e.message); } }   // build 1025: author-marked static models grow a skeleton first
+  // build 1040: creator-authored custom clips join the augmented view on EVERY path, so the
+  // per-state pickers and the runtime state machine see them as the model's own.
+  const finish=(g)=>{
+    const ca=(typeof _caClipsFor==='function') ? _caClipsFor(g) : [];
+    if(!ca.length){ done(g); return; }
+    done({ scene:g.scene, scenes:g.scenes, animations:(g.animations||[]).concat(ca), userData:g.userData, parser:g.parser });
+  };
   const packId = cfg && cfg.animLib;
-  if(!packId || !ANIM_LIB_PACKS[packId] || !gltf || !gltf.scene){ done(gltf); return; }
+  if(!packId || !ANIM_LIB_PACKS[packId] || !gltf || !gltf.scene){ finish(gltf); return; }
   _animLibAttach(gltf, packId, (ok)=>{
-    if(!ok){ done(gltf); return; }
+    if(!ok){ finish(gltf); return; }
     try{ _animLibApplyPicks(cfg, packId); }catch(e){}   // build 925: pack defaults are living — new default picks (e.g. the move-fire composites) reach saved models without touching the selector; hand-picked overrides still survive
-    done({ scene:gltf.scene, scenes:gltf.scenes, animations:(gltf.animations||[]).concat(gltf.userData._libAnims), userData:gltf.userData, parser:gltf.parser });
+    finish({ scene:gltf.scene, scenes:gltf.scenes, animations:(gltf.animations||[]).concat(gltf.userData._libAnims), userData:gltf.userData, parser:gltf.parser });
   });
 }
 function _loadGLTFWithLib(url, cfg, cb, errcb){ loadGLTFCached(url, (g)=>_withLibAnims(g, cfg, cb), errcb); }
+// ---------- CUSTOM ANIMATIONS (build 1040) --------------------------------------------------
+// Creator-authored skeletal clips, editable in the in-game Animation Editor (build 1041) and
+// stored WITH THE LEVEL. A clip's tracks are keyed by a fixed canonical humanoid vocabulary and
+// hold world-space rotation DELTAS from the rig's rest pose (plus an optional hips position
+// offset normalized by hip height) — rig-independent by the same construction _retargetClip
+// uses, so one clip drives a Mixamo rig, a Blender export, or an auto-rigged statue alike.
+const CA_SLOTS = ['hips','spine0','spine1','spine2','neck','head',
+  'L:shoulder','L:uparm','L:forearm','L:hand','L:upleg','L:leg','L:foot','L:toe',
+  'R:shoulder','R:uparm','R:forearm','R:hand','R:upleg','R:leg','R:foot','R:toe'];
+const CA_SLOT_LABEL = { hips:'Hips', spine0:'Spine', spine1:'Spine 2', spine2:'Chest', neck:'Neck', head:'Head' };
+function _caSlotLabel(slot){
+  if(CA_SLOT_LABEL[slot]) return CA_SLOT_LABEL[slot];
+  const m=String(slot).match(/^([LR]):(\w+)$/); if(!m) return slot;
+  const nm={ shoulder:'Shoulder', uparm:'Upper arm', forearm:'Forearm', hand:'Hand', upleg:'Thigh', leg:'Shin', foot:'Foot', toe:'Toe' }[m[2]]||m[2];
+  return (m[1]==='L'?'Left ':'Right ')+nm.toLowerCase();
+}
+function _caNewId(){ return 'ca_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+let _caRev = 0;   // bumped whenever the library changes; invalidates per-gltf clip caches
+// Sanitizer: clips ride level data / share codes / the network, so everything is validated,
+// clamped and rounded. Malformed clips are dropped, never fatal. Plain data in, plain data out
+// (no functions, no prototypes) — imported animations cannot smuggle executable anything.
+function _caSanitize(list){
+  if(!Array.isArray(list)) return [];
+  const out=[], ids=new Set();
+  const num=(v,lo,hi,d)=>{ v=+v; if(!isFinite(v)) return d; return Math.min(hi, Math.max(lo, v)); };
+  for(const c of list){
+    if(out.length>=24) break;
+    if(!c || typeof c!=='object') continue;
+    let id=(typeof c.id==='string' && /^ca_[a-z0-9]{4,24}$/.test(c.id)) ? c.id : _caNewId();
+    while(ids.has(id)) id=_caNewId();
+    ids.add(id);
+    const dur=num(c.dur, 0.1, 60, 1);
+    const fps=Math.round(num(c.fps, 5, 60, 30));
+    const d={ id, v:1, name:(typeof c.name==='string' && c.name.trim()) ? c.name.trim().slice(0,40) : 'Custom clip',
+      dur, fps, loop:(c.loop==='once'||c.loop==='hold')?c.loop:'loop', tracks:{} };
+    const T=(c.tracks && typeof c.tracks==='object') ? c.tracks : {};
+    for(const slot of CA_SLOTS){
+      const t=T[slot]; if(!t || typeof t!=='object') continue;
+      const tr={};
+      if(Array.isArray(t.q)){
+        const q=[];
+        for(const k of t.q){ if(q.length>=600) break;
+          if(!Array.isArray(k) || k.length<5) continue;
+          const tt=+k[0], x=+k[1], y=+k[2], z=+k[3], w=+k[4];
+          if(![tt,x,y,z,w].every(isFinite)) continue;
+          const len=Math.sqrt(x*x+y*y+z*z+w*w); if(len<1e-6) continue;
+          q.push([ Math.round(Math.min(dur,Math.max(0,tt))*1000)/1000,
+            Math.round(x/len*1e4)/1e4, Math.round(y/len*1e4)/1e4, Math.round(z/len*1e4)/1e4, Math.round(w/len*1e4)/1e4 ]);
+        }
+        q.sort((a,b)=>a[0]-b[0]);
+        for(let i=q.length-1;i>0;i--) if(q[i][0]===q[i-1][0]) q.splice(i,1);   // duplicate-time keys collapse (last write wins after sort stability)
+        if(q.length) tr.q=q;
+      }
+      if(slot==='hips' && Array.isArray(t.p)){
+        const p=[];
+        for(const k of t.p){ if(p.length>=600) break;
+          if(!Array.isArray(k) || k.length<4) continue;
+          const tt=+k[0], x=+k[1], y=+k[2], z=+k[3];
+          if(![tt,x,y,z].every(isFinite)) continue;
+          p.push([ Math.round(Math.min(dur,Math.max(0,tt))*1000)/1000,
+            Math.round(Math.min(10,Math.max(-10,x))*1e4)/1e4, Math.round(Math.min(10,Math.max(-10,y))*1e4)/1e4, Math.round(Math.min(10,Math.max(-10,z))*1e4)/1e4 ]);
+        }
+        p.sort((a,b)=>a[0]-b[0]);
+        for(let i=p.length-1;i>0;i--) if(p[i][0]===p[i-1][0]) p.splice(i,1);
+        if(p.length) tr.p=p;
+      }
+      if(tr.q || tr.p) d.tracks[slot]=tr;
+    }
+    out.push(d);
+  }
+  return out;
+}
+// Canonical slot -> bone for one rig. Spine/neck chains resolve proportionally into the fixed
+// slots (a 5-bone spine picks 3 spread bones; a 1-bone spine answers only the chest slot), and
+// a pelvis-less rig promotes its lowest spine to hips — both mirroring _buildBoneMap.
+function _caGatherBones(root){
+  const raw=new Map();
+  root.traverse(o=>{ if(!o.name) return; const k=_canonBoneKey(o.name); if(!k) return;
+    const cur=raw.get(k); if(!cur || (o.isBone && !cur.isBone)) raw.set(k,o); });
+  const depth=(o)=>{ let d=0,p=o; while(p && p.parent){ d++; p=p.parent; } return d; };
+  if(!raw.has('hips')){
+    const sp=[...raw.keys()].filter(k=>k.indexOf('spine@')===0).sort((a,b)=>depth(raw.get(a))-depth(raw.get(b)));
+    if(sp.length){ raw.set('hips', raw.get(sp[0])); raw.delete(sp[0]); }
+  }
+  const out=new Map();
+  const chain=(base, slots)=>{
+    const ks=[...raw.keys()].filter(k=>k.indexOf(base+'@')===0).sort((a,b)=>depth(raw.get(a))-depth(raw.get(b)));
+    if(!ks.length) return;
+    for(let i=0;i<slots.length;i++){ const j=Math.round(i*(ks.length-1)/Math.max(1, slots.length-1)); out.set(slots[i], raw.get(ks[j])); }
+    for(const pick of [['spine2','spine1','spine0'],['neck']]){   // dedup short chains: one bone answers only its HIGHEST slot
+      const seen=new Set();
+      for(const sl of pick){ const b=out.get(sl); if(!b) continue; if(seen.has(b)) out.delete(sl); else seen.add(b); }
+    }
+  };
+  chain('spine', ['spine0','spine1','spine2']); chain('neck', ['neck']);
+  if(raw.has('hips')) out.set('hips', raw.get('hips'));
+  if(raw.has('head')) out.set('head', raw.get('head'));
+  for(const S of ['L','R']) for(const b of ['shoulder','uparm','forearm','hand','upleg','leg','foot','toe']){
+    const k=S+':'+b; if(raw.has(k)) out.set(k, raw.get(k));
+  }
+  return out;
+}
+// Evaluate a quaternion track (world delta) at time t — slerp between neighbors, clamped ends.
+function _caEvalQ(keys, t, target){
+  if(!keys.length) return target.set(0,0,0,1);
+  if(t<=keys[0][0]){ const k=keys[0]; return target.set(k[1],k[2],k[3],k[4]); }
+  const last=keys[keys.length-1];
+  if(t>=last[0]) return target.set(last[1],last[2],last[3],last[4]);
+  let i=1; while(i<keys.length && keys[i][0]<t) i++;
+  const a=keys[i-1], b=keys[i], f=(t-a[0])/Math.max(1e-9, b[0]-a[0]);
+  target.set(a[1],a[2],a[3],a[4]);
+  return target.slerp(new THREE.Quaternion(b[1],b[2],b[3],b[4]), f);   // slerp = shortest path, never Euler
+}
+function _caEvalP(keys, t, target){
+  if(!keys.length) return target.set(0,0,0);
+  if(t<=keys[0][0]){ const k=keys[0]; return target.set(k[1],k[2],k[3]); }
+  const last=keys[keys.length-1];
+  if(t>=last[0]) return target.set(last[1],last[2],last[3]);
+  let i=1; while(i<keys.length && keys[i][0]<t) i++;
+  const a=keys[i-1], b=keys[i], f=(t-a[0])/Math.max(1e-9, b[0]-a[0]);
+  return target.set(a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f, a[3]+(b[3]-a[3])*f);
+}
+// Build a plain THREE.AnimationClip from clip data for THIS rig. The rig must be at rest when
+// called (load time / editor open) — rest world orientations are read live, never cached, and
+// the rig is left exactly as found (bind pose is never mutated).
+function _caBuildClip(root, data){
+  try{
+    if(!root || !data || !data.tracks) return null;
+    const bones=_caGatherBones(root);
+    if(!bones.size) return null;
+    root.updateWorldMatrix(true, true);
+    const slotOf=new Map(); for(const [k,b] of bones) slotOf.set(b, k);
+    const restW=new Map();
+    for(const [,b] of bones) restW.set(b, b.getWorldQuaternion(new THREE.Quaternion()));
+    const hipsB=bones.get('hips');
+    let hipRestW=null, hipRestLocalParentInv=null, hipH=1, rootY=0;
+    { const rv=new THREE.Vector3(); root.getWorldPosition(rv); rootY=rv.y; }
+    if(hipsB){
+      hipRestW=hipsB.getWorldPosition(new THREE.Vector3());
+      hipH=Math.max(1e-4, Math.abs(hipRestW.y - rootY));
+      hipRestLocalParentInv=new THREE.Matrix4();
+      if(hipsB.parent){ hipsB.parent.updateWorldMatrix(true,false); hipRestLocalParentInv.copy(hipsB.parent.matrixWorld).invert(); }
+    }
+    const rec=new Map();   // bone -> { times:[], q:[] }
+    const getRec=(b)=>{ let r=rec.get(b); if(!r){ r={ times:[], q:[] }; rec.set(b,r); } return r; };
+    const dur=Math.max(0.1, +data.dur||1), fps=Math.max(5, Math.min(60, Math.round(+data.fps||30)));
+    const frames=Math.max(2, Math.round(dur*fps)+1);
+    const _qa=new THREE.Quaternion(), _qb=new THREE.Quaternion(), _qd=new THREE.Quaternion(), _v=new THREE.Vector3();
+    const hipPosTimes=[], hipPos=[];
+    const hasHipP=!!(hipsB && data.tracks.hips && data.tracks.hips.p && data.tracks.hips.p.length);
+    const walk=(node, parentWQ, t)=>{
+      const slot=slotOf.get(node);
+      let local=node.quaternion;
+      const tr=slot ? data.tracks[slot] : null;
+      if(tr && tr.q && tr.q.length){
+        _caEvalQ(tr.q, t, _qd);
+        _qa.copy(_qd).multiply(restW.get(node));            // world delta x rest world -> target world
+        _qb.copy(parentWQ).invert().multiply(_qa);          // -> local under the POSED parent
+        const r=getRec(node); r.times.push(t); r.q.push(_qb.x,_qb.y,_qb.z,_qb.w);
+        local=_qb;
+      }
+      const w=new THREE.Quaternion().copy(parentWQ).multiply(local);
+      for(const c of node.children) walk(c, w, t);
+    };
+    const rootWQ=new THREE.Quaternion(); if(root.parent) root.parent.getWorldQuaternion(rootWQ);
+    for(let f=0; f<frames; f++){
+      const t=Math.min(dur-1e-5, f/fps);
+      walk(root, rootWQ, t);
+      if(hasHipP){
+        _caEvalP(data.tracks.hips.p, t, _v).multiplyScalar(hipH).add(hipRestW);   // normalized offset -> this rig's world
+        _v.applyMatrix4(hipRestLocalParentInv);
+        hipPosTimes.push(t); hipPos.push(_v.x, _v.y, _v.z);
+      }
+    }
+    const tracks=[];
+    for(const [b,r] of rec){ if(r.times.length) tracks.push(new THREE.QuaternionKeyframeTrack(b.name+'.quaternion', r.times.slice(), r.q)); }
+    if(hasHipP && hipPosTimes.length) tracks.push(new THREE.VectorKeyframeTrack(hipsB.name+'.position', hipPosTimes, hipPos));
+    if(!tracks.length) return null;
+    return new THREE.AnimationClip(data.name||'Custom clip', dur, tracks);
+  }catch(e){ console.warn('[RUMPUS] custom clip build failed:', data && data.name, e && e.message); return null; }
+}
+// All custom clips built for one gltf, cached until the library changes. Names that collide
+// with a model/library clip get a ' (custom)' suffix so the by-name state pickers stay exact.
+function _caClipsFor(gltf){
+  if(typeof customAnims==='undefined' || !customAnims.length || !gltf || !gltf.scene) return [];
+  if(gltf.userData && gltf.userData._caFor===_caRev && gltf.userData._caClips) return gltf.userData._caClips;
+  let hasBone=false; gltf.scene.traverse(o=>{ if(o.isBone) hasBone=true; });
+  if(!hasBone) return [];
+  const baseNames=new Set(); for(const c of (gltf.animations||[])) baseNames.add(c.name);
+  if(gltf.userData && gltf.userData._libAnims) for(const c of gltf.userData._libAnims) baseNames.add(c.name);
+  const out=[];
+  for(const d of customAnims){
+    const clip=_caBuildClip(gltf.scene, d);
+    if(!clip) continue;
+    if(baseNames.has(clip.name)) clip.name=clip.name+' (custom)';
+    out.push(clip);
+  }
+  if(gltf.userData){ gltf.userData._caFor=_caRev; gltf.userData._caClips=out; }
+  return out;
+}
+let customAnims = _caSanitize(savedLevel && savedLevel.customAnims);   // authored; serialized with the level
 // ---------- AUTO-RIGGER (build 1025) ----------
 // Mixamo-style rigging for STATIC humanoid models: the author clicks chin/wrists/elbows/knees/
 // groin markers on the T/A-posed mesh; a mixamorig-named skeleton is fitted to those markers
@@ -15931,6 +16139,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
+  customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
@@ -20609,7 +20818,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1039 · 2026-07-22';
+const BUILD_VERSION = 'build 1040 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27401,6 +27610,7 @@ function serializeLevel(){
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
     logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
+    customAnims: ((typeof customAnims!=='undefined' && customAnims.length) ? _caSanitize(customAnims) : undefined),   // build 1040: creator-authored clips
     prefabDefs: _pfUsedDefs(),
     tracer: Object.assign({}, tracerCfg),
     decal: Object.assign({}, decalCfg),
@@ -27932,6 +28142,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
+  customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
