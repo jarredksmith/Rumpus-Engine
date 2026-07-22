@@ -9571,6 +9571,25 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
     dstRestW:   p.dst.getWorldQuaternion(new THREE.Quaternion()),
     times:[], q:[] }));
   const byDst = new Map(P.map(p=>[p.dst, p]));
+  // build 1047: REST-POSE ALIGNMENT. The delta x dstRestW form silently assumed both rigs rest
+  // in the same pose; an A-pose model inherited every T-pose clip offset by the A/T difference
+  // (the "arms crossed behind the back" default). Per pair, `align` rotates the DST rest bone
+  // direction onto the SRC rest direction, so the target bone points where the source bone
+  // points regardless of how either model happens to rest. Identity when the rests agree.
+  {
+    const dstSet=new Set(P.map(p=>p.dst)), srcSet=new Set(P.map(p=>p.src));
+    const firstMapped=(node, set)=>{ for(const c of node.children){ if(set.has(c)) return c; const d=firstMapped(c, set); if(d) return d; } return null; };
+    const _wa=new THREE.Vector3(), _wb=new THREE.Vector3(), _wc=new THREE.Vector3(), _wd=new THREE.Vector3();
+    for(const p of P){
+      p.align=new THREE.Quaternion();
+      const dc=firstMapped(p.dst, dstSet), sc=firstMapped(p.src, srcSet);
+      if(!dc || !sc) continue;   // leaf bones: nothing to aim, identity
+      p.dst.getWorldPosition(_wa); dc.getWorldPosition(_wb); _wb.sub(_wa);
+      p.src.getWorldPosition(_wc); sc.getWorldPosition(_wd); _wd.sub(_wc);
+      if(_wb.lengthSq()<1e-10 || _wd.lengthSq()<1e-10) continue;
+      p.align.setFromUnitVectors(_wb.normalize(), _wd.normalize());
+    }
+  }
   const hips = map.hips; const hd = byDst.get(hips.dst);
   const srcHipRest = hips.src.getWorldPosition(new THREE.Vector3());
   const dstHipRest = hips.dst.getWorldPosition(new THREE.Vector3());
@@ -9587,7 +9606,7 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
     let local = node.quaternion;                       // unmapped bones hold their rest local
     if(pr){
       pr.src.getWorldQuaternion(_qa);                  // src world now
-      _qa.multiply(pr.srcRestInv).multiply(pr.dstRestW);       // delta * dstRest = target dst WORLD
+      _qa.multiply(pr.srcRestInv).multiply(pr.align).multiply(pr.dstRestW);       // delta x restAlign x dstRest = target WORLD (build 1047: A-pose rigs align to the pack's rest)
       _qb.copy(parentWQ).invert().multiply(_qa);               // -> dst LOCAL under the posed parent
       pr.times.push(t); pr.q.push(_qb.x,_qb.y,_qb.z,_qb.w);
       local = _qb;
@@ -9692,13 +9711,13 @@ function _loadGLTFWithLib(url, cfg, cb, errcb){ loadGLTFCached(url, (g)=>_withLi
 // offset normalized by hip height) — rig-independent by the same construction _retargetClip
 // uses, so one clip drives a Mixamo rig, a Blender export, or an auto-rigged statue alike.
 const CA_SLOTS = ['hips','spine0','spine1','spine2','neck','head',
-  'L:shoulder','L:uparm','L:forearm','L:hand','L:upleg','L:leg','L:foot','L:toe',
-  'R:shoulder','R:uparm','R:forearm','R:hand','R:upleg','R:leg','R:foot','R:toe'];
+  'L:shoulder','L:uparm','L:forearm','L:hand','L:upleg','L:lowleg','L:foot','L:toe',
+  'R:shoulder','R:uparm','R:forearm','R:hand','R:upleg','R:lowleg','R:foot','R:toe'];
 const CA_SLOT_LABEL = { hips:'Hips', spine0:'Spine', spine1:'Spine 2', spine2:'Chest', neck:'Neck', head:'Head' };
 function _caSlotLabel(slot){
   if(CA_SLOT_LABEL[slot]) return CA_SLOT_LABEL[slot];
   const m=String(slot).match(/^([LR]):(\w+)$/); if(!m) return slot;
-  const nm={ shoulder:'Shoulder', uparm:'Upper arm (shoulder)', forearm:'Forearm (elbow)', hand:'Hand (wrist)', upleg:'Thigh (hip)', leg:'Shin (knee)', foot:'Foot (ankle)', toe:'Toe' }[m[2]]||m[2];   // build 1045: joint-forward names — "bend the knee" = rotate the shin
+  const nm={ shoulder:'Shoulder', uparm:'Upper arm (shoulder)', forearm:'Forearm (elbow)', hand:'Hand (wrist)', upleg:'Thigh (hip)', lowleg:'Shin (knee)', foot:'Foot (ankle)', toe:'Toe' }[m[2]]||m[2];   // build 1045: joint-forward names — "bend the knee" = rotate the shin
   return (m[1]==='L'?'Left ':'Right ')+nm.toLowerCase();
 }
 function _caNewId(){ return 'ca_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
@@ -9797,7 +9816,7 @@ function _caGatherBones(root){
   chain('spine', ['spine0','spine1','spine2']); chain('neck', ['neck']);
   if(raw.has('hips')) out.set('hips', raw.get('hips'));
   if(raw.has('head')) out.set('head', raw.get('head'));
-  for(const S of ['L','R']) for(const b of ['shoulder','uparm','forearm','hand','upleg','leg','foot','toe']){
+  for(const S of ['L','R']) for(const b of ['shoulder','uparm','forearm','hand','upleg','lowleg','foot','toe']){   // build 1047: 'lowleg' is the engine's canonical shin
     const k=S+':'+b; if(raw.has(k)) out.set(k, raw.get(k));
   }
   return out;
@@ -10598,7 +10617,7 @@ function _aeEnsureDom(){
   el.querySelector('#aeNextK').onclick=()=>{ const ts=_aeKeyTimes(_aeClip).filter(t=>t>_aeTime+1e-4); if(ts.length){ _aeSetPlaying(false); _aeApplyTime(ts[0]); } };
   el.querySelector('#aeSearch').oninput=(e)=>{ _aeTreeFilter=e.target.value.toLowerCase(); _aeRenderTree(); };
   for(const b of el.querySelectorAll('.aeViews button')) b.onclick=()=>{ const v=b.dataset.v;
-    _aePitch=0.12; _aeYaw = v==='f'?Math.PI : v==='b'?0 : v==='s'?Math.PI/2 : 0.6; if(v==='p') _aePitch=0.3; };
+    _aePitch=0.12; _aeYaw = v==='f'?0 : v==='b'?Math.PI : v==='s'?Math.PI/2 : 0.6; if(v==='p') _aePitch=0.3; };   // build 1047: GLB characters face +Z — Front parks the camera there
   el.querySelector('#aeRootP').onclick=()=>{ _aeRootPathOn=!_aeRootPathOn; el.querySelector('#aeRootP').classList.toggle('aeAccent', _aeRootPathOn); _aeRootPathSync(); };   // build 1046 (bound after the view loop, which would otherwise claim it)
   _aeBindTL(el.querySelector('#aeTL'));
   return el;
@@ -10613,8 +10632,8 @@ function _aeRenderTree(){
   const host=_aeEl && _aeEl.querySelector('#aeTree'); if(!host || !_aeBones) return;
   host.textContent='';
   const IND={ hips:0, spine0:1, spine1:2, spine2:3, neck:4, head:5,
-    'L:shoulder':4,'L:uparm':5,'L:forearm':6,'L:hand':7,'L:upleg':1,'L:leg':2,'L:foot':3,'L:toe':4,
-    'R:shoulder':4,'R:uparm':5,'R:forearm':6,'R:hand':7,'R:upleg':1,'R:leg':2,'R:foot':3,'R:toe':4 };
+    'L:shoulder':4,'L:uparm':5,'L:forearm':6,'L:hand':7,'L:upleg':1,'L:lowleg':2,'L:foot':3,'L:toe':4,
+    'R:shoulder':4,'R:uparm':5,'R:forearm':6,'R:hand':7,'R:upleg':1,'R:lowleg':2,'R:foot':3,'R:toe':4 };
   for(const slot of CA_SLOTS){
     const b=_aeBones.get(slot); if(!b) continue;
     const label=_caSlotLabel(slot);
@@ -21882,7 +21901,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1046 · 2026-07-22';
+const BUILD_VERSION = 'build 1047 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

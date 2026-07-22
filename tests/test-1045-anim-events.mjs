@@ -89,7 +89,7 @@ assert(/if\(document\.querySelector\('\.uiDlgBack'\)\) return;/.test(extractFunc
   'while a dialog is up the editor yields its keys (Escape used to close the whole editor)');
 {
   const lbl = new Function('const CA_SLOT_LABEL={ hips:"Hips" };\n' + extractFunction('_caSlotLabel', src) + '\nreturn _caSlotLabel;')();
-  eq(lbl('L:leg'), 'Left shin (knee)', 'bone names lead with the joint — "knee" is findable');
+  eq(lbl('L:lowleg'), 'Left shin (knee)', 'bone names lead with the joint — "knee" is findable (build 1047: the canonical slot is lowleg)');
   eq(lbl('R:forearm'), 'Right forearm (elbow)', '...same for elbows');
   eq(lbl('L:foot'), 'Left foot (ankle)', '...and ankles');
 }

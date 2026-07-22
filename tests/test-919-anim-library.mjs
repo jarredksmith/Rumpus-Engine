@@ -35,7 +35,7 @@ eq(canon('root'), null, 'the root bone is not retargeted (hips is the retarget r
 
 // the retargeter: world-delta resample, tracks named for the TARGET rig, hips position scaled
 const rt = extractFunction('_retargetClip', src);
-assert(/multiply\(pr\.srcRestInv\)\.multiply\(pr\.dstRestW\)/.test(rt), 'world-space rotation delta re-based onto the target rest pose');
+assert(/multiply\(pr\.srcRestInv\)\.multiply\(pr\.align\)\.multiply\(pr\.dstRestW\)/.test(rt), 'world-space rotation delta re-based onto the target rest pose (build 1047: through the rest-direction alignment, so A-pose rigs land T-pose clips)');
 assert(/QuaternionKeyframeTrack\(pr\.dst\.name\+'\.quaternion'/.test(rt) && /VectorKeyframeTrack\(hips\.dst\.name\+'\.position'/.test(rt),
   'tracks are written for the TARGET rig bones (+ hips position)');
 assert(/hipScale/.test(rt), 'hip travel scales to the target hip height');
