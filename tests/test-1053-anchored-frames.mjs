@@ -63,10 +63,11 @@ const angOf = (q) => 2 * Math.acos(Math.min(1, Math.abs(q.w)));
     const d = fa.getWorldPosition(new THREE.Vector3()).sub(ua.getWorldPosition(new THREE.Vector3())).normalize();
     assert(('Left' === S ? d.x : -d.x) > 0.99, S + ' arm points exactly where the clip says');
   }
-  // ...while the spine itself IS still corrected onto the pack's directions:
+  // ...and (build 1054) the leaning spine KEEPS its lean — a spine chain's rest direction is
+  // anatomy (the auto-rig draws it hips->chin; a forward chin must not fold the torso):
   const hipsB = dstRoot.getObjectByName('mixamorigHips'), spB = dstRoot.getObjectByName('mixamorigSpine');
   const sd = spB.getWorldPosition(new THREE.Vector3()).sub(hipsB.getWorldPosition(new THREE.Vector3())).normalize();
-  assert(sd.y > 0.995, 'the leaning spine still straightens onto the pack’s rest: ' + sd.y.toFixed(4));
+  assert(sd.z > 0.25 && sd.y > 0.94, 'the leaning spine keeps its own anatomy under the pack clip: ' + sd.y.toFixed(3) + ',' + sd.z.toFixed(3));
   mixer.stopAllAction(); mixer.uncacheRoot(dstRoot);
 }
 // the machinery is pinned

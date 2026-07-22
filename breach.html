@@ -9608,7 +9608,15 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
       const p=pairOfDst.get(node);
       if(p){
         p.align.copy(parentAlign);
-        if(!/^(?:[LR]:(?:hand|foot|toe|thumb|index|middle|ring|pinky)|head)/.test(p.key||'')){
+        // build 1054: alignment is a WHITELIST of limb long bones. Measured against the real
+        // pack: aligning the trunk wrenched a forward-drawn auto-rig spine (the chain runs
+        // hips->chin, and a long-snouted/hunched character puts the chin far forward) 20-30
+        // degrees from rest under plain idle — the folded torso — and the pack's own clavicle
+        // points ~40 degrees BACKWARD, so aligning shoulders onto it sucked every chest in by
+        // ~60 degrees. Trunk, shoulders, head, hands, feet, fingers: their rest directions are
+        // ANATOMY (where the rigger drew them), so they keep pure delta retargeting. Only the
+        // limb long bones encode rest POSE (A-pose arms, bent-knee rests) and align.
+        if(/^[LR]:(?:uparm|forearm|upleg|lowleg)$/.test(p.key||'')){
           const dc=firstMapped(node, dstSet);
           const cp=dc ? pairOfDst.get(dc) : null;
           if(cp){   // leaf pose bones aim at nothing — they just ride the chain
@@ -22016,7 +22024,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1053 · 2026-07-22';
+const BUILD_VERSION = 'build 1054 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
