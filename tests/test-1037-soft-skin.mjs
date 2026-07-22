@@ -1,7 +1,7 @@
 // (build 1037) SOFT JOINT BLENDING — author report: some auto-rigged models creased sharply at
 // knees/elbows. The 1/d^4 skinning falloff gave a blend zone only ~one limb-girth wide, so verts
 // snapped between parent/child bones across a bend. New kernel: w = 1/((d^2 + r^2)^2) with a
-// per-bone blend radius r = 25% of bone length clamped to 2%..8% of model height — unchanged
+// per-bone blend radius r (build 1039: 30% of bone length clamped to 2.5%..10% of height) — unchanged
 // tight falloff far away (no cross-limb bleed), smooth multi-girth ramp across every joint.
 import { readFileSync } from 'node:fs';
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
@@ -13,9 +13,9 @@ const env = new Function(
   + '\nreturn { r:_arBlendR, k:_arWeightKernel, d2:_segDist2 };')();
 
 // ---- the blend-radius policy ----
-near(env.r(0.4, 1.8), 0.1, 1e-9, 'r = 25% of the bone length in the normal range');
-near(env.r(0.05, 1.8), 0.036, 1e-9, 'stubby bones clamp UP to 2% of model height (joints still blend)');
-near(env.r(2.0, 1.8), 0.144, 1e-9, 'lanky bones clamp DOWN to 8% of model height (no whole-limb mush)');
+near(env.r(0.4, 1.8), 0.12, 1e-9, 'r = 30% of the bone length in the normal range (build 1039: widened)');
+near(env.r(0.05, 1.8), 0.045, 1e-9, 'stubby bones clamp UP to 2.5% of model height (joints still blend)');
+near(env.r(2.0, 1.8), 0.18, 1e-9, 'lanky bones clamp DOWN to 10% of model height (no whole-limb mush)');
 near(env.r(0.4, 18) / env.r(0.04, 1.8), 10, 1e-6, 'the radius scales with the model (same proportions x10 -> x10)');
 assert(env.r(0.4, 0) > 0, 'a degenerate zero-height model still gets a positive radius');
 

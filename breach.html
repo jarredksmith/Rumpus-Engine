@@ -9703,7 +9703,7 @@ function _segDist2(px,py,pz, ax,ay,az, bx,by,bz){   // point -> segment, squared
 // but is clamped against the model height so stubby or lanky proportions both stay sane.
 function _arBlendR(segLen, height){
   const h=Math.max(1e-6, height);
-  return Math.min(Math.max(segLen*0.25, h*0.02), h*0.08);
+  return Math.min(Math.max(segLen*0.3, h*0.025), h*0.1);   // build 1039: widened — 1037's ramp was still too narrow on real meshes
 }
 // build 1037: softened skinning kernel. 1/d^4 far from the bone (unchanged reach — no
 // cross-limb bleed), but the +r^2 floor flattens the falloff near joints, so parent and
@@ -9712,6 +9712,83 @@ function _arBlendR(segLen, height){
 function _arWeightKernel(d2, r2){
   const dd=d2+r2+1e-8;
   return 1/(dd*dd);
+}
+// build 1039: Laplacian smoothing of skin weights over the mesh's own topology. Radial kernels
+// (1037) blend through SPACE; creases live on the SURFACE — so diffuse each vertex's weights
+// with its neighbors' for a few rounds. Vertices weld by quantized position first (GLB exports
+// split verts at UV/normal seams; without welding every seam becomes a crease), then adjacency
+// comes from the triangles. Weights stay sparse ([bone, w] pairs, top 8 kept per round).
+function _arSmoothWeights(pos, idx, wl, iters){
+  const n=wl.length; if(!n || !(iters>0)) return wl;
+  let mnx=1e9,mny=1e9,mnz=1e9,mxx=-1e9,mxy=-1e9,mxz=-1e9;
+  for(let i=0;i<n;i++){ const x=pos[i*3],y=pos[i*3+1],z=pos[i*3+2];
+    if(x<mnx)mnx=x; if(y<mny)mny=y; if(z<mnz)mnz=z; if(x>mxx)mxx=x; if(y>mxy)mxy=y; if(z>mxz)mxz=z; }
+  const q=1e4/Math.max(1e-6, Math.hypot(mxx-mnx,mxy-mny,mxz-mnz));   // ~0.01% of the diagonal
+  const key2g=new Map(), gOf=new Int32Array(n), members=[];
+  for(let i=0;i<n;i++){
+    const k=Math.round(pos[i*3]*q)+','+Math.round(pos[i*3+1]*q)+','+Math.round(pos[i*3+2]*q);
+    let g=key2g.get(k);
+    if(g===undefined){ g=members.length; key2g.set(k,g); members.push([]); }
+    gOf[i]=g; members[g].push(i);
+  }
+  const G=members.length, adj=new Array(G);
+  for(let g=0;g<G;g++) adj[g]=new Set();
+  const tc=Math.floor((idx?idx.length:n)/3);
+  for(let t=0;t<tc;t++){
+    const a=gOf[idx?idx[t*3]:t*3], b=gOf[idx?idx[t*3+1]:t*3+1], c=gOf[idx?idx[t*3+2]:t*3+2];
+    if(a!==b){ adj[a].add(b); adj[b].add(a); }
+    if(b!==c){ adj[b].add(c); adj[c].add(b); }
+    if(a!==c){ adj[a].add(c); adj[c].add(a); }
+  }
+  let W=new Array(G);
+  for(let g=0;g<G;g++){
+    const m=new Map(); const inv=1/members[g].length;
+    for(const vi of members[g]) for(const p of wl[vi]) m.set(p[0], (m.get(p[0])||0)+p[1]*inv);
+    W[g]=m;
+  }
+  for(let it=0; it<iters; it++){
+    const W2=new Array(G);
+    for(let g=0;g<G;g++){
+      const acc=new Map();
+      for(const [b,w] of W[g]) acc.set(b, w*0.5);
+      const nb=adj[g];
+      if(nb.size){
+        const f=0.5/nb.size;
+        for(const h of nb) for(const [b,w] of W[h]) acc.set(b, (acc.get(b)||0)+w*f);
+      } else {
+        for(const [b,w] of W[g]) acc.set(b, (acc.get(b)||0)+w*0.5);   // isolated island: nothing to blend with
+      }
+      let arr=[...acc.entries()];
+      if(arr.length>8){ arr.sort((x,y)=>y[1]-x[1]); arr.length=8; }
+      let sum=0; for(const e of arr) sum+=e[1];
+      const m=new Map(), inv=sum>1e-12?1/sum:0;
+      for(const e of arr) m.set(e[0], e[1]*inv);
+      W2[g]=m;
+    }
+    W=W2;
+  }
+  const out=new Array(n);
+  for(let i=0;i<n;i++){ const m=W[gOf[i]]; const a=new Array(m.size); let k=0; for(const e of m) a[k++]=[e[0], e[1]]; out[i]=a; }
+  return out;
+}
+// How many diffusion rounds: enough that the smoothed zone spans roughly the blend radius.
+// Dense meshes (short edges) need more rounds than low-poly ones; clamped so neither a 300-tri
+// blockout nor a 60k-vert sculpt goes to mush or stays creased.
+function _arSmoothIters(pos, idx, n, rAvg){
+  const tc=Math.floor((idx?idx.length:n)/3);
+  if(!tc || !(rAvg>0)) return 3;
+  const step=Math.max(1, Math.floor(tc/300));
+  let sum=0, m=0;
+  for(let t=0;t<tc;t+=step){
+    const a=idx?idx[t*3]:t*3, b=idx?idx[t*3+1]:t*3+1;
+    const dx=pos[a*3]-pos[b*3], dy=pos[a*3+1]-pos[b*3+1], dz=pos[a*3+2]-pos[b*3+2];
+    const e=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    if(e>1e-9){ sum+=e; m++; }
+  }
+  const avg=m?sum/m:0;
+  if(!(avg>0)) return 3;
+  const k=Math.round((rAvg/avg)*(rAvg/avg)*0.5);
+  return Math.max(3, Math.min(16, k));
 }
 // Fit + bind: converts the gltf's static meshes to SkinnedMeshes on a generated mixamorig
 // skeleton. Mutates the CACHED gltf in place (every later clone inherits the rig via
@@ -9768,12 +9845,13 @@ function _autoRigApply(gltf, markersRaw){
     const _br=_arBlendR(_sl, _rigH);   // build 1037: per-bone joint blend radius
     segs.push({ bi, a:j.pos, b:child.pos, r2:_br*_br, isSide:/mixamorig(Left|Right)/.test(j.name), sideSign:/mixamorigLeft/.test(j.name)?1:-1 }); }
   const x0=(bb.min.x+bb.max.x)/2, W=Math.max(1e-6, bb.max.x-bb.min.x);
+  const rAvg=segs.length ? segs.reduce((t,sg)=>t+Math.sqrt(sg.r2),0)/segs.length : 0;   // build 1039: drives the smoothing depth
   const made=[];
   for(const bk of baked){
     const m=bk.m, g=bk.g;            // already baked root-local above — one skeleton serves every mesh
     const pa=g.attributes.position, n=pa.count;
     const skinIndex=new Uint16Array(n*4), skinWeight=new Float32Array(n*4);
-    const cand=[];
+    const cand=[], wlist=new Array(n);
     for(let i=0;i<n;i++){
       const px=pa.getX(i), py=pa.getY(i), pz=pa.getZ(i);
       cand.length=0;
@@ -9784,8 +9862,28 @@ function _autoRigApply(gltf, markersRaw){
         cand.push([w, sg.bi]);
       }
       cand.sort((a,b)=>b[0]-a[0]);
-      let sum=0; for(let k=0;k<4;k++) sum+=cand[k][0];
-      for(let k=0;k<4;k++){ skinIndex[i*4+k]=cand[k][1]; skinWeight[i*4+k]=cand[k][0]/sum; }
+      const K=Math.min(6, cand.length), top=new Array(K);   // build 1039: keep 6 candidates — smoothing decides the final 4
+      for(let k=0;k<K;k++) top[k]=[cand[k][1], cand[k][0]];
+      wlist[i]=top;
+    }
+    // build 1039: diffuse the weights along the surface — the crease killer (skipped only on
+    // extreme meshes where the one-time cost would stall the import)
+    let fin=wlist;
+    if(n<=90000){
+      const posArr=new Float32Array(n*3);
+      for(let i=0;i<n;i++){ posArr[i*3]=pa.getX(i); posArr[i*3+1]=pa.getY(i); posArr[i*3+2]=pa.getZ(i); }
+      const idxArr=g.index ? g.index.array : null;
+      fin=_arSmoothWeights(posArr, idxArr, wlist, _arSmoothIters(posArr, idxArr, n, rAvg));
+    }
+    for(let i=0;i<n;i++){
+      const arr=fin[i].slice().sort((a,b)=>b[1]-a[1]);
+      const K=Math.min(4, arr.length);
+      let sum=0; for(let k=0;k<K;k++) sum+=arr[k][1];
+      const inv=sum>1e-12?1/sum:0;
+      for(let k=0;k<4;k++){
+        if(k<K){ skinIndex[i*4+k]=arr[k][0]; skinWeight[i*4+k]=arr[k][1]*inv; }
+        else { skinIndex[i*4+k]=0; skinWeight[i*4+k]=0; }
+      }
     }
     g.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndex,4));
     g.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeight,4));
@@ -9900,11 +9998,11 @@ function _arOpen(url){
       +'<button id="arClose" aria-label="Close" style="background:none;border:none;color:#7fa79a;font-size:18px;cursor:pointer;">\u2715</button></div>'
       +'<div style="display:flex;gap:12px;align-items:stretch;">'
       +'<div style="flex:0 0 150px;display:flex;flex-direction:column;gap:2px;"><div id="arSteps"></div>'
-      +'<div class="hint" style="margin-top:8px;font-size:11px;line-height:1.5;">Place markers on your model, then press AUTO-RIG to fit a skeleton. Drag to turn \u00b7 scroll to zoom \u00b7 click a row to re-place it.</div></div>'
+      +'<div class="hint" style="margin-top:8px;font-size:11px;line-height:1.5;color:#9fbdb2;">Place markers on your model, then press AUTO-RIG to fit a skeleton. Drag to turn \u00b7 scroll to zoom \u00b7 click a row to re-place it.</div></div>'
       +'<div id="arHolder" style="flex:1;position:relative;aspect-ratio:1.15;background:radial-gradient(circle at 50% 38%, #18262f, #070b0e);border-radius:10px;overflow:hidden;touch-action:none;cursor:crosshair;"></div></div>'
       +'<div style="display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap;">'
       +'<label style="display:flex;align-items:center;gap:6px;color:#9fe6cf;font-size:12px;cursor:pointer;"><input id="arSym" type="checkbox" checked style="width:14px;height:14px;accent-color:var(--accent);">Use Symmetry</label>'
-      +'<div id="arHint" style="flex:1;min-width:180px;color:#7fb8a6;font-size:12px;"></div>'
+      +'<div id="arHint" style="flex:1;min-width:180px;color:#a9dcc9;font-size:12px;"></div>'
       +'<button id="arBack" class="lobbyBtn lobbyGhost" style="padding:8px 18px;">BACK</button>'
       +'<button id="arGo" class="lobbyBtn lobbyCTA" style="padding:8px 22px;">AUTO-RIG</button></div>';
     _arEl.appendChild(cd); document.body.appendChild(_arEl);
@@ -20511,7 +20609,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1038 · 2026-07-22';
+const BUILD_VERSION = 'build 1039 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
