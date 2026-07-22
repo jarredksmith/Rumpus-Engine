@@ -8098,6 +8098,9 @@ function _lgRefreshDatalists(){
   const mk=(id)=>{ let el=document.getElementById(id); if(!el){ el=document.createElement('datalist'); el.id=id; document.body.appendChild(el); } el.innerHTML=''; return el; };
   const tl=mk('lgTagList');
   for(const t of _lgTagOptions()){ const op=document.createElement('option'); op.value=t.tag; op.label=t.n+(t.n===1?' prop':' props'); tl.appendChild(op); }
+  const tt=mk('lgTagListThis');   // build 1035: the Signals fold's variant — "this object" first
+  { const op=document.createElement('option'); op.value='this'; op.label='this object'; tt.appendChild(op); }
+  for(const t of _lgTagOptions()){ const op=document.createElement('option'); op.value=t.tag; op.label=t.n+(t.n===1?' prop':' props'); tt.appendChild(op); }
   const el=mk('lgEvtList');
   for(const nm of _lgEventOptions()){ const op=document.createElement('option'); op.value=nm; el.appendChild(op); }
   const cl=mk('lgClipList');
@@ -8318,6 +8321,18 @@ function _applySignalAction(s, src){
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
     if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
     if(s.do==='emit'){ if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(String(s.text||'').trim()); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed.
+    if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
+      if(!src || !src.userData) return;
+      const i=propModels.indexOf(src);
+      try{
+        if(s.do==='toggle'){ if(src.userData.xa && src.userData.xa.on){ xaToggle(src); if(i>=0) broadcastXAnim(i); } }
+        else if(s.do==='open'){ if(src.userData.xa && src.userData.xa.on && !src.userData.xa.dest){ src.userData.xa.dest=1; if(i>=0) broadcastXAnim(i); } }
+        else if(s.do==='close'){ if(src.userData.xa && src.userData.xa.on && src.userData.xa.dest){ src.userData.xa.dest=0; if(i>=0) broadcastXAnim(i); } }
+        else if(s.do==='anim'){ playPropAnimationOnce(src, s.clip); if(i>=0) broadcastAnim(i, s.clip); }
+        else if(s.do==='unlock'){ if(src.userData.lockId && !src.userData.unlocked){ src.userData.unlocked=true; if(i>=0) broadcastUnlock(i); } }
+      }catch(e){}
+      return;
+    }
     if(!s.target) return;
     for(let i=0;i<propModels.length;i++){
       const t = propModels[i]; if(!t || t.userData.tag !== s.target) continue;
@@ -10686,7 +10701,7 @@ function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
   const _tRel = !!(savedLevel && savedLevel.tRel);
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -15729,7 +15744,7 @@ function loadLevelFromNet(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -19673,6 +19688,15 @@ function checkProximity(){
       if(d<bd){ bd=d; best=o; } }
     if(best) nearTarget = { type:'npc', obj:best };
   }
+  if(!nearTarget){   // build 1035: props flagged Interactable — one checkbox, no mechanism required
+    let best=null, bd=2.4;
+    for(const o of propModels){ if(!o || !o.userData || !o.userData.interact) continue;
+      const b=o.userData.box; let d;
+      if(b){ const cx=Math.max(b.min.x,Math.min(player.pos.x,b.max.x)), cy=Math.max(b.min.y,Math.min(player.pos.y,b.max.y)), cz=Math.max(b.min.z,Math.min(player.pos.z,b.max.z)); d=Math.hypot(player.pos.x-cx, player.pos.y-cy, player.pos.z-cz); }
+      else d=Math.hypot(player.pos.x-o.position.x, player.pos.y-o.position.y, player.pos.z-o.position.z);
+      if(d<bd){ bd=d; best=o; } }
+    if(best) nearTarget = { type:'use', obj:best };
+  }
   if(!nearTarget && !mountedTurret){
     let best=null, bd=2.8;
     for(const g of turretModels){ const d=Math.hypot(player.pos.x-g.position.x, player.pos.z-g.position.z); if(d<bd){ bd=d; best=g; } }
@@ -19703,7 +19727,7 @@ function checkProximity(){
     if(nearTarget.type==='station'){
       const w=W();
       prompt.innerHTML = `AMMO STATION — <b>${_uk}</b> Buy ${w.refillAmt} ${w.name} rounds &nbsp;·&nbsp; ◆${w.refillCost}`;
-    } else if(nearTarget.type==='anim' || nearTarget.type==='xanim'){
+    } else if(nearTarget.type==='anim' || nearTarget.type==='xanim' || nearTarget.type==='use'){
       const lo=nearTarget.obj, lk=lo&&lo.userData.lockId;
       if(lk && !lo.userData.unlocked) prompt.innerHTML = playerKeys[lk] ? `<b>${_uk}</b> Unlock \u2014 ${keyDisplayName(lk)}` : `LOCKED \u2014 needs ${keyDisplayName(lk)}`;
       else prompt.innerHTML = `<b>${_uk}</b> Activate`;
@@ -19789,6 +19813,10 @@ function interact(){
     if(!tryUnlockProp(o)) return;   // locked and no key -> deny
     xaToggle(o);
     const i = propModels.indexOf(o); if(i>=0) broadcastXAnim(i);   // open/close it for everyone
+    fireSignals(o, 'interacted');
+  } else if(nearTarget.type==='use'){   // build 1035: an Interactable prop — the checkbox IS the whole wiring
+    const o = nearTarget.obj;
+    if(!tryUnlockProp(o)) return;   // locked and no key -> deny
     fireSignals(o, 'interacted');
   } else if(nearTarget.type==='turret'){
     mountTurret(nearTarget.turret);
@@ -20415,7 +20443,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1034 · 2026-07-21';
+const BUILD_VERSION = 'build 1035 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26868,6 +26896,7 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     applyPropDynState(obj, p);
     if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }
     if(p.tg) obj.userData.tag=p.tg;
+    if(p.itr) obj.userData.interact=true;
     if(gid) obj.userData.groupId=gid;
     if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(x=>String(x).slice(0,200));
     if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40);
@@ -27151,6 +27180,7 @@ function propEntry(o){
   if(o.userData.sigNeed>1) e.snd=o.userData.sigNeed;
   if(o.userData.attribution) e.att=o.userData.attribution;
   if(o.userData.pf && o.userData.pf.id) e.pf={ id:String(o.userData.pf.id), inst:String(o.userData.pf.inst||'i0'), slot:o.userData.pf.slot|0 };   // build 1030: prefab instance mark
+  if(o.userData.interact) e.itr=1;   // build 1035: Interactable (press E)
   if(o.userData.nid) e.nid=o.userData.nid;
   return e;
 }
@@ -27713,7 +27743,7 @@ function restoreLevel(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -28565,7 +28595,7 @@ function levelIssues(){
     const tags=new Set(); for(const o of propModels){ if(o && o.userData && o.userData.tag) tags.add(o.userData.tag); }
     for(const o of propModels){ if(!o || !o.userData || !o.userData.signals) continue;
       for(const s of o.userData.signals){
-        if(s.target && !tags.has(s.target)) issues.push("A signal targets tag '"+s.target+"', but no prop carries that tag.");
+        if(s.target && s.target!=='this' && !tags.has(s.target)) issues.push("A signal targets tag '"+s.target+"', but no prop carries that tag.");
         if(!s.target && s.do!=='win' && s.do!=='cutscene') issues.push('A signal has no target tag (only Win level and Play cutscene work without one).');
         if(s.when==='contact' && s.from && !tags.has(s.from)) issues.push("A contact signal only triggers on objects tagged '"+s.from+"', but no prop carries that tag.");
         if(s.do==='cutscene'){
@@ -28699,8 +28729,8 @@ function buildSignalsUI(sgBody, store, rerender){
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
     r.appendChild(mkSel([['destroyed','On destroyed'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));
     r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event']], s.do, v=>{ s.do=v; }));
-    const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag'; ti.value=s.target||'';
-    if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagList'); }
+    const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag (or: this)'; ti.value=s.target||'';
+    if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagListThis'); }
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
     ti.onchange=()=>{ pushUndoSnapshot(); s.target=ti.value.trim(); rerender(); };
     const del=document.createElement('button'); del.textContent='×'; del.style.cssText='padding:1px 7px;font-size:12px;';
@@ -31095,7 +31125,14 @@ function renderEditorFields(){
           tin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
           tin.setAttribute('list','lgTagList');
           tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) tagObj.userData.tag=v; else delete tagObj.userData.tag; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
-          row.appendChild(spn); row.appendChild(tin); th.appendChild(row);
+          // build 1035: interactability is ONE visible checkbox — it used to hide inside the
+          // mechanism trigger dropdown, where even the engine's author lost it.
+          const iw=document.createElement('label'); iw.title='The player can press E on this prop: it prompts \u201cActivate\u201d and fires its On-E signals. No mechanism needed \u2014 pair it with a signal like On E \u2192 Toggle \u2192 this.';
+          iw.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:4px;font-size:11px;color:#9fe6cf;cursor:pointer;';
+          const icb=document.createElement('input'); icb.type='checkbox'; icb.checked=!!tagObj.userData.interact; icb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
+          icb.onchange=()=>{ pushUndoSnapshot(); if(icb.checked) tagObj.userData.interact=true; else delete tagObj.userData.interact; if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+          iw.appendChild(icb); iw.appendChild(document.createTextNode('Interactable (E)'));
+          row.appendChild(spn); row.appendChild(tin); row.appendChild(iw); th.appendChild(row);
         }
       } }
     if(typeof renderPrefabsPanel==='function') renderPrefabsPanel();   // build 1034: prefab visibility + Update/Detach buttons follow the live selection

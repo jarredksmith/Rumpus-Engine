@@ -41,7 +41,7 @@ const mk = () => {
 // --- emitters wired ---
 assert(/obj\.userData\._shattered = true;[\s\S]*?if\(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\{ try\{ fireSignals\(obj, 'destroyed'\); \}catch\(e\)\{\} \}/.test(extractFunction('shatterProp')), 'destroyed fires authoritative-side only');
 const it = extractFunction('interact');
-assert((it.match(/fireSignals\(o, 'interacted'\);/g)||[]).length === 2, 'both interact branches emit');
+assert((it.match(/fireSignals\(o, 'interacted'\);/g)||[]).length === 3, 'all three interact branches emit (anim / mechanism / build-1035 Interactable checkbox)');
 const xI = it.indexOf("xaToggle(o)");
 assert(it.indexOf("fireSignals(o, 'interacted')", xI) > it.indexOf('broadcastXAnim(i)', xI), 'emit comes after the activation broadcast');
 

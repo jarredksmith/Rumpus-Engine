@@ -43,7 +43,7 @@ assert(/if\(pm\.listId==='lgEvtList'\) _lgRefreshDatalists\(\);/.test(src), 'nam
 const rf = extractFunction('_lgRefreshDatalists', src);
 assert(/op\.label=t\.n\+\(t\.n===1\?' prop':' props'\)/.test(rf), 'each tag option shows its prop count');
 assert(/_lgRefreshDatalists\(\);/.test(extractFunction('_lgRender', src)), 'lists refresh whenever the canvas renders');
-assert(/ti\.setAttribute\('list','lgTagList'\)/.test(src), "the prop-signal editor's target field shares the tag list");
+assert(/ti\.setAttribute\('list','lgTagListThis'\)/.test(src), "the prop-signal editor's target field shares the tag list (build 1035: the variant led by 'this object')");
 assert(/ei\.setAttribute\('list','lgEvtList'\)/.test(src), '...and its event-name field shares the event list');
 
 done('build 1033: tag + event dropdowns everywhere a name used to be typed blind');
