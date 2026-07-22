@@ -7392,7 +7392,8 @@ function flashToast(msg){
 // build 815: themed in-game dialogs — native confirm()/alert() yank the player out of fullscreen and ignore the theme.
 function _uiDialog(msg, buttons){
   const back=document.createElement('div');
-  back.style.cssText='position:fixed;inset:0;z-index:120;background:rgba(3,7,10,0.66);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
+  back.className='uiDlgBack';   // build 1045: fullscreen layers (animation editor) yield key handling while a dialog is up
+  back.style.cssText='position:fixed;inset:0;z-index:400;background:rgba(3,7,10,0.66);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';   // build 1045: above the animation editor (300) — dialogs used to hide behind it
   const card=document.createElement('div');
   card.style.cssText='background:rgba(9,17,21,0.97);border:1px solid rgba(var(--accent-rgb),0.45);border-radius:12px;padding:20px 24px;max-width:min(440px,86vw);color:#cfeee2;font-size:14px;line-height:1.55;box-shadow:0 18px 60px rgba(0,0,0,0.6);';
   const txt=document.createElement('div'); txt.textContent=msg; card.appendChild(txt);
@@ -7415,7 +7416,8 @@ function uiConfirm(msg, onYes, yesLabel){ _uiDialog(msg, [ { label:'Cancel' }, {
 // cb(null) on cancel (Escape / backdrop / Cancel), cb([values...]) on submit (Enter works too).
 function uiPromptForm(title, fields, cb){
   const back=document.createElement('div');
-  back.style.cssText='position:fixed;inset:0;z-index:120;background:rgba(3,7,10,0.66);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
+  back.className='uiDlgBack';   // build 1045: fullscreen layers (animation editor) yield key handling while a dialog is up
+  back.style.cssText='position:fixed;inset:0;z-index:400;background:rgba(3,7,10,0.66);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';   // build 1045: above the animation editor (300) — dialogs used to hide behind it
   const card=document.createElement('div');
   card.style.cssText='background:rgba(9,17,21,0.97);border:1px solid rgba(var(--accent-rgb),0.45);border-radius:12px;padding:20px 24px;width:min(440px,86vw);color:#cfeee2;font-size:14px;line-height:1.55;box-shadow:0 18px 60px rgba(0,0,0,0.55);';
   const txt=document.createElement('div'); txt.textContent=title; txt.style.cssText='font-weight:700;letter-spacing:0.4px;'; card.appendChild(txt);
@@ -7545,6 +7547,7 @@ function updateMixersLOD(dt){
     if(stride===1){ m.update(dt + (m._lodAcc||0)); m._lodAcc=0; m._lodN=0; }
     else { m._lodAcc=(m._lodAcc||0)+dt; m._lodN=((m._lodN||0)+1); if(m._lodN>=stride){ m.update(m._lodAcc); m._lodAcc=0; m._lodN=0; } }
   }
+  if(typeof _caScanClipEvents==='function') _caScanClipEvents();   // build 1045: authored clip events (sounds / logic signals)
 }
 // Build a mixer for any baked clips. mode 'loop' = ambient auto-loop (default); 'trigger' = stay paused
 // at the start until the player activates the object with E (see interact()). Actions are kept on
@@ -7812,6 +7815,7 @@ function playEnemyStates(root, gltf, clips){
   if(!Object.keys(actions).length){ const a = mixer.clipAction(gltf.animations[0]); a.loop = THREE.LoopRepeat; a.play(); actions.idle = a; }   // no recognizable clip -> loop the first
   const startKey = actions.idle ? 'idle' : Object.keys(actions)[0];
   if(actions[startKey]) actions[startKey].setEffectiveWeight(1);
+  mixer._caHasEv = Object.keys(actions).some(k=>{ const c=actions[k].getClip && actions[k].getClip(); return !!(c && c._caEvents && c._caEvents.length); });   // build 1045: only event-carrying rigs get scanned
   mixers.push(mixer); root.userData.mixer = mixer; root.userData.stateActions = actions; root.userData.animState = startKey;
   return mixer;
 }
@@ -9694,7 +9698,7 @@ const CA_SLOT_LABEL = { hips:'Hips', spine0:'Spine', spine1:'Spine 2', spine2:'C
 function _caSlotLabel(slot){
   if(CA_SLOT_LABEL[slot]) return CA_SLOT_LABEL[slot];
   const m=String(slot).match(/^([LR]):(\w+)$/); if(!m) return slot;
-  const nm={ shoulder:'Shoulder', uparm:'Upper arm', forearm:'Forearm', hand:'Hand', upleg:'Thigh', leg:'Shin', foot:'Foot', toe:'Toe' }[m[2]]||m[2];
+  const nm={ shoulder:'Shoulder', uparm:'Upper arm (shoulder)', forearm:'Forearm (elbow)', hand:'Hand (wrist)', upleg:'Thigh (hip)', leg:'Shin (knee)', foot:'Foot (ankle)', toe:'Toe' }[m[2]]||m[2];   // build 1045: joint-forward names — "bend the knee" = rotate the shin
   return (m[1]==='L'?'Left ':'Right ')+nm.toLowerCase();
 }
 function _caNewId(){ return 'ca_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
@@ -9748,6 +9752,21 @@ function _caSanitize(list){
         if(p.length) tr.p=p;
       }
       if(tr.q || tr.p) d.tracks[slot]=tr;
+    }
+    if(Array.isArray(c.events)){   // build 1045: timeline events — plain validated data, like everything else
+      const evs=[];
+      for(const e of c.events){ if(evs.length>=32) break;
+        if(!e || typeof e!=='object') continue;
+        const t=+e.t; if(!isFinite(t)) continue;
+        const type=(e.type==='signal')?'signal':((e.type==='sound')?'sound':null); if(!type) continue;
+        const ev={ id:(typeof e.id==='string' && /^ce_[a-z0-9]{4,24}$/.test(e.id))?e.id:('ce_'+Math.random().toString(36).slice(2,10)),
+          t:Math.round(Math.min(dur, Math.max(0, t))*1000)/1000, type };
+        if(type==='sound'){ const u=String(e.snd||'').slice(0,300).trim(); if(!u) continue; ev.snd=u; }
+        else { const nm=String(e.sig||'').slice(0,60).trim(); if(!nm) continue; ev.sig=nm; }
+        evs.push(ev);
+      }
+      evs.sort((a,b)=>a.t-b.t);
+      if(evs.length) d.events=evs;
     }
     out.push(d);
   }
@@ -9865,7 +9884,9 @@ function _caBuildClip(root, data){
     for(const [b,r] of rec){ if(r.times.length) tracks.push(new THREE.QuaternionKeyframeTrack(b.name+'.quaternion', r.times.slice(), r.q)); }
     if(hasHipP && hipPosTimes.length) tracks.push(new THREE.VectorKeyframeTrack(hipsB.name+'.position', hipPosTimes, hipPos));
     if(!tracks.length) return null;
-    return new THREE.AnimationClip(data.name||'Custom clip', dur, tracks);
+    const clip=new THREE.AnimationClip(data.name||'Custom clip', dur, tracks);
+    if(data.events && data.events.length) clip._caEvents=data.events.map(e=>Object.assign({}, e));   // build 1045: events ride the built clip
+    return clip;
   }catch(e){ console.warn('[RUMPUS] custom clip build failed:', data && data.name, e && e.message); return null; }
 }
 // All custom clips built for one gltf, cached until the library changes. Names that collide
@@ -9887,6 +9908,39 @@ function _caClipsFor(gltf){
   if(gltf.userData){ gltf.userData._caFor=_caRev; gltf.userData._caClips=out; }
   return out;
 }
+// build 1045: fire a clip's authored events for the time span a playing action just covered.
+// Wrap-aware (a looping clip crossing its end fires the tail AND the head), weight-gated so
+// crossfaded-out clips stay silent, and signals only fire where gameplay is authoritative.
+function _caFireSpan(evs, prev, now, previewOnly){
+  if(now===prev) return;
+  for(const ev of evs){
+    const hit=(now>prev) ? (ev.t>prev && ev.t<=now) : (ev.t>prev || ev.t<=now);
+    if(hit) _caFireEvent(ev, previewOnly);
+  }
+}
+function _caFireEvent(ev, previewOnly){
+  try{
+    if(ev.type==='sound'){ if(ev.snd && typeof playSample==='function'){ if(!playSample(ev.snd) && typeof loadSound==='function') loadSound(ev.snd); } }
+    else if(ev.type==='signal' && !previewOnly){ if(ev.sig && (typeof NET==='undefined' || NET.mode!=='client') && typeof logicEvent==='function') logicEvent(ev.sig); }
+  }catch(e){}
+}
+function _caScanClipEvents(){
+  if(typeof mixers==='undefined') return;
+  for(const m of mixers){
+    if(!m || !m._caHasEv) continue;   // marked at build time — zero cost for everything else
+    const root=_mixerRoot(m); const acts=root && root.userData && root.userData.stateActions;
+    if(!acts) continue;
+    for(const k in acts){
+      const a=acts[k]; const clip=a.getClip ? a.getClip() : null; const evs=clip && clip._caEvents;
+      if(!evs || !evs.length) continue;
+      if(!a.enabled || a.paused || a.getEffectiveWeight()<0.3){ a._caLastT=null; continue; }
+      const now=a.time % Math.max(1e-4, clip.duration);
+      if(a._caLastT==null){ a._caLastT=now; continue; }   // just activated: arm without replaying history
+      _caFireSpan(evs, a._caLastT, now, false);
+      a._caLastT=now;
+    }
+  }
+}
 let customAnims = _caSanitize(savedLevel && savedLevel.customAnims);   // authored; serialized with the level
 // ---------- ANIMATION EDITOR (build 1041) ---------------------------------------------------
 // Author custom skeletal clips on the player's rigged model, entirely in the browser. Works on
@@ -9900,6 +9954,7 @@ let _aeSkel=null, _aeDots=[], _aeGrid=null, _aeSel='', _aeClip=null, _aeTime=0, 
 let _aeMixer=null, _aeAction=null, _aeRebuildT=0, _aeUndo=[], _aeRedo=[], _aeAutoKey=false, _aeSnap=true;
 let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKey=null, _aeAxis='';
 let _aeTreeFilter='', _aeLastTL=null;
+let _aeFireEv=true, _aePrevT=null;   // build 1045: preview event firing (sounds only, never while scrubbing)
 // ---- pure keyframe-list helpers (sorted by time; replace-within-epsilon) ----
 function _aeUpsertKey(arr, key, eps){
   eps = (eps==null) ? 1e-4 : eps;
@@ -10085,8 +10140,10 @@ function _aeLoop(){
   const now=performance.now();
   const dt=Math.min(0.05, (now-(_aeLastTL||now))/1000); _aeLastTL=now;
   if(_aePlaying && _aeMixer && _aeAction){
+    const _pv=_aeTime;
     _aeMixer.update(dt);
     _aeTime=_aeAction.time % Math.max(1e-3, _aeClip.dur);
+    if(_aeFireEv){ const c=_aeAction.getClip(); if(c && c._caEvents && c._caEvents.length) _caFireSpan(c._caEvents, _pv, _aeTime, true); }   // build 1045: preview fires sounds only
     _aeDrawTL();
   }
   _aeCam.position.set(
@@ -10395,6 +10452,7 @@ function _aeBindViewport(cv){
 // ---- keyboard (capture phase: the game's editor shortcuts must never fire inside the modal) ----
 function _aeKeys(e){
   if(!_aeEl || _aeEl.style.display==='none') return;
+  if(document.querySelector('.uiDlgBack')) return;   // build 1045: a themed dialog is up — its Escape/buttons win (Escape used to close the whole editor)
   const tag=(e.target&&e.target.tagName)||'';
   if(e.key==='x'||e.key==='y'||e.key==='z'||e.key==='X'||e.key==='Y'||e.key==='Z'){ if(tag!=='INPUT'&&tag!=='TEXTAREA'){ _aeAxis=e.key.toLowerCase(); } }
   if(tag==='INPUT'||tag==='TEXTAREA'){ e.stopPropagation(); return; }   // typing stays in the field; the game never sees it
@@ -10451,6 +10509,7 @@ function _aeEnsureDom(){
     +'<span id="aeTimeLb">0.00 / 0.00 · f0</span>'
     +'<label><input id="aeAutoK" type="checkbox"> Auto-key</label>'
     +'<label><input id="aeSnapCb" type="checkbox" checked> Snap</label>'
+    +'<label title="Fire sound events while the preview plays (never while scrubbing)"><input id="aeFireEv" type="checkbox" checked> Fire events</label>'
     +'<button id="aeKeyBone" title="Key the selected bone at the playhead (K)">Key bone</button>'
     +'<button id="aeKeyPose" title="Key every posed bone (Shift+K)">Key pose</button>'
     +'<button id="aeCopyK" title="Copy every key at the playhead">Copy keys</button>'
@@ -10474,6 +10533,7 @@ function _aeEnsureDom(){
   el.querySelector('#aeStop').onclick=()=>{ _aeSetPlaying(false); _aeApplyTime(0); };
   el.querySelector('#aeAutoK').onchange=(e)=>{ _aeAutoKey=e.target.checked; };
   el.querySelector('#aeSnapCb').onchange=(e)=>{ _aeSnap=e.target.checked; };
+  el.querySelector('#aeFireEv').onchange=(e)=>{ _aeFireEv=e.target.checked; };
   el.querySelector('#aeKeyBone').onclick=()=>{ if(_aeSel){ _aeSnapshot(); _aeKeySlot(_aeSel, _aeTime); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); } };
   el.querySelector('#aeKeyPose').onclick=()=>{ _aeSnapshot(); const n=_aeKeyPose(_aeTime); if(typeof toast==='function') toast(n+' bones keyed'); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); };
   el.querySelector('#aeCopyK').onclick=()=>{ _aeKeyClipb=_aeKeysAt(_aeClip, _aeSnapT(_aeTime, _aeClip.fps, _aeSnap)); const n=Object.keys(_aeKeyClipb).length; if(typeof toast==='function') toast(n?('Copied keys on '+n+' bones'):'No keys at the playhead'); };
@@ -10593,6 +10653,34 @@ function _aeRenderInspector(){
     note.textContent = kt.length ? (kt.length+' key times · '+Object.keys(_aeClip.tracks).length+' bones keyed') : 'No keys yet — pose the model and press Key bone / Key pose.';
     cSec.appendChild(note);
   }
+  // -- events (build 1045) --
+  if(_aeClip){
+    const eSec=sec('EVENTS');
+    const evs=_aeClip.events=(_aeClip.events||[]);
+    for(let i=0;i<evs.length;i++){
+      const ev=evs[i];
+      const row=document.createElement('div'); row.className='aeNumRow';
+      const tn=document.createElement('input'); tn.type='number'; tn.step='0.01'; tn.min='0'; tn.max=_aeClip.dur; tn.value=ev.t; tn.style.flex='0 0 56px';
+      tn.onchange=()=>{ _aeSnapshot(); ev.t=Math.max(0, Math.min(_aeClip.dur, parseFloat(tn.value)||0)); _aeQueueRebuild(); _aeDrawTL(); };
+      const ts=document.createElement('select'); ts.style.flex='0 0 70px';
+      for(const [v,l] of [['sound','Sound'],['signal','Signal']]){ const o=document.createElement('option'); o.value=v; o.textContent=l; if(ev.type===v) o.selected=true; ts.appendChild(o); }
+      const pi=document.createElement('input'); pi.type='text'; pi.placeholder=(ev.type==='signal')?'event name':'sound url';
+      pi.value=(ev.type==='signal')?(ev.sig||''):(ev.snd||'');
+      if(typeof _lgRefreshDatalists==='function'){ try{ _lgRefreshDatalists(); }catch(e){} pi.setAttribute('list', (ev.type==='signal')?'lgEvtList':'lgSndList'); }
+      ts.onchange=()=>{ _aeSnapshot(); const old=(ev.type==='signal')?ev.sig:ev.snd; delete ev.sig; delete ev.snd; ev.type=ts.value; if(ev.type==='signal') ev.sig=old||''; else ev.snd=old||''; _aeRenderInspector(); _aeQueueRebuild(); };
+      pi.onchange=()=>{ _aeSnapshot(); if(ev.type==='signal') ev.sig=pi.value.trim().slice(0,60); else ev.snd=pi.value.trim().slice(0,300); _aeQueueRebuild(); };
+      const del=document.createElement('button'); del.textContent='✕'; del.title='Remove this event'; del.style.flex='0 0 auto';
+      del.onclick=()=>{ _aeSnapshot(); evs.splice(i,1); _aeRenderInspector(); _aeQueueRebuild(); _aeDrawTL(); };
+      row.appendChild(tn); row.appendChild(ts); row.appendChild(pi); row.appendChild(del); eSec.appendChild(row);
+    }
+    const add=document.createElement('button'); add.textContent='+ Event at playhead';
+    add.title='Fire a sound or a → Logic event at this moment of the clip — footsteps, shell casings, reload clicks, melee hit-windows (as signals the Logic graph catches)';
+    add.onclick=()=>{ _aeSnapshot(); evs.push({ id:'ce_'+Math.random().toString(36).slice(2,10), t:Math.round(_aeTime*1000)/1000, type:'sound', snd:'' }); _aeRenderInspector(); _aeDrawTL(); };
+    eSec.appendChild(add);
+    const nn=document.createElement('div'); nn.className='aeNote';
+    nn.textContent='Events fire during play (and editor playback — see “Fire events”). Signals land in the Logic graph as On-event pulses; sounds accept any level sound URL. Orange ticks on the timeline.';
+    eSec.appendChild(nn);
+  }
   // -- assignment --
   if(_aeClip){
     const aSec=sec('ASSIGN TO PLAYER');
@@ -10640,6 +10728,11 @@ function _aeDrawTL(){
   // all-key summary
   ctx.fillStyle='#7fb8a6';
   for(const t of _aeKeyTimes(_aeClip)){ const x=_aeTLx(t,g); ctx.beginPath(); ctx.moveTo(x, rowY[0]); ctx.lineTo(x+4*dpr, rowY[0]+4*dpr); ctx.lineTo(x, rowY[0]+8*dpr); ctx.lineTo(x-4*dpr, rowY[0]+4*dpr); ctx.fill(); }
+  // events (build 1045): orange ticks on the ruler band
+  if(_aeClip.events && _aeClip.events.length){
+    ctx.fillStyle='#ff8a5b';
+    for(const ev of _aeClip.events){ const x=_aeTLx(ev.t, g); ctx.fillRect(x-1.5*dpr, 12*dpr, 3*dpr, 7*dpr); }
+  }
   // selected bone
   if(_aeSel && _aeClip.tracks[_aeSel]){
     const tr=_aeClip.tracks[_aeSel]; const ts=new Set();
@@ -21732,7 +21825,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1044 · 2026-07-22';
+const BUILD_VERSION = 'build 1045 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
