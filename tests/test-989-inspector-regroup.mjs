@@ -30,7 +30,7 @@ assert(!/edFold\(animHost, '(lock|signals|dialogue|vehicle|joint|mech|waypath|ph
   'nothing else still renders into the Animation fold');
 
 // ---- the empty-fold hider knows the new hosts (gun/station selections leave them hidden, not blank) ----
-assert(/object:\['edShapes','edModels','edUrl','edPicker','edAnim','edBehave','edMotion','edLibrary'\]/.test(src),
+assert(/object:\['edPropTag','edShapes','edModels','edUrl','edPicker','edAnim','edBehave','edMotion','edLibrary'\]/.test(src),
   'contextual hiding covers the two new hosts');
 
 // ---- the no-animation notes point at the new address (textContent — plain text, no entities) ----

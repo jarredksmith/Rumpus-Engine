@@ -8053,7 +8053,7 @@ const LG_DEFS = {
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66},{k:'value',l:'+/\u2212',w:50}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:96,sel:['toggle','open','close','anim','unlock','win','cutscene','objective','checkpoint','sound']},{k:'target',l:'tag',w:80,listId:'lgTagList'},{k:'clip',l:'clip',w:80,ifv:['verb','anim']},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound']}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:96,sel:['toggle','open','close','anim','unlock','win','cutscene','objective','checkpoint','sound']},{k:'target',l:'tag',w:80,listId:'lgTagList'},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound'],listId:'lgSndList'}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -8079,12 +8079,31 @@ function _lgEventOptions(){
   for(const n of logicGraph.nodes){ if((n.type==='event' || n.type==='emit') && n.p && n.p.name) set.add(String(n.p.name).trim()); }
   return Array.from(set).filter(Boolean).sort();
 }
+// build 1034: every animation clip name any placed prop's model carries (the loaders stash
+// them on userData.animClipNames), and every sound URL the level already uses anywhere.
+function _lgClipOptions(){
+  const set=new Set();
+  if(typeof propModels!=='undefined') for(const o of propModels){ if(o && o.userData && Array.isArray(o.userData.animClipNames)) for(const nm of o.userData.animClipNames){ if(nm) set.add(String(nm)); } }
+  return Array.from(set).sort();
+}
+function _lgSoundOptions(){
+  const set=new Set();
+  if(typeof propModels!=='undefined') for(const o of propModels){ const sg=o && o.userData && o.userData.signals; if(Array.isArray(sg)) for(const g of sg){ if(g.sound) set.add(String(g.sound)); } }
+  if(typeof audioZones!=='undefined') for(const z of audioZones){ if(z && z.url) set.add(String(z.url)); }
+  try{ const a=JSON.parse(localStorage.getItem('breach_audio')||'null');   // custom SFX/music overrides hold uploaded clip URLs
+    if(a && typeof a==='object'){ (function walk(x){ for(const k in x){ const v=x[k]; if(typeof v==='string' && v.slice(0,4)==='http') set.add(v); else if(v && typeof v==='object') walk(v); } })(a); } }catch(e){}
+  return Array.from(set).sort();
+}
 function _lgRefreshDatalists(){
   const mk=(id)=>{ let el=document.getElementById(id); if(!el){ el=document.createElement('datalist'); el.id=id; document.body.appendChild(el); } el.innerHTML=''; return el; };
   const tl=mk('lgTagList');
   for(const t of _lgTagOptions()){ const op=document.createElement('option'); op.value=t.tag; op.label=t.n+(t.n===1?' prop':' props'); tl.appendChild(op); }
   const el=mk('lgEvtList');
   for(const nm of _lgEventOptions()){ const op=document.createElement('option'); op.value=nm; el.appendChild(op); }
+  const cl=mk('lgClipList');
+  for(const nm of _lgClipOptions()){ const op=document.createElement('option'); op.value=nm; cl.appendChild(op); }
+  const sl=mk('lgSndList');
+  for(const u of _lgSoundOptions()){ const op=document.createElement('option'); op.value=u; sl.appendChild(op); }
 }
 function _lgDirty(){ if(typeof _levelDirty!=='undefined') _levelDirty=true; const c=document.getElementById('lgCount'); if(c) c.textContent=logicGraph.nodes.length+' node'+(logicGraph.nodes.length===1?'':'s'); }
 function _lgAddNode(type, x, y){
@@ -11523,6 +11542,7 @@ addEventListener('keydown', e=>{
     return;
   }
   // build 798: Ctrl/Cmd+G groups the selected props, Ctrl/Cmd+Shift+G ungroups — clicking any member then grabs the whole group
+  if(editorOpen && (e.ctrlKey||e.metaKey) && e.shiftKey && e.code==='KeyC' && !e.repeat){ e.preventDefault(); if(typeof edCollapseAll==='function') edCollapseAll(); return; }   // build 1034: collapse every editor section
   if(editorOpen && editorActive==='props' && (e.ctrlKey||e.metaKey) && e.code==='KeyG' && !e.repeat){
     if(e.shiftKey){ if(typeof ungroupSelectedProps==='function') ungroupSelectedProps(); }
     else { if(typeof groupSelectedProps==='function') groupSelectedProps(); }
@@ -20395,7 +20415,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1033 · 2026-07-21';
+const BUILD_VERSION = 'build 1034 · 2026-07-21';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25941,6 +25961,13 @@ function _edTipify(root){
 }
 let _edTipifyQueued=false;
 function _edTipifySoon(){ if(_edTipifyQueued || !editorEl) return; _edTipifyQueued=true; requestAnimationFrame(()=>{ _edTipifyQueued=false; try{ _edTipify(editorEl); }catch(e){} }); }
+function edCollapseAll(){   // build 1034: Ctrl+Shift+C — goes through each fold's own handler so the collapsed state persists exactly like manual clicks
+  if(!editorEl) return 0;
+  let n=0;
+  editorEl.querySelectorAll('.edSection').forEach(sx=>{ if(!sx.classList.contains('collapsed')){ const h=sx.querySelector('.edSecHead'); if(h){ h.click(); n++; } } });
+  if(typeof flashToast==='function') flashToast(n ? ('Collapsed '+n+' section'+(n===1?'':'s')) : 'All sections already collapsed');
+  return n;
+}
 function applyEditorMode(){
   if(!editorEl) return;
   const secs = MODE_SECTIONS[editorMode] || [];
@@ -25978,7 +26005,7 @@ function applyEditorMode(){
 // a manual mode click instead snaps editorActive to the mode's first target so its Transform shows something valid.
 function applyContextualSections(){
   if(!editorEl) return;
-  const CTX = { gizmo:['edGizmo'], object:['edShapes','edModels','edUrl','edPicker','edAnim','edBehave','edMotion','edLibrary'] };
+  const CTX = { gizmo:['edGizmo'], object:['edPropTag','edShapes','edModels','edUrl','edPicker','edAnim','edBehave','edMotion','edLibrary'] };
   const modeSecs = MODE_SECTIONS[editorMode] || [];
   for(const key in CTX){
     if(modeSecs.indexOf(key)<0) continue;
@@ -26969,6 +26996,12 @@ function _pfDetach(o){
 }
 function renderPrefabsPanel(){
   const host=edDoc().getElementById('edPrefabs'); if(!host) return; host.innerHTML='';
+  // build 1034: like Material, prefabs are a PROPS concern — without this the section trailed
+  // every target tab (Lights, Spawns, Gun...) at the bottom of the panel.
+  const pfSec=host.closest('.edSection');
+  const pfOn=(typeof editorActive==='undefined' || editorActive==='props') && (MODE_SECTIONS[editorMode]||[]).indexOf('prefabs')>=0;
+  if(pfSec) pfSec.style.display = pfOn ? '' : 'none';
+  if(!pfOn) return;
   const hint=document.createElement('div'); hint.className='hint'; hint.style.margin='2px 0 6px';
   hint.innerHTML='<b>Reusable components.</b> Select configured props (a door + its trigger, a whole room) and save them as a prefab \u2014 signals, animations, physics and materials all come along. Place copies in any level; they arrive grouped. Your library follows you (and levels carry the prefabs they use).';
   host.appendChild(hint);
@@ -28074,7 +28107,8 @@ function buildEditorPanel(){
     + '<div class="tabs" id="edTabs"></div>'
     + sec('Handles', 'gizmo', '<div id="edGizmo"></div>')
     + sec('Object &amp; selection', 'object',
-          '<div id="edPicker"></div>'
+          '<div id="edPropTag"></div>'
+        + '<div id="edPicker"></div>'
         + subfold('Add a shape', 'o_shapes', '<div id="edShapes"></div>', true)
         + subfold('Model &amp; texture', 'o_model', '<div id="edModels"></div><div id="edUrl"></div>', true)
         + subfold('Animation', 'o_anim', '<div id="edAnim"></div>', false)
@@ -28651,7 +28685,7 @@ function buildSignalsUI(sgBody, store, rerender){
     const tsp=document.createElement('span'); tsp.textContent='Tag'; tsp.style.minWidth='56px';
     const tin=document.createElement('input'); tin.type='text'; tin.placeholder='e.g. vaultDoor'; tin.value=store.tag||'';
     tin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
-    tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) store.tag=v; else delete store.tag; };
+    tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) store.tag=v; else delete store.tag; if(typeof renderEditorFields==='function') renderEditorFields(); };   // build 1034: the Object & selection Tag field shows the same store — keep them in step
     tr.appendChild(tsp); tr.appendChild(tin); sgBody.appendChild(tr); }
   { const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:0 0 4px;font-size:11px;color:#9fe6cf;';
     const nsp=document.createElement('span'); nsp.innerHTML='<b>Needs</b>'; nsp.style.minWidth='56px'; nsp.title='How many DIFFERENT senders must signal this before it reacts (e.g. both plates / all 3 generators). The same sender firing twice still counts once.';
@@ -31048,6 +31082,23 @@ function renderEditorFields(){
     // editable at all). Now the section stays and explains itself.
     const matNote = matInMode && !matOn && !!selObj;
     const matSec = matHost.closest('.edSection'); if(matSec) matSec.style.display = (matOn||matNote) ? '' : 'none';
+    // build 1034: the prop TAG leads Object & selection — the same userData.tag the Signals fold
+    // edits, so changing either field updates the other (both re-render through renderEditorFields).
+    { const th=(typeof edDoc==='function')?edDoc().getElementById('edPropTag'):null;
+      if(th){ th.innerHTML='';
+        const tagObj=(editorActive==='props' && editorTargets.props.obj) ? editorTargets.props.obj() : null;
+        if(tagObj){
+          if(typeof _lgRefreshDatalists==='function') _lgRefreshDatalists();
+          const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 7px;';
+          const spn=document.createElement('span'); spn.textContent='Tag'; spn.title='Signals and the logic graph find this prop by its tag'; spn.style.cssText='min-width:56px;font-size:11px;color:#9fe6cf;';
+          const tin=document.createElement('input'); tin.type='text'; tin.placeholder='e.g. vaultDoor'; tin.value=tagObj.userData.tag||'';
+          tin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+          tin.setAttribute('list','lgTagList');
+          tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) tagObj.userData.tag=v; else delete tagObj.userData.tag; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
+          row.appendChild(spn); row.appendChild(tin); th.appendChild(row);
+        }
+      } }
+    if(typeof renderPrefabsPanel==='function') renderPrefabsPanel();   // build 1034: prefab visibility + Update/Detach buttons follow the live selection
     if(matNote){ const nn=document.createElement('div'); nn.className='hint';
       nn.textContent='Imported models keep their own materials. Colour, texture, glow and opacity editing applies to the built-in shapes (Box / Sphere / Cylinder / Cone / Ramp / Stairs / Dome / Tube / Ring).';
       matHost.appendChild(nn); }
