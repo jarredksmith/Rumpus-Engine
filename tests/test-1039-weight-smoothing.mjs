@@ -72,7 +72,7 @@ assert(/fin=_arSmoothWeights\(allPos, tri, allW, _arSmoothIters\(allPos, tri, to
   'smoothing runs between the joint ramps and the final write (build 1043: across ALL meshes at once)');
 assert(/if\(totalN<=120000\)/.test(src), 'extreme meshes skip the pass instead of stalling the import');
 assert(/const rAvg=segs\.length \? segs\.reduce/.test(src), 'the blend radius drives the smoothing depth');
-assert(/segLen\*0\.3, h\*0\.025\), h\*0\.1\)/.test(src), 'the blend radius widened (30% of bone, 2.5%..10% of height)');
+assert(/segLen\*0\.3, h\*0\.015\), h\*0\.1\)/.test(src), 'the blend radius widened (30% of bone, 1.5%..10% of height — build 1050 lowered the floor for small parts)');
 
 // ---- the modal's unreadable text ----
 assert(/line-height:1\.5;color:#9fbdb2;/.test(src), 'the sidebar instructions finally have a color (they inherited near-black)');

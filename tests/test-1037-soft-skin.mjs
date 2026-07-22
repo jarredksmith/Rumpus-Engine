@@ -14,7 +14,7 @@ const env = new Function(
 
 // ---- the blend-radius policy ----
 near(env.r(0.4, 1.8), 0.12, 1e-9, 'r = 30% of the bone length in the normal range (build 1039: widened)');
-near(env.r(0.05, 1.8), 0.045, 1e-9, 'stubby bones clamp UP to 2.5% of model height (joints still blend)');
+near(env.r(0.05, 1.8), 0.027, 1e-9, 'stubby bones clamp UP to 1.5% of model height (build 1050: feet/hands were over-softened at 2.5%)');
 near(env.r(2.0, 1.8), 0.18, 1e-9, 'lanky bones clamp DOWN to 10% of model height (no whole-limb mush)');
 near(env.r(0.4, 18) / env.r(0.04, 1.8), 10, 1e-6, 'the radius scales with the model (same proportions x10 -> x10)');
 assert(env.r(0.4, 0) > 0, 'a degenerate zero-height model still gets a positive radius');

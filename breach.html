@@ -11001,7 +11001,7 @@ function _segDist2(px,py,pz, ax,ay,az, bx,by,bz){   // point -> segment, squared
 // but is clamped against the model height so stubby or lanky proportions both stay sane.
 function _arBlendR(segLen, height){
   const h=Math.max(1e-6, height);
-  return Math.min(Math.max(segLen*0.3, h*0.025), h*0.1);   // build 1039: widened — 1037's ramp was still too narrow on real meshes
+  return Math.min(Math.max(segLen*0.3, h*0.015), h*0.1);   // build 1039: widened for long limbs; build 1050: floor lowered — feet/hands were over-softened
 }
 // build 1037: softened skinning kernel. 1/d^4 far from the bone (unchanged reach — no
 // cross-limb bleed), but the +r^2 floor flattens the falloff near joints, so parent and
@@ -11100,9 +11100,23 @@ function _arJoints(J, segs){
     let pn=j.parent;
     while(pn && !segOf[pn]) pn=(byName[pn]||{}).parent;   // climb past weightless in-betweens
     if(!pn) continue;
-    const dx=sg.b[0]-sg.a[0], dy=sg.b[1]-sg.a[1], dz=sg.b[2]-sg.a[2];
-    const L=Math.hypot(dx,dy,dz); if(L<1e-6) continue;
-    out.push({ p:sg.a, dir:[dx/L,dy/L,dz/L], child:sg.bi, parent:segOf[pn].bi, R:Math.max(1e-4, Math.sqrt(sg.r2)) });
+    const ps=segOf[pn];
+    // build 1050: the blend axis is the PARENT bone's APPROACH into the joint, not the child's
+    // own direction. Collinear chains (knee, elbow) are unchanged — but at sharp-angle joints
+    // the child axis put part of the child body on the parent side of the cut plane: the HEEL
+    // sits behind the ankle along the foot's axis, so it inherited shin weights and the boot
+    // crumpled every step (the soldier bug). The approach axis cuts perpendicular to the limb,
+    // so everything past the joint belongs to the child.
+    let dx=sg.a[0]-ps.a[0], dy=sg.a[1]-ps.a[1], dz=sg.a[2]-ps.a[2];
+    let L=Math.hypot(dx,dy,dz);
+    if(L<1e-6){ dx=sg.b[0]-sg.a[0]; dy=sg.b[1]-sg.a[1]; dz=sg.b[2]-sg.a[2]; L=Math.hypot(dx,dy,dz); }   // degenerate parent: fall back to the child axis
+    if(L<1e-6) continue;
+    const childLen=Math.hypot(sg.b[0]-sg.a[0], sg.b[1]-sg.a[1], sg.b[2]-sg.a[2]);
+    const parentLen=Math.hypot(ps.b[0]-ps.a[0], ps.b[1]-ps.a[1], ps.b[2]-ps.a[2]);
+    // build 1050: small parts get small ramps — R is capped by BOTH bones so an ankle or wrist
+    // ramp can never engulf the whole foot or hand (the height-based floor used to inflate it).
+    const R=Math.max(1e-4, Math.min(Math.sqrt(sg.r2), childLen*0.35, (parentLen||childLen)*0.35));
+    out.push({ p:sg.a, dir:[dx/L,dy/L,dz/L], child:sg.bi, parent:ps.bi, R });
   }
   return out;
 }
@@ -21963,7 +21977,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1049 · 2026-07-22';
+const BUILD_VERSION = 'build 1050 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
