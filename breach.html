@@ -9566,7 +9566,7 @@ function _buildBoneMap(dstRoot, srcRoot){
 function _retargetClip(dstRoot, srcRoot, clip, map, fps){
   fps = fps || 24;
   dstRoot.updateWorldMatrix(true, true); srcRoot.updateWorldMatrix(true, true);
-  const P = map.pairs.map(p=>({ dst:p.dst, src:p.src,
+  const P = map.pairs.map(p=>({ key:p.key, dst:p.dst, src:p.src,
     srcRestInv: p.src.getWorldQuaternion(new THREE.Quaternion()).invert(),
     dstRestW:   p.dst.getWorldQuaternion(new THREE.Quaternion()),
     times:[], q:[] }));
@@ -9589,6 +9589,14 @@ function _retargetClip(dstRoot, srcRoot, clip, map, fps){
     const _wa=new THREE.Vector3(), _wb=new THREE.Vector3(), _wc=new THREE.Vector3(), _wd=new THREE.Vector3();
     for(const p of P){
       p.align=new THREE.Quaternion();
+      // build 1051: alignment is for bones whose direction encodes POSE (arms, legs, spine —
+      // an A-pose arm is genuinely posed differently). Hands, feet, toes, fingers and the head
+      // are END bones whose direction encodes ANATOMY — the pack's foot bone slopes from a high
+      // ankle to the toe, an auto-rig's runs nearly level, and BOTH mean "foot flat". Aligning
+      // them pitched feet into the ground and curled hands (the crushed-boots-under-pack-anims
+      // bug). End bones keep pure delta retargeting: they deviate from THEIR rest exactly as
+      // the pack's deviate from its.
+      if(/^(?:[LR]:(?:hand|foot|toe|thumb|index|middle|ring|pinky)|head)/.test(p.key||'')) continue;
       const dc=firstMapped(p.dst, dstSet);
       const cp=dc ? pairOfDst.get(dc) : null;
       if(!cp) continue;   // leaf bones: nothing to aim, identity
@@ -21977,7 +21985,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1050 · 2026-07-22';
+const BUILD_VERSION = 'build 1051 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
