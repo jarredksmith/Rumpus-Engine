@@ -7,7 +7,7 @@ const src = gameSource();
 // revealZoneTool helper that jumps to World mode + sets the active zone type.
 
 // --- the new targets are pushed into the ray list ---
-assert(/for\(const g of turretModels\)\{ if\(g\) targets\.push\(g\); \}/.test(src), 'turrets added to the pick targets');
+assert(/for\(const g of turretModels\)\{ if\(g && g\.visible && !\(g\.userData && g\.userData\.edLock\)\) targets\.push\(g\); \}/.test(src), 'turrets added to the pick targets (build 1036: unless outliner-locked/hidden)');
 assert(/for\(const m of ladderMarkers\)\{ if\(m && m\.visible\) targets\.push\(m\); \}/.test(src), 'ladders added to the pick targets');
 assert(/for\(const m of audioZoneMarkers\)\{ if\(m && m\.visible\) targets\.push\(m\); \}/.test(src), 'audio zones added to the pick targets');
 assert(/if\(playerSpawnMarker && playerSpawnMarker\.visible\) targets\.push\(playerSpawnMarker\);/.test(src), 'the player-start marker is pickable when visible');

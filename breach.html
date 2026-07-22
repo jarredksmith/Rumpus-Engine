@@ -139,6 +139,46 @@
   #edToolbar button:hover { background:rgba(255,255,255,0.06); color:#eafff7; }
   #edToolbar button.on { background:rgba(var(--accent-rgb),0.25); color:var(--accent); }
   @media (max-width:760px) { #edToolbar { flex-wrap:wrap; max-width:52vw; } }
+  /* build 1036: scene outliner */
+  #outliner { position:fixed; top:calc(56px + env(safe-area-inset-top)); left:calc(12px + env(safe-area-inset-left)); z-index:28; width:252px; max-height:min(62vh, 540px); display:none; flex-direction:column; background:rgba(9,15,19,0.94); border:1px solid #223039; border-radius:10px; box-shadow:0 8px 26px rgba(0,0,0,0.5); font-size:12px; color:#cfe8df; }
+  body:has(#editor.dockLeft) #outliner { left:auto; right:calc(12px + env(safe-area-inset-right)); }
+  #outliner .outHead { display:flex; align-items:center; padding:7px 10px 4px; }
+  #outliner .outTitle { flex:1; font-size:11px; letter-spacing:2px; color:var(--accent); font-weight:700; }
+  #outliner #outClose { background:none; border:none; color:#8fb0a6; font-size:15px; cursor:pointer; padding:0 2px; }
+  #outliner .outTools { display:flex; gap:5px; padding:0 8px 6px; }
+  #outliner .outTools input, #outliner .outTools select { min-width:0; background:rgba(255,255,255,0.05); border:1px solid #223039; border-radius:6px; color:#dff5ec; font-size:11px; padding:4px 6px; }
+  #outliner .outTools input { flex:1; }
+  #outliner .outTools select { flex:0 0 84px; }
+  #outliner .outBody { overflow-y:auto; padding:0 4px 6px; }
+  .outGrpHead { display:flex; align-items:center; gap:5px; padding:4px 6px; cursor:pointer; color:#9fd8c4; font-weight:600; border-top:1px solid rgba(140,180,168,0.10); }
+  .outGrp:first-child .outGrpHead { border-top:none; }
+  .outGrpHead .outGrpLb { flex:0 0 auto; }
+  .outCaret { display:inline-block; transition:transform .12s; font-size:10px; }
+  .outCaret.closed { transform:rotate(-90deg); }
+  .outCt { flex:1; font-size:10px; color:#5f7d72; }
+  .outRow { display:flex; align-items:center; gap:5px; padding:2px 6px 2px 16px; border-radius:5px; cursor:pointer; min-height:20px; }
+  .outRow:hover { background:rgba(255,255,255,0.05); }
+  .outRow.sel { background:rgba(var(--accent-rgb),0.18); color:var(--accent); }
+  .outRow.hid .outNm { opacity:0.45; }
+  .outRow .outNm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .outRow.inF { padding-left:30px; }
+  .outFolder { padding-left:8px; color:#b8d6ca; font-weight:600; }
+  .outFolder .outNm { flex:0 1 auto; }
+  .outFolder .outCt { flex:1; }
+  .outFIc { display:flex; }
+  .outFIc svg { width:12px; height:12px; }
+  .outTagChip { flex:0 0 auto; max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9.5px; background:rgba(var(--accent-rgb),0.14); color:var(--accent); border-radius:4px; padding:0 4px; }
+  .outBtn { flex:0 0 auto; width:18px; height:18px; display:flex; align-items:center; justify-content:center; background:none; border:none; border-radius:4px; color:#5f7d72; cursor:pointer; padding:0; opacity:0; }
+  .outRow:hover .outBtn, .outGrpHead:hover .outBtn, .outBtn.on { opacity:1; }
+  .outBtn:hover { color:#eafff7; background:rgba(255,255,255,0.08); }
+  .outBtn.on { color:var(--accent); }
+  .outBtn svg { width:13px; height:13px; }
+  @media (pointer:coarse) { .outBtn { opacity:1; } }
+  .outMove { display:flex; align-items:center; gap:6px; padding:3px 6px 3px 16px; color:#9fd8c4; font-size:11px; }
+  .outMove select, .outMove input { flex:1; min-width:0; background:rgba(255,255,255,0.05); border:1px solid #223039; border-radius:6px; color:#dff5ec; font-size:11px; padding:3px 5px; }
+  .outRen { background:rgba(255,255,255,0.08); border:1px solid var(--accent); border-radius:4px; color:#fff; font-size:11px; padding:1px 4px; flex:1; min-width:0; }
+  .outEmpty { padding:10px; color:#5f7d72; text-align:center; }
+  @media (max-width:760px) { #outliner { width:200px; max-height:44vh; top:calc(96px + env(safe-area-inset-top)); } }
   /* ---- build 978: pro-inspector reskin — flat details list, tooltips, settings search ---- */
   #editor { font: 12px/1.45 var(--ui-font), system-ui, sans-serif; background: rgba(9,14,18,0.96); border-left: 1px solid #1c2a31; }   /* build 985: padding lives on #edTopBar / #edMain now (the panel scrolls as one) */
   #editor.dockLeft { border-right: 1px solid #1c2a31; }
@@ -10701,7 +10741,7 @@ function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
   const _tRel = !!(savedLevel && savedLevel.tRel);
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -10762,6 +10802,7 @@ function _lightOpts(g){
   if(type==='hemi') o.ground=hx(L.groundColor);
   if(g.userData.tag) o.tag=g.userData.tag;                                          // build 699: signal target + start state
   if(g.userData.startOff) o.startOff=true;
+  if(g.userData.name) o.nm=String(g.userData.name).slice(0,60); if(g.userData.edHide) o.eh=1; if(g.userData.edLock) o.elk=1;   // build 1036: outliner name/hide/lock
   if(g.userData.lfade!=null && g.userData.lfade!==0.4) o.fade=+g.userData.lfade;
   return o;
 }
@@ -10796,6 +10837,7 @@ function buildLight(opts){
   if(opts.tag) g.userData.tag = String(opts.tag).slice(0,40);  // name it so a signal's Open/Close/Toggle can target it
   g.userData.lfade = (opts.fade!=null ? +opts.fade : 0.4);     // seconds to fade on/off (0 = instant)
   g.userData.startOff = !!opts.startOff;                       // start dark at deploy, lit later by a signal
+  if(opts.nm) g.userData.name=String(opts.nm).slice(0,60); if(opts.eh) g.userData.edHide=true; if(opts.elk) g.userData.edLock=true;   // build 1036: outliner name/hide/lock
   if(type==='spot' || type==='dir'){   // direction stick (child of the marker, so it shows/hides with it)
     const st=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,1.8,6), new THREE.MeshBasicMaterial({color:mcol}));
     marker.add(st); g.userData.dirStick=st;
@@ -11591,6 +11633,11 @@ addEventListener('keydown', e=>{
   }
   // build 882: B toggles the terrain brush (sculpt/paint/scatter) — same guard pattern as F/T above.
   // Editor-only, so driving's B-handbrake is untouched (you can't drive with the editor open).
+  // build 1036: O toggles the scene outliner — same typing guard as F/T/B above.
+  if(editorOpen && !e.repeat && e.code==='KeyO' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){ if(typeof _outToggle==='function') _outToggle(); keys['KeyO']=false; e.preventDefault(); return; }
+  }
   if(editorOpen && !e.repeat && e.code==='KeyB' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
     const tag = (e.target && e.target.tagName) || '';
     if(tag!=='INPUT' && tag!=='TEXTAREA'){
@@ -11771,7 +11818,7 @@ function _marqueeFinish(e){
   const r = renderer.domElement.getBoundingClientRect();
   const x0=Math.min(_marqueeX0,e.clientX), x1=Math.max(_marqueeX0,e.clientX), y0=Math.min(_marqueeY0,e.clientY), y1=Math.max(_marqueeY0,e.clientY);
   const cam = activeCam(); const hits=[];
-  for(const p of propModels){ if(!p) continue; _marqueeV.setFromMatrixPosition(p.matrixWorld); _marqueeV.project(cam);
+  for(const p of propModels){ if(!p || (p.userData && (p.userData.edLock || p.userData.edHide))) continue; _marqueeV.setFromMatrixPosition(p.matrixWorld); _marqueeV.project(cam);   // build 1036: locked/hidden props dodge the marquee
     const sx = r.left + (_marqueeV.x*0.5+0.5)*r.width, sy = r.top + (-_marqueeV.y*0.5+0.5)*r.height;
     if(_marqueeV.z < 1 && sx>=x0 && sx<=x1 && sy>=y0 && sy<=y1) hits.push(p);
   }
@@ -15744,7 +15791,7 @@ function loadLevelFromNet(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -20443,7 +20490,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1035 · 2026-07-21';
+const BUILD_VERSION = 'build 1036 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26896,7 +26943,7 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     applyPropDynState(obj, p);
     if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }
     if(p.tg) obj.userData.tag=p.tg;
-    if(p.itr) obj.userData.interact=true;
+    if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true;
     if(gid) obj.userData.groupId=gid;
     if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(x=>String(x).slice(0,200));
     if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40);
@@ -27181,6 +27228,7 @@ function propEntry(o){
   if(o.userData.attribution) e.att=o.userData.attribution;
   if(o.userData.pf && o.userData.pf.id) e.pf={ id:String(o.userData.pf.id), inst:String(o.userData.pf.inst||'i0'), slot:o.userData.pf.slot|0 };   // build 1030: prefab instance mark
   if(o.userData.interact) e.itr=1;   // build 1035: Interactable (press E)
+  if(o.userData.name) e.nm=String(o.userData.name).slice(0,60); if(o.userData.folder) e.fld=String(o.userData.folder).slice(0,40); if(o.userData.edHide) e.eh=1; if(o.userData.edLock) e.elk=1;   // build 1036: outliner name/folder/hide/lock
   if(o.userData.nid) e.nid=o.userData.nid;
   return e;
 }
@@ -27743,7 +27791,7 @@ function restoreLevel(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -28899,6 +28947,7 @@ function renderInvItems(host){
 let _refLast = 0, _refQueued = false;
 function renderEditorFields(){
   if(!editorEl) return;
+  if(typeof _outQueueRefresh==='function') _outQueueRefresh();   // build 1036: the outliner mirrors every add/delete/select
   if(_refQueued) return;
   { const _rnow = performance.now();
     if(_rnow - _refLast < 8){ _refQueued = true; requestAnimationFrame(()=>{ _refQueued = false; _refLast = performance.now(); renderEditorFields(); }); return; }
@@ -32090,15 +32139,15 @@ renderer.domElement.addEventListener('click', (e)=>{
   raycaster.setFromCamera(new THREE.Vector2(nx, ny), activeCam());
   const targets = [];
   if(station && station.model) targets.push(station.model);
-  for(const p of propModels){ if(p) targets.push(p); }
-  for(const g of lightModels){ if(g.userData.marker) targets.push(g.userData.marker); }
-  for(const g of spawnMarkers){ if(g.visible) targets.push(g); }
+  for(const p of propModels){ if(p && !(p.userData && (p.userData.edLock || p.userData.edHide))) targets.push(p); }   // build 1036: outliner lock/hide
+  for(const g of lightModels){ if(g.userData.marker && g.visible && !g.userData.edLock) targets.push(g.userData.marker); }
+  for(const g of spawnMarkers){ if(g.visible && !g.userData.edLock) targets.push(g); }
   for(const m of pickupMarkers){ if(m && m.visible) targets.push(m); }
   for(const m of lootMarkers){ if(m && m.visible) targets.push(m); }
   for(const m of deathZoneMarkers){ if(m && m.visible) targets.push(m); }
   // build 657: every placeable thing must be click-selectable. Adds turrets, ladders, audio zones, the player
   // start marker, and the extract zone (their markers/visuals are already visible during editing).
-  for(const g of turretModels){ if(g) targets.push(g); }
+  for(const g of turretModels){ if(g && g.visible && !(g.userData && g.userData.edLock)) targets.push(g); }   // build 1036: outliner lock/hide
   for(const m of ladderMarkers){ if(m && m.visible) targets.push(m); }
   for(const m of audioZoneMarkers){ if(m && m.visible) targets.push(m); }
   if(playerSpawnMarker && playerSpawnMarker.visible) targets.push(playerSpawnMarker);
@@ -32225,6 +32274,7 @@ function _edToolbarEnsure(){
     fly:S+'<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>',
     eye:S+'<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>',
     col:S+'<ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14a7 3 0 0 0 14 0V5"/></svg>',
+    list:S+'<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
   };
   const mk=(id,icon,tip)=>{ const b=document.createElement('button'); b.id=id; b.innerHTML=icon; b.setAttribute('data-tip', tip); b.setAttribute('aria-label', tip); return b; };
   const g1=document.createElement('div'); g1.className='tbGroup';
@@ -32234,6 +32284,7 @@ function _edToolbarEnsure(){
   const g2=document.createElement('div'); g2.className='tbGroup';
   g2.appendChild(mk('tbTop', I.top, 'Top view \u2014 overhead camera; drag to marquee-select (T)'));
   g2.appendChild(mk('tbFly', I.fly, 'Fly camera \u2014 WASD + mouse look (F)'));
+  g2.appendChild(mk('tbOut', I.list, 'Outliner \u2014 the whole scene as a list: search, folders, hide, lock (O)'));
   const g3=document.createElement('div'); g3.className='tbGroup';
   g3.appendChild(mk('tbHideEn', I.eye, 'Hide enemies while editing'));
   g3.appendChild(mk('tbCol', I.col, 'Show colliders \u2014 the pink damage hit-cylinders'));
@@ -32245,6 +32296,7 @@ function _edToolbarEnsure(){
   q('tbScale').onclick=()=>{ gizmoMode='scale'; updateGizmo(); renderEditorFields(); };
   q('tbTop').onclick=()=>{ editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=Math.min(Math.max(75, ARENA*1.12), 2600); } renderEditorFields(); };
   q('tbFly').onclick=()=>{ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } renderEditorFields(); };
+  q('tbOut').onclick=()=>{ if(typeof _outToggle==='function') _outToggle(); };
   q('tbHideEn').onclick=()=>{ editorHideEnemies=!editorHideEnemies; renderEditorFields(); };
   q('tbCol').onclick=()=>{ editorShowColliders=!editorShowColliders; renderEditorFields(); };
   if(typeof _edBindTips==='function') _edBindTips(t);
@@ -32255,11 +32307,303 @@ function _edToolbarSync(){
   const on=(id,v)=>{ const b=t.querySelector('#'+id); if(b) b.classList.toggle('on', !!v); };
   on('tbMove', gizmoMode==='translate'); on('tbRot', gizmoMode==='rotate'); on('tbScale', gizmoMode==='scale');
   on('tbTop', editorTopView); on('tbFly', editorFreeFly);
+  on('tbOut', typeof _outOn!=='undefined' && _outOn);
   on('tbHideEn', editorHideEnemies); on('tbCol', editorShowColliders);
 }
 function _edToolbarShow(v){
   if(v){ const t=_edToolbarEnsure(); t.style.display='flex'; _edToolbarSync(); }
   else { const t=document.getElementById('edToolbar'); if(t) t.style.display='none'; }
+}
+// ---- build 1036: SCENE OUTLINER --------------------------------------------------------------
+// One searchable hierarchy for everything placed in the level (O, or the list button on the
+// editor toolbar): props, lights, enemy spawns, turrets, pickups. Props group into FOLDERS
+// (userData.folder — serialized); rows show tags; the eye hides an object while editing (play is
+// never affected); the padlock keeps viewport clicks and the marquee from grabbing it (set
+// dressing stops stealing clicks). Type and folder headers select everything they contain, the
+// search box matches name/tag/folder, and the tag dropdown narrows to one tag. Double-click
+// renames props and lights (serialized).
+let _outEl=null, _outSearch='', _outTag='', _outFolds={}, _outRefT=0;
+let _outOn=false; try{ _outOn = localStorage.getItem('breach_outliner_on')==='1'; }catch(e){}
+try{ _outFolds = JSON.parse(localStorage.getItem('breach_outliner_folds')||'{}') || {}; }catch(e){ _outFolds={}; }
+function _outSaveFolds(){ try{ localStorage.setItem('breach_outliner_folds', JSON.stringify(_outFolds)); }catch(e){} }
+function _outName(o){
+  const u=(o && o.userData)||{};
+  if(u.name) return String(u.name);
+  if(u.npcName) return String(u.npcName);
+  const src=String(u.src||'');
+  if(src){
+    if(typeof isPrimitive==='function' && isPrimitive(src)) return src;
+    const b=src.split('?')[0].split('#')[0].split('/').pop().replace(/\.(glb|gltf)$/i,'');
+    if(b){ try{ return decodeURIComponent(b).slice(0,42); }catch(e){ return b.slice(0,42); } }
+  }
+  return 'prop';
+}
+function _outMatch(name, tag, folder){
+  if(_outTag && tag!==_outTag) return false;
+  const q=String(_outSearch).trim().toLowerCase();
+  if(!q) return true;
+  return String(name).toLowerCase().indexOf(q)>=0 || String(tag||'').toLowerCase().indexOf(q)>=0 || String(folder||'').toLowerCase().indexOf(q)>=0;
+}
+function _outItems(kind){
+  const out=[];
+  if(kind==='props'){ for(let i=0;i<propModels.length;i++){ const o=propModels[i]; if(!o) continue; const u=o.userData||{}; out.push({ o, i, name:_outName(o), tag:u.tag||'', folder:u.folder||'' }); } }
+  else if(kind==='lights'){ for(let i=0;i<lightModels.length;i++){ const g=lightModels[i]; if(!g) continue; const u=g.userData||{}; out.push({ o:g, i, name:(u.name?String(u.name):((u.ltype||'point')+' light')), tag:u.tag||'', folder:'' }); } }
+  else if(kind==='spawns'){ for(let i=0;i<spawnMarkers.length;i++){ const g=spawnMarkers[i]; if(!g) continue; const m=(g.userData&&g.userData.mark)||{}; out.push({ o:g, i, name:(m.type||'enemy')+(m.wave>0?(' · wave '+m.wave):''), tag:'', folder:'' }); } }
+  else if(kind==='turrets'){ for(let i=0;i<turretModels.length;i++){ const g=turretModels[i]; if(!g) continue; out.push({ o:g, i, name:'turret '+(i+1), tag:'', folder:'' }); } }
+  else if(kind==='pickups'){ for(let i=0;i<pickupSpots.length;i++){ const p=pickupSpots[i]; if(!p) continue; out.push({ o:null, i, name:(p.kind||'pickup')+(p.item?(' · '+p.item):''), tag:'', folder:'' }); } }
+  return out;
+}
+function _outSelect(kind, obj, idx, additive){
+  if(kind==='props'){
+    if(additive){ const at=selProps.indexOf(obj); if(at>=0) selProps.splice(at,1); else selProps.push(obj); }
+    else selProps=[obj];
+    selLights=[]; selSpawns=[]; selPickup=-1; editorActive='props';
+    const primary=selProps[selProps.length-1]||obj; editorTargets.props.idx=propModels.indexOf(primary);
+  } else if(kind==='lights'){
+    if(additive){ const at=selLights.indexOf(obj); if(at>=0) selLights.splice(at,1); else selLights.push(obj); }
+    else selLights=[obj];
+    selProps=[]; selSpawns=[]; selPickup=-1; editorActive='lights'; editorTargets.lights.idx=idx;
+  } else if(kind==='spawns'){
+    if(additive){ const at=selSpawns.indexOf(obj); if(at>=0) selSpawns.splice(at,1); else selSpawns.push(obj); }
+    else selSpawns=[obj];
+    selProps=[]; selLights=[]; selPickup=-1; editorActive='spawns'; editorTargets.spawns.idx=idx;
+  } else if(kind==='turrets'){
+    selTurrets=[obj]; selProps=[]; selLights=[]; selSpawns=[]; selPickup=-1; editorActive='turrets'; editorTargets.turrets.idx=idx;
+  } else if(kind==='pickups'){
+    selProps.length=0; selLights.length=0; selSpawns=[]; if(typeof selLoot!=='undefined') selLoot=-1;
+    selPickup=idx; gizmoMode='translate'; editorActive='pickups';
+    if(typeof setEditorMode==='function' && editorMode!=='rules') setEditorMode('rules', true);
+  }
+  if(kind!=='pickups' && typeof syncModeToActive==='function') syncModeToActive();
+  if(typeof updateGizmo==='function') updateGizmo();
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+}
+function _outSelectAll(kind, objs){
+  objs=(objs||[]).filter(Boolean); if(!objs.length) return;
+  if(kind==='props'){ selProps=objs.slice(); selLights=[]; selSpawns=[]; selPickup=-1; editorActive='props'; editorTargets.props.idx=propModels.indexOf(objs[objs.length-1]); }
+  else if(kind==='lights'){ selLights=objs.slice(); selProps=[]; selSpawns=[]; selPickup=-1; editorActive='lights'; editorTargets.lights.idx=lightModels.indexOf(objs[objs.length-1]); }
+  else if(kind==='spawns'){ selSpawns=objs.slice(); selProps=[]; selLights=[]; selPickup=-1; editorActive='spawns'; editorTargets.spawns.idx=spawnMarkers.indexOf(objs[objs.length-1]); }
+  else if(kind==='turrets'){ selTurrets=objs.slice(); selProps=[]; selLights=[]; selSpawns=[]; selPickup=-1; editorActive='turrets'; editorTargets.turrets.idx=turretModels.indexOf(objs[objs.length-1]); }
+  else return;
+  if(typeof syncModeToActive==='function') syncModeToActive();
+  if(typeof updateGizmo==='function') updateGizmo();
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof toast==='function') toast(objs.length+' selected');
+}
+function _outDeselect(o){
+  const rm=(arr)=>{ if(!arr) return; const at=arr.indexOf(o); if(at>=0) arr.splice(at,1); };
+  rm(selProps); rm(selLights); rm(selSpawns); if(typeof selTurrets!=='undefined') rm(selTurrets);
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof updateGizmo==='function') updateGizmo();
+}
+function _outSetHide(o, v){
+  if(!o || !o.userData) return;
+  if(v) o.userData.edHide=true; else delete o.userData.edHide;
+  o.visible=!v;
+  if(v) _outDeselect(o);
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+}
+function _outSetLock(o, v){
+  if(!o || !o.userData) return;
+  if(v) o.userData.edLock=true; else delete o.userData.edLock;
+  if(v) _outDeselect(o);
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+}
+function _outIcon(kind){
+  const S='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+  if(kind==='eye') return S+'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+  if(kind==='eyeoff') return S+'<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+  if(kind==='lock') return S+'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+  if(kind==='unlock') return S+'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
+  if(kind==='sel') return S+'<path d="M3 3h7v7H3z"/><path d="M14 3h7v7h-7z"/><path d="M3 14h7v7H3z"/><path d="M14 14h7v7h-7z"/></svg>';
+  if(kind==='folder') return S+'<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+  return '';
+}
+function _outIconBtn(kind, on, tip){
+  const b=document.createElement('button'); b.className='outBtn'+(on?' on':''); b.innerHTML=_outIcon(kind);
+  b.title=tip; b.setAttribute('aria-label', tip); return b;
+}
+function _outRenameEl(o, nmEl){   // double-click a prop/light row: rename in place (serialized as e.nm)
+  const inp=document.createElement('input'); inp.type='text'; inp.className='outRen'; inp.value=(o.userData&&o.userData.name)?o.userData.name:'';
+  inp.placeholder=_outName(o);
+  nmEl.replaceWith(inp); inp.focus(); inp.select();
+  let done=false;
+  const fin=(commit)=>{ if(done) return; done=true;
+    if(commit){ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); const v=inp.value.trim();
+      if(v) o.userData.name=v.slice(0,60); else delete o.userData.name;
+      if(typeof _levelDirty!=='undefined') _levelDirty=true; }
+    _outRefresh(); };
+  inp.onkeydown=(e)=>{ e.stopPropagation(); if(e.key==='Enter') fin(true); else if(e.key==='Escape') fin(false); };
+  inp.onblur=()=>fin(true);
+}
+function _outRenameFolder(oldName, fitems, nmEl){
+  const inp=document.createElement('input'); inp.type='text'; inp.className='outRen'; inp.value=oldName;
+  nmEl.replaceWith(inp); inp.focus(); inp.select();
+  let done=false;
+  const fin=(commit)=>{ if(done) return; done=true;
+    const v=inp.value.trim().slice(0,40);
+    if(commit && v && v!==oldName){ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+      for(const it of fitems){ if(it.o && it.o.userData) it.o.userData.folder=v; }
+      _outFolds['f:'+v]=_outFolds['f:'+oldName]!==false; delete _outFolds['f:'+oldName]; _outSaveFolds();
+      if(typeof _levelDirty!=='undefined') _levelDirty=true; }
+    _outRefresh(); };
+  inp.onkeydown=(e)=>{ e.stopPropagation(); if(e.key==='Enter') fin(true); else if(e.key==='Escape') fin(false); };
+  inp.onblur=()=>fin(true);
+}
+function _outMoveSel(folder){   // move the selected props into a folder ('' = back to the root)
+  if(!selProps.length) return;
+  if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+  for(const o of selProps){ if(!o || !o.userData) continue; if(folder) o.userData.folder=folder.slice(0,40); else delete o.userData.folder; }
+  if(folder) _outFolds['f:'+folder.slice(0,40)]=true;
+  _outSaveFolds();
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  _outRefresh();
+}
+function _outMoveRow(){
+  const r=document.createElement('div'); r.className='outMove';
+  const lb=document.createElement('span'); lb.textContent='Move '+selProps.length+' →'; r.appendChild(lb);
+  const sel=document.createElement('select');
+  const add=(v,t)=>{ const op=document.createElement('option'); op.value=v; op.textContent=t; sel.appendChild(op); };
+  add('','folder…'); add('::root','(no folder)');
+  const names=new Set(); for(const o of propModels){ if(o && o.userData && o.userData.folder) names.add(o.userData.folder); }
+  for(const n of [...names].sort()) add('::f:'+n, n);
+  add('::new','+ new folder…');
+  sel.onchange=()=>{
+    const v=sel.value; if(!v) return;
+    if(v==='::new'){
+      const inp=document.createElement('input'); inp.type='text'; inp.className='outRen'; inp.placeholder='folder name';
+      sel.replaceWith(inp); inp.focus();
+      let done=false;
+      const fin=(commit)=>{ if(done) return; done=true; const nm=inp.value.trim().slice(0,40); if(commit && nm) _outMoveSel(nm); else _outRefresh(); };
+      inp.onkeydown=(e)=>{ e.stopPropagation(); if(e.key==='Enter') fin(true); else if(e.key==='Escape') fin(false); };
+      inp.onblur=()=>fin(true);
+      return;
+    }
+    _outMoveSel(v==='::root' ? '' : v.slice(4));
+  };
+  r.appendChild(sel); return r;
+}
+function _outRowEl(kind, it, inFolder){
+  const o=it.o, u=(o && o.userData)||{};
+  const r=document.createElement('div'); r.className='outRow'+(inFolder?' inF':'')+(u.edHide?' hid':'');
+  const isSel = kind==='props' ? selProps.indexOf(o)>=0
+    : kind==='lights' ? selLights.indexOf(o)>=0
+    : kind==='spawns' ? selSpawns.indexOf(o)>=0
+    : kind==='turrets' ? (typeof selTurrets!=='undefined' && selTurrets.indexOf(o)>=0)
+    : selPickup===it.i;
+  if(isSel) r.classList.add('sel');
+  const nm=document.createElement('span'); nm.className='outNm'; nm.textContent=it.name;
+  nm.title=it.name+((kind==='props'||kind==='lights')?' — double-click to rename':'');
+  r.appendChild(nm);
+  if(it.tag){ const tc=document.createElement('span'); tc.className='outTagChip'; tc.textContent=it.tag; tc.title='tag: '+it.tag; r.appendChild(tc); }
+  if(kind!=='pickups'){
+    const hb=_outIconBtn(u.edHide?'eyeoff':'eye', !!u.edHide, u.edHide?'Show':'Hide while editing (play is never affected)');
+    hb.onclick=(e)=>{ e.stopPropagation(); _outSetHide(o, !u.edHide); _outRefresh(); }; r.appendChild(hb);
+    const kb=_outIconBtn(u.edLock?'lock':'unlock', !!u.edLock, u.edLock?'Unlock':'Lock — viewport clicks pass through it');
+    kb.onclick=(e)=>{ e.stopPropagation(); _outSetLock(o, !u.edLock); _outRefresh(); }; r.appendChild(kb);
+  }
+  r.onclick=(e)=>{ _outSelect(kind, o, it.i, !!e.shiftKey); _outRefresh(); };
+  if(kind==='props'||kind==='lights'){ nm.ondblclick=(e)=>{ e.stopPropagation(); _outRenameEl(o, nm); }; }
+  return r;
+}
+function _outEnsure(){
+  if(_outEl) return _outEl;
+  const el=document.createElement('div'); el.id='outliner';
+  el.innerHTML='<div class="outHead"><span class="outTitle">SCENE</span><button id="outClose" aria-label="Close the outliner">×</button></div>'
+    +'<div class="outTools"><input id="outSearch" type="text" placeholder="Search name, tag, folder…" aria-label="Search the scene"><select id="outTagSel" aria-label="Filter by tag"><option value="">all tags</option></select></div>'
+    +'<div class="outBody" id="outBody"></div>';
+  document.body.appendChild(el);
+  el.querySelector('#outClose').onclick=()=>{ if(_outOn) _outToggle(); };
+  const si=el.querySelector('#outSearch');
+  si.oninput=()=>{ _outSearch=si.value; _outRefresh(); };
+  si.onkeydown=(e)=>{ e.stopPropagation(); if(e.key==='Escape'){ si.value=''; _outSearch=''; _outRefresh(); } };
+  const ts=el.querySelector('#outTagSel'); ts.onchange=()=>{ _outTag=ts.value; _outRefresh(); };
+  _outEl=el; return el;
+}
+function _outRefresh(){
+  if(!_outOn) return;
+  const el=_outEnsure();
+  const ts=el.querySelector('#outTagSel'); const cur=_outTag;
+  while(ts.options.length>1) ts.remove(1);
+  if(typeof _lgTagOptions==='function') for(const t of _lgTagOptions()){ const op=document.createElement('option'); op.value=t.tag; op.textContent=t.tag+' ('+t.n+')'; ts.appendChild(op); }
+  ts.value=cur; if(ts.value!==cur){ _outTag=''; ts.value=''; }
+  const body=el.querySelector('#outBody'); body.textContent='';
+  const GROUPS=[['props','Props'],['lights','Lights'],['spawns','Enemy spawns'],['turrets','Turrets'],['pickups','Pickups']];
+  for(const [kind,label] of GROUPS){
+    const items=_outItems(kind); if(!items.length) continue;
+    const match=items.filter(it=>_outMatch(it.name, it.tag, it.folder));
+    const sec=document.createElement('div'); sec.className='outGrp';
+    const open=_outFolds['t:'+kind]!==false;
+    const h=document.createElement('div'); h.className='outGrpHead';
+    const car=document.createElement('span'); car.className='outCaret'+(open?'':' closed'); car.textContent='▾'; h.appendChild(car);
+    const lb=document.createElement('span'); lb.className='outGrpLb'; lb.textContent=label; h.appendChild(lb);
+    const ct=document.createElement('span'); ct.className='outCt'; ct.textContent=(match.length===items.length)?String(items.length):(match.length+'/'+items.length); h.appendChild(ct);
+    if(kind!=='pickups'){
+      const sa=_outIconBtn('sel', false, 'Select every '+label.toLowerCase()+' shown (locked ones stay put)');
+      sa.onclick=(e)=>{ e.stopPropagation(); _outSelectAll(kind, match.filter(it=>!(it.o && it.o.userData && it.o.userData.edLock)).map(it=>it.o)); _outRefresh(); };
+      h.appendChild(sa);
+    }
+    h.onclick=()=>{ const now=_outFolds['t:'+kind]!==false; _outFolds['t:'+kind]=!now; _outSaveFolds(); _outRefresh(); };
+    sec.appendChild(h);
+    if(open){
+      if(kind==='props'){
+        if(selProps.length) sec.appendChild(_outMoveRow());
+        const folders={}; const root=[];
+        for(const it of match){ if(it.folder){ (folders[it.folder]=folders[it.folder]||[]).push(it); } else root.push(it); }
+        for(const fname of Object.keys(folders).sort()){
+          const fitems=folders[fname];
+          const fopen=_outFolds['f:'+fname]!==false;
+          const fh=document.createElement('div'); fh.className='outRow outFolder';
+          const fc=document.createElement('span'); fc.className='outCaret'+(fopen?'':' closed'); fc.textContent='▾'; fh.appendChild(fc);
+          const fi=document.createElement('span'); fi.className='outFIc'; fi.innerHTML=_outIcon('folder'); fh.appendChild(fi);
+          const fn=document.createElement('span'); fn.className='outNm'; fn.textContent=fname; fn.title=fname+' — double-click to rename the folder'; fh.appendChild(fn);
+          const fct=document.createElement('span'); fct.className='outCt'; fct.textContent=String(fitems.length); fh.appendChild(fct);
+          const allH=fitems.every(it=>it.o.userData.edHide), allL=fitems.every(it=>it.o.userData.edLock);
+          const fsa=_outIconBtn('sel', false, 'Select the folder contents');
+          fsa.onclick=(e)=>{ e.stopPropagation(); _outSelectAll('props', fitems.filter(it=>!it.o.userData.edLock).map(it=>it.o)); _outRefresh(); }; fh.appendChild(fsa);
+          const fhb=_outIconBtn(allH?'eyeoff':'eye', allH, allH?'Show the whole folder':'Hide the whole folder while editing');
+          fhb.onclick=(e)=>{ e.stopPropagation(); for(const it of fitems) _outSetHide(it.o, !allH); _outRefresh(); }; fh.appendChild(fhb);
+          const flb=_outIconBtn(allL?'lock':'unlock', allL, allL?'Unlock the whole folder':'Lock the whole folder');
+          flb.onclick=(e)=>{ e.stopPropagation(); for(const it of fitems) _outSetLock(it.o, !allL); _outRefresh(); }; fh.appendChild(flb);
+          fh.onclick=()=>{ const now=_outFolds['f:'+fname]!==false; _outFolds['f:'+fname]=!now; _outSaveFolds(); _outRefresh(); };
+          fn.ondblclick=(e)=>{ e.stopPropagation(); _outRenameFolder(fname, fitems, fn); };
+          sec.appendChild(fh);
+          if(fopen) for(const it of fitems) sec.appendChild(_outRowEl(kind, it, true));
+        }
+        for(const it of root) sec.appendChild(_outRowEl(kind, it, false));
+      } else {
+        for(const it of match) sec.appendChild(_outRowEl(kind, it, false));
+      }
+    }
+    body.appendChild(sec);
+  }
+  if(!body.children.length){ const em=document.createElement('div'); em.className='outEmpty'; em.textContent=(_outSearch||_outTag)?'Nothing matches the filter.':'Nothing placed yet.'; body.appendChild(em); }
+}
+function _outQueueRefresh(){   // coalesced: renderEditorFields fires on every edit — rebuild at most ~6x/s
+  if(!_outOn || typeof editorOpen==='undefined' || !editorOpen) return;
+  if(_outRefT) return;
+  _outRefT=setTimeout(()=>{ _outRefT=0; if(_outOn && editorOpen) _outRefresh(); }, 160);
+}
+function _outToggle(){
+  _outOn=!_outOn;
+  try{ localStorage.setItem('breach_outliner_on', _outOn?'1':'0'); }catch(e){}
+  const el=_outEnsure();
+  el.style.display=_outOn?'flex':'none';
+  if(_outOn) _outRefresh();
+  if(typeof _edToolbarSync==='function') _edToolbarSync();
+}
+function _outOnEditorOpen(){   // re-hide flagged objects (marker-visibility passes just re-showed them) + restore the panel
+  const all=[propModels, lightModels, spawnMarkers, turretModels];
+  for(const arr of all) for(const o of arr){ if(o && o.userData && o.userData.edHide) o.visible=false; }
+  if(_outOn){ const el=_outEnsure(); el.style.display='flex'; _outRefresh(); }
+}
+function _outOnEditorClose(){   // hidden is an EDITING convenience — everything plays visible
+  const all=[propModels, lightModels, spawnMarkers, turretModels];
+  for(const arr of all) for(const o of arr){ if(o && o.userData && o.userData.edHide) o.visible=true; }
+  if(_outEl) _outEl.style.display='none';
+  if(_outRefT){ clearTimeout(_outRefT); _outRefT=0; }
 }
 // ---- build 981: command palette ------------------------------------------------------------------
 // Ctrl/Cmd+K while the editor is open (or the ⌘ topbar button): one box that jumps ANYWHERE —
@@ -32277,6 +32621,7 @@ function _palItems(){
   A('Toggle Fly camera','free wasd f', ()=>{ const b=document.getElementById('tbFly'); if(b) b.click(); });
   A('Toggle Hide enemies','show visibility', ()=>{ const b=document.getElementById('tbHideEn'); if(b) b.click(); });
   A('Toggle Show colliders','hitbox cylinder physics', ()=>{ const b=document.getElementById('tbCol'); if(b) b.click(); });
+  A('Toggle Outliner','scene hierarchy list tree folders o', ()=>{ if(typeof _outToggle==='function') _outToggle(); });
   A('Gizmo: Move','translate grab 1', ()=>{ gizmoMode='translate'; updateGizmo(); renderEditorFields(); });
   A('Gizmo: Rotate','turn spin 2', ()=>{ gizmoMode='rotate'; updateGizmo(); renderEditorFields(); });
   A('Gizmo: Scale','size resize 3', ()=>{ gizmoMode='scale'; updateGizmo(); renderEditorFields(); });
@@ -32382,9 +32727,11 @@ function toggleEditor(){
     if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
     if(typeof refreshCinePreview==='function') refreshCinePreview();   // show the dotted camera path while editing
     document.body.classList.add('editing');   // build 658: CSS hides all combat HUD elements (crosshair stays)
+    if(typeof _outOnEditorOpen==='function') _outOnEditorOpen();   // build 1036: re-apply outliner hides + restore the panel
     if(typeof applyEditorMode==='function') applyEditorMode();
     renderEditorFields();
   } else {
+    if(typeof _outOnEditorClose==='function') _outOnEditorClose();   // build 1036: everything hidden in the outliner plays visible
     if(typeof autoSaveNow==='function') autoSaveNow('on close'); if(typeof stopAutoSave==='function') stopAutoSave();   // flush unsaved edits when leaving the editor
     if(typeof applyAudioSettings==='function') applyAudioSettings();   // restore the music bus now that we're leaving the editor
     if(editorEl && editorEl._popWin){ try{ editorEl._popWin.close(); }catch(e){} if(editorEl._reDock) editorEl._reDock(); }   // build 658: if popped out, re-dock first so it's ready next open
@@ -32489,6 +32836,7 @@ function startGame(){
   if(_pathPreviewGroup){ scene.remove(_pathPreviewGroup); _pathPreviewGroup=null; }   // hide editor path markers during play
   closeModal('mpModal'); closeModal('instrModal');   // drop any open menu modal as the world starts
   if(typeof ensurePlayerPreview==='function') ensurePlayerPreview(false);   // drop the editor's stand-in avatar
+  if(typeof _outOnEditorClose==='function') _outOnEditorClose();   // build 1036: outliner hides are editor-only
   editorOpen=false; _editorOpenFlag=false; if(typeof applyAudioSettings==='function') applyAudioSettings();   // leaving the editor: clear the flag + unmute the music bus BEFORE music starts
   if(typeof applyCrosshair==='function') applyCrosshair((NET.mode==='client' && NET.crosshair) ? NET.crosshair : gameCfg.crosshair);   // host's authored crosshair carries to joiners
   initAudio();
@@ -32521,6 +32869,7 @@ function startGame(){
   buffs.damage=0; buffs.speed=0; buffs.shield=0;
   // reset aim/shake state
   firing=false; ads=false; adsBlend=0; shake=0; if(typeof _killTimes!=='undefined') _killTimes.length=0; if(typeof inventory!=='undefined'){ inventory.length=0; if(typeof closeInventory==='function') closeInventory(); }
+  if(typeof _outOnEditorClose==='function') _outOnEditorClose();   // build 1036: outliner hides are editor-only
   editorOpen=false; _editorOpenFlag=false; editorAimPreview=false; editorFreeFly=false; editorTopView=false;
   if(typeof updateGizmo==='function') updateGizmo();   // editorOpen now false -> updateGizmo hides the handles (it only hides when called, and nothing else calls it on this path)
   if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false;
@@ -32700,6 +33049,7 @@ function endGame(){
   stopMusic();
   if(typeof drivingCar!=='undefined' && drivingCar && typeof exitCar==='function') exitCar(); gameOn=false; gameOver=true; safeExitPointerLock(); if(typeof _raceHudHide==='function') _raceHudHide(); if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false; if(typeof closeUpgradePicker==='function') closeUpgradePicker();
   firing=false; ads=false; shopOpen=false;
+  if(typeof _outOnEditorClose==='function') _outOnEditorClose();   // build 1036: outliner hides are editor-only
   editorOpen=false; _editorOpenFlag=false; editorAimPreview=false; editorFreeFly=false; editorTopView=false;
   if(typeof updateGizmo==='function') updateGizmo();   // editorOpen now false -> updateGizmo hides the handles (it only hides when called, and nothing else calls it on this path)
   if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false;
