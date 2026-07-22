@@ -64,8 +64,9 @@ assert(/if\(moved>6 \|\| !_arModel\) return;/.test(open_), 'a drag never places 
 assert(/_arPlace\(_arModel\.worldToLocal\(hits\[0\]\.point\.clone\(\)\)\)/.test(open_),
   'placements land in MODEL space — stable under the turntable spin');
 const fin = extractFunction('_arFinish', src);
-assert(/playerModelCfg\.autoRig=mk;/.test(fin), 'markers land in the player cfg (serialized with the level)');
-assert(/playerModelCfg\.animLib='ual1'; if\(typeof _animLibApplyPicks==='function'\) _animLibApplyPicks\(playerModelCfg, 'ual1'\);/.test(fin),
+assert(/cfg\.autoRig=mk;/.test(fin) && /const cfg=_arCfg\|\|playerModelCfg;/.test(fin),
+  'markers land in the target cfg — the player by default (build 1057: enemies/roster pass their own)');
+assert(/cfg\.animLib='ual1'; if\(typeof _animLibApplyPicks==='function'\) _animLibApplyPicks\(cfg, 'ual1'\);/.test(fin),
   'a fresh rig defaults the animation library ON (a skeleton without clips is still a statue)');
 assert(/if\(g && !wasRigged\) _autoRigApply\(g, mk\);/.test(fin), 'the cached gltf rigs immediately — no reload needed the first time');
 assert(/rebuildAvatars\(\)/.test(fin), 'avatars rebuild so the rig shows instantly');
@@ -75,7 +76,7 @@ assert(/arB\.textContent=playerModelCfg\.autoRig \? '\\u2713 Auto-rigged \\u2014
   'the Player tab button reflects rig state');
 assert(/arB\.onclick=\(\)=>_arOpen\(\(playerModelCfg\.url\|\|''\)\.trim\(\)\);/.test(src), 'and opens the tool for the current model');
 assert(/cx\.onclick=\(\)=>\{ playerModelCfg\.autoRig=null;/.test(src), 'markers can be cleared');
-assert(/use Auto-rig on the Player tab \(for static models\) or re-rig it externally/.test(src),
-  'the old dead-end "go use Mixamo" toast now points at the in-app tool');
+assert(/use Auto-rig on the Player or Enemies tab \(for static models\) or re-rig it externally/.test(src),
+  'the old dead-end "go use Mixamo" toast now points at the in-app tool (both tabs since build 1057)');
 
 done('build 1026: auto-rigger UI — marker flow with symmetry, modal, Player-tab entry');

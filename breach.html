@@ -9730,7 +9730,7 @@ function _animLibAttach(gltf, packId, cb){
       const map = _buildBoneMap(gltf.scene, srcScene);
       if(!map){ gltf.userData._libFailed='rig';
         try{ const _nm=[]; gltf.scene.traverse(o=>{ if(o.isBone && _nm.length<12) _nm.push(o.name); }); console.warn('[RUMPUS] Animation library: no humanoid core in this rig. Bone names sampled:', _nm.join(', ') || '(no bones found at all)'); }catch(e){}
-        if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — use Auto-rig on the Player tab (for static models) or re-rig it externally'); } cb(false, 0); return; }
+        if(typeof toast==='function' && performance.now()-_libToastAt>4000){ _libToastAt=performance.now(); toast('Animation library: this rig has no recognizable humanoid bones — use Auto-rig on the Player or Enemies tab (for static models) or re-rig it externally'); } cb(false, 0); return; }
       const out = [];
       for(const c of (pk.animations||[])){ if(/t.?pose|bind.?pose/i.test(c.name||'')) continue;
         try{ const rc=_retargetClip(gltf.scene, srcScene, c, map); if(rc) out.push(rc); }catch(e){} }
@@ -10209,7 +10209,7 @@ function _aeOpen(cfg, label, rebuildFn){   // build 1046: any character — play
     _aeRestRoot=THREE.cloneSkinned(gltf.scene);
     _aeBones=_caGatherBones(_aeRoot);
     _aeRestBones=_caGatherBones(_aeRestRoot);
-    if(!_aeBones.size){ msg.textContent='No humanoid skeleton found in this model — rig it first (Auto-rig on the Player tab works for static humanoids).'; return; }
+    if(!_aeBones.size){ msg.textContent='No humanoid skeleton found in this model — rig it first (Auto-rig on the Player or Enemies tab works for static humanoids).'; return; }
     msg.style.display='none';
     _aeRestRoot.updateWorldMatrix(true,true); _aeRoot.updateWorldMatrix(true,true);
     _aeRestW=new Map(); _aeRestLocal=new Map();
@@ -11388,7 +11388,7 @@ const AR_STEPS = [
   { key:'knee',  label:'KNEES',  color:'#ff9b5b', sym:1 },
   { key:'groin', label:'GROIN',  color:'#ff7bd5' },
 ];
-let _arEl=null, _arGrp=null, _arModel=null, _arMarkers={}, _arStep=0, _arSym=true, _arRAF=0, _arUrl='', _arRotY=0, _arDist=3.4, _arMidY=0.9, _arX0=0, _arH=1.8, _arWS=1, _arRings={};
+let _arEl=null, _arGrp=null, _arModel=null, _arMarkers={}, _arStep=0, _arSym=true, _arRAF=0, _arUrl='', _arRotY=0, _arDist=3.4, _arMidY=0.9, _arX0=0, _arH=1.8, _arWS=1, _arRings={}, _arCfg=null, _arRefresh=null;   // build 1057: _arCfg = whichever character cfg the modal serves (player / enemy type / roster)
 const _arTexes={}, _arNdc=new THREE.Vector2();
 function _arRingTex(color){
   if(_arTexes[color]) return _arTexes[color];
@@ -11451,19 +11451,21 @@ function _arClose(){
 function _arFinish(){
   const mk=_sanitizeAutoRig(_arMarkers);
   if(!mk){ if(typeof toast==='function') toast('Place every marker first'); return; }
-  playerModelCfg.autoRig=mk;
-  if(!playerModelCfg.animLib){ playerModelCfg.animLib='ual1'; if(typeof _animLibApplyPicks==='function') _animLibApplyPicks(playerModelCfg, 'ual1'); }   // a fresh rig needs clips — default to the Standard pack
+  const cfg=_arCfg||playerModelCfg;   // build 1057: the modal serves any character cfg — player, enemy type, roster
+  cfg.autoRig=mk;
+  if(!cfg.animLib){ cfg.animLib='ual1'; if(typeof _animLibApplyPicks==='function') _animLibApplyPicks(cfg, 'ual1'); }   // a fresh rig needs clips — default to the Standard pack
   const g=gltfCache[_arUrl];
   const wasRigged=!!(g && g.userData && g.userData._autoRigged);
   if(g && !wasRigged) _autoRigApply(g, mk);
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
   _arClose();
-  if(typeof rebuildAvatars==='function') rebuildAvatars();
+  if(_arRefresh) _arRefresh(); else if(typeof rebuildAvatars==='function') rebuildAvatars();
   if(typeof renderEditorFields==='function') renderEditorFields();
   if(typeof toast==='function') toast(wasRigged ? 'Markers updated \u2014 reload the level (or refresh) to re-fit the skeleton' : 'Auto-rig complete \u2014 the animation library is now animating this model');
 }
-function _arOpen(url){
+function _arOpen(url, cfg, refresh){   // build 1057: cfg defaults to the player — enemies/roster pass their own
   if(!url){ if(typeof toast==='function') toast('Load a model URL first'); return; }
+  _arCfg=cfg||playerModelCfg; _arRefresh=refresh||null;
   if(!_ensureInspectR()){ if(typeof toast==='function') toast('Preview unavailable on this device'); return; }
   if(!_arEl){
     _arEl=document.createElement('div'); _arEl.id='arModal';
@@ -11491,7 +11493,7 @@ function _arOpen(url){
     cd.querySelector('#arSym').onchange=(e)=>{ _arSym=!!e.target.checked; _arRenderList(); };
   }
   _arUrl=url; _arStep=0; _arMarkers={}; _arRings={}; _arRotY=0;
-  const prev=_sanitizeAutoRig(playerModelCfg.autoRig);
+  const prev=_sanitizeAutoRig(_arCfg.autoRig);
   if(prev){ for(const k in prev) _arMarkers[k]=prev[k].slice(); }
   _arEl.style.display='flex';
   _arEl.querySelector('#arSym').checked=_arSym;
@@ -22088,7 +22090,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1056 · 2026-07-22';
+const BUILD_VERSION = 'build 1057 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30966,6 +30968,21 @@ function renderEditorFields(){
         if(libSel.value) _animLibApplyPicks(mc, libSel.value);
         refreshEnemyVisuals(); };
       libRow.appendChild(libSp); libRow.appendChild(libSel); eHost.appendChild(libRow);
+    }
+    { // build 1057: Mixamo-style auto-rigger for STATIC (unrigged) enemy models — same tool as the Player tab
+      const arRow=document.createElement('div'); arRow.style.cssText='display:flex;align-items:center;gap:7px;margin:4px 0 2px;';
+      const arB=document.createElement('button'); arB.textContent=mc.autoRig ? '\u2713 Auto-rigged \u2014 edit markers' : 'Auto-rig model (T-pose)';
+      arB.title='For humanoid models with NO skeleton: click chin, wrists, elbows, knees and groin on the model \u2014 a skeleton is fitted, skin weights are computed, and the animation library animates this enemy. Saved with the level.';
+      arB.style.cssText='flex:1;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
+      arB.onclick=()=>{ if(typeof _arOpen==='function') _arOpen((mc.url||'').trim(), mc, refreshEnemyVisuals); };
+      arRow.appendChild(arB);
+      if(mc.autoRig){
+        const cx=document.createElement('button'); cx.textContent='Clear'; cx.title='Remove the auto-rig markers (the model goes back to static on the next load)';
+        cx.style.cssText='flex:0 0 auto;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #4a3a2a;background:transparent;color:#c9a284;';
+        cx.onclick=()=>{ pushUndoSnapshot(); mc.autoRig=null; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); if(typeof toast==='function') toast('Auto-rig markers cleared \u2014 reload the level to unbind'); };
+        arRow.appendChild(cx);
+      }
+      eHost.appendChild(arRow);
     }
     { // build 1046: author custom clips on THIS enemy model
       const aeRow=document.createElement('div'); aeRow.style.cssText='display:flex;gap:7px;margin:2px 0;';
