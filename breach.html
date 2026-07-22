@@ -10026,7 +10026,7 @@ let _aeEl=null, _aeR=null, _aeScene=null, _aeCam=null, _aeRoot=null, _aeRestRoot
 let _aeBones=null, _aeRestBones=null, _aeRestW=null, _aeRestLocal=null, _aeHipRestW=null, _aeHipH=1, _aeH=1.8;
 let _aeSkel=null, _aeDots=[], _aeGrid=null, _aeSel='', _aeClip=null, _aeTime=0, _aePlaying=false;
 let _aeMixer=null, _aeAction=null, _aeRebuildT=0, _aeUndo=[], _aeRedo=[], _aeAutoKey=false, _aeSnap=true;
-let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKeys=[], _aeAxis='';   // build 1046: key selection is a SET
+let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKeys=[], _aeAxis='', _aeMarq=null;   // build 1046: key selection is a SET; _aeMarq = the live sweep band (build 1056)
 let _aeTreeFilter='', _aeLastTL=null;
 let _aeFireEv=true, _aePrevT=null;   // build 1045: preview event firing (sounds only, never while scrubbing)
 let _aeCfg=null, _aeCfgLabel='Player', _aeRebuildFn=null, _aeRootPath=null, _aeRootPathOn=false;   // build 1046: any-character targets + root path
@@ -10553,7 +10553,7 @@ function _aeBindViewport(cv){
   addEventListener('mousemove', (e)=>{
     if(!_aeDrag || !_aeEl || _aeEl.style.display==='none') return;
     const dx=e.clientX-_aeDrag.x, dy=e.clientY-_aeDrag.y;
-    if(_aeDrag.kind==='orbit'){ _aeYaw+=dx*0.008; _aePitch=Math.max(-1.2, Math.min(1.4, _aePitch+dy*0.006)); _aeDrag.x=e.clientX; _aeDrag.y=e.clientY; }
+    if(_aeDrag.kind==='orbit'){ _aeYaw-=dx*0.008; _aePitch=Math.max(-1.2, Math.min(1.4, _aePitch+dy*0.006)); _aeDrag.x=e.clientX; _aeDrag.y=e.clientY; }   // build 1056: dragging right spins the character right (grab-the-model, like the rig modal)
     else if(_aeDrag.kind==='pan'){
       const right=new THREE.Vector3().setFromMatrixColumn(_aeCam.matrixWorld,0);
       const up=new THREE.Vector3().setFromMatrixColumn(_aeCam.matrixWorld,1);
@@ -10876,6 +10876,16 @@ function _aeTLGeom(cv){
 }
 function _aeTLx(t, g){ return g.padL + (t/Math.max(1e-3,_aeClip.dur))*g.span; }
 function _aeTLt(x, g){ return Math.max(0, Math.min(_aeClip.dur, (x-g.padL)/Math.max(1,g.span)*_aeClip.dur)); }
+// build 1056: the marquee's brain, pure — every keyed time on the slot inside [a,b], edge-tolerant
+function _aeKeysInRange(clip, slot, a, b){
+  const tr=clip && clip.tracks && clip.tracks[slot]; if(!tr) return [];
+  const tol=1e-4 + (clip.dur||0)*0.004;
+  const lo=Math.min(a,b)-tol, hi=Math.max(a,b)+tol;
+  const ts=new Set();
+  if(tr.q) for(const k of tr.q) ts.add(k[0]);
+  if(tr.p) for(const k of tr.p) ts.add(k[0]);
+  return [...ts].filter(t=>t>=lo && t<=hi).sort((x,y)=>x-y);
+}
 function _aeDrawTL(){
   const cv=_aeEl && _aeEl.querySelector('#aeTL'); if(!cv || !_aeClip) return;
   const g=_aeTLGeom(cv), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||1;
@@ -10916,6 +10926,16 @@ function _aeDrawTL(){
       ctx.beginPath(); ctx.moveTo(x, yc-r); ctx.lineTo(x+r, yc); ctx.lineTo(x, yc+r); ctx.lineTo(x-r, yc); ctx.fill(); }
   }
   ctx.textBaseline='top';
+  // build 1056: the live marquee band while sweep-selecting keys
+  if(_aeMarq){
+    const mi=g.rows.indexOf(_aeMarq.slot);
+    if(mi>=0){
+      const x0=_aeTLx(Math.min(_aeMarq.t0,_aeMarq.t1), g), x1=_aeTLx(Math.max(_aeMarq.t0,_aeMarq.t1), g);
+      const my=g.ruler+mi*g.rowH;
+      ctx.fillStyle='rgba(255,209,102,0.16)'; ctx.fillRect(x0, my, Math.max(1,x1-x0), g.rowH);
+      ctx.strokeStyle='rgba(255,209,102,0.7)'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5, my+0.5, Math.max(1,x1-x0)-1, g.rowH-1);
+    }
+  }
   // playhead
   const px=_aeTLx(_aeTime, g);
   ctx.fillStyle='#ff8a5b'; ctx.fillRect(px-1, 0, 2*dpr, g.H);
@@ -10954,12 +10974,25 @@ function _aeBindTL(cv){
         _aeDrawTL(); return;
       }
     }
-    if(slot && slot!==_aeSel){ _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); }   // empty row click: select the bone, then scrub
-    _aeSelKeys=[]; _aeSetPlaying(false); _aeApplyTime(t); drag={ scrub:true };
+    if(slot){   // empty row spot: a CLICK selects the bone + jumps time; a DRAG sweeps a marquee over its keys (build 1056)
+      drag={ marq:true, slot, t0:t, sx:e.clientX, sy:e.clientY, moved:false, shift:e.shiftKey,
+        base:(e.shiftKey && slot===_aeSel) ? _aeSelKeys.slice() : [] };   // shift adds to the selection
+      return;
+    }
+    _aeSelKeys=[]; _aeSetPlaying(false); _aeApplyTime(t); drag={ scrub:true };   // the ruler stays a pure scrub zone
   });
   addEventListener('mousemove', (e)=>{
     if(!drag || !_aeEl || _aeEl.style.display==='none') return;
     const t=geomT(e);
+    if(drag.marq){
+      if(!drag.moved && Math.hypot(e.clientX-drag.sx, e.clientY-drag.sy)>4){ drag.moved=true;
+        if(drag.slot!==_aeSel){ _aeSel=drag.slot; _aeRenderTree(); _aeRenderInspector(); } }
+      if(!drag.moved) return;
+      _aeSelKeys=drag.base.concat(_aeKeysInRange(_aeClip, drag.slot, drag.t0, t)
+        .filter(kt=>!drag.base.some(st=>Math.abs(st-kt)<=1e-4)));
+      _aeMarq={ slot:drag.slot, t0:drag.t0, t1:t };
+      _aeDrawTL(); return;
+    }
     if(drag.scrub){ _aeApplyTime(t); return; }
     // move the grabbed key (both q and p entries at that time)
     const nt=_aeSnapT(t, _aeClip.fps, _aeSnap);
@@ -10969,7 +11002,17 @@ function _aeBindTL(cv){
     _aeSelKeys=_aeMoveKeys(_aeClip, _aeSel, drag.times, delta, _aeClip.fps, _aeSnap);
     _aeQueueRebuild(); _aeDrawTL();
   });
-  addEventListener('mouseup', ()=>{ drag=null; });
+  addEventListener('mouseup', ()=>{
+    if(drag && drag.marq){
+      if(!drag.moved){   // a plain click: select the bone and jump the playhead (pre-marquee behavior)
+        if(drag.slot!==_aeSel){ _aeSel=drag.slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); }
+        else if(!drag.shift) _aeSelKeys=[];
+        _aeSetPlaying(false); _aeApplyTime(drag.t0);
+      }
+      _aeMarq=null; _aeDrawTL();
+    }
+    drag=null;
+  });
   cv.addEventListener('dblclick', (e)=>{
     const slot=rowAt(e) || _aeSel;   // build 1048: double-click keys the row under the pointer
     if(!slot) return;
@@ -22045,7 +22088,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1055 · 2026-07-22';
+const BUILD_VERSION = 'build 1056 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

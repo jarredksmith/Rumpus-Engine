@@ -53,7 +53,8 @@ assert(/const rowCss=rows\.length>9 \? 12 : 15;/.test(src), 'many rows pack tigh
   assert(/if\(y<g\.ruler\) return null;/.test(bind), 'the ruler band stays a pure scrub zone');
   assert(/if\(slot!==_aeSel\)\{ _aeSel=slot; _aeSelKeys=\[\]; _aeRenderTree\(\); _aeRenderInspector\(\); \}   \/\/ the row IS a bone selection/.test(bind),
     'grabbing a key on another row selects that bone first');
-  assert(/\/\/ empty row click: select the bone, then scrub/.test(bind), 'clicking an empty row selects its bone and scrubs');
+  assert(/\/\/ empty row spot: a CLICK selects the bone \+ jumps time; a DRAG sweeps a marquee over its keys \(build 1056\)/.test(bind),
+    'clicking an empty row still selects its bone and jumps the playhead (dragging became the marquee in 1056)');
   assert(/const slot=rowAt\(e\) \|\| _aeSel;   \/\/ build 1048: double-click keys the row under the pointer/.test(bind),
     'double-click keys whichever row is under the pointer');
 }
