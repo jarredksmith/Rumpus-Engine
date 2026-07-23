@@ -13,8 +13,8 @@ assert(/enemyHurt\(best,/.test(m) && /botHurt\(best,/.test(m), 'punch can kill e
 assert(/damageProp\(o, DMG,.*\); if\(!broke\) pushDynamic\(o, dir, 8/.test(m), 'punch breaks or shoves a prop in front');
 
 // dry-fire routes to a punch; V key bound; jab thrust in the viewmodel
-assert(/if\(w\.mag<=0\)\{ if\(w\.reserve<=0\)\{ meleeAttack\(\); return; \}/.test(src), 'firing fully dry throws a punch');
-assert(/if\(e\.code===BINDS\.melee\) meleeAttack\(\);/.test(src) && /melee:'KeyV'/.test(src), 'V (rebindable) bound to melee');
+assert(/if\(w\.mag<=0\)\{ if\(w\.reserve<=0\)\{ if\(firingLatch\) return; firingLatch=true; meleeAttack\(\); return; \}/.test(src), 'firing fully dry throws a punch (build 1059: one per click — it used to spam while held)');
+assert(/if\(e\.code===BINDS\.melee && !e\.repeat\) meleeAttack\(\);/.test(src) && /melee:'KeyV'/.test(src), 'V (rebindable) bound to melee (build 1059: key auto-repeat ignored)');
 assert(/const j=Math\.sin\(_mp\*Math\.PI\); gun\.position\.z -= j\*0\.55/.test(src), 'viewmodel does a punch thrust');
 
 done();

@@ -13377,7 +13377,7 @@ addEventListener('keydown', e=>{
   if(e.code==='KeyH' && !e.repeat && drivingCar && !editorOpen && !shopOpen && !chatOpen){ if(drivingCar.userData.vehicle && drivingCar.userData.vehicle.headlights){ _carHeadOn=!_carHeadOn; if(typeof flashToast==='function') flashToast('Headlights '+(_carHeadOn?'on':'off')); } e.preventDefault(); return; }   // build 781: toggle headlights
   if(editorOpen) return;   // ignore gameplay keys while editing
   if(e.code===BINDS.reload){ if(typeof buildMode!=='undefined' && buildMode){ e.preventDefault(); _bmRotStep(e.shiftKey?-1:1); return; } reload(); }   // build 1022: R rotates the build ghost (Shift+R backwards)
-  if(e.code===BINDS.melee) meleeAttack();
+  if(e.code===BINDS.melee && !e.repeat) meleeAttack();   // build 1059: holding V is ONE swing — key auto-repeat is ignored; a full release re-arms
   if(e.code===BINDS.interact) interact();
   if(e.code===BINDS.grab){ if(drivingCar && typeof _ghostToggle==='function' && typeof objectiveActive==='function' && objectiveActive()==='race' && !e.repeat) _ghostToggle(); else grabAction(); }   // build 841: G in a race car toggles the ghost; on foot it's still grab/drop
   if(e.code===BINDS.flashlight && !e.repeat) toggleFlashlight();   // build 672: held flashlight (when the level enables it)
@@ -22195,7 +22195,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1058 · 2026-07-22';
+const BUILD_VERSION = 'build 1059 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24004,8 +24004,8 @@ function shoot(){
   if(now - lastShot < w.fireRate * run.fireMul || reloading) return;
   if(now < _drawUntil) return;                 // build 965: still drawing — the gun is coming up
   if(_rlP > 0.35) return;                      // build 965: still recovering from the reload dip
-  if(w.melee){ if(!w.auto && firingLatch) return; firingLatch=true; touchFireBufT=0; lastShot=now; triggerGunAnim('shoot'); meleeAttack(w); return; }   // equipped melee weapon: swing it
-  if(w.mag<=0){ if(w.reserve<=0){ meleeAttack(); return; } SFX.empty(); reload(); return; }   // out of ammo entirely -> throw hands
+  if(w.melee){ if(firingLatch) return; firingLatch=true; touchFireBufT=0; lastShot=now; triggerGunAnim('shoot'); meleeAttack(w); return; }   // equipped melee weapon: ONE swing per click (build 1059 — holding fire looped the swing clip; full release re-arms via mouseup/pad/touch)
+  if(w.mag<=0){ if(w.reserve<=0){ if(firingLatch) return; firingLatch=true; meleeAttack(); return; } SFX.empty(); reload(); return; }   // out of ammo entirely -> throw hands (build 1059: one punch per click here too)
   if(!w.auto && firingLatch) return;     // semi-auto: one shot per click
   firingLatch = true; touchFireBufT = 0;   // build 992: this press's buffered tap is spent
   lastShot = now; w.mag--; updateHUD();
