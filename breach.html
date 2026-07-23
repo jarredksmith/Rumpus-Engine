@@ -18299,6 +18299,20 @@ let _ownAvatar=null, _ownAvatarKey='', _tpCaster=null, _ownPrevX=0, _ownPrevZ=0,
 // so earlier triggers can call it.
 let _ownEvt=null, _ownIdleT=0, _ownFidgetAt=0, _ownFidgetUntil=0, _lastDieVariant='die', _ownPrevYaw=null, _ownPrevCrouch=false;
 function playOwnAnim(slot, dur){ _ownEvt = { slot, until: performance.now() + (dur||300) }; }
+// build 1062: the one-shot window for a slot, sized to the OWN avatar's actual clip so the swing
+// plays all the way through instead of being cut to a fixed guess. Only a genuine melee/attack
+// clip extends it — a model without one resolves down the fallback chain to idle, which must NOT
+// lengthen the window (that would freeze the body), so those keep the caller's default.
+function _ownSlotDurMs(slot){
+  const v=_ownAvatar && _ownAvatar.userData && _ownAvatar.userData.visual;
+  const acts=v && v.userData && v.userData.stateActions; if(!acts) return 0;
+  const key=(typeof _stateActionKey==='function') ? _stateActionKey(acts, slot) : slot;
+  if(!key || !acts[key] || !/melee|attack|punch|kick|slash|swipe|combo|jab|cross/i.test(key)) return 0;
+  let d=0; try{ d=acts[key].getClip().duration||0; }catch(e){ return 0; }
+  const cfg=v.userData.animCfg;
+  const spd=(cfg && cfg.clipSpeed && cfg.clipSpeed[slot]!=null) ? Math.max(0.1,Math.min(4,+cfg.clipSpeed[slot])) : 1;
+  return d>0 ? Math.round((d/spd)*1000) : 0;
+}
 const _tpBack=new THREE.Vector3(), _tpEye=new THREE.Vector3(), _tpLookAt=new THREE.Vector3();
 function ensureOwnAvatar(){
   const cfg=myCharCfg(); const key=[cfg.url||'', cfg.tint==null?'x':cfg.tint, cfg.scale||1, cfg.face||0, cfg.rx||0, cfg.rz||0, cfg.xoff||0, cfg.yoff||0, cfg.zoff||0, JSON.stringify(cfg.clips||{}), JSON.stringify(cfg.clipSpeed||{}), JSON.stringify(cfg.clipHold||{})].join('|');   // anim config is part of the key so changing a clip / speed / hold rebuilds the live avatar
@@ -22323,7 +22337,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1061 · 2026-07-22';
+const BUILD_VERSION = 'build 1062 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24084,7 +24098,12 @@ function meleeAttack(wep){
   if(!gameOn || editorOpen || paused) return;
   const now = performance.now();
   if(now - _meleeT < (wep ? 0 : MELEE_CD)) return;   // a weapon is gated by its own fireRate; the bare-fist punch uses MELEE_CD
-  _meleeT = now; if(typeof playOwnAnim==='function') playOwnAnim(wep ? (wep.dmg>=50?'meleeHeavy':'meleeCombo') : 'meleeLight', 360);   // build 933: a melee WEAPON'S swing has its own slot (meleeCombo, or meleeHeavy for heavy hitters) — it shared meleeLight with the bare melee key, so firing a knife/fists and pressing V looked identical no matter what the author picked
+  _meleeT = now;
+  if(typeof playOwnAnim==='function'){
+    const _mslot = wep ? (wep.dmg>=50?'meleeHeavy':'meleeCombo') : 'meleeLight';   // build 933: a melee WEAPON'S swing has its own slot (meleeCombo, or meleeHeavy for heavy hitters)
+    const _mms = (typeof _ownSlotDurMs==='function' && _ownSlotDurMs(_mslot)) || 360;   // build 1062: hold the pose for the FULL swing clip, not a fixed 360ms that cut it to idle
+    playOwnAnim(_mslot, Math.max(250, Math.min(1500, _mms)));
+  }
   if(wep && wep.fists){   // build 678: alternate the punch; play the mapped punchR/punchL clip if the model has one
     if(typeof _punchFists==='function') _punchFists();   // flips _fistSide (procedural fallback nod)
     if(typeof triggerFistAnim==='function') triggerFistAnim(_fistSide<0 ? 'punchL' : 'punchR');

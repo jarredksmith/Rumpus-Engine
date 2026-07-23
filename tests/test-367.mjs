@@ -10,7 +10,7 @@ assert(/function playOwnAnim\(slot, dur\)\{ _ownEvt = \{ slot, until: performanc
 const sw = extractFunction('switchWeapon');
 assert(/playOwnAnim\('equip', 320\)/.test(sw), 'weapon swap -> equip');
 const me = extractFunction('meleeAttack');
-assert(/playOwnAnim\(wep \? \(wep\.dmg>=50\?'meleeHeavy':'meleeCombo'\) : 'meleeLight', 360\)/.test(me), 'melee -> heavy for the crowbar, combo for light weapons, light for the bare key (build 933)');
+assert(/const _mslot = wep \? \(wep\.dmg>=50\?'meleeHeavy':'meleeCombo'\) : 'meleeLight';/.test(me), 'melee -> heavy for the crowbar, combo for light weapons, light for the bare key (build 933)');
 const tg = extractFunction('throwGrenade');
 assert(/playOwnAnim\('throw', 480\)/.test(tg), 'grenade -> throw');
 const hd = extractFunction('hurtDir');

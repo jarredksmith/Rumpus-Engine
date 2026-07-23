@@ -10,7 +10,7 @@ import { gameSource, extractFunction, assert, done } from './harness.mjs';
 
 const src = gameSource();
 const ma = extractFunction('meleeAttack', src);
-assert(/playOwnAnim\(wep \? \(wep\.dmg>=50\?'meleeHeavy':'meleeCombo'\) : 'meleeLight', 360\)/.test(ma),
+assert(/const _mslot = wep \? \(wep\.dmg>=50\?'meleeHeavy':'meleeCombo'\) : 'meleeLight';/.test(ma),
   "a weapon's swing uses meleeCombo/meleeHeavy; the bare melee key keeps meleeLight");
 assert(!/\(wep && wep\.dmg>=50\)\?'meleeHeavy':'meleeLight'/.test(ma), 'the shared-slot selection is gone');
 
