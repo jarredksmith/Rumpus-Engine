@@ -8122,6 +8122,109 @@ function updateLogic(dt){
     } else { _lgTimers.splice(i,1); _lgFollow(T.node,0); }        // delay
   }
 }
+// ---------- CUSTOM HUD WIDGETS (build 1058) ----------
+// Author-defined on-screen elements (scoreboards, countdown timers, progress bars) that are
+// LIVE VIEWS of the logic graph's variables — the graph drives, the HUD displays. A label may
+// interpolate {var} (same syntax as the Show-message node); 'timer' formats a seconds variable
+// as M:SS; 'bar' fills value/max. 'when' gates visibility on a variable being non-zero, so
+// show/hide is a Set-variable node away. Host-authoritative like the graph itself: the host
+// mirrors just the watched variables to clients ({t:'hudv'}), so every player's widgets agree.
+// Widgets are plain data (sanitized, textContent-only — imported levels can't inject markup).
+const HW_ANCHORS=['tl','tc','tr','ml','mr','bl','bc','br'];
+function _sanitizeHudWidgets(a){
+  if(!Array.isArray(a)) return [];
+  const out=[];
+  for(const w of a){
+    if(!w || typeof w!=='object') continue;
+    out.push({
+      id:(typeof w.id==='string' && w.id) ? w.id.slice(0,12) : ('hw_'+Math.random().toString(36).slice(2,8)),
+      kind:(w.kind==='timer'||w.kind==='bar')?w.kind:'text',
+      label:String(w.label==null?'':w.label).slice(0,80),
+      value:String(w.value==null?'':w.value).slice(0,24).trim(),
+      max:String(w.max==null?'':w.max).slice(0,24).trim(),
+      when:String(w.when==null?'':w.when).slice(0,24).trim(),
+      anchor:HW_ANCHORS.indexOf(w.anchor)>=0?w.anchor:'tc',
+      dx:Math.max(-2000,Math.min(2000,Math.round(+w.dx||0))),
+      dy:Math.max(-2000,Math.min(2000,Math.round(+w.dy||0))),
+      size:Math.max(9,Math.min(96,Math.round(+w.size||18))),
+      color:(typeof w.color==='string' && /^#[0-9a-fA-F]{6}$/.test(w.color))?w.color:'',
+      bg:(w.bg===false)?false:true,
+    });
+    if(out.length>=24) break;
+  }
+  return out;
+}
+let hudWidgets = _sanitizeHudWidgets(savedLevel && savedLevel.hudWidgets);   // authored; serialized with the level
+let _hwRev=0, _hwHost=null, _hwBuiltRev=-1, _hwEls=[], _hwVars=[], _hwSent='', _hwSentAt=0;
+const _HW_POS={ tl:['top:12px;left:12px;',''], tc:['top:12px;left:50%;','translateX(-50%) '], tr:['top:12px;right:12px;',''],
+  ml:['top:50%;left:12px;','translateY(-50%) '], mr:['top:50%;right:12px;','translateY(-50%) '],
+  bl:['bottom:86px;left:12px;',''], bc:['bottom:86px;left:50%;','translateX(-50%) '], br:['bottom:86px;right:12px;',''] };
+function _hwFmtTimer(sec){ sec=Math.max(0, Math.ceil(+sec||0)); return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'); }
+function _hwText(w){
+  const interp=(t)=>String(t).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));
+  if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (interp(w.label)+' '+t) : t; }
+  return interp(w.label);
+}
+function _hwRebuild(){
+  const hud=document.getElementById('hud'); if(!hud) return;
+  if(!_hwHost || !_hwHost.parentNode){
+    _hwHost=document.createElement('div'); _hwHost.id='hudWidgets';
+    _hwHost.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:4;';
+    hud.appendChild(_hwHost);
+  }
+  _hwHost.innerHTML=''; _hwEls=[];
+  for(const w of hudWidgets){
+    const el=document.createElement('div');
+    const P=_HW_POS[w.anchor]||_HW_POS.tc;
+    el.style.cssText='position:absolute;'+P[0]+'transform:'+P[1]+'translate('+w.dx+'px,'+w.dy+'px);'
+      +'font-size:'+w.size+'px;line-height:1.25;letter-spacing:.04em;white-space:pre;font-family:inherit;'
+      +'color:'+(w.color||'var(--accent, #9fe6cf)')+';text-shadow:0 1px 3px rgba(0,0,0,.6);'
+      +(w.bg?('background:rgba(4,10,12,.45);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:'+Math.round(w.size*0.3)+'px '+Math.round(w.size*0.55)+'px;'):'');
+    const lb=document.createElement('div'); lb.className='hwLb'; el.appendChild(lb);
+    let fill=null;
+    if(w.kind==='bar'){
+      const tr=document.createElement('div');
+      tr.style.cssText='width:'+Math.max(60,w.size*9)+'px;height:'+Math.max(6,Math.round(w.size*0.55))+'px;background:rgba(255,255,255,.12);border-radius:99px;overflow:hidden;margin-top:3px;';
+      fill=document.createElement('div'); fill.style.cssText='height:100%;width:0%;background:'+(w.color||'var(--accent, #9fe6cf)')+';border-radius:99px;';
+      tr.appendChild(fill); el.appendChild(tr);
+    }
+    _hwHost.appendChild(el);
+    _hwEls.push({ w, el, lb, fill, txt:null, vis:null, pct:-1 });
+  }
+  const vs=new Set();   // every variable the widgets watch — the host mirrors exactly these
+  for(const w of hudWidgets){
+    String(w.label).replace(/\{([\w#]+)\}/g, (m,k)=>{ vs.add(k); return m; });
+    if(w.value) vs.add(w.value); if(w.when) vs.add(w.when);
+    if(w.max && isNaN(parseFloat(w.max))) vs.add(w.max);
+  }
+  _hwVars=[...vs];
+  _hwBuiltRev=_hwRev;
+}
+function updateHudWidgets(){
+  if(!hudWidgets.length){ if(_hwHost){ _hwHost.remove(); _hwHost=null; _hwBuiltRev=-1; } return; }
+  if(_hwBuiltRev!==_hwRev || !_hwHost || !_hwHost.parentNode) _hwRebuild();
+  if(!_hwHost) return;
+  for(const e of _hwEls){
+    const w=e.w;
+    const vis=!w.when || (+logicVars[w.when]||0)!==0;
+    if(vis!==e.vis){ e.vis=vis; e.el.style.display=vis?'':'none'; }
+    if(!vis) continue;
+    const t=_hwText(w);
+    if(t!==e.txt){ e.txt=t; e.lb.textContent=t; e.lb.style.display=t?'':'none'; }
+    if(e.fill){
+      const mx=_lgNum(w.max)||100;
+      const pct=Math.max(0,Math.min(100, mx>0 ? (_lgNum(w.value)/mx)*100 : 0));
+      if(Math.abs(pct-e.pct)>0.4){ e.pct=pct; e.fill.style.width=pct.toFixed(1)+'%'; }
+    }
+  }
+  if(typeof NET!=='undefined' && NET.mode==='host' && _hwVars.length){
+    const v={}; for(const k of _hwVars) v[k]=+logicVars[k]||0;
+    const js=JSON.stringify(v); const now=(typeof performance!=='undefined')?performance.now():Date.now();
+    if(js!==_hwSent || now-_hwSentAt>2000){ _hwSent=js; _hwSentAt=now;
+      for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'hudv', v}); }catch(e){} }
+    }
+  }
+}
 // ---------- LOGIC GRAPH EDITOR (build 1028): the node canvas ----------
 // Full-screen board: drag the background to pan, wheel to zoom, drag node headers to move,
 // drag an OUT port onto an IN port to wire (click a wire to remove it). Params edit inline.
@@ -17412,6 +17515,7 @@ function loadLevelFromNet(level){
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
+  hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
   if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
@@ -18924,6 +19028,7 @@ function handleHostMsg(msg){
   else if(msg.t==='teams'){ NET.teams=msg.tm||{}; if(NET.teams[NET.myId]!=null) NET.team=NET.teams[NET.myId]; applyTeamColors(); renderScoreboard(); }
   else if(msg.t==='feed'){ addKillFeed(msg.k, msg.v); }
   else if(msg.t==='frag'){ registerLocalKill(); }   // co-op: the host confirmed our shot killed an enemy -> multi-kill tracking
+  else if(msg.t==='hudv'){ if(msg.v && typeof msg.v==='object') for(const k in msg.v) logicVars[k]=+msg.v[k]||0; }   // build 1058: the host mirrors widget-watched logic variables
   else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200)); }   // chat from the host or relayed from another player
   else if(msg.t==='duelOver'){ showDuelResult(msg.w, msg.wt); }
   else if(msg.t==='race'){ _raceNet[msg.from]={ lap:msg.lap|0, f:+msg.f||0 }; }   // build 836: another racer's progress (standings)
@@ -22090,7 +22195,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1057 · 2026-07-22';
+const BUILD_VERSION = 'build 1058 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26793,6 +26898,7 @@ function loop(){
   updateEnemyShots(dt); // ranged-enemy projectiles
   updateDecals(dt);     // bullet holes fade + expire (pooled, hard-capped)
   updateLogic(dt);      // logic graph timers/delays/repeats (host/solo)
+  updateHudWidgets();   // build 1058: custom HUD widgets mirror the logic variables (all modes)
   updateChests(dt);
   checkProximity();   // runs in all modes; in duel it only considers trigger-animation props
 
@@ -28883,6 +28989,7 @@ function serializeLevel(){
     deathFx: Object.assign({}, deathFxCfg),
     logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
     customAnims: ((typeof customAnims!=='undefined' && customAnims.length) ? _caSanitize(customAnims) : undefined),   // build 1040: creator-authored clips
+    hudWidgets: ((typeof hudWidgets!=='undefined' && hudWidgets.length) ? _sanitizeHudWidgets(hudWidgets) : undefined),   // build 1058: custom HUD widgets
     prefabDefs: _pfUsedDefs(),
     tracer: Object.assign({}, tracerCfg),
     decal: Object.assign({}, decalCfg),
@@ -29144,6 +29251,59 @@ function renderHudPanel(){
   const colorRow=(label,key)=>{ const ci=document.createElement('input'); ci.type='color'; ci.value=hudCfg[key]||'#ffffff'; ci.style.cssText='width:42px;height:24px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#0c1418;cursor:pointer;flex:0 0 auto;'; ci.oninput=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg[key]=ci.value; commit(); }; row(label, ci); };
   const fontRow=(label,key)=>{ const sel=document.createElement('select'); sel.style.cssText='flex:0 0 auto;max-width:150px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;'; for(const f of HUD_FONTS){ const o=document.createElement('option'); o.value=f; o.textContent=f; o.style.fontFamily="'"+f+"'"; if(hudCfg[key]===f) o.selected=true; sel.appendChild(o); } sel.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudCfg[key]=sel.value; commit(); }; row(label, sel); };
 
+  { // build 1058: CUSTOM WIDGETS — author-defined scoreboards / countdowns / bars, driven by Logic variables
+    grp('Custom widgets (logic-driven)');
+    const hint=document.createElement('div'); hint.className='hint'; hint.style.cssText='font-size:10px;opacity:.85;margin:2px 0 6px;line-height:1.5;';
+    hint.innerHTML='On-screen text, countdown timers and bars that read the <b>Logic graph\u2019s variables</b> live. Write <b>{score}</b> inside a label to show that variable. A <b>timer</b> reads a seconds variable (drive it in Logic: <i>Every 1 sec \u2192 Change variable time \u22121 \u2192 Branch \u2264 0 \u2192 win/lose</i>). A <b>bar</b> fills value/max. <b>Show when</b> hides the widget until that variable is non-zero. Synced to every player in multiplayer.';
+    wrap.appendChild(hint);
+    const commitW=()=>{ _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){} _levelDirty=true; };
+    const inp=(val,ph,wd,fn)=>{ const i=document.createElement('input'); i.type='text'; i.value=val; i.placeholder=ph; i.style.cssText='width:'+wd+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;'; i.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(i.value); commitW(); }; return i; };
+    const numI=(val,wd,fn)=>{ const i=document.createElement('input'); i.type='number'; i.value=val; i.style.cssText='width:'+wd+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;'; i.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(+i.value||0); commitW(); }; return i; };
+    const selI=(opts,val,fn)=>{ const el=document.createElement('select'); el.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;'; for(const [v,l] of opts){ const o=document.createElement('option'); o.value=v; o.textContent=l; if(v===val) o.selected=true; el.appendChild(o); } el.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(el.value); commitW(); }; return el; };
+    hudWidgets.forEach((w,i)=>{
+      const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:6px 7px;margin:5px 0;display:flex;flex-direction:column;gap:4px;';
+      const l1=document.createElement('div'); l1.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
+      l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
+      const lab=inp(w.label, w.kind==='timer'?'label (before the M:SS)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
+      const del=document.createElement('button'); del.textContent='\u2715'; del.title='Remove widget'; del.style.cssText='padding:1px 7px;font-size:11px;flex:0 0 auto;'; del.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudWidgets.splice(i,1); commitW(); renderHudPanel(); };
+      l1.appendChild(del); card.appendChild(l1);
+      if(w.kind==='timer' || w.kind==='bar'){
+        const l2=document.createElement('div'); l2.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+        l2.appendChild(document.createTextNode(w.kind==='timer'?'seconds variable':'value variable'));
+        l2.appendChild(inp(w.value,'e.g. time',80, v=>{ w.value=v.trim().slice(0,24); }));
+        if(w.kind==='bar'){ l2.appendChild(document.createTextNode('max')); l2.appendChild(inp(w.max,'100 or a variable',90, v=>{ w.max=v.trim().slice(0,24); })); }
+        card.appendChild(l2);
+      }
+      const l3=document.createElement('div'); l3.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+      l3.appendChild(selI([['tl','Top left'],['tc','Top centre'],['tr','Top right'],['ml','Mid left'],['mr','Mid right'],['bl','Bottom left'],['bc','Bottom centre'],['br','Bottom right']], w.anchor, v=>{ w.anchor=v; }));
+      l3.appendChild(document.createTextNode('offset')); l3.appendChild(numI(w.dx,52,v=>{ w.dx=Math.round(v); })); l3.appendChild(numI(w.dy,52,v=>{ w.dy=Math.round(v); }));
+      l3.appendChild(document.createTextNode('size')); l3.appendChild(numI(w.size,48,v=>{ w.size=Math.max(9,Math.min(96,Math.round(v)||18)); }));
+      card.appendChild(l3);
+      const l4=document.createElement('div'); l4.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+      const accL=document.createElement('label'); accL.style.cssText='display:flex;gap:4px;align-items:center;cursor:pointer;';
+      const acc=document.createElement('input'); acc.type='checkbox'; acc.checked=!w.color; acc.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
+      const ci=document.createElement('input'); ci.type='color'; ci.value=w.color||'#9fe6cf'; ci.style.cssText='width:34px;height:20px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#0c1418;cursor:pointer;'; ci.style.display=w.color?'':'none';
+      acc.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); w.color=acc.checked?'':ci.value; ci.style.display=acc.checked?'none':''; commitW(); };
+      ci.oninput=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); w.color=ci.value; commitW(); };
+      accL.appendChild(acc); accL.appendChild(document.createTextNode('theme colour')); l4.appendChild(accL); l4.appendChild(ci);
+      const bgL=document.createElement('label'); bgL.style.cssText='display:flex;gap:4px;align-items:center;cursor:pointer;';
+      const bg=document.createElement('input'); bg.type='checkbox'; bg.checked=w.bg!==false; bg.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
+      bg.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); w.bg=bg.checked; commitW(); };
+      bgL.appendChild(bg); bgL.appendChild(document.createTextNode('panel')); l4.appendChild(bgL);
+      l4.appendChild(document.createTextNode('show when')); l4.appendChild(inp(w.when,'always',70, v=>{ w.when=v.trim().slice(0,24); }));
+      card.appendChild(l4);
+      wrap.appendChild(card);
+    });
+    const addRow=document.createElement('div'); addRow.style.cssText='display:flex;gap:6px;margin:4px 0 2px;';
+    const mkAdd=(txt,proto)=>{ const b=document.createElement('button'); b.textContent=txt; b.style.cssText='flex:1;padding:4px 6px;font-size:11px;';
+      b.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); if(hudWidgets.length>=24){ if(typeof toast==='function') toast('Widget limit reached (24)'); return; }
+        hudWidgets.push(_sanitizeHudWidgets([proto])[0]); commitW(); renderHudPanel(); };
+      addRow.appendChild(b); };
+    mkAdd('+ Text', { kind:'text', label:'SCORE {score}', anchor:'tc' });
+    mkAdd('+ Timer', { kind:'timer', label:'', value:'time', anchor:'tc', size:26 });
+    mkAdd('+ Bar', { kind:'bar', label:'', value:'progress', max:'100', anchor:'tc' });
+    wrap.appendChild(addRow);
+  }
   grp('Colours');
   colorRow('Accent', 'accent'); colorRow('Health', 'health'); colorRow('Score', 'score');
 
@@ -29415,6 +29575,7 @@ function restoreLevel(level){
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
+  hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
   if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
