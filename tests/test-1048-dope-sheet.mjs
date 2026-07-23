@@ -51,10 +51,10 @@ assert(/const rowCss=rows\.length>9 \? 12 : 15;/.test(src), 'many rows pack tigh
   const bind = extractFunction('_aeBindTL', src);
   assert(/const rowAt=\(e\)=>\{/.test(bind), 'pointer-to-row mapping exists');
   assert(/if\(y<g\.ruler\) return null;/.test(bind), 'the ruler band stays a pure scrub zone');
-  assert(/if\(slot!==_aeSel\)\{ _aeSel=slot; _aeSelKeys=\[\]; _aeRenderTree\(\); _aeRenderInspector\(\); \}   \/\/ the row IS a bone selection/.test(bind),
-    'grabbing a key on another row selects that bone first');
-  assert(/\/\/ empty row spot: a CLICK selects the bone \+ jumps time; a DRAG sweeps a marquee over its keys \(build 1056\)/.test(bind),
-    'clicking an empty row still selects its bone and jumps the playhead (dragging became the marquee in 1056)');
+  assert(/else if\(slot!==_aeSel\)\{ _aeSel=slot; _aeRenderTree\(\); _aeRenderInspector\(\); \}   \/\/ keep the multi-selection, make this row active/.test(bind),
+    'grabbing a key on another row makes it active (build 1063: keeping any cross-bone selection)');
+  assert(/\/\/ empty row spot: a CLICK selects the bone \+ jumps time; a DRAG sweeps a marquee across rows \(build 1056\/1063\)/.test(bind),
+    'clicking an empty row still selects its bone and jumps the playhead (dragging became the cross-row marquee)');
   assert(/const slot=rowAt\(e\) \|\| _aeSel;   \/\/ build 1048: double-click keys the row under the pointer/.test(bind),
     'double-click keys whichever row is under the pointer');
 }

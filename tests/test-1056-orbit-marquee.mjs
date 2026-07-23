@@ -28,18 +28,18 @@ eq(env(clip, 'R:hand', 0, 1).length, 0, 'an unkeyed slot yields nothing');
 eq(env(null, 'L:uparm', 0, 1).length, 0, 'no clip is a safe no-op');
 
 // ---- the wiring is pinned ----
-assert(/drag=\{ marq:true, slot, t0:t, sx:e\.clientX, sy:e\.clientY, moved:false, shift:e\.shiftKey,/.test(src),
-  'an empty row spot arms a pending marquee instead of instantly scrubbing');
-assert(/base:\(e\.shiftKey && slot===_aeSel\) \? _aeSelKeys\.slice\(\) : \[\]/.test(src),
-  'shift keeps the existing selection as the base — the band adds to it');
-assert(/_aeSelKeys=drag\.base\.concat\(_aeKeysInRange\(_aeClip, drag\.slot, drag\.t0, t\)/.test(src),
-  'the selection updates live while the band sweeps');
-assert(/if\(!drag\.moved && Math\.hypot\(e\.clientX-drag\.sx, e\.clientY-drag\.sy\)>4\)/.test(src),
-  'a 4px threshold separates a click from a sweep');
+assert(/drag=\{ marq:true, slot, row0:rowIdxAt\(e\), t0:t, sx:e\.clientX, sy:e\.clientY, moved:false, shift:e\.shiftKey,/.test(src),
+  'an empty row spot arms a pending marquee (build 1063: tracking a start ROW) instead of instantly scrubbing');
+assert(/base:e\.shiftKey \? _aeSelUnified\(\) : new Map\(\)/.test(src),
+  'shift keeps the existing (cross-bone) selection as the base — the band adds to it');
+assert(/const box=_aeCellsInBox\(_aeClip, rows, drag\.row0, rowNow, drag\.t0, t\);/.test(src),
+  'the selection updates live while the band sweeps (build 1063: across every row it crosses)');
+assert(/if\(!drag\.moved && \(Math\.hypot\(e\.clientX-drag\.sx, e\.clientY-drag\.sy\)>4 \|\| rowNow!==drag\.row0\)\)/.test(src),
+  'a 4px (or one-row) threshold separates a click from a sweep');
 assert(/if\(!drag\.moved\)\{   \/\/ a plain click: select the bone and jump the playhead \(pre-marquee behavior\)/.test(src),
   'a motionless click still selects the bone and jumps the playhead');
-assert(/_aeMarq=\{ slot:drag\.slot, t0:drag\.t0, t1:t \};/.test(src) && /const mi=g\.rows\.indexOf\(_aeMarq\.slot\);/.test(src),
-  'the band draws live on the dope sheet');
+assert(/_aeMarq=\{ r0:drag\.row0, r1:rowNow, t0:drag\.t0, t1:t \};/.test(src) && /if\(_aeMarq\)\{   \/\/ build 1063: the band spans every row it's dragged across/.test(src),
+  'the band draws live across the dragged rows');
 assert(/_aeMarq=null; _aeDrawTL\(\);/.test(src), 'release clears the band');
 assert(/drag=\{ scrub:true \};   \/\/ the ruler stays a pure scrub zone/.test(src), 'ruler scrubbing is untouched');
 

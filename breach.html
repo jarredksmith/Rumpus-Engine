@@ -10143,7 +10143,7 @@ let _aeEl=null, _aeR=null, _aeScene=null, _aeCam=null, _aeRoot=null, _aeRestRoot
 let _aeBones=null, _aeRestBones=null, _aeRestW=null, _aeRestLocal=null, _aeHipRestW=null, _aeHipH=1, _aeH=1.8;
 let _aeSkel=null, _aeDots=[], _aeGrid=null, _aeSel='', _aeClip=null, _aeTime=0, _aePlaying=false;
 let _aeMixer=null, _aeAction=null, _aeRebuildT=0, _aeUndo=[], _aeRedo=[], _aeAutoKey=false, _aeSnap=true;
-let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKeys=[], _aeAxis='', _aeMarq=null;   // build 1046: key selection is a SET; _aeMarq = the live sweep band (build 1056)
+let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKeys=[], _aeAxis='', _aeMarq=null, _aeSelExtra=new Map();   // build 1046: key selection is a SET; _aeMarq = the live sweep band (build 1056); _aeSelExtra = build 1063 cross-bone selection (Map<slot,Set<t4>>) — _aeSelKeys holds the ACTIVE row's times, _aeSelExtra the other rows'
 let _aeTreeFilter='', _aeLastTL=null;
 let _aeFireEv=true, _aePrevT=null;   // build 1045: preview event firing (sounds only, never while scrubbing)
 let _aeCfg=null, _aeCfgLabel='Player', _aeRebuildFn=null, _aeRootPath=null, _aeRootPathOn=false;   // build 1046: any-character targets + root path
@@ -10475,7 +10475,7 @@ function _aeClose(){
   _aeDots=[]; _aeSkel=null; _aeGrid=null;
   if(_aeR){ try{ const c=_aeR.domElement; _aeR.dispose(); if(c && c.parentNode) c.parentNode.removeChild(c); }catch(e){} _aeR=null; }
   _aeScene=null; _aeRoot=null; _aeRestRoot=null; _aeGltf=null; _aeBones=null; _aeRestBones=null;
-  _aeUndo.length=0; _aeRedo.length=0; _aeClip=null; _aeSel=''; _aeSelKeys=[];
+  _aeUndo.length=0; _aeRedo.length=0; _aeClip=null; _aeSel=''; _aeClearSel();
 }
 function _aeInitScene(holder, bb){
   _aeScene=new THREE.Scene();
@@ -10702,7 +10702,7 @@ function _aeLoadClip(id){
   const d=customAnims.find(c=>c.id===id) || customAnims[0];
   if(!d) return;
   _aeClip=JSON.parse(JSON.stringify(d));
-  _aeUndo.length=0; _aeRedo.length=0; _aeSelKeys=[]; _aeTime=0; _aePlaying=false;
+  _aeUndo.length=0; _aeRedo.length=0; _aeClearSel(); _aeTime=0; _aePlaying=false;
   _aeQueueRebuild(true); _aeRenderClipSel(); _aeRenderTree(); _aeRenderInspector(); _aeDrawTL();
 }
 function _aeSave(){
@@ -10834,13 +10834,7 @@ function _aeKeys(e){
   else if(e.code==='Escape'){ _aeClose(); }
   else if((e.ctrlKey||e.metaKey) && e.code==='KeyZ' && !e.shiftKey){ e.preventDefault(); _aeUndoOp(); }
   else if(((e.ctrlKey||e.metaKey) && e.code==='KeyZ' && e.shiftKey) || ((e.ctrlKey||e.metaKey) && e.code==='KeyY')){ e.preventDefault(); _aeRedoOp(); }
-  else if(e.code==='Delete' || e.code==='Backspace'){
-    if(_aeSelKeys.length && _aeSel && _aeClip.tracks[_aeSel]){ _aeSnapshot();   // build 1046: deletes the whole selection
-      const tr=_aeClip.tracks[_aeSel];
-      for(const st of _aeSelKeys){ if(tr.q) _aeDeleteKeyAt(tr.q, st); if(_aeSel==='hips' && tr.p) _aeDeleteKeyAt(tr.p, st); }
-      if((!tr.q||!tr.q.length)&&(!tr.p||!tr.p.length)) delete _aeClip.tracks[_aeSel];
-      _aeSelKeys=[]; _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); }
-  }
+  else if(e.code==='Delete' || e.code==='Backspace'){ _aeDeleteSel(); }   // build 1063: deletes the whole selection across every bone
   else if(e.code==='KeyK'){ _aeSnapshot(); if(e.shiftKey){ const n=_aeKeyPose(_aeTime); if(typeof toast==='function') toast(n+' bones keyed'); } else if(_aeSel) _aeKeySlot(_aeSel, _aeTime); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); }
   else if(e.code==='ArrowLeft'||e.code==='ArrowRight'){
     e.preventDefault();
@@ -10887,6 +10881,9 @@ function _aeEnsureDom(){
     +'<label title="Fire sound events while the preview plays (never while scrubbing)"><input id="aeFireEv" type="checkbox" checked> Fire events</label>'
     +'<button id="aeKeyBone" title="Key the selected bone at the playhead (K)">Key bone</button>'
     +'<button id="aeKeyPose" title="Key every posed bone (Shift+K)">Key pose</button>'
+    +'<button id="aeSelAll" title="Select every key on every bone (Delete to clear them all)">Select all</button>'
+    +'<button id="aeDeselect" title="Clear the key selection">Deselect</button>'
+    +'<button id="aeDelK" title="Delete the selected keys (Delete key)">Delete keys</button>'
     +'<button id="aeCopyK" title="Copy every key at the playhead">Copy keys</button>'
     +'<button id="aePasteK" title="Paste the copied keys at the playhead">Paste keys</button>'
     +'<button id="aeGhost" title="Onion skin — ghost skeletons at the previous (blue) and next (orange) keys">Ghosts</button>'
@@ -10912,6 +10909,9 @@ function _aeEnsureDom(){
   el.querySelector('#aeFireEv').onchange=(e)=>{ _aeFireEv=e.target.checked; };
   el.querySelector('#aeKeyBone').onclick=()=>{ if(_aeSel){ _aeSnapshot(); _aeKeySlot(_aeSel, _aeTime); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); } };
   el.querySelector('#aeKeyPose').onclick=()=>{ _aeSnapshot(); const n=_aeKeyPose(_aeTime); if(typeof toast==='function') toast(n+' bones keyed'); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); };
+  el.querySelector('#aeSelAll').onclick=()=>_aeSelectAll();
+  el.querySelector('#aeDeselect').onclick=()=>{ _aeClearSel(); _aeDrawTL(); };
+  el.querySelector('#aeDelK').onclick=()=>{ const n=_aeDeleteSel(); if(typeof toast==='function') toast(n?('Deleted '+n+' keys'):'No keys selected'); };
   el.querySelector('#aeCopyK').onclick=()=>{ _aeKeyClipb=_aeKeysAt(_aeClip, _aeSnapT(_aeTime, _aeClip.fps, _aeSnap)); const n=Object.keys(_aeKeyClipb).length; if(typeof toast==='function') toast(n?('Copied keys on '+n+' bones'):'No keys at the playhead'); };
   el.querySelector('#aePasteK').onclick=()=>{ if(!_aeKeyClipb){ if(typeof toast==='function') toast('Nothing copied yet'); return; } _aeSnapshot(); const n=_aePasteKeysAt(_aeClip, _aeKeyClipb, _aeSnapT(_aeTime, _aeClip.fps, _aeSnap)); if(typeof toast==='function') toast(n?('Pasted '+n+' keys'):'Nothing to paste'); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL(); };
   el.querySelector('#aeGhost').onclick=()=>{ _aeGhostOn=!_aeGhostOn; el.querySelector('#aeGhost').classList.toggle('aeAccent', _aeGhostOn); _aeGhostSync(); };
@@ -10945,7 +10945,7 @@ function _aeRenderTree(){
     const tr=_aeClip && _aeClip.tracks[slot];
     const nK=tr ? ((tr.q?tr.q.length:0)+(tr.p?tr.p.length:0)) : 0;
     row.innerHTML='<span class="aeBoneNm">'+label+'</span><span class="aeBoneReal">'+b.name.slice(0,16)+'</span>'+(nK?('<span class="aeKeyCt">'+nK+'</span>'):'');
-    row.onclick=()=>{ _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); };
+    row.onclick=()=>{ _aeSel=slot; _aeClearSel(); _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); };
     host.appendChild(row);
   }
 }
@@ -11117,6 +11117,72 @@ function _aeKeysInRange(clip, slot, a, b){
   if(tr.p) for(const k of tr.p) ts.add(k[0]);
   return [...ts].filter(t=>t>=lo && t<=hi).sort((x,y)=>x-y);
 }
+// ---- build 1063: CROSS-BONE key selection. The active row's selected times live in _aeSelKeys
+// (unchanged, so per-bone flows keep working); every OTHER row's selected times live in
+// _aeSelExtra (Map<slot, Set<'t.toFixed(4)'>>). Together they're a selection that can span the
+// whole dope sheet — for Select-all, a multi-row marquee, group delete and group move. ----
+const _t4=(t)=>(+t).toFixed(4);
+function _aeClearSel(){ _aeSelKeys=[]; _aeSelExtra=new Map(); }
+function _aeSelHasCell(slot, t){   // is (slot,t) currently selected?
+  if(slot===_aeSel && _aeSelKeys.some(st=>Math.abs(st-t)<1e-4)) return true;
+  const set=_aeSelExtra.get(slot); return !!(set && set.has(_t4(t)));
+}
+function _aeSelUnified(){   // the whole selection as Map<slot, times[]>
+  const m=new Map();
+  if(_aeSel && _aeSelKeys.length) m.set(_aeSel, _aeSelKeys.slice());
+  for(const [slot,set] of _aeSelExtra){ const arr=(m.get(slot)||[]).slice();
+    for(const s4 of set){ const t=+s4; if(!arr.some(x=>Math.abs(x-t)<1e-4)) arr.push(t); } if(arr.length) m.set(slot, arr); }
+  return m;
+}
+function _aeSelMerge(a, b){   // union two Map<slot,times[]>
+  const out=new Map(); for(const [slot,ts] of a) out.set(slot, ts.slice());
+  for(const [slot,ts] of b){ const arr=(out.get(slot)||[]).slice();
+    for(const t of ts){ if(!arr.some(x=>Math.abs(x-t)<1e-4)) arr.push(t); } out.set(slot, arr); }
+  return out;
+}
+function _aeSelSetFromMap(map, activeSlot){   // load a Map<slot,times[]> back into the split store
+  _aeSelKeys=[]; _aeSelExtra=new Map();
+  let act=activeSlot;
+  if(!act || !map.has(act)) act = map.size ? map.keys().next().value : (_aeSel||'');
+  for(const [slot,times] of map){
+    if(!times || !times.length) continue;
+    if(slot===act) _aeSelKeys=times.slice();
+    else _aeSelExtra.set(slot, new Set(times.map(_t4)));
+  }
+  if(act) _aeSel=act;
+}
+function _aeCellsInBox(clip, rows, ra, rb, ta, tb){   // every keyed time in the row-range x time-range box
+  const out=new Map(); const lo=Math.min(ra,rb), hi=Math.max(ra,rb);
+  for(let i=Math.max(0,lo); i<=Math.min(rows.length-1,hi); i++){
+    const slot=rows[i], ts=_aeKeysInRange(clip, slot, ta, tb); if(ts.length) out.set(slot, ts); }
+  return out;
+}
+function _aeAllCells(clip, rows){   // every key on every row
+  const out=new Map(); const dur=(clip&&clip.dur)||0;
+  for(const slot of rows){ const ts=_aeKeysInRange(clip, slot, -1, dur+1); if(ts.length) out.set(slot, ts); }
+  return out;
+}
+function _aeSelCount(){ let n=_aeSelKeys.length; for(const [,set] of _aeSelExtra) n+=set.size; return n; }
+function _aeSelectAll(){
+  if(!_aeClip) return;
+  const rows=_aeTLRows(); const map=_aeAllCells(_aeClip, rows);
+  if(!map.size){ if(typeof toast==='function') toast('No keys to select yet'); return; }
+  _aeSelSetFromMap(map, _aeSel && map.has(_aeSel) ? _aeSel : null);
+  _aeRenderTree(); _aeDrawTL();
+  if(typeof toast==='function') toast('Selected '+_aeSelCount()+' keys on '+map.size+' bones (Delete to clear)');
+}
+function _aeDeleteSel(){   // delete every selected key, across all bones
+  if(!_aeClip) return 0;
+  const uni=_aeSelUnified(); if(!uni.size) return 0;
+  _aeSnapshot();
+  let n=0;
+  for(const [slot,times] of uni){ const tr=_aeClip.tracks[slot]; if(!tr) continue;
+    for(const st of times){ if(tr.q) _aeDeleteKeyAt(tr.q, st); if(slot==='hips' && tr.p) _aeDeleteKeyAt(tr.p, st); n++; }
+    if(tr.q && !tr.q.length) delete tr.q; if(tr.p && !tr.p.length) delete tr.p;
+    if((!tr.q||!tr.q.length)&&(!tr.p||!tr.p.length)) delete _aeClip.tracks[slot]; }
+  _aeClearSel(); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL();
+  return n;
+}
 function _aeDrawTL(){
   const cv=_aeEl && _aeEl.querySelector('#aeTL'); if(!cv || !_aeClip) return;
   const g=_aeTLGeom(cv), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||1;
@@ -11152,19 +11218,20 @@ function _aeDrawTL(){
     if(tr.p) for(const k of tr.p) ts.add(k[0]);
     const r=Math.min(5*dpr, g.rowH*0.34);
     for(const t of ts){ const x=_aeTLx(t,g);
-      const selK=isSel && _aeSelKeys.some(st=>Math.abs(st-t)<1e-4);
+      const selK=_aeSelHasCell(slot, t);   // build 1063: highlight selected keys on ANY row, not just the active one
       ctx.fillStyle=selK?'#ffd166':(isSel?UI_ACCENT:'#7fb8a6');   // the canvas-side accent mirror (re-themes with the UI)
       ctx.beginPath(); ctx.moveTo(x, yc-r); ctx.lineTo(x+r, yc); ctx.lineTo(x, yc+r); ctx.lineTo(x-r, yc); ctx.fill(); }
   }
   ctx.textBaseline='top';
   // build 1056: the live marquee band while sweep-selecting keys
-  if(_aeMarq){
-    const mi=g.rows.indexOf(_aeMarq.slot);
-    if(mi>=0){
+  if(_aeMarq){   // build 1063: the band spans every row it's dragged across
+    const n=g.rows.length; if(n){
+      const r0=Math.max(0,Math.min(n-1,_aeMarq.r0)), r1=Math.max(0,Math.min(n-1,_aeMarq.r1));
+      const lo=Math.min(r0,r1), hi=Math.max(r0,r1);
       const x0=_aeTLx(Math.min(_aeMarq.t0,_aeMarq.t1), g), x1=_aeTLx(Math.max(_aeMarq.t0,_aeMarq.t1), g);
-      const my=g.ruler+mi*g.rowH;
-      ctx.fillStyle='rgba(255,209,102,0.16)'; ctx.fillRect(x0, my, Math.max(1,x1-x0), g.rowH);
-      ctx.strokeStyle='rgba(255,209,102,0.7)'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5, my+0.5, Math.max(1,x1-x0)-1, g.rowH-1);
+      const y0=g.ruler+lo*g.rowH, y1=g.ruler+(hi+1)*g.rowH;
+      ctx.fillStyle='rgba(255,209,102,0.14)'; ctx.fillRect(x0, y0, Math.max(1,x1-x0), y1-y0);
+      ctx.strokeStyle='rgba(255,209,102,0.7)'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5, y0+0.5, Math.max(1,x1-x0)-1, (y1-y0)-1);
     }
   }
   // playhead
@@ -11183,6 +11250,12 @@ function _aeBindTL(cv){
     const i=Math.floor((y-g.ruler)/g.rowH);
     return (i>=0 && i<g.rows.length) ? g.rows[i] : null;
   };
+  const rowIdxAt=(e)=>{   // build 1063: clamped row index (for the multi-row marquee — valid even off the ends)
+    const r=cv.getBoundingClientRect(); const g=_aeTLGeom(cv);
+    const y=(e.clientY-r.top)*(window.devicePixelRatio||1);
+    const i=Math.floor((y-g.ruler)/g.rowH);
+    return Math.max(0, Math.min(g.rows.length-1, i));
+  };
   cv.addEventListener('mousedown', (e)=>{
     const t=geomT(e);
     const slot=rowAt(e);
@@ -11193,51 +11266,56 @@ function _aeBindTL(cv){
       const tol=_aeClip.dur*0.012+0.008;
       let hit=null; for(const kt of ts) if(Math.abs(kt-t)<tol && (hit==null || Math.abs(kt-t)<Math.abs(hit-t))) hit=kt;
       if(hit!=null){
-        if(slot!==_aeSel){ _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); }   // the row IS a bone selection
-        if(e.shiftKey){   // build 1046: shift-click toggles membership in the key selection
-          const at=_aeSelKeys.findIndex(st=>Math.abs(st-hit)<=1e-4);
-          if(at>=0) _aeSelKeys.splice(at,1); else _aeSelKeys.push(hit);
+        if(e.shiftKey){   // build 1046/1063: shift-click toggles this key's membership (on any row, keeping the rest)
+          if(slot===_aeSel){ const at=_aeSelKeys.findIndex(st=>Math.abs(st-hit)<=1e-4); if(at>=0) _aeSelKeys.splice(at,1); else _aeSelKeys.push(hit); }
+          else { const cur=_aeSelExtra.get(slot)||new Set(); if(cur.has(_t4(hit))) cur.delete(_t4(hit)); else cur.add(_t4(hit)); if(cur.size) _aeSelExtra.set(slot,cur); else _aeSelExtra.delete(slot); }
           _aeDrawTL(); return;
         }
-        if(!_aeSelKeys.some(st=>Math.abs(st-hit)<=1e-4)) _aeSelKeys=[hit];   // grabbing outside the selection re-selects
+        // plain grab: if the key isn't already in the selection, reset to just it on its row; then group-move the whole selection
+        if(!_aeSelHasCell(slot, hit)){ _aeClearSel(); _aeSel=slot; _aeSelKeys=[hit]; _aeRenderTree(); _aeRenderInspector(); }
+        else if(slot!==_aeSel){ _aeSel=slot; _aeRenderTree(); _aeRenderInspector(); }   // keep the multi-selection, make this row active
         _aeSnapshot();
-        drag={ from:hit, orig:JSON.stringify(_aeClip.tracks), times:_aeSelKeys.slice() };   // build 1046: group drag restores from this snapshot every move
+        drag={ from:hit, orig:JSON.stringify(_aeClip.tracks), uni:_aeSelUnified() };   // build 1063: group drag restores from this snapshot and moves every selected bone
         _aeDrawTL(); return;
       }
     }
-    if(slot){   // empty row spot: a CLICK selects the bone + jumps time; a DRAG sweeps a marquee over its keys (build 1056)
-      drag={ marq:true, slot, t0:t, sx:e.clientX, sy:e.clientY, moved:false, shift:e.shiftKey,
-        base:(e.shiftKey && slot===_aeSel) ? _aeSelKeys.slice() : [] };   // shift adds to the selection
+    if(slot){   // empty row spot: a CLICK selects the bone + jumps time; a DRAG sweeps a marquee across rows (build 1056/1063)
+      drag={ marq:true, slot, row0:rowIdxAt(e), t0:t, sx:e.clientX, sy:e.clientY, moved:false, shift:e.shiftKey,
+        base:e.shiftKey ? _aeSelUnified() : new Map() };   // shift adds to the existing selection
       return;
     }
-    _aeSelKeys=[]; _aeSetPlaying(false); _aeApplyTime(t); drag={ scrub:true };   // the ruler stays a pure scrub zone
+    _aeClearSel(); _aeSetPlaying(false); _aeApplyTime(t); drag={ scrub:true };   // the ruler stays a pure scrub zone
   });
   addEventListener('mousemove', (e)=>{
     if(!drag || !_aeEl || _aeEl.style.display==='none') return;
     const t=geomT(e);
     if(drag.marq){
-      if(!drag.moved && Math.hypot(e.clientX-drag.sx, e.clientY-drag.sy)>4){ drag.moved=true;
-        if(drag.slot!==_aeSel){ _aeSel=drag.slot; _aeRenderTree(); _aeRenderInspector(); } }
+      const rowNow=rowIdxAt(e);
+      if(!drag.moved && (Math.hypot(e.clientX-drag.sx, e.clientY-drag.sy)>4 || rowNow!==drag.row0)){ drag.moved=true;
+        const startSlot=_aeTLRows()[drag.row0]; if(startSlot && startSlot!==_aeSel){ _aeSel=startSlot; _aeRenderTree(); _aeRenderInspector(); } }
       if(!drag.moved) return;
-      _aeSelKeys=drag.base.concat(_aeKeysInRange(_aeClip, drag.slot, drag.t0, t)
-        .filter(kt=>!drag.base.some(st=>Math.abs(st-kt)<=1e-4)));
-      _aeMarq={ slot:drag.slot, t0:drag.t0, t1:t };
+      const rows=_aeTLRows();
+      const box=_aeCellsInBox(_aeClip, rows, drag.row0, rowNow, drag.t0, t);   // build 1063: rows the band crosses
+      _aeSelSetFromMap(_aeSelMerge(drag.base, box), rows[drag.row0]);
+      _aeMarq={ r0:drag.row0, r1:rowNow, t0:drag.t0, t1:t };
       _aeDrawTL(); return;
     }
     if(drag.scrub){ _aeApplyTime(t); return; }
-    // move the grabbed key (both q and p entries at that time)
+    // move the grabbed keys — every selected bone shifts by the same delta (build 1063)
     const nt=_aeSnapT(t, _aeClip.fps, _aeSnap);
     const delta=nt-drag.from;
     if(Math.abs(delta)<1e-6) return;
-    _aeClip.tracks=JSON.parse(drag.orig);   // build 1046: re-apply the WHOLE group move from the drag-start snapshot (no cumulative drift)
-    _aeSelKeys=_aeMoveKeys(_aeClip, _aeSel, drag.times, delta, _aeClip.fps, _aeSnap);
+    _aeClip.tracks=JSON.parse(drag.orig);   // re-apply the WHOLE group move from the drag-start snapshot (no cumulative drift)
+    const moved=new Map();
+    for(const [slot,times] of drag.uni){ moved.set(slot, _aeMoveKeys(_aeClip, slot, times, delta, _aeClip.fps, _aeSnap)); }
+    _aeSelSetFromMap(moved, _aeSel);
     _aeQueueRebuild(); _aeDrawTL();
   });
   addEventListener('mouseup', ()=>{
     if(drag && drag.marq){
       if(!drag.moved){   // a plain click: select the bone and jump the playhead (pre-marquee behavior)
-        if(drag.slot!==_aeSel){ _aeSel=drag.slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); }
-        else if(!drag.shift) _aeSelKeys=[];
+        if(drag.slot!==_aeSel){ _aeSel=drag.slot; _aeClearSel(); _aeRenderTree(); _aeRenderInspector(); }
+        else if(!drag.shift) _aeClearSel();
         _aeSetPlaying(false); _aeApplyTime(drag.t0);
       }
       _aeMarq=null; _aeDrawTL();
@@ -11247,7 +11325,7 @@ function _aeBindTL(cv){
   cv.addEventListener('dblclick', (e)=>{
     const slot=rowAt(e) || _aeSel;   // build 1048: double-click keys the row under the pointer
     if(!slot) return;
-    if(slot!==_aeSel){ _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); }
+    if(slot!==_aeSel){ _aeSel=slot; _aeClearSel(); _aeRenderTree(); _aeRenderInspector(); }
     const t=_aeSnapT(geomT(e), _aeClip.fps, _aeSnap);
     _aeSnapshot(); const keep=_aeTime; _aeApplyTime(t); _aeKeySlot(_aeSel, t); _aeApplyTime(keep);
     _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL();
@@ -22337,7 +22415,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1062 · 2026-07-22';
+const BUILD_VERSION = 'build 1063 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

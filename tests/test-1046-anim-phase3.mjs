@@ -70,13 +70,13 @@ assert(/sec\('ASSIGN TO '\+\(_aeCfgLabel\|\|'Player'\)\.toUpperCase\(\)\)/.test(
 
 // ---- multi-select keys ----
 assert(!/_aeSelKey[^s]/.test(src.slice(src.indexOf('let _aeRAF'))), 'the single-key selection is fully retired');
-assert(/if\(e\.shiftKey\)\{   \/\/ build 1046: shift-click toggles membership/.test(src), 'shift-click toggles keys into the selection');
-assert(/drag=\{ from:hit, orig:JSON\.stringify\(_aeClip\.tracks\), times:_aeSelKeys\.slice\(\) \};/.test(src),
-  'group drags snapshot the tracks at grab time');
-assert(/_aeClip\.tracks=JSON\.parse\(drag\.orig\);/.test(src) && /_aeSelKeys=_aeMoveKeys\(_aeClip, _aeSel, drag\.times, delta, _aeClip\.fps, _aeSnap\);/.test(src),
-  '...and re-apply the whole move each mouse step (no cumulative drift)');
-assert(/for\(const st of _aeSelKeys\)\{ if\(tr\.q\) _aeDeleteKeyAt\(tr\.q, st\);/.test(src), 'Delete clears the whole selection');
-assert(/const selK=isSel && _aeSelKeys\.some\(st=>Math\.abs\(st-t\)<1e-4\);/.test(src), 'every selected key draws gold (build 1048: on its own dope-sheet row)');
+assert(/if\(e\.shiftKey\)\{   \/\/ build 1046\/1063: shift-click toggles this key's membership/.test(src), 'shift-click toggles keys into the selection');
+assert(/drag=\{ from:hit, orig:JSON\.stringify\(_aeClip\.tracks\), uni:_aeSelUnified\(\) \};/.test(src),
+  'group drags snapshot the tracks + the cross-bone selection at grab time (build 1063)');
+assert(/_aeClip\.tracks=JSON\.parse\(drag\.orig\);/.test(src) && /for\(const \[slot,times\] of drag\.uni\)\{ moved\.set\(slot, _aeMoveKeys\(_aeClip, slot, times, delta, _aeClip\.fps, _aeSnap\)\); \}/.test(src),
+  '...and re-apply the whole move each mouse step across every selected bone (no cumulative drift)');
+assert(/else if\(e\.code==='Delete' \|\| e\.code==='Backspace'\)\{ _aeDeleteSel\(\); \}/.test(src), 'Delete clears the whole selection');
+assert(/const selK=_aeSelHasCell\(slot, t\);/.test(src), 'every selected key draws gold (build 1063: on ANY row, cross-bone)');
 
 // ---- root path lifecycle ----
 assert(/id="aeRootP"/.test(src) && /_aeRootPathOn=!_aeRootPathOn;/.test(src), 'the Root path toggle exists');
