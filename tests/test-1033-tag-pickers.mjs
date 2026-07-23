@@ -39,7 +39,7 @@ eq(evts.join(','), 'platePressed,roundStart', 'event names from prop signals + g
 assert(/\{k:'target',l:'tag',w:80,listId:'lgTagList'\}/.test(src), 'the Do-action tag field opts into the tag list');
 eq((src.match(/\{k:'name',l:'name',w:86,listId:'lgEvtList'\}/g)||[]).length, 2, 'On event AND Send event name fields opt into the event list');
 assert(/if\(pm\.listId\) inp\.setAttribute\('list', pm\.listId\);/.test(src), 'the param builder wires the datalist');
-assert(/if\(pm\.listId==='lgEvtList'\) _lgRefreshDatalists\(\);/.test(src), 'naming a new event refreshes the list immediately');
+assert(/if\(pm\.listId==='lgEvtList' \|\| pm\.listId==='lgVarList'\) _lgRefreshDatalists\(\);/.test(src), 'naming a new event (or variable, build 1060) refreshes the list immediately');
 const rf = extractFunction('_lgRefreshDatalists', src);
 assert(/op\.label=t\.n\+\(t\.n===1\?' prop':' props'\)/.test(rf), 'each tag option shows its prop count');
 assert(/_lgRefreshDatalists\(\);/.test(extractFunction('_lgRender', src)), 'lists refresh whenever the canvas renders');

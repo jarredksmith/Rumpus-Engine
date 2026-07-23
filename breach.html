@@ -8235,14 +8235,14 @@ const LG_DEFS = {
   interval: { t:'Every X sec',     cat:'ev', outs:['tick'],             params:[{k:'sec',l:'sec',w:40},{k:'times',l:'times (0=\u221e)',w:40}] },
   onkill:   { t:'On enemy killed', cat:'ev', outs:['\u25b6'],            params:[] },
   onwave:   { t:'On wave start',   cat:'ev', outs:['\u25b6'],            params:[] },
-  branch:   { t:'Branch',          cat:'fl', ins:['in'], outs:['true','false'], params:[{k:'a',l:'A',w:56},{k:'op',l:'',w:44,sel:['==','!=','<','<=','>','>=']},{k:'b',l:'B',w:56}] },
+  branch:   { t:'Branch',          cat:'fl', ins:['in'], outs:['true','false'], params:[{k:'a',l:'A',w:56,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['==','!=','<','<=','>','>=']},{k:'b',l:'B',w:56,listId:'lgVarList'}] },
   counter:  { t:'Counter',         cat:'fl', ins:['in','reset'], outs:['reached','each'], params:[{k:'target',l:'target',w:40}] },
   delay:    { t:'Delay',           cat:'fl', ins:['in'], outs:['then'],  params:[{k:'sec',l:'sec',w:40}] },
   repeat:   { t:'Repeat',          cat:'fl', ins:['in'], outs:['done','each (#i)'], params:[{k:'times',l:'times',w:40},{k:'gap',l:'gap s',w:40}] },
   random:   { t:'Random',          cat:'fl', ins:['in'], outs:['A','B','C','D'], params:[{k:'w0',l:'A%',w:32},{k:'w1',l:'B%',w:32},{k:'w2',l:'C%',w:32},{k:'w3',l:'D%',w:32}] },
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
-  setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
-  addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66},{k:'value',l:'+/\u2212',w:50}] },
+  setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
+  addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
   do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:96,sel:['toggle','open','close','anim','unlock','win','cutscene','objective','checkpoint','sound']},{k:'target',l:'tag',w:80,listId:'lgTagList'},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound'],listId:'lgSndList'}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
@@ -8254,6 +8254,18 @@ let _lgEl=null, _lgBoard=null, _lgSvg=null, _lgPan={x:120,y:80}, _lgZoom=1, _lgS
 function _lgNewId(){ let id; do{ id='n'+(_lgSeq++); }while(_lgNode(id)); return id; }
 // build 1033: every tag already carried by a prop or scene light, with how many carry it —
 // the Do-action node and the prop-signal editor offer these as a dropdown (typing still works).
+function _lgVarOptions(){   // build 1060: every variable name in play — from the graph's setvar/addvar/branch and the HUD widgets
+  const set=new Set();
+  const addName=(v)=>{ const t=String(v==null?'':v).trim(); if(t && !/^[-+]?[0-9.]/.test(t) && /^[\w#]+$/.test(t) && t!=='#i') set.add(t); };
+  const addRefs=(txt)=>{ String(txt==null?'':txt).replace(/\{([\w#]+)\}/g,(m,k)=>{ if(k!=='#i') set.add(k); return m; }); };
+  if(typeof logicGraph!=='undefined' && logicGraph.nodes) for(const n of logicGraph.nodes){ const q=n.p||{};
+    if(n.type==='setvar'||n.type==='addvar') addName(q.name);
+    if(n.type==='branch'){ addName(q.a); addName(q.b); }
+    if(n.type==='toast'||n.type==='do') addRefs(q.text);
+  }
+  if(typeof hudWidgets!=='undefined' && hudWidgets) for(const w of hudWidgets){ addName(w.value); addName(w.max); addName(w.when); addRefs(w.label); }
+  return Array.from(set).sort();
+}
 function _lgTagOptions(){
   const counts={};
   if(typeof propModels!=='undefined') for(const o of propModels){ const t=o && o.userData && o.userData.tag; if(t) counts[t]=(counts[t]||0)+1; }
@@ -8297,6 +8309,8 @@ function _lgRefreshDatalists(){
   for(const nm of _lgClipOptions()){ const op=document.createElement('option'); op.value=nm; cl.appendChild(op); }
   const sl=mk('lgSndList');
   for(const u of _lgSoundOptions()){ const op=document.createElement('option'); op.value=u; sl.appendChild(op); }
+  const vl=mk('lgVarList');   // build 1060: variable names, shared by the logic nodes and the HUD widget fields
+  for(const nm of _lgVarOptions()){ const op=document.createElement('option'); op.value=nm; vl.appendChild(op); }
 }
 function _lgDirty(){ if(typeof _levelDirty!=='undefined') _levelDirty=true; const c=document.getElementById('lgCount'); if(c) c.textContent=logicGraph.nodes.length+' node'+(logicGraph.nodes.length===1?'':'s'); }
 function _lgAddNode(type, x, y){
@@ -8364,7 +8378,7 @@ function _lgRenderNode(n){
     let inp;
     if(pm.sel){ inp=document.createElement('select'); for(const o of pm.sel){ const op=document.createElement('option'); op.value=o; op.textContent=o; if(String(n.p[pm.k]||'')===o) op.selected=true; inp.appendChild(op); } inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
     else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!n.p[pm.k]; inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
-    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList') _lgRefreshDatalists(); }; }
+    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList') _lgRefreshDatalists(); }; }
     if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:100px;';
     inp.onpointerdown=(e)=>e.stopPropagation();
     wrap.appendChild(inp); body.appendChild(wrap);
@@ -22195,7 +22209,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1059 · 2026-07-22';
+const BUILD_VERSION = 'build 1060 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29257,7 +29271,8 @@ function renderHudPanel(){
     hint.innerHTML='On-screen text, countdown timers and bars that read the <b>Logic graph\u2019s variables</b> live. Write <b>{score}</b> inside a label to show that variable. A <b>timer</b> reads a seconds variable (drive it in Logic: <i>Every 1 sec \u2192 Change variable time \u22121 \u2192 Branch \u2264 0 \u2192 win/lose</i>). A <b>bar</b> fills value/max. <b>Show when</b> hides the widget until that variable is non-zero. Synced to every player in multiplayer.';
     wrap.appendChild(hint);
     const commitW=()=>{ _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){} _levelDirty=true; };
-    const inp=(val,ph,wd,fn)=>{ const i=document.createElement('input'); i.type='text'; i.value=val; i.placeholder=ph; i.style.cssText='width:'+wd+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;'; i.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(i.value); commitW(); }; return i; };
+    if(typeof _lgRefreshDatalists==='function') try{ _lgRefreshDatalists(); }catch(e){}   // build 1060: seed the variable dropdown from the graph
+    const inp=(val,ph,wd,fn,listId)=>{ const i=document.createElement('input'); i.type='text'; i.value=val; i.placeholder=ph; i.style.cssText='width:'+wd+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;'; if(listId) i.setAttribute('list', listId); i.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(i.value); commitW(); if(listId==='lgVarList' && typeof _lgRefreshDatalists==='function') _lgRefreshDatalists(); }; return i; };
     const numI=(val,wd,fn)=>{ const i=document.createElement('input'); i.type='number'; i.value=val; i.style.cssText='width:'+wd+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;'; i.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(+i.value||0); commitW(); }; return i; };
     const selI=(opts,val,fn)=>{ const el=document.createElement('select'); el.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;'; for(const [v,l] of opts){ const o=document.createElement('option'); o.value=v; o.textContent=l; if(v===val) o.selected=true; el.appendChild(o); } el.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); fn(el.value); commitW(); }; return el; };
     hudWidgets.forEach((w,i)=>{
@@ -29270,8 +29285,8 @@ function renderHudPanel(){
       if(w.kind==='timer' || w.kind==='bar'){
         const l2=document.createElement('div'); l2.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
         l2.appendChild(document.createTextNode(w.kind==='timer'?'seconds variable':'value variable'));
-        l2.appendChild(inp(w.value,'e.g. time',80, v=>{ w.value=v.trim().slice(0,24); }));
-        if(w.kind==='bar'){ l2.appendChild(document.createTextNode('max')); l2.appendChild(inp(w.max,'100 or a variable',90, v=>{ w.max=v.trim().slice(0,24); })); }
+        l2.appendChild(inp(w.value,'e.g. time',80, v=>{ w.value=v.trim().slice(0,24); }, 'lgVarList'));
+        if(w.kind==='bar'){ l2.appendChild(document.createTextNode('max')); l2.appendChild(inp(w.max,'100 or a variable',90, v=>{ w.max=v.trim().slice(0,24); }, 'lgVarList')); }
         card.appendChild(l2);
       }
       const l3=document.createElement('div'); l3.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
@@ -29290,7 +29305,7 @@ function renderHudPanel(){
       const bg=document.createElement('input'); bg.type='checkbox'; bg.checked=w.bg!==false; bg.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
       bg.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); w.bg=bg.checked; commitW(); };
       bgL.appendChild(bg); bgL.appendChild(document.createTextNode('panel')); l4.appendChild(bgL);
-      l4.appendChild(document.createTextNode('show when')); l4.appendChild(inp(w.when,'always',70, v=>{ w.when=v.trim().slice(0,24); }));
+      l4.appendChild(document.createTextNode('show when')); l4.appendChild(inp(w.when,'always',70, v=>{ w.when=v.trim().slice(0,24); }, 'lgVarList'));
       card.appendChild(l4);
       wrap.appendChild(card);
     });
