@@ -36,7 +36,7 @@ assert(/object:\['edPropTag','edShapes','edModels','edUrl','edPicker','edAnim','
 // ---- the no-animation notes point at the new address (textContent — plain text, no entities) ----
 assert(/To move\/rotate it, open Motion & physics \\u2192 Mechanism below\./.test(src),
   'the primitive-shape note names the new home');
-assert(/To move it, open Motion & physics \\u2192 Mechanism below/.test(src),
+assert(/use Motion & physics \\u2192 Mechanism below for simple moves/.test(src),
   'the clipless-model note names the new home');
 assert(!/Use the Mechanism section below/.test(src), 'the old "section below" wording is gone');
 

@@ -65,7 +65,7 @@ assert(/\.sub\(_aeHipRestW\)\.divideScalar\(_aeHipH\)/.test(extractFunction('_ae
 assert(/id="aeClipSel"|'aeClipSel'/.test(src) && /#aeTree/.test(src) && /#aeTL/.test(src) && /#aeInsp/.test(src), 'the workspace has its clip selector, bone tree, timeline and inspector');
 assert(/Animation editor'/.test(src) && /_aeOpen==='function'\) _aeOpen\(\)/.test(src), 'the Player tab (and palette) launch it');
 assert(/isTouch\)\{ if\(typeof toast==='function'\) toast\('The Animation editor needs a desktop/.test(src), 'authoring is desktop-gated (clips still play everywhere)');
-assert(/No humanoid skeleton found in this model/.test(src), 'a boneless model gets a clear warning, not a broken canvas');
+assert(/_aeRigMode=\(_aeBones\.size>1\)\?'bones':'root';/.test(src), 'a non-humanoid model falls back to its own bones — or the whole model — instead of a dead end (build 1064)');
 assert(/if\(_aeAutoKey\)\{ _aeKeySlot\(_aeSel, _aeTime\);/.test(src), 'auto-key writes keys live while dragging a joint');
 assert(/_aeClip\.dur=Math\.round\(last\*1000\)\/1000; if\(typeof toast==='function'\) toast\('Duration extended/.test(src),
   'saving with keys past the end extends the duration instead of silently truncating');

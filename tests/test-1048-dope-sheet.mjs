@@ -31,7 +31,7 @@ const manual = readFileSync(new URL('../breach-help.html', import.meta.url), 'ut
 
 // ---- executable: the dope-sheet row list ----
 {
-  const rows = new Function('_aeClip', '_aeSel', "const CA_SLOTS=['hips','spine0','head','L:uparm','R:lowleg'];\n"
+  const rows = new Function('_aeClip', '_aeSel', "const CA_SLOTS=['hips','spine0','head','L:uparm','R:lowleg'];\nconst _aeRigMode='human', _aeBones=null;\n"
     + extractFunction('_aeTLRows', src) + '\nreturn _aeTLRows();');
   eq(rows({ tracks: { head: {}, hips: {} } }, '').join(','), 'hips,head', 'keyed bones appear in skeleton order');
   eq(rows({ tracks: { head: {} } }, 'R:lowleg').join(','), 'head,R:lowleg', 'the selected bone always shows, keyed or not');

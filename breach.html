@@ -7554,23 +7554,33 @@ function updateMixersLOD(dt){
 // userData.animActions so the trigger / live mode-switch can drive them.
 // Map a prop's chosen playback style to a THREE loop mode. 'loop'=repeat, 'pingpong'=back-and-forth, 'once'=play once + hold last frame.
 function _propLoopMode(play){ return play==='pingpong' ? THREE.LoopPingPong : (play==='once' ? THREE.LoopOnce : THREE.LoopRepeat); }
-function playModelAnimations(root, gltf, mode){
-  if(!gltf || !gltf.animations || !gltf.animations.length) return null;
+function playModelAnimations(root, gltf, mode, allowCustomOnly){
+  if(!gltf) return null;
+  const base = gltf.animations || [];
+  if(!base.length && !allowCustomOnly) return null;   // build 1064: only PROPS opt into custom-only rigs (guns/coins/previews keep the old contract)
+  // build 1064: the level's custom clips join every prop's action set (humanoid clips retarget,
+  // 'b:'-named clips match this model's bones, 'root' clips move the whole model). A custom clip
+  // NEVER auto-plays unless the author explicitly picked it — existing scenes stay untouched.
+  const ca = (typeof _caClipsFor==='function') ? _caClipsFor(gltf) : [];
+  const have = new Set(base.map(c=>c.name));
+  const caSet = new Set(ca.filter(c=>c && !have.has(c.name)));
+  const clips = base.concat([...caSet]);
+  if(!clips.length) return null;
   // back-compat: legacy `mode` was 'loop' (auto+repeat) or 'trigger' (E+once). New props carry animTrigger+animPlay.
   if(root.userData.animTrigger == null){ root.userData.animTrigger = (mode==='trigger') ? 'interact' : 'auto'; }
   if(root.userData.animPlay == null){ root.userData.animPlay = (mode==='trigger') ? 'once' : 'loop'; }
   const trig = root.userData.animTrigger, play = root.userData.animPlay;
   const mixer = new THREE.AnimationMixer(root);
   const actions = [];
-  root.userData.animClipNames = (gltf.animations||[]).map(c=>c.name||'');   // names for the editor picker
+  root.userData.animClipNames = clips.map(c=>c.name||'');   // names for the editor picker (customs included)
   const chosen = root.userData.animClip || '';   // '' = play all; else only the named clip
   const lm = _propLoopMode(play);
-  for(const clip of gltf.animations){
+  for(const clip of clips){
     const action = mixer.clipAction(clip);
     action.userData = action.userData || {}; action.userData.clipName = clip.name||'';
     action.loop = lm; action.clampWhenFinished = (play==='once');
     actions.push(action);
-    const usethis = !chosen || (clip.name === chosen);
+    const usethis = chosen ? (clip.name === chosen) : !caSet.has(clip);   // '' = all BASE clips; customs only when picked by name
     if(trig==='auto' && usethis){ action.play(); }   // auto: start now. interact/signal: wait to be fired.
   }
   mixers.push(mixer);
@@ -7589,6 +7599,17 @@ function setPropAnimClip(obj, clipName){
     const nm = (a.userData && a.userData.clipName) || '';
     if(!clipName || nm === clipName){ a.reset(); a.loop = lm; a.clampWhenFinished=(obj.userData.animPlay==='once'); a.enabled = true; a.setEffectiveWeight(1); a.play(); }
     else { a.stop(); }
+  }
+}
+// build 1064: after a custom clip is saved/deleted, live props re-arm their action sets so the
+// new clip is immediately playable (picker, E, signals, logic) — no respawn, no reload.
+function _caRefreshPropAnims(){
+  if(typeof propModels==='undefined' || typeof gltfCache==='undefined') return;
+  for(const o of propModels){
+    if(!o || !o.userData || !o.userData.src) continue;
+    const g=gltfCache[o.userData.src]; if(!g) continue;
+    if(o.userData.mixer){ try{ o.userData.mixer.stopAllAction(); }catch(e){} const mi=mixers.indexOf(o.userData.mixer); if(mi>=0) mixers.splice(mi,1); o.userData.mixer=null; o.userData.animActions=null; }
+    try{ playModelAnimations(o, g, o.userData.animMode, true); }catch(e){}
   }
 }
 // --- animated gun viewmodels: idle loops; shoot/reload are one-shots triggered by gameplay -------------
@@ -9887,12 +9908,17 @@ const CA_SLOTS = ['hips','spine0','spine1','spine2','neck','head',
   'R:shoulder','R:uparm','R:forearm','R:hand','R:upleg','R:lowleg','R:foot','R:toe'];
 const CA_SLOT_LABEL = { hips:'Hips', spine0:'Spine', spine1:'Spine 2', spine2:'Chest', neck:'Neck', head:'Head' };
 function _caSlotLabel(slot){
+  if(slot==='root') return 'Whole model';                        // build 1064: prop-mode track — the model root itself
+  if(typeof slot==='string' && slot.indexOf('b:')===0) return slot.slice(2);   // build 1064: a named bone on a non-humanoid rig
   if(CA_SLOT_LABEL[slot]) return CA_SLOT_LABEL[slot];
   const m=String(slot).match(/^([LR]):(\w+)$/); if(!m) return slot;
   const nm={ shoulder:'Shoulder', uparm:'Upper arm (shoulder)', forearm:'Forearm (elbow)', hand:'Hand (wrist)', upleg:'Thigh (hip)', lowleg:'Shin (knee)', foot:'Foot (ankle)', toe:'Toe' }[m[2]]||m[2];   // build 1045: joint-forward names — "bend the knee" = rotate the shin
   return (m[1]==='L'?'Left ':'Right ')+nm.toLowerCase();
 }
 function _caNewId(){ return 'ca_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+// build 1064: a 'root' track binds the model root BY NAME (uuids don't survive cloning). Unnamed
+// or binding-unsafe roots get one deterministic name, applied to the cache and clones alike.
+function _caEnsureRootName(o){ if(!o.name || /[\s.\[\]():\/]/.test(o.name)) o.name='caRootNode'; return o.name; }
 let _caRev = 0;   // bumped whenever the library changes; invalidates per-gltf clip caches
 // Sanitizer: clips ride level data / share codes / the network, so everything is validated,
 // clamped and rounded. Malformed clips are dropped, never fatal. Plain data in, plain data out
@@ -9912,7 +9938,9 @@ function _caSanitize(list){
     const d={ id, v:1, name:(typeof c.name==='string' && c.name.trim()) ? c.name.trim().slice(0,40) : 'Custom clip',
       dur, fps, loop:(c.loop==='once'||c.loop==='hold')?c.loop:'loop', interp:(c.interp==='linear'||c.interp==='step')?c.interp:'smooth', tracks:{} };   // build 1044
     const T=(c.tracks && typeof c.tracks==='object') ? c.tracks : {};
-    for(const slot of CA_SLOTS){
+    const _slotKeys=[...CA_SLOTS];   // build 1064: prop tracks — 'root' + up to 64 'b:<name>' bones (binding-safe names only)
+    { let gen=0; for(const k in T){ if(k==='root' || /^b:[^\s.\[\]():\/]{1,48}$/.test(k)){ if(gen++<64) _slotKeys.push(k); } } }
+    for(const slot of _slotKeys){
       const t=T[slot]; if(!t || typeof t!=='object') continue;
       const tr={};
       if(Array.isArray(t.q)){
@@ -9929,14 +9957,15 @@ function _caSanitize(list){
         for(let i=q.length-1;i>0;i--) if(q[i][0]===q[i-1][0]) q.splice(i,1);   // duplicate-time keys collapse (last write wins after sort stability)
         if(q.length) tr.q=q;
       }
-      if(slot==='hips' && Array.isArray(t.p)){
+      if((slot==='hips' || slot==='root') && Array.isArray(t.p)){
+        const lim=(slot==='root')?512:10;   // hips p is hip-height-normalized; root p is raw model units (build 1064)
         const p=[];
         for(const k of t.p){ if(p.length>=600) break;
           if(!Array.isArray(k) || k.length<4) continue;
           const tt=+k[0], x=+k[1], y=+k[2], z=+k[3];
           if(![tt,x,y,z].every(isFinite)) continue;
           p.push([ Math.round(Math.min(dur,Math.max(0,tt))*1000)/1000,
-            Math.round(Math.min(10,Math.max(-10,x))*1e4)/1e4, Math.round(Math.min(10,Math.max(-10,y))*1e4)/1e4, Math.round(Math.min(10,Math.max(-10,z))*1e4)/1e4 ]);
+            Math.round(Math.min(lim,Math.max(-lim,x))*1e4)/1e4, Math.round(Math.min(lim,Math.max(-lim,y))*1e4)/1e4, Math.round(Math.min(lim,Math.max(-lim,z))*1e4)/1e4 ]);
         }
         p.sort((a,b)=>a[0]-b[0]);
         for(let i=p.length-1;i>0;i--) if(p[i][0]===p[i-1][0]) p.splice(i,1);
@@ -9966,6 +9995,15 @@ function _caSanitize(list){
 // Canonical slot -> bone for one rig. Spine/neck chains resolve proportionally into the fixed
 // slots (a 5-bone spine picks 3 spread bones; a 1-bone spine answers only the chest slot), and
 // a pelvis-less rig promotes its lowest spine to hips — both mirroring _buildBoneMap.
+// build 1064: NON-humanoid rigs — every named bone answers as 'b:<name>', plus 'root' (the
+// model root itself: rotate/move the whole prop, which makes STATIC models animatable too).
+function _caGatherAnyBones(root){
+  const out=new Map();
+  out.set('root', root);
+  let n=0;
+  root.traverse(o=>{ if(n>=96 || !o.isBone || !o.name) return; const k='b:'+o.name; if(!out.has(k)){ out.set(k,o); n++; } });
+  return out;
+}
 function _caGatherBones(root){
   const raw=new Map();
   root.traverse(o=>{ if(!o.name) return; const k=_canonBoneKey(o.name); if(!k) return;
@@ -10026,11 +10064,17 @@ function _caBuildClip(root, data){
   try{
     if(!root || !data || !data.tracks) return null;
     const bones=_caGatherBones(root);
-    if(!bones.size) return null;
+    let hasGen=false; for(const k in data.tracks){ if(k==='root'||k.indexOf('b:')===0){ hasGen=true; break; } }   // build 1064
+    if(!bones.size && !hasGen) return null;
     root.updateWorldMatrix(true, true);
     const slotOf=new Map(); for(const [k,b] of bones) slotOf.set(b, k);
+    if(hasGen){   // build 1064: 'b:<name>' resolves any node by name; 'root' is the model root itself
+      const wanted=new Set(); for(const k in data.tracks){ if(k.indexOf('b:')===0) wanted.add(k.slice(2)); }
+      if(wanted.size) root.traverse(o=>{ if(o.name && wanted.has(o.name) && !slotOf.has(o)){ slotOf.set(o, 'b:'+o.name); wanted.delete(o.name); } });
+      if(data.tracks.root){ _caEnsureRootName(root); if(!slotOf.has(root)) slotOf.set(root, 'root'); }
+    }
     const restW=new Map();
-    for(const [,b] of bones) restW.set(b, b.getWorldQuaternion(new THREE.Quaternion()));
+    for(const [b] of slotOf) restW.set(b, b.getWorldQuaternion(new THREE.Quaternion()));
     const hipsB=bones.get('hips');
     let hipRestW=null, hipRestLocalParentInv=null, hipH=1, rootY=0;
     { const rv=new THREE.Vector3(); root.getWorldPosition(rv); rootY=rv.y; }
@@ -10047,6 +10091,10 @@ function _caBuildClip(root, data){
     const _qa=new THREE.Quaternion(), _qb=new THREE.Quaternion(), _qd=new THREE.Quaternion(), _v=new THREE.Vector3();
     const hipPosTimes=[], hipPos=[];
     const hasHipP=!!(hipsB && data.tracks.hips && data.tracks.hips.p && data.tracks.hips.p.length);
+    const rootTr=data.tracks.root;   // build 1064: root position — raw model units, LOCAL offset from rest
+    const hasRootP=!!(rootTr && rootTr.p && rootTr.p.length && slotOf.has(root));
+    const rootRestP=hasRootP ? root.position.clone() : null;
+    const rootPosTimes=[], rootPos=[];
     const walk=(node, parentWQ, t)=>{
       const slot=slotOf.get(node);
       let local=node.quaternion;
@@ -10070,10 +10118,15 @@ function _caBuildClip(root, data){
         _v.applyMatrix4(hipRestLocalParentInv);
         hipPosTimes.push(t); hipPos.push(_v.x, _v.y, _v.z);
       }
+      if(hasRootP){
+        _caEvalP(rootTr.p, t, _v, data.interp).add(rootRestP);   // build 1064: local rest + authored offset
+        rootPosTimes.push(t); rootPos.push(_v.x, _v.y, _v.z);
+      }
     }
     const tracks=[];
     for(const [b,r] of rec){ if(r.times.length) tracks.push(new THREE.QuaternionKeyframeTrack(b.name+'.quaternion', r.times.slice(), r.q)); }
     if(hasHipP && hipPosTimes.length) tracks.push(new THREE.VectorKeyframeTrack(hipsB.name+'.position', hipPosTimes, hipPos));
+    if(hasRootP && rootPosTimes.length) tracks.push(new THREE.VectorKeyframeTrack(_caEnsureRootName(root)+'.position', rootPosTimes, rootPos));
     if(!tracks.length) return null;
     const clip=new THREE.AnimationClip(data.name||'Custom clip', dur, tracks);
     if(data.events && data.events.length) clip._caEvents=data.events.map(e=>Object.assign({}, e));   // build 1045: events ride the built clip
@@ -10086,7 +10139,9 @@ function _caClipsFor(gltf){
   if(typeof customAnims==='undefined' || !customAnims.length || !gltf || !gltf.scene) return [];
   if(gltf.userData && gltf.userData._caFor===_caRev && gltf.userData._caClips) return gltf.userData._caClips;
   let hasBone=false; gltf.scene.traverse(o=>{ if(o.isBone) hasBone=true; });
-  if(!hasBone) return [];
+  let needGen=false;   // build 1064: root/'b:' clips apply to models with no humanoid rig — even no bones at all
+  if(!hasBone){ outer: for(const d of customAnims){ for(const k in (d.tracks||{})){ if(k==='root'||k.indexOf('b:')===0){ needGen=true; break outer; } } } }
+  if(!hasBone && !needGen) return [];
   const baseNames=new Set(); for(const c of (gltf.animations||[])) baseNames.add(c.name);
   if(gltf.userData && gltf.userData._libAnims) for(const c of gltf.userData._libAnims) baseNames.add(c.name);
   const out=[];
@@ -10143,7 +10198,7 @@ let _aeEl=null, _aeR=null, _aeScene=null, _aeCam=null, _aeRoot=null, _aeRestRoot
 let _aeBones=null, _aeRestBones=null, _aeRestW=null, _aeRestLocal=null, _aeHipRestW=null, _aeHipH=1, _aeH=1.8;
 let _aeSkel=null, _aeDots=[], _aeGrid=null, _aeSel='', _aeClip=null, _aeTime=0, _aePlaying=false;
 let _aeMixer=null, _aeAction=null, _aeRebuildT=0, _aeUndo=[], _aeRedo=[], _aeAutoKey=false, _aeSnap=true;
-let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKeys=[], _aeAxis='', _aeMarq=null, _aeSelExtra=new Map();   // build 1046: key selection is a SET; _aeMarq = the live sweep band (build 1056); _aeSelExtra = build 1063 cross-bone selection (Map<slot,Set<t4>>) — _aeSelKeys holds the ACTIVE row's times, _aeSelExtra the other rows'
+let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKeys=[], _aeAxis='', _aeMarq=null, _aeSelExtra=new Map(), _aeRigMode='human';   // build 1046: key selection is a SET; _aeMarq = the live sweep band (build 1056); _aeSelExtra = build 1063 cross-bone selection (Map<slot,Set<t4>>) — _aeSelKeys holds the ACTIVE row's times, _aeSelExtra the other rows'
 let _aeTreeFilter='', _aeLastTL=null;
 let _aeFireEv=true, _aePrevT=null;   // build 1045: preview event firing (sounds only, never while scrubbing)
 let _aeCfg=null, _aeCfgLabel='Player', _aeRebuildFn=null, _aeRootPath=null, _aeRootPathOn=false;   // build 1046: any-character targets + root path
@@ -10314,7 +10369,12 @@ function _aeReduceP(keys, eps){
 function _aeSampleClip(srcClip){
   if(!_aeGltf || !srcClip || !srcClip.duration) return null;
   const clone=THREE.cloneSkinned(_aeGltf.scene); clone.updateWorldMatrix(true,true);
-  const bones=_caGatherBones(clone); if(!bones.size) return null;
+  let bones=_caGatherBones(clone);
+  if(!bones.size){ _caEnsureRootName(clone); bones=_caGatherAnyBones(clone); }   // build 1064: prop rigs sample by bone name (+ the root)
+  if(!bones.size) return null;
+  const _sbb=new THREE.Box3().setFromObject(clone);
+  const _sH=Math.max(0.2, _sbb.max.y-_sbb.min.y);
+  const rootRestLocal=clone.position.clone();
   const restW=new Map(); for(const [slot,b] of bones) restW.set(slot, b.getWorldQuaternion(new THREE.Quaternion()));
   const hipsB=bones.get('hips');
   let rootY=0; { const rv=new THREE.Vector3(); clone.getWorldPosition(rv); rootY=rv.y; }
@@ -10338,14 +10398,18 @@ function _aeSampleClip(srcClip){
       tr.q.push([tt, r4(_q.x), r4(_q.y), r4(_q.z), r4(_q.w)]);
       if(slot==='hips'){ b.getWorldPosition(_p).sub(hipRestW).divideScalar(hipH);
         tr.p=tr.p||[]; tr.p.push([tt, r4(_p.x), r4(_p.y), r4(_p.z)]); }
+      if(slot==='root'){ _p.copy(b.position).sub(rootRestLocal);   // build 1064: whole-model motion in raw units
+        tr.p=tr.p||[]; tr.p.push([tt, r4(_p.x), r4(_p.y), r4(_p.z)]); }
     }
   }
   mixer.stopAllAction(); mixer.uncacheRoot(clone);
   for(const slot in data.tracks){ const tr=data.tracks[slot];
+    const pEps=(slot==='root')?Math.max(0.004, _sH*0.004):0.004;   // build 1064: root p is raw units — scale tolerance to the model
+    const pTiny=(slot==='root')?Math.max(2e-3, _sH*1e-3):2e-3;
     if(tr.q) tr.q=_aeReduceQ(tr.q, 0.015);
-    if(tr.p) tr.p=_aeReduceP(tr.p, 0.004);
+    if(tr.p) tr.p=_aeReduceP(tr.p, pEps);
     const qStill=!tr.q || tr.q.every(k=>Math.abs(k[1])<3e-3 && Math.abs(k[2])<3e-3 && Math.abs(k[3])<3e-3 && Math.abs(1-Math.abs(k[4]))<3e-3);
-    const pStill=!tr.p || tr.p.every(k=>Math.abs(k[1])<2e-3 && Math.abs(k[2])<2e-3 && Math.abs(k[3])<2e-3);
+    const pStill=!tr.p || tr.p.every(k=>Math.abs(k[1])<pTiny && Math.abs(k[2])<pTiny && Math.abs(k[3])<pTiny);
     if(qStill && pStill) delete data.tracks[slot];          // a bone that never leaves rest needs no track
     else { if(qStill) delete tr.q; if(pStill && tr.p) delete tr.p; }
   }
@@ -10438,7 +10502,13 @@ function _aeOpen(cfg, label, rebuildFn){   // build 1046: any character — play
     _aeRestRoot=THREE.cloneSkinned(gltf.scene);
     _aeBones=_caGatherBones(_aeRoot);
     _aeRestBones=_caGatherBones(_aeRestRoot);
-    if(!_aeBones.size){ msg.textContent='No humanoid skeleton found in this model — rig it first (Auto-rig on the Player or Enemies tab works for static humanoids).'; return; }
+    _aeRigMode='human';
+    if(!_aeBones.size){   // build 1064: no humanoid core — edit the model's OWN bones; a boneless model edits as one 'Whole model' track
+      _caEnsureRootName(_aeRoot); _caEnsureRootName(_aeRestRoot);
+      _aeBones=_caGatherAnyBones(_aeRoot);
+      _aeRestBones=_caGatherAnyBones(_aeRestRoot);
+      _aeRigMode=(_aeBones.size>1)?'bones':'root';
+    }
     msg.style.display='none';
     _aeRestRoot.updateWorldMatrix(true,true); _aeRoot.updateWorldMatrix(true,true);
     _aeRestW=new Map(); _aeRestLocal=new Map();
@@ -10581,6 +10651,11 @@ function _aeKeySlot(slot, t){
     const wp=b.getWorldPosition(new THREE.Vector3()).sub(_aeHipRestW).divideScalar(_aeHipH);
     if(wp.lengthSq()>1e-8 || (tr.p&&tr.p.length)){ tr.p=tr.p||[]; _aeUpsertKey(tr.p, [tt, Math.round(wp.x*1e4)/1e4, Math.round(wp.y*1e4)/1e4, Math.round(wp.z*1e4)/1e4]); }
   }
+  if(slot==='root'){   // build 1064: whole-model motion — raw model units, local offset from rest
+    const rl=_aeRestLocal.get('root');
+    const dp=rl ? b.position.clone().sub(rl.p) : null;
+    if(dp && (dp.lengthSq()>1e-10 || (tr.p&&tr.p.length))){ tr.p=tr.p||[]; _aeUpsertKey(tr.p, [tt, Math.round(dp.x*1e4)/1e4, Math.round(dp.y*1e4)/1e4, Math.round(dp.z*1e4)/1e4]); }
+  }
   if(_aeClip.dur<tt) _aeClip.dur=tt;
 }
 function _aeKeyPose(t){   // key every bone that moved off rest (plus the hips offset)
@@ -10588,7 +10663,7 @@ function _aeKeyPose(t){   // key every bone that moved off rest (plus the hips o
   let n=0;
   for(const [slot,b] of _aeBones){
     const r=_aeRestLocal.get(slot); if(!r) continue;
-    const moved=b.quaternion.angleTo(r.q)>0.002 || (slot==='hips' && b.position.distanceTo(r.p)>1e-4);
+    const moved=b.quaternion.angleTo(r.q)>0.002 || ((slot==='hips'||slot==='root') && b.position.distanceTo(r.p)>1e-4);
     const keyed=_aeClip.tracks[slot] && ((_aeClip.tracks[slot].q&&_aeClip.tracks[slot].q.length)||(_aeClip.tracks[slot].p&&_aeClip.tracks[slot].p.length));
     if(moved || keyed){ _aeKeySlot(slot, t); n++; }
   }
@@ -10773,7 +10848,7 @@ function _aeBindViewport(cv){
       const slot=hits[0].object.userData.slot;
       if(slot===_aeSel){
         const b=_aeBones.get(slot);
-        if(e.shiftKey && slot==='hips'){ _aeDrag={ kind:'move', x:e.clientX, y:e.clientY, p0:b.position.clone() }; }
+        if(e.shiftKey && (slot==='hips'||slot==='root')){ _aeDrag={ kind:'move', slot, x:e.clientX, y:e.clientY, p0:b.position.clone() }; }   // build 1064: Shift-drag also moves the whole model in prop mode
         else { _aeDrag={ kind:'rot', x:e.clientX, y:e.clientY, q0:b.quaternion.clone(), axis:_aeAxis };
           if(_aeAutoKey) _aeSnapshot(); }
       } else { _aeSel=slot; _aeSelKeys=[]; _aeRenderTree(); _aeRenderInspector(); _aeDrawTL(); }
@@ -10807,14 +10882,14 @@ function _aeBindViewport(cv){
       _aeRenderInspector();
     }
     else if(_aeDrag.kind==='move'){
-      const b=_aeBones.get('hips'); if(!b) return;
+      const b=_aeBones.get(_aeDrag.slot||'hips'); if(!b) return;
       const right=new THREE.Vector3().setFromMatrixColumn(_aeCam.matrixWorld,0);
       const up=new THREE.Vector3().setFromMatrixColumn(_aeCam.matrixWorld,1);
       const par=b.parent?b.parent.getWorldQuaternion(new THREE.Quaternion()).invert():new THREE.Quaternion();
       const d=new THREE.Vector3().addScaledVector(right, dx*_aeDist*0.0012).addScaledVector(up, -dy*_aeDist*0.0012).applyQuaternion(par);
       b.position.copy(_aeDrag.p0).add(d);
       _aeRoot.updateWorldMatrix(true,true);
-      if(_aeAutoKey){ _aeKeySlot('hips', _aeTime); _aeQueueRebuild(); _aeDrawTL(); }
+      if(_aeAutoKey){ _aeKeySlot(_aeDrag.slot||'hips', _aeTime); _aeQueueRebuild(); _aeDrawTL(); }
       _aeRenderInspector();
     }
   });
@@ -10936,12 +11011,12 @@ function _aeRenderTree(){
   const IND={ hips:0, spine0:1, spine1:2, spine2:3, neck:4, head:5,
     'L:shoulder':4,'L:uparm':5,'L:forearm':6,'L:hand':7,'L:upleg':1,'L:lowleg':2,'L:foot':3,'L:toe':4,
     'R:shoulder':4,'R:uparm':5,'R:forearm':6,'R:hand':7,'R:upleg':1,'R:lowleg':2,'R:foot':3,'R:toe':4 };
-  for(const slot of CA_SLOTS){
+  for(const slot of ((_aeRigMode==='human')?CA_SLOTS:[..._aeBones.keys()])){   // build 1064: non-humanoid rigs list their own bones
     const b=_aeBones.get(slot); if(!b) continue;
     const label=_caSlotLabel(slot);
     if(_aeTreeFilter && label.toLowerCase().indexOf(_aeTreeFilter)<0 && b.name.toLowerCase().indexOf(_aeTreeFilter)<0) continue;
     const row=document.createElement('div'); row.className='aeBoneRow'+(slot===_aeSel?' sel':'');
-    row.style.paddingLeft=(8+(IND[slot]||0)*9)+'px';
+    row.style.paddingLeft=(8+(IND[slot]!=null?IND[slot]:(slot==='root'?0:1))*9)+'px';
     const tr=_aeClip && _aeClip.tracks[slot];
     const nK=tr ? ((tr.q?tr.q.length:0)+(tr.p?tr.p.length:0)) : 0;
     row.innerHTML='<span class="aeBoneNm">'+label+'</span><span class="aeBoneReal">'+b.name.slice(0,16)+'</span>'+(nK?('<span class="aeKeyCt">'+nK+'</span>'):'');
@@ -11067,7 +11142,11 @@ function _aeRenderInspector(){
     eSec.appendChild(nn);
   }
   // -- assignment --
-  if(_aeClip){
+  if(_aeClip && _aeCfg && _aeCfg.propMode){   // build 1064: props don't have animation states — point at the prop's own picker
+    const aSec=sec('USE ON THE PROP');
+    aSec.innerHTML='<div class="aeNote">Save, then pick this clip on the prop\u2019s <b>Animation</b> fold (World tab) \u2014 it plays through the normal triggers: Auto, E&nbsp;Activate, Signals, or a Logic \u201cDo action \u2192 anim\u201d.</div>';
+  }
+  else if(_aeClip){
     const aSec=sec('ASSIGN TO '+(_aeCfgLabel||'Player').toUpperCase());
     const row=document.createElement('div'); row.className='aeBtnRow';
     const sel=document.createElement('select');
@@ -11090,7 +11169,9 @@ function _aeRenderInspector(){
 const AE_TL_RULER=20;   // css px — the frame ruler band (events live here too)
 function _aeTLRows(){   // build 1048: dope sheet — keyed bones in skeleton order; the selected bone always shows
   const rows=[];
-  if(_aeClip) for(const slot of CA_SLOTS){ if(_aeClip.tracks[slot] || slot===_aeSel) rows.push(slot); }
+  const order=(_aeRigMode==='human'||!_aeBones)?CA_SLOTS:[..._aeBones.keys()];   // build 1064
+  if(_aeClip){ for(const slot of order){ if(_aeClip.tracks[slot] || slot===_aeSel) rows.push(slot); }
+    for(const k in _aeClip.tracks){ if(rows.indexOf(k)<0 && order.indexOf(k)<0) rows.push(k); } }   // tracks this rig can't pose still show (and delete)
   if(!rows.length && _aeSel) rows.push(_aeSel);
   return rows;
 }
@@ -11177,7 +11258,7 @@ function _aeDeleteSel(){   // delete every selected key, across all bones
   _aeSnapshot();
   let n=0;
   for(const [slot,times] of uni){ const tr=_aeClip.tracks[slot]; if(!tr) continue;
-    for(const st of times){ if(tr.q) _aeDeleteKeyAt(tr.q, st); if(slot==='hips' && tr.p) _aeDeleteKeyAt(tr.p, st); n++; }
+    for(const st of times){ if(tr.q) _aeDeleteKeyAt(tr.q, st); if((slot==='hips'||slot==='root') && tr.p) _aeDeleteKeyAt(tr.p, st); n++; }
     if(tr.q && !tr.q.length) delete tr.q; if(tr.p && !tr.p.length) delete tr.p;
     if((!tr.q||!tr.q.length)&&(!tr.p||!tr.p.length)) delete _aeClip.tracks[slot]; }
   _aeClearSel(); _aeQueueRebuild(); _aeRenderTree(); _aeDrawTL();
@@ -12547,7 +12628,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   colliders.push(obj);
   if(slot != null) propModels[slot] = obj;   // keep saved order even with async GLB loads
   else propModels.push(obj);
-  if(gltf){ obj.userData.animClip = animClip || ''; playModelAnimations(obj, gltf, obj.userData.animMode); }
+  if(gltf){ obj.userData.animClip = animClip || ''; playModelAnimations(obj, gltf, obj.userData.animMode, true); }   // build 1064: props accept custom-clip-only rigs (static models become animatable)
   if(mat && isMatPrimitive(src)) applyStoredMaterial(obj, mat);   // color / texture / emissive
   if(gltf && !obj.userData.phys && typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();   // build 643: a model loaded late (e.g. on a joiner) -> rebuild physics so it's solid (you can't walk through it)
   return obj;
@@ -22415,7 +22496,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1063 · 2026-07-22';
+const BUILD_VERSION = 'build 1064 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32221,6 +32302,14 @@ function renderEditorFields(){
       const fitS=document.createElement('span'); fitS.innerHTML='<b>Fit to size on add</b> \u2014 scale new models to ~'+PROP_FIT_TARGET+'m &amp; sit on the floor';
       fitL.appendChild(fitCb); fitL.appendChild(fitS); animHost.appendChild(fitL);
       const sel = propModels[tgt.idx];
+      if(sel && sel.userData.src && typeof isModelSrc==='function' && isModelSrc(sel.userData.src)){   // build 1064: keyframe ANY model prop
+        const aeRow=document.createElement('div'); aeRow.style.cssText='display:flex;gap:7px;margin:6px 0 2px;';
+        const aeB=document.createElement('button'); aeB.textContent='\ud83c\udfac Animation editor';
+        aeB.title='Keyframe this prop: its skeleton if it has one (humanoid or not), or the whole model (move/rotate/travel) if it doesn\u2019t. Clips join the level\u2019s library and play through the normal triggers \u2014 Auto, E Activate, Signals, Logic \u2014 for cutscenes, ambient NPCs and set pieces.';
+        aeB.style.cssText='flex:1;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #6e4a2a;background:rgba(18,12,8,.5);color:#ffc99b;';
+        aeB.onclick=()=>{ if(typeof _aeOpen==='function') _aeOpen({ url:(sel.userData.src||'').trim(), propMode:true }, 'Prop'+(sel.userData.name?(' \u2014 '+sel.userData.name):''), ()=>{ if(typeof _caRefreshPropAnims==='function') _caRefreshPropAnims(); if(typeof renderEditorFields==='function') renderEditorFields(); }); };
+        aeRow.appendChild(aeB); animHost.appendChild(aeRow);
+      }
       if(sel && sel.userData.animActions && sel.userData.animActions.length){
         const aHost = edFold(animHost, 'anim', 'Animation', false, 'Play a model\u2019s built-in animation clips');
         const curTrig = sel.userData.animTrigger || (sel.userData.animMode==='trigger'?'interact':'auto');
@@ -32251,7 +32340,7 @@ function renderEditorFields(){
         const isPrim = (typeof isPrimitive==='function') && isPrimitive(sel.userData.src||'');
         ni.textContent = isPrim
           ? 'This is a built-in shape (no animation). To move/rotate it, open Motion & physics \u2192 Mechanism below.'
-          : 'This model has no animation clips, so there\u2019s nothing to play/loop. To move it, open Motion & physics \u2192 Mechanism below \u2014 or import a model that includes animations (try \u201cAnimated only\u201d in the Sketchfab search).';
+          : 'This model has no animation clips yet \u2014 open the \ud83c\udfac Animation editor above to keyframe it (its bones, or the whole model), or use Motion & physics \u2192 Mechanism below for simple moves.';
         animHost.appendChild(ni);
       }
       // ---- Lock: this prop's E-activation (triggered animation or mechanism) needs a key ----

@@ -43,7 +43,7 @@ assert(/autoRig:m\.autoRig\|\|undefined/.test(src), 'and serialize them with the
 // ---- the dead-end messages point at both tabs now ----
 assert(/use Auto-rig on the Player or Enemies tab \(for static models\)/.test(src),
   'the no-humanoid-bones toast names both entry points');
-assert(/rig it first \(Auto-rig on the Player or Enemies tab works for static humanoids\)/.test(src),
-  'the animation editor’s unrigged-model message does too');
+assert(/_caEnsureRootName\(_aeRoot\); _caEnsureRootName\(_aeRestRoot\);/.test(src),
+  'the animation editor no longer dead-ends on unrigged models — build 1064 opens them in whole-model mode instead');
 
 done('build 1057: static models auto-rig straight from the Enemies tab — one modal, any character cfg');
