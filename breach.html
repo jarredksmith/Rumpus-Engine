@@ -10202,6 +10202,168 @@ function _caScanClipEvents(){
     }
   }
 }
+// ---------- AI ANIMATION (build 1067) ----------
+// Describe a motion in plain language; Claude returns POSES, not quaternions. Asking a language
+// model for raw [x,y,z,w] deltas produces mush — it has no reliable intuition for quaternion
+// components. Instead it writes anatomical joint angles in DEGREES ("knee bends 90, spine
+// pitches forward 55"), which is knowledge it genuinely has, and the ENGINE converts that into
+// the world-space deltas the clip format stores. The conversion is pure, clamped to real joint
+// limits, and unit-tested — so a physically silly number becomes a valid pose instead of a
+// broken rig. The result lands as ordinary keyframes the author can scrub, tweak and delete:
+// a blocking generator, not a black box. Output goes through _caSanitize like every other clip,
+// so an AI clip is exactly as inert as an imported .rumpusanim file.
+const AI_ANIM_PARENT = {   // the canonical chain — an unmentioned bone still passes its parent's rotation down
+  root:null, hips:null, spine0:'hips', spine1:'spine0', spine2:'spine1', neck:'spine2', head:'neck',
+  'L:shoulder':'spine2','L:uparm':'L:shoulder','L:forearm':'L:uparm','L:hand':'L:forearm',
+  'R:shoulder':'spine2','R:uparm':'R:shoulder','R:forearm':'R:uparm','R:hand':'R:forearm',
+  'L:upleg':'hips','L:lowleg':'L:upleg','L:foot':'L:lowleg','L:toe':'L:foot',
+  'R:upleg':'hips','R:lowleg':'R:upleg','R:foot':'R:lowleg','R:toe':'R:foot',
+};
+// Axes are the character's own rest frame: +X = their LEFT, +Y = up, +Z = the way they FACE.
+// Universal channels exist on every bone; the semantic ones read like anatomy.
+const AI_ANIM_BASE_CH = { pitch:['x',1], yaw:['y',1], roll:['z',1], twist:['y',1] };
+const AI_ANIM_ALIAS = {
+  lowleg:  { bend:['x',1] },      // knee: heel swings behind
+  upleg:   { lift:['x',-1], out:['z',1] },        // hip: knee forward / leg out to the side
+  forearm: { bend:['y',-1] },     // elbow: hand swings forward
+  uparm:   { raise:['x',-1], out:['z',1] },       // shoulder: arm forward / arm out sideways
+  foot:    { point:['x',-1] },    // ankle: toes point down
+};
+const AI_ANIM_LIM = {   // anatomical clamps — the engine's guarantee that a plausible-sounding number stays a valid pose
+  pitch:[-180,180], yaw:[-180,180], roll:[-180,180], twist:[-90,90],
+  bend:[0,155], lift:[-45,130], raise:[-90,180], out:[-30,170], point:[-50,60],
+};
+// slot + channel -> [axis, sign]. Right-side bones mirror on Y and Z (X survives) — the same
+// reflection _aeMirrorQK uses — so "both arms out 70" is symmetric without the model thinking about it.
+function _aiAnimAxis(slot, ch){
+  const type=String(slot||'').replace(/^[LR]:/,'');
+  const A=(AI_ANIM_ALIAS[type] && AI_ANIM_ALIAS[type][ch]) || AI_ANIM_BASE_CH[ch];
+  if(!A) return null;
+  let ax=A[0], sg=A[1];
+  if(String(slot).indexOf('R:')===0 && (ax==='y'||ax==='z')) sg=-sg;
+  return [ax, sg];
+}
+// The converter, PURE: a pose spec -> custom-clip data. Each key is a COMPLETE pose; a bone left
+// out of a key returns to rest there (so motions ease cleanly in and out).
+function _aiPoseToTracks(spec, allow){
+  if(!spec || !Array.isArray(spec.keys) || !spec.keys.length) return null;
+  const AXV={ x:[1,0,0], y:[0,1,0], z:[0,0,1] };
+  const dur=Math.max(0.1, Math.min(60, +spec.dur||2));
+  const data={ id:_caNewId(), v:1,
+    name:(typeof spec.name==='string' && spec.name.trim()) ? spec.name.trim().slice(0,40) : 'AI clip',
+    dur, fps:Math.max(5, Math.min(60, Math.round(+spec.fps||30))),
+    loop:(spec.loop==='once'||spec.loop==='hold')?spec.loop:'loop',
+    interp:(spec.interp==='linear'||spec.interp==='step')?spec.interp:'smooth', tracks:{} };
+  const keys=spec.keys.filter(k=>k && isFinite(+k.t)).slice(0,120).sort((a,b)=>(+a.t)-(+b.t));
+  if(!keys.length) return null;
+  const used=new Set();
+  for(const k of keys){ const po=k.pose||k.p; if(po && typeof po==='object') for(const sl in po){
+    if(!Object.prototype.hasOwnProperty.call(AI_ANIM_PARENT, sl)) continue;
+    if(allow && allow.indexOf(sl)<0) continue; used.add(sl); } }
+  if(!used.size) return null;
+  // a slot that translates ANYWHERE gets a position key at EVERY key time. Without this, a track
+  // that first appears mid-clip clamps backward and the motion starts already displaced (a crouch
+  // that begins crouched) — the same "each key is a complete pose" contract as the rotations.
+  const usedP=new Set();
+  for(const k of keys){ const po=k.pose||k.p; if(!po) continue;
+    for(const sl of ['hips','root']){ const c=po[sl];
+      if(c && typeof c==='object' && ((+c.dx)||(+c.dy)||(+c.dz)) && used.has(sl)) usedP.add(sl); } }
+  for(const k of keys){
+    const t=Math.round(Math.max(0, Math.min(dur, +k.t))*1000)/1000;
+    const pose=(k.pose||k.p||{});
+    const memo=new Map();
+    const resolve=(slot)=>{
+      if(memo.has(slot)) return memo.get(slot);
+      const par=AI_ANIM_PARENT[slot];
+      const q=par ? resolve(par).clone() : new THREE.Quaternion();
+      const ch=pose[slot];
+      if(ch && typeof ch==='object'){
+        for(const c in ch){
+          const A=_aiAnimAxis(slot, c); if(!A) continue;
+          let deg=+ch[c]; if(!isFinite(deg)) continue;
+          const lim=AI_ANIM_LIM[c]||[-180,180];
+          deg=Math.max(lim[0], Math.min(lim[1], deg));
+          const v=AXV[A[0]];
+          q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(v[0],v[1],v[2]), A[1]*deg*Math.PI/180));
+        }
+      }
+      memo.set(slot, q); return q;
+    };
+    const r4=(v)=>Math.round(v*1e4)/1e4;
+    for(const slot of used){
+      const q=resolve(slot);
+      const tr=data.tracks[slot]=(data.tracks[slot]||{});
+      (tr.q=tr.q||[]).push([t, r4(q.x), r4(q.y), r4(q.z), r4(q.w)]);
+      if(usedP.has(slot)){
+        const ch=pose[slot];
+        const dx=(ch&&isFinite(+ch.dx))?+ch.dx:0, dy=(ch&&isFinite(+ch.dy))?+ch.dy:0, dz=(ch&&isFinite(+ch.dz))?+ch.dz:0;
+        (tr.p=tr.p||[]).push([t, r4(dx), r4(dy), r4(dz)]);
+      }
+    }
+  }
+  return data;
+}
+// The brief. Slots are listed from the LIVE rig so the model never invents a bone this model lacks.
+function _aiAnimPrompt(desc, slots, propMode){
+  const chLine=(sl)=>{ const type=sl.replace(/^[LR]:/,''); const extra=AI_ANIM_ALIAS[type];
+    return '  "'+sl+'"'+(extra?('  extra: '+Object.keys(extra).join(', ')):''); };
+  return 'You are animating a game character by writing KEYFRAME POSES. Return ONLY minified JSON \u2014 no prose, no code fences.\n\n'
+    + 'THE MOTION TO CREATE: '+String(desc||'').slice(0,600)+'\n\n'
+    + 'SHAPE:\n{"name":"short clip name","dur":seconds,"fps":30,"loop":"once"|"loop"|"hold","interp":"smooth",'
+    + '"keys":[{"t":seconds,"pose":{"<bone>":{"<channel>":degrees}}}]}\n\n'
+    + 'RULES:\n'
+    + '1. Every key is a COMPLETE pose. A bone you leave out of a key is at REST in that key, so motions ease in and out naturally. Restate the bones that should hold their position.\n'
+    + '2. Angles are DEGREES, measured at that JOINT relative to its parent bone (like a real body: "the knee is bent 90", not "the shin points 20 degrees off vertical"). The engine handles the rest of the skeleton.\n'
+    + '3. Axes, from the character\u2019s point of view: pitch + = lean/bend FORWARD, yaw + = turn to THEIR left, roll + = lean toward THEIR left. Left and right limbs mirror automatically \u2014 give both the same positive number to be symmetric.\n'
+    + '4. Semantic channels (use these where listed; they read like anatomy):\n'
+    + '   bend  (knee/elbow) 0..155, always positive \u2014 a knee bends the heel backward, an elbow brings the hand forward\n'
+    + '   lift  (hip)  + brings the knee forward/up\n'
+    + '   raise (shoulder) + swings the arm forward and up; out + lifts it sideways away from the body\n'
+    + '   point (ankle) + points the toes down\n'
+    + '   twist + rotates the limb about its own length\n'
+    + '5. hips also takes "dy" (and dx/dz) in HIP-HEIGHTS: dy -0.3 drops the body into a crouch, dy 0.15 rises onto the toes. Use it whenever the whole body lowers or lifts \u2014 bending the legs alone will not move the pelvis.\n'
+    + (propMode ? '6. This is an OBJECT, not a character: use only the bone "root" with pitch/yaw/roll and dx/dy/dz (dy 1 = one model-height up) to move the whole model.\n'
+                : '6. Use 4-8 keys. Give the motion real timing \u2014 anticipation, a fast action, a settle. Keep feet planted (a foot that stays on the ground should keep its rotation roughly cancelling the leg above it).\n')
+    + '\nBONES AVAILABLE ON THIS MODEL (use only these; every one also takes pitch/yaw/roll):\n'
+    + slots.map(chLine).join('\n') + '\n\n'
+    + 'EXAMPLE (a character lifting a heavy box: stand, squat down, grip, stand up holding it):\n'
+    + '{"name":"Lift box","dur":3.4,"fps":30,"loop":"once","interp":"smooth","keys":['
+    + '{"t":0,"pose":{}},'
+    + '{"t":0.5,"pose":{"spine0":{"pitch":18},"L:upleg":{"lift":22},"R:upleg":{"lift":22},"L:lowleg":{"bend":25},"R:lowleg":{"bend":25},"hips":{"dy":-0.08}}},'
+    + '{"t":1.3,"pose":{"spine0":{"pitch":48},"L:upleg":{"lift":95},"R:upleg":{"lift":95},"L:lowleg":{"bend":105},"R:lowleg":{"bend":105},"L:foot":{"point":-12},"R:foot":{"point":-12},'
+    + '"L:uparm":{"raise":55,"out":12},"R:uparm":{"raise":55,"out":12},"L:forearm":{"bend":35},"R:forearm":{"bend":35},"hips":{"dy":-0.42}}},'
+    + '{"t":1.8,"pose":{"spine0":{"pitch":48},"L:upleg":{"lift":95},"R:upleg":{"lift":95},"L:lowleg":{"bend":105},"R:lowleg":{"bend":105},"L:foot":{"point":-12},"R:foot":{"point":-12},'
+    + '"L:uparm":{"raise":60,"out":8},"R:uparm":{"raise":60,"out":8},"L:forearm":{"bend":75},"R:forearm":{"bend":75},"hips":{"dy":-0.42}}},'
+    + '{"t":2.9,"pose":{"spine0":{"pitch":12},"L:upleg":{"lift":12},"R:upleg":{"lift":12},"L:lowleg":{"bend":10},"R:lowleg":{"bend":10},'
+    + '"L:uparm":{"raise":45,"out":10},"R:uparm":{"raise":45,"out":10},"L:forearm":{"bend":85},"R:forearm":{"bend":85},"hips":{"dy":-0.05}}},'
+    + '{"t":3.4,"pose":{"spine0":{"pitch":8},"L:uparm":{"raise":45,"out":10},"R:uparm":{"raise":45,"out":10},"L:forearm":{"bend":85},"R:forearm":{"bend":85}}}]}';
+}
+// Parse whatever came back, tolerating a stray sentence or fence around the JSON.
+function _aiAnimParse(txt){
+  const clean=String(txt||'').replace(/```json|```/g,'').trim();
+  const a=clean.indexOf('{'), b=clean.lastIndexOf('}');
+  if(a<0||b<=a) return null;
+  try{ return JSON.parse(clean.slice(a, b+1)); }catch(e){ return null; }
+}
+function _aiGenAnim(desc, slots, propMode, cb, errcb){
+  const key=(typeof aiGetKey==='function')?aiGetKey():'';
+  if(!key){ errcb && errcb(new Error('no key')); return; }
+  fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{ 'content-type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+    body: JSON.stringify({ model:AI_MODEL, max_tokens:4096, messages:[{ role:'user', content:_aiAnimPrompt(desc, slots, propMode) }] })
+  })
+  .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status+(r.status===401?' \u2014 check your Anthropic key in Settings':'')); return r.json(); })
+  .then(d=>{
+    const txt=(d && Array.isArray(d.content)) ? d.content.filter(x=>x&&x.type==='text').map(x=>x.text).join('') : '';
+    const spec=_aiAnimParse(txt);
+    if(!spec) throw new Error('the model did not return usable JSON');
+    const data=_aiPoseToTracks(spec, slots);
+    if(!data) throw new Error('no usable poses in the response');
+    cb(data);
+  })
+  .catch(err=>{ errcb && errcb(err); });
+}
 let customAnims = _caSanitize(savedLevel && savedLevel.customAnims);   // authored; serialized with the level
 // ---------- ANIMATION EDITOR (build 1041) ---------------------------------------------------
 // Author custom skeletal clips on the player's rigged model, entirely in the browser. Works on
@@ -10947,6 +11109,7 @@ function _aeEnsureDom(){
     +'<button id="aeNew">+ New</button><button id="aeDup">Duplicate</button><button id="aeDel">Delete</button>'
     +'<button id="aeExp" title="Download this clip as a .rumpusanim file">Export</button><button id="aeImp" title="Import a .rumpusanim file into this level">Import</button>'
     +'<select id="aeFromLib" aria-label="Edit an existing animation"><option value="">Edit existing\u2026</option></select>'
+    +'<button id="aeAI" title="Describe an animation in plain language and let Claude block it out as keyframes you can then edit (needs your Anthropic key \u2014 Settings \u2192 API keys)">\u2728 AI</button>'
     +'<input id="aeName" type="text" maxlength="40" aria-label="Clip name" placeholder="clip name">'
     +'<button id="aeSave" class="aeAccent">SAVE CLIP</button>'
     +'<button id="aeClose" aria-label="Close">✕</button>'
@@ -10991,6 +11154,7 @@ function _aeEnsureDom(){
   el.querySelector('#aeImp').onclick=_aeImport;
   el.querySelector('#aeClipSel').onchange=(e)=>_aeLoadClip(e.target.value);
   el.querySelector('#aeFromLib').onchange=(e)=>{ const v=e.target.value; e.target.value=''; if(v) _aeImportFromLib(v); };   // build 1061: sample an existing clip into an editable one
+  el.querySelector('#aeAI').onclick=()=>_aeAIDialog();   // build 1067: describe it, Claude blocks it out
   el.querySelector('#aeName').onchange=(e)=>{ if(!_aeClip) return; _aeSnapshot(); _aeClip.name=(e.target.value.trim()||'Custom clip').slice(0,40); _aeRenderClipSel(); };
   el.querySelector('#aePlay').onclick=()=>_aeSetPlaying(!_aePlaying);
   el.querySelector('#aeStop').onclick=()=>{ _aeSetPlaying(false); _aeApplyTime(0); };
@@ -11013,6 +11177,73 @@ function _aeEnsureDom(){
   el.querySelector('#aeRootP').onclick=()=>{ _aeRootPathOn=!_aeRootPathOn; el.querySelector('#aeRootP').classList.toggle('aeAccent', _aeRootPathOn); _aeRootPathSync(); };   // build 1046 (bound after the view loop, which would otherwise claim it)
   _aeBindTL(el.querySelector('#aeTL'));
   return el;
+}
+// build 1067: the AI prompt sheet. Same conventions as the other editor dialogs (.uiDlgBack at
+// z-index 400 so the fullscreen editor yields its key handling), plus a textarea and a live status
+// line — a generation takes a few seconds and silence reads as a hang.
+function _aeAIDialog(){
+  if(!_aeClip || !_aeBones){ if(typeof toast==='function') toast('Open a model first'); return; }
+  const slots=[..._aeBones.keys()].filter(k=>Object.prototype.hasOwnProperty.call(AI_ANIM_PARENT, k));
+  const propMode=(_aeRigMode!=='human');
+  if(!slots.length){ if(typeof toast==='function') toast('This rig has no bones the AI can pose \u2014 try a humanoid model, or a prop in whole-model mode'); return; }
+  const back=document.createElement('div'); back.className='uiDlgBack';
+  back.style.cssText='position:fixed;inset:0;z-index:400;background:rgba(3,7,10,0.66);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
+  const card=document.createElement('div');
+  card.style.cssText='background:rgba(9,17,21,0.97);border:1px solid rgba(var(--accent-rgb),0.45);border-radius:12px;padding:20px 24px;width:min(560px,90vw);color:#cfeee2;font-size:14px;line-height:1.55;box-shadow:0 18px 60px rgba(0,0,0,0.55);';
+  const ttl=document.createElement('div'); ttl.textContent='\u2728 Generate an animation'; ttl.style.cssText='font-weight:700;letter-spacing:0.4px;'; card.appendChild(ttl);
+  const sub=document.createElement('div'); sub.style.cssText='margin:6px 0 0;font-size:11px;color:#9fc4ba;line-height:1.5;';
+  sub.innerHTML=propMode
+    ? 'Describe how this object should move. Claude blocks it out as keyframes you can then edit by hand.'
+    : 'Describe the motion in plain language. Claude blocks it out as real keyframes on this model\u2019s skeleton \u2014 then scrub, tweak and polish it like any clip you authored.';
+  card.appendChild(sub);
+  const ta=document.createElement('textarea');
+  ta.placeholder=propMode ? 'e.g. the lid swings open slowly, pauses, then slams shut'
+    : 'e.g. lifting a heavy box: start standing, bend down, grab it, then stand back up still holding it';
+  ta.style.cssText='width:100%;box-sizing:border-box;margin-top:12px;min-height:88px;resize:vertical;background:#0c161b;color:#eafff7;border:1px solid rgba(var(--accent-rgb),0.35);border-radius:7px;padding:9px 11px;font-size:13px;line-height:1.5;font-family:inherit;';
+  card.appendChild(ta);
+  const st=document.createElement('div'); st.style.cssText='margin:10px 0 0;font-size:11px;min-height:15px;color:#9fc4ba;'; card.appendChild(st);
+  const hasKey=(typeof aiGetKey==='function' && !!aiGetKey());
+  if(!hasKey) st.innerHTML='<span style="color:#ffb08a;">No Anthropic key yet \u2014 add one under <b>Settings \u2192 API keys</b>. Your key calls Anthropic directly from this browser.</span>';
+  const row=document.createElement('div'); row.style.cssText='display:flex;gap:10px;justify-content:flex-end;margin-top:14px;';
+  let busy=false;
+  const close=()=>{ try{ document.body.removeChild(back); }catch(e){} removeEventListener('keydown', onKey, true); };
+  const onKey=(e)=>{ if(e.key==='Escape' && !busy){ e.stopPropagation(); e.preventDefault(); close(); } };
+  const mkBtn=(label, primary, fn)=>{ const b=document.createElement('button'); b.textContent=label;
+    b.style.cssText='padding:7px 18px;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;min-height:34px;border:1px solid '+(primary?'var(--accent)':'rgba(255,255,255,0.25)')+';background:'+(primary?'rgba(var(--accent-rgb),0.16)':'transparent')+';color:'+(primary?'var(--accent)':'#cfeee2')+';';
+    b.onclick=fn; return b; };
+  const cancel=mkBtn('Cancel', false, ()=>{ if(!busy) close(); });
+  const go=mkBtn('Generate', true, ()=>{
+    if(busy) return;
+    const desc=ta.value.trim();
+    if(!desc){ st.textContent='Describe the motion first.'; return; }
+    if(!hasKey){ st.innerHTML='<span style="color:#ffb08a;">Add an Anthropic key under <b>Settings \u2192 API keys</b> first.</span>'; return; }
+    if(customAnims.length>=24){ st.innerHTML='<span style="color:#ffb08a;">The level\u2019s clip library is full (24) \u2014 delete one first.</span>'; return; }
+    busy=true; go.textContent='Generating\u2026'; go.style.opacity='0.7'; st.textContent='Claude is blocking out the motion\u2026 (a few seconds)';
+    _aiGenAnim(desc, slots, propMode, (data)=>{
+      busy=false;
+      const clean=_caSanitize([data])[0];
+      if(!clean){ go.textContent='Generate'; go.style.opacity=''; st.innerHTML='<span style="color:#ffb08a;">The poses came back empty \u2014 try describing it with more steps.</span>'; return; }
+      if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+      customAnims.push(clean); _caRev++;
+      close();
+      _aeLoadClip(clean.id);
+      if(typeof _aeRenderFromLib==='function') _aeRenderFromLib();
+      const nk=_aeKeyTimes(_aeClip).length, nb=Object.keys(_aeClip.tracks).length;
+      if(typeof toast==='function') toast('Generated \u201c'+clean.name+'\u201d \u2014 '+nk+' keys on '+nb+' bones. Scrub and tweak, then SAVE CLIP.');
+    }, (err)=>{
+      busy=false; go.textContent='Generate'; go.style.opacity='';
+      const m=(err && err.message)||'failed';
+      st.innerHTML='<span style="color:#ffb08a;">'+(m==='no key' ? 'Add an Anthropic key under <b>Settings \u2192 API keys</b> first.' : ('Generation failed: '+String(m).slice(0,120)))+'</span>';
+    });
+  });
+  row.appendChild(cancel); row.appendChild(go); card.appendChild(row);
+  const note=document.createElement('div'); note.style.cssText='margin:10px 0 0;font-size:10px;opacity:.65;line-height:1.5;';
+  note.textContent='The result is a starting point: real keyframes on the timeline, yours to refine. Nothing is saved into the level until you press SAVE CLIP.';
+  card.appendChild(note);
+  back.appendChild(card); document.body.appendChild(back);
+  back.addEventListener('pointerdown', (e)=>{ if(e.target===back && !busy) close(); });
+  addEventListener('keydown', onKey, true);
+  setTimeout(()=>{ try{ ta.focus(); }catch(e){} }, 30);
 }
 function _aeRenderClipSel(){
   const sel=_aeEl && _aeEl.querySelector('#aeClipSel'); if(!sel) return;
@@ -22512,7 +22743,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1066 · 2026-07-22';
+const BUILD_VERSION = 'build 1067 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

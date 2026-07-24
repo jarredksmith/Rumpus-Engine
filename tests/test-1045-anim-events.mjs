@@ -82,8 +82,8 @@ assert(/pi\.setAttribute\('list', \(ev\.type==='signal'\)\?'lgEvtList':'lgSndLis
 assert(/timeline events<\/b>/.test(manual), 'the field manual covers events');
 
 // ---- field fixes folded into this build ----
-eq((src.match(/back\.className='uiDlgBack';/g)||[]).length, 2, 'both themed dialogs mark their backdrop');
-eq((src.match(/position:fixed;inset:0;z-index:400;background:rgba\(3,7,10,0\.66\)/g)||[]).length, 2,
+eq((src.match(/back\.className='uiDlgBack';/g)||[]).length, 3, 'every themed dialog marks its backdrop (build 1067 added the AI sheet)');
+eq((src.match(/position:fixed;inset:0;z-index:400;background:rgba\(3,7,10,0\.66\)/g)||[]).length, 3,
   'dialogs stack ABOVE the fullscreen animation editor (they used to hide behind it)');
 assert(/if\(document\.querySelector\('\.uiDlgBack'\)\) return;/.test(extractFunction('_aeKeys', src)),
   'while a dialog is up the editor yields its keys (Escape used to close the whole editor)');
