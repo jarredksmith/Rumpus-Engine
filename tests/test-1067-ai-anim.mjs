@@ -16,6 +16,9 @@ const glue = src.match(/const AI_ANIM_PARENT = \{[\s\S]*?\n\};/)[0] + '\n'
   + src.match(/const AI_ANIM_ALIAS = \{[\s\S]*?\n\};/)[0] + '\n'
   + src.match(/const AI_ANIM_LIM = \{[\s\S]*?\n\};/)[0] + '\n'
   + "function _caNewId(){ return 'ca_ai'+Math.random().toString(36).slice(2,8); }\n"
+  + src.match(/const AI_STAGGER_UNIT = [\s\S]*?\n/)[0]
+  + src.match(/const AI_STAGGER_MAX  = [\s\S]*?\n/)[0]
+  + extractFunction('_aiSlotDepth', src) + '\n' + extractFunction('_aiStagger', src) + '\n'
   + extractFunction('_aiAnimAxis', src) + '\n' + extractFunction('_aiPoseToTracks', src) + '\n'
   + extractFunction('_aiAnimParse', src);
 const env = new Function('THREE', glue + '\nreturn { axis:_aiAnimAxis, conv:_aiPoseToTracks, parse:_aiAnimParse };')(THREE);

@@ -10244,9 +10244,39 @@ function _aiAnimAxis(slot, ch){
   if(String(slot).indexOf('R:')===0 && (ax==='y'||ax==='z')) sg=-sg;
   return [ax, sg];
 }
+// build 1070: OVERLAPPING ACTION. The pose contract keys every bone at the same instant, which
+// reads mechanical — a real body's core leads and its extremities trail. Rather than ask the model
+// to invent per-bone timings (it has no reliable feel for tens of milliseconds), the engine drags
+// each bone by its DEPTH in the skeleton: the hips lead, the spine follows, the hands and feet
+// arrive last. Only INTERIOR keys move — the first and last stay pinned, so clip length is
+// untouched and a looping clip still meets itself cleanly — and the lag is capped at 40% of a
+// track's tightest gap so a key can never cross its neighbour.
+const AI_STAGGER_UNIT = 0.018;   // seconds of drag per level of bone depth
+const AI_STAGGER_MAX  = 0.13;    // hard ceiling (also the tolerance for reading staggered keys back)
+function _aiSlotDepth(slot){ let d=0, s=slot; while(s && AI_ANIM_PARENT[s]){ s=AI_ANIM_PARENT[s]; if(++d>12) break; } return d; }
+function _aiStagger(data, amount){
+  if(!data || !data.tracks || !(amount>0)) return data;
+  const dur=Math.max(0.1, +data.dur||1);
+  for(const slot in data.tracks){
+    const d=_aiSlotDepth(slot); if(d<=0) continue;              // the root/hips lead — never dragged
+    const tr=data.tracks[slot];
+    let lag=Math.min(AI_STAGGER_MAX, AI_STAGGER_UNIT*d*amount);
+    for(const arr of [tr.q, tr.p]){
+      if(!arr || arr.length<2) continue;
+      let gap=Infinity; for(let i=1;i<arr.length;i++) gap=Math.min(gap, arr[i][0]-arr[i-1][0]);
+      if(isFinite(gap)) lag=Math.min(lag, gap*0.4);             // never let a key overtake the next one
+    }
+    if(!(lag>1e-4)) continue;
+    for(const arr of [tr.q, tr.p]){
+      if(!arr || arr.length<3) continue;                        // two keys are both endpoints: nothing interior to drag
+      for(let i=1;i<arr.length-1;i++) arr[i][0]=Math.round(Math.min(dur, Math.max(0, arr[i][0]+lag))*1000)/1000;
+    }
+  }
+  return data;
+}
 // The converter, PURE: a pose spec -> custom-clip data. Each key is a COMPLETE pose; a bone left
 // out of a key returns to rest there (so motions ease cleanly in and out).
-function _aiPoseToTracks(spec, allow){
+function _aiPoseToTracks(spec, allow, stagger){
   if(!spec || !Array.isArray(spec.keys) || !spec.keys.length) return null;
   const AXV={ x:[1,0,0], y:[0,1,0], z:[0,0,1] };
   const dur=Math.max(0.1, Math.min(60, +spec.dur||2));
@@ -10302,7 +10332,7 @@ function _aiPoseToTracks(spec, allow){
       }
     }
   }
-  return data;
+  return _aiStagger(data, stagger||0);
 }
 // The brief. Slots are listed from the LIVE rig so the model never invents a bone this model lacks.
 function _aiAnimPrompt(desc, slots, propMode){
@@ -10384,11 +10414,30 @@ function _aiTracksToPose(data, maxKeys){
     if(tr.p) for(const k of tr.p) times.push(k[0]); }
   times=[...new Set(times.map(t=>Math.round(t*1000)/1000))].sort((a,b)=>a-b);
   if(!times.length) return null;
+  // build 1070: a staggered clip spreads one logical beat across a cluster of times. Collapse each
+  // cluster to its LEADER (the first, i.e. the undragged core) so the description reads as the
+  // beats the animator thinks in — and so re-generating never compounds the drag.
+  { const tol=AI_STAGGER_MAX*1.05, keep=[]; let start=null;
+    for(const t of times){ if(start===null || t-start>tol){ keep.push(t); start=t; } }
+    const last=times[times.length-1];
+    if(keep[keep.length-1]!==last) keep.push(last);   // the clip's END is always a real beat, never absorbed
+    times=keep; }
   const cap=Math.max(2, maxKeys||16);
   if(times.length>cap){   // a densely-sampled clip is described at a readable density (ends always kept)
     const pick=[]; for(let i=0;i<cap;i++) pick.push(times[Math.round(i*(times.length-1)/(cap-1))]);
     times=[...new Set(pick)];
   }
+  // each bone is described at ITS OWN key nearest the beat — a dragged bone reaches its extreme
+  // slightly later, and reading it at the leader's time would under-report the pose
+  const ownTimes={};
+  for(const sl of slots){ const tr=data.tracks[sl], ts=new Set();
+    if(tr.q) for(const k of tr.q) ts.add(k[0]);
+    if(tr.p) for(const k of tr.p) ts.add(k[0]);
+    ownTimes[sl]=[...ts].sort((a,b)=>a-b); }
+  const nearestT=(sl, t)=>{ const arr=ownTimes[sl]; if(!arr || !arr.length) return t;
+    let best=t, bd=AI_STAGGER_MAX*1.05;
+    for(const k of arr){ const d=Math.abs(k-t); if(d<bd){ bd=d; best=k; } }
+    return best; };
   const spec={ name:data.name||'Clip', dur:data.dur, fps:data.fps, loop:data.loop, interp:data.interp, keys:[] };
   for(const t of times){
     const memo=new Map();
@@ -10396,7 +10445,7 @@ function _aiTracksToPose(data, maxKeys){
       if(memo.has(slot)) return memo.get(slot);
       const tr=data.tracks[slot];
       let q;
-      if(tr && tr.q && tr.q.length){ q=new THREE.Quaternion(); _caEvalQ(tr.q, t, q, data.interp); }
+      if(tr && tr.q && tr.q.length){ q=new THREE.Quaternion(); _caEvalQ(tr.q, nearestT(slot, t), q, data.interp); }
       else { const par=AI_ANIM_PARENT[slot]; q = par ? accumAt(par).clone() : new THREE.Quaternion(); }
       memo.set(slot, q); return q;
     };
@@ -10407,7 +10456,7 @@ function _aiTracksToPose(data, maxKeys){
       const ch=_aiPoseChannels(sl, own);
       const tr=data.tracks[sl];
       if((sl==='hips'||sl==='root') && tr.p && tr.p.length){
-        const v=new THREE.Vector3(); _caEvalP(tr.p, t, v, data.interp);
+        const v=new THREE.Vector3(); _caEvalP(tr.p, nearestT(sl, t), v, data.interp);
         const r2=(x)=>Math.round(x*100)/100;
         if(Math.abs(v.x)>0.005) ch.dx=r2(v.x);
         if(Math.abs(v.y)>0.005) ch.dy=r2(v.y);
@@ -10433,7 +10482,7 @@ function _aiRefinePrompt(desc, cur, slots, propMode){
     + '4. hips "dy" is in HIP-HEIGHTS \u2014 lower it to sink the body, raise it to lift. '+(propMode?'For an object use only "root" with pitch/yaw/roll and dx/dy/dz.':'')+'\n\n'
     + 'BONES AVAILABLE ON THIS MODEL (use only these):\n'+slots.join(', ');
 }
-function _aiGenAnim(desc, slots, propMode, cb, errcb, cur){
+function _aiGenAnim(desc, slots, propMode, cb, errcb, cur, stagger){
   const key=(typeof aiGetKey==='function')?aiGetKey():'';
   if(!key){ errcb && errcb(new Error('no key')); return; }
   fetch('https://api.anthropic.com/v1/messages', {
@@ -10446,7 +10495,7 @@ function _aiGenAnim(desc, slots, propMode, cb, errcb, cur){
     const txt=(d && Array.isArray(d.content)) ? d.content.filter(x=>x&&x.type==='text').map(x=>x.text).join('') : '';
     const spec=_aiAnimParse(txt);
     if(!spec) throw new Error('the model did not return usable JSON');
-    const data=_aiPoseToTracks(spec, slots);
+    const data=_aiPoseToTracks(spec, slots, stagger);
     if(!data) throw new Error('no usable poses in the response');
     cb(data);
   })
@@ -10463,6 +10512,7 @@ let _aeEl=null, _aeR=null, _aeScene=null, _aeCam=null, _aeRoot=null, _aeRestRoot
 let _aeBones=null, _aeRestBones=null, _aeRestW=null, _aeRestLocal=null, _aeHipRestW=null, _aeHipH=1, _aeH=1.8;
 let _aeSkel=null, _aeDots=[], _aeGrid=null, _aeSel='', _aeClip=null, _aeTime=0, _aePlaying=false;
 let _aeMixer=null, _aeAction=null, _aeRebuildT=0, _aeUndo=[], _aeRedo=[], _aeAutoKey=false, _aeSnap=true;
+let _aiStaggerOn=true;   // build 1070: overlapping action, on by default (a session preference)
 let _aeRAF=0, _aeYaw=0.6, _aePitch=0.16, _aeDist=3.4, _aeTgt=null, _aeDrag=null, _aeSelKeys=[], _aeAxis='', _aeMarq=null, _aeSelExtra=new Map(), _aeRigMode='human';   // build 1046: key selection is a SET; _aeMarq = the live sweep band (build 1056); _aeSelExtra = build 1063 cross-bone selection (Map<slot,Set<t4>>) — _aeSelKeys holds the ACTIVE row's times, _aeSelExtra the other rows'
 let _aeTreeFilter='', _aeLastTL=null;
 let _aeFireEv=true, _aePrevT=null;   // build 1045: preview event firing (sounds only, never while scrubbing)
@@ -11310,6 +11360,11 @@ function _aeAIDialog(){
   const ta=document.createElement('textarea');
   ta.style.cssText='width:100%;box-sizing:border-box;margin-top:8px;min-height:64px;resize:vertical;background:#0c161b;color:#eafff7;border:1px solid rgba(var(--accent-rgb),0.35);border-radius:7px;padding:8px 11px;font-size:13px;line-height:1.5;font-family:inherit;';
   card.appendChild(ta);
+  const ovL=document.createElement('label'); ovL.style.cssText='display:flex;align-items:center;gap:7px;margin:8px 0 0;font-size:11px;color:#9fc4ba;cursor:pointer;';
+  const ovCb=document.createElement('input'); ovCb.type='checkbox'; ovCb.checked=_aiStaggerOn; ovCb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
+  ovCb.onchange=()=>{ _aiStaggerOn=ovCb.checked; };
+  const ovT=document.createElement('span'); ovT.innerHTML='<b>Overlap &amp; follow-through</b> \u2014 drag the limbs a few frames behind the body so the motion reads naturally (off = everything hits on the same frame)';
+  ovL.appendChild(ovCb); ovL.appendChild(ovT); card.appendChild(ovL);
   const st=document.createElement('div'); st.style.cssText='margin:8px 0 0;font-size:11px;min-height:15px;color:#9fc4ba;'; card.appendChild(st);
   const log=document.createElement('div'); log.style.cssText='margin:6px 0 0;font-size:10px;color:#7fa79a;line-height:1.6;max-height:76px;overflow:auto;'; card.appendChild(log);
   const row=document.createElement('div'); row.style.cssText='display:flex;gap:10px;justify-content:flex-end;margin-top:12px;';
@@ -11388,7 +11443,7 @@ function _aeAIDialog(){
       busy=false; go.textContent='Generate'; go.style.opacity='';
       const m=(err && err.message)||'failed';
       st.innerHTML='<span style="color:#ffb08a;">'+(m==='no key' ? 'Add an Anthropic key under <b>Settings \u2192 API keys</b> first.' : ('Generation failed: '+String(m).slice(0,120)))+'</span>';
-    }, cur);
+    }, cur, _aiStaggerOn?1:0);
   }
   paint();
   back.appendChild(card); document.body.appendChild(back);
@@ -22894,7 +22949,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1069 · 2026-07-22';
+const BUILD_VERSION = 'build 1070 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

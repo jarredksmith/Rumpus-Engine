@@ -15,6 +15,9 @@ const glue = src.match(/const AI_ANIM_PARENT = \{[\s\S]*?\n\};/)[0] + '\n'
   + src.match(/const AI_ANIM_ALIAS = \{[\s\S]*?\n\};/)[0] + '\n'
   + src.match(/const AI_ANIM_LIM = \{[\s\S]*?\n\};/)[0] + '\n'
   + "function _caNewId(){ return 'ca_ai'+Math.random().toString(36).slice(2,8); }\n"
+  + src.match(/const AI_STAGGER_UNIT = [\s\S]*?\n/)[0]
+  + src.match(/const AI_STAGGER_MAX  = [\s\S]*?\n/)[0]
+  + extractFunction('_aiSlotDepth', src) + '\n' + extractFunction('_aiStagger', src) + '\n'
   + extractFunction('_caEvalQ', src) + '\n' + extractFunction('_caEvalP', src) + '\n'
   + extractFunction('_aiAnimAxis', src) + '\n' + extractFunction('_aiPoseToTracks', src) + '\n'
   + extractFunction('_aiPoseChannels', src) + '\n' + extractFunction('_aiTracksToPose', src) + '\n'
@@ -99,7 +102,7 @@ const SPEC = { name: 'Lift box', dur: 3, fps: 30, loop: 'once', interp: 'smooth'
 {
   const keys = []; for (let i = 0; i <= 60; i++) keys.push([i / 60, 0, 0, 0, 1]);
   const back = env.from({ dur: 1, fps: 30, interp: 'smooth', tracks: { spine0: { q: keys } } }, 16);
-  assert(back.keys.length <= 16, 'a 61-key clip is summarised to at most 16 (' + back.keys.length + ')');
+  assert(back.keys.length <= 16 && back.keys.length >= 3, 'a 61-key clip is summarised to a readable set of beats (' + back.keys.length + ')');
   eq(back.keys[0].t, 0, 'the first key is kept');
   eq(back.keys[back.keys.length - 1].t, 1, 'the last key is kept');
 }
