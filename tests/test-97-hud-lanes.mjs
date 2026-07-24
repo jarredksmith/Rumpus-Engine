@@ -5,7 +5,7 @@ import { gameSource, extractFunction, html, done, assert } from './harness.mjs';
 const src = gameSource();
 
 assert(/#roomBadge \{ display:none; position:fixed; top:8px;/.test(html), 'room badge lane (8px)');
-assert(/top:36px;left:50%;transform:translateX\(-50%\);z-index:70;/.test(src), 'pickup toast lane (36px)');
+assert(/top:36px;left:50%;transform:translateX\(-50%\);z-index:500;/.test(src), 'pickup toast lane (36px; build 1069: above the fullscreen editor/dialogs, pointer-events:none so it blocks nothing)');
 assert(/#wavePanel \{ top: 70px;/.test(html), 'score banner lane (70px)');
 assert(/#cpHud \{ position:fixed; top:70px;/.test(html), 'KOTH banner shares the banner lane');
 

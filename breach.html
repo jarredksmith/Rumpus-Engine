@@ -192,6 +192,7 @@
   #animEd button { background:rgba(255,255,255,0.05); border:1px solid #2a3a42; color:#cfeee2; border-radius:6px; padding:5px 9px; font-size:12px; cursor:pointer; }
   #animEd button:hover { background:rgba(255,255,255,0.1); color:#fff; }
   #animEd button.aeAccent { background:rgba(var(--accent-rgb),0.2); border-color:var(--accent); color:var(--accent); font-weight:700; }
+  #animEd button.aeSaved { background:rgba(120,240,190,0.3); border-color:#7cf0be; color:#eafff7; font-weight:700; }   /* build 1069: SAVE CLIP confirms in place */
   #animEd #aeClose { margin-left:auto; font-size:14px; }
   #animEd .aeMain { flex:1; display:flex; min-height:0; }
   #animEd .aeLeft { flex:0 0 200px; display:flex; flex-direction:column; border-right:1px solid #182228; }
@@ -7361,7 +7362,7 @@ let _toastBusy = false;
 function _showToast(msg){
   let t = document.getElementById('toast');
   if(!t){ t = document.createElement('div'); t.id='toast';
-    t.style.cssText='position:absolute;top:36px;left:50%;transform:translateX(-50%);z-index:70;background:rgba(8,18,22,.92);border:1px solid rgba(var(--accent-rgb),.45);color:#cfeee2;padding:9px 16px;border-radius:8px;font-size:13px;letter-spacing:1px;pointer-events:none;transition:opacity .3s;';
+    t.style.cssText='position:fixed;top:36px;left:50%;transform:translateX(-50%);z-index:500;background:rgba(8,18,22,.92);border:1px solid rgba(var(--accent-rgb),.45);color:#cfeee2;padding:9px 16px;border-radius:8px;font-size:13px;letter-spacing:1px;pointer-events:none;transition:opacity .3s;';
     document.body.appendChild(t); }
   t.textContent = msg; t.style.opacity='1'; _toastBusy=true;
   clearTimeout(t._t);
@@ -7374,7 +7375,7 @@ function _showToast(msg){
 function flashBigToast(title, sub){
   let t=document.getElementById('bigToast');
   if(!t){ t=document.createElement('div'); t.id='bigToast';
-    t.style.cssText='position:fixed;top:74px;left:50%;z-index:130;display:flex;align-items:center;gap:13px;background:rgba(8,20,24,.98);border:1px solid var(--accent);border-left:5px solid var(--accent);color:#eafff7;padding:14px 22px;border-radius:11px;box-shadow:0 14px 44px rgba(0,0,0,.6);opacity:0;transform:translateX(-50%) translateY(-10px);transition:opacity .25s, transform .25s;pointer-events:none;max-width:min(92vw,480px);';
+    t.style.cssText='position:fixed;top:74px;left:50%;z-index:501;display:flex;align-items:center;gap:13px;background:rgba(8,20,24,.98);border:1px solid var(--accent);border-left:5px solid var(--accent);color:#eafff7;padding:14px 22px;border-radius:11px;box-shadow:0 14px 44px rgba(0,0,0,.6);opacity:0;transform:translateX(-50%) translateY(-10px);transition:opacity .25s, transform .25s;pointer-events:none;max-width:min(92vw,480px);';
     const ic=document.createElement('div'); ic.className='bigToastIcon'; ic.textContent='✓'; ic.style.cssText='font-size:28px;line-height:1;color:var(--accent);flex:0 0 auto;';
     const tx=document.createElement('div'); const h=document.createElement('div'); h.className='bigToastTitle'; h.style.cssText='font-weight:800;letter-spacing:1px;font-size:15px;';
     const sb=document.createElement('div'); sb.className='bigToastSub'; sb.style.cssText='font-size:12px;color:#bfe3d8;margin-top:2px;overflow-wrap:anywhere;';
@@ -11044,6 +11045,17 @@ function _aeLoadClip(id){
   _aeUndo.length=0; _aeRedo.length=0; _aeClearSel(); _aeTime=0; _aePlaying=false;
   _aeQueueRebuild(true); _aeRenderClipSel(); _aeRenderTree(); _aeRenderInspector(); _aeDrawTL();
 }
+// build 1069: SAVE CLIP had no visible confirmation — it always toasted, but the toast lane sits
+// at z-index 500 only since this build; before that it rendered BEHIND the fullscreen editor (300)
+// and nobody ever saw it. Belt and braces: the button itself flashes a saved state, so the result
+// is obvious even when the toast lane is busy with another message.
+function _aeFlashSaved(clean){
+  const b=_aeEl && _aeEl.querySelector('#aeSave'); if(!b) return;
+  if(b._svT){ clearTimeout(b._svT); } else { b._svLabel=b.textContent; }
+  b.textContent='\u2713 SAVED';
+  b.classList.add('aeSaved');
+  b._svT=setTimeout(()=>{ b._svT=0; b.textContent=b._svLabel||'SAVE CLIP'; b.classList.remove('aeSaved'); }, 1800);
+}
 function _aeSave(){
   if(!_aeClip) return;
   const last=_aeKeyTimes(_aeClip).pop()||0;
@@ -11058,7 +11070,8 @@ function _aeSave(){
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
   if(typeof _aeRebuildFn==='function') _aeRebuildFn(); else if(typeof rebuildAvatars==='function') rebuildAvatars();   // build 1046: rebuild THIS character's visuals
   _aeRenderClipSel();
-  if(typeof toast==='function') toast('Saved — "'+clean.name+'" is in this level’s clip library');
+  _aeFlashSaved(clean);   // build 1069: the button confirms in place as well as the toast
+  if(typeof toast==='function') toast('Saved — "'+clean.name+'" is in this level’s clip library ('+_aeKeyTimes(clean).length+' keys)');
 }
 function _aeDuplicate(){
   if(!_aeClip) return;
@@ -22881,7 +22894,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1068 · 2026-07-22';
+const BUILD_VERSION = 'build 1069 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
