@@ -40,6 +40,6 @@ const si = src.indexOf('pdBody.appendChild(snote);');
 assert(mi > 0 && si > mi, 'fold region located');
 assert(src.slice(mi, si).indexOf('animHost.appendChild(') < 0, 'no stray direct appends left inside the folded groups');
 // build 338: user-facing tab names (internal keys untouched)
-assert(/MODE_LABEL = \{ build:'Build', scene:'World', player:'Player', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', hud:'HUD', files:'Save' \}/.test(src), 'tabs read Build / World / Player / Enemies / Gameplay / Weapons / HUD / Save');
-assert(/EDITOR_MODES = \['build','scene','player','enemies','rules','kit','hud','files'\]/.test(src), 'internal mode keys unchanged (HUD added build 665)');
+assert(/MODE_LABEL = \{ build:'Build', scene:'World', player:'Player', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', hud:'HUD', files:'Save', settings:'Settings' \}/.test(src), 'tabs read Build / World / Player / Enemies / Gameplay / Weapons / HUD / Save / Settings');
+assert(/EDITOR_MODES = \['build','scene','player','enemies','rules','kit','hud','files','settings'\]/.test(src), 'internal mode keys unchanged (HUD build 665, Settings build 1066)');
 done();

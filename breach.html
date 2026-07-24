@@ -16095,8 +16095,9 @@ function renderGeneratePanel(){
     sv.onclick=()=>{ if(typeof aiSetKey==='function'){ aiSetKey(ak.value); renderGeneratePanel(); if(typeof toast==='function') toast(ak.value?'Anthropic key saved (this browser only)':'Anthropic key cleared'); } };
     ar.appendChild(ak); ar.appendChild(sv); host.appendChild(ar);
     const an=document.createElement('div'); an.className='hint'; an.style.cssText='font-size:10px;opacity:0.75;margin:0 0 2px;';
-    an.innerHTML = aiHas ? '\u2713 Rooms are composed by Claude (each room gets a role + matching furniture). Key stays in this browser; only you (the author) need it.'
-                         : 'Without a key, the description is placed by keyword. Add a key to have Claude lay out each room logically.';
+    an.innerHTML = (aiHas ? '\u2713 Rooms are composed by Claude (each room gets a role + matching furniture). Key stays in this browser; only you (the author) need it.'
+                         : 'Without a key, the description is placed by keyword. Add a key to have Claude lay out each room logically.')
+                 + ' <span style="opacity:.75">Also editable under <b>Settings \u2192 API keys</b>.</span>';   // build 1066
     host.appendChild(an);
     if(aiHas){ const vl=document.createElement('label'); vl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:11px;margin:2px 0 2px;cursor:pointer;'; const vc=document.createElement('input'); vc.type='checkbox'; vc.checked=_genVision; vc.style.accentColor='var(--accent)'; vc.onchange=()=>{ _genVision=vc.checked; }; const vs=document.createElement('span'); vs.innerHTML='<b>Verify models with vision</b> \u2014 Claude looks at thumbnails and rejects wrong ones (slower, more API calls)'; vl.appendChild(vc); vl.appendChild(vs); host.appendChild(vl); }
   }
@@ -22511,7 +22512,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1065 · 2026-07-22';
+const BUILD_VERSION = 'build 1066 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27854,9 +27855,9 @@ let editorActive = 'gun';
 // ---- Editor MODES: one primary switch that gates which target-tabs + sections are shown, so a new user
 // sees a handful of relevant controls instead of the whole panel at once. Each target/section lives in
 // exactly one mode. (Purely a visibility layer — every panel's editing logic is unchanged.)
-const EDITOR_MODES = ['build','scene','player','enemies','rules','kit','hud','files'];
-const MODE_LABEL = { build:'Build', scene:'World', player:'Player', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', hud:'HUD', files:'Save' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
-const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', player:'#7c9cff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', hud:'#5eead4', files:'#b69cff' };   // per-mode accent so the buttons read as distinct sections
+const EDITOR_MODES = ['build','scene','player','enemies','rules','kit','hud','files','settings'];   // build 1066: Settings is the home for API keys (and future global prefs)
+const MODE_LABEL = { build:'Build', scene:'World', player:'Player', enemies:'Enemies', rules:'Gameplay', kit:'Weapons', hud:'HUD', files:'Save', settings:'Settings' };   // user-facing names; internal mode keys unchanged so saved prefs/tests keep working
+const MODE_COLOR = { build:'var(--accent)', scene:'#5db4ff', player:'#7c9cff', enemies:'#ff6b8a', rules:'#ffd166', kit:'#ff9b5b', hud:'#5eead4', files:'#b69cff', settings:'#9fb4c7' };   // per-mode accent so the buttons read as distinct sections
 // Compact, mode-aware top hint (build 651) — replaces one dense always-on paragraph. Tells a newcomer what
 // THIS mode is for + the one or two gestures that matter here. Universal shortcuts trail every line.
 const MODE_HINT = {
@@ -27868,6 +27869,7 @@ const MODE_HINT = {
   kit:     'Your weapons: pick a tab (Gun / Aim / Grenade) to pose the viewmodel; tune bullet impacts, tracer & crosshair below.',
   hud:     'Make the HUD yours: colours, fonts, panel style, and which elements show in play. Live preview here.',
   files:   'Save, share or export this level, and chain levels into a campaign.',
+  settings:'Your API keys for the AI tools and the 3D model libraries. Stored in THIS browser only \u2014 never saved into a level or shared.',
 };
 const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+A</b> add · <b>F</b> fly · <b>T</b> top view · <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close.</span>';
 function _hexRgba(hex,a){ const nn=parseInt(hex.replace('#',''),16); return 'rgba('+((nn>>16)&255)+','+((nn>>8)&255)+','+(nn&255)+','+a+')'; }
@@ -27882,6 +27884,7 @@ const MODE_ICON = {
   kit:     _svgIcon('<circle cx="12" cy="12" r="9"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/>'),
   hud:     _svgIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>'),
   files:   _svgIcon('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>'),
+  settings:_svgIcon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
 };
 const PRIM_ICON = {
   box:      _svgIcon('<path d="M12 3 21 7.5v9L12 21 3 16.5v-9L12 3Z"/><path d="M3 7.5 12 12l9-4.5"/><path d="M12 12v9"/>'),
@@ -27903,6 +27906,7 @@ const MODE_SECTIONS = {
   kit:     ['object','transform','wepfx'],   // 'object' carries the weapon model import + per-weapon shoot sound; the FX panels (impacts/tracer) are grouped under one 'wepfx' picker (build 653); music/SFX live in Scene
   hud:     ['hud','crosshair'],   // build 665: per-level HUD theme + visibility. build 845: the crosshair is a HUD element — it moved here from Weapons > Effects
   files:   ['titlescreen','levelfile','campaign'],   // build 971: the creator title screen ships with the level file
+  settings:['apikeys'],   // build 1066
 };
 // Plain-language one-liner shown under each section header (build 648). Keyed by the section's data-sec key
 // so renaming a display title never desyncs it. Injected in buildEditorPanel.
@@ -27938,6 +27942,7 @@ const SEC_SUB = {
   levelfile:  'Save, share, export or import this level.',
   campaign:   'Chain levels together into a campaign.',
   hud:        'Theme, fonts, panel style & which HUD elements appear in play.',
+  apikeys:    'Keys for the AI tools (Claude) and the 3D model search. Saved in this browser only.',
 };
 const MODE_TARGETS = {
   build:   ['props','lights','station','extract','turrets'],
@@ -27948,6 +27953,7 @@ const MODE_TARGETS = {
   kit:     ['gun','aim','grenade'],
   hud:     [],
   files:   [],
+  settings:[],
 };
 const TARGET_MODE = {};   // reverse: which mode owns each target tab
 for(const _m of EDITOR_MODES) for(const _t of MODE_TARGETS[_m]) TARGET_MODE[_t]=_m;
@@ -29562,6 +29568,61 @@ function renderBuildMenuPanel(){
   btnRow.appendChild(add); btnRow.appendChild(rst); wrap.appendChild(btnRow);
   host.appendChild(wrap);
 }
+// ---------- SETTINGS > API KEYS (build 1066) ----------
+// One home for every key the editor can use, instead of one buried in the AI scene builder and
+// the rest invisible. Keys live in THIS browser's localStorage only \u2014 they are never written
+// into a level, a share code, a campaign or the network. Each row shows whether YOUR key is set
+// (a built-in shared key covers the model libraries out of the box, so those rows read
+// "built-in key active" until you add your own).
+const API_KEY_ROWS = [
+  { id:'anthropic', label:'Claude (Anthropic)', ls:'breach_anthropic_key', ph:'sk-ant-\u2026',
+    get:()=>(typeof aiGetKey==='function'?aiGetKey():''), set:(v)=>{ if(typeof aiSetKey==='function') aiSetKey(v); },
+    url:'https://console.anthropic.com/settings/keys', urlLabel:'console.anthropic.com',
+    what:'Unlocks the <b>AI scene builder</b> (furnishes rooms from a description) and <b>AI animation generation</b> in the animation editor. Your key calls Anthropic directly from this browser.' },
+  { id:'sketchfab', label:'Sketchfab', ls:'fs_api_key', ph:'API token (optional)',
+    get:()=>{ try{ return (localStorage.getItem('fs_api_key')||'').trim(); }catch(e){ return ''; } },
+    set:(v)=>{ if(typeof fsSetKey==='function') fsSetKey(v); else { try{ localStorage.setItem('fs_api_key', v||''); }catch(e){} } },
+    url:'https://sketchfab.com/settings/password', urlLabel:'sketchfab.com',
+    builtin:true, what:'Searches Sketchfab for downloadable 3D models. A shared key is built in \u2014 add your own if you hit rate limits or want your own account\u2019s access.' },
+  { id:'polypizza', label:'Poly Pizza', ls:'pp_api_key', ph:'API key (optional)',
+    get:()=>{ try{ return (localStorage.getItem('pp_api_key')||'').trim(); }catch(e){ return ''; } },
+    set:(v)=>{ try{ localStorage.setItem('pp_api_key', v||''); }catch(e){} },
+    url:'https://poly.pizza/api', urlLabel:'poly.pizza',
+    builtin:true, what:'Searches the Poly Pizza CC0 model library. A shared key is built in \u2014 your own is optional.' },
+];
+function renderApiKeysPanel(){
+  const host=edDoc().getElementById('edApiKeys'); if(!host) return; host.innerHTML='';
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.cssText='margin:0 0 8px;font-size:10px;line-height:1.55;';
+  intro.innerHTML='Keys are stored in <b>this browser only</b> (localStorage) \u2014 they are never written into a level, a share link, a campaign export or sent to other players. Anyone playing your levels needs no keys at all.';
+  host.appendChild(intro);
+  for(const row of API_KEY_ROWS){
+    const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:7px 8px;margin:0 0 7px;';
+    const head=document.createElement('div'); head.style.cssText='display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+    const ttl=document.createElement('b'); ttl.textContent=row.label; ttl.style.cssText='flex:1 1 auto;font-size:11px;color:var(--accent);letter-spacing:.05em;';
+    const mine=(row.get()||'').length>0;
+    const badge=document.createElement('span'); badge.style.cssText='font-size:9px;padding:1px 6px;border-radius:99px;flex:0 0 auto;'
+      + (mine ? 'background:rgba(80,220,170,0.18);color:#9fe6cf;' : (row.builtin ? 'background:rgba(160,180,200,0.16);color:#9fb4c7;' : 'background:rgba(255,150,110,0.16);color:#ffb08a;'));
+    badge.textContent = mine ? '\u2713 your key saved' : (row.builtin ? 'built-in key active' : 'not set');
+    head.appendChild(ttl); head.appendChild(badge); card.appendChild(head);
+    const what=document.createElement('div'); what.className='hint'; what.style.cssText='font-size:10px;opacity:.85;line-height:1.5;margin:0 0 5px;'; what.innerHTML=row.what; card.appendChild(what);
+    const r=document.createElement('div'); r.style.cssText='display:flex;gap:5px;align-items:center;';
+    const inp=document.createElement('input'); inp.type='password'; inp.placeholder=mine?'saved \u2014 paste to replace':row.ph;
+    inp.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:11px;';
+    const save=document.createElement('button'); save.textContent='Save'; save.style.cssText='padding:3px 10px;font-size:11px;flex:0 0 auto;';
+    save.onclick=()=>{ const v=inp.value.trim(); if(!v){ if(typeof toast==='function') toast('Paste a key first'); return; }
+      row.set(v); inp.value=''; renderApiKeysPanel(); if(typeof toast==='function') toast(row.label+' key saved to this browser'); };
+    r.appendChild(inp); r.appendChild(save);
+    if(mine){ const clr=document.createElement('button'); clr.textContent='Clear'; clr.title='Remove this key from this browser';
+      clr.style.cssText='padding:3px 9px;font-size:11px;flex:0 0 auto;border-color:#4a3a2a;color:#c9a284;';
+      clr.onclick=()=>{ row.set(''); try{ localStorage.removeItem(row.ls); }catch(e){} renderApiKeysPanel(); if(typeof toast==='function') toast(row.label+' key cleared'); };
+      r.appendChild(clr); }
+    card.appendChild(r);
+    const lnk=document.createElement('div'); lnk.className='hint'; lnk.style.cssText='font-size:10px;opacity:.7;margin:4px 0 0;';
+    lnk.innerHTML='Get a key: <a href="'+row.url+'" target="_blank" rel="noopener" style="color:#9fe6cf;">'+row.urlLabel+'</a>';
+    card.appendChild(lnk);
+    host.appendChild(card);
+  }
+}
 function renderHudPanel(){
   if(typeof _ensureHudFonts==='function') _ensureHudFonts();   // build 817: the font picker previews every family
   const host=edDoc().getElementById('edHud'); if(!host) return; host.innerHTML='';
@@ -30331,6 +30392,7 @@ function buildEditorPanel(){
       + '<div class="row2" style="margin-top:10px"><button id="edWipe" style="width:100%;border-color:#7a2630;color:#ff9b93">'+_icn('trash')+'Delete all objects (fresh scene)</button></div>'
       + '<div class="copied" id="edCopied"></div>')
     + sec('Campaign', 'campaign', '<div id="edCampaign"></div>')
+    + sec('API keys', 'apikeys', '<div id="edApiKeys"></div>')
     + '</div></div>'
     ;
   document.body.appendChild(p);
@@ -30481,6 +30543,7 @@ function buildEditorPanel(){
   if(typeof renderHudPanel==='function') renderHudPanel();                // build 665: HUD theming panel
   if(typeof renderHomePanel==='function') renderHomePanel();              // build 971: creator title screen
   if(typeof renderBuildMenuPanel==='function') renderBuildMenuPanel();    // build 671: radial build-menu editor
+  if(typeof renderApiKeysPanel==='function') renderApiKeysPanel();        // build 1066: Settings > API keys
   // restore saved width + wire drag-to-resize (drag the left edge; wider = more room for the crowded panels)
   try{ const w = parseInt(localStorage.getItem('breach_editor_width')||'',10); if(w>=260 && w<=window.innerWidth*0.92) p.style.width = w+'px'; }catch(e){}
   (function(){

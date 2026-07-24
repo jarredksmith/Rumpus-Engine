@@ -45,7 +45,7 @@ assert(/#hud #hpFill \{ background: var\(--hud-health/.test(html), 'health colou
 assert(/#hud \{ font-family: var\(--hud-font/.test(html), 'HUD font is scoped to #hud');
 
 // --- editor mode integration ---
-assert(/const EDITOR_MODES = \['build','scene','player','enemies','rules','kit','hud','files'\];/.test(src), 'HUD is its own editor mode');
+assert(/const EDITOR_MODES = \['build','scene','player','enemies','rules','kit','hud','files','settings'\];/.test(src), 'HUD is its own editor mode');
 assert(/hud:'HUD'/.test(src) && /hud:'#5eead4'/.test(src), 'it has a label + accent');
 assert(/MODE_SECTIONS = \{[\s\S]*?hud:     \['hud','crosshair'\]/.test(src), 'the HUD mode owns the hud + crosshair sections (build 845)');
 assert(/sec\('HUD', 'hud', '<div id="edHud"><\/div>'\)/.test(src), 'the HUD section is registered');

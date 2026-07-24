@@ -25,8 +25,8 @@ assert(/#editor\.dockLeft #edModes\.edModes \{ border-right: none; border-left: 
 // markup: the shell wraps the rail + main, rail comes first
 assert(/\+ '<div id="edShell"><div class="edModes" id="edModes"><\/div><div id="edMain">'/.test(src),
   'the rail is the first child of the shell, main follows');
-assert(/\+ sec\('Campaign', 'campaign', '<div id="edCampaign"><\/div>'\)\s*\n\s*\+ '<\/div><\/div>'/.test(src),
-  'the shell + main close after the last section');
+assert(/\+ sec\('API keys', 'apikeys', '<div id="edApiKeys"><\/div>'\)\s*\n\s*\+ '<\/div><\/div>'/.test(src),
+  'the shell + main close after the last section (build 1066: API keys is now last)');
 assert(!/\+ '<div class="edModes" id="edModes"><\/div>'\s*\n\s*\+ '<div id="edSearchRow"/.test(src),
   'the old top-of-panel mode row is gone');
 
