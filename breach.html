@@ -8178,6 +8178,78 @@ function _sanitizeHudWidgets(a){
   return out;
 }
 let hudWidgets = _sanitizeHudWidgets(savedLevel && savedLevel.hudWidgets);   // authored; serialized with the level
+// ---------- ACTION BINDINGS (build 1071) ----------
+// Seven authored animation slots (parry, dodge, block, holster, knockdown, getup, idleToCombat)
+// were pickable in the editor but nothing in the engine ever played them — a creator could assign
+// a dodge roll and never once see it. An action binding is the missing trigger: an input, an
+// animation, and (optionally) a Logic event. The action itself deliberately does NO gameplay —
+// it plays the clip and pulses the graph, and the graph already owns damage/spawn/score/win, so
+// "dodge grants a speed burst" is three visible nodes instead of a hidden checkbox.
+const ACT_KEYS = ['KeyQ','KeyZ','KeyX','KeyB','KeyN','KeyH','KeyU','KeyY','KeyP','KeyO','KeyM','KeyJ','KeyL','KeyK',
+  'Digit6','Digit7','Digit8','Digit9','Digit0','KeyT','KeyG','KeyF','KeyR','KeyV','KeyC'];
+const ACT_INPUT_LABEL = { mouse3:'Middle mouse', mouse4:'Mouse 4 (back)', mouse5:'Mouse 5 (forward)',
+  pad0:'Gamepad A / X', pad1:'Gamepad B / O', pad2:'Gamepad X / \u25a1', pad3:'Gamepad Y / \u25b3',
+  pad12:'D-pad up', pad13:'D-pad down' };
+function _actInputLabel(v){
+  if(!v) return 'None';
+  if(ACT_INPUT_LABEL[v]) return ACT_INPUT_LABEL[v];
+  return String(v).replace(/^Key/,'').replace(/^Digit/,'');
+}
+function _sanitizeActions(a){
+  if(!Array.isArray(a)) return [];
+  const out=[], ids=new Set(), slots=(typeof ANIM_SLOTS!=='undefined')?ANIM_SLOTS.map(s=>s.k):[];
+  for(const x of a){
+    if(out.length>=8) break;
+    if(!x || typeof x!=='object') continue;
+    let id=(typeof x.id==='string' && /^act_[a-z0-9]{3,16}$/.test(x.id)) ? x.id : ('act_'+Math.random().toString(36).slice(2,9));
+    while(ids.has(id)) id='act_'+Math.random().toString(36).slice(2,9);
+    ids.add(id);
+    const inp=String(x.input==null?'':x.input);
+    out.push({
+      id,
+      name:(typeof x.name==='string' && x.name.trim()) ? x.name.trim().slice(0,24) : 'Action',
+      slot:(slots.indexOf(x.slot)>=0) ? x.slot : 'dodge',
+      clip:String(x.clip==null?'':x.clip).slice(0,40),      // '' = whatever the slot resolves to
+      input:(ACT_KEYS.indexOf(inp)>=0 || ACT_INPUT_LABEL[inp]) ? inp : '',
+      event:String(x.event==null?'':x.event).trim().slice(0,60),
+      cd:Math.max(0, Math.min(60, Math.round((+x.cd||0)*100)/100)),
+      lock:!!x.lock,
+      touch:(x.touch===false)?false:true,
+    });
+  }
+  return out;
+}
+let actionBinds = _sanitizeActions(savedLevel && savedLevel.actions);
+const _actCd = {};   // id -> next allowed time (runtime only)
+let _actNetCode = 0, _actNetSeq = 0;   // the one-shot peers replay, same shape as the hit-react pair
+// Fire an action by index: play its clip for the clip's own length, pulse the graph, hold the
+// player still if asked, and tell peers. Host/solo authority mirrors the rest of the engine.
+function fireAction(i){
+  const a=actionBinds[i]; if(!a) return false;
+  if(!gameOn || editorOpen || paused || shopOpen || invOpen || mapOpen || chatOpen) return false;
+  if(typeof duelDead!=='undefined' && duelDead) return false;
+  if(player.hp!=null && player.hp<=0) return false;
+  const now=performance.now();
+  if(a.cd>0 && now < (_actCd[a.id]||0)) return false;
+  _actCd[a.id]=now + a.cd*1000;
+  const ms=(typeof _ownSlotDurMs==='function' && _ownSlotDurMs(a.slot)) || 600;   // build 1062: the clip's real length
+  const dur=Math.max(200, Math.min(6000, ms));
+  if(typeof playOwnAnim==='function') playOwnAnim(a.slot, dur);
+  if(a.lock){ _actLockUntil=now+dur; }
+  _actNetCode=(i+1)&15; _actNetSeq=(_actNetSeq+1)&255;   // peers replay it for the same window
+  if(a.event && typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(a.event);
+  else if(a.event && typeof NET!=='undefined' && NET.mode==='client' && NET.conn){ try{ NET.conn.send({ t:'actEv', n:a.event }); }catch(e){} }   // a client's action still reaches the host's graph
+  if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
+  return true;
+}
+let _actLockUntil = 0;
+function actionMovementLocked(){ return performance.now() < _actLockUntil; }
+// Which action (if any) a given input fires. Pure — the dispatcher and the tests share it.
+function actionForInput(list, input){
+  if(!input || !Array.isArray(list)) return -1;
+  for(let i=0;i<list.length;i++){ if(list[i] && list[i].input===input) return i; }
+  return -1;
+}
 let _hwRev=0, _hwHost=null, _hwBuiltRev=-1, _hwEls=[], _hwVars=[], _hwSent='', _hwSentAt=0;
 const _HW_POS={ tl:['top:12px;left:12px;',''], tc:['top:12px;left:50%;','translateX(-50%) '], tr:['top:12px;right:12px;',''],
   ml:['top:50%;left:12px;','translateY(-50%) '], mr:['top:50%;right:12px;','translateY(-50%) '],
@@ -14117,6 +14189,7 @@ addEventListener('keydown', e=>{
   if(editorOpen) return;   // ignore gameplay keys while editing
   if(e.code===BINDS.reload){ if(typeof buildMode!=='undefined' && buildMode){ e.preventDefault(); _bmRotStep(e.shiftKey?-1:1); return; } reload(); }   // build 1022: R rotates the build ghost (Shift+R backwards)
   if(e.code===BINDS.melee && !e.repeat) meleeAttack();   // build 1059: holding V is ONE swing — key auto-repeat is ignored; a full release re-arms
+  if(!e.repeat && typeof actionForInput==='function'){ const _ai=actionForInput(actionBinds, e.code); if(_ai>=0){ fireAction(_ai); e.preventDefault(); return; } }   // build 1071: author-bound action animations (edge-triggered like melee)
   if(e.code===BINDS.interact) interact();
   if(e.code===BINDS.grab){ if(drivingCar && typeof _ghostToggle==='function' && typeof objectiveActive==='function' && objectiveActive()==='race' && !e.repeat) _ghostToggle(); else grabAction(); }   // build 841: G in a race car toggles the ghost; on foot it's still grab/drop
   if(e.code===BINDS.flashlight && !e.repeat) toggleFlashlight();   // build 672: held flashlight (when the level enables it)
@@ -18256,6 +18329,7 @@ function loadLevelFromNet(level){
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
+  actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
   if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
@@ -19356,7 +19430,7 @@ function _packCar(){
 function _packGrip(){ const wk=(typeof curWep!=='undefined'?curWep:'rifle'); const g=activeCharGrip(wk)||tpGunGrip(wk); return [ +(+g.x).toFixed(3), +(+g.y).toFixed(3), +(+g.z).toFixed(3), +(+g.yaw).toFixed(3), +(+g.pitch).toFixed(3), +(+g.roll).toFixed(3), +((g.scale==null?1:+g.scale)).toFixed(3) ]; }
 function _unpackGrip(a){ return (a && a.length>=7) ? { x:+a[0], y:+a[1], z:+a[2], yaw:+a[3], pitch:+a[4], roll:+a[5], scale:+a[6] } : null; }
 function serializeWorld(){
-  const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar() }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving
+  const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving; build 1071: ac/aq = the action one-shot peers replay
   for(const id in NET.players){ const rp=NET.players[id];
     P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1), cl:(rp.cl||0), c:(rp.car||undefined) }); }
   for(const b of bots){ if(b.dead && !b._dying) continue; P.push({ id:b.id, p:[b.pos.x,EYE,b.pos.z], y:b.yaw, pi:0, w:(b.wep||'rifle'), hp:(b.dead?0:b.hp), hd:b._netHitDir||0, hs:b._netHitSeq||0, n:b.name }); }   // build 502: keep dead-but-dying bots in the snapshot (+ hd/hs) so clients play the directional death, then they prune on respawn
@@ -19529,7 +19603,9 @@ function applyWorld(msg){
   const seen=new Set();
   for(const pl of msg.P){ if(pl.id===NET.myId) continue; seen.add(pl.id);
     const rp=ensureRemotePlayer(pl.id, pl.n);
-    rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); rp.cl=pl.cl||0; rp.car=pl.c||null; }   // build 548/644: turret index + climbing anim code travel in the snapshot; build 895: driven car
+    rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); rp.cl=pl.cl||0; rp.car=pl.c||null;
+      if(pl.aq!=null && pl.aq!==rp._aq){ rp._aq=pl.aq; const _a=actionBinds[(pl.ac|0)-1];   // build 1071: a fresh action -> replay its slot for the clip's own length
+        if(_a){ rp._actSlot=_a.slot; rp._actT=performance.now()+Math.max(200, Math.min(6000, (typeof _ownSlotDurMs==='function' && _ownSlotDurMs(_a.slot))||600)); } } }   // build 548/644: turret index + climbing anim code travel in the snapshot; build 895: driven car
   for(const id in NET.players){ if(!seen.has(+id)) removeRemotePlayer(+id); }
   const es=new Set();
   for(const e of msg.E){ es.add(e.id); upsertEnemyMesh(e); }
@@ -19640,6 +19716,7 @@ function netInterpolate(dt){
       if(rp.slide) _st='slide';                                       // sliding flag travels in the state packet
       if(rp.cl) _st = _CLIMB_BY_CODE[rp.cl] || _st;                   // build 644: climbing (ledge hang/up/drop, ladder) overrides loco/air
       if(rp._fireT && performance.now() < rp._fireT){ const _rf = rp.crouch ? 'crouch' : (tier==='run'?'run':(tier==='walk'?'walk':null)); _st=(_rf?(_fireSlot(_rf)||'attack'):'attack'); }   // brief move+fire (or standing attack) after a networked shot
+      if(rp._actT && performance.now() < rp._actT) _st=rp._actSlot;   // build 1071: an author-bound action the peer fired
       if(rp._hitT && performance.now() < rp._hitT) _st=['hitFront','hitBack','hitLeft','hitRight'][rp._hitDir||0];   // directional hit-react (wins over loco, below death)
       if(rp.hp!=null && rp.hp<=0) _st = (rp._hitDir===0?'dieBack':rp._hitDir===1?'dieFront':'die');   // directional death (front hit -> fall backward), else flat die
       { const _cy=rp.mesh.rotation.y; if(rp._turnPrevYaw==null) rp._turnPrevYaw=_cy; let _dyaw=_cy-rp._turnPrevYaw; _dyaw=Math.atan2(Math.sin(_dyaw),Math.cos(_dyaw)); rp._turnPrevYaw=_cy;   // build 504: turn-in-place from the smoothed mesh yaw (network-safe)
@@ -19679,7 +19756,7 @@ function netTick(dt){
   if(NET.sendTimer<=0){
     NET.sendTimer=0.05;
     if(NET.mode==='client' && NET.conn && NET.conn.open){
-      try{ NET.conn.send({ t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar() }); }catch(e){}
+      try{ NET.conn.send({ t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }); }catch(e){}
       if(heldProp && heldNidLocal!=null){ const tgt=_localHoldTarget(); try{ NET.conn.send({ t:'hold', nid:heldNidLocal, p:[tgt.x,tgt.y,tgt.z] }); }catch(e){} }
     } else if(NET.mode==='host'){
       broadcastWorld();
@@ -19782,6 +19859,7 @@ function handleHostMsg(msg){
   else if(msg.t==='teams'){ NET.teams=msg.tm||{}; if(NET.teams[NET.myId]!=null) NET.team=NET.teams[NET.myId]; applyTeamColors(); renderScoreboard(); }
   else if(msg.t==='feed'){ addKillFeed(msg.k, msg.v); }
   else if(msg.t==='frag'){ registerLocalKill(); }   // co-op: the host confirmed our shot killed an enemy -> multi-kill tracking
+  else if(msg.t==='actEv'){ if(typeof logicEvent==='function') logicEvent(String(msg.n||'').slice(0,60)); }   // build 1071: a client's action pulses the host's logic graph
   else if(msg.t==='hudv'){ if(msg.v && typeof msg.v==='object') for(const k in msg.v) logicVars[k]=+msg.v[k]||0; }   // build 1058: the host mirrors widget-watched logic variables
   else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200)); }   // chat from the host or relayed from another player
   else if(msg.t==='duelOver'){ showDuelResult(msg.w, msg.wt); }
@@ -22949,7 +23027,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1070 · 2026-07-22';
+const BUILD_VERSION = 'build 1071 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -23089,6 +23167,8 @@ function pollGamepad(dt){
     if(edge(13) && typeof openBigMap==='function' && !chatOpen) openBigMap();  // D-pad down
     if(edge(14) && typeof meleeAttack==='function') meleeAttack();             // D-pad left
     if(edge(15) && typeof toggleFlashlight==='function') toggleFlashlight();   // D-pad right
+    if(typeof actionBinds!=='undefined') for(const _b of [0,1,2,3,12,13]){   // build 1071: face + up/down d-pad are available to actions
+      if(edge(_b)){ const _ai=actionForInput(actionBinds, 'pad'+_b); if(_ai>=0) fireAction(_ai); } }
   }
 
   // releasing the fire trigger re-arms semi-auto (mirrors mouseup)
@@ -23126,6 +23206,8 @@ addEventListener('mousedown', e=>{
   if(radialOpen){ if(e.button===0) closeRadial(true); return; }
   if(typeof buildMode!=='undefined' && buildMode){ if(e.button===0){ placeBuild(); } else if(e.button===1){ _bmDeleteAimed(); } else if(e.button===2){ buildSnap=!buildSnap; try{ localStorage.setItem('breach_buildsnap', buildSnap?'1':'0'); }catch(_e){} _bmHint(); } e.preventDefault(); return; }
   if(shopOpen || editorOpen || paused || mapOpen || duelDead || invOpen) return;   // no actions while eliminated or while the inventory is open
+  { const _m=(e.button===1)?'mouse3':(e.button===3)?'mouse4':(e.button===4)?'mouse5':'';   // build 1071: actions can claim the middle/side buttons
+    if(_m){ const _ai=actionForInput(actionBinds, _m); if(_ai>=0){ e.preventDefault(); fireAction(_ai); return; } } }
   if(e.button===0){ if(heldProp){ throwHeld(); return; } firing=true; }
   else if(e.button===1){ e.preventDefault(); grabAction(); }   // middle-click (scroll-wheel push): grab / drop
   else if(e.button===2) ads = true;   // right-click: aim down sights
@@ -23278,6 +23360,26 @@ function applyTouchChrome(){
 }
 let touchLayout = (()=>{ try{ return JSON.parse(localStorage.getItem('breach_touch_layout')||'{}')||{}; }catch(e){ return {}; } })();
 function saveTouchLayout(){ try{ localStorage.setItem('breach_touch_layout', JSON.stringify(touchLayout)); }catch(e){} }
+// build 1071: an author-bound action gets its own touch button, created from the same .tBtn
+// class and registered in TOUCH_EDITABLE so players can drag it wherever they like.
+function refreshActionTouchButtons(){
+  const host=document.getElementById('touchUI'); if(!host) return;
+  for(const el of [...host.querySelectorAll('.tActBtn')]) el.remove();
+  for(let i=TOUCH_EDITABLE.length-1;i>=0;i--) if(TOUCH_EDITABLE[i].indexOf('tAct')===0) TOUCH_EDITABLE.splice(i,1);
+  if(typeof actionBinds==='undefined') return;
+  actionBinds.forEach((a,i)=>{
+    if(!a.touch) return;
+    const id='tAct'+i;
+    const b=document.createElement('button'); b.className='tBtn tActBtn'; b.id=id;
+    b.textContent=String(a.name||'ACT').toUpperCase().slice(0,7);
+    b.setAttribute('aria-label', a.name||('Action '+(i+1)));
+    b.style.cssText='right:calc('+(20+ (i%2)*62 )+'px + env(safe-area-inset-right));bottom:calc('+(252 + Math.floor(i/2)*56)+'px + env(safe-area-inset-bottom));width:50px;height:50px;font-size:9px;';
+    b.addEventListener('pointerdown', (e)=>{ fireAction(i); e.preventDefault(); });
+    host.appendChild(b);
+    TOUCH_EDITABLE.push(id);
+  });
+  if(typeof applyTouchLayout==='function') try{ applyTouchLayout(); }catch(e){}
+}
 function applyTouchLayout(){
   const vw=innerWidth, vh=innerHeight;
   for(const id of ALL_EDITABLE){ const el=document.getElementById(id); if(!el) continue; const o=touchLayout[id]||{};
@@ -27206,6 +27308,7 @@ function loop(){
   if(pvpMode() && duelDead){ wish.set(0,0,0); moveScale=0; }   // frozen until respawn
   if(_levelLoaderActive){ wish.set(0,0,0); moveScale=0; }   // frozen while the level is still loading
   if(matchWarmup>0){ wish.set(0,0,0); moveScale=0; }   // frozen during the pre-match GENERATING/countdown (no pre-positioning advantage)
+  if(typeof actionMovementLocked==='function' && actionMovementLocked()){ wish.set(0,0,0); moveScale=0; }   // build 1071: an action marked 'lock movement' plants the player for its clip
   if(mountedTurret){ wish.set(0,0,0); moveScale=0; }   // frozen while manning a turret
   if(drivingCar){ wish.set(0,0,0); moveScale=0; }      // foot movement off while driving — driveUpdate moves the car
   wish.normalize();
@@ -29754,6 +29857,7 @@ function serializeLevel(){
     logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
     customAnims: ((typeof customAnims!=='undefined' && customAnims.length) ? _caSanitize(customAnims) : undefined),   // build 1040: creator-authored clips
     hudWidgets: ((typeof hudWidgets!=='undefined' && hudWidgets.length) ? _sanitizeHudWidgets(hudWidgets) : undefined),   // build 1058: custom HUD widgets
+    actions: ((typeof actionBinds!=='undefined' && actionBinds.length) ? _sanitizeActions(actionBinds) : undefined),   // build 1071: action bindings
     prefabDefs: _pfUsedDefs(),
     tracer: Object.assign({}, tracerCfg),
     decal: Object.assign({}, decalCfg),
@@ -30396,6 +30500,7 @@ function restoreLevel(level){
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
+  actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
   if(level.prefabDefs && typeof _pfMergeDefs==='function') _pfMergeDefs(level.prefabDefs);
   tracerCfg = _sanitizeTracer(level.tracer); if(typeof renderTracerFxPanel==='function') renderTracerFxPanel();
   decalCfg = _sanitizeDecal(level.decal); if(typeof _decalTexReset==='function') _decalTexReset(); if(typeof renderDecalFxPanel==='function') renderDecalFxPanel();
@@ -33477,6 +33582,85 @@ function renderEditorFields(){
           aeB.onclick=()=>{ if(typeof _aeOpen==='function') _aeOpen(); };
           aeRow.appendChild(aeB); urlHost.appendChild(aeRow);
         }
+      }
+      { // build 1071: ACTION BINDINGS — give the unreachable slots (dodge, parry, block, taunts...) a trigger
+        const abHead=document.createElement('div'); abHead.className='hint'; abHead.style.margin='12px 0 2px';
+        abHead.innerHTML='<b>Action bindings</b> — put an animation on a key, button or touch control. The action plays the clip; wire the <i>event</i> into the <b>Logic</b> tab to make it <i>do</i> something (damage, dash, score, unlock). Saved with the level.';
+        urlHost.appendChild(abHead);
+        const commitA=()=>{ if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){} _levelDirty=true; };
+        const usedInputs=()=>{ const m={}; for(const b in BINDS) m[BINDS[b]]=(BIND_LABEL[b]||b); return m; };
+        actionBinds.forEach((a,i)=>{
+          const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:6px 7px;margin:5px 0;display:flex;flex-direction:column;gap:4px;';
+          const l1=document.createElement('div'); l1.style.cssText='display:flex;gap:5px;align-items:center;';
+          const nm=document.createElement('input'); nm.type='text'; nm.value=a.name; nm.placeholder='name'; nm.maxLength=24;
+          nm.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
+          nm.onchange=()=>{ pushUndoSnapshot(); a.name=nm.value.trim().slice(0,24)||'Action'; commitA(); renderEditorFields(); };
+          const del=document.createElement('button'); del.textContent='\u2715'; del.title='Remove this action'; del.style.cssText='padding:1px 7px;font-size:11px;flex:0 0 auto;';
+          del.onclick=()=>{ pushUndoSnapshot(); actionBinds.splice(i,1); commitA(); renderEditorFields(); };
+          l1.appendChild(nm); l1.appendChild(del); card.appendChild(l1);
+          const l2=document.createElement('div'); l2.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+          l2.appendChild(document.createTextNode('plays'));
+          const ssel=document.createElement('select'); ssel.style.cssText='flex:1;min-width:110px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+          { let g=''; let og=null;
+            for(const sl of ANIM_SLOTS){ if(sl.g!==g){ g=sl.g; og=document.createElement('optgroup'); og.label=g; ssel.appendChild(og); }
+              const o=document.createElement('option'); o.value=sl.k; o.textContent=sl.l; if(a.slot===sl.k) o.selected=true; (og||ssel).appendChild(o); } }
+          ssel.onchange=()=>{ pushUndoSnapshot(); a.slot=ssel.value; commitA(); };
+          l2.appendChild(ssel);
+          l2.appendChild(document.createTextNode('on'));
+          const isel=document.createElement('select'); isel.style.cssText='flex:0 0 auto;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+          { const taken=usedInputs();
+            const o0=document.createElement('option'); o0.value=''; o0.textContent='\u2014 no key \u2014'; if(!a.input) o0.selected=true; isel.appendChild(o0);
+            const gK=document.createElement('optgroup'); gK.label='Keyboard'; isel.appendChild(gK);
+            for(const k of ACT_KEYS){ const o=document.createElement('option'); o.value=k;
+              o.textContent=_actInputLabel(k)+(taken[k]?('  \u2014 used by '+taken[k]):'');
+              if(a.input===k) o.selected=true; gK.appendChild(o); }
+            const gM=document.createElement('optgroup'); gM.label='Mouse / gamepad'; isel.appendChild(gM);
+            for(const k in ACT_INPUT_LABEL){ const o=document.createElement('option'); o.value=k; o.textContent=ACT_INPUT_LABEL[k]; if(a.input===k) o.selected=true; gM.appendChild(o); } }
+          isel.onchange=()=>{ pushUndoSnapshot(); a.input=isel.value; commitA(); renderEditorFields(); };
+          l2.appendChild(isel);
+          card.appendChild(l2);
+          // conflict warning: an author-chosen key that a default control already owns
+          { const taken=usedInputs();
+            if(a.input && taken[a.input]){ const w=document.createElement('div'); w.className='hint';
+              w.style.cssText='font-size:10px;color:#ffb08a;margin:0;'; w.textContent='\u26a0 '+_actInputLabel(a.input)+' is also '+taken[a.input]+' \u2014 the action wins. Pick another key, or players can rebind in Settings.';
+              card.appendChild(w); }
+            const dupe=actionBinds.findIndex((b,j)=>j!==i && b.input && b.input===a.input);
+            if(a.input && dupe>=0 && dupe<i){ const w=document.createElement('div'); w.className='hint';
+              w.style.cssText='font-size:10px;color:#ffb08a;margin:0;'; w.textContent='\u26a0 Also bound to \u201c'+actionBinds[dupe].name+'\u201d \u2014 that one fires first.';
+              card.appendChild(w); } }
+          const l3=document.createElement('div'); l3.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+          l3.appendChild(document.createTextNode('event'));
+          const ev=document.createElement('input'); ev.type='text'; ev.value=a.event; ev.placeholder='(optional) logic event'; ev.maxLength=60;
+          ev.style.cssText='flex:1;min-width:100px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
+          if(typeof _lgRefreshDatalists==='function'){ try{ _lgRefreshDatalists(); }catch(e){} ev.setAttribute('list','lgEvtList'); }
+          ev.onchange=()=>{ pushUndoSnapshot(); a.event=ev.value.trim().slice(0,60); commitA(); if(typeof _lgRefreshDatalists==='function') _lgRefreshDatalists(); };
+          l3.appendChild(ev);
+          l3.appendChild(document.createTextNode('cooldown'));
+          const cd=document.createElement('input'); cd.type='number'; cd.min='0'; cd.max='60'; cd.step='0.1'; cd.value=a.cd;
+          cd.style.cssText='width:52px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+          cd.onchange=()=>{ pushUndoSnapshot(); a.cd=Math.max(0,Math.min(60,+cd.value||0)); commitA(); };
+          l3.appendChild(cd); l3.appendChild(document.createTextNode('s'));
+          card.appendChild(l3);
+          const l4=document.createElement('div'); l4.style.cssText='display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+          const mkCb=(label,val,fn,title)=>{ const w=document.createElement('label'); w.style.cssText='display:flex;gap:5px;align-items:center;cursor:pointer;'; w.title=title||'';
+            const c=document.createElement('input'); c.type='checkbox'; c.checked=val; c.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
+            c.onchange=()=>{ pushUndoSnapshot(); fn(c.checked); commitA(); };
+            w.appendChild(c); w.appendChild(document.createTextNode(label)); return w; };
+          l4.appendChild(mkCb('lock movement', a.lock, v=>{ a.lock=v; }, 'Plant the player for the length of the clip'));
+          l4.appendChild(mkCb('touch button', a.touch, v=>{ a.touch=v; }, 'Show an on-screen button on phones/tablets (players can drag it in the touch layout editor)'));
+          card.appendChild(l4);
+          urlHost.appendChild(card);
+        });
+        const addB=document.createElement('button'); addB.textContent='+ Add action'; addB.style.cssText='width:100%;padding:5px 8px;font-size:11px;margin:2px 0 0;';
+        addB.onclick=()=>{ if(actionBinds.length>=8){ if(typeof toast==='function') toast('8 actions is the limit'); return; }
+          pushUndoSnapshot();
+          const free=ACT_KEYS.find(k=>{ for(const b in BINDS) if(BINDS[b]===k) return false; return !actionBinds.some(a=>a.input===k); })||'';
+          actionBinds.push(_sanitizeActions([{ name:'Action '+(actionBinds.length+1), slot:'dodge', input:free }])[0]);
+          commitA(); renderEditorFields(); };
+        urlHost.appendChild(addB);
+        if(!actionBinds.length){ const em=document.createElement('div'); em.className='hint'; em.style.cssText='font-size:10px;opacity:.75;margin:3px 0 0;';
+          em.innerHTML='Nothing bound yet. Several animation states \u2014 <b>dodge, parry, block, holster, knockdown, get up</b> \u2014 have no trigger of their own; an action binding is how you reach them.';
+          urlHost.appendChild(em); }
       }
       const acHead=document.createElement('div'); acHead.className='hint'; acHead.style.margin='10px 0 2px'; acHead.innerHTML='<b>Animation states</b> — auto-matched by clip name; override per state. Walk/run switch with the avatar\u2019s movement in-game.';
       urlHost.appendChild(acHead);
