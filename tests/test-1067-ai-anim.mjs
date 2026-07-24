@@ -155,8 +155,8 @@ assert(/back\.className='uiDlgBack';/.test(extractFunction('_aeAIDialog', src)),
   'it marks its backdrop so the fullscreen editor yields Escape and keys');
 assert(/const clean=_caSanitize\(\[data\]\)\[0\];/.test(src), 'generated clips go through the SAME sanitizer as imported ones');
 assert(/Settings \\u2192 API keys/.test(extractFunction('_aeAIDialog', src)), 'a missing key points at Settings');
-assert(/max_tokens:4096, messages:\[\{ role:'user', content:_aiAnimPrompt\(desc, slots, propMode\) \}\]/.test(src),
-  'the request carries the built brief');
+assert(/content: cur \? _aiRefinePrompt\(desc, cur, slots, propMode\) : _aiAnimPrompt\(desc, slots, propMode\)/.test(src),
+  'the request carries the built brief (build 1068: the refine brief when a current clip is supplied)');
 assert(/BONES AVAILABLE ON THIS MODEL/.test(src), 'the prompt lists the LIVE rig’s bones so the model cannot invent one');
 
 done('build 1067: describe it in plain language, get real keyframes — anatomy in, quaternions out, yours to edit');
