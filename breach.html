@@ -7583,6 +7583,7 @@ function playModelAnimations(root, gltf, mode, allowCustomOnly){
     const usethis = chosen ? (clip.name === chosen) : !caSet.has(clip);   // '' = all BASE clips; customs only when picked by name
     if(trig==='auto' && usethis){ action.play(); }   // auto: start now. interact/signal: wait to be fired.
   }
+  mixer._caHasEv = clips.some(c=>c && c._caEvents && c._caEvents.length);   // build 1065: prop clips fire their authored events too
   mixers.push(mixer);
   root.userData.mixer = mixer;
   root.userData.animActions = actions;
@@ -10174,12 +10175,26 @@ function _caScanClipEvents(){
   if(typeof mixers==='undefined') return;
   for(const m of mixers){
     if(!m || !m._caHasEv) continue;   // marked at build time — zero cost for everything else
-    const root=_mixerRoot(m); const acts=root && root.userData && root.userData.stateActions;
-    if(!acts) continue;
-    for(const k in acts){
-      const a=acts[k]; const clip=a.getClip ? a.getClip() : null; const evs=clip && clip._caEvents;
+    const root=_mixerRoot(m); if(!root || !root.userData) continue;
+    const acts=root.userData.stateActions;
+    if(acts){
+      for(const k in acts){
+        const a=acts[k]; const clip=a.getClip ? a.getClip() : null; const evs=clip && clip._caEvents;
+        if(!evs || !evs.length) continue;
+        if(!a.enabled || a.paused || a.getEffectiveWeight()<0.3){ a._caLastT=null; continue; }
+        const now=a.time % Math.max(1e-4, clip.duration);
+        if(a._caLastT==null){ a._caLastT=now; continue; }   // just activated: arm without replaying history
+        _caFireSpan(evs, a._caLastT, now, false);
+        a._caLastT=now;
+      }
+      continue;
+    }
+    const pacts=root.userData.animActions;   // build 1065: PROP mixers — the same span scan over the action array,
+    if(!pacts) continue;                     // so a prop clip's footsteps/creaks/logic signals fire wherever it plays
+    for(const a of pacts){
+      const clip=a.getClip ? a.getClip() : null; const evs=clip && clip._caEvents;
       if(!evs || !evs.length) continue;
-      if(!a.enabled || a.paused || a.getEffectiveWeight()<0.3){ a._caLastT=null; continue; }
+      if(!a.isRunning() || a.paused || a.getEffectiveWeight()<0.3){ a._caLastT=null; continue; }
       const now=a.time % Math.max(1e-4, clip.duration);
       if(a._caLastT==null){ a._caLastT=now; continue; }   // just activated: arm without replaying history
       _caFireSpan(evs, a._caLastT, now, false);
@@ -22496,7 +22511,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1064 · 2026-07-22';
+const BUILD_VERSION = 'build 1065 · 2026-07-22';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
