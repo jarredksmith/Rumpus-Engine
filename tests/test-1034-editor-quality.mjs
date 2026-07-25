@@ -30,7 +30,7 @@ eq(env.sounds().join(','), 'https://h/boom.wav,https://h/klaxon.mp3,https://h/th
 
 // ---- dropdown wiring ----
 assert(/\{k:'clip',l:'clip',w:80,ifv:\['verb','anim'\],listId:'lgClipList'\}/.test(src), 'the Do-action clip field opts in');
-assert(/\{k:'sound',l:'url',w:96,ifv:\['verb','sound'\],listId:'lgSndList'\}/.test(src), 'the Do-action sound field opts in');
+assert(/\{k:'sound',l:'url',w:96,ifv:\['verb',\['sound','music'\]\],listId:'lgSndList'\}/.test(src), 'the Do-action sound field opts in');
 const rf = extractFunction('_lgRefreshDatalists', src);
 assert(/mk\('lgClipList'\)/.test(rf) && /mk\('lgSndList'\)/.test(rf), 'both datalists are filled with the rest');
 

@@ -6642,12 +6642,16 @@ function toggleMute(){ audioSettings.muted=!audioSettings.muted; applyAudioSetti
 
 // ---------- Adaptive music (procedural; intensity tracks the live threat) ----------
 let _musicOn=false, _musicDrone=null, _musicTimer=null, _musicInt=0, _musicTarget=0, _musicStep=0, _musicSrc=null;
+// build 1074: a track chosen by a RULE, for this match only. null = "whatever the level authored"; a string
+// (including '') overrides it. Deliberately not written into audioSettings — a boss theme that plays during a
+// playtest must never end up saved as the level's music track.
+let _lgMusic=null;
 const MUSIC_ROOT=110;
 // Pure: map the live game state to a target intensity 0..1 (calm between waves, tense under threat).
 function musicTargetFor(s){ const threat=Math.min(1,((s.enemies||0)+(s.toSpawn||0))/8); const waveF=Math.min(1,Math.max(0,((s.wave||1)-1)/10)); return Math.max(0,Math.min(1, 0.15 + 0.55*threat + 0.30*waveF)); }
 function setMusicIntensity(x){ _musicTarget=Math.max(0,Math.min(1,+x||0)); }
 // A custom looping track (your own music) takes over the music bus when set; co-op clients hear the host's.
-function curMusicUrl(){ return (typeof NET!=='undefined' && NET.musicUrl) || (audioSettings && audioSettings.musicUrl) || ''; }
+function curMusicUrl(){ if(_lgMusic!=null) return _lgMusic; return (typeof NET!=='undefined' && NET.musicUrl) || (audioSettings && audioSettings.musicUrl) || ''; }
 function startMusic(){
   if(!actx||!musicBus||_musicOn) return;
   if(typeof editorOpen!=='undefined' && editorOpen) return;   // no level music while editing
@@ -8078,6 +8082,8 @@ function logicEvent(name){   // the bridge IN: prop signals (do:'emit') and 'emi
 function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
   logicVars={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;
   if(typeof _trigState!=='undefined') _trigState.length=0;   // build 1072: trigger volumes re-arm with the match (once-only fires again on a retry)
+  if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
+  if(typeof _lgMusic!=='undefined') _lgMusic=null;           // ...and the level's own music track comes back
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
   _lgFireEvents('start','');
@@ -8116,7 +8122,8 @@ function _lgPulse(id, pin){
     case 'once': { if(pin==='reset'){ st.done=false; break; } if(st.done) break; st.done=true; _lgFollow(id,0); break; }
     case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
     case 'do': { try{ _applySignalAction({ do:p.verb||'toggle', target:String(p.target||'').trim(), clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
-        etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim() }, null); }catch(e){} _lgFollow(id,0); break; }
+        etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim(),
+        stat:p.stat||'speed', mul:p.mul }, null); }catch(e){} _lgFollow(id,0); break; }
     case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));   // {score} interpolates live variables
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
@@ -8340,7 +8347,7 @@ const LG_DEFS = {
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound'],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb','spawn']},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport']],listId:'lgPlaceList'}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -8649,7 +8656,7 @@ function _applySignalAction(s, src){
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
     if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
     if(s.do==='emit'){ if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(String(s.text||'').trim()); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed.
-    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'){   // build 1073: the world verbs take no tag — they act on a PLACE, or on WHO
+    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'){   // builds 1073/1074: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -8730,9 +8737,43 @@ function _wactSend(o){
   if(typeof NET==='undefined' || NET.mode!=='host') return;
   for(const cid in NET.conns){ try{ NET.conns[cid].send(Object.assign({ t:'wact' }, o)); }catch(e){} }
 }
+// build 1074: the stats a rule can bend mid-match. Each is a MULTIPLIER of the value the LEVEL authored,
+// so x1 always puts it back EXACTLY — there is no hidden "original" to capture, lose or drift, and a match
+// restart re-derives from the same place. Only stats a rule actually touched are restored, so the perk
+// system's own +max-HP is left alone unless the author deliberately drives that stat.
+const LG_STATS = { speed:'Move speed', jump:'Jump height', gravity:'Gravity', maxhp:'Max health', dmg:'Damage dealt' };
+let _lgStatOn = {};
+function _lgApplyStat(which, mul){
+  if(!LG_STATS[which]) return;
+  const m=Math.max(0.05, Math.min(10, +mul||1));
+  const W=(typeof worldCfg!=='undefined' && worldCfg)?worldCfg:{};
+  _lgStatOn[which]=1;
+  if(which==='speed'){ if(W.walk){ SPEED=W.walk*m; CROUCH_SPEED=(W.crouch||W.walk*0.45)*m; } }        // SPRINT is a ratio, so sprinting scales with it
+  else if(which==='jump'){ if(W.jump) JUMP=W.jump*m; }
+  else if(which==='gravity'){ if(W.grav) GRAV=W.grav*m; }
+  else if(which==='maxhp'){ player.maxHp=Math.max(1, Math.round(100*m)); player.hp=Math.min(player.hp, player.maxHp); if(typeof updateHUD==='function') updateHUD(); }
+  else if(which==='dmg'){ if(typeof run!=='undefined' && run) run.dmgMul=m; }
+}
+function _lgResetStats(){ const was=_lgStatOn; _lgStatOn={}; for(const k in was){ _lgApplyStat(k, 1); } _lgStatOn={}; }
+function _lgSetMusic(url){
+  const u=String(url==null?'':url).trim();
+  _lgMusic=u;                                                    // '' is a real choice: deliberate silence
+  try{ if(typeof stopMusic==='function') stopMusic(); if(u && typeof startMusic==='function') startMusic(); }catch(e){}
+}
+function _isWorldVerb(v){ return v==='spawn'||v==='pickup'||v==='damage'||v==='heal'||v==='kill'||v==='teleport'||v==='give'||v==='take'||v==='stat'||v==='music'; }
 function _applyWorldAction(s){
   const who=(s.who==='enemies'||s.who==='nearest')?s.who:'player';
   const amt=Math.max(0, Math.min(99999, Math.round(+s.amt||0)));
+  if(s.do==='give' || s.do==='take'){
+    const id=String(s.item||'').trim(); if(!id) return;
+    const n=Math.max(1, Math.min(99, Math.round(+s.n||1)));
+    try{ if(s.do==='give'){ if(typeof giveItem==='function') giveItem(id, n); } else if(typeof takeItem==='function') takeItem(id, n); }catch(e){}
+    _wactSend(s.do==='give' ? { gi:[id,n] } : { ti:[id,n] });     // a co-op reward reaches the whole team
+    return;
+  }
+  if(s.do==='stat'){ const w=LG_STATS[s.stat]?s.stat:'speed', m=Math.max(0.05, Math.min(10, +s.mul||1));
+    _lgApplyStat(w, m); _wactSend({ st:[w, m] }); return; }
+  if(s.do==='music'){ const u=String(s.sound==null?'':s.sound).trim(); _lgSetMusic(u); _wactSend({ mu:u }); return; }
   if(s.do==='spawn'){
     if(typeof spawnEnemy!=='function') return;
     const n=Math.max(1, Math.min(20, Math.round(+s.n||1)));        // a bounded squad; 'spawn 5000' is a typo, not a design
@@ -20100,6 +20141,10 @@ function handleHostMsg(msg){
     if(msg.k) try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){}
     else if(msg.d>0) try{ applyEnemyDamageToSelf(+msg.d||0, null, null); }catch(e){}
     if(msg.h>0){ player.hp=Math.min(player.maxHp, player.hp+(+msg.h||0)); if(typeof updateHUD==='function') updateHUD(); }
+    if(msg.gi && typeof giveItem==='function') try{ giveItem(String(msg.gi[0]), +msg.gi[1]||1); }catch(e){}      // build 1074
+    if(msg.ti && typeof takeItem==='function') try{ takeItem(String(msg.ti[0]), +msg.ti[1]||1); }catch(e){}
+    if(msg.st && typeof _lgApplyStat==='function') _lgApplyStat(String(msg.st[0]), +msg.st[1]||1);
+    if(msg.mu!=null && typeof _lgSetMusic==='function') _lgSetMusic(msg.mu);
   }
 }
 
@@ -23254,7 +23299,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1073 · 2026-07-25';
+const BUILD_VERSION = 'build 1074 · 2026-07-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31737,6 +31782,49 @@ function _pickupXformPanel(host, sp, i){
 }
 // build 688: a reusable Signals editor (tag + needs + signal rows). `store` is any object that holds .tag/.sigNeed/
 // .signals (a prop's userData OR an inventory-item def); `rerender` rebuilds the owning panel after a change.
+// build 1074: the parameter row for a world verb inside the prop Signals fold. Build 1073 put the verbs in
+// the dropdown but left them unconfigurable here — a prop that said "Spawn enemies" had no way to say WHICH,
+// HOW MANY or WHERE, so it silently spawned one grunt on the player. Same fields the Logic node offers.
+function _sigWorldRow(s, rerender){
+  const wr=document.createElement('div'); wr.style.cssText='display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:-1px 0 5px;padding-left:8px;';
+  const IST='background:#0c1418;border:1px solid #2a3a42;color:#9fe6cf;border-radius:4px;padding:2px 5px;font-size:10px;';
+  if(typeof _lgRefreshDatalists==='function') try{ _lgRefreshDatalists(); }catch(e){}
+  const lab=(t)=>{ const e=document.createElement('span'); e.textContent=t; e.style.cssText='font-size:10px;color:#7fb8a6;'; wr.appendChild(e); };
+  const sel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText=IST;
+    opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); });
+    e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; wr.appendChild(e); return e; };
+  const txt=(ph,val,on,w,list)=>{ const e=document.createElement('input'); e.type='text'; e.placeholder=ph; e.value=(val==null?'':val);
+    e.style.cssText=IST+'width:'+w+'px;'; if(list) e.setAttribute('list',list);
+    e.onchange=()=>{ pushUndoSnapshot(); on(e.value.trim()); }; wr.appendChild(e); return e; };
+  const WHO=[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']];
+  if(s.do==='spawn'){
+    sel([['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']], s.etype||'grunt', v=>{ s.etype=v; });
+    lab('\u00d7'); txt('1', s.n, v=>{ if(v) s.n=v; else delete s.n; }, 30);
+    lab('at'); txt('place (blank = the player)', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 120, 'lgPlaceList');
+  } else if(s.do==='pickup'){
+    sel(PICKUP_KIND_OPTS, s.pk||'health', v=>{ s.pk=v; });
+    if((s.pk||'health')==='item'){ lab('item'); txt('item id', s.item, v=>{ if(v) s.item=v; else delete s.item; }, 90, 'lgItemList'); }
+    lab('at'); txt('place (blank = the player)', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 120, 'lgPlaceList');
+  } else if(s.do==='damage' || s.do==='heal'){
+    sel(WHO, s.who||'player', v=>{ s.who=v; });
+    lab('amount'); txt('25', s.amt, v=>{ if(v) s.amt=v; else delete s.amt; }, 44);
+  } else if(s.do==='kill'){
+    sel(WHO, s.who||'player', v=>{ s.who=v; });
+  } else if(s.do==='teleport'){
+    sel(WHO, s.who||'player', v=>{ s.who=v; });
+    lab('to'); txt('place', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 120, 'lgPlaceList');
+  } else if(s.do==='give' || s.do==='take'){
+    txt('item id', s.item, v=>{ if(v) s.item=v; else delete s.item; }, 110, 'lgItemList');
+    lab('\u00d7'); txt('1', s.n, v=>{ if(v) s.n=v; else delete s.n; }, 30);
+  } else if(s.do==='stat'){
+    sel(Object.keys(LG_STATS).map(k=>[k, LG_STATS[k]]), s.stat||'speed', v=>{ s.stat=v; });
+    lab('\u00d7'); txt('1', s.mul, v=>{ if(v) s.mul=v; else delete s.mul; }, 40);
+    lab('(\u00d71 puts it back)');
+  } else if(s.do==='music'){
+    txt('music URL (blank = silence)', s.sound, v=>{ if(v) s.sound=v; else delete s.sound; }, 210, 'lgSndList');
+  }
+  return wr;
+}
 function buildSignalsUI(sgBody, store, rerender){
   { const tr=document.createElement('div'); tr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 4px;font-size:11px;color:#9fe6cf;';
     const tsp=document.createElement('span'); tsp.textContent='Tag'; tsp.style.minWidth='56px';
@@ -31755,14 +31843,16 @@ function buildSignalsUI(sgBody, store, rerender){
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
     r.appendChild(mkSel([['destroyed','On destroyed'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));
-    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport']], s.do, v=>{ s.do=v; }));
+    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag (or: this)'; ti.value=s.target||'';
     if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagListThis'); }
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
     ti.onchange=()=>{ pushUndoSnapshot(); s.target=ti.value.trim(); rerender(); };
     const del=document.createElement('button'); del.textContent='×'; del.style.cssText='padding:1px 7px;font-size:12px;';
     del.onclick=()=>{ pushUndoSnapshot(); sigs.splice(si,1); rerender(); };
-    r.appendChild(ti); r.appendChild(del); sgBody.appendChild(r);
+    if(!_isWorldVerb(s.do)) r.appendChild(ti);   // build 1074: a world verb takes no target tag — showing an ignored field is worse than showing none
+    r.appendChild(del); sgBody.appendChild(r);
+    if(_isWorldVerb(s.do)) sgBody.appendChild(_sigWorldRow(s, rerender));   // ...it takes these instead
     // build 706: optional inventory gate — only fire this signal if the player carries a chosen item (e.g. press E on
     // a door only unlocks it if the hidden note is in your inventory). Like a key, but any inventory item.
     { const itemIds=Object.keys((typeof invCatalog!=='undefined' && invCatalog) || {});

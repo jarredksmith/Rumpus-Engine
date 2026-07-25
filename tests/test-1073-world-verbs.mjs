@@ -210,7 +210,7 @@ const W = new Function(WORLD_GLUE
 // ---------------------------------------------------------------- wiring
 {
   const fn = extractFunction('_applySignalAction', src);
-  assert(/if\(s\.do==='spawn'\|\|s\.do==='pickup'\|\|s\.do==='damage'\|\|s\.do==='heal'\|\|s\.do==='kill'\|\|s\.do==='teleport'\)\{/.test(fn),
+  assert(/if\(s\.do==='spawn'\|\|s\.do==='pickup'\|\|s\.do==='damage'\|\|s\.do==='heal'\|\|s\.do==='kill'\|\|s\.do==='teleport'\|\|s\.do==='give'/.test(fn),
     'the world verbs branch out of the shared action dispatcher — so PROP SIGNALS get them too, not just the graph');
   assert(/if\(\(typeof NET==='undefined' \|\| NET\.mode!=='client'\) && typeof _applyWorldAction==='function'\)/.test(fn),
     '...on the authoritative side only: the host owns spawns, damage and positions and streams the results');
