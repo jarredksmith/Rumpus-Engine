@@ -39,7 +39,8 @@ assert(/el\.style\.setProperty\('--goal-vis','0'\)/.test(extractFunction('tickGo
 assert(!/el\.style\.cssText=/.test(extractFunction('_ensureGoalBanner')), 'objective banner no longer hard-codes inline styles');
 assert(!/el\.style\.cssText=/.test(extractFunction('_ensureDialogueEl')), 'dialogue box no longer hard-codes inline styles');
 assert(/el\.innerHTML='<span class="goalLabel">OBJECTIVE<\/span><span class="goalText">/.test(extractFunction('showGoalBanner')), 'objective text uses themeable classes');
-assert(/nm\+'<div class="dlgText">'\+line\+'<\/div><div class="dlgMore">'/.test(extractFunction('_renderDialogue')), 'dialogue text uses themeable classes');
+assert(/'<div class="dlgText">'\+_creditEsc\(n\.t\)\+'<\/div>'/.test(extractFunction('_renderDialogue')) && /<div class="dlgMore">/.test(extractFunction('_renderDialogue')),
+  'dialogue text uses themeable classes');
 
 // --- HUD editor fills sample objective + dialogue so they can be dragged/sized live ---
 const ae = extractFunction('applyEditorMode');

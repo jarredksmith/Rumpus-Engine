@@ -290,10 +290,42 @@ move those); for models without animations, the Sketchfab search has an "Animate
 <p><b>Lock</b> picks the required key (red / blue / gold / green); pressing <kbd>E</kbd> on the prop then needs
 that key in hand — place a matching key pickup pad somewhere findable. <b>Consume key on unlock</b> spends the
 key (for one-key-one-door puzzles; off = a master key). A prop unlocks once per deploy, for everyone in MP.</p>
-<h3>Dialogue (NPC)</h3>
-<p><b>Name</b> (shown over the prompt) + one line of dialogue per row (up to 12 × 200 chars); the player presses
+<h3 id="dialogue">Dialogue (NPC)</h3>
+<p><b>Name</b> (shown over the prompt) + one line of dialogue per row (up to 120 × 200 chars); the player presses
 <kbd>E</kbd> to advance. The first line also fires the prop's <b>On&nbsp;E</b> signals — so a conversation can
 set the objective, drop a checkpoint, or open a door as it starts.</p>
+<h4>Replies, conditions &amp; jumps</h4>
+<p>That's still all a simple NPC needs. When you want the player to <i>answer</i>, six marks turn the same box into
+a branching conversation — nothing else about it changes, and a script written before this still reads exactly the
+same way.</p>
+<div class="tblwrap"><table>
+<tr><th>Mark</th><th>What it does</th></tr>
+<tr><td><code>&gt; text -&gt; label</code></td><td>A <b>reply button</b> on the row above it. Up to six; the player clicks one, taps it, or presses <kbd>1</kbd>–<kbd>6</kbd>. <code>-&gt; end</code> finishes the conversation. Leave the arrow off and it just carries on to the next row. <b>While replies are showing, <kbd>E</kbd> does nothing</b> — the player has to answer.</td></tr>
+<tr><td><code>#label</code></td><td>Names the <b>next</b> row so a reply can jump to it. Not a line of dialogue itself.</td></tr>
+<tr><td><code>[if expr]</code></td><td>At the <b>start of a row</b>: skip that row unless it's true. At the <b>end of a reply</b>: hide that reply unless it's true — a locked option simply isn't offered.</td></tr>
+<tr><td><code>-&gt; label</code></td><td>On its own row: after the line above, <b>jump</b> instead of falling through into the next branch. <code>-&gt; end</code> stops there.</td></tr>
+<tr><td><code>{set name = 2}</code></td><td>Write a <a href="#logic">Logic</a> variable when the row is shown or the reply is picked. <code>+</code> and <code>−</code> work too: <code>{set coins + 1}</code>.</td></tr>
+<tr><td><code>{event doorOpen}</code></td><td>Fire a <a href="#logic">Logic event</a> — the same pulse an <i>On event</i> node catches. This and <code>{set}</code> are the bridge: a conversation can drive your whole graph.</td></tr>
+</table></div>
+<p>A condition compares two things with <code>==</code> <code>!=</code> <code>&lt;</code> <code>&lt;=</code>
+<code>&gt;</code> <code>&gt;=</code>. Either side can be a <b>number</b>, a <b>Logic variable</b>, or
+<code>item:someId</code> — how many of that <a href="#pickups">inventory item</a> the player is carrying.
+<code>[if hasKey]</code> with no operator means “it has been set at all”. An unset variable reads as
+<code>0</code>, so a condition is never comparing against nothing.</p>
+<pre>Have you found the brass key?
+&gt; Here it is. -&gt; gotIt [if item:brassKey &gt;= 1]
+&gt; Still looking. -&gt; notYet
+&gt; Leave. -&gt; end
+#gotIt
+Then the vault is yours. {set questStage = 2} {event vaultOpen}
+-&gt; end
+#notYet
+[if questStage &gt;= 1] You said that last time.
+Keep looking. It glints in the dark.</pre>
+<p>Rows that start with a reply and have no line above them render as a <b>bare choice prompt</b> — useful for
+“what do you do?”. A label that doesn't exist ends the conversation rather than looping. Everything the player
+sees is escaped, so a shared level can't inject markup through a line or a button. Pair this with
+<a href="#logic">values that carry over</a> and an NPC can remember you between levels.</p>
 <h3>Joint (physics)</h3>
 <div class="tblwrap"><table>
 <tr><th>Control</th><th>What it does / how to use it</th></tr>

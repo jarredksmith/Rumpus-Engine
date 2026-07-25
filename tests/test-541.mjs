@@ -9,12 +9,12 @@ assert(/nearTarget\.type==='npc'\)\{\s*const nm=nearTarget\.obj\.userData\.npcNa
 
 // --- the dialogue box: open / advance / close, escaped, signal on open ---
 const od = extractFunction('openDialogue');
-assert(/_dlg\.open=true; _dlg\.lines=dl\.slice\(0,12\); _dlg\.i=0;/.test(od), 'opening seeds the lines');
+assert(/_dlg\.open=true; _dlg\.script=script; _dlg\.i=0;/.test(od), 'opening seeds the conversation (build 1076: a parsed script, not a flat list)');
 assert(/fireSignals\(obj, 'interacted'\)/.test(od), 'talking fires the NPC’s interacted signals');
 const rd = extractFunction('_renderDialogue');
-assert(/_creditEsc\(_dlg\.lines\[_dlg\.i\]\|\|''\)/.test(rd), 'dialogue text is escaped');
+assert(/_creditEsc\(n\.t\)/.test(rd) && /_creditEsc\(c\.t\)/.test(rd), 'dialogue text — and every reply — is escaped');
 const ad = extractFunction('advanceDialogue');
-assert(/_dlg\.i\+\+;[\s\S]*?if\(_dlg\.i >= _dlg\.lines\.length\) closeDialogue\(\);\s*else _renderDialogue\(\);/.test(ad), 'advance steps to the next line or closes');
+assert(/_dlgShow\(_dlgNextFrom\(_dlg\.i\+1\)\);/.test(ad), 'advance steps to the next line (build 1076: the next one whose condition passes) or closes');
 
 // --- interact() routes to dialogue ---
 const it = extractFunction('interact');
@@ -28,7 +28,7 @@ assert(/sel\.userData\.dialogue=lines/.test(panel) && /sel\.userData\.npcName=v/
 
 // --- persistence (serialize + 3 load paths) ---
 const pe = extractFunction('propEntry');
-assert(/e\.dlg=o\.userData\.dialogue\.slice\(0,12\)\.map\(s=>String\(s\)\.slice\(0,200\)\)/.test(pe) && /e\.npc=String\(o\.userData\.npcName\)\.slice\(0,40\)/.test(pe), 'dialogue + name serialized');
+assert(/e\.dlg=o\.userData\.dialogue\.slice\(0,120\)\.map\(s=>String\(s\)\.slice\(0,200\)\)/.test(pe) && /e\.npc=String\(o\.userData\.npcName\)\.slice\(0,40\)/.test(pe), 'dialogue + name serialized');
 assert((src.match(/if\(Array\.isArray\(p\.dlg\)\) obj\.userData\.dialogue=p\.dlg\.map\(s=>String\(s\)\.slice\(0,200\)\); if\(p\.npc\) obj\.userData\.npcName=String\(p\.npc\)\.slice\(0,40\);/g)||[]).length===3, 'restored in all three load paths');
 
 // --- closed on game start / end ---

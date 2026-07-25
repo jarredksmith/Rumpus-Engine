@@ -425,6 +425,14 @@
   #dialogue .dlgName { color:var(--el-tint, var(--accent)); font-family:var(--el-font, var(--hud-display-font, var(--ui-font))), ui-monospace, monospace; font-size:13px; letter-spacing:1px; margin-bottom:4px; }
   #dialogue .dlgText { color:var(--el-tint,#eafff7); font-size:15px; line-height:1.5; }
   #dialogue .dlgMore { color:#6f9385; font-size:10px; text-align:right; margin-top:6px; }
+  /* build 1076: branching dialogue — the reply buttons. Sized for a thumb on mobile and numbered for the keyboard. */
+  #dialogue .dlgChoices { display:flex; flex-direction:column; gap:5px; margin-top:9px; }
+  #dialogue .dlgChoice { display:flex; align-items:center; gap:9px; width:100%; text-align:left; cursor:pointer;
+    background:rgba(var(--accent-rgb,120,200,180),.07); border:1px solid rgba(var(--accent-rgb,120,200,180),.32);
+    border-radius:7px; padding:8px 11px; color:var(--el-tint,#eafff7); font-family:inherit; font-size:14px; line-height:1.35; }
+  #dialogue .dlgChoice:hover { background:rgba(var(--accent-rgb,120,200,180),.16); border-color:rgba(var(--accent-rgb,120,200,180),.7); }
+  #dialogue .dlgNum { flex:0 0 auto; width:17px; height:17px; border-radius:4px; display:flex; align-items:center; justify-content:center;
+    font-size:10px; font-weight:700; color:#04110d; background:var(--el-tint, var(--accent)); }
   #radial { position:fixed; inset:0; z-index:30; display:none; background:rgba(4,8,10,.45); }
   #radialRing { position:absolute; inset:0; }
   #radial .radItem { position:absolute; transform:translate(-50%,-50%); width:74px; text-align:center; color:#cfeee2; transition:transform .08s; pointer-events:none; }
@@ -14417,6 +14425,10 @@ addEventListener('keydown', e=>{
       return;
     }
   }
+  if(_dlg.open && !e.repeat && !editorOpen){   // build 1076: 1-6 pick a reply (the buttons are for the mouse and the thumb)
+    const _dm=e.code.match(/^Digit([1-6])$/);
+    if(_dm && pickDialogueChoice(+_dm[1]-1)){ e.preventDefault(); return; }
+  }
   if(shopOpen){
     // shop is open: number keys buy, E or ESC closes (E re-locks the mouse cleanly; Esc has a browser re-lock cooldown)
     if(e.code==='Digit1') buyFromShop(0);
@@ -22688,7 +22700,101 @@ function checkProximity(){
 // build 695: simple NPC dialogue. A prop with dialogue lines shows a talk box on E; click / E steps through it.
 // The first line also fires the prop's 'interacted' signals, so talking can give a quest (set objective), open a
 // door, drop a checkpoint, etc. Text is escaped (safe for shared levels). Doesn't pause the world.
-let _dlg = { open:false, lines:[], i:0, name:'' };
+// ---------- build 1076: BRANCHING DIALOGUE ----------
+// The stored shape is unchanged: a prop's dialogue is still an ARRAY OF ROWS, and "one line per row" still means
+// exactly what it always did — every conversation written before this build parses to the same thing. Four marks
+// at the start of a row turn that list into a real conversation:
+//     #label          names the NEXT row, so something can jump to it
+//     > reply -> label  a reply button on the row above (-> end finishes the conversation)
+//     [if expr]       at the front of a row: skip the row unless it's true. At the end of a reply: hide the reply.
+//     -> label        on its own row: jump instead of falling through
+// and two inline marks, {set name = 2} / {set name + 1} and {event name}, run when the row is shown or the reply
+// is picked. That last pair is the bridge: dialogue can now drive the logic graph and read it back.
+// Deliberately a small text language rather than a nested form editor — writing dialogue is writing, and the whole
+// script stays visible and diffable in one box.
+const DLG_OPS = ['==','!=','<=','>=','<','>'];
+function _dlgExpr(txt){
+  const t=String(txt||'').trim();
+  for(const op of DLG_OPS){ const i=t.indexOf(op); if(i>0) return { v:t.slice(0,i).trim(), op, b:t.slice(i+op.length).trim() }; }
+  return { v:t, op:'>=', b:'1' };            // "[if hasKey]" is the common case: true when it's been set at all
+}
+// One side of a comparison: a number, a logic variable, or item:someId (how many of that item you're carrying).
+function _dlgVal(v){
+  const t=String(v==null?'':v).trim(); if(!t) return 0;
+  if(/^-?[0-9]*\.?[0-9]+$/.test(t)) return +t;
+  const m=/^item:(.+)$/i.exec(t);
+  if(m){ const id=m[1].trim();
+    if(typeof inventory==='undefined' || !Array.isArray(inventory)) return 0;
+    const st=inventory.find(x=>x && x.id===id); return st?(+st.n||0):0; }
+  return +((typeof logicVars!=='undefined' && logicVars[t])||0);
+}
+function _dlgTest(c){
+  if(!c || !c.v) return true;
+  const a=_dlgVal(c.v), b=_dlgVal(c.b), op=c.op||'>=';
+  return op==='==' ? a===b : op==='!=' ? a!==b : op==='<' ? a<b : op==='<=' ? a<=b : op==='>' ? a>b : a>=b;
+}
+function _dlgSet(x){
+  if(!x || !x.v) return; const k=String(x.v).trim(); if(!/^[\w#]+$/.test(k)) return;
+  if(typeof logicVars==='undefined') return;
+  const b=_dlgVal(x.b);
+  if(x.op==='+') logicVars[k]=(+logicVars[k]||0)+b;
+  else if(x.op==='-') logicVars[k]=(+logicVars[k]||0)-b;
+  else logicVars[k]=b;
+}
+function _dlgMarks(txt){   // pull {set ...} and {event ...} out of a row, in whatever order they were written
+  let t=String(txt||''), set=null, ev='';
+  t=t.replace(/\{\s*set\s+([\w#]+)\s*([=+\-])\s*([^}]*)\}/gi, (m,k,op,val)=>{ set={ v:k, op, b:String(val).trim() }; return ''; });
+  t=t.replace(/\{\s*event\s+([^}]+)\}/gi, (m,n)=>{ ev=String(n).trim().slice(0,60); return ''; });
+  return { t:t.replace(/\s{2,}/g,' ').trim(), set, ev };
+}
+function _dlgParse(rows){
+  const out=[]; let pendingId='';
+  for(const raw of (Array.isArray(rows)?rows:[])){
+    let t=String(raw==null?'':raw).trim(); if(!t) continue;
+    if(t.charAt(0)==='#'){ pendingId=t.slice(1).trim().slice(0,40); continue; }
+    if(t.slice(0,2)==='->'){                                    // a bare jump belongs to the row above it
+      const to=t.slice(2).trim(), last=out[out.length-1];
+      if(last){ if(/^end$/i.test(to)) last.end=1; else if(to) last.to=to.slice(0,40); }
+      continue;
+    }
+    if(t.charAt(0)==='>'){                                      // a reply button on the row above it
+      let c=t.slice(1).trim(), cond=null;
+      c=c.replace(/\[\s*if\s+([^\]]+)\]/i, (m,e)=>{ cond=_dlgExpr(e); return ''; }).trim();
+      const mk=_dlgMarks(c); c=mk.t;                            // {set}/{event} come off BEFORE the arrow, so
+      let to=''; const ar=c.lastIndexOf('->');                  // "> Accept -> yes {set x = 1}" jumps to 'yes'
+      if(ar>=0){ to=c.slice(ar+2).trim(); c=c.slice(0,ar).trim(); }
+      const ch={ t:(c.slice(0,120) || '\u2026') };
+      if(cond) ch.if=cond;
+      if(mk.set) ch.set=mk.set;
+      if(mk.ev) ch.ev=mk.ev;
+      if(/^end$/i.test(to)) ch.end=1; else if(to) ch.to=to.slice(0,40);
+      let last=out[out.length-1];
+      if(!last){ last={ t:'' }; out.push(last); }               // replies with nothing above them get a silent prompt
+      (last.ch || (last.ch=[])).push(ch);
+      if(last.ch.length>6) last.ch.length=6;                    // more than six buttons is a menu, not a conversation
+      continue;
+    }
+    let cond=null;
+    t=t.replace(/^\[\s*if\s+([^\]]+)\]/i, (m,e)=>{ cond=_dlgExpr(e); return ''; }).trim();
+    const mk=_dlgMarks(t);
+    const node={ t:mk.t.slice(0,200) };
+    if(pendingId){ node.id=pendingId; pendingId=''; }
+    if(cond) node.if=cond;
+    if(mk.set) node.set=mk.set;
+    if(mk.ev) node.ev=mk.ev;
+    out.push(node);
+    if(out.length>=120) break;
+  }
+  return out;
+}
+function _dlgOptions(n){ return (n && n.ch) ? n.ch.filter(c=>_dlgTest(c.if)) : []; }
+function _dlgNextFrom(i){ for(let k=Math.max(0,i); k<_dlg.script.length; k++){ if(_dlgTest(_dlg.script[k].if)) return k; } return -1; }
+function _dlgGoto(label){
+  const t=String(label||'').trim(); if(!t) return -1;
+  for(let k=0;k<_dlg.script.length;k++){ if(_dlg.script[k].id===t) return _dlgTest(_dlg.script[k].if) ? k : _dlgNextFrom(k+1); }
+  return -1;                                                    // a typo'd label ends the conversation rather than looping
+}
+let _dlg = { open:false, script:[], i:0, name:'' };
 function _ensureDialogueEl(){
   let el=document.getElementById('dialogue');
   if(!el){ el=document.createElement('div'); el.id='dialogue';   // build 701: styling now lives in CSS so the HUD theme/per-element vars apply
@@ -22698,26 +22804,57 @@ function _ensureDialogueEl(){
 }
 function openDialogue(obj){
   const dl=obj && obj.userData && obj.userData.dialogue; if(!dl||!dl.length) return;
-  _dlg.open=true; _dlg.lines=dl.slice(0,12); _dlg.i=0; _dlg.name=obj.userData.npcName||'';
+  const script=_dlgParse(dl); if(!script.length) return;
+  _dlg.open=true; _dlg.script=script; _dlg.i=0; _dlg.name=obj.userData.npcName||'';
+  // the prop's own 'On E' signals run BEFORE the first row is picked, so a signal that sets a variable is
+  // already visible to that row's [if] — "talk to her the first time" works without a frame of lag
+  try{ fireSignals(obj, 'interacted'); }catch(e){}
+  _dlgShow(_dlgNextFrom(0));
+}
+function _dlgShow(i){
+  if(i<0 || i>=_dlg.script.length){ closeDialogue(); return; }
+  _dlg.i=i; const n=_dlg.script[i];
+  if(n.set) _dlgSet(n.set);
+  if(n.ev && typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(n.ev);
   _renderDialogue();
-  try{ fireSignals(obj, 'interacted'); }catch(e){}   // talking to them triggers their signals (quest/objective/etc.)
 }
 function _renderDialogue(){
   const el=_ensureDialogueEl();
-  const line=_creditEsc(_dlg.lines[_dlg.i]||'');
+  const n=_dlg.script[_dlg.i]; if(!n){ closeDialogue(); return; }
   const nm=_dlg.name ? '<div class="dlgName">'+_creditEsc(_dlg.name)+'</div>' : '';
-  const _ukd=(typeof padRecent==='function' && padRecent()) ? 'Y' : 'E';   // build 935
-  const more=(_dlg.i < _dlg.lines.length-1) ? ('click / '+_ukd+' ▸') : ('click / '+_ukd+' to close');
-  el.innerHTML=nm+'<div class="dlgText">'+line+'</div><div class="dlgMore">'+more+'</div>';
+  const opts=_dlgOptions(n);
+  let body=(n.t ? '<div class="dlgText">'+_creditEsc(n.t)+'</div>' : '');
+  if(opts.length){
+    body+='<div class="dlgChoices">'+opts.map((c,i)=>'<button type="button" class="dlgChoice"><span class="dlgNum">'+(i+1)+'</span><span>'+_creditEsc(c.t)+'</span></button>').join('')+'</div>';
+  } else {
+    const _ukd=(typeof padRecent==='function' && padRecent()) ? 'Y' : 'E';   // build 935
+    const last=(n.end || (!n.to && _dlgNextFrom(_dlg.i+1)<0));
+    body+='<div class="dlgMore">'+('click / '+_ukd+(last?' to close':' \u25b8'))+'</div>';
+  }
+  el.innerHTML=nm+body;
+  if(opts.length){ const bs=el.querySelectorAll('.dlgChoice');
+    for(let i=0;i<bs.length;i++){ (function(ci){ bs[ci].onclick=(e)=>{ e.stopPropagation(); pickDialogueChoice(ci); }; })(i); } }
   el.style.display='block';
 }
 function advanceDialogue(){
   if(!_dlg.open) return;
-  _dlg.i++;
-  if(_dlg.i >= _dlg.lines.length) closeDialogue();
-  else _renderDialogue();
+  const n=_dlg.script[_dlg.i];
+  if(n && _dlgOptions(n).length) return;                 // a reply is waiting: E and clicks do nothing until you pick
+  if(n && n.end){ closeDialogue(); return; }
+  if(n && n.to){ _dlgShow(_dlgGoto(n.to)); return; }
+  _dlgShow(_dlgNextFrom(_dlg.i+1));
 }
-function closeDialogue(){ _dlg.open=false; const el=document.getElementById('dialogue'); if(el) el.style.display='none'; }
+function pickDialogueChoice(ci){
+  if(!_dlg.open) return false;
+  const n=_dlg.script[_dlg.i]; const opts=_dlgOptions(n); const c=opts[ci];
+  if(!c) return false;
+  if(c.set) _dlgSet(c.set);
+  if(c.ev && typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(c.ev);
+  if(c.end){ closeDialogue(); return true; }
+  _dlgShow(c.to ? _dlgGoto(c.to) : _dlgNextFrom(_dlg.i+1));
+  return true;
+}
+function closeDialogue(){ _dlg.open=false; _dlg.script=[]; _dlg.i=0; const el=document.getElementById('dialogue'); if(el) el.style.display='none'; }
 function interact(){
   if(_dlg.open){ advanceDialogue(); return; }   // mid-conversation -> next line
   if(mountedTurret){ dismountTurret(); return; }
@@ -23380,7 +23517,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1075 · 2026-07-25';
+const BUILD_VERSION = 'build 1076 · 2026-07-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30152,7 +30289,7 @@ function propEntry(o){
   if(o.userData.lockId){ e.lk=o.userData.lockId; if(o.userData.lockConsume) e.lkc=1; }
   if(o.userData.tag) e.tg=o.userData.tag;
   if(o.userData.groupId) e.gid=o.userData.groupId;   // build 798: prop group link
-  if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,12).map(s=>String(s).slice(0,200));   // build 695: NPC dialogue
+  if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,120).map(s=>String(s).slice(0,200));   // build 695 / 1076: NPC dialogue script
   if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
   if(o.userData.signals && o.userData.signals.length) e.sg=o.userData.signals.map(s=>{ const x={ w:s.when, d:s.do, t:s.target }; if(s.clip) x.c=s.clip; if(s.cs) x.n=s.cs; if(s.from) x.f=s.from; if(s.contain) x.ci=1; if(s.text) x.tx=s.text; if(s.needItem) x.ni=s.needItem; if(s.needConsume) x.nc=1; if(s.consume) x.cn=1; if(s.sound) x.so=s.sound; return x; });
   if(o.userData.sigNeed>1) e.snd=o.userData.sigNeed;
@@ -33450,16 +33587,31 @@ function renderEditorFields(){
       }
       // ---- Dialogue (build 695): make this prop a talkable NPC ----
       if(sel){
-        const dBody = edFold(behaveHost, 'dialogue', 'Dialogue (NPC)', true, 'Talk to this prop with E — one line per row');
+        const dBody = edFold(behaveHost, 'dialogue', 'Dialogue (NPC)', true, 'Talk to this prop with E — one line per row, with replies and conditions when you want them');
         const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 4px;font-size:11px;color:#9fe6cf;';
         const nsp=document.createElement('span'); nsp.textContent='Name'; nsp.style.minWidth='42px';
         const nin=document.createElement('input'); nin.type='text'; nin.maxLength=40; nin.placeholder='e.g. Old Hermit (optional)'; nin.value=sel.userData.npcName||''; nin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
         nin.onchange=()=>{ pushUndoSnapshot(); const v=nin.value.trim().slice(0,40); if(v) sel.userData.npcName=v; else delete sel.userData.npcName; };
         nr.appendChild(nsp); nr.appendChild(nin); dBody.appendChild(nr);
-        const ta=document.createElement('textarea'); ta.rows=4; ta.placeholder='One line of dialogue per row…\nPress E to advance through them.'; ta.value=(sel.userData.dialogue||[]).join('\n'); ta.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:5px 7px;font-size:12px;line-height:1.5;resize:vertical;';
-        ta.onchange=()=>{ pushUndoSnapshot(); const lines=ta.value.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,12).map(s=>s.slice(0,200)); if(lines.length) sel.userData.dialogue=lines; else delete sel.userData.dialogue; };
+        const ta=document.createElement('textarea'); ta.rows=7; ta.placeholder='One line of dialogue per row…\nPress E to advance through them.\n\n> A reply the player can pick -> label'; ta.value=(sel.userData.dialogue||[]).join('\n'); ta.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:5px 7px;font-size:12px;line-height:1.5;resize:vertical;';
+        ta.onchange=()=>{ pushUndoSnapshot(); const lines=ta.value.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,120).map(s=>s.slice(0,200)); if(lines.length) sel.userData.dialogue=lines; else delete sel.userData.dialogue; };
         dBody.appendChild(ta);
         const dh=document.createElement('div'); dh.className='hint'; dh.style.margin='3px 0 0'; dh.innerHTML='Gives the prop an <b>E Talk</b> prompt. The first line also fires this prop’s <b>“On E”</b> signals — so a chat can set the objective, drop a checkpoint, open a door, etc.'; dBody.appendChild(dh);
+        // build 1076: the branching marks, written out where the author is typing. Collapsed by default so a
+        // one-line NPC never has to read any of it.
+        const dg=document.createElement('details'); dg.style.cssText='margin:5px 0 0;';
+        const dsm=document.createElement('summary'); dsm.textContent='Replies, conditions & jumps'; dsm.style.cssText='cursor:pointer;font-size:11px;color:#9fe6cf;';
+        dg.appendChild(dsm);
+        const dgb=document.createElement('div'); dgb.className='hint'; dgb.style.cssText='margin:4px 0 0;font-size:10px;line-height:1.6;';
+        dgb.innerHTML='<b>&gt; text -&gt; label</b> a reply button (<b>-&gt; end</b> finishes the talk)<br>'
+          + '<b>#label</b> names the next row so a reply can jump to it<br>'
+          + '<b>[if coins &gt;= 5]</b> at the start of a row skips it unless true; at the end of a reply hides that reply<br>'
+          + '<b>-&gt; label</b> on its own row jumps instead of falling through<br>'
+          + '<b>{set questStage = 2}</b> or <b>{set coins + 1}</b> changes a Logic variable<br>'
+          + '<b>{event doorOpen}</b> fires a Logic event<br>'
+          + 'A condition compares a <b>Logic variable</b>, a number, or <b>item:someId</b> (how many you carry).'
+          + '<pre style="margin:6px 0 0;padding:6px 8px;background:#0a1116;border-radius:5px;white-space:pre-wrap;color:#9fe6cf;font-size:10px;">Have you found the key?\n&gt; Here it is. -&gt; gotIt [if item:brassKey &gt;= 1]\n&gt; Not yet.\n&gt; Leave. -&gt; end\n-&gt; end\n#gotIt\nThe vault is yours. {set questStage = 2} {event vaultOpen}</pre>';
+        dg.appendChild(dgb); dBody.appendChild(dg);
       }
       // ---- Vehicle (drivable, build 709): flag this prop as a car you can enter + drive ----
       if(sel){
