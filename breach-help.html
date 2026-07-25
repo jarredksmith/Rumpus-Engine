@@ -911,6 +911,25 @@ models ship, and every sound URL the level already uses — pick from the list o
 event and call it from anywhere — the calling chain continues after the call. A classic graph:
 <i>On start</i> → <i>Set score = 0</i>; a pressure plate fires <b>→ Logic event</b> "scored" → <i>Change score +1</i>
 → <i>Branch score ≥ 5</i> → <i>Show message</i> → <i>Win level</i>.</p>
+<h3>Values that carry over</h3>
+<p>Normally every variable resets when a level starts — which quietly rules out anything with progress: a running
+coin total, a quest stage, a shortcut you unlocked. Under <b>Gameplay ▸ Logic graph</b>, below the Open button,
+every variable name in the level is listed with a tick box. Tick one and it <b>survives into the next level</b> of
+the <a href="#tab-save">campaign</a>.</p>
+<div class="tblwrap"><table>
+<tr><th>What happens</th><th>When</th></tr>
+<tr><td>The carried value is put back into the variable</td><td>At the <b>start of every match</b>, before <i>On start</i> runs — so your first node can already read it</td></tr>
+<tr><td>The live value is carried forward</td><td>Only when the level is <b>cleared</b></td></tr>
+<tr><td>The value rewinds to what you walked in with</td><td>On a <b>retry</b> — the level was not cleared, so nothing was committed</td></tr>
+<tr><td>Everything resets to zero</td><td>When you start the campaign from the top, or hit <b>Clear</b> in the panel</td></tr>
+</table></div>
+<p>That asymmetry is on purpose: a player can <b>never lose progress by dying</b>, and can never farm a level by
+replaying the first half of it. A variable you tick but never write settles at <code>0</code> rather than nothing,
+so a <i>Branch</i> on it is never comparing against a blank.</p>
+<p><b>Also keep them between sessions</b> is a separate opt-in below the list. With it on, the carried values are
+written to the player's browser, so they can close the tab and come back to the same progress; with it off — the
+default — nothing is stored anywhere. The panel always shows what is being carried <i>right now</i>, with one
+button to throw it away.</p>
 <div class="box">The graph runs on the <b>host</b> (its world actions broadcast through the signal system, so
 multiplayer stays in sync — spawned enemies and pickups stream in the world snapshot, and a teleport, damage or
 heal aimed at “the player” reaches every teammate, as do given items, bent stats and a music change) and pauses while the editor is open — playtest to see it run. Variables and timers reset

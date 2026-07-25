@@ -8053,6 +8053,39 @@ function _sanitizeLogic(g){
 }
 let logicGraph = _sanitizeLogic(savedLevel && savedLevel.logic);   // authored; serialized with the level
 let logicVars = {};                                                // runtime variable store (reset every match)
+// ---------- build 1075: PERSISTENT VARIABLES ----------
+// Until now every variable died at match start, so nothing could be carried: no running coin total across a
+// campaign, no "you already talked to her", no unlocked shortcut. The author names the variables that should
+// SURVIVE, and the engine keeps a separate carried store beside the live one.
+// The rule is deliberately forgiving: a persistent value is seeded into the match at the start and committed
+// back only when the level is CLEARED. Dying and retrying rewinds it to what it was when you walked in — you
+// can never lose progress by failing, and you can never farm a level by replaying half of it.
+let persistVars = _sanitizePersist(savedLevel && savedLevel.persistVars);   // authored: the names that survive
+let persistSave = !!(savedLevel && savedLevel.persistSave);                 // authored: also survive closing the tab
+let campaignVars = {};                                                     // the carried values themselves
+const PERSIST_KEY = 'breach_persist_v1';
+function _sanitizePersist(a){
+  if(!Array.isArray(a)) return [];
+  const out=[], seen={};
+  for(const v of a){ const t=String(v==null?'':v).trim();
+    if(!t || !/^[\w#]+$/.test(t) || /^[-+]?[0-9.]/.test(t) || t==='#i' || seen[t]) continue;   // same shape a variable name has everywhere else
+    seen[t]=1; out.push(t); if(out.length>=40) break; }
+  return out;
+}
+function _persistLoad(){   // the level opted into surviving a closed tab: read the saved values back
+  if(!persistSave) return;
+  try{ const j=JSON.parse(localStorage.getItem(PERSIST_KEY)); if(j && typeof j==='object') for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; } }catch(e){}
+}
+function _persistStore(){ if(!persistSave) return; try{ localStorage.setItem(PERSIST_KEY, JSON.stringify(campaignVars)); }catch(e){} }
+function _persistSeed(){   // a match begins: the carried values become live variables again
+  for(const k of persistVars){ if(campaignVars[k]!=null) logicVars[k]=campaignVars[k]; }
+}
+function _persistCommit(){ // the level was CLEARED: carry the live values forward. A retry never reaches here.
+  if(!persistVars.length) return;
+  for(const k of persistVars) campaignVars[k]=+logicVars[k]||0;
+  _persistStore();
+}
+function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(PERSIST_KEY); }catch(e){} }
 let _lgTimers = [];                                                // pending delay / interval / repeat continuations
 let _lgState = {};                                                 // per-node runtime (counter counts, once flags)
 let _lgBudget = 0, _lgWarned = false;
@@ -8081,6 +8114,7 @@ function logicEvent(name){   // the bridge IN: prop signals (do:'emit') and 'emi
 }
 function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
   logicVars={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;
+  if(typeof _persistSeed==='function') _persistSeed();       // build 1075: carried values come back before anything runs
   if(typeof _trigState!=='undefined') _trigState.length=0;   // build 1072: trigger volumes re-arm with the match (once-only fires again on a retry)
   if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
   if(typeof _lgMusic!=='undefined') _lgMusic=null;           // ...and the level's own music track comes back
@@ -8622,6 +8656,51 @@ function renderLogicPanel(){
   b.onclick=_lgOpen;
   const ct=document.createElement('span'); ct.style.cssText='font-size:11px;color:#7fa79a;'; ct.textContent=logicGraph.nodes.length+' node'+(logicGraph.nodes.length===1?'':'s');
   row.appendChild(b); row.appendChild(ct); host.appendChild(row);
+  _renderPersistUI(host);
+}
+// build 1075: which variables survive a level change. Every name in the level is listed with a checkbox, so
+// the author ticks the ones that are progress ("coins", "questStage") and leaves the per-level scratch alone.
+function _renderPersistUI(host){
+  const wrap=document.createElement('div'); wrap.style.cssText='margin-top:9px;border-top:1px solid rgba(90,140,130,0.22);padding-top:7px;';
+  const h=document.createElement('div'); h.style.cssText='font-size:11px;color:#bfe4ff;font-weight:700;letter-spacing:0.4px;margin-bottom:3px;'; h.textContent='Values that carry over';
+  wrap.appendChild(h);
+  const hint=document.createElement('div'); hint.className='hint'; hint.style.cssText='font-size:10px;margin:0 0 6px;';
+  hint.innerHTML='Normally every variable resets when a level starts. Tick one here and it <b>survives into the next level</b> of the campaign — a running coin total, a quest stage, a shortcut you unlocked. It is saved when a level is <b>cleared</b>, so dying and retrying rewinds it to what it was when you walked in.';
+  wrap.appendChild(hint);
+  const names=(typeof _lgVarOptions==='function') ? _lgVarOptions() : [];
+  for(const nm of persistVars) if(names.indexOf(nm)<0) names.push(nm);   // a name whose node was deleted still shows, so it can be un-ticked
+  if(!names.length){
+    const n=document.createElement('div'); n.className='hint'; n.style.fontSize='10px';
+    n.textContent='No variables yet — add a Set variable node in the graph and its name appears here.';
+    wrap.appendChild(n);
+  } else {
+    const grid=document.createElement('div'); grid.style.cssText='display:flex;flex-wrap:wrap;gap:4px 10px;';
+    for(const nm of names.sort()){
+      const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:4px;font-size:11px;color:#cfeee2;cursor:pointer;';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=persistVars.indexOf(nm)>=0; cb.style.cssText='width:12px;height:12px;accent-color:var(--accent);';
+      cb.onchange=()=>{ pushUndoSnapshot();
+        if(cb.checked){ if(persistVars.indexOf(nm)<0) persistVars.push(nm); }
+        else persistVars=persistVars.filter(x=>x!==nm);
+        if(typeof _levelDirty!=='undefined') _levelDirty=true; renderLogicPanel(); };
+      l.appendChild(cb); l.appendChild(document.createTextNode(nm)); grid.appendChild(l);
+    }
+    wrap.appendChild(grid);
+  }
+  const sv=document.createElement('label'); sv.style.cssText='display:flex;align-items:center;gap:6px;font-size:11px;color:#cfeee2;cursor:pointer;margin-top:7px;';
+  const scb=document.createElement('input'); scb.type='checkbox'; scb.checked=!!persistSave; scb.style.cssText='width:12px;height:12px;accent-color:var(--accent);';
+  scb.onchange=()=>{ pushUndoSnapshot(); persistSave=scb.checked; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderLogicPanel(); };
+  sv.title='Write them to this browser so the player can close the tab and come back to the same progress';
+  sv.appendChild(scb); sv.appendChild(document.createTextNode('Also keep them between sessions'));
+  wrap.appendChild(sv);
+  { const cur=Object.keys(campaignVars);
+    const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;margin-top:6px;';
+    const st=document.createElement('span'); st.style.cssText='font-size:10px;color:#7fa79a;flex:1;';
+    st.textContent = cur.length ? ('carrying now: '+cur.map(k=>k+'='+campaignVars[k]).join(', ')) : 'nothing carried yet';
+    const cl=document.createElement('button'); cl.textContent='Clear'; cl.style.cssText='font-size:10px;padding:2px 9px;';
+    cl.title='Throw away the carried values (and any saved copy) — start the campaign from zero';
+    cl.onclick=()=>{ clearPersistent(); renderLogicPanel(); if(typeof flashToast==='function') flashToast('Carried values cleared'); };
+    r.appendChild(st); r.appendChild(cl); wrap.appendChild(r); }
+  host.appendChild(wrap);
 }
 // Signals: a prop can carry rules like {when:'destroyed'|'interacted', do:'toggle'|'open'|'close'|'anim'|'unlock', target:'tagName'}.
 // Firing applies the action to every prop whose userData.tag matches. Each action uses the existing
@@ -13386,7 +13465,8 @@ function _wipeSceneCore(){
   pickupSpots.length=0; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   lootSpots.length=0; selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
   if(typeof stopAudioZones==='function') stopAudioZones(); audioZones.length=0; if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers();
-  triggerZones.length=0; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers();
+  triggerZones.length=0; selTrigger=-1; _trigState.length=0;
+  persistVars=[]; persistSave=false;   // build 1075 if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers();
   deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; ladders.length=0; selLadder=-1; fireZones.length=0; selFireZone=-1; waterZones.length=0; selWaterZone=-1; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls.length=0; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
   // clear selections so the editor doesn't point at a deleted object
   selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1;
@@ -18589,6 +18669,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
   actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
@@ -23299,7 +23380,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1074 · 2026-07-25';
+const BUILD_VERSION = 'build 1075 · 2026-07-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30130,6 +30211,7 @@ function serializeLevel(){
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
     logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
+    persistVars: (persistVars.length ? persistVars.slice() : undefined), persistSave: (persistSave||undefined),   // build 1075
     customAnims: ((typeof customAnims!=='undefined' && customAnims.length) ? _caSanitize(customAnims) : undefined),   // build 1040: creator-authored clips
     hudWidgets: ((typeof hudWidgets!=='undefined' && hudWidgets.length) ? _sanitizeHudWidgets(hudWidgets) : undefined),   // build 1058: custom HUD widgets
     actions: ((typeof actionBinds!=='undefined' && actionBinds.length) ? _sanitizeActions(actionBinds) : undefined),   // build 1071: action bindings
@@ -30221,7 +30303,7 @@ function _importCampaignFile(file, onDone){
 let campaignActive=false, campaignIdx=0, _campaignComplete=false;
 let campaignEditIdx=-1;   // campaign slot currently loaded in the editor for re-editing (-1 = none)
 function _campaignLoad(i){ const lv=campaign.levels[i]; if(!lv) return; loadLevelFromNet(lv); startGame(); }
-function startCampaign(){ if(!campaign.levels.length){ if(typeof flashToast==='function') flashToast('No campaign yet \u2014 build one in the editor under Files > Campaign'); return; } campaignActive=true; campaignIdx=0; _campaignComplete=false; _campaignLoad(0); }
+function startCampaign(){ if(!campaign.levels.length){ if(typeof flashToast==='function') flashToast('No campaign yet \u2014 build one in the editor under Files > Campaign'); return; } campaignActive=true; campaignIdx=0; _campaignComplete=false; campaignVars={}; _campaignLoad(0); }   // build 1075: a new run starts from zero — a level that opts into saving re-seeds from the store as it loads
 function _captureLoadout(){ const a={}; for(const k of owned){ const w=WEAPONS[k]; if(w) a[k]={ mag:w.mag, reserve:w.reserve }; } return { owned:[...owned], wep:curWep, hp:player.hp, ammo:a }; }
 function _interEsc(x){ return String(x==null?'':x).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function _clearInterstitial(){ _interActive=false; if(_interTimer){ clearTimeout(_interTimer); _interTimer=null; } if(_interKeyGo){ document.removeEventListener('keydown', _interKeyGo, true); _interKeyGo=null; } const c=document.getElementById('campaignCard'); if(c) c.style.display='none'; }
@@ -30827,6 +30909,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
   actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
@@ -36241,6 +36324,7 @@ function bindEndScreen(){
 }
 function gameWon(){
   if(!gameOn) return;
+  if(typeof _persistCommit==='function') _persistCommit();  // build 1075: cleared -> the carried values move forward
   if(typeof closeDialogue==='function') closeDialogue();   // build 695: drop any open NPC dialogue
   if(campaignActive && campaign.levels.length){
     if(campaignIdx < campaign.levels.length-1){
