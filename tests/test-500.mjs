@@ -16,8 +16,8 @@ assert(/id="edZonePicker"/.test(src), 'the Zones section has a type picker host'
 assert(/scene:   \['world','generate','zones'\]/.test(src), 'scene mode collapsed 5 zone sections into 1');
 
 // --- picker state + the two helpers ---
-assert(/const ZONE_TYPES = \[\['audiozones'/.test(src), 'ZONE_TYPES drives the segmented picker');
-assert(/const ZONE_HOST = \{ audiozones:'edAudioZones'/.test(src), 'ZONE_HOST maps a type to its panel host');
+assert(/const ZONE_TYPES = \[\['triggers','\\u26a1','Trigger'\],\['audiozones'/.test(src), 'ZONE_TYPES drives the segmented picker (build 1072: Trigger leads)');
+assert(/const ZONE_HOST = \{ triggers:'edTriggers', audiozones:'edAudioZones'/.test(src), 'ZONE_HOST maps a type to its panel host');
 assert(/let activeZoneType = 'audiozones';/.test(src), 'the active zone tool is tracked');
 assert(/localStorage\.getItem\('breach_editor_zone'\)/.test(src), 'the choice persists across sessions');
 assert(/function applyZoneVisibility\(\)/.test(src), 'applyZoneVisibility exists');

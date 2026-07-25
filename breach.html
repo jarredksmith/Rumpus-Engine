@@ -8077,6 +8077,7 @@ function logicEvent(name){   // the bridge IN: prop signals (do:'emit') and 'emi
 }
 function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
   logicVars={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;
+  if(typeof _trigState!=='undefined') _trigState.length=0;   // build 1072: trigger volumes re-arm with the match (once-only fires again on a retry)
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
   _lgFireEvents('start','');
@@ -8374,6 +8375,8 @@ function _lgEventOptions(){
   if(typeof propModels!=='undefined') for(const o of propModels){ const sg=o && o.userData && o.userData.signals;
     if(Array.isArray(sg)) for(const g of sg){ if(g.do==='emit' && g.text) set.add(String(g.text).trim()); } }
   for(const n of logicGraph.nodes){ if((n.type==='event' || n.type==='emit') && n.p && n.p.name) set.add(String(n.p.name).trim()); }
+  if(typeof triggerZones!=='undefined') for(const z of triggerZones){ if(z && z.ev) set.add(String(z.ev).trim()); }   // build 1072
+  if(typeof actionBinds!=='undefined') for(const a of actionBinds){ if(a && a.event) set.add(String(a.event).trim()); }   // build 1071
   return Array.from(set).filter(Boolean).sort();
 }
 // build 1034: every animation clip name any placed prop's model carries (the loaders stash
@@ -13223,6 +13226,7 @@ function _wipeSceneCore(){
   pickupSpots.length=0; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   lootSpots.length=0; selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
   if(typeof stopAudioZones==='function') stopAudioZones(); audioZones.length=0; if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers();
+  triggerZones.length=0; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers();
   deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; ladders.length=0; selLadder=-1; fireZones.length=0; selFireZone=-1; waterZones.length=0; selWaterZone=-1; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls.length=0; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
   // clear selections so the editor doesn't point at a deleted object
   selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1;
@@ -15329,6 +15333,102 @@ function addLootSpot(){ pushUndoSnapshot(); const fwd=new THREE.Vector3(-Math.si
 function removeLootSpot(i){ pushUndoSnapshot(); lootSpots.splice(i,1); if(selLoot>=lootSpots.length) selLoot=lootSpots.length-1; refreshLootMarkers(); renderEditorFields(); }
 function setAudioZoneMarkersVisible(v){ for(const g of audioZoneMarkers) g.visible=v; }
 // ---- Death zones: lethal areas (lava, pits, out-of-bounds) ----
+// ---------- TRIGGER VOLUMES (build 1072) ----------
+// The primitive every level designer reaches for first, and the one thing the logic graph had no
+// way to express: "when something enters HERE, fire an event". Every other zone in the engine is
+// a hardcoded behaviour (death, audio, jump, ladder, fire, water); this one does nothing by
+// itself and hands the moment to the graph, which is where the author's game actually lives.
+// Authoritative side only (host/solo) — the graph is, so the trigger must be.
+const TRIG_WHO = ['player','enemy','any'];
+const TRIG_ON  = ['enter','exit','stay'];
+function _migrateTrigger(z){
+  z=z||{};
+  return { x:+z.x||0, z:+z.z||0, r:Math.max(0.5, Math.min(400, +z.r||6)),
+    y:+z.y||0, h:Math.max(0.5, Math.min(200, z.h!=null?+z.h:4)),
+    on:(TRIG_ON.indexOf(z.on)>=0?z.on:'enter'),
+    who:(TRIG_WHO.indexOf(z.who)>=0?z.who:'player'),
+    ev:String(z.ev==null?'':z.ev).trim().slice(0,60),
+    once:!!z.once,
+    every:Math.max(0.1, Math.min(60, +z.every||1)) };   // 'stay' cadence, seconds
+}
+let triggerZones = (savedLevel && Array.isArray(savedLevel.triggers)) ? savedLevel.triggers.map(_migrateTrigger) : [];
+let selTrigger = -1;
+let triggerMarkers = [];
+const _trigState = [];   // per-zone runtime: { inside, fired, next }
+function disposeTriggerMarkers(){ for(const g of triggerMarkers){ scene.remove(g); g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose && o.material.dispose(); }); } triggerMarkers.length=0; }
+function refreshTriggerMarkers(){
+  disposeTriggerMarkers();
+  const vis=(typeof editorOpen!=='undefined' && editorOpen);
+  for(let i=0;i<triggerZones.length;i++){
+    const z=triggerZones[i], r=Math.max(0.5,+z.r||6), baseY=(+z.y||0), h=Math.max(0.5,+z.h||4);
+    const sel=(i===selTrigger), C=0x7cc4ff;
+    const grp=new THREE.Group();
+    const ring=new THREE.Mesh(new THREE.RingGeometry(Math.max(0.3,r-0.4), r, 56), new THREE.MeshBasicMaterial({ color:C, transparent:true, opacity:sel?0.9:0.55, side:THREE.DoubleSide, depthWrite:false }));
+    ring.rotation.x=-Math.PI/2; ring.position.y=baseY+0.07; grp.add(ring);
+    const fill=new THREE.Mesh(new THREE.CircleGeometry(r, 48), new THREE.MeshBasicMaterial({ color:C, transparent:true, opacity:0.10, side:THREE.DoubleSide, depthWrite:false }));
+    fill.rotation.x=-Math.PI/2; fill.position.y=baseY+0.05; grp.add(fill);
+    const wall=new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 40, 1, true), new THREE.MeshBasicMaterial({ color:C, transparent:true, opacity:sel?0.15:0.08, side:THREE.DoubleSide, depthWrite:false }));
+    wall.position.y=baseY+h/2; grp.add(wall);
+    const topRing=new THREE.Mesh(new THREE.RingGeometry(Math.max(0.3,r-0.3), r, 56), new THREE.MeshBasicMaterial({ color:0xbfe4ff, transparent:true, opacity:sel?0.8:0.45, side:THREE.DoubleSide, depthWrite:false }));
+    topRing.rotation.x=-Math.PI/2; topRing.position.y=baseY+h; grp.add(topRing);
+    const dot=new THREE.Mesh(new THREE.SphereGeometry(sel?0.7:0.55,14,10), new THREE.MeshBasicMaterial({ color:C, transparent:true, opacity:0.92, depthWrite:false }));
+    dot.position.y=baseY+0.8; grp.add(dot);
+    grp.position.set(+z.x||0, _maxTerrainOver(+z.x||0,+z.z||0,0), +z.z||0); grp.visible=vis; grp.userData.triggerMarker=true;
+    scene.add(grp); triggerMarkers.push(grp);
+  }
+}
+// Is a world point inside the volume? Pure — the frame loop and the tests share it.
+function _trigContains(z, x, y, zz){
+  const r=Math.max(0.5,+z.r||6), dx=x-(+z.x||0), dz=zz-(+z.z||0);
+  if(dx*dx+dz*dz > r*r) return false;
+  const baseY=(+z.y||0), h=Math.max(0.5,+z.h||4);
+  return (y >= baseY-0.05 && y <= baseY+h);
+}
+// One zone's edge logic for this frame. Pure: (zone, state, isInside, now) -> how many times to
+// fire. Keeps enter/exit/stay, once-only and the stay cadence testable without a running game.
+function _trigStep(z, st, inside, now){
+  let fire=0;
+  if(z.on==='enter'){ if(inside && !st.inside) fire=1; }
+  else if(z.on==='exit'){ if(!inside && st.inside) fire=1; }
+  else { if(inside){ if(!st.next || now>=st.next){ fire=1; st.next=now + Math.max(0.1,+z.every||1)*1000; } } else st.next=0; }
+  st.inside=inside;
+  if(fire && z.once){ if(st.fired) fire=0; else st.fired=1; }
+  return fire;
+}
+function updateTriggerZones(dt){
+  if(typeof NET!=='undefined' && NET.mode==='client') return;          // the graph runs host/solo — so does the trigger
+  if(!gameOn || (typeof editorOpen!=='undefined' && editorOpen) || (typeof paused!=='undefined' && paused)) return;
+  if(!triggerZones.length) return;
+  const now=performance.now(), feetY=player.pos.y-EYE;
+  for(let i=0;i<triggerZones.length;i++){
+    const z=triggerZones[i]; if(!z.ev) continue;
+    const st=_trigState[i] || (_trigState[i]={ inside:false, fired:0, next:0 });
+    let inside=false;
+    if(z.who!=='enemy'){
+      if(_trigContains(z, player.pos.x, feetY, player.pos.z)) inside=true;
+      if(!inside && typeof NET!=='undefined' && NET.mode==='host'){    // co-op: any teammate counts as "the player"
+        for(const id in NET.players){ const rp=NET.players[id]; if(!rp||!rp.posEye) continue;
+          if(rp.hp!=null && rp.hp<=0) continue;
+          if(_trigContains(z, rp.posEye.x, rp.posEye.y-EYE, rp.posEye.z)){ inside=true; break; } }
+      }
+    }
+    if(!inside && z.who!=='player' && typeof enemies!=='undefined'){
+      for(const en of enemies){ if(!en.mesh) continue;
+        if(_trigContains(z, en.mesh.position.x, en.mesh.position.y, en.mesh.position.z)){ inside=true; break; } }
+    }
+    if(_trigStep(z, st, inside, now) && typeof logicEvent==='function') logicEvent(z.ev);
+  }
+}
+function addTriggerZone(){
+  pushUndoSnapshot();
+  const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)};
+  const _y=(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity)?surfaceTopAt(_dp.x,_dp.z):((typeof terrainHeightAt==='function')?terrainHeightAt(_dp.x,_dp.z):0);
+  triggerZones.push(_migrateTrigger({ x:_dp.x, z:_dp.z, r:6, y:_y, h:4, on:'enter', who:'player', ev:'' }));
+  selTrigger=triggerZones.length-1; editorActive='triggers';
+  refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+}
+function removeTriggerZone(i){ pushUndoSnapshot(); triggerZones.splice(i,1); _trigState.splice(i,1); if(selTrigger>=triggerZones.length) selTrigger=triggerZones.length-1; refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel(); if(typeof _levelDirty!=='undefined') _levelDirty=true; }
 let deathZoneMarkers = [];
 let jumpPadMarkers = [];
 let fireZoneFx = [];   // per-zone THREE.Group: ground glow + flickering flames + warm light (visible in play + editor)
@@ -15867,6 +15967,7 @@ if(fireZones.length) refreshFireZones();
 if(deathZones.length) refreshDeathZoneMarkers();
 if(jumpPads.length) refreshJumpPadMarkers();
 if(ladders.length) refreshLadderMarkers();
+if(triggerZones.length) refreshTriggerMarkers();   // build 1072
 function addWaterfall(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)};
   const by=(typeof terrainHeightAt==='function')?terrainHeightAt(_dp.x,_dp.z):0;
   waterfalls.push(_migrateWaterfall({ x:_dp.x, z:_dp.z, y:+(by+8).toFixed(2), h:8, w:6 }));
@@ -18324,6 +18425,7 @@ function loadLevelFromNet(level){
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
+  triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
@@ -23027,7 +23129,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1071 · 2026-07-22';
+const BUILD_VERSION = 'build 1072 · 2026-07-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27761,6 +27863,7 @@ function loop(){
   updateDecals(dt);     // bullet holes fade + expire (pooled, hard-capped)
   updateLogic(dt);      // logic graph timers/delays/repeats (host/solo)
   updateHudWidgets();   // build 1058: custom HUD widgets mirror the logic variables (all modes)
+  updateTriggerZones(dt);   // build 1072: trigger volumes -> logic events (host/solo)
   updateChests(dt);
   checkProximity();   // runs in all modes; in duel it only considers trigger-animation props
 
@@ -28464,6 +28567,7 @@ const SEC_SUB = {
   loot:       'What enemies and crates drop when destroyed.',
   invitems:   'Define carryable items and what using them does.',
   buildmenu:  'The in-game radial Deploy menu — shapes/models players can spawn.',
+  triggers:   'Volumes that fire a Logic event when something enters, leaves or stays inside.',
   audiozones: 'Positional sound that plays while you stand inside a radius.',
   deathzones: 'Areas that kill on contact — pits, lava, out-of-bounds.',
   jumppads:   'Launch the player up or forward on contact.',
@@ -28500,8 +28604,8 @@ for(const _m of EDITOR_MODES) for(const _t of MODE_TARGETS[_m]) TARGET_MODE[_t]=
 let editorMode = 'build';
 try{ const _sm = localStorage.getItem('breach_editor_mode'); if(_sm && EDITOR_MODES.indexOf(_sm)>=0) editorMode = _sm; }catch(e){}
 // Which placeable-volume tool is showing inside the grouped 'Zones' section (build 649).
-const ZONE_TYPES = [['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire'],['waterzones','\ud83d\udca7','Water']];
-const ZONE_HOST = { audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones', waterzones:'edWaterZones' };
+const ZONE_TYPES = [['triggers','\u26a1','Trigger'],['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire'],['waterzones','\ud83d\udca7','Water']];
+const ZONE_HOST = { triggers:'edTriggers', audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones', waterzones:'edWaterZones' };
 let activeZoneType = 'audiozones';
 try{ const _z = localStorage.getItem('breach_editor_zone'); if(_z && ZONE_HOST[_z]) activeZoneType = _z; }catch(e){}
 // Show only the selected zone tool's host inside the grouped section.
@@ -29847,6 +29951,7 @@ function serializeLevel(){
     extractFx: { color: extractFxCfg.color, opacity: extractFxCfg.opacity, height: extractFxCfg.height, pillar: extractFxCfg.pillar },
     audioZones: audioZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, url:z.url||'', vol:+z.vol, loop:!!z.loop })),
     deathZones: deathZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3) })),
+    triggers: (triggerZones.length ? triggerZones.map(_migrateTrigger) : undefined),   // build 1072
     jumpPads: jumpPads.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), power:(+z.power||22) })),
     ladders: ladders.map(L=>({ x:+L.x, z:+L.z, r:(+L.r||1), y:(+L.y||0), h:(L.h!=null?+L.h:4), face:(+L.face||0) })),   // build 645
     waterZones: waterZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), color:(z.color!=null?+z.color:0x14586e), op:(z.op!=null?+z.op:0.72), wave:(z.wave!=null?+z.wave:1), flowDir:(+z.flowDir||0), flowSpd:(+z.flowSpd||0) })),
@@ -30344,6 +30449,59 @@ function renderImpactFxPanel(){
 
   host.appendChild(wrap);
 }
+function renderTriggersPanel(){
+  const host=(editorEl && editorEl.querySelector('#edTriggers')); if(!host) return;
+  host.innerHTML='';
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px';
+  intro.innerHTML='<b>Triggers</b> \u2014 a volume that fires a <b>Logic event</b> when something enters, leaves, or stays inside. It does nothing on its own: catch the event with an <b>On event</b> node in the <b>Logic</b> tab and decide what happens. Drag the blue dot with the move gizmo; set the radius and height below.';
+  host.appendChild(intro);
+  const addB=document.createElement('button'); addB.textContent='+ Add trigger (at me)'; addB.style.cssText='width:100%;margin-bottom:8px;';
+  addB.onclick=()=>addTriggerZone(); host.appendChild(addB);
+  if(!triggerZones.length){ const n=document.createElement('div'); n.className='hint';
+    n.innerHTML='None yet. Stand where you want one and click Add. <i>Example:</i> a trigger at the vault door with the event <b>reachedVault</b>, then in Logic: <b>On event reachedVault \u2192 Show message</b>.';
+    host.appendChild(n); return; }
+  triggerZones.forEach((z,i)=>{
+    const box=document.createElement('div'); box.style.cssText='border:1px solid rgba(124,196,255,0.28);border-radius:6px;padding:7px 9px;margin-bottom:6px;background:'+(i===selTrigger?'rgba(124,196,255,0.09)':'transparent')+';';
+    const hd=document.createElement('div'); hd.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;';
+    const tt=document.createElement('span'); tt.style.cssText='font-size:11px;color:#bfe4ff;'; tt.textContent=(z.ev?('\u26a1 '+z.ev):('Trigger '+(i+1)))+'  \u00b7  ('+(+z.x).toFixed(1)+', '+(+z.z).toFixed(1)+')';
+    const selB=document.createElement('button'); selB.textContent=(i===selTrigger?'selected':'select'); selB.style.cssText='font-size:10px;padding:2px 8px;';
+    selB.onclick=()=>{ selTrigger=i; editorActive='triggers'; refreshTriggerMarkers(); renderTriggersPanel(); if(typeof updateGizmo==='function') updateGizmo(); };
+    const del=document.createElement('button'); del.textContent='\u2715'; del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeTriggerZone(i);
+    const right=document.createElement('div'); right.style.cssText='display:flex;gap:4px;'; right.appendChild(selB); right.appendChild(del);
+    hd.appendChild(tt); hd.appendChild(right); box.appendChild(hd);
+    const touch=()=>{ if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+    const row=(label,node)=>{ const r=document.createElement('label'); r.style.cssText='display:flex;align-items:center;gap:8px;color:#bfe4ff;font-size:11px;margin:3px 0;';
+      const sp=document.createElement('span'); sp.textContent=label; sp.style.minWidth='58px'; r.appendChild(sp); r.appendChild(node); box.appendChild(r); return r; };
+    // the event this trigger fires — shares the graph's event dropdown so it can be picked, not retyped
+    const ev=document.createElement('input'); ev.type='text'; ev.value=z.ev; ev.placeholder='event name (e.g. reachedVault)'; ev.maxLength=60;
+    ev.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:11px;';
+    if(typeof _lgRefreshDatalists==='function'){ try{ _lgRefreshDatalists(); }catch(e){} ev.setAttribute('list','lgEvtList'); }
+    ev.onchange=()=>{ pushUndoSnapshot(); z.ev=ev.value.trim().slice(0,60); touch(); if(typeof _lgRefreshDatalists==='function') _lgRefreshDatalists(); renderTriggersPanel(); };
+    row('fires', ev);
+    const seg=(label, opts, cur, on)=>{ const wrap=document.createElement('div'); wrap.style.cssText='display:flex;gap:4px;flex:1;';
+      opts.forEach(o=>{ const b=document.createElement('button'); b.textContent=o[1]; b.style.cssText='flex:1;font-size:10px;padding:2px 4px;';
+        if(cur===o[0]){ b.style.background='rgba(124,196,255,0.28)'; b.style.color='#eafff7'; }
+        b.onclick=()=>{ pushUndoSnapshot(); on(o[0]); touch(); renderTriggersPanel(); }; wrap.appendChild(b); });
+      row(label, wrap); };
+    seg('when', [['enter','Enters'],['exit','Leaves'],['stay','Stays in']], z.on, v=>{ z.on=v; });
+    seg('who', [['player','Player'],['enemy','Enemy'],['any','Anything']], z.who, v=>{ z.who=v; });
+    const mkN=(label,key,min,max,step,after)=>{
+      const inp=document.createElement('input'); inp.type='number'; inp.min=min; inp.max=max; inp.step=step; inp.value=z[key];
+      inp.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
+      inp.onchange=()=>{ pushUndoSnapshot(); z[key]=Math.max(min,Math.min(max,+inp.value||min)); touch(); if(after) after(); refreshTriggerMarkers(); renderTriggersPanel(); };
+      row(label, inp); };
+    mkN('radius','r',0.5,400,0.5); mkN('height','h',0.5,200,0.5); mkN('base Y','y',-500,500,0.5);
+    if(z.on==='stay') mkN('every (s)','every',0.1,60,0.1);
+    const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:7px;color:#bfe4ff;font-size:11px;margin:4px 0 0;cursor:pointer;';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!z.once; cb.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
+    cb.onchange=()=>{ pushUndoSnapshot(); z.once=cb.checked; touch(); };
+    l.appendChild(cb); l.appendChild(document.createTextNode('only once per match'));
+    box.appendChild(l);
+    if(!z.ev){ const w=document.createElement('div'); w.className='hint'; w.style.cssText='font-size:10px;color:#ffb08a;margin:4px 0 0;';
+      w.textContent='\u26a0 No event name \u2014 this trigger does nothing yet.'; box.appendChild(w); }
+    host.appendChild(box);
+  });
+}
 function renderDeathZonesPanel(){
   const host = (editorEl && editorEl.querySelector('#edDeathZones')); if(!host) return;
   host.innerHTML='';
@@ -30495,6 +30653,7 @@ function restoreLevel(level){
   refreshPlayerSpawnMarker();
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); }
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
+  triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
@@ -30899,6 +31058,7 @@ function buildEditorPanel(){
     + sec('Cutscenes', 'cutscenes', '<div id="edCutscenes"></div>')
     + sec('Zones', 'zones',
           '<div id="edZonePicker"></div>'
+        + '<div id="edTriggers" class="zoneHost" data-zone="triggers"></div>'
         + '<div id="edAudioZones" class="zoneHost" data-zone="audiozones"></div>'
         + '<div id="edDeathZones" class="zoneHost" data-zone="deathzones"></div>'
         + '<div id="edJumpPads" class="zoneHost" data-zone="jumppads"></div>'
@@ -31071,6 +31231,7 @@ function buildEditorPanel(){
   if(typeof refreshLadderMarkers==='function') refreshLadderMarkers();   // build 645: show ladder markers while editing
   if(typeof renderFireZonesPanel==='function') renderFireZonesPanel();
   if(typeof renderWaterZonesPanel==='function') renderWaterZonesPanel();
+  if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072: trigger volumes
   if(typeof renderZonePicker==='function') renderZonePicker();        // build 649: the grouped Zones type picker
   if(typeof applyZoneVisibility==='function') applyZoneVisibility();   // ...and reveal only the active zone tool
   if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
@@ -34569,6 +34730,7 @@ function getSelPos(){
   if(editorActive==='turrets'){ const g=editorTargets.turrets.obj(); return g?g.position:null; }
   if(editorActive==='pstart'){ return playerSpawnMarker?playerSpawnMarker.position:null; }
   if(editorActive==='extract'){ return extractZone?extractZone.position:null; }
+  if(editorActive==='triggers'){ return (selTrigger>=0 && triggerMarkers[selTrigger])?triggerMarkers[selTrigger].position:null; }
   if(editorActive==='deathzones'){ return (selDeathZone>=0 && deathZoneMarkers[selDeathZone])?deathZoneMarkers[selDeathZone].position:null; }
   if(editorActive==='jumppads'){ return (selJumpPad>=0 && jumpPadMarkers[selJumpPad])?jumpPadMarkers[selJumpPad].position:null; }
   if(editorActive==='ladders'){ return (selLadder>=0 && ladderMarkers[selLadder])?ladderMarkers[selLadder].position:null; }
@@ -34610,6 +34772,8 @@ function setSelPos(v){
   } else if(editorActive==='extract'){
     const lim=ARENA*0.85; const x=Math.max(-lim,Math.min(lim,v.x)), z=Math.max(-lim,Math.min(lim,v.z));
     extractSpot={x,z}; extractPos.set(x,0,z); if(extractZone) extractZone.position.set(x, _maxTerrainOver(x, z, gameCfg.extractRadius||3.5), z);   // extraction sits on the terrain
+  } else if(editorActive==='triggers'){
+    const z=triggerZones[selTrigger]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();
   } else if(editorActive==='deathzones'){
     const z=deathZones[selDeathZone]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel();
   } else if(editorActive==='ladders'){
@@ -34741,7 +34905,7 @@ function buildGizmo(){
 function updateGizmo(){
   if(!gizmo) gizmo = buildGizmo();
   const gr = gizmo.userData.groups;
-  const movable = editorOpen && (selPickup>=0 || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || (editorActive==='deathzones'&&selDeathZone>=0) || (editorActive==='jumppads'&&selJumpPad>=0) || (editorActive==='ladders'&&selLadder>=0) || (editorActive==='firezones'&&selFireZone>=0) || (editorActive==='audiozones'&&selAudioZone>=0) || editorActive==='turrets');
+  const movable = editorOpen && (selPickup>=0 || editorActive==='props' || editorActive==='station' || editorActive==='lights' || editorActive==='spawns' || editorActive==='pstart' || editorActive==='extract' || (editorActive==='triggers'&&selTrigger>=0) || (editorActive==='deathzones'&&selDeathZone>=0) || (editorActive==='jumppads'&&selJumpPad>=0) || (editorActive==='ladders'&&selLadder>=0) || (editorActive==='firezones'&&selFireZone>=0) || (editorActive==='audiozones'&&selAudioZone>=0) || editorActive==='turrets');
   // build 1038: a locked primary (outliner padlock) never grows handles — locked means immovable
   const _lkO = editorActive==='props' ? propModels[editorTargets.props.idx]
     : editorActive==='lights' ? lightModels[editorTargets.lights.idx]
@@ -34758,7 +34922,7 @@ function updateGizmo(){
   if((editorActive==='lights'||editorActive==='spawns'||editorActive==='pstart') && mode==='scale') mode='translate';
   if(selPickup>=0) mode='translate';   // a pickup spot is just an x/z position
   if(editorActive==='extract') mode='translate';   // the extraction point only moves (radius lives in Game / waves)
-  if(editorActive==='deathzones'||editorActive==='jumppads'||editorActive==='ladders'||editorActive==='audiozones') mode='translate';   // these zones only move; size lives in their panel
+  if(editorActive==='triggers'||editorActive==='deathzones'||editorActive==='jumppads'||editorActive==='ladders'||editorActive==='audiozones') mode='translate';   // these zones only move; size lives in their panel
   // build 556: fire zones now support rotate + scale gizmo modes (move/rotate/scale), like a prop
   if(editorActive==='turrets') mode='translate';   // move with the gizmo; facing/scale/arc live in the Turrets panel
   gr.translate.visible = (mode==='translate');

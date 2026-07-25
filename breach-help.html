@@ -411,12 +411,29 @@ engine loop, brake, skid, boost. A built-in <b>Freesound</b> browser searches fr
 <b>AI scene builder</b> — describe a scene in a sentence and it searches and places matching models (works best with a Poly Pizza or Sketchfab key).</p>
 <h3>Zones</h3>
 <p>Paintable volumes under World → Zones — pick a type at the top of the section, then <b>+ Add (at me)</b> drops one
-where you stand. <b>Audio zones</b> (positional sound while inside a radius: URL, volume, loop), <b>Death zones</b>
+where you stand. <b>Triggers</b> (see below), <b>Audio zones</b> (positional sound while inside a radius: URL, volume, loop), <b>Death zones</b>
 (instant kill between Base&nbsp;Y and Base&nbsp;Y&nbsp;+&nbsp;Height — lava, pits, out-of-bounds), <b>Jump pads</b>
 (launch on contact, scaled by the Movement fold's Launch power), <b>Ladders</b> (climbable volumes: <kbd>W</kbd> up,
 <kbd>S</kbd> down, jump to hop off; Facing sets which side you step off at the top), and <b>Fire zones</b>
 (damage per second inside, with a full particle look: density, size, hue, turbulence, wind, saturation, sparks,
 smoke mode — hue 30 is natural fire, 210 blue, 285 purple; saturation 0 turns it into grey smoke).</p>
+<h4>Triggers — “when something gets <i>here</i>”</h4>
+<p>Every other zone is a fixed behaviour: a death zone kills, a jump pad launches. A <b>trigger</b> does nothing
+by itself — it fires a <b>Logic event</b> and hands the moment to your graph, which is where your game actually
+lives. Before triggers the only things that could start a chain were match start, a timer, an enemy dying, a wave
+starting, or the player pressing <kbd>E</kbd> on a prop. Now you can say “when the player reaches <i>here</i>.”</p>
+<div class="tblwrap"><table>
+<tr><th>Control</th><th>What it does / how to use it</th></tr>
+<tr><td>Event</td><td>The Logic event name it fires, e.g. <code>reachedVault</code>. The field shares the graph's event dropdown, so pick a name you already use instead of retyping it — and any name you type here shows up in the <b>On event</b> node's list. <b>A trigger with no event name does nothing</b>, and the panel tells you so.</td></tr>
+<tr><td>When</td><td><b>Enters</b> fires on the frame something crosses in (not every frame it stands there). <b>Leaves</b> is the mirror. <b>Stays in</b> pulses on a repeat interval for as long as something is inside — use it for damage-over-time, a capture point ticking up, or an alarm.</td></tr>
+<tr><td>Who</td><td><b>Player</b>, <b>Enemy</b>, or <b>Anything</b>. In co-op, “Player” means <i>any</i> living teammate — a door opens for whoever reaches it first, and a downed teammate doesn't hold it open.</td></tr>
+<tr><td>Radius / Height / Base Y</td><td>A cylinder, exactly like the other zones: it spans Base&nbsp;Y up to Base&nbsp;Y&nbsp;+&nbsp;Height. Height matters — a short trigger can be <i>jumped over</i>, and a trigger on a balcony ignores the floor below it. Drag the blue dot with the move gizmo.</td></tr>
+<tr><td>Repeat every</td><td>Only used by <b>Stays in</b>: seconds between pulses (0.1–60).</td></tr>
+<tr><td>Only once</td><td>Fires at most once per match, whichever mode it's in. Restarting the match re-arms it, so a retry plays the same as a first attempt.</td></tr>
+</table></div>
+<p><b>The whole loop, end to end:</b> drop a trigger at the vault door, set its event to <code>reachedVault</code>, then in
+the <b>Logic</b> tab add <b>On event reachedVault → Show message</b> (or Open door, Spawn, Play cutscene, Set variable —
+anything the graph can do). Triggers are evaluated by the host in multiplayer, and never while you're editing or paused.</p>
 <h4>Water zones — control by control</h4>
 <div class="tblwrap"><table>
 <tr><th>Control</th><th>Range</th><th>What it does / how to use it</th></tr>
