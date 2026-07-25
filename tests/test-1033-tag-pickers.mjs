@@ -36,7 +36,8 @@ const evts = env.events();
 eq(evts.join(','), 'platePressed,roundStart', 'event names from prop signals + graph nodes, deduped and sorted');
 
 // ---- wiring ----
-assert(/\{k:'target',l:'tag',w:80,listId:'lgTagList'\}/.test(src), 'the Do-action tag field opts into the tag list');
+assert(/\{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:\['verb',\['toggle','open','close','anim','unlock'\]\]\}/.test(src),
+  'the Do-action tag field opts into the tag list (and build 1073 hides it for the verbs that take a place instead)');
 eq((src.match(/\{k:'name',l:'name',w:86,listId:'lgEvtList'\}/g)||[]).length, 2, 'On event AND Send event name fields opt into the event list');
 assert(/if\(pm\.listId\) inp\.setAttribute\('list', pm\.listId\);/.test(src), 'the param builder wires the datalist');
 assert(/if\(pm\.listId==='lgEvtList' \|\| pm\.listId==='lgVarList'\) _lgRefreshDatalists\(\);/.test(src), 'naming a new event (or variable, build 1060) refreshes the list immediately');

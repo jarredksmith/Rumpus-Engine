@@ -8115,7 +8115,8 @@ function _lgPulse(id, pin){
       break; }
     case 'once': { if(pin==='reset'){ st.done=false; break; } if(st.done) break; st.done=true; _lgFollow(id,0); break; }
     case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
-    case 'do': { try{ _applySignalAction({ do:p.verb||'toggle', target:String(p.target||'').trim(), clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'' }, null); }catch(e){} _lgFollow(id,0); break; }
+    case 'do': { try{ _applySignalAction({ do:p.verb||'toggle', target:String(p.target||'').trim(), clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
+        etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim() }, null); }catch(e){} _lgFollow(id,0); break; }
     case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));   // {score} interpolates live variables
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
@@ -8339,7 +8340,7 @@ const LG_DEFS = {
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:96,sel:['toggle','open','close','anim','unlock','win','cutscene','objective','checkpoint','sound']},{k:'target',l:'tag',w:80,listId:'lgTagList'},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound'],listId:'lgSndList'}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb','sound'],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb','spawn']},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport']],listId:'lgPlaceList'}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -8409,6 +8410,21 @@ function _lgRefreshDatalists(){
   for(const u of _lgSoundOptions()){ const op=document.createElement('option'); op.value=u; sl.appendChild(op); }
   const vl=mk('lgVarList');   // build 1060: variable names, shared by the logic nodes and the HUD widget fields
   for(const nm of _lgVarOptions()){ const op=document.createElement('option'); op.value=nm; vl.appendChild(op); }
+  const pl=mk('lgPlaceList');   // build 1073: every PLACE the world verbs can point at
+  for(const o of _lgPlaceOptions()){ const op=document.createElement('option'); op.value=o.v; op.label=o.l; pl.appendChild(op); }
+  const il=mk('lgItemList');    // build 1073: inventory item ids, for a spawned collectible
+  if(typeof invCatalog!=='undefined') for(const id of Object.keys(invCatalog)){ const op=document.createElement('option'); op.value=id; op.label=(invCatalog[id]&&invCatalog[id].name)||id; il.appendChild(op); }
+}
+// build 1073: a "place" is a TAG — the same naming system props already use — so the author points at
+// something they can see and select in the viewport. Trigger volumes answer to their own event name, so the
+// zone that fires a rule can also be the spot it acts on ("On reachedVault -> Spawn 3 brutes at reachedVault").
+function _lgPlaceOptions(){
+  const out=[{ v:'me', l:'the player' }, { v:'start', l:'the level start' }];
+  const seen={};
+  if(typeof propModels!=='undefined') for(const o of propModels){ const t=o&&o.userData&&o.userData.tag; if(t) seen[t]=(seen[t]||0)+1; }
+  for(const t of Object.keys(seen).sort()) out.push({ v:t, l:seen[t]+(seen[t]===1?' prop':' props') });
+  if(typeof triggerZones!=='undefined') for(const z of triggerZones){ if(z&&z.ev&&!seen[z.ev]){ seen[z.ev]=1; out.push({ v:z.ev, l:'trigger volume' }); } }
+  return out;
 }
 function _lgDirty(){ if(typeof _levelDirty!=='undefined') _levelDirty=true; const c=document.getElementById('lgCount'); if(c) c.textContent=logicGraph.nodes.length+' node'+(logicGraph.nodes.length===1?'':'s'); }
 function _lgAddNode(type, x, y){
@@ -8468,16 +8484,26 @@ function _lgRenderNode(n){
   del.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _lgDelNode(n.id); };
   hd.appendChild(del); el.appendChild(hd);
   const body=document.createElement('div'); body.style.cssText='padding:6px 8px 8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:14px;';
+  // build 1073: the effective value of a select param, falling back to the option the browser is actually
+  // SHOWING when the node has never been touched — otherwise a fresh node hides fields that belong to its
+  // own default verb, and an imported graph that omits a key does the same.
+  const _pval=(k)=>{ const raw=String(n.p[k]==null?'':n.p[k]); if(raw) return raw;
+    const c=d.params.find(q=>q.k===k); if(!c||!c.sel||!c.sel.length) return '';
+    return String(Array.isArray(c.sel[0])?c.sel[0][0]:c.sel[0]); };
+  const _cond=(c)=>{ if(!c) return true; const v=_pval(c[0]); return Array.isArray(c[1]) ? c[1].indexOf(v)>=0 : v===c[1]; };
   for(const pm of d.params){
     if(pm.ifk && !n.p[pm.ifk]) continue;
-    if(pm.ifv && String(n.p[pm.ifv[0]]||'')!==pm.ifv[1]) continue;
+    if(!_cond(pm.ifv) || !_cond(pm.ifv2)) continue;
     const wrap=document.createElement('label'); wrap.style.cssText='display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;';
     if(pm.l) wrap.appendChild(document.createTextNode(pm.l));
     let inp;
-    if(pm.sel){ inp=document.createElement('select'); for(const o of pm.sel){ const op=document.createElement('option'); op.value=o; op.textContent=o; if(String(n.p[pm.k]||'')===o) op.selected=true; inp.appendChild(op); } inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
+    if(pm.sel){ inp=document.createElement('select'); const cur=_pval(pm.k);
+      for(const o of pm.sel){ const ov=Array.isArray(o)?o[0]:o, ot=Array.isArray(o)?o[1]:o;
+        const op=document.createElement('option'); op.value=ov; op.textContent=ot; if(cur===ov) op.selected=true; inp.appendChild(op); }
+      inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
     else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!n.p[pm.k]; inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
     else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList') _lgRefreshDatalists(); }; }
-    if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:100px;';
+    if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:'+(pm.w||100)+'px;';
     inp.onpointerdown=(e)=>e.stopPropagation();
     wrap.appendChild(inp); body.appendChild(wrap);
   }
@@ -8623,6 +8649,9 @@ function _applySignalAction(s, src){
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
     if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
     if(s.do==='emit'){ if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(String(s.text||'').trim()); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed.
+    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'){   // build 1073: the world verbs take no tag — they act on a PLACE, or on WHO
+      if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
+      return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
       if(!src || !src.userData) return;
       const i=propModels.indexOf(src);
@@ -8664,6 +8693,96 @@ function _applySignalAction(s, src){
         try{ setLightOn(g, on); broadcastLight(i, on); }catch(e){}
       }
     }
+}
+// ---------- build 1073: THE WORLD VERBS ----------
+// Every verb above this line changes a PROP (open it, animate it, unlock it) or the UI (a message, an
+// objective). These change the WORLD: they make enemies, they hurt and heal people, and they move them
+// somewhere else. They are the difference between a logic graph that is a switch panel and one that is a game.
+// They run on the authoritative side only — the host owns enemy spawns, damage and positions and streams the
+// results in the world snapshot, so a client applying them too would double-count.
+function _lgPlaceAt(tag){
+  const raw=String(tag==null?'':tag).trim(), t=raw.toLowerCase();
+  if(!raw || t==='me' || t==='player') return { x:player.pos.x, y:player.pos.y-EYE, z:player.pos.z };
+  if(t==='start'){ const ty=(typeof terrainHeightAt==='function')?terrainHeightAt(playerSpawn.x, playerSpawn.z):0;
+    return { x:playerSpawn.x, y:ty+(+playerSpawn.y||0), z:playerSpawn.z }; }
+  const hits=[];
+  if(typeof propModels!=='undefined') for(const o of propModels){ if(o && o.userData && o.userData.tag===raw) hits.push({ x:o.position.x, y:o.position.y, z:o.position.z }); }
+  if(typeof triggerZones!=='undefined') for(const z of triggerZones){ if(z && z.ev===raw) hits.push({ x:+z.x||0, y:+z.y||0, z:+z.z||0 }); }
+  if(!hits.length) return null;                      // a tag nobody carries: do nothing rather than act at 0,0
+  return hits[(Math.random()*hits.length)|0];        // several props share a tag -> pick one, so a squad scatters
+}
+function _lgEnemyTargets(who){
+  if(typeof enemies==='undefined' || !enemies.length) return [];
+  const live=[]; for(const e of enemies){ if(e && e.hp>0 && e.mesh) live.push(e); }
+  if(who!=='nearest') return live;
+  let best=null, bd=Infinity;
+  for(const e of live){ const dx=e.mesh.position.x-player.pos.x, dz=e.mesh.position.z-player.pos.z, d=dx*dx+dz*dz; if(d<bd){ bd=d; best=e; } }
+  return best?[best]:[];
+}
+function _lgPlacePlayer(p){
+  player.pos.set(p.x, p.y+EYE, p.z);
+  player.vel.set(0,0,0); if(player.extVel) player.extVel.set(0,0,0); player.onGround=false;   // arrive standing still, never mid-fall
+  try{ if(typeof releaseHeld==='function') releaseHeld(); }catch(e){}
+}
+// One message carries every world verb that lands on a REMOTE player, so co-op teammates get teleported,
+// hurt and healed by the same rule that moved the host — without a new message type per verb.
+function _wactSend(o){
+  if(typeof NET==='undefined' || NET.mode!=='host') return;
+  for(const cid in NET.conns){ try{ NET.conns[cid].send(Object.assign({ t:'wact' }, o)); }catch(e){} }
+}
+function _applyWorldAction(s){
+  const who=(s.who==='enemies'||s.who==='nearest')?s.who:'player';
+  const amt=Math.max(0, Math.min(99999, Math.round(+s.amt||0)));
+  if(s.do==='spawn'){
+    if(typeof spawnEnemy!=='function') return;
+    const n=Math.max(1, Math.min(20, Math.round(+s.n||1)));        // a bounded squad; 'spawn 5000' is a typo, not a design
+    const ty=(typeof ENEMY_TYPES!=='undefined' && ENEMY_TYPES[s.etype]) ? s.etype : 'grunt';
+    const at=_lgPlaceAt(s.at);
+    for(let i=0;i<n;i++){
+      const sp={ type:ty };
+      if(at){ const a=Math.random()*6.2831853, r=(n>1)?(1.5+Math.random()*2.5):0;   // never stack a squad on one point
+        sp.x=at.x+Math.cos(a)*r; sp.z=at.z+Math.sin(a)*r; }
+      try{ spawnEnemy(sp); }catch(e){}                              // spawnEnemy already un-buries and re-samples
+    }
+    if(typeof updateHUD==='function') updateHUD();
+    return;
+  }
+  if(s.do==='pickup'){
+    if(typeof buildPowerupMesh!=='function' || typeof powerups==='undefined') return;
+    const at=_lgPlaceAt(s.at); if(!at) return;
+    const kind=String(s.pk||'health'), item=(kind==='item')?String(s.item||''):undefined;
+    // _applyPickupXform snaps to the terrain and treats y as an OFFSET, so hand it the height the place sits
+    // ABOVE the ground: a pickup asked for at a balcony prop lands on the balcony, not underneath it.
+    const base=(typeof _maxTerrainOver==='function')?_maxTerrainOver(at.x, at.z, 1.2):0;
+    const spot={ x:at.x, z:at.z, y:Math.max(0, at.y-base) };
+    try{
+      const mesh=buildPowerupMesh(kind, item); _applyPickupXform(mesh, spot); scene.add(mesh);
+      powerups.push({ id:_puId++, x:at.x, z:at.z, kind, item, interact:false, ready:true, cd:0, mesh });
+    }catch(e){}
+    return;
+  }
+  if(s.do==='teleport'){
+    const at=_lgPlaceAt(s.at); if(!at) return;
+    if(who==='player'){ _lgPlacePlayer(at); _wactSend({ tp:[at.x, at.y, at.z] }); return; }
+    for(const e of _lgEnemyTargets(who)){
+      const fy=(typeof _spawnFloorAt==='function')?_spawnFloorAt(at.x, at.z):at.y;
+      e.mesh.position.set(at.x, fy+1.4, at.z); e.wp=null; e.wpUntil=0;                 // drop any stale waypoint
+    }
+    return;
+  }
+  if(s.do==='damage' || s.do==='heal' || s.do==='kill'){
+    if(who==='player'){
+      if(s.do==='kill'){ try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} _wactSend({ k:1 }); }
+      else if(s.do==='heal'){ if(amt>0){ player.hp=Math.min(player.maxHp, player.hp+amt); if(typeof updateHUD==='function') updateHUD(); _wactSend({ h:amt }); } }
+      else if(amt>0){ try{ applyEnemyDamageToSelf(amt, null, null); }catch(e){} _wactSend({ d:amt }); }
+      return;
+    }
+    for(const e of _lgEnemyTargets(who)){
+      if(s.do==='heal'){ if(amt>0) e.hp=Math.min(e.maxHp||(e.hp+amt), e.hp+amt); continue; }
+      const d=(s.do==='kill')?(e.hp+1):amt;                        // kill routes through the normal death (drops, kill feed, On-enemy-killed)
+      if(d>0) try{ enemyHurt(e, d, player.pos.x, player.pos.z); }catch(err){}
+    }
+  }
 }
 // build 682: CONTACT signals (when:'contact') fire when another prop is touching this one (a box on a pressure
 // plate) or sitting inside it (an item dropped in a bin). Authoritative side only (host/solo); the actions
@@ -19976,6 +20095,12 @@ function handleHostMsg(msg){
   else if(msg.t==='pDel'){ netApplyDelProp(msg.nid); }  // a prop was deleted
   else if(msg.t==='pMov'){ netApplyMovProp(msg.nid, msg.x); }   // a prop was moved/rotated/scaled
   else if(msg.t==='death'){ playerDeathFx(msg.p[0], msg.p[1], msg.p[2]); }   // someone was eliminated
+  else if(msg.t==='wact'){   // build 1073: a world verb from the host's logic graph landed on US
+    if(msg.tp && typeof _lgPlacePlayer==='function') _lgPlacePlayer({ x:+msg.tp[0]||0, y:+msg.tp[1]||0, z:+msg.tp[2]||0 });
+    if(msg.k) try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){}
+    else if(msg.d>0) try{ applyEnemyDamageToSelf(+msg.d||0, null, null); }catch(e){}
+    if(msg.h>0){ player.hp=Math.min(player.maxHp, player.hp+(+msg.h||0)); if(typeof updateHUD==='function') updateHUD(); }
+  }
 }
 
 // ---- connection lifecycle ----
@@ -23129,7 +23254,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1072 · 2026-07-25';
+const BUILD_VERSION = 'build 1073 · 2026-07-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31630,7 +31755,7 @@ function buildSignalsUI(sgBody, store, rerender){
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
     r.appendChild(mkSel([['destroyed','On destroyed'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));
-    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event']], s.do, v=>{ s.do=v; }));
+    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag (or: this)'; ti.value=s.target||'';
     if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagListThis'); }
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';

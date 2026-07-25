@@ -409,7 +409,7 @@ engine loop, brake, skid, boost. A built-in <b>Freesound</b> browser searches fr
 <h3>Auto-generate</h3>
 <p>Procedurally builds a starting layout (cover, buildings, scatter) you then edit by hand. There's also an
 <b>AI scene builder</b> — describe a scene in a sentence and it searches and places matching models (works best with a Poly Pizza or Sketchfab key).</p>
-<h3>Zones</h3>
+<h3 id="zones">Zones</h3>
 <p>Paintable volumes under World → Zones — pick a type at the top of the section, then <b>+ Add (at me)</b> drops one
 where you stand. <b>Triggers</b> (see below), <b>Audio zones</b> (positional sound while inside a radius: URL, volume, loop), <b>Death zones</b>
 (instant kill between Base&nbsp;Y and Base&nbsp;Y&nbsp;+&nbsp;Height — lava, pits, out-of-bounds), <b>Jump pads</b>
@@ -846,6 +846,25 @@ prop the signal lives on, no tag needed. So "press E on the door, the door opens
 <tr><td>Set checkpoint</td><td>Drop a respawn checkpoint here</td></tr>
 <tr><td>Play sound</td><td>Play a sound URL</td></tr>
 </table></div>
+<h4 id="worldverbs">The world verbs</h4>
+<p>Everything above changes a <i>prop</i> or the UI. These change the <b>world</b> — and because they live in the same
+list, a prop signal and a <a href="#logic">Logic</a> <i>Do action</i> node can both use them. None of them take a
+target tag; they take a <b>place</b> or a <b>who</b>.</p>
+<div class="tblwrap"><table>
+<tr><th>Do…</th><th>Effect</th></tr>
+<tr><td>Spawn enemies</td><td>Make 1–20 enemies of any type (Grunt · Runner · Brute · Gunner · Sapper · Shieldbearer · Charger · BOSS) at a <b>place</b>. A squad scatters in a small ring instead of stacking on one point, and every one is un-buried and floor-snapped exactly like a wave spawn.</td></tr>
+<tr><td>Spawn pickup</td><td>Drop a live pickup pad — any kind the Pickups section offers, including a specific inventory item — at a <b>place</b>. It lands at that place's height, so a pickup asked for at a balcony prop is <i>on</i> the balcony.</td></tr>
+<tr><td>Damage / Heal</td><td>By an amount, to <b>the player</b>, <b>all enemies</b>, or the <b>nearest enemy</b>. Damage runs the normal hurt path (flash, shake, shield soak); healing never exceeds max health.</td></tr>
+<tr><td>Kill</td><td>Same three targets, no amount. Killing an enemy runs the <i>real</i> death — coin drops, the kill feed, the ragdoll, and the graph's <i>On enemy killed</i> event. Killing the player runs the normal defeat flow, so “Respawn at checkpoint” still applies.</td></tr>
+<tr><td>Teleport</td><td>Move <b>the player</b>, <b>all enemies</b> or the <b>nearest enemy</b> to a <b>place</b>. The player arrives standing still (never mid-fall) and drops anything they were carrying; enemies land on the real floor and re-decide where to go.</td></tr>
+</table></div>
+<p><b>A “place” is a tag.</b> Type or pick one and it resolves to the prop carrying it — the same naming system the
+rest of the signal system uses, so you point at something you can see and select in the viewport. Two names are
+built in: <b>me</b> (blank means the same thing) is wherever the player is standing, and <b>start</b> is the level's
+player start. A <a href="#zones">trigger volume</a> answers to its own <i>event name</i>, so the zone that fires a
+rule can also be the spot it acts on — <i>On event reachedVault → Spawn 4 Brutes at reachedVault</i>. If several
+props share a tag, each use picks one at random, so “spawn at guardPost” scatters a patrol across all of them.
+A place nobody carries does <b>nothing</b> — the verb is skipped rather than firing at the world origin.</p>
 <h4>The advanced gates</h4>
 <ul>
   <li><b>Needs N different senders</b> — the receiving prop only reacts once N <i>different</i> props have signalled
@@ -877,14 +896,15 @@ models ship, and every sound URL the level already uses — pick from the list o
 <tr><td><b>Events</b> (cyan)</td><td><i>On start</i> · <i>On event</i> (named — fired by prop signals via <b>→ Logic event</b> or by <i>Send event</i>) · <i>Every X sec</i> (optional fire limit) · <i>On enemy killed</i> · <i>On wave start</i></td></tr>
 <tr><td><b>Flow</b> (yellow)</td><td><i>Branch</i> (compare two values with ==/!=/&lt;/&le;/&gt;/&ge; — either side can be a number or a variable name) · <i>Counter</i> (an "each count" output plus a "target reached" output that auto-resets; reset pin) · <i>Delay</i> · <i>Repeat</i> (N passes, optional gap, <code>#i</code> is the loop index) · <i>Random</i> (up to four weighted outputs) · <i>Only once</i> (reset pin)</td></tr>
 <tr><td><b>State</b> (green)</td><td><i>Set variable</i> (a value, or a random integer in a min–max range) · <i>Change variable</i> (+/−)</td></tr>
-<tr><td><b>Actions</b> (orange)</td><td><i>Do action</i> — every signal verb: toggle/open/close, play anim, unlock, cutscene, objective, checkpoint, sound · <i>Show message</i> (with live <code>{variable}</code> interpolation: <code>SCORE {score}!</code>) · <i>Send event</i> · <i>Win level</i> · <i>Lose level</i></td></tr>
+<tr><td><b>Actions</b> (orange)</td><td><i>Do action</i> — every signal verb: toggle/open/close, play anim, unlock, cutscene, objective, checkpoint, sound, plus the <a href="#worldverbs">world verbs</a> (spawn enemies, spawn pickup, damage, heal, kill, teleport) · <i>Show message</i> (with live <code>{variable}</code> interpolation: <code>SCORE {score}!</code>) · <i>Send event</i> · <i>Win level</i> · <i>Lose level</i></td></tr>
 </table></div>
 <p><b>Reusable functions</b> are the <i>On event</i> / <i>Send event</i> pair: build a chain once behind a named
 event and call it from anywhere — the calling chain continues after the call. A classic graph:
 <i>On start</i> → <i>Set score = 0</i>; a pressure plate fires <b>→ Logic event</b> "scored" → <i>Change score +1</i>
 → <i>Branch score ≥ 5</i> → <i>Show message</i> → <i>Win level</i>.</p>
 <div class="box">The graph runs on the <b>host</b> (its world actions broadcast through the signal system, so
-multiplayer stays in sync) and pauses while the editor is open — playtest to see it run. Variables and timers reset
+multiplayer stays in sync — spawned enemies and pickups stream in the world snapshot, and a teleport, damage or
+heal aimed at “the player” reaches every teammate) and pauses while the editor is open — playtest to see it run. Variables and timers reset
 at every match start. A mis-wired infinite loop can't freeze the game: the graph stops for that frame and a toast
 tells you to add a <i>Delay</i>.</div>
 <h2><span class="tag">Systems</span>Pickups &amp; inventory</h2>
