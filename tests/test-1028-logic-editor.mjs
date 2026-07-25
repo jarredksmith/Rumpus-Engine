@@ -8,15 +8,15 @@ const src = gameSource();
 
 // ---- every runtime node type has an editor definition, and vice versa ----
 const defs = new Function('return ' + extractConst('LG_DEFS', src) + ';')();
-const runtimeTypes = ['start','event','interval','onkill','onwave','branch','counter','delay','repeat','random','once','setvar','addvar','do','toast','emit','win','lose'];
+const runtimeTypes = ['start','event','interval','onkill','onwave','onspot','onhurt','branch','counter','delay','repeat','random','once','setvar','addvar','do','toast','emit','win','lose'];
 for(const t of runtimeTypes) assert(defs[t], 'palette covers runtime type: '+t);
 eq(Object.keys(defs).length, runtimeTypes.length, 'no orphan editor types the runtime would ignore');
 // pin the pieces the interpreter dispatches on
 const pulse = extractFunction('_lgPulse', src);
-for(const t of runtimeTypes){ if(['start','event','interval','onkill','onwave'].includes(t)) continue;
+for(const t of runtimeTypes){ if(['start','event','interval','onkill','onwave','onspot','onhurt'].includes(t)) continue;
   assert(new RegExp("case '"+t+"':").test(pulse), 'the interpreter handles '+t); }
 // entry nodes have no input pin; terminal actions have no outputs
-for(const t of ['start','event','interval','onkill','onwave']) assert(!defs[t].ins, t+' is an entry — nothing wires INTO it');
+for(const t of ['start','event','interval','onkill','onwave','onspot','onhurt']) assert(!defs[t].ins, t+' is an entry — nothing wires INTO it');
 for(const t of ['win','lose']) eq(defs[t].outs.length, 0, t+' is terminal — nothing continues after it');
 // branch/counter/repeat expose the outputs the runtime fires
 eq(defs.branch.outs.join(','), 'true,false', 'branch outs match _lgFollow(0/1)');

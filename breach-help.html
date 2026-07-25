@@ -892,6 +892,7 @@ target tag; they take a <b>place</b> or a <b>who</b>.</p>
 <tr><td>Give item / Take item</td><td>Put an <a href="#pickups">inventory item</a> straight into the player's hands, or take it back — the quest reward, and the fuse that gets spent when it's used. Pick the item from a dropdown of everything the level defines; a count is optional.</td></tr>
 <tr><td>Set player stat</td><td>Bend one of five rules of the game: <b>Move speed</b>, <b>Jump height</b>, <b>Gravity</b>, <b>Max health</b>, <b>Damage dealt</b>. See below.</td></tr>
 <tr><td>Play music</td><td>Take over the music track for this match — the boss theme when the door opens. A <b>blank URL is deliberate silence</b>. It never overwrites the level's own music setting, so a theme you played while testing can't end up saved into the level, and the next match starts on the level's track again.</td></tr>
+<tr><td>Command enemies</td><td>Tell <b>all enemies</b> or the <b>nearest</b> one what to do: <b>Hunt the player</b> · <b>Patrol</b> · <b>Hold position</b> · <b>Alert them to</b> a place (identical to hearing a gunshot there — they wake and converge) · <b>Lose the player</b> (they forget you and their search timers reset: the stealth reset) · <b>Move their post to</b> a place (reassign a guard; it replaces any authored patrol route). Every one of these drives state the AI already reads, so a commanded enemy behaves like an authored one from the very next frame.</td></tr>
 </table></div>
 <p><b>Every stat is a multiplier of what the level authored</b>, which means <b>×1 always puts it back exactly</b> —
 there's no hidden “original value” to lose track of. Move speed ×0.4 is a swamp, Gravity ×0.3 is the moon, Jump ×2
@@ -934,15 +935,26 @@ props and lights already carry (with a count), every event name declared anywher
 models ship, and every sound URL the level already uses — pick from the list or type a brand-new value.</p>
 <div class="tblwrap"><table>
 <tr><th>Category</th><th>Nodes</th></tr>
-<tr><td><b>Events</b> (cyan)</td><td><i>On start</i> · <i>On event</i> (named — fired by prop signals via <b>→ Logic event</b> or by <i>Send event</i>) · <i>Every X sec</i> (optional fire limit) · <i>On enemy killed</i> · <i>On wave start</i></td></tr>
+<tr><td><b>Events</b> (cyan)</td><td><i>On start</i> · <i>On event</i> (named — fired by prop signals via <b>→ Logic event</b>, by <i>Send event</i>, by a <a href="#zones">trigger volume</a>, or by a line of <a href="#dialogue">dialogue</a>) · <i>Every X sec</i> (optional fire limit) · <i>On enemy killed</i> · <i>On enemy spots you</i> · <i>On enemy damaged</i> · <i>On wave start</i></td></tr>
 <tr><td><b>Flow</b> (yellow)</td><td><i>Branch</i> (compare two values with ==/!=/&lt;/&le;/&gt;/&ge; — either side can be a number or a variable name) · <i>Counter</i> (an "each count" output plus a "target reached" output that auto-resets; reset pin) · <i>Delay</i> · <i>Repeat</i> (N passes, optional gap, <code>#i</code> is the loop index) · <i>Random</i> (up to four weighted outputs) · <i>Only once</i> (reset pin)</td></tr>
 <tr><td><b>State</b> (green)</td><td><i>Set variable</i> (a value, or a random integer in a min–max range) · <i>Change variable</i> (+/−)</td></tr>
-<tr><td><b>Actions</b> (orange)</td><td><i>Do action</i> — every signal verb: toggle/open/close, play anim, unlock, cutscene, objective, checkpoint, sound, plus the <a href="#worldverbs">world verbs</a> (spawn enemies, spawn pickup, damage, heal, kill, teleport, give/take item, set player stat, play music) · <i>Show message</i> (with live <code>{variable}</code> interpolation: <code>SCORE {score}!</code>) · <i>Send event</i> · <i>Win level</i> · <i>Lose level</i></td></tr>
+<tr><td><b>Actions</b> (orange)</td><td><i>Do action</i> — every signal verb: toggle/open/close, play anim, unlock, cutscene, objective, checkpoint, sound, plus the <a href="#worldverbs">world verbs</a> (spawn enemies, spawn pickup, damage, heal, kill, teleport, give/take item, set player stat, play music, command enemies) · <i>Show message</i> (with live <code>{variable}</code> interpolation: <code>SCORE {score}!</code>) · <i>Send event</i> · <i>Win level</i> · <i>Lose level</i></td></tr>
 </table></div>
 <p><b>Reusable functions</b> are the <i>On event</i> / <i>Send event</i> pair: build a chain once behind a named
 event and call it from anywhere — the calling chain continues after the call. A classic graph:
 <i>On start</i> → <i>Set score = 0</i>; a pressure plate fires <b>→ Logic event</b> "scored" → <i>Change score +1</i>
 → <i>Branch score ≥ 5</i> → <i>Show message</i> → <i>Win level</i>.</p>
+<h3>Enemy hooks</h3>
+<p>The AI had exactly one connection to the graph: <i>On enemy killed</i>. Two more entries close the loop.</p>
+<div class="tblwrap"><table>
+<tr><th>Node</th><th>Fires when</th></tr>
+<tr><td><i>On enemy spots you</i></td><td>An enemy goes from oblivious to alerted — <b>once per alert</b>, not every frame it's hunting you. It covers <i>every</i> way that happens: seeing you, hearing gunfire, catching a blast, or a rule telling it to. It re-arms when the enemy gives up, so the next time it notices you it fires again.</td></tr>
+<tr><td><i>On enemy damaged</i></td><td>An enemy takes a hit <b>and survives it</b> — a boss phase change at half health, a retreat, an alarm. A killing blow fires <i>On enemy killed</i> instead; one hit never fires both.</td></tr>
+</table></div>
+<p>Neither carries which enemy it was, on purpose: pair them with <b>Command enemies</b> (above) and you have the
+whole classic loop in four nodes — <i>On enemy spots you → Change alarm +1 → Command all enemies: Alert them to
+vaultDoor</i>. A stealth game is the same loop plus <i>Command enemies: Lose the player</i> on the other side.
+Both cost nothing until you actually put one on the board.</p>
 <h3>Values that carry over</h3>
 <p>Normally every variable resets when a level starts — which quietly rules out anything with progress: a running
 coin total, a quest stage, a shortcut you unlocked. Under <b>Gameplay ▸ Logic graph</b>, below the Open button,

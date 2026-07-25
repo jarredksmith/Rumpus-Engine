@@ -8109,6 +8109,13 @@ function _lgNum(v){
 function _lgFollow(id, out){
   for(const w of logicGraph.wires){ if(w.a===id && w.o===out) _lgPulse(w.b, w.i); }
 }
+// build 1077: the enemy hooks. Entry nodes, so they cost nothing until an author drops one on the board, and
+// they run on the authoritative side like every other event source.
+function _lgEnemyEvent(kind){
+  if(typeof NET!=='undefined' && NET.mode==='client') return;
+  if(typeof logicGraph==='undefined' || !logicGraph.nodes.length) return;
+  for(const n of logicGraph.nodes){ if(n.type===kind){ _lgFireEvents(kind, ''); return; } }   // nothing wired -> nothing to do
+}
 function _lgFireEvents(kind, name){
   for(const n of logicGraph.nodes){
     if(n.type!==kind) continue;
@@ -8165,12 +8172,12 @@ function _lgPulse(id, pin){
     case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
     case 'do': { try{ _applySignalAction({ do:p.verb||'toggle', target:String(p.target||'').trim(), clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
         etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim(),
-        stat:p.stat||'speed', mul:p.mul }, null); }catch(e){} _lgFollow(id,0); break; }
+        stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }catch(e){} _lgFollow(id,0); break; }
     case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));   // {score} interpolates live variables
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
     case 'lose': { try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} break; }   // the death-zone path: ends the run through the normal defeat flow
-    default: break;   // start / event / interval / onkill / onwave are entries — they only ever FIRE, never receive
+    default: break;   // start / event / interval / onkill / onwave / onspot / onhurt are entries — they only ever FIRE, never receive
   }
 }
 function updateLogic(dt){
@@ -8381,6 +8388,8 @@ const LG_DEFS = {
   interval: { t:'Every X sec',     cat:'ev', outs:['tick'],             params:[{k:'sec',l:'sec',w:40},{k:'times',l:'times (0=\u221e)',w:40}] },
   onkill:   { t:'On enemy killed', cat:'ev', outs:['\u25b6'],            params:[] },
   onwave:   { t:'On wave start',   cat:'ev', outs:['\u25b6'],            params:[] },
+  onspot:   { t:'On enemy spots you', cat:'ev', outs:['\u25b6'],         params:[] },   // build 1077
+  onhurt:   { t:'On enemy damaged',   cat:'ev', outs:['\u25b6'],         params:[] },
   branch:   { t:'Branch',          cat:'fl', ins:['in'], outs:['true','false'], params:[{k:'a',l:'A',w:56,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['==','!=','<','<=','>','>=']},{k:'b',l:'B',w:56,listId:'lgVarList'}] },
   counter:  { t:'Counter',         cat:'fl', ins:['in','reset'], outs:['reached','each'], params:[{k:'target',l:'target',w:40}] },
   delay:    { t:'Delay',           cat:'fl', ins:['in'], outs:['then'],  params:[{k:'sec',l:'sec',w:40}] },
@@ -8389,7 +8398,7 @@ const LG_DEFS = {
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -8743,7 +8752,7 @@ function _applySignalAction(s, src){
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
     if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
     if(s.do==='emit'){ if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(String(s.text||'').trim()); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed.
-    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'){   // builds 1073/1074: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
+    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -8847,7 +8856,10 @@ function _lgSetMusic(url){
   _lgMusic=u;                                                    // '' is a real choice: deliberate silence
   try{ if(typeof stopMusic==='function') stopMusic(); if(u && typeof startMusic==='function') startMusic(); }catch(e){}
 }
-function _isWorldVerb(v){ return v==='spawn'||v==='pickup'||v==='damage'||v==='heal'||v==='kill'||v==='teleport'||v==='give'||v==='take'||v==='stat'||v==='music'; }
+function _isWorldVerb(v){ return v==='spawn'||v==='pickup'||v==='damage'||v==='heal'||v==='kill'||v==='teleport'||v==='give'||v==='take'||v==='stat'||v==='music'||v==='command'; }
+// build 1077: what a rule can tell an enemy to DO. Every one of these drives state the AI already reads, so
+// a commanded enemy behaves like an authored one from the next frame — no parallel "scripted" mode to diverge.
+const LG_CMDS = { hunt:'Hunt the player', patrol:'Patrol', hold:'Hold position', alert:'Alert them to', calm:'Lose the player', post:'Move their post to' };
 function _applyWorldAction(s){
   const who=(s.who==='enemies'||s.who==='nearest')?s.who:'player';
   const amt=Math.max(0, Math.min(99999, Math.round(+s.amt||0)));
@@ -8861,6 +8873,23 @@ function _applyWorldAction(s){
   if(s.do==='stat'){ const w=LG_STATS[s.stat]?s.stat:'speed', m=Math.max(0.05, Math.min(10, +s.mul||1));
     _lgApplyStat(w, m); _wactSend({ st:[w, m] }); return; }
   if(s.do==='music'){ const u=String(s.sound==null?'':s.sound).trim(); _lgSetMusic(u); _wactSend({ mu:u }); return; }
+  if(s.do==='command'){
+    const list=_lgEnemyTargets(s.ewho==='nearest'?'nearest':'enemies'); if(!list.length) return;   // 'the player' is meaningless here
+    const cmd=LG_CMDS[s.cmd]?s.cmd:'hunt';
+    const at=(cmd==='alert'||cmd==='post') ? _lgPlaceAt(s.at) : null;
+    if((cmd==='alert'||cmd==='post') && !at) return;                    // a place that does not exist: do nothing
+    for(const e of list){
+      e.wp=null; e.wpUntil=0;                                           // drop the stale waypoint: re-decide from here
+      if(cmd==='hunt'||cmd==='patrol'||cmd==='hold'){
+        e.mode=cmd;
+        if(cmd!=='hunt' && !e.home) e.home={ x:e.mesh.position.x, z:e.mesh.position.z };   // a spawned-in enemy has no post yet
+      }
+      else if(cmd==='alert'){ if(typeof alertEnemy==='function') alertEnemy(e, at.x, at.z); }   // "the alarm went off — everyone to the vault"
+      else if(cmd==='calm'){ e.aware=false; e.lkp=null; e.lostAt=0; e._alertedT=0; e._wasAware=0; }   // they lose you: the stealth reset
+      else if(cmd==='post'){ e.home={ x:at.x, z:at.z }; e.route=null; e.routeIdx=0; }   // a guard is reassigned; an authored patrol route is replaced by the new post
+    }
+    return;
+  }
   if(s.do==='spawn'){
     if(typeof spawnEnemy!=='function') return;
     const n=Math.max(1, Math.min(20, Math.round(+s.n||1)));        // a bounded squad; 'spawn 5000' is a typo, not a design
@@ -23517,7 +23546,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1076 · 2026-07-25';
+const BUILD_VERSION = 'build 1077 · 2026-07-25';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25501,6 +25530,8 @@ function enemyHurt(en, dmg, sx, sz){
   if(!en || en.hp<=0) return false;
   en.hp -= dmg;
   if(en.hp<=0){ killEnemy(en, sx, sz); return true; }
+  if(typeof _lgEnemyEvent==='function') _lgEnemyEvent('onhurt');   // build 1077: it took the hit and lived — a boss phase, a retreat, an alarm
+
   const now=performance.now();
   if(sx!=null && now>(en._evtCd||0) && en.mesh && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
     const eyaw = en.mesh.rotation.y - (en.mesh.userData.faceOff||0);   // logical facing (strip the model's facing offset)
@@ -28288,6 +28319,11 @@ function loop(){
       en._near = near; en._dist = nd;
       en._nearEyeY = (near.eyeY!=null ? near.eyeY : (near.pos.y!=null ? near.pos.y : 1.4));
       const td = enemyDesiredTarget(en, near.pos.x, near.pos.z, nd, nowMs);
+      // build 1077: the moment this enemy goes from oblivious to alerted, exactly once per alert. The edge is
+      // watched HERE rather than at the four places that can set `aware` (sight, gunfire, a blast, a rule), so
+      // every one of them fires it and none of them fires it twice.
+      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot'); }
+      else if(!en.aware && en._wasAware) en._wasAware=0;
       en._chase = td.chase; en._see = !!td.see;
       // face the player only when actually seen; while hunting a last-known spot, face where we're walking
       if(td.see){ en._faceX = td.tx; en._faceZ = td.tz; }
@@ -32042,6 +32078,10 @@ function _sigWorldRow(s, rerender){
     lab('(\u00d71 puts it back)');
   } else if(s.do==='music'){
     txt('music URL (blank = silence)', s.sound, v=>{ if(v) s.sound=v; else delete s.sound; }, 210, 'lgSndList');
+  } else if(s.do==='command'){
+    sel([['enemies','All enemies'],['nearest','Nearest enemy']], s.ewho||'enemies', v=>{ s.ewho=v; });
+    sel(Object.keys(LG_CMDS).map(k=>[k, LG_CMDS[k]]), s.cmd||'hunt', v=>{ s.cmd=v; });
+    if((s.cmd||'hunt')==='alert' || s.cmd==='post'){ txt('place', s.at, v=>{ if(v) s.at=v; else delete s.at; }, 120, 'lgPlaceList'); }
   }
   return wr;
 }
@@ -32063,7 +32103,7 @@ function buildSignalsUI(sgBody, store, rerender){
   sigs.forEach((s,si)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:4px;align-items:center;margin:0 0 3px;';
     const mkSel=(opts,val,on)=>{ const e=document.createElement('select'); e.style.cssText='font-size:11px;flex:1;'; opts.forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(val===o[0]) op.selected=true; e.appendChild(op); }); e.onchange=()=>{ pushUndoSnapshot(); on(e.value); rerender(); }; return e; };
     r.appendChild(mkSel([['destroyed','On destroyed'],['interacted','On E'],['contact','On object placed']], s.when, v=>{ s.when=v; }));
-    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music']], s.do, v=>{ s.do=v; }));
+    r.appendChild(mkSel([['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['emit','\u2192 Logic event'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies']], s.do, v=>{ s.do=v; }));
     const ti=document.createElement('input'); ti.type='text'; ti.placeholder='target tag (or: this)'; ti.value=s.target||'';
     if(typeof _lgRefreshDatalists==='function'){ _lgRefreshDatalists(); ti.setAttribute('list','lgTagListThis'); }
     ti.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
