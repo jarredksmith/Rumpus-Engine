@@ -12688,7 +12688,9 @@ function _arFinish(){
   _arClose();
   if(_arRefresh) _arRefresh(); else if(typeof rebuildAvatars==='function') rebuildAvatars();
   if(typeof renderEditorFields==='function') renderEditorFields();
-  if(typeof toast==='function') toast(wasRigged ? 'Markers updated \u2014 reload the level (or refresh) to re-fit the skeleton' : 'Auto-rig complete \u2014 the animation library is now animating this model');
+  if(typeof toast==='function') toast(wasRigged ? 'Markers updated \u2014 reload the level (or refresh) to re-fit the skeleton'
+    : (cfg.propMode ? 'Rigged \u2014 open the animation editor to keyframe its limbs (placed copies re-fit on reload)'
+                    : 'Auto-rig complete \u2014 the animation library is now animating this model'));
 }
 function _arOpen(url, cfg, refresh){   // build 1057: cfg defaults to the player — enemies/roster pass their own
   if(!url){ if(typeof toast==='function') toast('Load a model URL first'); return; }
@@ -13514,6 +13516,46 @@ const PLAYER_CAP_R = 0.45;   // capsule radius for KCC world collision (narrower
 let physAccum = 0;
 // Spawn one scene object from a descriptor; onReady(obj) fires once it's in the world.
 // mat (optional) = { col, tex, texRepeat:[u,v], emit:{c,i} } for primitive material settings.
+// ---------- build 1080: RIGGING AN IMPORTED MODEL ----------
+// The auto-rigger has been able to grow a skeleton on a static model since build 1025, but only for a
+// PLAYER or an ENEMY type. Everything else a creator imports — the shopkeeper, the guard on the wall, the
+// statue that comes alive — is a PROP, and a prop had no way to be rigged at all. It could be keyframed
+// only as one solid object: moved, turned, floated. No arms.
+// A rig belongs to the MODEL, not to one copy of it. Props share a single cached GLTF per URL, so rigging
+// "this crate" and "that crate" separately would be a lie the engine could not keep; keying the markers by
+// URL means every copy of the shopkeeper stands up the same way, and the level stores one marker set
+// however many of them you placed.
+let modelRigs = _sanitizeModelRigs(savedLevel && savedLevel.modelRigs);
+function _sanitizeModelRigs(o){
+  const out={}; if(!o || typeof o!=='object' || Array.isArray(o)) return out;
+  let n=0;
+  for(const k in o){
+    if(n>=32) break;                                        // a level with 32 hand-rigged models is already a lot
+    const url=String(k||'').trim(); if(!url || url.length>400) continue;
+    const mk=(typeof _sanitizeAutoRig==='function') ? _sanitizeAutoRig(o[k]) : null; if(!mk) continue;
+    out[url]=mk; n++;
+  }
+  return out;
+}
+function _rigForUrl(u){ const k=String(u==null?'':u).trim(); return (k && modelRigs[k]) ? modelRigs[k] : null; }
+// Applied to the CACHED gltf, before the first clone is taken — so every prop spawned from here on stands
+// up already rigged, and the custom-clip builder sees real bones to retarget onto.
+function _applyModelRig(gltf, url){
+  const mk=_rigForUrl(url); if(!mk || !gltf || !gltf.scene) return false;
+  if(gltf.userData && gltf.userData._autoRigged) return true;   // one model, one skeleton, however many props use it
+  try{ return !!_autoRigApply(gltf, mk); }
+  catch(e){ console.warn('[RUMPUS] model auto-rig failed:', url, e && e.message); return false; }
+}
+// The cfg the auto-rig modal and the animation editor both speak. It is a live view of modelRigs, so the
+// modal's own "cfg.autoRig = markers" writes straight into the level with nothing to copy back.
+function _propRigCfg(url){
+  const u=String(url==null?'':url).trim();
+  return { url:u, propMode:true, animLib:'ual1',   // animLib is pre-set so the modal doesn't try to pick one for a prop
+    get autoRig(){ return _rigForUrl(u); },
+    set autoRig(v){ const mk=(typeof _sanitizeAutoRig==='function')?_sanitizeAutoRig(v):null;
+      if(mk) modelRigs[u]=mk; else delete modelRigs[u];
+      if(typeof _levelDirty!=='undefined') _levelDirty=true; } };
+}
 function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip){
   if(isPrimitive(src)){
     const obj = finalizeProp(PRIMITIVE_BUILDERS[src](), src, t, null, slot, animMode, mat, nid, animClip);
@@ -13521,7 +13563,8 @@ function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip)
     return;
   }
   loadGLTFCached(src,
-    (gltf)=>{ const obj = finalizeProp(THREE.cloneSkinned(gltf.scene), src, t, gltf, slot, animMode, mat, nid, animClip); if(typeof _scheduleWarmCompile==='function') _scheduleWarmCompile(); if(onReady) onReady(obj); },
+    (gltf)=>{ _applyModelRig(gltf, src);   // build 1080: grow the authored skeleton BEFORE the first clone is taken
+      const obj = finalizeProp(THREE.cloneSkinned(gltf.scene), src, t, gltf, slot, animMode, mat, nid, animClip); if(typeof _scheduleWarmCompile==='function') _scheduleWarmCompile(); if(onReady) onReady(obj); },
     (err)=>{ console.warn('Prop load failed for', src, '-', err && err.message); if(onError) onError(err); }
   );
 }
@@ -13537,7 +13580,9 @@ function _wipeSceneCore(){
   lootSpots.length=0; selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
   if(typeof stopAudioZones==='function') stopAudioZones(); audioZones.length=0; if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers();
   triggerZones.length=0; selTrigger=-1; _trigState.length=0;
-  persistVars=[]; persistSave=false;   // build 1075 if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers();
+  if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers();
+  persistVars=[]; persistSave=false;   // build 1075
+  modelRigs={};                        // build 1080
   deathZones.length=0; selDeathZone=-1; jumpPads.length=0; selJumpPad=-1; ladders.length=0; selLadder=-1; fireZones.length=0; selFireZone=-1; waterZones.length=0; selWaterZone=-1; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls.length=0; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof refreshSpawnRegionMarker==='function') refreshSpawnRegionMarker();
   // clear selections so the editor doesn't point at a deleted object
   selProps.length=0; selLights.length=0; selSpawns=[]; selPickup=-1;
@@ -18745,6 +18790,7 @@ function loadLevelFromNet(level){
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
+  modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
   actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
@@ -23619,7 +23665,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1079 · 2026-07-26';
+const BUILD_VERSION = 'build 1080 · 2026-07-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30458,6 +30504,7 @@ function serializeLevel(){
     deathFx: Object.assign({}, deathFxCfg),
     logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
     persistVars: (persistVars.length ? persistVars.slice() : undefined), persistSave: (persistSave||undefined),   // build 1075
+    modelRigs: (Object.keys(modelRigs).length ? Object.assign({}, modelRigs) : undefined),   // build 1080: skeletons grown on imported models, keyed by URL
     customAnims: ((typeof customAnims!=='undefined' && customAnims.length) ? _caSanitize(customAnims) : undefined),   // build 1040: creator-authored clips
     hudWidgets: ((typeof hudWidgets!=='undefined' && hudWidgets.length) ? _sanitizeHudWidgets(hudWidgets) : undefined),   // build 1058: custom HUD widgets
     actions: ((typeof actionBinds!=='undefined' && actionBinds.length) ? _sanitizeActions(actionBinds) : undefined),   // build 1071: action bindings
@@ -31156,6 +31203,7 @@ function restoreLevel(level){
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
+  modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
   actionBinds = _sanitizeActions(level.actions); if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){}   // build 1071
@@ -33636,8 +33684,27 @@ function renderEditorFields(){
         const aeB=document.createElement('button'); aeB.textContent='\ud83c\udfac Animation editor';
         aeB.title='Keyframe this prop: its skeleton if it has one (humanoid or not), or the whole model (move/rotate/travel) if it doesn\u2019t. Clips join the level\u2019s library and play through the normal triggers \u2014 Auto, E Activate, Signals, Logic \u2014 for cutscenes, ambient NPCs and set pieces.';
         aeB.style.cssText='flex:1;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #6e4a2a;background:rgba(18,12,8,.5);color:#ffc99b;';
-        aeB.onclick=()=>{ if(typeof _aeOpen==='function') _aeOpen({ url:(sel.userData.src||'').trim(), propMode:true }, 'Prop'+(sel.userData.name?(' \u2014 '+sel.userData.name):''), ()=>{ if(typeof _caRefreshPropAnims==='function') _caRefreshPropAnims(); if(typeof renderEditorFields==='function') renderEditorFields(); }); };
+        // build 1080: the editor gets the model's authored skeleton, so a rigged prop keyframes as a humanoid
+        aeB.onclick=()=>{ if(typeof _aeOpen==='function') _aeOpen(_propRigCfg((sel.userData.src||'').trim()), 'Prop'+(sel.userData.name?(' \u2014 '+sel.userData.name):''), ()=>{ if(typeof _caRefreshPropAnims==='function') _caRefreshPropAnims(); if(typeof renderEditorFields==='function') renderEditorFields(); }); };
         aeRow.appendChild(aeB); animHost.appendChild(aeRow);
+        // build 1080: and the rigger itself. A static NPC has no arms to keyframe until it has a skeleton.
+        const _src=(sel.userData.src||'').trim(), _rigged=!!_rigForUrl(_src);
+        const arRow=document.createElement('div'); arRow.style.cssText='display:flex;gap:7px;margin:0 0 2px;';
+        const arB=document.createElement('button');
+        arB.textContent=_rigged ? '\u2713 Rigged \u2014 edit markers' : '\ud83e\uddb4 Auto-rig model (T-pose)';
+        arB.title=_rigged ? 'Re-place the joint markers on this model' : 'Give this model a humanoid skeleton by dropping a marker on each joint \u2014 then keyframe its arms and legs in the animation editor. Best on a model standing in a T-pose or A-pose.';
+        arB.style.cssText='flex:1;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid '+(_rigged?'#2a6e5c':'#6e4a2a')+';background:rgba(8,18,18,.5);color:'+(_rigged?'#9fe6cf':'#ffc99b')+';';
+        arB.onclick=()=>{ if(typeof _arOpen==='function') _arOpen(_src, _propRigCfg(_src), ()=>{ if(typeof renderEditorFields==='function') renderEditorFields(); }); };
+        arRow.appendChild(arB);
+        if(_rigged){ const cx=document.createElement('button'); cx.textContent='\u2715'; cx.title='Remove the skeleton from this model'; cx.style.cssText='flex:0 0 auto;padding:7px 10px;font-size:12px;';
+          cx.onclick=()=>{ pushUndoSnapshot(); delete modelRigs[_src]; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); if(typeof toast==='function') toast('Rig removed \u2014 reload the level to unbind the skeleton'); };
+          arRow.appendChild(cx); }
+        animHost.appendChild(arRow);
+        { const h=document.createElement('div'); h.className='hint'; h.style.cssText='font-size:10px;margin:1px 0 4px;';
+          h.innerHTML=_rigged
+            ? 'This model has an authored skeleton \u2014 the animation editor keyframes its <b>arms, legs and spine</b>, and every copy of it in the level shares the same rig. Placed copies pick it up when the level reloads.'
+            : 'No skeleton: the animation editor can only move this model <b>as one piece</b>. Rig it to keyframe limbs \u2014 the usual way to make an NPC out of an imported character.';
+          animHost.appendChild(h); }
       }
       if(sel && sel.userData.animActions && sel.userData.animActions.length){
         const aHost = edFold(animHost, 'anim', 'Animation', false, 'Play a model\u2019s built-in animation clips');

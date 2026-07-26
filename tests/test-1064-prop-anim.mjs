@@ -100,8 +100,8 @@ assert(/function _caRefreshPropAnims\(\)\{/.test(src) && /playModelAnimations\(o
 assert(/_aeRigMode=\(_aeBones\.size>1\)\?'bones':'root';/.test(src),
   'the editor falls back: model bones if any, else whole-model mode');
 assert(/if\(e\.shiftKey && \(slot==='hips'\|\|slot==='root'\)\)/.test(src), 'Shift-drag moves the whole model in prop mode');
-assert(/aeB\.onclick=\(\)=>\{ if\(typeof _aeOpen==='function'\) _aeOpen\(\{ url:\(sel\.userData\.src\|\|''\)\.trim\(\), propMode:true \}/.test(src),
-  'every selected model prop offers the Animation editor');
+assert(/aeB\.onclick=\(\)=>\{ if\(typeof _aeOpen==='function'\) _aeOpen\(_propRigCfg\(\(sel\.userData\.src\|\|''\)\.trim\(\)\)/.test(src),
+  'every selected model prop offers the Animation editor (build 1080: carrying the model\u2019s own authored skeleton)');
 assert(/if\(_aeClip && _aeCfg && _aeCfg\.propMode\)\{/.test(src),
   'prop mode swaps the character Assign panel for prop guidance (triggers/signals/logic)');
 
