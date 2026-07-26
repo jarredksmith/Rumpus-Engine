@@ -22776,6 +22776,15 @@ function _dlgMarks(txt){   // pull {set ...} and {event ...} out of a row, in wh
   t=t.replace(/\{\s*event\s+([^}]+)\}/gi, (m,n)=>{ ev=String(n).trim().slice(0,60); return ''; });
   return { t:t.replace(/\s{2,}/g,' ').trim(), set, ev };
 }
+// build 1078: a jump written at the END of a row, which is how everyone actually writes one:
+//     I felt sassy once. -> end
+// Anchored and single-word on purpose, so an arrow used as PUNCTUATION mid-sentence ("the hall -> the vault
+// is that way") is left alone: only a lone label sitting at the very end of the row counts as a jump.
+const DLG_TAIL = /\s*->\s*([\w#-]{1,40})\s*$/;
+function _dlgTail(t){
+  const m=DLG_TAIL.exec(t); if(!m) return { t:t.trim(), to:'' };
+  return { t:t.slice(0, m.index).trim(), to:m[1] };
+}
 function _dlgParse(rows){
   const out=[]; let pendingId='';
   for(const raw of (Array.isArray(rows)?rows:[])){
@@ -22789,9 +22798,9 @@ function _dlgParse(rows){
     if(t.charAt(0)==='>'){                                      // a reply button on the row above it
       let c=t.slice(1).trim(), cond=null;
       c=c.replace(/\[\s*if\s+([^\]]+)\]/i, (m,e)=>{ cond=_dlgExpr(e); return ''; }).trim();
-      const mk=_dlgMarks(c); c=mk.t;                            // {set}/{event} come off BEFORE the arrow, so
-      let to=''; const ar=c.lastIndexOf('->');                  // "> Accept -> yes {set x = 1}" jumps to 'yes'
-      if(ar>=0){ to=c.slice(ar+2).trim(); c=c.slice(0,ar).trim(); }
+      const mk=_dlgMarks(c);                                   // {set}/{event} come off BEFORE the arrow, so
+      const tl=_dlgTail(mk.t); c=tl.t;                          // "> Accept -> yes {set x = 1}" jumps to 'yes'
+      const to=tl.to;
       const ch={ t:(c.slice(0,120) || '\u2026') };
       if(cond) ch.if=cond;
       if(mk.set) ch.set=mk.set;
@@ -22806,17 +22815,39 @@ function _dlgParse(rows){
     let cond=null;
     t=t.replace(/^\[\s*if\s+([^\]]+)\]/i, (m,e)=>{ cond=_dlgExpr(e); return ''; }).trim();
     const mk=_dlgMarks(t);
-    const node={ t:mk.t.slice(0,200) };
+    const tl=_dlgTail(mk.t);                                    // build 1078: "...once. -> end" ends there
+    const node={ t:tl.t.slice(0,200) };
     if(pendingId){ node.id=pendingId; pendingId=''; }
     if(cond) node.if=cond;
     if(mk.set) node.set=mk.set;
     if(mk.ev) node.ev=mk.ev;
+    if(tl.to){ if(/^end$/i.test(tl.to)) node.end=1; else node.to=tl.to; }
     out.push(node);
     if(out.length>=120) break;
   }
   return out;
 }
 function _dlgOptions(n){ return (n && n.ch) ? n.ch.filter(c=>_dlgTest(c.if)) : []; }
+// build 1078: the two mistakes that are invisible until you play the level and watch it walk through every
+// branch you wrote. Both are about what happens at the END of a section, which is exactly where an author's
+// attention has already moved on to writing the next one.
+function _dlgLint(rows){
+  const script=_dlgParse(rows), out=[], labels={}, seen={};
+  for(const n of script) if(n.id) labels[n.id]=1;
+  const targeted={};
+  const badJump=(to)=>{ if(!to) return; targeted[to]=1;
+    if(labels[to] || seen['j'+to]) return; seen['j'+to]=1;
+    out.push('\u2192 ' + to + ' \u2014 there is no #' + to + ' to jump to, so it just ends there'); };
+  for(const n of script){ badJump(n.to); if(n.ch) for(const c of n.ch) badJump(c.to); }
+  // A section only "leaks" if something jumps INTO the one below it. A label nothing jumps to can only be
+  // reached by falling through, so falling through is plainly what the author meant — never warn about that.
+  for(let i=0;i<script.length-1;i++){
+    const n=script[i], nx=script[i+1];
+    if(!nx.id || !targeted[nx.id] || n.end || n.to || (n.ch && n.ch.length)) continue;
+    out.push('\u201c' + String(n.t||'').slice(0,26) + '\u2026\u201d runs straight on into #' + nx.id + ' \u2014 end that branch with  -> end');
+  }
+  return out.slice(0,6);
+}
 function _dlgNextFrom(i){ for(let k=Math.max(0,i); k<_dlg.script.length; k++){ if(_dlgTest(_dlg.script[k].if)) return k; } return -1; }
 function _dlgGoto(label){
   const t=String(label||'').trim(); if(!t) return -1;
@@ -23546,7 +23577,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1077 · 2026-07-25';
+const BUILD_VERSION = 'build 1078 · 2026-07-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33634,8 +33665,13 @@ function renderEditorFields(){
         nin.onchange=()=>{ pushUndoSnapshot(); const v=nin.value.trim().slice(0,40); if(v) sel.userData.npcName=v; else delete sel.userData.npcName; };
         nr.appendChild(nsp); nr.appendChild(nin); dBody.appendChild(nr);
         const ta=document.createElement('textarea'); ta.rows=7; ta.placeholder='One line of dialogue per row…\nPress E to advance through them.\n\n> A reply the player can pick -> label'; ta.value=(sel.userData.dialogue||[]).join('\n'); ta.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:5px 7px;font-size:12px;line-height:1.5;resize:vertical;';
-        ta.onchange=()=>{ pushUndoSnapshot(); const lines=ta.value.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,120).map(s=>s.slice(0,200)); if(lines.length) sel.userData.dialogue=lines; else delete sel.userData.dialogue; };
-        dBody.appendChild(ta);
+        // build 1078: the branch check, live under the box. Updated in place rather than by re-rendering the
+        // whole inspector, so typing and tabbing away never loses your place.
+        const dw=document.createElement('div'); dw.style.cssText='margin:4px 0 0;font-size:10px;line-height:1.6;color:#ffbf7a;';
+        const dLint=()=>{ const rows=sel.userData.dialogue||[]; const msgs=(typeof _dlgLint==='function')?_dlgLint(rows):[];
+          dw.innerHTML = msgs.length ? ('\u26a0 ' + msgs.map(m=>String(m).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))).join('<br>\u26a0 ')) : ''; };
+        ta.onchange=()=>{ pushUndoSnapshot(); const lines=ta.value.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,120).map(s=>s.slice(0,200)); if(lines.length) sel.userData.dialogue=lines; else delete sel.userData.dialogue; dLint(); };
+        dBody.appendChild(ta); dBody.appendChild(dw); dLint();
         const dh=document.createElement('div'); dh.className='hint'; dh.style.margin='3px 0 0'; dh.innerHTML='Gives the prop an <b>E Talk</b> prompt. The first line also fires this prop’s <b>“On E”</b> signals — so a chat can set the objective, drop a checkpoint, open a door, etc.'; dBody.appendChild(dh);
         // build 1076: the branching marks, written out where the author is typing. Collapsed by default so a
         // one-line NPC never has to read any of it.
@@ -33646,11 +33682,11 @@ function renderEditorFields(){
         dgb.innerHTML='<b>&gt; text -&gt; label</b> a reply button (<b>-&gt; end</b> finishes the talk)<br>'
           + '<b>#label</b> names the next row so a reply can jump to it<br>'
           + '<b>[if coins &gt;= 5]</b> at the start of a row skips it unless true; at the end of a reply hides that reply<br>'
-          + '<b>-&gt; label</b> on its own row jumps instead of falling through<br>'
+          + '<b>-&gt; label</b> at the end of a row (or on its own row) jumps instead of falling through &mdash; <b>-&gt; end</b> stops the conversation there<br>'
           + '<b>{set questStage = 2}</b> or <b>{set coins + 1}</b> changes a Logic variable<br>'
           + '<b>{event doorOpen}</b> fires a Logic event<br>'
           + 'A condition compares a <b>Logic variable</b>, a number, or <b>item:someId</b> (how many you carry).'
-          + '<pre style="margin:6px 0 0;padding:6px 8px;background:#0a1116;border-radius:5px;white-space:pre-wrap;color:#9fe6cf;font-size:10px;">Have you found the key?\n&gt; Here it is. -&gt; gotIt [if item:brassKey &gt;= 1]\n&gt; Not yet.\n&gt; Leave. -&gt; end\n-&gt; end\n#gotIt\nThe vault is yours. {set questStage = 2} {event vaultOpen}</pre>';
+          + '<pre style="margin:6px 0 0;padding:6px 8px;background:#0a1116;border-radius:5px;white-space:pre-wrap;color:#9fe6cf;font-size:10px;">Have you found the key?\n&gt; Here it is. -&gt; gotIt [if item:brassKey &gt;= 1]\n&gt; Not yet. -&gt; notYet\n&gt; Leave. -&gt; end\n#gotIt\nThe vault is yours. {set questStage = 2} -&gt; end\n#notYet\nKeep looking. -&gt; end</pre>';
         dg.appendChild(dgb); dBody.appendChild(dg);
       }
       // ---- Vehicle (drivable, build 709): flag this prop as a car you can enter + drive ----

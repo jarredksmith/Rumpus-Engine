@@ -17,6 +17,7 @@ const GLUE = `
 const DLG_MARKS = src.match(/function _dlgMarks\(txt\)\{[\s\S]*?\n\}/)[0];
 const D = new Function(GLUE
   + src.match(/const DLG_OPS = \[[^\]]*\];/)[0] + '\n'
+  + src.match(/const DLG_TAIL = .*\n/)[0] + extractFunction('_dlgTail', src) + '\n'
   + extractFunction('_dlgExpr', src) + '\n' + extractFunction('_dlgVal', src) + '\n'
   + extractFunction('_dlgTest', src) + '\n' + extractFunction('_dlgSet', src) + '\n'
   + DLG_MARKS + '\n' + extractFunction('_dlgParse', src) + '\n'

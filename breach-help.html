@@ -303,7 +303,7 @@ same way.</p>
 <tr><td><code>&gt; text -&gt; label</code></td><td>A <b>reply button</b> on the row above it. Up to six; the player clicks one, taps it, or presses <kbd>1</kbd>–<kbd>6</kbd>. <code>-&gt; end</code> finishes the conversation. Leave the arrow off and it just carries on to the next row. <b>While replies are showing, <kbd>E</kbd> does nothing</b> — the player has to answer.</td></tr>
 <tr><td><code>#label</code></td><td>Names the <b>next</b> row so a reply can jump to it. Not a line of dialogue itself.</td></tr>
 <tr><td><code>[if expr]</code></td><td>At the <b>start of a row</b>: skip that row unless it's true. At the <b>end of a reply</b>: hide that reply unless it's true — a locked option simply isn't offered.</td></tr>
-<tr><td><code>-&gt; label</code></td><td>On its own row: after the line above, <b>jump</b> instead of falling through into the next branch. <code>-&gt; end</code> stops there.</td></tr>
+<tr><td><code>-&gt; label</code></td><td><b>Jump</b> instead of falling through into the next branch. Write it at the <b>end of a line</b> (<code>I felt sassy once. -&gt; end</code>) or on a <b>row of its own</b> — both work. <code>-&gt; end</code> stops the conversation there. It only counts as a jump when it's a single bare label at the very end of the row, so an arrow used as punctuation mid-sentence is left alone.</td></tr>
 <tr><td><code>{set name = 2}</code></td><td>Write a <a href="#logic">Logic</a> variable when the row is shown or the reply is picked. <code>+</code> and <code>−</code> work too: <code>{set coins + 1}</code>.</td></tr>
 <tr><td><code>{event doorOpen}</code></td><td>Fire a <a href="#logic">Logic event</a> — the same pulse an <i>On event</i> node catches. This and <code>{set}</code> are the bridge: a conversation can drive your whole graph.</td></tr>
 </table></div>
@@ -317,11 +317,14 @@ same way.</p>
 &gt; Still looking. -&gt; notYet
 &gt; Leave. -&gt; end
 #gotIt
-Then the vault is yours. {set questStage = 2} {event vaultOpen}
--&gt; end
+Then the vault is yours. {set questStage = 2} {event vaultOpen} -&gt; end
 #notYet
 [if questStage &gt;= 1] You said that last time.
-Keep looking. It glints in the dark.</pre>
+Keep looking. It glints in the dark. -&gt; end</pre>
+<div class="box"><b>Every branch needs an ending.</b> Without one, a branch runs straight on into the next
+<code>#label</code> below it — so picking the first reply plays every answer in the file. End each one with
+<code>-&gt; end</code> (or a jump). The editor watches for exactly this and warns you under the box, along with
+any jump pointing at a <code>#label</code> that doesn't exist.</div>
 <p>Rows that start with a reply and have no line above them render as a <b>bare choice prompt</b> — useful for
 “what do you do?”. A label that doesn't exist ends the conversation rather than looping. Everything the player
 sees is escaped, so a shared level can't inject markup through a line or a button. Pair this with
