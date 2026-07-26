@@ -20,7 +20,7 @@ eq(mk({ gameCfg:{ view:'fps' }, gameOn:true, editorOpen:false, _cineActive:false
 // ---- persistence: config, serialize, and BOTH load paths ----
 assert(/view: \(savedLevel && savedLevel\.game && \(savedLevel\.game\.view==='top'\|\|savedLevel\.game\.view==='side'\|\|savedLevel\.game\.view==='chase'\)\) \? savedLevel\.game\.view : 'fps',/.test(src), 'gameCfg.view boots from the autosave (chase joined in build 894)');
 assert(/viewAxis: \(savedLevel && savedLevel\.game && savedLevel\.game\.viewAxis==='z'\) \? 'z' : 'x',/.test(src), 'gameCfg.viewAxis boots from the autosave');
-assert(/view: \(gameCfg\.view==='top'\|\|gameCfg\.view==='side'\|\|gameCfg\.view==='chase'\)\?gameCfg\.view:'fps', viewDist: \+gameCfg\.viewDist\|\|0, viewAxis: \(gameCfg\.viewAxis==='z'\)\?'z':'x' \},/.test(src), 'serializeLevel writes all three fields');
+assert(/view: \(gameCfg\.view==='top'\|\|gameCfg\.view==='side'\|\|gameCfg\.view==='chase'\)\?gameCfg\.view:'fps', viewDist: \+gameCfg\.viewDist\|\|0, viewAxis: \(gameCfg\.viewAxis==='z'\)\?'z':'x'/.test(src), 'serializeLevel writes all three fields');
 const loads = src.match(/gameCfg\.view = \(level\.game\.view==='top'\|\|level\.game\.view==='side'\|\|level\.game\.view==='chase'\) \? level\.game\.view : 'fps';/g) || [];
 eq(loads.length, 2, 'both load paths (local load + multiplayer host-adopt) apply the view');
 
@@ -33,16 +33,27 @@ assert(/player\.yaw=Math\.atan2\(-dx, -dz\);/.test(src), 'body yaw faces the cur
 assert(/if\(vm==='side' && _sideLock==null\) _sideLock=\(axis==='x'\) \? player\.pos\.z : player\.pos\.x;/.test(src), 'the side-scroll lane is captured at deploy');
 
 // ---- movement: screen-relative in top, lane-only in side ----
-assert(/if\(_vm874==='top'\)\{ forward\.set\(0,0,-1\); right\.set\(1,0,0\); \}/.test(src), 'top: W = up-screen, D = right-screen');
+// build 1085 rotated this basis with the camera; at yaw 0 it must still be exactly the original, so run
+// it rather than matching the old literal.
+{ const b=src.match(/if\(_vm874==='top'\)\{ const _ya=[^\n]*?right\.set\([^\n]*?\); \}/);
+  assert(b, 'the top-down movement basis is still set in one place');
+  const F={}, R={}, mk=o=>({ set:(x,y,z)=>{ o.x=x; o.y=y; o.z=z; } });
+  new Function('_vm874','forward','right','_vcamYawRad', b[0])('top', mk(F), mk(R), ()=>0);
+  eq([F.x,F.y,F.z].join(), '0,0,-1', 'top at yaw 0: W = up-screen');
+  eq([R.x,R.y,R.z].join(), '1,0,0', 'top at yaw 0: D = right-screen');
+}
 assert(/else if\(_vm874==='side'\)\{ if\(gameCfg\.viewAxis==='z'\)\{ right\.set\(0,0,-1\); \} else \{ right\.set\(1,0,0\); \} forward\.set\(0,0,0\); \}/.test(src), 'side: only the lane axis moves');
 assert(/if\(_vm874==='side' && _sideLock!=null && !drivingCar\)\{/.test(src), 'lane hold: off-lane velocity killed, eased back on');
 
 // ---- camera override: after the branch ladder, respecting turret/killcam ----
 assert(/if\(_vmC!=='fps' && !mountedTurret && !\(duelDead && pvpMode\(\)\)\)\{/.test(src), 'override skips the turret seat and the PvP killcam');
-assert(/camera\.position\.set\(_t\.x, _t\.y\+D, _t\.z\+D\*0\.55\);/.test(src), 'top camera: height D, pulled back 0.55D (isometric tilt, not map-flat)');
-assert(/const D=Math\.max\(8, Math\.min\(80, _vd\|\|26\)\);/.test(src), 'top distance clamps 8–80, default 26');
-assert(/if\(gameCfg\.viewAxis==='z'\) camera\.position\.set\(_t\.x\+D, _cy, _t\.z\);/.test(src), 'side camera sits off the lane axis');
-assert(/const _t = drivingCar \? drivingCar\.position : player\.pos;/.test(src), 'driving keeps the view — cars work top-down');
+// build 1085: the framing moved into _vcamPose(), shared by the live camera, the editor rig and the
+// preview window. The old (0, D, 0.55D) offset survives as the orbit's default radius and tilt.
+assert(/_vcamPose\(camera, 0, true, drivingCar \? drivingCar\.position : player\.pos\)/.test(src), 'the live camera is posed by the shared function');
+assert(/const VCAM_TOP_R = Math\.hypot\(1, 0\.55\), VCAM_TOP_TILT = Math\.atan2\(1, 0\.55\)\/VCAM_DEG;/.test(src), 'top camera: height D, pulled back 0.55D (isometric tilt, not map-flat)');
+assert(/top:  \{ dist:\[8,80\]/.test(src) && /top:  \{ dist:26/.test(src), 'top distance clamps 8–80, default 26');
+assert(/function _vcamBaseYaw\(vm\)\{ return \(vm==='side' && gameCfg\.viewAxis==='z'\) \? 90 : 0; \}/.test(src), 'side camera sits off the lane axis');
+assert(/drivingCar \? drivingCar\.position : player\.pos/.test(src), 'driving keeps the view — cars work top-down');
 
 // ---- combat: shots through the cursor, body-relative melee/rockets, avatar shown ----
 assert(/if\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\)\{\s*\n\s*tpMuzzleWorld\(muzzleWorld\);/.test(src), 'tracers start at the avatar barrel (tpActive since build 894)');
@@ -55,6 +66,7 @@ assert(/if\(_scopedNow && activeViewMode\(\)!=='fps'\) _scopedNow=false;/.test(s
 // ---- editor UI ----
 assert(/vRow\.appendChild\(vBtn\('fps','First person'\)\); vRow\.appendChild\(vBtn\('chase','Third-person'\)\); vRow\.appendChild\(vBtn\('top','Top-down'\)\); vRow\.appendChild\(vBtn\('side','Side-scroller'\)\);/.test(src), 'four-way picker in Player options (chase joined in build 894)');
 assert(/aw\.appendChild\(aBtn\('x','Lane runs east\\u2013west'\)\); aw\.appendChild\(aBtn\('z','Lane runs north\\u2013south'\)\);/.test(src), 'side mode picks its lane axis');
-assert(/gameCfg\.viewDist=\+rr\.value;/.test(src), 'camera distance slider writes viewDist');
+assert(/camSlider\('Camera distance','dist'/.test(src) && /gameCfg\[prop\]=\+rr\.value;/.test(src) &&
+  /const prop='view'\+key\.charAt\(0\)\.toUpperCase\(\)\+key\.slice\(1\);/.test(src), 'camera distance slider writes viewDist');
 
 done('build 874: per-level camera views — top-down twin-stick + 2.5D side-scroll, wired end to end');

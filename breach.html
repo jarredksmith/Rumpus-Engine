@@ -14040,6 +14040,11 @@ let gameCfg = {
   // build 874: per-level camera view — 'fps' (default) | 'top' (isometric twin-stick) | 'side' (2.5D side-scroller).
   // viewDist 0 = the mode's own default distance; viewAxis picks the side-scroller's running direction.
   view: (savedLevel && savedLevel.game && (savedLevel.game.view==='top'||savedLevel.game.view==='side'||savedLevel.game.view==='chase')) ? savedLevel.game.view : 'fps',
+  // build 1085: the camera orbit. All absent -> the per-mode defaults, which reproduce the pre-1085 framing.
+  viewYaw:    (savedLevel && savedLevel.game && savedLevel.game.viewYaw!=null)    ? +savedLevel.game.viewYaw    : 0,
+  viewTilt:   (savedLevel && savedLevel.game && savedLevel.game.viewTilt!=null)   ? +savedLevel.game.viewTilt   : null,
+  viewHeight: (savedLevel && savedLevel.game && savedLevel.game.viewHeight!=null) ? +savedLevel.game.viewHeight : 0,
+  viewRoll:   (savedLevel && savedLevel.game && savedLevel.game.viewRoll!=null)   ? +savedLevel.game.viewRoll   : 0,
   viewDist: (savedLevel && savedLevel.game && savedLevel.game.viewDist!=null) ? +savedLevel.game.viewDist : 0,
   viewAxis: (savedLevel && savedLevel.game && savedLevel.game.viewAxis==='z') ? 'z' : 'x',
 };
@@ -18819,7 +18824,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x';
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0;   // build 1085: null tilt = the mode's default
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -23703,7 +23708,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1084 · 2026-07-26';
+const BUILD_VERSION = 'build 1085 · 2026-07-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27761,31 +27766,79 @@ function _vcamTarget(){
   _VCAM_T.x=gx; _VCAM_T.y=gy+EYE; _VCAM_T.z=gz;
   return _VCAM_T;
 }
-// Mirrors the live framing block in the frame loop exactly — same clamps, same defaults, same lift, same
-// look-at. If that block ever changes, this must change with it or the preview starts lying.
-function _vcamPose(cam, aspect){
+// ---- build 1085: the camera is an ORBIT around the player, not a fixed offset ----
+// Until now top-down and side-scroller levels got one hard-coded angle each. Creators asked to rotate and
+// raise them, which only works if the pose is expressed as (radius, yaw, tilt) about an aim point.
+// The defaults below are chosen to reproduce the OLD offsets to the last decimal, so every level built
+// before this change frames identically — see the constants.
+const VCAM_DEG = Math.PI/180;
+// The legacy top-down offset was (0, D, 0.55D): a radius of hypot(1,0.55)*D at atan2(1,0.55) above the
+// horizon. Expressed that way it drops straight into the orbit with no change in framing.
+const VCAM_TOP_R = Math.hypot(1, 0.55), VCAM_TOP_TILT = Math.atan2(1, 0.55)/VCAM_DEG;
+const VCAM_SIDE_LIFT = 1.0;   // the old side camera sat 1.0 above the player anchor; that is now the aim height
+// Per-mode limits. Side yaw stays inside +-60: past that the camera swings down the lane, A/D stop reading
+// as left/right, and the aim ray gets near-parallel to the play plane it has to hit. Top tilt stops at 89
+// so lookAt never gimbals straight down, and at 15 so the cursor's ground-plane intersect stays solid.
+const VCAM_LIM = {
+  top:  { dist:[8,80],  yaw:[-180,180], tilt:[15,89],  height:[-8,24], roll:[-30,30] },
+  side: { dist:[6,60],  yaw:[-60,60],   tilt:[-30,60], height:[-8,24], roll:[-30,30] },
+};
+const VCAM_DEF = {
+  top:  { dist:26, yaw:0, tilt:VCAM_TOP_TILT, height:0, roll:0 },
+  side: { dist:16, yaw:0, tilt:0,             height:0, roll:0 },
+};
+function _vcamNum(v, lo, hi, d){ v=(v==null||v==='')?d:+v; if(!isFinite(v)) v=d; return Math.max(lo, Math.min(hi, v)); }
+// One reader for every knob, so a hand-edited or truncated level file can never produce a broken camera.
+function _vcamOpt(vm, key){
+  const lim=VCAM_LIM[vm]||VCAM_LIM.side, def=VCAM_DEF[vm]||VCAM_DEF.side;
+  const raw=(typeof gameCfg!=='undefined' && gameCfg) ? gameCfg['view'+key.charAt(0).toUpperCase()+key.slice(1)] : null;
+  const v=_vcamNum(raw, lim[key][0], lim[key][1], def[key]);
+  return (key==='dist' && !(+raw)) ? def[key] : v;   // 0/absent distance means "the default", as it always has
+}
+// Which way the camera sits before the creator's yaw is added: a north-south lane is filmed from +X,
+// everything else from +Z. Measured as a compass angle so yaw just adds to it.
+function _vcamBaseYaw(vm){ return (vm==='side' && gameCfg.viewAxis==='z') ? 90 : 0; }
+function _vcamYawRad(vm){ return (_vcamBaseYaw(vm) + _vcamOpt(vm,'yaw')) * VCAM_DEG; }
+const _vcamLast={ vm:'', r:0, aimY:0 };   // what the last pose used — the rig reads this to draw the frame
+// THE pose function. The live camera, the editor rig and the preview window all go through here, so there
+// is exactly one implementation of the framing and they cannot drift apart.
+//   tgt   - what to orbit (live: the player or their car; editor: the start point)
+//   live  - true when driving the real camera: leave fov/aspect/projection alone, since the ADS blend owns them
+function _vcamPose(cam, aspect, live, tgt){
   const vm=_vcamMode(); if(!vm) return '';
-  const t=_vcamTarget(), _vd=+gameCfg.viewDist||0;
-  if(vm==='top'){
-    const D=Math.max(8, Math.min(80, _vd||26));
-    cam.position.set(t.x, t.y+D, t.z+D*0.55);
-    cam.lookAt(t.x, t.y, t.z);
-  } else {
-    const D=Math.max(6, Math.min(60, _vd||16)), cy=t.y+1.0;
-    if(gameCfg.viewAxis==='z') cam.position.set(t.x+D, cy, t.z);
-    else cam.position.set(t.x, cy, t.z+D);
-    cam.lookAt(t.x, cy, t.z);
+  const t=tgt || _vcamTarget();
+  const D=_vcamOpt(vm,'dist');
+  const R=(vm==='top') ? D*VCAM_TOP_R : D;
+  const tilt=_vcamOpt(vm,'tilt')*VCAM_DEG, a=_vcamYawRad(vm);
+  const aimY=t.y + (vm==='side' ? VCAM_SIDE_LIFT : 0) + _vcamOpt(vm,'height');
+  const ct=Math.cos(tilt);
+  cam.up.set(0,1,0);
+  cam.position.set(t.x + Math.sin(a)*ct*R, aimY + Math.sin(tilt)*R, t.z + Math.cos(a)*ct*R);
+  cam.lookAt(t.x, aimY, t.z);
+  // No `rotation.z = 0` here, deliberately. lookAt with a world up already yields zero roll, so that line
+  // was only ever a safety net — but it reads the Euler, and the LIVE camera runs in 'YXZ' order (set by the
+  // first-person path) while a fresh preview camera is 'XYZ'. Zeroing z means different things in the two
+  // orders once the camera has both yaw and pitch, so the preview and the real camera drifted apart the
+  // moment Rotate was used. Roll goes on as a quaternion turn instead, which is order-independent.
+  const roll=_vcamOpt(vm,'roll'); if(roll) cam.rotateZ(roll*VCAM_DEG);
+  if(!live){
+    cam.fov=(typeof worldCfg!=='undefined' && worldCfg.fov) ? worldCfg.fov : 78;   // the resting FOV; ADS zoom is transient
+    cam.near=camera.near; cam.far=camera.far;
+    if(aspect) cam.aspect=aspect;
+    cam.updateProjectionMatrix();
   }
-  cam.rotation.z=0;
-  cam.fov=(typeof worldCfg!=='undefined' && worldCfg.fov) ? worldCfg.fov : 78;   // the resting FOV; ADS zoom is transient
-  cam.near=camera.near; cam.far=camera.far;
-  if(aspect) cam.aspect=aspect;
-  cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
+  cam.updateMatrixWorld(true);
+  _vcamLast.vm=vm; _vcamLast.r=R; _vcamLast.aimY=aimY;
   return vm;
 }
-function _vcamDist(cam, vm){   // eye -> the plane the action happens on
-  const t=_vcamTarget();
-  return cam.position.distanceTo(_vcamTmp.set(t.x, (vm==='top')?t.y:(t.y+1.0), t.z));
+function _vcamDist(cam, vm){ return _vcamLast.r || 1; }   // eye -> the plane the action happens on: the orbit radius
+// Put every knob back to the mode's default. The camera is the one setting where a creator can get
+// thoroughly lost, so there is always a way home.
+function _vcamReset(){
+  const vm=_vcamMode(); if(!vm) return false;
+  const d=VCAM_DEF[vm];
+  gameCfg.viewDist=d.dist; gameCfg.viewYaw=d.yaw; gameCfg.viewTilt=d.tilt; gameCfg.viewHeight=d.height; gameCfg.viewRoll=d.roll;
+  return true;
 }
 function _vcamCorners(cam, d){   // the framed rectangle at distance d, in world space
   const hh=Math.tan(cam.fov*Math.PI/360)*d, hw=hh*cam.aspect;
@@ -28152,7 +28205,10 @@ function loop(){
   // build 874: in the fixed-camera views WASD is screen-relative, not facing-relative (the body faces
   // the cursor). Top: W = up-screen (world -Z), D = right-screen (world +X). Side: only the lane axis.
   const _vm874 = activeViewMode();
-  if(_vm874==='top'){ forward.set(0,0,-1); right.set(1,0,0); }
+  // build 1085: top-down movement is screen-relative, so it has to rotate with the camera. At yaw 0 this is
+  // exactly the old (0,0,-1)/(1,0,0). Side keeps the lane basis below — the player runs along the lane no
+  // matter where the camera is watching from.
+  if(_vm874==='top'){ const _ya=(typeof _vcamYawRad==='function')?_vcamYawRad('top'):0; forward.set(-Math.sin(_ya),0,-Math.cos(_ya)); right.set(Math.cos(_ya),0,-Math.sin(_ya)); }
   else if(_vm874==='side'){ if(gameCfg.viewAxis==='z'){ right.set(0,0,-1); } else { right.set(1,0,0); } forward.set(0,0,0); }
   const wish = new THREE.Vector3();
   let moveScale = 1;   // analog when using the stick, full when using keys
@@ -28473,18 +28529,10 @@ function loop(){
   { const _vmC=activeViewMode();
     if(_vmC!=='fps' && !mountedTurret && !(duelDead && pvpMode())){
       gun.visible=false;   // renderViewmodel() keys off this — no floating first-person gun overlay
-      const _t = drivingCar ? drivingCar.position : player.pos;
-      const _vd = +gameCfg.viewDist||0;
-      if(_vmC==='top'){
-        const D=Math.max(8, Math.min(80, _vd||26));
-        camera.position.set(_t.x, _t.y+D, _t.z+D*0.55);   // pulled toward +Z: ~61° tilt reads isometric, not map-flat
-        camera.lookAt(_t.x, _t.y, _t.z); camera.rotation.z=0;
-      } else {
-        const D=Math.max(6, Math.min(60, _vd||16)), _cy=_t.y+1.0;
-        if(gameCfg.viewAxis==='z') camera.position.set(_t.x+D, _cy, _t.z);
-        else camera.position.set(_t.x, _cy, _t.z+D);
-        camera.lookAt(_t.x, _cy, _t.z); camera.rotation.z=0;
-      }
+      // build 1085: the framing lives in _vcamPose() now — the same function the editor rig and the preview
+      // window use, so what a creator sets up is exactly what ships. `true` = don't touch fov/projection
+      // here; the ADS blend above owns those. The orbit target follows the player (or the car they drive).
+      _vcamPose(camera, 0, true, drivingCar ? drivingCar.position : player.pos);
     } }
   updateOwnAvatar(dt);   // show + place the player's own body in third person (hidden otherwise)
   _updateMuzMarker();   // live gunfire-origin marker when tuning (third-person, opt-in)
@@ -30739,7 +30787,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', autoRig:c.autoRig||undefined, ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x' },
+    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0 },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default)
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -31420,7 +31468,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x';
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0;   // build 1085: null tilt = the mode's default
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -33472,12 +33520,31 @@ function renderEditorFields(){
       const vBtn=(key,txt)=>{ const b=document.createElement('button'); b.textContent=txt; if(_curView===key){ b.style.background='rgba(var(--accent-rgb),0.30)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); gameCfg.view=key; _levelDirty=true; renderEditorFields(); }; return b; };
       vRow.appendChild(vBtn('fps','First person')); vRow.appendChild(vBtn('chase','Third-person')); vRow.appendChild(vBtn('top','Top-down')); vRow.appendChild(vBtn('side','Side-scroller')); bPly.appendChild(vRow);
       if(_curView==='top'||_curView==='side'){
-        const w=document.createElement('div'); w.style.cssText='display:flex;align-items:center;gap:8px;margin:5px 0 3px;color:#9fe6cf;font-size:12px;';
-        const sp2=document.createElement('span'); sp2.textContent='Camera distance'; sp2.style.cssText='flex:0 0 110px;';
-        const rr=document.createElement('input'); rr.type='range'; rr.min=(_curView==='top')?'8':'6'; rr.max=(_curView==='top')?'80':'60'; rr.step='1'; rr.value=String(+gameCfg.viewDist || (_curView==='top'?26:16)); rr.style.cssText='flex:1 1 auto;accent-color:var(--accent);';
-        const nn=document.createElement('span'); nn.style.cssText='flex:0 0 34px;text-align:right;color:#cfeee2;'; nn.textContent=rr.value;
-        rr.addEventListener('pointerdown',()=>pushUndoSnapshot()); rr.oninput=()=>{ gameCfg.viewDist=+rr.value; nn.textContent=rr.value; _levelDirty=true; };
-        w.appendChild(sp2); w.appendChild(rr); w.appendChild(nn); bPly.appendChild(w);
+        // build 1085: the camera is an orbit, so every part of it is adjustable. One slider builder — the
+        // value writes straight to gameCfg and the rig + preview redraw on the next frame, live.
+        const _lim=VCAM_LIM[_curView], _def=VCAM_DEF[_curView];
+        const camSlider=(label, key, step, unit, tip)=>{
+          const w=document.createElement('div'); w.style.cssText='display:flex;align-items:center;gap:8px;margin:5px 0 3px;color:#9fe6cf;font-size:12px;';
+          const sp2=document.createElement('span'); sp2.textContent=label; sp2.style.cssText='flex:0 0 104px;'; if(tip) sp2.title=tip;
+          const rr=document.createElement('input'); rr.type='range'; rr.min=String(_lim[key][0]); rr.max=String(_lim[key][1]); rr.step=String(step);
+          rr.value=String(Math.round(_vcamOpt(_curView,key)*10)/10); rr.style.cssText='flex:1 1 auto;accent-color:var(--accent);'; if(tip) rr.title=tip;
+          const nn=document.createElement('span'); nn.style.cssText='flex:0 0 46px;text-align:right;color:#cfeee2;'; nn.textContent=rr.value+unit;
+          const prop='view'+key.charAt(0).toUpperCase()+key.slice(1);
+          rr.addEventListener('pointerdown',()=>pushUndoSnapshot());
+          rr.oninput=()=>{ gameCfg[prop]=+rr.value; nn.textContent=rr.value+unit; _levelDirty=true; };
+          w.appendChild(sp2); w.appendChild(rr); w.appendChild(nn); bPly.appendChild(w);
+        };
+        camSlider('Camera distance','dist',1,'', 'How far back the camera orbits');
+        camSlider('Rotate','yaw',1,'\u00b0', _curView==='top' ? 'Spin the camera around the player \u2014 WASD follows it, so movement always matches the screen'
+                                                              : 'Swing the camera off square to the lane for a 2.5D angle. The player still runs along the lane.');
+        camSlider('Tilt','tilt',1,'\u00b0', _curView==='top' ? 'Angle above the horizon: 89\u00b0 is straight down, lower is more isometric'
+                                                             : 'Look down on the lane (or up at it, below 0)');
+        camSlider('Height','height',0.5,'', 'Raise or lower what the camera is centred on \u2014 the whole frame shifts with it');
+        camSlider('Roll','roll',1,'\u00b0', 'Tip the horizon for a dutch angle');
+        const rs=document.createElement('button'); rs.textContent='Reset camera'; rs.style.cssText='width:100%;font-size:12px;margin:4px 0 2px;';
+        rs.title='Back to this mode\u2019s default framing';
+        rs.onclick=()=>{ pushUndoSnapshot(); if(_vcamReset()){ _levelDirty=true; renderEditorFields(); } };
+        bPly.appendChild(rs);
       }
       if(_curView==='side'){
         const aw=document.createElement('div'); aw.className='row2';

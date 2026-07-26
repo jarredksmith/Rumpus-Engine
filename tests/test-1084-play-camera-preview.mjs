@@ -7,97 +7,30 @@ const src = gameSource();
 const pose = extractFunction('_vcamPose');
 assert(pose, '_vcamPose exists');
 
-// The one thing that actually matters: it must agree with the LIVE camera block, or the preview lies.
-// Pull both out and compare the numbers that define the framing.
-const live = src.match(/if\(_vmC==='top'\)\{[\s\S]*?camera\.lookAt\(_t\.x, _cy, _t\.z\); camera\.rotation\.z=0;/);
-assert(live, 'found the live top/side framing block in the frame loop');
-const L = live[0];
-const nums = (t) => (t.match(/-?\d+(?:\.\d+)?/g) || []).join(',');
-eq(nums(L.match(/Math\.max\(8, Math\.min\(80, _vd\|\|26\)\)/)[0]), nums('Math.max(8, Math.min(80, _vd||26))'),
-   'top: the live clamp is 8..80 with a default of 26');
-assert(/Math\.max\(8, Math\.min\(80, _vd\|\|26\)\)/.test(pose), '...and the preview uses exactly that clamp');
-assert(/Math\.max\(6, Math\.min\(60, _vd\|\|16\)\)/.test(L) && /Math\.max\(6, Math\.min\(60, _vd\|\|16\)\)/.test(pose),
-   'side: both use the 6..60 clamp with a default of 16');
-assert(/position\.set\(t\.x, t\.y\+D, t\.z\+D\*0\.55\)/.test(pose) && /position\.set\(_t\.x, _t\.y\+D, _t\.z\+D\*0\.55\)/.test(L),
-   'top: both lift by D and pull back by D*0.55 (the ~61 degree isometric tilt)');
-assert(/cy=t\.y\+1\.0/.test(pose) && /_cy=_t\.y\+1\.0/.test(L), 'side: both sit 1.0 above the player anchor');
-assert(/viewAxis==='z'\) cam\.position\.set\(t\.x\+D, cy, t\.z\)/.test(pose) && /viewAxis==='z'\) camera\.position\.set\(_t\.x\+D, _cy, _t\.z\)/.test(L),
-   'side: both put the camera on +X for a north-south lane');
-assert(/rotation\.z=0/.test(pose), 'and the preview is level, like the real one');
+// Build 1084 shipped this alongside a duplicate of the framing maths in the frame loop, and pinned the two
+// against each other. Build 1085 deleted the duplicate: the live camera now calls _vcamPose too. That is
+// strictly safer, so the test becomes "there is exactly one implementation, and everything uses it".
+assert(!/camera\.position\.set\(_t\.x, _t\.y\+D, _t\.z\+D\*0\.55\)/.test(src),
+  'the frame loop no longer carries its own copy of the framing');
+assert(/_vcamPose\(camera, 0, true, drivingCar \? drivingCar\.position : player\.pos\)/.test(src),
+  'the live camera is posed by the shared function, following the player (or their car)');
+eq((src.match(/function _vcamPose\(/g) || []).length, 1, 'and there is only one of it');
+// the live call must NOT let the pose touch fov/projection — the ADS blend above owns those
+assert(/if\(!live\)\{[\s\S]{0,240}updateProjectionMatrix\(\);\n\s*\}/.test(pose),
+  'driving the real camera leaves fov and the projection alone');
 
 // the anchor point must be where the player actually spawns, not the raw pstart
 const tgt = extractFunction('_vcamTarget');
 assert(/terrainHeightAt\(gx,gz\)/.test(tgt) && /\+\(\+playerSpawn\.y\|\|0\)/.test(tgt) && /gy\+EYE/.test(tgt),
-  'the anchor is terrain + pstart.y + EYE — exactly what deployAt() gives the player');
-assert(/deployAt\(\)?[\s\S]{0,200}/.test(src), 'sanity: the deploy path exists');
+  'the editor anchor is terrain + pstart.y + EYE — exactly what deployAt() gives the player');
 assert(/player\.pos\.set\(playerSpawn\.x, ty\+\(playerSpawn\.y\|\|0\)\+EYE, playerSpawn\.z\)/.test(src),
   '...and that really is how deploy positions the player');
+assert(/const t=tgt \|\| _vcamTarget\(\);/.test(pose),
+  'so the editor previews the START point while the live camera follows the player, through one function');
 
 // FOV: the resting one, not a transient ADS zoom
 assert(/cam\.fov=\(typeof worldCfg!=='undefined' && worldCfg\.fov\) \? worldCfg\.fov : 78/.test(pose),
   'the preview frames at the level FOV');
-
-// ---------------------------------------------------------------- run the pose and check real geometry
-const mk = (view, opts = {}) => {
-  const THREE = {
-    Vector3: class { constructor(x=0,y=0,z=0){ this.x=x; this.y=y; this.z=z; }
-      set(x,y,z){ this.x=x; this.y=y; this.z=z; return this; }
-      copy(v){ return this.set(v.x,v.y,v.z); }
-      distanceTo(v){ return Math.hypot(this.x-v.x, this.y-v.y, this.z-v.z); } },
-  };
-  const cam = { position: new THREE.Vector3(), rotation: { z: 1 }, lookedAt: null, fov: 0, near: 0, far: 0, aspect: 0,
-    lookAt(x,y,z){ this.lookedAt = { x,y,z }; }, updateProjectionMatrix(){}, updateMatrixWorld(){} };
-  const fn = new Function('THREE','gameCfg','playerSpawn','worldCfg','EYE','camera','terrainHeightAt',
-    `${extractFunction('_vcamMode')}\n${tgt}\n${pose}\n${extractFunction('_vcamDist')}
-     const _VCAM_T={x:0,y:0,z:0}; const _vcamTmp=new THREE.Vector3();
-     return { pose:_vcamPose, dist:_vcamDist, target:_vcamTarget };`
-  )(THREE,
-    { view, viewDist: opts.dist || 0, viewAxis: opts.axis || 'x' },
-    { x: opts.px || 0, y: opts.py || 0, z: opts.pz || 0 },
-    { fov: 78 }, 1.7,
-    { near: 0.1, far: 400 },
-    () => opts.terrain || 0);
-  return { cam, api: fn };
-};
-
-// side-scroller, lane east-west, start at the origin on flat ground
-let m = mk('side');
-eq(m.api.pose(m.cam, 16 / 9), 'side', 'poses a side-scroller');
-near(m.cam.position.z, 16, 1e-6, 'the camera sits the default 16 back on +Z');
-near(m.cam.position.x, 0, 1e-6, '...directly in line with the start');
-near(m.cam.position.y, 1.7 + 1.0, 1e-6, '...at eye height plus the 1.0 lift');
-near(m.cam.lookedAt.y, 1.7 + 1.0, 1e-6, 'and it looks level — a tilted side-scroller camera would be wrong');
-eq(m.cam.rotation.z, 0, 'no roll');
-eq(m.cam.fov, 78, 'at the level FOV');
-
-// the lane axis genuinely swings the camera round
-m = mk('side', { axis: 'z', dist: 24, px: 5, pz: -3 });
-m.api.pose(m.cam, 16 / 9);
-near(m.cam.position.x, 5 + 24, 1e-6, 'a north-south lane puts the camera 24 out on +X');
-near(m.cam.position.z, -3, 1e-6, '...level with the start on Z');
-
-// terrain and the start height both raise it
-m = mk('side', { terrain: 12, py: 3 });
-m.api.pose(m.cam, 16 / 9);
-near(m.cam.position.y, 12 + 3 + 1.7 + 1.0, 1e-6, 'a start on a hill (or a platform) lifts the camera with it');
-
-// out-of-range distances are clamped exactly like the live path
-m = mk('side', { dist: 500 }); m.api.pose(m.cam, 16 / 9);
-near(m.cam.position.z, 60, 1e-6, 'side distance clamps to 60');
-m = mk('top', { dist: 500 }); m.api.pose(m.cam, 16 / 9);
-near(m.cam.position.y - 1.7, 80, 1e-6, 'top distance clamps to 80');
-
-// top-down: lifted and pulled toward +Z for the isometric read
-m = mk('top', { dist: 30 });
-eq(m.api.pose(m.cam, 16 / 9), 'top', 'poses a top-down level');
-near(m.cam.position.y, 1.7 + 30, 1e-6, 'lifted by the camera distance');
-near(m.cam.position.z, 30 * 0.55, 1e-6, '...and pulled back so it reads isometric, not map-flat');
-
-// every other view mode is left completely alone
-for (const v of ['fps', 'chase', undefined, 'nonsense']) {
-  const q = mk(v); eq(q.api.pose(q.cam, 1), '', (v || 'unset') + ' has no derived camera — nothing is posed');
-  eq(q.cam.rotation.z, 1, '...and the camera object is not touched');
-}
 
 // ---------------------------------------------------------------- the frame rectangle
 const corn = extractFunction('_vcamCorners');
