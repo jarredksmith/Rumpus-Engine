@@ -21,7 +21,7 @@ assert(/setInterval\([\s\S]*?autoSaveNow\(\)[\s\S]*?, 20000\)/.test(start), 'flu
 assert(/_levelDirty = false; if\(typeof startAutoSave==='function'\) startAutoSave\(\);/.test(src), 'starts on editor open');
 assert(/autoSaveNow\('on close'\); if\(typeof stopAutoSave==='function'\) stopAutoSave\(\);/.test(src), 'flushes + stops on editor close');
 assert(/autoSaveNow\('before play'\); startGame\(\);/.test(src), 'flushes before Play');
-assert(/addEventListener\('beforeunload', \(\)=>\{ try\{ if\(_autoSaveOn && _levelDirty\) saveLevel\(\);/.test(src), 'flushes on tab close');
+assert(/addEventListener\('beforeunload', \(\)=>\{ try\{ if\(!_newLevelPending && _autoSaveOn && _levelDirty\) saveLevel\(\);/.test(src), 'flushes on tab close');
 assert(/visibilitychange[\s\S]*?document\.visibilityState==='hidden'\) autoSaveNow\(\)/.test(src), 'flushes when the tab is hidden');
 
 // toggle persists + UI
