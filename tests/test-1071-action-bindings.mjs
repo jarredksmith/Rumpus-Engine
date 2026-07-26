@@ -72,8 +72,10 @@ const forInput = new Function(extractFunction('actionForInput', src) + '\nreturn
     'actions never fire while editing, paused, shopping, typing or in a menu');
   assert(/if\(player\.hp!=null && player\.hp<=0\) return false;/.test(fn), '...or while dead');
   assert(/if\(a\.cd>0 && now < \(_actCd\[a\.id\]\|\|0\)\) return false;/.test(fn), 'the cooldown is honoured');
-  assert(/const ms=\(typeof _ownSlotDurMs==='function' && _ownSlotDurMs\(a\.slot\)\) \|\| 600;/.test(fn),
+  assert(/const ms=\(typeof _ownSlotDurMs==='function' && _ownSlotDurMs\(_st\)\) \|\| 600;/.test(fn),
     'the clip plays for ITS OWN length (build 1062), not a fixed guess');
+  assert(/const _st=actionState\(a\);/.test(fn) && /playOwnAnim\(_st, dur\)/.test(fn),
+    '...whether that is a named slot or (build 1079) a clip chosen by name');
   assert(/if\(a\.lock\)\{ _actLockUntil=now\+dur; \}/.test(fn), 'lock-movement plants the player for exactly that long');
   assert(/if\(a\.event && typeof logicEvent==='function' && \(typeof NET==='undefined' \|\| NET\.mode!=='client'\)\) logicEvent\(a\.event\);/.test(fn),
     'the logic event pulses the graph where gameplay is authoritative');
@@ -108,8 +110,8 @@ assert(/if\(typeof actionMovementLocked==='function' && actionMovementLocked\(\)
 assert(/ac:_actNetCode, aq:_actNetSeq \}\];/.test(src), 'the host self-entry carries the action code + sequence');
 assert(/ac:_actNetCode, aq:_actNetSeq \}\); \}catch/.test(src), 'the client state packet carries them too');
 assert(/if\(pl\.aq!=null && pl\.aq!==rp\._aq\)\{ rp\._aq=pl\.aq;/.test(src), 'a CHANGED sequence is what triggers the replay (not a level flag)');
-assert(/rp\._actT=performance\.now\(\)\+Math\.max\(200, Math\.min\(6000, \(typeof _ownSlotDurMs==='function' && _ownSlotDurMs\(_a\.slot\)\)\|\|600\)\);/.test(src),
-  '...for the clip’s own measured length on the receiving end');
+assert(/rp\._actSlot=_as; rp\._actT=performance\.now\(\)\+Math\.max\(200, Math\.min\(6000, \(typeof _ownSlotDurMs==='function' && _ownSlotDurMs\(_as\)\)\|\|600\)\);/.test(src),
+  '...for the clip’s own measured length on the receiving end, resolved the same way the firing player resolved it');
 assert(/if\(rp\._actT && performance\.now\(\) < rp\._actT\) _st=rp\._actSlot;/.test(src), 'and the remote avatar plays that slot');
 {
   const i = src.indexOf("if(rp._actT && performance.now() < rp._actT) _st=rp._actSlot;");

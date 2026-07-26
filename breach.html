@@ -7852,7 +7852,27 @@ function playEnemyStates(root, gltf, clips){
   if(actions[startKey]) actions[startKey].setEffectiveWeight(1);
   mixer._caHasEv = Object.keys(actions).some(k=>{ const c=actions[k].getClip && actions[k].getClip(); return !!(c && c._caEvents && c._caEvents.length); });   // build 1045: only event-carrying rigs get scanned
   mixers.push(mixer); root.userData.mixer = mixer; root.userData.stateActions = actions; root.userData.animState = startKey;
+  root.userData.animClips = gltf.animations;   // build 1079: every clip the model carries, mapped to a slot or not
   return mixer;
+}
+// build 1079: play a clip DIRECTLY, by name, with no slot in between. An action binding could only choose one
+// of the ~30 named slots, so a clip you authored in the animation editor was unreachable until you also gave up
+// a slot for it — and the slots are a fixed taxonomy, so "Backflip" had nowhere honest to live.
+// A state of the form 'clip:<name>' resolves here instead. The action is built the first time it is asked for,
+// so carrying fifty clips costs nothing until one is actually used, and it then behaves like any other state:
+// crossfades, hold, per-clip speed, and the peer replay all work unchanged.
+const CLIP_STATE = 'clip:';
+function _ensureClipAction(v, state){
+  if(!v || !v.userData || String(state||'').indexOf(CLIP_STATE)!==0) return;
+  const acts=v.userData.stateActions, mixer=v.userData.mixer;
+  if(!acts || !mixer || acts[state]) return;
+  const name=state.slice(CLIP_STATE.length);
+  const clip=(v.userData.animClips||[]).find(c=>(c.name||'')===name); if(!clip) return;
+  try{ const a=mixer.clipAction(clip);
+    a.userData=a.userData||{}; a.userData.state=state;
+    a.loop=THREE.LoopOnce; a.clampWhenFinished=true; a.enabled=true; a.setEffectiveWeight(0); a.play();
+    acts[state]=a;
+  }catch(e){}
 }
 // Resolve a requested state to an available action (graceful fallback when a clip is missing).
 function _stateActionKey(acts, state){
@@ -7872,6 +7892,7 @@ function applyAnimSpeedLive(state, spd){
 function setEnemyAnimState(body, state){
   const v = body.userData.visual; if(!v) return;
   const acts = v.userData.stateActions; if(!acts) return;
+  _ensureClipAction(v, state);   // build 1079: 'clip:<name>' builds its action on first use
   const key = _stateActionKey(acts, state); if(!key || !acts[key]) return;
   if(v.userData.animState === key) return;   // already there
   const cur = v.userData.animState ? acts[v.userData.animState] : null;
@@ -8282,6 +8303,9 @@ const _actCd = {};   // id -> next allowed time (runtime only)
 let _actNetCode = 0, _actNetSeq = 0;   // the one-shot peers replay, same shape as the hit-react pair
 // Fire an action by index: play its clip for the clip's own length, pulse the graph, hold the
 // player still if asked, and tell peers. Host/solo authority mirrors the rest of the engine.
+// build 1079: what this action plays. A clip picked BY NAME wins over the slot — the slot stays behind it as
+// the fallback, so swapping to a model that lacks that clip degrades to a sensible pose instead of nothing.
+function actionState(a){ return (a && a.clip) ? ('clip:'+a.clip) : (a ? a.slot : ''); }
 function fireAction(i){
   const a=actionBinds[i]; if(!a) return false;
   if(!gameOn || editorOpen || paused || shopOpen || invOpen || mapOpen || chatOpen) return false;
@@ -8290,9 +8314,10 @@ function fireAction(i){
   const now=performance.now();
   if(a.cd>0 && now < (_actCd[a.id]||0)) return false;
   _actCd[a.id]=now + a.cd*1000;
-  const ms=(typeof _ownSlotDurMs==='function' && _ownSlotDurMs(a.slot)) || 600;   // build 1062: the clip's real length
+  const _st=actionState(a);
+  const ms=(typeof _ownSlotDurMs==='function' && _ownSlotDurMs(_st)) || 600;   // build 1062: the clip's real length
   const dur=Math.max(200, Math.min(6000, ms));
-  if(typeof playOwnAnim==='function') playOwnAnim(a.slot, dur);
+  if(typeof playOwnAnim==='function') playOwnAnim(_st, dur);
   if(a.lock){ _actLockUntil=now+dur; }
   _actNetCode=(i+1)&15; _actNetSeq=(_actNetSeq+1)&255;   // peers replay it for the same window
   if(a.event && typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(a.event);
@@ -11234,12 +11259,20 @@ function _aeInitScene(holder, bb){
   holder.appendChild(_aeR.domElement);
   _aeR.domElement.style.cssText='position:absolute;inset:0;width:100%;height:100%;cursor:grab;';
   _aeBindViewport(_aeR.domElement);
-  _aeResize();
+  _aeResize(true);
 }
-function _aeResize(){
+// build 1079: the drawing buffer follows the VIEWPORT, checked every frame rather than only on a window
+// resize. #aeView is flex:1 beside a panel that changes width on its own — opening a fold, a longer bone
+// list, a wider clip name. Any of those resized the canvas's CSS box while the buffer and camera.aspect
+// stayed put, and the model came out stretched sideways with no window resize to correct it.
+let _aeVW=0, _aeVH=0;
+function _aeResize(force){
   if(!_aeR || !_aeEl) return;
-  const holder=_aeEl.querySelector('#aeView');
-  const w=holder.clientWidth||640, h=holder.clientHeight||480;
+  const holder=_aeEl.querySelector('#aeView'); if(!holder) return;
+  const w=Math.max(1, holder.clientWidth||640), h=Math.max(1, holder.clientHeight||480);
+  if(!force && w===_aeVW && h===_aeVH) return;                 // nothing moved: not even a projection rebuild
+  _aeVW=w; _aeVH=h;
+  _aeR.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
   _aeR.setSize(w, h, false); _aeCam.aspect=w/h; _aeCam.updateProjectionMatrix();
 }
 function _aeLoop(){
@@ -11262,6 +11295,7 @@ function _aeLoop(){
   for(const d of _aeDots){ d.position.setFromMatrixPosition(d.userData.bone.matrixWorld);
     d.material.color.setHex(d.userData.slot===_aeSel ? 0xffd166 : 0x38f5b5);
     d.material.opacity = d.userData.slot===_aeSel ? 1 : 0.7; }
+  _aeResize();                                                  // build 1079: costs two integer reads until something actually moves
   _aeR.render(_aeScene, _aeCam);
 }
 // ---- preview clip (throttled rebuild; always built from the pristine rest clone) ----
@@ -11598,7 +11632,7 @@ function _aeKeys(e){
 function _aeKeyUp(e){ if(e.key==='x'||e.key==='y'||e.key==='z'||e.key==='X'||e.key==='Y'||e.key==='Z') _aeAxis=''; }
 addEventListener('keydown', _aeKeys, true);
 addEventListener('keyup', _aeKeyUp, true);
-addEventListener('resize', ()=>{ if(_aeEl && _aeEl.style.display!=='none') _aeResize(); });
+addEventListener('resize', ()=>{ if(_aeEl && _aeEl.style.display!=='none') _aeResize(true); });
 // ---- DOM ----
 function _aeEnsureDom(){
   if(_aeEl) return _aeEl;
@@ -19376,6 +19410,13 @@ function playOwnAnim(slot, dur){ _ownEvt = { slot, until: performance.now() + (d
 function _ownSlotDurMs(slot){
   const v=_ownAvatar && _ownAvatar.userData && _ownAvatar.userData.visual;
   const acts=v && v.userData && v.userData.stateActions; if(!acts) return 0;
+  if(String(slot||'').indexOf('clip:')===0){   // build 1079: a clip chosen BY NAME always runs to its own end —
+    const nm=slot.slice(5);                    // the author picked that clip, not a state the engine guessed at
+    const c=(v.userData.animClips||[]).find(x=>(x.name||'')===nm);
+    const cfg=v.userData.animCfg;
+    const sp=(cfg && cfg.clipSpeed && cfg.clipSpeed[slot]!=null) ? Math.max(0.1,Math.min(4,+cfg.clipSpeed[slot])) : 1;
+    return c ? Math.round((c.duration||0)*1000/sp) : 0;
+  }
   const key=(typeof _stateActionKey==='function') ? _stateActionKey(acts, slot) : slot;
   if(!key || !acts[key] || !/melee|attack|punch|kick|slash|swipe|combo|jab|cross/i.test(key)) return 0;
   let d=0; try{ d=acts[key].getClip().duration||0; }catch(e){ return 0; }
@@ -19989,7 +20030,8 @@ function applyWorld(msg){
     const rp=ensureRemotePlayer(pl.id, pl.n);
     rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); rp.cl=pl.cl||0; rp.car=pl.c||null;
       if(pl.aq!=null && pl.aq!==rp._aq){ rp._aq=pl.aq; const _a=actionBinds[(pl.ac|0)-1];   // build 1071: a fresh action -> replay its slot for the clip's own length
-        if(_a){ rp._actSlot=_a.slot; rp._actT=performance.now()+Math.max(200, Math.min(6000, (typeof _ownSlotDurMs==='function' && _ownSlotDurMs(_a.slot))||600)); } } }   // build 548/644: turret index + climbing anim code travel in the snapshot; build 895: driven car
+        if(_a){ const _as=(typeof actionState==='function')?actionState(_a):_a.slot;   // build 1079: a clip-by-name replays on peers too
+          rp._actSlot=_as; rp._actT=performance.now()+Math.max(200, Math.min(6000, (typeof _ownSlotDurMs==='function' && _ownSlotDurMs(_as))||600)); } } }   // build 548/644: turret index + climbing anim code travel in the snapshot; build 895: driven car
   for(const id in NET.players){ if(!seen.has(+id)) removeRemotePlayer(+id); }
   const es=new Set();
   for(const e of msg.E){ es.add(e.id); upsertEnemyMesh(e); }
@@ -23577,7 +23619,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1078 · 2026-07-26';
+const BUILD_VERSION = 'build 1079 · 2026-07-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34272,7 +34314,7 @@ function renderEditorFields(){
       }
       { // build 1071: ACTION BINDINGS — give the unreachable slots (dodge, parry, block, taunts...) a trigger
         const abHead=document.createElement('div'); abHead.className='hint'; abHead.style.margin='12px 0 2px';
-        abHead.innerHTML='<b>Action bindings</b> — put an animation on a key, button or touch control. The action plays the clip; wire the <i>event</i> into the <b>Logic</b> tab to make it <i>do</i> something (damage, dash, score, unlock). Saved with the level.';
+        abHead.innerHTML='<b>Action bindings</b> — put an animation on a key, button or touch control. Pick any <b>clip</b> the model carries (including ones you made in the <b>animation editor</b>) or one of the named <b>slots</b>. The action plays it; wire the <i>event</i> into the <b>Logic</b> tab to make it <i>do</i> something (damage, dash, score, unlock). Saved with the level.';
         urlHost.appendChild(abHead);
         const commitA=()=>{ if(typeof refreshActionTouchButtons==='function') try{ refreshActionTouchButtons(); }catch(e){} _levelDirty=true; };
         const usedInputs=()=>{ const m={}; for(const b in BINDS) m[BINDS[b]]=(BIND_LABEL[b]||b); return m; };
@@ -34288,10 +34330,22 @@ function renderEditorFields(){
           const l2=document.createElement('div'); l2.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
           l2.appendChild(document.createTextNode('plays'));
           const ssel=document.createElement('select'); ssel.style.cssText='flex:1;min-width:110px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
-          { let g=''; let og=null;
-            for(const sl of ANIM_SLOTS){ if(sl.g!==g){ g=sl.g; og=document.createElement('optgroup'); og.label=g; ssel.appendChild(og); }
-              const o=document.createElement('option'); o.value=sl.k; o.textContent=sl.l; if(a.slot===sl.k) o.selected=true; (og||ssel).appendChild(o); } }
-          ssel.onchange=()=>{ pushUndoSnapshot(); a.slot=ssel.value; commitA(); };
+          { const cur=(typeof actionState==='function')?actionState(a):a.slot;
+            // build 1079: every clip the avatar actually carries, listed FIRST — including the ones authored in
+            // the animation editor. The 30 slots are a fixed taxonomy with nowhere honest to put "Backflip", so
+            // a custom clip used to be unreachable until you sacrificed an unrelated slot for it.
+            const names=(typeof playerModelClips!=='undefined') ? playerModelClips.slice() : [];
+            if(a.clip && names.indexOf(a.clip)<0) names.push(a.clip);   // a pick whose model is not loaded yet still shows
+            if(names.length){ const gc=document.createElement('optgroup'); gc.label='Clips in this level'; ssel.appendChild(gc);
+              for(const nm of names){ if(!nm) continue; const o=document.createElement('option'); o.value='clip:'+nm; o.textContent=nm;
+                if(cur==='clip:'+nm) o.selected=true; gc.appendChild(o); } }
+            let g=''; let og=null;
+            for(const sl of ANIM_SLOTS){ if(sl.g!==g){ g=sl.g; og=document.createElement('optgroup'); og.label='Slot \u00b7 '+sl.g; ssel.appendChild(og); }
+              const o=document.createElement('option'); o.value=sl.k; o.textContent=sl.l; if(cur===sl.k) o.selected=true; (og||ssel).appendChild(o); } }
+          ssel.onchange=()=>{ pushUndoSnapshot();
+            if(ssel.value.indexOf('clip:')===0) a.clip=ssel.value.slice(5).slice(0,40);
+            else { a.clip=''; a.slot=ssel.value; }
+            commitA(); renderEditorFields(); };
           l2.appendChild(ssel);
           l2.appendChild(document.createTextNode('on'));
           const isel=document.createElement('select'); isel.style.cssText='flex:0 0 auto;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
@@ -34307,6 +34361,10 @@ function renderEditorFields(){
           l2.appendChild(isel);
           card.appendChild(l2);
           // conflict warning: an author-chosen key that a default control already owns
+          if(a.clip && typeof playerModelClips!=='undefined' && playerModelClips.length && playerModelClips.indexOf(a.clip)<0){
+            const w=document.createElement('div'); w.className='hint'; w.style.cssText='font-size:10px;color:#ffb08a;margin:0;';
+            w.textContent='\u26a0 This model has no clip called \u201c'+a.clip+'\u201d \u2014 it will fall back to '+a.slot+'.';
+            card.appendChild(w); }
           { const taken=usedInputs();
             if(a.input && taken[a.input]){ const w=document.createElement('div'); w.className='hint';
               w.style.cssText='font-size:10px;color:#ffb08a;margin:0;'; w.textContent='\u26a0 '+_actInputLabel(a.input)+' is also '+taken[a.input]+' \u2014 the action wins. Pick another key, or players can rebind in Settings.';
