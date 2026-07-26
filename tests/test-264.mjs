@@ -18,7 +18,9 @@ assert(/_fArr\.line\.raycast=\(\)=>\{\}; _fArr\.cone\.raycast=\(\)=>\{\}; mk\.ad
 // --- (3) third-person shoulder offset ---
 assert(/let tpSide = 0;/.test(src) && /let tpDist = 4\.2;/.test(src) && /let tpHeight = 0;/.test(src), 'side/distance/height are persisted, clamped prefs (build 371)');
 const tp = extractFunction('tpCameraPushback');
-assert(/let camx = px - fx\*dist \+ rx\*side, camy = py - fy\*dist \+ height, camz = pz - fz\*dist \+ rz\*side;/.test(tp), 'camera carries blended side + height framing (build 373)');
+{ const f=extractFunction('_tpFrame');   // build 1086: the framing moved here, shared with the editor preview
+  assert(/_TPF\.x = pivot\.x - fx\*dist \+ rx\*side;/.test(f) && /_TPF\.y = pivot\.y - fy\*dist \+ height;/.test(f) && /_TPF\.z = pivot\.z - fz\*dist \+ rz\*side;/.test(f),
+    'camera carries blended side + height framing (build 373)'); }
 assert(/if\(side \|\| height\)\{ _tpLookAt\.set\(camx \+ fx, camy \+ fy, camz \+ fz\); camera\.lookAt\(_tpLookAt\); \}/.test(tp), 'view stays parallel to forward so the crosshair is accurate');
 assert(/_tpLookAt\.set\(camx \+ fx, camy \+ fy, camz \+ fz\); camera\.lookAt\(_tpLookAt\)/.test(tp), 'looks parallel to forward so the crosshair stays accurate (build 370)');
 assert(/_tpBack=new THREE\.Vector3\(\), _tpEye=new THREE\.Vector3\(\), _tpLookAt=new THREE\.Vector3\(\)/.test(src), '_tpLookAt declared with the other tp vectors');

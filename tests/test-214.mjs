@@ -6,7 +6,12 @@ assert(/g\.userData\.centerLocal=\{ x:0, y:1\.0, z:0 \}/.test(src), 'capsule pla
 const uoa = extractFunction('updateOwnAvatar');
 assert(/a\.userData\.footY = footY;/.test(uoa), 'foot height exposed to the chase cam');
 const tcp = extractFunction('tpCameraPushback');
-assert(/_ownAvatar\.userData\.centerLocal\)\{/.test(tcp), 'chase cam uses the model centre');
-assert(/px=player\.pos\.x \+ cl\.x\*cy \+ cl\.z\*sy; pz=player\.pos\.z - cl\.x\*sy \+ cl\.z\*cy; py=fY \+ cl\.y;/.test(tcp), 'pivot rotates the local centre by yaw + sits at model-centre height');
-assert(/let camx = px - fx\*dist \+ rx\*side, camy = py - fy\*dist \+ height, camz = pz - fz\*dist \+ rz\*side;/.test(tcp), 'chase cam pulls back with blended side/distance/height framing (build 373)');
+// build 1086: the pivot and the framing became _tpPivot/_tpFrame, shared with the editor preview.
+assert(/_tpPivot\(_ownAvatar, player\.pos, player\.yaw, player\.pos\.y-EYE\)/.test(tcp), 'chase cam uses the model centre');
+{ const pv=extractFunction('_tpPivot');
+  assert(/obj\.userData\.centerLocal/.test(pv), '...read off the model');
+  assert(/_TPP\.x = base\.x \+ cl\.x\*cy \+ cl\.z\*sy;/.test(pv) && /_TPP\.z = base\.z - cl\.x\*sy \+ cl\.z\*cy;/.test(pv) && /_TPP\.y = fY \+ cl\.y;/.test(pv),
+    'pivot rotates the local centre by yaw + sits at model-centre height');
+  const f=extractFunction('_tpFrame');
+  assert(/_TPF\.x = pivot\.x - fx\*dist \+ rx\*side;/.test(f), 'chase cam pulls back with blended side/distance/height framing (build 373)'); }
 done();

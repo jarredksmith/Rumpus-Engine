@@ -7,7 +7,10 @@ const src = gameSource();
 const tp = extractFunction('tpCameraPushback');
 
 // the full offset camera position is computed first, then collided
-assert(/let camx = px - fx\*dist \+ rx\*side, camy = py - fy\*dist \+ height, camz = pz - fz\*dist \+ rz\*side;/.test(tp), 'the OTS camera position (side + height + distance) is computed');
+// build 1086: computed by _tpFrame, then taken here for the damping + collision passes
+assert(/let camx = _f\.x, camy = _f\.y, camz = _f\.z;/.test(tp) &&
+  /_TPF\.x = pivot\.x - fx\*dist \+ rx\*side;/.test(extractFunction('_tpFrame')),
+  'the OTS camera position (side + height + distance) is computed');
 assert(/_cameraCollide\(px, py, pz, camx, camy, camz, TP_MIN, \(typeof _ownAvatar!=='undefined'\?_ownAvatar:null\)\)/.test(tp), 'it collides pivot -> real camera position, ignoring the player\'s own body');
 assert(/if\(_cc\)\{ camx=_cc\.x; camy=_cc\.y; camz=_cc\.z; \}/.test(tp), 'a blocked camera is pulled in to the surface');
 

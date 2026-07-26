@@ -36,8 +36,11 @@ assert(Math.abs(lateral(2) - (-2)) < 1e-9 && Math.abs(lateral(-2) - 2) < 1e-9, '
 
 // wiring
 const tp = extractFunction('tpCameraPushback');
-assert(/let dist = tpDist \+ \(tpAimDist - tpDist\)\*_b;/.test(tp), 'chase distance blends hip->aim (build 373)');
-assert(/let camx = px - fx\*dist \+ rx\*side, camy = py - fy\*dist \+ height, camz = pz - fz\*dist \+ rz\*side;/.test(tp), 'camera carries blended side + distance + height (build 373)');
+{ const f=extractFunction('_tpFrame');
+  assert(/const dist = tpDist \+ \(tpAimDist - tpDist\)\*b;/.test(f), 'chase distance blends hip->aim (build 373)'); }
+{ const f=extractFunction('_tpFrame');   // build 1086: the framing moved here, shared with the editor preview
+  assert(/_TPF\.x = pivot\.x - fx\*dist \+ rx\*side;/.test(f) && /_TPF\.y = pivot\.y - fy\*dist \+ height;/.test(f) && /_TPF\.z = pivot\.z - fz\*dist \+ rz\*side;/.test(f),
+    'camera carries blended side + distance + height (build 373)'); }
 assert(/let tpSide = 0;/.test(src) && /let tpDist = 4\.2;/.test(src) && /let tpHeight = 0;/.test(src), 'three persisted framing prefs');
 assert(/mkSlider\('Side'/.test(src) && /mkSlider\('Distance'/.test(src) && /mkSlider\('Height'/.test(src), 'Player-tab sliders for all three');
 done();

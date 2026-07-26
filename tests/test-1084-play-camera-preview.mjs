@@ -66,15 +66,19 @@ assert(loop[0].indexOf('_vcamSync()') < loop[0].indexOf('renderScene(scene, acti
 // calls startGame), so closing it back to the menu drops gameOn and skips both calls above. Found in a
 // browser: without a guard placed BEFORE every early-out, the rig and panel sat on the main menu.
 assert(/if\(!gameOn\) \{[\s\S]{0,200}return; \}/.test(src), 'sanity: the loop really does bail out when the game is not running');
-const guard = src.match(/if\(_vcamGroup && !editorOpen\) _vcamGroup\.visible=false;\n\s*if\(_vcamPvPanel && \(!editorOpen \|\| _cineActive \|\| !_vcamPvOn\)\) _vcamPvPanel\.style\.display='none';/);
+// (build 1086 widened the panel half of this guard to _pvKind(), which covers the third-person preview too)
+const guard = src.match(/if\(_vcamGroup && !editorOpen\) _vcamGroup\.visible=false;\n\s*if\(_vcamPvPanel && [^\n]*_vcamPvPanel\.style\.display='none';/);
 assert(guard, 'the rig and panel are hidden by an unconditional guard, not only by the in-editor calls');
 assert(src.indexOf(guard[0]) < src.indexOf('if(!gameOn) {'), '...and that guard sits BEFORE the early-out, or it would never run on the way back to the menu');
 assert(src.indexOf(guard[0]) < src.indexOf('if(typeof _vcamSync'), '...and before the normal per-frame sync');
 
 // ---------------------------------------------------------------- the preview window
 const pv = extractFunction('_renderVcamPvWindow');
-assert(/editorOpen && _vcamPvOn/.test(pv), 'the preview is editor-only and can be switched off');
-assert(/if\(!vm\)\{ if\(_vcamPvPanel\) _vcamPvPanel\.style\.display='none'; return; \}/.test(pv),
+// build 1086 moved the "which camera, if any" decision into _pvKind(), shared with the guard above
+{ const k = extractFunction('_pvKind');
+  assert(/editorOpen!=='undefined' && editorOpen/.test(k) && /_vcamPvOn && _vcamMode\(\)/.test(k),
+    'the preview is editor-only and can be switched off'); }
+assert(/if\(!kind\)\{ if\(_vcamPvPanel\) _vcamPvPanel\.style\.display='none'; return; \}/.test(pv),
   '...and takes its panel away with it — including when the editor closes, since it is called unconditionally');
 assert(/if\(typeof _renderVcamPvWindow==='function'\) _renderVcamPvWindow\(\);/.test(src) &&
   !/editorOpen && typeof _renderVcamPvWindow/.test(src), 'the call site is unguarded on purpose (it self-gates)');

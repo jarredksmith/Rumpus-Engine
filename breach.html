@@ -19604,26 +19604,51 @@ function updateOwnAvatar(dt){
   }
   _ownPrevX=player.pos.x; _ownPrevZ=player.pos.z; _ownPrevYaw=player.yaw;
 }
-function tpCameraPushback(dt){
-  // orbit the camera around a fixed pivot on the character: place it straight back along the view axis so the
-  // pivot lands on the crosshair for every yaw/pitch. The body then stays centered and only rotates in place
-  // (no swinging around the reticle), and looking down puts the camera cleanly overhead.
-  const cp=Math.cos(player.pitch), sp=Math.sin(player.pitch), cy=Math.cos(player.yaw), sy=Math.sin(player.yaw);
+// ---- build 1086: the chase FRAMING, pulled out so the editor can preview it ----
+// Everything the Side / Distance / Height sliders describe lives here. tpCameraPushback layers the two
+// LIVE-only behaviours on top (damped follow, wall collision); the editor wants the raw authored pose, so
+// it calls these directly. One implementation of the framing means the preview cannot lie about it.
+const _TPP={ x:0, y:0, z:0 }, _TPF={ x:0, y:0, z:0, fx:0, fy:0, fz:0, px:0, py:0, pz:0 };
+// The point the camera orbits. Pivoting on the model's real centre is what keeps ANY model (short, tall,
+// offset) on the crosshair while it rotates in place instead of swinging around the reticle.
+function _tpPivot(obj, base, yaw, footFallback){
+  const cy=Math.cos(yaw), sy=Math.sin(yaw);
+  const cl = obj && obj.userData && obj.userData.centerLocal;
+  if(cl){
+    const fY = (obj.userData.footY!=null) ? obj.userData.footY : footFallback;
+    _TPP.x = base.x + cl.x*cy + cl.z*sy;
+    _TPP.z = base.z - cl.x*sy + cl.z*cy;
+    _TPP.y = fY + cl.y;
+  } else { _TPP.x=base.x; _TPP.y=base.y-0.3; _TPP.z=base.z; }   // fallback pivot: upper chest
+  return _TPP;
+}
+// blend is the hip -> aim ramp (adsBlend in play, the preview's own switch in the editor). Each axis
+// interpolates independently. The camera sits back by dist, sideways by side and vertically by height,
+// looking PARALLEL to forward — so a nonzero side genuinely moves the character off-centre (true OTS)
+// rather than orbiting them, and the crosshair stays accurate.
+function _tpFrame(pivot, yaw, pitch, blend){
+  const cp=Math.cos(pitch), sp=Math.sin(pitch), cy=Math.cos(yaw), sy=Math.sin(yaw);
   const fx=-cp*sy, fy=sp, fz=-cp*cy;   // view forward for YXZ yaw/pitch
-  let px=player.pos.x, py=player.pos.y-0.3, pz=player.pos.z;   // fallback pivot: upper chest
-  if(_ownAvatar && _ownAvatar.userData.centerLocal){   // pivot on the model's real centre so ANY model (short/tall/offset) stays on the crosshair and only rotates, never slides
-    const cl=_ownAvatar.userData.centerLocal, fY=(_ownAvatar.userData.footY!=null)?_ownAvatar.userData.footY:(player.pos.y-EYE);
-    px=player.pos.x + cl.x*cy + cl.z*sy; pz=player.pos.z - cl.x*sy + cl.z*cy; py=fY + cl.y;
-  }
-  // blend hip framing -> aim framing by adsBlend (right-click ramp). Each axis interpolates independently.
-  const _b = (typeof adsBlend==='number') ? adsBlend : 0;
-  const side = tpSide + (tpAimSide - tpSide)*_b;
-  const height = tpHeight + (tpAimHeight - tpHeight)*_b;
-  let dist = tpDist + (tpAimDist - tpDist)*_b;
+  const b = (typeof blend==='number') ? blend : 0;
+  const side = tpSide + (tpAimSide - tpSide)*b;
+  const height = tpHeight + (tpAimHeight - tpHeight)*b;
+  const dist = tpDist + (tpAimDist - tpDist)*b;
   const rx = cy, rz = -sy;   // yaw-only view-right (level)
-  // camera sits back by dist, shifted sideways by side and vertically by height, looking PARALLEL to forward
-  // so a nonzero side moves the character off-center (true OTS) while the crosshair stays accurate.
-  let camx = px - fx*dist + rx*side, camy = py - fy*dist + height, camz = pz - fz*dist + rz*side;
+  _TPF.px=pivot.x; _TPF.py=pivot.y; _TPF.pz=pivot.z;
+  _TPF.fx=fx; _TPF.fy=fy; _TPF.fz=fz;
+  _TPF.x = pivot.x - fx*dist + rx*side;
+  _TPF.y = pivot.y - fy*dist + height;
+  _TPF.z = pivot.z - fz*dist + rz*side;
+  return _TPF;
+}
+function tpCameraPushback(dt){
+  const _p=_tpPivot(_ownAvatar, player.pos, player.yaw, player.pos.y-EYE);
+  const px=_p.x, py=_p.y, pz=_p.z;
+  const _b = (typeof adsBlend==='number') ? adsBlend : 0;
+  const _f=_tpFrame(_p, player.yaw, player.pitch, _b);
+  const fx=_f.fx, fy=_f.fy, fz=_f.fz;
+  const side = tpSide + (tpAimSide - tpSide)*_b, height = tpHeight + (tpAimHeight - tpHeight)*_b;
+  let camx = _f.x, camy = _f.y, camz = _f.z;
   // build 894: damped follow — the camera EASES toward its target instead of being bolted to the player,
   // so sprints, jumps and turns read as smooth pursuit. Exponential smoothing (frame-rate independent);
   // aiming blends the damping out (ADS must stay crosshair-exact); a long gap (mode entry, respawn,
@@ -23708,7 +23733,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1085 · 2026-07-26';
+const BUILD_VERSION = 'build 1086 · 2026-07-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27922,8 +27947,17 @@ function _ensureVcamPvPanel(){
   const hdr=document.createElement('div'); hdr.style.cssText='pointer-events:auto;display:flex;align-items:center;gap:8px;background:rgba(8,14,18,.94);border:1px solid rgba(var(--accent-rgb),0.45);border-bottom:none;border-radius:7px 7px 0 0;padding:5px 9px;box-shadow:0 -2px 14px rgba(0,0,0,.45);cursor:grab;';
   const lab=document.createElement('span'); lab.id='vcamPvLabel'; lab.style.cssText='font-size:11px;color:var(--accent);letter-spacing:.04em;flex:1 1 auto;cursor:grab;';
   const x=document.createElement('button'); x.textContent='\u2715'; x.title='Hide the play-camera preview'; x.style.cssText='flex:0 0 auto;background:none;border:none;color:#9fe6cf;font-size:13px;line-height:1;cursor:pointer;padding:0 2px;';
-  x.onclick=()=>{ _vcamPvOn=false; try{ localStorage.setItem('breach_vcampv','off'); }catch(e){} if(typeof renderEditorFields==='function') renderEditorFields(); };
-  hdr.appendChild(lab); hdr.appendChild(x);
+  x.onclick=()=>{   // build 1086: close whichever preview is up
+    if(_pvKind()==='chase'){ _tpPvOn=false; try{ localStorage.setItem('breach_tppv','off'); }catch(e){} }
+    else { _vcamPvOn=false; try{ localStorage.setItem('breach_vcampv','off'); }catch(e){} }
+    if(typeof renderEditorFields==='function') renderEditorFields(); };
+  // build 1086: hip / aiming switch — only meaningful for the chase preview, hidden otherwise
+  const ad=document.createElement('button'); ad.id='vcamPvAds'; ad.textContent='hip';
+  ad.title='Switch between the hip framing and the \u201c\u2026when aiming\u201d framing';
+  ad.style.cssText='flex:0 0 auto;background:rgba(var(--accent-rgb),0.16);border:1px solid rgba(var(--accent-rgb),0.4);color:#cfeee2;font-size:10px;line-height:1;cursor:pointer;padding:3px 7px;border-radius:5px;display:none;';
+  ad.onclick=()=>{ _tpPvAds=_tpPvAds?0:1; };
+  _vcamPvAdsBtn=ad;
+  hdr.appendChild(lab); hdr.appendChild(ad); hdr.appendChild(x);
   const fr=document.createElement('div'); fr.style.cssText='border:1px solid rgba(var(--accent-rgb),0.45);border-top:none;border-radius:0 0 7px 7px;box-shadow:0 6px 22px rgba(0,0,0,.5);';
   p.appendChild(hdr); p.appendChild(fr); document.body.appendChild(p);
   _vcamPvPanel=p; _vcamPvFrame=fr; _vcamPvLab=lab;
@@ -27935,16 +27969,56 @@ function _ensureVcamPvPanel(){
   const end=()=>{ if(!drag) return; drag=null; hdr.style.cursor='grab'; try{ localStorage.setItem('breach_vcampvpos', JSON.stringify(_vcamPvPos)); }catch(e){} };
   hdr.addEventListener('pointerup', end); hdr.addEventListener('pointercancel', end);
 }
-// Renders the play camera into a corner of the same canvas, the way the cinematic preview does.
+// ---- build 1086: the same window, a second camera ----
+// Tuning the third-person framing used to mean: drag a slider, press play, look, pause, drag again. The
+// Player tab's big viewport is a free ORBIT for inspecting the model — it deliberately ignores Side,
+// Distance and Height — so the sliders had no visible effect anywhere in the editor. Now the corner window
+// shows the real chase framing around the stand-in avatar while the viewport keeps orbiting freely.
+let _tpPvOn=true; try{ if(localStorage.getItem('breach_tppv')==='off') _tpPvOn=false; }catch(e){}
+let _tpPvAds=0;   // 0 = hip framing, 1 = the ...when aiming set (which is even harder to tune blind)
+let _vcamPvAdsBtn=null;
+// Which camera the one preview window should be showing right now — decided by what is being edited.
+function _pvKind(){
+  if(!(typeof editorOpen!=='undefined' && editorOpen)) return '';
+  if(typeof _cineActive!=='undefined' && _cineActive) return '';
+  // editorMode is which TAB is open; editorActive is which object is selected, and it stays 'player' on
+  // tabs that own no targets (Gameplay, World, HUD, Save). Keying on editorActive would leave the chase
+  // preview stuck over those tabs and make the play-camera preview unreachable once you had visited Player.
+  if(typeof editorMode!=='undefined' && editorMode==='player' && typeof previewAvatar!=='undefined' && previewAvatar)
+    return _tpPvOn ? 'chase' : '';
+  return (_vcamPvOn && _vcamMode()) ? 'play' : '';
+}
+// Pose a camera exactly as the live chase cam would, around the editor's stand-in avatar. No damping and no
+// wall collision: both are live-only reactions, and a preview that ducked behind scenery would be useless
+// for judging the framing you actually authored.
+function _tpPosePreview(cam, aspect){
+  const av=previewAvatar;
+  const yaw=(typeof player!=='undefined')?player.yaw:0, pitch=(typeof player!=='undefined')?player.pitch:-0.15;
+  const p=_tpPivot(av, av.position, yaw, av.position.y);
+  const f=_tpFrame(p, yaw, pitch, _tpPvAds);
+  cam.up.set(0,1,0);
+  cam.position.set(f.x, f.y, f.z);
+  cam.rotation.order='YXZ'; cam.rotation.y=yaw; cam.rotation.x=pitch; cam.rotation.z=0;   // look PARALLEL to forward, as in play
+  cam.fov=(typeof worldCfg!=='undefined' && worldCfg.fov) ? worldCfg.fov : 78;
+  cam.near=camera.near; cam.far=camera.far;
+  if(aspect) cam.aspect=aspect;
+  cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
+  return 'chase';
+}
+// Renders the relevant camera into a corner of the same canvas, the way the cinematic preview does.
 function _renderVcamPvWindow(){
-  const vm=(editorOpen && _vcamPvOn && !(typeof _cineActive!=='undefined' && _cineActive)) ? _vcamMode() : '';
-  if(!vm){ if(_vcamPvPanel) _vcamPvPanel.style.display='none'; return; }
+  const kind=_pvKind();
+  const vm=(kind==='play') ? _vcamMode() : kind;
+  if(!kind){ if(_vcamPvPanel) _vcamPvPanel.style.display='none'; return; }
   _ensureVcamPvPanel();
   _vcamPvPanel.style.display='block';
   const size=renderer.getSize(new THREE.Vector2());
   const W=Math.max(180, Math.min(320, Math.round(size.x*0.26))), H=Math.round(W*9/16), M=20;
   _vcamPvPanel.style.width=W+'px'; _vcamPvFrame.style.width=W+'px'; _vcamPvFrame.style.height=H+'px';
-  if(_vcamPvLab) _vcamPvLab.textContent=(vm==='top'?'\u25a3 Top-down camera':'\u25a3 Side-scroller camera')+' \u2014 from the start point';
+  if(_vcamPvLab) _vcamPvLab.textContent = (kind==='chase')
+    ? ('\u25a3 Third-person camera \u2014 '+(_tpPvAds?'aiming':'hip'))
+    : ((vm==='top'?'\u25a3 Top-down camera':'\u25a3 Side-scroller camera')+' \u2014 from the start point');
+  if(_vcamPvAdsBtn){ _vcamPvAdsBtn.style.display=(kind==='chase')?'':'none'; _vcamPvAdsBtn.textContent=_tpPvAds?'aim':'hip'; }
   if(_vcamPvPos){
     const ph=_vcamPvPanel.offsetHeight||(H+30);
     _vcamPvPanel.style.left=Math.max(0, Math.min(innerWidth-W, _vcamPvPos.left))+'px';
@@ -27959,7 +28033,7 @@ function _renderVcamPvWindow(){
   const fr=_vcamPvFrame.getBoundingClientRect();
   const X=Math.round(fr.left), Yb=Math.round(size.y-fr.bottom), Wr=Math.max(2,Math.round(fr.width)), Hr=Math.max(2,Math.round(fr.height));
   if(!_vcamPvCam) _vcamPvCam=new THREE.PerspectiveCamera(78, 16/9, camera.near, camera.far);
-  _vcamPose(_vcamPvCam, Wr/Hr);
+  if(kind==='chase') _tpPosePreview(_vcamPvCam, Wr/Hr); else _vcamPose(_vcamPvCam, Wr/Hr);
   // Hide the transient editor chrome (same list the cinematic preview hides, plus this build's own rig).
   // Authored markers — the start point, spawns, trigger rings — stay: they are how you know what you are
   // looking at, and the preview is for framing, not a screenshot.
@@ -28134,7 +28208,7 @@ function loop(){
   // and the !gameOn early-out below skips the normal _vcamSync() / _renderVcamPvWindow() calls entirely.
   // Without this the rig and the panel would sit on the main menu until something started a game again.
   if(_vcamGroup && !editorOpen) _vcamGroup.visible=false;
-  if(_vcamPvPanel && (!editorOpen || _cineActive || !_vcamPvOn)) _vcamPvPanel.style.display='none';
+  if(_vcamPvPanel && !(typeof _pvKind==='function' && _pvKind())) _vcamPvPanel.style.display='none';   // build 1086: covers both previews
   if(_levelLoaderActive){ pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // hold the world frozen behind the level loading screen until assets finish loading — checked BEFORE the cutscene so the intro cinematic can't advance while loading
   if(_cineActive){ updateCinematic(rawDt); if(mixers.length){ for(const m of mixers) m.update(rawDt); } if(typeof updateXAnim==='function') updateXAnim(rawDt); renderScene(scene,camera); return; }   // keep GLB clips AND mechanism/waypoint motion (doors, platforms, elevators) alive on camera   // keep prop/GLB animations alive on camera (raw time — no hitstop during a cutscene)   // intro/preview flythrough owns the camera; freeze the sim
   if(_interActive){ pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // campaign transition card owns the screen; hold the won level frozen behind it
@@ -34890,6 +34964,14 @@ function renderEditorFields(){
         mkSlider('Side', ()=>tpAimSide, v=>tpAimSide=v, -3, 3, 0.1, v=> v===0?'centered':(v>0?'left ':'right ')+Math.abs(v).toFixed(1), 'breach_tp_aim_side');
         mkSlider('Distance', ()=>tpAimDist, v=>tpAimDist=v, 1.5, 10, 0.1, v=>v.toFixed(1)+'m', 'breach_tp_aim_dist');
         mkSlider('Height', ()=>tpAimHeight, v=>tpAimHeight=v, -2, 3, 0.1, v=> v===0?'level':(v>0?'+':'')+v.toFixed(1), 'breach_tp_aim_height');
+        // build 1086: the sliders above are invisible in the viewport (it orbits freely for model inspection),
+        // so the corner preview is how you see them. Offer it right here rather than in a menu.
+        { const pvb=document.createElement('button'); pvb.style.cssText='width:100%;font-size:12px;margin:5px 0 2px;';
+          pvb.textContent=(_tpPvOn?'\u2713 ':'')+'Live third-person preview';
+          pvb.title='Show a window with the real chase framing around this model \u2014 Side, Distance and Height apply live';
+          if(_tpPvOn){ pvb.style.background='rgba(var(--accent-rgb),0.30)'; pvb.style.color='#eafff7'; }
+          pvb.onclick=()=>{ _tpPvOn=!_tpPvOn; try{ localStorage.setItem('breach_tppv', _tpPvOn?'on':'off'); }catch(e){} renderEditorFields(); };
+          urlHost.appendChild(pvb); }
         const tpHint=document.createElement('div'); tpHint.className='hint'; tpHint.style.cssText='font-size:10px;opacity:0.7;margin:2px 0 0;'; tpHint.textContent='Third-person framing (toggle Camera in the pause menu). The top set is your normal view; the bottom set is what the camera eases to while you hold right-click to aim.'; urlHost.appendChild(tpHint);
         // gunfire origin (third-person): where the tracer STARTS on screen. A hip set AND a separate AIMING
         // set, blended by adsBlend so the streak lines up with the gun in both framings. Slider + exact number.
