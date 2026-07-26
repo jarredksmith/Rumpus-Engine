@@ -9,6 +9,7 @@ const gw = extractFunction('gameWon');
 assert(/if\(campaignActive && campaign\.levels\.length\)\{/.test(gw), 'win advances the campaign');
 assert(/campaignIdx\+\+; const toIdx=campaignIdx;/.test(gw) && /_campaignLoad\(toIdx\); _restoreLoadout\(carry\);/.test(gw), 'next level loads (via the interstitial card) with the carried loadout');
 assert(/campaignActive=false; _campaignComplete=true;/.test(gw), 'last level completes the campaign');
-assert(/\$\{_campaignComplete\?'CAMPAIGN COMPLETE':'MISSION COMPLETE'\}/.test(src), 'victory screen reflects campaign completion');
+assert(/\(_campaignComplete\?'CAMPAIGN COMPLETE':'MISSION COMPLETE'\)/.test(src),
+  'victory screen reflects campaign completion (build 1082: unless the creator named their own ending)');
 assert(/function renderCampaignPanel\(\)/.test(src) && /sec\('Campaign', 'campaign'/.test(src), 'editor Campaign panel');
 done('single-player campaign');

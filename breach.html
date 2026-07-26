@@ -589,6 +589,15 @@
     color: var(--accent); letter-spacing: 6px;
     line-height: .9;
   }
+  /* build 1082: a creator-branded end screen. #overlay's innerHTML is rewritten by every screen, so the
+     backdrop is a SIBLING element that outlives it — the same reason the title screen is its own layer.
+     Nothing here applies until .branded is set, so the engine menu is untouched. */
+  #endBg { position:fixed; inset:0; z-index:19; display:none; pointer-events:none; overflow:hidden; }
+  #endBg.on { display:block; }
+  #endBg img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:var(--end-bgop,.55); }
+  #endBg .endScrim { position:absolute; inset:0; background:radial-gradient(circle at 50% 42%, rgba(4,10,9,.30), rgba(2,3,5,.90)); }
+  #overlay.branded { background:var(--end-bgcol, rgba(2,3,5,.35)); -webkit-backdrop-filter:none; backdrop-filter:none; }
+  #overlay.branded h1 { font-family:var(--end-font, 'Kaph', var(--display-font)), sans-serif; font-size:clamp(38px,8.5vw,84px); letter-spacing:4px; }
   #overlay h1 img { width:min(560px, 84vw, 82vh); height:auto; display:block; margin:0 auto; }   /* build 966: no glow */  /* build 960/963: SVG wordmark, theme-glow; the 90vh term caps height ~24vh at the logo's 3.45:1 aspect, so landscape phones keep a short menu (the SVG has no intrinsic size, so width must stay explicit) */
   #overlay .sub { color:#7fa99c; letter-spacing: 4px; margin-top: 10px; font-size: 14px; }
   #buildTag { position:absolute; right:calc(10px + env(safe-area-inset-right)); bottom:calc(8px + env(safe-area-inset-bottom)); color:#44625a; font:500 10px var(--ui-font), sans-serif; letter-spacing:1px; pointer-events:none; }   /* build 979: which build is this device actually running? */
@@ -629,7 +638,10 @@
     .secBtn.heroBtn .eico { width: 15px; height: 15px; }
   }
   /* build 971: creator title screens — a shared/published level ships its own home screen */
-  #gameHome { position:fixed; inset:0; z-index:22; display:none; flex-direction:column; align-items:center; justify-content:center; text-align:center; background:radial-gradient(circle at 50% 40%, #0a1412, #04070a); overflow:hidden; }
+  /* build 1081: the title screen was five knobs and a wall of hardcoded CSS. Every value a creator would
+     reasonably want is now a custom property, defaulted to exactly what it used to be — so a level saved
+     before this build renders byte-identically, and the panel just fills the vars in. */
+  #gameHome { position:fixed; inset:0; z-index:22; display:none; flex-direction:column; align-items:var(--hp-align,center); justify-content:center; text-align:var(--hp-talign,center); background:var(--hp-bgcol, radial-gradient(circle at 50% 40%, #0a1412, #04070a)); overflow:hidden; padding:0 max(20px, 6vw); box-sizing:border-box; }
   /* build 1000: AAA character select — full-screen layer, big live model, card strip, select bar */
   #charSelect { position:fixed; inset:0; z-index:90; display:none; flex-direction:column; background:radial-gradient(1100px 640px at 50% 30%, #0e1a20, #05080b 78%); }
   #charSelect.open { display:flex; }
@@ -666,15 +678,16 @@
   }
   #gameHome.on { display:flex; }
   #gameHome.preview { z-index:55; }   /* above the editor panel while previewing, still under modals */
-  #gameHome .hpBg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.55; }
-  #gameHome .hpScrim { position:absolute; inset:0; background:radial-gradient(circle at 50% 42%, rgba(4,10,9,.18), rgba(2,3,5,.85)); }
-  #gameHome .hpIn { position:relative; display:flex; flex-direction:column; align-items:center; gap:8px; padding:0 20px; max-width:min(92vw,760px); }
-  #gameHome .hpTitle { font-family:var(--display-font), sans-serif; font-size:clamp(30px,7vw,62px); font-weight:800; letter-spacing:2px; color:#eafff7; line-height:1.08; text-shadow:0 3px 24px rgba(0,0,0,.85); overflow-wrap:anywhere; }
-  #gameHome .hpTag { color:#c2ddd4; font-size:clamp(13px,2.2vw,17px); letter-spacing:1px; max-width:560px; }
-  #gameHome .hpBtns { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; margin-top:14px; }
-  #gameHome .hpPlay { padding:14px 46px; font-size:17px; font-weight:800; letter-spacing:3px; border-radius:8px; cursor:pointer; color:#eafff7; border:1px solid rgba(var(--accent-rgb),.65); background:rgba(var(--accent-rgb),.2); }
+  #gameHome .hpBg { position:absolute; inset:0; width:100%; height:100%; object-fit:var(--hp-bgfit,cover); opacity:var(--hp-bgop,.55); }
+  #gameHome .hpScrim { position:absolute; inset:0; opacity:var(--hp-scrim,1); background:radial-gradient(circle at 50% 42%, rgba(4,10,9,.18), rgba(2,3,5,.85)); }
+  #gameHome .hpIn { position:relative; display:flex; flex-direction:column; align-items:var(--hp-align,center); gap:8px; padding:0 20px; max-width:min(92vw,760px); transform:translateY(var(--hp-vpos,0px)); }
+  #gameHome .hpLogo { display:none; max-width:min(88vw,640px); height:var(--hp-logoh,16vh); object-fit:contain; margin-bottom:2px; }
+  #gameHome .hpTitle { font-family:var(--hp-font, var(--display-font)), sans-serif; font-size:clamp(30px,7vw,62px); font-weight:800; letter-spacing:2px; color:var(--hp-tcol,#eafff7); line-height:1.08; text-shadow:0 3px 24px rgba(0,0,0,.85); overflow-wrap:anywhere; }
+  #gameHome .hpTag { color:var(--hp-scol,#c2ddd4); font-size:clamp(13px,2.2vw,17px); letter-spacing:1px; max-width:560px; }
+  #gameHome .hpBtns { display:flex; gap:12px; flex-wrap:wrap; justify-content:var(--hp-align,center); margin-top:14px; }
+  #gameHome .hpPlay { font-family:var(--hp-font, var(--display-font)), sans-serif; padding:14px 46px; font-size:17px; font-weight:800; letter-spacing:3px; border-radius:8px; cursor:pointer; color:#eafff7; border:1px solid rgba(var(--accent-rgb),.65); background:rgba(var(--accent-rgb),.2); }
   #gameHome .hpPlay:hover { transform:translateY(-2px); }
-  #gameHome .hpSec { padding:14px 22px; font-size:13px; font-weight:700; letter-spacing:2px; border-radius:8px; cursor:pointer; color:#bfe3d8; border:1px solid #2a3a42; background:rgba(10,20,24,.75); }
+  #gameHome .hpSec { font-family:var(--hp-font, var(--display-font)), sans-serif; padding:14px 22px; font-size:13px; font-weight:700; letter-spacing:2px; border-radius:8px; cursor:pointer; color:#bfe3d8; border:1px solid #2a3a42; background:rgba(10,20,24,.75); }
   #gameHome .hpLink { margin-top:12px; background:none; border:none; color:#7fa99c; font-size:11.5px; letter-spacing:.5px; cursor:pointer; text-decoration:underline; }
   #gameHome .hpBadge { position:absolute; bottom:calc(12px + env(safe-area-inset-bottom)); left:0; right:0; text-align:center; }
   #gameHome .hpBadge a { color:#6f958a; font-size:10.5px; letter-spacing:2px; text-decoration:none; border:1px solid rgba(127,169,156,.3); border-radius:14px; padding:5px 12px; }
@@ -23665,7 +23678,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1080 · 2026-07-26';
+const BUILD_VERSION = 'build 1082 · 2026-07-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36704,8 +36717,12 @@ function gameWon(){
   $('shop').classList.add('hidden');
   const pr=$('prompt'); if(pr) pr.style.display='none';
   const ov=$('overlay'); ov.classList.remove('hidden');
+  const _br=(typeof _endBrand==='function') ? _endBrand('win') : null;   // build 1082
+  const _wh=(_br && _br.title) ? _creditEsc(_br.title) : (_campaignComplete?'CAMPAIGN COMPLETE':'MISSION COMPLETE');
+  const _wc=(_br && _br.col) ? _br.col : 'var(--accent)';
+  const _ws=(_br && _br.col) ? ('0 0 30px '+_br.col+'80') : '0 0 30px rgba(var(--accent-rgb),.5)';
   ov.innerHTML = `
-    <h1 style="color:var(--accent);text-shadow:0 0 30px rgba(var(--accent-rgb),.5)">${_campaignComplete?'CAMPAIGN COMPLETE':'MISSION COMPLETE'}</h1>
+    <h1 style="color:${_wc};text-shadow:${_ws}">${_wh}</h1>
     <div class="sub">${ gameCfg.objective==='puzzle' ? 'SOLVED' : gameCfg.objective==='survival' ? ('SURVIVED '+fmtClock(gameCfg.surviveSecs)) : gameCfg.objective==='extraction' ? 'EXTRACTED' : gameCfg.objective==='defend' ? ('ZONE HELD '+fmtClock(gameCfg.surviveSecs)) : gameCfg.objective==='destroy' ? 'ALL TARGETS DESTROYED' : gameCfg.objective==='escort' ? 'PAYLOAD DELIVERED' : gameCfg.objective==='race' ? ((gameCfg.raceLaps||3)+' LAP'+((gameCfg.raceLaps||3)===1?'':'S')+(isFinite(_raceBestT)?(' · BEST '+_fmtRace(_raceBestT)):'')) : (gameCfg.winWaves+' WAVE'+(gameCfg.winWaves===1?'':'S')+' CLEARED') }</div>
     ${ gameCfg.winText ? '<div class="sub" style="color:#cfe9df;font-size:15px;line-height:1.5;max-width:560px;margin:8px auto 0;opacity:.95">'+_creditEsc(gameCfg.winText)+'</div>' : '' }
     ${ (gameCfg.objective==='race' && typeof _raceTimes!=='undefined' && _raceTimes.length) ? '<div class="sub" style="font-family:JetBrains Mono,monospace;font-size:14px;line-height:1.7;margin-top:10px">'+_raceTimes.slice(0,12).map((t,i)=>'LAP '+(i+1)+' — '+_fmtRace(t)+(t===_raceBestT?'  ★':'')).join('<br>')+(_raceTimes.length>12?'<br>…':'')+'</div>' : '' }
@@ -36740,8 +36757,12 @@ function endGame(){
   $('shop').classList.add('hidden');
   $('prompt').style.display='none';
   const ov=$('overlay'); ov.classList.remove('hidden');
+  const _br=(typeof _endBrand==='function') ? _endBrand('lose') : null;   // build 1082
+  const _lh=(_br && _br.title) ? _creditEsc(_br.title) : ((gameCfg.objective==='race' && typeof _raceOver!=='undefined' && _raceOver) ? 'RACE LOST' : 'TERMINATED');
+  const _lc=(_br && _br.col) ? _br.col : '#ff2d55';
+  const _ls=(_br && _br.col) ? ('0 0 30px '+_br.col+'80') : '0 0 30px rgba(255,45,85,.5)';
   ov.innerHTML = `
-    <h1 style="color:#ff2d55;text-shadow:0 0 30px rgba(255,45,85,.5)">${ (gameCfg.objective==='race' && typeof _raceOver!=='undefined' && _raceOver) ? 'RACE LOST' : 'TERMINATED' }</h1>
+    <h1 style="color:${_lc};text-shadow:${_ls}">${_lh}</h1>
     <div class="sub">${ (gameCfg.objective==='race' && typeof _raceOver!=='undefined' && _raceOver) ? ('A RIVAL FINISHED FIRST'+(typeof _raceBestT!=='undefined' && isFinite(_raceBestT)?(' · YOUR BEST LAP '+_fmtRace(_raceBestT)):'')) : gameCfg.objective==='puzzle' ? 'YOU DIED' : ('REACHED WAVE '+wave) }</div>
     ${ gameCfg.loseText ? '<div class="sub" style="color:#f3c4c9;font-size:15px;line-height:1.5;max-width:560px;margin:8px auto 0;opacity:.95">'+_creditEsc(gameCfg.loseText)+'</div>' : '' }
     ${runSummaryHTML()}
@@ -37012,16 +37033,53 @@ function bindMenu(){
 // separate fixed layer above #overlay (whose innerHTML is volatile — end screens overwrite it),
 // synced by a MutationObserver: visible only while the real menu is up (#menuLogo present), never
 // over end screens or gameplay. Quitting to menu / finishing a run returns to the creator's screen.
+// build 1081: an image source the title screen accepts — a captured backdrop (data URI, size-capped so it
+// still fits in a share link) or an uploaded/hosted URL (no cap, and the level stays small).
+function _hpImg(v){
+  const t=String(v==null?'':v);
+  if(/^data:image\/(jpeg|png|webp);base64,/.test(t)) return t.length<=150000 ? t : '';
+  return /^https?:\/\//i.test(t) ? t.slice(0,300) : '';
+}
+function _hpHex(v){ return (typeof v==='string' && /^#[0-9a-fA-F]{6}$/.test(v)) ? v : ''; }
+function _hpNum(v, lo, hi, d){ const x=Math.round(+v); return isFinite(x) ? Math.max(lo, Math.min(hi, x)) : d; }
 function _sanitizeHomepage(h){
   const ok = h && typeof h==='object';
+  const txt=(v,n)=> ok ? String(v==null?'':v).replace(/[<>]/g,'').slice(0,n) : '';
   return {
     on:     ok ? !!h.on : false,
-    title:  ok ? String(h.title||'').replace(/[<>]/g,'').slice(0,48) : '',
-    tag:    ok ? String(h.tag||'').replace(/[<>]/g,'').slice(0,90) : '',
+    title:  txt(h&&h.title,48),
+    tag:    txt(h&&h.tag,90),
     accent: (ok && /^#[0-9a-fA-F]{6}$/.test(h.accent||'')) ? h.accent : '',
     slug:   (ok && typeof h.slug==='string' && /^[a-z0-9\-]{1,64}$/.test(h.slug)) ? h.slug : '',   // build 972: the published /game/ URL
-    bg:     (ok && typeof h.bg==='string' && /^data:image\/(jpeg|png);base64,/.test(h.bg) && h.bg.length<=150000) ? h.bg : '',
+    bg:     ok ? _hpImg(h.bg) : '',
     showMp: ok ? h.showMp!==false : true,
+    // ---- build 1081: the look. Every default is EXACTLY the old hardcoded value, so a level saved before
+    // this build renders identically and an author only pays for what they deliberately change.
+    font:   (ok && typeof h.font==='string' && typeof HUD_FONTS!=='undefined' && HUD_FONTS.indexOf(h.font)>=0) ? h.font : '',
+    tcol:   ok ? _hpHex(h.tcol) : '',      // '' = the engine's near-white
+    scol:   ok ? _hpHex(h.scol) : '',      // '' = the engine's muted tagline grey
+    bgCol:  ok ? _hpHex(h.bgCol) : '',     // '' = the engine's dark radial gradient
+    align:  (ok && (h.align==='l' || h.align==='r')) ? h.align : 'c',
+    vpos:   ok ? _hpNum(h.vpos,-40,40,0) : 0,     // percent of viewport height, from centre
+    bgOp:   ok ? _hpNum(h.bgOp,0,100,55) : 55,
+    scrim:  ok ? _hpNum(h.scrim,0,100,100) : 100,
+    bgFit:  (ok && h.bgFit==='contain') ? 'contain' : 'cover',
+    logo:   ok ? _hpImg(h.logo) : '',
+    logoH:  ok ? _hpNum(h.logoH,6,40,16) : 16,    // vh
+    playLbl:txt(h&&h.playLbl,20),
+    mpLbl:  txt(h&&h.mpLbl,20),
+    // ---- build 1082: the end screens. A game that opens on the creator's title screen and then ENDS on
+    // the engine's is only half branded, and the ending is the part a player screenshots.
+    win:    _hpScreen(ok?h.win:null),
+    lose:   _hpScreen(ok?h.lose:null),
+  };
+}
+function _hpScreen(x){
+  const ok = x && typeof x==='object';
+  return {
+    title: ok ? String(x.title==null?'':x.title).replace(/[<>]/g,'').slice(0,32) : '',   // '' = the engine's own wording
+    col:   ok ? _hpHex(x.col) : '',
+    bg:    ok ? _hpImg(x.bg) : '',
   };
 }
 let homepageCfg = _sanitizeHomepage(null);
@@ -37040,6 +37098,7 @@ function _ensureGameHome(){
     + '<div class="hpScrim"></div>'
     + '<button class="hpClose" id="ghClose">\u2715 Close preview</button>'
     + '<div class="hpIn">'
+    +   '<img class="hpLogo" id="ghLogo" alt="">'
     +   '<div class="hpTitle" id="ghTitle"></div>'
     +   '<div class="hpTag" id="ghTag"></div>'
     +   '<div class="hpBtns">'
@@ -37056,24 +37115,212 @@ function _ensureGameHome(){
   d.querySelector('#ghClose').onclick=()=>_hpClosePreview();
   return d;
 }
+const _HP_ALIGN={ c:'center', l:'flex-start', r:'flex-end' };
+const _HP_TALIGN={ c:'center', l:'left', r:'right' };
 function _hpPopulate(d){
   const h=homepageCfg;
-  d.querySelector('#ghTitle').textContent = h.title || 'UNTITLED GAME';
+  const ti=d.querySelector('#ghTitle');
+  ti.textContent = h.title || 'UNTITLED GAME';
+  ti.style.display = (h.logo && !h.title) ? 'none' : '';   // a logo alone is a complete title screen
   const tg=d.querySelector('#ghTag'); tg.textContent=h.tag||''; tg.style.display=h.tag?'':'none';
   const bg=d.querySelector('#ghBg'); if(h.bg){ bg.src=h.bg; bg.style.display=''; } else { bg.removeAttribute('src'); bg.style.display='none'; }
+  const lg=d.querySelector('#ghLogo'); if(lg){ if(h.logo){ lg.src=h.logo; lg.style.display='block'; } else { lg.removeAttribute('src'); lg.style.display='none'; } }
   const play=d.querySelector('#ghPlay'); play.style.borderColor=_hpTint(0.65); play.style.background=_hpTint(0.2);
-  d.querySelector('#ghMp').style.display=h.showMp?'':'none';
+  play.textContent = h.playLbl || 'PLAY';
+  const mp=d.querySelector('#ghMp'); mp.style.display=h.showMp?'':'none'; mp.textContent = h.mpLbl || 'MULTIPLAYER';
+  // build 1081: the look, as CSS vars. Setting a var to '' REMOVES it, so every untouched field falls back
+  // to the value baked into the stylesheet — there is no second copy of the defaults to drift out of step.
+  const v=(k,val)=>{ if(val==='' || val==null) d.style.removeProperty(k); else d.style.setProperty(k, val); };
+  if(h.font && typeof _ensureHudFonts==='function' && typeof _fontNeedsLoad==='function' && _fontNeedsLoad(h.font)) _ensureHudFonts();
+  v('--hp-font',   h.font ? ("'"+h.font+"'") : '');
+  v('--hp-tcol',   h.tcol);
+  v('--hp-scol',   h.scol);
+  v('--hp-bgcol',  h.bgCol);
+  v('--hp-align',  h.align==='c' ? '' : _HP_ALIGN[h.align]);
+  v('--hp-talign', h.align==='c' ? '' : _HP_TALIGN[h.align]);
+  v('--hp-vpos',   h.vpos ? (h.vpos+'vh') : '');
+  v('--hp-bgop',   h.bgOp===55 ? '' : (h.bgOp/100));
+  v('--hp-scrim',  h.scrim===100 ? '' : (h.scrim/100));
+  v('--hp-bgfit',  h.bgFit==='cover' ? '' : h.bgFit);
+  v('--hp-logoh',  h.logoH===16 ? '' : (h.logoH+'vh'));
 }
 function _syncGameHome(){
   if(_hpPreviewing) return;   // the editor preview owns the layer until closed
   const ov=document.getElementById('overlay');
   const menuUp = ov && !ov.classList.contains('hidden') && !!document.getElementById('menuLogo');
+  if(menuUp && typeof _endBrand==='function') _endBrand(null);   // build 1082: the real menu is never branded as an ending
   const want = !!(homepageCfg.on && !_hpDismissed && menuUp);
   if(!want){ const d=document.getElementById('gameHome'); if(d) d.classList.remove('on'); return; }
   const d=_ensureGameHome(); _hpPopulate(d); d.classList.add('on');
 }
+// build 1082: paint (or clear) the branded end screen. Called by BOTH end paths with the screen they are
+// showing; passing nothing puts everything back, which is what every other overlay state needs.
+let _endBranded=false;
+function _endBrand(kind){
+  const ov=document.getElementById('overlay');
+  let bgl=document.getElementById('endBg');
+  const sc=(kind==='win'||kind==='lose') ? homepageCfg[kind] : null;
+  const live=!!(sc && (sc.title || sc.col || sc.bg || homepageCfg.font));
+  if(!live){
+    // A MutationObserver watches #overlay's class + children to keep the title screen in step. Clearing
+    // unconditionally rewrote the class attribute, which re-fired the observer, which cleared again — an
+    // infinite loop that froze the tab the moment the menu came back. Only touch the DOM if there is
+    // genuinely something to undo.
+    if(!_endBranded) return null;
+    _endBranded=false;
+    if(ov){ ov.classList.remove('branded'); ov.style.removeProperty('--end-font'); ov.style.removeProperty('--end-bgcol'); }
+    if(bgl) bgl.classList.remove('on');
+    return null;
+  }
+  _endBranded=true;
+  if(!bgl){ bgl=document.createElement('div'); bgl.id='endBg';
+    bgl.innerHTML='<img alt=""><div class="endScrim"></div>'; document.body.appendChild(bgl); }
+  const im=bgl.querySelector('img');
+  if(sc.bg){ im.src=sc.bg; im.style.display=''; bgl.classList.add('on'); }
+  else { im.removeAttribute('src'); im.style.display='none'; bgl.classList.remove('on'); }
+  if(ov){
+    ov.classList.add('branded');
+    if(homepageCfg.font){
+      if(typeof _fontNeedsLoad==='function' && typeof _ensureHudFonts==='function' && _fontNeedsLoad(homepageCfg.font)) _ensureHudFonts();
+      ov.style.setProperty('--end-font', "'"+homepageCfg.font+"'");
+    } else ov.style.removeProperty('--end-font');
+    if(sc.bg) ov.style.setProperty('--end-bgcol','rgba(2,3,5,.28)'); else ov.style.removeProperty('--end-bgcol');
+  }
+  return sc;
+}
 function _hpPreview(){ _hpPreviewing=true; const d=_ensureGameHome(); _hpPopulate(d); d.classList.add('on','preview'); }
 function _hpClosePreview(){ _hpPreviewing=false; const d=document.getElementById('gameHome'); if(d) d.classList.remove('preview'); _syncGameHome(); }
+// build 1082: show an end screen over the editor so the author can judge it without finishing a match.
+// Reuses the real painter, then puts the overlay back exactly as it was.
+let _endPvSaved=null;
+function _endPreview(kind){
+  const ov=document.getElementById('overlay'); if(!ov) return;
+  if(_endPvSaved===null) _endPvSaved={ html:ov.innerHTML, hidden:ov.classList.contains('hidden') };
+  const sc=_endBrand(kind);
+  const win=(kind==='win');
+  const head=(sc && sc.title) ? _creditEsc(sc.title) : (win?'MISSION COMPLETE':'TERMINATED');
+  const c=(sc && sc.col) ? sc.col : (win?'var(--accent)':'#ff2d55');
+  const sh=(sc && sc.col) ? ('0 0 30px '+sc.col+'80') : (win?'0 0 30px rgba(var(--accent-rgb),.5)':'0 0 30px rgba(255,45,85,.5)');
+  ov.classList.remove('hidden');
+  ov.innerHTML = '<h1 style="color:'+c+';text-shadow:'+sh+'">'+head+'</h1>'
+    + '<div class="sub">PREVIEW</div>'
+    + '<button id="endPvClose" style="margin-top:18px">\u2715 Close preview</button>';
+  ov.style.zIndex='56';   // above the editor panel, under modals — the same rule the title preview follows
+  const b=ov.querySelector('#endPvClose'); if(b) b.onclick=_endPreviewClose;
+}
+function _endPreviewClose(){
+  const ov=document.getElementById('overlay'); if(!ov || _endPvSaved===null) return;
+  _endBrand(null);
+  ov.style.removeProperty('z-index');
+  ov.innerHTML=_endPvSaved.html;
+  if(_endPvSaved.hidden) ov.classList.add('hidden'); else ov.classList.remove('hidden');
+  _endPvSaved=null;
+  if(typeof bindMenu==='function') try{ bindMenu(); }catch(e){}
+}
+function _hpBgNote(h){
+  if(!h.bg) return 'No backdrop \u2014 the title screen uses a dark gradient (or the background colour below).';
+  return /^data:/.test(h.bg) ? ('Backdrop captured \u2713 ('+Math.round(h.bg.length/1024)+' KB)')
+                             : ('Backdrop image \u2713 '+String(h.bg).split('/').pop().slice(0,32));
+}
+// build 1081: repaint the live layer the instant a control moves — the whole point of these knobs is
+// seeing them land, and the preview button is a click too many for a colour picker.
+function _hpLive(){ const d=document.getElementById('gameHome'); if(d && d.classList.contains('on')) _hpPopulate(d); }
+// build 1081: the visual controls. Folded away, because a creator who only wants a title and a backdrop
+// should never have to scroll past twelve of these.
+function _renderHomeLook(host, dirty){
+  if(!host || typeof edFold!=='function') return;
+  const body = edFold(host, 'hpLook', 'Look', false, 'Font, colours, layout and logo for the title screen');
+  const h = homepageCfg;
+  const touch = ()=>{ dirty(); _hpLive(); };
+  const row=(label, node, note)=>{ const r=document.createElement('label');
+    r.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:11px;margin:4px 0;';
+    const sp=document.createElement('span'); sp.textContent=label; sp.style.cssText='min-width:74px;flex:0 0 auto;';
+    if(note) r.title=note;
+    r.appendChild(sp); r.appendChild(node); body.appendChild(r); return r; };
+  const IST='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 5px;font-size:11px;';
+  const sel=(opts, cur, on)=>{ const e=document.createElement('select'); e.style.cssText=IST+'flex:1;min-width:0;';
+    for(const o of opts){ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1];
+      if(o[0]==='' || o[0]===cur) op.style.color='#cfeee2';
+      if(cur===o[0]) op.selected=true; e.appendChild(op); }
+    e.onchange=()=>{ on(e.value); touch(); }; return e; };
+  const col=(cur, on, clr)=>{ const w=document.createElement('span'); w.style.cssText='display:flex;align-items:center;gap:6px;flex:1;';
+    const c=document.createElement('input'); c.type='color'; c.value=cur||clr; c.style.cssText='width:34px;height:22px;padding:0;border:1px solid #2a3a42;background:#0c1418;flex:0 0 auto;';
+    c.oninput=()=>{ on(c.value); touch(); };
+    const x=document.createElement('button'); x.textContent='default'; x.style.cssText='font-size:10px;padding:2px 8px;flex:0 0 auto;';
+    x.disabled=!cur; x.onclick=(e)=>{ e.preventDefault(); on(''); touch(); _renderHomePanelSoft(); };
+    w.appendChild(c); w.appendChild(x); return w; };
+  const rng=(cur, lo, hi, on, fmt)=>{ const w=document.createElement('span'); w.style.cssText='display:flex;align-items:center;gap:7px;flex:1;';
+    const r=document.createElement('input'); r.type='range'; r.min=String(lo); r.max=String(hi); r.step='1'; r.value=String(cur);
+    r.style.cssText='flex:1;min-width:0;accent-color:var(--accent);';
+    const n=document.createElement('span'); n.style.cssText='font-size:10px;color:#7fb8a6;min-width:38px;text-align:right;'; n.textContent=fmt(cur);
+    r.oninput=()=>{ const v=+r.value; n.textContent=fmt(v); on(v); touch(); };
+    w.appendChild(r); w.appendChild(n); return w; };
+
+  // ---- type ----
+  { const opts=[['','Engine default (Rajdhani)']];
+    if(typeof HUD_FONTS!=='undefined') for(const f of HUD_FONTS) opts.push([f,f]);
+    const e=sel(opts, h.font, v=>{ h.font=v; if(v && typeof _ensureHudFonts==='function') _ensureHudFonts(); });
+    for(const o of e.options){ if(o.value) o.style.fontFamily="'"+o.value+"'"; }
+    if(typeof _ensureHudFonts==='function') e.onfocus=()=>_ensureHudFonts();
+    row('Font', e, 'The display face for the title, tagline and buttons'); }
+  row('Title colour', col(h.tcol, v=>{ h.tcol=v; }, '#eafff7'));
+  row('Tagline', col(h.scol, v=>{ h.scol=v; }, '#c2ddd4'));
+
+  // ---- layout ----
+  row('Align', sel([['c','Centre'],['l','Left'],['r','Right']], h.align, v=>{ h.align=v; }));
+  row('Nudge', rng(h.vpos,-40,40, v=>{ h.vpos=v; }, v=>(v>0?'+':'')+v+'%'), 'Move the whole block up or down');
+
+  // ---- backdrop ----
+  { const d=document.createElement('div'); d.className='hint'; d.style.cssText='font-size:10px;margin:8px 0 0;color:#7da395;';
+    d.textContent='BACKDROP'; body.appendChild(d); }
+  row('Image', sel([['cover','Fill the screen (crop)'],['contain','Fit inside (letterbox)']], h.bgFit, v=>{ h.bgFit=v; }));
+  row('Strength', rng(h.bgOp,0,100, v=>{ h.bgOp=v; }, v=>v+'%'), 'How strongly the backdrop image shows through');
+  row('Darken', rng(h.scrim,0,100, v=>{ h.scrim=v; }, v=>v+'%'), 'The vignette over the backdrop that keeps text readable');
+  row('Behind it', col(h.bgCol, v=>{ h.bgCol=v; }, '#0a1412'), 'A flat colour instead of the engine gradient \u2014 works on its own, with no image at all');
+
+  // ---- logo ----
+  { const d=document.createElement('div'); d.className='hint'; d.style.cssText='font-size:10px;margin:8px 0 0;color:#7da395;';
+    d.textContent='LOGO (optional \u2014 sits above the title)'; body.appendChild(d); }
+  { const r=document.createElement('div'); r.className='row2'; body.appendChild(r);
+    if(typeof renderUploadRow==='function') renderUploadRow(r, 'texture', (url)=>{ h.logo=_hpImg(url); touch(); _renderHomePanelSoft(); });
+    if(h.logo){ const cb=document.createElement('button'); cb.textContent='Clear'; cb.onclick=()=>{ h.logo=''; touch(); _renderHomePanelSoft(); }; r.appendChild(cb); } }
+  if(h.logo) row('Height', rng(h.logoH,6,40, v=>{ h.logoH=v; }, v=>v+'vh'));
+  { const n=document.createElement('div'); n.className='hint'; n.style.cssText='font-size:10px;margin:2px 0 0;';
+    n.textContent = h.logo ? (h.title ? 'Logo above the title text. Clear the GAME TITLE field to show the logo alone.' : 'Logo only \u2014 the title text is hidden.')
+                           : 'No logo. Upload a PNG with transparency for a wordmark.';
+    body.appendChild(n); }
+
+  // ---- buttons ----
+  { const d=document.createElement('div'); d.className='hint'; d.style.cssText='font-size:10px;margin:8px 0 0;color:#7da395;';
+    d.textContent='BUTTON LABELS'; body.appendChild(d); }
+  const lbl=(cur, ph, on)=>{ const e=document.createElement('input'); e.type='text'; e.maxLength=20; e.placeholder=ph; e.value=cur||'';
+    e.style.cssText=IST+'flex:1;min-width:0;'; e.oninput=()=>{ on(e.value.replace(/[<>]/g,'').slice(0,20)); touch(); }; return e; };
+  row('Play', lbl(h.playLbl, 'PLAY', v=>{ h.playLbl=v; }));
+  row('Multiplayer', lbl(h.mpLbl, 'MULTIPLAYER', v=>{ h.mpLbl=v; }));
+
+  // ---- build 1082: the endings. Same fold, because it is the same decision — what this game LOOKS like.
+  { const d=document.createElement('div'); d.className='hint'; d.style.cssText='font-size:10px;margin:10px 0 0;color:#7da395;';
+    d.textContent='END SCREENS'; body.appendChild(d);
+    const n=document.createElement('div'); n.className='hint'; n.style.cssText='font-size:10px;margin:1px 0 4px;';
+    n.innerHTML='The screens a player actually screenshots. Blank keeps the engine wording (<b>MISSION COMPLETE</b> / <b>TERMINATED</b>); the <b>Font</b> above applies here too, even with the title screen switched off.';
+    body.appendChild(n); }
+  // the swatch a blank field falls back to: the engine's own defaults, read from the theme source of truth
+  const _winDef=(typeof UI_THEME_DEFAULT!=='undefined' && UI_THEME_DEFAULT.accent) || 'var(--accent)';
+  for(const [key, label, ph, defCol] of [['win','Victory','MISSION COMPLETE',_winDef], ['lose','Defeat','TERMINATED','#ff2d55']]){
+    const sc=h[key];
+    { const d=document.createElement('div'); d.style.cssText='font-size:10px;color:#bfe4ff;font-weight:700;margin:6px 0 0;'; d.textContent=label.toUpperCase(); body.appendChild(d); }
+    row('Heading', lbl(sc.title, ph, v=>{ sc.title=v; }));
+    row('Colour', col(sc.col, v=>{ sc.col=v; }, defCol));
+    { const r=document.createElement('div'); r.className='row2'; r.style.margin='3px 0'; body.appendChild(r);
+      if(typeof renderUploadRow==='function') renderUploadRow(r, 'texture', (url)=>{ sc.bg=_hpImg(url); touch(); _renderHomePanelSoft(); });
+      if(sc.bg){ const cb=document.createElement('button'); cb.textContent='Clear image'; cb.onclick=()=>{ sc.bg=''; touch(); _renderHomePanelSoft(); }; r.appendChild(cb); } }
+    { const pv=document.createElement('button'); pv.textContent='Preview '+label.toLowerCase()+' screen';
+      pv.style.cssText='width:100%;font-size:11px;padding:4px 8px;margin:2px 0 0;';
+      pv.onclick=()=>_endPreview(key); body.appendChild(pv); }
+  }
+}
+// Re-render the panel without losing the fold's open state (edFold remembers it by key).
+function _renderHomePanelSoft(){ if(typeof renderHomePanel==='function') renderHomePanel(); }
 function renderHomePanel(){
   const host = (typeof editorEl!=='undefined' && editorEl) ? editorEl.querySelector('#edHomePanel') : null; if(!host) return;
   const h=homepageCfg, esc=s=>String(s).replace(/"/g,'&quot;');
@@ -37090,7 +37337,9 @@ function renderHomePanel(){
     +     '<label style="display:flex;align-items:center;gap:6px;color:#9fe6cf;font-size:11px;cursor:pointer;margin-left:auto"><input type="checkbox" id="hpMp" style="width:14px;height:14px;accent-color:var(--accent)"'+(h.showMp?' checked':'')+'>Multiplayer button</label>'
     +   '</div>'
     +   '<div class="row2" style="margin-top:8px"><button id="hpShot">Capture backdrop</button><button id="hpShotClear"'+(h.bg?'':' disabled')+'>Remove</button></div>'
-    +   '<div class="hint" id="hpShotNote" style="font-size:10px;margin:2px 0 0">'+(h.bg?('Backdrop captured \u2713 ('+Math.round(h.bg.length/1024)+' KB)'):'No backdrop \u2014 the title screen uses a dark gradient.')+'</div>'
+    +   '<div id="hpBgUpRow" class="row2" style="margin-top:6px"></div>'
+    +   '<div class="hint" id="hpShotNote" style="font-size:10px;margin:2px 0 0">'+_hpBgNote(h)+'</div>'
+    +   '<div id="hpLookHost"></div>'
     +   '<div class="row2" style="margin-top:8px"><button id="hpPreviewBtn" style="width:100%">Preview title screen</button></div>'
     +   '<div class="row2" style="margin-top:8px"><button id="hpPublish" style="width:100%">Publish game page (instant URL)</button></div>'
     +   (h.slug?'<div class="row2" style="margin-top:6px"><button id="hpUnpub" style="width:100%;border-color:#7a2630;color:#ff9b93">Unpublish /game/'+h.slug+'</button></div>':'')
@@ -37112,6 +37361,10 @@ function renderHomePanel(){
   q('#hpShot').onclick=()=>{ const shot=_commCaptureThumb(640,360,0.62,150000); if(shot){ homepageCfg.bg=shot; dirty(); renderHomePanel(); } else { const n=q('#hpShotNote'); if(n) n.textContent='Capture failed \u2014 nothing is rendering yet; try again with the scene on screen.'; } };
   q('#hpShotClear').onclick=()=>{ homepageCfg.bg=''; dirty(); renderHomePanel(); };
   q('#hpPreviewBtn').onclick=()=>_hpPreview();
+  { const r=q('#hpBgUpRow');
+    if(r && typeof renderUploadRow==='function') renderUploadRow(r, 'texture', (url)=>{ homepageCfg.bg=_hpImg(url); dirty(); renderHomePanel(); _hpLive(); });
+  }
+  _renderHomeLook(q('#hpLookHost'), dirty);
   { const row=q('#hpLobbyBgRow');
     if(row && typeof renderUploadRow==='function'){
       renderUploadRow(row, 'texture', (url)=>{ lobbyBgUrl=_sanitizeLobbyBg(url); dirty(); _applyLobbyBg(lobbyBgUrl); renderHomePanel(); });

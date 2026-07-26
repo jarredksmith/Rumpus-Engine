@@ -7,8 +7,10 @@ import { gameSource, html, assert, eq, extractFunction, done } from './harness.m
 const src = gameSource();
 
 // ---- executable: the sanitizer is the security boundary for shared data ----
-const san = extractFunction('_sanitizeHomepage', src);
-const run = new Function('h', san + '\nreturn _sanitizeHomepage(h);');
+const san = extractFunction('_hpImg', src) + '\n' + extractFunction('_hpHex', src) + '\n'
+  + extractFunction('_hpNum', src) + '\n' + extractFunction('_hpScreen', src) + '\n'
+  + extractFunction('_sanitizeHomepage', src);
+const run = new Function('h', "const HUD_FONTS=['Orbitron','Rajdhani'];\n" + san + '\nreturn _sanitizeHomepage(h);');
 const off = run(null);
 eq(off.on, false, 'absent block -> off (no bleed between level loads)');
 eq(off.showMp, true, 'MP button defaults on');
@@ -63,6 +65,7 @@ assert(!/openModal\('instrModal'\)\s*;\s*\}\s*\}catch/.test(src) && /try\{ local
 // ---- CSS: layering — above the menu (20), below editor (30) & modals (60); preview above editor ----
 assert(/#gameHome \{ position:fixed; inset:0; z-index:22;/.test(html), 'layer sits just above the menu');
 assert(/#gameHome\.preview \{ z-index:55; \}/.test(html), 'preview rises above the editor panel, under modals');
-assert(/#gameHome \.hpBg \{[^}]*object-fit:cover/.test(html), 'backdrop covers, never distorts');
+assert(/#gameHome \.hpBg \{[^}]*object-fit:var\(--hp-bgfit,cover\)/.test(html),
+  'backdrop covers by default, never distorts (build 1081: the creator can switch it to contain)');
 
 done('build 971: creator title screens — custom game homepage on share links + ?game= URLs');
