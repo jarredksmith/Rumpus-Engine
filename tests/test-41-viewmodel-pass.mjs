@@ -19,6 +19,8 @@ assert(/renderer\.autoClear = ac/.test(rv), 'restores autoClear');
 
 // called after the world render at every first-person site
 eq((src.match(/renderViewmodel\(\)/g)||[]).length >= 4, true, 'invoked at the render sites (def + 3 calls)');
-assert(/renderScene\(scene, activeCam\(\)\);\n  if\(editorOpen && typeof _renderCinePvWindow==='function'\) _renderCinePvWindow\(\);\n  renderViewmodel\(\)/.test(src), 'runs after the main gameplay render');
+// the editor's camera-preview windows scissor-render between the two, but the viewmodel is still LAST —
+// it clears depth, so anything drawn after it would be cut by the gun.
+assert(/renderScene\(scene, activeCam\(\)\);\n(?:  if\(.*?_render\w*PvWindow==='function'\)[^\n]*\n)+  renderViewmodel\(\)/.test(src), 'runs after the main gameplay render');
 assert(/vmMuzzle\.getWorldPosition\(muzzleWorld\)/.test(src), 'tracers source from the gun-anchored barrel, projected to align with the drawn weapon');
 done('viewmodel depth-cleared pass (no world clipping / cutting)');

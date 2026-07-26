@@ -23703,7 +23703,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1083 · 2026-07-26';
+const BUILD_VERSION = 'build 1084 · 2026-07-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27741,6 +27741,184 @@ function _renderPvDof(X, M, W, H){
   renderer.setRenderTarget(null);
   renderer.setScissorTest(true); renderer.setViewport(X,M,W,H); renderer.setScissor(X,M,W,H); renderer.render(_dofScene,_dofCam);   // 3) vertical blur -> corner
 }
+// ---------- build 1084: SEE THE PLAY CAMERA ----------
+// Top-down and side-scroller levels derive their camera entirely from the player start, the camera distance
+// and (side only) the lane axis. None of that is visible while building — activeViewMode() deliberately
+// reports 'fps' in the editor — so a creator places props with no idea what will be on screen, and no idea
+// which lane is even reachable. Two answers, both fed by the SAME pose function so they cannot disagree with
+// each other or with the live camera: a rig drawn in the world, and a live preview window.
+let _vcamGroup=null, _vcamCam=null, _vcamFrLine=null, _vcamLane=null, _vcamLaneLine=null, _vcamBody=null;
+let _vcamPvOn=true; try{ if(localStorage.getItem('breach_vcampv')==='off') _vcamPvOn=false; }catch(e){}
+let _vcamPvPanel=null, _vcamPvFrame=null, _vcamPvLab=null, _vcamPvCam=null;
+let _vcamPvPos=null; try{ const _s=localStorage.getItem('breach_vcampvpos'); if(_s){ const o=JSON.parse(_s); if(o && typeof o.left==='number' && typeof o.top==='number') _vcamPvPos=o; } }catch(e){}
+const _VCAM_T={ x:0, y:0, z:0 }, _vcamTmp=new THREE.Vector3(), _vcamDir=new THREE.Vector3(), _vcamCbuf=[];
+function _vcamMode(){ const v=(typeof gameCfg!=='undefined' && gameCfg) ? gameCfg.view : ''; return (v==='top'||v==='side') ? v : ''; }
+// Where the player's camera anchor sits the instant they deploy. deployAt() spawns them at
+// terrainHeightAt + pstart.y + EYE, and the view camera reads player.pos — so this is that point.
+function _vcamTarget(){
+  const gx=playerSpawn.x, gz=playerSpawn.z;
+  const gy=((typeof terrainHeightAt==='function')?terrainHeightAt(gx,gz):0)+(+playerSpawn.y||0);
+  _VCAM_T.x=gx; _VCAM_T.y=gy+EYE; _VCAM_T.z=gz;
+  return _VCAM_T;
+}
+// Mirrors the live framing block in the frame loop exactly — same clamps, same defaults, same lift, same
+// look-at. If that block ever changes, this must change with it or the preview starts lying.
+function _vcamPose(cam, aspect){
+  const vm=_vcamMode(); if(!vm) return '';
+  const t=_vcamTarget(), _vd=+gameCfg.viewDist||0;
+  if(vm==='top'){
+    const D=Math.max(8, Math.min(80, _vd||26));
+    cam.position.set(t.x, t.y+D, t.z+D*0.55);
+    cam.lookAt(t.x, t.y, t.z);
+  } else {
+    const D=Math.max(6, Math.min(60, _vd||16)), cy=t.y+1.0;
+    if(gameCfg.viewAxis==='z') cam.position.set(t.x+D, cy, t.z);
+    else cam.position.set(t.x, cy, t.z+D);
+    cam.lookAt(t.x, cy, t.z);
+  }
+  cam.rotation.z=0;
+  cam.fov=(typeof worldCfg!=='undefined' && worldCfg.fov) ? worldCfg.fov : 78;   // the resting FOV; ADS zoom is transient
+  cam.near=camera.near; cam.far=camera.far;
+  if(aspect) cam.aspect=aspect;
+  cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
+  return vm;
+}
+function _vcamDist(cam, vm){   // eye -> the plane the action happens on
+  const t=_vcamTarget();
+  return cam.position.distanceTo(_vcamTmp.set(t.x, (vm==='top')?t.y:(t.y+1.0), t.z));
+}
+function _vcamCorners(cam, d){   // the framed rectangle at distance d, in world space
+  const hh=Math.tan(cam.fov*Math.PI/360)*d, hw=hh*cam.aspect;
+  const sx=[-hw,hw,hw,-hw], sy=[hh,hh,-hh,-hh];
+  for(let i=0;i<4;i++){ (_vcamCbuf[i]=_vcamCbuf[i]||new THREE.Vector3()).set(sx[i], sy[i], -d).applyMatrix4(cam.matrixWorld); }
+  return _vcamCbuf;
+}
+function _vcamBuildRig(){
+  if(_vcamGroup) return;
+  const COL=0x4fd3ff, LANE=0xffd166;
+  const g=new THREE.Group(); g.renderOrder=9;
+  const body=new THREE.Group();
+  body.add(new THREE.Mesh(new THREE.BoxGeometry(0.7,0.5,0.9), new THREE.MeshBasicMaterial({ color:COL, transparent:true, opacity:0.55, depthWrite:false })));
+  const lens=new THREE.Mesh(new THREE.ConeGeometry(0.26,0.5,12), new THREE.MeshBasicMaterial({ color:COL, depthWrite:false }));
+  lens.rotation.x=-Math.PI/2; lens.position.z=-0.62; body.add(lens);
+  body.traverse(o=>{ o.frustumCulled=false; }); g.add(body); _vcamBody=body;
+  // 4 corner rays + the rectangle they frame = 8 segments = 16 vertices
+  const fg=new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(48), 3));
+  _vcamFrLine=new THREE.LineSegments(fg, new THREE.LineBasicMaterial({ color:COL, transparent:true, opacity:0.85, depthTest:false }));
+  _vcamFrLine.frustumCulled=false; _vcamFrLine.renderOrder=10; g.add(_vcamFrLine);
+  // The lane. In side view the player is LOCKED to the plane they deploy on (_sideLock), so anything off it
+  // is scenery they can never reach — easily the least obvious rule in the whole mode.
+  _vcamLane=new THREE.Mesh(new THREE.PlaneGeometry(1,1), new THREE.MeshBasicMaterial({ color:LANE, transparent:true, opacity:0.10, side:THREE.DoubleSide, depthWrite:false }));
+  _vcamLane.frustumCulled=false; g.add(_vcamLane);
+  const lg=new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  _vcamLaneLine=new THREE.Line(lg, new THREE.LineBasicMaterial({ color:LANE, transparent:true, opacity:0.8, depthTest:false }));
+  _vcamLaneLine.frustumCulled=false; _vcamLaneLine.renderOrder=10; g.add(_vcamLaneLine);
+  scene.add(g); _vcamGroup=g;
+}
+// Re-derived every editor frame rather than hooked to each of the eight things that can move it (start
+// point, distance, axis, view mode, FOV, terrain, arena size, undo). Cheap: two buffer writes.
+function _vcamSync(){
+  const vm=(typeof editorOpen!=='undefined' && editorOpen && !(typeof _cineActive!=='undefined' && _cineActive)) ? _vcamMode() : '';
+  if(!vm){ if(_vcamGroup) _vcamGroup.visible=false; return; }
+  _vcamBuildRig();
+  if(!_vcamCam) _vcamCam=new THREE.PerspectiveCamera(78, 16/9, 0.1, 400);
+  _vcamPose(_vcamCam, (camera && camera.aspect) ? camera.aspect : 16/9);   // the player's real window shape
+  _vcamGroup.visible=true;
+  _vcamBody.position.copy(_vcamCam.position); _vcamBody.quaternion.copy(_vcamCam.quaternion);
+  const c=_vcamCorners(_vcamCam, _vcamDist(_vcamCam, vm));
+  const p=_vcamFrLine.geometry.attributes.position, a=p.array; let i=0;
+  const put=(v)=>{ a[i++]=v.x; a[i++]=v.y; a[i++]=v.z; };
+  for(let k=0;k<4;k++){ put(_vcamCam.position); put(c[k]); }
+  for(let k=0;k<4;k++){ put(c[k]); put(c[(k+1)%4]); }
+  p.needsUpdate=true;
+  if(vm==='side'){
+    const A=(typeof ARENA!=='undefined' && ARENA) ? ARENA : ((typeof worldCfg!=='undefined' && worldCfg.arena) || 70);
+    const t=_vcamTarget(), gy=t.y-EYE, H=6;
+    _vcamLane.visible=true; _vcamLaneLine.visible=true;
+    _vcamLane.scale.set(A*2, H, 1);
+    const lp=_vcamLaneLine.geometry.attributes.position, la=lp.array;
+    if(gameCfg.viewAxis==='z'){   // the lane runs north-south: the play plane is x = start.x
+      _vcamLane.rotation.set(0, Math.PI/2, 0); _vcamLane.position.set(t.x, gy+H/2, 0);
+      la[0]=t.x; la[1]=gy+0.05; la[2]=-A; la[3]=t.x; la[4]=gy+0.05; la[5]=A;
+    } else {                      // east-west: the play plane is z = start.z
+      _vcamLane.rotation.set(0,0,0); _vcamLane.position.set(0, gy+H/2, t.z);
+      la[0]=-A; la[1]=gy+0.05; la[2]=t.z; la[3]=A; la[4]=gy+0.05; la[5]=t.z;
+    }
+    lp.needsUpdate=true;
+  } else { _vcamLane.visible=false; _vcamLaneLine.visible=false; }
+}
+// Put the editor's free-fly camera exactly where the play camera will be — the fastest way to understand
+// a framing is to stand in it. The look basis below matches the free-fly block's fwd vector.
+function _vcamGoTo(){
+  if(!_vcamMode()) return false;
+  if(!_vcamCam) _vcamCam=new THREE.PerspectiveCamera(78, 16/9, 0.1, 400);
+  _vcamPose(_vcamCam, (camera && camera.aspect) ? camera.aspect : 16/9);
+  _vcamCam.getWorldDirection(_vcamDir);
+  editorTopView=false; editorFreeFly=true; flyInit=true;
+  flyPos.copy(_vcamCam.position);
+  player.yaw=Math.atan2(-_vcamDir.x, -_vcamDir.z);
+  player.pitch=Math.asin(Math.max(-1, Math.min(1, _vcamDir.y)));
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof flashToast==='function') flashToast('Standing in the play camera \u2014 F returns to normal fly');
+  return true;
+}
+function _ensureVcamPvPanel(){
+  if(_vcamPvPanel) return;
+  const p=document.createElement('div'); p.id='vcamPvPanel';
+  p.style.cssText='position:fixed;bottom:20px;left:20px;z-index:46;pointer-events:none;';
+  const hdr=document.createElement('div'); hdr.style.cssText='pointer-events:auto;display:flex;align-items:center;gap:8px;background:rgba(8,14,18,.94);border:1px solid rgba(var(--accent-rgb),0.45);border-bottom:none;border-radius:7px 7px 0 0;padding:5px 9px;box-shadow:0 -2px 14px rgba(0,0,0,.45);cursor:grab;';
+  const lab=document.createElement('span'); lab.id='vcamPvLabel'; lab.style.cssText='font-size:11px;color:var(--accent);letter-spacing:.04em;flex:1 1 auto;cursor:grab;';
+  const x=document.createElement('button'); x.textContent='\u2715'; x.title='Hide the play-camera preview'; x.style.cssText='flex:0 0 auto;background:none;border:none;color:#9fe6cf;font-size:13px;line-height:1;cursor:pointer;padding:0 2px;';
+  x.onclick=()=>{ _vcamPvOn=false; try{ localStorage.setItem('breach_vcampv','off'); }catch(e){} if(typeof renderEditorFields==='function') renderEditorFields(); };
+  hdr.appendChild(lab); hdr.appendChild(x);
+  const fr=document.createElement('div'); fr.style.cssText='border:1px solid rgba(var(--accent-rgb),0.45);border-top:none;border-radius:0 0 7px 7px;box-shadow:0 6px 22px rgba(0,0,0,.5);';
+  p.appendChild(hdr); p.appendChild(fr); document.body.appendChild(p);
+  _vcamPvPanel=p; _vcamPvFrame=fr; _vcamPvLab=lab;
+  let drag=null;
+  hdr.addEventListener('pointerdown', (e)=>{ if(e.target===x) return; const r=p.getBoundingClientRect(); drag={ dx:e.clientX-r.left, dy:e.clientY-r.top }; try{ hdr.setPointerCapture(e.pointerId); }catch(_e){} hdr.style.cursor='grabbing'; e.preventDefault(); });
+  hdr.addEventListener('pointermove', (e)=>{ if(!drag) return; const W=p.offsetWidth, H=p.offsetHeight;
+    const left=Math.max(0, Math.min(innerWidth-W, e.clientX-drag.dx)), top=Math.max(0, Math.min(innerHeight-H, e.clientY-drag.dy));
+    _vcamPvPos={ left, top }; p.style.left=left+'px'; p.style.top=top+'px'; p.style.right='auto'; p.style.bottom='auto'; });
+  const end=()=>{ if(!drag) return; drag=null; hdr.style.cursor='grab'; try{ localStorage.setItem('breach_vcampvpos', JSON.stringify(_vcamPvPos)); }catch(e){} };
+  hdr.addEventListener('pointerup', end); hdr.addEventListener('pointercancel', end);
+}
+// Renders the play camera into a corner of the same canvas, the way the cinematic preview does.
+function _renderVcamPvWindow(){
+  const vm=(editorOpen && _vcamPvOn && !(typeof _cineActive!=='undefined' && _cineActive)) ? _vcamMode() : '';
+  if(!vm){ if(_vcamPvPanel) _vcamPvPanel.style.display='none'; return; }
+  _ensureVcamPvPanel();
+  _vcamPvPanel.style.display='block';
+  const size=renderer.getSize(new THREE.Vector2());
+  const W=Math.max(180, Math.min(320, Math.round(size.x*0.26))), H=Math.round(W*9/16), M=20;
+  _vcamPvPanel.style.width=W+'px'; _vcamPvFrame.style.width=W+'px'; _vcamPvFrame.style.height=H+'px';
+  if(_vcamPvLab) _vcamPvLab.textContent=(vm==='top'?'\u25a3 Top-down camera':'\u25a3 Side-scroller camera')+' \u2014 from the start point';
+  if(_vcamPvPos){
+    const ph=_vcamPvPanel.offsetHeight||(H+30);
+    _vcamPvPanel.style.left=Math.max(0, Math.min(innerWidth-W, _vcamPvPos.left))+'px';
+    _vcamPvPanel.style.top=Math.max(0, Math.min(innerHeight-ph, _vcamPvPos.top))+'px';
+    _vcamPvPanel.style.right='auto'; _vcamPvPanel.style.bottom='auto';
+  } else {   // the corner opposite the dock, stacked above the cinematic preview when that one is up too
+    const dockLeft=!!(editorEl && editorEl.classList.contains('dockLeft'));
+    const cineUp=!!(_cinePvPanel && _cinePvPanel.style.display==='block');
+    _vcamPvPanel.style.left = dockLeft ? 'auto' : M+'px'; _vcamPvPanel.style.right = dockLeft ? M+'px' : 'auto';
+    _vcamPvPanel.style.bottom = (M + (cineUp ? (_cinePvPanel.offsetHeight||0)+10 : 0))+'px'; _vcamPvPanel.style.top='auto';
+  }
+  const fr=_vcamPvFrame.getBoundingClientRect();
+  const X=Math.round(fr.left), Yb=Math.round(size.y-fr.bottom), Wr=Math.max(2,Math.round(fr.width)), Hr=Math.max(2,Math.round(fr.height));
+  if(!_vcamPvCam) _vcamPvCam=new THREE.PerspectiveCamera(78, 16/9, camera.near, camera.far);
+  _vcamPose(_vcamPvCam, Wr/Hr);
+  // Hide the transient editor chrome (same list the cinematic preview hides, plus this build's own rig).
+  // Authored markers — the start point, spawns, trigger rings — stay: they are how you know what you are
+  // looking at, and the preview is for framing, not a screenshot.
+  const hid=[]; for(const o of [_vcamGroup, _cinePreviewGroup, (typeof gizmo!=='undefined'?gizmo:null), (typeof selBox!=='undefined'?selBox:null)]){ if(o && o.visible){ o.visible=false; hid.push(o); } }
+  const sbh=[]; if(typeof selBoxes!=='undefined' && selBoxes) for(const b of selBoxes){ if(b && b.visible){ b.visible=false; sbh.push(b); } }
+  const sa=renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate=false;   // the main render already built the sun shadows this frame
+  renderer.setScissorTest(true); renderer.setViewport(X, Yb, Wr, Hr); renderer.setScissor(X, Yb, Wr, Hr);
+  try{ renderer.render(scene, _vcamPvCam); }catch(e){}
+  renderer.setScissorTest(false); renderer.setViewport(0,0,size.x,size.y); renderer.setScissor(0,0,size.x,size.y); renderer.setRenderTarget(null);
+  renderer.shadowMap.autoUpdate=sa;
+  for(const o of hid) o.visible=true; for(const b of sbh) b.visible=true;
+}
 function _renderCinePvWindow(){
   if(!editorOpen || !_cinePvOn || _cineActive){ if(_cinePvPanel) _cinePvPanel.style.display='none'; _blankCinePvWindow(); return; }
   const shot=_cinePvShot();
@@ -27898,6 +28076,12 @@ function loop(){
   // normal _renderCinePvWindow() call behind editorOpen — so without this its panel + frame border would
   // linger on screen. Hiding it here, before any early-out, covers every one of those paths.
   if(_cinePvPanel && (!editorOpen || _cineActive || !_cinePvOn)){ _cinePvPanel.style.display='none'; if(typeof _blankCinePvWindow==='function') _blankCinePvWindow(); }
+  // build 1084: the play-camera rig and its preview need the same treatment, and for the same reason — the
+  // editor is entered from a LIVE game (enterEditor calls startGame), so leaving it to the menu drops gameOn
+  // and the !gameOn early-out below skips the normal _vcamSync() / _renderVcamPvWindow() calls entirely.
+  // Without this the rig and the panel would sit on the main menu until something started a game again.
+  if(_vcamGroup && !editorOpen) _vcamGroup.visible=false;
+  if(_vcamPvPanel && (!editorOpen || _cineActive || !_vcamPvOn)) _vcamPvPanel.style.display='none';
   if(_levelLoaderActive){ pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // hold the world frozen behind the level loading screen until assets finish loading — checked BEFORE the cutscene so the intro cinematic can't advance while loading
   if(_cineActive){ updateCinematic(rawDt); if(mixers.length){ for(const m of mixers) m.update(rawDt); } if(typeof updateXAnim==='function') updateXAnim(rawDt); renderScene(scene,camera); return; }   // keep GLB clips AND mechanism/waypoint motion (doors, platforms, elevators) alive on camera   // keep prop/GLB animations alive on camera (raw time — no hitstop during a cutscene)   // intro/preview flythrough owns the camera; freeze the sim
   if(_interActive){ pollGamepad(dt); renderScene(scene,camera); renderViewmodel(); return; }   // campaign transition card owns the screen; hold the won level frozen behind it
@@ -28735,8 +28919,10 @@ function loop(){
   { const _a=perfOn?_pnow():0; drawMinimap(); if(perfOn)_prof.mini+=_pnow()-_a; }
   if(mapOpen) drawBigMap();
   if(editorOpen && typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof _vcamSync==='function') _vcamSync();   // build 1084: the play-camera rig, re-derived and hidden before anything is drawn
   renderScene(scene, activeCam());
   if(editorOpen && typeof _renderCinePvWindow==='function') _renderCinePvWindow();
+  if(typeof _renderVcamPvWindow==='function') _renderVcamPvWindow();   // build 1084
   renderViewmodel();
 }
 loop();
@@ -33298,6 +33484,21 @@ function renderEditorFields(){
         const aBtn=(key,txt)=>{ const b=document.createElement('button'); b.textContent=txt; if(((gameCfg.viewAxis==='z')?'z':'x')===key){ b.style.background='rgba(var(--accent-rgb),0.30)'; b.style.color='#eafff7'; } b.onclick=()=>{ pushUndoSnapshot(); gameCfg.viewAxis=key; _sideLock=null; _levelDirty=true; renderEditorFields(); }; return b; };
         aw.appendChild(aBtn('x','Lane runs east\u2013west')); aw.appendChild(aBtn('z','Lane runs north\u2013south')); bPly.appendChild(aw);
       }
+      if(_curView==='top'||_curView==='side'){
+        // build 1084: the camera is derived, not placed — so give the creator a way to SEE it
+        const pvRow=document.createElement('div'); pvRow.style.cssText='display:flex;gap:6px;margin:5px 0 2px;';
+        const pb=document.createElement('button'); pb.style.cssText='flex:1;font-size:12px;'; pb.textContent=(_vcamPvOn?'\u2713 ':'')+'Live camera preview';
+        pb.title='A small window showing exactly what players will see standing on the start point';
+        if(_vcamPvOn){ pb.style.background='rgba(var(--accent-rgb),0.30)'; pb.style.color='#eafff7'; }
+        pb.onclick=()=>{ _vcamPvOn=!_vcamPvOn; try{ localStorage.setItem('breach_vcampv', _vcamPvOn?'on':'off'); }catch(e){} renderEditorFields(); };
+        const gb=document.createElement('button'); gb.style.cssText='flex:0 0 auto;font-size:12px;'; gb.textContent='Stand in it';
+        gb.title='Fly the editor camera to the play camera\u2019s exact position and angle';
+        gb.onclick=()=>{ if(typeof _vcamGoTo==='function') _vcamGoTo(); };
+        pvRow.appendChild(pb); pvRow.appendChild(gb); bPly.appendChild(pvRow);
+        hint(bPly, '', '2px 0 6px').textContent = _curView==='side'
+          ? 'The blue box in the viewport is the camera, the blue rectangle is the frame, and the gold plane is the lane \u2014 players are locked to it, so anything off it is scenery.'
+          : 'The blue box in the viewport is the camera and the blue rectangle is what fits on screen at this distance.';
+      }
       hint(bPly, '', '2px 0 8px').textContent = _curView==='top'
         ? 'Twin-stick: WASD moves on the map, the mouse steers a cursor and shots hit whatever is under it. Cars keep their handling \u2014 instant chase levels.'
         : (_curView==='side'
@@ -36351,6 +36552,10 @@ const ED_MENUS = [
     { label:'Logic graph',          run:()=>{ if(typeof _lgOpen==='function') _lgOpen(); } },
     { label:'Animation editor',     run:()=>{ if(typeof _aeOpen==='function') _aeOpen(); } },
     { label:'Outliner',      key:'O', run:()=>{ if(typeof _outToggle==='function') _outToggle(); } },
+    { label:'Play-camera preview', run:()=>{ if(typeof _vcamMode!=='function') return;
+        if(!_vcamMode()){ if(typeof flashToast==='function') flashToast('Only top-down and side-scroller levels have a fixed play camera'); return; }
+        _vcamPvOn=!_vcamPvOn; try{ localStorage.setItem('breach_vcampv', _vcamPvOn?'on':'off'); }catch(e){}
+        if(typeof renderEditorFields==='function') renderEditorFields(); } },
     { label:'Command palette', key:'Ctrl+K', run:()=>_edClick('edPalBtn') },
     { sep:1 },
     { label:'Settings',             run:()=>{ if(typeof setEditorMode==='function') setEditorMode('settings'); } },
