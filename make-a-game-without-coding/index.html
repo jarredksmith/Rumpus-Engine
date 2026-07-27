@@ -92,6 +92,7 @@
 <div class="wrap"><p class="crumbs"><a href="/">Home</a> › Make a game without coding</p></div>
 
 <div class="hero compact">
+  <div class="bg" data-shot><img src="/img/logic-graph.jpg" alt="" aria-hidden="true"></div>
   <div class="wrap">
     <h1>How to make a game without coding</h1>
     <p class="lede">You do not need to learn a programming language to build a 3D game. Here is how visual game
@@ -121,28 +122,40 @@
     actually use.</p>
     <div class="grid">
       <div class="card">
-        <span class="k">Triggers</span>
-        <h3>"When the player reaches here…"</h3>
-        <p>Draw an invisible volume in the world and choose what happens when a player — or an enemy — enters,
-        leaves, or stays in it. This covers most of what a beginner would otherwise script.</p>
+        <figure data-shot><img src="/img/trigger-volume.jpg" alt="A trigger volume drawn in the Rumpus Engine editor with its settings panel open" loading="lazy"></figure>
+        <div class="pad">
+          <span class="k">Triggers</span>
+          <h3>"When the player reaches here…"</h3>
+          <p>Draw an invisible volume in the world and choose what happens when a player — or an enemy — enters,
+          leaves, or stays in it. This covers most of what a beginner would otherwise script.</p>
+        </div>
       </div>
       <div class="card">
-        <span class="k">Logic graph</span>
-        <h3>"…then do this, and this"</h3>
-        <p>Drag nodes onto a canvas and connect them: an event on the left, outcomes on the right. Open a door,
-        spawn a wave, play a sound, start a cutscene, change the objective.</p>
+        <figure data-shot><img src="/img/logic-graph.jpg" alt="Event and outcome nodes connected on the Rumpus Engine logic graph" loading="lazy"></figure>
+        <div class="pad">
+          <span class="k">Logic graph</span>
+          <h3>"…then do this, and this"</h3>
+          <p>Drag nodes onto a canvas and connect them: an event on the left, outcomes on the right. Open a door,
+          spawn a wave, play a sound, start a cutscene, change the objective.</p>
+        </div>
       </div>
       <div class="card">
-        <span class="k">Variables</span>
-        <h3>Remembering things</h3>
-        <p>Named values that persist — across a level, or across a whole campaign. Count how many switches are
-        flipped, remember whether the player took the key, gate an ending on a choice.</p>
+        <figure data-shot><img src="/img/variables.jpg" alt="The Rumpus Engine variables panel, listing named values used by a level" loading="lazy"></figure>
+        <div class="pad">
+          <span class="k">Variables</span>
+          <h3>Remembering things</h3>
+          <p>Named values that persist — across a level, or across a whole campaign. Count how many switches are
+          flipped, remember whether the player took the key, gate an ending on a choice.</p>
+        </div>
       </div>
       <div class="card">
-        <span class="k">Dialogue</span>
-        <h3>Conversations that branch</h3>
-        <p>Write NPC dialogue as plain lines with reply options, jump between labelled sections, and set
-        variables from a choice — the shape of a script, without the syntax.</p>
+        <figure data-shot><img src="/img/dialogue.jpg" alt="The Rumpus Engine dialogue editor, showing NPC lines with branching reply options" loading="lazy"></figure>
+        <div class="pad">
+          <span class="k">Dialogue</span>
+          <h3>Conversations that branch</h3>
+          <p>Write NPC dialogue as plain lines with reply options, jump between labelled sections, and set
+          variables from a choice — the shape of a script, without the syntax.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -158,6 +171,11 @@
     <p>Sculpt terrain with a brush, drop in primitives (boxes, ramps, stairs, tubes), or search free 3D models
     from Poly&nbsp;Pizza and Sketchfab and place them without leaving the editor. Move, rotate and scale with a
     drag gizmo, or type exact numbers.</p>
+
+    <figure class="shot" data-shot>
+      <img src="/img/editor.jpg" alt="The Rumpus Engine editor with a model selected and the transform gizmo active" loading="lazy">
+      <figcaption><b>Step 2.</b> Drag the gizmo, or type exact numbers. The model browser searches free 3D models without leaving the tab.</figcaption>
+    </figure>
 
     <h3 id="step-3">3. Choose how it plays</h3>
     <p>Pick a camera view — first person, third person, top-down or side-scrolling — and an objective. Eight are
@@ -177,6 +195,11 @@
     <p>A whole level compresses into a URL, so sharing is sending a link — the person you send it to plays it in
     their browser with nothing to download. You can also export a file, or submit the level to the in-game
     community library.</p>
+
+    <figure class="shot" data-shot>
+      <img src="/img/share-link.jpg" alt="The Rumpus Engine share panel, showing a level packed into a copyable link" loading="lazy">
+      <figcaption><b>Step 6.</b> The whole level is in the URL. Whoever you send it to plays it in their browser with nothing to install.</figcaption>
+    </figure>
 
     <p class="note">Want the detail? The <a href="/breach-help.html">field manual</a> documents every tab,
     section and slider, and the editor ships with loadable example projects.</p>
@@ -260,11 +283,26 @@
 <script>
 /* Any figure marked data-shot whose image has not been added yet removes itself, so the layout stays
    clean instead of showing a broken-image icon. */
-document.querySelectorAll('[data-shot] img').forEach(function(img){
-  var kill = function(){ var f = img.closest('[data-shot]'); if(f) f.remove(); };
-  if(img.complete && img.naturalWidth === 0) kill();
-  img.addEventListener('error', kill);
-});
+/* The error event alone is not enough: these images are loading="lazy", so one below the fold never
+   requests anything until you scroll to it, and its empty figure sits there until then. Each distinct
+   source is probed once with a HEAD request — no image data, no effect on the lazy load that follows.
+   If the probe cannot run we fail open and leave the figures alone: a missing image is a cosmetic
+   problem, a wrongly-deleted one is not. */
+(function(){
+  var figs = [].slice.call(document.querySelectorAll('[data-shot]'));
+  var kill = function(f){ if(f && f.parentNode) f.parentNode.removeChild(f); };
+  var bySrc = {};
+  figs.forEach(function(f){
+    var img = f.querySelector('img'); if(!img) return;
+    if(img.complete && img.naturalWidth === 0) return kill(f);
+    img.addEventListener('error', function(){ kill(f); });
+    var src = img.getAttribute('src'); (bySrc[src] = bySrc[src] || []).push(f);
+  });
+  if(!window.fetch) return;
+  Object.keys(bySrc).forEach(function(src){
+    fetch(src, { method:'HEAD' }).then(function(r){ if(!r.ok) bySrc[src].forEach(kill); }).catch(function(){});
+  });
+})();
 </script>
 
 </body>

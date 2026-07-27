@@ -323,11 +323,26 @@
       leaves a clean layout rather than a broken-image icon.
    2. Videos load as a thumbnail and only swap in the YouTube iframe on click — a raw embed pulls
       roughly a megabyte of third-party script per video before anyone presses play. */
-document.querySelectorAll('[data-shot] img').forEach(function(img){
-  var kill = function(){ var f = img.closest('[data-shot]'); if(f) f.remove(); };
-  if(img.complete && img.naturalWidth === 0) kill();
-  img.addEventListener('error', kill);
-});
+/* The error event alone is not enough: these images are loading="lazy", so one below the fold never
+   requests anything until you scroll to it, and its empty figure sits there until then. Each distinct
+   source is probed once with a HEAD request — no image data, no effect on the lazy load that follows.
+   If the probe cannot run we fail open and leave the figures alone: a missing image is a cosmetic
+   problem, a wrongly-deleted one is not. */
+(function(){
+  var figs = [].slice.call(document.querySelectorAll('[data-shot]'));
+  var kill = function(f){ if(f && f.parentNode) f.parentNode.removeChild(f); };
+  var bySrc = {};
+  figs.forEach(function(f){
+    var img = f.querySelector('img'); if(!img) return;
+    if(img.complete && img.naturalWidth === 0) return kill(f);
+    img.addEventListener('error', function(){ kill(f); });
+    var src = img.getAttribute('src'); (bySrc[src] = bySrc[src] || []).push(f);
+  });
+  if(!window.fetch) return;
+  Object.keys(bySrc).forEach(function(src){
+    fetch(src, { method:'HEAD' }).then(function(r){ if(!r.ok) bySrc[src].forEach(kill); }).catch(function(){});
+  });
+})();
 /* YouTube's thumbnail host is blocked by plenty of ad-blockers and some corporate networks. If a poster
    fails, drop just the image — the framed panel and its play button remain, and clicking still works. */
 document.querySelectorAll('.vid .frame img').forEach(function(img){

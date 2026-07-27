@@ -85,6 +85,7 @@
 <div class="wrap"><p class="crumbs"><a href="/">Home</a> › Browser game engine</p></div>
 
 <div class="hero compact">
+  <div class="bg" data-shot><img src="/img/browser-chrome.jpg" alt="" aria-hidden="true"></div>
   <div class="wrap">
     <h1>A free browser game engine for 3D games</h1>
     <p class="lede">Build FPS, racing, top-down and side-scrolling games in a browser tab. No download, no
@@ -138,18 +139,41 @@
       </table>
     </div>
     <p>Because the engine is a single file, it also works offline once loaded, and you can keep your own copy
-    of it. The project ships with 839 automated test harnesses covering the engine's behaviour.</p>
+    of it. The project ships with 840 automated test harnesses covering the engine's behaviour.</p>
+
+    <figure class="shot" data-shot>
+      <img src="/img/physics.jpg" alt="Rigid-body physics in Rumpus Engine — props scattered and toppling after a collision" loading="lazy">
+      <figcaption><b>Rapier, compiled to WebAssembly.</b> Rigid bodies, vehicles, ragdolls and destructible props run in the tab at close to native speed.</figcaption>
+    </figure>
   </section>
 
   <section>
     <h2>What you can build in the browser</h2>
-    <div class="grid">
-      <div class="card"><span class="k">Shooter</span><h3>First and third person</h3><p>Wave combat, distinct enemy archetypes, weapon loadouts and attachments, upgrade cards between waves.</p></div>
-      <div class="card"><span class="k">Racing</span><h3>Track builder</h3><p>Snap-together curves, banking and ramps, with AI rivals, lap timing and ghost laps.</p></div>
-      <div class="card"><span class="k">Top-down</span><h3>Twin-stick</h3><p>Isometric-tilt camera with rotation, tilt and height control, and a mouse-steered aiming cursor.</p></div>
-      <div class="card"><span class="k">Side-scroll</span><h3>2.5D platforming</h3><p>Lane-locked movement through fully 3D scenery, with an angled camera you control.</p></div>
-      <div class="card"><span class="k">Story</span><h3>NPCs and cutscenes</h3><p>Branching dialogue, trigger volumes, signals and locks, and a shot-by-shot cutscene editor.</p></div>
-      <div class="card"><span class="k">Campaign</span><h3>Multiple levels</h3><p>Chain levels together, carry variables between them, and author your own title and end screens.</p></div>
+    <div class="grid g3">
+      <div class="card">
+        <figure data-shot><img src="/img/shot-fps.jpg" alt="First-person view in a Rumpus Engine level" loading="lazy"></figure>
+        <div class="pad"><span class="k">Shooter</span><h3>First and third person</h3><p>Wave combat, distinct enemy archetypes, weapon loadouts and attachments, upgrade cards between waves.</p></div>
+      </div>
+      <div class="card">
+        <figure data-shot><img src="/img/racing.jpg" alt="A vehicle racing a built track in Rumpus Engine" loading="lazy"></figure>
+        <div class="pad"><span class="k">Racing</span><h3>Track builder</h3><p>Snap-together curves, banking and ramps, with AI rivals, lap timing and ghost laps.</p></div>
+      </div>
+      <div class="card">
+        <figure data-shot><img src="/img/genre-topdown.jpg" alt="Top-down twin-stick view of a Rumpus Engine level" loading="lazy"></figure>
+        <div class="pad"><span class="k">Top-down</span><h3>Twin-stick</h3><p>Isometric-tilt camera with rotation, tilt and height control, and a mouse-steered aiming cursor.</p></div>
+      </div>
+      <div class="card">
+        <figure data-shot><img src="/img/genre-sidescroll.jpg" alt="Side-scrolling 2.5D view of a Rumpus Engine level" loading="lazy"></figure>
+        <div class="pad"><span class="k">Side-scroll</span><h3>2.5D platforming</h3><p>Lane-locked movement through fully 3D scenery, with an angled camera you control.</p></div>
+      </div>
+      <div class="card">
+        <figure data-shot><img src="/img/cinematics.jpg" alt="The cutscene editor in Rumpus Engine, showing a camera path" loading="lazy"></figure>
+        <div class="pad"><span class="k">Story</span><h3>NPCs and cutscenes</h3><p>Branching dialogue, trigger volumes, signals and locks, and a shot-by-shot cutscene editor.</p></div>
+      </div>
+      <div class="card">
+        <figure data-shot><img src="/img/shot-interior.jpg" alt="An authored interior level in Rumpus Engine" loading="lazy"></figure>
+        <div class="pad"><span class="k">Campaign</span><h3>Multiple levels</h3><p>Chain levels together, carry variables between them, and author your own title and end screens.</p></div>
+      </div>
     </div>
   </section>
 
@@ -237,11 +261,26 @@
 <script>
 /* Any figure marked data-shot whose image has not been added yet removes itself, so the layout stays
    clean instead of showing a broken-image icon. */
-document.querySelectorAll('[data-shot] img').forEach(function(img){
-  var kill = function(){ var f = img.closest('[data-shot]'); if(f) f.remove(); };
-  if(img.complete && img.naturalWidth === 0) kill();
-  img.addEventListener('error', kill);
-});
+/* The error event alone is not enough: these images are loading="lazy", so one below the fold never
+   requests anything until you scroll to it, and its empty figure sits there until then. Each distinct
+   source is probed once with a HEAD request — no image data, no effect on the lazy load that follows.
+   If the probe cannot run we fail open and leave the figures alone: a missing image is a cosmetic
+   problem, a wrongly-deleted one is not. */
+(function(){
+  var figs = [].slice.call(document.querySelectorAll('[data-shot]'));
+  var kill = function(f){ if(f && f.parentNode) f.parentNode.removeChild(f); };
+  var bySrc = {};
+  figs.forEach(function(f){
+    var img = f.querySelector('img'); if(!img) return;
+    if(img.complete && img.naturalWidth === 0) return kill(f);
+    img.addEventListener('error', function(){ kill(f); });
+    var src = img.getAttribute('src'); (bySrc[src] = bySrc[src] || []).push(f);
+  });
+  if(!window.fetch) return;
+  Object.keys(bySrc).forEach(function(src){
+    fetch(src, { method:'HEAD' }).then(function(r){ if(!r.ok) bySrc[src].forEach(kill); }).catch(function(){});
+  });
+})();
 </script>
 
 </body>

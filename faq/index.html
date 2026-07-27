@@ -75,6 +75,7 @@
 <div class="wrap"><p class="crumbs"><a href="/">Home</a> › FAQ</p></div>
 
 <div class="hero compact">
+  <div class="bg" data-shot><img src="/img/hero.jpg" alt="" aria-hidden="true"></div>
   <div class="wrap">
     <h1>Frequently asked questions</h1>
     <p class="lede">Everything people ask before they open the editor — answered plainly, including the things
@@ -126,6 +127,11 @@
       <p>In your browser, on your machine. Nothing is uploaded unless you choose to submit a level to the
       community library. Export a level to a file if you want a backup you control.</p>
     </div></details>
+
+    <figure class="shot" data-shot>
+      <img src="/img/mobile.jpg" alt="Rumpus Engine running on a phone, with on-screen touch controls" loading="lazy">
+      <figcaption><b>The same engine on a phone.</b> Touch controls take over automatically and the renderer scales its own quality to hold a steady frame rate.</figcaption>
+    </figure>
   </section>
 
   <section>
@@ -156,6 +162,17 @@
       <p>Yes. Levels chain into campaigns, variables carry between them, and you can author your own title
       screen and win/lose end screens.</p>
     </div></details>
+
+    <div class="shots">
+      <figure class="shot" data-shot>
+        <img src="/img/model-search.jpg" alt="Searching free 3D models from inside the Rumpus Engine editor" loading="lazy">
+        <figcaption><b>Free models, searched in-editor.</b> Poly Pizza and Sketchfab results drop straight into the level, attribution included.</figcaption>
+      </figure>
+      <figure class="shot" data-shot>
+        <img src="/img/animation-editor.jpg" alt="The Rumpus Engine animation editor, showing a rigged character and its keyframes" loading="lazy">
+        <figcaption><b>Rigging and animation, built in.</b> A character that arrives without animations can be rigged and animated without leaving the tab.</figcaption>
+      </figure>
+    </div>
   </section>
 
   <section>
@@ -176,6 +193,11 @@
       <p>You do. Licences for imported assets follow whatever you imported; the engine collects attributions per
       level and shows them on an in-game credits screen, so your players can see them too.</p>
     </div></details>
+
+    <figure class="shot" data-shot>
+      <img src="/img/community.jpg" alt="The in-game community library in Rumpus Engine, listing levels published by other people" loading="lazy">
+      <figcaption><b>The community library.</b> Publish a level from inside the editor, or open somebody else's and take it apart.</figcaption>
+    </figure>
   </section>
 
   <div class="cta-band">
@@ -221,11 +243,26 @@
 <script>
 /* Any figure marked data-shot whose image has not been added yet removes itself, so the layout stays
    clean instead of showing a broken-image icon. */
-document.querySelectorAll('[data-shot] img').forEach(function(img){
-  var kill = function(){ var f = img.closest('[data-shot]'); if(f) f.remove(); };
-  if(img.complete && img.naturalWidth === 0) kill();
-  img.addEventListener('error', kill);
-});
+/* The error event alone is not enough: these images are loading="lazy", so one below the fold never
+   requests anything until you scroll to it, and its empty figure sits there until then. Each distinct
+   source is probed once with a HEAD request — no image data, no effect on the lazy load that follows.
+   If the probe cannot run we fail open and leave the figures alone: a missing image is a cosmetic
+   problem, a wrongly-deleted one is not. */
+(function(){
+  var figs = [].slice.call(document.querySelectorAll('[data-shot]'));
+  var kill = function(f){ if(f && f.parentNode) f.parentNode.removeChild(f); };
+  var bySrc = {};
+  figs.forEach(function(f){
+    var img = f.querySelector('img'); if(!img) return;
+    if(img.complete && img.naturalWidth === 0) return kill(f);
+    img.addEventListener('error', function(){ kill(f); });
+    var src = img.getAttribute('src'); (bySrc[src] = bySrc[src] || []).push(f);
+  });
+  if(!window.fetch) return;
+  Object.keys(bySrc).forEach(function(src){
+    fetch(src, { method:'HEAD' }).then(function(r){ if(!r.ok) bySrc[src].forEach(kill); }).catch(function(){});
+  });
+})();
 </script>
 
 </body>

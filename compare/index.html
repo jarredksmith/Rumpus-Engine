@@ -85,6 +85,7 @@
 <div class="wrap"><p class="crumbs"><a href="/">Home</a> › Compare game engines</p></div>
 
 <div class="hero compact">
+  <div class="bg" data-shot><img src="/img/editor.jpg" alt="" aria-hidden="true"></div>
   <div class="wrap">
     <h1>Free game engines, compared honestly</h1>
     <p class="lede">Rumpus Engine is not the right tool for every game. Here is a straight comparison of the
@@ -169,6 +170,17 @@
       <li><strong>You want to iterate fast.</strong> No build step: <kbd>P</kbd> flips between editing and playing in the same session.</li>
       <li><strong>You want multiplayer without running a server.</strong> Peer-to-peer co-op and PvP with a room code, included.</li>
     </ul>
+
+    <div class="shots">
+      <figure class="shot" data-shot>
+        <img src="/img/showcase.jpg" alt="A finished-looking level built in Rumpus Engine" loading="lazy">
+        <figcaption><b>Built in the browser, no code.</b> Lighting, shadows, post-processing and physics are the same whether your level is simple or elaborate.</figcaption>
+      </figure>
+      <figure class="shot" data-shot>
+        <img src="/img/multiplayer.jpg" alt="Two players in the same Rumpus Engine level over peer-to-peer multiplayer" loading="lazy">
+        <figcaption><b>A room code, not a server.</b> Co-op and PvP run peer-to-peer over WebRTC — there is nothing to rent or deploy.</figcaption>
+      </figure>
+    </div>
   </section>
 
   <section>
@@ -249,11 +261,26 @@
 <script>
 /* Any figure marked data-shot whose image has not been added yet removes itself, so the layout stays
    clean instead of showing a broken-image icon. */
-document.querySelectorAll('[data-shot] img').forEach(function(img){
-  var kill = function(){ var f = img.closest('[data-shot]'); if(f) f.remove(); };
-  if(img.complete && img.naturalWidth === 0) kill();
-  img.addEventListener('error', kill);
-});
+/* The error event alone is not enough: these images are loading="lazy", so one below the fold never
+   requests anything until you scroll to it, and its empty figure sits there until then. Each distinct
+   source is probed once with a HEAD request — no image data, no effect on the lazy load that follows.
+   If the probe cannot run we fail open and leave the figures alone: a missing image is a cosmetic
+   problem, a wrongly-deleted one is not. */
+(function(){
+  var figs = [].slice.call(document.querySelectorAll('[data-shot]'));
+  var kill = function(f){ if(f && f.parentNode) f.parentNode.removeChild(f); };
+  var bySrc = {};
+  figs.forEach(function(f){
+    var img = f.querySelector('img'); if(!img) return;
+    if(img.complete && img.naturalWidth === 0) return kill(f);
+    img.addEventListener('error', function(){ kill(f); });
+    var src = img.getAttribute('src'); (bySrc[src] = bySrc[src] || []).push(f);
+  });
+  if(!window.fetch) return;
+  Object.keys(bySrc).forEach(function(src){
+    fetch(src, { method:'HEAD' }).then(function(r){ if(!r.ok) bySrc[src].forEach(kill); }).catch(function(){});
+  });
+})();
 </script>
 
 </body>
