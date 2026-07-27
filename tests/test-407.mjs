@@ -8,5 +8,5 @@ assert(/if\(spawn && spawn\.x!=null\)\{ px = spawn\.x; pz = spawn\.z; \}/.test(s
 
 // both wave descriptor sources carry explicit positions (the reason the earlier fix did nothing)
 assert(/out\.push\(\{ x:px, z:pz, mode:'hunt', type: pickEnemyType/.test(src), 'randomWaveDescriptors ships explicit x/z');
-assert(/return \{ x:g\.position\.x, z:g\.position\.z, mode:m\.mode/.test(src), 'descFromMarker ships explicit x/z');
+assert(/return \{ x:g\.position\.x, z:g\.position\.z, y:\(\+m\.y\|\|0\), mode:m\.mode/.test(src), 'descFromMarker ships explicit x/z (build 1087 added the authored height)');
 done();

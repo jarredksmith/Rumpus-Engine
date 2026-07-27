@@ -13868,6 +13868,26 @@ for(const T of ((savedLevel && Array.isArray(savedLevel.turrets)) ? savedLevel.t
 // its target-selection (AI state) and home post change. Saved with the level under `spawns`.
 const spawnMarkers = [];
 const SPAWN_MODE_COLORS = { hunt:0xff4d5e, patrol:0xffd166, hold:0x49b6ff };
+const SPAWN_MAX_Y = 60;   // build 1087
+// build 1087: place the marker at its authored height and draw the height aids. Mirrors the player start
+// marker exactly (same relative-to-terrain meaning, same drop line + landing disc), because a creator who
+// has raised one already knows how the other behaves.
+function refreshSpawnMarkerY(g){
+  if(!g) return;
+  const m=g.userData.mark, gx=g.position.x, gz=g.position.z;
+  const terr=(typeof terrainHeightAt==='function')?terrainHeightAt(gx,gz):0;
+  const gy=terr+(+m.y||0);
+  g.position.y=gy;
+  const dl=g.userData.dropLine, sh=g.userData.shadow;
+  if(dl && sh){
+    let surf=(typeof surfaceTopAt==='function')?surfaceTopAt(gx,gz):-Infinity;
+    if(surf===-Infinity || surf>gy+0.01) surf=terr;   // ignore anything ABOVE the marker — we want what it lands on
+    const h=Math.max(0, gy-surf);
+    if(h>0.15){ dl.visible=true; sh.visible=true; dl.scale.set(1,h,1); dl.position.y=-h/2; sh.position.y=-h+0.04; }
+    else { dl.visible=false; sh.visible=false; }
+  }
+  if(typeof refreshRouteViz==='function') refreshRouteViz(g);
+}
 function refreshSpawnRings(g){
   const rings = g.userData.rings;
   for(let i=rings.children.length-1;i>=0;i--){ const c=rings.children[i]; rings.remove(c); if(c.geometry) c.geometry.dispose(); if(c.material) c.material.dispose(); }
@@ -13883,6 +13903,7 @@ function buildSpawnMarker(opts){
     route: (opts.route||[]).map(p=>Array.isArray(p)?{x:p[0],z:p[1]}:{x:p.x,z:p.z}),   // ordered patrol waypoints (world XZ)
     routeLoop: opts.loop!==false,                                                      // loop (cycle) vs ping-pong (reverse at ends)
     type: (opts.type && ['grunt','runner','brute'].includes(opts.type)) ? opts.type : 'grunt',
+    y: Math.max(0, Math.min(SPAWN_MAX_Y, +opts.y||0)),                                  // build 1087: height ABOVE the terrain — rooftops, balconies, catwalks
     wave: (opts.wave!=null) ? (opts.wave|0) : 0 };                                      // 0 = every wave; else only that wave (pre-built mode)
   g.userData.mark = mark; g.userData.isSpawn = true;
   const col = SPAWN_MODE_COLORS[mode];
@@ -13893,7 +13914,13 @@ function buildSpawnMarker(opts){
   g.add(post); g.userData.post = post;
   g.userData.rings = new THREE.Group(); g.add(g.userData.rings);
   refreshSpawnRings(g);
+  // build 1087: height aids, shown only once the marker is actually raised
+  const dropLine = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1, 6), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.5, depthTest:false }));
+  dropLine.renderOrder = 8998; dropLine.visible=false; g.add(dropLine); g.userData.dropLine=dropLine;
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.6, 24), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.25, side:THREE.DoubleSide, depthTest:false }));
+  shadow.rotation.x=-Math.PI/2; shadow.renderOrder=8998; shadow.visible=false; g.add(shadow); g.userData.shadow=shadow;
   g.position.set(opts.t[0], 0, opts.t[1]); g.rotation.y = mark.face;
+  refreshSpawnMarkerY(g);
   // route polyline + nodes live in WORLD space (waypoints are absolute), so they sit in the scene, not
   // under the (rotating) marker group. Visibility + cleanup are kept in step with the marker.
   g.userData.routeViz = new THREE.Group(); g.userData.routeViz.visible = false; scene.add(g.userData.routeViz);
@@ -13907,7 +13934,7 @@ function refreshRouteViz(g){
   for(let i=rv.children.length-1;i>=0;i--){ const c=rv.children[i]; rv.remove(c); if(c.geometry) c.geometry.dispose(); if(c.material && c.material.dispose) c.material.dispose(); }
   const route = g.userData.mark.route;
   if(route && route.length){
-    const pts = [ new THREE.Vector3(g.position.x, 0.12, g.position.z) ];     // start the line at the post
+    const pts = [ new THREE.Vector3(g.position.x, (g.position.y||0)+0.12, g.position.z) ];   // start the line at the post (build 1087: which may be raised)
     for(const p of route) pts.push(new THREE.Vector3(p.x, 0.12, p.z));
     if(g.userData.mark.routeLoop && route.length>1) pts.push(new THREE.Vector3(route[0].x, 0.12, route[0].z));
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color:0xffd166, transparent:true, opacity:0.85, depthTest:false }));
@@ -13976,7 +14003,7 @@ function randomWaveDescriptors(waveNum, arena, rng){
 // Should a spawn marker appear on this wave? wave 0 = every wave (back-compat default); else exact match.
 function spawnAppearsOnWave(mark, waveNum){ const w0 = mark.wave||0; if(typeof gameCfg!=='undefined' && gameCfg.noRespawn){ const w=(w0===0?1:w0); return w===waveNum; } return w0===0 || w0===waveNum; }
 function _hasFutureAuthoredSpawns(curWaveNum){ for(const g of spawnMarkers){ const w0=g.userData.mark.wave||0; const w=(gameCfg.noRespawn && w0===0)?1:w0; if(w>curWaveNum) return true; } return false; }
-function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt' }; }
+function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt' }; }
 // Mode defaults preserve old levels: markers present -> pre-built (markers were wave 0 = every wave); else random.
 let gameCfg = {
   mode: (savedLevel && savedLevel.game && savedLevel.game.mode) || (spawnMarkers.length ? 'prebuilt' : 'random'),
@@ -15427,7 +15454,10 @@ function spawnEnemy(spawn){
   // wave/marker x,z can land inside a rock -> the enemy is trapped on the wrong side and can't path out, and
   // a fixed Y=1.4 leaves it under an elevated floor. Snap to the real surface; if the body is buried, spiral
   // out to the nearest clear column, then fall back to a fresh random spawn, so it starts standing in the open.
-  { const _surfAt=(x,z)=> _spawnFloorAt(x,z);
+  // build 1087: an authored marker height re-ceilings the search (see _spawnFloorNear). Markers without one
+  // — every level built before 1087 — take the original path unchanged.
+  { const _my=(spawn && +spawn.y>0) ? +spawn.y : 0;
+    const _surfAt=(x,z)=> _my ? _spawnFloorNear(x, z, ((typeof terrainHeightAt==='function')?terrainHeightAt(x,z):0) + _my) : _spawnFloorAt(x,z);
     let _fy=(_spawnY!=null)?_spawnY:_surfAt(px,pz);
     if(typeof clearAt==='function' && !clearAt(px,pz,_fy)){
       let _found=null;
@@ -23733,7 +23763,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1086 · 2026-07-26';
+const BUILD_VERSION = 'build 1087 · 2026-07-26';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27246,6 +27276,16 @@ function _spawnFloorAt(x, z){
   const t = (typeof terrainHeightAt==='function') ? terrainHeightAt(x, z) : 0;
   return (s>-Infinity) ? Math.max(s, t) : t;
 }
+// build 1087: the same search, ceilinged by an AUTHORED height instead of the player's head. _spawnFloorAt
+// caps at player.pos.y + 2.5 so a random wave never materialises on a roof the player is standing under —
+// right for random spawns, and exactly why a marker deliberately placed on that roof kept sliding down to
+// the ground floor. When a creator has raised a marker, their height is the ceiling.
+function _spawnFloorNear(x, z, wantY){
+  const s = surfaceTopUnder(x, z, wantY + 1.2);   // a little headroom, so a marker set just under the roof still finds it
+  const t = (typeof terrainHeightAt==='function') ? terrainHeightAt(x, z) : 0;
+  if(s>-Infinity && s>=t) return s;
+  return Math.max(t, wantY);   // nothing solid up there: hold the authored height and let gravity do the rest
+}
 // editor's "snap to ground" so a prop drops onto whatever is under it. Returns terrain height if nothing else.
 function surfaceTopBelow(obj){
   const box = new THREE.Box3().setFromObject(obj);
@@ -29306,9 +29346,10 @@ const editorTargets = {
     isSpawns: true,
     addable: true,
     noun: 'Spawn',
-    state: { px:0, pz:0, radius:6, detect:14 },
+    state: { px:0, py:0, pz:0, radius:6, detect:14 },
     fields: [
       { k:'px',     label:'Pos X',         min:-65, max:65, step:STEP_POS },
+      { k:'py',     label:'Height',        min:0,   max:SPAWN_MAX_Y, step:STEP_POS },   // build 1087: above the ground under it — rooftops, balconies, catwalks
       { k:'pz',     label:'Pos Z',         min:-65, max:65, step:STEP_POS },
       { k:'radius', label:'Patrol radius', min:0,   max:40, step:0.5 },
       { k:'detect', label:'Detect range',  min:1,   max:80, step:0.5 },
@@ -29316,9 +29357,11 @@ const editorTargets = {
     count(){ return spawnMarkers.length; },
     obj(){ return spawnMarkers[this.idx] || null; },
     sync(){ const g=this.obj(); if(!g) return; const m=g.userData.mark;
-      this.state.px=g.position.x; this.state.pz=g.position.z; this.state.radius=m.radius; this.state.detect=m.detect; },
+      this.state.px=g.position.x; this.state.py=(+m.y||0); this.state.pz=g.position.z; this.state.radius=m.radius; this.state.detect=m.detect; },
     apply(){ const g=this.obj(); if(!g) return; const m=g.userData.mark, s=this.state;
-      g.position.set(s.px, 0, s.pz); m.radius=Math.max(0,s.radius); m.detect=Math.max(1,s.detect); refreshSpawnRings(g); refreshRouteViz(g); },
+      g.position.x=s.px; g.position.z=s.pz;
+      m.y=Math.max(0, Math.min(SPAWN_MAX_Y, +s.py||0));   // build 1087
+      m.radius=Math.max(0,s.radius); m.detect=Math.max(1,s.detect); refreshSpawnRings(g); refreshSpawnMarkerY(g); },
     code(){ return '// ===== Enemy spawns ===== (authored in-editor; saved in the level JSON under "spawns")'; }
   },
   turrets: {
@@ -30833,7 +30876,7 @@ function serializeLevel(){
     lights:  lightModels.map(g=>_lightOpts(g)),
     turret:  { url: turretModelUrl, scale: turretModelScale, modelYaw: turretModelYaw, muz: { fwd:turretMuzzle.fwd, up:turretMuzzle.up, side:turretMuzzle.side } },
     turrets: turretModels.map(_turretOpts),
-    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave }; }),
+    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave }; }),   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
     pickupsOn: pickupsOn,
     pickups: pickupSpots.map(s=>({ x:+s.x, z:+s.z, kind:s.kind, ...(s.item!=null?{item:s.item}:{}), ...(s.y?{y:s.y}:{}), ...(s.rx?{rx:s.rx}:{}), ...(s.ry?{ry:s.ry}:{}), ...(s.rz?{rz:s.rz}:{}), ...(s.scale!=null&&s.scale!==1?{scale:s.scale}:{}), ...(s.interact?{interact:1}:{}) })),
     loot: lootSpots.map(s=>({ x:+s.x, y:+(s.y||0), z:+s.z, items:(s.items||[]).slice(), glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })),
@@ -35804,9 +35847,13 @@ function setSelPos(v){
     const s=editorTargets.lights.state; s.px=v.x; s.py=v.y; s.pz=v.z;
   } else if(editorActive==='spawns'){
     const g=editorTargets.spawns.obj(); if(!g) return;
-    g.position.set(v.x, 0, v.z);   // spawns live on the floor
-    const s=editorTargets.spawns.state; s.px=v.x; s.pz=v.z;
-    if(typeof refreshRouteViz==='function') refreshRouteViz(g);
+    // build 1087: dragging up is how you put an enemy on a roof. The stored height is relative to the
+    // terrain beneath, like the player start, so the marker rides terrain edits instead of being stranded.
+    g.position.x=v.x; g.position.z=v.z;
+    const terr=(typeof terrainHeightAt==='function')?terrainHeightAt(v.x,v.z):0;
+    g.userData.mark.y=Math.max(0, Math.min(SPAWN_MAX_Y, v.y-terr));
+    refreshSpawnMarkerY(g);
+    const s=editorTargets.spawns.state; s.px=v.x; s.py=g.userData.mark.y; s.pz=v.z;
   } else if(editorActive==='turrets'){
     const g=editorTargets.turrets.obj(); if(!g) return;
     g.position.copy(v);

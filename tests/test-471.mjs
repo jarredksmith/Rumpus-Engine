@@ -20,7 +20,10 @@ eq(sf(0, 0.3, 0), 0.3, 'floor prop just above terrain is used');
 eq(sf(5, 5.0, 0), 5.0, 'on an upper floor (ceiling = playerY+2.5) the upper floor wins over terrain far below');
 
 // wiring: both spawn paths now go through the ceiling-aware floor
-assert(/const _surfAt=\(x,z\)=> _spawnFloorAt\(x,z\);/.test(extractFunction('spawnEnemy')), 'spawnEnemy uses the ceiling-aware floor');
+// build 1087: a marker with an authored height re-ceilings the search at THAT height instead (see
+// _spawnFloorNear); markers without one — every level from before 1087 — still take this exact path.
+assert(/_my \? _spawnFloorNear\(x, z, \(\(typeof terrainHeightAt==='function'\)\?terrainHeightAt\(x,z\):0\) \+ _my\) : _spawnFloorAt\(x,z\)/.test(extractFunction('spawnEnemy')),
+  'spawnEnemy uses the ceiling-aware floor');
 assert(/const surfAt = \(x,z\)=> _spawnFloorAt\(x,z\);/.test(extractFunction('randomSpawn')), 'randomSpawn uses the ceiling-aware floor');
 assert(/const ceil = \(\(typeof player!=='undefined' && player\) \? player\.pos\.y : 0\) \+ 2\.5;/.test(extractFunction('_spawnFloorAt')), 'ceiling is the player head height');
 
