@@ -25,7 +25,9 @@ assert(/const id=lo\[slot\]; if\(!id\) continue/.test(rb) && /_attMountTransform
 assert(/try\{/.test(rb) && /catch\(e\)\{/.test(rb), 'mount building is wrapped so it can never break rendering');
 
 // --- hooks: switch / equip / muzzle-edit / persistence ---
-assert(/if\(typeof rebuildAttMounts==='function'\) rebuildAttMounts\(key\)/.test(extractFunction('showWeaponModel')), 'weapon switch rebuilds mounts');
+// build 1091: the call is now gated on _attStateReady — showWeaponModel runs at startup, above the
+// attachment block, so an ungated call reached that state while it was still in its TDZ.
+assert(/if\(_attStateReady && typeof rebuildAttMounts==='function'\) rebuildAttMounts\(key\)/.test(extractFunction('showWeaponModel')), 'weapon switch rebuilds mounts');
 assert(/rebuildAttMounts\(curWep\)/.test(extractFunction('applyAttachments')), 'equipping rebuilds mounts');
 assert(/mountWep:/.test(extractFunction('serializeLevel')), 'mounts persist with the level');
 assert(/savedLevel\.mountWep/.test(src), 'mounts restore on load');

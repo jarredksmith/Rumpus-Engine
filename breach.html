@@ -1,6 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Google Analytics (GA4). This lives in the repo, not just on the server: it was hand-added to
+     the uploaded copies, so any re-upload from git would silently drop it. Keep it on every page. -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-8R98ZNS9HN"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  gtag('js', new Date());
+  gtag('config', 'G-8R98ZNS9HN');
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>RUMPUS ENGINE — build & play worlds in your browser</title>
@@ -15017,9 +15026,9 @@ function showWeaponModel(key){
   // for that slot (build 674 fix), in which case it loads like any other weapon viewmodel.
   const isFists = !(WEAPONS[key] && WEAPONS[key].model) && (key==='hands' || (WEAPONS[key] && WEAPONS[key].fists));
   if(typeof _setFistsVisible==='function') _setFistsVisible(isFists);
-  if(isFists){ for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible=false; } if(gunPlaceholder) gunPlaceholder.visible=false; gunModel=null; sight=null; if(typeof rebuildAttMounts==='function') rebuildAttMounts(key); return; }
+  if(isFists){ for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible=false; } if(gunPlaceholder) gunPlaceholder.visible=false; gunModel=null; sight=null; if(_attStateReady && typeof rebuildAttMounts==='function') rebuildAttMounts(key); return; }
   for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible = (k===key); }
-  if(typeof rebuildAttMounts==='function') rebuildAttMounts(key);   // build 586: show this weapon's mounted attachments
+  if(_attStateReady && typeof rebuildAttMounts==='function') rebuildAttMounts(key);   // build 586: show this weapon's mounted attachments
   const existing = gunModelByWep[key];
   if(existing){
     if(gunPlaceholder) gunPlaceholder.visible = false;
@@ -15148,6 +15157,7 @@ function W(){ return WEAPONS[curWep]; }
 // Unlocked permanently with credits, equipped per weapon per slot (one per slot). Equipped sets modify the
 // weapon's EFFECTIVE stats (mag size, spread, ADS zoom). _resolveAtt is pure (unit-tested); applyAttachments
 // recomputes the live stats from a base snapshot so it's idempotent.
+var _attStateReady = false;   // build 1091: false until the block below has run — see showWeaponModel
 const ATT_SLOTS = ['optic','muzzle','magazine','tactical'];
 const ATTACHMENTS = {
   reddot:     { name:'Red Dot Sight', slot:'optic',    cost:120, desc:'Clean close-quarters optic',     mods:{ zoomMul:0.92 } },
@@ -15258,7 +15268,8 @@ function applyAttachments(){   // recompute live stats from base + equipped (ide
 function _attZoomMul(key){ return _attZoom[key]||1; }
 function buyAttachment(id){ const a=ATTACHMENTS[id]; if(!a||_ownedAtt[id]) return false; if(credits<a.cost){ if(typeof SFX!=='undefined'&&SFX.deny)SFX.deny(); return false; } credits-=a.cost; _ownedAtt[id]=true; if(typeof SFX!=='undefined'&&SFX.buy)SFX.buy(); _saveAtt(); if(typeof updateHUD==='function')updateHUD(); return true; }
 function equipAttachment(weaponKey, id){ const a=ATTACHMENTS[id]; if(!a||!_ownedAtt[id]) return; _attLoadout[weaponKey]=_attLoadout[weaponKey]||{}; if(_attLoadout[weaponKey][a.slot]===id) delete _attLoadout[weaponKey][a.slot]; else _attLoadout[weaponKey][a.slot]=id; applyAttachments(); _saveAtt(); }
-applyAttachments();   // apply any saved loadout at startup
+_attStateReady = true;
+applyAttachments();   // apply any saved loadout at startup (this is what mounts a saved loadout)
 let reloading = false;
 let lastShot = 0, recoil = 0;
 const DRAW_MS = 300;   // build 965: weapon draw time — the gun rises for this long after a switch, trigger held
@@ -23833,7 +23844,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1090 · 2026-07-27';
+const BUILD_VERSION = 'build 1091 · 2026-07-27';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

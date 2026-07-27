@@ -175,3 +175,10 @@ The repo root carries the static site: `index.html`, `rumpus-site.css`, `sitemap
 `llms.txt`, and the folders `browser-game-engine/`, `make-a-game-without-coding/`, `compare/` and
 `faq/`. Upload them into `public_html` alongside `breach.html`. They are plain static files — no PHP,
 no build step.
+
+### Google Analytics lives in the repo now (build 1091)
+
+The GA4 tag (`G-8R98ZNS9HN`) was originally hand-pasted into the uploaded copies only, which meant every
+re-upload from git silently switched analytics off until someone noticed and pasted it back. It is now in
+the repo copies of `breach.html` and all five marketing pages, right after `<head>`. Uploading straight
+from the repo is safe; don't strip it, and don't paste a second copy in on the server.
