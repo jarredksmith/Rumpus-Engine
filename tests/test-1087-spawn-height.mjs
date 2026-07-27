@@ -13,7 +13,7 @@ const at = extractFunction('_spawnFloorAt'), near_ = extractFunction('_spawnFloo
 assert(at && near_, 'both floor lookups exist');
 assert(/player\.pos\.y[\s\S]{0,20}\+ 2\.5/.test(at), 'the random-wave lookup still ceilings at the player\'s head (build 617)');
 assert(!/player\.pos/.test(near_), 'the authored lookup does not care where the player is standing');
-assert(/surfaceTopUnder\(x, z, wantY \+ 1\.2\)/.test(near_),
+assert(/surfaceTopUnder\(x, z, wantY \+ 1\.2, wantY \+ 50\)/.test(near_),
   '...it ceilings at the authored height, with a little headroom so a marker set just under the roof still finds it');
 
 // run both against the same fake world: terrain at 0, a building roof at 8, the player on the ground floor
@@ -56,10 +56,12 @@ assert(/const _surfAt=\(x,z\)=>/.test(se) && /for\(let r=1\.2; r<=8[\s\S]{0,200}
 const bsm = extractFunction('buildSpawnMarker');
 assert(/y: Math\.max\(0, Math\.min\(SPAWN_MAX_Y, \+opts\.y\|\|0\)\)/.test(bsm),
   'the marker carries a height, clamped on the way in');
-assert(/const SPAWN_MAX_Y = 60;/.test(src), 'with a stated ceiling');
+assert(/const SPAWN_MAX_Y = \d+;/.test(src), 'with a stated ceiling');
 assert(/refreshSpawnMarkerY\(g\);/.test(bsm), '...and is placed at it when built');
 const rsy = extractFunction('refreshSpawnMarkerY');
-assert(/const terr=\(typeof terrainHeightAt==='function'\)\?terrainHeightAt\(gx,gz\):0;\n\s*const gy=terr\+\(\+m\.y\|\|0\);/.test(rsy),
+// build 1088 wrapped the terrain read in a try/catch — saved markers are rebuilt before the probe globals
+// exist, and an unguarded call killed the boot. The MEANING is unchanged: height is measured from terrain.
+assert(/let terr=0; try\{ if\(typeof terrainHeightAt==='function'\) terr=terrainHeightAt\(gx,gz\); \}catch\(e\)\{\}\n\s*const gy=terr\+\(\+m\.y\|\|0\);/.test(rsy),
   'the height is measured from the terrain, like the player start — so it rides terrain edits');
 assert(/g\.position\.y=gy;/.test(rsy), '...and the marker actually moves there');
 // height aids, mirroring the player start marker exactly
@@ -100,8 +102,8 @@ assert(/s\.px=v\.x; s\.py=g\.userData\.mark\.y; s\.pz=v\.z;/.test(setPos[0]), '.
 // ---------------------------------------------------------------- 4. and type it
 const tgt = src.match(/spawns: \{[\s\S]*?code\(\)\{ return '\/\/ ===== Enemy spawns/);
 assert(tgt, 'found the spawns inspector');
-assert(/\{ k:'py',\s*label:'Height',\s*min:0,\s*max:SPAWN_MAX_Y/.test(tgt[0]),
-  'there is a Height field, ranged by the same constant the marker clamps to');
+assert(/\{ k:'py',\s*label:'Height',\s*min:0,\s*max:SPAWN_SLIDER_Y/.test(tgt[0]),
+  'there is a Height field (build 1088 gave the slider its own, shorter drag range — see test-1088)');
 assert(/state: \{ px:0, py:0, pz:0/.test(tgt[0]), '...backed by state');
 assert(/this\.state\.py=\(\+m\.y\|\|0\)/.test(tgt[0]), '...synced from the marker');
 assert(/m\.y=Math\.max\(0, Math\.min\(SPAWN_MAX_Y, \+s\.py\|\|0\)\)/.test(tgt[0]), '...and applied back, clamped the same way');

@@ -13868,20 +13868,34 @@ for(const T of ((savedLevel && Array.isArray(savedLevel.turrets)) ? savedLevel.t
 // its target-selection (AI state) and home post change. Saved with the level under `spawns`.
 const spawnMarkers = [];
 const SPAWN_MODE_COLORS = { hunt:0xff4d5e, patrol:0xffd166, hold:0x49b6ff };
-const SPAWN_MAX_Y = 60;   // build 1087
+// build 1088: 60 was far too low — a tower level wants hundreds. The number box is unclamped by the field
+// renderer ("typed numbers can exceed slider min/max"), so this is the only real limit; the slider range
+// below just follows the value. 1000 clears anything buildable in the 2000-wide maximum arena.
+const SPAWN_MAX_Y = 1000;
+const SPAWN_SLIDER_Y = 120;   // where the DRAG range tops out; type a bigger number and the track grows to fit
 // build 1087: place the marker at its authored height and draw the height aids. Mirrors the player start
 // marker exactly (same relative-to-terrain meaning, same drop line + landing disc), because a creator who
 // has raised one already knows how the other behaves.
 function refreshSpawnMarkerY(g){
   if(!g) return;
   const m=g.userData.mark, gx=g.position.x, gz=g.position.z;
-  const terr=(typeof terrainHeightAt==='function')?terrainHeightAt(gx,gz):0;
+  // build 1088 fix: saved markers are rebuilt during module evaluation, ABOVE the point where the surface
+  // probe's scratch vectors (_downOrigin/_downRay) are declared. Both helpers below are hoisted function
+  // declarations, so a `typeof` guard passes and then throws a TDZ error on the scratch vector — which
+  // killed the boot outright for any level that had enemy spawns saved. Everything here is therefore
+  // best-effort; setSpawnMarkersVisible() re-runs it when the editor opens, which is the only time the
+  // marker is visible anyway.
+  let terr=0; try{ if(typeof terrainHeightAt==='function') terr=terrainHeightAt(gx,gz); }catch(e){}
   const gy=terr+(+m.y||0);
   g.position.y=gy;
   const dl=g.userData.dropLine, sh=g.userData.shadow;
   if(dl && sh){
-    let surf=(typeof surfaceTopAt==='function')?surfaceTopAt(gx,gz):-Infinity;
-    if(surf===-Infinity || surf>gy+0.01) surf=terr;   // ignore anything ABOVE the marker — we want what it lands on
+    // build 1088: ask for the highest surface AT OR BELOW the marker directly, probing from above it. The
+    // old "take the highest, discard it if it is above us" fell all the way back to the terrain whenever
+    // anything taller stood in the same column — and could not see past y=300 at all.
+    let surf=-Infinity;
+    try{ if(typeof surfaceTopUnder==='function') surf=surfaceTopUnder(gx, gz, gy+0.01, gy+50); }catch(e){ surf=-Infinity; }
+    if(surf===-Infinity || surf>gy+0.01) surf=terr;
     const h=Math.max(0, gy-surf);
     if(h>0.15){ dl.visible=true; sh.visible=true; dl.scale.set(1,h,1); dl.position.y=-h/2; sh.position.y=-h+0.04; }
     else { dl.visible=false; sh.visible=false; }
@@ -13955,7 +13969,7 @@ function removeSpawnMarker(idx){
   if(g.userData.routeViz){ g.userData.routeViz.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material && o.material.dispose) o.material.dispose(); }); scene.remove(g.userData.routeViz); }
   scene.remove(g); spawnMarkers.splice(idx,1);
 }
-function setSpawnMarkersVisible(v){ for(const g of spawnMarkers){ g.visible = v; if(g.userData.routeViz) g.userData.routeViz.visible = v; } if(playerSpawnMarker) playerSpawnMarker.visible = v; }
+function setSpawnMarkersVisible(v){ for(const g of spawnMarkers){ g.visible = v; if(v) refreshSpawnMarkerY(g); if(g.userData.routeViz) g.userData.routeViz.visible = v; } if(playerSpawnMarker) playerSpawnMarker.visible = v; }   // build 1088: showing them re-derives height + aids, which boot could not compute yet
 for(const sp of ((savedLevel && Array.isArray(savedLevel.spawns)) ? savedLevel.spawns : [])) buildSpawnMarker(sp);
 
 // ---------- Enemy archetypes + wave/game config ----------
@@ -23763,7 +23777,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1087 · 2026-07-26';
+const BUILD_VERSION = 'build 1088 · 2026-07-27';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27260,8 +27274,12 @@ function surfaceTopAt(x, z, exclude, skipDynamic, ceilY, skipVehicles){
 }
 // Build 617: like surfaceTopAt but only counts surfaces AT OR BELOW ceilY. A roof/ceiling primitive placed over a
 // maze or building sits above the player, so it must not become the spawn floor — enemies belong in the course.
-function surfaceTopUnder(x, z, ceilY){
-  _downOrigin.set(x, 300, z); _downRay.set(_downOrigin, _downDir); _downRay.far = 600;
+// build 1088: `fromY` is where the probe ray STARTS. It defaults to the original 300, so every existing
+// caller is unchanged — but a spawn authored at y=600 needs the ray to begin above it or the roof it is
+// meant to land on is simply never hit, and the height silently stops snapping to anything.
+function surfaceTopUnder(x, z, ceilY, fromY){
+  const _from = (fromY!=null && fromY>300) ? fromY : 300;
+  _downOrigin.set(x, _from, z); _downRay.set(_downOrigin, _downDir); _downRay.far = Math.max(600, _from*2);
   let top = -Infinity;
   const hits = _downRay.intersectObjects(_surfCull(x,z), true);
   for(const h of hits){ if(h.point.y <= ceilY && h.point.y > top) top = h.point.y; }
@@ -27281,7 +27299,7 @@ function _spawnFloorAt(x, z){
 // right for random spawns, and exactly why a marker deliberately placed on that roof kept sliding down to
 // the ground floor. When a creator has raised a marker, their height is the ceiling.
 function _spawnFloorNear(x, z, wantY){
-  const s = surfaceTopUnder(x, z, wantY + 1.2);   // a little headroom, so a marker set just under the roof still finds it
+  const s = surfaceTopUnder(x, z, wantY + 1.2, wantY + 50);   // a little headroom, so a marker set just under the roof still finds it
   const t = (typeof terrainHeightAt==='function') ? terrainHeightAt(x, z) : 0;
   if(s>-Infinity && s>=t) return s;
   return Math.max(t, wantY);   // nothing solid up there: hold the authored height and let gravity do the rest
@@ -29349,7 +29367,7 @@ const editorTargets = {
     state: { px:0, py:0, pz:0, radius:6, detect:14 },
     fields: [
       { k:'px',     label:'Pos X',         min:-65, max:65, step:STEP_POS },
-      { k:'py',     label:'Height',        min:0,   max:SPAWN_MAX_Y, step:STEP_POS },   // build 1087: above the ground under it — rooftops, balconies, catwalks
+      { k:'py',     label:'Height',        min:0,   max:SPAWN_SLIDER_Y, step:STEP_POS },   // build 1087: above the ground under it — rooftops, balconies, catwalks. build 1088: the track grows in sync() for taller values
       { k:'pz',     label:'Pos Z',         min:-65, max:65, step:STEP_POS },
       { k:'radius', label:'Patrol radius', min:0,   max:40, step:0.5 },
       { k:'detect', label:'Detect range',  min:1,   max:80, step:0.5 },
@@ -29357,7 +29375,11 @@ const editorTargets = {
     count(){ return spawnMarkers.length; },
     obj(){ return spawnMarkers[this.idx] || null; },
     sync(){ const g=this.obj(); if(!g) return; const m=g.userData.mark;
-      this.state.px=g.position.x; this.state.py=(+m.y||0); this.state.pz=g.position.z; this.state.radius=m.radius; this.state.detect=m.detect; },
+      this.state.px=g.position.x; this.state.py=(+m.y||0); this.state.pz=g.position.z; this.state.radius=m.radius; this.state.detect=m.detect;
+      // build 1088: grow the Height track to fit a tall value, so dragging it never snaps a 400-high spawn
+      // back down to the slider's top. Same trick the muzzle-offset fields use.
+      const hf=this.fields.find(f=>f.k==='py');
+      if(hf) hf.max=Math.max(SPAWN_SLIDER_Y, Math.ceil(this.state.py*1.25)); },
     apply(){ const g=this.obj(); if(!g) return; const m=g.userData.mark, s=this.state;
       g.position.x=s.px; g.position.z=s.pz;
       m.y=Math.max(0, Math.min(SPAWN_MAX_Y, +s.py||0));   // build 1087
