@@ -9307,26 +9307,46 @@ const _mgA=new THREE.Vector3(), _mgB=new THREE.Vector3(), _mgC=new THREE.Vector3
 // An open archway column ends up with only the high arch-stone box (skipped as overhead by clearAt), so
 // the player walks through; a solid wall column spans floor..top, so it stays a wall; stair treads become
 // a staircase of low boxes the player can step up. Returns null to fall back to per-mesh boxes.
+// build 1089: sized for PROPS, this used to break down completely on a LEVEL-sized model. Two hard caps did
+// it: 64x64 columns and 48 vertical slots, whatever the model measured. On a 331 x 148 x 366 skyscraper that
+// works out to 5.2 x 5.7 unit columns and 3.09 unit slots — so each storey's floor and its ceiling landed in
+// the SAME slot and fused into one solid slab, and the entire interior became solid. The player never
+// noticed (clearAt raycasts the real mesh and steps out of over-occupied boxes); enemies, which resolve
+// against the raw boxes with no such escape, were pushed in every single column of the building.
+// Resolution is now chosen from the model's real size against a memory budget, and the budget buys 8x more
+// because occupancy is a bitset rather than a byte per slot.
+const MGRID_CELL = 1.0, MGRID_SLOT = 0.35;   // target column width / slot height, in world units
+const MGRID_BITS = 48 << 20;                 // ~6 MB of occupancy (halved on phones)
 function buildModelGridBoxes(obj, overall){
   if(!overall) return null;
   const sx=overall.max.x-overall.min.x, sy=overall.max.y-overall.min.y, sz=overall.max.z-overall.min.z;
   if(!(sx>0)||!(sz>0)||!(sy>0)||!isFinite(sx)||!isFinite(sz)||!isFinite(sy)) return null;
-  const span=Math.max(sx,sz);
-  let cell=span/20; cell=Math.max(0.35, Math.min(cell, 1.2));        // finer columns -> walls hug geometry, opening stays wide
-  const nx=Math.max(1, Math.min(64, Math.ceil(sx/cell)));
-  const nz=Math.max(1, Math.min(64, Math.ceil(sz/cell)));
+  let nx=Math.max(1, Math.ceil(sx/MGRID_CELL));
+  let nz=Math.max(1, Math.ceil(sz/MGRID_CELL));
+  let K =Math.max(8, Math.round(sy/MGRID_SLOT));
+  // Too big for the budget? Shrink all three by the same factor, so the grid stays proportional instead of
+  // going fine in one axis and useless in another.
+  { const budget=(typeof IS_COARSE!=='undefined' && IS_COARSE) ? (MGRID_BITS>>1) : MGRID_BITS;
+    const total=nx*nz*K;
+    if(total>budget){ const f=Math.cbrt(budget/total);
+      nx=Math.max(1,Math.floor(nx*f)); nz=Math.max(1,Math.floor(nz*f)); K=Math.max(8,Math.floor(K*f)); } }
   const cw=sx/nx, cd=sz/nz, ox=overall.min.x, oz=overall.min.z, oy=overall.min.y;
-  const K=Math.max(8, Math.min(48, Math.round(sy/0.2)));            // vertical occupancy slots (~0.2u each)
   const sh=sy/K, N=nx*nz;
-  const occ=new Uint8Array(N*K);                                    // occ[(gx*nz+gz)*K + slot] = solid
-  let tris=0, bail=false;
+  const occ=new Uint32Array(((N*K)+31)>>5);                         // bitset: slot (gx*nz+gz)*K + sl
+  const setSlot=(i)=>{ occ[i>>5] |= (1<<(i&31)); };
+  const getSlot=(i)=>  (occ[i>>5] >>> (i&31)) & 1;
+  let tris=0, bail=false, work=0;
   obj.traverse(o=>{
     if(bail || !o.isMesh || o.visible===false || !o.geometry) return;
     const pos=o.geometry.attributes && o.geometry.attributes.position; if(!pos||!pos.count) return;
     o.updateWorldMatrix(true,false);
     const idx=o.geometry.index, tc=idx?idx.count:pos.count;
     for(let t=0;t+2<tc;t+=3){
-      if(++tris>200000){ bail=true; return; }                      // pathological mesh: fall back to AABB
+      // build 1089: a level model legitimately has hundreds of thousands of triangles — the old 200k cap made
+      // the biggest models, the ones that need this most, silently fall back to per-mesh AABBs. What actually
+      // costs time is SLOTS WRITTEN (one huge floor triangle can touch the whole grid), so budget that
+      // instead and let the triangle count run.
+      if(++tris>2000000 || work>40000000){ bail=true; return; }
       const a=idx?idx.getX(t):t, b=idx?idx.getX(t+1):t+1, c=idx?idx.getX(t+2):t+2;
       _mgA.fromBufferAttribute(pos,a).applyMatrix4(o.matrixWorld);
       _mgB.fromBufferAttribute(pos,b).applyMatrix4(o.matrixWorld);
@@ -9337,23 +9357,46 @@ function buildModelGridBoxes(obj, overall){
       const gx0=Math.max(0,Math.min(nx-1,Math.floor((miX-ox)/cw))), gx1=Math.max(0,Math.min(nx-1,Math.floor((maX-ox)/cw)));
       const gz0=Math.max(0,Math.min(nz-1,Math.floor((miZ-oz)/cd))), gz1=Math.max(0,Math.min(nz-1,Math.floor((maZ-oz)/cd)));
       const s0=Math.max(0,Math.min(K-1,Math.floor((miY-oy)/sh))), s1=Math.max(0,Math.min(K-1,Math.floor((maY-oy)/sh)));
-      for(let gx=gx0;gx<=gx1;gx++) for(let gz=gz0;gz<=gz1;gz++){ const base=(gx*nz+gz)*K; for(let sl=s0;sl<=s1;sl++) occ[base+sl]=1; }
+      work += (gx1-gx0+1)*(gz1-gz0+1)*(s1-s0+1);
+      for(let gx=gx0;gx<=gx1;gx++) for(let gz=gz0;gz<=gz1;gz++){ const base=(gx*nz+gz)*K; for(let sl=s0;sl<=s1;sl++) setSlot(base+sl); }
     }
   });
   if(bail || !tris) return null;
-  // Per column, emit ONE box per contiguous vertical run of solid slots. A column under the archway holds a
-  // low threshold run and a high crown run with an EMPTY gap between them, so the player's body band passes
-  // through; a solid wall column is one floor-to-top run; stair treads are single low runs you step up.
-  const boxes=[]; const ey=1e-3;
+  // Per column, the contiguous vertical runs of solid slots. A column under an archway holds a low threshold
+  // run and a high crown run with an EMPTY gap between them, so a body passes through; a solid wall column is
+  // one floor-to-top run; stair treads are single low runs you step up.
+  const key=new Array(N); let solid=0;
   for(let gx=0;gx<nx;gx++) for(let gz=0;gz<nz;gz++){
-    const base=(gx*nz+gz)*K;
-    const x0=ox+gx*cw, x1=ox+(gx+1)*cw, z0=oz+gz*cd, z1=oz+(gz+1)*cd;
-    let sl=0;
+    const ci=gx*nz+gz, base=ci*K;
+    let k='', sl=0;
     while(sl<K){
-      if(!occ[base+sl]){ sl++; continue; }
-      let run=sl; while(run<K && occ[base+run]) run++;             // solid run [sl, run)
-      boxes.push(new THREE.Box3(new THREE.Vector3(x0-ey, oy+sl*sh, z0-ey), new THREE.Vector3(x1+ey, oy+run*sh, z1+ey)));
+      if(!getSlot(base+sl)){ sl++; continue; }
+      let run=sl; while(run<K && getSlot(base+run)) run++;
+      k += (k?',':'') + sl + ':' + run;
       sl=run;
+    }
+    key[ci]=k; if(k) solid++;
+  }
+  if(!solid) return null;
+  // Greedy-merge identical columns into rectangles before emitting boxes. At this resolution a building is
+  // tens of thousands of columns, and every consumer (the player's clearAt, insideSolid, the enemy resolve)
+  // walks the box list per query — a raw per-column emit would trade one bug for a framerate one. Long walls
+  // and wide floors are exactly the case greedy meshing collapses best.
+  const boxes=[], ey=1e-3, used=new Uint8Array(N);
+  for(let gx=0;gx<nx;gx++) for(let gz=0;gz<nz;gz++){
+    const ci=gx*nz+gz; if(used[ci] || !key[ci]) continue;
+    const k=key[ci];
+    let z1=gz; while(z1+1<nz && !used[gx*nz+z1+1] && key[gx*nz+z1+1]===k) z1++;   // extend along Z
+    let x1=gx;                                                                    // ...then widen along X
+    outer: while(x1+1<nx){
+      for(let z=gz; z<=z1; z++){ const c2=(x1+1)*nz+z; if(used[c2] || key[c2]!==k) break outer; }
+      x1++;
+    }
+    for(let x=gx; x<=x1; x++) for(let z=gz; z<=z1; z++) used[x*nz+z]=1;
+    const bx0=ox+gx*cw-ey, bx1=ox+(x1+1)*cw+ey, bz0=oz+gz*cd-ey, bz1=oz+(z1+1)*cd+ey;
+    for(const part of k.split(',')){
+      const p=part.split(':');
+      boxes.push(new THREE.Box3(new THREE.Vector3(bx0, oy+(+p[0])*sh, bz0), new THREE.Vector3(bx1, oy+(+p[1])*sh, bz1)));
     }
   }
   return boxes.length ? boxes : null;
@@ -23777,7 +23820,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1088 · 2026-07-27';
+const BUILD_VERSION = 'build 1089 · 2026-07-27';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28954,7 +28997,13 @@ function loop(){
       // imported models -- doorways, archways -- are passable rather than treating the whole model as one
       // solid block. Only resolve against a sub-box the body vertically overlaps, so enemies walk through the
       // door gap, pass under a lintel, and don't get shoved off a platform they're standing on.
-      const eFeetY = en.mesh.position.y - 1.4, eHeadY = en.mesh.position.y + 0.55;
+      // build 1089: start the body band a STEP above the feet, exactly as clearAt does for the player
+      // (bandLo = standY + STEP). Without it the FLOOR SLAB the enemy is standing on counts as an obstacle:
+      // the grid quantises a run's top UP to the next slot boundary, so the slab's box top sits a fraction
+      // above the real surface, lands inside the band, and shoves the enemy — in every column, every frame.
+      // That, not the walls, is what pinned enemies all over an imported level while the player walked it.
+      // It also lets them step over kerbs and low thresholds, which is the same rule the player plays by.
+      const eFeetY = en.mesh.position.y - 1.4 + STEP, eHeadY = en.mesh.position.y + 0.55;
       for(const c of colliders){
         const b0 = c.userData.box;
         if(b0 && (en.mesh.position.x < b0.min.x-eR || en.mesh.position.x > b0.max.x+eR || en.mesh.position.z < b0.min.z-eR || en.mesh.position.z > b0.max.z+eR)) continue;   // coarse reject: nowhere near this model
