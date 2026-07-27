@@ -149,3 +149,29 @@ for your players, supply your own TURN service (e.g. Cloudflare Calls TURN, Twil
 coturn box) by setting `RUMPUS_ICE_JSON` in the PHP environment to a JSON array of ICE
 servers — the game picks it up automatically on the next session. Players can also override
 locally via the `breach_ice` localStorage key.
+
+## The root `.htaccess` (build 1090)
+
+`htaccess-root.txt` in this folder is the root rewrite/caching config. Upload it to
+`public_html/.htaccess` (with the leading dot). Keep a copy of the old one first.
+
+The one line that matters most is `DirectoryIndex`. Naming only `breach.html` REPLACES Apache's
+default `index.html`, so every page folder (`/faq/`, `/compare/`, …) makes Apache look for a
+`breach.html` inside it, find nothing, and return **403 Forbidden**. Listing both files fixes it:
+
+    DirectoryIndex index.html breach.html    # "/" = the landing page, game at /breach.html
+    DirectoryIndex breach.html index.html    # "/" = the game, marketing pages still work
+
+Either order works for the marketing pages — the difference is only what the bare domain serves.
+The landing page forwards `#lvl=`, `?game=` and `?challenge=` to `breach.html`, so share links minted
+against the bare domain keep working whichever you pick.
+
+The file also forces one canonical address (https + www), because `http://` and the bare domain both
+answer 200 today, which splits ranking signals across four spellings of the same site.
+
+## Marketing pages (build 1090)
+
+The repo root carries the static site: `index.html`, `rumpus-site.css`, `sitemap.xml`, `robots.txt`,
+`llms.txt`, and the folders `browser-game-engine/`, `make-a-game-without-coding/`, `compare/` and
+`faq/`. Upload them into `public_html` alongside `breach.html`. They are plain static files — no PHP,
+no build step.
