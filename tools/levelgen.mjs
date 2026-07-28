@@ -3,71 +3,237 @@
 //
 //   node tools/levelgen.mjs <layout> <out.glb>     layouts: keep, spine
 //
-// Everything here is shaped by what build 1089 established about how an imported model
+// Everything here is shaped by what builds 1089/1092 established about how an imported model
 // becomes a collider:
 //   - the voxel grid lands on ~1.0-unit cells for an arena this size, with ~0.35-unit
 //     vertical slots; STEP (the shared step allowance) is 0.6
-//   - enemies get a clearance capsule of radius 0.9 whose body band starts STEP above
-//     their feet — so ramps must rise gently per cell, corridors must be ≥ 4 wide, and
-//     nothing waist-high should sit where bots need to path
-//   - surfaceTopUnder raycasts real triangles for floor height, so sloped ramp tops walk
-//     smoothly; only the push test sees the voxelised columns
+//   - enemies get a clearance capsule of radius 0.9 — corridors ≥ 4 wide, ramps ≤ 0.5
+//     rise per cell, nothing waist-high where bots must path
+//   - surfaceTopUnder raycasts real triangles for floor height; since build 1092 sloped
+//     faces rasterise as slopes and near-step columns read as ground, so ramps are
+//     bot-climbable (verified per-centreline in the engine before shipping)
+//
+// Materials are textured, not flat: a procedural painter bakes tileable PBR sets (base
+// colour + metallic-roughness + normal) into embedded PNGs — concrete, panelled concrete,
+// brushed metal, deck plate, crate, hazard stripes. Architectural surfaces are planar-mapped
+// in world units so texture density is constant everywhere; discrete objects (crates) get
+// unit UVs so their frames land on their edges.
 //
 // Multiplayer intent: 180° rotational symmetry (fair for two teams), no dead ends (every
-// space has ≥ 2 exits), three heights with the power position exposed from below, and
-// cover placed in mirrored pairs.
+// space has ≥ 2 exits), and cover placed in mirrored pairs.
 
 import { writeFileSync } from 'node:fs';
+import { deflateSync } from 'node:zlib';
+
+// ------------------------------------------------------------------ texture painter ----
+// Everything is deterministic (seeded PRNG) and tileable (lattice noise wraps), because
+// these textures repeat across whole walls.
+function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+const S = 256;   // texture size
+function lattice(r, n) { const g = new Float64Array(n * n); for (let i = 0; i < n * n; i++) g[i] = r(); return g; }
+function noiseAt(g, n, x, y) {   // bilinear, smoothstep, wrapping -> tileable
+  const fx = x * n / S, fy = y * n / S;
+  const x0 = Math.floor(fx) % n, y0 = Math.floor(fy) % n, x1 = (x0 + 1) % n, y1 = (y0 + 1) % n;
+  let tx = fx - Math.floor(fx), ty = fy - Math.floor(fy);
+  tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+  const a = g[y0 * n + x0], b = g[y0 * n + x1], c = g[y1 * n + x0], d = g[y1 * n + x1];
+  return a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
+}
+function fbm(r, octaves) {   // returns sampler(x,y) in ~[0,1]
+  const layers = octaves.map(([n, w]) => [lattice(r, n), n, w]);
+  const tot = octaves.reduce((s, o) => s + o[1], 0);
+  return (x, y) => layers.reduce((s, [g, n, w]) => s + noiseAt(g, n, x, y) * w, 0) / tot;
+}
+class Tex {
+  constructor(name) { this.name = name; this.rgb = new Float64Array(S * S * 3); this.h = new Float64Array(S * S); this.mr = null; }
+  fill(c) { for (let i = 0; i < S * S; i++) { this.rgb[i * 3] = c[0]; this.rgb[i * 3 + 1] = c[1]; this.rgb[i * 3 + 2] = c[2]; } return this; }
+  each(fn) { for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) fn(x, y, y * S + x); return this; }
+  tint(i, k) { this.rgb[i * 3] *= k; this.rgb[i * 3 + 1] *= k; this.rgb[i * 3 + 2] *= k; }
+  mrInit(metal, rough) { this.mr = new Float64Array(S * S * 2); for (let i = 0; i < S * S; i++) { this.mr[i * 2] = rough; this.mr[i * 2 + 1] = metal; } return this; }
+}
+function pngRGB(px, w, h) {   // px: Float64Array w*h*3 in 0..1
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) { const ro = y * (w * 3 + 1); raw[ro] = 0;
+    for (let i = 0; i < w * 3; i++) raw[ro + 1 + i] = Math.max(0, Math.min(255, Math.round(px[y * w * 3 + i] * 255))); }
+  const chunk = (t, d) => { const c = Buffer.concat([Buffer.from(t), d]); const out = Buffer.alloc(c.length + 8);
+    out.writeUInt32BE(d.length, 0); c.copy(out, 4); out.writeInt32BE(crc32(c), c.length + 4); return out; };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
+}
+let _crcT = null;
+function crc32(buf) {
+  if (!_crcT) { _crcT = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; _crcT[n] = c; } }
+  let c = -1; for (const b of buf) c = _crcT[(c ^ b) & 255] ^ (c >>> 8); return (c ^ -1) | 0;
+}
+function normalPNG(h, strength) {   // tangent-space normal map from the height field, wrapping
+  const px = new Float64Array(S * S * 3);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const dx = (h[y * S + (x + 1) % S] - h[y * S + (x + S - 1) % S]) * strength;
+    const dy = (h[((y + 1) % S) * S + x] - h[((y + S - 1) % S) * S + x]) * strength;
+    const l = Math.hypot(dx, dy, 1);
+    const i = (y * S + x) * 3;
+    px[i] = (-dx / l) * 0.5 + 0.5; px[i + 1] = (-dy / l) * 0.5 + 0.5; px[i + 2] = (1 / l) * 0.5 + 0.5;
+  }
+  return pngRGB(px, S, S);
+}
+function mrPNG(mr) {   // glTF: roughness in G, metallic in B
+  const px = new Float64Array(S * S * 3);
+  for (let i = 0; i < S * S; i++) { px[i * 3] = 0; px[i * 3 + 1] = mr[i * 2]; px[i * 3 + 2] = mr[i * 2 + 1]; }
+  return pngRGB(px, S, S);
+}
+
+// ---- the texture set -------------------------------------------------------------------
+function concreteTex(name, seed) {
+  const r = rng(seed), t = new Tex(name).fill([0.66, 0.66, 0.65]);
+  const mottle = fbm(r, [[8, 1], [16, 0.6], [32, 0.35], [64, 0.2]]);
+  const blotch = fbm(r, [[4, 1], [8, 0.7]]);
+  t.each((x, y, i) => {
+    const m = mottle(x, y), b = blotch(x, y);
+    t.tint(i, 0.86 + m * 0.24 - Math.max(0, b - 0.62) * 0.5);
+    if (r() < 0.012) t.tint(i, r() < 0.5 ? 0.78 : 1.14);           // speckle
+    t.h[i] = m;
+  });
+  return t;
+}
+function panelsTex(name, seed) {   // concrete cast in big panels: seams, form-tie holes, weep stains
+  const t = concreteTex(name, seed), r = rng(seed ^ 0xBEEF);
+  const seam = (v) => { const d = Math.min(v % 128, 128 - (v % 128)); return d < 2 ? 0.55 : d < 5 ? 0.88 : 1; };
+  t.each((x, y, i) => { const s = Math.min(seam(y), seam(x + 64)); t.tint(i, s); if (s < 1) t.h[i] -= (1 - s) * 0.8; });
+  for (let k = 0; k < 5; k++) {                                     // weep stains falling from seams
+    const sx = Math.floor(r() * S), sy = (Math.floor(r() * 2) * 128) % S, len = 26 + r() * 60;
+    for (let d = 0; d < len; d++) for (let w = -1; w <= 1; w++) {
+      const i = ((sy + d) % S) * S + (sx + w + S) % S;
+      t.tint(i, 1 - 0.16 * (1 - d / len) * (w ? 0.5 : 1));
+    }
+  }
+  for (const [fx, fy] of [[32, 32], [96, 32], [160, 32], [224, 32], [32, 160], [96, 160], [160, 160], [224, 160]]) {
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (dx * dx + dy * dy <= 4) {
+      const i = ((fy + dy + S) % S) * S + (fx + dx + S) % S; t.tint(i, 0.62); t.h[i] -= 0.9;   // form-tie holes
+    }
+  }
+  return t;
+}
+function metalTex(name, seed) {   // brushed panels with seams + rivets; MR map carries the variation
+  const r = rng(seed), t = new Tex(name).fill([0.68, 0.7, 0.73]).mrInit(0.9, 0.62);
+  const brushRow = new Float64Array(S); for (let y = 0; y < S; y++) brushRow[y] = r();
+  const brush = fbm(r, [[64, 1], [128, 0.8]]);
+  const seam = (v) => { const d = Math.min(v % 128, 128 - (v % 128)); return d < 2 ? 0.62 : 1; };
+  t.each((x, y, i) => {
+    const b = brush(x, y) * 0.5 + brushRow[y] * 0.5;
+    t.tint(i, 0.92 + b * 0.14);
+    const s = Math.min(seam(x), seam(y));
+    if (s < 1) { t.tint(i, s); t.h[i] -= 0.7; t.mr[i * 2] = 0.8; }
+    else { t.h[i] = b * 0.35; t.mr[i * 2] = 0.55 + b * 0.25; }
+  });
+  for (let px = 0; px < S; px += 32) for (const py of [6, 122, 134, 250]) {   // rivet rows beside seams
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const d2 = dx * dx + dy * dy; if (d2 > 5) continue;
+      const i = ((py + dy + S) % S) * S + (px + 16 + dx) % S;
+      t.h[i] += (5 - d2) * 0.28; t.tint(i, 1.06); t.mr[i * 2] = 0.45; }
+  }
+  for (let k = 0; k < 14; k++) {                                    // scratches
+    let x = r() * S, y = r() * S; const a = r() * Math.PI, len = 10 + r() * 40, ca = Math.cos(a), sa = Math.sin(a);
+    for (let d = 0; d < len; d++) { const i = ((Math.round(y + sa * d) + S) % S) * S + (Math.round(x + ca * d) + S) % S;
+      t.tint(i, 1.12); t.mr[i * 2] = 0.42; }
+  }
+  return t;
+}
+function deckTex(name, seed) {   // walkway plate: raised oblong studs in offset rows, worn tops
+  const r = rng(seed), t = new Tex(name).fill([0.62, 0.64, 0.67]).mrInit(0.5, 0.75);
+  const wear = fbm(r, [[16, 1], [64, 0.5]]);
+  t.each((x, y, i) => {
+    const row = Math.floor(y / 32), lx = (x + (row % 2) * 32) % 64, ly = y % 32;
+    const inStud = lx > 8 && lx < 56 && ly > 7 && ly < 25;
+    const w = wear(x, y);
+    if (inStud) { t.h[i] = 0.85; t.tint(i, 1.1 + w * 0.15); t.mr[i * 2] = 0.6 + w * 0.22; }
+    else { t.h[i] = 0; t.tint(i, 0.9 + w * 0.1); t.mr[i * 2] = 0.82; }
+  });
+  return t;
+}
+function crateTex(name, seed) {   // one crate face: raised frame, recessed panel, corner bolts
+  const r = rng(seed), t = new Tex(name).fill([0.62, 0.6, 0.56]);
+  const grime = fbm(r, [[8, 1], [32, 0.6]]);
+  const F = 30;                                                     // frame width in px
+  t.each((x, y, i) => {
+    const g = grime(x, y), ex = Math.min(x, S - 1 - x), ey = Math.min(y, S - 1 - y), e = Math.min(ex, ey);
+    if (e > F) { t.tint(i, 0.72 + g * 0.18); t.h[i] = 0; }          // recessed panel
+    else { t.tint(i, 0.95 + g * 0.12); t.h[i] = 0.9 - (e > F - 4 ? (e - (F - 4)) * 0.2 : 0); }
+    if (e > F && e < F + 3) t.tint(i, 0.6);                         // shadow line inside the frame
+  });
+  for (const bx of [15, S - 15]) for (const by of [15, S - 15])     // corner bolts
+    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const d2 = dx * dx + dy * dy; if (d2 > 18) continue;
+      const i = (by + dy) * S + bx + dx; t.h[i] += (18 - d2) * 0.06; t.tint(i, 1.12); }
+  for (let k = 0; k < 3; k++) {                                     // stencil dashes
+    const y0 = 96 + k * 22; for (let x = 70; x < 130; x++) for (let w = 0; w < 8; w++) {
+      if (rng(seed + k)() < 0) break; const i = (y0 + w) * S + x; t.tint(i, 0.55); }
+  }
+  return t;
+}
+function hazardTex(name) {   // 45° chevrons, worn
+  const r = rng(77), t = new Tex(name).fill([0.9, 0.72, 0.12]);
+  const wear = fbm(r, [[16, 1], [64, 0.7]]);
+  t.each((x, y, i) => {
+    if (((x + y) % 64) < 28) { t.rgb[i * 3] = 0.13; t.rgb[i * 3 + 1] = 0.13; t.rgb[i * 3 + 2] = 0.14; }
+    const w = wear(x, y); t.tint(i, 0.8 + w * 0.35); t.h[i] = w * 0.3;
+  });
+  return t;
+}
 
 // ---------------------------------------------------------------- geometry builder ----
-const MATS = [];
-function mat(name, hex, opts = {}) {
-  const c = [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255];
-  MATS.push({
-    name,
-    pbrMetallicRoughness: { baseColorFactor: [...c, 1], metallicFactor: opts.metal ?? 0.05, roughnessFactor: opts.rough ?? 0.92 },
-    ...(opts.glow ? { emissiveFactor: c.map(v => v * opts.glow) } : {}),
-  });
+const MATS = [];    // material specs, resolved into glTF at write time
+const TEXS = {};    // name -> Tex
+function useTex(t) { TEXS[t.name] = t; return t.name; }
+function mat(name, opts = {}) {
+  MATS.push({ name, base: opts.base || [1, 1, 1], metal: opts.metal ?? 0.05, rough: opts.rough ?? 0.92,
+    tex: opts.tex || null, nrm: opts.nrm ?? 1.0, glow: opts.glow || null, scale: opts.scale || 4 });
   return MATS.length - 1;
 }
 
-const prims = [];   // per-material: { pos:[], nrm:[], idx:[] }
-function prim(m) { return prims[m] || (prims[m] = { pos: [], nrm: [], idx: [] }); }
+const prims = [];   // per-material: { pos:[], nrm:[], uv:[], idx:[] }
+function prim(m) { return prims[m] || (prims[m] = { pos: [], nrm: [], uv: [], idx: [] }); }
 // The a→b→c→d labels below run clockwise seen from outside, so both emitters flip:
 // negated normal, reversed winding. (Caught by the engine probe — with front faces
 // pointing inward, surfaceTopUnder raycasts landed on every slab's underside.)
-function quad(m, a, b, c, d) {
-  const p = prim(m);
+// UVs: planar projection along the face's dominant axis, in world units / material scale —
+// or explicit per-vertex UVs (unitUV) for objects whose texture must land on their edges.
+function _uvFor(n, s, v) {
+  const ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
+  if (ay >= ax && ay >= az) return [v[0] / s, v[2] / s];
+  if (ax >= az) return [v[2] / s, v[1] / s];
+  return [v[0] / s, v[1] / s];
+}
+function quad(m, a, b, c, d, unitUV) {
+  const p = prim(m), s = MATS[m].scale;
   const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
   let n = [u[2] * v[1] - u[1] * v[2], u[0] * v[2] - u[2] * v[0], u[1] * v[0] - u[0] * v[1]];
   const l = Math.hypot(...n) || 1; n = n.map(x => x / l);
   const base = p.pos.length / 3;
-  for (const vtx of [a, b, c, d]) { p.pos.push(...vtx); p.nrm.push(...n); }
+  const uvs = unitUV || [a, b, c, d].map(vtx => _uvFor(n, s, vtx));
+  [a, b, c, d].forEach((vtx, k) => { p.pos.push(...vtx); p.nrm.push(...n); p.uv.push(uvs[k][0], uvs[k][1]); });
   p.idx.push(base, base + 2, base + 1, base, base + 3, base + 2);
 }
 function tri(m, a, b, c) {
-  const p = prim(m);
+  const p = prim(m), s = MATS[m].scale;
   const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
   let n = [u[2] * v[1] - u[1] * v[2], u[0] * v[2] - u[2] * v[0], u[1] * v[0] - u[0] * v[1]];
   const l = Math.hypot(...n) || 1; n = n.map(x => x / l);
   const base = p.pos.length / 3;
-  for (const vtx of [a, b, c]) { p.pos.push(...vtx); p.nrm.push(...n); }
+  [a, b, c].forEach(vtx => { p.pos.push(...vtx); p.nrm.push(...n); const q = _uvFor(n, s, vtx); p.uv.push(q[0], q[1]); });
   p.idx.push(base, base + 2, base + 1);
 }
-
-// axis-aligned box from min/max corners
-function box(m, x0, y0, z0, x1, y1, z1) {
+const UNIT = [[0, 0], [1, 0], [1, 1], [0, 1]];
+function box(m, x0, y0, z0, x1, y1, z1, unit) {
   const A = [x0, y0, z0], B = [x1, y0, z0], C = [x1, y0, z1], D = [x0, y0, z1];
   const E = [x0, y1, z0], F = [x1, y1, z0], G = [x1, y1, z1], H = [x0, y1, z1];
-  quad(m, E, F, G, H);            // top  (+y)
-  quad(m, D, C, B, A);            // bottom (-y)
-  quad(m, A, B, F, E);            // north (-z)
-  quad(m, C, D, H, G);            // south (+z)
-  quad(m, D, A, E, H);            // west (-x)
-  quad(m, B, C, G, F);            // east (+x)
+  const uu = unit ? UNIT : null;
+  quad(m, E, F, G, H, uu);            // top  (+y)
+  quad(m, D, C, B, A, uu);            // bottom (-y)
+  quad(m, A, B, F, E, uu);            // north (-z)
+  quad(m, C, D, H, G, uu);            // south (+z)
+  quad(m, D, A, E, H, uu);            // west (-x)
+  quad(m, B, C, G, F, uu);            // east (+x)
 }
-// centred convenience
-function cbox(m, cx, cy, cz, sx, sy, sz) { box(m, cx - sx / 2, cy - sy / 2, cz - sz / 2, cx + sx / 2, cy + sy / 2, cz + sz / 2); }
+function cbox(m, cx, cy, cz, sx, sy, sz, unit) { box(m, cx - sx / 2, cy - sy / 2, cz - sz / 2, cx + sx / 2, cy + sy / 2, cz + sz / 2, unit); }
 
 // solid ramp: the top surface runs along `axis` ('x'|'z') from height yAtMin at the axis-min end
 // to yAtMax at the axis-max end; the underside is flat at yBase. The corner labels copy box()'s
@@ -94,26 +260,31 @@ function mirrored(fn) {
   fn((x, z) => [x, z], t => t.a);
   fn((x, z) => [-x, -z], t => t.b);
 }
-// mirrored min/max box helper (rotating corners swaps which is min/max)
-function mbox(m, x0, y0, z0, x1, y1, z1) {
-  box(m, x0, y0, z0, x1, y1, z1);
-  box(m, -x1, y0, -z1, -x0, y1, -z0);
-}
 
 // ---------------------------------------------------------------------- palettes ----
 function industrialPalette() {
+  const concrete = useTex(concreteTex('concrete', 11));
+  const panels = useTex(panelsTex('panels', 23));
+  const metal = useTex(metalTex('metal', 37));
+  const deck = useTex(deckTex('deck', 51));
+  const crate = useTex(crateTex('crate', 67));
+  const hazard = useTex(hazardTex('hazard'));
   return {
-    floor: mat('floor', 0x39404a),
-    slab: mat('slab', 0x424b56),
-    wall: mat('wall', 0x4a5561),
-    pillar: mat('pillar', 0x556270),
-    ramp: mat('ramp', 0x515e6b),
-    parapet: mat('parapet', 0x2e353d),
-    crate: mat('crate', 0x7a5f3f, { rough: 0.98 }),
-    crate2: mat('crate2', 0x5d6b5a, { rough: 0.98 }),
-    trim: mat('trim', 0x38f5b5, { glow: 0.9, rough: 0.5 }),
-    teamA: mat('teamA', 0xff8c3a, { glow: 0.55, rough: 0.6 }),
-    teamB: mat('teamB', 0x4aa8ff, { glow: 0.55, rough: 0.6 }),
+    // architecture: world-planar UVs, density set per material
+    floor: mat('floor', { tex: concrete, base: [0.52, 0.55, 0.57], rough: 0.95, scale: 7, nrm: 1.2 }),
+    slab: mat('slab', { tex: deck, base: [0.92, 0.95, 1], metal: 0.15, rough: 1, scale: 3, nrm: 1.6 }),
+    wall: mat('wall', { tex: panels, base: [0.66, 0.7, 0.74], rough: 0.9, scale: 12, nrm: 1.4 }),
+    pillar: mat('pillar', { tex: metal, base: [0.82, 0.86, 0.92], metal: 0.15, rough: 1, scale: 4, nrm: 1.2 }),
+    ramp: mat('ramp', { tex: deck, base: [0.82, 0.86, 0.94], metal: 0.15, rough: 1, scale: 3, nrm: 1.6 }),
+    parapet: mat('parapet', { tex: metal, base: [0.6, 0.65, 0.72], metal: 0.15, rough: 1, scale: 3, nrm: 1.2 }),
+    hazard: mat('hazard', { tex: hazard, base: [1, 1, 1], rough: 0.75, scale: 2, nrm: 0.8 }),
+    // discrete objects: unit UVs, tinted per variant off one texture
+    crate: mat('crate', { tex: crate, base: [0.55, 0.52, 0.38], rough: 0.8, metal: 0.25, scale: 1, nrm: 1.8 }),
+    crate2: mat('crate2', { tex: crate, base: [0.5, 0.35, 0.26], rough: 0.85, metal: 0.25, scale: 1, nrm: 1.8 }),
+    // emissives stay untextured — the glow is the texture
+    trim: mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.9, rough: 0.5 }),
+    teamA: mat('teamA', { base: [1, 0.55, 0.23], glow: 0.55, rough: 0.6 }),
+    teamB: mat('teamB', { base: [0.29, 0.66, 1], glow: 0.55, rough: 0.6 }),
   };
 }
 
@@ -200,8 +371,8 @@ function buildKeep() {
     for (const [sx, sz, rot] of spots) {
       const [x, z] = xz(sx, sz);
       const m = (sx + sz) % 3 ? P.crate : P.crate2;
-      cbox(m, x, 0.85, z, 2, 1.7, 2);
-      if (!rot) cbox(m === P.crate ? P.crate2 : P.crate, x + 0.15, 2.4, z - 0.1, 1.4, 1.4, 1.4);
+      cbox(m, x, 0.85, z, 2, 1.7, 2, true);
+      if (!rot) cbox(m === P.crate ? P.crate2 : P.crate, x + 0.15, 2.4, z - 0.1, 1.4, 1.4, 1.4, true);
     }
   });
   return { name: 'Crossfire Keep' };
@@ -236,9 +407,9 @@ function buildSpine() {
     ramp(P.ramp, -42, s * 10 - 2, -32, s * 10 + 2, 0, 0, MID, 'x');
     ramp(P.ramp, 32, s * 10 - 2, 42, s * 10 + 2, 0, MID, 0, 'x');
   }
-  // centre killbox: waist-high cross cover + glow marker
-  cbox(P.parapet, 0, 0.6, 0, 10, 1.2, 2);
-  cbox(P.parapet, 0, 0.6, 0, 2, 1.2, 10);
+  // centre killbox: waist-high cross cover in hazard stripes + glow marker
+  cbox(P.hazard, 0, 0.6, 0, 10, 1.2, 2);
+  cbox(P.hazard, 0, 0.6, 0, 2, 1.2, 10);
   cbox(P.trim, 0, 1.25, 0, 2.4, 0.12, 2.4);
 
   // corner bunkers: L-walls (2.6 high — blocks sight, not a platform) + a crate nest
@@ -248,7 +419,7 @@ function buildSpine() {
       const dx = x > 0 ? -1 : 1, dz = z > 0 ? -1 : 1;
       box(P.wall, Math.min(x, x + dx * 10), 0, Math.min(z, z + dz * 1), Math.max(x, x + dx * 10), 2.6, Math.max(z, z + dz * 1));
       box(P.wall, Math.min(x, x + dx * 1), 0, Math.min(z, z + dz * 8), Math.max(x, x + dx * 1), 2.6, Math.max(z, z + dz * 8));
-      cbox((sxz[0] > 0) ? P.crate : P.crate2, x + dx * 4, 0.85, z + dz * 4, 2, 1.7, 2);
+      cbox((sxz[0] > 0) ? P.crate : P.crate2, x + dx * 4, 0.85, z + dz * 4, 2, 1.7, 2, true);
     }
     // team bands on the short walls
     const tm = team({ a: P.teamA, b: P.teamB });
@@ -260,7 +431,7 @@ function buildSpine() {
   mirrored((xz) => {
     for (const [sx, sz] of [[10, 20], [-16, 24], [22, 16]]) {
       const [x, z] = xz(sx, sz);
-      cbox((sx + sz) % 3 ? P.crate : P.crate2, x, 0.85, z, 2, 1.7, 2);
+      cbox((sx + sz) % 3 ? P.crate : P.crate2, x, 0.85, z, 2, 1.7, 2, true);
     }
   });
   return { name: 'Twin Spine' };
@@ -278,19 +449,43 @@ function writeGLB(out) {
   };
   prims.forEach((p, mi) => {
     if (!p) return;
-    const pos = new Float32Array(p.pos), nrm = new Float32Array(p.nrm), idx = new Uint32Array(p.idx);
+    const pos = new Float32Array(p.pos), nrm = new Float32Array(p.nrm), uv = new Float32Array(p.uv), idx = new Uint32Array(p.idx);
     const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < pos.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], pos[i + k]); mx[k] = Math.max(mx[k], pos[i + k]); }
-    const vPos = push(Buffer.from(pos.buffer), 34962), vNrm = push(Buffer.from(nrm.buffer), 34962), vIdx = push(Buffer.from(idx.buffer), 34963);
+    const vPos = push(Buffer.from(pos.buffer), 34962), vNrm = push(Buffer.from(nrm.buffer), 34962);
+    const vUV = push(Buffer.from(uv.buffer), 34962), vIdx = push(Buffer.from(idx.buffer), 34963);
     accessors.push({ bufferView: vPos, componentType: 5126, count: pos.length / 3, type: 'VEC3', min: mn, max: mx });
     accessors.push({ bufferView: vNrm, componentType: 5126, count: nrm.length / 3, type: 'VEC3' });
+    accessors.push({ bufferView: vUV, componentType: 5126, count: uv.length / 2, type: 'VEC2' });
     accessors.push({ bufferView: vIdx, componentType: 5125, count: idx.length, type: 'SCALAR' });
-    primitives.push({ attributes: { POSITION: accessors.length - 3, NORMAL: accessors.length - 2 }, indices: accessors.length - 1, material: mi });
+    primitives.push({ attributes: { POSITION: accessors.length - 4, NORMAL: accessors.length - 3, TEXCOORD_0: accessors.length - 2 },
+      indices: accessors.length - 1, material: mi });
   });
+
+  // bake every referenced texture set into embedded PNGs (base + optional MR + normal)
+  const images = [], textures = [], texIdx = {};   // name -> { base, mr, nrm } texture indices
+  for (const [name, t] of Object.entries(TEXS)) {
+    const add = (png) => { const v = push(png); images.push({ bufferView: v, mimeType: 'image/png' });
+      textures.push({ sampler: 0, source: images.length - 1 }); return textures.length - 1; };
+    texIdx[name] = { base: add(pngRGB(t.rgb, S, S)), mr: t.mr ? add(mrPNG(t.mr)) : null, nrm: add(normalPNG(t.h, 2.2)) };
+  }
+  const _skip = (env, n) => (process.env[env] || '').split(',').includes(n);   // debug bisection
+  const materials = MATS.map(md => {
+    const g = { name: md.name, pbrMetallicRoughness: { baseColorFactor: [...md.base, 1], metallicFactor: md.metal, roughnessFactor: md.rough } };
+    if (md.tex) { const ti = texIdx[md.tex];
+      if (!_skip('NOTEX', md.name)) g.pbrMetallicRoughness.baseColorTexture = { index: ti.base };
+      if (ti.mr != null && !_skip('NOMR', md.name)) g.pbrMetallicRoughness.metallicRoughnessTexture = { index: ti.mr };
+      if (!_skip('NONRM', md.name)) g.normalTexture = { index: ti.nrm, scale: md.nrm }; }
+    if (md.glow) g.emissiveFactor = md.base.map(v => v * md.glow);
+    return g;
+  });
+
   const json = {
     asset: { version: '2.0', generator: 'rumpus-levelgen' },
     scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: 'level' }],
-    meshes: [{ primitives }], materials: MATS,
+    meshes: [{ primitives }], materials,
+    samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }],
+    images, textures,
     buffers: [{ byteLength: off }], bufferViews: views, accessors,
   };
   let jbuf = Buffer.from(JSON.stringify(json)); while (jbuf.length % 4) jbuf = Buffer.concat([jbuf, Buffer.from(' ')]);
@@ -313,4 +508,4 @@ if (!LAYOUTS[which] || !out) {
 }
 const info = LAYOUTS[which]();
 const w = writeGLB(out);
-console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials)`);
+console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets)`);
