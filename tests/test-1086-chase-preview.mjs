@@ -103,7 +103,8 @@ const pv = (obj, base, yaw, fb) => new Function('EYE',
 
 // ---------------------------------------------------------------- the preview camera
 const tpp = extractFunction('_tpPosePreview');
-assert(/cam\.rotation\.order='YXZ'; cam\.rotation\.y=yaw; cam\.rotation\.x=pitch; cam\.rotation\.z=0;/.test(tpp),
+// (build 1101: rotation.x subtracts the tilt, which is zero unless authored — still parallel by default)
+assert(/cam\.rotation\.order='YXZ'; cam\.rotation\.y=yaw; cam\.rotation\.x=pitch - pvTilt; cam\.rotation\.z=0;/.test(tpp),
   'the preview looks PARALLEL to forward, exactly as play does — that is what makes a nonzero Side read as off-centre');
 assert(/cam\.rotation\.order='YXZ'/.test(tpp) && /camera\.rotation\.order='YXZ'/.test(src),
   '...in the same Euler order as the live camera (build 1085 got bitten by that difference)');

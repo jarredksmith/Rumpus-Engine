@@ -24,15 +24,19 @@ assert(/if\(typeof renderApiKeysPanel==='function'\) renderApiKeysPanel\(\);/.te
 // ---- the row registry: executable against a stubbed localStorage ----
 {
   const store = {};
-  const env = new Function('localStorage', 'aiGetKey', 'aiSetKey', 'fsSetKey',
+  const env = new Function('localStorage', 'aiGetKey', 'aiSetKey', 'fsSetKey', 'sfSetToken', 'sfSetEnabled',
     src.match(/const API_KEY_ROWS = \[[\s\S]*?\n\];/)[0] + '\nreturn API_KEY_ROWS;')(
     { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } },
     () => (store['breach_anthropic_key'] || ''),
     (v) => { store['breach_anthropic_key'] = v; },
-    (v) => { store['fs_api_key'] = v; });
+    (v) => { store['fs_api_key'] = v; },
+    (v) => { store['breach_sketchfab_token'] = (v || '').trim(); },
+    (b) => { store['breach_sketchfab_on'] = b ? '1' : '0'; });
 
-  eq(env.length, 3, 'three keys are surfaced');
-  eq(env.map(r => r.id).join(','), 'anthropic,sketchfab,polypizza', 'Claude first, then the model libraries');
+  // build 1098: four rows — Sketchfab was silently writing to Freesound's storage, so Freesound
+  // became its own row and Sketchfab got the real token key.
+  eq(env.length, 4, 'four keys are surfaced');
+  eq(env.map(r => r.id).join(','), 'anthropic,sketchfab,freesound,polypizza', 'Claude first, then the model libraries');
 
   const ant = env.find(r => r.id === 'anthropic');
   eq(ant.ls, 'breach_anthropic_key', 'the Anthropic row reuses the EXISTING storage key (scene-builder keys carry over)');
@@ -43,11 +47,18 @@ assert(/if\(typeof renderApiKeysPanel==='function'\) renderApiKeysPanel\(\);/.te
   assert(/AI animation generation/.test(ant.what), 'its description names the AI animation feature');
 
   const sf = env.find(r => r.id === 'sketchfab');
-  eq(sf.ls, 'fs_api_key', 'Sketchfab reuses its existing storage key');
-  assert(sf.builtin, 'Sketchfab is marked as having a built-in shared key');
-  eq(sf.get(), '', "reads the USER's key only — the baked-in default never masquerades as yours");
+  eq(sf.ls, 'breach_sketchfab_token', 'Sketchfab stores to the token key sfGetToken actually reads (build 1098)');
+  assert(!sf.builtin, 'no built-in Sketchfab key exists — the old badge was a lie');
+  eq(sf.get(), '', 'starts unset');
   sf.set('my-token');
   eq(sf.get(), 'my-token', 'a user token round-trips');
+  eq(store['breach_sketchfab_on'], '1', 'saving also switches the Sketchfab source on');
+
+  const fs = env.find(r => r.id === 'freesound');
+  eq(fs.ls, 'fs_api_key', 'Freesound owns the storage the old Sketchfab row was writing');
+  assert(fs.builtin, '...and is the row that truly has a built-in shared key');
+  fs.set('fs-key');
+  eq(fs.get(), 'fs-key', 'round-trips through fsSetKey');
 
   const pp = env.find(r => r.id === 'polypizza');
   eq(pp.ls, 'pp_api_key', 'Poly Pizza reuses its existing storage key');

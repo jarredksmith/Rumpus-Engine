@@ -21,7 +21,8 @@ assert(/const picks = _rollLootItems\(3\);/.test(sc), 'random spawn reuses the s
 assert(/chests\.length>=2 \+ \(lootSpots\?lootSpots\.length:0\)/.test(sc), 'placed boxes do not count against the random cap');
 
 // spawned at play start
-assert(/gameOn=true; gameOver=false; shopOpen=false; if\(typeof spawnPlacedLoot==='function'\) spawnPlacedLoot\(\);/.test(src), 'placed loot spawns when gameplay starts');
+// (build 1100 resets the top-down orbit yaw on the same line before the loot spawn)
+assert(/gameOn=true; gameOver=false; shopOpen=false;[\s\S]{0,220}?if\(typeof spawnPlacedLoot==='function'\) spawnPlacedLoot\(\);/.test(src), 'placed loot spawns when gameplay starts');
 
 // serialized
 assert(/loot: lootSpots\.map\(s=>\(\{ x:\+s\.x, y:\+\(s\.y\|\|0\), z:\+s\.z, items:\(s\.items\|\|\[\]\)\.slice\(\), glowColor:/.test(src), 'placed loot saved with the level (+ y + glow)');

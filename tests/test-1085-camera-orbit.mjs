@@ -33,6 +33,7 @@ const build = (cfg, spawn = {}) => {
      ${extractFunction('_vcamNum')}
      ${extractFunction('_vcamOpt')}
      ${extractFunction('_vcamBaseYaw')}
+     const _vcamOrbitOn=()=>false;   // build 1100: player orbit is off in this authored-framing harness
      ${extractFunction('_vcamYawRad')}
      ${extractFunction('_vcamPose')}
      ${extractFunction('_vcamReset')}
