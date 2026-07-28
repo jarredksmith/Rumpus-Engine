@@ -6830,6 +6830,13 @@ function _adaptResTick(frameMs, now){
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;   // static by default; _dirtyShadows() requests a refresh
 renderer.shadowMap.type = IS_COARSE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+// build 1095: filmic pipeline. ACES tone mapping rolls highlights off like film instead of clipping
+// to white, and is most of what reads as "modern renderer". Exposure compensates the curve's mid dip.
+// applyWorldCfg drives both from worldCfg (filmic/exposure) so a level can opt back to the raw look.
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
+// build 1095: anisotropic filtering — ground textures at grazing angles stop dissolving into mush.
+const MAX_ANISO = Math.min(8, (renderer.capabilities && renderer.capabilities.getMaxAnisotropy) ? renderer.capabilities.getMaxAnisotropy() : 1);
 document.body.appendChild(renderer.domElement);
 
 // ---------- Depth of field (optional post-process) ----------
@@ -7063,7 +7070,7 @@ moon.shadow.camera.top = 80; moon.shadow.camera.bottom = -80;
 // and stair treads; the small negative depth bias handles grazing angles. Keep normalBias modest so thin
 // contact shadows don't detach (peter-panning).
 moon.shadow.bias = -0.0004;
-moon.shadow.normalBias = 1.2;
+moon.shadow.normalBias = 0.6;   // build 1095: was 1.2 — contact shadows were detaching (peter-panning) on generated levels; 0.6 still clears banding on large planes at 2048px
 scene.add(moon);
 // Shadow-refresh bookkeeping lives HERE (not by the render loop) since build 855: applyWorldCfg runs at
 // boot and now calls _dirtyShadows when the sun moves — declaring these ~11k lines later was a TDZ crash.
@@ -9515,6 +9522,7 @@ function loadTextureCached(url){
   const loader = new THREE.TextureLoader(); loader.crossOrigin = 'anonymous';
   const tex = loader.load(url, undefined, undefined, (err)=>{ console.warn('Texture load failed for', url, '-', err && err.message); });
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  if(typeof MAX_ANISO !== 'undefined') tex.anisotropy = MAX_ANISO;   // build 1095
   if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace; else if('encoding' in tex) tex.encoding = 3001; // sRGBEncoding
   texCache[url] = tex; return tex;
 }
@@ -13599,7 +13607,20 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   // frustum-cull them (the whole prop vanishes) even while their shadow still renders from the sun's wider frustum
   // — the "shadows on the ground but no props" you hit while hosting. Disable culling on skinned meshes so they
   // always draw. (Static props keep culling — their bounds are correct.)
-  obj.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; if(o.isSkinnedMesh) o.frustumCulled = false; } });
+  obj.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; if(o.isSkinnedMesh) o.frustumCulled = false;
+    // build 1095: sharpen every imported texture at grazing angles (floors especially)
+    if(typeof MAX_ANISO !== 'undefined' && MAX_ANISO > 1){ const ms = Array.isArray(o.material) ? o.material : [o.material];
+      for(const m of ms){ if(!m) continue; for(const k of ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap']) if(m[k]) m[k].anisotropy = MAX_ANISO;
+        // build 1095: a generated level can mark its bake as a full RGB radiance lightmap (glTF
+        // material extras.rumpusLightmap). Move it from aoMap (darkens ambient only) to lightMap
+        // (ADDS colored indirect light: sky-blue shade, warm sun bounce) — the AAA split: baked GI
+        // for indirect, the dynamic sun + shadow map for direct.
+        if(m.userData && m.userData.rumpusLightmap && m.aoMap && !m.lightMap){
+          m.lightMap = m.aoMap; m.aoMap = null;
+          if('colorSpace' in m.lightMap) m.lightMap.colorSpace = THREE.SRGBColorSpace; else m.lightMap.encoding = 3001;   // the bake is sRGB-authored
+          m.lightMapIntensity = +m.userData.rumpusLightmap || 1;
+          m.needsUpdate = true;
+        } } } } });
   obj.userData.src = src;
   if(nid && typeof propByNid==='function' && propByNid(nid)) nid = genNid();   // build 905: stored levels can carry DUPLICATE nids (props copied across saves) — nid-keyed sync (pDel/pMov/the reconciler's maps) then hits the wrong prop, so a live collision gets a fresh id (the next save writes it back, healing the level)
   obj.userData.nid = nid || genNid();   // assign once; load/net paths pass an existing id to keep peers aligned
@@ -14247,7 +14268,7 @@ const player = {
 };
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
-const DEFAULT_WORLD = { walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, terrain:null };
+const DEFAULT_WORLD = { walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -14288,6 +14309,32 @@ function applySurfaceTexture(mat, url, urlKey, repU, repV, normalUrl, roughUrl, 
 // distributed as jpg). Sets it as the scene background AND environment (so models pick up reflections),
 // processed through a PMREM render target for correct lighting. Empty string restores the flat color.
 let _skyHdriUrl = null, _skyPMREM = null, _skyEnvRT = null, _skyOrigTex = null, _skyOrigKind = null, _skyRotTex = null, _skyRotTimer = null;
+// build 1095: default image-based lighting. Without scene.environment, metals render black and
+// roughness has nothing to respond to — "PBR that doesn't look PBR". When no HDRI sky is set,
+// a tiny procedural gradient sky (zenith -> horizon -> ground, plus a warm sun blob) goes through
+// PMREM once at boot and becomes the ambient/reflection environment. Deliberately dim so it fills
+// and adds speculars without re-lighting scenes tuned before it existed.
+let _envDefaultRT = null;
+function _ensureDefaultEnv(){
+  if(_envDefaultRT || !THREE.PMREMGenerator) return;
+  try{
+    const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128;
+    const g = cv.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0.00, '#4a6a9a');   // zenith
+    grad.addColorStop(0.40, '#7f9bc0');
+    grad.addColorStop(0.55, '#c2ccd4');   // horizon glow (brightest — backlights silhouettes)
+    grad.addColorStop(0.60, '#585d55');   // ground horizon
+    grad.addColorStop(1.00, '#23262a');   // ground
+    g.fillStyle = grad; g.fillRect(0, 0, 256, 128);
+    const sun = g.createRadialGradient(64, 30, 2, 64, 30, 30);
+    sun.addColorStop(0, 'rgba(255,240,214,0.95)'); sun.addColorStop(0.3, 'rgba(255,226,178,0.35)'); sun.addColorStop(1, 'rgba(255,226,178,0)');
+    g.fillStyle = sun; g.fillRect(0, 0, 256, 128);
+    const tex = new THREE.CanvasTexture(cv); tex.mapping = THREE.EquirectangularReflectionMapping;
+    const pg = new THREE.PMREMGenerator(renderer); pg.compileEquirectangularShader();
+    _envDefaultRT = pg.fromEquirectangular(tex); pg.dispose(); tex.dispose();
+  }catch(e){}
+}
 let _arenaRebuildQueued = false;
 
 // --- HDRI sky orientation: rotate the equirectangular panorama horizontally (yaw) by shifting its pixel
@@ -14361,7 +14408,7 @@ function applySkyHdri(url){
   _skyPending = false;   // set true below only if we actually kick off a network load
   if(!url){
     scene.background = new THREE.Color((worldCfg && worldCfg.fogColor!=null ? worldCfg.fogColor : 0x070b10)>>>0);
-    if(scene.environment){ scene.environment = null; }
+    _ensureDefaultEnv(); scene.environment = _envDefaultRT ? _envDefaultRT.texture : null;   // build 1095: fall back to the procedural env, not to nothing
     if(_skyEnvRT){ _skyEnvRT.dispose && _skyEnvRT.dispose(); _skyEnvRT = null; }
     _skyOrigTex = null; _skyOrigKind = null; _skyRotTex = null;
     return;
@@ -14469,6 +14516,19 @@ function applyWorldCfg(){
   }
   if(typeof skyLight!=='undefined'){ skyLight.intensity = worldCfg.sky; skyLight.color.setHex(((worldCfg.skyColor==null?DEFAULT_WORLD.skyColor:worldCfg.skyColor)>>>0)); }   // build 584: sky hemisphere color is now adjustable (was a hardcoded teal that tinted everything green)
   if(typeof worldAmbient!=='undefined') worldAmbient.intensity = worldCfg.ambient;
+  // build 1095: filmic pipeline — ACES tone mapping + exposure, saved with the level. Toggling
+  // recompiles every material (tone mapping is baked into the programs), so only touch on change.
+  worldCfg.filmic = (worldCfg.filmic === false || worldCfg.filmic === 0) ? 0 : 1;
+  worldCfg.exposure = Math.max(0.3, Math.min(3, worldCfg.exposure == null ? DEFAULT_WORLD.exposure : (+worldCfg.exposure || DEFAULT_WORLD.exposure)));
+  if(typeof renderer !== 'undefined'){
+    renderer.toneMappingExposure = worldCfg.exposure;
+    const wantTM = worldCfg.filmic ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    if(renderer.toneMapping !== wantTM){
+      renderer.toneMapping = wantTM;
+      scene.traverse(o=>{ const ms=o.material; if(!ms) return; (Array.isArray(ms)?ms:[ms]).forEach(m=>{ if(m) m.needsUpdate=true; }); });
+    }
+    if(!_skyHdriUrl){ _ensureDefaultEnv(); if(_envDefaultRT && scene.environment !== _envDefaultRT.texture) scene.environment = _envDefaultRT.texture; }
+  }
   SPEED = worldCfg.walk; SPRINT = worldCfg.run / worldCfg.walk;
   JUMP = worldCfg.jump; GRAV = worldCfg.grav; CROUCH_SPEED = worldCfg.crouch;
   // arena size — rebuild floor/grid/walls only when it changes; coalesce rapid changes (slider drag)
@@ -23887,7 +23947,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1094 · 2026-07-28';
+const BUILD_VERSION = 'build 1095 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33066,6 +33126,13 @@ function renderEditorFields(){
       const dofSp=document.createElement('span'); dofSp.innerHTML='<b>Depth of field</b> \u2014 blur by distance'; dofRow.appendChild(dofCb); dofRow.appendChild(dofSp); b.appendChild(dofRow);
       if(worldCfg.dof===true){ slider(b,'Focus distance','dofFocus',2,120,1); slider(b,'In-focus range','dofRange',1,80,1); slider(b,'Blur strength','dofStrength',0.1,4,0.1);
         hint(b,'','0 0 4px').textContent='Focus distance = how far away stays sharp. In-focus range = depth kept sharp around it. Everything else blurs.'; }
+      // build 1095: filmic pipeline controls — ACES tone mapping + exposure, saved with the level
+      const fmRow=document.createElement('label'); fmRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 4px;cursor:pointer;';
+      const fmCb=document.createElement('input'); fmCb.type='checkbox'; fmCb.checked=(worldCfg.filmic!==0 && worldCfg.filmic!==false); fmCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+      fmCb.onchange=()=>{ pushUndoSnapshot(); worldCfg.filmic=fmCb.checked?1:0; applyWorldCfg(); renderEditorFields(); };
+      const fmSp=document.createElement('span'); fmSp.innerHTML='<b>Filmic tone mapping</b> — ACES highlight rolloff'; fmRow.appendChild(fmCb); fmRow.appendChild(fmSp); b.appendChild(fmRow);
+      if(worldCfg.filmic!==0 && worldCfg.filmic!==false){ slider(b,'Exposure','exposure',0.4,2.5,0.05);
+        hint(b,'','0 0 4px').textContent='Filmic rolls bright areas off like film instead of clipping to white. Exposure is the overall brightness of the graded image.'; }
       // build 582: post-processing look (bloom / motion blur / grade). Master on/off is the global toggle (also in the pause menu); the look values save with the level.
       const pfxRow=document.createElement('label'); pfxRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:10px 0 4px;cursor:pointer;';
       const pfxCb=document.createElement('input'); pfxCb.type='checkbox'; pfxCb.checked=(typeof _postOn!=='undefined' && _postOn); pfxCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';

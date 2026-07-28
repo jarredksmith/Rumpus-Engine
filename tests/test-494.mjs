@@ -7,7 +7,8 @@ const src = gameSource();
 
 // --- wiring ---
 const fp = extractFunction('finalizeProp');
-assert(/if\(o\.isMesh\)\{ o\.castShadow = true; o\.receiveShadow = true; if\(o\.isSkinnedMesh\) o\.frustumCulled = false; \}/.test(fp),
+// (build 1095 appended anisotropy/lightmap polish after the culling line — the pin anchors the decision itself)
+assert(/if\(o\.isMesh\)\{ o\.castShadow = true; o\.receiveShadow = true; if\(o\.isSkinnedMesh\) o\.frustumCulled = false;/.test(fp),
   'finalizeProp disables frustum culling on skinned meshes (keeps shadow + receive)');
 
 // --- executable: the per-mesh traverse decision (skinned -> no cull; static -> untouched) ---
