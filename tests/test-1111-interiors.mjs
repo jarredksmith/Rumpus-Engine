@@ -68,8 +68,12 @@ const sig = (rs) => rs.map(r => [r.x0, r.z0, r.x1, r.z1].map(v => v.toFixed(2)).
 assert(sig(rooms) !== sig(rooms2), 'a different seed gives a different floor plan');
 
 // ---------------------------------------------------------------- wired into the arena
-assert(/const rooms = roomBlock\(P\.wall, libMat\('plankGrey'\), P\.trim, x0, z0, x1, z1, 0, WH2,/.test(lgSrc),
+assert(/const rooms = roomBlock\(P\.wall, libMat\('plankGrey'\), P\.trim, x0, z0, x1, z1, 0, twoUp \? STO : 4\.6,/.test(lgSrc),
   'the arena building side-structure is a real multi-room block now');
+// build 1112: roomBlock supports stacked storeys, but the arena keeps them OFF — the probe found
+// enemies pushed at every step of the generated stairs, so they are not shipped enabled.
+assert(/const twoUp = \(rr\(\), false\);/.test(lgSrc), 'multi-storey stays off until bots can climb it');
+assert(/storeys: twoUp \? 2 : 1/.test(lgSrc), '...but the wiring is in place for when it is fixed');
 assert(/lightCol: theme === 'volcanic' \? \[1, 0\.62, 0\.3\] : theme === 'castle' \? \[1, 0\.78, 0\.5\] : \[1, 0\.93, 0\.78\]/.test(lgSrc),
   'and its lamps take the theme colour');
 

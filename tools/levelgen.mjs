@@ -1176,12 +1176,61 @@ function wallRun(m, axis, a0, a1, o0, o1, y0, y1, openings = []) {
 function roomBlock(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts = {}) {
   const rr = rng(seed2), T = opts.wall || 0.45, DOOR = opts.door || 1.6, DOORH = opts.doorH || 2.5;
   const minRoom = opts.minRoom || 5.5;
-  // ---- partition: split the longer side while both halves stay habitable ----
+  // ---- build 1112: STOREYS. A stair bay is carved off the -x edge and runs the full depth; the
+  // rooms partition what's left. Every upper floor plate and the roof omit the bay, so the shaft is
+  // open top to bottom and the ramps inside it are the way up — including onto the roof, which is
+  // why a multi-storey block needs no outside ramp. Ramps alternate direction per storey, so the
+  // climb switchbacks instead of running one impossible 20-unit straight.
+  const storeys = Math.max(1, opts.storeys || 1);
+  // 7 wide, so each switchback lane is 3.5. It is not enough to clear the enemy capsule (1.8
+  // across): the collider grid quantises the ramp's SIDE face outward by up to a cell, so an
+  // obstacle effectively stands ~1 unit inside each lane edge. At 2.5-wide lanes that leaves 0.75
+  // of clearance at the centreline — inside the 0.9 push radius, and the probe showed bots shoved
+  // at every single step of the stairs. 3.5 puts it back outside.
+  const bayW = storeys > 1 ? (opts.bay || 7) : 0;
+  const bx = x0 + bayW;                       // interior (room) area starts here
+  const perStorey = [];
+  for (let k = 0; k < storeys; k++) {
+    const yk = y0 + k * h;
+    const rooms = _rbStorey(mWall, mFloor, mTrim, bx, z0, x1, z1, yk, h, (seed2 * 31 + k * 7) | 0, opts, T, DOOR, DOORH, minRoom);
+    perStorey.push(rooms);
+    if (k > 0) box(mFloor, bx - T, yk, z0, x1, yk + 0.2, z1);          // this storey's plate (bay stays open)
+    if (bayW) {
+      // Switchback flights sit SIDE BY SIDE in their own lanes. Stacking them over the same span
+      // looks fine on paper — flight k+1 starts exactly where flight k ended — but the two surfaces
+      // then converge along the run, so the headroom climbing the lower flight shrinks to nothing
+      // at the top. Two lanes: even flights climb toward +z in lane 0, odd flights climb back
+      // toward -z in lane 1, and each one's foot meets the previous one's head at the same height.
+      const lane = (k % 2), lx0 = x0 + lane * (bayW / 2), lx1 = lx0 + bayW / 2;
+      const up = lane === 0;
+      ramp(mFloor, lx0 + 0.1, z0 + 0.3, lx1 - 0.1, z1 - 0.3, yk, up ? yk : yk + h, up ? yk + h : yk, 'z');
+      box(mTrim, bx - 0.12, yk + h, z0, bx, yk + h + 1.0, z1);         // rail so the shaft reads as a drop
+    }
+  }
+  const leaves = perStorey[0];
+  // ---- shell + roof, spanning every storey ----
+  const H = h * storeys;
+  _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts);
+  box(mFloor, x0, y0, z0, x1, y0 + 0.12, z1);                          // ground floor (under the bay too)
+  if (bayW) {                                                          // roof: everything but the shaft
+    box(mWall, bx - T, y0 + H, z0 - T, x1 + T, y0 + H + 0.35, z1 + T);
+    box(mWall, x0 - T, y0 + H, z0 - T, bx - T, y0 + H + 0.35, z0);
+    box(mWall, x0 - T, y0 + H, z1, bx - T, y0 + H + 0.35, z1 + T);
+    box(mWall, x0 - T, y0 + H, z0, x0, y0 + H + 0.35, z1);
+  } else box(mWall, x0 - T, y0 + H, z0 - T, x1 + T, y0 + H + 0.35, z1 + T);
+  return leaves;
+}
+// One storey's rooms: the partition + its lights. Split out of roomBlock so every storey of a
+// tower gets its own seeded floor plan instead of the same one stacked.
+function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, DOOR, DOORH, minRoom) {
+  const rr = rng(seed2);
   const leaves = [];
   (function split(r, depth) {
     const w = r.x1 - r.x0, d = r.z1 - r.z0;
     const canX = w >= minRoom * 2 + T, canZ = d >= minRoom * 2 + T;
-    if (depth >= (opts.depth || 2) || (!canX && !canZ) || rr() < 0.15) { leaves.push(r); return; }
+    // The early-out only applies BELOW the top level: a block big enough to divide always divides,
+    // otherwise "multi-room building" quietly rolls a single shed 15% of the time.
+    if (depth >= (opts.depth || 2) || (!canX && !canZ) || (depth > 0 && rr() < 0.15)) { leaves.push(r); return; }
     const alongX = canX && (!canZ || w >= d);
     const lo = (alongX ? r.x0 : r.z0) + minRoom, hi = (alongX ? r.x1 : r.z1) - minRoom;
     const cut = lo + rr() * (hi - lo);
@@ -1198,19 +1247,6 @@ function roomBlock(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts = {}
     }
   })({ x0, z0, x1, z1 }, 0);
 
-  // ---- shell: entrance on the requested face, windows on the rest ----
-  const ent = opts.entrance || '-x';
-  const win = (a0, a1) => [{ at: a0 + (a1 - a0) * 0.28, w: 1.8, h: 1.4, sill: 1.5 },
-                           { at: a0 + (a1 - a0) * 0.72, w: 1.8, h: 1.4, sill: 1.5 }];
-  const doorOn = (a0, a1) => [{ at: (a0 + a1) / 2, w: DOOR * 1.6, h: 3 }];
-  wallRun(mWall, 'x', x0, x1, z0 - T, z0, y0, y0 + h, ent === '-z' ? doorOn(x0, x1) : win(x0, x1));
-  wallRun(mWall, 'x', x0, x1, z1, z1 + T, y0, y0 + h, ent === '+z' ? doorOn(x0, x1) : win(x0, x1));
-  wallRun(mWall, 'z', z0, z1, x0 - T, x0, y0, y0 + h, ent === '-x' ? doorOn(z0, z1) : win(z0, z1));
-  wallRun(mWall, 'z', z0, z1, x1, x1 + T, y0, y0 + h, ent === '+x' ? doorOn(z0, z1) : win(z0, z1));
-
-  box(mFloor, x0, y0, z0, x1, y0 + 0.12, z1);                             // interior floor
-  box(mWall, x0 - T, y0 + h, z0 - T, x1 + T, y0 + h + 0.35, z1 + T);      // roof slab
-
   // ---- per-room ceiling fixture + the baked light that goes with it ----
   const lc = opts.lightCol || [1, 0.93, 0.78];
   for (const r of leaves) {
@@ -1221,6 +1257,22 @@ function roomBlock(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts = {}
     addLight(cx, ly - 0.25, cz, lc, Math.max(6, Math.hypot(r.x1 - r.x0, r.z1 - r.z0) * 0.9), opts.lightPow || 2.6);
   }
   return leaves;
+}
+// The outer shell: an entrance on the requested face at ground level, windows everywhere else on
+// every storey — so an upper floor reads as inhabited from outside, and gives defenders firing
+// positions rather than a blank box.
+function _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts) {
+  const ent = opts.entrance || '-x';
+  const doorOn = (a0, a1) => [{ at: (a0 + a1) / 2, w: DOOR * 1.6, h: 3 }];
+  for (let k = 0; k < storeys; k++) {
+    const yk = y0 + k * h, ground = k === 0;
+    const W2 = (a0, a1) => [{ at: a0 + (a1 - a0) * 0.28, w: 1.8, h: 1.4, sill: 1.5 },
+                            { at: a0 + (a1 - a0) * 0.72, w: 1.8, h: 1.4, sill: 1.5 }];
+    wallRun(mWall, 'x', x0, x1, z0 - T, z0, yk, yk + h, (ground && ent === '-z') ? doorOn(x0, x1) : W2(x0, x1));
+    wallRun(mWall, 'x', x0, x1, z1, z1 + T, yk, yk + h, (ground && ent === '+z') ? doorOn(x0, x1) : W2(x0, x1));
+    wallRun(mWall, 'z', z0, z1, x0 - T, x0, yk, yk + h, (ground && ent === '-x') ? doorOn(z0, z1) : W2(z0, z1));
+    wallRun(mWall, 'z', z0, z1, x1, x1 + T, yk, yk + h, (ground && ent === '+x') ? doorOn(z0, z1) : W2(z0, z1));
+  }
 }
 
 // an organic boulder: an icosphere (subdivided once, 80 faces) with deterministic per-vertex
@@ -2190,25 +2242,43 @@ function buildArena(seed, theme, size, footprint) {
       reserve(Math.min(gx0, gx1) - 1, -gz - 11, Math.max(gx0, gx1) + 1, gz + 11);
       scan(s * (W - 3), gz + 9, s * (W - 3), 0);
     }
-  } else if (ss === 1) {   // build 1111: real BUILDINGS — several rooms, doorways, lit interiors
-    const bx = W - 9.5, bzE = ((rr() * 10) | 0) - 5, WH2 = 4.6;
+  } else if (ss === 1) {   // build 1111/1112: real BUILDINGS — rooms, doorways, lit interiors,
+    // build 1112: roomBlock CAN stack storeys with a switchback stairwell (see its `storeys`
+    // option, unit-tested), but the arena does not use it yet: the engine probe shows enemies
+    // pushed at EVERY step of the generated stairs (31/31 sample points), on both the 2.5- and
+    // 3.5-wide lane variants, so widening the shaft is not the cause. Until that is understood,
+    // arena buildings stay single-storey — shipping stairs bots refuse to climb would be worse
+    // than shipping none. rr() is still consumed so seeds keep their existing layouts.
+    const twoUp = (rr(), false);
+    const STO = 3.7, bzE = ((rr() * 10) | 0) - 5;
+    const bx = W - 10.5, WH2 = twoUp ? STO * 2 : 4.6;
     for (const s of [1, -1]) {
       const cx2 = s * bx, cz2 = s * bzE;
-      const x0 = cx2 - 5, x1 = cx2 + 5, z0 = cz2 - 7, z1 = cz2 + 7;
+      // the stair bay is carved off the block's -x edge, so mirror the block for the west copy to
+      // keep both entrances facing the courtyard
+      const x0 = cx2 - (twoUp ? 8 : 6), x1 = cx2 + (twoUp ? 8 : 6), z0 = cz2 - 8, z1 = cz2 + 8;
       const xd = s > 0 ? x0 : x1;                                  // door face looks at the courtyard
-      const rooms = roomBlock(P.wall, libMat('plankGrey'), P.trim, x0, z0, x1, z1, 0, WH2,
+      const rooms = roomBlock(P.wall, libMat('plankGrey'), P.trim, x0, z0, x1, z1, 0, twoUp ? STO : 4.6,
         (seed * 97 + s * 13) | 0, { entrance: s > 0 ? '-x' : '+x', depth: 2, minRoom: 5.5,
+          storeys: twoUp ? 2 : 1, bay: 7,
           lightCol: theme === 'volcanic' ? [1, 0.62, 0.3] : theme === 'castle' ? [1, 0.78, 0.5] : [1, 0.93, 0.78] });
       // furnish: a crate in the largest room, so the interior is worth entering
       const big = rooms.slice().sort((a, b) => (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0))[0];
       if (big) bevelCbox(P.cover, (big.x0 + big.x1) / 2, 0.74, (big.z0 + big.z1) / 2, 1.24, 1.24, 1.24, true);
-      // roof ramp: run 12, rise 4.95 -> 0.41. On the +z side for the east building, mirrored west.
-      const rz0 = s > 0 ? z1 + 0.45 : z0 - 12.45, rz1 = s > 0 ? z1 + 12.45 : z0 - 0.45;
-      ramp(P.ramp, cx2 - 1.8, rz0, cx2 + 1.8, rz1, 0, s > 0 ? WH2 + 0.35 : 0, s > 0 ? 0 : WH2 + 0.35, 'z');
+      let rz0, rz1;
+      if (twoUp) {
+        // no outside ramp: 7.75 of rise would need a 18-unit run. The internal stairs go all the
+        // way to the roof, so the height advantage is earned by going INSIDE.
+        rz0 = z0; rz1 = z1;
+        scan(x0 + 1.75, z0 + 0.6, x0 + 1.75, z1 - 0.6);            // lane 0 of the stair bay
+      } else {
+        rz0 = s > 0 ? z1 + 0.45 : z0 - 12.45; rz1 = s > 0 ? z1 + 12.45 : z0 - 0.45;
+        ramp(P.ramp, cx2 - 1.8, rz0, cx2 + 1.8, rz1, 0, s > 0 ? WH2 + 0.35 : 0, s > 0 ? 0 : WH2 + 0.35, 'z');
+        scan(cx2, s > 0 ? rz1 + 1 : rz0 - 1, cx2, s > 0 ? rz0 - 10 : rz1 + 10);
+      }
       box(P.parapet, xd - (s > 0 ? 0.45 : -0.45) * 0.66, WH2 + 0.35, z0 - 0.45, xd + (s > 0 ? 0 : 0.45) * 0.66, WH2 + 1.5, z1 + 0.45);
-      sign(s > 0 ? '-x' : '+x', cz2 * 0 + xd + (s > 0 ? -0.5 : 0.5), WH2 - 0.65, cz2, 0.62, theme === 'castle' ? 'BARRACKS' : theme === 'garden' ? 'GREENHOUSE' : 'DEPOT', P.signC);
+      sign(s > 0 ? '-x' : '+x', xd + (s > 0 ? -0.5 : 0.5), 3.95, cz2, 0.62, theme === 'castle' ? 'BARRACKS' : theme === 'garden' ? 'GREENHOUSE' : 'DEPOT', P.signC);
       reserve(x0 - 1.4, Math.min(rz0, z0) - 1, x1 + 1.4, Math.max(rz1, z1) + 1);
-      scan(cx2, s > 0 ? rz1 + 1 : rz0 - 1, cx2, s > 0 ? rz0 - 10 : rz1 + 10);
     }
   } else {                 // open yards: big theme cover at mid-wall
     for (const s of [1, -1]) {
