@@ -567,15 +567,17 @@ function grassTex(name, seed, S) {
   const r = rng(seed), t = new Tex(name, S);
   const clump = fbm(r, S, [[10, 1], [30, 0.6]]);
   const dry = fbm(rng(seed ^ 4), S, [[4, 1], [12, 0.5]]);
-  t.fill([0.26, 0.4, 0.16]);
+  const cool = fbm(rng(seed ^ 9), S, [[5, 1], [15, 0.4]]);           // slow hue drift: warm and cool greens
+  t.fill([0.23, 0.33, 0.14]);
   t.each((x, y, i) => {
-    const c = clump(x, y), d = dry(x, y);
-    t.tint(i, 0.75 + c * 0.55);
-    if (d > 0.58) t.mix(i, [0.55, 0.5, 0.24], Math.min(1, (d - 0.58) * 4) * 0.6);   // dry patches
+    const c = clump(x, y), d = dry(x, y), q2 = cool(x, y);
+    t.tint(i, 0.74 + c * 0.44);
+    if (q2 > 0.55) t.mix(i, [0.17, 0.30, 0.19], Math.min(1, (q2 - 0.55) * 3) * 0.5);   // cool blue-green patches
+    if (d > 0.58) t.mix(i, [0.5, 0.45, 0.22], Math.min(1, (d - 0.58) * 4) * 0.6);      // dry straw patches
     t.h[i] = c * 0.4;
   });
   const k = S / 256;                                                 // blades: short strokes, any resolution
-  for (let q = 0; q < S * S / 340; q++) {
+  for (let q = 0; q < S * S / 230; q++) {
     let x = r() * S, y = r() * S;
     const lean = (r() - 0.5) * 0.9, len = (2 + r() * 3) * k, up = r() < 0.5 ? 0.82 : 1.2;
     for (let d = 0; d < len; d++) {
@@ -1257,8 +1259,9 @@ function container(mBody, mDoor, cx, cz, y, along = 'x') {
 function grassCardTex(name, seed, S, opts = {}) {
   const t = new Tex(name, S); t.a = new Float64Array(S * S); t.noAux = true;
   const rr = rng(seed);
-  // pre-fill rgb with the mid-field green so MASK edge texels never sample toward black
-  for (let i = 0; i < S * S; i++) { t.rgb[i * 3] = 0.16; t.rgb[i * 3 + 1] = 0.26; t.rgb[i * 3 + 2] = 0.10; }
+  // pre-fill rgb with a LIT mid-green: mipmaps average transparent texels' colour into distant
+  // blades, so a dark fill turns far-away tufts into black silhouettes
+  for (let i = 0; i < S * S; i++) { t.rgb[i * 3] = 0.30; t.rgb[i * 3 + 1] = 0.44; t.rgb[i * 3 + 2] = 0.17; }
   const px = (x, y, r, g, b, a) => {
     if (x < 0 || y < 0 || x >= S || y >= S) return;
     const i = (y | 0) * S + (x | 0);
@@ -1280,7 +1283,7 @@ function grassCardTex(name, seed, S, opts = {}) {
       const x = x0 + lean * S * 0.16 * tt + curve * S * 0.10 * tt * tt;
       const y = S - 1 - h * tt;
       const hw = Math.max(0.5, w0 * (1 - tt * 0.92));
-      const shade = 0.42 + 0.58 * tt;                       // root-to-tip AO gradient
+      const shade = 0.55 + 0.45 * tt;                       // root-to-tip AO gradient
       for (let dx = -hw - 1; dx <= hw + 1; dx++) {
         const a = sstep(hw + 0.8, hw - 0.8, Math.abs(dx));  // soft edge; MASK cutoff hardens it
         if (a > 0.03) px(x + dx, y, cr * shade, cg * shade, cb * shade, a);
@@ -1318,7 +1321,7 @@ function grassClump(m, cx, cz, y, seed2, size = 1) {
     const a = a0 + q * Math.PI / n + (rr() - 0.5) * 0.5;
     const w = (1.5 + rr() * 0.8) * size, h = (0.8 + rr() * 0.45) * size;
     const dx = Math.cos(a) * w / 2, dz = Math.sin(a) * w / 2;
-    const swx = (rr() - 0.5) * 0.3 * size, swz = (rr() - 0.5) * 0.3 * size;   // wind lean at the tips
+    const swx = (0.22 + (rr() - 0.5) * 0.18) * size, swz = (0.10 + (rr() - 0.5) * 0.18) * size;   // one prevailing wind + per-card jitter
     quad(m, [cx - dx, y - 0.05, cz - dz], [cx + dx, y - 0.05, cz + dz],
             [cx + dx + swx, y + h, cz + dz + swz], [cx - dx + swx, y + h, cz - dz + swz],
       [[0, 1], [1, 1], [1, 0], [0, 0]]);
@@ -1330,12 +1333,22 @@ function scatterFoliage(m, x0, z0, x1, z1, n, seed2, opts = {}) {
   const rr = rng(seed2), avoid = opts.avoid || [];
   const yAt = opts.yAt || (() => opts.y || 0);
   const sMin = opts.sMin ?? 0.7, sMax = opts.sMax ?? 1.25;
+  // low-frequency patch noise: lush clumps with thin gaps between them, and per-patch hue
+  // (alt materials) — an even carpet of identical green is the procedural tell
+  const vh = (a, b) => hash2(a * 3.17 + seed2 * 0.13, b * 7.71 - seed2 * 0.29);
+  const vn = (x, z) => { const xf = x * 0.19, zf = z * 0.19, xi = Math.floor(xf), zi = Math.floor(zf);
+    const fx = xf - xi, fz = zf - zi, sx2 = fx * fx * (3 - 2 * fx), sz2 = fz * fz * (3 - 2 * fz);
+    return (vh(xi, zi) * (1 - sx2) + vh(xi + 1, zi) * sx2) * (1 - sz2) + (vh(xi, zi + 1) * (1 - sx2) + vh(xi + 1, zi + 1) * sx2) * sz2; };
+  const mats = [m].concat(opts.alts || []);
   let placed = 0, tries = 0;
-  while (placed < n && tries++ < n * 14) {
+  while (placed < n && tries++ < n * 22) {
     const x = x0 + rr() * (x1 - x0), z = z0 + rr() * (z1 - z0);
+    const pv = vn(x, z);
+    if (opts.patchy !== false && pv < 0.34) continue;
     if (avoid.some(r => x > r[0] - 0.7 && x < r[2] + 0.7 && z > r[1] - 0.7 && z < r[3] + 0.7)) continue;
-    const mm = (opts.flowerM != null && rr() < (opts.flowerFrac ?? 0.22)) ? opts.flowerM : m;
-    grassClump(mm, x, z, yAt(x, z), (seed2 * 31 + placed * 7 + 1) | 0, sMin + rr() * (sMax - sMin));
+    const mm = (opts.flowerM != null && rr() < (opts.flowerFrac ?? 0.22)) ? opts.flowerM
+      : mats[Math.min(mats.length - 1, (pv * mats.length * 1.35) | 0)];
+    grassClump(mm, x, z, yAt(x, z), (seed2 * 31 + placed * 7 + 1) | 0, (sMin + rr() * (sMax - sMin)) * (0.72 + pv * 0.5));
     placed++;
   }
   return placed;
@@ -1919,8 +1932,8 @@ function buildMuseum() {
 // engine probe to verify bots can actually walk what was generated.
 function arenaPalette(theme) {
   const D = mat('decals', { tex: useTex(decalTex('decals')), blend: true, rough: 0.5, metal: 0, base: [1, 1, 1] });
-  const teamA = mat('teamA', { base: [1, 0.55, 0.23], glow: 0.55, rough: 0.6 });
-  const teamB = mat('teamB', { base: [0.29, 0.66, 1], glow: 0.55, rough: 0.6 });
+  const teamA = mat('teamA', { base: [1, 0.55, 0.23], glow: 0.32, rough: 0.6 });   // glow low enough that ACES keeps the hue
+  const teamB = mat('teamB', { base: [0.29, 0.66, 1], glow: 0.32, rough: 0.6 });
   const base = { D, teamA, teamB, grassM: libMat('grassCard'), flowerM: libMat('flowerCard'), reedM: libMat('reedCard') };
   if (theme === 'castle') return { ...base,
     ground: libMat('cobble'), wall: libMat('stone'), slab: libMat('stone'), deck: libMat('plankGrey'),
@@ -1931,18 +1944,40 @@ function arenaPalette(theme) {
     ground: libMat('dirt'), wall: libMat('rock'), slab: libMat('stone'), deck: libMat('stone'),
     ramp: libMat('stone'), pillar: libMat('rock'), parapet: libMat('stone'),
     cover: libMat('rock'), cover2: libMat('stone'), lava: libMat('lava'),
-    trim: mat('ember', { base: [1, 0.42, 0.12], glow: 1.1, rough: 0.6 }), signC: [1, 0.6, 0.3], foliage: 'scorched' };
+    trim: mat('ember', { base: [1, 0.42, 0.12], glow: 0.6, rough: 0.6 }), signC: [1, 0.6, 0.3], foliage: 'scorched' };
   if (theme === 'garden') return { ...base,
-    ground: libMat('grass'), wall: libMat('brickPale'), slab: libMat('stone'), deck: libMat('planks'),
+    ground: libMat('grass', { base: [0.74, 0.8, 0.62] }), wall: libMat('brickPale'), slab: libMat('stone'), deck: libMat('planks'),
     ramp: libMat('planks'), pillar: libMat('brickPale'), parapet: libMat('plankGrey'),
     cover: libMat('planks'), cover2: libMat('crateTx'), path: libMat('cobble'),
     trim: mat('lantern', { base: [0.95, 0.9, 0.6], glow: 0.8, rough: 0.5 }), signC: [0.9, 0.86, 0.7], foliage: 'lush' };
-  return { ...base,   // industrial
-    ground: libMat('concrete', { base: [0.52, 0.55, 0.57] }), wall: libMat('panels'), slab: libMat('deck'),
-    deck: libMat('deck'), ramp: libMat('deck', { base: [0.82, 0.86, 0.94] }), pillar: libMat('metal'),
-    parapet: libMat('metal', { base: [0.6, 0.65, 0.72], scale: 3 }),
+  return { ...base,   // industrial — hard value structure: dark floor, mid walls, light deck, dark steel
+    ground: libMat('concrete', { base: [0.30, 0.31, 0.33], scale: 10 }), wall: libMat('panels', { base: [0.5, 0.52, 0.55] }),
+    slab: libMat('deck', { base: [0.62, 0.64, 0.68] }),
+    deck: libMat('deck', { base: [0.62, 0.64, 0.68] }), ramp: libMat('deck', { base: [0.66, 0.68, 0.72] }), pillar: libMat('metal', { base: [0.3, 0.32, 0.36] }),
+    parapet: libMat('metal', { base: [0.26, 0.29, 0.33], scale: 3 }),
     cover: libMat('crateTx'), cover2: libMat('crateTx', { base: [0.5, 0.35, 0.26], rough: 0.85 }),
-    trim: mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.9, rough: 0.5 }), signC: [0.9, 0.88, 0.82], foliage: 'weeds' };
+    trim: mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.55, rough: 0.5 }), signC: [0.9, 0.88, 0.82], foliage: 'weeds' };
+}
+// Per-theme lighting mood: the bake rig (indirect radiance colours) and the runtime worldCfg
+// colour script (warm key vs cool fill, fog matched to the horizon) travel together. The warm/cool
+// temperature split between sun and shadow is most of what reads as "cinematic".
+function arenaMood(theme) {
+  if (theme === 'castle') return {   // golden hour: low warm sun, long shadows, warm haze
+    light: { sunAzim: 245, sunElev: 26, sunCol: [1, 0.72, 0.45], skyZen: [0.14, 0.19, 0.34], skyHor: [0.50, 0.37, 0.28], groundAlb: [0.22, 0.19, 0.15] },
+    world: { sun: 1.05, sunColor: 0xffd2a0, sunAzim: 245, sunElev: 26, sky: 0.35, skyColor: 0x92a6c8, ambient: 0.05,
+      fogDensity: 0.005, fogColor: 0x8a7663, exposure: 1.3, postBloom: 0.5, postVig: 0.34, postSat: 1.1 } };
+  if (theme === 'volcanic') return { // ashen overcast with ember accents
+    light: { sunAzim: 130, sunElev: 38, sunCol: [1, 0.80, 0.60], skyZen: [0.15, 0.145, 0.15], skyHor: [0.28, 0.25, 0.23], groundAlb: [0.16, 0.13, 0.10] },
+    world: { sun: 0.75, sunColor: 0xffc9a0, sunAzim: 130, sunElev: 38, sky: 0.5, skyColor: 0x8e8d90, ambient: 0.06,
+      fogDensity: 0.007, fogColor: 0x4a453f, exposure: 1.25, postBloom: 0.7, postVig: 0.4, postSat: 1.04 } };
+  if (theme === 'garden') return {   // bright clear day; the ground bounce is green
+    light: { sunAzim: 115, sunElev: 52, sunCol: [1, 0.94, 0.85], skyZen: [0.18, 0.28, 0.50], skyHor: [0.38, 0.42, 0.48], groundAlb: [0.12, 0.18, 0.08] },
+    world: { sun: 1.0, sunColor: 0xfff0da, sunAzim: 115, sunElev: 52, sky: 0.36, skyColor: 0xa5c0e0, ambient: 0.03,
+      fogDensity: 0.004, fogColor: 0x9fb0c2, exposure: 1.12, postBloom: 0.45, postVig: 0.3, postSat: 1.06 } };
+  return {                           // industrial: cool clear working day
+    light: { sunAzim: 100, sunElev: 55, sunCol: [1, 0.95, 0.88], skyZen: [0.16, 0.25, 0.45], skyHor: [0.34, 0.38, 0.45], groundAlb: [0.20, 0.21, 0.22] },
+    world: { sun: 1.1, sunColor: 0xfff2e0, sunAzim: 100, sunElev: 55, sky: 0.22, skyColor: 0xa8c2dd, ambient: 0.03,
+      fogDensity: 0.0045, fogColor: 0x8d9aa8, exposure: 1.15, postBloom: 0.5, postVig: 0.32, postSat: 1.08 } };
 }
 function buildArena(seed, theme, size) {
   const rr = rng((seed * 9973 + 7) | 0);
@@ -1989,6 +2024,23 @@ function buildArena(seed, theme, size) {
     box(P.parapet, W - 0.1, WALL_H, -W, W + 1.6, WALL_H + 0.4, W);
     for (const sx of [1, -1]) for (const sz of [1, -1]) lamppost(P.parapet, P.trim, sx * (W - 3), sz * (W - 3), 0, 4.6, 0.9 * -sx);
   }
+  // ---- trim pass: plinth, floor border, cornice. "Never let two materials meet naked" — the
+  // wall-floor seam gets a darker plinth strip + a contrasting border band, and the wall top a
+  // proud cornice line. This is most of what kills the blockout read.
+  if (theme !== 'volcanic') {                                       // rock walls are organic, no joinery
+    const plinth = libMat(theme === 'industrial' ? 'concrete' : 'stone',
+      theme === 'industrial' ? { base: [0.35, 0.37, 0.39], rough: 0.98, scale: 3 } : { base: [0.72, 0.68, 0.62], rough: 0.98, scale: 3 });
+    const border = theme === 'industrial' ? libMat('asphalt') : theme === 'garden' ? libMat('dirt') : libMat('cobble', { base: [0.8, 0.78, 0.75] });
+    box(plinth, -W, 0, -W, W, 0.55, -W + 0.16); box(plinth, -W, 0, W - 0.16, W, 0.55, W);
+    box(plinth, -W, 0, -W, -W + 0.16, 0.55, W); box(plinth, W - 0.16, 0, -W, W, 0.55, W);
+    box(border, -W, 0, -W + 0.16, W, 0.045, -W + 0.85); box(border, -W, 0, W - 0.85, W, 0.045, W - 0.16);
+    box(border, -W, 0, -W, -W + 0.85, 0.045, W); box(border, W - 0.85, 0, -W, W, 0.045, W);
+    box(plinth, -W, WALL_H - 0.92, -W, W, WALL_H - 0.62, -W + 0.14); box(plinth, -W, WALL_H - 0.92, W - 0.14, W, WALL_H - 0.62, W);
+    box(plinth, -W, WALL_H - 0.92, -W, -W + 0.14, WALL_H - 0.62, W); box(plinth, W - 0.14, WALL_H - 0.92, -W, W, WALL_H - 0.62, W);
+  }
+  // motivated weathering: leak streaks bleeding down from the cornice line
+  for (const s of [1, -1]) { decal(P.D, s > 0 ? '-x' : '+x', s * (W - 0.05), WALL_H * 0.55, s * -14, 5, WALL_H * 0.7, DECAL.LEAK);
+    decal(P.D, s > 0 ? '-z' : '+z', s * -19, WALL_H * 0.5, s * (W - 0.05), 4, WALL_H * 0.62, DECAL.LEAK); }
 
   // ---- central feature: deck | hill | plaza ----
   const cf = (rr() * 3) | 0;
@@ -2142,8 +2194,9 @@ function buildArena(seed, theme, size) {
       reserve(tx - 2, tz - 2, tx + 2, tz + 2); reserve(-tx - 2, -tz - 2, -tx + 2, -tz + 2);
       trees++;
     }
-    scatterFoliage(P.grassM, -W + 1.5, -W + 1.5, W - 1.5, W - 1.5, (W * W / 6) | 0, (seed * 3 + 11) | 0,
-      { flowerM: P.flowerM, avoid: AV, sMin: 0.7, sMax: 1.45 });
+    scatterFoliage(P.grassM, -W + 1.5, -W + 1.5, W - 1.5, W - 1.5, (W * W / 5) | 0, (seed * 3 + 11) | 0,
+      { flowerM: P.flowerM, avoid: AV, sMin: 0.7, sMax: 1.45,
+        alts: [libMat('grassCard', { base: [0.84, 0.96, 0.7] }), libMat('grassCard', { base: [1, 0.93, 0.78] })] });
   } else if (F === 'patchy') {                                      // castle: green creeps in at the edges
     for (const [x0, z0, x1, z1] of [[-W + 1, -W + 1, W - 1, -W + 7], [-W + 1, W - 7, W - 1, W - 1],
                                     [-W + 1, -W + 7, -W + 7, W - 7], [W - 7, -W + 7, W - 1, W - 7]])
@@ -2172,7 +2225,8 @@ function buildArena(seed, theme, size) {
   sign('-x', W - 0.04, WALL_H * 0.62, 0, 1.2, arenaName, P.signC);
   for (const sc of SCANS.slice(0, 2)) decal(P.D, 'up', sc[0], 0.03, sc[1], 3.2, 2.8, DECAL.CHEV, Math.abs(sc[1]) > Math.abs(sc[0]) ? (sc[1] > 0 ? 0 : 180) : (sc[0] > 0 ? 90 : 270));
 
-  return { name: `${arenaName} (seed ${seed} · ${theme} · ${size})`, scans: SCANS };
+  const MOOD = arenaMood(theme);
+  return { name: `${arenaName} (seed ${seed} · ${theme} · ${size})`, scans: SCANS, light: MOOD.light, world: MOOD.world };
 }
 
 // -------------------------------------------------------------- baked lighting (AO) ----
@@ -2183,15 +2237,30 @@ function buildArena(seed, theme, size) {
 // resolution gradients, and AO no longer darkens direct sunlight, only ambient.
 // A uniform XZ grid over the solids accelerates the rays (2D DDA); without it a full level
 // bake is minutes, with it seconds.
-let LM = null;   // { px: Float64Array A*A, A } after bake
-function bakeLightmap() {
+let LM = null;   // { px: Float64Array A*A*3 (linear RGB), A, intensity } after bake
+function bakeLightmap(light) {
   if (!PATCHES.length) return;
+  // build 1095 pipeline: this is no longer an AO bake — it is an RGB *radiance* bake of the
+  // indirect light: coloured sky visibility (blue-grey shade) + one bounce of sun off the ground
+  // (warm up-light), with short-range contact occlusion folded in. The engine moves it from
+  // aoMap to lightMap (extras.rumpusLightmap) and the dynamic sun supplies direct light and
+  // shadows on top — the classic baked-GI / dynamic-key split.
+  const LR = light || {};
+  const azr = ((LR.sunAzim == null ? 110 : LR.sunAzim) * Math.PI) / 180;
+  const elr = ((LR.sunElev == null ? 48 : LR.sunElev) * Math.PI) / 180;
+  const sunD = [Math.sin(azr) * Math.cos(elr), Math.sin(elr), Math.cos(azr) * Math.cos(elr)];
+  const sunC = LR.sunCol || [1.0, 0.93, 0.84];          // warm key for the bounce
+  const zen  = LR.skyZen || [0.16, 0.24, 0.42];         // cool fill from above...
+  const hor  = LR.skyHor || [0.30, 0.34, 0.42];         // ...brightening toward the horizon
+  const gAlb = LR.groundAlb || [0.22, 0.20, 0.15];      // what the ground bounces
+  const wAlb = LR.wallAlb || [0.30, 0.29, 0.27];        // what walls bounce
+  const skyAvg = [(zen[0] + hor[0]) / 2, (zen[1] + hor[1]) / 2, (zen[2] + hor[2]) / 2];
   const CELL = 10, INT = 8;
   const perRow1 = Math.floor(1024 / CELL);
   const A = PATCHES.length <= perRow1 * perRow1 ? 1024 : 2048;
   const perRow = Math.floor(A / CELL);
   if (PATCHES.length > perRow * perRow) throw new Error('lightmap atlas overflow: ' + PATCHES.length);
-  LM = { px: new Float64Array(A * A).fill(1), A };
+  LM = { px: new Float64Array(A * A * 3).fill(1), A, intensity: 1 };
   // ---- acceleration grid over XZ ----
   let mnx = 1e9, mnz = 1e9, mxx = -1e9, mxz = -1e9;
   for (const b of SOLIDS) { mnx = Math.min(mnx, b[0]); mnz = Math.min(mnz, b[2]); mxx = Math.max(mxx, b[3]); mxz = Math.max(mxz, b[5]); }
@@ -2218,7 +2287,7 @@ function bakeLightmap() {
     }
     return t0;
   };
-  const rayOcc = (ox, oy, oz, dx, dy, dz) => {   // weight of nearest hit within MAXT, 0 if clear
+  const rayT = (ox, oy, oz, dx, dy, dz) => {   // distance to nearest hit; MAXT if clear
     raySerial++;
     let best = MAXT;
     let gx = ((ox - mnx) / GC) | 0, gz = ((oz - mnz) / GC) | 0;
@@ -2241,7 +2310,7 @@ function bakeLightmap() {
       if ((gx < 0 && stepX < 0) || (gx >= GW && stepX > 0)) break;
       if ((gz < 0 && stepZ < 0) || (gz >= GH && stepZ > 0)) break;
     }
-    return best < MAXT ? (1 - best / MAXT) : 0;
+    return best;
   };
   const DIRS = [];
   for (let q = 0; q < 32; q++) {
@@ -2268,7 +2337,11 @@ function bakeLightmap() {
     const downFacing = ny < -0.75;
     for (let j = 1; j <= INT; j++) for (let i2 = 1; i2 <= INT; i2++) {   // pass 1: interior
       { const fi = i2, fj = j;
-        if (downFacing) { LM.px[(cy + j) * A + cx + i2] = 0.55; continue; }
+        const oi = ((cy + j) * A + cx + i2) * 3;
+        if (downFacing) {   // undersides: dim ground bounce, slightly warm
+          LM.px[oi] = skyAvg[0] * 0.28 + gAlb[0] * 0.30; LM.px[oi + 1] = skyAvg[1] * 0.28 + gAlb[1] * 0.30; LM.px[oi + 2] = skyAvg[2] * 0.28 + gAlb[2] * 0.30;
+          continue;
+        }
         const fu = (fi - 0.5) / INT, fv = (fj - 0.5) / INT;
         let px2, py2, pz2;
         if (pt.n === 4) {
@@ -2283,22 +2356,46 @@ function bakeLightmap() {
           pz2 = V[0][2] + (V[1][2] - V[0][2]) * wu + (V[2][2] - V[0][2]) * wv;
         }
         const ox = px2 + nx * 0.06, oy = py2 + ny * 0.06, oz = pz2 + nz * 0.06;
-        let occ = 0, wsum = 0;
+        let r = 0, g2 = 0, b2 = 0, wsum = 0, contact = 0;
         for (const d of DIRS) {
           const dt = d[0] * nx + d[1] * ny + d[2] * nz;
           if (dt < 0.12) continue;
           wsum += dt;
-          occ += dt * rayOcc(ox, oy, oz, d[0], d[1], d[2]);
+          const t = rayT(ox, oy, oz, d[0], d[1], d[2]);
+          if (t >= MAXT) {
+            if (d[1] >= 0) {           // open sky: gradient by elevation
+              const f = d[1];
+              r += dt * (hor[0] + (zen[0] - hor[0]) * f); g2 += dt * (hor[1] + (zen[1] - hor[1]) * f); b2 += dt * (hor[2] + (zen[2] - hor[2]) * f);
+            } else {                   // escaped below the horizon: distant sunlit ground
+              r += dt * gAlb[0] * sunC[0] * 0.8; g2 += dt * gAlb[1] * sunC[1] * 0.8; b2 += dt * gAlb[2] * sunC[2] * 0.8;
+            }
+          } else {
+            if (t < 1.4) contact += dt * (1 - t / 1.4);   // short-range hit doubles as cavity/contact AO
+            // one bounce: is the hit point in the sun? (offset back along the ray, nudged up)
+            const hx = ox + d[0] * t, hy = oy + d[1] * t, hz = oz + d[2] * t;
+            const sv = rayT(hx - d[0] * 0.08, hy - d[1] * 0.08 + 0.03, hz - d[2] * 0.08, sunD[0], sunD[1], sunD[2]) >= MAXT ? 1 : 0;
+            const alb = hy < 0.7 ? gAlb : wAlb;
+            const bf = 0.55 * sv + 0.12;                  // sunlit bounce, plus faint sky-lit bounce
+            r += dt * alb[0] * sunC[0] * bf; g2 += dt * alb[1] * sunC[1] * bf; b2 += dt * alb[2] * sunC[2] * bf;
+          }
         }
-        LM.px[(cy + j) * A + cx + i2] = 0.3 + 0.7 * Math.max(0, Math.min(1, 1 - 1.35 * (wsum ? occ / wsum : 0)));
+        if (wsum > 0) { r /= wsum; g2 /= wsum; b2 /= wsum; }
+        const ao = Math.max(0.25, 1 - 1.15 * (wsum ? contact / wsum : 0));   // crease definition
+        const m2 = 1.2 * ao;                                                 // 1.2 = infinite-bounce compensation
+        r = Math.max(r * m2, 0.015); g2 = Math.max(g2 * m2, 0.015); b2 = Math.max(b2 * m2, 0.02);
+        LM.px[oi] = r; LM.px[oi + 1] = g2; LM.px[oi + 2] = b2;
       }
     }
     for (let j = 0; j < CELL; j++) for (let i2 = 0; i2 < CELL; i2++) {   // pass 2: gutter ring
       const fi = Math.min(Math.max(i2, 1), INT), fj = Math.min(Math.max(j, 1), INT);
       if (i2 === fi && j === fj) continue;
-      LM.px[(cy + j) * A + cx + i2] = LM.px[(cy + fj) * A + cx + fi];
+      const src2 = ((cy + fj) * A + cx + fi) * 3, dst = ((cy + j) * A + cx + i2) * 3;
+      LM.px[dst] = LM.px[src2]; LM.px[dst + 1] = LM.px[src2 + 1]; LM.px[dst + 2] = LM.px[src2 + 2];
     }
   });
+  // normalise into 0..1 for the PNG; the scale factor rides along as lightMapIntensity
+  let mx2 = 0; for (let i3 = 0; i3 < LM.px.length; i3++) if (LM.px[i3] > mx2) mx2 = LM.px[i3];
+  if (mx2 > 1) { for (let i3 = 0; i3 < LM.px.length; i3++) LM.px[i3] /= mx2; LM.intensity = +mx2.toFixed(3); }
 }
 
 // ------------------------------------------------------------------- GLB writing ----
@@ -2339,8 +2436,8 @@ function writeGLB(out) {
   // normal maps at half res — their content is lower-frequency, and noisy normals are what
   // refuse to compress, so half-res aux maps are where the file size goes
   const images = [], textures = [], texIdx = {};   // name -> { base, mr, nrm } texture indices
-  const addImg = (png) => { const v = push(png); images.push({ bufferView: v, mimeType: 'image/png' });
-    textures.push({ sampler: 0, source: images.length - 1 }); return textures.length - 1; };
+  const addImg = (png, sampler = 0) => { const v = push(png); images.push({ bufferView: v, mimeType: 'image/png' });
+    textures.push({ sampler, source: images.length - 1 }); return textures.length - 1; };
   for (const [name, t] of Object.entries(TEXS)) {
     const S = t.S;
     let basePng;
@@ -2362,11 +2459,12 @@ function writeGLB(out) {
     }
     texIdx[name] = e;
   }
-  // the baked AO lightmap: single grey PNG, its own UV channel
+  // the baked radiance lightmap: RGB, sRGB-encoded (banding-friendly in the shade), its own UV
+  // channel, clamped un-mipped sampler (1px gutters are only bilinear-safe at mip 0)
   let lmTex = null;
   if (LM) { const px = new Float64Array(LM.A * LM.A * 3);
-    for (let i = 0; i < LM.A * LM.A; i++) { px[i * 3] = px[i * 3 + 1] = px[i * 3 + 2] = LM.px[i]; }
-    lmTex = addImg(pngEncode(toBytes(px), LM.A, LM.A, 3)); }
+    for (let i = 0; i < px.length; i++) px[i] = Math.pow(Math.max(0, Math.min(1, LM.px[i])), 1 / 2.2);
+    lmTex = addImg(pngEncode(toBytes(px), LM.A, LM.A, 3), 1); }
   const _skip = (env, n) => (process.env[env] || '').split(',').includes(n);   // debug bisection
   const materials = MATS.map(md => {
     const g = { name: md.name, pbrMetallicRoughness: { baseColorFactor: [...md.base, 1], metallicFactor: md.metal, roughnessFactor: md.rough } };
@@ -2375,9 +2473,12 @@ function writeGLB(out) {
       if (ti.mr != null && !_skip('NOMR', md.name)) g.pbrMetallicRoughness.metallicRoughnessTexture = { index: ti.mr };
       if (ti.nrm != null && !_skip('NONRM', md.name)) g.normalTexture = { index: ti.nrm, scale: md.nrm }; }
     if (md.blend) g.alphaMode = 'BLEND';
-    if (md.mask) { g.alphaMode = 'MASK'; g.alphaCutoff = 0.45; }   // cutout foliage: no blend-sort artifacts
+    if (md.mask) { g.alphaMode = 'MASK'; g.alphaCutoff = 0.32; }   // cutout foliage; low cutoff keeps distant mips alive
     if (md.ds) g.doubleSided = true;
-    if (lmTex != null && !process.env.NOLM && _lmMats.has(MATS.indexOf(md))) g.occlusionTexture = { index: lmTex, texCoord: 1 };
+    if (lmTex != null && !process.env.NOLM && _lmMats.has(MATS.indexOf(md))) {
+      g.occlusionTexture = { index: lmTex, texCoord: 1 };                       // old engines: reads .r as plain AO
+      g.extras = { rumpusLightmap: LM.intensity || 1 };                         // build 1095 engines: adopt as radiance lightMap
+    }
     if (md.tex && texIdx[md.tex].em != null) { g.emissiveTexture = { index: texIdx[md.tex].em }; g.emissiveFactor = [1, 1, 1]; }
     else if (md.glow) g.emissiveFactor = md.base.map(v => v * md.glow);
     return g;
@@ -2389,7 +2490,8 @@ function writeGLB(out) {
     asset: { version: '2.0', generator: 'rumpus-levelgen' },
     scene: 0, scenes: [{ nodes: nodes.map((_, i) => i) }], nodes,
     meshes, materials,
-    samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }],
+    samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 },
+               { magFilter: 9729, minFilter: 9729, wrapS: 33071, wrapT: 33071 }],   // lightmap atlas: clamp, no mips
     images, textures,
     buffers: [{ byteLength: off }], bufferViews: views, accessors,
   };
@@ -2428,8 +2530,9 @@ const info = which === 'arena'
   ? buildArena((+process.argv[4] || 1) | 0, process.argv[5] || 'auto', process.argv[6] || 'medium')
   : LAYOUTS[which]();
 const t0 = process.hrtime.bigint();
-bakeLightmap();
+bakeLightmap(info.light);
 const aoMs = Number(process.hrtime.bigint() - t0) / 1e6 | 0;
 const w = writeGLB(out);
 console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets, lightmap ${LM ? LM.A : 0}px / ${PATCHES.length} patches in ${aoMs} ms over ${SOLIDS.length} solids)`);
 if (info.scans) console.log('SCANS ' + JSON.stringify(info.scans));
+if (info.world) console.log('WORLD ' + JSON.stringify(info.world));

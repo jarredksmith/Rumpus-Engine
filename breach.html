@@ -13608,6 +13608,10 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   // — the "shadows on the ground but no props" you hit while hosting. Disable culling on skinned meshes so they
   // always draw. (Static props keep culling — their bounds are correct.)
   obj.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; if(o.isSkinnedMesh) o.frustumCulled = false;
+    // build 1096: alpha-cutout foliage cards (the nocollide convention) must not RECEIVE shadows —
+    // a card catches its own crossed twin's shadow as acne and whole tufts go black. Casting stays:
+    // grass speckling the lawn with shadow is what grounds it.
+    for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)){ o.receiveShadow = false; break; } }
     // build 1095: sharpen every imported texture at grazing angles (floors especially)
     if(typeof MAX_ANISO !== 'undefined' && MAX_ANISO > 1){ const ms = Array.isArray(o.material) ? o.material : [o.material];
       for(const m of ms){ if(!m) continue; for(const k of ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap']) if(m[k]) m[k].anisotropy = MAX_ANISO;
@@ -23947,7 +23951,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1095 · 2026-07-28';
+const BUILD_VERSION = 'build 1096 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
