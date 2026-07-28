@@ -424,22 +424,36 @@ function sandTex(name, seed, S) {
 function plankTex(name, seed, S, col = [0.55, 0.4, 0.26]) {
   const r = rng(seed), t = new Tex(name, S), k = S / 256, pw = S / 6;
   const grain = fbm(r, S, [[4, 1], [10, 0.7], [40, 0.4]]);
-  const knots = worley(rng(seed ^ 8), S, 6);
+  // knots: a few hand-placed ellipses, long axis along the grain, with the grain field
+  // deflecting around each — not concentric rings
+  const kr = rng(seed ^ 8), knots = [];
+  for (let q = 0; q < 5; q++) knots.push([kr() * S, kr() * S, (6 + kr() * 7) * k]);
   t.fill(col);
   t.each((x, y, i) => {
     const colI = Math.floor(x / pw), ph = hash2(colI, 7);
     const lx = x % pw;
-    const g = grain(((x * 0.3) | 0) % S, (y * 2 + ph * S) % S);                       // stretched along the plank
+    let warp = 0, knotD = 9;
+    for (const [kx2, ky2, R] of knots) {
+      let dx = x - kx2; dx -= Math.round(dx / S) * S;
+      let dy = y - ky2; dy -= Math.round(dy / S) * S;
+      const d = Math.hypot(dx / 0.42, dy) / R;              // tall ellipse: stretched with the grain
+      if (d < knotD) knotD = d;
+      if (d < 2.4) warp += (dx >= 0 ? 1 : -1) * Math.max(0, 1 - d / 2.4) * 7 * k;   // grain parts around the knot
+    }
+    // grain stretched ALONG the plank (slow in y, fast in x — the first version had it sideways)
+    const g = grain((((x * 4 + warp) % S) + S) % S, (((y * 0.35 + ph * S) % S) + S) % S);
     const tone = 0.8 + ph * 0.36;
     t.tint(i, tone * (0.78 + g * 0.45));
     t.h[i] = g * 0.5;
     if (lx < 2 * k || lx > pw - 2 * k) { t.tint(i, 0.55); t.h[i] = 0; }               // plank gaps
     const seamY = Math.floor(hash2(colI, 3) * 4) * (S / 4) + (S / 8) * (colI % 2);
     if (Math.abs(y - seamY) < 2 * k) { t.tint(i, 0.6); t.h[i] = 0; }                  // board ends
-    const kn = knots(x, y);
-    if (kn.d1 < 9 * k && kn.id > 0.72) { const d = kn.d1 / (9 * k);
-      t.mix(i, [0.32, 0.2, 0.1], 0.7 * (1 - d)); t.h[i] -= (1 - d) * 0.3;
-      if (Math.abs(d - 0.6) < 0.15 || Math.abs(d - 0.25) < 0.1) t.tint(i, 0.7); }     // knot rings
+    if (knotD < 1.4) {                                                                 // the knot itself
+      const core = Math.max(0, 1 - knotD / 0.45);
+      t.mix(i, [0.3, 0.19, 0.1], Math.min(1, core * 1.5));                             // dark heart
+      t.tint(i, 1 - Math.max(0, 1 - knotD) * 0.22);                                    // soft halo, no bands
+      t.h[i] += core * 0.3 - Math.max(0, 1 - knotD) * 0.12;                            // raised centre, sunk ring
+    }
   });
   return finish(t, seed, { cavDark: 0.32 });
 }
