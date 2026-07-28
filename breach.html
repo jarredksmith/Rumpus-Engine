@@ -23887,7 +23887,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1093 · 2026-07-28';
+const BUILD_VERSION = 'build 1094 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29088,9 +29088,13 @@ function loop(){
             // an obstacle and shoved it back down. A marginal box whose top matches the real walk
             // surface over that box is the ground one step ahead, not a wall. Checked only on
             // actual contact with a near-step-height box, so the raycast cost stays rare.
+            // build 1094: sample the surface just inside the box at the CONTACT point, not the box
+            // centre — the greedy merge can fuse a ramp mouth into a long wall box whose centre
+            // hangs over open air, which made the exemption fail exactly at a ramp's summit. The
+            // tolerance also covers worst-case quantisation (0.45 slope/cell + 0.36 slot).
             if(b.max.y - (en.mesh.position.y-1.4) < STEP + 0.5 && typeof surfaceTopUnder==='function'){
-              const st = surfaceTopUnder((b.min.x+b.max.x)/2, (b.min.z+b.max.z)/2, b.max.y+0.05, b.max.y+2);
-              if(st > -Infinity && b.max.y - st < 0.66) continue;
+              const st = surfaceTopUnder(cx - dx/d*0.1, cz - dz/d*0.1, b.max.y+0.05, b.max.y+2);
+              if(st > -Infinity && b.max.y - st < 0.85) continue;
             }
             const push=eR-d; en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push;
           }

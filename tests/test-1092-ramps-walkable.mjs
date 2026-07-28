@@ -69,14 +69,16 @@ assert(/const multi = \(gx1>gx0 \|\| gz1>gz0\);/.test(bg), 'single-cell triangle
 // ---------------------------------------------------------------- the floor-not-obstacle exemption
 // It lives inside the Phase 3 contact branch: only on actual overlap, only for near-step boxes,
 // and it asks the real surface — so a crate still pushes, but the ramp underfoot does not.
-const m = src.match(/if\(d < eR && d > 1e-4\)\{\n([\s\S]{0,1200}?)\n          \}/);
+const m = src.match(/if\(d < eR && d > 1e-4\)\{\n([\s\S]{0,2000}?)\n          \}/);
 assert(m, 'the enemy resolve contact branch is found');
 assert(/b\.max\.y - \(en\.mesh\.position\.y-1\.4\) < STEP \+ 0\.5/.test(m[1]),
   'the exemption gates on a near-step box top — a crate or parapet never qualifies');
 assert(/typeof surfaceTopUnder==='function'/.test(m[1]), '...guarded, since surfaceTopUnder lives far below');
-assert(/surfaceTopUnder\(\(b\.min\.x\+b\.max\.x\)\/2, \(b\.min\.z\+b\.max\.z\)\/2, b\.max\.y\+0\.05, b\.max\.y\+2\)/.test(m[1]),
-  '...and asks for the real walkable surface over the box itself');
-assert(/if\(st > -Infinity && b\.max\.y - st < 0\.66\) continue;/.test(m[1]),
+// build 1094: the surface is sampled just inside the box at the CONTACT point (box-centre
+// sampling failed when the greedy merge fused a ramp mouth into a long wall box)
+assert(/surfaceTopUnder\(cx - dx\/d\*0\.1, cz - dz\/d\*0\.1, b\.max\.y\+0\.05, b\.max\.y\+2\)/.test(m[1]),
+  '...and asks for the real walkable surface at the contact point on the box');
+assert(/if\(st > -Infinity && b\.max\.y - st < 0\.85\) continue;/.test(m[1]),
   'a box whose top matches the surface is ground one step ahead — skipped, not shoved');
 assert(/const push=eR-d; en\.mesh\.position\.x \+= dx\/d\*push; en\.mesh\.position\.z \+= dz\/d\*push;/.test(m[1]),
   'everything else still pushes exactly as before');
