@@ -1990,10 +1990,12 @@ function arenaMood(theme) {
     world: { sun: 1.1, sunColor: 0xfff2e0, sunAzim: 100, sunElev: 55, sky: 0.22, skyColor: 0xa8c2dd, ambient: 0.03,
       fogDensity: 0.0045, fogColor: 0x8d9aa8, exposure: 1.15, postBloom: 0.5, postVig: 0.32, postSat: 1.08 } };
 }
-function buildArena(seed, theme, size) {
+function buildArena(seed, theme, size, footprint) {
   const rr = rng((seed * 9973 + 7) | 0);
   const themes = ['industrial', 'castle', 'volcanic', 'garden'];
   if (!themes.includes(theme)) theme = themes[(rr() * 4) | 0];
+  const FOOTPRINTS = ['square', 'cross', 'octagon', 'diagonal'];
+  if (!FOOTPRINTS.includes(footprint)) footprint = (footprint === 'auto') ? FOOTPRINTS[(rr() * 4) | 0] : 'square';
   const W = size === 'small' ? 30 : size === 'large' ? 46 : 38;   // inner wall face at ±W
   const P = arenaPalette(theme);
   const WALL_H = 8 + ((rr() * 3) | 0), T = 0.5, MID = 4.5;
@@ -2174,6 +2176,39 @@ function buildArena(seed, theme, size) {
   });
   reserve(-13, W - 10, 13, W); reserve(-13, -W, 13, -W + 10);
 
+  // ---- footprint: the play space need not be a square (build 1110) ----
+  // Corner masses in the wall material, capped at wall height, carve a cross / octagon / diagonal
+  // out of the square, always 180°-symmetric so neither team gets the long straw.
+  // Placed HERE, after the central feature, side structures and bases have reserved their
+  // footprints, and each candidate mass is shrunk until it clears them — otherwise a large arena's
+  // gallery ramp (which reaches |z| = 30) would end up buried inside a corner block: an unwalkable
+  // ramp and a pile of coincident faces. If even the smallest mass would collide, that corner is
+  // simply left square.
+  if (footprint !== 'square') {
+    const corners = footprint === 'diagonal' ? [[1, 1], [-1, -1]] : [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+    const C0 = Math.round(W * (footprint === 'diagonal' ? 0.5 : footprint === 'cross' ? 0.42 : 0.36));
+    const rect = (sx, sz, ax, bx, az, bz) => [
+      Math.min(sx * (W - ax), sx * (W - bx)), Math.min(sz * (W - az), sz * (W - bz)),
+      Math.max(sx * (W - ax), sx * (W - bx)), Math.max(sz * (W - az), sz * (W - bz))];
+    const stepsFor = (C) => footprint === 'octagon'
+      ? [[C, C * 2 / 3, C / 3, 0], [C * 2 / 3, C / 3, C * 2 / 3, 0], [C / 3, 0, C, 0]]   // disjoint 3-step chamfer
+      : [[C, 0, C, 0]];
+    const hits = (r) => AV.some(a => r[0] < a[2] + 1 && r[2] > a[0] - 1 && r[1] < a[3] + 1 && r[3] > a[1] - 1);
+    for (const [sx, sz] of corners) {
+      let C = 0;
+      for (const f of [1, 0.75, 0.5]) {                 // shrink until the corner is clear
+        const c = C0 * f;
+        if (!stepsFor(c).some(s => hits(rect(sx, sz, ...s)))) { C = c; break; }
+      }
+      if (!C) continue;
+      for (const s of stepsFor(C)) {
+        const r = rect(sx, sz, ...s);
+        box(P.wall, r[0], 0, r[1], r[2], WALL_H, r[3]);
+        reserve(r[0] - 1.5, r[1] - 1.5, r[2] + 1.5, r[3] + 1.5);
+      }
+    }
+  }
+
   // ---- garden paths (before cover, so lanes stay clear) ----
   if (theme === 'garden' && P.path != null) {
     box(P.path, -2.2, 0, -W + 1, 2.2, 0.06, W - 1);
@@ -2248,7 +2283,8 @@ function buildArena(seed, theme, size) {
   for (const sc of SCANS.slice(0, 2)) decal(P.D, 'up', sc[0], 0.03, sc[1], 3.2, 2.8, DECAL.CHEV, Math.abs(sc[1]) > Math.abs(sc[0]) ? (sc[1] > 0 ? 0 : 180) : (sc[0] > 0 ? 90 : 270));
 
   const MOOD = arenaMood(theme);
-  return { name: `${arenaName} (seed ${seed} · ${theme} · ${size})`, scans: SCANS, light: MOOD.light, world: MOOD.world };
+  return { name: `${arenaName} (seed ${seed} · ${theme} · ${size}${footprint !== 'square' ? ' · ' + footprint : ''})`,
+    scans: SCANS, light: MOOD.light, world: MOOD.world };
 }
 
 // -------------------------------------------------------------- baked lighting (AO) ----
@@ -2546,11 +2582,11 @@ if (which === 'tex') {   // fast iteration: node tools/levelgen.mjs tex <library
 }
 if ((which !== 'arena' && !LAYOUTS[which]) || !out) {
   console.error('usage: node tools/levelgen.mjs <' + Object.keys(LAYOUTS).join('|') + '> <out.glb>');
-  console.error('       node tools/levelgen.mjs arena <out.glb> [seed] [industrial|castle|volcanic|garden|auto] [small|medium|large]');
+  console.error('       node tools/levelgen.mjs arena <out.glb> [seed] [industrial|castle|volcanic|garden|auto] [small|medium|large] [square|cross|octagon|diagonal|auto]');
   process.exit(1);
 }
 const info = which === 'arena'
-  ? buildArena((+process.argv[4] || 1) | 0, process.argv[5] || 'auto', process.argv[6] || 'medium')
+  ? buildArena((+process.argv[4] || 1) | 0, process.argv[5] || 'auto', process.argv[6] || 'medium', process.argv[7] || 'square')
   : LAYOUTS[which]();
 const t0 = process.hrtime.bigint();
 bakeLightmap(info.light);

@@ -24124,7 +24124,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1109 · 2026-07-28';
+const BUILD_VERSION = 'build 1110 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37241,7 +37241,7 @@ self.onmessage = async (e) => {
     const AsyncFn = Object.getPrototypeOf(async function(){}).constructor;
     const factory = new AsyncFn('RUMPUS_LEVELGEN_HOST','Buffer','process', d.src + String.fromCharCode(10) + ';return { buildArena, bakeLightmap, writeGLB, LAYOUTS };');
     const api = await factory(host, Buf, { env:{ TEXSIZE: d.texsize||'', TEXAUX: d.texaux||'' }, argv:[] });
-    const info = d.kind==='arena' ? api.buildArena(d.seed, d.theme, d.size) : api.LAYOUTS[d.kind]();
+    const info = d.kind==='arena' ? api.buildArena(d.seed, d.theme, d.size, d.footprint) : api.LAYOUTS[d.kind]();
     api.bakeLightmap(info.light);
     const w = api.writeGLB('out.glb');
     const bytes = host.out;
@@ -37281,6 +37281,13 @@ function _lgOpenDialog(){
     return r; };
   pickRow('Theme', ['auto','industrial','castle','volcanic','garden'], ()=>theme, v=>theme=v);
   pickRow('Size', ['small','medium','large'], ()=>size, v=>size=v);
+  // build 1110: texture budget. These were CLI-only env knobs (TEXSIZE/TEXAUX), so the browser
+  // always produced the ~10 MB "high" build — over the 12 MB upload cap once a level has anything
+  // else in it, and heavy on phones. Low ≈ 1.5 MB, Medium ≈ 4 MB, High ≈ 10 MB.
+  let quality='medium', footprint='square';
+  pickRow('Shape', ['square','cross','octagon','diagonal','auto'], ()=>footprint, v=>footprint=v);
+  pickRow('Textures', ['low','medium','high'], ()=>quality, v=>quality=v);
+  const QUAL={ low:{ texsize:'256', texaux:'4' }, medium:{ texsize:'512', texaux:'2' }, high:{ texsize:'', texaux:'2' } };
   const moodRow=H('<label style="display:flex;align-items:center;gap:7px;margin:7px 0 2px;cursor:pointer;"></label>');
   const moodCb=document.createElement('input'); moodCb.type='checkbox'; moodCb.checked=true; moodCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);';
   moodRow.appendChild(moodCb); moodRow.appendChild(Object.assign(document.createElement('span'),{ textContent:'Apply the arena’s lighting mood to this level' }));
@@ -37292,7 +37299,7 @@ function _lgOpenDialog(){
   go.onclick=()=>{
     if(_lgBusy) return; _lgBusy=true; go.disabled=true; const _goLabel=go.textContent; go.textContent='Generating… (10–30s)';
     status.textContent='Painting materials, building geometry, baking light…';
-    _lgGenerate({ kind:'arena', seed:(+seedI.value||1)|0, theme, size, texsize:'', texaux:'2' }, (r)=>{
+    _lgGenerate({ kind:'arena', seed:(+seedI.value||1)|0, theme, size, footprint, ...QUAL[quality] }, (r)=>{
       _lgBusy=false; go.disabled=false; go.textContent=_goLabel;
       if(!r.ok){ status.textContent='Failed: '+r.err; return; }
       status.textContent=r.name+' — '+r.kb+' KB, '+r.tris+' triangles.';
