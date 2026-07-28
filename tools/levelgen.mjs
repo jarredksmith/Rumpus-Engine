@@ -217,10 +217,12 @@ function concreteTex(name, seed, S) {
   t.fill([0.66, 0.66, 0.65]);
   const mottle = fbm(r, S, [[8, 1], [16, 0.6], [32, 0.35], [64, 0.2], [160, 0.14]]);
   const blotch = fbm(r, S, [[4, 1], [8, 0.7]]);
+  const specks = worley(rng(seed ^ 8), S, 120);
   t.each((x, y, i) => {
     const m = mottle(x, y), b = blotch(x, y);
     t.tint(i, 0.86 + m * 0.24 - Math.max(0, b - 0.62) * 0.5);
-    if (r() < 0.012) t.tint(i, r() < 0.5 ? 0.78 : 1.14);
+    const sp = specks(x, y);                                        // aggregate showing through, any resolution
+    if (sp.d1 < 0.8 * k && sp.id > 0.35) t.tint(i, sp.id > 0.68 ? 1.08 : 0.9);
     t.h[i] = m;
   });
   for (let c = 0; c < 2; c++) {                                     // hairline cracks, random-walked
@@ -255,7 +257,7 @@ function panelsTex(name, seed, S) {   // concrete cast in big panels: seams, for
   }
   for (const fx of [32, 96, 160, 224]) for (const fy of [32, 160]) {
     for (let dy = -2 * k; dy <= 2 * k; dy++) for (let dx = -2 * k; dx <= 2 * k; dx++) if (dx * dx + dy * dy <= 4 * k * k) {
-      const i = (((fy * k + dy) | 0 + S) % S) * S + (((fx * k + dx) | 0) + S) % S; t.tint(i, 0.62); t.h[i] -= 0.9;
+      const i = ((((fy * k + dy) | 0) + S) % S) * S + ((((fx * k + dx) | 0) + S) % S); t.tint(i, 0.62); t.h[i] -= 0.9;
     }
   }
   return finish(t, seed, { cavDark: 0.34, cavK: 1.8 });
@@ -264,11 +266,13 @@ function metalTex(name, seed, S) {   // brushed panels, seams, rivets — and ru
   const r = rng(seed), t = new Tex(name, S), k = S / 256, P = S / 2;
   t.fill([0.68, 0.7, 0.73]).mrInit(0.9, 0.62);
   const brushRow = new Float64Array(S); for (let y = 0; y < S; y++) brushRow[y] = r();
+  for (let q = 0; q < 2; q++) for (let y = 0; y < S; y++)            // smooth: brushing, not scanlines
+    brushRow[y] = (brushRow[(y + S - 1) % S] + brushRow[y] * 2 + brushRow[(y + 1) % S]) / 4;
   const brush = fbm(r, S, [[64, 1], [128, 0.8], [320, 0.5]]);
   const rustN = fbm(r, S, [[24, 1], [96, 0.7]]);
   const seamD = (v) => Math.min(v % P, P - (v % P));
   t.each((x, y, i) => {
-    const b = brush(x, y) * 0.5 + brushRow[y] * 0.5;
+    const b = brush(x, y) * 0.65 + brushRow[y] * 0.35;
     t.tint(i, 0.92 + b * 0.14);
     const ds = Math.min(seamD(x), seamD(y));
     if (ds < 2 * k) { t.tint(i, 0.62); t.h[i] -= 0.7; t.mr[i * 2] = 0.8; }
@@ -281,7 +285,7 @@ function metalTex(name, seed, S) {   // brushed panels, seams, rivets — and ru
   });
   for (let px = 0; px < S; px += 32 * k) for (const py of [6 * k, P - 10 * k, P + 10 * k, S - 6 * k]) {   // rivets
     for (let dy = -2 * k; dy <= 2 * k; dy++) for (let dx = -2 * k; dx <= 2 * k; dx++) { const d2 = dx * dx + dy * dy; if (d2 > 5 * k * k) continue;
-      const i = (((py + dy) | 0 + S) % S) * S + (((px + 16 * k + dx) | 0) % S);
+      const i = ((((py + dy) | 0) + S) % S) * S + (((px + 16 * k + dx) | 0) % S);
       t.h[i] += (5 * k * k - d2) * 0.28 / (k * k); t.tint(i, 1.06); t.mr[i * 2] = 0.4; }
   }
   for (let q = 0; q < 4; q++) {                                     // rust streaks bleeding down from rivets
@@ -290,10 +294,15 @@ function metalTex(name, seed, S) {   // brushed panels, seams, rivets — and ru
       const i = (((sy + d) | 0) % S) * S + ((sx + ((r() - 0.5) * 2) | 0) + S) % S;
       t.mix(i, [0.4, 0.23, 0.12], 0.5 * fall); t.mr[i * 2] = Math.min(1, t.mr[i * 2] + 0.25 * fall); }
   }
-  for (let q = 0; q < 14 * k; q++) {                                // scratches: bright, glossy
-    let x = r() * S, y = r() * S; const a = r() * Math.PI, len = (10 + r() * 40) * k, ca = Math.cos(a), sa = Math.sin(a);
-    for (let d = 0; d < len; d++) { const i = ((Math.round(y + sa * d) + S) % S) * S + (Math.round(x + ca * d) + S) % S;
-      t.tint(i, 1.12); t.mr[i * 2] = 0.35; }
+  for (let q = 0; q < 14 * k; q++) {                                // scratches: bright, glossy, hand-wavering
+    let x = r() * S, y = r() * S, a = r() * Math.PI;
+    const len = (10 + r() * 40) * k;
+    for (let d = 0; d < len; d++) {
+      a += (r() - 0.5) * 0.06;
+      x = (x + Math.cos(a) + S) % S; y = (y + Math.sin(a) + S) % S;
+      const i = (y | 0) * S + (x | 0);
+      t.tint(i, 1.12); t.mr[i * 2] = 0.35;
+    }
   }
   return finish(t, seed, { edgeSmooth: 0.35, cavDark: 0.3 });
 }
@@ -305,11 +314,16 @@ function deckTex(name, seed, S) {   // walkway plate: offset stud rows, worn rim
   const CW = 64 * k, CH = 32 * k;
   t.each((x, y, i) => {
     const row = Math.floor(y / CH), lx = (x + (row % 2) * (CW / 2)) % CW, ly = y % CH;
-    const inStud = lx > 8 * k && lx < 56 * k && ly > 7 * k && ly < 25 * k;
-    const rim = !inStud && lx > 6 * k && lx < 58 * k && ly > 5 * k && ly < 27 * k;
+    const cst = Math.floor((x + (row % 2) * (CW / 2)) / CW);
+    const hs = hash2(cst * 7, row * 13);                             // every stud wears differently
+    const e = Math.min(lx - 8 * k, 56 * k - lx, ly - 7 * k, 25 * k - ly);
     const w = wear(x, y);
-    if (inStud) { t.h[i] = 0.85; t.tint(i, 1.08 + w * 0.14); t.mr[i * 2] = 0.6 + w * 0.22; }
-    else if (rim) { t.h[i] = 0.4; t.tint(i, 1.15); t.mr[i * 2] = 0.35; t.mr[i * 2 + 1] = 0.85; }   // worn bare rim
+    if (e > -2 * k) {                                                // stud with a soft shoulder
+      const core = sstep(0, 1.8 * k, e);
+      t.h[i] = 0.4 + 0.45 * core;
+      if (e > 0) { t.tint(i, (1.03 + hs * 0.08) + w * 0.12 * core); t.mr[i * 2] = 0.55 + w * 0.2 + hs * 0.1; }
+      else { t.tint(i, 1.03 + hs * 0.12); t.mr[i * 2] = 0.3 + hs * 0.22; t.mr[i * 2 + 1] = 0.85; }
+    }
     else { t.h[i] = 0; t.tint(i, 0.9 + w * 0.1); t.mr[i * 2] = 0.82; }
     const o = oil(x, y);                                            // oil: darker AND glossier
     if (o > 0.64) { const oo = Math.min(1, (o - 0.64) / 0.3); t.tint(i, 1 - 0.38 * oo); t.mr[i * 2] = Math.max(0.2, t.mr[i * 2] - 0.4 * oo); }
@@ -331,17 +345,20 @@ function crateTex(name, seed, S) {   // one crate face: raised frame, recessed p
   for (const bx of [15 * k, S - 15 * k]) for (const by of [15 * k, S - 15 * k]) {
     for (let dy = -4 * k; dy <= 4 * k; dy++) for (let dx = -4 * k; dx <= 4 * k; dx++) { const d2 = dx * dx + dy * dy; if (d2 > 18 * k * k) continue;
       const i = ((by + dy) | 0) * S + ((bx + dx) | 0); t.h[i] += (18 * k * k - d2) * 0.06 / (k * k); t.tint(i, 1.12); }
-    for (let d = 0; d < 22 * k; d++) { const i = (((by + 5 * k + d) | 0) % S) * S + ((bx + ((r() - 0.5) * 2 * k)) | 0 + S) % S;
+    for (let d = 0; d < 22 * k; d++) { const i = (((by + 5 * k + d) | 0) % S) * S + ((((bx + ((r() - 0.5) * 2 * k)) | 0) + S) % S);
       t.mix(i, [0.38, 0.22, 0.12], 0.4 * (1 - d / (22 * k))); }     // rust bleeding off each bolt
   }
-  for (let q = 0; q < 3; q++) {
+  for (let q = 0; q < 3; q++) {                                     // stencil dashes, spray-frayed
     const y0 = (96 + q * 22) * k;
-    for (let x = 70 * k; x < 130 * k; x++) for (let w = 0; w < 8 * k; w++) { const i = ((y0 + w) | 0) * S + (x | 0); t.tint(i, 0.55); }
+    for (let x = 70 * k; x < 130 * k; x++) for (let w = 0; w < 8 * k; w++) {
+      if (hash2(x | 0, (y0 + w) | 0) < 0.28) continue;
+      const i = ((y0 + w) | 0) * S + (x | 0); t.tint(i, 0.58);
+    }
   }
   return finish(t, seed, { cavDark: 0.36, edgeLight: 0.24 });
 }
-function hazardTex(name, S) {   // 45° chevrons, chipped and scuffed
-  const r = rng(77), t = new Tex(name, S), k = S / 256;
+function hazardTex(name, seed, S) {   // 45° chevrons, chipped and scuffed
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
   t.fill([0.9, 0.72, 0.12]);
   const wear = fbm(r, S, [[16, 1], [64, 0.7]]);
   t.each((x, y, i) => {
@@ -354,7 +371,7 @@ function hazardTex(name, S) {   // 45° chevrons, chipped and scuffed
     for (let d = 0; d < len; d++) { x = (x + 0.71 + S) % S; y = (y - 0.71 + S) % S;
       const i = (y | 0) * S + (x | 0); t.tint(i, 0.72); }
   }
-  return finish(t, 77, {});
+  return finish(t, seed, {});
 }
 // ---- expanded families: masonry, nature, interior, sci-fi ------------------------------
 function brickTex(name, seed, S, col = [0.5, 0.25, 0.19]) {
@@ -555,9 +572,17 @@ function grassTex(name, seed, S) {
     const c = clump(x, y), d = dry(x, y);
     t.tint(i, 0.75 + c * 0.55);
     if (d > 0.58) t.mix(i, [0.55, 0.5, 0.24], Math.min(1, (d - 0.58) * 4) * 0.6);   // dry patches
-    if (r() < 0.06) t.tint(i, r() < 0.5 ? 0.7 : 1.4);                               // blade speckle
-    t.h[i] = c * 0.4 + (r() < 0.06 ? 0.3 : 0);
+    t.h[i] = c * 0.4;
   });
+  const k = S / 256;                                                 // blades: short strokes, any resolution
+  for (let q = 0; q < S * S / 340; q++) {
+    let x = r() * S, y = r() * S;
+    const lean = (r() - 0.5) * 0.9, len = (2 + r() * 3) * k, up = r() < 0.5 ? 0.82 : 1.2;
+    for (let d = 0; d < len; d++) {
+      const i = (((y - d) | 0 + S) % S) * S + (((x + lean * d) | 0) + S) % S;
+      t.tint(i, up); t.h[i] += 0.1;
+    }
+  }
   return finish(t, seed, { cavDark: 0.22, edgeLight: 0.1 });
 }
 function sandTex(name, seed, S) {
@@ -614,8 +639,8 @@ function asphaltTex(name, seed, S) {
   const f = fbm(r, S, [[6, 1], [24, 0.5]]);
   t.fill([0.16, 0.16, 0.17]).mrInit(0.05, 0.85);
   t.each((x, y, i) => {
-    const g = f(x, y); t.tint(i, 0.8 + g * 0.5 + (r() < 0.3 ? r() * 0.5 : 0));
-    t.h[i] = g * 0.3 + r() * 0.12;
+    const g = f(x, y); t.tint(i, 0.8 + g * 0.5 + (r() < 0.16 ? r() * 0.35 : 0));
+    t.h[i] = g * 0.3 + r() * 0.08;
     t.mr[i * 2] = 0.78 + g * 0.18;
   });
   for (let c = 0; c < 3; c++) {                                                       // cracks with light edges
@@ -623,12 +648,13 @@ function asphaltTex(name, seed, S) {
     for (let d = 0, len = S * (0.4 + r() * 0.4); d < len; d++) {
       ang += (r() - 0.5) * 0.35; x = (x + Math.cos(ang) + S) % S; y = (y + Math.sin(ang) + S) % S;
       const i = (y | 0) * S + (x | 0); t.tint(i, 0.45); t.h[i] -= 0.8;
-      const j = (y | 0) * S + (((x | 0) + 1) % S); t.tint(j, 1.25);
+      const jx = ((x - Math.sin(ang) * 1.3) | 0 + S) % S, jy = ((y + Math.cos(ang) * 1.3) | 0 + S) % S;
+      t.tint(jy * S + jx, 1.22);                                    // raised lip perpendicular to the crack
     }
   }
   { const px = (r() * S) | 0, py = (r() * S) | 0, pw2 = (40 + r() * 60) * k, ph2 = (30 + r() * 50) * k;
     for (let y = 0; y < ph2; y++) for (let x = 0; x < pw2; x++) {                     // fresh patch rectangle
-      const i = (((py + y) | 0) % S) * S + (((px + x) | 0) % S); t.tint(i, 0.55); t.mr[i * 2] = 0.6; } }
+      const i = (((py + y) | 0) % S) * S + (((px + x) | 0) % S); t.tint(i, 0.5 + f((px + x) % S, (py + y) % S) * 0.18); t.mr[i * 2] = 0.6; } }
   return finish(t, seed, { cavDark: 0.3, edgeLight: 0.1 });
 }
 function tilesTex(name, seed, S, col = [0.72, 0.76, 0.76]) {
@@ -640,7 +666,8 @@ function tilesTex(name, seed, S, col = [0.72, 0.76, 0.76]) {
     if (lx < m || ly < m) { t.mix(i, [0.42, 0.4, 0.38], 0.95); t.h[i] = 0; t.mr[i * 2] = 0.9; return; }
     const tone = 0.9 + hash2(tx, ty) * 0.18;
     t.tint(i, tone * (0.96 + g(x, y) * 0.08));
-    t.h[i] = 0.8; t.mr[i * 2] = 0.22 + hash2(ty, tx) * 0.2;
+    const e = Math.min(lx, ly, tw - lx, tw - ly) - m;
+    t.h[i] = 0.8 * sstep(0, 2.5 * k, e); t.mr[i * 2] = 0.22 + hash2(ty, tx) * 0.2;
     if (hash2(tx * 5, ty * 3) > 0.93) { t.tint(i, 0.8 + g(y, x) * 0.2); t.mr[i * 2] = 0.6; }   // a stained tile
   });
   return finish(t, seed, { cavDark: 0.25, edgeSmooth: 0.1 });
@@ -1152,7 +1179,7 @@ const MATLIB = {
   metal:     { s: 1024, make: (n, S) => metalTex(n, 37, S),          opts: { base: [0.8, 0.84, 0.9], metal: 0.15, rough: 1, scale: 4, nrm: 1.2 } },
   deck:      { s: 1024, make: (n, S) => deckTex(n, 51, S),           opts: { base: [0.9, 0.93, 1], metal: 0.15, rough: 1, scale: 3, nrm: 1.6 } },
   crateTx:   { s: 512,  make: (n, S) => crateTex(n, 67, S),          opts: { base: [0.55, 0.52, 0.38], rough: 0.8, metal: 0.25, scale: 1, nrm: 1.8 } },
-  hazard:    { s: 512,  make: (n, S) => hazardTex(n, S),             opts: { base: [1, 1, 1], rough: 0.75, scale: 2, nrm: 0.8 } },
+  hazard:    { s: 512,  make: (n, S) => hazardTex(n, 77, S),             opts: { base: [1, 1, 1], rough: 0.75, scale: 2, nrm: 0.8 } },
   brick:     { s: 1024, make: (n, S) => brickTex(n, 101, S),         opts: { base: [1, 1, 1], rough: 0.92, scale: 5, nrm: 1.6 } },
   brickPale: { s: 1024, make: (n, S) => brickTex(n, 103, S, [0.62, 0.55, 0.45]), opts: { base: [1, 1, 1], rough: 0.92, scale: 5, nrm: 1.6 } },
   stone:     { s: 1024, make: (n, S) => stoneBlocksTex(n, 107, S),   opts: { base: [1, 1, 1], rough: 0.95, scale: 6, nrm: 1.8 } },
