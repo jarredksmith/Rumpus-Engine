@@ -34,9 +34,12 @@ assert(/if\(side \|\| height \|\| _cc \|\| \(typeof tpTilt==='number' && tpTilt\
   'the camera looks along the frozen boom, not the body yaw');
 
 // firing, melee, grenades and rockets all resolve to the cursor
-assert(/const _vmA = \(typeof cursorAimActive==='function' && cursorAimActive\(\)\) \? _vAimNdc : null;/.test(src),
+// (build 1109 widened the gate to _bodyAimActive so a TILTED chase camera also fires from the body)
+assert(/const _vmA = \(typeof _bodyAimActive==='function' && _bodyAimActive\(\)\) \? _aimNdcNow\(\) : null;/.test(src),
   'pellets fire from the body toward the cursor target');
-const cursorGates = src.match(/typeof cursorAimActive==='function' && cursorAimActive\(\)/g) || [];
+// melee + the scope gate read cursorAimActive directly; gunfire, grenades and rockets go through
+// _bodyAimActive (which is cursorAimActive OR a tilted chase camera) — build 1109
+const cursorGates = src.match(/typeof (cursorAimActive|_bodyAimActive)==='function' && (cursorAimActive|_bodyAimActive)\(\)/g) || [];
 assert(cursorGates.length >= 5, 'melee, grenades, rockets and the scope gate all honour it (' + cursorGates.length + ' sites)');
 
 // movement relative to the frozen camera

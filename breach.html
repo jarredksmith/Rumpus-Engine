@@ -19637,6 +19637,18 @@ function chaseCursorOn(){
 }
 // Everywhere that asks "does the cursor aim, not the head?" — top/side always, chase when opted in.
 function cursorAimActive(){ return activeViewMode()!=='fps' || chaseCursorOn(); }
+// ---- build 1109: fire from the BODY, not the camera, whenever the camera isn't at the eye ----
+// Third-person shots have always raycast from the CAMERA through the crosshair. That is fine when
+// the camera sits at head height behind the shoulder. Build 1101's Tilt raises the boom metres into
+// the air (5 m at 60°), so shots started up there: they cleared cover the character was behind,
+// were blocked by ceilings the character was under, and read as "shooting from the sky". Now any
+// tilted chase camera uses the same body-relative ballistics the twin-stick views use — the pellet
+// leaves the character and travels to whatever the crosshair is on.
+const _TP_CENTER = { x:0, y:0 };
+function _aimNdcNow(){ return cursorAimActive() ? _vAimNdc : _TP_CENTER; }
+function _bodyAimActive(){
+  return cursorAimActive() || (typeof tpActive==='function' && tpActive() && typeof tpTilt==='number' && Math.abs(tpTilt) > 1);
+}
 let _vcX=0, _vcY=0, _vcActive=false, _sideLock=null;   // twin-stick cursor (px from screen centre) + side-scroll lane
 const _vAimNdc={ x:0, y:0 }, _vAimPt=new THREE.Vector3(), _vAimTmpNdc=new THREE.Vector2();
 // Steers the virtual cursor, aims the body at it, and (side mode) captures the lane. Runs every live
@@ -21287,12 +21299,13 @@ function throwGrenade(){
   // arc (g=30, matching updateGrenades) that lands ON the cursor — range-capped by throwForce so the
   // grenade tuning dial still limits reach.
   let origin, vel;
-  if(typeof cursorAimActive==='function' && cursorAimActive()){
+  if(typeof _bodyAimActive==='function' && _bodyAimActive()){   // build 1109: tilted chase lobs from the body too
     origin = new THREE.Vector3(player.pos.x, player.pos.y-0.2, player.pos.z);
-    raycaster.setFromCamera(_vAimTmpNdc.set(_vAimNdc.x, _vAimNdc.y), camera);
+    const _nd = _aimNdcNow();
+    raycaster.setFromCamera(_vAimTmpNdc.set(_nd.x, _nd.y), camera);
     const _em = (typeof NET!=='undefined' && NET.mode==='client') ? Object.values(NET.enemyMeshes).map(o=>o.mesh) : enemies.map(e=>e.mesh);
     const _hits = raycaster.intersectObjects([..._em, ...colliders, ...dynamicProps, floor].filter(o=>o&&o.isObject3D), true);
-    const tgt = _hits.length ? _hits[0].point.clone() : _vAimPt.clone();
+    const tgt = _hits.length ? _hits[0].point.clone() : (cursorAimActive() ? _vAimPt.clone() : raycaster.ray.at(30, new THREE.Vector3()));
     if(tgt.distanceToSquared(origin) < 1) tgt.copy(origin).addScaledVector(new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw)), 4);   // cursor on top of yourself: lob where you face
     const maxR = Math.max(6, (+GRENADE.throwForce||26)*1.1);
     let dx=tgt.x-origin.x, dz=tgt.z-origin.z; const d0=Math.hypot(dx,dz)||1e-4;
@@ -21652,7 +21665,15 @@ function fireRocket(o, dir, by, auth, R, dmg){
 function fireRocketShot(){
   const o=new THREE.Vector3(); camera.getWorldPosition(o);
   const d=new THREE.Vector3(); camera.getWorldDirection(d); d.normalize();
-  if(typeof cursorAimActive==='function' && cursorAimActive()){ o.set(player.pos.x, player.pos.y-0.2, player.pos.z); d.copy(_vAimPt).sub(o).normalize(); }   // build 874: from the body, at the cursor point (build 1103: chase-cursor too)
+  // build 874: from the body, at the cursor point (1103: chase-cursor · 1109: tilted chase)
+  if(typeof _bodyAimActive==='function' && _bodyAimActive()){
+    o.set(player.pos.x, player.pos.y-0.2, player.pos.z);
+    let _t = _vAimPt;
+    if(!cursorAimActive()){ const _nd=_aimNdcNow(); raycaster.setFromCamera(_vAimTmpNdc.set(_nd.x,_nd.y), camera);
+      const _h=raycaster.intersectObjects([...colliders, ...dynamicProps, floor].filter(x=>x&&x.isObject3D), true);
+      _t = _h.length ? _h[0].point : raycaster.ray.at(80, new THREE.Vector3()); }
+    d.copy(_t).sub(o).normalize();
+  }
   o.addScaledVector(d, 1.2);                 // spawn just ahead of the camera
   addShake(0.22); if(activeViewMode()==='fps') player.pitch += 0.02;   // chunky launch kick (build 1102: not in cursor views — pitch isn't the aim there)
   if(!WEAPONS.launcher.noMuzzle){
@@ -24103,7 +24124,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1107 · 2026-07-28';
+const BUILD_VERSION = 'build 1109 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -25995,13 +26016,15 @@ function shoot(){
   // hip spread threw most pellets clean past a dead-on cursor ("the gun doesn't hurt enemies"). Now the
   // cursor ray resolves WHAT you're aiming at (one raycast per shot), and every pellet fires from the
   // player's chest toward it with an angular cone — walls between YOU and the target block shots too.
-  const _vmA = (typeof cursorAimActive==='function' && cursorAimActive()) ? _vAimNdc : null;   // build 1103: chase-cursor shoots at the cursor too
+  const _vmA = (typeof _bodyAimActive==='function' && _bodyAimActive()) ? _aimNdcNow() : null;   // build 1103: chase-cursor · build 1109: any tilted chase camera
   let _vmOrig=null, _vmTgt=null;
   if(_vmA){
     _vmOrig = new THREE.Vector3(player.pos.x, player.pos.y-0.2, player.pos.z);
     raycaster.setFromCamera(_vAimTmpNdc.set(_vmA.x, _vmA.y), camera);
     const _cHits = raycaster.intersectObjects(rayTargets, true);
-    _vmTgt = _cHits.length ? _cHits[0].point.clone() : _vAimPt.clone();
+    // nothing under the crosshair: aim far down the ray itself. (_vAimPt is only maintained by the
+    // cursor solver, so a tilted chase camera would otherwise inherit a stale point — build 1109.)
+    _vmTgt = _cHits.length ? _cHits[0].point.clone() : (cursorAimActive() ? _vAimPt.clone() : raycaster.ray.at(120, new THREE.Vector3()));
     if(_vmTgt.distanceToSquared(_vmOrig) < 1) _vmTgt.copy(_vmOrig).addScaledVector(new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw)), 4);   // cursor on top of yourself: shoot where you face
   }
   // build 1102: flash + network from the REAL fire pose (see the note above)

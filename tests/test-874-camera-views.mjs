@@ -59,7 +59,9 @@ assert(/drivingCar \? drivingCar\.position : player\.pos/.test(src), 'driving ke
 // ---- combat: shots through the cursor, body-relative melee/rockets, avatar shown ----
 assert(/if\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\)\{\s*\n\s*tpMuzzleWorld\(muzzleWorld\);/.test(src), 'tracers start at the avatar barrel (tpActive since build 894)');
 assert(/raycaster\.set\(_vmOrig, _pd\);/.test(src) && /\} else raycaster\.setFromCamera\(new THREE\.Vector2\(sx, sy\), camera\);/.test(src), 'hitscan: body-origin pellets in fixed views, screen-centre in fps (reworked in 885)');
-assert(/o\.set\(player\.pos\.x, player\.pos\.y-0\.2, player\.pos\.z\); d\.copy\(_vAimPt\)\.sub\(o\)\.normalize\(\);/.test(src), 'rockets launch from the body toward the cursor point');
+// (build 1109: the target is resolved into _t first, so a tilted chase camera can use the
+// crosshair ray instead of the cursor solver's point)
+assert(/o\.set\(player\.pos\.x, player\.pos\.y-0\.2, player\.pos\.z\);\n    let _t = _vAimPt;/.test(src) && /d\.copy\(_t\)\.sub\(o\)\.normalize\(\);/.test(src), 'rockets launch from the body toward the cursor point');
 assert(/if\(typeof cursorAimActive==='function' && cursorAimActive\(\)\) fwd\.set\(-Math\.sin\(player\.yaw\), 0, -Math\.cos\(player\.yaw\)\);/.test(src), 'melee swings where the body faces');
 assert(/if\(!\(\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\) && gameOn && !editorOpen\)\)/.test(src), 'the player body renders in the fixed views');
 assert(/if\(_scopedNow && typeof cursorAimActive==='function' && cursorAimActive\(\)\) _scopedNow=false;/.test(src), 'no sniper-optic tunnel from a bird’s-eye camera');   // build 1103: nor from chase-cursor

@@ -11,10 +11,12 @@ const src = gameSource();
 const fn = extractFunction('throwGrenade', src);
 
 // ---- view-aware branch: chest origin + cursor target ----
-assert(/if\(typeof cursorAimActive==='function' && cursorAimActive\(\)\)\{/.test(fn), 'branches on the live view mode');   // build 1103: chase-cursor lobs at the cursor too
+assert(/if\(typeof _bodyAimActive==='function' && _bodyAimActive\(\)\)\{/.test(fn), 'branches on the live view mode');   // 1103: chase-cursor · 1109: tilted chase
 assert(/origin = new THREE\.Vector3\(player\.pos\.x, player\.pos\.y-0\.2, player\.pos\.z\);/.test(fn), 'lob originates at the player chest, not the sky camera');
-assert(/raycaster\.setFromCamera\(_vAimTmpNdc\.set\(_vAimNdc\.x, _vAimNdc\.y\), camera\);/.test(fn), 'the cursor ray resolves the landing target');
-assert(/const tgt = _hits\.length \? _hits\[0\]\.point\.clone\(\) : _vAimPt\.clone\(\);/.test(fn), 'empty space falls back to the aim-plane point (same as gunfire)');
+// (build 1109: the NDC comes from _aimNdcNow — the cursor in cursor views, screen centre for a
+// tilted chase camera, which has no cursor)
+assert(/const _nd = _aimNdcNow\(\);\n    raycaster\.setFromCamera\(_vAimTmpNdc\.set\(_nd\.x, _nd\.y\), camera\);/.test(fn), 'the cursor ray resolves the landing target');
+assert(/const tgt = _hits\.length \? _hits\[0\]\.point\.clone\(\) : \(cursorAimActive\(\) \? _vAimPt\.clone\(\) : raycaster\.ray\.at\(30, new THREE\.Vector3\(\)\)\);/.test(fn), 'empty space falls back to the aim-plane point (same as gunfire)');
 assert(/if\(tgt\.distanceToSquared\(origin\) < 1\)/.test(fn), 'cursor on top of yourself lobs where you face, not a zero-length arc');
 
 // ---- ballistic solve, range-capped ----
