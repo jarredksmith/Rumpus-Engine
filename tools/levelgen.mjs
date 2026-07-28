@@ -1059,6 +1059,14 @@ function tri(m, a, b, c) {
 // seen from across the arena, where depth precision is coarsest.
 const PROUD = 0.05;
 const SOLIDS = [];   // analytic occluders for the AO bake — every box and ramp lands here
+// build 1111: local light sources for the bake. The radiance bake integrates SKY visibility, so
+// anything under a roof integrates to almost nothing — a room would bake black. Interiors register
+// their fixtures here and the baker adds each one's direct contribution, shadow-tested, so a lamp
+// actually lights its room and casts the doorway's light across the floor outside.
+const LIGHTS = [];
+// Range is capped at the ray tracer's search distance: past that the shadow test cannot see an
+// occluder, so a longer-reaching light would leak through walls.
+function addLight(x, y, z, col, range, power = 1) { LIGHTS.push({ x, y, z, c: col, r: Math.min(range, 9.5), p: power }); }
 const UNIT = [[0, 1], [1, 1], [1, 0], [0, 0]];   // v=1 at the face's base: image bottom sits at the bottom
 function box(m, x0, y0, z0, x1, y1, z1, unit) {
   SOLIDS.push([x0, y0, z0, x1, y1, z1]);
@@ -1156,6 +1164,63 @@ function wallRun(m, axis, a0, a1, o0, o1, y0, y1, openings = []) {
     cur = w1;
   }
   seg(cur, a1, y0, y1);
+}
+
+// ---- build 1111: multi-room interiors -------------------------------------------------
+// A walled block split into rooms by a seeded binary partition. Every leaf room is reachable:
+// each split wall gets a doorway, and the outer shell gets an entrance on the requested side, so
+// the whole interior is one connected space with no sealed pockets. Rooms carry a ceiling fixture
+// (emissive) plus a baked light, which is the half that makes an interior readable at all.
+//
+// Returns the leaf rooms as {x0,z0,x1,z1} so the caller can furnish them / reserve them.
+function roomBlock(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts = {}) {
+  const rr = rng(seed2), T = opts.wall || 0.45, DOOR = opts.door || 1.6, DOORH = opts.doorH || 2.5;
+  const minRoom = opts.minRoom || 5.5;
+  // ---- partition: split the longer side while both halves stay habitable ----
+  const leaves = [];
+  (function split(r, depth) {
+    const w = r.x1 - r.x0, d = r.z1 - r.z0;
+    const canX = w >= minRoom * 2 + T, canZ = d >= minRoom * 2 + T;
+    if (depth >= (opts.depth || 2) || (!canX && !canZ) || rr() < 0.15) { leaves.push(r); return; }
+    const alongX = canX && (!canZ || w >= d);
+    const lo = (alongX ? r.x0 : r.z0) + minRoom, hi = (alongX ? r.x1 : r.z1) - minRoom;
+    const cut = lo + rr() * (hi - lo);
+    if (alongX) {
+      wallRun(mWall, 'z', r.z0, r.z1, cut - T / 2, cut + T / 2, y0, y0 + h,
+        [{ at: r.z0 + (r.z1 - r.z0) * (0.3 + rr() * 0.4), w: DOOR, h: DOORH }]);
+      split({ x0: r.x0, z0: r.z0, x1: cut - T / 2, z1: r.z1 }, depth + 1);
+      split({ x0: cut + T / 2, z0: r.z0, x1: r.x1, z1: r.z1 }, depth + 1);
+    } else {
+      wallRun(mWall, 'x', r.x0, r.x1, cut - T / 2, cut + T / 2, y0, y0 + h,
+        [{ at: r.x0 + (r.x1 - r.x0) * (0.3 + rr() * 0.4), w: DOOR, h: DOORH }]);
+      split({ x0: r.x0, z0: r.z0, x1: r.x1, z1: cut - T / 2 }, depth + 1);
+      split({ x0: r.x0, z0: cut + T / 2, x1: r.x1, z1: r.z1 }, depth + 1);
+    }
+  })({ x0, z0, x1, z1 }, 0);
+
+  // ---- shell: entrance on the requested face, windows on the rest ----
+  const ent = opts.entrance || '-x';
+  const win = (a0, a1) => [{ at: a0 + (a1 - a0) * 0.28, w: 1.8, h: 1.4, sill: 1.5 },
+                           { at: a0 + (a1 - a0) * 0.72, w: 1.8, h: 1.4, sill: 1.5 }];
+  const doorOn = (a0, a1) => [{ at: (a0 + a1) / 2, w: DOOR * 1.6, h: 3 }];
+  wallRun(mWall, 'x', x0, x1, z0 - T, z0, y0, y0 + h, ent === '-z' ? doorOn(x0, x1) : win(x0, x1));
+  wallRun(mWall, 'x', x0, x1, z1, z1 + T, y0, y0 + h, ent === '+z' ? doorOn(x0, x1) : win(x0, x1));
+  wallRun(mWall, 'z', z0, z1, x0 - T, x0, y0, y0 + h, ent === '-x' ? doorOn(z0, z1) : win(z0, z1));
+  wallRun(mWall, 'z', z0, z1, x1, x1 + T, y0, y0 + h, ent === '+x' ? doorOn(z0, z1) : win(z0, z1));
+
+  box(mFloor, x0, y0, z0, x1, y0 + 0.12, z1);                             // interior floor
+  box(mWall, x0 - T, y0 + h, z0 - T, x1 + T, y0 + h + 0.35, z1 + T);      // roof slab
+
+  // ---- per-room ceiling fixture + the baked light that goes with it ----
+  const lc = opts.lightCol || [1, 0.93, 0.78];
+  for (const r of leaves) {
+    const cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2, ly = y0 + h - 0.3;
+    box(mTrim, cx - 0.5, ly, cz - 0.5, cx + 0.5, ly + 0.1, cz + 0.5);     // the visible fixture
+    // Power is high because this is the ONLY light a sealed room gets: the sun is blocked by the
+    // roof (real shadow map) and sky visibility integrates to nothing indoors.
+    addLight(cx, ly - 0.25, cz, lc, Math.max(6, Math.hypot(r.x1 - r.x0, r.z1 - r.z0) * 0.9), opts.lightPow || 2.6);
+  }
+  return leaves;
 }
 
 // an organic boulder: an icosphere (subdivided once, 80 faces) with deterministic per-vertex
@@ -2125,22 +2190,18 @@ function buildArena(seed, theme, size, footprint) {
       reserve(Math.min(gx0, gx1) - 1, -gz - 11, Math.max(gx0, gx1) + 1, gz + 11);
       scan(s * (W - 3), gz + 9, s * (W - 3), 0);
     }
-  } else if (ss === 1) {   // buildings: door, windows, interior, roof reached by an outside ramp
-    const bx = W - 8.5, bzE = ((rr() * 12) | 0) - 6, WH2 = 4.6;
+  } else if (ss === 1) {   // build 1111: real BUILDINGS — several rooms, doorways, lit interiors
+    const bx = W - 9.5, bzE = ((rr() * 10) | 0) - 5, WH2 = 4.6;
     for (const s of [1, -1]) {
       const cx2 = s * bx, cz2 = s * bzE;
-      const x0 = cx2 - 4, x1 = cx2 + 4, z0 = cz2 - 6, z1 = cz2 + 6;
+      const x0 = cx2 - 5, x1 = cx2 + 5, z0 = cz2 - 7, z1 = cz2 + 7;
       const xd = s > 0 ? x0 : x1;                                  // door face looks at the courtyard
-      wallRun(P.wall, 'z', z0, z1, xd - (s > 0 ? 0.45 : 0), xd + (s > 0 ? 0 : 0.45), 0, WH2,
-        [{ at: cz2, w: 3.0, h: 3.3 }, { at: cz2 - 4, w: 2, h: 1.4, sill: 1.4 }, { at: cz2 + 4, w: 2, h: 1.4, sill: 1.4 }]);
-      const xb = s > 0 ? x1 : x0;
-      wallRun(P.wall, 'z', z0, z1, xb - (s > 0 ? 0 : 0.45), xb + (s > 0 ? 0.45 : 0), 0, WH2, [{ at: cz2, w: 2, h: 1.4, sill: 1.4 }]);
-      wallRun(P.wall, 'x', x0, x1, z0 - 0.45, z0, 0, WH2, []);
-      wallRun(P.wall, 'x', x0, x1, z1, z1 + 0.45, 0, WH2, []);
-      box(P.deck, x0 - 0.45, WH2, z0 - 0.45, x1 + 0.45, WH2 + 0.35, z1 + 0.45);   // roof
-      box(libMat('plankGrey'), x0 + 0.2, 0, z0 + 0.2, x1 - 0.2, 0.12, z1 - 0.2);  // interior floor
-      bevelCbox(P.cover, cx2 + s * 1.4, 0.62, cz2 - 2, 1.24, 1.24, 1.24, true);
-      cbox(P.trim, cx2, WH2 - 0.6, cz2 + 2, 0.4, 0.4, 0.24);
+      const rooms = roomBlock(P.wall, libMat('plankGrey'), P.trim, x0, z0, x1, z1, 0, WH2,
+        (seed * 97 + s * 13) | 0, { entrance: s > 0 ? '-x' : '+x', depth: 2, minRoom: 5.5,
+          lightCol: theme === 'volcanic' ? [1, 0.62, 0.3] : theme === 'castle' ? [1, 0.78, 0.5] : [1, 0.93, 0.78] });
+      // furnish: a crate in the largest room, so the interior is worth entering
+      const big = rooms.slice().sort((a, b) => (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0))[0];
+      if (big) bevelCbox(P.cover, (big.x0 + big.x1) / 2, 0.74, (big.z0 + big.z1) / 2, 1.24, 1.24, 1.24, true);
       // roof ramp: run 12, rise 4.95 -> 0.41. On the +z side for the east building, mirrored west.
       const rz0 = s > 0 ? z1 + 0.45 : z0 - 12.45, rz1 = s > 0 ? z1 + 12.45 : z0 - 0.45;
       ramp(P.ramp, cx2 - 1.8, rz0, cx2 + 1.8, rz1, 0, s > 0 ? WH2 + 0.35 : 0, s > 0 ? 0 : WH2 + 0.35, 'z');
@@ -2440,7 +2501,24 @@ function bakeLightmap(light) {
         if (wsum > 0) { r /= wsum; g2 /= wsum; b2 /= wsum; }
         const ao = Math.max(0.25, 1 - 1.15 * (wsum ? contact / wsum : 0));   // crease definition
         const m2 = 1.2 * ao;                                                 // 1.2 = infinite-bounce compensation
-        r = Math.max(r * m2, 0.015); g2 = Math.max(g2 * m2, 0.015); b2 = Math.max(b2 * m2, 0.02);
+        r *= m2; g2 *= m2; b2 *= m2;
+        // local lights: N·L with inverse-square-ish falloff, one shadow ray each. This is what
+        // makes an interior readable — and the shadow ray is what throws a lit patch through a
+        // doorway onto the floor outside instead of glowing through the wall.
+        for (const L of LIGHTS) {
+          const lx = L.x - px2, ly = L.y - py2, lz = L.z - pz2;
+          const d2 = lx * lx + ly * ly + lz * lz; if (d2 > L.r * L.r) continue;
+          const dl = Math.sqrt(d2) || 1e-4;
+          const nd = (lx * nx + ly * ny + lz * nz) / dl; if (nd <= 0.02) continue;
+          const f = 1 - dl / L.r, att = f * f;                               // smooth cutoff at range
+          // rayT reports MAXT when it finds nothing, so "th >= MAXT" means CLEAR, not "a hit 10
+          // units away" — without that check every light past 10 units would read as shadowed.
+          const th = rayT(ox, oy, oz, lx / dl, ly / dl, lz / dl);
+          if (th < MAXT && th < dl - 0.06) continue;   // in shadow
+          const g3 = nd * att * L.p * ao;
+          r += L.c[0] * g3; g2 += L.c[1] * g3; b2 += L.c[2] * g3;
+        }
+        r = Math.max(r, 0.015); g2 = Math.max(g2, 0.015); b2 = Math.max(b2, 0.02);
         LM.px[oi] = r; LM.px[oi + 1] = g2; LM.px[oi + 2] = b2;
       }
     }
