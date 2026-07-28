@@ -9319,6 +9319,7 @@ function updateXAnim(dt){
   }
 }
 const _pcV = new THREE.Vector3();
+const _ncNoRay = function(){};   // build 1093: raycast no-op stamped onto "nocollide" decoration meshes
 // True if this prop is an imported model (URL / Poly Pizza / Sketchfab / .glb) rather than a built-in
 // primitive. Imported models are concave (stairs, archways), so a single bounding box is a poor player
 // collider even though Rapier already has their exact trimesh for dynamic objects.
@@ -9360,6 +9361,9 @@ function buildModelGridBoxes(obj, overall){
   let tris=0, bail=false, work=0;
   obj.traverse(o=>{
     if(bail || !o.isMesh || o.visible===false || !o.geometry) return;
+    // build 1093: meshes named "nocollide*" (or under a group so named) are decoration — grass
+    // cards, foliage, light shafts. They never enter the collider grid.
+    for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)) return; }
     const pos=o.geometry.attributes && o.geometry.attributes.position; if(!pos||!pos.count) return;
     o.updateWorldMatrix(true,false);
     const idx=o.geometry.index, tc=idx?idx.count:pos.count;
@@ -9469,6 +9473,9 @@ function refreshPropCollider(obj){
   const boxes = [];
   obj.traverse(o=>{
     if(!o.isMesh || o.visible===false || !o.geometry) return;
+    // build 1093: "nocollide"-named meshes are pure decoration. No collider box, and no raycast
+    // hits either — so grass never blocks movement probes, enemy sight lines, or bullets.
+    for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)){ o.raycast = _ncNoRay; return; } }
     const pos = o.geometry.attributes && o.geometry.attributes.position; if(!pos || !pos.count) return;
     o.updateWorldMatrix(true, false);
     const b = new THREE.Box3();
@@ -23880,7 +23887,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1092 · 2026-07-28';
+const BUILD_VERSION = 'build 1093 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -24443,6 +24450,7 @@ function trimeshDescFor(o){
   const verts = [], indices = []; let base = 0; const tv = new THREE.Vector3();
   o.traverse(m=>{
     if(!m.isMesh || m.visible===false || !m.geometry) return;
+    for(let p=m; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)) return; }   // build 1093: decoration meshes stay out of physics too
     const pos = m.geometry.attributes && m.geometry.attributes.position; if(!pos || !pos.count) return;
     m.updateWorldMatrix(true, false);
     for(let i=0;i<pos.count;i++){ tv.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld); verts.push(tv.x, tv.y, tv.z); }
