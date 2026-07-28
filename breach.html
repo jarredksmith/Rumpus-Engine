@@ -9327,6 +9327,113 @@ function updateXAnim(dt){
 }
 const _pcV = new THREE.Vector3();
 const _ncNoRay = function(){};   // build 1093: raycast no-op stamped onto "nocollide" decoration meshes
+// ---------- build 1097: raycast BVH for imported models ----------
+// three.js raycasts test EVERY triangle of a mesh. A generated arena is ~15k triangles and a
+// big imported level hundreds of thousands — at ~1.5 ms per ray, a host simulating bots (ground
+// follow, obstacle probes, sight lines — several rays each, every frame) burns the whole frame
+// budget in raycasts alone; that is the "60 fps until bots join" cliff. Each big static mesh
+// gets a median-split triangle BVH built once at load, and mesh.raycast walks it instead —
+// same intersection records (distance/point/face/faceIndex), 10-50x fewer triangle tests.
+function _buildTriBVH(geo){
+  const posA = geo.attributes.position.array, idx = geo.index, ia = idx ? idx.array : null;
+  const triCount = ((idx ? idx.count : geo.attributes.position.count) / 3) | 0;
+  const mins = new Float32Array(triCount * 3), maxs = new Float32Array(triCount * 3), cent = new Float32Array(triCount * 3);
+  for(let t = 0; t < triCount; t++){
+    const a = (ia ? ia[t*3] : t*3) * 3, b = (ia ? ia[t*3+1] : t*3+1) * 3, c = (ia ? ia[t*3+2] : t*3+2) * 3;
+    for(let k = 0; k < 3; k++){
+      const va = posA[a+k], vb = posA[b+k], vc = posA[c+k];
+      mins[t*3+k] = Math.min(va, vb, vc); maxs[t*3+k] = Math.max(va, vb, vc); cent[t*3+k] = (va + vb + vc) / 3;
+    }
+  }
+  const order = new Uint32Array(triCount); for(let i = 0; i < triCount; i++) order[i] = i;
+  const nb = [], ni = [];   // per node: 6 bounds floats; 4 ints (leaf: start,count,0,0 | inner: 0,0,left,right)
+  // Hoare partition around the median (quickselect) — O(n log n) build, no per-node sort allocations,
+  // which matters on 300k-triangle imported levels.
+  const partition = (lo, hi, k, axk) => {
+    while(hi > lo){
+      const pivot = cent[order[(lo + hi) >> 1] * 3 + axk];
+      let i = lo, j = hi;
+      while(i <= j){
+        while(cent[order[i]*3+axk] < pivot) i++;
+        while(cent[order[j]*3+axk] > pivot) j--;
+        if(i <= j){ const q = order[i]; order[i] = order[j]; order[j] = q; i++; j--; }
+      }
+      if(k <= j) hi = j; else if(k >= i) lo = i; else return;
+    }
+  };
+  const build = (start, end) => {
+    const nodeI = ni.length / 4;
+    ni.push(0, 0, 0, 0);
+    let mnx = 1e30, mny = 1e30, mnz = 1e30, mxx = -1e30, mxy = -1e30, mxz = -1e30;
+    for(let i = start; i < end; i++){ const t = order[i] * 3;
+      if(mins[t] < mnx) mnx = mins[t]; if(mins[t+1] < mny) mny = mins[t+1]; if(mins[t+2] < mnz) mnz = mins[t+2];
+      if(maxs[t] > mxx) mxx = maxs[t]; if(maxs[t+1] > mxy) mxy = maxs[t+1]; if(maxs[t+2] > mxz) mxz = maxs[t+2];
+    }
+    nb.push(mnx, mny, mnz, mxx, mxy, mxz);
+    if(end - start <= 8){ ni[nodeI*4] = start; ni[nodeI*4+1] = end - start; return nodeI; }
+    const ex = mxx - mnx, ey = mxy - mny, ez = mxz - mnz;
+    const axk = ex > ey ? (ex > ez ? 0 : 2) : (ey > ez ? 1 : 2);
+    const mid = (start + end) >> 1;
+    partition(start, end - 1, mid, axk);
+    const L = build(start, mid), R = build(mid, end);
+    ni[nodeI*4+2] = L; ni[nodeI*4+3] = R;
+    return nodeI;
+  };
+  build(0, triCount);
+  return { nb: new Float32Array(nb), ni: new Int32Array(ni), order, posA, ia };
+}
+const _bvhInv = new THREE.Matrix4(), _bvhRayL = new THREE.Ray();
+const _bvhA = new THREE.Vector3(), _bvhB = new THREE.Vector3(), _bvhC = new THREE.Vector3();
+const _bvhP = new THREE.Vector3(), _bvhPW = new THREE.Vector3();
+const _bvhStack = new Int32Array(512);
+function _bvhRaycastMesh(raycaster, intersects){
+  const bvh = this.userData.__bvh; if(!bvh) return;
+  _bvhInv.copy(this.matrixWorld).invert();
+  _bvhRayL.copy(raycaster.ray).applyMatrix4(_bvhInv);
+  const mat0 = Array.isArray(this.material) ? this.material[0] : this.material;
+  const cullBack = !mat0 || mat0.side === THREE.FrontSide;   // same rule as three.js Mesh.raycast
+  const nb = bvh.nb, ni = bvh.ni, order = bvh.order, posA = bvh.posA, ia = bvh.ia;
+  const o = _bvhRayL.origin, d = _bvhRayL.direction;
+  const inx = 1 / d.x, iny = 1 / d.y, inz = 1 / d.z;
+  let sp = 0; _bvhStack[sp++] = 0;
+  while(sp > 0){
+    const n = _bvhStack[--sp], B = n * 6;
+    let t0 = ((inx >= 0 ? nb[B]   : nb[B+3]) - o.x) * inx, t1 = ((inx >= 0 ? nb[B+3] : nb[B])   - o.x) * inx;
+    let ta = ((iny >= 0 ? nb[B+1] : nb[B+4]) - o.y) * iny, tb = ((iny >= 0 ? nb[B+4] : nb[B+1]) - o.y) * iny;
+    if(ta > t0) t0 = ta; if(tb < t1) t1 = tb;
+    ta = ((inz >= 0 ? nb[B+2] : nb[B+5]) - o.z) * inz; tb = ((inz >= 0 ? nb[B+5] : nb[B+2]) - o.z) * inz;
+    if(ta > t0) t0 = ta; if(tb < t1) t1 = tb;
+    if(t0 < 0) t0 = 0;
+    if(t0 > t1) continue;
+    const I = n * 4;
+    if(ni[I+1] > 0){
+      const s2 = ni[I], e2 = s2 + ni[I+1];
+      for(let i = s2; i < e2; i++){
+        const t = order[i];
+        const a = ia ? ia[t*3] : t*3, b = ia ? ia[t*3+1] : t*3+1, c = ia ? ia[t*3+2] : t*3+2;
+        _bvhA.fromArray(posA, a*3); _bvhB.fromArray(posA, b*3); _bvhC.fromArray(posA, c*3);
+        if(!_bvhRayL.intersectTriangle(_bvhA, _bvhB, _bvhC, cullBack, _bvhP)) continue;
+        _bvhPW.copy(_bvhP).applyMatrix4(this.matrixWorld);
+        const dist = raycaster.ray.origin.distanceTo(_bvhPW);
+        if(dist < raycaster.near || dist > raycaster.far) continue;
+        const face = { a, b, c, normal: new THREE.Vector3(), materialIndex: 0 };
+        THREE.Triangle.getNormal(_bvhA, _bvhB, _bvhC, face.normal);
+        intersects.push({ distance: dist, point: _bvhPW.clone(), object: this, face, faceIndex: t, uv: null });
+      }
+    } else { _bvhStack[sp++] = ni[I+2]; _bvhStack[sp++] = ni[I+3]; }
+  }
+}
+// Give a mesh the fast path if it is big, static and plain (skinned/instanced/morphing meshes
+// deform — their triangles move, a prebuilt tree would lie).
+function _installRaycastBVH(o){
+  if(!o.isMesh || o.isSkinnedMesh || o.isInstancedMesh || !o.geometry || o.userData.__bvh) return;
+  if(o.geometry.morphAttributes && o.geometry.morphAttributes.position) return;
+  const p = o.geometry.attributes && o.geometry.attributes.position; if(!p) return;
+  const tc = ((o.geometry.index ? o.geometry.index.count : p.count) / 3) | 0;
+  if(tc < 256) return;                                       // tiny meshes: brute force is already fine
+  for(let q = o; q; q = q.parent){ if(q.name && /^nocollide/i.test(q.name)) return; }   // already raycast-exempt
+  try{ o.userData.__bvh = _buildTriBVH(o.geometry); o.raycast = _bvhRaycastMesh; }catch(e){}
+}
 // True if this prop is an imported model (URL / Poly Pizza / Sketchfab / .glb) rather than a built-in
 // primitive. Imported models are concave (stairs, archways), so a single bounding box is a poor player
 // collider even though Rapier already has their exact trimesh for dynamic objects.
@@ -13612,6 +13719,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
     // a card catches its own crossed twin's shadow as acne and whole tufts go black. Casting stays:
     // grass speckling the lawn with shadow is what grounds it.
     for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)){ o.receiveShadow = false; break; } }
+    if(typeof _installRaycastBVH === 'function') _installRaycastBVH(o);   // build 1097: rays vs this model stop testing every triangle
     // build 1095: sharpen every imported texture at grazing angles (floors especially)
     if(typeof MAX_ANISO !== 'undefined' && MAX_ANISO > 1){ const ms = Array.isArray(o.material) ? o.material : [o.material];
       for(const m of ms){ if(!m) continue; for(const k of ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap']) if(m[k]) m[k].anisotropy = MAX_ANISO;
@@ -23951,7 +24059,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1096 · 2026-07-28';
+const BUILD_VERSION = 'build 1097 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
