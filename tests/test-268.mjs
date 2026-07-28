@@ -13,7 +13,7 @@ const tp = extractFunction('tpCameraPushback');
 assert(/const _b = \(typeof adsBlend==='number'\) \? adsBlend : 0;/.test(tp), 'reads the aim-down-sights blend');
 // build 1086: the per-axis blend lives in _tpFrame, which takes the ramp as an argument — play passes
 // adsBlend, the editor preview passes its own hip/aim switch.
-assert(/_tpFrame\(_p, player\.yaw, player\.pitch, _b\)/.test(tp), '...and hands it to the framing');
+assert(/_tpFrame\(_p, _camYaw, _camPitch, _b\)/.test(tp), '...and hands it to the framing');   // build 1103: via the freezable camera pose
 { const f=extractFunction('_tpFrame');
   assert(/const side = tpSide \+ \(tpAimSide - tpSide\)\*b;/.test(f), 'side interpolates hip->aim');
   assert(/const height = tpHeight \+ \(tpAimHeight - tpHeight\)\*b;/.test(f), 'height interpolates hip->aim');

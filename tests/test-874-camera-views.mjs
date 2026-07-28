@@ -25,7 +25,8 @@ const loads = src.match(/gameCfg\.view = \(level\.game\.view==='top'\|\|level\.g
 eq(loads.length, 2, 'both load paths (local load + multiplayer host-adopt) apply the view');
 
 // ---- input rerouting: pointer + touch steer the cursor, not the head ----
-assert(/if\(typeof activeViewMode==='function' && activeViewMode\(\)!=='fps' && !drivingCar\)\{ _vcX \+= mx; _vcY \+= my; return; \}/.test(src), 'mouse deltas feed the twin-stick cursor');
+// (build 1103: the gate widened to cursorAimActive — top/side always, chase when ARPG cursor aim is on)
+assert(/if\(typeof cursorAimActive==='function' && cursorAimActive\(\) && !drivingCar\)\{ _vcX \+= mx; _vcY \+= my; return; \}/.test(src), 'mouse deltas feed the twin-stick cursor');
 assert(/if\(typeof activeViewMode==='function' && activeViewMode\(\)!=='fps'\)\{ _vcX \+= touchLookDX\*1\.4; _vcY \+= touchLookDY\*1\.4; \}/.test(src), 'touch look feeds the cursor too');
 assert(/_updateViewAim\(\);\s+\/\/ build 874/.test(src), 'the cursor→aim update runs every frame before the look pose');
 // the aim update faces the body at the cursor and (side) captures the lane
@@ -59,9 +60,9 @@ assert(/drivingCar \? drivingCar\.position : player\.pos/.test(src), 'driving ke
 assert(/if\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\)\{\s*\n\s*tpMuzzleWorld\(muzzleWorld\);/.test(src), 'tracers start at the avatar barrel (tpActive since build 894)');
 assert(/raycaster\.set\(_vmOrig, _pd\);/.test(src) && /\} else raycaster\.setFromCamera\(new THREE\.Vector2\(sx, sy\), camera\);/.test(src), 'hitscan: body-origin pellets in fixed views, screen-centre in fps (reworked in 885)');
 assert(/o\.set\(player\.pos\.x, player\.pos\.y-0\.2, player\.pos\.z\); d\.copy\(_vAimPt\)\.sub\(o\)\.normalize\(\);/.test(src), 'rockets launch from the body toward the cursor point');
-assert(/if\(activeViewMode\(\)!=='fps'\) fwd\.set\(-Math\.sin\(player\.yaw\), 0, -Math\.cos\(player\.yaw\)\);/.test(src), 'melee swings where the body faces');
+assert(/if\(typeof cursorAimActive==='function' && cursorAimActive\(\)\) fwd\.set\(-Math\.sin\(player\.yaw\), 0, -Math\.cos\(player\.yaw\)\);/.test(src), 'melee swings where the body faces');
 assert(/if\(!\(\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\) && gameOn && !editorOpen\)\)/.test(src), 'the player body renders in the fixed views');
-assert(/if\(_scopedNow && activeViewMode\(\)!=='fps'\) _scopedNow=false;/.test(src), 'no sniper-optic tunnel from a bird’s-eye camera');
+assert(/if\(_scopedNow && typeof cursorAimActive==='function' && cursorAimActive\(\)\) _scopedNow=false;/.test(src), 'no sniper-optic tunnel from a bird’s-eye camera');   // build 1103: nor from chase-cursor
 
 // ---- editor UI ----
 assert(/vRow\.appendChild\(vBtn\('fps','First person'\)\); vRow\.appendChild\(vBtn\('chase','Third-person'\)\); vRow\.appendChild\(vBtn\('top','Top-down'\)\); vRow\.appendChild\(vBtn\('side','Side-scroller'\)\);/.test(src), 'four-way picker in Player options (chase joined in build 894)');

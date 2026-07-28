@@ -11,7 +11,7 @@ const src = gameSource();
 const fn = extractFunction('throwGrenade', src);
 
 // ---- view-aware branch: chest origin + cursor target ----
-assert(/if\(typeof activeViewMode==='function' && activeViewMode\(\)!=='fps'\)\{/.test(fn), 'branches on the live view mode');
+assert(/if\(typeof cursorAimActive==='function' && cursorAimActive\(\)\)\{/.test(fn), 'branches on the live view mode');   // build 1103: chase-cursor lobs at the cursor too
 assert(/origin = new THREE\.Vector3\(player\.pos\.x, player\.pos\.y-0\.2, player\.pos\.z\);/.test(fn), 'lob originates at the player chest, not the sky camera');
 assert(/raycaster\.setFromCamera\(_vAimTmpNdc\.set\(_vAimNdc\.x, _vAimNdc\.y\), camera\);/.test(fn), 'the cursor ray resolves the landing target');
 assert(/const tgt = _hits\.length \? _hits\[0\]\.point\.clone\(\) : _vAimPt\.clone\(\);/.test(fn), 'empty space falls back to the aim-plane point (same as gunfire)');

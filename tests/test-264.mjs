@@ -22,7 +22,7 @@ const tp = extractFunction('tpCameraPushback');
   assert(/_TPF\.x = pivot\.x - fx\*dist \+ rx\*side;/.test(f) && /_TPF\.y = pivot\.y - fy\*dist \+ height;/.test(f) && /_TPF\.z = pivot\.z - fz\*dist \+ rz\*side;/.test(f),
     'camera carries blended side + height framing (build 373)'); }
 // (build 1101 added tilt to the condition — parallel-look still holds whenever tilt is 0)
-assert(/if\(side \|\| height \|\| \(typeof tpTilt==='number' && tpTilt\)\)\{ _tpLookAt\.set\(camx \+ fx, camy \+ fy, camz \+ fz\); camera\.lookAt\(_tpLookAt\); \}/.test(tp), 'view stays parallel to forward so the crosshair is accurate');
+assert(/if\(side \|\| height \|\| _cc \|\| \(typeof tpTilt==='number' && tpTilt\)\)\{ _tpLookAt\.set\(camx \+ fx, camy \+ fy, camz \+ fz\); camera\.lookAt\(_tpLookAt\); \}/.test(tp), 'view stays parallel to forward so the crosshair is accurate');
 assert(/_tpLookAt\.set\(camx \+ fx, camy \+ fy, camz \+ fz\); camera\.lookAt\(_tpLookAt\)/.test(tp), 'looks parallel to forward so the crosshair stays accurate (build 370)');
 assert(/_tpBack=new THREE\.Vector3\(\), _tpEye=new THREE\.Vector3\(\), _tpLookAt=new THREE\.Vector3\(\)/.test(src), '_tpLookAt declared with the other tp vectors');
 // editor slider wired to the pref + localStorage

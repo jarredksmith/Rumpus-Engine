@@ -21,7 +21,7 @@ assert(/if\(typeof _vcamUserYaw!=='undefined'\) _vcamUserYaw=0;/.test(src),
   'a new session starts back at the authored angle');
 
 // persistence: saved with the level, read back by both loaders
-assert(/viewOrbit: !!gameCfg\.viewOrbit \}/.test(src), 'serialized into the level');
+assert(/viewOrbit: !!gameCfg\.viewOrbit, chaseCursorAim/.test(src), 'serialized into the level');
 const loads = src.match(/gameCfg\.viewOrbit = !!level\.game\.viewOrbit;/g) || [];
 assert(loads.length >= 2, 'both level loaders restore it (' + loads.length + ')');
 

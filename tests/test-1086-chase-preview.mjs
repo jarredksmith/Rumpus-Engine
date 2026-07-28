@@ -10,9 +10,9 @@ const frame = extractFunction('_tpFrame');
 const pivot = extractFunction('_tpPivot');
 const tcp = extractFunction('tpCameraPushback');
 assert(frame && pivot, 'the framing and the pivot are their own functions');
-assert(/const _f=_tpFrame\(_p, player\.yaw, player\.pitch, _b\);/.test(tcp),
+assert(/const _f=_tpFrame\(_p, _camYaw, _camPitch, _b\);/.test(tcp),   // build 1103: the freezable pose
   'the LIVE chase camera frames through _tpFrame — one implementation, so the preview cannot lie');
-assert(/const _p=_tpPivot\(_ownAvatar, player\.pos, player\.yaw, player\.pos\.y-EYE\);/.test(tcp),
+assert(/const _p=_tpPivot\(_ownAvatar, player\.pos, _camYaw, player\.pos\.y-EYE\);/.test(tcp),
   '...and pivots through _tpPivot');
 assert(/_tpFrame\(p, yaw, pitch, _tpPvAds\)/.test(extractFunction('_tpPosePreview')),
   'and so does the editor preview, with its own hip/aim ramp in place of adsBlend');

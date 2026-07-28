@@ -189,6 +189,13 @@ material showcase in the in-game library. It references the model at
 The other generated arenas (keep, spine, castle, caldera) can join the library the same way —
 generate, upload the .glb, copy the level json and add an index entry.
 
+### The in-editor arena generator needs one extra file (build 1104)
+
+Editor → Tools → **Generate arena…** fetches `tools/levelgen.mjs` from the site and runs it in
+the browser. GitHub Pages serves it automatically (it's in the repo). On the cPanel host, upload
+`tools/levelgen.mjs` into `public_html/tools/` (or flat as `public_html/levelgen.mjs`) — without
+it the dialog reports that the generator isn't hosted.
+
 ### Google Analytics lives in the repo now (build 1091)
 
 The GA4 tag (`G-8R98ZNS9HN`) was originally hand-pasted into the uploaded copies only, which meant every

@@ -5,7 +5,8 @@ const src = gameSource();
 
 // local shot broadcasts
 const sh = extractFunction('shoot');
-assert(/netFire\(player\.pos, _fd\)/.test(sh), 'shoot broadcasts a fire event');
+// (build 1102: the broadcast moved to the real muzzle origin + true aim direction)
+assert(/netFire\(muzzleWorld, _fd\)/.test(sh), 'shoot broadcasts a fire event');
 
 // sender
 const nf = extractFunction('netFire');

@@ -35,7 +35,7 @@ assert(/tpTilt=g\('breach_tp_tilt',-20,70,0\);/.test(src), 'the view loader rest
 assert(/tpTilt:_viewClamp\(v\.tpTilt,-20,70,0\),/.test(src), 'roster views sanitize it');
 assert(/tpTilt:tpTilt,/.test(src), 'roster views snapshot it');
 assert(/tpTilt=s\.tpTilt;/.test(src), 'roster views apply it');
-assert(/if\(side \|\| height \|\| \(typeof tpTilt==='number' && tpTilt\)\)\{ _tpLookAt\.set/.test(src),
+assert(/if\(side \|\| height \|\| _cc \|\| \(typeof tpTilt==='number' && tpTilt\)\)\{ _tpLookAt\.set/.test(src),
   'the live camera looks along the tilted forward, not the player pitch, whenever tilt is set');
 assert(/const pvTilt=\(typeof tpTilt==='number' && tpTilt\) \? tpTilt\*\(Math\.PI\/180\)\*\(1-_tpPvAds\) : 0;/.test(src),
   'the editor preview window shows the tilt too');

@@ -7,7 +7,8 @@ const uoa = extractFunction('updateOwnAvatar');
 assert(/a\.userData\.footY = footY;/.test(uoa), 'foot height exposed to the chase cam');
 const tcp = extractFunction('tpCameraPushback');
 // build 1086: the pivot and the framing became _tpPivot/_tpFrame, shared with the editor preview.
-assert(/_tpPivot\(_ownAvatar, player\.pos, player\.yaw, player\.pos\.y-EYE\)/.test(tcp), 'chase cam uses the model centre');
+// (build 1103: the pivot yaw routes through _camYaw — identical to player.yaw outside cursor mode)
+assert(/_tpPivot\(_ownAvatar, player\.pos, _camYaw, player\.pos\.y-EYE\)/.test(tcp), 'chase cam uses the model centre');
 { const pv=extractFunction('_tpPivot');
   assert(/obj\.userData\.centerLocal/.test(pv), '...read off the model');
   assert(/_TPP\.x = base\.x \+ cl\.x\*cy \+ cl\.z\*sy;/.test(pv) && /_TPP\.z = base\.z - cl\.x\*sy \+ cl\.z\*cy;/.test(pv) && /_TPP\.y = fY \+ cl\.y;/.test(pv),

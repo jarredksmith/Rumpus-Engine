@@ -22,8 +22,13 @@
 // Multiplayer intent: 180° rotational symmetry (fair for two teams), no dead ends (every
 // space has ≥ 2 exits), and cover placed in mirrored pairs.
 
-import { writeFileSync } from 'node:fs';
-import { deflateSync } from 'node:zlib';
+// Runs in TWO environments (build 1104): as the Node CLI below, and inside the browser, where
+// the editor's "Generate arena" dialog fetches this exact source and evaluates it with
+// RUMPUS_LEVELGEN_HOST supplying deflate, a Buffer work-alike and an output sink. One file,
+// no build step, no drift between what the CLI ships and what the editor generates.
+const _LG_HOST = (typeof RUMPUS_LEVELGEN_HOST !== 'undefined') ? RUMPUS_LEVELGEN_HOST : null;
+const deflateSync = _LG_HOST ? _LG_HOST.deflateSync : (await import('node:zlib')).deflateSync;
+const writeFileSync = _LG_HOST ? _LG_HOST.writeFileSync : (await import('node:fs')).writeFileSync;
 
 // ------------------------------------------------------------------ texture painter ----
 // Deterministic (seeded PRNG) and tileable (lattice noise wraps). What earns realism is not
@@ -2508,6 +2513,7 @@ function writeGLB(out) {
 
 // -------------------------------------------------------------------------- main ----
 const LAYOUTS = { keep: buildKeep, spine: buildSpine, museum: buildMuseum, castle: buildCastle, caldera: buildCaldera };
+if (!_LG_HOST) {   // CLI only — in the browser the host calls buildArena/bakeLightmap/writeGLB itself
 const which = process.argv[2], out = process.argv[3];
 if (which === 'tex') {   // fast iteration: node tools/levelgen.mjs tex <library-id> <out.png>
   const id = process.argv[3], outPng = process.argv[4];
@@ -2536,3 +2542,4 @@ const w = writeGLB(out);
 console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets, lightmap ${LM ? LM.A : 0}px / ${PATCHES.length} patches in ${aoMs} ms over ${SOLIDS.length} solids)`);
 if (info.scans) console.log('SCANS ' + JSON.stringify(info.scans));
 if (info.world) console.log('WORLD ' + JSON.stringify(info.world));
+}

@@ -5,8 +5,9 @@ const src = gameSource();
 // and serializes with the weapon.
 
 // --- local viewmodel flash gated on the active weapon ---
-assert(/if\(!w\.noMuzzle\)\{ muzzle\.intensity = 6; flashMat\.opacity = 1;/.test(src), 'the main shot skips the flash for a flash-less gun');
-assert(/if\(!WEAPONS\.launcher\.noMuzzle\)\{ muzzle\.intensity=8; flashMat\.opacity=1;/.test(src), 'the launcher honours its own toggle');
+// (build 1102 split each flash into a view-correct pair — the noMuzzle gate still wraps BOTH paths)
+assert(/if\(!w\.noMuzzle\)\{\n    if\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\) muzzleFlashAt\(muzzleWorld\);/.test(src), 'the main shot skips the flash for a flash-less gun');
+assert(/if\(!WEAPONS\.launcher\.noMuzzle\)\{\n    if\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\)/.test(src), 'the launcher honours its own toggle');
 
 // --- multiplayer: the weapon key rides the fire message; peers skip the flash ---
 const nf = extractFunction('netFire');
