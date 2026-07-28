@@ -909,6 +909,34 @@ function sign(face, cx, cy, cz, h, text, color = [0.9, 0.88, 0.82], rot = 0) {
   if (face === '+x') quad(m, [cx, y0, cz - w / 2], [cx, y0, cz + w / 2], [cx, y1, cz + w / 2], [cx, y1, cz - w / 2], uv);
 }
 
+function barkTex(name, seed, S) {   // vertical ridged plates with deep dark furrows
+  const r = rng(seed), t = new Tex(name, S);
+  const ridge = fbm(r, S, [[3, 1], [8, 0.55]]);
+  const fine = fbm(rng(seed ^ 3), S, [[24, 1], [96, 0.5]]);
+  t.fill([0.36, 0.28, 0.2]);
+  t.each((x, y, i) => {
+    const rv = 1 - Math.abs(2 * ridge((x * 3) % S, (y * 0.5 + fine(x, y) * 60) % S) - 1);   // vertical furrows
+    t.tint(i, 0.6 + rv * 0.6 + (fine(x, y) - 0.5) * 0.25);
+    t.tintC(i, 1 + rv * 0.05, 1, 1 - rv * 0.06);
+    t.h[i] = rv;
+  });
+  return finish(t, seed, { cavDark: 0.42, cavK: 2 });
+}
+function leavesTex(name, seed, S) {   // canopy: leaf clumps over dark interior, a few bright tips
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  const clump = fbm(r, S, [[8, 1], [20, 0.6], [64, 0.35]]);
+  const leafW = worley(rng(seed ^ 5), S, 64);
+  t.fill([0.18, 0.3, 0.12]);
+  t.each((x, y, i) => {
+    const c = clump(x, y);
+    t.tint(i, 0.55 + c * 0.9);                                       // strong light/shade clumping
+    const lw = leafW(x, y);
+    if (lw.d1 < 2.2 * k) { t.tint(i, 0.9 + lw.id * 0.45); t.tintC(i, 1 + lw.id * 0.12, 1 + lw.id * 0.06, 1); }
+    t.h[i] = c * 0.7 + (lw.d1 < 2.2 * k ? 0.25 : 0);
+  });
+  return finish(t, seed, { cavDark: 0.4, cavK: 1.8, edgeLight: 0.2 });
+}
+
 // the decal atlas: 4x4 cells of stains and worn paint, alpha-blended over the tiling base
 const DECAL = { OIL: [0, 0], LEAK: [1, 0], SCUFF: [2, 0], RING: [3, 0], ONE: [0, 1], TWO: [1, 1], CHEV: [2, 1], LINE: [3, 1] };
 function decalTex(name) {
@@ -968,11 +996,15 @@ function prim(m) { return prims[m] || (prims[m] = { pos: [], nrm: [], uv: [], id
 // pointing inward, surfaceTopUnder raycasts landed on every slab's underside.)
 // UVs: planar projection along the face's dominant axis, in world units / material scale —
 // or explicit per-vertex UVs (unitUV) for objects whose texture must land on their edges.
+// Signed per-face axes: (tangent x bitangent) points along the OUTWARD normal on every face,
+// and v runs down the wall in world space. The old mapping reused one axis pair for opposite
+// faces — mirrored tangent basis on half of them, so normal maps rendered inside-out (bumps
+// read as dents), and v pointed up, so rust streaks and weep stains climbed the walls.
 function _uvFor(n, s, v) {
   const ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
-  if (ay >= ax && ay >= az) return [v[0] / s, v[2] / s];
-  if (ax >= az) return [v[2] / s, v[1] / s];
-  return [v[0] / s, v[1] / s];
+  if (ay >= ax && ay >= az) return n[1] >= 0 ? [v[0] / s, -v[2] / s] : [v[0] / s, v[2] / s];
+  if (ax >= az) return n[0] >= 0 ? [v[2] / s, -v[1] / s] : [-v[2] / s, -v[1] / s];
+  return n[2] >= 0 ? [-v[0] / s, -v[1] / s] : [v[0] / s, -v[1] / s];
 }
 function _quadRaw(m, a, b, c, d, unitUV) {
   const p = prim(m), s = MATS[m].scale;
@@ -1011,7 +1043,7 @@ function tri(m, a, b, c) {
   p.idx.push(base, base + 2, base + 1);
 }
 const SOLIDS = [];   // analytic occluders for the AO bake — every box and ramp lands here
-const UNIT = [[0, 0], [1, 0], [1, 1], [0, 1]];
+const UNIT = [[0, 1], [1, 1], [1, 0], [0, 0]];   // v=1 at the face's base: image bottom sits at the bottom
 function box(m, x0, y0, z0, x1, y1, z1, unit) {
   SOLIDS.push([x0, y0, z0, x1, y1, z1]);
   const A = [x0, y0, z0], B = [x1, y0, z0], C = [x1, y0, z1], D = [x0, y0, z1];
@@ -1071,13 +1103,14 @@ function bevelBox(m, x0, y0, z0, x1, y1, z1, c, unit) {
 }
 function bevelCbox(m, cx, cy, cz, sx, sy, sz, unit) { bevelBox(m, cx - sx / 2, cy - sy / 2, cz - sz / 2, cx + sx / 2, cy + sy / 2, cz + sz / 2, Math.min(sx, sy, sz) * 0.06, unit); }
 // vertical cylinder (column) and a horizontal pipe run along x or z
-function cyl(m, cx, cz, y0, y1, r, segs = 14) {
+function cyl(m, cx, cz, y0, y1, r, segs = 14, rTop = null) {
+  const r1 = rTop == null ? r : rTop;
   SOLIDS.push([cx - r, y0, cz - r, cx + r, y1, cz + r]);
-  const pt = (q, y) => [cx + Math.cos(q / segs * Math.PI * 2) * r, y, cz + Math.sin(q / segs * Math.PI * 2) * r];
+  const pt = (q, y, rr) => [cx + Math.cos(q / segs * Math.PI * 2) * rr, y, cz + Math.sin(q / segs * Math.PI * 2) * rr];
   for (let q = 0; q < segs; q++) {
-    _quadRaw(m, pt(q, y0), pt(q + 1, y0), pt(q + 1, y1), pt(q, y1));
-    tri(m, [cx, y1, cz], pt(q, y1), pt(q + 1, y1));
-    tri(m, [cx, y0, cz], pt(q + 1, y0), pt(q, y0));
+    _quadRaw(m, pt(q, y0, r), pt(q + 1, y0, r), pt(q + 1, y1, r1), pt(q, y1, r1));
+    if (r1 > 0.01) tri(m, [cx, y1, cz], pt(q, y1, r1), pt(q + 1, y1, r1));
+    tri(m, [cx, y0, cz], pt(q + 1, y0, r), pt(q, y0, r));
   }
 }
 function pipe(m, axis, a0, a1, h, off, r, segs = 10) {
@@ -1141,6 +1174,75 @@ function terrainGround(m, x0, z0, x1, z1, cell, hFn) {
   }
 }
 
+// ---- prop vocabulary -------------------------------------------------------------------
+// Composed from the primitives so every prop gets colliders, AO and textures for free.
+function tree(mBark, mLeaf, cx, cz, y, seed2, big = 1) {
+  const rr = rng(seed2);
+  const h = (4.2 + rr() * 1.8) * big, tr = (0.24 + rr() * 0.1) * big;
+  cyl(mBark, cx, cz, y, y + h * 0.6, tr, 8, tr * 0.5);
+  const n = 3 + (rr() * 2 | 0);
+  for (let q = 0; q < n; q++) {
+    const a = rr() * Math.PI * 2, d = rr() * 1.1 * big;
+    boulder(mLeaf, cx + Math.cos(a) * d, y + h * 0.68 + rr() * h * 0.28, cz + Math.sin(a) * d,
+      (1.0 + rr() * 0.6) * big, seed2 * 7 + q);
+  }
+}
+function conifer(mBark, mLeaf, cx, cz, y, seed2, big = 1) {
+  const rr = rng(seed2);
+  const h = (5 + rr() * 2) * big;
+  cyl(mBark, cx, cz, y, y + h * 0.32, 0.2 * big, 8, 0.14 * big);
+  for (let q = 0; q < 3; q++) {                                      // stacked frustums
+    const b0 = y + h * (0.24 + q * 0.24), b1 = y + h * (0.52 + q * 0.24);
+    cyl(mLeaf, cx, cz, b0, b1, (1.5 - q * 0.42) * big, 9, (0.6 - q * 0.22) * big);
+  }
+  cyl(mLeaf, cx, cz, y + h * 0.96, y + h * 1.12, 0.28 * big, 7, 0.02);
+}
+function deadTree(mBark, cx, cz, y, seed2) {
+  const rr = rng(seed2);
+  const h = 3.6 + rr() * 2;
+  let px = cx, pz = cz;
+  for (let q = 0; q < 3; q++) {                                      // crooked, tapering trunk
+    const y0 = y + h * q / 3, y1 = y + h * (q + 1) / 3;
+    cyl(mBark, px, pz, y0, y1 + 0.05, 0.26 - q * 0.07, 7, 0.19 - q * 0.06);
+    px += (rr() - 0.5) * 0.5; pz += (rr() - 0.5) * 0.5;
+  }
+  for (const a of [rr() * 6.3, rr() * 6.3]) {                        // stub limbs
+    cyl(mBark, px + Math.cos(a) * 0.5, pz + Math.sin(a) * 0.5, y + h * 0.62, y + h * 0.62 + 0.9 + rr(), 0.09, 6, 0.03);
+  }
+}
+function fenceRun(mWood, axis, a0, a1, off, y) {
+  const step = 2.2, n = Math.max(1, Math.round((a1 - a0) / step));
+  for (let q = 0; q <= n; q++) {
+    const a = a0 + (a1 - a0) * q / n;
+    if (axis === 'x') bevelCbox(mWood, a, y + 0.62, off, 0.16, 1.24, 0.16);
+    else bevelCbox(mWood, off, y + 0.62, a, 0.16, 1.24, 0.16);
+  }
+  for (const ry of [0.42, 0.98]) {
+    if (axis === 'x') box(mWood, a0, y + ry, off - 0.05, a1, y + ry + 0.12, off + 0.05);
+    else box(mWood, off - 0.05, y + ry, a0, off + 0.05, y + ry + 0.12, a1);
+  }
+}
+function lamppost(mMetal, mGlow, cx, cz, y, h = 4.2, armX = 0.9) {
+  cyl(mMetal, cx, cz, y, y + h, 0.1, 8, 0.07);
+  bevelCbox(mMetal, cx, y + 0.14, cz, 0.5, 0.28, 0.5);
+  box(mMetal, cx, y + h - 0.08, cz - 0.06, cx + armX, y + h, cz + 0.06);
+  box(mGlow, cx + armX - 0.42, y + h - 0.32, cz - 0.14, cx + armX + 0.1, y + h - 0.06, cz + 0.14);
+}
+function container(mBody, mDoor, cx, cz, y, along = 'x') {
+  const L = 6.1, W = 2.45, H = 2.6;
+  const hx = along === 'x' ? L / 2 : W / 2, hz = along === 'x' ? W / 2 : L / 2;
+  box(mBody, cx - hx, y, cz - hz, cx + hx, y + H, cz + hz);
+  box(mBody, cx - hx - 0.06, y + H - 0.14, cz - hz - 0.06, cx + hx + 0.06, y + H, cz + hz + 0.06);   // roof lip
+  box(mBody, cx - hx - 0.06, y, cz - hz - 0.06, cx + hx + 0.06, y + 0.18, cz + hz + 0.06);           // skid rail
+  const dx = along === 'x' ? hx : 0, dz = along === 'x' ? 0 : hz;                                    // door end
+  for (const so of [-0.55, 0.55]) {                                                                  // lock rods
+    const px = cx + dx * 1.02 + (along === 'x' ? 0 : so), pz = cz + dz * 1.02 + (along === 'x' ? so : 0);
+    cyl(mDoor, px, pz, y + 0.2, y + H - 0.2, 0.05, 6);
+  }
+  if (along === 'x') box(mDoor, cx + hx, y + 0.2, cz - hz + 0.2, cx + hx + 0.05, y + H - 0.2, cz + hz - 0.2);
+  else box(mDoor, cx - hx + 0.2, y + 0.2, cz + hz, cx + hx - 0.2, y + H - 0.2, cz + hz + 0.05);
+}
+
 // place a callback twice: as-is and rotated 180° about the origin (x,z -> -x,-z).
 // The callback receives a transform that flips coordinates and swaps team materials.
 function mirrored(fn) {
@@ -1200,6 +1302,8 @@ const MATLIB = {
   scifi:     { s: 1024, make: (n, S) => scifiPanelTex(n, 191, S),    opts: { base: [1, 1, 1], metal: 0.25, rough: 1, scale: 4, nrm: 1.4 } },
   scifiFloor:{ s: 1024, make: (n, S) => scifiFloorTex(n, 193, S),    opts: { base: [1, 1, 1], metal: 0.25, rough: 1, scale: 4, nrm: 1.4 } },
   lava:      { s: 512,  make: (n, S) => lavaTex(n, 197, S),          opts: { base: [1, 1, 1], rough: 0.95, scale: 6, nrm: 1.8 } },
+  bark:      { s: 512,  make: (n, S) => barkTex(n, 199, S),          opts: { base: [1, 1, 1], rough: 0.95, scale: 2.2, nrm: 2 } },
+  leaves:    { s: 512,  make: (n, S) => leavesTex(n, 211, S),        opts: { base: [1, 1, 1], rough: 0.95, scale: 2.6, nrm: 1.4 } },
 };
 const _libCache = {};
 function libMat(id, over) {
@@ -1437,12 +1541,18 @@ function buildSpine() {
     box(tm, east ? HX : -HX - 0.15, 2.8, -14, east ? HX + 0.15 : -HX, 4.0, 14);
   });
 
-  // mid-field cover between spine and wall, mirrored
+  // mid-field cover: crates, cargo containers as heavy cover, lampposts by the ramps
   mirrored((xz) => {
     for (const [sx, sz] of [[10, 20], [-16, 24], [22, 16]]) {
       const [x, z] = xz(sx, sz);
       bevelCbox((sx + sz) % 3 ? P.crate : P.crate2, x, 0.85, z, 2, 1.7, 2, true);
     }
+    const [cx2, cz2] = xz(2, 24);
+    container(libMat('paintRed'), P.parapet, cx2, cz2, 0, 'x');
+    const [cx3, cz3] = xz(-24, -19);
+    container(libMat('paintGreen'), P.parapet, cx3, cz3, 0, 'z');
+    const [lx2, lz2] = xz(38, 16);
+    lamppost(P.parapet, P.trim, lx2, lz2, 0);
   });
 
   // decals — see the keep: stains for life, paint for navigation
@@ -1546,6 +1656,13 @@ function buildCastle() {
     sign(south ? '-z' : '+z', bx, 4.05, zDoor + (south ? -0.5 : 0.5), 0.7, 'BARRACKS', [0.85, 0.7, 0.4]);
   });
 
+  // courtyard trees in stone planters, mirrored
+  mirrored((xz) => {
+    const [tx2, tz2] = xz(-24, -18);
+    box(stone, tx2 - 1.6, 0, tz2 - 1.6, tx2 + 1.6, 0.55, tz2 + 1.6);
+    tree(libMat('bark'), libMat('leaves'), tx2, tz2, 0.5, (tx2 * 13 + tz2) | 0);
+  });
+
   // torches along the E and W walls; scattered cover
   for (let a = -27; a <= 27; a += 9) { cbox(torch, -W + 0.15, 4.2, a, 0.3, 0.55, 0.28); cbox(torch, W - 0.15, 4.2, a, 0.3, 0.55, 0.28); }
   mirrored((xz) => {
@@ -1632,6 +1749,14 @@ function buildCaldera() {
       const [x, z] = xz(bx, bz); boulder(rock, x, th(x, z) + r2 * 0.42, z, r2 * 1.45, (bx * 7 + bz) | 0);
     }
   });
+  // scorched dead trees, mirrored
+  mirrored((xz) => {
+    for (const [tx2, tz2] of [[24, 26], [-8, 30], [33, -22]]) {
+      const [x2, z2] = xz(tx2, tz2);
+      deadTree(libMat('bark'), x2, z2, th(x2, z2) - 0.05, (tx2 * 7 + tz2) | 0);
+    }
+  });
+
   // bases E and W
   mirrored((xz, team) => {
     const east = xz(1, 0)[0] > 0, tm = team({ a: teamA, b: teamB });
@@ -1660,7 +1785,21 @@ function buildMuseum() {
     box(glow, x - 3, 5.25, row * 12 - 0.2, x + 3, 5.4, row * 12 + 0.2);             // header light
   });
   box(glow, -LEN / 2 + 1, 0.02, -0.3, LEN / 2 - 1, 0.09, 0.3);                      // centreline
-  return { name: 'Material Museum (' + ids.length + ' families)' };
+  // the props wing: the vocabulary on display beside the materials
+  const WX = LEN / 2, bark = libMat('bark'), leaves = libMat('leaves');
+  const grass2 = libMat('grass'), metal2 = libMat('metal'), planks2 = libMat('plankGrey');
+  box(grass2, WX, -0.5, -13, WX + 46, 0, 13);
+  tree(bark, leaves, WX + 5, -6, 0, 71);
+  tree(bark, leaves, WX + 11, 6, 0, 72, 1.25);
+  conifer(bark, leaves, WX + 17, -6, 0, 73);
+  deadTree(bark, WX + 22, 5, 0, 74);
+  fenceRun(planks2, 'x', WX + 26, WX + 34, -6, 0);
+  lamppost(metal2, glow, WX + 30, 6, 0);
+  container(libMat('paintRed'), metal2, WX + 39, -5, 0, 'x');
+  container(libMat('paintGreen'), metal2, WX + 39, 5, 0, 'x');
+  boulder(libMat('rock'), WX + 33, 0.5, 0, 1.3, 75);
+  boulder(libMat('rock'), WX + 35, 0.35, 1.6, 0.8, 76);
+  return { name: 'Material Museum (' + ids.length + ' families + props wing)' };
 }
 
 // -------------------------------------------------------------- baked lighting (AO) ----
@@ -1760,11 +1899,14 @@ function writeGLB(out) {
     } else basePng = pngEncode(toBytes(t.rgb), S, S, 3);
     const e = { base: addImg(basePng), mr: null, nrm: null };
     if (!t.noAux) {
+      const down = (px2, S2) => { let q = px2, ss = S2, div = +(process.env.TEXAUX || 2);
+        while (div > 1) { q = halfPx(q, ss, 3); ss >>= 1; div >>= 1; } return [q, ss]; };
       if (t.mr) { const px = new Float64Array(S * S * 3);
         for (let i = 0; i < S * S; i++) { px[i * 3 + 1] = t.mr[i * 2]; px[i * 3 + 2] = t.mr[i * 2 + 1]; }
-        e.mr = addImg(pngEncode(toBytes(halfPx(px, S, 3)), S >> 1, S >> 1, 3)); }
+        const [q1, s1] = down(px, S); e.mr = addImg(pngEncode(toBytes(q1), s1, s1, 3)); }
       // normal strength scales with resolution so world-space relief stays constant
-      e.nrm = addImg(pngEncode(toBytes(halfPx(normalPx(t.h, S, 2.2 * S / 256), S, 3)), S >> 1, S >> 1, 3));
+      const [q2, s2] = down(normalPx(t.h, S, 2.2 * S / 256), S);
+      e.nrm = addImg(pngEncode(toBytes(q2), s2, s2, 3));
       if (t.em) e.em = addImg(pngEncode(toBytes(t.em), S, S, 3));   // mostly black -> compresses tiny
     }
     texIdx[name] = e;
