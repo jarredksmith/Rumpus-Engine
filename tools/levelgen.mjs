@@ -1052,6 +1052,12 @@ function tri(m, a, b, c) {
   [a, b, c].forEach(vtx => { p.pos.push(...vtx); p.nrm.push(...n); const q = _uvFor(n, s, vtx); p.uv.push(q[0], q[1]); });
   p.idx.push(base, base + 2, base + 1);
 }
+// build 1108: how far a decorative surface must stand off the structure behind it. Two coplanar
+// front-facing surfaces have identical depth, so the GPU picks a winner per pixel and the choice
+// flips as the camera moves — the "overlapping mesh that flashes". Decals already used 0.02-0.03;
+// this is the same rule for banded geometry, with more margin because bands sit on 79-unit walls
+// seen from across the arena, where depth precision is coarsest.
+const PROUD = 0.05;
 const SOLIDS = [];   // analytic occluders for the AO bake — every box and ramp lands here
 const UNIT = [[0, 1], [1, 1], [1, 0], [0, 0]];   // v=1 at the face's base: image bottom sits at the bottom
 function box(m, x0, y0, z0, x1, y1, z1, unit) {
@@ -1564,7 +1570,7 @@ function buildKeep() {
     const tm = team({ a: P.teamA, b: P.teamB });
     for (const [x0, x1] of [[-14, -5], [-2, 2], [5, 14]]) box(P.parapet, x0, 0, zs[0], x1, 1.2, zs[1]);
     box(tm, -14, 1.2, zs[0], 14, 1.35, zs[1]);
-    box(tm, -16, 3.2, south ? W : -W - 0.15, 16, 4.4, south ? W + 0.15 : -W); // wall band
+    box(tm, -16, 3.2, south ? W - PROUD : -W - 0.15, 16, 4.4, south ? W + 0.15 : -W + PROUD); // wall band (build 1108: proud of the wall, never flush)
   });
 
   // ground cover, mirrored pairs (2×1.7 crates, some stacked)
@@ -1725,7 +1731,7 @@ function buildCastle() {
     for (let px = -11; px <= 11; px += 4.4) cbox(darkWood, px, 6.15, zr, 0.24, 1.3, 0.24);   // rail posts
     box(darkWood, -11, 6.7, zr - 0.09, 11, 6.95, zr + 0.09);                                 // rail beam
     const tm = team({ a: teamA, b: teamB });
-    box(tm, -12, 7.6, south ? W - 0.15 : -W + 0.01, 12, 8.5, south ? W - 0.01 : -W + 0.15); // team band
+    box(tm, -12, 7.6, south ? W - 0.15 : -W + PROUD, 12, 8.5, south ? W - PROUD : -W + 0.15); // team band (build 1108: 1cm was too thin a margin — PROUD is the shared rule)
     sign(south ? '-z' : '+z', 0, 3.2, south ? W - TH - 0.04 : -(W - TH) + 0.04, 1.5, south ? 'BASE 1' : 'BASE 2');
   });
   // central fountain: plinth, glossy basin, marble column
@@ -2008,9 +2014,12 @@ function buildArena(seed, theme, size) {
     }
     for (const tx of [-W, W]) for (const tz of [-W, W]) cyl(P.wall, tx, tz, 0, WALL_H + 3.4, 4.2, 16);
   } else if (theme === 'industrial') {
+    // build 1108: the buttresses stand fully INSIDE the wall face (centre 0.4 from it, half-depth
+    // 0.4). At 0.35 they poked 5 cm into the wall volume, so their tops and the wall's top shared
+    // both the plane y=WALL_H and a sliver of footprint — a thin coplanar strip that flashed.
     for (let a = -W + 8; a <= W - 8; a += 10) {
-      cbox(P.pillar, a, WALL_H / 2, -W + 0.35, 1.4, WALL_H, 0.8); cbox(P.pillar, a, WALL_H / 2, W - 0.35, 1.4, WALL_H, 0.8);
-      cbox(P.pillar, -W + 0.35, WALL_H / 2, a, 0.8, WALL_H, 1.4); cbox(P.pillar, W - 0.35, WALL_H / 2, a, 0.8, WALL_H, 1.4);
+      cbox(P.pillar, a, WALL_H / 2, -W + 0.4, 1.4, WALL_H, 0.8); cbox(P.pillar, a, WALL_H / 2, W - 0.4, 1.4, WALL_H, 0.8);
+      cbox(P.pillar, -W + 0.4, WALL_H / 2, a, 0.8, WALL_H, 1.4); cbox(P.pillar, W - 0.4, WALL_H / 2, a, 0.8, WALL_H, 1.4);
     }
     for (const sx of [1, -1]) pipe(P.parapet, 'z', -W + 6, W - 6, WALL_H - 1.3, sx * (W - 0.55), 0.22);
   } else if (theme === 'volcanic') {
@@ -2021,12 +2030,15 @@ function buildArena(seed, theme, size) {
       const bz2 = Math.abs(Math.cos(a)) > Math.abs(Math.sin(a)) ? (rb() * 2 - 1) * (W - 8) : Math.sign(Math.sin(a)) * d;
       boulder(P.cover, bx2, 0.4 + rb() * 0.4, bz2, 1.0 + rb() * 1.1, seed * 17 + q);
     }
-    box(P.trim, -W, 0, -W - 0.1, W, 0.35, -W); box(P.trim, -W, 0, W, W, 0.35, W + 0.1);   // ember seams
+    box(P.trim, -W, 0, -W - 0.1, W, 0.35, -W + PROUD); box(P.trim, -W, 0, W - PROUD, W, 0.35, W + 0.1);   // ember seams (build 1108: proud, not flush)
   } else {                                                          // garden: capped brick + lantern posts
-    box(P.parapet, -W - 1.6, WALL_H, -W - 1.6, W + 1.6, WALL_H + 0.4, -W + 0.1);   // cap = four rim strips
+    // cap = four rim strips, MITRED (build 1108): the E/W strips stop where the N/S strips begin.
+    // Overlapping them put two up-facing tops at the same height in each corner — coplanar, so the
+    // GPU flipped between them as the camera moved.
+    box(P.parapet, -W - 1.6, WALL_H, -W - 1.6, W + 1.6, WALL_H + 0.4, -W + 0.1);
     box(P.parapet, -W - 1.6, WALL_H, W - 0.1, W + 1.6, WALL_H + 0.4, W + 1.6);
-    box(P.parapet, -W - 1.6, WALL_H, -W, -W + 0.1, WALL_H + 0.4, W);
-    box(P.parapet, W - 0.1, WALL_H, -W, W + 1.6, WALL_H + 0.4, W);
+    box(P.parapet, -W - 1.6, WALL_H, -W + 0.1, -W + 0.1, WALL_H + 0.4, W - 0.1);
+    box(P.parapet, W - 0.1, WALL_H, -W + 0.1, W + 1.6, WALL_H + 0.4, W - 0.1);
     for (const sx of [1, -1]) for (const sz of [1, -1]) lamppost(P.parapet, P.trim, sx * (W - 3), sz * (W - 3), 0, 4.6, 0.9 * -sx);
   }
   // ---- trim pass: plinth, floor border, cornice. "Never let two materials meet naked" — the
@@ -2036,12 +2048,14 @@ function buildArena(seed, theme, size) {
     const plinth = libMat(theme === 'industrial' ? 'concrete' : 'stone',
       theme === 'industrial' ? { base: [0.35, 0.37, 0.39], rough: 0.98, scale: 3 } : { base: [0.72, 0.68, 0.62], rough: 0.98, scale: 3 });
     const border = theme === 'industrial' ? libMat('asphalt') : theme === 'garden' ? libMat('dirt') : libMat('cobble', { base: [0.8, 0.78, 0.75] });
+    // build 1108: every ring is MITRED — the E/W runs stop where the N/S runs begin. Overlapping
+    // them stacked two identical up-facing tops in each corner (coplanar => the flashing patch).
     box(plinth, -W, 0, -W, W, 0.55, -W + 0.16); box(plinth, -W, 0, W - 0.16, W, 0.55, W);
-    box(plinth, -W, 0, -W, -W + 0.16, 0.55, W); box(plinth, W - 0.16, 0, -W, W, 0.55, W);
+    box(plinth, -W, 0, -W + 0.16, -W + 0.16, 0.55, W - 0.16); box(plinth, W - 0.16, 0, -W + 0.16, W, 0.55, W - 0.16);
     box(border, -W, 0, -W + 0.16, W, 0.045, -W + 0.85); box(border, -W, 0, W - 0.85, W, 0.045, W - 0.16);
-    box(border, -W, 0, -W, -W + 0.85, 0.045, W); box(border, W - 0.85, 0, -W, W, 0.045, W);
+    box(border, -W, 0, -W + 0.85, -W + 0.85, 0.045, W - 0.85); box(border, W - 0.85, 0, -W + 0.85, W, 0.045, W - 0.85);
     box(plinth, -W, WALL_H - 0.92, -W, W, WALL_H - 0.62, -W + 0.14); box(plinth, -W, WALL_H - 0.92, W - 0.14, W, WALL_H - 0.62, W);
-    box(plinth, -W, WALL_H - 0.92, -W, -W + 0.14, WALL_H - 0.62, W); box(plinth, W - 0.14, WALL_H - 0.92, -W, W, WALL_H - 0.62, W);
+    box(plinth, -W, WALL_H - 0.92, -W + 0.14, -W + 0.14, WALL_H - 0.62, W - 0.14); box(plinth, W - 0.14, WALL_H - 0.92, -W + 0.14, W, WALL_H - 0.62, W - 0.14);
   }
   // motivated weathering: leak streaks bleeding down from the cornice line
   for (const s of [1, -1]) { decal(P.D, s > 0 ? '-x' : '+x', s * (W - 0.05), WALL_H * 0.55, s * -14, 5, WALL_H * 0.7, DECAL.LEAK);
@@ -2152,7 +2166,10 @@ function buildArena(seed, theme, size) {
     const tm = team({ a: P.teamA, b: P.teamB });
     for (const [x0, x1] of [[-12, -4], [-1.5, 1.5], [4, 12]]) box(P.parapet, x0, 0, zs[0], x1, 1.2, zs[1]);
     box(tm, -12, 1.2, zs[0], 12, 1.35, zs[1]);
-    box(tm, -14, WALL_H * 0.4, south ? W : -W - 0.15, 14, WALL_H * 0.4 + 1.1, south ? W + 0.15 : -W);
+    // build 1108: PROUD of the wall face by PROUD, never flush with it. A band whose visible face
+    // sat exactly on the wall plane z-fought with it: identical depth, so the two surfaces swapped
+    // in patches as the camera moved (the "flashing overlapping mesh"). Same rule as the decals.
+    box(tm, -14, WALL_H * 0.4, south ? W - PROUD : -W - 0.15, 14, WALL_H * 0.4 + 1.1, south ? W + 0.15 : -W + PROUD);
     sign(south ? '-z' : '+z', 0, 3.4, south ? W - 0.04 : -W + 0.04, 1.3, south ? 'BASE 1' : 'BASE 2', P.signC);
   });
   reserve(-13, W - 10, 13, W); reserve(-13, -W, 13, -W + 10);
