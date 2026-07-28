@@ -106,3 +106,51 @@ screen are release blockers.
 ## Git
 Initialize a repo and commit each build so you get a clean history (the build number is a
 natural commit message, e.g. "build 619 — UGC cloud gallery"). Tag releases as they happen.
+
+## The level generator (`tools/levelgen.mjs`) — orientation
+
+One file, TWO homes: the Node CLI, and the browser (editor → Tools → **Generate arena…**), which
+fetches this exact source and evaluates it in a worker behind `RUMPUS_LEVELGEN_HOST` (a Buffer
+work-alike + fflate for deflate). Keep it dual-environment — never add a bare `node:` import.
+
+- `node tools/levelgen.mjs <keep|spine|museum|castle|caldera> <out.glb>`
+- `node tools/levelgen.mjs arena <out.glb> [seed] [theme|auto] [small|medium|large] [square|cross|octagon|diagonal|auto]`
+- `node tools/levelgen.mjs tex <libid> <out.png>` — fast single-texture iteration
+- Env knobs: `TEXSIZE` (texture res), `TEXAUX` (aux-map divisor), `NOTEX/NOMR/NONRM/NOLM` (bisection)
+
+Conventions that are easy to break:
+- **Nothing flush.** Decoration stands off structure by `PROUD` (5 cm) and rings are mitred. Two
+  coplanar front-facing surfaces z-fight and flash as the camera moves. `test-1108` sweeps all four
+  themes for this and will catch it.
+- **`nocollide*`** named nodes are decoration (grass): engine build 1093 skips them in every
+  collider and neutralises their raycast; 1096 also stops them receiving shadows.
+- **Interiors need `addLight`.** The bake integrates sky visibility + one sun bounce, so anything
+  under a roof bakes black without a registered light. Light range is capped at the tracer's search
+  distance (9.5) or the shadow test can't see occluders and light leaks through walls.
+- **Probe before shipping geometry.** Ramps must read `pushed: 0` in the engine probe
+  (scratchpad `probe-gen.mjs`), not just look right.
+
+## Open work (as of build 1112)
+
+Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
+(groundwork only, 1112) → more themes/materials (not started) → emit gameplay data with the GLB
+(not started).
+
+Two known bugs, both with exact repros:
+
+1. **Multi-storey stairs push enemies.** `roomBlock({storeys:2})` builds a switchback stairwell and
+   is unit-tested, but the arena keeps it OFF (`const twoUp = (rr(), false);`) because the probe
+   reports enemies pushed at 31/31 sample points on the stairs. Ruled out: lane width (identical at
+   2.5 and 3.5) and flight geometry (scan reads a clean 0.24 rise/unit, 0.12→3.63). Next step: at
+   one pushed point, dump every collider box overlapping the enemy band and check whether the build
+   1094 exemption's `surfaceTopUnder` returns `-Infinity` — that's the only branch that falls
+   through to a push. Repro: force `twoUp` true, `arena t.glb 13 industrial medium`, probe scan
+   `[21.3,-6.4,21.3,8.4]`.
+2. **Cover crate clips a ramp mouth.** On *large* stepped-hill arenas a stacked crate lands at
+   collider box `x -25.5..-21.7, z 0.8..4.6, y 0..2.6`, overlapping the west tier-1 ramp which
+   starts at x=-22 (2/19 scan points pushed; the east ramp is clean, so it's asymmetric). Suspect
+   the mirrored-cover sampler tests only the ORIGINAL candidate against reserved rects, never the
+   mirrored copy. Repro: `TEXSIZE=256 node tools/levelgen.mjs arena out.glb 7 industrial large square`.
+
+Also outstanding (user actions): upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
+for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.
