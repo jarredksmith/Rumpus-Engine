@@ -985,7 +985,7 @@ function useTex(t) { TEXS[t.name] = t; return t.name; }
 function mat(name, opts = {}) {
   MATS.push({ name, base: opts.base || [1, 1, 1], metal: opts.metal ?? 0.05, rough: opts.rough ?? 0.92,
     tex: opts.tex || null, nrm: opts.nrm ?? 1.0, glow: opts.glow || null, scale: opts.scale || 4,
-    blend: !!opts.blend });
+    blend: !!opts.blend, mask: !!opts.mask, ds: !!opts.ds, nocollide: !!opts.nocollide });
   return MATS.length - 1;
 }
 
@@ -1009,7 +1009,7 @@ function _uvFor(n, s, v) {
 const PATCHES = [];   // every emitted face: a lightmap-atlas cell candidate
 function _quadRaw(m, a, b, c, d, unitUV) {
   const p = prim(m), s = MATS[m].scale;
-  if (!MATS[m].blend && !MATS[m].glow) PATCHES.push({ m, base: p.pos.length / 3, n: 4 });
+  if (!MATS[m].blend && !MATS[m].mask && !MATS[m].glow) PATCHES.push({ m, base: p.pos.length / 3, n: 4 });
   const u = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], v = [d[0] - b[0], d[1] - b[1], d[2] - b[2]];
   let n = [u[2] * v[1] - u[1] * v[2], u[0] * v[2] - u[2] * v[0], u[1] * v[0] - u[0] * v[1]];
   const l = Math.hypot(...n) || 1; n = n.map(x => x / l);
@@ -1022,7 +1022,7 @@ function _quadRaw(m, a, b, c, d, unitUV) {
 // possible: a 76-unit wall as one quad has nowhere to store a shadow gradient.
 const SUBD = 3;
 function quad(m, a, b, c, d, unitUV) {
-  if (MATS[m].blend) return _quadRaw(m, a, b, c, d, unitUV);
+  if (MATS[m].blend || MATS[m].mask) return _quadRaw(m, a, b, c, d, unitUV);
   const w = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   const h = Math.hypot(d[0] - a[0], d[1] - a[1], d[2] - a[2]);
   const nx = Math.max(1, Math.ceil(w / SUBD)), ny = Math.max(1, Math.ceil(h / SUBD));
@@ -1037,7 +1037,7 @@ function quad(m, a, b, c, d, unitUV) {
 }
 function tri(m, a, b, c) {
   const p = prim(m), s = MATS[m].scale;
-  if (!MATS[m].blend && !MATS[m].glow) PATCHES.push({ m, base: p.pos.length / 3, n: 3 });
+  if (!MATS[m].blend && !MATS[m].mask && !MATS[m].glow) PATCHES.push({ m, base: p.pos.length / 3, n: 3 });
   const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
   let n = [u[2] * v[1] - u[1] * v[2], u[0] * v[2] - u[2] * v[0], u[1] * v[0] - u[0] * v[1]];
   const l = Math.hypot(...n) || 1; n = n.map(x => x / l);
@@ -1246,6 +1246,101 @@ function container(mBody, mDoor, cx, cz, y, along = 'x') {
   else box(mDoor, cx - hx + 0.2, y + 0.2, cz + hz, cx + hx - 0.2, y + H - 0.2, cz + hz + 0.05);
 }
 
+// ---- procedural grass & foliage --------------------------------------------------------
+// Grass is CARDS: alpha-cutout blade silhouettes on crossed vertical quads. The material is
+// doubleSided + MASK (no blend-sort artifacts) and nocollide (build 1093: the engine skips
+// nocollide* meshes in every collider and neutralises their raycast), so a whole meadow costs
+// a few hundred triangles and never blocks a player, a bot, a sight line, or a bullet.
+// The painter draws each blade as a quadratic curve, tapering, darker at the root (a baked
+// AO gradient — grass shades itself), with per-blade hue decorrelation and a scatter of dry
+// straw blades so the field never reads as one repeated green.
+function grassCardTex(name, seed, S, opts = {}) {
+  const t = new Tex(name, S); t.a = new Float64Array(S * S); t.noAux = true;
+  const rr = rng(seed);
+  // pre-fill rgb with the mid-field green so MASK edge texels never sample toward black
+  for (let i = 0; i < S * S; i++) { t.rgb[i * 3] = 0.16; t.rgb[i * 3 + 1] = 0.26; t.rgb[i * 3 + 2] = 0.10; }
+  const px = (x, y, r, g, b, a) => {
+    if (x < 0 || y < 0 || x >= S || y >= S) return;
+    const i = (y | 0) * S + (x | 0);
+    if (a > t.a[i]) { t.a[i] = a; t.rgb[i * 3] = r; t.rgb[i * 3 + 1] = g; t.rgb[i * 3 + 2] = b; }
+  };
+  // sparse enough that the silhouette keeps gaps — a dense pass reads as a solid green rectangle
+  const NB = (opts.tall ? 60 : 85) * (S / 512) | 0;
+  for (let bl = 0; bl < NB; bl++) {
+    const x0 = S * (0.04 + rr() * 0.92), h = S * ((opts.tall ? 0.5 : 0.38) + rr() * 0.5);
+    const lean = (rr() - 0.5) * 1.15, curve = (rr() - 0.5) * 1.8;
+    const w0 = S * (0.007 + rr() * 0.009);
+    // per-blade colour: green family with real hue spread, 15% dry straw outliers
+    let cr, cg, cb;
+    if (rr() < 0.15) { const d = 0.8 + rr() * 0.3; cr = 0.52 * d; cg = 0.45 * d; cb = 0.20 * d; }
+    else { const g = 0.30 + rr() * 0.26; cr = g * (0.42 + rr() * 0.22); cg = g; cb = g * (0.22 + rr() * 0.14); }
+    const steps = (h * 1.4) | 0;
+    for (let s2 = 0; s2 <= steps; s2++) {
+      const tt = s2 / steps;
+      const x = x0 + lean * S * 0.16 * tt + curve * S * 0.10 * tt * tt;
+      const y = S - 1 - h * tt;
+      const hw = Math.max(0.5, w0 * (1 - tt * 0.92));
+      const shade = 0.42 + 0.58 * tt;                       // root-to-tip AO gradient
+      for (let dx = -hw - 1; dx <= hw + 1; dx++) {
+        const a = sstep(hw + 0.8, hw - 0.8, Math.abs(dx));  // soft edge; MASK cutoff hardens it
+        if (a > 0.03) px(x + dx, y, cr * shade, cg * shade, cb * shade, a);
+      }
+    }
+  }
+  if (opts.flowers) {                                       // a sprinkle of flower heads on stems
+    const NF = 12 * (S / 512) | 0;
+    for (let f = 0; f < NF; f++) {
+      const x = S * (0.08 + rr() * 0.84), y = S * (0.12 + rr() * 0.4);
+      const kind = rr();
+      const [fr, fg, fb] = kind < 0.45 ? [0.95, 0.93, 0.82] : kind < 0.8 ? [0.95, 0.78, 0.18] : [0.72, 0.30, 0.55];
+      for (let s2 = y; s2 < S; s2++) px(x + Math.sin(s2 * 0.05 + f) * 2, s2, 0.14, 0.24, 0.09, 0.9);   // stem
+      const R = S * (0.008 + rr() * 0.006);
+      for (let q = 0; q < 6; q++) {                          // petal blobs around a centre
+        const a = q / 6 * Math.PI * 2 + rr() * 0.4, pxc = x + Math.cos(a) * R, pyc = y + Math.sin(a) * R * 0.8;
+        for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+          const d = Math.hypot(dx, dy) / R; if (d > 1) continue;
+          px(pxc + dx, pyc + dy, fr * (0.75 + 0.25 * (1 - d)), fg * (0.75 + 0.25 * (1 - d)), fb, sstep(1, 0.7, d));
+        }
+      }
+      for (let dy = -R * 0.5; dy <= R * 0.5; dy++) for (let dx = -R * 0.5; dx <= R * 0.5; dx++) {
+        if (Math.hypot(dx, dy) <= R * 0.5) px(x + dx, y + dy, 0.55, 0.42, 0.10, 1);   // centre disc
+      }
+    }
+  }
+  return t;
+}
+// one tuft: 2-3 crossed cards with seeded rotation, size jitter and a slight lean.
+// UVs put v=1 at the blade roots (image bottom) so the card reads upright.
+function grassClump(m, cx, cz, y, seed2, size = 1) {
+  const rr = rng(seed2);
+  const n = 2 + (rr() * 2 | 0), a0 = rr() * Math.PI;
+  for (let q = 0; q < n; q++) {
+    const a = a0 + q * Math.PI / n + (rr() - 0.5) * 0.5;
+    const w = (1.5 + rr() * 0.8) * size, h = (0.8 + rr() * 0.45) * size;
+    const dx = Math.cos(a) * w / 2, dz = Math.sin(a) * w / 2;
+    const swx = (rr() - 0.5) * 0.3 * size, swz = (rr() - 0.5) * 0.3 * size;   // wind lean at the tips
+    quad(m, [cx - dx, y - 0.05, cz - dz], [cx + dx, y - 0.05, cz + dz],
+            [cx + dx + swx, y + h, cz + dz + swz], [cx - dx + swx, y + h, cz - dz + swz],
+      [[0, 1], [1, 1], [1, 0], [0, 0]]);
+  }
+}
+// scatter clumps over a rect, rejecting reserved rects [x0,z0,x1,z1] (ramps, lanes, pads).
+// opts: { y | yAt(x,z), avoid: [rects], flowerM, flowerFrac, sMin, sMax, edge }
+function scatterFoliage(m, x0, z0, x1, z1, n, seed2, opts = {}) {
+  const rr = rng(seed2), avoid = opts.avoid || [];
+  const yAt = opts.yAt || (() => opts.y || 0);
+  const sMin = opts.sMin ?? 0.7, sMax = opts.sMax ?? 1.25;
+  let placed = 0, tries = 0;
+  while (placed < n && tries++ < n * 14) {
+    const x = x0 + rr() * (x1 - x0), z = z0 + rr() * (z1 - z0);
+    if (avoid.some(r => x > r[0] - 0.7 && x < r[2] + 0.7 && z > r[1] - 0.7 && z < r[3] + 0.7)) continue;
+    const mm = (opts.flowerM != null && rr() < (opts.flowerFrac ?? 0.22)) ? opts.flowerM : m;
+    grassClump(mm, x, z, yAt(x, z), (seed2 * 31 + placed * 7 + 1) | 0, sMin + rr() * (sMax - sMin));
+    placed++;
+  }
+  return placed;
+}
+
 // place a callback twice: as-is and rotated 180° about the origin (x,z -> -x,-z).
 // The callback receives a transform that flips coordinates and swaps team materials.
 function mirrored(fn) {
@@ -1307,6 +1402,10 @@ const MATLIB = {
   lava:      { s: 512,  make: (n, S) => lavaTex(n, 197, S),          opts: { base: [1, 1, 1], rough: 0.95, scale: 6, nrm: 1.8 } },
   bark:      { s: 512,  make: (n, S) => barkTex(n, 199, S),          opts: { base: [1, 1, 1], rough: 0.95, scale: 2.2, nrm: 2 } },
   leaves:    { s: 512,  make: (n, S) => leavesTex(n, 211, S),        opts: { base: [1, 1, 1], rough: 0.95, scale: 2.6, nrm: 1.4 } },
+  // foliage cards: alpha-cutout, double-sided, and NOCOLLIDE (build 1093 engine convention)
+  grassCard: { s: 512,  make: (n, S) => grassCardTex(n, 223, S),                  opts: { base: [1, 1, 1], rough: 0.92, metal: 0, mask: true, ds: true, nocollide: true } },
+  flowerCard:{ s: 512,  make: (n, S) => grassCardTex(n, 227, S, { flowers: true }), opts: { base: [1, 1, 1], rough: 0.92, metal: 0, mask: true, ds: true, nocollide: true } },
+  reedCard:  { s: 512,  make: (n, S) => grassCardTex(n, 229, S, { tall: true }),    opts: { base: [0.9, 0.95, 0.8], rough: 0.92, metal: 0, mask: true, ds: true, nocollide: true } },
 };
 const _libCache = {};
 function libMat(id, over) {
@@ -1802,7 +1901,278 @@ function buildMuseum() {
   container(libMat('paintGreen'), metal2, WX + 39, 5, 0, 'x');
   boulder(libMat('rock'), WX + 33, 0.5, 0, 1.3, 75);
   boulder(libMat('rock'), WX + 35, 0.35, 1.6, 0.8, 76);
+  // procedural grass across the props-wing lawn — nocollide cards, walk straight through
+  scatterFoliage(libMat('grassCard'), WX + 2, -12, WX + 44, 12, 150, 81, {
+    flowerM: libMat('flowerCard'),
+    avoid: [[WX + 3, -8, WX + 13, 8], [WX + 15, -8, WX + 24, 7], [WX + 25, -7.5, WX + 35, 7.5], [WX + 36, -7, WX + 42, 7]],
+  });
   return { name: 'Material Museum (' + ids.length + ' families + props wing)' };
+}
+
+// ------------------------------------------------------------ layout: seeded arenas ----
+// Not a fixed layout — a GENERATOR: `node tools/levelgen.mjs arena out.glb <seed> <theme> <size>`
+// rolls a symmetric team arena from the seed. The central feature, side structures, cover set,
+// props and foliage are all seeded choices, but every ramp is constraint-safe by construction
+// (rise/run <= 0.45 under the build-1092 enemy rules) and everything mirrors 180° about the
+// origin so neither team gets the long straw. Themes: industrial | castle | volcanic | garden
+// (or 'auto' to let the seed pick). Prints a SCANS manifest — every ramp centreline — for the
+// engine probe to verify bots can actually walk what was generated.
+function arenaPalette(theme) {
+  const D = mat('decals', { tex: useTex(decalTex('decals')), blend: true, rough: 0.5, metal: 0, base: [1, 1, 1] });
+  const teamA = mat('teamA', { base: [1, 0.55, 0.23], glow: 0.55, rough: 0.6 });
+  const teamB = mat('teamB', { base: [0.29, 0.66, 1], glow: 0.55, rough: 0.6 });
+  const base = { D, teamA, teamB, grassM: libMat('grassCard'), flowerM: libMat('flowerCard'), reedM: libMat('reedCard') };
+  if (theme === 'castle') return { ...base,
+    ground: libMat('cobble'), wall: libMat('stone'), slab: libMat('stone'), deck: libMat('plankGrey'),
+    ramp: libMat('stone'), pillar: libMat('stone'), parapet: libMat('stone'),
+    cover: libMat('planks'), cover2: libMat('plankGrey'),
+    trim: mat('torch', { base: [1, 0.62, 0.25], glow: 1.0, rough: 0.5 }), signC: [0.85, 0.7, 0.4], foliage: 'patchy' };
+  if (theme === 'volcanic') return { ...base,
+    ground: libMat('dirt'), wall: libMat('rock'), slab: libMat('stone'), deck: libMat('stone'),
+    ramp: libMat('stone'), pillar: libMat('rock'), parapet: libMat('stone'),
+    cover: libMat('rock'), cover2: libMat('stone'), lava: libMat('lava'),
+    trim: mat('ember', { base: [1, 0.42, 0.12], glow: 1.1, rough: 0.6 }), signC: [1, 0.6, 0.3], foliage: 'scorched' };
+  if (theme === 'garden') return { ...base,
+    ground: libMat('grass'), wall: libMat('brickPale'), slab: libMat('stone'), deck: libMat('planks'),
+    ramp: libMat('planks'), pillar: libMat('brickPale'), parapet: libMat('plankGrey'),
+    cover: libMat('planks'), cover2: libMat('crateTx'), path: libMat('cobble'),
+    trim: mat('lantern', { base: [0.95, 0.9, 0.6], glow: 0.8, rough: 0.5 }), signC: [0.9, 0.86, 0.7], foliage: 'lush' };
+  return { ...base,   // industrial
+    ground: libMat('concrete', { base: [0.52, 0.55, 0.57] }), wall: libMat('panels'), slab: libMat('deck'),
+    deck: libMat('deck'), ramp: libMat('deck', { base: [0.82, 0.86, 0.94] }), pillar: libMat('metal'),
+    parapet: libMat('metal', { base: [0.6, 0.65, 0.72], scale: 3 }),
+    cover: libMat('crateTx'), cover2: libMat('crateTx', { base: [0.5, 0.35, 0.26], rough: 0.85 }),
+    trim: mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.9, rough: 0.5 }), signC: [0.9, 0.88, 0.82], foliage: 'weeds' };
+}
+function buildArena(seed, theme, size) {
+  const rr = rng((seed * 9973 + 7) | 0);
+  const themes = ['industrial', 'castle', 'volcanic', 'garden'];
+  if (!themes.includes(theme)) theme = themes[(rr() * 4) | 0];
+  const W = size === 'small' ? 30 : size === 'large' ? 46 : 38;   // inner wall face at ±W
+  const P = arenaPalette(theme);
+  const WALL_H = 8 + ((rr() * 3) | 0), T = 0.5, MID = 4.5;
+  const AV = [], SCANS = [];
+  const reserve = (x0, z0, x1, z1) => AV.push([x0, z0, x1, z1]);
+  const scan = (ax, az, bx, bz) => SCANS.push([ax, az, bx, bz].map(v => +v.toFixed(1)));
+
+  // ---- floor + perimeter wall, theme-dressed ----
+  box(P.ground, -W - 1.5, -T, -W - 1.5, W + 1.5, 0, W + 1.5);
+  box(P.wall, -W - 1.5, 0, -W - 1.5, W + 1.5, WALL_H, -W);
+  box(P.wall, -W - 1.5, 0, W, W + 1.5, WALL_H, W + 1.5);
+  box(P.wall, -W - 1.5, 0, -W, -W, WALL_H, W);
+  box(P.wall, W, 0, -W, W + 1.5, WALL_H, W);
+  if (theme === 'castle') {
+    for (let a = -W + 4; a <= W - 4; a += 2.4) {
+      cbox(P.wall, a, WALL_H + 0.65, -W - 0.75, 1.1, 1.3, 1.4); cbox(P.wall, a, WALL_H + 0.65, W + 0.75, 1.1, 1.3, 1.4);
+      cbox(P.wall, -W - 0.75, WALL_H + 0.65, a, 1.4, 1.3, 1.1); cbox(P.wall, W + 0.75, WALL_H + 0.65, a, 1.4, 1.3, 1.1);
+    }
+    for (const tx of [-W, W]) for (const tz of [-W, W]) cyl(P.wall, tx, tz, 0, WALL_H + 3.4, 4.2, 16);
+  } else if (theme === 'industrial') {
+    for (let a = -W + 8; a <= W - 8; a += 10) {
+      cbox(P.pillar, a, WALL_H / 2, -W + 0.35, 1.4, WALL_H, 0.8); cbox(P.pillar, a, WALL_H / 2, W - 0.35, 1.4, WALL_H, 0.8);
+      cbox(P.pillar, -W + 0.35, WALL_H / 2, a, 0.8, WALL_H, 1.4); cbox(P.pillar, W - 0.35, WALL_H / 2, a, 0.8, WALL_H, 1.4);
+    }
+    for (const sx of [1, -1]) pipe(P.parapet, 'z', -W + 6, W - 6, WALL_H - 1.3, sx * (W - 0.55), 0.22);
+  } else if (theme === 'volcanic') {
+    const rb = rng(seed * 131 + 3);
+    for (let q = 0; q < 10; q++) {                                  // tumbled rocks at the wall feet
+      const a = rb() * Math.PI * 2, d = W - 1.6 - rb() * 1.2;
+      const bx2 = Math.abs(Math.cos(a)) > Math.abs(Math.sin(a)) ? Math.sign(Math.cos(a)) * d : (rb() * 2 - 1) * (W - 8);
+      const bz2 = Math.abs(Math.cos(a)) > Math.abs(Math.sin(a)) ? (rb() * 2 - 1) * (W - 8) : Math.sign(Math.sin(a)) * d;
+      boulder(P.cover, bx2, 0.4 + rb() * 0.4, bz2, 1.0 + rb() * 1.1, seed * 17 + q);
+    }
+    box(P.trim, -W, 0, -W - 0.1, W, 0.35, -W); box(P.trim, -W, 0, W, W, 0.35, W + 0.1);   // ember seams
+  } else {                                                          // garden: capped brick + lantern posts
+    box(P.parapet, -W - 1.6, WALL_H, -W - 1.6, W + 1.6, WALL_H + 0.4, -W + 0.1);   // cap = four rim strips
+    box(P.parapet, -W - 1.6, WALL_H, W - 0.1, W + 1.6, WALL_H + 0.4, W + 1.6);
+    box(P.parapet, -W - 1.6, WALL_H, -W, -W + 0.1, WALL_H + 0.4, W);
+    box(P.parapet, W - 0.1, WALL_H, -W, W + 1.6, WALL_H + 0.4, W);
+    for (const sx of [1, -1]) for (const sz of [1, -1]) lamppost(P.parapet, P.trim, sx * (W - 3), sz * (W - 3), 0, 4.6, 0.9 * -sx);
+  }
+
+  // ---- central feature: deck | hill | plaza ----
+  const cf = (rr() * 3) | 0;
+  if (cf === 0) {          // raised deck on pillars, two point-symmetric ramps
+    cbox(P.slab, 0, MID - T / 2, 0, 28, T, 20);
+    for (const px of [-10, 10]) for (const pz of [-6, 6]) {
+      cyl(P.pillar, px, pz, 0.25, MID - T, 0.9, 12);
+      bevelCbox(P.pillar, px, 0.14, pz, 2.3, 0.28, 2.3);
+    }
+    ramp(P.ramp, 4, 10, 8, 22, 0, MID, 0, 'z');
+    ramp(P.ramp, -8, -22, -4, -10, 0, 0, MID, 'z');
+    reserve(-15, -11, 15, 11); reserve(3, 9, 9, 23); reserve(-9, -23, -3, -9);
+    scan(6, 23, 6, 4); scan(-6, -23, -6, -4);
+    for (const s of [1, -1]) {                                     // E/W edge parapets + glow
+      box(P.parapet, s > 0 ? 14 : -14.3, MID, -10, s > 0 ? 14.3 : -14, MID + 1.15, 10);
+      box(P.trim, s > 0 ? 14 : -14.3, MID + 1.15, -10, s > 0 ? 14.3 : -14, MID + 1.25, 10);
+    }
+    for (const [x0, x1, zs] of [[-14, 2, 1], [10, 14, 1], [-14, -10, -1], [-2, 14, -1]])
+      box(P.parapet, x0, MID, zs * 10 - (zs > 0 ? 0 : 0.3), x1, MID + 1.15, zs * 10 + (zs > 0 ? 0.3 : 0));
+    decal(P.D, 'up', 0, MID + 0.02, 0, 8, 8, DECAL.RING);
+  } else if (cf === 1) {   // stepped hill: two tiers, E/W ramps to tier 1, N/S to tier 2
+    box(P.slab, -13, 0, -12, 13, 2.25, 12);
+    box(P.slab, -8, 2.25, -5, 8, MID - 0.14, 5);     // stone body: big shaded faces stay stone
+    box(P.deck, -8, MID - 0.14, -5, 8, MID, 5);      // deck material as the walking cap only
+    ramp(P.ramp, 13, -3, 22, 3, 0, 2.25, 0, 'x');
+    ramp(P.ramp, -22, -3, -13, 3, 0, 0, 2.25, 'x');
+    ramp(P.ramp, 2, 5, 6, 12, 2.25, MID, 2.25, 'z');
+    ramp(P.ramp, -6, -12, -2, -5, 2.25, 2.25, MID, 'z');
+    reserve(-14, -13, 14, 13); reserve(12, -4, 23, 4); reserve(-23, -4, -12, 4);
+    scan(23, 0, 14, 0); scan(-23, 0, -14, 0);                      // ground -> tier-1 ramps
+    scan(4, 11, 4, 6); scan(-4, -11, -4, -6);                      // tier-1 -> summit ramps
+    decal(P.D, 'up', 0, MID + 0.02, 0, 7, 7, DECAL.RING);
+  } else {                 // plaza: walkable plinth with a theme centrepiece + diagonal baffles
+    cbox(P.slab, 0, 0.25, 0, 9, 0.5, 9);
+    if (theme === 'volcanic') { boulder(P.cover, 0, 1.4, 0, 1.9, seed * 5 + 1); boulder(P.cover, 0.9, 2.6, -0.5, 1.1, seed * 5 + 2);
+      box(P.trim, -1.6, 0.5, -1.6, 1.6, 0.62, 1.6); }
+    else if (theme === 'industrial') { cyl(P.pillar, 0, 0, 0.5, 5.4, 0.85, 12); cbox(P.trim, 0, 5.6, 0, 1.4, 0.35, 1.4); }
+    else { box(libMat('tiles'), -2.6, 0.5, -2.6, 2.6, 0.62, 2.6);
+      cyl(libMat('marble'), 0, 0, 0.6, 2.7, 0.62, 12); bevelCbox(libMat('marble'), 0, 2.85, 0, 1.0, 0.3, 1.0); }
+    for (const s of [1, -1]) { box(P.parapet, s * 6, 0.5, s * -9, s * 9 + (s > 0 ? 0.45 : -0.45), 1.6, s * -6);
+      box(P.parapet, s * -9, 0.5, s * 6, s * -6, 1.6, s * 9 + (s > 0 ? 0.45 : -0.45)); }
+    reserve(-10, -10, 10, 10);
+    decal(P.D, 'up', 0, 0.52, 0, 8.5, 8.5, DECAL.RING);
+  }
+
+  // ---- side structures along E/W: galleries | buildings | open yards ----
+  let ss = (rr() * 3) | 0;
+  if (ss === 1 && W < 36) ss = 0;                                  // buildings need elbow room
+  if (ss === 0) {          // wall galleries with end ramps
+    const G = 3.6, gz = Math.min(20, W - 22);
+    for (const s of [1, -1]) {
+      const gx0 = s > 0 ? W - 6 : -W, gx1 = s > 0 ? W : -W + 6;
+      box(P.slab, gx0, G - T, -gz, gx1, G, gz);
+      ramp(P.ramp, gx0 + 0.5, gz, gx1 - 0.5, gz + 10, 0, G, 0, 'z');
+      ramp(P.ramp, gx0 + 0.5, -gz - 10, gx1 - 0.5, -gz, 0, 0, G, 'z');
+      const ix = s > 0 ? W - 6 : -W + 6;                           // inner edge parapet, gapped mid
+      for (const [z0, z1] of [[-gz, -3], [3, gz]]) {
+        box(P.parapet, ix - (s > 0 ? 0.3 : 0), G, z0, ix + (s > 0 ? 0 : 0.3), G + 1.15, z1);
+        box(P.trim, ix - (s > 0 ? 0.3 : 0), G + 1.15, z0, ix + (s > 0 ? 0 : 0.3), G + 1.25, z1);
+      }
+      reserve(Math.min(gx0, gx1) - 1, -gz - 11, Math.max(gx0, gx1) + 1, gz + 11);
+      scan(s * (W - 3), gz + 9, s * (W - 3), 0);
+    }
+  } else if (ss === 1) {   // buildings: door, windows, interior, roof reached by an outside ramp
+    const bx = W - 8.5, bzE = ((rr() * 12) | 0) - 6, WH2 = 4.6;
+    for (const s of [1, -1]) {
+      const cx2 = s * bx, cz2 = s * bzE;
+      const x0 = cx2 - 4, x1 = cx2 + 4, z0 = cz2 - 6, z1 = cz2 + 6;
+      const xd = s > 0 ? x0 : x1;                                  // door face looks at the courtyard
+      wallRun(P.wall, 'z', z0, z1, xd - (s > 0 ? 0.45 : 0), xd + (s > 0 ? 0 : 0.45), 0, WH2,
+        [{ at: cz2, w: 3.0, h: 3.3 }, { at: cz2 - 4, w: 2, h: 1.4, sill: 1.4 }, { at: cz2 + 4, w: 2, h: 1.4, sill: 1.4 }]);
+      const xb = s > 0 ? x1 : x0;
+      wallRun(P.wall, 'z', z0, z1, xb - (s > 0 ? 0 : 0.45), xb + (s > 0 ? 0.45 : 0), 0, WH2, [{ at: cz2, w: 2, h: 1.4, sill: 1.4 }]);
+      wallRun(P.wall, 'x', x0, x1, z0 - 0.45, z0, 0, WH2, []);
+      wallRun(P.wall, 'x', x0, x1, z1, z1 + 0.45, 0, WH2, []);
+      box(P.deck, x0 - 0.45, WH2, z0 - 0.45, x1 + 0.45, WH2 + 0.35, z1 + 0.45);   // roof
+      box(libMat('plankGrey'), x0 + 0.2, 0, z0 + 0.2, x1 - 0.2, 0.12, z1 - 0.2);  // interior floor
+      bevelCbox(P.cover, cx2 + s * 1.4, 0.62, cz2 - 2, 1.24, 1.24, 1.24, true);
+      cbox(P.trim, cx2, WH2 - 0.6, cz2 + 2, 0.4, 0.4, 0.24);
+      // roof ramp: run 12, rise 4.95 -> 0.41. On the +z side for the east building, mirrored west.
+      const rz0 = s > 0 ? z1 + 0.45 : z0 - 12.45, rz1 = s > 0 ? z1 + 12.45 : z0 - 0.45;
+      ramp(P.ramp, cx2 - 1.8, rz0, cx2 + 1.8, rz1, 0, s > 0 ? WH2 + 0.35 : 0, s > 0 ? 0 : WH2 + 0.35, 'z');
+      box(P.parapet, xd - (s > 0 ? 0.45 : -0.45) * 0.66, WH2 + 0.35, z0 - 0.45, xd + (s > 0 ? 0 : 0.45) * 0.66, WH2 + 1.5, z1 + 0.45);
+      sign(s > 0 ? '-x' : '+x', cz2 * 0 + xd + (s > 0 ? -0.5 : 0.5), WH2 - 0.65, cz2, 0.62, theme === 'castle' ? 'BARRACKS' : theme === 'garden' ? 'GREENHOUSE' : 'DEPOT', P.signC);
+      reserve(x0 - 1.4, Math.min(rz0, z0) - 1, x1 + 1.4, Math.max(rz1, z1) + 1);
+      scan(cx2, s > 0 ? rz1 + 1 : rz0 - 1, cx2, s > 0 ? rz0 - 10 : rz1 + 10);
+    }
+  } else {                 // open yards: big theme cover at mid-wall
+    for (const s of [1, -1]) {
+      const yx = s * (W - 7), yz = s * 4;
+      if (theme === 'industrial') { container(s > 0 ? libMat('paintRed') : libMat('paintGreen'), P.pillar, yx, yz, 0, 'z');
+        container(P.cover2 === P.cover ? P.cover : libMat('corrugated'), P.pillar, yx - s * 3.5, yz - s * 7, 0, 'x'); }
+      else if (theme === 'volcanic') { boulder(P.cover, yx, 1.1, yz, 2.1, seed * 23 + s * 3); boulder(P.cover, yx - s * 2.4, 0.7, yz - s * 3.4, 1.3, seed * 23 + s * 5); }
+      else { for (const px of [-1.6, 1.6]) for (const pz of [-1.2, 1.2]) cbox(P.cover2, yx + px, 1.3, yz + pz, 0.22, 2.6, 0.22);
+        ramp(P.cover, yx - 2, yz - 1.7, yx + 2, yz + 1.7, 2.5, 3.15, 2.65, 'z');
+        cyl(P.cover2, yx - 1, yz + 0.8, 0, 1.25, 0.52, 10); bevelCbox(P.cover, yx + 0.9, 0.5, yz - 0.6, 1.0, 1.0, 1.0, true); }
+      reserve(yx - 5, yz - 5, yx + 5, yz + 5);
+    }
+  }
+
+  // ---- team bases N/S: apron cover walls, colour band, sign ----
+  mirrored((xz, team) => {
+    const south = xz(0, 1)[1] > 0, zs = south ? [W - 9, W - 8] : [-(W - 8), -(W - 9)];
+    const tm = team({ a: P.teamA, b: P.teamB });
+    for (const [x0, x1] of [[-12, -4], [-1.5, 1.5], [4, 12]]) box(P.parapet, x0, 0, zs[0], x1, 1.2, zs[1]);
+    box(tm, -12, 1.2, zs[0], 12, 1.35, zs[1]);
+    box(tm, -14, WALL_H * 0.4, south ? W : -W - 0.15, 14, WALL_H * 0.4 + 1.1, south ? W + 0.15 : -W);
+    sign(south ? '-z' : '+z', 0, 3.4, south ? W - 0.04 : -W + 0.04, 1.3, south ? 'BASE 1' : 'BASE 2', P.signC);
+  });
+  reserve(-13, W - 10, 13, W); reserve(-13, -W, 13, -W + 10);
+
+  // ---- garden paths (before cover, so lanes stay clear) ----
+  if (theme === 'garden' && P.path != null) {
+    box(P.path, -2.2, 0, -W + 1, 2.2, 0.06, W - 1);
+    box(P.path, -W + 1, 0, -2.2, W - 1, 0.06, 2.2);
+    reserve(-2.6, -W, 2.6, W); reserve(-W, -2.6, W, 2.6);
+  }
+
+  // ---- seeded mirrored cover, rejection-sampled against everything reserved ----
+  const rc = rng((seed * 613 + 29) | 0);
+  const nCover = W > 40 ? 7 : 5;
+  let placed = 0, guard = 0;
+  while (placed < nCover && guard++ < 90) {
+    const sx = (rc() * 2 - 1) * (W - 6), sz = (rc() * 2 - 1) * (W - 13);
+    if (AV.some(r => sx > r[0] - 1.8 && sx < r[2] + 1.8 && sz > r[1] - 1.8 && sz < r[3] + 1.8)) continue;
+    const stack = rc() < 0.4, kind = rc();
+    for (const [x, z] of [[sx, sz], [-sx, -sz]]) {
+      if (theme === 'volcanic') boulder(kind < 0.5 ? P.cover : P.cover2, x, 0.7, z, 1.2 + kind, seed * 7 + placed * 3 + (x > 0 ? 1 : 0));
+      else {
+        bevelCbox(kind < 0.5 ? P.cover : P.cover2, x, 0.85, z, 2, 1.7, 2, true);
+        if (stack) bevelCbox(kind < 0.5 ? P.cover2 : P.cover, x + 0.15, 2.4, z - 0.1, 1.4, 1.4, 1.4, true);
+      }
+      decal(P.D, 'up', x + 0.4, 0.03, z - 0.3, 3.2, 3.2, DECAL.OIL, (placed & 1) * 90);
+    }
+    reserve(sx - 1.6, sz - 1.6, sx + 1.6, sz + 1.6); reserve(-sx - 1.6, -sz - 1.6, -sx + 1.6, -sz + 1.6);
+    placed++;
+  }
+
+  // ---- foliage: the theme decides how alive the arena is ----
+  const F = P.foliage;
+  if (F === 'lush') {
+    const rt = rng((seed * 389 + 5) | 0);
+    let trees = 0, tg = 0;                                          // mirrored tree pairs in planters
+    while (trees < 3 && tg++ < 40) {
+      const tx = (rt() * 2 - 1) * (W - 8), tz = (rt() * 2 - 1) * (W - 14);
+      if (AV.some(r => tx > r[0] - 2.2 && tx < r[2] + 2.2 && tz > r[1] - 2.2 && tz < r[3] + 2.2)) continue;
+      for (const [x, z] of [[tx, tz], [-tx, -tz]]) {
+        box(P.wall, x - 1.5, 0, z - 1.5, x + 1.5, 0.5, z + 1.5);
+        (rt() < 0.5 ? tree : conifer)(libMat('bark'), libMat('leaves'), x, z, 0.5, (seed * 41 + trees * 9 + (x > 0 ? 1 : 0)) | 0);
+      }
+      reserve(tx - 2, tz - 2, tx + 2, tz + 2); reserve(-tx - 2, -tz - 2, -tx + 2, -tz + 2);
+      trees++;
+    }
+    scatterFoliage(P.grassM, -W + 1.5, -W + 1.5, W - 1.5, W - 1.5, (W * W / 6) | 0, (seed * 3 + 11) | 0,
+      { flowerM: P.flowerM, avoid: AV, sMin: 0.7, sMax: 1.45 });
+  } else if (F === 'patchy') {                                      // castle: green creeps in at the edges
+    for (const [x0, z0, x1, z1] of [[-W + 1, -W + 1, W - 1, -W + 7], [-W + 1, W - 7, W - 1, W - 1],
+                                    [-W + 1, -W + 7, -W + 7, W - 7], [W - 7, -W + 7, W - 1, W - 7]])
+      scatterFoliage(P.grassM, x0, z0, x1, z1, ((x1 - x0) * (z1 - z0) / 14) | 0, (seed * 3 + 13) | 0,
+        { flowerM: P.flowerM, flowerFrac: 0.12, avoid: AV, sMin: 0.55, sMax: 1.0 });
+  } else if (F === 'scorched') {                                    // volcanic: dry reeds + dead trees
+    const rd = rng(seed * 57 + 1);
+    for (const s of [1, -1]) deadTree(libMat('bark'), s * (W - 12), s * -(W - 16), 0, seed * 61 + s);
+    scatterFoliage(P.reedM, -W + 2, -W + 2, W - 2, W - 2, W | 0, (seed * 3 + 17) | 0,
+      { avoid: AV, sMin: 0.5, sMax: 0.9 });
+    if (P.lava != null) for (const s of [1, -1]) {                  // corner lava pools (visual)
+      box(P.lava, s * (W - 9), 0.02, s * (W - 9), s * (W - 3), 0.1, s * (W - 3));
+      reserve(Math.min(s * (W - 9), s * (W - 3)), Math.min(s * (W - 9), s * (W - 3)),
+        Math.max(s * (W - 9), s * (W - 3)), Math.max(s * (W - 9), s * (W - 3)));
+    }
+  } else {                                                          // industrial: weeds in the seams
+    scatterFoliage(P.reedM, -W + 1, -W + 1, W - 1, -W + 3, 8, seed * 3 + 19, { sMin: 0.4, sMax: 0.7 });
+    scatterFoliage(P.reedM, -W + 1, W - 3, W - 1, W - 1, 8, seed * 3 + 23, { sMin: 0.4, sMax: 0.7 });
+  }
+
+  // ---- signage + ramp-foot chevrons ----
+  const N1 = { industrial: ['IRON', 'CARGO', 'GRID', 'BOLT'], castle: ['STONE', 'CROWN', 'RAVEN', 'OAK'],
+    volcanic: ['EMBER', 'ASH', 'BASALT', 'CINDER'], garden: ['MOSS', 'BLOOM', 'WILLOW', 'CLOVER'] }[theme];
+  const N2 = ['YARD', 'RING', 'COURT', 'CROSS', 'HOLLOW', 'RUN'];
+  const arenaName = N1[(rr() * N1.length) | 0] + ' ' + N2[(rr() * N2.length) | 0];
+  sign('-x', W - 0.04, WALL_H * 0.62, 0, 1.2, arenaName, P.signC);
+  for (const sc of SCANS.slice(0, 2)) decal(P.D, 'up', sc[0], 0.03, sc[1], 3.2, 2.8, DECAL.CHEV, Math.abs(sc[1]) > Math.abs(sc[0]) ? (sc[1] > 0 ? 0 : 180) : (sc[0] > 0 ? 90 : 270));
+
+  return { name: `${arenaName} (seed ${seed} · ${theme} · ${size})`, scans: SCANS };
 }
 
 // -------------------------------------------------------------- baked lighting (AO) ----
@@ -1933,7 +2303,7 @@ function bakeLightmap() {
 
 // ------------------------------------------------------------------- GLB writing ----
 function writeGLB(out) {
-  const bufs = [], views = [], accessors = [], primitives = [];
+  const bufs = [], views = [], accessors = [], primitives = [], foliagePrims = [];
   const _lmMats = new Set();
   let off = 0;
   const push = (buf, target) => {
@@ -1959,7 +2329,10 @@ function writeGLB(out) {
       const vU2 = push(Buffer.from(u2.buffer), 34962);
       accessors.push({ bufferView: vU2, componentType: 5126, count: u2.length / 2, type: 'VEC2' });
       attrs.TEXCOORD_1 = accessors.length - 1; extra = 1; _lmMats.add(mi); }
-    primitives.push({ attributes: attrs, indices: accessors.length - 1 - extra, material: mi });
+    // nocollide materials (grass cards, foliage) go to a separate node the engine's build-1093
+    // convention recognises by name — no collider boxes, no raycast hits, pure decoration
+    (MATS[mi].nocollide ? foliagePrims : primitives)
+      .push({ attributes: attrs, indices: accessors.length - 1 - extra, material: mi });
   });
 
   // bake textures: base colour at full res (RGBA for the decal atlas); metallic-roughness and
@@ -2002,16 +2375,20 @@ function writeGLB(out) {
       if (ti.mr != null && !_skip('NOMR', md.name)) g.pbrMetallicRoughness.metallicRoughnessTexture = { index: ti.mr };
       if (ti.nrm != null && !_skip('NONRM', md.name)) g.normalTexture = { index: ti.nrm, scale: md.nrm }; }
     if (md.blend) g.alphaMode = 'BLEND';
-    if (lmTex != null && _lmMats.has(MATS.indexOf(md))) g.occlusionTexture = { index: lmTex, texCoord: 1 };
+    if (md.mask) { g.alphaMode = 'MASK'; g.alphaCutoff = 0.45; }   // cutout foliage: no blend-sort artifacts
+    if (md.ds) g.doubleSided = true;
+    if (lmTex != null && !process.env.NOLM && _lmMats.has(MATS.indexOf(md))) g.occlusionTexture = { index: lmTex, texCoord: 1 };
     if (md.tex && texIdx[md.tex].em != null) { g.emissiveTexture = { index: texIdx[md.tex].em }; g.emissiveFactor = [1, 1, 1]; }
     else if (md.glow) g.emissiveFactor = md.base.map(v => v * md.glow);
     return g;
   });
 
+  const meshes = [{ primitives }], nodes = [{ mesh: 0, name: 'level' }];
+  if (foliagePrims.length) { meshes.push({ primitives: foliagePrims }); nodes.push({ mesh: 1, name: 'nocollide-foliage' }); }
   const json = {
     asset: { version: '2.0', generator: 'rumpus-levelgen' },
-    scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: 'level' }],
-    meshes: [{ primitives }], materials,
+    scene: 0, scenes: [{ nodes: nodes.map((_, i) => i) }], nodes,
+    meshes, materials,
     samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }],
     images, textures,
     buffers: [{ byteLength: off }], bufferViews: views, accessors,
@@ -2035,17 +2412,24 @@ if (which === 'tex') {   // fast iteration: node tools/levelgen.mjs tex <library
   if (!MATLIB[id] || !outPng) { console.error('tex ids: ' + Object.keys(MATLIB).join(' ')); process.exit(1); }
   const S2 = +(process.env.TEXSIZE || 0) || 512;
   const t = MATLIB[id].make('t_' + id, S2);
-  writeFileSync(outPng, pngEncode(toBytes(t.rgb), S2, S2, 3));
+  if (t.a) { const px = new Float64Array(S2 * S2 * 4);
+    for (let i = 0; i < S2 * S2; i++) { px[i * 4] = t.rgb[i * 3]; px[i * 4 + 1] = t.rgb[i * 3 + 1]; px[i * 4 + 2] = t.rgb[i * 3 + 2]; px[i * 4 + 3] = t.a[i]; }
+    writeFileSync(outPng, pngEncode(toBytes(px), S2, S2, 4));
+  } else writeFileSync(outPng, pngEncode(toBytes(t.rgb), S2, S2, 3));
   console.log(id, '->', outPng, S2 + 'px');
   process.exit(0);
 }
-if (!LAYOUTS[which] || !out) {
+if ((which !== 'arena' && !LAYOUTS[which]) || !out) {
   console.error('usage: node tools/levelgen.mjs <' + Object.keys(LAYOUTS).join('|') + '> <out.glb>');
+  console.error('       node tools/levelgen.mjs arena <out.glb> [seed] [industrial|castle|volcanic|garden|auto] [small|medium|large]');
   process.exit(1);
 }
-const info = LAYOUTS[which]();
+const info = which === 'arena'
+  ? buildArena((+process.argv[4] || 1) | 0, process.argv[5] || 'auto', process.argv[6] || 'medium')
+  : LAYOUTS[which]();
 const t0 = process.hrtime.bigint();
 bakeLightmap();
 const aoMs = Number(process.hrtime.bigint() - t0) / 1e6 | 0;
 const w = writeGLB(out);
 console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets, lightmap ${LM ? LM.A : 0}px / ${PATCHES.length} patches in ${aoMs} ms over ${SOLIDS.length} solids)`);
+if (info.scans) console.log('SCANS ' + JSON.stringify(info.scans));
