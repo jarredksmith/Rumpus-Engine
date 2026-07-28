@@ -176,6 +176,19 @@ The repo root carries the static site: `index.html`, `rumpus-site.css`, `sitemap
 `faq/`. Upload them into `public_html` alongside `breach.html`. They are plain static files — no PHP,
 no build step.
 
+### The Material Museum in the community library
+
+`community/levels/material-museum.json` + its entry in `community/index.json` put the generated
+material showcase in the in-game library. It references the model at
+`https://www.rumpusengine.com/community/models/material-museum.glb`, so to go live:
+
+1. Generate it: `TEXSIZE=512 node tools/levelgen.mjs museum material-museum.glb` (~10.7 MB).
+2. Upload that file to `public_html/community/models/`.
+3. Re-upload `community/index.json` and `community/levels/material-museum.json`.
+
+The other generated arenas (keep, spine, castle, caldera) can join the library the same way —
+generate, upload the .glb, copy the level json and add an index entry.
+
 ### Google Analytics lives in the repo now (build 1091)
 
 The GA4 tag (`G-8R98ZNS9HN`) was originally hand-pasted into the uploaded copies only, which meant every

@@ -604,13 +604,78 @@ function lavaTex(name, seed, S) {
   t.each((x, y, i) => {
     const c = w(x, y), rim = c.d2 - c.d1, g = f(x, y);
     t.tint(i, 0.7 + g * 0.6); t.h[i] = Math.min(1, rim / (18 * (S / 256)));
-    const hot = Math.max(0, 1 - rim / (7 * (S / 256)));
-    if (hot > 0) { const hh = hot * (0.65 + g * 0.35);
-      t.setEm(i, [1, 0.32 + g * 0.25, 0.04], hh);
-      t.mix(i, [0.7, 0.2, 0.03], hot * 0.8); t.h[i] = 0.1; }
-    else if (g > 0.72) t.setEm(i, [0.6, 0.12, 0.01], (g - 0.72) * 1.6);               // ember pores
+    const hot = Math.max(0, 1 - rim / (11 * (S / 256)));
+    if (hot > 0) { const hh = Math.min(1, hot * (1.0 + g * 0.5));
+      t.setEm(i, [1, 0.38 + g * 0.3, 0.05], hh);
+      t.mix(i, [0.95, 0.35, 0.06], Math.min(1, hot * 1.2)); t.h[i] = 0.1; }
+    else if (g > 0.62) t.setEm(i, [0.85, 0.2, 0.02], (g - 0.62) * 2.2);               // ember pores
   });
   return finish(t, seed, { cavDark: 0.2, edgeLight: 0.1 });
+}
+
+// ---- signage: worn stencil lettering baked on demand -----------------------------------
+// A 5x7 stencil font. sign() bakes each unique string once into a shared 1024x1024 atlas row
+// and emits an alpha-blended quad, so layouts can label bases, shops and hazards free-form.
+const FONT = {
+  A:[14,17,17,31,17,17,17],B:[30,17,17,30,17,17,30],C:[15,16,16,16,16,16,15],D:[30,17,17,17,17,17,30],
+  E:[31,16,16,30,16,16,31],F:[31,16,16,30,16,16,16],G:[15,16,16,23,17,17,15],H:[17,17,17,31,17,17,17],
+  I:[31,4,4,4,4,4,31],J:[7,2,2,2,2,18,12],K:[17,18,20,24,20,18,17],L:[16,16,16,16,16,16,31],
+  M:[17,27,21,21,17,17,17],N:[17,25,21,19,17,17,17],O:[14,17,17,17,17,17,14],P:[30,17,17,30,16,16,16],
+  Q:[14,17,17,17,21,18,13],R:[30,17,17,30,20,18,17],S:[15,16,16,14,1,1,30],T:[31,4,4,4,4,4,4],
+  U:[17,17,17,17,17,17,14],V:[17,17,17,17,17,10,4],W:[17,17,17,21,21,27,17],X:[17,17,10,4,10,17,17],
+  Y:[17,17,10,4,4,4,4],Z:[31,1,2,4,8,16,31],
+  '0':[14,17,19,21,25,17,14],'1':[4,12,4,4,4,4,14],'2':[14,17,1,6,8,16,31],'3':[30,1,1,14,1,1,30],
+  '4':[2,6,10,18,31,2,2],'5':[31,16,30,1,1,17,14],'6':[14,16,16,30,17,17,14],'7':[31,1,2,4,8,8,8],
+  '8':[14,17,17,14,17,17,14],'9':[14,17,17,15,1,1,14],'-':[0,0,0,31,0,0,0],' ':[0,0,0,0,0,0,0],
+  '!':[4,4,4,4,4,0,4],'.':[0,0,0,0,0,0,4],
+};
+let _signTex = null, _signRow = 0, _signMat = null;
+const _signSlots = {};   // text -> { u0, v0, u1, v1, cols }
+function _bakeSign(text, color) {
+  if (!_signTex) { _signTex = new Tex('signage', 1024); _signTex.a = new Float64Array(1024 * 1024); _signTex.noAux = true;
+    useTex(_signTex); _signMat = mat('signage', { tex: 'signage', blend: true, rough: 0.6, metal: 0, base: [1, 1, 1] }); }
+  const key = text + '|' + color.join(',');
+  if (_signSlots[key]) return _signSlots[key];
+  const S = 1024, cols = text.length * 6 - 1;
+  const bw = Math.min(13, Math.floor(1016 / (cols * 5)));           // block size so the row fits
+  const wear = fbm(rng(31337 + _signRow), S, [[48, 1], [128, 0.7]]);
+  const y0 = _signRow * 100 + 4, x0 = 4;
+  if (y0 + 96 > S) throw new Error('signage atlas full');
+  for (let ci = 0; ci < text.length; ci++) {
+    const g = FONT[text[ci].toUpperCase()] || FONT[' '];
+    for (let gy = 0; gy < 7; gy++) for (let gx = 0; gx < 5; gx++) {
+      if (!((g[gy] >> (4 - gx)) & 1)) continue;
+      for (let py = 0; py < bw * 2; py++) for (let px = 0; px < bw; px++) {
+        const X = x0 + (ci * 6 + gx) * bw + px, Y = y0 + gy * bw * 2 + py;
+        const w = wear(X, Y), a = w < 0.3 ? 0 : 0.92 * (0.5 + 0.5 * Math.min(1, (w - 0.3) / 0.35));
+        const i = Y * S + X;
+        if (a > _signTex.a[i]) { _signTex.a[i] = a;
+          _signTex.rgb[i * 3] = color[0]; _signTex.rgb[i * 3 + 1] = color[1]; _signTex.rgb[i * 3 + 2] = color[2]; }
+      }
+    }
+  }
+  const slot = { u0: x0 / S, v0: y0 / S, u1: (x0 + cols * bw) / S, v1: (y0 + 14 * bw) / S, cols };
+  _signSlots[key] = slot; _signRow++;
+  return slot;
+}
+// stencil text on a surface; height in world units, width follows the glyph aspect
+function sign(face, cx, cy, cz, h, text, color = [0.9, 0.88, 0.82], rot = 0) {
+  const sl = _bakeSign(text, color);
+  const w = h * sl.cols / 14;
+  const m = _signMat;
+  if (face === 'up') {
+    let uv = [[sl.u0, sl.v0], [sl.u1, sl.v0], [sl.u1, sl.v1], [sl.u0, sl.v1]];
+    for (let q = 0; q < ((rot / 90) | 0); q++) uv = [uv[3], uv[0], uv[1], uv[2]];
+    const rw = (rot % 180) ? h * 1 : w, rh = (rot % 180) ? w : h;
+    quad(m, [cx - rw / 2, cy, cz - rh / 2], [cx + rw / 2, cy, cz - rh / 2], [cx + rw / 2, cy, cz + rh / 2], [cx - rw / 2, cy, cz + rh / 2], uv);
+    return;
+  }
+  const uv = [[sl.u1, sl.v1], [sl.u0, sl.v1], [sl.u0, sl.v0], [sl.u1, sl.v0]];
+  const y0 = cy - h / 2, y1 = cy + h / 2;
+  if (face === '-z') quad(m, [cx - w / 2, y0, cz], [cx + w / 2, y0, cz], [cx + w / 2, y1, cz], [cx - w / 2, y1, cz], uv);
+  if (face === '+z') quad(m, [cx + w / 2, y0, cz], [cx - w / 2, y0, cz], [cx - w / 2, y1, cz], [cx + w / 2, y1, cz], uv);
+  if (face === '-x') quad(m, [cx, y0, cz + w / 2], [cx, y0, cz - w / 2], [cx, y1, cz - w / 2], [cx, y1, cz + w / 2], uv);
+  if (face === '+x') quad(m, [cx, y0, cz - w / 2], [cx, y0, cz + w / 2], [cx, y1, cz + w / 2], [cx, y1, cz - w / 2], uv);
 }
 
 // the decal atlas: 4x4 cells of stains and worn paint, alpha-blended over the tiling base
@@ -1112,6 +1177,149 @@ function buildSpine() {
   return { name: 'Twin Spine' };
 }
 
+// ---------------------------------------------------------------- layout: castle ----
+// "The Old Yard" — a torch-lit castle courtyard in stone, cobble and timber. Two wall-walk
+// galleries face each other across market stalls and a central fountain; 180° symmetric.
+function buildCastle() {
+  const stone = libMat('stone'), cobble = libMat('cobble'), planks = libMat('planks');
+  const darkWood = libMat('plankGrey'), marble = libMat('marble'), tiles = libMat('tiles');
+  const torch = mat('torch', { base: [1, 0.62, 0.25], glow: 1.0, rough: 0.5 });
+  const teamA = mat('teamA', { base: [1, 0.55, 0.23], glow: 0.55, rough: 0.6 });
+  const teamB = mat('teamB', { base: [0.29, 0.66, 1], glow: 0.55, rough: 0.6 });
+  const D = mat('decals', { tex: useTex(decalTex('decals')), blend: true, rough: 0.5, metal: 0, base: [1, 1, 1] });
+  const W = 34, TH = 1.8, WH = 10;
+
+  box(cobble, -W - TH, -0.5, -W - TH, W + TH, 0, W + TH);                       // courtyard
+  box(stone, -W - TH, 0, -W - TH, W + TH, WH, -W);                             // walls
+  box(stone, -W - TH, 0, W, W + TH, WH, W + TH);
+  box(stone, -W - TH, 0, -W, -W, WH, W);
+  box(stone, W, 0, -W, W + TH, WH, W);
+  for (let a = -30; a <= 30; a += 2.4) {                                        // crenellations
+    cbox(stone, a, WH + 0.65, -W - TH / 2, 1.1, 1.3, 1.4); cbox(stone, a, WH + 0.65, W + TH / 2, 1.1, 1.3, 1.4);
+    cbox(stone, -W - TH / 2, WH + 0.65, a, 1.4, 1.3, 1.1); cbox(stone, W + TH / 2, WH + 0.65, a, 1.4, 1.3, 1.1);
+  }
+  for (const tx of [-W, W]) for (const tz of [-W, W]) {                         // corner towers + crowns
+    cyl(stone, tx, tz, 0, 13.5, 4.4, 16);
+    for (let q = 0; q < 10; q++) { const a = q / 10 * Math.PI * 2;
+      cbox(stone, tx + Math.cos(a) * 4.1, 14.1, tz + Math.sin(a) * 4.1, 1.0, 1.2, 1.0); }
+    cbox(torch, tx, 12.6, tz > 0 ? tz - 4.55 : tz + 4.55, 0.5, 0.5, 0.25);
+  }
+  // wall-walk galleries on N and S walls, stairs descending toward centre
+  mirrored((xz, team) => {
+    const south = xz(0, 1)[1] > 0, zi = south ? [28.8, W - TH + 0.2] : [-(W - TH) - 0.2, -28.8];
+    box(stone, -12, 5.0, zi[0], 12, 5.5, zi[1]);
+    for (let jx = -10; jx <= 10; jx += 5) box(darkWood, jx - 0.14, 4.7, zi[0], jx + 0.14, 5.0, zi[1]);
+    for (const sx2 of [1, -1]) ramp(stone, sx2 > 0 ? 12 : -24, zi[0], sx2 > 0 ? 24 : -12, zi[1], 0, sx2 > 0 ? 0 : 5.5, sx2 > 0 ? 5.5 : 0, 'x');
+    const zr = south ? 28.9 : -28.9;
+    for (let px = -11; px <= 11; px += 4.4) cbox(darkWood, px, 6.15, zr, 0.24, 1.3, 0.24);   // rail posts
+    box(darkWood, -11, 6.7, zr - 0.09, 11, 6.95, zr + 0.09);                                 // rail beam
+    const tm = team({ a: teamA, b: teamB });
+    box(tm, -12, 7.6, south ? W - 0.15 : -W + 0.01, 12, 8.5, south ? W - 0.01 : -W + 0.15); // team band
+    sign(south ? '-z' : '+z', 0, 3.2, south ? W - TH - 0.04 : -(W - TH) + 0.04, 1.5, south ? 'BASE 1' : 'BASE 2');
+  });
+  // central fountain: plinth, glossy basin, marble column
+  cbox(stone, 0, 0.25, 0, 9, 0.5, 9);
+  box(tiles, -3.4, 0.5, -3.4, 3.4, 0.62, 3.4);
+  for (const [x0, z0, x1, z1] of [[-3.6, -3.6, 3.6, -3.1], [-3.6, 3.1, 3.6, 3.6], [-3.6, -3.6, -3.1, 3.6], [3.1, -3.6, 3.6, 3.6]])
+    box(marble, x0, 0.5, z0, x1, 1.35, z1);
+  cyl(marble, 0, 0, 0.6, 2.9, 0.7, 12);
+  bevelCbox(marble, 0, 3.05, 0, 1.1, 0.34, 1.1);
+  // market stalls (mirrored pairs) with counters, sloped roofs and barrels
+  mirrored((xz) => {
+    for (const [sx, sz, along] of [[16, -11, 'x'], [7, 19, 'z']]) {
+      const [x, z] = xz(sx, sz);
+      for (const px of [-1.6, 1.6]) for (const pz of [-1.2, 1.2]) cbox(darkWood, x + px, 1.3, z + pz, 0.22, 2.6, 0.22);
+      cbox(planks, x, 0.5, z + (z > 0 ? -1.3 : 1.3), 3.6, 1.0, 0.5);
+      ramp(darkWood, x - 2, z - 1.7, x + 2, z + 1.7, 2.5, 3.15, 2.65, 'z');
+      bevelCbox(planks, x + 0.8, 0.4, z, 0.9, 0.8, 0.9, true);
+      cyl(darkWood, x - 1, z + (z > 0 ? 0.6 : -0.6), 0, 1.25, 0.52, 10);
+      cyl(darkWood, x - 0.1, z + (z > 0 ? 0.9 : -0.9), 0, 1.05, 0.48, 10);
+    }
+    const [ax, az] = xz(16, -11);
+    sign(az > 0 ? '-z' : '+z', ax, 3.6, az + (az > 0 ? -1.85 : 1.85), 0.85, 'ARMORY', [0.85, 0.7, 0.4]);
+  });
+  // torches along the E and W walls; scattered cover
+  for (let a = -27; a <= 27; a += 9) { cbox(torch, -W + 0.15, 4.2, a, 0.3, 0.55, 0.28); cbox(torch, W - 0.15, 4.2, a, 0.3, 0.55, 0.28); }
+  mirrored((xz) => {
+    for (const [sx, sz] of [[24, 6], [10, -22], [26, -18]]) { const [x, z] = xz(sx, sz);
+      bevelCbox(planks, x, 0.7, z, 1.5, 1.4, 1.5, true); }
+  });
+  for (const s2 of [1, -1]) { decal(D, 'up', s2 * 20, 0.02, s2 * 14, 3, 2.4, DECAL.SCUFF, s2 > 0 ? 0 : 90);
+    decal(D, s2 > 0 ? '-x' : '+x', s2 * (W - 0.04), 5.8, s2 * -12, 6, 7, DECAL.LEAK); }
+  sign('-x', W - TH - 0.04 + TH, 6.5, 0, 1.2, 'THE OLD YARD', [0.8, 0.75, 0.6]);
+  return { name: 'The Old Yard' };
+}
+
+// ---------------------------------------------------------------- layout: caldera ----
+// "Caldera" — king-of-the-hill on a stepped stone mound inside a rock rim, with lava
+// channels forcing bridge fights on both approaches. Lava is visual: add fire zones over
+// the channels in the editor for damage.
+function buildCaldera() {
+  const rock = libMat('rock'), dirt = libMat('dirt'), stone = libMat('stone');
+  const lava = libMat('lava'), planks = libMat('plankGrey');
+  const warm = mat('warm', { base: [1, 0.55, 0.2], glow: 0.9, rough: 0.5 });
+  const teamA = mat('teamA', { base: [1, 0.55, 0.23], glow: 0.55, rough: 0.6 });
+  const teamB = mat('teamB', { base: [0.29, 0.66, 1], glow: 0.55, rough: 0.6 });
+  const D = mat('decals', { tex: useTex(decalTex('decals')), blend: true, rough: 0.5, metal: 0, base: [1, 1, 1] });
+  const H = 40, WH = 12;
+
+  box(dirt, -H - 1.5, -0.5, -H - 1.5, H + 1.5, 0, H + 1.5);
+  box(rock, -H - 1.5, 0, -H - 1.5, H + 1.5, WH, -H);
+  box(rock, -H - 1.5, 0, H, H + 1.5, WH, H + 1.5);
+  box(rock, -H - 1.5, 0, -H, -H, WH, H);
+  box(rock, H, 0, -H, H + 1.5, WH, H);
+  for (let a = -32; a <= 32; a += 10.5) {                                       // rock buttresses
+    cbox(rock, a, 5.5, -H + 0.5, 2.4, 11, 1.6); cbox(rock, a, 5.5, H - 0.5, 2.4, 11, 1.6);
+    cbox(rock, -H + 0.5, 5.5, a, 1.6, 11, 2.4); cbox(rock, H - 0.5, 5.5, a, 1.6, 11, 2.4);
+  }
+  // the hill: three stone terraces, ramps alternating N/S then E/W then N/S
+  box(stone, -12, 0, -12, 12, 1.7, 12);
+  box(stone, -8, 1.7, -8, 8, 3.4, 8);
+  box(stone, -4.5, 3.4, -4.5, 4.5, 5.1, 4.5);
+  for (const s2 of [1, -1]) {
+    ramp(stone, -2.5, s2 > 0 ? 12 : -16, 2.5, s2 > 0 ? 16 : -12, 0, s2 > 0 ? 1.7 : 0, s2 > 0 ? 0 : 1.7, 'z');
+    ramp(stone, s2 > 0 ? 8 : -12, -2, s2 > 0 ? 12 : -8, 2, 1.7, s2 > 0 ? 3.4 : 1.7, s2 > 0 ? 1.7 : 3.4, 'x');
+    ramp(stone, -1.75, s2 > 0 ? 4.5 : -8.5, 1.75, s2 > 0 ? 8.5 : -4.5, 3.4, s2 > 0 ? 5.1 : 3.4, s2 > 0 ? 3.4 : 5.1, 'z');
+  }
+  decal(D, 'up', 0, 5.12, 0, 7.5, 7.5, DECAL.RING);
+  for (const s2 of [1, -1]) cbox(warm, 0, 5.35, s2 * 4.3, 8.6, 0.14, 0.22);     // hill crown glow
+  for (const s2 of [1, -1]) cbox(warm, s2 * 4.3, 5.35, 0, 0.22, 0.14, 8.2);
+  // lava channels across both N/S approaches, with a stone bridge each
+  for (const s2 of [1, -1]) {
+    const za = s2 > 0 ? 16 : -22, zb = s2 > 0 ? 22 : -16;                       // channel span
+    box(lava, -14, -0.35, za, 14, 0.02, zb);
+    box(rock, -14.6, 0, za - 0.6, -14, 0.34, zb + 0.6);                         // side curbs
+    box(rock, 14, 0, za - 0.6, 14.6, 0.34, zb + 0.6);
+    box(rock, -14, 0, za - 0.6, 14, 0.34, za);                                  // near/far curbs
+    box(rock, -14, 0, zb, 14, 0.34, zb + 0.6);
+    box(stone, -2, 0.02, za - 0.8, 2, 0.42, zb + 0.8);                          // bridge deck
+    box(stone, -2.3, 0.42, za - 0.8, -2, 0.9, zb + 0.8);                        // bridge parapets
+    box(stone, 2, 0.42, za - 0.8, 2.3, 0.9, zb + 0.8);
+    sign('up', 0, 0.04, s2 * 26.5, 1.1, 'DANGER', [0.95, 0.75, 0.1], s2 > 0 ? 0 : 180);
+  }
+  // lava pools in the flanks + boulders as cover
+  mirrored((xz) => {
+    const [px, pz] = xz(26, -10);
+    box(lava, px - 4, -0.35, pz - 3, px + 4, 0.02, pz + 3);
+    box(rock, px - 4.6, 0, pz - 3.6, px + 4.6, 0.3, pz - 3);
+    box(rock, px - 4.6, 0, pz + 3, px + 4.6, 0.3, pz + 3.6);
+    box(rock, px - 4.6, 0, pz - 3, px - 4, 0.3, pz + 3);
+    box(rock, px + 4, 0, pz - 3, px + 4.6, 0.3, pz + 3);
+    for (const [bx, bz, r2] of [[14, 24, 1.4], [30, 2, 1.1], [20, -24, 1.7], [7, -27, 1.2]]) {
+      const [x, z] = xz(bx, bz); bevelCbox(rock, x, r2 * 0.62, z, r2 * 2, r2 * 1.28, r2 * 1.7);
+    }
+  });
+  // bases E and W
+  mirrored((xz, team) => {
+    const east = xz(1, 0)[0] > 0, tm = team({ a: teamA, b: teamB });
+    box(tm, east ? H - 0.15 : -H + 0.01, 5.2, -10, east ? H - 0.01 : -H + 0.15, 6.1, 10);
+    sign(east ? '-x' : '+x', east ? H - 0.04 : -H + 0.04, 3.4, 0, 2.2, east ? '1' : '2');
+    for (const [cx2, cz2] of [[H - 6, 6], [H - 6, -6]]) { const [x, z] = xz(cx2, cz2);
+      bevelCbox(planks, x, 0.7, z, 1.6, 1.4, 1.6, true); }
+  });
+  return { name: 'Caldera' };
+}
+
 // ---------------------------------------------------------------- layout: museum ----
 // A material showcase: every library family as a wall slab and a floor apron, in two
 // facing rows with a walkway between. Generate with TEXSIZE=512 to keep the file small.
@@ -1271,7 +1479,7 @@ function writeGLB(out) {
 }
 
 // -------------------------------------------------------------------------- main ----
-const LAYOUTS = { keep: buildKeep, spine: buildSpine, museum: buildMuseum };
+const LAYOUTS = { keep: buildKeep, spine: buildSpine, museum: buildMuseum, castle: buildCastle, caldera: buildCaldera };
 const which = process.argv[2], out = process.argv[3];
 if (!LAYOUTS[which] || !out) {
   console.error('usage: node tools/levelgen.mjs <' + Object.keys(LAYOUTS).join('|') + '> <out.glb>');
