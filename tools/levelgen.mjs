@@ -26,13 +26,19 @@ import { writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 
 // ------------------------------------------------------------------ texture painter ----
-// Everything is deterministic (seeded PRNG) and tileable (lattice noise wraps), because
-// these textures repeat across whole walls.
+// Deterministic (seeded PRNG) and tileable (lattice noise wraps). What earns realism is not
+// resolution but WHERE variation lands — the rules below follow production texturing practice:
+//   - roughness varies everywhere: grime is matte, worn edges polish, oil is glossy. A flat
+//     roughness value is the single biggest tell of a procedural texture.
+//   - wear follows logic, not randomness: edges (above the local mean height) chip and
+//     polish, cavities (below it) collect dirt. Both masks derive from the height field.
+//   - three scales of variation — macro tone drift, meso features/stains, micro grain — so
+//     the tiling never reads at any distance.
+//   - decals (stains, leaks, painted markings) break repetition on top of the tiling base.
 function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
-const S = 256;   // texture size
 function lattice(r, n) { const g = new Float64Array(n * n); for (let i = 0; i < n * n; i++) g[i] = r(); return g; }
-function noiseAt(g, n, x, y) {   // bilinear, smoothstep, wrapping -> tileable
+function noiseAt(g, n, x, y, S) {   // bilinear, smoothstep, wrapping -> tileable
   const fx = x * n / S, fy = y * n / S;
   const x0 = Math.floor(fx) % n, y0 = Math.floor(fy) % n, x1 = (x0 + 1) % n, y1 = (y0 + 1) % n;
   let tx = fx - Math.floor(fx), ty = fy - Math.floor(fy);
@@ -40,142 +46,294 @@ function noiseAt(g, n, x, y) {   // bilinear, smoothstep, wrapping -> tileable
   const a = g[y0 * n + x0], b = g[y0 * n + x1], c = g[y1 * n + x0], d = g[y1 * n + x1];
   return a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
 }
-function fbm(r, octaves) {   // returns sampler(x,y) in ~[0,1]
+function fbm(r, S, octaves) {   // sampler(x,y) in ~[0,1]
   const layers = octaves.map(([n, w]) => [lattice(r, n), n, w]);
   const tot = octaves.reduce((s, o) => s + o[1], 0);
-  return (x, y) => layers.reduce((s, [g, n, w]) => s + noiseAt(g, n, x, y) * w, 0) / tot;
+  return (x, y) => layers.reduce((s, [g, n, w]) => s + noiseAt(g, n, x, y, S) * w, 0) / tot;
+}
+function blurField(src, S, rad) {   // wrapping two-pass box blur: the "local mean" for cavity/edge masks
+  const tmp = new Float64Array(S * S), out = new Float64Array(S * S), w = rad * 2 + 1;
+  for (let y = 0; y < S; y++) { let acc = 0;
+    for (let k = -rad; k <= rad; k++) acc += src[y * S + ((k + S) % S)];
+    for (let x = 0; x < S; x++) { tmp[y * S + x] = acc / w;
+      acc += src[y * S + ((x + rad + 1) % S)] - src[y * S + ((x - rad + S) % S)]; } }
+  for (let x = 0; x < S; x++) { let acc = 0;
+    for (let k = -rad; k <= rad; k++) acc += tmp[((k + S) % S) * S + x];
+    for (let y = 0; y < S; y++) { out[y * S + x] = acc / w;
+      acc += tmp[((y + rad + 1) % S) * S + x] - tmp[((y - rad + S) % S) * S + x]; } }
+  return out;
 }
 class Tex {
-  constructor(name) { this.name = name; this.rgb = new Float64Array(S * S * 3); this.h = new Float64Array(S * S); this.mr = null; }
-  fill(c) { for (let i = 0; i < S * S; i++) { this.rgb[i * 3] = c[0]; this.rgb[i * 3 + 1] = c[1]; this.rgb[i * 3 + 2] = c[2]; } return this; }
-  each(fn) { for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) fn(x, y, y * S + x); return this; }
+  constructor(name, S) { this.name = name; this.S = S; this.rgb = new Float64Array(S * S * 3); this.h = new Float64Array(S * S); this.mr = null; this.a = null; this.noAux = false; }
+  fill(c) { for (let i = 0; i < this.S * this.S; i++) { this.rgb[i * 3] = c[0]; this.rgb[i * 3 + 1] = c[1]; this.rgb[i * 3 + 2] = c[2]; } return this; }
+  each(fn) { for (let y = 0; y < this.S; y++) for (let x = 0; x < this.S; x++) fn(x, y, y * this.S + x); return this; }
   tint(i, k) { this.rgb[i * 3] *= k; this.rgb[i * 3 + 1] *= k; this.rgb[i * 3 + 2] *= k; }
-  mrInit(metal, rough) { this.mr = new Float64Array(S * S * 2); for (let i = 0; i < S * S; i++) { this.mr[i * 2] = rough; this.mr[i * 2 + 1] = metal; } return this; }
+  tintC(i, kr, kg, kb) { this.rgb[i * 3] *= kr; this.rgb[i * 3 + 1] *= kg; this.rgb[i * 3 + 2] *= kb; }
+  mix(i, c, k) { for (let q = 0; q < 3; q++) this.rgb[i * 3 + q] += (c[q] - this.rgb[i * 3 + q]) * k; }
+  mrInit(metal, rough) { this.mr = new Float64Array(this.S * this.S * 2); for (let i = 0; i < this.S * this.S; i++) { this.mr[i * 2] = rough; this.mr[i * 2 + 1] = metal; } return this; }
 }
-function pngRGB(px, w, h) {   // px: Float64Array w*h*3 in 0..1
-  const raw = Buffer.alloc((w * 3 + 1) * h);
-  for (let y = 0; y < h; y++) { const ro = y * (w * 3 + 1); raw[ro] = 0;
-    for (let i = 0; i < w * 3; i++) raw[ro + 1 + i] = Math.max(0, Math.min(255, Math.round(px[y * w * 3 + i] * 255))); }
-  const chunk = (t, d) => { const c = Buffer.concat([Buffer.from(t), d]); const out = Buffer.alloc(c.length + 8);
-    out.writeUInt32BE(d.length, 0); c.copy(out, 4); out.writeInt32BE(crc32(c), c.length + 4); return out; };
-  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
-  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
+
+// The finishing pass every material runs through LAST. This is where the "AAA" rules live:
+// cavity grime (darker + matte), edge wear (brighter + polished), macro tone/hue drift that
+// breaks tiling at distance, and a micro grain kept inside the subtle 5-10% band.
+function finish(t, seed, o = {}) {
+  const S = t.S, r = rng(seed ^ 0xF1715);
+  const mean = blurField(t.h, S, o.blurR ?? Math.max(4, S >> 6));
+  const macro = fbm(r, S, [[2, 1], [5, 0.7]]);
+  const grain = fbm(r, S, [[Math.min(512, S), 1]]);
+  t.each((x, y, i) => {
+    const cav = Math.min(1, Math.max(0, (mean[i] - t.h[i])) * (o.cavK ?? 1.6));
+    const edge = Math.min(1, Math.max(0, (t.h[i] - mean[i])) * (o.edgeK ?? 1.8));
+    const m = macro(x, y) - 0.5, g = grain(x, y) - 0.5;
+    t.tintC(i, 1 + m * 0.11 + g * 0.06, 1 + m * 0.09 + g * 0.06, 1 + m * 0.06 + g * 0.06);
+    t.tint(i, (1 - cav * (o.cavDark ?? 0.32)) * (1 + edge * (o.edgeLight ?? 0.2)));
+    if (t.mr) {
+      let rr = t.mr[i * 2];
+      rr += cav * (o.cavRough ?? 0.2) - edge * (o.edgeSmooth ?? 0.3) + g * (o.grainRough ?? 0.12);
+      t.mr[i * 2] = Math.max(0.08, Math.min(1, rr));
+    }
+  });
+  return t;
 }
+
 let _crcT = null;
 function crc32(buf) {
   if (!_crcT) { _crcT = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; _crcT[n] = c; } }
   let c = -1; for (const b of buf) c = _crcT[(c ^ b) & 255] ^ (c >>> 8); return (c ^ -1) | 0;
 }
-function normalPNG(h, strength) {   // tangent-space normal map from the height field, wrapping
+function toBytes(px) { const b = Buffer.alloc(px.length); for (let i = 0; i < px.length; i++) b[i] = Math.max(0, Math.min(255, Math.round(px[i] * 255))); return b; }
+// PNG with adaptive per-row filtering (None/Sub/Up/Paeth, least-sum-of-abs). At 1024 on noisy
+// content this roughly halves the file next to the filter-0-everywhere encoder it replaces.
+function pngEncode(bytes, w, h, ch) {
+  const bpr = w * ch, raw = Buffer.alloc((bpr + 1) * h), cand = Buffer.alloc(bpr);
+  for (let y = 0; y < h; y++) {
+    const row = bytes.subarray(y * bpr, (y + 1) * bpr);
+    const prev = y ? bytes.subarray((y - 1) * bpr, y * bpr) : null;
+    let bestF = 0, bestSum = Infinity, best = null;
+    for (const f of [0, 1, 2, 4]) {
+      let sum = 0;
+      for (let i = 0; i < bpr && sum < bestSum; i++) {
+        const a = i >= ch ? row[i - ch] : 0, b = prev ? prev[i] : 0, c = (prev && i >= ch) ? prev[i - ch] : 0;
+        let v;
+        if (f === 0) v = row[i];
+        else if (f === 1) v = (row[i] - a) & 255;
+        else if (f === 2) v = (row[i] - b) & 255;
+        else { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c);
+          v = (row[i] - (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255; }
+        cand[i] = v; sum += v < 128 ? v : 256 - v;
+      }
+      if (sum < bestSum) { bestSum = sum; bestF = f; best = Buffer.from(cand); }
+    }
+    raw[y * (bpr + 1)] = bestF; best.copy(raw, y * (bpr + 1) + 1);
+  }
+  const chunk = (t, d) => { const cbuf = Buffer.concat([Buffer.from(t), d]); const out = Buffer.alloc(cbuf.length + 8);
+    out.writeUInt32BE(d.length, 0); cbuf.copy(out, 4); out.writeInt32BE(crc32(cbuf), cbuf.length + 4); return out; };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = ch === 4 ? 6 : 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
+}
+function normalPx(h, S, strength) {   // tangent-space normals from the height field, wrapping
   const px = new Float64Array(S * S * 3);
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const dx = (h[y * S + (x + 1) % S] - h[y * S + (x + S - 1) % S]) * strength;
     const dy = (h[((y + 1) % S) * S + x] - h[((y + S - 1) % S) * S + x]) * strength;
-    const l = Math.hypot(dx, dy, 1);
-    const i = (y * S + x) * 3;
+    const l = Math.hypot(dx, dy, 1), i = (y * S + x) * 3;
     px[i] = (-dx / l) * 0.5 + 0.5; px[i + 1] = (-dy / l) * 0.5 + 0.5; px[i + 2] = (1 / l) * 0.5 + 0.5;
   }
-  return pngRGB(px, S, S);
+  return px;
 }
-function mrPNG(mr) {   // glTF: roughness in G, metallic in B
-  const px = new Float64Array(S * S * 3);
-  for (let i = 0; i < S * S; i++) { px[i * 3] = 0; px[i * 3 + 1] = mr[i * 2]; px[i * 3 + 2] = mr[i * 2 + 1]; }
-  return pngRGB(px, S, S);
+function halfPx(px, S, ch) {   // 2x2 average downsample
+  const H = S >> 1, out = new Float64Array(H * H * ch);
+  for (let y = 0; y < H; y++) for (let x = 0; x < H; x++) for (let c = 0; c < ch; c++)
+    out[(y * H + x) * ch + c] = (px[((y * 2) * S + x * 2) * ch + c] + px[((y * 2) * S + x * 2 + 1) * ch + c]
+      + px[((y * 2 + 1) * S + x * 2) * ch + c] + px[((y * 2 + 1) * S + x * 2 + 1) * ch + c]) / 4;
+  return out;
 }
 
 // ---- the texture set -------------------------------------------------------------------
-function concreteTex(name, seed) {
-  const r = rng(seed), t = new Tex(name).fill([0.66, 0.66, 0.65]);
-  const mottle = fbm(r, [[8, 1], [16, 0.6], [32, 0.35], [64, 0.2]]);
-  const blotch = fbm(r, [[4, 1], [8, 0.7]]);
+// Feature sizes are written for a 256px tile and scaled by k, so world-space detail size is
+// unchanged at any resolution.
+function concreteTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  t.fill([0.66, 0.66, 0.65]);
+  const mottle = fbm(r, S, [[8, 1], [16, 0.6], [32, 0.35], [64, 0.2], [160, 0.14]]);
+  const blotch = fbm(r, S, [[4, 1], [8, 0.7]]);
   t.each((x, y, i) => {
     const m = mottle(x, y), b = blotch(x, y);
     t.tint(i, 0.86 + m * 0.24 - Math.max(0, b - 0.62) * 0.5);
-    if (r() < 0.012) t.tint(i, r() < 0.5 ? 0.78 : 1.14);           // speckle
+    if (r() < 0.012) t.tint(i, r() < 0.5 ? 0.78 : 1.14);
     t.h[i] = m;
   });
-  return t;
-}
-function panelsTex(name, seed) {   // concrete cast in big panels: seams, form-tie holes, weep stains
-  const t = concreteTex(name, seed), r = rng(seed ^ 0xBEEF);
-  const seam = (v) => { const d = Math.min(v % 128, 128 - (v % 128)); return d < 2 ? 0.55 : d < 5 ? 0.88 : 1; };
-  t.each((x, y, i) => { const s = Math.min(seam(y), seam(x + 64)); t.tint(i, s); if (s < 1) t.h[i] -= (1 - s) * 0.8; });
-  for (let k = 0; k < 5; k++) {                                     // weep stains falling from seams
-    const sx = Math.floor(r() * S), sy = (Math.floor(r() * 2) * 128) % S, len = 26 + r() * 60;
-    for (let d = 0; d < len; d++) for (let w = -1; w <= 1; w++) {
-      const i = ((sy + d) % S) * S + (sx + w + S) % S;
-      t.tint(i, 1 - 0.16 * (1 - d / len) * (w ? 0.5 : 1));
-    }
-  }
-  for (const [fx, fy] of [[32, 32], [96, 32], [160, 32], [224, 32], [32, 160], [96, 160], [160, 160], [224, 160]]) {
-    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (dx * dx + dy * dy <= 4) {
-      const i = ((fy + dy + S) % S) * S + (fx + dx + S) % S; t.tint(i, 0.62); t.h[i] -= 0.9;   // form-tie holes
+  for (let c = 0; c < 2; c++) {                                     // hairline cracks, random-walked
+    let x = r() * S, y = r() * S, ang = r() * Math.PI * 2;
+    const len = S * (0.3 + r() * 0.4);
+    for (let d = 0; d < len; d++) {
+      ang += (r() - 0.5) * 0.4;
+      x = (x + Math.cos(ang) + S) % S; y = (y + Math.sin(ang) + S) % S;
+      const i = (y | 0) * S + (x | 0);
+      t.tint(i, 0.68); t.h[i] -= 0.8;
+      if (r() < 0.35) { const j = (y | 0) * S + (((x | 0) + 1) % S); t.tint(j, 0.75); t.h[j] -= 0.5; }
     }
   }
   return t;
 }
-function metalTex(name, seed) {   // brushed panels with seams + rivets; MR map carries the variation
-  const r = rng(seed), t = new Tex(name).fill([0.68, 0.7, 0.73]).mrInit(0.9, 0.62);
+function concreteFinished(name, seed, S) { return finish(concreteTex(name, seed, S), seed, { cavDark: 0.3 }); }
+function panelsTex(name, seed, S) {   // concrete cast in big panels: seams, form ties, weep stains
+  const t = concreteTex(name, seed, S), r = rng(seed ^ 0xBEEF), k = S / 256, P = S / 2;
+  const seam = (v) => { const d = Math.min(v % P, P - (v % P)); return d < 2 * k ? 0.55 : d < 5 * k ? 0.88 : 1; };
+  const tone = fbm(r, S, [[2, 1]]);                                 // per-panel tone difference
+  t.each((x, y, i) => {
+    const s = Math.min(seam(y), seam(x + P / 2));
+    t.tint(i, s * (0.95 + tone(((x / P) | 0) * P + P / 2, ((y / P) | 0) * P + P / 2) * 0.1));
+    if (s < 1) t.h[i] -= (1 - s) * 0.8;
+  });
+  for (let q = 0; q < 8; q++) {                                     // weep stains falling from seams
+    const sx = Math.floor(r() * S), sy = (Math.floor(r() * 2) * P) % S, len = (26 + r() * 60) * k;
+    for (let d = 0; d < len; d++) for (let w = -k; w <= k; w++) {
+      const i = (((sy + d) | 0) % S) * S + (((sx + w) | 0) + S) % S;
+      t.tint(i, 1 - 0.14 * (1 - d / len) * (Math.abs(w) > k / 2 ? 0.5 : 1));
+    }
+  }
+  for (const fx of [32, 96, 160, 224]) for (const fy of [32, 160]) {
+    for (let dy = -2 * k; dy <= 2 * k; dy++) for (let dx = -2 * k; dx <= 2 * k; dx++) if (dx * dx + dy * dy <= 4 * k * k) {
+      const i = (((fy * k + dy) | 0 + S) % S) * S + (((fx * k + dx) | 0) + S) % S; t.tint(i, 0.62); t.h[i] -= 0.9;
+    }
+  }
+  return finish(t, seed, { cavDark: 0.34, cavK: 1.8 });
+}
+function metalTex(name, seed, S) {   // brushed panels, seams, rivets — and rust where water sits
+  const r = rng(seed), t = new Tex(name, S), k = S / 256, P = S / 2;
+  t.fill([0.68, 0.7, 0.73]).mrInit(0.9, 0.62);
   const brushRow = new Float64Array(S); for (let y = 0; y < S; y++) brushRow[y] = r();
-  const brush = fbm(r, [[64, 1], [128, 0.8]]);
-  const seam = (v) => { const d = Math.min(v % 128, 128 - (v % 128)); return d < 2 ? 0.62 : 1; };
+  const brush = fbm(r, S, [[64, 1], [128, 0.8], [320, 0.5]]);
+  const rustN = fbm(r, S, [[24, 1], [96, 0.7]]);
+  const seamD = (v) => Math.min(v % P, P - (v % P));
   t.each((x, y, i) => {
     const b = brush(x, y) * 0.5 + brushRow[y] * 0.5;
     t.tint(i, 0.92 + b * 0.14);
-    const s = Math.min(seam(x), seam(y));
-    if (s < 1) { t.tint(i, s); t.h[i] -= 0.7; t.mr[i * 2] = 0.8; }
+    const ds = Math.min(seamD(x), seamD(y));
+    if (ds < 2 * k) { t.tint(i, 0.62); t.h[i] -= 0.7; t.mr[i * 2] = 0.8; }
     else { t.h[i] = b * 0.35; t.mr[i * 2] = 0.55 + b * 0.25; }
+    // rust: seeded near seams, matte, barely metallic — colour noise keeps it organic
+    const rmask = rustN(x, y) - 0.74 + Math.max(0, (9 * k - ds)) / (9 * k) * 0.16;
+    if (rmask > 0) { const n = Math.min(1, rmask * 5);
+      t.mix(i, [0.36 + rustN(y, x) * 0.18, 0.2 + rustN(y, x) * 0.07, 0.11], 0.62 * n);
+      t.mr[i * 2] = Math.min(1, t.mr[i * 2] + 0.3 * n); t.mr[i * 2 + 1] = 0.15; t.h[i] += n * 0.15; }
   });
-  for (let px = 0; px < S; px += 32) for (const py of [6, 122, 134, 250]) {   // rivet rows beside seams
-    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const d2 = dx * dx + dy * dy; if (d2 > 5) continue;
-      const i = ((py + dy + S) % S) * S + (px + 16 + dx) % S;
-      t.h[i] += (5 - d2) * 0.28; t.tint(i, 1.06); t.mr[i * 2] = 0.45; }
+  for (let px = 0; px < S; px += 32 * k) for (const py of [6 * k, P - 10 * k, P + 10 * k, S - 6 * k]) {   // rivets
+    for (let dy = -2 * k; dy <= 2 * k; dy++) for (let dx = -2 * k; dx <= 2 * k; dx++) { const d2 = dx * dx + dy * dy; if (d2 > 5 * k * k) continue;
+      const i = (((py + dy) | 0 + S) % S) * S + (((px + 16 * k + dx) | 0) % S);
+      t.h[i] += (5 * k * k - d2) * 0.28 / (k * k); t.tint(i, 1.06); t.mr[i * 2] = 0.4; }
   }
-  for (let k = 0; k < 14; k++) {                                    // scratches
-    let x = r() * S, y = r() * S; const a = r() * Math.PI, len = 10 + r() * 40, ca = Math.cos(a), sa = Math.sin(a);
+  for (let q = 0; q < 4; q++) {                                     // rust streaks bleeding down from rivets
+    const sx = ((Math.floor(r() * (S / (32 * k))) * 32 + 16) * k) | 0, sy = (r() < 0.5 ? 8 * k : P + 12 * k) | 0, len = (30 + r() * 70) * k;
+    for (let d = 0; d < len; d++) { const fall = 1 - d / len;
+      const i = (((sy + d) | 0) % S) * S + ((sx + ((r() - 0.5) * 2) | 0) + S) % S;
+      t.mix(i, [0.4, 0.23, 0.12], 0.5 * fall); t.mr[i * 2] = Math.min(1, t.mr[i * 2] + 0.25 * fall); }
+  }
+  for (let q = 0; q < 14 * k; q++) {                                // scratches: bright, glossy
+    let x = r() * S, y = r() * S; const a = r() * Math.PI, len = (10 + r() * 40) * k, ca = Math.cos(a), sa = Math.sin(a);
     for (let d = 0; d < len; d++) { const i = ((Math.round(y + sa * d) + S) % S) * S + (Math.round(x + ca * d) + S) % S;
-      t.tint(i, 1.12); t.mr[i * 2] = 0.42; }
+      t.tint(i, 1.12); t.mr[i * 2] = 0.35; }
   }
-  return t;
+  return finish(t, seed, { edgeSmooth: 0.35, cavDark: 0.3 });
 }
-function deckTex(name, seed) {   // walkway plate: raised oblong studs in offset rows, worn tops
-  const r = rng(seed), t = new Tex(name).fill([0.62, 0.64, 0.67]).mrInit(0.5, 0.75);
-  const wear = fbm(r, [[16, 1], [64, 0.5]]);
+function deckTex(name, seed, S) {   // walkway plate: offset stud rows, worn rims, oily patches
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  t.fill([0.62, 0.64, 0.67]).mrInit(0.5, 0.75);
+  const wear = fbm(r, S, [[16, 1], [64, 0.5], [200, 0.3]]);
+  const oil = fbm(r, S, [[6, 1], [18, 0.6]]);
+  const CW = 64 * k, CH = 32 * k;
   t.each((x, y, i) => {
-    const row = Math.floor(y / 32), lx = (x + (row % 2) * 32) % 64, ly = y % 32;
-    const inStud = lx > 8 && lx < 56 && ly > 7 && ly < 25;
+    const row = Math.floor(y / CH), lx = (x + (row % 2) * (CW / 2)) % CW, ly = y % CH;
+    const inStud = lx > 8 * k && lx < 56 * k && ly > 7 * k && ly < 25 * k;
+    const rim = !inStud && lx > 6 * k && lx < 58 * k && ly > 5 * k && ly < 27 * k;
     const w = wear(x, y);
-    if (inStud) { t.h[i] = 0.85; t.tint(i, 1.1 + w * 0.15); t.mr[i * 2] = 0.6 + w * 0.22; }
+    if (inStud) { t.h[i] = 0.85; t.tint(i, 1.08 + w * 0.14); t.mr[i * 2] = 0.6 + w * 0.22; }
+    else if (rim) { t.h[i] = 0.4; t.tint(i, 1.15); t.mr[i * 2] = 0.35; t.mr[i * 2 + 1] = 0.85; }   // worn bare rim
     else { t.h[i] = 0; t.tint(i, 0.9 + w * 0.1); t.mr[i * 2] = 0.82; }
+    const o = oil(x, y);                                            // oil: darker AND glossier
+    if (o > 0.64) { const oo = Math.min(1, (o - 0.64) / 0.3); t.tint(i, 1 - 0.38 * oo); t.mr[i * 2] = Math.max(0.2, t.mr[i * 2] - 0.4 * oo); }
   });
-  return t;
+  return finish(t, seed, { edgeSmooth: 0.32 });
 }
-function crateTex(name, seed) {   // one crate face: raised frame, recessed panel, corner bolts
-  const r = rng(seed), t = new Tex(name).fill([0.62, 0.6, 0.56]);
-  const grime = fbm(r, [[8, 1], [32, 0.6]]);
-  const F = 30;                                                     // frame width in px
+function crateTex(name, seed, S) {   // one crate face: raised frame, recessed panel, bolts, dirt
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  t.fill([0.62, 0.6, 0.56]);
+  const grime = fbm(r, S, [[8, 1], [32, 0.6], [128, 0.3]]);
+  const F = 30 * k;
   t.each((x, y, i) => {
-    const g = grime(x, y), ex = Math.min(x, S - 1 - x), ey = Math.min(y, S - 1 - y), e = Math.min(ex, ey);
-    if (e > F) { t.tint(i, 0.72 + g * 0.18); t.h[i] = 0; }          // recessed panel
-    else { t.tint(i, 0.95 + g * 0.12); t.h[i] = 0.9 - (e > F - 4 ? (e - (F - 4)) * 0.2 : 0); }
-    if (e > F && e < F + 3) t.tint(i, 0.6);                         // shadow line inside the frame
+    const g = grime(x, y), e = Math.min(x, S - 1 - x, y, S - 1 - y);
+    if (e > F) { t.tint(i, 0.72 + g * 0.18); t.h[i] = 0; }
+    else { t.tint(i, 0.95 + g * 0.12); t.h[i] = 0.9 - (e > F - 4 * k ? (e - (F - 4 * k)) * 0.2 / k : 0); }
+    if (e > F && e < F + 3 * k) t.tint(i, 0.6);
+    if (y > S * 0.72) t.tint(i, 1 - (y / S - 0.72) / 0.28 * 0.26);   // dirt gathers at the bottom
   });
-  for (const bx of [15, S - 15]) for (const by of [15, S - 15])     // corner bolts
-    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const d2 = dx * dx + dy * dy; if (d2 > 18) continue;
-      const i = (by + dy) * S + bx + dx; t.h[i] += (18 - d2) * 0.06; t.tint(i, 1.12); }
-  for (let k = 0; k < 3; k++) {                                     // stencil dashes
-    const y0 = 96 + k * 22; for (let x = 70; x < 130; x++) for (let w = 0; w < 8; w++) {
-      if (rng(seed + k)() < 0) break; const i = (y0 + w) * S + x; t.tint(i, 0.55); }
+  for (const bx of [15 * k, S - 15 * k]) for (const by of [15 * k, S - 15 * k]) {
+    for (let dy = -4 * k; dy <= 4 * k; dy++) for (let dx = -4 * k; dx <= 4 * k; dx++) { const d2 = dx * dx + dy * dy; if (d2 > 18 * k * k) continue;
+      const i = ((by + dy) | 0) * S + ((bx + dx) | 0); t.h[i] += (18 * k * k - d2) * 0.06 / (k * k); t.tint(i, 1.12); }
+    for (let d = 0; d < 22 * k; d++) { const i = (((by + 5 * k + d) | 0) % S) * S + ((bx + ((r() - 0.5) * 2 * k)) | 0 + S) % S;
+      t.mix(i, [0.38, 0.22, 0.12], 0.4 * (1 - d / (22 * k))); }     // rust bleeding off each bolt
   }
-  return t;
+  for (let q = 0; q < 3; q++) {
+    const y0 = (96 + q * 22) * k;
+    for (let x = 70 * k; x < 130 * k; x++) for (let w = 0; w < 8 * k; w++) { const i = ((y0 + w) | 0) * S + (x | 0); t.tint(i, 0.55); }
+  }
+  return finish(t, seed, { cavDark: 0.36, edgeLight: 0.24 });
 }
-function hazardTex(name) {   // 45° chevrons, worn
-  const r = rng(77), t = new Tex(name).fill([0.9, 0.72, 0.12]);
-  const wear = fbm(r, [[16, 1], [64, 0.7]]);
+function hazardTex(name, S) {   // 45° chevrons, chipped and scuffed
+  const r = rng(77), t = new Tex(name, S), k = S / 256;
+  t.fill([0.9, 0.72, 0.12]);
+  const wear = fbm(r, S, [[16, 1], [64, 0.7]]);
   t.each((x, y, i) => {
-    if (((x + y) % 64) < 28) { t.rgb[i * 3] = 0.13; t.rgb[i * 3 + 1] = 0.13; t.rgb[i * 3 + 2] = 0.14; }
+    if (((x + y) % (64 * k)) < 28 * k) { t.rgb[i * 3] = 0.13; t.rgb[i * 3 + 1] = 0.13; t.rgb[i * 3 + 2] = 0.14; }
     const w = wear(x, y); t.tint(i, 0.8 + w * 0.35); t.h[i] = w * 0.3;
+    if (w < 0.3) { t.mix(i, [0.45, 0.45, 0.47], (0.3 - w) * 2.4); t.h[i] -= 0.3; }   // paint chipped to bare
   });
+  for (let q = 0; q < 10; q++) {                                    // scuffs dragged along the stripes
+    let x = r() * S, y = r() * S; const len = (20 + r() * 50) * k;
+    for (let d = 0; d < len; d++) { x = (x + 0.71 + S) % S; y = (y - 0.71 + S) % S;
+      const i = (y | 0) * S + (x | 0); t.tint(i, 0.72); }
+  }
+  return finish(t, 77, {});
+}
+// the decal atlas: 4x4 cells of stains and worn paint, alpha-blended over the tiling base
+const DECAL = { OIL: [0, 0], LEAK: [1, 0], SCUFF: [2, 0], RING: [3, 0], ONE: [0, 1], TWO: [1, 1], CHEV: [2, 1], LINE: [3, 1] };
+function decalTex(name) {
+  const S = 1024, t = new Tex(name, S); t.a = new Float64Array(S * S); t.noAux = true;
+  const r = rng(4242), C = 256;
+  const wear = fbm(r, S, [[64, 1], [192, 0.7]]);
+  const paint = [0.88, 0.87, 0.8], yellow = [0.93, 0.68, 0.12];
+  const put = (gx, gy, c, a) => { const i = gy * S + gx; if (a <= t.a[i]) return;
+    t.rgb[i * 3] = c[0]; t.rgb[i * 3 + 1] = c[1]; t.rgb[i * 3 + 2] = c[2]; t.a[i] = a; };
+  const worn = (gx, gy, a) => { const w = wear(gx, gy); return w < 0.28 ? 0 : a * (0.5 + 0.5 * Math.min(1, (w - 0.28) / 0.4)); };
+  const inCell = (cx, cy, fn) => { for (let y = 6; y < C - 6; y++) for (let x = 6; x < C - 6; x++) fn(x, y, cx * C + x, cy * C + y); };
+  inCell(...DECAL.OIL, (x, y, gx, gy) => {                          // oil blob: ragged edge, darker core
+    const rr = Math.hypot(x - 128, y - 128) / 108 + (wear((gx * 3) % S, (gy * 3) % S) - 0.5) * 0.55;
+    if (rr < 1) put(gx, gy, [0.05, 0.045, 0.04], Math.min(0.85, (1 - rr) * 2.0));
+  });
+  { const streaks = []; for (let q = 0; q < 6; q++) streaks.push([20 + r() * 216, (2 + r() * 4), (90 + r() * 150)]);
+    inCell(...DECAL.LEAK, (x, y, gx, gy) => {
+      for (const [sx, sw, sl] of streaks) { const d = Math.abs(x - sx); if (d > sw || y > sl) continue;
+        put(gx, gy, [0.16, 0.14, 0.12], (1 - y / sl) * (1 - d / sw) * 0.55 * (0.6 + wear(gx, gy) * 0.4)); } }); }
+  inCell(...DECAL.SCUFF, (x, y, gx, gy) => {                        // directional scuff smudge
+    const ry = (y - 128) / 70, rx = (x - 128) / 116;
+    if (rx * rx + ry * ry < 1 && wear((gx * 2) % S, gy) > 0.45) put(gx, gy, [0.1, 0.1, 0.11], (1 - rx * rx - ry * ry) * 0.4);
+  });
+  inCell(...DECAL.RING, (x, y, gx, gy) => {                         // painted ring + cardinal ticks
+    const rr = Math.hypot(x - 128, y - 128);
+    if (Math.abs(rr - 102) < 9) put(gx, gy, paint, worn(gx, gy, 0.9));
+    if (rr < 78 && rr > 70 && (Math.abs(x - 128) < 5 || Math.abs(y - 128) < 5)) put(gx, gy, paint, worn(gx, gy, 0.85));
+  });
+  const rect = (cell, x0, y0, x1, y1, c) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++)
+    put(cell[0] * C + x, cell[1] * C + y, c, worn(cell[0] * C + x, cell[1] * C + y, 0.92)); };
+  rect(DECAL.ONE, 112, 40, 148, 216, paint); rect(DECAL.ONE, 78, 58, 112, 88, paint); rect(DECAL.ONE, 74, 192, 186, 216, paint);
+  rect(DECAL.TWO, 70, 40, 186, 68, paint); rect(DECAL.TWO, 158, 68, 186, 118, paint);
+  rect(DECAL.TWO, 70, 112, 186, 140, paint); rect(DECAL.TWO, 70, 140, 98, 192, paint); rect(DECAL.TWO, 70, 192, 186, 218, paint);
+  inCell(...DECAL.CHEV, (x, y, gx, gy) => {                         // two chevrons, apex up
+    for (const yb of [104, 176]) { const d = Math.abs(y - (yb - Math.abs(x - 128) * 0.55));
+      if (d < 15 && x > 30 && x < 226) put(gx, gy, yellow, worn(gx, gy, 0.9)); }
+  });
+  rect(DECAL.LINE, 14, 112, 242, 146, paint);
   return t;
 }
 
@@ -185,7 +343,8 @@ const TEXS = {};    // name -> Tex
 function useTex(t) { TEXS[t.name] = t; return t.name; }
 function mat(name, opts = {}) {
   MATS.push({ name, base: opts.base || [1, 1, 1], metal: opts.metal ?? 0.05, rough: opts.rough ?? 0.92,
-    tex: opts.tex || null, nrm: opts.nrm ?? 1.0, glow: opts.glow || null, scale: opts.scale || 4 });
+    tex: opts.tex || null, nrm: opts.nrm ?? 1.0, glow: opts.glow || null, scale: opts.scale || 4,
+    blend: !!opts.blend });
   return MATS.length - 1;
 }
 
@@ -204,7 +363,7 @@ function _uvFor(n, s, v) {
 }
 function quad(m, a, b, c, d, unitUV) {
   const p = prim(m), s = MATS[m].scale;
-  const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+  const u = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], v = [d[0] - b[0], d[1] - b[1], d[2] - b[2]];
   let n = [u[2] * v[1] - u[1] * v[2], u[0] * v[2] - u[2] * v[0], u[1] * v[0] - u[0] * v[1]];
   const l = Math.hypot(...n) || 1; n = n.map(x => x / l);
   const base = p.pos.length / 3;
@@ -261,14 +420,35 @@ function mirrored(fn) {
   fn((x, z) => [-x, -z], t => t.b);
 }
 
+// a decal: one quad floated 2cm off a surface, uv-mapped into an atlas cell. The vertex
+// patterns copy box()'s faces (proven winding); the uv corner order was worked out per face
+// so wall artwork reads upright and floor artwork points -z at rot 0.
+function decal(m, face, cx, cy, cz, w, h, cell, rot = 0) {
+  const CELL = 0.25, PAD = 8 / 1024;
+  const u0 = cell[0] * CELL + PAD, v0 = cell[1] * CELL + PAD, u1 = (cell[0] + 1) * CELL - PAD, v1 = (cell[1] + 1) * CELL - PAD;
+  if (face === 'up') {
+    let uv = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+    for (let q = 0; q < ((rot / 90) | 0); q++) uv = [uv[3], uv[0], uv[1], uv[2]];
+    quad(m, [cx - w / 2, cy, cz - h / 2], [cx + w / 2, cy, cz - h / 2], [cx + w / 2, cy, cz + h / 2], [cx - w / 2, cy, cz + h / 2], uv);
+    return;
+  }
+  const uv = [[u1, v1], [u0, v1], [u0, v0], [u1, v0]];
+  const y0 = cy - h / 2, y1 = cy + h / 2;
+  if (face === '-z') quad(m, [cx - w / 2, y0, cz], [cx + w / 2, y0, cz], [cx + w / 2, y1, cz], [cx - w / 2, y1, cz], uv);
+  if (face === '+z') quad(m, [cx + w / 2, y0, cz], [cx - w / 2, y0, cz], [cx - w / 2, y1, cz], [cx + w / 2, y1, cz], uv);
+  if (face === '-x') quad(m, [cx, y0, cz + w / 2], [cx, y0, cz - w / 2], [cx, y1, cz - w / 2], [cx, y1, cz + w / 2], uv);
+  if (face === '+x') quad(m, [cx, y0, cz - w / 2], [cx, y0, cz + w / 2], [cx, y1, cz + w / 2], [cx, y1, cz - w / 2], uv);
+}
+
 // ---------------------------------------------------------------------- palettes ----
 function industrialPalette() {
-  const concrete = useTex(concreteTex('concrete', 11));
-  const panels = useTex(panelsTex('panels', 23));
-  const metal = useTex(metalTex('metal', 37));
-  const deck = useTex(deckTex('deck', 51));
-  const crate = useTex(crateTex('crate', 67));
-  const hazard = useTex(hazardTex('hazard'));
+  const concrete = useTex(concreteFinished('concrete', 11, 1024));
+  const panels = useTex(panelsTex('panels', 23, 1024));
+  const metal = useTex(metalTex('metal', 37, 1024));
+  const deck = useTex(deckTex('deck', 51, 1024));
+  const crate = useTex(crateTex('crate', 67, 512));
+  const hazard = useTex(hazardTex('hazard', 512));
+  const decals = useTex(decalTex('decals'));
   return {
     // architecture: world-planar UVs, density set per material
     floor: mat('floor', { tex: concrete, base: [0.52, 0.55, 0.57], rough: 0.95, scale: 7, nrm: 1.2 }),
@@ -285,6 +465,8 @@ function industrialPalette() {
     trim: mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.9, rough: 0.5 }),
     teamA: mat('teamA', { base: [1, 0.55, 0.23], glow: 0.55, rough: 0.6 }),
     teamB: mat('teamB', { base: [0.29, 0.66, 1], glow: 0.55, rough: 0.6 }),
+    // stains and worn paint, alpha-blended 2cm above whatever they sit on
+    decals: mat('decals', { tex: decals, blend: true, rough: 0.5, metal: 0, base: [1, 1, 1] }),
   };
 }
 
@@ -375,6 +557,23 @@ function buildKeep() {
       if (!rot) cbox(m === P.crate ? P.crate2 : P.crate, x + 0.15, 2.4, z - 0.1, 1.4, 1.4, 1.4, true);
     }
   });
+
+  // decals: stains where things live, paint where players look. These are what stop the
+  // tiling textures from reading as tiles.
+  const D = P.decals;
+  for (const [x, z] of [[6, 17], [-6, -17], [22, 5], [-22, -5]]) decal(D, 'up', x + 0.4, 0.02, z - 0.3, 3.4, 3.4, DECAL.OIL, ((x + z) & 1) * 90);
+  decal(D, 'up', 0, MID + 0.02, 0, 9, 9, DECAL.RING);                       // deck centre: the contested mark
+  decal(D, 'up', 0, TOP + 0.02, 0, 5.5, 5.5, DECAL.RING);                   // perch echo
+  for (const s2 of [1, -1]) for (const bz of [-9, 9]) decal(D, 'up', s2 * 13.5, MID + 0.02, bz, 3, 2.4, DECAL.SCUFF, s2 > 0 ? 0 : 180);
+  for (const x of [-10, 10]) {                                              // painted arrows at every ramp foot
+    decal(D, 'up', x, 0.02, 25.6, 3.6, 3, DECAL.CHEV, 0);
+    decal(D, 'up', x, 0.02, -25.6, 3.6, 3, DECAL.CHEV, 180);
+  }
+  for (const s2 of [1, -1]) { decal(D, 'up', s2 * 35, 0.02, 35.6, 3.4, 2.8, DECAL.CHEV, 0); decal(D, 'up', s2 * 35, 0.02, -35.6, 3.4, 2.8, DECAL.CHEV, 180); }
+  decal(D, '-z', 0, 7.6, W - 0.04, 5, 6.5, DECAL.ONE);                      // team numbers on the base walls
+  decal(D, '+z', 0, 7.6, -W + 0.04, 5, 6.5, DECAL.TWO);
+  for (const z of [-18, 18]) { decal(D, '-x', W - 0.04, 6.2, z, 6, 7, DECAL.LEAK); decal(D, '+x', -W + 0.04, 6.2, z, 6, 7, DECAL.LEAK); }
+  for (const s2 of [1, -1]) decal(D, 'up', s2 * 35, MID + 0.02, s2 * -5, 3, 3, DECAL.OIL, 90);
   return { name: 'Crossfire Keep' };
 }
 
@@ -434,6 +633,17 @@ function buildSpine() {
       cbox((sx + sz) % 3 ? P.crate : P.crate2, x, 0.85, z, 2, 1.7, 2, true);
     }
   });
+
+  // decals — see the keep: stains for life, paint for navigation
+  const D = P.decals;
+  decal(D, 'up', 0, 0.02, 0, 8, 8, DECAL.RING);
+  for (const s2 of [1, -1]) for (const z of [10, -10]) decal(D, 'up', s2 * 40.5, 0.02, z, 3.4, 3, DECAL.CHEV, s2 > 0 ? 270 : 90);
+  decal(D, '-x', HX - 0.04, 6.6, 0, 5, 6.5, DECAL.ONE);
+  decal(D, '+x', -HX + 0.04, 6.6, 0, 5, 6.5, DECAL.TWO);
+  for (const [x, z] of [[26, 18], [-26, -18], [10, 20], [-10, -20]]) decal(D, 'up', x, 0.02, z, 3.2, 3.2, DECAL.OIL, ((x + z) & 1) * 90);
+  for (const s2 of [1, -1]) for (const x of [-14, 0, 14]) decal(D, 'up', x, MID + 0.02, s2 * 10, 10, 0.9, DECAL.LINE, 0);
+  for (const x of [-14, 14]) { decal(D, '-z', x, 5.5, HZ - 0.04, 6, 7, DECAL.LEAK); decal(D, '+z', x, 5.5, -HZ + 0.04, 6, 7, DECAL.LEAK); }
+  for (const [x, z, rr] of [[5, 5, 0], [-5, -5, 90]]) decal(D, 'up', x, 0.02, z, 3, 2.4, DECAL.SCUFF, rr);
   return { name: 'Twin Spine' };
 }
 
@@ -462,12 +672,28 @@ function writeGLB(out) {
       indices: accessors.length - 1, material: mi });
   });
 
-  // bake every referenced texture set into embedded PNGs (base + optional MR + normal)
+  // bake textures: base colour at full res (RGBA for the decal atlas); metallic-roughness and
+  // normal maps at half res — their content is lower-frequency, and noisy normals are what
+  // refuse to compress, so half-res aux maps are where the file size goes
   const images = [], textures = [], texIdx = {};   // name -> { base, mr, nrm } texture indices
+  const addImg = (png) => { const v = push(png); images.push({ bufferView: v, mimeType: 'image/png' });
+    textures.push({ sampler: 0, source: images.length - 1 }); return textures.length - 1; };
   for (const [name, t] of Object.entries(TEXS)) {
-    const add = (png) => { const v = push(png); images.push({ bufferView: v, mimeType: 'image/png' });
-      textures.push({ sampler: 0, source: images.length - 1 }); return textures.length - 1; };
-    texIdx[name] = { base: add(pngRGB(t.rgb, S, S)), mr: t.mr ? add(mrPNG(t.mr)) : null, nrm: add(normalPNG(t.h, 2.2)) };
+    const S = t.S;
+    let basePng;
+    if (t.a) { const px = new Float64Array(S * S * 4);
+      for (let i = 0; i < S * S; i++) { px[i * 4] = t.rgb[i * 3]; px[i * 4 + 1] = t.rgb[i * 3 + 1]; px[i * 4 + 2] = t.rgb[i * 3 + 2]; px[i * 4 + 3] = t.a[i]; }
+      basePng = pngEncode(toBytes(px), S, S, 4);
+    } else basePng = pngEncode(toBytes(t.rgb), S, S, 3);
+    const e = { base: addImg(basePng), mr: null, nrm: null };
+    if (!t.noAux) {
+      if (t.mr) { const px = new Float64Array(S * S * 3);
+        for (let i = 0; i < S * S; i++) { px[i * 3 + 1] = t.mr[i * 2]; px[i * 3 + 2] = t.mr[i * 2 + 1]; }
+        e.mr = addImg(pngEncode(toBytes(halfPx(px, S, 3)), S >> 1, S >> 1, 3)); }
+      // normal strength scales with resolution so world-space relief stays constant
+      e.nrm = addImg(pngEncode(toBytes(halfPx(normalPx(t.h, S, 2.2 * S / 256), S, 3)), S >> 1, S >> 1, 3));
+    }
+    texIdx[name] = e;
   }
   const _skip = (env, n) => (process.env[env] || '').split(',').includes(n);   // debug bisection
   const materials = MATS.map(md => {
@@ -475,7 +701,8 @@ function writeGLB(out) {
     if (md.tex) { const ti = texIdx[md.tex];
       if (!_skip('NOTEX', md.name)) g.pbrMetallicRoughness.baseColorTexture = { index: ti.base };
       if (ti.mr != null && !_skip('NOMR', md.name)) g.pbrMetallicRoughness.metallicRoughnessTexture = { index: ti.mr };
-      if (!_skip('NONRM', md.name)) g.normalTexture = { index: ti.nrm, scale: md.nrm }; }
+      if (ti.nrm != null && !_skip('NONRM', md.name)) g.normalTexture = { index: ti.nrm, scale: md.nrm }; }
+    if (md.blend) g.alphaMode = 'BLEND';
     if (md.glow) g.emissiveFactor = md.base.map(v => v * md.glow);
     return g;
   });
