@@ -12,7 +12,9 @@ const bg = extractFunction('buildModelGridBoxes');
 assert(!/if\(\+\+tris>200000\)/.test(bg), 'the 200k triangle cap is gone');
 assert(/if\(\+\+tris>2000000 \|\| work>40000000\)\{ bail=true; return; \}/.test(bg),
   'the budget is now on SLOTS WRITTEN, which is what actually costs time — one huge floor triangle can touch the whole grid');
-assert(/work \+= \(gx1-gx0\+1\)\*\(gz1-gz0\+1\)\*\(s1-s0\+1\)/.test(bg), '...and that work is actually counted');
+// build 1092: work is now accumulated per column (the clip pass and the slots the clipped
+// fragment actually writes), not as one bulk product of the whole triangle's AABB.
+assert(/work \+= 4;/.test(bg) && /work \+= cs1-cs0\+2;/.test(bg), '...and that work is actually counted');
 
 // ---------------------------------------------------------------- 2. the resolution was fixed, not fitted
 // 64 x 64 columns and 48 slots regardless of size. On the reported model that is 5.18 x 5.72 unit columns

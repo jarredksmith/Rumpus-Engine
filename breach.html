@@ -9379,8 +9379,44 @@ function buildModelGridBoxes(obj, overall){
       const gx0=Math.max(0,Math.min(nx-1,Math.floor((miX-ox)/cw))), gx1=Math.max(0,Math.min(nx-1,Math.floor((maX-ox)/cw)));
       const gz0=Math.max(0,Math.min(nz-1,Math.floor((miZ-oz)/cd))), gz1=Math.max(0,Math.min(nz-1,Math.floor((maZ-oz)/cd)));
       const s0=Math.max(0,Math.min(K-1,Math.floor((miY-oy)/sh))), s1=Math.max(0,Math.min(K-1,Math.floor((maY-oy)/sh)));
-      work += (gx1-gx0+1)*(gz1-gz0+1)*(s1-s0+1);
-      for(let gx=gx0;gx<=gx1;gx++) for(let gz=gz0;gz<=gz1;gz++){ const base=(gx*nz+gz)*K; for(let sl=s0;sl<=s1;sl++) setSlot(base+sl); }
+      // build 1092: a triangle used to stamp its FULL vertical extent into every column its XZ
+      // bounding box covers. Fine for small triangles (their box IS local), but a level authored
+      // from big clean faces got mangled: a ramp top filled every column under the slope from
+      // base to summit, and a ramp's triangular SIDE face stamped a summit-height wall along the
+      // ramp's entire length. The greedy merge then fused those columns into wall-shaped boxes —
+      // the player (who walks the real triangles) climbed fine; enemies (who resolve against
+      // these boxes) were shoved off. So: for a triangle spanning more than one column, clip it
+      // to each cell in 3D (Sutherland–Hodgman against the four cell planes, interpolating y)
+      // and stamp only the clipped fragment's true height range. Exact for any orientation, and
+      // cells inside the XZ bounding box that the triangle never actually touches now stay empty.
+      const multi = (gx1>gx0 || gz1>gz0);
+      for(let gx=gx0;gx<=gx1;gx++) for(let gz=gz0;gz<=gz1;gz++){
+        const base=(gx*nz+gz)*K;
+        let lo=miY, hi=maY;
+        if(multi){
+          let poly=[[_mgA.x,_mgA.y,_mgA.z],[_mgB.x,_mgB.y,_mgB.z],[_mgC.x,_mgC.y,_mgC.z]];
+          const rx0=ox+gx*cw, rx1=rx0+cw, rz0=oz+gz*cd, rz1=rz0+cd;
+          for(let pass=0; pass<4 && poly.length; pass++){
+            const out=[];
+            for(let i=0;i<poly.length;i++){
+              const p0=poly[i], p1=poly[(i+1)%poly.length];
+              const f0 = pass===0? p0[0]-rx0 : pass===1? rx1-p0[0] : pass===2? p0[2]-rz0 : rz1-p0[2];
+              const f1 = pass===0? p1[0]-rx0 : pass===1? rx1-p1[0] : pass===2? p1[2]-rz0 : rz1-p1[2];
+              if(f0>=0) out.push(p0);
+              if((f0<0)!==(f1<0)){ const t=f0/(f0-f1); out.push([p0[0]+(p1[0]-p0[0])*t, p0[1]+(p1[1]-p0[1])*t, p0[2]+(p1[2]-p0[2])*t]); }
+            }
+            poly=out;
+          }
+          work += 4;
+          if(!poly.length) continue;             // in the box, but the triangle never enters this cell
+          lo=Infinity; hi=-Infinity;
+          for(const v of poly){ if(v[1]<lo) lo=v[1]; if(v[1]>hi) hi=v[1]; }
+        }
+        const cs0=Math.max(0,Math.min(K-1,Math.floor((lo-oy)/sh)));
+        const cs1=Math.max(cs0,Math.min(K-1,Math.floor((hi-oy)/sh)));
+        work += cs1-cs0+2;
+        for(let sl=cs0;sl<=cs1;sl++) setSlot(base+sl);
+      }
     }
   });
   if(bail || !tris) return null;
@@ -23844,7 +23880,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1091 · 2026-07-27';
+const BUILD_VERSION = 'build 1092 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29038,7 +29074,18 @@ function loop(){
           const cz = Math.max(b.min.z, Math.min(en.mesh.position.z, b.max.z));
           const dx = en.mesh.position.x - cx, dz = en.mesh.position.z - cz;
           const d = Math.hypot(dx,dz);
-          if(d < eR && d > 1e-4){ const push=eR-d; en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push; }
+          if(d < eR && d > 1e-4){
+            // build 1092: on a slope, the column one cell upslope tops out more than STEP above the
+            // feet once slot quantisation is added — so the very ramp an enemy is climbing read as
+            // an obstacle and shoved it back down. A marginal box whose top matches the real walk
+            // surface over that box is the ground one step ahead, not a wall. Checked only on
+            // actual contact with a near-step-height box, so the raycast cost stays rare.
+            if(b.max.y - (en.mesh.position.y-1.4) < STEP + 0.5 && typeof surfaceTopUnder==='function'){
+              const st = surfaceTopUnder((b.min.x+b.max.x)/2, (b.min.z+b.max.z)/2, b.max.y+0.05, b.max.y+2);
+              if(st > -Infinity && b.max.y - st < 0.66) continue;
+            }
+            const push=eR-d; en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push;
+          }
         }
       }
       // dynamic physics props (crates etc.) live in dynamicProps, not colliders — treat each as an
