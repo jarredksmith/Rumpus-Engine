@@ -11,10 +11,18 @@ const src = gameSource();
 // the runtime yaw is gated: in-game only, top view only, opt-in only
 assert(/function _vcamOrbitOn\(\)\{ return typeof gameOn!=='undefined' && gameOn && !\(typeof editorOpen!=='undefined' && editorOpen\) && gameCfg\.view==='top' && !!gameCfg\.viewOrbit; \}/.test(src),
   'the orbit gate: playing, not editing, top-down view, creator opted in');
-assert(/if\(e\.button!==1 \|\| !_vcamOrbitOn\(\)\) return; _vcamOrbitDrag=\{ x:e\.clientX \}; e\.preventDefault\(\);/.test(src),
+assert(/if\(e\.button!==1 \|\| !_orbitTarget\(\)\) return; _vcamOrbitDrag=true; e\.preventDefault\(\);/.test(src),
   'middle-mouse press starts the orbit drag (and stops browser autoscroll)');
-assert(/_vcamUserYaw=\(_vcamUserYaw \+ \(e\.clientX-_vcamOrbitDrag\.x\)\*0\.35\)%360;/.test(src),
-  'sideways drag spins the camera');
+// build 1106: THE bug — pointer lock freezes clientX, so the original clientX-baseline drag always
+// measured zero in-game and the camera never moved. The lock delta (movementX) is the real signal.
+assert(/const d=\(typeof e\.movementX==='number'\) \? e\.movementX : 0; if\(!d\) return;/.test(src),
+  'the drag reads the pointer-lock delta, not the frozen clientX');
+assert(/if\(t==='top'\) _vcamUserYaw=\(_vcamUserYaw - d\*0\.35\)%360;/.test(src),
+  'sideways drag spins the camera (sign matches the look handler: drag right turns right)');
+assert(/else _ccYaw -= d\*0\.35\*\(Math\.PI\/180\);/.test(src),
+  'the same drag swings the frozen ARPG chase camera');
+assert(/function _orbitTarget\(\)\{\n  if\(_vcamOrbitOn\(\)\) return 'top';\n  if\(typeof chaseCursorOn==='function' && chaseCursorOn\(\)\) return 'chase';/.test(src),
+  'top-down needs the creator opt-in; ARPG chase always allows it (its camera is frozen by design)');
 assert(/\(vm==='top' && _vcamOrbitOn\(\)\) \? _vcamUserYaw : 0/.test(src),
   'the player yaw adds to the authored yaw inside the single shared pose function');
 assert(/if\(typeof _vcamUserYaw!=='undefined'\) _vcamUserYaw=0;/.test(src),

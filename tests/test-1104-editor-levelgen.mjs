@@ -21,10 +21,31 @@ assert(/const factory = new AsyncFn\('RUMPUS_LEVELGEN_HOST','Buffer','process', 
   'the worker evaluates the source with host, Buffer and process supplied');
 assert(/zlibSync\(buf instanceof Uint8Array \? buf : new Uint8Array\(buf\), \{ level: 9 \}\)/.test(src),
   'fflate zlibSync stands in for node:zlib deflateSync (same zlib container)');
+// build 1107: the compressor is vendored beside the game (like rapier3d-compat.js) and tried FIRST,
+// so a blocked or down CDN can't break the generator. Verified end-to-end in a real browser.
+assert(/for \(const u of \[d\.base \+ 'fflate\.min\.js', 'https:\/\/cdnjs/.test(src),
+  'the worker loads the local fflate first, CDNs as fallback');
+assert(/wk\.postMessage\(Object\.assign\(\{ src, base:new URL\('\.', location\.href\)\.href \}, opts\)\);/.test(src),
+  'the worker gets an absolute base (its blob: origin cannot resolve a relative path)');
+assert(/const urls=\['fflate\.min\.js','https:\/\/cdnjs/.test(src),
+  'the Sketchfab unzip loader prefers the local copy too');
+assert(/go\.classList\.remove\('lgCTA'\); go\.textContent='Regenerate';/.test(src),
+  'after a generate, Place in level becomes the single primary action');
 assert(/label:'Generate arena…', run:\(\)=>\{ if\(typeof _lgOpenDialog==='function'\) _lgOpenDialog\(\); \}/.test(src),
   'Tools menu opens the dialog');
 assert(/spawnProp\(url, \[0,0,0, 0,0,0, 1\]/.test(src), 'Place in level spawns the blob GLB as a model prop');
 assert(/Object\.assign\(worldCfg, r\.world\); applyWorldCfg\(\);/.test(src), 'the arena lighting mood can be applied');
+
+// build 1105: the modal lives outside #editor, so it carries the editor's button language itself
+import { html } from './harness.mjs';
+assert(/#lgGenPanel button \{ pointer-events:auto; cursor:pointer; background:rgba\(var\(--accent-rgb\),0\.14\); border:1px solid rgba\(var\(--accent-rgb\),0\.35\);/.test(html),
+  'modal buttons mirror #editor button (same fill, border, radius)');
+assert(/#lgGenPanel button:hover \{ background:rgba\(var\(--accent-rgb\),0\.28\); \}/.test(html), '...same hover');
+assert(/#lgGenPanel button\.lgCTA \{ background:linear-gradient\(180deg, rgba\(var\(--accent-rgb\),0\.95\), rgba\(var\(--accent-rgb\),0\.72\)\);/.test(html),
+  '...and the primary actions use the editor CTA gradient');
+assert(/p\.id='lgGenPanel'/.test(src), 'the dialog carries the id the styling keys off');
+assert(/go\.className='lgCTA'/.test(src) && /place\.className='lgRes lgCTA'/.test(src),
+  'Generate and Place in level are the CTAs');
 
 // ---------------------------------------------------------------- executable: the browser path
 {

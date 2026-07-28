@@ -124,6 +124,14 @@
     padding: 6px 8px; font: inherit; flex: 1;
   }
   #editor button:hover { background: rgba(var(--accent-rgb),0.28); }
+  /* build 1105: the Generate Arena modal lives OUTSIDE #editor (fixed overlay), so it mirrors the
+     editor's button language here — same fills, borders and hover, same CTA gradient. */
+  #lgGenPanel button { pointer-events:auto; cursor:pointer; background:rgba(var(--accent-rgb),0.14); border:1px solid rgba(var(--accent-rgb),0.35); color:#eafff7; border-radius:4px; padding:6px 8px; font:inherit; }
+  #lgGenPanel button:hover { background:rgba(var(--accent-rgb),0.28); }
+  #lgGenPanel button.lgCTA { background:linear-gradient(180deg, rgba(var(--accent-rgb),0.95), rgba(var(--accent-rgb),0.72)); color:#04120e; border:none; border-radius:8px; font-weight:800; letter-spacing:.5px; box-shadow:0 3px 14px rgba(var(--accent-rgb),0.25); }
+  #lgGenPanel button.lgCTA:hover { filter:brightness(1.08); background:linear-gradient(180deg, rgba(var(--accent-rgb),0.95), rgba(var(--accent-rgb),0.72)); }
+  #lgGenPanel button:disabled { opacity:.55; cursor:default; }
+  #lgGenPanel input[type=number] { background:#0c1418; border:1px solid #2a3a42; color:#cfeee2; border-radius:4px; }
   #editor .edSection { border: 1px solid rgba(var(--accent-rgb),0.18); border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
   #editor .edSecHead { cursor: pointer; user-select: none; padding: 7px 10px; background: rgba(var(--accent-rgb),0.10);
     color: #cfeee6; font: 600 12px ui-monospace, monospace; letter-spacing: 2px; display: flex; align-items: center; gap: 8px; }
@@ -13594,7 +13602,7 @@ let _fflateP=null;
 function ensureFflate(){
   if(window.fflate && window.fflate.unzipSync) return Promise.resolve(window.fflate);
   if(_fflateP) return _fflateP;
-  const urls=['https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.2/umd/index.js','https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js'];
+  const urls=['fflate.min.js','https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.2/umd/index.js','https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js'];   // build 1107: vendored copy first, CDNs as fallback
   _fflateP=new Promise((res,rej)=>{ let i=0; const go=()=>{ if(i>=urls.length){ rej(new Error('could not load the unzip helper (fflate) from CDN')); return; } const sc=document.createElement('script'); sc.src=urls[i++]; sc.onload=()=>{ if(window.fflate && window.fflate.unzipSync) res(window.fflate); else go(); }; sc.onerror=go; document.head.appendChild(sc); }; go(); });
   return _fflateP;
 }
@@ -24095,7 +24103,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1104 · 2026-07-28';
+const BUILD_VERSION = 'build 1107 · 2026-07-28';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28218,12 +28226,28 @@ function _vcamBaseYaw(vm){ return (vm==='side' && gameCfg.viewAxis==='z') ? 90 :
 // spin the camera around the player. Movement is already screen-relative (build 1085), so WASD
 // keeps matching the screen at any spin; the runtime yaw simply adds to the authored yaw. Editor
 // previews never apply it (gameOn gate), and it resets when a session starts.
-let _vcamUserYaw = 0, _vcamOrbitDrag = null;
+let _vcamUserYaw = 0, _vcamOrbitDrag = false;
 function _vcamOrbitOn(){ return typeof gameOn!=='undefined' && gameOn && !(typeof editorOpen!=='undefined' && editorOpen) && gameCfg.view==='top' && !!gameCfg.viewOrbit; }
-addEventListener('mousedown', (e)=>{ if(e.button!==1 || !_vcamOrbitOn()) return; _vcamOrbitDrag={ x:e.clientX }; e.preventDefault(); });
-addEventListener('mousemove', (e)=>{ if(!_vcamOrbitDrag) return; if(!_vcamOrbitOn()){ _vcamOrbitDrag=null; return; }
-  _vcamUserYaw=(_vcamUserYaw + (e.clientX-_vcamOrbitDrag.x)*0.35)%360; _vcamOrbitDrag.x=e.clientX; });
-addEventListener('mouseup', (e)=>{ if(e.button===1) _vcamOrbitDrag=null; });
+// build 1106: WHICH camera a middle-drag turns. Top-down needs the creator's opt-in (a fixed angle
+// is a legitimate design choice there); ARPG chase-cursor always allows it, because that camera is
+// frozen by design and this drag is the ONLY way to turn it.
+function _orbitTarget(){
+  if(_vcamOrbitOn()) return 'top';
+  if(typeof chaseCursorOn==='function' && chaseCursorOn()) return 'chase';
+  return '';
+}
+addEventListener('mousedown', (e)=>{ if(e.button!==1 || !_orbitTarget()) return; _vcamOrbitDrag=true; e.preventDefault(); });
+addEventListener('mousemove', (e)=>{
+  if(!_vcamOrbitDrag) return;
+  const t=_orbitTarget(); if(!t){ _vcamOrbitDrag=false; return; }
+  // build 1106: pointer lock FREEZES clientX — the original build-1100 handler measured drag from
+  // clientX, so in-game it always computed zero and the camera never moved. Use the lock delta
+  // (movementX), the same value the look handler reads, and match its sign: drag right turns right.
+  const d=(typeof e.movementX==='number') ? e.movementX : 0; if(!d) return;
+  if(t==='top') _vcamUserYaw=(_vcamUserYaw - d*0.35)%360;
+  else _ccYaw -= d*0.35*(Math.PI/180);
+});
+addEventListener('mouseup', (e)=>{ if(e.button===1) _vcamOrbitDrag=false; });
 function _vcamYawRad(vm){ return (_vcamBaseYaw(vm) + _vcamOpt(vm,'yaw') + ((vm==='top' && _vcamOrbitOn()) ? _vcamUserYaw : 0)) * VCAM_DEG; }
 const _vcamLast={ vm:'', r:0, aimY:0 };   // what the last pose used — the rig reads this to draw the frame
 // THE pose function. The live camera, the editor rig and the preview window all go through here, so there
@@ -34072,7 +34096,7 @@ function renderEditorFields(){
           orbCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.viewOrbit=orbCb.checked; _levelDirty=true; };
           const orbSp=document.createElement('span'); orbSp.innerHTML='<b>Players can orbit the camera</b> \u2014 hold middle mouse and drag';
           orbRow.appendChild(orbCb); orbRow.appendChild(orbSp); bPly.appendChild(orbRow);
-          hint(bPly,'','0 0 4px').textContent='Off = the camera stays at the angle you set above. On = players spin it freely in play; WASD always follows the screen, and each session starts back at your angle.';
+          hint(bPly,'','0 0 4px').textContent='Off = the camera stays at the angle you set above. On = players hold the middle mouse button and drag sideways to spin it; WASD always follows the screen, and each session starts back at your angle.';
         }
         const rs=document.createElement('button'); rs.textContent='Reset camera'; rs.style.cssText='width:100%;font-size:12px;margin:4px 0 2px;';
         rs.title='Back to this mode\u2019s default framing';
@@ -34090,7 +34114,7 @@ function renderEditorFields(){
         ccCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.chaseCursorAim=ccCb.checked; _levelDirty=true; };
         const ccSp=document.createElement('span'); ccSp.innerHTML='<b>ARPG cursor aim</b> \u2014 the mouse is a cursor; the character shoots at it';
         ccRow.appendChild(ccCb); ccRow.appendChild(ccSp); bPly.appendChild(ccRow);
-        hint(bPly,'','0 0 4px').textContent='The camera direction freezes and WASD moves relative to it while the character turns to face the cursor \u2014 Diablo-style. Pair with the Tilt slider (Player tab \u2192 Third-person camera) for an almost-top-down action view.';
+        hint(bPly,'','0 0 4px').textContent='The camera direction freezes and WASD moves relative to it while the character turns to face the cursor \u2014 Diablo-style. Players hold the middle mouse button and drag to swing the camera around. Pair with the Tilt slider (Player tab \u2192 Third-person camera) for an almost-top-down action view.';
       }
       if(_curView==='top'||_curView==='side'){
         // build 1084: the camera is derived, not placed — so give the creator a way to SEE it
@@ -37170,7 +37194,9 @@ self.onmessage = async (e) => {
   const d = e.data;
   try {
     let ff = null;
-    for (const u of ['https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.2/umd/index.js','https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js']){
+    // build 1107: LOCAL copy first (vendored beside the game, like rapier3d-compat.js) — a CDN is a
+    // single point of failure and plenty of networks block them. CDNs stay as the fallback.
+    for (const u of [d.base + 'fflate.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.2/umd/index.js','https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js']){
       try { importScripts(u); if (self.fflate && self.fflate.zlibSync) { ff = self.fflate; break; } } catch(_e){}
     }
     if (!ff) throw new Error('could not load the compression helper (fflate) from a CDN');
@@ -37205,14 +37231,18 @@ function _lgGenerate(opts, done){
     const wk = new Worker(URL.createObjectURL(new Blob([_LG_WORKER_JS], { type:'application/javascript' })));
     wk.onmessage = (e)=>{ wk.terminate(); done(e.data); };
     wk.onerror = (e)=>{ wk.terminate(); done({ ok:false, err:(e && e.message) || 'worker error' }); };
-    wk.postMessage(Object.assign({ src }, opts));
+    wk.postMessage(Object.assign({ src, base:new URL('.', location.href).href }, opts));   // build 1107: absolute base so the worker (blob: origin) can resolve the local fflate
   }).catch(err=>done({ ok:false, err:String(err && err.message || err) }));
 }
 function _lgOpenDialog(){
   if(_lgPanel){ _lgPanel.remove(); _lgPanel=null; return; }
-  const p=document.createElement('div'); _lgPanel=p;
-  p.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:60;width:min(360px,92vw);background:rgba(8,14,18,.97);border:1px solid rgba(var(--accent-rgb),0.45);border-radius:9px;padding:12px 14px;box-shadow:0 10px 40px rgba(0,0,0,.6);color:#cfeee2;font-size:12px;';
-  const H=(html)=>{ const d=document.createElement('div'); d.innerHTML=html; p.appendChild(d); return d; };
+  const p=document.createElement('div'); _lgPanel=p; p.id='lgGenPanel';   // build 1105: the id carries the editor's button styling
+  p.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:60;width:min(360px,92vw);background:rgba(8,14,18,.97);border:1px solid rgba(var(--accent-rgb),0.45);border-radius:9px;padding:12px 14px;box-shadow:0 10px 40px rgba(0,0,0,.6);color:#cfeee2;font-size:12px;font-family:var(--ui-font),system-ui,sans-serif;';
+  // build 1106: return the element the markup describes, not a wrapper around it — otherwise every
+  // `display:flex` row above was inert (labels wrapped, and the Generate CTA never filled its row).
+  const H=(html)=>{ const d=document.createElement('div'); d.innerHTML=html;
+    const el=(d.childNodes.length===1 && d.firstElementChild) ? d.firstElementChild : d;
+    p.appendChild(el); return el; };
   H('<b style="color:var(--accent);letter-spacing:.06em;">GENERATE ARENA</b><span style="float:right;cursor:pointer;padding:0 4px;" id="lgX">✕</span>');
   H('<div class="hint" style="font-size:10px;margin:4px 0 8px;opacity:.8;">A full multiplayer arena — themed materials, baked lighting, bot-safe ramps — built by the same generator the stock arenas came from.</div>');
   const seedRow=H('<div style="display:flex;gap:6px;align-items:center;margin:4px 0;"><span style="flex:0 0 52px;">Seed</span></div>');
@@ -37233,20 +37263,21 @@ function _lgOpenDialog(){
   moodRow.appendChild(moodCb); moodRow.appendChild(Object.assign(document.createElement('span'),{ textContent:'Apply the arena’s lighting mood to this level' }));
   const status=H('<div class="hint" style="font-size:11px;min-height:16px;margin:6px 0 2px;"></div>');
   const actRow=H('<div style="display:flex;gap:6px;margin-top:6px;"></div>');
-  const go=document.createElement('button'); go.textContent='Generate'; go.style.cssText='flex:1;padding:6px;font-size:13px;';
+  const go=document.createElement('button'); go.textContent='Generate'; go.className='lgCTA'; go.style.cssText='flex:1;padding:8px;font-size:13px;';
   actRow.appendChild(go);
   p.querySelector('#lgX').onclick=()=>{ p.remove(); _lgPanel=null; };
   go.onclick=()=>{
-    if(_lgBusy) return; _lgBusy=true; go.disabled=true; go.textContent='Generating… (10–30s)';
+    if(_lgBusy) return; _lgBusy=true; go.disabled=true; const _goLabel=go.textContent; go.textContent='Generating… (10–30s)';
     status.textContent='Painting materials, building geometry, baking light…';
     _lgGenerate({ kind:'arena', seed:(+seedI.value||1)|0, theme, size, texsize:'', texaux:'2' }, (r)=>{
-      _lgBusy=false; go.disabled=false; go.textContent='Generate';
+      _lgBusy=false; go.disabled=false; go.textContent=_goLabel;
       if(!r.ok){ status.textContent='Failed: '+r.err; return; }
       status.textContent=r.name+' — '+r.kb+' KB, '+r.tris+' triangles.';
+      go.classList.remove('lgCTA'); go.textContent='Regenerate';   // build 1107: one primary action at a time — Place in level takes over
       const blob=new Blob([r.glb], { type:'model/gltf-binary' });
       const url=URL.createObjectURL(blob);
       actRow.querySelectorAll('.lgRes').forEach(b=>b.remove());
-      const place=document.createElement('button'); place.className='lgRes'; place.textContent='Place in level'; place.style.cssText='flex:1;padding:6px;font-size:12px;';
+      const place=document.createElement('button'); place.className='lgRes lgCTA'; place.textContent='Place in level'; place.style.cssText='flex:1;padding:8px;font-size:12px;';
       place.onclick=()=>{ pushUndoSnapshot();
         spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).'); }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
         if(moodCb.checked && r.world){ Object.assign(worldCfg, r.world); applyWorldCfg(); }

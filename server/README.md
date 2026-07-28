@@ -193,8 +193,14 @@ generate, upload the .glb, copy the level json and add an index entry.
 
 Editor → Tools → **Generate arena…** fetches `tools/levelgen.mjs` from the site and runs it in
 the browser. GitHub Pages serves it automatically (it's in the repo). On the cPanel host, upload
-`tools/levelgen.mjs` into `public_html/tools/` (or flat as `public_html/levelgen.mjs`) — without
-it the dialog reports that the generator isn't hosted.
+**two** files (both are in the repo root / `tools/`):
+
+- `tools/levelgen.mjs` → `public_html/tools/` (or flat as `public_html/levelgen.mjs`)
+- `fflate.min.js` → `public_html/` beside `breach.html` — the compressor that writes the model's
+  PNG textures. Build 1107 loads this local copy first and only falls back to a CDN, so the
+  generator (and Sketchfab model unzipping) keep working on networks that block CDNs.
+
+Without them the dialog says so plainly rather than failing silently.
 
 ### Google Analytics lives in the repo now (build 1091)
 
