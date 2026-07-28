@@ -73,6 +73,42 @@ function brickAt(x, y, bw, bh, off) {   // staggered courses; tiles when bw, bh 
   const row = Math.floor(y / bh), xo = (row % 2) * bw * off;
   return { row, col: Math.floor((x + xo) / bw), lx: (((x + xo) % bw) + bw) % bw, ly: ((y % bh) + bh) % bh };
 }
+function sstep(a, b, x) { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+// domain-warped worley: cell boundaries wiggle organically instead of reading as voronoi.
+// Two warp layers with different jobs: a low-frequency SHAPE warp makes each cell a different
+// blob, a high-frequency CRINKLE roughens the boundary line itself. (Substance practice:
+// the base pattern is 10% of the result; warp + per-cell variation is most of the rest.)
+function warpedWorley(r, S, n, shapeAmp = 0.35, crinkleAmp = 0.06) {
+  const w = worley(r, S, n);
+  const cell = S / n;
+  const wx1 = fbm(rng(r() * 1e9 | 0), S, [[Math.max(2, (n * 0.7) | 0), 1], [n * 2 | 0, 0.4]]);
+  const wy1 = fbm(rng(r() * 1e9 | 0), S, [[Math.max(2, (n * 0.7) | 0), 1], [n * 2 | 0, 0.4]]);
+  const wx2 = fbm(rng(r() * 1e9 | 0), S, [[Math.min(256, n * 4 | 0), 1]]);
+  const wy2 = fbm(rng(r() * 1e9 | 0), S, [[Math.min(256, n * 4 | 0), 1]]);
+  return (x, y) => {
+    const X = x + (wx1(x, y) - 0.5) * 2 * shapeAmp * cell + (wx2(x, y) - 0.5) * 2 * crinkleAmp * cell;
+    const Y = y + (wy1(x, y) - 0.5) * 2 * shapeAmp * cell + (wy2(x, y) - 0.5) * 2 * crinkleAmp * cell;
+    return w(((X % S) + S) % S, ((Y % S) + S) % S);
+  };
+}
+// slope-blur-min: cheap grayscale erosion with a noise structuring element. Eats edges
+// irregularly (flat areas barely move), turning mathematically clean bevels and chip rims
+// into crumbled, weathered ones. Run AFTER profile shaping, BEFORE normals.
+function erodeMin(h, S, intensity, seed) {
+  const r = rng(seed);
+  const ox1 = fbm(r, S, [[24, 1], [96, 0.5]]), oy1 = fbm(r, S, [[24, 1], [96, 0.5]]);
+  const ox2 = fbm(r, S, [[40, 1]]), oy2 = fbm(r, S, [[40, 1]]);
+  const out = new Float64Array(S * S);
+  const at = (x, y) => h[(((y | 0) % S + S) % S) * S + (((x | 0) % S + S) % S)];
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = y * S + x;
+    let v = h[i];
+    v = Math.min(v, at(x + (ox1(x, y) - 0.5) * 2 * intensity, y + (oy1(x, y) - 0.5) * 2 * intensity));
+    v = Math.min(v, at(x + (ox2(x, y) - 0.5) * 2 * intensity, y + (oy2(x, y) - 0.5) * 2 * intensity));
+    out[i] = v;
+  }
+  h.set(out);
+}
 function blurField(src, S, rad) {   // wrapping two-pass box blur: the "local mean" for cavity/edge masks
   const tmp = new Float64Array(S * S), out = new Float64Array(S * S), w = rad * 2 + 1;
   for (let y = 0; y < S; y++) { let acc = 0;
@@ -321,52 +357,149 @@ function hazardTex(name, S) {   // 45° chevrons, chipped and scuffed
   return finish(t, 77, {});
 }
 // ---- expanded families: masonry, nature, interior, sci-fi ------------------------------
-function brickTex(name, seed, S, col = [0.58, 0.26, 0.19]) {
+function brickTex(name, seed, S, col = [0.5, 0.25, 0.19]) {
+  // Reference-driven: discrete tone clusters (mid red / purple-brown / light orange) with
+  // darker = purpler, kiln flashing gradients per brick, clustered iron spots, corner chips
+  // as depth not bright discs, mortar with sand speckle and a shadow line at the interface.
   const r = rng(seed), t = new Tex(name, S), k = S / 256, bw = S / 4, bh = S / 16;
   const grain = fbm(r, S, [[48, 1], [160, 0.6]]);
+  const wx = fbm(rng(seed ^ 21), S, [[8, 1], [32, 0.5]]), wy = fbm(rng(seed ^ 22), S, [[8, 1], [32, 0.5]]);
   const chips = worley(rng(seed ^ 9), S, 20);
+  const spots = worley(rng(seed ^ 13), S, 110);
+  const gone = worley(rng(seed ^ 17), S, 30);
   t.fill(col);
   t.each((x, y, i) => {
-    const b = brickAt(x, y, bw, bh, 0.5), m = 3 * k;
-    if (b.lx < m || b.ly < m) { t.rgb[i*3]=0.72; t.rgb[i*3+1]=0.7; t.rgb[i*3+2]=0.66; t.h[i] = 0; t.tint(i, 0.9 + grain(x, y) * 0.2); return; }
-    const tone = 0.78 + hash2(b.row, b.col) * 0.44, warm = 0.94 + hash2(b.col, b.row) * 0.12;
-    t.tintC(i, tone * warm, tone, tone * (2 - warm));
-    t.tint(i, 0.9 + grain(x, y) * 0.2);
+    const b = brickAt(x + (wx(x, y) - 0.5) * 3 * k, y + (wy(x, y) - 0.5) * 3 * k, bw, bh, 0.5);
+    const m = 2.6 * k;
+    const hb = hash2(b.row, b.col), hb2 = hash2(b.col * 3, b.row * 7), hb3 = hash2(b.row * 11, b.col * 5);
+    const g = grain((x + hb * S) % S, (y + hb2 * S) % S);
+    if (b.lx < m || b.ly < m) {                                      // mortar
+      t.rgb[i * 3] = 0.58; t.rgb[i * 3 + 1] = 0.55; t.rgb[i * 3 + 2] = 0.51;
+      t.tint(i, 0.82 + g * 0.3);
+      if (hash2(x | 0, y | 0) > 0.85) t.tint(i, 1.2);                // sand grains
+      t.h[i] = 0.12 + g * 0.1;
+      const gn = gone(x, y);                                         // missing mortar patches
+      if (gn.d1 < 3 * k && gn.id > 0.88) { t.tint(i, 0.55); t.h[i] = 0; }
+      return;
+    }
+    // three firing clusters; darker cluster shifts purple, lighter shifts orange
+    const cl = hb < 0.6 ? 0 : hb < 0.85 ? 1 : 2;
+    const tone = [1.0, 0.78, 1.18][cl] * (0.96 + hb2 * 0.08);
+    const warm = [1.0, 0.93, 1.07][cl];
+    t.tintC(i, tone * warm, tone * (2 - warm) * 0.55 + tone * 0.45, tone * (2 - warm));
+    t.tint(i, 0.9 + g * 0.2);
+    if (hb3 > 0.55) {                                                // kiln flashing: one end darker
+      const dir = hash2(b.col, b.row * 9) > 0.5 ? b.lx / bw : 1 - b.lx / bw;
+      t.tint(i, 1 - Math.max(0, dir - 0.35) * 0.35 * ((hb3 - 0.55) / 0.45));
+      t.tintC(i, 0.97, 0.99, 1.03);
+    }
     const eb = Math.min(b.lx - m, b.ly - m, bw - b.lx, bh - b.ly);
-    t.h[i] = 0.55 + Math.min(1, eb / (4 * k)) * 0.45;
-    const c = chips(x, y); if (c.d1 < 5 * k && hash2(b.col * 3, b.row * 7) > 0.6) { t.tint(i, 1.18); t.h[i] -= 0.5; }
+    t.h[i] = 0.5 + hash2(b.row * 13, b.col * 17) * 0.14 + sstep(0, (2.5 + hb2 * 3) * k, eb) * 0.36 + g * 0.08;
+    if (hb2 > 0.87) {                                                // the occasional iron-spotted brick
+      const sp = spots(x, y);
+      if (sp.d1 < (0.5 + sp.id * 0.8) * k && sp.id > 0.45) { t.tint(i, 0.62); t.h[i] -= 0.06; }
+    }
+    const c = chips(x, y);                                           // dog-eared corners: depth-led
+    if (eb < 5 * k && c.d1 < (2.5 + c.id * 4) * k && hash2(b.col * 3, b.row * 7) > 0.66) {
+      const pp = 1 - c.d1 / ((2.5 + c.id * 4) * k);
+      t.tint(i, 1 + 0.1 * pp); t.tintC(i, 1.04, 1, 0.96);            // exposed core: brighter, oranger
+      t.h[i] -= 0.42 * pp;
+    }
+    if (hash2(b.row * 31, b.col * 23) > 0.985) {                     // one lime pop in a while
+      const dx2 = b.lx - bw * 0.55, dy2 = b.ly - bh * 0.5, dd = Math.hypot(dx2, dy2);
+      if (dd < 4 * k) { t.tint(i, dd < 1.5 * k ? 1.7 : 0.7); t.h[i] -= (1 - dd / (4 * k)) * 0.3; }
+    }
   });
-  return finish(t, seed, { cavDark: 0.3 });
+  erodeMin(t.h, S, 2 * k, seed ^ 27);
+  return finish(t, seed, { cavDark: 0.28 });
 }
 function stoneBlocksTex(name, seed, S, col = [0.6, 0.56, 0.48]) {
+  // Rebuilt on reference: pits cluster on a few blocks (never uniform dots), edges vary
+  // block-to-block, joints wander, tone comes in discrete quarry batches with rare outliers.
   const r = rng(seed), t = new Tex(name, S), k = S / 256, bw = S / 4, bh = S / 4;
   const grain = fbm(r, S, [[16, 1], [64, 0.5], [200, 0.3]]);
-  const pits = worley(rng(seed ^ 5), S, 26);
+  const wx = fbm(rng(seed ^ 21), S, [[6, 1], [24, 0.5]]), wy = fbm(rng(seed ^ 22), S, [[6, 1], [24, 0.5]]);
+  const vugs = worley(rng(seed ^ 5), S, 26);
+  const micro = worley(rng(seed ^ 15), S, 84);
+  const chipW = worley(rng(seed ^ 25), S, 14);
+  const TONES = [1.0, 0.88, 1.12];                                  // quarry batches, not a gaussian
   t.fill(col);
   t.each((x, y, i) => {
-    const b = brickAt(x, y, bw, bh, 0.5), m = 5 * k;
-    const g = grain(x, y);
-    if (b.lx < m || b.ly < m) { t.tint(i, 0.5 + g * 0.2); t.h[i] = 0; return; }
-    t.tint(i, (0.82 + hash2(b.row, b.col) * 0.36) * (0.88 + g * 0.24));
+    const b = brickAt(x + (wx(x, y) - 0.5) * 8 * k, y + (wy(x, y) - 0.5) * 8 * k, bw, bh, 0.5);
+    const m = 5 * k;
+    const hb = hash2(b.row * 13, b.col * 17), hb2 = hash2(b.col * 7, b.row * 3), hb3 = hash2(b.row * 5, b.col * 29);
+    const g = grain((x + hb * S) % S, (y + hb2 * S) % S);            // per-block grain phase
+    if (b.lx < m || b.ly < m) {                                      // mortar: a material, not a groove
+      t.tint(i, (0.62 + g * 0.25));
+      if (hash2(x | 0, y | 0) > 0.86) t.tint(i, 1.18);               // sand speckle
+      t.h[i] = 0.05 + g * 0.08;
+      return;
+    }
+    let tone = TONES[(hb * 2.99) | 0] * (0.96 + hb2 * 0.08);
+    let warm = 0.96 + hash2(b.col + 4, b.row) * 0.08;
+    if (hb3 > 0.93) { tone *= 0.82; warm = 1.12; }                   // the rare iron-stained block
+    t.tintC(i, tone * warm, tone, tone * (2 - warm));
+    t.tint(i, 0.88 + g * 0.24);
     const eb = Math.min(b.lx - m, b.ly - m, bw - b.lx, bh - b.ly);
-    t.h[i] = 0.4 + Math.min(1, eb / (10 * k)) * 0.6 + g * 0.15;
-    const c = pits(x, y); if (c.d1 < 3.5 * k) { t.tint(i, 0.82); t.h[i] -= 0.3; }
+    const bevW = (4 + hb2 * 9) * k;                                  // bevel width varies per block
+    t.h[i] = 0.35 + hb * 0.2 + sstep(0, bevW, eb) * 0.5 + g * 0.15
+      + (b.lx / bw - 0.5) * (hash2(b.col, b.row + 9) - 0.5) * 0.2;   // slight per-block tilt
+    if (hb3 > 0.42 && hb3 < 0.68) {                                  // bedding bands on some blocks
+      const band = Math.sin((b.ly / bh + hb) * Math.PI * (3 + hb2 * 5));
+      t.tint(i, 1 + band * 0.05); t.h[i] += band * 0.04;
+    }
+    if (hb2 > 0.62) {                                                // tool marks, one direction per block
+      t.tint(i, 1 + Math.sin((b.lx + b.ly * 0.7) / (3.2 * k) + hb * 9) * 0.035);
+    }
+    const mc = micro(x, y);                                          // micro-pitting: everywhere, subtle
+    if (mc.d1 < 1.1 * k) { t.tint(i, 0.94); t.h[i] -= 0.05; }
+    const c = vugs(x, y);                                            // vugs: clustered, size varies 3x, soft
+    const R = (1.1 + c.id * 3.2) * k;
+    if (c.d1 < R && c.id > 0.5 && hash2(b.col * 5, b.row * 11) > 0.62) {
+      const pp = 1 - c.d1 / R;
+      t.tint(i, 1 - 0.13 * pp * pp); t.h[i] -= 0.28 * pp * pp;
+    }
+    const ch = chipW(x, y);                                          // chips live on edges, gated per block
+    if (eb < 7 * k && ch.d1 < (3 + ch.id * 5) * k && hash2(b.col * 3, b.row * 19) > 0.55) {
+      const pp = 1 - ch.d1 / ((3 + ch.id * 5) * k);
+      t.tint(i, 1 + 0.1 * pp); t.h[i] -= 0.45 * pp;                  // depth-led, freshly-exposed lighter
+    }
   });
-  return finish(t, seed, { cavDark: 0.36, cavK: 1.8 });
+  erodeMin(t.h, S, 3 * k, seed ^ 31);                                // crumble the clean bevels
+  return finish(t, seed, { cavDark: 0.28, cavK: 1.5 });
 }
 function cobbleTex(name, seed, S) {
+  // Sett paving, not voronoi mosaic: warped cell boundaries, per-stone dome profiles
+  // (some crowned, some worn flat), sand in the joints, the odd missing or off-colour stone.
   const r = rng(seed), t = new Tex(name, S), k = S / 256;
-  const w = worley(rng(seed ^ 3), S, 10);
+  const w = warpedWorley(rng(seed ^ 3), S, 10, 0.3, 0.07);
   const grain = fbm(r, S, [[32, 1], [128, 0.5]]);
-  t.fill([0.5, 0.48, 0.45]);
+  const sand = fbm(rng(seed ^ 6), S, [[48, 1], [160, 0.6]]);
+  t.fill([0.5, 0.48, 0.45]).mrInit(0.05, 0.85);
   t.each((x, y, i) => {
     const c = w(x, y), rim = c.d2 - c.d1, g = grain(x, y);
-    if (rim < 4 * k) { t.mix(i, [0.28, 0.24, 0.19], 0.85); t.h[i] = 0; t.tint(i, 0.85 + g * 0.3); return; }
-    t.tint(i, (0.74 + c.id * 0.5) * (0.9 + g * 0.2));
-    t.tintC(i, 1, 1 - c.id * 0.06, 1 - c.id * 0.1);
-    t.h[i] = Math.min(1, (rim - 4 * k) / (14 * k));
+    const jw = (2.5 + hash2(c.id * 97, 3) * 3.5) * k;                // joint width varies stone to stone
+    const missing = hash2(c.id * 131, 5) > 0.965;
+    if (rim < jw || missing) {                                       // the joint: sand and grit, not void
+      t.mix(i, [0.36, 0.31, 0.25], 0.9);
+      t.tint(i, 0.8 + sand(x, y) * 0.45);
+      if (hash2(x | 0, y * 3 | 0) > 0.9) t.tint(i, 1.25);            // grit specks
+      t.h[i] = 0.06 + sand(x, y) * 0.12;
+      t.mr[i * 2] = 0.95;
+      return;
+    }
+    const tone = 0.74 + hash2(c.id * 57.3, 1) * 0.5;                 // tone and hue decorrelated
+    let warm = 0.965 + hash2(c.id * 57.3, 2) * 0.07;
+    if (hash2(c.id * 77, 9) > 0.93) warm += (hash2(c.id * 91, 2) > 0.5 ? 0.06 : -0.055);   // pink/blue outliers, rare and subtle
+    t.tintC(i, tone * warm, tone, tone * (2 - warm));
+    t.tint(i, 0.9 + g * 0.2);
+    const dome = Math.min(1, (rim - jw) / ((8 + c.id * 14) * k));
+    t.h[i] = Math.pow(dome, 0.55 + c.id * 0.75) * (0.68 + hash2(c.id * 41, 4) * 0.32);
+    t.mr[i * 2] = 0.85 - t.h[i] * 0.35;                              // crowns polish, flanks stay matte
+    if (dome < 0.22) t.tint(i, 0.88);                                // grime ring where stone meets sand
   });
-  return finish(t, seed, { cavDark: 0.38, edgeLight: 0.16 });
+  erodeMin(t.h, S, 2.5 * k, seed ^ 33);
+  return finish(t, seed, { cavDark: 0.34, edgeLight: 0.14, edgeSmooth: 0.35 });
 }
 function rockTex(name, seed, S) {
   const r = rng(seed), t = new Tex(name, S);
@@ -383,16 +516,35 @@ function rockTex(name, seed, S) {
   return finish(t, seed, { cavDark: 0.4, cavK: 2, edgeLight: 0.18 });
 }
 function dirtTex(name, seed, S) {
+  // Pebbles are half-buried hemispheres in three sizes at low contrast — not bright confetti.
   const r = rng(seed), t = new Tex(name, S), k = S / 256;
   const f = fbm(r, S, [[8, 1], [24, 0.6], [96, 0.4]]);
+  const smear = fbm(rng(seed ^ 11), S, [[3, 1]]);
   const peb = worley(rng(seed ^ 7), S, 44);
-  t.fill([0.4, 0.32, 0.24]);
+  const grav = worley(rng(seed ^ 9), S, 96);
+  const bigW = warpedWorley(rng(seed ^ 10), S, 6, 0.35, 0.08);
+  const damp = fbm(rng(seed ^ 12), S, [[5, 1], [15, 0.5]]);
+  t.fill([0.4, 0.32, 0.24]).mrInit(0.02, 0.92);
   t.each((x, y, i) => {
-    const g = f(x, y); t.tint(i, 0.75 + g * 0.5); t.h[i] = g * 0.5;
-    const c = peb(x, y);
-    if (c.d1 < (1.5 + c.id * 2.2) * k && c.id > 0.55) { t.tint(i, 1.3); t.tintC(i, 1, 1.02, 1.06); t.h[i] += 0.4; }
+    const g = f(((x + (smear(x, y) - 0.5) * 40 * k) % S + S) % S, y);   // directionally smeared clods
+    t.tint(i, 0.78 + g * 0.45); t.h[i] = g * 0.45;
+    const gv = grav(x, y);                                           // fine gravel, barely-there
+    if (gv.d1 < 0.9 * k && gv.id > 0.4) { t.tint(i, 1.1); t.h[i] += 0.12; }
+    const c = peb(x, y);                                             // pebbles: domed, half-buried
+    const R = (1 + hash2(c.id * 91, 7) * 2.8) * k;
+    if (c.d1 < R && c.id > 0.55) {
+      const pp = 1 - c.d1 / R;
+      t.mix(i, [0.55, 0.5, 0.44], Math.max(0, pp - 0.25) * 1.2);
+      t.tint(i, 1 + 0.13 * pp);
+      t.h[i] += 0.35 * pp * pp;
+    }
+    const bs = bigW(x, y);                                           // the rare larger stone
+    if (bs.d1 < 6 * k && bs.id > 0.88) { const pp = 1 - bs.d1 / (6 * k);
+      t.mix(i, [0.5, 0.46, 0.4], Math.max(0, pp - 0.15)); t.tint(i, 1 + 0.1 * pp); t.h[i] += 0.5 * pp * pp; }
+    const dp = damp(x, y);                                           // damp patches: darker AND less rough
+    if (dp > 0.6) { const dd = Math.min(1, (dp - 0.6) * 4); t.tint(i, 1 - 0.22 * dd); t.mr[i * 2] -= 0.18 * dd; }
   });
-  return finish(t, seed, { cavDark: 0.3 });
+  return finish(t, seed, { cavDark: 0.28 });
 }
 function grassTex(name, seed, S) {
   const r = rng(seed), t = new Tex(name, S);
@@ -508,23 +660,43 @@ function marbleTex(name, seed, S, col = [0.85, 0.85, 0.88]) {
   return finish(t, seed, { cavDark: 0.1, edgeK: 0.5, grainRough: 0.05 });
 }
 function plasterTex(name, seed, S, col = [0.8, 0.76, 0.68]) {
+  // Losses are ragged (noise-modulated boundary), come in two sizes, have a curling lip and
+  // radiating hairlines — never a circle with an annulus.
   const r = rng(seed), t = new Tex(name, S), k = S / 256;
   const f = fbm(r, S, [[6, 1], [20, 0.5], [80, 0.3]]);
-  const chips = worley(rng(seed ^ 11), S, 7);
+  const rag = fbm(rng(seed ^ 12), S, [[10, 1], [30, 0.6], [90, 0.3]]);
+  const holes = worley(rng(seed ^ 11), S, 7);
+  const small = worley(rng(seed ^ 19), S, 18);
   t.fill(col);
+  const bare = (x, y, i, g) => {                                     // masonry under the loss
+    const b = brickAt(x, y, S / 4, S / 16, 0.5);
+    const bm = (b.lx < 3 * k || b.ly < 3 * k);
+    t.rgb[i * 3] = bm ? 0.6 : 0.5; t.rgb[i * 3 + 1] = bm ? 0.58 : 0.28; t.rgb[i * 3 + 2] = bm ? 0.54 : 0.2;
+    t.tint(i, 0.8 + g * 0.3); t.h[i] = 0.12;
+  };
   t.each((x, y, i) => {
-    const g = f(x, y); t.tint(i, 0.88 + g * 0.2); t.h[i] = 0.7 + g * 0.3;
-    const c = chips(x, y);
-    if (c.d1 < 26 * k && c.id > 0.72) {                                                // plaster fallen off
-      const d = c.d1 / (26 * k);
-      if (d < 0.85) { const b = brickAt(x, y, S / 4, S / 16, 0.5);
-        const bm = (b.lx < 3 * k || b.ly < 3 * k);
-        t.rgb[i*3]=bm?0.6:0.5; t.rgb[i*3+1]=bm?0.58:0.28; t.rgb[i*3+2]=bm?0.54:0.2;    // masonry beneath
-        t.tint(i, 0.8 + f(y, x) * 0.3); t.h[i] = 0.15; }
-      else t.tint(i, 0.85);                                                            // cracked fringe
+    const g = f(x, y);
+    t.tint(i, 0.88 + g * 0.2); t.h[i] = 0.7 + g * 0.3;
+    const c = holes(x, y);
+    if (c.id > 0.82) {
+      const d = c.d1 / (19 * k) + (rag(x, y) - 0.5) * 0.7;           // ragged boundary
+      if (d < 0.92) { bare(x, y, i, f(y, x)); return; }
+      if (d < 1.0 && rag(y, x) > 0.45) { t.tint(i, 0.86); t.h[i] -= 0.15; }   // broken fringe
+      else if (d < 1.12) { t.tint(i, 1.05); t.h[i] += 0.09; }        // curling lip catches light
     }
+    const sc = small(x, y);                                          // sparse small chips to the scratch coat
+    const sd = sc.d1 / ((2.5 + sc.id * 4) * k) + (rag(y, x) - 0.5) * 0.5;
+    if (sc.id > 0.91 && sd < 1) { t.tint(i, 0.9); t.h[i] = Math.min(t.h[i], 0.5); }
   });
-  return finish(t, seed, { cavDark: 0.34 });
+  for (let q = 0; q < 7; q++) {                                      // hairline cracks wandering from losses
+    let x = r() * S, y = r() * S, ang = r() * Math.PI * 2;
+    for (let d = 0, len = S * (0.15 + r() * 0.3); d < len; d++) {
+      ang += (r() - 0.5) * 0.5;
+      x = (x + Math.cos(ang) + S) % S; y = (y + Math.sin(ang) + S) % S;
+      const i = (y | 0) * S + (x | 0); t.tint(i, 0.62); t.h[i] -= 0.5;
+    }
+  }
+  return finish(t, seed, { cavDark: 0.32 });
 }
 function corrugatedTex(name, seed, S) {
   const r = rng(seed), t = new Tex(name, S), k = S / 256;
@@ -543,22 +715,40 @@ function corrugatedTex(name, seed, S) {
   }
   return finish(t, seed, { edgeSmooth: 0.25 });
 }
-function paintedMetalTex(name, seed, S, col = [0.32, 0.5, 0.38]) {
+function paintedMetalTex(name, seed, S, col = [0.3, 0.42, 0.3]) {
+  // Chips are ragged, rust is an independent weather field (some chips clean, some eaten),
+  // big scrapes near seams, a lifted-paint rim, and orange-peel in the paint itself.
   const r = rng(seed), t = new Tex(name, S), k = S / 256, P = S / 2;
   t.fill(col).mrInit(0.25, 0.55);
   const g = fbm(r, S, [[12, 1], [48, 0.5]]);
+  const peel = fbm(rng(seed ^ 18), S, [[200, 1]]);
+  const rag = fbm(rng(seed ^ 14), S, [[40, 1], [120, 0.6]]);
+  const rustF = fbm(rng(seed ^ 15), S, [[24, 1], [96, 0.7]]);
   const chips = worley(rng(seed ^ 13), S, 24);
+  const scrape = worley(rng(seed ^ 17), S, 8);
   const seamD = (v) => Math.min(v % P, P - (v % P));
+  const METAL = [0.55, 0.57, 0.6], RUST = [0.4, 0.23, 0.12];
   t.each((x, y, i) => {
-    t.tint(i, 0.9 + g(x, y) * 0.2); t.h[i] = 0.6;
+    t.tint(i, 0.9 + g(x, y) * 0.2);
+    t.h[i] = 0.6 + (peel(x, y) - 0.5) * 0.08;                        // orange-peel
+    t.mr[i * 2] = 0.5 + (g(x, y) - 0.5) * 0.25;
     const ds = Math.min(seamD(x), seamD(y));
     if (ds < 2 * k) { t.tint(i, 0.6); t.h[i] = 0.2; t.mr[i * 2] = 0.7; }
-    const c = chips(x, y);
     const near = Math.max(0, 1 - ds / (14 * k));
-    if (c.d1 < (2.5 + near * 5) * k && c.id > 0.55) {                                  // paint chipped to metal
-      t.rgb[i*3]=0.55; t.rgb[i*3+1]=0.57; t.rgb[i*3+2]=0.6; t.h[i] = 0.35;
-      t.mr[i * 2] = 0.4; t.mr[i * 2 + 1] = 0.85;
-      if (c.d1 > (1.5 + near * 4) * k) t.mix(i, [0.4, 0.23, 0.12], 0.7);               // rust fringe
+    const c = chips(x, y), sc = scrape(x, y);
+    const cd = c.d1 + (rag(x, y) - 0.5) * 8 * k;                     // ragged chip boundary
+    const sd = sc.d1 + (rag(y, x) - 0.5) * 14 * k;
+    const R1 = (1.8 + near * 3.5 + c.id * 1.5) * k, R2 = (5 + sc.id * 9) * k * (0.4 + near);
+    const inChip = (cd < R1 && c.id > 0.8) || (sd < R2 && sc.id > 0.9);
+    if (inChip) {
+      t.rgb[i * 3] = METAL[0]; t.rgb[i * 3 + 1] = METAL[1]; t.rgb[i * 3 + 2] = METAL[2];
+      t.tint(i, 0.9 + g(y, x) * 0.2);
+      t.h[i] = 0.34; t.mr[i * 2] = 0.4; t.mr[i * 2 + 1] = 0.85;
+      const rf = rustF(x, y);                                        // rust where the weather says so
+      if (rf > 0.52) { const rr2 = Math.min(1, (rf - 0.52) * 3);
+        t.mix(i, RUST, rr2 * 0.85); t.mr[i * 2] = 0.4 + rr2 * 0.5; t.mr[i * 2 + 1] = 0.2; t.h[i] += rr2 * 0.1; }
+    } else if (cd < R1 + 1.6 * k && c.id > 0.8) {
+      t.tint(i, 1.08); t.h[i] -= 0.08;                               // lifted paint rim
     }
   });
   for (let q = 0; q < 10 * k; q++) {
@@ -566,7 +756,7 @@ function paintedMetalTex(name, seed, S, col = [0.32, 0.5, 0.38]) {
     for (let d = 0; d < len; d++) { const i = ((Math.round(y + Math.sin(a) * d) + S) % S) * S + (Math.round(x + Math.cos(a) * d) + S) % S;
       t.tint(i, 1.15); t.mr[i * 2] = 0.4; }
   }
-  return finish(t, seed, { edgeLight: 0.24 });
+  return finish(t, seed, { edgeLight: 0.22 });
 }
 function scifiPanelTex(name, seed, S, accent = [0.25, 0.85, 1]) {
   const r = rng(seed), t = new Tex(name, S), k = S / 256;
@@ -1587,6 +1777,15 @@ function writeGLB(out) {
 // -------------------------------------------------------------------------- main ----
 const LAYOUTS = { keep: buildKeep, spine: buildSpine, museum: buildMuseum, castle: buildCastle, caldera: buildCaldera };
 const which = process.argv[2], out = process.argv[3];
+if (which === 'tex') {   // fast iteration: node tools/levelgen.mjs tex <library-id> <out.png>
+  const id = process.argv[3], outPng = process.argv[4];
+  if (!MATLIB[id] || !outPng) { console.error('tex ids: ' + Object.keys(MATLIB).join(' ')); process.exit(1); }
+  const S2 = +(process.env.TEXSIZE || 0) || 512;
+  const t = MATLIB[id].make('t_' + id, S2);
+  writeFileSync(outPng, pngEncode(toBytes(t.rgb), S2, S2, 3));
+  console.log(id, '->', outPng, S2 + 'px');
+  process.exit(0);
+}
 if (!LAYOUTS[which] || !out) {
   console.error('usage: node tools/levelgen.mjs <' + Object.keys(LAYOUTS).join('|') + '> <out.glb>');
   process.exit(1);
