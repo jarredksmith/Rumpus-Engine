@@ -874,6 +874,56 @@ function pipe(m, axis, a0, a1, h, off, r, segs = 10) {
   }
 }
 
+// a wall with openings — doorways and windows built from segments, lintels and sills.
+// axis 'x': runs a0..a1 with thickness o0..o1 in z (and vice versa). openings: {at, w, h, sill}.
+// This is what turns extrusions into buildings: anything with an opening has an inside.
+function wallRun(m, axis, a0, a1, o0, o1, y0, y1, openings = []) {
+  const ops = [...openings].sort((p2, q2) => p2.at - q2.at);
+  const seg = (s0, s1, yy0, yy1) => { if (s1 - s0 < 0.01 || yy1 - yy0 < 0.01) return;
+    axis === 'x' ? box(m, s0, yy0, o0, s1, yy1, o1) : box(m, o0, yy0, s0, o1, yy1, s1); };
+  let cur = a0;
+  for (const op of ops) {
+    const w0 = op.at - op.w / 2, w1 = op.at + op.w / 2, sill = op.sill || 0;
+    seg(cur, w0, y0, y1);
+    if (sill > 0) seg(w0, w1, y0, y0 + sill);
+    seg(w0, w1, y0 + sill + op.h, y1);
+    cur = w1;
+  }
+  seg(cur, a1, y0, y1);
+}
+
+// an organic boulder: an icosphere (subdivided once, 80 faces) with deterministic per-vertex
+// radial displacement, squashed vertically and sunk into the ground — the first geometry here
+// with no right angles anywhere
+function boulder(m, cx, cy, cz, r, seed2) {
+  const t0 = (1 + Math.sqrt(5)) / 2;
+  const V = [[-1, t0, 0], [1, t0, 0], [-1, -t0, 0], [1, -t0, 0], [0, -1, t0], [0, 1, t0], [0, -1, -t0], [0, 1, -t0], [t0, 0, -1], [t0, 0, 1], [-t0, 0, -1], [-t0, 0, 1]]
+    .map(v => { const l = Math.hypot(...v); return [v[0] / l, v[1] / l, v[2] / l]; });
+  const F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  const nv = V.slice(), mid = {};
+  const gm = (a, b) => { const key = a < b ? a + '_' + b : b + '_' + a; if (mid[key] != null) return mid[key];
+    const q = [(nv[a][0] + nv[b][0]) / 2, (nv[a][1] + nv[b][1]) / 2, (nv[a][2] + nv[b][2]) / 2]; const l = Math.hypot(...q);
+    nv.push([q[0] / l, q[1] / l, q[2] / l]); mid[key] = nv.length - 1; return mid[key]; };
+  const nf = [];
+  for (const [a, b, c] of F) { const ab = gm(a, b), bc = gm(b, c), ca = gm(c, a);
+    nf.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+  const bump = nv.map(v => 0.74 + hash2(v[0] * 7.13 + v[2] * 3.7 + seed2, v[1] * 5.1 + seed2) * 0.5);
+  const P = nv.map((v, qi) => [cx + v[0] * r * bump[qi] * 1.15, cy + v[1] * r * bump[qi] * 0.8, cz + v[2] * r * bump[qi] * 1.05]);
+  for (const [a, b, c] of nf) tri(m, P[a], P[c], P[b]);
+  SOLIDS.push([cx - r, cy - r * 0.8, cz - r, cx + r, cy + r * 0.8, cz + r]);
+}
+
+// heightfield ground: a triangle grid whose height comes from hFn(x, z). Since build 1092
+// clipped-triangle rasterisation, sloped ground colliders are exact — a level can finally
+// stand on rolling terrain instead of a slab.
+function terrainGround(m, x0, z0, x1, z1, cell, hFn) {
+  for (let z = z0; z < z1 - 0.01; z += cell) for (let x = x0; x < x1 - 0.01; x += cell) {
+    const x2 = Math.min(x + cell, x1), z2 = Math.min(z + cell, z1);
+    const A = [x, hFn(x, z), z], B = [x2, hFn(x2, z), z], C = [x2, hFn(x2, z2), z2], D = [x, hFn(x, z2), z2];
+    tri(m, A, B, C); tri(m, A, C, D);   // this order faces +y through tri()'s negated-cross convention
+  }
+}
+
 // place a callback twice: as-is and rotated 180° about the origin (x,z -> -x,-z).
 // The callback receives a transform that flips coordinates and swaps team materials.
 function mirrored(fn) {
@@ -1240,7 +1290,7 @@ function buildCastle() {
   bevelCbox(marble, 0, 3.05, 0, 1.1, 0.34, 1.1);
   // market stalls (mirrored pairs) with counters, sloped roofs and barrels
   mirrored((xz) => {
-    for (const [sx, sz, along] of [[16, -11, 'x'], [7, 19, 'z']]) {
+    for (const [sx, sz, along] of [[16, -11, 'x'], [-2, 20, 'z']]) {
       const [x, z] = xz(sx, sz);
       for (const px of [-1.6, 1.6]) for (const pz of [-1.2, 1.2]) cbox(darkWood, x + px, 1.3, z + pz, 0.22, 2.6, 0.22);
       cbox(planks, x, 0.5, z + (z > 0 ? -1.3 : 1.3), 3.6, 1.0, 0.5);
@@ -1252,6 +1302,33 @@ function buildCastle() {
     const [ax, az] = xz(16, -11);
     sign(az > 0 ? '-z' : '+z', ax, 3.6, az + (az > 0 ? -1.85 : 1.85), 0.85, 'ARMORY', [0.85, 0.7, 0.4]);
   });
+  // barracks (mirrored): the first real BUILDINGS — doorway, windows, interior, and an
+  // outside ramp onto a parapeted roof. wallRun turns walls into architecture.
+  mirrored((xz) => {
+    const [bx, bz] = xz(17, 13);                 // centre; footprint 12 x 8, walls to 4.6
+    const x0 = bx - 6, x1 = bx + 6, z0 = bz - 4, z1 = bz + 4, WH2 = 4.6;
+    const south = bz > 0;                        // door faces the courtyard
+    const zDoor = south ? z0 : z1, zBack = south ? z1 : z0;
+    wallRun(stone, 'x', x0, x1, zDoor - (south ? 0.45 : 0), zDoor + (south ? 0 : 0.45), 0, WH2,
+      [{ at: bx, w: 3.2, h: 3.4 }, { at: bx - 4.2, w: 2.2, h: 1.5, sill: 1.4 }, { at: bx + 4.2, w: 2.2, h: 1.5, sill: 1.4 }]);
+    wallRun(stone, 'x', x0, x1, zBack - (south ? 0 : 0.45), zBack + (south ? 0.45 : 0), 0, WH2,
+      [{ at: bx - 3, w: 2.2, h: 1.5, sill: 1.4 }, { at: bx + 3, w: 2.2, h: 1.5, sill: 1.4 }]);
+    wallRun(stone, 'z', z0, z1, x0 - 0.45 + (bx > 0 ? 0 : 0), x0, 0, WH2, [{ at: bz, w: 2.2, h: 1.5, sill: 1.4 }]);
+    wallRun(stone, 'z', z0, z1, x1, x1 + 0.45, 0, WH2, []);
+    box(planks, x0 - 0.45, WH2, z0 - 0.45, x1 + 0.45, WH2 + 0.35, z1 + 0.45);   // roof slab
+    box(darkWood, x0 + 0.2, 0, z0 + 0.2, x1 - 0.2, 0.12, z1 - 0.2);             // plank floor inside
+    bevelCbox(planks, bx - 3.4, 0.62, bz + (south ? 1.6 : -1.6), 1.3, 1.24, 1.3, true);
+    cbox(torch, bx, 3.9, zBack + (south ? 0.3 : -0.3), 0.4, 0.5, 0.24);
+    // roof parapet (gap where the ramp lands) + the ramp itself along the east face
+    const rz = south ? [z1 + 0.45, z1 + 0.75] : [z0 - 0.75, z0 - 0.45];
+    box(stone, x0 - 0.45, WH2 + 0.35, south ? z0 - 0.75 : z1 + 0.45, x1 + 0.45, WH2 + 0.95, south ? z0 - 0.45 : z1 + 0.75);
+    box(stone, x0 - 0.75, WH2 + 0.35, z0 - 0.45, x0 - 0.45, WH2 + 0.95, z1 + 0.45);
+    box(stone, x1 + 0.45, WH2 + 0.35, south ? bz - 4.45 : bz - 4.45 + 0, x1 + 0.75, WH2 + 0.95, south ? bz + 1 : bz + 4.45);
+    ramp(stone, x1 + 0.45, south ? z1 + 0.45 : z0 - 12.45, x1 + 3.85, south ? z1 + 12.45 : z0 - 0.45,
+      0, south ? WH2 + 0.35 : 0, south ? 0 : WH2 + 0.35, 'z');
+    sign(south ? '-z' : '+z', bx, 4.05, zDoor + (south ? -0.5 : 0.5), 0.7, 'BARRACKS', [0.85, 0.7, 0.4]);
+  });
+
   // torches along the E and W walls; scattered cover
   for (let a = -27; a <= 27; a += 9) { cbox(torch, -W + 0.15, 4.2, a, 0.3, 0.55, 0.28); cbox(torch, W - 0.15, 4.2, a, 0.3, 0.55, 0.28); }
   mirrored((xz) => {
@@ -1277,7 +1354,22 @@ function buildCaldera() {
   const D = mat('decals', { tex: useTex(decalTex('decals')), blend: true, rough: 0.5, metal: 0, base: [1, 1, 1] });
   const H = 40, WH = 12;
 
-  box(dirt, -H - 1.5, -0.5, -H - 1.5, H + 1.5, 0, H + 1.5);
+  // rolling ground: value noise masked flat around every structure — the hill, channels,
+  // pools, bases and walls all sit at 0, the open field undulates ±1
+  const _tg = lattice(rng(777), 24);
+  const wnoise = (x, z) => noiseAt(_tg, 24, ((x * 2.4 % 256) + 256) % 256, ((z * 2.4 % 256) + 256) % 256, 256);
+  const rectOut = (x, z, rx0, rz0, rx1, rz1) => Math.max(rx0 - x, x - rx1, rz0 - z, z - rz1, 0);
+  const th = (x, z) => {
+    let m = Math.min(1, rectOut(x, z, -17, -29, 17, 29) / 5);                     // hill + channels + sign strips
+    m = Math.min(m, rectOut(x, z, 19.5, -16.5, 32.5, -3.5) / 5);                  // pools
+    m = Math.min(m, rectOut(x, z, -32.5, 3.5, -19.5, 16.5) / 5);
+    m = Math.min(m, rectOut(x, z, H - 13, -14, H + 2, 14) / 5);                   // bases
+    m = Math.min(m, rectOut(x, z, -H - 2, -14, -(H - 13), 14) / 5);
+    m = Math.min(m, Math.max(0, (H - 4 - Math.max(Math.abs(x), Math.abs(z))) / 5));   // walls
+    const n = wnoise(x, z) * 0.7 + wnoise(x * 2.3 + 91, z * 2.3 + 40) * 0.3;
+    return (n - 0.5) * 2.0 * Math.max(0, m);
+  };
+  terrainGround(dirt, -H - 1.5, -H - 1.5, H + 1.5, H + 1.5, 2.1, th);
   box(rock, -H - 1.5, 0, -H - 1.5, H + 1.5, WH, -H);
   box(rock, -H - 1.5, 0, H, H + 1.5, WH, H + 1.5);
   box(rock, -H - 1.5, 0, -H, -H, WH, H);
@@ -1320,7 +1412,7 @@ function buildCaldera() {
     box(rock, px - 4.6, 0, pz - 3, px - 4, 0.3, pz + 3);
     box(rock, px + 4, 0, pz - 3, px + 4.6, 0.3, pz + 3);
     for (const [bx, bz, r2] of [[14, 24, 1.4], [30, 2, 1.1], [20, -24, 1.7], [7, -27, 1.2]]) {
-      const [x, z] = xz(bx, bz); bevelCbox(rock, x, r2 * 0.62, z, r2 * 2, r2 * 1.28, r2 * 1.7);
+      const [x, z] = xz(bx, bz); boulder(rock, x, th(x, z) + r2 * 0.42, z, r2 * 1.45, (bx * 7 + bz) | 0);
     }
   });
   // bases E and W
