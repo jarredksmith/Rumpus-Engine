@@ -1006,8 +1006,10 @@ function _uvFor(n, s, v) {
   if (ax >= az) return n[0] >= 0 ? [v[2] / s, -v[1] / s] : [-v[2] / s, -v[1] / s];
   return n[2] >= 0 ? [-v[0] / s, -v[1] / s] : [v[0] / s, -v[1] / s];
 }
+const PATCHES = [];   // every emitted face: a lightmap-atlas cell candidate
 function _quadRaw(m, a, b, c, d, unitUV) {
   const p = prim(m), s = MATS[m].scale;
+  if (!MATS[m].blend && !MATS[m].glow) PATCHES.push({ m, base: p.pos.length / 3, n: 4 });
   const u = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], v = [d[0] - b[0], d[1] - b[1], d[2] - b[2]];
   let n = [u[2] * v[1] - u[1] * v[2], u[0] * v[2] - u[2] * v[0], u[1] * v[0] - u[0] * v[1]];
   const l = Math.hypot(...n) || 1; n = n.map(x => x / l);
@@ -1035,6 +1037,7 @@ function quad(m, a, b, c, d, unitUV) {
 }
 function tri(m, a, b, c) {
   const p = prim(m), s = MATS[m].scale;
+  if (!MATS[m].blend && !MATS[m].glow) PATCHES.push({ m, base: p.pos.length / 3, n: 3 });
   const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
   let n = [u[2] * v[1] - u[1] * v[2], u[0] * v[2] - u[2] * v[0], u[1] * v[0] - u[0] * v[1]];
   const l = Math.hypot(...n) || 1; n = n.map(x => x / l);
@@ -1803,54 +1806,127 @@ function buildMuseum() {
 }
 
 // -------------------------------------------------------------- baked lighting (AO) ----
-// Per-vertex ambient occlusion, raytraced against the level's own solids at build time and
-// written as COLOR_0 (three.js multiplies it into the base colour). This is the "baked
-// lighting" a static GLB can carry into any engine scene: contact darkening at wall bases,
-// gloom under decks, bright open tops — while staying correct under the level's dynamic sun,
-// which baked directional shadows would fight.
-function bakeAO() {
-  const DIRS = [];
-  for (let q = 0; q < 32; q++) {   // golden-spiral hemisphere-ish fan over the sphere
-    const t = (q + 0.5) / 32, ph = Math.acos(1 - 2 * t), th = q * 2.399963;
-    DIRS.push([Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th)]);
-  }
+// Texel-level ambient occlusion, raytraced at build time against the level's own solids and
+// baked into a LIGHTMAP: every face gets its own cell in an atlas (8x8 interior + 1px gutter),
+// addressed by a second UV set and wired as glTF occlusionTexture/texCoord 1 — which three.js
+// maps to aoMap. Physically nicer than the old per-vertex COLOR_0 bake it replaces: texture-
+// resolution gradients, and AO no longer darkens direct sunlight, only ambient.
+// A uniform XZ grid over the solids accelerates the rays (2D DDA); without it a full level
+// bake is minutes, with it seconds.
+let LM = null;   // { px: Float64Array A*A, A } after bake
+function bakeLightmap() {
+  if (!PATCHES.length) return;
+  const CELL = 10, INT = 8;
+  const perRow1 = Math.floor(1024 / CELL);
+  const A = PATCHES.length <= perRow1 * perRow1 ? 1024 : 2048;
+  const perRow = Math.floor(A / CELL);
+  if (PATCHES.length > perRow * perRow) throw new Error('lightmap atlas overflow: ' + PATCHES.length);
+  LM = { px: new Float64Array(A * A).fill(1), A };
+  // ---- acceleration grid over XZ ----
+  let mnx = 1e9, mnz = 1e9, mxx = -1e9, mxz = -1e9;
+  for (const b of SOLIDS) { mnx = Math.min(mnx, b[0]); mnz = Math.min(mnz, b[2]); mxx = Math.max(mxx, b[3]); mxz = Math.max(mxz, b[5]); }
+  const GC = 7, GW = Math.max(1, Math.ceil((mxx - mnx) / GC)), GH = Math.max(1, Math.ceil((mxz - mnz) / GC));
+  const gcell = Array.from({ length: GW * GH }, () => []);
+  SOLIDS.forEach((b, si) => {
+    const x0 = Math.max(0, ((b[0] - mnx) / GC) | 0), x1 = Math.min(GW - 1, ((b[3] - mnx) / GC) | 0);
+    const z0 = Math.max(0, ((b[2] - mnz) / GC) | 0), z1 = Math.min(GH - 1, ((b[5] - mnz) / GC) | 0);
+    for (let gz = z0; gz <= z1; gz++) for (let gx = x0; gx <= x1; gx++) gcell[gz * GW + gx].push(si);
+  });
+  const stamp = new Int32Array(SOLIDS.length).fill(-1);
+  let raySerial = 0;
   const MAXT = 10;
-  const hit = (ox, oy, oz, dx, dy, dz) => {   // nearest slab-test distance, else Infinity
-    let best = Infinity;
-    for (let si = 0; si < SOLIDS.length; si++) {
-      const b = SOLIDS[si];
-      let t0 = 0.08, t1 = Math.min(best, MAXT);
-      let ok = true;
-      for (let a = 0; a < 3 && ok; a++) {
-        const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
-        const mn = b[a], mx = b[a + 3];
-        if (Math.abs(d) < 1e-9) { if (o < mn || o > mx) ok = false; continue; }
-        let ta = (mn - o) / d, tb = (mx - o) / d;
-        if (ta > tb) { const tmp = ta; ta = tb; tb = tmp; }
-        if (ta > t0) t0 = ta; if (tb < t1) t1 = tb;
-        if (t0 > t1) ok = false;
-      }
-      if (ok && t0 < best) best = t0;
+  const slab = (b, ox, oy, oz, dx, dy, dz, tMax) => {
+    let t0 = 0.05, t1 = tMax;
+    for (let a2 = 0; a2 < 3; a2++) {
+      const o = a2 === 0 ? ox : a2 === 1 ? oy : oz, d = a2 === 0 ? dx : a2 === 1 ? dy : dz;
+      const mn = b[a2], mx = b[a2 + 3];
+      if (Math.abs(d) < 1e-9) { if (o < mn || o > mx) return Infinity; continue; }
+      let ta = (mn - o) / d, tb = (mx - o) / d;
+      if (ta > tb) { const q = ta; ta = tb; tb = q; }
+      if (ta > t0) t0 = ta; if (tb < t1) t1 = tb;
+      if (t0 > t1) return Infinity;
     }
-    return best;
+    return t0;
   };
-  prims.forEach((p, mi) => {
-    if (!p || MATS[mi].blend) return;
-    p.col = new Float64Array(p.pos.length);
-    for (let vi = 0; vi < p.pos.length / 3; vi++) {
-      const nx = p.nrm[vi * 3], ny = p.nrm[vi * 3 + 1], nz = p.nrm[vi * 3 + 2];
-      const ox = p.pos[vi * 3] + nx * 0.06, oy = p.pos[vi * 3 + 1] + ny * 0.06, oz = p.pos[vi * 3 + 2] + nz * 0.06;
-      let occ = 0, wsum = 0;
-      for (const d of DIRS) {
-        const dt = d[0] * nx + d[1] * ny + d[2] * nz;
-        if (dt < 0.12) continue;
-        wsum += dt;
-        const t = hit(ox, oy, oz, d[0], d[1], d[2]);
-        if (t < MAXT) occ += dt * (1 - t / MAXT);
+  const rayOcc = (ox, oy, oz, dx, dy, dz) => {   // weight of nearest hit within MAXT, 0 if clear
+    raySerial++;
+    let best = MAXT;
+    let gx = ((ox - mnx) / GC) | 0, gz = ((oz - mnz) / GC) | 0;
+    const stepX = dx > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
+    let tMaxX = Math.abs(dx) < 1e-9 ? Infinity : (((gx + (dx > 0 ? 1 : 0)) * GC + mnx) - ox) / dx;
+    let tMaxZ = Math.abs(dz) < 1e-9 ? Infinity : (((gz + (dz > 0 ? 1 : 0)) * GC + mnz) - oz) / dz;
+    const tDX = Math.abs(GC / (dx || 1e-9)), tDZ = Math.abs(GC / (dz || 1e-9));
+    let t = 0;
+    for (let it = 0; it < 12 && t < best; it++) {
+      if (gx >= 0 && gx < GW && gz >= 0 && gz < GH) {
+        for (const si of gcell[gz * GW + gx]) {
+          if (stamp[si] === raySerial) continue;
+          stamp[si] = raySerial;
+          const th2 = slab(SOLIDS[si], ox, oy, oz, dx, dy, dz, best);
+          if (th2 < best) best = th2;
+        }
       }
-      const ao = Math.max(0, Math.min(1, 1 - 1.35 * (wsum ? occ / wsum : 0)));
-      const c = 0.34 + 0.66 * ao;
-      p.col[vi * 3] = c; p.col[vi * 3 + 1] = c; p.col[vi * 3 + 2] = c;
+      if (tMaxX < tMaxZ) { t = tMaxX; tMaxX += tDX; gx += stepX; }
+      else { t = tMaxZ; tMaxZ += tDZ; gz += stepZ; }
+      if ((gx < 0 && stepX < 0) || (gx >= GW && stepX > 0)) break;
+      if ((gz < 0 && stepZ < 0) || (gz >= GH && stepZ > 0)) break;
+    }
+    return best < MAXT ? (1 - best / MAXT) : 0;
+  };
+  const DIRS = [];
+  for (let q = 0; q < 32; q++) {
+    const t2 = (q + 0.5) / 32, ph = Math.acos(1 - 2 * t2), th3 = q * 2.399963;
+    DIRS.push([Math.sin(ph) * Math.cos(th3), Math.cos(ph), Math.sin(ph) * Math.sin(th3)]);
+  }
+  // ---- bake every patch into its cell ----
+  PATCHES.forEach((pt, pi) => {
+    const p = prim(pt.m);
+    if (!p.uv2) p.uv2 = new Float64Array(p.pos.length / 3 * 2).fill(0);
+    const cx = (pi % perRow) * CELL, cy = ((pi / perRow) | 0) * CELL;
+    const V = [];
+    for (let q = 0; q < pt.n; q++) V.push([p.pos[(pt.base + q) * 3], p.pos[(pt.base + q) * 3 + 1], p.pos[(pt.base + q) * 3 + 2]]);
+    const nx = p.nrm[pt.base * 3], ny = p.nrm[pt.base * 3 + 1], nz = p.nrm[pt.base * 3 + 2];
+    // uv2: interior rect (quads) or interior right triangle (tris), half-texel inset
+    if (pt.n === 4) {
+      const u0 = (cx + 1) / A, v0 = (cy + 1) / A, u1 = (cx + 1 + INT) / A, v1 = (cy + 1 + INT) / A;
+      const UV = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+      for (let q = 0; q < 4; q++) { p.uv2[(pt.base + q) * 2] = UV[q][0]; p.uv2[(pt.base + q) * 2 + 1] = UV[q][1]; }
+    } else {
+      const UV = [[(cx + 1) / A, (cy + 1) / A], [(cx + 1 + INT) / A, (cy + 1) / A], [(cx + 1) / A, (cy + 1 + INT) / A]];
+      for (let q = 0; q < 3; q++) { p.uv2[(pt.base + q) * 2] = UV[q][0]; p.uv2[(pt.base + q) * 2 + 1] = UV[q][1]; }
+    }
+    const downFacing = ny < -0.75;
+    for (let j = 1; j <= INT; j++) for (let i2 = 1; i2 <= INT; i2++) {   // pass 1: interior
+      { const fi = i2, fj = j;
+        if (downFacing) { LM.px[(cy + j) * A + cx + i2] = 0.55; continue; }
+        const fu = (fi - 0.5) / INT, fv = (fj - 0.5) / INT;
+        let px2, py2, pz2;
+        if (pt.n === 4) {
+          const ax2 = V[0][0] + (V[1][0] - V[0][0]) * fu, ay2 = V[0][1] + (V[1][1] - V[0][1]) * fu, az2 = V[0][2] + (V[1][2] - V[0][2]) * fu;
+          const bx2 = V[3][0] + (V[2][0] - V[3][0]) * fu, by2 = V[3][1] + (V[2][1] - V[3][1]) * fu, bz2 = V[3][2] + (V[2][2] - V[3][2]) * fu;
+          px2 = ax2 + (bx2 - ax2) * fv; py2 = ay2 + (by2 - ay2) * fv; pz2 = az2 + (bz2 - az2) * fv;
+        } else {
+          let wu = fu, wv = fv;
+          if (wu + wv > 1) { const ex = (wu + wv - 1) / 2; wu -= ex; wv -= ex; }   // clamp to the triangle
+          px2 = V[0][0] + (V[1][0] - V[0][0]) * wu + (V[2][0] - V[0][0]) * wv;
+          py2 = V[0][1] + (V[1][1] - V[0][1]) * wu + (V[2][1] - V[0][1]) * wv;
+          pz2 = V[0][2] + (V[1][2] - V[0][2]) * wu + (V[2][2] - V[0][2]) * wv;
+        }
+        const ox = px2 + nx * 0.06, oy = py2 + ny * 0.06, oz = pz2 + nz * 0.06;
+        let occ = 0, wsum = 0;
+        for (const d of DIRS) {
+          const dt = d[0] * nx + d[1] * ny + d[2] * nz;
+          if (dt < 0.12) continue;
+          wsum += dt;
+          occ += dt * rayOcc(ox, oy, oz, d[0], d[1], d[2]);
+        }
+        LM.px[(cy + j) * A + cx + i2] = 0.3 + 0.7 * Math.max(0, Math.min(1, 1 - 1.35 * (wsum ? occ / wsum : 0)));
+      }
+    }
+    for (let j = 0; j < CELL; j++) for (let i2 = 0; i2 < CELL; i2++) {   // pass 2: gutter ring
+      const fi = Math.min(Math.max(i2, 1), INT), fj = Math.min(Math.max(j, 1), INT);
+      if (i2 === fi && j === fj) continue;
+      LM.px[(cy + j) * A + cx + i2] = LM.px[(cy + fj) * A + cx + fi];
     }
   });
 }
@@ -1858,6 +1934,7 @@ function bakeAO() {
 // ------------------------------------------------------------------- GLB writing ----
 function writeGLB(out) {
   const bufs = [], views = [], accessors = [], primitives = [];
+  const _lmMats = new Set();
   let off = 0;
   const push = (buf, target) => {
     views.push({ buffer: 0, byteOffset: off, byteLength: buf.length, ...(target ? { target } : {}) });
@@ -1877,11 +1954,12 @@ function writeGLB(out) {
     accessors.push({ bufferView: vUV, componentType: 5126, count: uv.length / 2, type: 'VEC2' });
     accessors.push({ bufferView: vIdx, componentType: 5125, count: idx.length, type: 'SCALAR' });
     const attrs = { POSITION: accessors.length - 4, NORMAL: accessors.length - 3, TEXCOORD_0: accessors.length - 2 };
-    if (p.col) { const col = new Float32Array(p.col);
-      const vCol = push(Buffer.from(col.buffer), 34962);
-      accessors.push({ bufferView: vCol, componentType: 5126, count: col.length / 3, type: 'VEC3' });
-      attrs.COLOR_0 = accessors.length - 1; }
-    primitives.push({ attributes: attrs, indices: accessors.length - 1 - (p.col ? 1 : 0), material: mi });
+    let extra = 0;
+    if (p.uv2) { const u2 = new Float32Array(p.uv2);
+      const vU2 = push(Buffer.from(u2.buffer), 34962);
+      accessors.push({ bufferView: vU2, componentType: 5126, count: u2.length / 2, type: 'VEC2' });
+      attrs.TEXCOORD_1 = accessors.length - 1; extra = 1; _lmMats.add(mi); }
+    primitives.push({ attributes: attrs, indices: accessors.length - 1 - extra, material: mi });
   });
 
   // bake textures: base colour at full res (RGBA for the decal atlas); metallic-roughness and
@@ -1911,6 +1989,11 @@ function writeGLB(out) {
     }
     texIdx[name] = e;
   }
+  // the baked AO lightmap: single grey PNG, its own UV channel
+  let lmTex = null;
+  if (LM) { const px = new Float64Array(LM.A * LM.A * 3);
+    for (let i = 0; i < LM.A * LM.A; i++) { px[i * 3] = px[i * 3 + 1] = px[i * 3 + 2] = LM.px[i]; }
+    lmTex = addImg(pngEncode(toBytes(px), LM.A, LM.A, 3)); }
   const _skip = (env, n) => (process.env[env] || '').split(',').includes(n);   // debug bisection
   const materials = MATS.map(md => {
     const g = { name: md.name, pbrMetallicRoughness: { baseColorFactor: [...md.base, 1], metallicFactor: md.metal, roughnessFactor: md.rough } };
@@ -1919,6 +2002,7 @@ function writeGLB(out) {
       if (ti.mr != null && !_skip('NOMR', md.name)) g.pbrMetallicRoughness.metallicRoughnessTexture = { index: ti.mr };
       if (ti.nrm != null && !_skip('NONRM', md.name)) g.normalTexture = { index: ti.nrm, scale: md.nrm }; }
     if (md.blend) g.alphaMode = 'BLEND';
+    if (lmTex != null && _lmMats.has(MATS.indexOf(md))) g.occlusionTexture = { index: lmTex, texCoord: 1 };
     if (md.tex && texIdx[md.tex].em != null) { g.emissiveTexture = { index: texIdx[md.tex].em }; g.emissiveFactor = [1, 1, 1]; }
     else if (md.glow) g.emissiveFactor = md.base.map(v => v * md.glow);
     return g;
@@ -1961,7 +2045,7 @@ if (!LAYOUTS[which] || !out) {
 }
 const info = LAYOUTS[which]();
 const t0 = process.hrtime.bigint();
-bakeAO();
+bakeLightmap();
 const aoMs = Number(process.hrtime.bigint() - t0) / 1e6 | 0;
 const w = writeGLB(out);
-console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets, AO ${aoMs} ms over ${SOLIDS.length} solids)`);
+console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets, lightmap ${LM ? LM.A : 0}px / ${PATCHES.length} patches in ${aoMs} ms over ${SOLIDS.length} solids)`);
