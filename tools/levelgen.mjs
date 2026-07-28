@@ -51,6 +51,28 @@ function fbm(r, S, octaves) {   // sampler(x,y) in ~[0,1]
   const tot = octaves.reduce((s, o) => s + o[1], 0);
   return (x, y) => layers.reduce((s, [g, n, w]) => s + noiseAt(g, n, x, y, S) * w, 0) / tot;
 }
+function worley(r, S, n) {   // wrapped feature points; sampler returns {d1,d2,id} in px
+  const pts = [];
+  for (let gy = 0; gy < n; gy++) for (let gx = 0; gx < n; gx++) pts.push([(gx + r()) * S / n, (gy + r()) * S / n, r()]);
+  return (x, y) => {
+    const gx = Math.floor(x * n / S), gy = Math.floor(y * n / S);
+    let d1 = 1e9, d2 = 1e9, id = 0;
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+      const cgx = gx + ox, cgy = gy + oy;
+      const wx = ((cgx % n) + n) % n, wy = ((cgy % n) + n) % n;
+      const pt = pts[wy * n + wx];
+      const px = pt[0] + (cgx - wx) / n * S, py = pt[1] + (cgy - wy) / n * S;
+      const d = (x - px) * (x - px) + (y - py) * (y - py);
+      if (d < d1) { d2 = d1; d1 = d; id = pt[2]; } else if (d < d2) d2 = d;
+    }
+    return { d1: Math.sqrt(d1), d2: Math.sqrt(d2), id };
+  };
+}
+function hash2(a, b) { const h = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return h - Math.floor(h); }
+function brickAt(x, y, bw, bh, off) {   // staggered courses; tiles when bw, bh divide S
+  const row = Math.floor(y / bh), xo = (row % 2) * bw * off;
+  return { row, col: Math.floor((x + xo) / bw), lx: (((x + xo) % bw) + bw) % bw, ly: ((y % bh) + bh) % bh };
+}
 function blurField(src, S, rad) {   // wrapping two-pass box blur: the "local mean" for cavity/edge masks
   const tmp = new Float64Array(S * S), out = new Float64Array(S * S), w = rad * 2 + 1;
   for (let y = 0; y < S; y++) { let acc = 0;
@@ -64,7 +86,9 @@ function blurField(src, S, rad) {   // wrapping two-pass box blur: the "local me
   return out;
 }
 class Tex {
-  constructor(name, S) { this.name = name; this.S = S; this.rgb = new Float64Array(S * S * 3); this.h = new Float64Array(S * S); this.mr = null; this.a = null; this.noAux = false; }
+  constructor(name, S) { this.name = name; this.S = S; this.rgb = new Float64Array(S * S * 3); this.h = new Float64Array(S * S); this.mr = null; this.a = null; this.em = null; this.noAux = false; }
+  emInit() { this.em = new Float64Array(this.S * this.S * 3); return this; }
+  setEm(i, c, k = 1) { this.em[i * 3] = c[0] * k; this.em[i * 3 + 1] = c[1] * k; this.em[i * 3 + 2] = c[2] * k; }
   fill(c) { for (let i = 0; i < this.S * this.S; i++) { this.rgb[i * 3] = c[0]; this.rgb[i * 3 + 1] = c[1]; this.rgb[i * 3 + 2] = c[2]; } return this; }
   each(fn) { for (let y = 0; y < this.S; y++) for (let x = 0; x < this.S; x++) fn(x, y, y * this.S + x); return this; }
   tint(i, k) { this.rgb[i * 3] *= k; this.rgb[i * 3 + 1] *= k; this.rgb[i * 3 + 2] *= k; }
@@ -296,6 +320,299 @@ function hazardTex(name, S) {   // 45° chevrons, chipped and scuffed
   }
   return finish(t, 77, {});
 }
+// ---- expanded families: masonry, nature, interior, sci-fi ------------------------------
+function brickTex(name, seed, S, col = [0.58, 0.26, 0.19]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256, bw = S / 4, bh = S / 16;
+  const grain = fbm(r, S, [[48, 1], [160, 0.6]]);
+  const chips = worley(rng(seed ^ 9), S, 20);
+  t.fill(col);
+  t.each((x, y, i) => {
+    const b = brickAt(x, y, bw, bh, 0.5), m = 3 * k;
+    if (b.lx < m || b.ly < m) { t.rgb[i*3]=0.72; t.rgb[i*3+1]=0.7; t.rgb[i*3+2]=0.66; t.h[i] = 0; t.tint(i, 0.9 + grain(x, y) * 0.2); return; }
+    const tone = 0.78 + hash2(b.row, b.col) * 0.44, warm = 0.94 + hash2(b.col, b.row) * 0.12;
+    t.tintC(i, tone * warm, tone, tone * (2 - warm));
+    t.tint(i, 0.9 + grain(x, y) * 0.2);
+    const eb = Math.min(b.lx - m, b.ly - m, bw - b.lx, bh - b.ly);
+    t.h[i] = 0.55 + Math.min(1, eb / (4 * k)) * 0.45;
+    const c = chips(x, y); if (c.d1 < 5 * k && hash2(b.col * 3, b.row * 7) > 0.6) { t.tint(i, 1.18); t.h[i] -= 0.5; }
+  });
+  return finish(t, seed, { cavDark: 0.3 });
+}
+function stoneBlocksTex(name, seed, S, col = [0.6, 0.56, 0.48]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256, bw = S / 4, bh = S / 4;
+  const grain = fbm(r, S, [[16, 1], [64, 0.5], [200, 0.3]]);
+  const pits = worley(rng(seed ^ 5), S, 26);
+  t.fill(col);
+  t.each((x, y, i) => {
+    const b = brickAt(x, y, bw, bh, 0.5), m = 5 * k;
+    const g = grain(x, y);
+    if (b.lx < m || b.ly < m) { t.tint(i, 0.5 + g * 0.2); t.h[i] = 0; return; }
+    t.tint(i, (0.82 + hash2(b.row, b.col) * 0.36) * (0.88 + g * 0.24));
+    const eb = Math.min(b.lx - m, b.ly - m, bw - b.lx, bh - b.ly);
+    t.h[i] = 0.4 + Math.min(1, eb / (10 * k)) * 0.6 + g * 0.15;
+    const c = pits(x, y); if (c.d1 < 3.5 * k) { t.tint(i, 0.82); t.h[i] -= 0.3; }
+  });
+  return finish(t, seed, { cavDark: 0.36, cavK: 1.8 });
+}
+function cobbleTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  const w = worley(rng(seed ^ 3), S, 10);
+  const grain = fbm(r, S, [[32, 1], [128, 0.5]]);
+  t.fill([0.5, 0.48, 0.45]);
+  t.each((x, y, i) => {
+    const c = w(x, y), rim = c.d2 - c.d1, g = grain(x, y);
+    if (rim < 4 * k) { t.mix(i, [0.28, 0.24, 0.19], 0.85); t.h[i] = 0; t.tint(i, 0.85 + g * 0.3); return; }
+    t.tint(i, (0.74 + c.id * 0.5) * (0.9 + g * 0.2));
+    t.tintC(i, 1, 1 - c.id * 0.06, 1 - c.id * 0.1);
+    t.h[i] = Math.min(1, (rim - 4 * k) / (14 * k));
+  });
+  return finish(t, seed, { cavDark: 0.38, edgeLight: 0.16 });
+}
+function rockTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S);
+  const f1 = fbm(r, S, [[6, 1], [12, 0.6], [24, 0.4], [64, 0.25], [160, 0.15]]);
+  const f2 = fbm(r, S, [[8, 1], [32, 0.5]]);
+  t.fill([0.46, 0.42, 0.38]);
+  t.each((x, y, i) => {
+    const ridge = 1 - Math.abs(2 * f1(x, y) - 1);
+    const strat = Math.sin((y + f2(x, y) * 90) * Math.PI * 10 / S) * 0.5 + 0.5;
+    t.tint(i, 0.6 + ridge * 0.5);
+    t.tintC(i, 1 + strat * 0.1, 1 + strat * 0.04, 1 - strat * 0.05);
+    t.h[i] = ridge;
+  });
+  return finish(t, seed, { cavDark: 0.4, cavK: 2, edgeLight: 0.18 });
+}
+function dirtTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  const f = fbm(r, S, [[8, 1], [24, 0.6], [96, 0.4]]);
+  const peb = worley(rng(seed ^ 7), S, 44);
+  t.fill([0.4, 0.32, 0.24]);
+  t.each((x, y, i) => {
+    const g = f(x, y); t.tint(i, 0.75 + g * 0.5); t.h[i] = g * 0.5;
+    const c = peb(x, y);
+    if (c.d1 < (1.5 + c.id * 2.2) * k && c.id > 0.55) { t.tint(i, 1.3); t.tintC(i, 1, 1.02, 1.06); t.h[i] += 0.4; }
+  });
+  return finish(t, seed, { cavDark: 0.3 });
+}
+function grassTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S);
+  const clump = fbm(r, S, [[10, 1], [30, 0.6]]);
+  const dry = fbm(rng(seed ^ 4), S, [[4, 1], [12, 0.5]]);
+  t.fill([0.26, 0.4, 0.16]);
+  t.each((x, y, i) => {
+    const c = clump(x, y), d = dry(x, y);
+    t.tint(i, 0.75 + c * 0.55);
+    if (d > 0.58) t.mix(i, [0.55, 0.5, 0.24], Math.min(1, (d - 0.58) * 4) * 0.6);   // dry patches
+    if (r() < 0.06) t.tint(i, r() < 0.5 ? 0.7 : 1.4);                               // blade speckle
+    t.h[i] = c * 0.4 + (r() < 0.06 ? 0.3 : 0);
+  });
+  return finish(t, seed, { cavDark: 0.22, edgeLight: 0.1 });
+}
+function sandTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S);
+  const warp = fbm(r, S, [[6, 1], [18, 0.5]]);
+  const grain = fbm(rng(seed ^ 2), S, [[200, 1]]);
+  t.fill([0.76, 0.66, 0.48]);
+  t.each((x, y, i) => {
+    const rip = Math.sin((x + warp(x, y) * 120) * Math.PI * 14 / S) * 0.5 + 0.5;
+    t.tint(i, 0.86 + rip * 0.2 + (grain(x, y) - 0.5) * 0.1);
+    t.h[i] = rip * 0.8;
+    if (r() < 0.02) t.tint(i, 1.16);
+  });
+  return finish(t, seed, { cavDark: 0.2, edgeK: 1, grainRough: 0.06 });
+}
+function plankTex(name, seed, S, col = [0.55, 0.4, 0.26]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256, pw = S / 6;
+  const grain = fbm(r, S, [[4, 1], [10, 0.7], [40, 0.4]]);
+  const knots = worley(rng(seed ^ 8), S, 6);
+  t.fill(col);
+  t.each((x, y, i) => {
+    const colI = Math.floor(x / pw), ph = hash2(colI, 7);
+    const lx = x % pw;
+    const g = grain(((x * 0.3) | 0) % S, (y * 2 + ph * S) % S);                       // stretched along the plank
+    const tone = 0.8 + ph * 0.36;
+    t.tint(i, tone * (0.78 + g * 0.45));
+    t.h[i] = g * 0.5;
+    if (lx < 2 * k || lx > pw - 2 * k) { t.tint(i, 0.55); t.h[i] = 0; }               // plank gaps
+    const seamY = Math.floor(hash2(colI, 3) * 4) * (S / 4) + (S / 8) * (colI % 2);
+    if (Math.abs(y - seamY) < 2 * k) { t.tint(i, 0.6); t.h[i] = 0; }                  // board ends
+    const kn = knots(x, y);
+    if (kn.d1 < 9 * k && kn.id > 0.72) { const d = kn.d1 / (9 * k);
+      t.mix(i, [0.32, 0.2, 0.1], 0.7 * (1 - d)); t.h[i] -= (1 - d) * 0.3;
+      if (Math.abs(d - 0.6) < 0.15 || Math.abs(d - 0.25) < 0.1) t.tint(i, 0.7); }     // knot rings
+  });
+  return finish(t, seed, { cavDark: 0.32 });
+}
+function asphaltTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  const f = fbm(r, S, [[6, 1], [24, 0.5]]);
+  t.fill([0.16, 0.16, 0.17]).mrInit(0.05, 0.85);
+  t.each((x, y, i) => {
+    const g = f(x, y); t.tint(i, 0.8 + g * 0.5 + (r() < 0.3 ? r() * 0.5 : 0));
+    t.h[i] = g * 0.3 + r() * 0.12;
+    t.mr[i * 2] = 0.78 + g * 0.18;
+  });
+  for (let c = 0; c < 3; c++) {                                                       // cracks with light edges
+    let x = r() * S, y = r() * S, ang = r() * Math.PI * 2;
+    for (let d = 0, len = S * (0.4 + r() * 0.4); d < len; d++) {
+      ang += (r() - 0.5) * 0.35; x = (x + Math.cos(ang) + S) % S; y = (y + Math.sin(ang) + S) % S;
+      const i = (y | 0) * S + (x | 0); t.tint(i, 0.45); t.h[i] -= 0.8;
+      const j = (y | 0) * S + (((x | 0) + 1) % S); t.tint(j, 1.25);
+    }
+  }
+  { const px = (r() * S) | 0, py = (r() * S) | 0, pw2 = (40 + r() * 60) * k, ph2 = (30 + r() * 50) * k;
+    for (let y = 0; y < ph2; y++) for (let x = 0; x < pw2; x++) {                     // fresh patch rectangle
+      const i = (((py + y) | 0) % S) * S + (((px + x) | 0) % S); t.tint(i, 0.55); t.mr[i * 2] = 0.6; } }
+  return finish(t, seed, { cavDark: 0.3, edgeLight: 0.1 });
+}
+function tilesTex(name, seed, S, col = [0.72, 0.76, 0.76]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256, tw = S / 8;
+  t.fill(col).mrInit(0.05, 0.28);
+  const g = fbm(r, S, [[16, 1], [64, 0.4]]);
+  t.each((x, y, i) => {
+    const tx = Math.floor(x / tw), ty = Math.floor(y / tw), lx = x % tw, ly = y % tw, m = 2 * k;
+    if (lx < m || ly < m) { t.mix(i, [0.42, 0.4, 0.38], 0.95); t.h[i] = 0; t.mr[i * 2] = 0.9; return; }
+    const tone = 0.9 + hash2(tx, ty) * 0.18;
+    t.tint(i, tone * (0.96 + g(x, y) * 0.08));
+    t.h[i] = 0.8; t.mr[i * 2] = 0.22 + hash2(ty, tx) * 0.2;
+    if (hash2(tx * 5, ty * 3) > 0.93) { t.tint(i, 0.8 + g(y, x) * 0.2); t.mr[i * 2] = 0.6; }   // a stained tile
+  });
+  return finish(t, seed, { cavDark: 0.25, edgeSmooth: 0.1 });
+}
+function marbleTex(name, seed, S, col = [0.85, 0.85, 0.88]) {
+  const r = rng(seed), t = new Tex(name, S);
+  const w1 = fbm(r, S, [[4, 1], [10, 0.6]]);
+  const w2 = fbm(rng(seed ^ 6), S, [[8, 1], [20, 0.5]]);
+  t.fill(col).mrInit(0.05, 0.2);
+  t.each((x, y, i) => {
+    const v1 = Math.pow(1 - Math.abs(2 * w1((x + w2(x, y) * 140) % S, y) - 1), 10);
+    const v2 = Math.pow(1 - Math.abs(2 * w2((x + w1(x, y) * 90) % S, (y + 77) % S) - 1), 14);
+    t.tint(i, 1 - v1 * 0.35 - v2 * 0.2);
+    if (v1 > 0.5) t.tintC(i, 0.92, 0.94, 1.02);
+    t.h[i] = 0.5; t.mr[i * 2] = 0.16 + v1 * 0.2;
+  });
+  return finish(t, seed, { cavDark: 0.1, edgeK: 0.5, grainRough: 0.05 });
+}
+function plasterTex(name, seed, S, col = [0.8, 0.76, 0.68]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  const f = fbm(r, S, [[6, 1], [20, 0.5], [80, 0.3]]);
+  const chips = worley(rng(seed ^ 11), S, 7);
+  t.fill(col);
+  t.each((x, y, i) => {
+    const g = f(x, y); t.tint(i, 0.88 + g * 0.2); t.h[i] = 0.7 + g * 0.3;
+    const c = chips(x, y);
+    if (c.d1 < 26 * k && c.id > 0.72) {                                                // plaster fallen off
+      const d = c.d1 / (26 * k);
+      if (d < 0.85) { const b = brickAt(x, y, S / 4, S / 16, 0.5);
+        const bm = (b.lx < 3 * k || b.ly < 3 * k);
+        t.rgb[i*3]=bm?0.6:0.5; t.rgb[i*3+1]=bm?0.58:0.28; t.rgb[i*3+2]=bm?0.54:0.2;    // masonry beneath
+        t.tint(i, 0.8 + f(y, x) * 0.3); t.h[i] = 0.15; }
+      else t.tint(i, 0.85);                                                            // cracked fringe
+    }
+  });
+  return finish(t, seed, { cavDark: 0.34 });
+}
+function corrugatedTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  t.fill([0.6, 0.62, 0.64]).mrInit(0.6, 0.5);
+  const g = fbm(r, S, [[8, 1], [48, 0.4]]);
+  t.each((x, y, i) => {
+    const rip = Math.sin(x * Math.PI * 32 / S) * 0.5 + 0.5;
+    t.tint(i, (0.8 + rip * 0.3) * (0.9 + g(x, y) * 0.2));
+    t.h[i] = rip; t.mr[i * 2] = 0.42 + rip * 0.2;
+  });
+  for (let q = 0; q < 7; q++) {                                                        // rust wash from the top lap
+    const sx = (r() * S) | 0, len = (60 + r() * 160) * k, w = (3 + r() * 6) * k;
+    for (let d = 0; d < len; d++) for (let dx = -w; dx <= w; dx++) {
+      const i = ((d | 0) % S) * S + (((sx + dx) | 0) + S) % S;
+      t.mix(i, [0.42, 0.24, 0.13], 0.5 * (1 - d / len) * (1 - Math.abs(dx) / (w + 1))); t.mr[i * 2] = Math.min(1, t.mr[i * 2] + 0.3); }
+  }
+  return finish(t, seed, { edgeSmooth: 0.25 });
+}
+function paintedMetalTex(name, seed, S, col = [0.32, 0.5, 0.38]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256, P = S / 2;
+  t.fill(col).mrInit(0.25, 0.55);
+  const g = fbm(r, S, [[12, 1], [48, 0.5]]);
+  const chips = worley(rng(seed ^ 13), S, 24);
+  const seamD = (v) => Math.min(v % P, P - (v % P));
+  t.each((x, y, i) => {
+    t.tint(i, 0.9 + g(x, y) * 0.2); t.h[i] = 0.6;
+    const ds = Math.min(seamD(x), seamD(y));
+    if (ds < 2 * k) { t.tint(i, 0.6); t.h[i] = 0.2; t.mr[i * 2] = 0.7; }
+    const c = chips(x, y);
+    const near = Math.max(0, 1 - ds / (14 * k));
+    if (c.d1 < (2.5 + near * 5) * k && c.id > 0.55) {                                  // paint chipped to metal
+      t.rgb[i*3]=0.55; t.rgb[i*3+1]=0.57; t.rgb[i*3+2]=0.6; t.h[i] = 0.35;
+      t.mr[i * 2] = 0.4; t.mr[i * 2 + 1] = 0.85;
+      if (c.d1 > (1.5 + near * 4) * k) t.mix(i, [0.4, 0.23, 0.12], 0.7);               // rust fringe
+    }
+  });
+  for (let q = 0; q < 10 * k; q++) {
+    let x = r() * S, y = r() * S; const a = r() * Math.PI, len = (8 + r() * 30) * k;
+    for (let d = 0; d < len; d++) { const i = ((Math.round(y + Math.sin(a) * d) + S) % S) * S + (Math.round(x + Math.cos(a) * d) + S) % S;
+      t.tint(i, 1.15); t.mr[i * 2] = 0.4; }
+  }
+  return finish(t, seed, { edgeLight: 0.24 });
+}
+function scifiPanelTex(name, seed, S, accent = [0.25, 0.85, 1]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  t.fill([0.74, 0.77, 0.81]).mrInit(0.55, 0.42).emInit();
+  const g = fbm(r, S, [[16, 1], [80, 0.4]]);
+  const half = S / 2;
+  t.each((x, y, i) => {
+    t.tint(i, 0.94 + g(x, y) * 0.12); t.h[i] = 0.8; t.mr[i * 2] = 0.36 + g(x, y) * 0.14;
+    const cx = Math.floor(x / half), cy = Math.floor(y / half), lx = x % half, ly = y % half;
+    const hsh = hash2(cx + 3, cy + 5);
+    if (lx < 2 * k || ly < 2 * k) { t.tint(i, 0.55); t.h[i] = 0.3; t.mr[i * 2] = 0.6; }
+    const ix0 = 18 * k + hsh * 20 * k, iy0 = 18 * k, ix1 = half - 18 * k, iy1 = half - 18 * k - hsh * 24 * k;
+    if (lx > ix0 && lx < ix1 && ly > iy0 && ly < iy1) {                                // recessed inner panel
+      t.tint(i, 0.9); t.h[i] = 0.45;
+      const eb = Math.min(lx - ix0, ix1 - lx, ly - iy0, iy1 - ly);
+      if (eb < 2.5 * k) { t.tint(i, 0.62); t.h[i] = 0.3; }
+    }
+    if (hsh > 0.55 && ly > iy1 + 6 * k && ly < iy1 + 11 * k && lx > 30 * k && lx < half - 30 * k) {
+      const on = hash2(cx * 9, cy * 4) > 0.35;
+      t.h[i] = 0.5; if (on) t.setEm(i, accent, 0.9); t.rgb[i*3]=accent[0]*0.4; t.rgb[i*3+1]=accent[1]*0.4; t.rgb[i*3+2]=accent[2]*0.4;   // light strip
+    }
+    if (hsh <= 0.55 && ly > iy1 + 6 * k && ly < iy1 + 12 * k && lx > 34 * k && lx < 74 * k && ((lx / (4 * k)) | 0) % 2 === 0) {
+      t.tint(i, 0.35); t.h[i] = 0.35;                                                  // vent slats
+    }
+  });
+  return finish(t, seed, { cavDark: 0.24, edgeSmooth: 0.15 });
+}
+function scifiFloorTex(name, seed, S, accent = [0.25, 0.85, 1]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256, tw = S / 4;
+  t.fill([0.5, 0.53, 0.57]).mrInit(0.6, 0.5).emInit();
+  const g = fbm(r, S, [[12, 1], [64, 0.5]]);
+  t.each((x, y, i) => {
+    const tx = Math.floor(x / tw), ty = Math.floor(y / tw), lx = x % tw, ly = y % tw, m = 3 * k;
+    t.tint(i, (0.9 + hash2(tx, ty) * 0.16) * (0.92 + g(x, y) * 0.14));
+    t.h[i] = 0.7; t.mr[i * 2] = 0.42 + g(x, y) * 0.2;
+    const eb = Math.min(lx, ly, tw - lx, tw - ly);
+    if (eb < m) { t.tint(i, 0.5); t.h[i] = 0.3;
+      if (hash2(tx * 7 + ty, ty * 3) > 0.72) { t.setEm(i, accent, 0.75); t.rgb[i*3]=accent[0]*0.35; t.rgb[i*3+1]=accent[1]*0.35; t.rgb[i*3+2]=accent[2]*0.35; } }
+    else if (eb < m + 2 * k) t.tint(i, 0.7);
+    if (((x / (2 * k)) | 0) % 2 === ((y / (2 * k)) | 0) % 2 && lx > 12 * k && lx < 30 * k && ly > 12 * k && ly < 30 * k) t.tint(i, 0.88);   // tread patch
+  });
+  return finish(t, seed, { cavDark: 0.26 });
+}
+function lavaTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S).emInit();
+  const w = worley(rng(seed ^ 15), S, 8);
+  const f = fbm(r, S, [[8, 1], [24, 0.6], [96, 0.3]]);
+  t.fill([0.09, 0.07, 0.06]);
+  t.each((x, y, i) => {
+    const c = w(x, y), rim = c.d2 - c.d1, g = f(x, y);
+    t.tint(i, 0.7 + g * 0.6); t.h[i] = Math.min(1, rim / (18 * (S / 256)));
+    const hot = Math.max(0, 1 - rim / (7 * (S / 256)));
+    if (hot > 0) { const hh = hot * (0.65 + g * 0.35);
+      t.setEm(i, [1, 0.32 + g * 0.25, 0.04], hh);
+      t.mix(i, [0.7, 0.2, 0.03], hot * 0.8); t.h[i] = 0.1; }
+    else if (g > 0.72) t.setEm(i, [0.6, 0.12, 0.01], (g - 0.72) * 1.6);               // ember pores
+  });
+  return finish(t, seed, { cavDark: 0.2, edgeLight: 0.1 });
+}
+
 // the decal atlas: 4x4 cells of stains and worn paint, alpha-blended over the tiling base
 const DECAL = { OIL: [0, 0], LEAK: [1, 0], SCUFF: [2, 0], RING: [3, 0], ONE: [0, 1], TWO: [1, 1], CHEV: [2, 1], LINE: [3, 1] };
 function decalTex(name) {
@@ -361,7 +678,7 @@ function _uvFor(n, s, v) {
   if (ax >= az) return [v[2] / s, v[1] / s];
   return [v[0] / s, v[1] / s];
 }
-function quad(m, a, b, c, d, unitUV) {
+function _quadRaw(m, a, b, c, d, unitUV) {
   const p = prim(m), s = MATS[m].scale;
   const u = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], v = [d[0] - b[0], d[1] - b[1], d[2] - b[2]];
   let n = [u[2] * v[1] - u[1] * v[2], u[0] * v[2] - u[2] * v[0], u[1] * v[0] - u[0] * v[1]];
@@ -370,6 +687,23 @@ function quad(m, a, b, c, d, unitUV) {
   const uvs = unitUV || [a, b, c, d].map(vtx => _uvFor(n, s, vtx));
   [a, b, c, d].forEach((vtx, k) => { p.pos.push(...vtx); p.nrm.push(...n); p.uv.push(uvs[k][0], uvs[k][1]); });
   p.idx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+}
+// Big faces subdivide into <=SUBD-unit patches. That is what makes baked vertex lighting
+// possible: a 76-unit wall as one quad has nowhere to store a shadow gradient.
+const SUBD = 3;
+function quad(m, a, b, c, d, unitUV) {
+  if (MATS[m].blend) return _quadRaw(m, a, b, c, d, unitUV);
+  const w = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const h = Math.hypot(d[0] - a[0], d[1] - a[1], d[2] - a[2]);
+  const nx = Math.max(1, Math.ceil(w / SUBD)), ny = Math.max(1, Math.ceil(h / SUBD));
+  if (nx === 1 && ny === 1) return _quadRaw(m, a, b, c, d, unitUV);
+  const lerp = (P, Q, t) => [P[0] + (Q[0] - P[0]) * t, P[1] + (Q[1] - P[1]) * t, P[2] + (Q[2] - P[2]) * t];
+  const at = (i, j) => lerp(lerp(a, b, i / nx), lerp(d, c, i / nx), j / ny);
+  const uvAt = unitUV ? (i, j) => { const l2 = (P, Q, t) => [P[0] + (Q[0] - P[0]) * t, P[1] + (Q[1] - P[1]) * t];
+    return l2(l2(unitUV[0], unitUV[1], i / nx), l2(unitUV[3], unitUV[2], i / nx), j / ny); } : null;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++)
+    _quadRaw(m, at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1),
+      uvAt ? [uvAt(i, j), uvAt(i + 1, j), uvAt(i + 1, j + 1), uvAt(i, j + 1)] : null);
 }
 function tri(m, a, b, c) {
   const p = prim(m), s = MATS[m].scale;
@@ -380,8 +714,10 @@ function tri(m, a, b, c) {
   [a, b, c].forEach(vtx => { p.pos.push(...vtx); p.nrm.push(...n); const q = _uvFor(n, s, vtx); p.uv.push(q[0], q[1]); });
   p.idx.push(base, base + 2, base + 1);
 }
+const SOLIDS = [];   // analytic occluders for the AO bake — every box and ramp lands here
 const UNIT = [[0, 0], [1, 0], [1, 1], [0, 1]];
 function box(m, x0, y0, z0, x1, y1, z1, unit) {
+  SOLIDS.push([x0, y0, z0, x1, y1, z1]);
   const A = [x0, y0, z0], B = [x1, y0, z0], C = [x1, y0, z1], D = [x0, y0, z1];
   const E = [x0, y1, z0], F = [x1, y1, z0], G = [x1, y1, z1], H = [x0, y1, z1];
   const uu = unit ? UNIT : null;
@@ -405,12 +741,58 @@ function ramp(m, x0, z0, x1, z1, yBase, yAtMin, yAtMax, axis) {
   if (axis === 'x') { E = [x0, yAtMin, z0]; F = [x1, yAtMax, z0]; G = [x1, yAtMax, z1]; H = [x0, yAtMin, z1]; }
   else              { E = [x0, yAtMin, z0]; F = [x1, yAtMin, z0]; G = [x1, yAtMax, z1]; H = [x0, yAtMax, z1]; }
   const A = [x0, yBase, z0], B = [x1, yBase, z0], C = [x1, yBase, z1], D = [x0, yBase, z1];
+  for (let q = 0; q < 4; q++) {   // AO occluder: the wedge as four rising slabs
+    const t0 = q / 4, t1 = (q + 1) / 4;
+    const hA = yAtMin + (yAtMax - yAtMin) * t0, hB = yAtMin + (yAtMax - yAtMin) * t1;
+    const lo = Math.min(yBase, hA, hB), hi = Math.max(hA, hB);
+    if (axis === 'x') SOLIDS.push([x0 + (x1 - x0) * t0, lo, z0, x0 + (x1 - x0) * t1, hi, z1]);
+    else SOLIDS.push([x0, lo, z0 + (z1 - z0) * t0, x1, hi, z0 + (z1 - z0) * t1]);
+  }
   quad(m, E, F, G, H);   // sloping top
   quad(m, D, C, B, A);   // underside
   quad(m, A, B, F, E);   // z0 side (zero-area where top meets base — harmless)
   quad(m, C, D, H, G);   // z1 side
   quad(m, D, A, E, H);   // x0 end
   quad(m, B, C, G, F);   // x1 end
+}
+
+// a box with its top edges chamfered — the bevel highlight is most of what reads as
+// "modelled, not blocked out" on props like crates, posts and cover
+function bevelBox(m, x0, y0, z0, x1, y1, z1, c, unit) {
+  SOLIDS.push([x0, y0, z0, x1, y1, z1]);
+  const yt = y1 - c, uu = unit ? UNIT : null;
+  const E = [x0 + c, y1, z0 + c], F = [x1 - c, y1, z0 + c], G = [x1 - c, y1, z1 - c], H = [x0 + c, y1, z1 - c];
+  quad(m, E, F, G, H, uu);                                                        // inset top
+  quad(m, [x0, y0, z1], [x1, y0, z1], [x1, y0, z0], [x0, y0, z0], uu);            // bottom
+  quad(m, [x0, y0, z0], [x1, y0, z0], [x1, yt, z0], [x0, yt, z0], uu);            // sides stop at yt
+  quad(m, [x1, y0, z1], [x0, y0, z1], [x0, yt, z1], [x1, yt, z1], uu);
+  quad(m, [x0, y0, z1], [x0, y0, z0], [x0, yt, z0], [x0, yt, z1], uu);
+  quad(m, [x1, y0, z0], [x1, y0, z1], [x1, yt, z1], [x1, yt, z0], uu);
+  quad(m, [x0, yt, z0], [x1, yt, z0], F, E, uu);                                  // four bevels
+  quad(m, [x1, yt, z1], [x0, yt, z1], H, G, uu);
+  quad(m, [x0, yt, z1], [x0, yt, z0], E, H, uu);
+  quad(m, [x1, yt, z0], [x1, yt, z1], G, F, uu);
+}
+function bevelCbox(m, cx, cy, cz, sx, sy, sz, unit) { bevelBox(m, cx - sx / 2, cy - sy / 2, cz - sz / 2, cx + sx / 2, cy + sy / 2, cz + sz / 2, Math.min(sx, sy, sz) * 0.06, unit); }
+// vertical cylinder (column) and a horizontal pipe run along x or z
+function cyl(m, cx, cz, y0, y1, r, segs = 14) {
+  SOLIDS.push([cx - r, y0, cz - r, cx + r, y1, cz + r]);
+  const pt = (q, y) => [cx + Math.cos(q / segs * Math.PI * 2) * r, y, cz + Math.sin(q / segs * Math.PI * 2) * r];
+  for (let q = 0; q < segs; q++) {
+    _quadRaw(m, pt(q, y0), pt(q + 1, y0), pt(q + 1, y1), pt(q, y1));
+    tri(m, [cx, y1, cz], pt(q, y1), pt(q + 1, y1));
+    tri(m, [cx, y0, cz], pt(q + 1, y0), pt(q, y0));
+  }
+}
+function pipe(m, axis, a0, a1, h, off, r, segs = 10) {
+  if (axis === 'x') SOLIDS.push([a0, h - r, off - r, a1, h + r, off + r]);
+  else SOLIDS.push([off - r, h - r, a0, off + r, h + r, a1]);
+  const pt = (q, a) => { const cq = Math.cos(q / segs * Math.PI * 2) * r, sq = Math.sin(q / segs * Math.PI * 2) * r;
+    return axis === 'x' ? [a, h + sq, off + cq] : [off + cq, h + sq, a]; };
+  for (let q = 0; q < segs; q++) {
+    if (axis === 'x') _quadRaw(m, pt(q, a0), pt(q, a1), pt(q + 1, a1), pt(q + 1, a0));
+    else _quadRaw(m, pt(q, a1), pt(q, a0), pt(q + 1, a0), pt(q + 1, a1));
+  }
 }
 
 // place a callback twice: as-is and rotated 180° about the origin (x,z -> -x,-z).
@@ -440,27 +822,63 @@ function decal(m, face, cx, cy, cz, w, h, cell, rot = 0) {
   if (face === '+x') quad(m, [cx, y0, cz - w / 2], [cx, y0, cz + w / 2], [cx, y1, cz + w / 2], [cx, y1, cz - w / 2], uv);
 }
 
+// ----------------------------------------------------------------- material library ----
+// Every family the painter can bake, one call away: libMat('brick') returns a material index,
+// building and caching the texture set on first use. Layouts compose palettes from these, so
+// any theme — industrial, castle, desert, sci-fi lab, lava cavern — is a palette away.
+// TEXSIZE=512 in the environment halves every texture (the museum uses it to stay small).
+const MATLIB = {
+  concrete:  { s: 1024, make: (n, S) => concreteFinished(n, 11, S),  opts: { base: [0.62, 0.64, 0.66], rough: 0.95, scale: 7, nrm: 1.2 } },
+  panels:    { s: 1024, make: (n, S) => panelsTex(n, 23, S),         opts: { base: [0.66, 0.7, 0.74], rough: 0.9, scale: 12, nrm: 1.4 } },
+  metal:     { s: 1024, make: (n, S) => metalTex(n, 37, S),          opts: { base: [0.8, 0.84, 0.9], metal: 0.15, rough: 1, scale: 4, nrm: 1.2 } },
+  deck:      { s: 1024, make: (n, S) => deckTex(n, 51, S),           opts: { base: [0.9, 0.93, 1], metal: 0.15, rough: 1, scale: 3, nrm: 1.6 } },
+  crateTx:   { s: 512,  make: (n, S) => crateTex(n, 67, S),          opts: { base: [0.55, 0.52, 0.38], rough: 0.8, metal: 0.25, scale: 1, nrm: 1.8 } },
+  hazard:    { s: 512,  make: (n, S) => hazardTex(n, S),             opts: { base: [1, 1, 1], rough: 0.75, scale: 2, nrm: 0.8 } },
+  brick:     { s: 1024, make: (n, S) => brickTex(n, 101, S),         opts: { base: [1, 1, 1], rough: 0.92, scale: 5, nrm: 1.6 } },
+  brickPale: { s: 1024, make: (n, S) => brickTex(n, 103, S, [0.62, 0.55, 0.45]), opts: { base: [1, 1, 1], rough: 0.92, scale: 5, nrm: 1.6 } },
+  stone:     { s: 1024, make: (n, S) => stoneBlocksTex(n, 107, S),   opts: { base: [1, 1, 1], rough: 0.95, scale: 6, nrm: 1.8 } },
+  cobble:    { s: 1024, make: (n, S) => cobbleTex(n, 109, S),        opts: { base: [1, 1, 1], rough: 0.95, scale: 4, nrm: 2 } },
+  rock:      { s: 1024, make: (n, S) => rockTex(n, 113, S),          opts: { base: [1, 1, 1], rough: 0.97, scale: 9, nrm: 2.2 } },
+  dirt:      { s: 512,  make: (n, S) => dirtTex(n, 127, S),          opts: { base: [1, 1, 1], rough: 0.97, scale: 5, nrm: 1.4 } },
+  grass:     { s: 512,  make: (n, S) => grassTex(n, 131, S),         opts: { base: [1, 1, 1], rough: 0.95, scale: 5, nrm: 1 } },
+  sand:      { s: 512,  make: (n, S) => sandTex(n, 137, S),          opts: { base: [1, 1, 1], rough: 0.9, scale: 5, nrm: 1.2 } },
+  planks:    { s: 1024, make: (n, S) => plankTex(n, 139, S),         opts: { base: [1, 1, 1], rough: 0.85, scale: 4, nrm: 1.4 } },
+  plankGrey: { s: 1024, make: (n, S) => plankTex(n, 149, S, [0.5, 0.47, 0.42]), opts: { base: [1, 1, 1], rough: 0.9, scale: 4, nrm: 1.4 } },
+  asphalt:   { s: 512,  make: (n, S) => asphaltTex(n, 151, S),       opts: { base: [1, 1, 1], rough: 1, scale: 8, nrm: 1.2 } },
+  tiles:     { s: 512,  make: (n, S) => tilesTex(n, 157, S),         opts: { base: [1, 1, 1], rough: 1, scale: 3, nrm: 1 } },
+  marble:    { s: 1024, make: (n, S) => marbleTex(n, 163, S),        opts: { base: [1, 1, 1], rough: 1, scale: 6, nrm: 0.6 } },
+  plaster:   { s: 1024, make: (n, S) => plasterTex(n, 167, S),       opts: { base: [1, 1, 1], rough: 0.94, scale: 6, nrm: 1.4 } },
+  corrugated:{ s: 512,  make: (n, S) => corrugatedTex(n, 173, S),    opts: { base: [1, 1, 1], metal: 0.2, rough: 1, scale: 3, nrm: 2.2 } },
+  paintGreen:{ s: 1024, make: (n, S) => paintedMetalTex(n, 179, S),  opts: { base: [1, 1, 1], metal: 0.2, rough: 1, scale: 4, nrm: 1.2 } },
+  paintRed:  { s: 1024, make: (n, S) => paintedMetalTex(n, 181, S, [0.55, 0.2, 0.16]), opts: { base: [1, 1, 1], metal: 0.2, rough: 1, scale: 4, nrm: 1.2 } },
+  scifi:     { s: 1024, make: (n, S) => scifiPanelTex(n, 191, S),    opts: { base: [1, 1, 1], metal: 0.25, rough: 1, scale: 4, nrm: 1.4 } },
+  scifiFloor:{ s: 1024, make: (n, S) => scifiFloorTex(n, 193, S),    opts: { base: [1, 1, 1], metal: 0.25, rough: 1, scale: 4, nrm: 1.4 } },
+  lava:      { s: 512,  make: (n, S) => lavaTex(n, 197, S),          opts: { base: [1, 1, 1], rough: 0.95, scale: 6, nrm: 1.8 } },
+};
+const _libCache = {};
+function libMat(id, over) {
+  if (!MATLIB[id]) throw new Error('unknown material: ' + id);
+  if (!over && _libCache[id] != null) return _libCache[id];
+  const d = MATLIB[id], S = +(process.env.TEXSIZE || 0) || d.s, tn = 't_' + id;
+  if (!TEXS[tn]) useTex(d.make(tn, S));
+  const m = mat(over ? id + '*' : id, { tex: tn, ...d.opts, ...(over || {}) });
+  if (!over) _libCache[id] = m;
+  return m;
+}
+
 // ---------------------------------------------------------------------- palettes ----
 function industrialPalette() {
-  const concrete = useTex(concreteFinished('concrete', 11, 1024));
-  const panels = useTex(panelsTex('panels', 23, 1024));
-  const metal = useTex(metalTex('metal', 37, 1024));
-  const deck = useTex(deckTex('deck', 51, 1024));
-  const crate = useTex(crateTex('crate', 67, 512));
-  const hazard = useTex(hazardTex('hazard', 512));
   const decals = useTex(decalTex('decals'));
   return {
-    // architecture: world-planar UVs, density set per material
-    floor: mat('floor', { tex: concrete, base: [0.52, 0.55, 0.57], rough: 0.95, scale: 7, nrm: 1.2 }),
-    slab: mat('slab', { tex: deck, base: [0.92, 0.95, 1], metal: 0.15, rough: 1, scale: 3, nrm: 1.6 }),
-    wall: mat('wall', { tex: panels, base: [0.66, 0.7, 0.74], rough: 0.9, scale: 12, nrm: 1.4 }),
-    pillar: mat('pillar', { tex: metal, base: [0.82, 0.86, 0.92], metal: 0.15, rough: 1, scale: 4, nrm: 1.2 }),
-    ramp: mat('ramp', { tex: deck, base: [0.82, 0.86, 0.94], metal: 0.15, rough: 1, scale: 3, nrm: 1.6 }),
-    parapet: mat('parapet', { tex: metal, base: [0.6, 0.65, 0.72], metal: 0.15, rough: 1, scale: 3, nrm: 1.2 }),
-    hazard: mat('hazard', { tex: hazard, base: [1, 1, 1], rough: 0.75, scale: 2, nrm: 0.8 }),
-    // discrete objects: unit UVs, tinted per variant off one texture
-    crate: mat('crate', { tex: crate, base: [0.55, 0.52, 0.38], rough: 0.8, metal: 0.25, scale: 1, nrm: 1.8 }),
-    crate2: mat('crate2', { tex: crate, base: [0.5, 0.35, 0.26], rough: 0.85, metal: 0.25, scale: 1, nrm: 1.8 }),
+    floor: libMat('concrete', { base: [0.52, 0.55, 0.57] }),
+    slab: libMat('deck'),
+    wall: libMat('panels'),
+    pillar: libMat('metal'),
+    ramp: libMat('deck', { base: [0.82, 0.86, 0.94] }),
+    parapet: libMat('metal', { base: [0.6, 0.65, 0.72], scale: 3 }),
+    hazard: libMat('hazard'),
+    crate: libMat('crateTx'),
+    crate2: libMat('crateTx', { base: [0.5, 0.35, 0.26], rough: 0.85 }),
     // emissives stay untextured — the glow is the texture
     trim: mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.9, rough: 0.5 }),
     teamA: mat('teamA', { base: [1, 0.55, 0.23], glow: 0.55, rough: 0.6 }),
@@ -486,12 +904,37 @@ function buildKeep() {
   box(P.wall, -W - 1.5, 0, W, W + 1.5, WALL_H, W + 1.5);          // S
   box(P.wall, -W - 1.5, 0, -W, -W, WALL_H, W);                    // W
   box(P.wall, W, 0, -W, W + 1.5, WALL_H, W);                      // E
+  // articulation: pilasters every 9.5, a skirt course, a cap course — a wall with structure
+  // instead of a flat extrusion (and the AO bake shades every join)
+  for (let a = -28.5; a <= 28.5; a += 9.5) {
+    cbox(P.wall, a, 6.1, -W + 0.3, 1.5, 12.2, 0.9); cbox(P.wall, a, 6.1, W - 0.3, 1.5, 12.2, 0.9);
+    cbox(P.wall, -W + 0.3, 6.1, a, 0.9, 12.2, 1.5); cbox(P.wall, W - 0.3, 6.1, a, 0.9, 12.2, 1.5);
+  }
+  for (const [x0, z0, x1, z1] of [[-W, -W, W, -W + 0.55], [-W, W - 0.55, W, W], [-W, -W, -W + 0.55, W], [W - 0.55, -W, W, W]]) {
+    box(P.parapet, x0, 0, z0, x1, 0.5, z1);                       // skirt
+    box(P.parapet, x0, WALL_H - 0.45, z0, x1, WALL_H, z1);        // cap
+  }
+  // service pipes along the E and W walls, above gallery head height, with brackets
+  for (const sx of [1, -1]) for (const [py, pr] of [[7.6, 0.24], [8.35, 0.16]]) {
+    pipe(P.parapet, 'z', -30, 30, py, sx * (W - 0.55), pr);
+    for (let bz = -28; bz <= 28; bz += 8) cbox(P.parapet, sx * (W - 0.35), py, bz, 0.7, pr * 2 + 0.14, 0.35);
+  }
 
   // central deck (32×24 @ MID) on pillars, perch (14×8 @ TOP)
   cbox(P.slab, 0, MID - T / 2, 0, 32, T, 24);
   cbox(P.slab, 0, TOP - T / 2, 0, 14, T, 8);
-  for (const px of [-14, 0, 14]) for (const pz of [-10, 10]) cbox(P.pillar, px, (MID - T) / 2, pz, 2, MID - T, 2);
-  for (const px of [-6, 6]) for (const pz of [-3, 3]) cbox(P.pillar, px, MID + (TOP - MID - T) / 2, pz, 1.4, TOP - MID - T, 1.4);
+  for (const px of [-14, 0, 14]) for (const pz of [-10, 10]) {     // columns: shaft + base + capital
+    cyl(P.pillar, px, pz, 0.25, MID - T, 1.0, 14);
+    bevelCbox(P.pillar, px, 0.14, pz, 2.6, 0.28, 2.6);
+    cbox(P.pillar, px, MID - T - 0.14, pz, 2.4, 0.28, 2.4);
+  }
+  for (const px of [-6, 6]) for (const pz of [-3, 3]) {
+    cyl(P.pillar, px, pz, MID, TOP - T, 0.62, 12);
+    cbox(P.pillar, px, MID + 0.12, pz, 1.7, 0.24, 1.7);
+  }
+  // steel joists under the deck and perch — depth where you look up
+  for (let jz = -10; jz <= 10; jz += 4) box(P.parapet, -16, MID - T - 0.32, jz - 0.14, 16, MID - T, jz + 0.14);
+  for (let jx = -6; jx <= 6; jx += 3) box(P.parapet, jx - 0.12, TOP - T - 0.26, -4, jx + 0.12, TOP - T, 4);
 
   // perch ramps: deck edge (±16) climbing inward to the perch lip (±7). 9 run / 4.5 rise
   // = 0.5 per grid cell, inside the 0.6 step allowance.
@@ -508,7 +951,12 @@ function buildKeep() {
   for (const s of [1, -1]) {
     const gx0 = s > 0 ? 32 : -W, gx1 = s > 0 ? W : -32;
     box(P.slab, gx0, MID - T, -24, gx1, MID, 24);
-    for (const bz of [-9, 9]) box(P.slab, s > 0 ? 16 : -32, MID - T, bz - 2, s > 0 ? 32 : -16, MID, bz + 2);
+    for (let jz = -22; jz <= 22; jz += 5.5) box(P.parapet, gx0, MID - T - 0.3, jz - 0.13, gx1, MID - T, jz + 0.13);
+    for (const bz of [-9, 9]) { const bx0 = s > 0 ? 16 : -32, bx1 = s > 0 ? 32 : -16;
+      box(P.slab, bx0, MID - T, bz - 2, bx1, MID, bz + 2);
+      box(P.parapet, bx0, MID - T - 0.28, bz - 2, bx1, MID - T, bz - 1.75);   // bridge edge beams
+      box(P.parapet, bx0, MID - T - 0.28, bz + 1.75, bx1, MID - T, bz + 2);
+    }
     // gallery -> ground ramps at both ends (10 run / 4.5 rise = 0.45/cell)
     ramp(P.ramp, gx0 + 1, 24, gx1 - 1, 34, 0, MID, 0, 'z');
     ramp(P.ramp, gx0 + 1, -34, gx1 - 1, -24, 0, 0, MID, 'z');
@@ -522,6 +970,8 @@ function buildKeep() {
     for (const [z0, z1] of [[-24, -11], [-7, 7], [11, 24]]) {
       box(P.parapet, x0, MID, z0, x1, MID + 1.1, z1);
       box(P.trim, x0, MID + 1.1, z0, x1, MID + 1.2, z1);
+      for (const pz of [z0 + 0.25, (z0 + z1) / 2, z1 - 0.25])     // rail posts
+        bevelCbox(P.parapet, (x0 + x1) / 2, MID + 0.65, pz, 0.42, 1.34, 0.42);
     }
   }
   mirrored((xz) => {                                             // deck N/S edges
@@ -553,8 +1003,8 @@ function buildKeep() {
     for (const [sx, sz, rot] of spots) {
       const [x, z] = xz(sx, sz);
       const m = (sx + sz) % 3 ? P.crate : P.crate2;
-      cbox(m, x, 0.85, z, 2, 1.7, 2, true);
-      if (!rot) cbox(m === P.crate ? P.crate2 : P.crate, x + 0.15, 2.4, z - 0.1, 1.4, 1.4, 1.4, true);
+      bevelCbox(m, x, 0.85, z, 2, 1.7, 2, true);
+      if (!rot) bevelCbox(m === P.crate ? P.crate2 : P.crate, x + 0.15, 2.4, z - 0.1, 1.4, 1.4, 1.4, true);
     }
   });
 
@@ -591,11 +1041,26 @@ function buildSpine() {
   box(P.wall, -HX - 1.5, 0, HZ, HX + 1.5, WALL_H, HZ + 1.5);
   box(P.wall, -HX - 1.5, 0, -HZ, -HX, WALL_H, HZ);
   box(P.wall, HX, 0, -HZ, HX + 1.5, WALL_H, HZ);
+  for (let a = -40; a <= 40; a += 10) { cbox(P.wall, a, 5.2, -HZ + 0.3, 1.5, 10.4, 0.9); cbox(P.wall, a, 5.2, HZ - 0.3, 1.5, 10.4, 0.9); }
+  for (let a = -28; a <= 28; a += 9.3) { cbox(P.wall, -HX + 0.3, 5.2, a, 0.9, 10.4, 1.5); cbox(P.wall, HX - 0.3, 5.2, a, 0.9, 10.4, 1.5); }
+  for (const [x0, z0, x1, z1] of [[-HX, -HZ, HX, -HZ + 0.55], [-HX, HZ - 0.55, HX, HZ], [-HX, -HZ, -HX + 0.55, HZ], [HX - 0.55, -HZ, HX, HZ]]) {
+    box(P.parapet, x0, 0, z0, x1, 0.5, z1);
+    box(P.parapet, x0, WALL_H - 0.45, z0, x1, WALL_H, z1);
+  }
+  for (const sz of [1, -1]) for (const [py, pr] of [[6.4, 0.22], [7.1, 0.15]]) {
+    pipe(P.parapet, 'x', -40, 40, py, sz * (HZ - 0.5), pr);
+    for (let bx = -36; bx <= 36; bx += 9) cbox(P.parapet, bx, py, sz * (HZ - 0.32), 0.35, pr * 2 + 0.14, 0.64);
+  }
 
   // the two spines: raised walkways at z=±10, 6 wide, 64 long, on repeating pillars
   for (const s of [1, -1]) {
     box(P.slab, -32, MID - T, s * 10 - 3, 32, MID, s * 10 + 3);
-    for (let px = -28; px <= 28; px += 14) cbox(P.pillar, px, (MID - T) / 2, s * 10, 2, MID - T, 2);
+    for (let jx = -30; jx <= 30; jx += 5) box(P.parapet, jx - 0.13, MID - T - 0.3, s * 10 - 3, jx + 0.13, MID - T, s * 10 + 3);
+    for (let px = -28; px <= 28; px += 14) {
+      cyl(P.pillar, px, s * 10, 0.22, MID - T, 0.95, 14);
+      bevelCbox(P.pillar, px, 0.12, s * 10, 2.4, 0.24, 2.4);
+      cbox(P.pillar, px, MID - T - 0.13, s * 10, 2.2, 0.26, 2.2);
+    }
     // parapet only on the killbox side — the outer side is an open drop for flanks
     const zi = s > 0 ? [7, 7.3] : [-7.3, -7];
     for (const [x0, x1] of [[-32, -20], [-12, 12], [20, 32]]) {
@@ -618,7 +1083,7 @@ function buildSpine() {
       const dx = x > 0 ? -1 : 1, dz = z > 0 ? -1 : 1;
       box(P.wall, Math.min(x, x + dx * 10), 0, Math.min(z, z + dz * 1), Math.max(x, x + dx * 10), 2.6, Math.max(z, z + dz * 1));
       box(P.wall, Math.min(x, x + dx * 1), 0, Math.min(z, z + dz * 8), Math.max(x, x + dx * 1), 2.6, Math.max(z, z + dz * 8));
-      cbox((sxz[0] > 0) ? P.crate : P.crate2, x + dx * 4, 0.85, z + dz * 4, 2, 1.7, 2, true);
+      bevelCbox((sxz[0] > 0) ? P.crate : P.crate2, x + dx * 4, 0.85, z + dz * 4, 2, 1.7, 2, true);
     }
     // team bands on the short walls
     const tm = team({ a: P.teamA, b: P.teamB });
@@ -630,7 +1095,7 @@ function buildSpine() {
   mirrored((xz) => {
     for (const [sx, sz] of [[10, 20], [-16, 24], [22, 16]]) {
       const [x, z] = xz(sx, sz);
-      cbox((sx + sz) % 3 ? P.crate : P.crate2, x, 0.85, z, 2, 1.7, 2, true);
+      bevelCbox((sx + sz) % 3 ? P.crate : P.crate2, x, 0.85, z, 2, 1.7, 2, true);
     }
   });
 
@@ -645,6 +1110,79 @@ function buildSpine() {
   for (const x of [-14, 14]) { decal(D, '-z', x, 5.5, HZ - 0.04, 6, 7, DECAL.LEAK); decal(D, '+z', x, 5.5, -HZ + 0.04, 6, 7, DECAL.LEAK); }
   for (const [x, z, rr] of [[5, 5, 0], [-5, -5, 90]]) decal(D, 'up', x, 0.02, z, 3, 2.4, DECAL.SCUFF, rr);
   return { name: 'Twin Spine' };
+}
+
+// ---------------------------------------------------------------- layout: museum ----
+// A material showcase: every library family as a wall slab and a floor apron, in two
+// facing rows with a walkway between. Generate with TEXSIZE=512 to keep the file small.
+function buildMuseum() {
+  const ids = Object.keys(MATLIB);
+  const N = Math.ceil(ids.length / 2), GAP = 7.5, LEN = N * GAP + 6;
+  const base = libMat('concrete', { base: [0.45, 0.47, 0.5] });
+  const glow = mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.9, rough: 0.5 });
+  box(base, -LEN / 2, -0.5, -13, LEN / 2, 0, 13);
+  ids.forEach((id, q) => {
+    const row = q % 2 ? 1 : -1, x = -LEN / 2 + 4 + Math.floor(q / 2) * GAP;
+    const m = libMat(id);
+    box(m, x - 3, 0, row * 12 - 0.6 * row, x + 3, 5.2, row * 12 + 0.6 * row);       // display wall
+    box(m, x - 3, 0.02, row * 4.4, x + 3, 0.07, row * 10.9);                        // floor apron
+    box(glow, x - 3, 5.25, row * 12 - 0.2, x + 3, 5.4, row * 12 + 0.2);             // header light
+  });
+  box(glow, -LEN / 2 + 1, 0.02, -0.3, LEN / 2 - 1, 0.09, 0.3);                      // centreline
+  return { name: 'Material Museum (' + ids.length + ' families)' };
+}
+
+// -------------------------------------------------------------- baked lighting (AO) ----
+// Per-vertex ambient occlusion, raytraced against the level's own solids at build time and
+// written as COLOR_0 (three.js multiplies it into the base colour). This is the "baked
+// lighting" a static GLB can carry into any engine scene: contact darkening at wall bases,
+// gloom under decks, bright open tops — while staying correct under the level's dynamic sun,
+// which baked directional shadows would fight.
+function bakeAO() {
+  const DIRS = [];
+  for (let q = 0; q < 32; q++) {   // golden-spiral hemisphere-ish fan over the sphere
+    const t = (q + 0.5) / 32, ph = Math.acos(1 - 2 * t), th = q * 2.399963;
+    DIRS.push([Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th)]);
+  }
+  const MAXT = 10;
+  const hit = (ox, oy, oz, dx, dy, dz) => {   // nearest slab-test distance, else Infinity
+    let best = Infinity;
+    for (let si = 0; si < SOLIDS.length; si++) {
+      const b = SOLIDS[si];
+      let t0 = 0.08, t1 = Math.min(best, MAXT);
+      let ok = true;
+      for (let a = 0; a < 3 && ok; a++) {
+        const o = a === 0 ? ox : a === 1 ? oy : oz, d = a === 0 ? dx : a === 1 ? dy : dz;
+        const mn = b[a], mx = b[a + 3];
+        if (Math.abs(d) < 1e-9) { if (o < mn || o > mx) ok = false; continue; }
+        let ta = (mn - o) / d, tb = (mx - o) / d;
+        if (ta > tb) { const tmp = ta; ta = tb; tb = tmp; }
+        if (ta > t0) t0 = ta; if (tb < t1) t1 = tb;
+        if (t0 > t1) ok = false;
+      }
+      if (ok && t0 < best) best = t0;
+    }
+    return best;
+  };
+  prims.forEach((p, mi) => {
+    if (!p || MATS[mi].blend) return;
+    p.col = new Float64Array(p.pos.length);
+    for (let vi = 0; vi < p.pos.length / 3; vi++) {
+      const nx = p.nrm[vi * 3], ny = p.nrm[vi * 3 + 1], nz = p.nrm[vi * 3 + 2];
+      const ox = p.pos[vi * 3] + nx * 0.06, oy = p.pos[vi * 3 + 1] + ny * 0.06, oz = p.pos[vi * 3 + 2] + nz * 0.06;
+      let occ = 0, wsum = 0;
+      for (const d of DIRS) {
+        const dt = d[0] * nx + d[1] * ny + d[2] * nz;
+        if (dt < 0.12) continue;
+        wsum += dt;
+        const t = hit(ox, oy, oz, d[0], d[1], d[2]);
+        if (t < MAXT) occ += dt * (1 - t / MAXT);
+      }
+      const ao = Math.max(0, Math.min(1, 1 - 1.35 * (wsum ? occ / wsum : 0)));
+      const c = 0.34 + 0.66 * ao;
+      p.col[vi * 3] = c; p.col[vi * 3 + 1] = c; p.col[vi * 3 + 2] = c;
+    }
+  });
 }
 
 // ------------------------------------------------------------------- GLB writing ----
@@ -668,8 +1206,12 @@ function writeGLB(out) {
     accessors.push({ bufferView: vNrm, componentType: 5126, count: nrm.length / 3, type: 'VEC3' });
     accessors.push({ bufferView: vUV, componentType: 5126, count: uv.length / 2, type: 'VEC2' });
     accessors.push({ bufferView: vIdx, componentType: 5125, count: idx.length, type: 'SCALAR' });
-    primitives.push({ attributes: { POSITION: accessors.length - 4, NORMAL: accessors.length - 3, TEXCOORD_0: accessors.length - 2 },
-      indices: accessors.length - 1, material: mi });
+    const attrs = { POSITION: accessors.length - 4, NORMAL: accessors.length - 3, TEXCOORD_0: accessors.length - 2 };
+    if (p.col) { const col = new Float32Array(p.col);
+      const vCol = push(Buffer.from(col.buffer), 34962);
+      accessors.push({ bufferView: vCol, componentType: 5126, count: col.length / 3, type: 'VEC3' });
+      attrs.COLOR_0 = accessors.length - 1; }
+    primitives.push({ attributes: attrs, indices: accessors.length - 1 - (p.col ? 1 : 0), material: mi });
   });
 
   // bake textures: base colour at full res (RGBA for the decal atlas); metallic-roughness and
@@ -692,6 +1234,7 @@ function writeGLB(out) {
         e.mr = addImg(pngEncode(toBytes(halfPx(px, S, 3)), S >> 1, S >> 1, 3)); }
       // normal strength scales with resolution so world-space relief stays constant
       e.nrm = addImg(pngEncode(toBytes(halfPx(normalPx(t.h, S, 2.2 * S / 256), S, 3)), S >> 1, S >> 1, 3));
+      if (t.em) e.em = addImg(pngEncode(toBytes(t.em), S, S, 3));   // mostly black -> compresses tiny
     }
     texIdx[name] = e;
   }
@@ -703,7 +1246,8 @@ function writeGLB(out) {
       if (ti.mr != null && !_skip('NOMR', md.name)) g.pbrMetallicRoughness.metallicRoughnessTexture = { index: ti.mr };
       if (ti.nrm != null && !_skip('NONRM', md.name)) g.normalTexture = { index: ti.nrm, scale: md.nrm }; }
     if (md.blend) g.alphaMode = 'BLEND';
-    if (md.glow) g.emissiveFactor = md.base.map(v => v * md.glow);
+    if (md.tex && texIdx[md.tex].em != null) { g.emissiveTexture = { index: texIdx[md.tex].em }; g.emissiveFactor = [1, 1, 1]; }
+    else if (md.glow) g.emissiveFactor = md.base.map(v => v * md.glow);
     return g;
   });
 
@@ -727,12 +1271,15 @@ function writeGLB(out) {
 }
 
 // -------------------------------------------------------------------------- main ----
-const LAYOUTS = { keep: buildKeep, spine: buildSpine };
+const LAYOUTS = { keep: buildKeep, spine: buildSpine, museum: buildMuseum };
 const which = process.argv[2], out = process.argv[3];
 if (!LAYOUTS[which] || !out) {
   console.error('usage: node tools/levelgen.mjs <' + Object.keys(LAYOUTS).join('|') + '> <out.glb>');
   process.exit(1);
 }
 const info = LAYOUTS[which]();
+const t0 = process.hrtime.bigint();
+bakeAO();
+const aoMs = Number(process.hrtime.bigint() - t0) / 1e6 | 0;
 const w = writeGLB(out);
-console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets)`);
+console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets, AO ${aoMs} ms over ${SOLIDS.length} solids)`);
