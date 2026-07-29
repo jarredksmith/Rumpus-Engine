@@ -6836,6 +6836,11 @@ function _adaptResTick(frameMs, now){
   } else { _adaptGood=0; if(_adaptUpNeed>6 && now-_adaptShiftAt>45000){ _adaptUpNeed=6; _adaptShiftAt=now; } }
 }
 renderer.shadowMap.enabled = true;
+// build 1122: r149 clears renderer.info at the START of every render() call, and one frame makes
+// many calls (scene, shadow map, four post quads, the viewmodel, preview windows). Left on, the
+// numbers the perf HUD showed were whatever the LAST call did — a fullscreen quad — so it read
+// "draws 1  tris 0k" no matter what the level contained. Reset once a frame, read once a frame.
+renderer.info.autoReset = false;
 renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;   // static by default; _dirtyShadows() requests a refresh
 renderer.shadowMap.type = IS_COARSE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 // build 1095: filmic pipeline. ACES tone mapping rolls highlights off like film instead of clipping
@@ -6967,12 +6972,12 @@ function _runDofTo(scn, cam, out){
 function renderScene(scn, cam){
   const _r=perfOn?_pnow():0;
   if(_postOn && !_postFail && typeof ensurePost==='function' && ensurePost()){
-    try{ _renderPostFX(scn, cam); _perfCalls=renderer.info.render.calls; _perfTris=renderer.info.render.triangles; if(perfOn)_prof.render+=_pnow()-_r; return; }
+    try{ _renderPostFX(scn, cam); if(perfOn)_prof.render+=_pnow()-_r; return; }   // build 1122: counters are read once, at the end of the frame
     catch(e){ _postFail=true; try{ renderer.setRenderTarget(null); }catch(_e){} if(typeof console!=='undefined') console.warn('Post-FX disabled after an error:', e&&e.message); }
   }
   if(!dofEnabled || !ensureDof()){ renderer.render(scn, cam); }
   else { _runDofTo(scn, cam, null); }
-  _perfCalls=renderer.info.render.calls; _perfTris=renderer.info.render.triangles; if(perfOn)_prof.render+=_pnow()-_r;
+  if(perfOn)_prof.render+=_pnow()-_r;
 }
 
 // ---------- Post-processing: bloom + color grade + vignette + film grain + motion blur ----------
@@ -28962,7 +28967,8 @@ addEventListener('visibilitychange', ()=>{
 addEventListener('blur', ()=>{ if(typeof clearMovementInput==='function') clearMovementInput(); });   // build 843: same for focus loss without a tab switch (e.g. clicking another window)
 function loop(){
   requestAnimationFrame(loop);
-  if(_tabHidden) return;   // backgrounded: stop rendering AND stepping physics — a hidden tab simulating is what gets the page killed on mobile
+  if(_tabHidden) return;
+  try{ renderer.info.reset(); }catch(e){}   // build 1122: one accumulation window per frame   // backgrounded: stop rendering AND stepping physics — a hidden tab simulating is what gets the page killed on mobile
   // build 1120: re-fit the sun's shadow volume to the active camera BEFORE deciding whether the map
   // needs re-rendering — a volume that moved must be re-rendered or the old shadows smear across it.
   // the editor flies the same `camera`, so one fit covers authoring and play alike
@@ -29871,6 +29877,8 @@ function loop(){
   if(editorOpen && typeof _renderCinePvWindow==='function') _renderCinePvWindow();
   if(typeof _renderVcamPvWindow==='function') _renderVcamPvWindow();   // build 1084
   renderViewmodel();
+  // build 1122: every pass of this frame has now run, so these are the frame's real totals
+  _perfCalls=renderer.info.render.calls; _perfTris=renderer.info.render.triangles;
 }
 loop();
 
