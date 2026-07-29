@@ -7127,9 +7127,45 @@ const moon = new THREE.DirectionalLight(0x9fd8ff, 0.9);
 moon.position.set(40, 80, 20);
 moon.castShadow = true;
 moon.shadow.mapSize.set(IS_COARSE ? 1024 : 2048, IS_COARSE ? 1024 : 2048);
-moon.shadow.camera.near = 1; moon.shadow.camera.far = 200;
+moon.shadow.camera.near = 1; moon.shadow.camera.far = 260;
+// build 1120: the shadow volume FOLLOWS THE CAMERA instead of being a fixed box at the world origin.
+// It was +/-80 on a 2048 map — 7.8 cm a texel — and nailed to (0,0), while worldCfg.arena goes to
+// 2000: past 80 units from the origin a level simply had no shadows at all, which is most of any
+// large level. Fitting it to what the camera can see makes the same 2048 map cover a 30-unit radius
+// at 2.9 cm a texel (a 2.7x sharpening) AND removes the size limit entirely.
 moon.shadow.camera.left = -80; moon.shadow.camera.right = 80;
 moon.shadow.camera.top = 80; moon.shadow.camera.bottom = -80;
+const _sunTarget = new THREE.Object3D(); scene.add(_sunTarget); moon.target = _sunTarget;
+const _fitF = new THREE.Vector3(), _fitAx = new THREE.Vector3(), _fitAy = new THREE.Vector3(), _fitL = new THREE.Vector3();
+let _fitFx = 1e9, _fitFz = 1e9;
+function _fitSunShadow(cam){
+  if(!cam || !cam.isCamera) return false;
+  const E = Math.max(8, Math.min(400, +((typeof worldCfg!=='undefined' && worldCfg.shadowDist) || 30)));
+  // aim a little ahead of the eye, on the ground: a player looks forward, so spending the volume
+  // behind them wastes half of it
+  _fitF.set(0,0,-1).applyQuaternion(cam.quaternion); _fitF.y = 0;
+  if(_fitF.lengthSq() < 1e-6) _fitF.set(0,0,-1);
+  _fitF.normalize();
+  let fx = cam.position.x + _fitF.x * E * 0.55, fz = cam.position.z + _fitF.z * E * 0.55;
+  // Snap the focus to the shadow map's own texel grid, measured along the LIGHT's axes. Without
+  // this the map slides by a fraction of a texel every frame and every shadow edge crawls — the
+  // classic shimmer, and far more distracting than a slightly stale shadow.
+  const px = moon.shadow.mapSize.x || 2048, texel = (2 * E) / px;
+  _fitL.copy(moon.position).normalize();                       // light direction (it orbits the origin)
+  _fitAx.set(-_fitL.z, 0, _fitL.x);                            // light-space right, flattened to the ground
+  if(_fitAx.lengthSq() < 1e-6) _fitAx.set(1,0,0);
+  _fitAx.normalize(); _fitAy.set(-_fitAx.z, 0, _fitAx.x);
+  const u = Math.round((fx*_fitAx.x + fz*_fitAx.z) / texel) * texel;
+  const v = Math.round((fx*_fitAy.x + fz*_fitAy.z) / texel) * texel;
+  fx = u*_fitAx.x + v*_fitAy.x; fz = u*_fitAx.z + v*_fitAy.z;
+  const moved = Math.abs(fx - _fitFx) > texel*0.5 || Math.abs(fz - _fitFz) > texel*0.5;
+  const sized = Math.abs(moon.shadow.camera.right - E) > 1e-3;
+  if(!moved && !sized) return false;
+  _fitFx = fx; _fitFz = fz;
+  _sunTarget.position.set(fx, 0, fz); _sunTarget.updateMatrixWorld();
+  if(sized){ const c = moon.shadow.camera; c.left = -E; c.right = E; c.top = E; c.bottom = -E; c.updateProjectionMatrix(); }
+  return true;   // the caller dirties the map: a moved volume must be re-rendered or it smears
+}
 // Kill shadow acne (the striped self-shadowing bands on flat faces): normalBias offsets the shadow
 // lookup along the surface normal by ~1 world unit, which clears banding on large planes like the marble
 // and stair treads; the small negative depth bias handles grazing angles. Keep normalBias modest so thin
@@ -7149,7 +7185,11 @@ const _WEATHER_BOX = { w:46, h:30 };
 // Place the sun on its 90m orbit (build 855 math, factored in 861 so the day/night cycle can drive it too).
 function _sunOrbit(azimDeg, elevDeg){
   const az=azimDeg*Math.PI/180, el=elevDeg*Math.PI/180, r=90, h=Math.cos(el)*r;
-  moon.position.set(Math.sin(az)*h, Math.sin(el)*r, Math.cos(az)*h);
+  // build 1120: relative to the shadow focus, not the world origin — the orthographic volume is
+  // centred on the target, so a light left orbiting (0,0) points its 260-unit depth range at the
+  // wrong place once the player walks away.
+  const t = (typeof _sunTarget!=='undefined' && _sunTarget) ? _sunTarget.position : { x:0, z:0 };
+  moon.position.set(t.x + Math.sin(az)*h, Math.sin(el)*r, t.z + Math.cos(az)*h);
 }
 // ---- Day/night cycle (build 861) ----
 // One pure function models the sky: phase 0=dawn, 0.25=noon, 0.5=dusk, 0.75=midnight.
@@ -14632,7 +14672,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
 // versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
 // The dark stock palette needs an art pass, which belongs with the sky/lighting work.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null, shadowDist:30, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -24393,7 +24433,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1119 · 2026-07-29';
+const BUILD_VERSION = 'build 1120 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28888,6 +28928,13 @@ addEventListener('blur', ()=>{ if(typeof clearMovementInput==='function') clearM
 function loop(){
   requestAnimationFrame(loop);
   if(_tabHidden) return;   // backgrounded: stop rendering AND stepping physics — a hidden tab simulating is what gets the page killed on mobile
+  // build 1120: re-fit the sun's shadow volume to the active camera BEFORE deciding whether the map
+  // needs re-rendering — a volume that moved must be re-rendered or the old shadows smear across it.
+  // the editor flies the same `camera`, so one fit covers authoring and play alike
+  if(typeof _fitSunShadow==='function' && _fitSunShadow(camera)){
+    if(typeof _sunOrbit==='function' && typeof worldCfg!=='undefined') _sunOrbit(worldCfg.sunAzim||0, Math.max(5, worldCfg.sunElev||61));
+    _dirtyShadows(1);
+  }
   if(_shadowDirtyFrames>0){ renderer.shadowMap.needsUpdate = true; _shadowDirtyFrames--; }
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
