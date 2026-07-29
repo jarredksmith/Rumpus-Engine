@@ -74,7 +74,7 @@ assert(/const rooms = roomBlock\(P\.wall, libMat\('plankGrey'\), P\.trim, x0, z0
 // generated stairwell climbable, and for the executable proof that a bot walks it to the roof.
 assert(/const twoUp = rr\(\) < 0\.5;/.test(lgSrc), 'multi-storey blocks are rolled per seed');
 assert(/storeys: twoUp \? 2 : 1/.test(lgSrc), '...and wired through to roomBlock');
-assert(/lightCol: theme === 'volcanic' \? \[1, 0\.62, 0\.3\] : theme === 'castle' \? \[1, 0\.78, 0\.5\] : \[1, 0\.93, 0\.78\]/.test(lgSrc),
-  'and its lamps take the theme colour');
+// build 1114: the lamp colour is one of the treatments the palette carries, like the rest of them
+assert(/lightCol: P\.lightCol \}\);/.test(lgSrc), 'and its lamps take the theme colour');
 
 done('build 1111: buildings have rooms, doorways, windows — and light to see them by');
