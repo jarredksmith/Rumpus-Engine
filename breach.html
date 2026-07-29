@@ -6867,6 +6867,26 @@ const _OETF_GLSL = [
   'vec3 _oetf(vec3 c){ return mix(c*12.92, 1.055*pow(max(c,vec3(0.0)), vec3(0.4166667))-0.055, step(vec3(0.0031308), c)); }',
   'vec3 _out(vec3 c){ return mix(c, _oetf(c), uEncode); }'
 ].join('\n');
+// build 1118: the post chain carries LINEAR light, and 8 bits of linear is nowhere near enough at
+// the bottom end — one code step is 1/255 of full brightness, so everything under linear 0.0039
+// collapses to zero and the encode at the end then stretches those steps into visible bands. The
+// fingerprint is unmistakable: whole regions drawn from {0,13,22,28,33,38,42,46,49,53,56,59,62},
+// which is exactly OETF(n/255) for n <= 12. Half float fixes it at the source. WebGL2 guarantees
+// EXT_color_buffer_half_float; if the allocation throws anyway we fall back rather than lose the
+// frame, because a working 8-bit chain beats a black screen.
+let _rtType = null;
+function _postRTType(){
+  if(_rtType !== null) return _rtType;
+  _rtType = THREE.UnsignedByteType;
+  try{
+    if(renderer.capabilities && renderer.capabilities.isWebGL2 && THREE.HalfFloatType){
+      const probe = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
+      renderer.setRenderTarget(probe); renderer.setRenderTarget(null); probe.dispose();
+      _rtType = THREE.HalfFloatType;
+    }
+  }catch(e){ _rtType = THREE.UnsignedByteType; }
+  return _rtType;
+}
 // ---------- Depth of field (optional post-process) ----------
 // Self-contained: no external composer addons. We render the scene into a color target that also has a
 // depth texture, then draw a fullscreen quad whose shader blurs each pixel by how far its depth is from
@@ -6880,7 +6900,7 @@ function ensureDof(){
   if(!THREE.WebGLRenderTarget || !THREE.DepthTexture) return false;
   const [w,h] = _dofSize();
   const mkRT = (withDepth)=>{
-    const rt = new THREE.WebGLRenderTarget(w, h, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:THREE.UnsignedByteType });
+    const rt = new THREE.WebGLRenderTarget(w, h, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:_postRTType() });
     if(withDepth){ rt.depthTexture = new THREE.DepthTexture(w, h); rt.depthTexture.format = THREE.DepthFormat; rt.depthTexture.type = THREE.UnsignedShortType; }
     return rt;
   };
@@ -6978,7 +6998,7 @@ function ensurePost(){
   if(_postRT) return true;
   if(!THREE.WebGLRenderTarget) return false;
   const [w,h] = _postSize(); const hw=Math.max(1,w>>1), hh=Math.max(1,h>>1);
-  const mkRT = (rw,rh)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:THREE.UnsignedByteType });
+  const mkRT = (rw,rh)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:_postRTType() });
   _postRT=mkRT(w,h); _bloomRT=mkRT(hw,hh); _compRT=mkRT(w,h); _afterA=mkRT(w,h); _afterB=mkRT(w,h);
   // build 872: the scene pass is the ONLY place geometry rasterizes when effects are on, and a plain render
   // target gets zero antialiasing — the canvas's antialias:true never applied, so effects-on meant jagged
@@ -24201,7 +24221,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1117 · 2026-07-29';
+const BUILD_VERSION = 'build 1118 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
