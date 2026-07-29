@@ -6,14 +6,16 @@ const src = gameSource();
 // --- the pipeline builds its targets + passes ---
 const ep = extractFunction('ensurePost');
 assert(/if\(_postRT\) return true;/.test(ep) && /if\(!THREE\.WebGLRenderTarget\) return false;/.test(ep), 'lazy build, guarded on RT support');   // build 880: keys on targets (materials persist)
-assert(/_postRT=mkRT\(w,h\)/.test(ep) && /_bloomRT=mkRT\(hw,hh\)/.test(ep) && /_compRT=mkRT\(w,h\)/.test(ep) && /_afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\)/.test(ep), 'full-res scene/comp, half-res bloom, two afterimage buffers');
-assert(/_matBright=new THREE\.ShaderMaterial/.test(ep) && /_matComp=new THREE\.ShaderMaterial/.test(ep) && /_matAfter=new THREE\.ShaderMaterial/.test(ep) && /_matCopy=new THREE\.ShaderMaterial/.test(ep), 'four passes: bright, composite, afterimage, copy');
+// build 1128: the single half-res bloom buffer became a five-level mip pyramid, base half-res.
+assert(/_postRT=mkRT\(w,h\)/.test(ep) && /_bloomMips\.push\(mkRT\(mw,mh\)\)/.test(ep) && /_compRT=mkRT\(w,h\)/.test(ep) && /_afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\)/.test(ep), 'full-res scene/comp, half-res bloom, two afterimage buffers');
+assert(/let i=0, mw=hw, mh=hh; i<_BLOOM_MIPS/.test(ep), '...the pyramid starts at half resolution and halves per level');
+assert(/_matBloomDown=new THREE\.ShaderMaterial/.test(ep) && /_matBloomUp=new THREE\.ShaderMaterial/.test(ep) && /_matComp=new THREE\.ShaderMaterial/.test(ep) && /_matAfter=new THREE\.ShaderMaterial/.test(ep) && /_matCopy=new THREE\.ShaderMaterial/.test(ep), 'five passes: bloom down, bloom up, composite, afterimage, copy');
 assert(/max\(nw, od\)/.test(ep), 'motion blur keeps the brighter of new vs decayed-old (afterimage trails)');
 assert(/smoothstep\(0\.42,0\.78,r\)\*uVig/.test(ep), 'vignette darkens the edges');
 
 // --- the per-frame chain order ---
 const rp = extractFunction('_renderPostFX');
-const order = ['setRenderTarget\\(_postRT\\); renderer.render\\(scn', 'setRenderTarget\\(_bloomRT\\)', 'setRenderTarget\\(_compRT\\)', 'setRenderTarget\\(_afterB\\)'];
+const order = ['setRenderTarget\\(_postRT\\); renderer.render\\(scn', 'setRenderTarget\\(_bloomMips\\[i\\]\\)', 'setRenderTarget\\(_compRT\\)', 'setRenderTarget\\(_afterB\\)'];
 let last=-1; for(const pat of order){ const i=rp.search(new RegExp(pat)); assert(i>last, 'chain step in order: '+pat); last=i; }
 assert(rp.lastIndexOf('setRenderTarget(null)') > last, 'the present-to-screen pass comes last in the motion-blur chain');
 // build 810: with motion blur ~0 (or shed at the lowest adaptive step), the composite goes straight to screen — the

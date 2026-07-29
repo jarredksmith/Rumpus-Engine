@@ -7013,8 +7013,13 @@ function renderScene(scn, cam){
 let _postOn = true; try{ const v=localStorage.getItem('breach_postfx'); if(v==='off') _postOn=false; }catch(e){}
 let _postFail = false;
 let _postBloom = 0.65, _postMotion = 0.62, _postVig = 0.42, _postGrain = 0.05, _postSat = 1.08, _postCon = 1.05, _postThresh = 0.62;
-let _postRT=null, _bloomRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
-let _matBright=null, _matComp=null, _matAfter=null, _matCopy=null;
+let _postRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
+let _matComp=null, _matAfter=null, _matCopy=null;
+// build 1128: bloom is a mip pyramid — _bloomMips[0] is half resolution and each level halves again.
+// Five levels reach a glow radius of ~16 half-res texels (a quarter of a 720p frame), which is the
+// scale a real bloom works at; the old single 5x5 gather reached six full-res pixels.
+const _BLOOM_MIPS = 5;
+let _bloomMips=[], _matBloomDown=null, _matBloomUp=null;
 // build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
 // resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
 let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
@@ -7045,7 +7050,8 @@ function ensurePost(){
   if(!THREE.WebGLRenderTarget) return false;
   const [w,h] = _postSize(); const hw=Math.max(1,w>>1), hh=Math.max(1,h>>1);
   const mkRT = (rw,rh,type)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:type||_postRTType() });
-  _postRT=mkRT(w,h); _bloomRT=mkRT(hw,hh); _compRT=mkRT(w,h); _afterA=mkRT(w,h); _afterB=mkRT(w,h);
+  _postRT=mkRT(w,h); _compRT=mkRT(w,h); _afterA=mkRT(w,h); _afterB=mkRT(w,h);
+  _bloomMips=[]; for(let i=0, mw=hw, mh=hh; i<_BLOOM_MIPS; i++){ _bloomMips.push(mkRT(mw,mh)); mw=Math.max(1,mw>>1); mh=Math.max(1,mh>>1); }
   // build 1126: the AO buffers. _aoGeoRT is a half-resolution G-BUFFER — view normal in rgb, view
   // distance in a — written by a second, material-free pass over the scene.
   //
@@ -7066,25 +7072,76 @@ function ensurePost(){
   _postRT.samples = _desiredPostSamples();
   if(_postScene) return true;   // build 880: materials + scene survive disposePost — a resolution shift rebuilds TARGETS only (no shader recompiles, no hitch)
   const vert='varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }';
-  // bright-pass + blur into the half-res bloom buffer (a 5x5 thresholded box gather)
-  _matBright=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null}, uTexel:{value:new THREE.Vector2(1/hw,1/hh)}, uThresh:{value:_postThresh} },
+  // ---------- build 1128: bloom as a MIP PYRAMID ----------
+  // It was a single 5x5 box gather at half resolution with a 1.5-texel step: a radius of about six
+  // full-resolution pixels. That is a rim, not a glow — a bright window in a real engine spills a
+  // quarter of the screen. Worse, the gather weighted each tap by its own excess brightness
+  // (`c * max(0, L(c)-thresh)`) and then divided by the tap COUNT rather than the weight sum, so the
+  // result was a brightness-squared term scaled by 1/25: energy was neither conserved nor even
+  // monotonic in radius.
+  //
+  // The standard fix, and what UE/Unity do: threshold once, then progressively downsample to a
+  // pyramid and progressively upsample back with a tent filter, adding each level in. Every level
+  // contributes a different scale of glow, the total is energy-conserving, and the whole chain costs
+  // about 1.33x the base mip in pixels because each level is a quarter of the one above.
+  _matBloomDown=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
+    uniforms:{ tColor:{value:null}, uTexel:{value:new THREE.Vector2(1/hw,1/hh)}, uThresh:{value:_postThresh}, uFirst:{value:1} },
     vertexShader:vert, fragmentShader:[
-      'varying vec2 vUv; uniform sampler2D tColor; uniform vec2 uTexel; uniform float uThresh;',
-      'float L(vec3 c){ return dot(c, vec3(0.299,0.587,0.114)); }',
-      'void main(){ vec3 s=vec3(0.0); float w=0.0;',
-      '  for(int x=-2;x<=2;x++){ for(int y=-2;y<=2;y++){ vec2 o=vec2(float(x),float(y))*uTexel*1.5;',
-      '    vec3 c=texture2D(tColor, vUv+o).rgb; float b=max(0.0, L(c)-uThresh); s+=c*b; w+=1.0; } }',
-      '  gl_FragColor=vec4(s/w, 1.0); }'
+      'varying vec2 vUv; uniform sampler2D tColor; uniform vec2 uTexel; uniform float uThresh; uniform float uFirst;',
+      'float L(vec3 c){ return dot(c, vec3(0.2126,0.7152,0.0722)); }',
+      // a SOFT KNEE around the threshold. A hard cut makes bloom pop in and out as a surface crosses
+      // it, which reads as flicker on anything moving; the knee is the standard quadratic ramp.
+      'vec3 pre(vec3 c){',
+      '  if(uFirst < 0.5) return c;',
+      '  float l = L(c), knee = max(1e-4, uThresh*0.5);',
+      '  float soft = clamp(l - uThresh + knee, 0.0, 2.0*knee);',
+      '  soft = soft*soft/(4.0*knee + 1e-4);',
+      '  return c * (max(soft, l - uThresh) / max(l, 1e-4)); }',
+      // 13-tap downsample (the Call of Duty / Jimenez filter): a plain 2x2 box aliases into the
+      // pyramid and makes small bright details strobe as the camera moves.
+      'void main(){',
+      '  vec2 t = uTexel;',
+      '  vec3 a = pre(texture2D(tColor, vUv + vec2(-2.0,-2.0)*t).rgb);',
+      '  vec3 b = pre(texture2D(tColor, vUv + vec2( 0.0,-2.0)*t).rgb);',
+      '  vec3 c = pre(texture2D(tColor, vUv + vec2( 2.0,-2.0)*t).rgb);',
+      '  vec3 d = pre(texture2D(tColor, vUv + vec2(-2.0, 0.0)*t).rgb);',
+      '  vec3 e = pre(texture2D(tColor, vUv).rgb);',
+      '  vec3 f = pre(texture2D(tColor, vUv + vec2( 2.0, 0.0)*t).rgb);',
+      '  vec3 g = pre(texture2D(tColor, vUv + vec2(-2.0, 2.0)*t).rgb);',
+      '  vec3 h = pre(texture2D(tColor, vUv + vec2( 0.0, 2.0)*t).rgb);',
+      '  vec3 i = pre(texture2D(tColor, vUv + vec2( 2.0, 2.0)*t).rgb);',
+      '  vec3 j = pre(texture2D(tColor, vUv + vec2(-1.0,-1.0)*t).rgb);',
+      '  vec3 k = pre(texture2D(tColor, vUv + vec2( 1.0,-1.0)*t).rgb);',
+      '  vec3 l = pre(texture2D(tColor, vUv + vec2(-1.0, 1.0)*t).rgb);',
+      '  vec3 m = pre(texture2D(tColor, vUv + vec2( 1.0, 1.0)*t).rgb);',
+      '  vec3 o = e*0.125 + (a+c+g+i)*0.03125 + (b+d+f+h)*0.0625 + (j+k+l+m)*0.125;',
+      '  gl_FragColor = vec4(o, 1.0); }'
+    ].join('\n') });
+  // 9-tap tent upsample, ADDED to the level above (three's AdditiveBlending does the accumulate)
+  _matBloomUp=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false, blending:THREE.AdditiveBlending,
+    uniforms:{ tColor:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uScale:{value:1} },
+    vertexShader:vert, fragmentShader:[
+      'varying vec2 vUv; uniform sampler2D tColor; uniform vec2 uTexel; uniform float uScale;',
+      'void main(){ vec2 t = uTexel*uScale;',
+      '  vec3 s = texture2D(tColor, vUv + vec2(-1.0,-1.0)*t).rgb * 1.0;',
+      '  s += texture2D(tColor, vUv + vec2( 0.0,-1.0)*t).rgb * 2.0;',
+      '  s += texture2D(tColor, vUv + vec2( 1.0,-1.0)*t).rgb * 1.0;',
+      '  s += texture2D(tColor, vUv + vec2(-1.0, 0.0)*t).rgb * 2.0;',
+      '  s += texture2D(tColor, vUv).rgb * 4.0;',
+      '  s += texture2D(tColor, vUv + vec2( 1.0, 0.0)*t).rgb * 2.0;',
+      '  s += texture2D(tColor, vUv + vec2(-1.0, 1.0)*t).rgb * 1.0;',
+      '  s += texture2D(tColor, vUv + vec2( 0.0, 1.0)*t).rgb * 2.0;',
+      '  s += texture2D(tColor, vUv + vec2( 1.0, 1.0)*t).rgb * 1.0;',
+      '  gl_FragColor = vec4(s/16.0, 1.0); }'
     ].join('\n') });
   // composite: scene + bloom, then contrast/saturation grade, vignette, and film grain
   _matComp=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0},
+    uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0}, uBloomNorm:{value:1/_BLOOM_MIPS},
       uAoTexel:{value:new THREE.Vector2(1,1)}, uFar:{value:400},
       uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1} },
     vertexShader:vert, fragmentShader:[
       'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom; uniform sampler2D tAO; uniform sampler2D tGeo;',
-      'uniform float uAO; uniform vec2 uAoTexel; uniform float uFar;',
+      'uniform float uAO; uniform vec2 uAoTexel; uniform float uFar; uniform float uBloomNorm;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
       // build 1126: BILATERAL UPSAMPLE. AO is computed at half resolution, and a plain bilinear tap
       // across a silhouette reads occlusion that belongs to the object and paints it onto whatever
@@ -7115,7 +7172,12 @@ function ensurePost(){
       // and every forward engine that ships SSAO makes the same approximation.
       'void main(){ vec3 c=texture2D(tColor,vUv).rgb;',
       '  if(uAO > 0.0) c *= mix(1.0, _ao(), uAO);',
-      '  c += texture2D(tBloom,vUv).rgb * uBloom;',
+      // build 1128: normalised by the pyramid depth. Each of the five levels carries roughly the
+      // same energy, so the sum is ~5x what the old single gather produced and postBloom would
+      // have silently changed meaning — every level ever saved would have come back washed out.
+      // Dividing here keeps the knob's authored value pointing at the same overall strength, and
+      // leaves the pyramid to change the SHAPE of the glow, which is the actual improvement.
+      '  c += texture2D(tBloom,vUv).rgb * uBloom * uBloomNorm;',
       '  c=_out(clamp(c,0.0,1.0));',                              // -> display space
       '  c=(c-0.5)*uCon+0.5;',                                    // contrast
       '  float l=dot(c, vec3(0.299,0.587,0.114)); c=mix(vec3(l), c, uSat);',   // saturation
@@ -7253,8 +7315,9 @@ function ensurePost(){
   return true;
 }
 function disposePost(){
-  for(const rt of [_postRT,_bloomRT,_compRT,_afterA,_afterB,_aoGeoRT,_aoRT,_aoRT2]){ if(rt && rt.dispose) rt.dispose(); }
-  _postRT=_bloomRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
+  for(const rt of [_postRT,_compRT,_afterA,_afterB,_aoGeoRT,_aoRT,_aoRT2].concat(_bloomMips)){ if(rt && rt.dispose) rt.dispose(); }
+  _bloomMips=[];
+  _postRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
 }
 function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next render
 function _renderPostFX(scn, cam){
@@ -7293,11 +7356,30 @@ function _renderPostFX(scn, cam){
     bu.tAO.value=_aoRT2.texture; bu.uDir.value.set(0,1);
     renderer.setRenderTarget(_aoRT); renderer.render(_postScene,_postCam);
   }
-  // 2) bright-pass + blur -> half-res bloom
-  _matBright.uniforms.tColor.value=_postRT.texture; _matBright.uniforms.uTexel.value.set(1/hw,1/hh); _matBright.uniforms.uThresh.value=_postThresh;
-  _postQuad.material=_matBright; renderer.setRenderTarget(_bloomRT); renderer.render(_postScene,_postCam);
+  // 2) bloom: threshold + downsample the pyramid, then tent-upsample back up, adding as we go
+  {
+    const du=_matBloomDown.uniforms;
+    du.uThresh.value=_postThresh;
+    let src=_postRT.texture, sw=w, sh=h;
+    for(let i=0;i<_bloomMips.length;i++){
+      du.tColor.value=src; du.uTexel.value.set(1/sw,1/sh); du.uFirst.value = (i===0) ? 1 : 0;   // threshold once, at the top
+      _postQuad.material=_matBloomDown; renderer.setRenderTarget(_bloomMips[i]); renderer.render(_postScene,_postCam);
+      src=_bloomMips[i].texture; sw=_bloomMips[i].width; sh=_bloomMips[i].height;
+    }
+    // upsample: mip i+1 is ADDED into mip i (the material blends additively), so mip 0 ends up
+    // holding the sum of every scale. Walk down so each level already contains what is below it.
+    const uu=_matBloomUp.uniforms;
+    _postQuad.material=_matBloomUp;
+    for(let i=_bloomMips.length-1;i>0;i--){
+      const from=_bloomMips[i], to=_bloomMips[i-1];
+      uu.tColor.value=from.texture; uu.uTexel.value.set(1/from.width,1/from.height); uu.uScale.value=1;
+      const ac=renderer.autoClear; renderer.autoClear=false;   // ADD to the level above, never clear it
+      renderer.setRenderTarget(to); renderer.render(_postScene,_postCam);
+      renderer.autoClear=ac;
+    }
+  }
   // 3) composite (scene + bloom + grade + vignette + grain) -> full res
-  const cu=_matComp.uniforms; cu.tColor.value=_postRT.texture; cu.tBloom.value=_bloomRT.texture;
+  const cu=_matComp.uniforms; cu.tColor.value=_postRT.texture; cu.tBloom.value=_bloomMips[0].texture;
   cu.tAO.value = _aoWant ? _aoRT.texture : null; cu.uAO.value = _aoWant ? _ssaoAmt : 0;
   if(_aoWant){ cu.tGeo.value=_aoGeoRT.texture; cu.uAoTexel.value.set(1/hw,1/hh); cu.uFar.value=cam.far; }
   cu.uBloom.value=_postBloom; cu.uVig.value=_postVig; cu.uGrain.value=_postGrain; cu.uSat.value=_postSat; cu.uCon.value=_postCon; cu.uTime.value=(performance.now()*0.001)%1000;
@@ -24791,7 +24873,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1127 · 2026-07-29';
+const BUILD_VERSION = 'build 1128 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

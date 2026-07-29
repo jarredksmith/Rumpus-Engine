@@ -20,7 +20,9 @@ assert(/if\(!dofEnabled \|\| !ensureDof\(\)\)\{ renderer\.render\(scn, cam\); \}
 const pf = extractFunction('_renderPostFX');
 assert(/if\(dofEnabled && ensureDof\(\)\)\{ _runDofTo\(scn, cam, _postRT\); \}\n  else \{ renderer\.setRenderTarget\(_postRT\); renderer\.render\(scn, cam\); \}/.test(pf), 'post step 1 = DoF into _postRT when active, else plain scene');
 // and the rest of the chain reads _postRT, so bloom/grade operate on the focus-blurred image
-assert(/_matBright\.uniforms\.tColor\.value=_postRT\.texture/.test(pf), 'bloom reads the (DoF-filled) post color target');
+// build 1128: the bright-pass became the pyramid's first downsample; it still starts from _postRT,
+// which is where DoF deposits its result.
+assert(/let src=_postRT\.texture/.test(pf), 'bloom reads the (DoF-filled) post color target');
 
 // the old inline DoF block is gone from renderScene (no duplicate pipeline)
 assert(!/setRenderTarget\(_dofRT2\)/.test(rs), 'renderScene no longer inlines the DoF passes');
