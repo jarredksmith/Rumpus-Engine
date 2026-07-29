@@ -14420,14 +14420,21 @@ const player = {
 };
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
-// build 1115: sun/sky raised because legacyMode:false linearises light COLOURS too, and this
-// world's are saturated and dark — 0x4a6c7a keeps only ~34% of its former luminance. That part is
-// real. What it does NOT fix, measured: the stock scene's brightness barely moved (mean luminance
-// 0.091 -> 0.087 on the same frame). The limiter is albedo, not light — floorColor 0x141c22
-// linearises to 0.0089 and wallColor 0x1a242b to 0.013, so these surfaces reflect ~1% of what hits
-// them and no lighting value can lift them. The stock level needs an art pass, which belongs with
-// the sky/lighting work, not here.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.1, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:1.35, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null };
+// build 1116: the stock palette is MIGRATED, not retuned. Before build 1115 these hexes were
+// consumed as linear (legacyMode:true). Reading the same hex correctly as sRGB darkens it hard —
+// 0x141c22 goes from 0.078 to 0.0089 linear, a 9x loss — which is what made the stock level's cover
+// geometry vanish into the background. Each value below is the sRGB hex that yields the SAME linear
+// colour the author picked, so shading is bit-for-bit what it was and only the (correct) output
+// encode changes. Intensities are untouched: see the note on why raising them was the wrong knob.
+//
+// build 1115: DEFAULT_WORLD's sun/sky are deliberately UNCHANGED. Raising them to compensate for
+// legacyMode:false linearising light colours looked obviously right and was measured to be wrong
+// twice over: the stock scene barely moved (mean luminance 0.091 -> 0.087, because the limiter is
+// albedo — floorColor 0x141c22 linearises to 0.0089, so it reflects ~1% of what hits it), and it
+// crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
+// versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
+// The dark stock palette needs an art pass, which belongs with the sky/lighting work.
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -24178,7 +24185,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1115 · 2026-07-29';
+const BUILD_VERSION = 'build 1116 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
