@@ -7006,12 +7006,19 @@ function ensurePost(){
       'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
       _OETF_GLSL,
+      // build 1117: bloom is added in LINEAR (light adds like light), then the frame is encoded, and
+      // only then is it graded. Grading before the encode ran contrast on scene-linear values, where
+      // uCon 1.05 — the shipped default — drives everything below linear 0.024 negative and clamps it
+      // to pure black. That is everything under sRGB 43/255, an eighth of the display range crushed,
+      // with grain then speckling the boundary. Contrast, saturation, vignette and grain are all
+      // display-referred operations; this is where they belong.
       'void main(){ vec3 c=texture2D(tColor,vUv).rgb; c += texture2D(tBloom,vUv).rgb * uBloom;',
+      '  c=_out(clamp(c,0.0,1.0));',                              // -> display space
       '  c=(c-0.5)*uCon+0.5;',                                    // contrast
       '  float l=dot(c, vec3(0.299,0.587,0.114)); c=mix(vec3(l), c, uSat);',   // saturation
       '  float r=length(vUv-0.5); c *= 1.0 - smoothstep(0.42,0.78,r)*uVig;',   // vignette
       '  float n=fract(sin(dot(vUv*(uTime+1.0), vec2(12.9898,78.233)))*43758.5453); c += (n-0.5)*uGrain;',   // grain
-      '  gl_FragColor=vec4(_out(clamp(c,0.0,1.0)), 1.0); }'
+      '  gl_FragColor=vec4(clamp(c,0.0,1.0), 1.0); }'
     ].join('\n') });
   // temporal afterimage motion blur: keep the brighter of (new) and (old * damp) -> decaying trails on motion
   _matAfter=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
@@ -7020,12 +7027,11 @@ function ensurePost(){
       'varying vec2 vUv; uniform sampler2D tNew; uniform sampler2D tOld; uniform float uDamp;',
       'void main(){ vec4 nw=texture2D(tNew,vUv); vec4 od=texture2D(tOld,vUv)*uDamp; gl_FragColor=max(nw, od); }'
     ].join('\n') });
-  // the present pass: it only ever writes the canvas (line ~7003 assigns it as the quad's starting
-  // material and every render replaces that), so its encode is on permanently
+  // build 1117: a plain blit. The composite now encodes unconditionally, so _compRT and the
+  // afterimage buffers already hold display-referred pixels and this pass must NOT encode again.
   _matCopy=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null}, uEncode:{value:1} }, vertexShader:vert,
-    fragmentShader:['varying vec2 vUv; uniform sampler2D tColor;', _OETF_GLSL,
-      'void main(){ gl_FragColor=vec4(_out(texture2D(tColor,vUv).rgb), 1.0); }'].join('\n') });
+    uniforms:{ tColor:{value:null} }, vertexShader:vert,
+    fragmentShader:'varying vec2 vUv; uniform sampler2D tColor; void main(){ gl_FragColor=texture2D(tColor,vUv); }' });
   _postScene=new THREE.Scene(); _postCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
   _postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2), _matCopy); _postScene.add(_postQuad);
   return true;
@@ -7052,12 +7058,14 @@ function _renderPostFX(scn, cam){
   // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
   // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
   const _mbOn = _postMotion>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);
+  // build 1117: the composite always encodes — it is the last stage that sees linear light either
+  // way, and the grade after it has to run in display space. Everything downstream is a blit or a
+  // temporal blend, both of which are fine on display-referred pixels.
+  cu.uEncode.value=1;
   if(!_mbOn){
-    cu.uEncode.value=1;   // build 1115: composite IS the final pass here — encode
     _postQuad.material=_matComp; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
     return;
   }
-  cu.uEncode.value=0;     // ...but with motion blur on it feeds _compRT, which must stay linear
   _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
   // 4) motion blur: blend with the previous frame -> _afterB
   _matAfter.uniforms.tNew.value=_compRT.texture; _matAfter.uniforms.tOld.value=_afterA.texture; _matAfter.uniforms.uDamp.value=_postMotion;
@@ -7198,7 +7206,15 @@ function updateLightBudget(){
 // Arena half-extent. Editable at runtime (saved with the level as worldCfg.arena); rebuildArena()
 // regenerates the floor, grid, and boundary walls, and the player/enemy clamps read it live.
 let ARENA = 70;
-const floorMat = new THREE.MeshPhysicalMaterial({ color:0x141c22, roughness:.95, metalness:.1 });
+// build 1117: polygonOffset so this plane always LOSES a depth tie. It sits at y=0 (position is
+// never assigned) and spans ARENA*2, while every generated arena's ground slab has its top face
+// at exactly y=0 (tools/levelgen.mjs: box(P.ground, ..., 0, ...)) — two coplanar surfaces, so the
+// GPU picks per pixel and the placed arena's sand is cut by bands of engine floor. It reads as
+// pure black because 0x141c22 is 0.007 linear, and ACES clamps anything under 0.00325 to zero.
+// Offsetting depth (not position) leaves collision, the nav grid, surfaceTopAt and spawn heights
+// untouched — moving the plane would change all of them.
+const floorMat = new THREE.MeshPhysicalMaterial({ color:0x141c22, roughness:.95, metalness:.1,
+  polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1 });
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), floorMat);
 floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
 scene.add(floor);
@@ -24185,7 +24201,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1116 · 2026-07-29';
+const BUILD_VERSION = 'build 1117 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
