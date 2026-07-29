@@ -7969,6 +7969,18 @@ function _paintCommit(){
 
 // grid glow (rebuilt with the arena so its extent + divisions track the size)
 let grid = null;
+// build 1133: the grid is a VIEWPORT AID, not scenery. It was on during play by default, and at a
+// grazing angle from eye height its lines alias into horizontal bands across the floor — which is
+// the single most recognisable "this is a prototype" tell in a game frame. Every other engine shows
+// its grid in the editor and never in the running game. worldCfg.grid still decides whether the
+// author wants it at all; this only stops it leaking into play.
+function _gridWanted(){
+  if(typeof worldCfg==='undefined' || !worldCfg || worldCfg.grid === false) return false;
+  // try/catch, not typeof: both editorOpen and gameOn are `let`s declared below this, and `typeof` on
+  // an uninitialised let THROWS rather than returning 'undefined'. rebuildArena calls this at boot.
+  try{ if(editorOpen) return true; }catch(e){ return true; }
+  try{ return !gameOn; }catch(e){ return true; }
+}
 
 // walls
 const wallMat = new THREE.MeshPhysicalMaterial({ color:0x1a242b, roughness:.8, metalness:.2 });
@@ -8069,7 +8081,7 @@ function rebuildArena(){
   // honor the saved grid-visibility toggle on every rebuild (incl. the deferred arena-resize rebuild,
   // which otherwise recreates a visible grid after applyWorldCfg already hid it). try/catch guards the
   // very first rebuildArena() call, which runs before worldCfg is initialized.
-  try { if(typeof worldCfg !== 'undefined' && worldCfg) grid.visible = (worldCfg.grid !== false); } catch(e){}
+  try { if(typeof worldCfg !== 'undefined' && worldCfg) grid.visible = _gridWanted(); } catch(e){}
   // boundary walls — remove old (from scene + colliders), rebuild at the new extent
   for(const w of arenaWalls){ scene.remove(w); const ci=colliders.indexOf(w); if(ci>=0) colliders.splice(ci,1); if(w.geometry) w.geometry.dispose(); }
   arenaWalls.length = 0;
@@ -14621,17 +14633,78 @@ function buildPillar(){
 }
 // Build the original scattered cover + glowing pillars as editable props. Only when there's no saved
 // layout — a saved layout already contains them, so generating again would duplicate the field.
+// build 1133: a DESIGNED default level, and the same one every time.
+//
+// What was here: 22 boxes at Math.random() positions with Math.random() sizes, plus six pillars on a
+// ring. Three problems, and this is the first thing anyone sees after pressing DEPLOY.
+//
+//  * It was NON-DETERMINISTIC. Math.random() meant the "default level" was a different level on every
+//    page load, so it could not be shared, screenshotted twice, learned, or spoken about.
+//  * It had no composition. Scattered boxes give no sightlines, no lanes, no cover relationships and
+//    no focal point — the three things a shooter arena is actually made of.
+//  * Every surface was the one default colour, so the whole frame was a single value: a greybox.
+//
+// This is the same primitives, arranged. Bilateral symmetry across x (so neither side of a duel has
+// the advantage) with the two halves' detail differing, a raised centre as the contested focal point,
+// graded cover heights so there is something to crouch behind and something to climb, and per-prop
+// colour, roughness and emissive so the frame has values in it. Everything is a real editable prop,
+// exactly as before — this is content, not a new system.
+const _DL = {                                   // the default level's palette
+  deck:   { col:0x33434e, shine:{ r:0.85, m:0.10 } },   // platform decks
+  wall:   { col:0x2b3941, shine:{ r:0.75, m:0.18 } },   // structure
+  crate:  { col:0x4c5c65, shine:{ r:0.60, m:0.25 } },   // cover you hide behind
+  crateH: { col:0x5a6b74, shine:{ r:0.55, m:0.30 } },   // taller cover, one value up so the grade reads
+  pipe:   { col:0x1f2a31, shine:{ r:0.40, m:0.55 } },   // dark metal, catches a highlight
+  glowA:  { col:0x123038, emit:{ c:0x2fe0b0, i:1.6 }, shine:{ r:0.4, m:0.2 } },   // team A accent
+  glowB:  { col:0x38251a, emit:{ c:0xff8c3c, i:1.6 }, shine:{ r:0.4, m:0.2 } },   // team B accent
+};
 function generateOriginalScene(){
-  for(let i=0;i<22;i++){
-    const s = 2.5 + Math.random()*3, ht = Math.min(s*0.7, 2.6);   // footprint 2.5–5.5, climbable height
-    let px, pz; do { px=(Math.random()-.5)*ARENA*1.7; pz=(Math.random()-.5)*ARENA*1.7; } while(Math.hypot(px,pz)<8);
-    spawnProp('box', [px, 0, pz, 0, 0, 0, s, ht, s]);            // 9-tuple = non-uniform crate
+  const P = (src, t, mat) => spawnProp(src, t, null, null, 'loop', mat || null);
+  // ---- the contested centre: a raised dais, four corner pipes, stairs on the long axis ----
+  P('box',    [0, 0, 0, 0, 0, 0, 16, 1.6, 16], _DL.deck);
+  for(const sx of [-1, 1]) for(const sz of [-1, 1])
+    P('box',  [sx*7, 1.6, sz*7, 0, 0, 0, 1.1, 3.2, 1.1], _DL.pipe);
+  for(const sz of [-1, 1])                                            // ramps up, one per side
+    P('wedge',[0, 0, sz*11, 0, sz > 0 ? 0 : Math.PI, 0, 7, 1.6, 6], _DL.wall);
+  P('box',    [0, 1.6, 0, 0, 0, 0, 4, 0.12, 4], _DL.glowA);           // a lit plate on the dais floor
+  // ---- team platforms, N and S: a deck, a lip to crouch behind, a ramp, an accent band ----
+  for(const sz of [-1, 1]){
+    const z = sz*30, accent = sz > 0 ? _DL.glowA : _DL.glowB;
+    P('box',  [0, 0, z, 0, 0, 0, 22, 1.2, 9], _DL.deck);
+    P('box',  [0, 1.2, z + sz*4.2, 0, 0, 0, 22, 1.0, 0.7], _DL.wall);  // parapet facing out
+    P('box',  [0, 2.2, z + sz*4.2, 0, 0, 0, 22, 0.25, 0.8], accent);   // band along its top
+    for(const sx of [-1, 1]) P('box', [sx*8, 1.2, z, 0, 0, 0, 2.4, 2.4, 2.4], _DL.crateH);
+    P('wedge',[0, 0, z - sz*7, 0, sz > 0 ? Math.PI : 0, 0, 8, 1.2, 5], _DL.wall);
+    for(const sx of [-1, 1]) P('pillar', [sx*13, 1.2, z, 0, 0, 0, 1]);
   }
-  for(let i=0;i<6;i++){
-    const a = i/6*Math.PI*2;
-    spawnProp('pillar', [Math.cos(a)*ARENA*0.7, 0, Math.sin(a)*ARENA*0.7, 0, 0, 0, 1]);
+  // ---- mid-field: staggered cover along both flanks, graded so heights read as a choice ----
+  for(const sx of [-1, 1]){
+    const x = sx*24;
+    P('box',  [x, 0, 0, 0, 0, 0, 3.0, 2.6, 12], _DL.wall);            // a long wall to break the flank
+    P('box',  [x - sx*5, 0, -8, 0, 0, 0, 3.2, 1.1, 3.2], _DL.crate);  // waist-high
+    P('box',  [x - sx*5, 0, 8, 0, 0, 0, 3.2, 1.8, 3.2], _DL.crateH);  // chest-high
+    P('box',  [x - sx*9, 0, 0, 0, 0, 0, 2.4, 0.8, 2.4], _DL.crate);   // a step up onto the taller one
+    P('cylinder', [x + sx*4, 0, -14, 0, 0, 0, 2.2, 3.4, 2.2], _DL.pipe);
+    P('cylinder', [x + sx*4, 0, 14, 0, 0, 0, 2.2, 3.4, 2.2], _DL.pipe);
   }
+  // ---- diagonal cover between the lanes: the reason the centre is not a shooting gallery ----
+  for(const [sx, sz] of [[1,1],[-1,-1],[1,-1],[-1,1]]){
+    P('box', [sx*13, 0, sz*17, 0, sx*sz*0.6, 0, 4.4, 1.5, 2.2], _DL.crate);
+    P('box', [sx*17, 0, sz*11, 0, sx*sz*-0.5, 0, 3.0, 2.2, 2.0], _DL.crateH);
+  }
+  // ---- corners: L-walls so the perimeter has depth instead of being an empty ring ----
+  for(const sx of [-1, 1]) for(const sz of [-1, 1]){
+    P('box', [sx*34, 0, sz*26, 0, 0, 0, 3, 4.5, 14], _DL.wall);
+    P('box', [sx*28, 0, sz*33, 0, 0, 0, 14, 4.5, 3], _DL.wall);
+    P('box', [sx*34, 4.5, sz*26, 0, 0, 0, 3.2, 0.3, 14.2], sz > 0 ? _DL.glowA : _DL.glowB);
+  }
+  // The player used to spawn at (0,0), which is now the dais — the same mistake build 1124 found in the
+  // generated arenas. Start on a team platform looking at the middle. Recorded rather than applied:
+  // playerSpawn is declared ~300 lines below this call and `typeof` does NOT guard a temporal dead
+  // zone (it throws for an uninitialised let), which is the trap that took the whole sky out in 1127.
+  _DL_SPAWN = { x:0, y:1.2, z:30 };
 }
+let _DL_SPAWN = null;
 if(!(savedLevel && Array.isArray(savedLevel.props))) generateOriginalScene();
 
 // ---------- Scene lights (addable/editable in the editor) ----------
@@ -15073,6 +15146,13 @@ let playerSpawn = {
   y:   (savedLevel && savedLevel.pstart && savedLevel.pstart.y  !=null) ? savedLevel.pstart.y   : 0,   // height ABOVE the ground (for second stories / platform tops); 0 = on the floor
   yaw: (savedLevel && savedLevel.pstart && savedLevel.pstart.yaw!=null) ? savedLevel.pstart.yaw : 0,
 };
+// build 1133: the default level's own start, applied here because this is where playerSpawn exists.
+// Only when the default scene was actually generated (no saved level) AND the save carried no start of
+// its own, so an author's choice is never overwritten.
+if(typeof _DL_SPAWN!=='undefined' && _DL_SPAWN && !(savedLevel && savedLevel.pstart)){
+  playerSpawn.x = _DL_SPAWN.x; playerSpawn.y = _DL_SPAWN.y; playerSpawn.z = _DL_SPAWN.z;
+  playerSpawn.yaw = Math.atan2(playerSpawn.x, playerSpawn.z);   // forward is (-sin yaw, -cos yaw)
+}
 let playerSpawnMarker = null;
 function buildPlayerSpawnMarker(){
   const g = new THREE.Group();
@@ -15463,7 +15543,7 @@ function applyWorldCfg(){
   if(typeof scene !== 'undefined' && !(scene.background && scene.background.isTexture)
      && !(worldCfg.skyMode === 'sky' && !_skyHdriUrl)) scene.background = new THREE.Color(worldCfg.fogColor>>>0);
   // ground grid visibility
-  if(typeof grid !== 'undefined' && grid) grid.visible = (worldCfg.grid !== false);
+  if(typeof grid !== 'undefined' && grid) grid.visible = _gridWanted();
   // depth of field
   if(typeof dofEnabled !== 'undefined'){
     dofEnabled  = (worldCfg.dof === true) && !IS_COARSE;   // DoF post-process is too heavy for mobile
@@ -24972,7 +25052,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1132 · 2026-07-29';
+const BUILD_VERSION = 'build 1134 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38472,6 +38552,7 @@ function toggleEditor(){
   if(!editorOpen && pvpMode()){ if(typeof flashToast==='function') flashToast('Editor is disabled in this mode'); return; }   // no mid-match settings changes / cheating
   if(!editorOpen && drivingCar && typeof exitCar==='function') exitCar();   // build 766: opening the editor forces you out of the car (no stuck speedo HUD)
   editorOpen = !editorOpen; _editorOpenFlag = editorOpen;
+  if(typeof grid!=='undefined' && grid) grid.visible = _gridWanted();   // build 1133: the grid follows the editor, not the level
   if(editorOpen){
     if(typeof _raceClearBots==='function') _raceClearBots();   // build 833: rivals are runtime-only — never ghosts in the editor
     if(!editorEl) buildEditorPanel();
@@ -38605,6 +38686,7 @@ function startGame(){
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
   if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); if(typeof _clearDust==='function') _clearDust(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/728/732/738: kill engine + HUD + skid + dust + restore crosshair on (re)deploy
   if(typeof preloadSignalSounds==='function') preloadSignalSounds();   // build 750: warm up custom signal clips so the first trigger plays
+  if(typeof grid!=='undefined' && grid) grid.visible = false;   // build 1133: never show the viewport grid in a running game
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _wakeLockTry==='function') setTimeout(_wakeLockTry, 0);   // build 908: keep the phone awake during play (gameOn is set below; next tick reads it true)
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
