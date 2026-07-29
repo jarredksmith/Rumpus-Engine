@@ -7239,6 +7239,168 @@ const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), floorMat);
 floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
 scene.add(floor);
 
+// ---------- build 1119: a real sky ----------
+// One analytic model, written twice from one constants block: as GLSL for the dome the camera sees,
+// and as JS for everything the sky has to DRIVE — the image-based lighting, the hemisphere fill and
+// the fog. Before this the background was a flat fill of worldCfg.fogColor (sampling the same frame
+// at two heights returned identical pixels: zero gradient), and the environment fallback was a
+// 256x128 canvas with a white blob painted on it for a sun.
+//
+// Shape, all in LINEAR space: a zenith->horizon ramp whose tightness is the turbidity, a Mie forward
+// lobe around the sun, a limb-softened disc, and a ground half below the horizon. No texture fetch,
+// two pow and one exp, so it costs a few dozen ALU on 12 triangles drawn after the opaques.
+const SKY_DEF = { zenith:[0.18,0.30,0.54], horizon:[0.52,0.60,0.70], ground:[0.20,0.19,0.17],
+                  turb:0.35, sunSize:1.6, sunGlow:1.0, exp:1.0 };
+function _skyP(){
+  const w = (typeof worldCfg!=='undefined') ? worldCfg : null;
+  const hex = (h, d) => { if(h==null) return d.slice();
+    const c = new THREE.Color(h>>>0); return [c.r, c.g, c.b]; };   // legacyMode:false -> already linear
+  return {
+    zenith: hex(w && w.skyZenith, SKY_DEF.zenith),
+    horizon: hex(w && w.skyHorizon, SKY_DEF.horizon),
+    ground: hex(w && w.skyGround, SKY_DEF.ground),
+    turb: (w && w.skyTurb != null) ? +w.skyTurb : SKY_DEF.turb,
+    sunSize: (w && w.skySunSize != null) ? +w.skySunSize : SKY_DEF.sunSize,
+    sunGlow: (w && w.skySunGlow != null) ? +w.skySunGlow : SKY_DEF.sunGlow,
+    exp: (w && w.skyExp != null) ? +w.skyExp : SKY_DEF.exp,
+  };
+}
+// the sun's world direction from the authored azimuth/elevation (the same numbers that aim the
+// shadow-casting light, so the disc in the sky is where the shadows say it is)
+function _sunDir(){
+  const az = ((typeof worldCfg!=='undefined' ? +worldCfg.sunAzim : 63) || 0) * Math.PI/180;
+  const el = Math.max(-0.2, ((typeof worldCfg!=='undefined' ? +worldCfg.sunElev : 61) || 0) * Math.PI/180);
+  return [Math.cos(el)*Math.sin(az), Math.sin(el), Math.cos(el)*Math.cos(az)];
+}
+// The JS twin. Must stay numerically identical to the GLSL below — test-1119 evaluates both.
+function skyRadiance(dx, dy, dz, P, S){
+  const falloff = 1.6 + (1 - P.turb) * 3.4;                 // hazy -> clear tightens the ramp
+  const t = Math.pow(1 - Math.max(dy, 0), falloff);
+  const out = [0,0,0];
+  for(let i=0;i<3;i++) out[i] = P.zenith[i] + (P.horizon[i] - P.zenith[i]) * t;
+  if(dy < 0){                                                // ground half, softly blended at the line
+    const g = Math.min(1, -dy / 0.35);
+    for(let i=0;i<3;i++) out[i] = out[i] + (P.ground[i] - out[i]) * (g*g*(3-2*g));
+  }
+  const cd = Math.max(-1, Math.min(1, dx*S[0] + dy*S[1] + dz*S[2]));
+  const glow = Math.pow(Math.max(cd, 0), 8 + (1 - P.turb) * 56) * P.sunGlow;   // Mie forward lobe
+  const ang = Math.acos(cd) * 180/Math.PI;
+  const disc = 1 - Math.min(1, Math.max(0, (ang - P.sunSize*0.5) / Math.max(0.05, P.sunSize*0.35)));
+  const add = glow * 0.45 + disc * disc * 12;
+  for(let i=0;i<3;i++) out[i] = (out[i] + add * (i===0?1:i===1?0.94:0.82)) * P.exp;
+  return out;
+}
+const SKY_GLSL = [
+  'uniform vec3 uZen; uniform vec3 uHor; uniform vec3 uGnd; uniform vec3 uSun;',
+  'uniform float uFall; uniform float uGlowP; uniform float uSunSize; uniform float uSunGlow; uniform float uExp;',
+  'vec3 skyRadiance(vec3 d){',
+  '  float t = pow(1.0 - max(d.y, 0.0), uFall);',
+  '  vec3 c = mix(uZen, uHor, t);',
+  '  if(d.y < 0.0) c = mix(c, uGnd, smoothstep(0.0, 1.0, min(1.0, -d.y/0.35)));',
+  '  float cd = clamp(dot(d, uSun), -1.0, 1.0);',
+  '  float glow = pow(max(cd, 0.0), uGlowP) * uSunGlow;',
+  '  float ang = degrees(acos(cd));',
+  '  float disc = 1.0 - clamp((ang - uSunSize*0.5) / max(0.05, uSunSize*0.35), 0.0, 1.0);',
+  '  float add = glow*0.45 + disc*disc*12.0;',
+  '  return (c + add*vec3(1.0, 0.94, 0.82)) * uExp;',
+  '}'
+].join('\n');
+let _skyMesh = null, _skyMat = null, _skyDomeRT = null, _skyDomePMREM = null, _skyKey = '';
+function _skyUniforms(){
+  const P = _skyP(), S = _sunDir();
+  return { uZen:{value:new THREE.Vector3(...P.zenith)}, uHor:{value:new THREE.Vector3(...P.horizon)},
+    uGnd:{value:new THREE.Vector3(...P.ground)}, uSun:{value:new THREE.Vector3(...S)},
+    uFall:{value:1.6+(1-P.turb)*3.4}, uGlowP:{value:8+(1-P.turb)*56},
+    uSunSize:{value:P.sunSize}, uSunGlow:{value:P.sunGlow}, uExp:{value:P.exp} };
+}
+function _ensureSky(){
+  if(_skyMesh) return _skyMesh;
+  _skyMat = new THREE.ShaderMaterial({ side:THREE.BackSide, depthWrite:false, fog:false,
+    uniforms:_skyUniforms(),
+    vertexShader:['varying vec3 vDir;','void main(){ vDir = position;',
+      // xyww pins the dome to the far plane, so it can never clip geometry or the near plane
+      '  vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }'].join('\n'),
+    fragmentShader:['varying vec3 vDir;', SKY_GLSL,
+      'void main(){ gl_FragColor = vec4(skyRadiance(normalize(vDir)), 1.0); }'].join('\n') });
+  _skyMesh = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), _skyMat);
+  _skyMesh.frustumCulled = false; _skyMesh.renderOrder = 1000; _skyMesh.name = 'nocollide-sky';
+  // The dome is a 2-unit box, so it has to travel with the eye — left at the world origin the camera
+  // simply walks out of it and the "sky" becomes a small cube in the distance. onBeforeRender gets
+  // the camera actually being rendered, which means this works for the gameplay camera, the editor
+  // camera and the cinematic preview without any of them knowing about it.
+  _skyMesh.onBeforeRender = function(r, sc, cam){ if(cam && cam.position){ _skyMesh.position.copy(cam.position); _skyMesh.updateMatrixWorld(); } };
+  scene.add(_skyMesh);
+  return _skyMesh;
+}
+// The sky IS the image-based lighting: render the same material to a small cube and PMREM it, so a
+// metal surface reflects the sky it is standing under instead of a painted canvas. Rebuilt only when
+// the sky parameters actually change (the key), never per frame.
+function _skyEnv(){
+  try{
+    const P=_skyP(), S=_sunDir();
+    const key = JSON.stringify([P,S.map(v=>+v.toFixed(3))]);
+    if(key === _skyKey && _skyDomeRT) return _skyDomeRT.texture;
+    if(!THREE.PMREMGenerator || !THREE.WebGLCubeRenderTarget) return null;
+    const size = (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 64 : 128;
+    const sc = new THREE.Scene();
+    const m = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.ShaderMaterial({
+      side:THREE.BackSide, depthWrite:false, fog:false, uniforms:_skyUniforms(),
+      vertexShader:'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader:['varying vec3 vDir;', SKY_GLSL, 'void main(){ gl_FragColor=vec4(skyRadiance(normalize(vDir)),1.0); }'].join('\n') }));
+    m.frustumCulled=false; sc.add(m);
+    const cubeRT = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType });
+    const cam = new THREE.CubeCamera(0.1, 10, cubeRT);
+    const prev = renderer.getRenderTarget();
+    cam.update(renderer, sc);
+    renderer.setRenderTarget(prev);
+    if(!_skyDomePMREM){ _skyDomePMREM = new THREE.PMREMGenerator(renderer); _skyDomePMREM.compileCubemapShader(); }
+    const out = _skyDomePMREM.fromCubemap(cubeRT.texture);
+    if(_skyDomeRT && _skyDomeRT.dispose) _skyDomeRT.dispose();
+    _skyDomeRT = out; _skyKey = key;
+    cubeRT.dispose(); m.geometry.dispose(); m.material.dispose();
+    return _skyEnvRT.texture;
+  }catch(e){ return null; }
+}
+// Everything the sky drives, applied together so they can never disagree: the dome's uniforms, the
+// hemisphere fill (sampled from the model itself rather than a hand-picked hex), the fog colour
+// along the view horizon, and the environment map.
+function applySky(){
+  // _skyHdriUrl is declared further down the file; guard the read (this file has a history of
+  // boot-time TDZ errors from exactly this pattern). An authored HDRI always outranks the model.
+  const hdri = (typeof _skyHdriUrl !== 'undefined') && _skyHdriUrl;
+  const on = (typeof worldCfg!=='undefined') && worldCfg.skyMode === 'sky' && !hdri;
+  if(_skyMesh) _skyMesh.visible = on;
+  if(!on) return false;
+  _ensureSky();
+  const u = _skyUniforms();
+  for(const k in u) if(_skyMat.uniforms[k]) _skyMat.uniforms[k].value = u[k].value;
+  _skyMesh.visible = true;
+  const P=_skyP(), S=_sunDir();
+  // hemisphere fill: the average of the upper and lower hemispheres of the SAME model. A hard floor
+  // keeps shadowed ground off zero — a surface lit only by bounce must still show its texture.
+  const avg = (sign)=>{ const a=[0,0,0]; let n=0;
+    for(let i=0;i<8;i++){ const th=i/8*Math.PI*2;
+      for(const el of [0.15,0.5,0.85]){ const y=sign*el, r=Math.sqrt(Math.max(0,1-y*y));
+        const c=skyRadiance(Math.cos(th)*r, y, Math.sin(th)*r, P, S);
+        a[0]+=c[0]; a[1]+=c[1]; a[2]+=c[2]; n++; } }
+    return a.map(v=>Math.max(0.012, v/n)); };
+  const up=avg(1), dn=avg(-1);
+  if(typeof skyLight!=='undefined'){ skyLight.color.setRGB(up[0],up[1],up[2]); skyLight.groundColor.setRGB(dn[0],dn[1],dn[2]); }
+  if(typeof scene!=='undefined') scene.background = null;   // the dome draws it now
+  // Fog is the sky at the horizon. Fading distance toward a separately authored fogColor is what
+  // makes a pasted-on skybox obvious: geometry recedes into a colour that is nowhere in the sky
+  // above it. Sampling the model's own horizon ring means the far plane and the sky meet.
+  if(typeof SCENE_FOG!=='undefined'){
+    const h=[0,0,0];
+    for(let i=0;i<8;i++){ const th=i/8*Math.PI*2;
+      const c=skyRadiance(Math.cos(th), 0.04, Math.sin(th), P, S);
+      h[0]+=c[0]/8; h[1]+=c[1]/8; h[2]+=c[2]/8; }
+    SCENE_FOG.color.setRGB(Math.min(1,h[0]), Math.min(1,h[1]), Math.min(1,h[2]));
+  }
+  const env = _skyEnv(); if(env && typeof scene!=='undefined') scene.environment = env;
+  return true;
+}
+
 // ---------- build 875: floor material painting (splat map) ----------
 // Paint up to THREE extra textures over the base floor (grass -> a soft-edged dirt path) with a brush.
 // One 256x256 RGBA canvas holds the blend weights (R/G/B = layers 1-3); the floor's own standard
@@ -14470,7 +14632,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
 // versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
 // The dark stock palette needs an art pass, which belongs with the sky/lighting work.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -14483,6 +14645,10 @@ function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.pos
 function _worldFrom(w){
   const out = Object.assign({}, DEFAULT_WORLD, w || {});
   out.colorV = (w && w.colorV != null) ? (w.colorV | 0) : (w ? 1 : 2);
+  // build 1119: a level authored before the sky existed was lit and graded against a flat fill of
+  // fogColor. Giving it a gradient and sky-driven fill would change every frame of it, so legacy
+  // content keeps the flat background unless its author opts in.
+  if(out.colorV < 2 && (!w || w.skyMode == null)) out.skyMode = 'flat';
   return out;
 }
 let worldCfg = _worldFrom((savedLevel && savedLevel.world) || null);
@@ -14744,7 +14910,11 @@ function applyWorldCfg(){
       renderer.toneMapping = wantTM;
       scene.traverse(o=>{ const ms=o.material; if(!ms) return; (Array.isArray(ms)?ms:[ms]).forEach(m=>{ if(m) m.needsUpdate=true; }); });
     }
-    if(!_skyHdriUrl){ _ensureDefaultEnv(); if(_envDefaultRT && scene.environment !== _envDefaultRT.texture) scene.environment = _envDefaultRT.texture; }
+    // build 1119: the procedural sky supplies the background, the hemisphere fill and the
+    // environment map together. Only fall back to the painted canvas when it is off.
+    if(!(typeof applySky==='function' && applySky())){
+      if(!_skyHdriUrl){ _ensureDefaultEnv(); if(_envDefaultRT && scene.environment !== _envDefaultRT.texture) scene.environment = _envDefaultRT.texture; }
+    }
   }
   SPEED = worldCfg.walk; SPRINT = worldCfg.run / worldCfg.walk;
   JUMP = worldCfg.jump; GRAV = worldCfg.grav; CROUCH_SPEED = worldCfg.crouch;
@@ -14792,7 +14962,9 @@ function applyWorldCfg(){
   worldCfg.fogDensity = Math.max(0, Math.min(0.2, worldCfg.fogDensity == null ? DEFAULT_WORLD.fogDensity : +worldCfg.fogDensity));
   if(worldCfg.fogColor == null) worldCfg.fogColor = DEFAULT_WORLD.fogColor;
   if(typeof SCENE_FOG !== 'undefined'){ SCENE_FOG.density = worldCfg.fogDensity; SCENE_FOG.color.setHex(worldCfg.fogColor>>>0); }
-  if(typeof scene !== 'undefined' && !(scene.background && scene.background.isTexture)) scene.background = new THREE.Color(worldCfg.fogColor>>>0);
+  // build 1119: with the sky dome on, the background stays null — the dome IS the background
+  if(typeof scene !== 'undefined' && !(scene.background && scene.background.isTexture)
+     && !(worldCfg.skyMode === 'sky' && !_skyHdriUrl)) scene.background = new THREE.Color(worldCfg.fogColor>>>0);
   // ground grid visibility
   if(typeof grid !== 'undefined' && grid) grid.visible = (worldCfg.grid !== false);
   // depth of field
@@ -24221,7 +24393,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1118 · 2026-07-29';
+const BUILD_VERSION = 'build 1119 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
