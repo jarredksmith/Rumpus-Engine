@@ -24916,7 +24916,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1130 · 2026-07-29';
+const BUILD_VERSION = 'build 1131 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28594,13 +28594,26 @@ function moveHorizontal(x, z, dx, dz, feetY){
   // Probe the destination CENTER — clearAt expands obstacles by the body radius internally. Probing a
   // point R ahead (as before) read the slope a body-radius up a ramp as too tall to step onto, which
   // fenced you off the ramp until you jumped on.
-  if(dx !== 0){
-    const destX = x + dx;
-    if(stuck || clearAt(destX, z, feetY)) nx = destX;
-  }
-  if(dz !== 0){
-    const destZ = z + dz;
-    if(stuck || clearAt(nx, destZ, feetY)) nz = destZ;
+  //
+  // build 1131: SUBSTEPPED. Testing only the destination is a discrete check on a continuous motion:
+  // if one frame's step is long enough, both the start and the end can be clear while the path
+  // between them passes straight through a wall. That is not hypothetical here — dt is clamped to
+  // 0.05, so at 20 fps ordinary running already covers 0.6 m per frame, and a grenade blast or a jump
+  // pad adds extVel on top. Walk the motion in pieces no longer than half a body radius and the gap
+  // can never be jumped. At 60 fps this is one iteration, i.e. exactly the old cost; it only does more
+  // work in the case that used to be broken.
+  //
+  // `stuck` keeps its escape hatch: a player already embedded in geometry moves freely so they can get
+  // out rather than freeze, and substepping that would just be 16 unconditional steps, so it stays 1.
+  const dist = Math.hypot(dx, dz);
+  const stepMax = Math.max(0.05, R * 0.5);
+  const steps = (stuck || dist <= stepMax) ? 1 : Math.min(16, Math.ceil(dist / stepMax));
+  const sx = dx / steps, sz = dz / steps;
+  for(let i = 0; i < steps; i++){
+    let moved = false;
+    if(sx !== 0){ const destX = nx + sx; if(stuck || clearAt(destX, nz, feetY)){ nx = destX; moved = true; } }
+    if(sz !== 0){ const destZ = nz + sz; if(stuck || clearAt(nx, destZ, feetY)){ nz = destZ; moved = true; } }
+    if(!moved) break;   // blocked on every axis that wanted to move: later substeps cannot do better
   }
   player.pos.x = nx; player.pos.z = nz;
   const lim = ARENA - 1.5;
