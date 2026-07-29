@@ -18,5 +18,7 @@ assert(/const _slideEdge = _slideKey && !_prevSlideKey; _prevSlideKey = _slideKe
 assert(/if\(!sliding && slideCD<=0 && _slideBufT>0 && \(_sprinting \|\| _sprintGraceT>0\) && player\.onGround && wish\.lengthSq\(\)>0\.01/.test(src), 'slide still requires sprint(+grace) + grounded + moving (builds 926/927)');
 
 // the on-screen legend reflects the split
-assert(/<b>CTRL<\/b> crouch/.test(page) && /<b>SPRINT\+C<\/b> slide/.test(page), 'controls legend shows Ctrl crouch + Sprint+C slide');
+// build 1121: these read from BINDS now, so the legend shows whatever crouch/slide are bound to
+assert(/<b data-bind="crouch">[^<]+<\/b> crouch/.test(page) && /<b data-bind="sprint">[^<]+<\/b>\+<b data-bind="slide">[^<]+<\/b> slide/.test(page),
+  'controls legend shows the crouch and sprint+slide keys');
 done();

@@ -42,6 +42,7 @@ assert(/Its equal twin <b>Build \/ edit level<\/b>/.test(manual) && /<b>Communit
 assert(/Logic graph<\/b> · <b>Cutscenes<\/b>/.test(manual), 'the Gameplay-tab crumbs include the new section');
 
 // ---- the in-game instructions card ----
-assert(/<b>R<\/b> reload \(rotates the ghost while building\)/.test(html), 'the quick controls card mentions the build-mode R');
+assert(/<b data-bind="reload">[A-Z]<\/b> reload \(rotates the ghost while building\)/.test(html),
+  'the quick controls card mentions the build-mode reload key (build 1121: resolved from the binding, not hardcoded)');
 
 done('build 1032: the field manual + instructions card document the full 1000-1031 feature run');

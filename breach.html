@@ -594,7 +594,7 @@
   body.touch #stats { min-width:84px; }
   body.touch #ammoPanel { min-width:84px; }
   body.touch #stats .label, body.touch #ammoPanel .label { font-size:9px; letter-spacing:1.2px; }
-  body.touch #nadeKbd { display:none; }   /* "[G] THROW" is keyboard-only on mobile */
+  body.touch #nadeKbd { display:none; }   /* the throw-key chip is keyboard-only on mobile (build 1121: its label is resolved from BINDS) */
   body.touch #stats .bar { height:4px; margin-top:4px; }
   /* controls, landscape-tuned + notch-safe */
   body.touch #tStick  { left: calc(20px + env(safe-area-inset-left));  bottom: calc(20px + env(safe-area-inset-bottom)); width:120px; height:120px; }
@@ -1151,7 +1151,7 @@
   <div id="ammoPanel" class="panel">
     <div class="label" id="wepName">RIFLE</div>
     <div class="big"><span id="ammo">30</span><span style="font-size:16px;color:#5a7d72">/<span id="reserve">90</span></span></div>
-    <div class="label" style="margin-top:6px">⊕ <span id="nades">0</span><span id="nadeKbd"> &nbsp; [G] THROW</span></div>
+    <div class="label" style="margin-top:6px">⊕ <span id="nades">0</span><span id="nadeKbd"></span></div>
   </div>
 
   <div id="wavePanel" class="panel">
@@ -1230,8 +1230,8 @@
     <button class="modalClose" aria-label="Close" data-close="instrModal">✕</button>
     <h2>INSTRUCTIONS</h2>
     <div id="controls">
-      <b>WASD</b> move &nbsp;·&nbsp; <b>MOUSE</b> look &nbsp;·&nbsp; <b>L-CLICK</b> fire &nbsp;·&nbsp; <b>R-CLICK</b> aim &nbsp;·&nbsp; <b>SHIFT</b> sprint &nbsp;·&nbsp; <b>SPACE</b> jump &nbsp;·&nbsp; <b>CTRL</b> crouch &nbsp;·&nbsp; <b>SPRINT+C</b> slide<br>
-      <b>R</b> reload (rotates the ghost while building) &nbsp;·&nbsp; <b>V</b> melee (auto when dry) &nbsp;·&nbsp; <b>G</b> throw grenade &nbsp;·&nbsp; <b>E</b> use station / open cache &nbsp;·&nbsp; <b>1·2·3</b> / <b>scroll</b> weapons<br>
+      <b data-bind="fwd">W</b><b data-bind="left">A</b><b data-bind="back">S</b><b data-bind="right">D</b> move &nbsp;·&nbsp; <b>MOUSE</b> look &nbsp;·&nbsp; <b>L-CLICK</b> fire &nbsp;·&nbsp; <b>R-CLICK</b> aim &nbsp;·&nbsp; <b data-bind="sprint">Shift</b> sprint &nbsp;·&nbsp; <b data-bind="jump">Space</b> jump &nbsp;·&nbsp; <b data-bind="crouch">Ctrl</b> crouch &nbsp;·&nbsp; <b data-bind="sprint">Shift</b>+<b data-bind="slide">C</b> slide<br>
+      <b data-bind="reload">R</b> reload (rotates the ghost while building) &nbsp;·&nbsp; <b data-bind="melee">V</b> melee (auto when dry) &nbsp;·&nbsp; <b data-bind="grenade">F</b> throw grenade &nbsp;·&nbsp; <b data-bind="interact">E</b> use station / open cache &nbsp;·&nbsp; <b>1·2·3</b> / <b>scroll</b> weapons<br>
       <b>ESC</b> pause &nbsp;·&nbsp; <b>P</b> open the in-game model/transform editor<br>
       <span style="color:var(--gold)">Kill enemies for ◆ credits — spend them at the ammo station and supply caches.</span>
       <div id="padNote" style="display:none;margin-top:10px;color:var(--accent)"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="11" x2="10" y2="11"/><line x1="8" y1="9" x2="8" y2="13"/><line x1="15" y1="12" x2="15.01" y2="12"/><line x1="18" y1="10" x2="18.01" y2="10"/><rect width="20" height="12" x="2" y="6" rx="2"/></svg>Controller connected — <b>L-stick</b> move · <b>R-stick</b> look · <b>RT</b> fire · <b>LT</b> aim · <b>A</b> jump · <b>X</b> reload · <b>Y</b> use · <b>B</b> grenade · <b>LB/RB</b> weapons · <b>L3</b> sprint · <b>any button</b> deploys &nbsp; <span style="color:#5a7d72">(press <b>`</b> for controller test)</span></div>
@@ -15054,13 +15054,35 @@ const BIND_LABEL = { fwd:'Move forward', back:'Move back', left:'Strafe left', r
   reload:'Reload', melee:'Melee', interact:'Use / interact', grab:'Grab / drop prop', flashlight:'Flashlight', grenade:'Grenade', inventory:'Inventory', map:'Tactical map', chat:'Chat (multiplayer)', radial:'Deploy menu', objective:'Recall objective' };
 const BINDS = Object.assign({}, BIND_DEFAULTS);
 try{ const _bv=JSON.parse(localStorage.getItem('breach_binds_v1')||'null'); if(_bv && typeof _bv==='object'){ for(const k in BIND_DEFAULTS){ if(typeof _bv[k]==='string' && _bv[k]) BINDS[k]=_bv[k]; } } }catch(e){}
-function saveBinds(){ try{ localStorage.setItem('breach_binds_v1', JSON.stringify(BINDS)); }catch(e){} }
+function saveBinds(){ try{ localStorage.setItem('breach_binds_v1', JSON.stringify(BINDS)); }catch(e){}
+  // build 1121: every rebind funnels through here (remap and reset alike), so this is the one
+  // place that has to re-resolve the on-screen labels.
+  if(typeof refreshBindLabels==='function') refreshBindLabels(); }
 function _rebuildGameKeys(){
+  if(typeof refreshBindLabels==='function') refreshBindLabels();   // build 1121: labels track the live binds
   for(const k in GAME_KEYS) delete GAME_KEYS[k];
   for(const k of ['Space','ShiftLeft','ShiftRight','ControlLeft','ControlRight','KeyW','KeyA','KeyS','KeyD','KeyC','KeyE','KeyF','KeyG','KeyR','KeyV','KeyQ','Digit1','Digit2','Digit3','Digit4','Digit5']) GAME_KEYS[k]=1;
   for(const a in BINDS){ const c=BINDS[a]; if(c && c!=='Escape') GAME_KEYS[c]=1; }
 }
 _rebuildGameKeys();
+// build 1121: every player-facing key label is RESOLVED from the live binding. The HUD shipped
+// "[G] THROW" as literal markup while BIND_DEFAULTS.grenade was KeyF and KeyG was grab — so the game
+// instructed every player to press the wrong key, and remapping never updated the text either.
+// Anything carrying data-bind="<action>" gets filled in here, and so does the grenade chip.
+let _bindLabelsRetried = false;
+function refreshBindLabels(){
+  try{
+    const B = (typeof BINDS!=='undefined' && BINDS) ? BINDS : BIND_DEFAULTS;
+    document.querySelectorAll('[data-bind]').forEach(el=>{
+      const a = el.getAttribute('data-bind'); if(a && B[a]) el.textContent = _keyLabel(B[a]);
+    });
+    const chip = document.getElementById('nadeKbd');
+    if(chip) chip.innerHTML = ' &nbsp; [' + _keyLabel(B.grenade || BIND_DEFAULTS.grenade) + '] THROW';
+    // The boot call can land before the HUD markup exists, and the labels are no longer hardcoded in
+    // the page — an empty chip would be worse than the wrong key. Retry once on the next frame.
+    else if(!_bindLabelsRetried){ _bindLabelsRetried = true; requestAnimationFrame(refreshBindLabels); }
+  }catch(e){}
+}
 function _keyLabel(code){ if(!code) return '?'; return String(code).replace(/^Key/,'').replace(/^Digit/,'').replace(/^Arrow/,'').replace('ControlLeft','Ctrl').replace('ControlRight','R-Ctrl').replace('ShiftLeft','Shift').replace('ShiftRight','R-Shift').replace('AltLeft','Alt').replace('AltRight','R-Alt'); }
 // ---- Touch / mobile input ----
 let isTouch = (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);   // primary input is a touchscreen
@@ -24433,7 +24455,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1120 · 2026-07-29';
+const BUILD_VERSION = 'build 1121 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
