@@ -175,10 +175,30 @@ The whole game lives inside `window.GAME_START = function(){...}`, so page-level
 internals: a harness has to drive the real UI. Capture at a FIXED generator seed or before/after
 frames are different arenas and prove nothing.
 
-## Open work (as of build 1115)
+**Know where the camera is before you judge the frame (build 1124).** Four rounds of visual
+critique — "no sky", "contact shadows detached", "flat sunless lighting", "break the arena canopy
+lid" — were all one bug: the player spawned at the origin, which is under the generated arena's
+central mass, with 0.55 m of headroom. The rust "sky" was the underside of a rock. Nothing was
+wrong with the sky, the shadows or the light. When a frame looks inexplicable, probe the scene
+before theorising: a temporary `window.__probeUp` hook that raycasts up from `camera.position` and
+stuffs the hit list into `document.title` costs one capture run and settles it, because
+`page.title()` reaches out of the closure that `page.evaluate` cannot. Zeroing a suspect parameter
+to its most extreme value is the other cheap discriminator — `normalBias = 0` producing NO acne
+proved the geometry was never in the shadow map, which no amount of bias tuning would have shown.
+
+## Open work (as of build 1124)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
-(done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (not started).
+(done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
+1124: `info.spawns`).
+
+**Gameplay data with the GLB.** Build 1124 added the first piece — `buildArena` returns
+`spawns: [[x,z],[x,z]]` (BASE 1, BASE 2), the worker carries it back beside `world`, and *Place in
+level* moves `playerSpawn` there facing the centre. The engine's forward is `(-sin yaw, -cos yaw)`,
+so facing the origin from `(x,z)` is `atan2(x, z)` — `atan2(-x,-z)` looks the wrong way (there is
+an instance of the wrong form in the maze generator, untouched). Next candidates, same channel:
+enemy spawn markers at the arena's cover positions, the ramp centrelines (`scans`) as bot routes,
+and pickup spots.
 
 No known geometry bugs: both of the build-1112 repros (multi-storey stairs pushing enemies, the
 cover crate clipping a ramp mouth) are fixed and covered by tests.

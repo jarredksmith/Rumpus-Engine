@@ -24473,7 +24473,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1122 · 2026-07-29';
+const BUILD_VERSION = 'build 1124 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37605,7 +37605,7 @@ self.onmessage = async (e) => {
     const w = api.writeGLB('out.glb');
     const bytes = host.out;
     const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    postMessage({ ok:true, name:info.name, world:info.world||null, kb:Math.round(w.bytes/1024), tris:w.tris, glb:ab }, [ab]);
+    postMessage({ ok:true, name:info.name, world:info.world||null, spawns:info.spawns||null, kb:Math.round(w.bytes/1024), tris:w.tris, glb:ab }, [ab]);
   } catch(err){ postMessage({ ok:false, err:String(err && err.message || err) }); }
 };`;
 function _lgGenerate(opts, done){
@@ -37668,7 +37668,17 @@ function _lgOpenDialog(){
       actRow.querySelectorAll('.lgRes').forEach(b=>b.remove());
       const place=document.createElement('button'); place.className='lgRes lgCTA'; place.textContent='Place in level'; place.style.cssText='flex:1;padding:8px;font-size:12px;';
       place.onclick=()=>{ pushUndoSnapshot();
-        spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).'); }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
+        spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed, player spawn moved to BASE 1. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).'); }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
+        // build 1124: an arena is not a prop — it lands at the origin, which is where the level's
+        // default player spawn already is, and every footprint the generator builds puts a structure
+        // at its centre. Measured on KILN RUN: the central mass's underside sits at y 2.25, so the
+        // player spawned into a 0.55 m undercroft with no sun, no sky and a rock for a ceiling.
+        // The generator names its base rooms; start the player in one, facing the middle.
+        if(r.spawns && r.spawns.length && typeof playerSpawn!=='undefined'){
+          const s=r.spawns[0]; playerSpawn.x=+s[0]||0; playerSpawn.z=+s[1]||0; playerSpawn.y=0;
+          playerSpawn.yaw=Math.atan2(playerSpawn.x, playerSpawn.z);   // look at the arena centre: forward is (-sin yaw, -cos yaw)
+          if(typeof refreshPlayerSpawnMarker==='function') refreshPlayerSpawnMarker();
+        }
         if(moodCb.checked && r.world){ Object.assign(worldCfg, r.world); applyWorldCfg(); }
         if(typeof renderEditorFields==='function') renderEditorFields();
         p.remove(); _lgPanel=null; };
