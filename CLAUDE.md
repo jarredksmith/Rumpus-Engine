@@ -192,6 +192,14 @@ Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) →
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
 1124: `info.spawns`).
 
+**Shadow parameters are TEXEL quantities (build 1125).** `normalBias` is a world-space offset whose
+correct size is a few texels of `2 * extent / mapSize`. Build 1095 tuned it to 0.6 against the fixed
+±80 volume (7.7 texels); build 1120 made the volume `shadowDist` and the constant silently became
+~20 texels — longer than the whole ground shadow a crate casts at noon. `_sunNormalBias(extent, px)`
+is now the single derivation, used at boot and on every re-fit. `moon.shadow.bias` is a DEPTH bias
+against an unchanged near/far and deliberately does NOT scale with it. If you touch the shadow
+volume again, check what else was tuned against its old size.
+
 **Gameplay data with the GLB.** Build 1124 added the first piece — `buildArena` returns
 `spawns: [[x,z],[x,z]]` (BASE 1, BASE 2), the worker carries it back beside `world`, and *Place in
 level* moves `playerSpawn` there facing the centre. The engine's forward is `(-sin yaw, -cos yaw)`,

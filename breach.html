@@ -7143,6 +7143,15 @@ moon.shadow.camera.top = 80; moon.shadow.camera.bottom = -80;
 const _sunTarget = new THREE.Object3D(); scene.add(_sunTarget); moon.target = _sunTarget;
 const _fitF = new THREE.Vector3(), _fitAx = new THREE.Vector3(), _fitAy = new THREE.Vector3(), _fitL = new THREE.Vector3();
 let _fitFx = 1e9, _fitFz = 1e9;
+// build 1125: normalBias is a TEXEL quantity, not a world-space constant. The 0.6 below was tuned
+// against the FIXED +/-80 volume, where a 2048 map made a texel 7.8 cm — 7.7 texels of offset.
+// Build 1120 shrank the volume to shadowDist (30 by default, so 2.9 cm a texel) and left the
+// constant alone, which silently turned it into ~20 texels: a longer offset than a whole noon
+// shadow, so every contact shadow slid out from under the thing casting it. Hold the tuned 7.7
+// texels and it is right at any shadowDist and any map size. (moon.shadow.bias is a DEPTH bias and
+// the depth range — near 1, far 260 — did not change in 1120, so it stays as tuned.)
+const SUN_NB_TEXELS = 7.7;
+const _sunNormalBias = (extent, px) => Math.min(0.6, Math.max(0.02, (2 * extent / (px || 2048)) * SUN_NB_TEXELS));
 function _fitSunShadow(cam){
   if(!cam || !cam.isCamera) return false;
   const E = Math.max(8, Math.min(400, +((typeof worldCfg!=='undefined' && worldCfg.shadowDist) || 30)));
@@ -7168,7 +7177,8 @@ function _fitSunShadow(cam){
   if(!moved && !sized) return false;
   _fitFx = fx; _fitFz = fz;
   _sunTarget.position.set(fx, 0, fz); _sunTarget.updateMatrixWorld();
-  if(sized){ const c = moon.shadow.camera; c.left = -E; c.right = E; c.top = E; c.bottom = -E; c.updateProjectionMatrix(); }
+  if(sized){ const c = moon.shadow.camera; c.left = -E; c.right = E; c.top = E; c.bottom = -E; c.updateProjectionMatrix();
+    moon.shadow.normalBias = _sunNormalBias(E, moon.shadow.mapSize.x); }
   return true;   // the caller dirties the map: a moved volume must be re-rendered or it smears
 }
 // Kill shadow acne (the striped self-shadowing bands on flat faces): normalBias offsets the shadow
@@ -7176,7 +7186,7 @@ function _fitSunShadow(cam){
 // and stair treads; the small negative depth bias handles grazing angles. Keep normalBias modest so thin
 // contact shadows don't detach (peter-panning).
 moon.shadow.bias = -0.0004;
-moon.shadow.normalBias = 0.6;   // build 1095: was 1.2 — contact shadows were detaching (peter-panning) on generated levels; 0.6 still clears banding on large planes at 2048px
+moon.shadow.normalBias = _sunNormalBias(moon.shadow.camera.right, moon.shadow.mapSize.x);   // build 1095: was 1.2 — contact shadows were detaching (peter-panning) on generated levels. Build 1125: the 0.6 that replaced it is 7.7 texels of the +/-80 volume this line runs against, so say THAT and it survives the first _fitSunShadow
 scene.add(moon);
 // Shadow-refresh bookkeeping lives HERE (not by the render loop) since build 855: applyWorldCfg runs at
 // boot and now calls _dirtyShadows when the sun moves — declaring these ~11k lines later was a TDZ crash.
@@ -24473,7 +24483,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1124 · 2026-07-29';
+const BUILD_VERSION = 'build 1125 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

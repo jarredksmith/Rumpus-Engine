@@ -30,9 +30,14 @@ assert(/const _sunTarget = new THREE\.Object3D\(\); scene\.add\(_sunTarget\); mo
     const moon = { position: new V3(...lightPos), shadow: { mapSize: { x: 2048 },
       camera: { left: -80, right: 80, top: 80, bottom: -80, updateProjectionMatrix() { this._upd = (this._upd || 0) + 1; } } } };
     const _sunTarget = { position: new V3(), updateMatrixWorld() { this._w = (this._w || 0) + 1; } };
+    // build 1125: the fit also sets the normal bias, so it needs that helper in scope — pulled from
+    // the real source rather than restated, or the test could pass against a formula that shipped
+    // differently
+    const nb = src.match(/const SUN_NB_TEXELS = [^\n]*\nconst _sunNormalBias = [^\n]*\n/);
+    assert(nb, 'the normal-bias helper is a named, single-source expression');
     const fn = new Function('THREE', 'moon', '_sunTarget', 'worldCfg', 'Math',
       'const _fitF=new THREE.Vector3(), _fitAx=new THREE.Vector3(), _fitAy=new THREE.Vector3(), _fitL=new THREE.Vector3();' +
-      'let _fitFx=1e9,_fitFz=1e9;' + extractFunction('_fitSunShadow') + '; return _fitSunShadow;'
+      'let _fitFx=1e9,_fitFz=1e9;' + nb[0] + extractFunction('_fitSunShadow') + '; return _fitSunShadow;'
     )({ Vector3: V3 }, moon, _sunTarget, { shadowDist }, Math);
     return { fn, moon, _sunTarget };
   };

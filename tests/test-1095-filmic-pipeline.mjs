@@ -47,6 +47,10 @@ assert(/m\.lightMapIntensity = \+m\.userData\.rumpusLightmap \|\| 1;/.test(src),
   'the extras value doubles as the intensity');
 
 // ---- shadow bias retune rides along
-assert(/moon\.shadow\.normalBias = 0\.6;/.test(src), 'normalBias 1.2 -> 0.6: contact shadows reattach');
+// build 1125: the retune's VALUE is unchanged at the volume it was tuned against (+/-80 on a 2048
+// map); it is just no longer a literal, because normalBias is a texel quantity and build 1120 made
+// the volume authorable. _sunNormalBias(80, 2048) === 0.6 is asserted in test-1125.
+assert(/moon\.shadow\.normalBias = _sunNormalBias\(moon\.shadow\.camera\.right, moon\.shadow\.mapSize\.x\);/.test(src),
+  'normalBias 1.2 -> 0.6: contact shadows reattach');
 
 done('build 1095: ACES + IBL + anisotropy + radiance lightmaps — the filmic pipeline');
