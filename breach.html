@@ -21448,6 +21448,35 @@ function netTick(dt){
 }
 
 // ---- message handlers ----
+// ---------- build 1130: the host does not take a client's word for damage ----------
+// Every damage packet a client sent was applied verbatim: applyPvpDamage(msg.d, msg.from),
+// botHurt(b, msg.d), damageProp(o, msg.d). A client is a web page the player controls, so `d` was
+// whatever they typed into the console — one packet with d:1e9 killed anything in the match — and
+// `from` was whoever they said they were, which also slipped past every sameTeam() check.
+//
+// Full server authority is not available to a peer-to-peer host: it cannot re-simulate the client's
+// shot. What it CAN do is bound the claim. Two rules, and neither of them can break an authored level:
+//
+//  * `from` is never read from the packet. The connection knows which player it belongs to.
+//  * `d` is clamped to what the LEVEL's own numbers could produce. The cap is derived, not hardcoded,
+//    because a level authors its own weapon and grenade damage — a fixed ceiling would quietly nerf
+//    a level that legitimately hits hard. HEADSHOT_MUL covers a head hit, one factor of 2 covers the
+//    2x-damage pickup, and 4 is headroom for stacked roguelite upgrades, which live on the ATTACKER's
+//    machine where the host cannot see them.
+function _netDmgCap(){
+  let m = 0;
+  try{ for(const k in WEAPONS){ const w = WEAPONS[k]; if(w && +w.dmg > m) m = +w.dmg; } }catch(e){}
+  try{ if(typeof GRENADE!=='undefined' && GRENADE && +GRENADE.damage > m) m = +GRENADE.damage; }catch(e){}
+  const head = (typeof HEADSHOT_MUL!=='undefined') ? +HEADSHOT_MUL : 2;
+  return Math.max(1, m) * head * 2 * 4;
+}
+// A claimed damage value, made safe: non-finite and negative are dropped to 0 (a negative would HEAL
+// the target, which is the same exploit wearing a hat), and the rest is clamped to the derived cap.
+function _netDmg(d){
+  const v = +d;
+  if(!isFinite(v) || v <= 0) return 0;
+  return Math.min(v, _netDmgCap());
+}
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
@@ -21461,18 +21490,18 @@ function handleClientMsg(conn, msg){
       try{ dest.send(fwd); }catch(e){} return; }
   }
   if(msg.t==='st'){ setRemoteState(id, msg); }
-  else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, msg.d, (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
+  else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmg(msg.d), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
   else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
-  else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us)
+  else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmg(msg.d), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
-  else if(msg.t==='died'){ registerDuelKill(msg.by, id); }            // a client died; credit the killer
-  else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(msg.from, msg.id)){ const _s=NET.players[msg.from]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, msg.d, _sx, _sz)) registerDuelKill(msg.from, msg.id); } }   // a client shot a bot
+  else if(msg.t==='died'){ const _by=+msg.by; if(_by===0 || NET.conns[_by]) registerDuelKill(_by, id); }            // a client died; credit the killer — build 1130: only a player who is actually in the match
+  else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(id, msg.id)){ const _s=NET.players[id]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, _netDmg(msg.d), _sx, _sz)) registerDuelKill(id, msg.id); } }   // a client shot a bot — build 1130: the shooter is the connection, so a claimed `from` can no longer dodge the sameTeam check or steal the credit
   else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } if(NET.phase==='lobby') refreshLobby(); }   // a client changed character (the lobby card updates live)
   else if(msg.t==='rocket'){ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), d=new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]); fireRocket(o,d,id,true,msg.r||7,WEAPONS.launcher.dmg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'rocket', o:msg.o, d:msg.d, r:msg.r, by:id}); }catch(e){} } } }   // a client fired a rocket: host simulates it + relays the visual
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), id, true); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'nade', o:msg.o, v:msg.v, by:id}); }catch(e){} } } }   // build 670: a client threw a grenade: host simulates it (authors damage) + relays the visual to the others
   else if(msg.t==='push'){ const o=propByNid(msg.nid); if(o) pushDynamic(o, new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]), msg.s||6, msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null); }   // a client shot a dynamic prop (legacy knockback-only)
-  else if(msg.t==='propHit'){ const o=propByNid(msg.nid); if(o){ const dir=new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]); const pt=msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null; const broke=damageProp(o, msg.d||0, pt, dir, msg.s||6, id); if(!broke) pushDynamic(o, dir, msg.s||6, pt); } }   // a client shot a prop: damage (breaks/detonates) + knockback, credited to the client
+  else if(msg.t==='propHit'){ const o=propByNid(msg.nid); if(o){ const dir=new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]); const pt=msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null; const broke=damageProp(o, _netDmg(msg.d), pt, dir, msg.s||6, id); if(!broke) pushDynamic(o, dir, msg.s||6, pt); } }   // a client shot a prop: damage (breaks/detonates) + knockback, credited to the client
   else if(msg.t==='bDel'){ const o=propByNid(msg.nid); if(o && o.userData.runtime && !o.userData._shattered) shatterProp(o, null, null, 5, id); }   // build 941: a client deleted a build-placed prop (authored level props are refused)
   else if(msg.t==='pPush'){ const o=propByNid(msg.nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ const sh=Math.max(0, Math.min(9, +msg.s||0)); try{ b.applyImpulse({ x:(+msg.nx||0)*sh*0.6, y:0, z:(+msg.nz||0)*sh*0.6 }, true); }catch(e){} } }   // build 923: a client walked into a dynamic prop — apply their shove here (clamped), the D snapshot carries it back
   else if(msg.t==='grab'){ const _go=propByNid(msg.nid); if(!_go || !_go.userData.phys || _go.userData.noGrab) return; if(heldProp===_go) return; if(!_remoteHold[msg.nid]) _remoteHold[msg.nid]={by:id}; }   // a client grabbed a prop (build 924: look it up by NET nid — dynamicById matches the numeric snapshot id and always missed)
@@ -24887,7 +24916,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1129 · 2026-07-29';
+const BUILD_VERSION = 'build 1130 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
