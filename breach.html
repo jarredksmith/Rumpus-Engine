@@ -6843,10 +6843,30 @@ renderer.shadowMap.type = IS_COARSE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMa
 // applyWorldCfg drives both from worldCfg (filmic/exposure) so a level can opt back to the raw look.
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.25;
+// build 1115: COLOUR MANAGEMENT. The tone mapper above shipped in 1095; the sRGB ENCODE never did.
+// r149 defaults outputEncoding to LinearEncoding and ColorManagement.legacyMode to true, so the
+// final image went to the canvas with no OETF — every frame ~2.2 gamma too dark — while sRGB-tagged
+// textures WERE hardware-decoded and hex material colours were NOT, leaving the two in different
+// colour spaces (a prop tinted 0x2a3a42 did not match a texture averaging 0x2a3a42). legacyMode
+// false makes every .setHex/.set convert sRGB -> linear on the way in, so all shading math finally
+// happens in linear space and the encode happens once, at the end.
+const LEGACY_EXPOSURE = 0.78;   // build 1115: see applyWorldCfg — compat for levels authored pre-encode
+THREE.ColorManagement.legacyMode = false;
+renderer.outputEncoding = THREE.sRGBEncoding;
 // build 1095: anisotropic filtering — ground textures at grazing angles stop dissolving into mush.
 const MAX_ANISO = Math.min(8, (renderer.capabilities && renderer.capabilities.getMaxAnisotropy) ? renderer.capabilities.getMaxAnisotropy() : 1);
 document.body.appendChild(renderer.domElement);
 
+// build 1115: the raw ShaderMaterials in this chain write gl_FragColor directly, so three's
+// <encodings_fragment> — and therefore renderer.outputEncoding — never touches them. Whichever pass
+// writes the CANVAS has to apply the sRGB transfer function itself, and only that one: an
+// intermediate target must stay linear or the next pass blurs and grades gamma-encoded values.
+// Hence uEncode on every candidate final pass, set to 1 by exactly one pass per frame.
+const _OETF_GLSL = [
+  'uniform float uEncode;',
+  'vec3 _oetf(vec3 c){ return mix(c*12.92, 1.055*pow(max(c,vec3(0.0)), vec3(0.4166667))-0.055, step(vec3(0.0031308), c)); }',
+  'vec3 _out(vec3 c){ return mix(c, _oetf(c), uEncode); }'
+].join('\n');
 // ---------- Depth of field (optional post-process) ----------
 // Self-contained: no external composer addons. We render the scene into a color target that also has a
 // depth texture, then draw a fullscreen quad whose shader blurs each pixel by how far its depth is from
@@ -6872,6 +6892,7 @@ function ensureDof(){
     uNear:  { value:camera.near }, uFar: { value:camera.far },
     uFocus: { value:dofFocus }, uRange: { value:dofRange }, uStrength: { value:dofStrength },
     uDir:   { value:new THREE.Vector2(1,0) },
+    uEncode:{ value:0 },   // build 1115: 1 only on the vertical pass when it presents to the canvas
   });
   const vert = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
   // reconstruct view-space distance from the depth buffer, compute blur radius from |dist - focus|
@@ -6879,17 +6900,18 @@ function ensureDof(){
     'varying vec2 vUv;',
     'uniform sampler2D tColor; uniform sampler2D tDepth;',
     'uniform vec2 uTexel; uniform float uNear; uniform float uFar; uniform float uFocus; uniform float uRange; uniform float uStrength; uniform vec2 uDir;',
+    _OETF_GLSL,
     'float viewZ(float d){ float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }',
     'void main(){',
     '  float d = texture2D(tDepth, vUv).x;',
     '  float dist = viewZ(d);',
     '  float coc = clamp(abs(dist - uFocus) / max(0.001, uRange), 0.0, 1.0) * uStrength;',  // 0 in focus, ->1 far from focus
-    '  if(coc < 0.01){ gl_FragColor = texture2D(tColor, vUv); return; }',
+    '  if(coc < 0.01){ vec4 c0 = texture2D(tColor, vUv); gl_FragColor = vec4(_out(c0.rgb), c0.a); return; }',
     '  vec2 step = uDir * uTexel * coc * 6.0;',
     '  vec4 sum = vec4(0.0); float wsum = 0.0;',
     '  for(int i=-6;i<=6;i++){ float fi=float(i); float w = exp(-fi*fi/18.0);',  // gaussian-ish 13-tap
     '    sum += texture2D(tColor, vUv + step*fi) * w; wsum += w; }',
-    '  gl_FragColor = sum / wsum;',
+    '  vec4 r = sum / wsum; gl_FragColor = vec4(_out(r.rgb), r.a);',
     '}',
   ].join('\n');
   _dofMatH = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:frag, depthTest:false, depthWrite:false });
@@ -6918,6 +6940,7 @@ function _runDofTo(scn, cam, out){
   _dofMatH.uniforms.tColor.value = _dofRT.texture; _dofMatH.uniforms.tDepth.value = _dofRT.depthTexture; _dofQuad.material = _dofMatH;
   renderer.setRenderTarget(_dofRT2); renderer.render(_dofScene, _dofCam);
   _dofMatV.uniforms.tColor.value = _dofRT2.texture; _dofMatV.uniforms.tDepth.value = _dofRT.depthTexture; _dofQuad.material = _dofMatV;
+  _dofMatV.uniforms.uEncode.value = (out === null) ? 1 : 0;   // build 1115: encode only when this IS the frame's last pass
   renderer.setRenderTarget(out); renderer.render(_dofScene, _dofCam);
   return true;
 }
@@ -6978,16 +7001,17 @@ function ensurePost(){
     ].join('\n') });
   // composite: scene + bloom, then contrast/saturation grade, vignette, and film grain
   _matComp=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null}, tBloom:{value:null}, uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0} },
+    uniforms:{ tColor:{value:null}, tBloom:{value:null}, uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1} },
     vertexShader:vert, fragmentShader:[
       'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
+      _OETF_GLSL,
       'void main(){ vec3 c=texture2D(tColor,vUv).rgb; c += texture2D(tBloom,vUv).rgb * uBloom;',
       '  c=(c-0.5)*uCon+0.5;',                                    // contrast
       '  float l=dot(c, vec3(0.299,0.587,0.114)); c=mix(vec3(l), c, uSat);',   // saturation
       '  float r=length(vUv-0.5); c *= 1.0 - smoothstep(0.42,0.78,r)*uVig;',   // vignette
       '  float n=fract(sin(dot(vUv*(uTime+1.0), vec2(12.9898,78.233)))*43758.5453); c += (n-0.5)*uGrain;',   // grain
-      '  gl_FragColor=vec4(clamp(c,0.0,1.0), 1.0); }'
+      '  gl_FragColor=vec4(_out(clamp(c,0.0,1.0)), 1.0); }'
     ].join('\n') });
   // temporal afterimage motion blur: keep the brighter of (new) and (old * damp) -> decaying trails on motion
   _matAfter=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
@@ -6996,9 +7020,12 @@ function ensurePost(){
       'varying vec2 vUv; uniform sampler2D tNew; uniform sampler2D tOld; uniform float uDamp;',
       'void main(){ vec4 nw=texture2D(tNew,vUv); vec4 od=texture2D(tOld,vUv)*uDamp; gl_FragColor=max(nw, od); }'
     ].join('\n') });
+  // the present pass: it only ever writes the canvas (line ~7003 assigns it as the quad's starting
+  // material and every render replaces that), so its encode is on permanently
   _matCopy=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null} }, vertexShader:vert,
-    fragmentShader:'varying vec2 vUv; uniform sampler2D tColor; void main(){ gl_FragColor=texture2D(tColor,vUv); }' });
+    uniforms:{ tColor:{value:null}, uEncode:{value:1} }, vertexShader:vert,
+    fragmentShader:['varying vec2 vUv; uniform sampler2D tColor;', _OETF_GLSL,
+      'void main(){ gl_FragColor=vec4(_out(texture2D(tColor,vUv).rgb), 1.0); }'].join('\n') });
   _postScene=new THREE.Scene(); _postCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
   _postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2), _matCopy); _postScene.add(_postQuad);
   return true;
@@ -7026,9 +7053,11 @@ function _renderPostFX(scn, cam){
   // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
   const _mbOn = _postMotion>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);
   if(!_mbOn){
+    cu.uEncode.value=1;   // build 1115: composite IS the final pass here — encode
     _postQuad.material=_matComp; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
     return;
   }
+  cu.uEncode.value=0;     // ...but with motion blur on it feeds _compRT, which must stay linear
   _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
   // 4) motion blur: blend with the previous frame -> _afterB
   _matAfter.uniforms.tNew.value=_compRT.texture; _matAfter.uniforms.tOld.value=_afterA.texture; _matAfter.uniforms.uDamp.value=_postMotion;
@@ -13738,6 +13767,9 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
         if(m.userData && m.userData.rumpusLightmap && m.aoMap && !m.lightMap){
           m.lightMap = m.aoMap; m.aoMap = null;
           if('colorSpace' in m.lightMap) m.lightMap.colorSpace = THREE.SRGBColorSpace; else m.lightMap.encoding = 3001;   // the bake is sRGB-authored
+          // build 1115: do NOT scale this by PI. r149 already does it on upload —
+          // `lightMapIntensity.value = material.lightMapIntensity * (physicallyCorrectLights !== true ? PI : 1)`
+          // — so multiplying here too blows the bake out by 3.14x. Measured, not assumed.
           m.lightMapIntensity = +m.userData.rumpusLightmap || 1;
           m.needsUpdate = true;
         } } } } });
@@ -14388,12 +14420,29 @@ const player = {
 };
 const EYE = 1.7;            // standing camera height above the surface the player stands on
 // ---- World movement settings (editable in the editor's World panel; saved with the level) ----
-const DEFAULT_WORLD = { walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null };
+// build 1115: sun/sky raised because legacyMode:false linearises light COLOURS too, and this
+// world's are saturated and dark — 0x4a6c7a keeps only ~34% of its former luminance. That part is
+// real. What it does NOT fix, measured: the stock scene's brightness barely moved (mean luminance
+// 0.091 -> 0.087 on the same frame). The limiter is albedo, not light — floorColor 0x141c22
+// linearises to 0.0089 and wallColor 0x1a242b to 0.013, so these surfaces reflect ~1% of what hits
+// them and no lighting value can lift them. The stock level needs an art pass, which belongs with
+// the sky/lighting work, not here.
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.1, sunColor:0x9fd8ff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:1.35, skyColor:0x4a6c7a, ambient:0, arena:70, floorColor:0x141c22, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x1a242b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x070b10, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
 function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.postVig=0; w.postGrain=0; w.postSat=1; w.postCon=1; return w; }
-let worldCfg = Object.assign({}, DEFAULT_WORLD, (savedLevel && savedLevel.world) || {});
+// build 1115: which colour pipeline a level was AUTHORED against. Everything saved before the sRGB
+// encode landed was tuned by eye against an image that displayed ~2.2 gamma too dark, so creators
+// compensated with sun/exposure that now read too hot. Such a level carries no colorV — and it must
+// not inherit the default's 2 through the Object.assign, or every legacy level would silently claim
+// to be authored in the corrected pipeline. No world block at all = a fresh level = colorV 2.
+function _worldFrom(w){
+  const out = Object.assign({}, DEFAULT_WORLD, w || {});
+  out.colorV = (w && w.colorV != null) ? (w.colorV | 0) : (w ? 1 : 2);
+  return out;
+}
+let worldCfg = _worldFrom((savedLevel && savedLevel.world) || null);
 if(!(savedLevel && savedLevel.world)) _postOffWorld(worldCfg);   // build 796: first-time scene (no saved world) -> post FX off by default
 
 // Apply (or clear) a tiling texture on a shared material. Stores the current url on the material under
@@ -14641,7 +14690,12 @@ function applyWorldCfg(){
   worldCfg.filmic = (worldCfg.filmic === false || worldCfg.filmic === 0) ? 0 : 1;
   worldCfg.exposure = Math.max(0.3, Math.min(3, worldCfg.exposure == null ? DEFAULT_WORLD.exposure : (+worldCfg.exposure || DEFAULT_WORLD.exposure)));
   if(typeof renderer !== 'undefined'){
-    renderer.toneMappingExposure = worldCfg.exposure;
+    // build 1115: a pre-colour-fix level is now rendered CORRECTLY, which means brighter than its
+    // author ever saw — measured at +0.13 mean luminance on a generated arena. The old error was a
+    // single monotone transfer difference, so one exposure knob is the honest approximation of it;
+    // it is not exact (gamma moves midtones most, exposure moves everything), and re-saving a level
+    // stamps colorV 2 and opts it into the true pipeline for good.
+    renderer.toneMappingExposure = worldCfg.exposure * (((worldCfg.colorV|0) >= 2) ? 1 : LEGACY_EXPOSURE);
     const wantTM = worldCfg.filmic ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
     if(renderer.toneMapping !== wantTM){
       renderer.toneMapping = wantTM;
@@ -19138,7 +19192,7 @@ function loadLevelFromNet(level){
   // props against the joiner's PREVIOUS level's terrain scattered every prop/track piece vertically,
   // then seeded NET.sentProps with mismatched tuples, and the reconciler "corrected" the HOST's level
   // with the junk ("all of the tracks and props moved y position randomly").
-  if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); _skyHdriUrl = null; applyWorldCfg(); }
+  if(level.world){ worldCfg = _worldFrom(level.world); _skyHdriUrl = null; applyWorldCfg(); }
   // rebuild from the host's data
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
@@ -24124,7 +24178,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1114 · 2026-07-29';
+const BUILD_VERSION = 'build 1115 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32012,7 +32066,7 @@ function restoreLevel(level){
   if(!level) return;
   // build 893: world (TERRAIN) first — prop y is stored relative to the terrain under it, so placement
   // must lift against THIS level's terrain, not whatever the previous level left behind.
-  if(level.world){ worldCfg = Object.assign({}, DEFAULT_WORLD, level.world); applyWorldCfg(); }
+  if(level.world){ worldCfg = _worldFrom(level.world); applyWorldCfg(); }
   // props
   for(let i=propModels.length-1;i>=0;i--){ if(propModels[i]) removeProp(i); }
   propModels.length = 0;
@@ -39392,7 +39446,7 @@ function _helpBuildExample(kind){
   // from the previous loaded levels"). One undo still restores everything.
   _wipeSceneCore();
   if(typeof clearTurrets==='function') clearTurrets();
-  worldCfg = Object.assign({}, DEFAULT_WORLD);   // stock world: terrain/paint/sky/floor/arena reset
+  worldCfg = _worldFrom(null);   // stock world: terrain/paint/sky/floor/arena reset
   if(typeof applyWorldCfg==='function') applyWorldCfg();
   gameCfg.view='fps'; gameCfg.viewDist=0; gameCfg.viewAxis='x';
   gameCfg.mode='random'; gameCfg.objective='eliminate'; gameCfg.winWaves=0;

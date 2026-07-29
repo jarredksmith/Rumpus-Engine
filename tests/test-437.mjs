@@ -19,7 +19,7 @@ assert(rp.lastIndexOf('setRenderTarget(null)') > last, 'the present-to-screen pa
 // build 810: with motion blur ~0 (or shed at the lowest adaptive step), the composite goes straight to screen — the
 // motion-blend + copy passes (two full-res fullscreen draws) are skipped entirely.
 assert(/const _mbOn = _postMotion>0\.01 && !\(_adaptOn && _prStepI>=_PR_STEPS\.length-1\);/.test(rp), 'motion chain is skipped when motion is ~0 or adaptive res is at its floor');
-assert(/if\(!_mbOn\)\{\s*\n?\s*_postQuad\.material=_matComp; renderer\.setRenderTarget\(null\); renderer\.render\(_postScene,_postCam\);\s*\n?\s*return;\s*\n?\s*\}/.test(rp), 'no-motion path composites straight to the screen (saves 2 full-res passes)');
+assert(/if\(!_mbOn\)\{[\s\S]{0,140}?_postQuad\.material=_matComp; renderer\.setRenderTarget\(null\); renderer\.render\(_postScene,_postCam\);\s*\n?\s*return;\s*\n?\s*\}/.test(rp), 'no-motion path composites straight to the screen (saves 2 full-res passes)');
 assert(/const t=_afterA; _afterA=_afterB; _afterB=t;/.test(rp), 'accumulation buffers swap each frame');
 assert(/if\(_postRT\.width!==w \|\| _postRT\.height!==h \|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost\(\); ensurePost\(\); \}/.test(rp), 'targets rebuild on resolution change (and on the MSAA step, build 880)');
 

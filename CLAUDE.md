@@ -143,7 +143,39 @@ Conventions that are easy to break:
   enemy obstacle resolution, and flood-fills to prove a bot reaches the roof. For ad-hoc work on a
   whole `.glb`, rebuild a scratchpad `probe-gen.mjs` the same way (parse the GLB, same two steps).
 
-## Open work (as of build 1114)
+## Rendering: the colour pipeline (build 1115)
+
+The frame is sRGB-encoded exactly once, at the end. Two things make that non-obvious:
+
+- `renderer.outputEncoding = THREE.sRGBEncoding` only covers three's BUILT-IN materials. The post
+  chain is raw `ShaderMaterial`s writing `gl_FragColor`, which `<encodings_fragment>` never touches,
+  so the pass that writes the CANVAS applies the OETF itself via the shared `_OETF_GLSL` snippet and
+  a `uEncode` uniform. Three passes can be last (DoF present, composite, afterimage copy) and each
+  sets `uEncode` per frame. **Encode an intermediate target and the next pass blurs and grades
+  gamma-encoded values** — that is the bug this design exists to prevent.
+- `ColorManagement.legacyMode = false` linearises every hex colour on the way in, INCLUDING light
+  colours. A saturated dark light colour loses most of its luminance (`0x4a6c7a` keeps ~34%), so
+  intensities tuned before this change now read dim. Albedo moves the same way, and that is the
+  stock level's real limiter: `floorColor 0x141c22` linearises to 0.0089.
+
+Do NOT scale `lightMapIntensity` by PI. r149 already does it on upload
+(`lightMapIntensity.value = material.lightMapIntensity * (physicallyCorrectLights !== true ? PI : 1)`).
+An audit claimed otherwise from r13x-era reasoning; the double multiply blew the bake out 3.14x and
+was caught only by capturing the frame and measuring it.
+
+Levels carry `world.colorV`. Absent = authored before this build = rendered through `LEGACY_EXPOSURE`,
+because correct rendering makes old content brighter than its author ever saw. `_worldFrom()` is the
+only place that decides it — a legacy level must not inherit the default's `colorV:2` through an
+`Object.assign`.
+
+## Headless capture
+
+The engine renders under Chromium + SwiftShader, so visual changes can be measured, not argued about.
+The whole game lives inside `window.GAME_START = function(){...}`, so page-level JS cannot reach its
+internals: a harness has to drive the real UI. Capture at a FIXED generator seed or before/after
+frames are different arenas and prove nothing.
+
+## Open work (as of build 1115)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (not started).
