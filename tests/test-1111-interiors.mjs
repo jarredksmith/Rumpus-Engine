@@ -70,11 +70,11 @@ assert(sig(rooms) !== sig(rooms2), 'a different seed gives a different floor pla
 // ---------------------------------------------------------------- wired into the arena
 assert(/const rooms = roomBlock\(P\.wall, libMat\('plankGrey'\), P\.trim, x0, z0, x1, z1, 0, twoUp \? STO : 4\.6,/.test(lgSrc),
   'the arena building side-structure is a real multi-room block now');
-// build 1112: roomBlock supports stacked storeys, but the arena keeps them OFF — the probe found
-// enemies pushed at every step of the generated stairs, so they are not shipped enabled.
-assert(/const twoUp = \(rr\(\), false\);/.test(lgSrc), 'multi-storey stays off until bots can climb it');
-assert(/storeys: twoUp \? 2 : 1/.test(lgSrc), '...but the wiring is in place for when it is fixed');
-assert(/lightCol: theme === 'volcanic' \? \[1, 0\.62, 0\.3\] : theme === 'castle' \? \[1, 0\.78, 0\.5\] : \[1, 0\.93, 0\.78\]/.test(lgSrc),
-  'and its lamps take the theme colour');
+// build 1113: the stacked-storey path is ON — see test-1113 for the clearance rules that made the
+// generated stairwell climbable, and for the executable proof that a bot walks it to the roof.
+assert(/const twoUp = rr\(\) < 0\.5;/.test(lgSrc), 'multi-storey blocks are rolled per seed');
+assert(/storeys: twoUp \? 2 : 1/.test(lgSrc), '...and wired through to roomBlock');
+// build 1114: the lamp colour is one of the treatments the palette carries, like the rest of them
+assert(/lightCol: P\.lightCol \}\);/.test(lgSrc), 'and its lamps take the theme colour');
 
 done('build 1111: buildings have rooms, doorways, windows — and light to see them by');

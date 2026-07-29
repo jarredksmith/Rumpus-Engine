@@ -42,7 +42,7 @@ assert(/if\(typeof drivingCar!=='undefined' && o===drivingCar\) return false;/.t
   const net = extractFunction('loadLevelFromNet', src);
   const rst = extractFunction('restoreLevel', src);
   for(const [name, fn] of [['loadLevelFromNet', net], ['restoreLevel', rst]]){
-    const w = fn.search(/if\(level\.world\)\{ worldCfg = Object\.assign/);
+    const w = fn.search(/if\(level\.world\)\{ worldCfg = _worldFrom/);
     const p = fn.search(/level\.props\.forEach/);
     assert(w>=0 && p>=0 && w<p, name+': terrain adopted BEFORE props spawn');
   }

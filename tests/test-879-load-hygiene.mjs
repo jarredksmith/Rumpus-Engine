@@ -31,7 +31,7 @@ assert(/function wipeScene\(\)\{ pushUndoSnapshot\(\); _wipeSceneCore\(\); \}/.t
 const ex = src.slice(src.indexOf('function _helpBuildExample(kind){'), src.indexOf("if(kind==='race'){"));
 assert(/_wipeSceneCore\(\);/.test(ex), 'examples run the full scene wipe (zones, pickups, loot, audio)');
 assert(/if\(typeof clearTurrets==='function'\) clearTurrets\(\);/.test(ex), '...and turrets');
-assert(/worldCfg = Object\.assign\(\{\}, DEFAULT_WORLD\);/.test(ex), '...and the world (terrain/paint/sky/floor/arena all stock)');
+assert(/worldCfg = _worldFrom\(null\);/.test(ex), '...and the world (terrain/paint/sky/floor/arena all stock)');
 assert(/gameCfg\.view='fps'; gameCfg\.viewDist=0; gameCfg\.viewAxis='x';/.test(ex), '...and the camera view (top-down must not bleed into the race example)');
 assert(/gameCfg\.goalText=''; gameCfg\.winText=''; gameCfg\.loseText='';/.test(ex), '...and the objective texts');
 assert(/playerSpawn\.x=0; playerSpawn\.z=0;/.test(ex), '...and the player start');

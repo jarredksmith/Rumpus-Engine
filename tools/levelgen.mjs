@@ -851,6 +851,127 @@ function lavaTex(name, seed, S) {
   return finish(t, seed, { cavDark: 0.2, edgeLight: 0.1 });
 }
 
+// ---- build 1114: three more families -----------------------------------------------------
+// Wind-carved bedded sandstone. The read is BEDDING, not masonry: alternating hard and soft
+// strata, the soft ones undercut into shadow, tafoni pitting where salt has eaten into the face,
+// and a bleached crust on the exposed ledges. The bedding planes are noise-warped, because a ruled
+// horizontal line at this scale is the tell that gives a procedural rock away instantly.
+function sandstoneTex(name, seed, S, col = [0.78, 0.62, 0.43]) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256, BED = S / 9;
+  const warp = fbm(r, S, [[3, 1], [9, 0.5], [28, 0.25]]);
+  const fine = fbm(rng(seed ^ 3), S, [[20, 1], [80, 0.5], [220, 0.3]]);
+  const pits = worley(rng(seed ^ 5), S, 26);
+  const salt = fbm(rng(seed ^ 7), S, [[4, 1], [13, 0.6]]);
+  t.fill(col).mrInit(0.02, 0.95);
+  t.each((x, y, i) => {
+    // beds are not a layer cake: a monotone distortion of y before banding makes some beds thick
+    // and some a few centimetres, which is what stops the eye finding the repeat
+    const yw = y + (warp(x, y) - 0.5) * 30 * k;
+    const yy = yw + Math.sin(yw * Math.PI * 2 / S) * 16 * k + Math.sin(yw * Math.PI * 6 / S) * 7 * k;
+    const band = Math.floor(yy / BED), inBed = (((yy % BED) + BED) % BED) / BED;
+    const hard = hash2(band, 11);                                   // per-bed hardness
+    const g = fine(x, y);
+    // soft beds sit back and hold shadow; hard beds stand proud and catch the light
+    const depth = hard < 0.42 ? 0.3 + Math.sin(inBed * Math.PI) * 0.18 : 0.78 + g * 0.16;
+    t.h[i] = depth;
+    t.tint(i, 0.72 + depth * 0.42 + (g - 0.5) * 0.14);
+    // bed-to-bed drift stays in the warm half of the wheel: a soft bed is a DARKER ochre, not a
+    // grey one, or the rock reads as wet concrete in bands
+    t.tintC(i, 1 + (hard - 0.5) * 0.05, 1 + (hard - 0.5) * 0.11, 1 + (hard - 0.5) * 0.24);
+    if (inBed < 0.05 || inBed > 0.95) { t.tint(i, 0.82); t.h[i] -= 0.12; }   // the parting itself
+    // tafoni: honeycomb hollows, and they eat the SOFT beds — sprayed evenly over the face they
+    // read as polka dots, which is the giveaway on every procedural rock that has them
+    const c = pits(x, y);
+    const R = (1.6 + hash2(c.id * 53, 3) * 7) * k * (hard < 0.42 ? 1 : 0.45);
+    if (c.id > 0.74 && c.d1 < R) {
+      const p2 = 1 - c.d1 / R;
+      t.tint(i, 1 - p2 * 0.34); t.h[i] -= p2 * p2 * 0.5;
+      t.mr[i * 2] = Math.min(1, t.mr[i * 2] + p2 * 0.06);
+    }
+    const sv = salt(x, y);                                           // salt bloom / sun bleach
+    if (sv > 0.58) { const ss = Math.min(1, (sv - 0.58) * 3.2);
+      t.mix(i, [0.92, 0.88, 0.8], ss * 0.45); t.mr[i * 2] = Math.min(1, t.mr[i * 2] + ss * 0.04); }
+  });
+  return finish(t, seed, { cavDark: 0.36, cavK: 1.9, edgeLight: 0.22, edgeSmooth: 0.12 });
+}
+// Wind-packed snow. Almost all of the read is in the NORMAL and the ROUGHNESS, not the colour:
+// sastrugi ridges carved across the wind, a glazed crust on the ridges against powder in the
+// hollows, a blue shift where the surface dips (snow's shadow is sky-lit, not black), and sparse
+// specular sparkle where crystal facets happen to face the camera.
+function snowTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  const drift = fbm(r, S, [[3, 1], [8, 0.5]]);                       // the big soft dunes
+  const warp = fbm(rng(seed ^ 2), S, [[6, 1], [20, 0.4]]);
+  const grain = fbm(rng(seed ^ 4), S, [[120, 1], [360, 0.6]]);
+  const scour = fbm(rng(seed ^ 6), S, [[4, 1], [12, 0.5]]);
+  t.fill([0.93, 0.945, 0.97]).mrInit(0.0, 0.72);
+  t.each((x, y, i) => {
+    const d = drift(x, y);
+    // Sastrugi run ACROSS the wind, so their phase is mostly the linear coordinate and only
+    // slightly warped. Warp them hard instead (the first cut used a 150px offset on a 256px tile)
+    // and the sine folds back on itself: contour rings, a topographic map rather than snow.
+    const ph = y + (warp(x, y) - 0.5) * 16 * k + d * 10 * k;
+    const rid = Math.pow(Math.max(0, Math.sin(ph * Math.PI * 2 * 5 / S)), 1.7);   // crisp crest, broad trough
+    const amp = Math.max(0, d - 0.3) * 1.5;                          // carved where the wind bites, smooth where it fills
+    const hgt = d * 0.5 + rid * amp * 0.6 + (grain(x, y) - 0.5) * 0.05;
+    t.h[i] = hgt;
+    // Snow's albedo is very nearly flat — the drifts are read from SHADING, not from tone. Driving
+    // the base colour off the height (and tinting the hollows hard) painted the sastrugi on as blue
+    // stripes, which is exactly what a photo of snow does not look like.
+    t.tint(i, 0.97 + hgt * 0.05);
+    if (hgt < 0.42) t.tintC(i, 1 - (0.42 - hgt) * 0.15, 1 - (0.42 - hgt) * 0.07, 1);   // sky-lit hollows
+    t.mr[i * 2] = 0.88 - rid * 0.4;                                  // glazed crust on the crests
+    const sc = scour(x, y);                                          // wind-scoured back to old crust
+    if (sc > 0.68) { const s2 = Math.min(1, (sc - 0.68) * 3);
+      t.mix(i, [0.74, 0.75, 0.77], s2 * 0.3); t.mr[i * 2] = Math.min(1, t.mr[i * 2] + s2 * 0.12); t.h[i] -= s2 * 0.12; }
+    if (r() < 0.002) { t.tint(i, 1.05); t.mr[i * 2] = 0.12; }        // facet sparkle
+  });
+  return finish(t, seed, { cavDark: 0.14, cavK: 1.2, edgeLight: 0.12, grainRough: 0.05 });
+}
+// Frozen-over water: fracture planes running through the slab, columns of trapped air, and frost
+// bloom that turns the surface matte wherever the wind reached it. The fractures are drawn from the
+// worley d2-d1 rim so they read as thin bright refractive seams instead of cell borders.
+function iceTex(name, seed, S) {
+  const r = rng(seed), t = new Tex(name, S), k = S / 256;
+  const cracks = warpedWorley(rng(seed ^ 3), S, 6, 0.45, 0.1);
+  const bub = worley(rng(seed ^ 9), S, 14);
+  const bloom = fbm(rng(seed ^ 11), S, [[5, 1], [17, 0.6], [70, 0.3]]);
+  const deep = fbm(rng(seed ^ 13), S, [[4, 1], [11, 0.5]]);
+  t.fill([0.6, 0.72, 0.78]).mrInit(0.02, 0.12);
+  t.each((x, y, i) => {
+    const dv = deep(x, y);
+    t.tint(i, 0.88 + dv * 0.26);
+    t.tintC(i, 1 - dv * 0.11, 1 - dv * 0.04, 1);                     // thicker ice reads bluer
+    t.h[i] = 0.74 + (dv - 0.5) * 0.1;
+    const w = cracks(x, y), rim = (w.d2 - w.d1) / (3.4 * k);         // the fracture web
+    if (rim < 1) { const f2 = (1 - rim) * (1 - rim);
+      t.mix(i, [0.93, 0.97, 1], f2 * 0.6); t.h[i] -= f2 * 0.34; t.mr[i * 2] = Math.min(1, t.mr[i * 2] + f2 * 0.25); }
+    // Bubbles are frozen-in columns: few, large and drawn out vertically. Sprayed small and dense
+    // (the first cut used 40 cells and a 0.5 threshold) they read as confetti, not as trapped air.
+    const b = bub(x, y), R = (1.4 + b.id * 3.2) * k;
+    if (b.id > 0.72 && b.d1 < R) { const p2 = 1 - b.d1 / R;
+      t.mix(i, [0.97, 0.99, 1], p2 * p2 * 0.75); t.h[i] += p2 * 0.05; }
+    const bl = bloom(x, y);                                          // wind frost: matte, feathered
+    if (bl > 0.56) { const f3 = Math.min(1, (bl - 0.56) * 2.4);
+      t.mix(i, [0.9, 0.94, 0.96], f3 * 0.55); t.mr[i * 2] = Math.min(1, t.mr[i * 2] + f3 * 0.6); t.h[i] += f3 * 0.05; }
+  });
+  // long straight fissures: the feature that says "a sheet under stress" rather than "a noise field"
+  for (let q = 0; q < 5; q++) {
+    let x = r() * S, y = r() * S, ang = r() * Math.PI * 2;
+    const len = S * (0.5 + r() * 0.7), w2 = (0.8 + r() * 1.4) * k;
+    for (let d = 0; d < len; d++) {
+      ang += (r() - 0.5) * 0.05;                                     // nearly straight
+      x = (x + Math.cos(ang) + S) % S; y = (y + Math.sin(ang) + S) % S;
+      for (let o = -w2; o <= w2; o++) {
+        const i = (((y + o * Math.sin(ang + 1.57)) | 0) % S + S) % S * S + ((((x + o * Math.cos(ang + 1.57)) | 0) % S) + S) % S;
+        const f4 = 1 - Math.abs(o) / (w2 + 1);
+        t.mix(i, [0.95, 0.98, 1], f4 * 0.5); t.h[i] -= f4 * 0.3; t.mr[i * 2] = Math.min(1, t.mr[i * 2] + f4 * 0.3);
+      }
+    }
+  }
+  return finish(t, seed, { cavDark: 0.16, edgeLight: 0.14, edgeSmooth: 0.12, grainRough: 0.04 });
+}
+
 // ---- signage: worn stencil lettering baked on demand -----------------------------------
 // A 5x7 stencil font. sign() bakes each unique string once into a shared 1024x1024 atlas row
 // and emits an alpha-blended quad, so layouts can label bases, shops and hazards free-form.
@@ -1088,15 +1209,23 @@ function cbox(m, cx, cy, cz, sx, sy, sz, unit) { box(m, cx - sx / 2, cy - sy / 2
 // version derived corners from a climb direction, which mirrored the quads (inverting their
 // faces) for one of the two directions. The engine probe caught it: raycasts fell straight
 // through half the ramp tops.
-function ramp(m, x0, z0, x1, z1, yBase, yAtMin, yAtMax, axis) {
+//
+// build 1113: pass `thick` and the underside runs PARALLEL to the top instead of flat at yBase —
+// a stair flight as a slab rather than a solid wedge. That is not cosmetic. A wedge's underside
+// sits at yBase for the whole run, so every column it touches is solid from yBase up: a flight
+// beside you (the other half of a switchback) becomes a wall along its entire length. As a slab
+// it only occupies its own thickness, so the space under and beside a flight stays open — which
+// is what lets a bot climb the lane next to it.
+function ramp(m, x0, z0, x1, z1, yBase, yAtMin, yAtMax, axis, thick) {
   let E, F, G, H;   // top corners at (x0,z0) (x1,z0) (x1,z1) (x0,z1)
   if (axis === 'x') { E = [x0, yAtMin, z0]; F = [x1, yAtMax, z0]; G = [x1, yAtMax, z1]; H = [x0, yAtMin, z1]; }
   else              { E = [x0, yAtMin, z0]; F = [x1, yAtMin, z0]; G = [x1, yAtMax, z1]; H = [x0, yAtMax, z1]; }
-  const A = [x0, yBase, z0], B = [x1, yBase, z0], C = [x1, yBase, z1], D = [x0, yBase, z1];
+  const bot = (c) => thick ? [c[0], c[1] - thick, c[2]] : [c[0], yBase, c[2]];
+  const A = bot(E), B = bot(F), C = bot(G), D = bot(H);
   for (let q = 0; q < 4; q++) {   // AO occluder: the wedge as four rising slabs
     const t0 = q / 4, t1 = (q + 1) / 4;
     const hA = yAtMin + (yAtMax - yAtMin) * t0, hB = yAtMin + (yAtMax - yAtMin) * t1;
-    const lo = Math.min(yBase, hA, hB), hi = Math.max(hA, hB);
+    const lo = thick ? Math.min(hA, hB) - thick : Math.min(yBase, hA, hB), hi = Math.max(hA, hB);
     if (axis === 'x') SOLIDS.push([x0 + (x1 - x0) * t0, lo, z0, x0 + (x1 - x0) * t1, hi, z1]);
     else SOLIDS.push([x0, lo, z0 + (z1 - z0) * t0, x1, hi, z0 + (z1 - z0) * t1]);
   }
@@ -1157,7 +1286,14 @@ function wallRun(m, axis, a0, a1, o0, o1, y0, y1, openings = []) {
     axis === 'x' ? box(m, s0, yy0, o0, s1, yy1, o1) : box(m, o0, yy0, s0, o1, yy1, s1); };
   let cur = a0;
   for (const op of ops) {
-    const w0 = op.at - op.w / 2, w1 = op.at + op.w / 2, sill = op.sill || 0;
+    // build 1113: an opening never overruns its wall. Doorways are wide now (see BOT_LANE), and a
+    // wide one on a short wall used to run past the end — seg() then dropped the inverted piece and
+    // the wall silently lost its pier. Clamp inside, shrink to fit, and leave the wall solid rather
+    // than emit nonsense if there is genuinely no room.
+    const PIER = 0.35, w = Math.min(op.w, (a1 - a0) - PIER * 2);
+    if (w < 0.4) continue;
+    const at = Math.max(a0 + PIER + w / 2, Math.min(a1 - PIER - w / 2, op.at));
+    const w0 = at - w / 2, w1 = at + w / 2, sill = op.sill || 0;
     seg(cur, w0, y0, y1);
     if (sill > 0) seg(w0, w1, y0, y0 + sill);
     seg(w0, w1, y0 + sill + op.h, y1);
@@ -1173,56 +1309,126 @@ function wallRun(m, axis, a0, a1, o0, o1, y0, y1, openings = []) {
 // (emissive) plus a baked light, which is the half that makes an interior readable at all.
 //
 // Returns the leaf rooms as {x0,z0,x1,z1} so the caller can furnish them / reserve them.
+// ---- build 1113: what the ENGINE's collider costs an opening ---------------------------
+// An imported model becomes a grid of per-column boxes ~1 unit across (MGRID_CELL), and a column
+// is solid for its WHOLE width the moment a triangle touches it. So every surface stands up to one
+// cell proud of where it was modelled, and a face that lands exactly ON a cell boundary — which
+// round-numbered architecture does constantly — costs the entire next cell. Measured on the
+// generated buildings: a 0.45-thick wall collides 2.0 thick, and a 2.56-wide doorway leaves 1.0 of
+// gap. An enemy resolves against those boxes with a 0.9 clearance radius and no escape hatch, so
+// anything a bot must walk through needs BOT_LANE of modelled width before it is passable at all.
+// This is why the build-1112 stairwell failed: not the slope, not the flights — the lanes were
+// simply narrower than the engine's own arithmetic allows.
+const GRID_PAD = 1.0, BOT_R = 0.9;
+const BOT_LANE = 2 * GRID_PAD + 2 * BOT_R;   // 3.8: the narrowest opening a bot can pass at all
 function roomBlock(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts = {}) {
-  const rr = rng(seed2), T = opts.wall || 0.45, DOOR = opts.door || 1.6, DOORH = opts.doorH || 2.5;
+  const rr = rng(seed2), T = opts.wall || 0.45;
+  // Doorways are openings, not doors: BOT_LANE plus a margin, or bots simply cannot enter the
+  // building they are being lit and furnished for. (Before this they could not — probed.)
+  const DOOR = opts.door || (BOT_LANE + 0.4), DOORH = opts.doorH || 2.9;
   const minRoom = opts.minRoom || 5.5;
-  // ---- build 1112: STOREYS. A stair bay is carved off the -x edge and runs the full depth; the
-  // rooms partition what's left. Every upper floor plate and the roof omit the bay, so the shaft is
-  // open top to bottom and the ramps inside it are the way up — including onto the roof, which is
-  // why a multi-storey block needs no outside ramp. Ramps alternate direction per storey, so the
-  // climb switchbacks instead of running one impossible 20-unit straight.
+  // ---- build 1112/1113: STOREYS. A stair bay is carved off one x edge and runs the full depth;
+  // the rooms partition what's left, open to the bay across their whole edge. Every upper floor
+  // plate and the roof omit the bay, so the shaft is open top to bottom and the flights inside it
+  // are the way up — including onto the roof, which is why a multi-storey block needs no outside
+  // ramp. Flights alternate lane and direction, so the climb switchbacks instead of running one
+  // impossible 20-unit straight.
   const storeys = Math.max(1, opts.storeys || 1);
-  // 7 wide, so each switchback lane is 3.5. It is not enough to clear the enemy capsule (1.8
-  // across): the collider grid quantises the ramp's SIDE face outward by up to a cell, so an
-  // obstacle effectively stands ~1 unit inside each lane edge. At 2.5-wide lanes that leaves 0.75
-  // of clearance at the centreline — inside the 0.9 push radius, and the probe showed bots shoved
-  // at every single step of the stairs. 3.5 puts it back outside.
-  const bayW = storeys > 1 ? (opts.bay || 7) : 0;
-  const bx = x0 + bayW;                       // interior (room) area starts here
+  // Each lane is half the bay and must clear BOT_LANE (3.8) on its own, so 9 — 4.5 a lane, which
+  // leaves a 0.7-wide band of stable footing at the worst-case grid phase. 7 (build 1112) gave
+  // 3.5 and the probe found bots shoved at all 31 sample points.
+  const bayW = storeys > 1 ? (opts.bay || 9) : 0;
+  // Which x edge holds the bay. The arena puts it on the courtyard side of BOTH side buildings, so
+  // the mirrored pair reads the same from the middle of the map.
+  const bayAtMin = opts.baySide !== '+x';
+  const BX = (u) => bayAtMin ? x0 + u : x1 - u;               // bay-local (0 = outer edge) -> world x
+  const xr = (u0, u1) => [Math.min(BX(u0), BX(u1)), Math.max(BX(u0), BX(u1))];
+  const bx = BX(bayW);                                       // interior (room) area starts here
+  const rmX = bayW ? [Math.min(bx, bayAtMin ? x1 : x0), Math.max(bx, bayAtMin ? x1 : x0)] : [x0, x1];
+  // The floor plate reaches the shaft edge and the rooms start a nosing's width back from it, so the
+  // plate's exposed edge and a partition wall's end are never the same plane — coplanar and both
+  // facing into the shaft is exactly the flashing overlap build 1108 hunted down.
+  const RB_LIP = 0.06;
+  const rwX = bayW ? (bayAtMin ? [rmX[0] + RB_LIP, rmX[1]] : [rmX[0], rmX[1] - RB_LIP]) : rmX;
   const perStorey = [];
   for (let k = 0; k < storeys; k++) {
     const yk = y0 + k * h;
-    const rooms = _rbStorey(mWall, mFloor, mTrim, bx, z0, x1, z1, yk, h, (seed2 * 31 + k * 7) | 0, opts, T, DOOR, DOORH, minRoom);
+    // walls stand ON their floor (the ground slab, or this storey's plate). Starting them at the
+    // slab's BOTTOM left every wall's underside coplanar with the slab's underside, both facing down
+    // into the storey below — invisible on the ground floor (the arena slab buries it) and a
+    // flashing overlap on every floor above it.
+    const rooms = _rbStorey(mWall, mFloor, mTrim, rwX[0], z0, rwX[1], z1, yk, h, (seed2 * 31 + k * 7) | 0,
+      opts, T, DOOR, DOORH, minRoom, yk + (k ? 0.2 : 0.12));
     perStorey.push(rooms);
-    if (k > 0) box(mFloor, bx - T, yk, z0, x1, yk + 0.2, z1);          // this storey's plate (bay stays open)
-    if (bayW) {
-      // Switchback flights sit SIDE BY SIDE in their own lanes. Stacking them over the same span
-      // looks fine on paper — flight k+1 starts exactly where flight k ended — but the two surfaces
-      // then converge along the run, so the headroom climbing the lower flight shrinks to nothing
-      // at the top. Two lanes: even flights climb toward +z in lane 0, odd flights climb back
-      // toward -z in lane 1, and each one's foot meets the previous one's head at the same height.
-      const lane = (k % 2), lx0 = x0 + lane * (bayW / 2), lx1 = lx0 + bayW / 2;
-      const up = lane === 0;
-      ramp(mFloor, lx0 + 0.1, z0 + 0.3, lx1 - 0.1, z1 - 0.3, yk, up ? yk : yk + h, up ? yk + h : yk, 'z');
-      box(mTrim, bx - 0.12, yk + h, z0, bx, yk + h + 1.0, z1);         // rail so the shaft reads as a drop
-    }
+    // this storey's plate — exactly the rooms area, so it never reaches over the shaft (a plate
+    // that overhung the bay by the wall thickness put the guard rail and the top flight inside it)
+    if (k > 0) box(mFloor, rmX[0], yk, z0, rmX[1], yk + 0.2, z1);
+    if (bayW) _rbFlight(mFloor, mTrim, xr, bayW, z0, z1, yk, h, k, storeys);
   }
   const leaves = perStorey[0];
+  // the stair centrelines, for the engine probe: one per flight plus the crossover on each landing
+  leaves.stairScans = bayW ? _rbStairScans(BX, bayW, z0, z1, storeys) : [];
   // ---- shell + roof, spanning every storey ----
   const H = h * storeys;
-  _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts);
+  // An entrance in the stair bay's own face must open onto the bay's GROUND landing, not into the
+  // flank of the first flight: walk in at the middle of that face and the stairs are already 1.9
+  // up, so the doorway's own lintel lands in the bot's chest.
+  const entAt = (bayW && (opts.entrance || '-x') === (bayAtMin ? '-x' : '+x')) ? z0 + RB_LAND * 0.75 : null;
+  _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts, entAt);
   box(mFloor, x0, y0, z0, x1, y0 + 0.12, z1);                          // ground floor (under the bay too)
   if (bayW) {                                                          // roof: everything but the shaft
-    box(mWall, bx - T, y0 + H, z0 - T, x1 + T, y0 + H + 0.35, z1 + T);
-    box(mWall, x0 - T, y0 + H, z0 - T, bx - T, y0 + H + 0.35, z0);
-    box(mWall, x0 - T, y0 + H, z1, bx - T, y0 + H + 0.35, z1 + T);
-    box(mWall, x0 - T, y0 + H, z0, x0, y0 + H + 0.35, z1);
+    const inner = xr(bayW - T, bayW - T), edge = xr(0, 0);
+    const rx0 = Math.min(inner[0], edge[0]), rx1 = Math.max(inner[0], edge[0]);
+    box(mWall, bayAtMin ? inner[0] : x0 - T, y0 + H, z0 - T, bayAtMin ? x1 + T : inner[0], y0 + H + 0.35, z1 + T);
+    box(mWall, rx0 - (bayAtMin ? T : 0), y0 + H, z0 - T, rx1 + (bayAtMin ? 0 : T), y0 + H + 0.35, z0);
+    box(mWall, rx0 - (bayAtMin ? T : 0), y0 + H, z1, rx1 + (bayAtMin ? 0 : T), y0 + H + 0.35, z1 + T);
+    box(mWall, bayAtMin ? x0 - T : x1, y0 + H, z0, bayAtMin ? x0 : x1 + T, y0 + H + 0.35, z1);
   } else box(mWall, x0 - T, y0 + H, z0 - T, x1 + T, y0 + H + 0.35, z1 + T);
   return leaves;
 }
+// One flight of the switchback plus the LANDING it arrives on. The landing is what makes the thing
+// work: it spans the whole bay at the flight's top height, so a bot crosses to the other lane on
+// flat ground (where the build-1094 step exemption applies) instead of trying to side-step between
+// two converging slopes, and it is also how you step off onto the storey's floor plate or the roof.
+// Flights are SLABS (see ramp()'s `thick`): a solid wedge in the next lane walls in the lane you
+// are climbing, which is the other half of why build 1112's stairs were unwalkable.
+// A landing is deep enough that its half away from the end wall is still clear of that wall's
+// quantised collider face by a bot's radius — otherwise the crossover happens in the one strip of
+// the stairwell a bot can never stand in, which is exactly how build 1112's shaft failed.
+const RB_LAND = 2 * (GRID_PAD + BOT_R), RB_SLAB = 0.35;
+function _rbFlight(mFloor, mTrim, xr, bayW, z0, z1, yk, h, k, storeys) {
+  const lane = k % 2, up = lane === 0;
+  const lx = xr(lane * bayW / 2, (lane + 1) * bayW / 2);     // the two lanes meet, so no slot to fall in
+  const fz0 = z0 + RB_LAND, fz1 = z1 - RB_LAND;              // the sloped run, between the two landings
+  const yFoot = k === 0 ? yk + 0.12 : yk, yTop = yk + h;     // flight 0 starts ON the ground-floor slab
+  ramp(mFloor, lx[0], fz0, lx[1], fz1, 0, up ? yFoot : yTop, up ? yTop : yFoot, 'z', RB_SLAB);
+  const bw = xr(0, bayW);
+  box(mFloor, bw[0], yTop - RB_SLAB, up ? fz1 : z0, bw[1], yTop, up ? z1 : fz0);
+  // Guard rail along the shaft edge, standing ON the deck it guards (the storey's plate, or the roof
+  // for the last flight) — a rail whose base hung at deck level instead shared an underside plane
+  // with the plate: a z-fight. It stops where THIS flight's landing meets the deck, or it would wall
+  // off the one place the climb is supposed to deliver you.
+  const deck = k === storeys - 1 ? 0.35 : 0.2, rail = xr(bayW, bayW + 0.12);
+  box(mTrim, rail[0], yTop + deck, up ? z0 : fz0, rail[1], yTop + deck + 1.0, up ? fz1 : z1);
+}
+// The centreline of every flight and every landing crossover — the manifest the engine probe walks
+// to prove a bot can actually climb what was generated.
+function _rbStairScans(BX, bayW, z0, z1, storeys) {
+  const out = [], fz0 = z0 + RB_LAND, fz1 = z1 - RB_LAND;
+  const cl = [BX(bayW * 0.25), BX(bayW * 0.75)];
+  for (let k = 0; k < storeys; k++) {
+    const up = k % 2 === 0, c = cl[k % 2];
+    out.push([c, up ? fz0 : fz1, c, up ? fz1 : fz0]);                    // the flight itself
+    // the crossover runs down the middle of the landing's USABLE half — its far half is inside the
+    // end wall's quantised collider, where nothing can stand
+    const lz = up ? (fz1 + z1 - GRID_PAD - BOT_R) / 2 : (fz0 + z0 + GRID_PAD + BOT_R) / 2;
+    out.push([cl[0], lz, cl[1], lz]);                                    // crossing to the next lane
+  }
+  return out;
+}
 // One storey's rooms: the partition + its lights. Split out of roomBlock so every storey of a
 // tower gets its own seeded floor plan instead of the same one stacked.
-function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, DOOR, DOORH, minRoom) {
+function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, DOOR, DOORH, minRoom, yw) {
   const rr = rng(seed2);
   const leaves = [];
   (function split(r, depth) {
@@ -1235,12 +1441,12 @@ function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, 
     const lo = (alongX ? r.x0 : r.z0) + minRoom, hi = (alongX ? r.x1 : r.z1) - minRoom;
     const cut = lo + rr() * (hi - lo);
     if (alongX) {
-      wallRun(mWall, 'z', r.z0, r.z1, cut - T / 2, cut + T / 2, y0, y0 + h,
+      wallRun(mWall, 'z', r.z0, r.z1, cut - T / 2, cut + T / 2, yw ?? y0, y0 + h,
         [{ at: r.z0 + (r.z1 - r.z0) * (0.3 + rr() * 0.4), w: DOOR, h: DOORH }]);
       split({ x0: r.x0, z0: r.z0, x1: cut - T / 2, z1: r.z1 }, depth + 1);
       split({ x0: cut + T / 2, z0: r.z0, x1: r.x1, z1: r.z1 }, depth + 1);
     } else {
-      wallRun(mWall, 'x', r.x0, r.x1, cut - T / 2, cut + T / 2, y0, y0 + h,
+      wallRun(mWall, 'x', r.x0, r.x1, cut - T / 2, cut + T / 2, yw ?? y0, y0 + h,
         [{ at: r.x0 + (r.x1 - r.x0) * (0.3 + rr() * 0.4), w: DOOR, h: DOORH }]);
       split({ x0: r.x0, z0: r.z0, x1: r.x1, z1: cut - T / 2 }, depth + 1);
       split({ x0: r.x0, z0: cut + T / 2, x1: r.x1, z1: r.z1 }, depth + 1);
@@ -1261,9 +1467,11 @@ function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, 
 // The outer shell: an entrance on the requested face at ground level, windows everywhere else on
 // every storey — so an upper floor reads as inhabited from outside, and gives defenders firing
 // positions rather than a blank box.
-function _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts) {
+function _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts, entAt) {
   const ent = opts.entrance || '-x';
-  const doorOn = (a0, a1) => [{ at: (a0 + a1) / 2, w: DOOR * 1.6, h: 3 }];
+  // The entrance is the widest opening in the block and the only way in, so it gets DOOR plus a
+  // margin — and a lintel high enough to clear a bot standing on whatever is behind it.
+  const doorOn = (a0, a1) => [{ at: entAt != null ? entAt : (a0 + a1) / 2, w: DOOR + 1.0, h: 3.4 }];
   for (let k = 0; k < storeys; k++) {
     const yk = y0 + k * h, ground = k === 0;
     const W2 = (a0, a1) => [{ at: a0 + (a1 - a0) * 0.28, w: 1.8, h: 1.4, sill: 1.5 },
@@ -1541,6 +1749,11 @@ const MATLIB = {
   scifi:     { s: 1024, make: (n, S) => scifiPanelTex(n, 191, S),    opts: { base: [1, 1, 1], metal: 0.25, rough: 1, scale: 4, nrm: 1.4 } },
   scifiFloor:{ s: 1024, make: (n, S) => scifiFloorTex(n, 193, S),    opts: { base: [1, 1, 1], metal: 0.25, rough: 1, scale: 4, nrm: 1.4 } },
   lava:      { s: 512,  make: (n, S) => lavaTex(n, 197, S),          opts: { base: [1, 1, 1], rough: 0.95, scale: 6, nrm: 1.8 } },
+  // build 1114
+  sandstone: { s: 1024, make: (n, S) => sandstoneTex(n, 233, S),     opts: { base: [1, 1, 1], rough: 0.96, scale: 6, nrm: 1.9 } },
+  sandRed:   { s: 1024, make: (n, S) => sandstoneTex(n, 239, S, [0.66, 0.4, 0.29]), opts: { base: [1, 1, 1], rough: 0.96, scale: 7, nrm: 1.9 } },
+  snow:      { s: 512,  make: (n, S) => snowTex(n, 241, S),          opts: { base: [1, 1, 1], rough: 1, scale: 6, nrm: 1.5 } },
+  ice:       { s: 1024, make: (n, S) => iceTex(n, 251, S),           opts: { base: [1, 1, 1], metal: 0.05, rough: 1, scale: 5, nrm: 1.3 } },
   bark:      { s: 512,  make: (n, S) => barkTex(n, 199, S),          opts: { base: [1, 1, 1], rough: 0.95, scale: 2.2, nrm: 2 } },
   leaves:    { s: 512,  make: (n, S) => leavesTex(n, 211, S),        opts: { base: [1, 1, 1], rough: 0.95, scale: 2.6, nrm: 1.4 } },
   // foliage cards: alpha-cutout, double-sided, and NOCOLLIDE (build 1093 engine convention)
@@ -2063,28 +2276,66 @@ function arenaPalette(theme) {
   const teamA = mat('teamA', { base: [1, 0.55, 0.23], glow: 0.32, rough: 0.6 });   // glow low enough that ACES keeps the hue
   const teamB = mat('teamB', { base: [0.29, 0.66, 1], glow: 0.32, rough: 0.6 });
   const base = { D, teamA, teamB, grassM: libMat('grassCard'), flowerM: libMat('flowerCard'), reedM: libMat('reedCard') };
+  // build 1114: a theme is DATA, not a run of conditionals scattered down buildArena. Alongside its
+  // materials each one names the treatments it wants — how the perimeter is dressed, whether the
+  // wall/floor joinery pass runs and in what, which centrepiece, which yard cover, which foliage —
+  // so adding the next theme is one entry here and one mood, not eight ternaries in the builder.
   if (theme === 'castle') return { ...base,
     ground: libMat('cobble'), wall: libMat('stone'), slab: libMat('stone'), deck: libMat('plankGrey'),
     ramp: libMat('stone'), pillar: libMat('stone'), parapet: libMat('stone'),
     cover: libMat('planks'), cover2: libMat('plankGrey'),
-    trim: mat('torch', { base: [1, 0.62, 0.25], glow: 1.0, rough: 0.5 }), signC: [0.85, 0.7, 0.4], foliage: 'patchy' };
+    trim: mat('torch', { base: [1, 0.62, 0.25], glow: 1.0, rough: 0.5 }), signC: [0.85, 0.7, 0.4], foliage: 'patchy',
+    dress: 'crenels', joinery: ['stone', 'cobble'], plaza: 'monument', yard: 'planters',
+    lightCol: [1, 0.78, 0.5], depot: 'BARRACKS', names: ['STONE', 'CROWN', 'RAVEN', 'OAK'] };
   if (theme === 'volcanic') return { ...base,
     ground: libMat('dirt'), wall: libMat('rock'), slab: libMat('stone'), deck: libMat('stone'),
     ramp: libMat('stone'), pillar: libMat('rock'), parapet: libMat('stone'),
     cover: libMat('rock'), cover2: libMat('stone'), lava: libMat('lava'),
-    trim: mat('ember', { base: [1, 0.42, 0.12], glow: 0.6, rough: 0.6 }), signC: [1, 0.6, 0.3], foliage: 'scorched' };
+    trim: mat('ember', { base: [1, 0.42, 0.12], glow: 0.6, rough: 0.6 }), signC: [1, 0.6, 0.3], foliage: 'scorched',
+    dress: 'rubble', joinery: null, plaza: 'boulders', yard: 'boulders',
+    lightCol: [1, 0.62, 0.3], depot: 'DEPOT', names: ['EMBER', 'ASH', 'BASALT', 'CINDER'] };
   if (theme === 'garden') return { ...base,
     ground: libMat('grass', { base: [0.74, 0.8, 0.62] }), wall: libMat('brickPale'), slab: libMat('stone'), deck: libMat('planks'),
     ramp: libMat('planks'), pillar: libMat('brickPale'), parapet: libMat('plankGrey'),
     cover: libMat('planks'), cover2: libMat('crateTx'), path: libMat('cobble'),
-    trim: mat('lantern', { base: [0.95, 0.9, 0.6], glow: 0.8, rough: 0.5 }), signC: [0.9, 0.86, 0.7], foliage: 'lush' };
+    trim: mat('lantern', { base: [0.95, 0.9, 0.6], glow: 0.8, rough: 0.5 }), signC: [0.9, 0.86, 0.7], foliage: 'lush',
+    dress: 'capped', joinery: ['stone', 'dirt'], plaza: 'monument', yard: 'planters',
+    lightCol: [1, 0.93, 0.78], depot: 'GREENHOUSE', names: ['MOSS', 'BLOOM', 'WILLOW', 'CLOVER'] };
+  // ---- build 1114: three new themes -----------------------------------------------------
+  if (theme === 'desert') return { ...base,   // sun-bleached sandstone: warm mid ground, pale ledges
+    ground: libMat('sand'), wall: libMat('sandstone'), slab: libMat('sandRed'), deck: libMat('plankGrey', { base: [0.86, 0.82, 0.72] }),
+    ramp: libMat('sandRed'), pillar: libMat('sandstone'), parapet: libMat('sandRed'),
+    cover: libMat('crateTx', { base: [0.62, 0.52, 0.36] }), cover2: libMat('plankGrey', { base: [0.8, 0.72, 0.58] }),
+    path: libMat('dirt', { base: [0.86, 0.76, 0.58] }),
+    trim: mat('brazier', { base: [1, 0.72, 0.34], glow: 0.85, rough: 0.55 }), signC: [0.95, 0.88, 0.72], foliage: 'dunes',
+    dress: 'ledges', joinery: ['sandRed', 'dirt'], plaza: 'monument', yard: 'crates',
+    lightCol: [1, 0.86, 0.62], depot: 'CISTERN', names: ['DUST', 'MESA', 'SCARAB', 'KILN'] };
+  if (theme === 'frost') return { ...base,    // snowfield: near-white ground, dark timber and stone
+    ground: libMat('snow'), wall: libMat('stone', { base: [0.78, 0.82, 0.88] }), slab: libMat('ice'), deck: libMat('plankGrey', { base: [0.62, 0.62, 0.66] }),
+    ramp: libMat('plankGrey', { base: [0.66, 0.66, 0.7] }), pillar: libMat('stone', { base: [0.74, 0.78, 0.85] }),
+    parapet: libMat('plankGrey', { base: [0.58, 0.6, 0.66] }),
+    cover: libMat('crateTx', { base: [0.5, 0.5, 0.52] }), cover2: libMat('rock', { base: [0.72, 0.76, 0.84] }),
+    snow: libMat('snow'), ice: libMat('ice'),
+    trim: mat('coldlamp', { base: [0.72, 0.88, 1], glow: 0.85, rough: 0.5 }), signC: [0.86, 0.92, 1], foliage: 'frozen',
+    dress: 'drifts', joinery: ['stone', 'rock'], plaza: 'cairn', yard: 'boulders',
+    lightCol: [0.85, 0.92, 1], depot: 'STORES', names: ['FROST', 'TUNDRA', 'PINE', 'SLEET'] };
+  if (theme === 'facility') return { ...base, // the sci-fi set the painter has had all along, unused
+    ground: libMat('scifiFloor'), wall: libMat('scifi'), slab: libMat('deck', { base: [0.6, 0.64, 0.7] }),
+    deck: libMat('deck', { base: [0.6, 0.64, 0.7] }), ramp: libMat('deck', { base: [0.66, 0.7, 0.76] }),
+    pillar: libMat('metal', { base: [0.34, 0.37, 0.42] }), parapet: libMat('metal', { base: [0.28, 0.32, 0.38], scale: 3 }),
+    cover: libMat('crateTx', { base: [0.46, 0.5, 0.56], rough: 0.7 }), cover2: libMat('hazard'),
+    trim: mat('strip', { base: [0.3, 0.9, 1], glow: 0.85, rough: 0.4 }), signC: [0.72, 0.94, 1], foliage: 'none',
+    dress: 'ribs', joinery: ['metal', 'hazard'], plaza: 'core', yard: 'containers',
+    lightCol: [0.8, 0.95, 1], depot: 'LAB', names: ['VECTOR', 'HALON', 'ORBIT', 'ATRIUM'] };
   return { ...base,   // industrial — hard value structure: dark floor, mid walls, light deck, dark steel
     ground: libMat('concrete', { base: [0.30, 0.31, 0.33], scale: 10 }), wall: libMat('panels', { base: [0.5, 0.52, 0.55] }),
     slab: libMat('deck', { base: [0.62, 0.64, 0.68] }),
     deck: libMat('deck', { base: [0.62, 0.64, 0.68] }), ramp: libMat('deck', { base: [0.66, 0.68, 0.72] }), pillar: libMat('metal', { base: [0.3, 0.32, 0.36] }),
     parapet: libMat('metal', { base: [0.26, 0.29, 0.33], scale: 3 }),
     cover: libMat('crateTx'), cover2: libMat('crateTx', { base: [0.5, 0.35, 0.26], rough: 0.85 }),
-    trim: mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.55, rough: 0.5 }), signC: [0.9, 0.88, 0.82], foliage: 'weeds' };
+    trim: mat('trim', { base: [0.22, 0.96, 0.68], glow: 0.55, rough: 0.5 }), signC: [0.9, 0.88, 0.82], foliage: 'weeds',
+    dress: 'buttress', joinery: ['concrete', 'asphalt'], plaza: 'mast', yard: 'containers',
+    lightCol: [1, 0.93, 0.78], depot: 'DEPOT', names: ['IRON', 'CARGO', 'GRID', 'BOLT'] };
 }
 // Per-theme lighting mood: the bake rig (indirect radiance colours) and the runtime worldCfg
 // colour script (warm key vs cool fill, fog matched to the horizon) travel together. The warm/cool
@@ -2102,22 +2353,42 @@ function arenaMood(theme) {
     light: { sunAzim: 115, sunElev: 52, sunCol: [1, 0.94, 0.85], skyZen: [0.18, 0.28, 0.50], skyHor: [0.38, 0.42, 0.48], groundAlb: [0.12, 0.18, 0.08] },
     world: { sun: 1.0, sunColor: 0xfff0da, sunAzim: 115, sunElev: 52, sky: 0.36, skyColor: 0xa5c0e0, ambient: 0.03,
       fogDensity: 0.004, fogColor: 0x9fb0c2, exposure: 1.12, postBloom: 0.45, postVig: 0.3, postSat: 1.06 } };
+  if (theme === 'desert') return {   // high noon: a near-vertical sun, bleached shadows, dust haze.
+    // The ground bounce is the loudest term in the whole rig here — sand throws a lot of warm light
+    // back up, which is why desert shadows photograph open and golden rather than blue.
+    light: { sunAzim: 160, sunElev: 72, sunCol: [1, 0.97, 0.9], skyZen: [0.22, 0.34, 0.58], skyHor: [0.55, 0.52, 0.44], groundAlb: [0.42, 0.34, 0.22] },
+    world: { sun: 1.25, sunColor: 0xfff6e2, sunAzim: 160, sunElev: 72, sky: 0.3, skyColor: 0xbcc9d8, ambient: 0.04,
+      fogDensity: 0.0055, fogColor: 0xc2ab86, exposure: 1.05, postBloom: 0.55, postVig: 0.36, postSat: 1.0 } };
+  if (theme === 'frost') return {    // late blue hour over snow: a low raking sun, everything else sky
+    light: { sunAzim: 285, sunElev: 14, sunCol: [1, 0.85, 0.72], skyZen: [0.20, 0.30, 0.55], skyHor: [0.42, 0.52, 0.68], groundAlb: [0.60, 0.64, 0.70] },
+    world: { sun: 0.9, sunColor: 0xffdcbe, sunAzim: 285, sunElev: 14, sky: 0.55, skyColor: 0xb6cbe6, ambient: 0.05,
+      fogDensity: 0.006, fogColor: 0xa9bdd4, exposure: 1.2, postBloom: 0.6, postVig: 0.3, postSat: 0.94 } };
+  if (theme === 'facility') return { // night on the pad: the sun is a rim light, the strips do the work
+    light: { sunAzim: 40, sunElev: 12, sunCol: [0.62, 0.72, 0.9], skyZen: [0.05, 0.07, 0.12], skyHor: [0.10, 0.14, 0.20], groundAlb: [0.10, 0.12, 0.14] },
+    world: { sun: 0.4, sunColor: 0xa8c0e8, sunAzim: 40, sunElev: 12, sky: 0.2, skyColor: 0x2b3a4e, ambient: 0.05,
+      fogDensity: 0.0075, fogColor: 0x16222e, exposure: 1.35, postBloom: 0.95, postVig: 0.46, postSat: 1.12 } };
   return {                           // industrial: cool clear working day
     light: { sunAzim: 100, sunElev: 55, sunCol: [1, 0.95, 0.88], skyZen: [0.16, 0.25, 0.45], skyHor: [0.34, 0.38, 0.45], groundAlb: [0.20, 0.21, 0.22] },
     world: { sun: 1.1, sunColor: 0xfff2e0, sunAzim: 100, sunElev: 55, sky: 0.22, skyColor: 0xa8c2dd, ambient: 0.03,
       fogDensity: 0.0045, fogColor: 0x8d9aa8, exposure: 1.15, postBloom: 0.5, postVig: 0.32, postSat: 1.08 } };
 }
+const ARENA_THEMES = ['industrial', 'castle', 'volcanic', 'garden', 'desert', 'frost', 'facility'];
 function buildArena(seed, theme, size, footprint) {
   const rr = rng((seed * 9973 + 7) | 0);
-  const themes = ['industrial', 'castle', 'volcanic', 'garden'];
-  if (!themes.includes(theme)) theme = themes[(rr() * 4) | 0];
+  if (!ARENA_THEMES.includes(theme)) theme = ARENA_THEMES[(rr() * ARENA_THEMES.length) | 0];
   const FOOTPRINTS = ['square', 'cross', 'octagon', 'diagonal'];
   if (!FOOTPRINTS.includes(footprint)) footprint = (footprint === 'auto') ? FOOTPRINTS[(rr() * 4) | 0] : 'square';
   const W = size === 'small' ? 30 : size === 'large' ? 46 : 38;   // inner wall face at ±W
   const P = arenaPalette(theme);
   const WALL_H = 8 + ((rr() * 3) | 0), T = 0.5, MID = 4.5;
-  const AV = [], SCANS = [];
+  const AV = [], SCANS = [], LATE = [];
   const reserve = (x0, z0, x1, z1) => AV.push([x0, z0, x1, z1]);
+  // Wall-foot decoration (tumbled rock, snow banked against the wall) is chosen while the perimeter
+  // is being dressed — long before the galleries, buildings and bases have reserved their ground.
+  // Placed there and then, a boulder lands on a gallery ramp and shoves every bot that tries to
+  // climb it. So the dressing only PROPOSES: each piece waits here with its radius and is dropped
+  // later, once there is something to test it against.
+  const later = (x, z, r, fn) => LATE.push([x, z, r, fn]);
   const scan = (ax, az, bx, bz) => SCANS.push([ax, az, bx, bz].map(v => +v.toFixed(1)));
 
   // ---- floor + perimeter wall, theme-dressed ----
@@ -2126,13 +2397,13 @@ function buildArena(seed, theme, size, footprint) {
   box(P.wall, -W - 1.5, 0, W, W + 1.5, WALL_H, W + 1.5);
   box(P.wall, -W - 1.5, 0, -W, -W, WALL_H, W);
   box(P.wall, W, 0, -W, W + 1.5, WALL_H, W);
-  if (theme === 'castle') {
+  if (P.dress === 'crenels') {
     for (let a = -W + 4; a <= W - 4; a += 2.4) {
       cbox(P.wall, a, WALL_H + 0.65, -W - 0.75, 1.1, 1.3, 1.4); cbox(P.wall, a, WALL_H + 0.65, W + 0.75, 1.1, 1.3, 1.4);
       cbox(P.wall, -W - 0.75, WALL_H + 0.65, a, 1.4, 1.3, 1.1); cbox(P.wall, W + 0.75, WALL_H + 0.65, a, 1.4, 1.3, 1.1);
     }
     for (const tx of [-W, W]) for (const tz of [-W, W]) cyl(P.wall, tx, tz, 0, WALL_H + 3.4, 4.2, 16);
-  } else if (theme === 'industrial') {
+  } else if (P.dress === 'buttress') {
     // build 1108: the buttresses stand fully INSIDE the wall face (centre 0.4 from it, half-depth
     // 0.4). At 0.35 they poked 5 cm into the wall volume, so their tops and the wall's top shared
     // both the plane y=WALL_H and a sliver of footprint — a thin coplanar strip that flashed.
@@ -2141,15 +2412,49 @@ function buildArena(seed, theme, size, footprint) {
       cbox(P.pillar, -W + 0.4, WALL_H / 2, a, 0.8, WALL_H, 1.4); cbox(P.pillar, W - 0.4, WALL_H / 2, a, 0.8, WALL_H, 1.4);
     }
     for (const sx of [1, -1]) pipe(P.parapet, 'z', -W + 6, W - 6, WALL_H - 1.3, sx * (W - 0.55), 0.22);
-  } else if (theme === 'volcanic') {
+  } else if (P.dress === 'rubble') {
     const rb = rng(seed * 131 + 3);
     for (let q = 0; q < 10; q++) {                                  // tumbled rocks at the wall feet
       const a = rb() * Math.PI * 2, d = W - 1.6 - rb() * 1.2;
       const bx2 = Math.abs(Math.cos(a)) > Math.abs(Math.sin(a)) ? Math.sign(Math.cos(a)) * d : (rb() * 2 - 1) * (W - 8);
       const bz2 = Math.abs(Math.cos(a)) > Math.abs(Math.sin(a)) ? (rb() * 2 - 1) * (W - 8) : Math.sign(Math.sin(a)) * d;
-      boulder(P.cover, bx2, 0.4 + rb() * 0.4, bz2, 1.0 + rb() * 1.1, seed * 17 + q);
+      const cy = 0.4 + rb() * 0.4, R = 1.0 + rb() * 1.1;
+      later(bx2, bz2, R, () => boulder(P.cover, bx2, cy, bz2, R, seed * 17 + q));
     }
     box(P.trim, -W, 0, -W - 0.1, W, 0.35, -W + PROUD); box(P.trim, -W, 0, W - PROUD, W, 0.35, W + 0.1);   // ember seams (build 1108: proud, not flush)
+  } else if (P.dress === 'ledges') {                                 // desert: stepped sandstone buttresses
+    // Two-step corbels rather than one slab: a sandstone wall reads by its courses, and the setback
+    // catches a hard shadow line under a near-vertical sun, which is the whole look of the theme.
+    for (let a = -W + 7; a <= W - 7; a += 8.5) for (const [o, hw, hh] of [[0.55, 1.9, 0.62], [1.15, 1.2, 0.34]]) {
+      cbox(P.parapet, a, WALL_H * hh, -W + o, hw, WALL_H * hh * 2, o * 2 - 0.06);
+      cbox(P.parapet, a, WALL_H * hh, W - o, hw, WALL_H * hh * 2, o * 2 - 0.06);
+      cbox(P.parapet, -W + o, WALL_H * hh, a, o * 2 - 0.06, WALL_H * hh * 2, hw);
+      cbox(P.parapet, W - o, WALL_H * hh, a, o * 2 - 0.06, WALL_H * hh * 2, hw);
+    }
+    for (const sx of [1, -1]) for (const sz of [1, -1])              // braziers on the corners
+      cyl(P.trim, sx * (W - 3.5), sz * (W - 3.5), 0.9, 1.2, 0.55, 10);
+  } else if (P.dress === 'drifts') {                                 // frost: snow banked against the wall
+    const rb = rng(seed * 137 + 5);
+    for (let q = 0; q < 16; q++) {
+      const a = rb() * Math.PI * 2, d = W - 1.2 - rb() * 1.4;
+      const along = (rb() * 2 - 1) * (W - 6);
+      const hor = Math.abs(Math.cos(a)) > Math.abs(Math.sin(a));
+      const dx2 = hor ? Math.sign(Math.cos(a)) * d : along, dz2 = hor ? along : Math.sign(Math.sin(a)) * d;
+      const cy = 0.15 + rb() * 0.3, R = 1.4 + rb() * 1.6;
+      later(dx2, dz2, R, () => boulder(P.snow, dx2, cy, dz2, R, seed * 19 + q));
+    }
+    for (const sx of [1, -1]) for (const sz of [1, -1]) lamppost(P.parapet, P.trim, sx * (W - 3), sz * (W - 3), 0, 4.6, 0.9 * -sx);
+  } else if (P.dress === 'ribs') {                                   // facility: structural ribs + light strips
+    for (let a = -W + 6; a <= W - 6; a += 6) {
+      for (const [sx2, sz2] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        const cx2 = sz2 ? a : sx2 * (W - 0.45), cz2 = sz2 ? sz2 * (W - 0.45) : a;
+        cbox(P.pillar, cx2, WALL_H / 2, cz2, sz2 ? 1.0 : 0.9, WALL_H, sz2 ? 0.9 : 1.0);
+        cbox(P.trim, cx2, WALL_H - 1.4, cz2, sz2 ? 0.7 : 0.55, 0.18, sz2 ? 0.55 : 0.7);
+      }
+    }
+    // a continuous strip at head height: the light that makes a night facility legible
+    for (const s2 of [1, -1]) { box(P.trim, -W + 1, 2.6, s2 > 0 ? W - PROUD - 0.08 : -W + PROUD, W - 1, 2.78, s2 > 0 ? W - PROUD : -W + PROUD + 0.08);
+      box(P.trim, s2 > 0 ? W - PROUD - 0.08 : -W + PROUD, 2.6, -W + 1, s2 > 0 ? W - PROUD : -W + PROUD + 0.08, 2.78, W - 1); }
   } else {                                                          // garden: capped brick + lantern posts
     // cap = four rim strips, MITRED (build 1108): the E/W strips stop where the N/S strips begin.
     // Overlapping them put two up-facing tops at the same height in each corner — coplanar, so the
@@ -2163,10 +2468,12 @@ function buildArena(seed, theme, size, footprint) {
   // ---- trim pass: plinth, floor border, cornice. "Never let two materials meet naked" — the
   // wall-floor seam gets a darker plinth strip + a contrasting border band, and the wall top a
   // proud cornice line. This is most of what kills the blockout read.
-  if (theme !== 'volcanic') {                                       // rock walls are organic, no joinery
-    const plinth = libMat(theme === 'industrial' ? 'concrete' : 'stone',
-      theme === 'industrial' ? { base: [0.35, 0.37, 0.39], rough: 0.98, scale: 3 } : { base: [0.72, 0.68, 0.62], rough: 0.98, scale: 3 });
-    const border = theme === 'industrial' ? libMat('asphalt') : theme === 'garden' ? libMat('dirt') : libMat('cobble', { base: [0.8, 0.78, 0.75] });
+  if (P.joinery) {                                                  // rock walls are organic, no joinery
+    const PL = { concrete: { base: [0.35, 0.37, 0.39], rough: 0.98, scale: 3 }, metal: { base: [0.24, 0.27, 0.31], rough: 0.9, scale: 3 },
+      sandRed: { base: [0.82, 0.7, 0.56], rough: 0.98, scale: 3 }, stone: { base: [0.72, 0.68, 0.62], rough: 0.98, scale: 3 } };
+    const BD = { cobble: { base: [0.8, 0.78, 0.75] }, rock: { base: [0.66, 0.7, 0.78] } };
+    const plinth = libMat(P.joinery[0], PL[P.joinery[0]]);
+    const border = libMat(P.joinery[1], BD[P.joinery[1]]);
     // build 1108: every ring is MITRED — the E/W runs stop where the N/S runs begin. Overlapping
     // them stacked two identical up-facing tops in each corner (coplanar => the flashing patch).
     box(plinth, -W, 0, -W, W, 0.55, -W + 0.16); box(plinth, -W, 0, W - 0.16, W, 0.55, W);
@@ -2213,10 +2520,22 @@ function buildArena(seed, theme, size, footprint) {
     decal(P.D, 'up', 0, MID + 0.02, 0, 7, 7, DECAL.RING);
   } else {                 // plaza: walkable plinth with a theme centrepiece + diagonal baffles
     cbox(P.slab, 0, 0.25, 0, 9, 0.5, 9);
-    if (theme === 'volcanic') { boulder(P.cover, 0, 1.4, 0, 1.9, seed * 5 + 1); boulder(P.cover, 0.9, 2.6, -0.5, 1.1, seed * 5 + 2);
+    if (P.plaza === 'boulders') { boulder(P.cover, 0, 1.4, 0, 1.9, seed * 5 + 1); boulder(P.cover, 0.9, 2.6, -0.5, 1.1, seed * 5 + 2);
       box(P.trim, -1.6, 0.5, -1.6, 1.6, 0.62, 1.6); }
-    else if (theme === 'industrial') { cyl(P.pillar, 0, 0, 0.5, 5.4, 0.85, 12); cbox(P.trim, 0, 5.6, 0, 1.4, 0.35, 1.4); }
-    else { box(libMat('tiles'), -2.6, 0.5, -2.6, 2.6, 0.62, 2.6);
+    else if (P.plaza === 'mast') { cyl(P.pillar, 0, 0, 0.5, 5.4, 0.85, 12); cbox(P.trim, 0, 5.6, 0, 1.4, 0.35, 1.4); }
+    else if (P.plaza === 'core') {                                   // facility: a lit reactor column
+      cyl(P.pillar, 0, 0, 0.5, 1.1, 2.2, 14);
+      cyl(P.trim, 0, 0, 1.1, 4.6, 1.5, 14);
+      cyl(P.pillar, 0, 0, 4.6, 5.4, 1.9, 14, 1.2);
+      for (let q = 0; q < 4; q++) { const a = q * Math.PI / 2 + 0.78;
+        cbox(P.parapet, Math.cos(a) * 3.1, 1.5, Math.sin(a) * 3.1, 0.5, 3, 0.5); }
+    }
+    else if (P.plaza === 'cairn') {                                  // frost: a stack under a snow cap
+      for (const [cy, r2, sd] of [[0.9, 1.7, 1], [2.2, 1.25, 2], [3.2, 0.8, 3]]) boulder(P.cover2, 0, cy, 0, r2, seed * 5 + sd);
+      boulder(P.snow, 0, 3.9, 0, 0.75, seed * 5 + 4);
+      box(P.trim, -1.9, 0.5, -1.9, 1.9, 0.6, 1.9);
+    }
+    else { box(libMat('tiles'), -2.6, 0.5, -2.6, 2.6, 0.62, 2.6);    // monument: a plinth and a column
       cyl(libMat('marble'), 0, 0, 0.6, 2.7, 0.62, 12); bevelCbox(libMat('marble'), 0, 2.85, 0, 1.0, 0.3, 1.0); }
     for (const s of [1, -1]) { box(P.parapet, s * 6, 0.5, s * -9, s * 9 + (s > 0 ? 0.45 : -0.45), 1.6, s * -6);
       box(P.parapet, s * -9, 0.5, s * 6, s * -6, 1.6, s * 9 + (s > 0 ? 0.45 : -0.45)); }
@@ -2242,26 +2561,27 @@ function buildArena(seed, theme, size, footprint) {
       reserve(Math.min(gx0, gx1) - 1, -gz - 11, Math.max(gx0, gx1) + 1, gz + 11);
       scan(s * (W - 3), gz + 9, s * (W - 3), 0);
     }
-  } else if (ss === 1) {   // build 1111/1112: real BUILDINGS — rooms, doorways, lit interiors,
-    // build 1112: roomBlock CAN stack storeys with a switchback stairwell (see its `storeys`
-    // option, unit-tested), but the arena does not use it yet: the engine probe shows enemies
-    // pushed at EVERY step of the generated stairs (31/31 sample points), on both the 2.5- and
-    // 3.5-wide lane variants, so widening the shaft is not the cause. Until that is understood,
-    // arena buildings stay single-storey — shipping stairs bots refuse to climb would be worse
-    // than shipping none. rr() is still consumed so seeds keep their existing layouts.
-    const twoUp = (rr(), false);
+  } else if (ss === 1) {   // build 1111/1113: real BUILDINGS — rooms, doorways, lit interiors,
+    // and, half the time, a second storey reached by the switchback stairwell inside. Build 1112
+    // shipped that stairwell disabled because the probe found bots shoved at all 31 sample points;
+    // build 1113 found why (the lanes were narrower than the engine's collider grid allows — see
+    // BOT_LANE) and turned it on.
+    const twoUp = rr() < 0.5;
     const STO = 3.7, bzE = ((rr() * 10) | 0) - 5;
     const bx = W - 10.5, WH2 = twoUp ? STO * 2 : 4.6;
     for (const s of [1, -1]) {
       const cx2 = s * bx, cz2 = s * bzE;
-      // the stair bay is carved off the block's -x edge, so mirror the block for the west copy to
-      // keep both entrances facing the courtyard
-      const x0 = cx2 - (twoUp ? 8 : 6), x1 = cx2 + (twoUp ? 8 : 6), z0 = cz2 - 8, z1 = cz2 + 8;
+      // deep enough (20) that the stairwell still gets a real flight between its two landings: the
+      // landings cost RB_LAND each, and what is left has to hold 3.7 of rise under the ramp limit
+      const x0 = cx2 - 8, x1 = cx2 + 8, z0 = cz2 - 10, z1 = cz2 + 10;
       const xd = s > 0 ? x0 : x1;                                  // door face looks at the courtyard
+      // the stair bay sits on the SAME face as the entrance, so both copies of the pair present the
+      // same face to the middle of the map — a 180°-symmetric arena cannot put one team's stairs on
+      // the courtyard and the other's against the perimeter wall
       const rooms = roomBlock(P.wall, libMat('plankGrey'), P.trim, x0, z0, x1, z1, 0, twoUp ? STO : 4.6,
         (seed * 97 + s * 13) | 0, { entrance: s > 0 ? '-x' : '+x', depth: 2, minRoom: 5.5,
-          storeys: twoUp ? 2 : 1, bay: 7,
-          lightCol: theme === 'volcanic' ? [1, 0.62, 0.3] : theme === 'castle' ? [1, 0.78, 0.5] : [1, 0.93, 0.78] });
+          storeys: twoUp ? 2 : 1, baySide: s > 0 ? '-x' : '+x',
+          lightCol: P.lightCol });
       // furnish: a crate in the largest room, so the interior is worth entering
       const big = rooms.slice().sort((a, b) => (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0))[0];
       if (big) bevelCbox(P.cover, (big.x0 + big.x1) / 2, 0.74, (big.z0 + big.z1) / 2, 1.24, 1.24, 1.24, true);
@@ -2270,22 +2590,28 @@ function buildArena(seed, theme, size, footprint) {
         // no outside ramp: 7.75 of rise would need a 18-unit run. The internal stairs go all the
         // way to the roof, so the height advantage is earned by going INSIDE.
         rz0 = z0; rz1 = z1;
-        scan(x0 + 1.75, z0 + 0.6, x0 + 1.75, z1 - 0.6);            // lane 0 of the stair bay
+        for (const sc of rooms.stairScans) scan(...sc);            // every flight and every landing
       } else {
         rz0 = s > 0 ? z1 + 0.45 : z0 - 12.45; rz1 = s > 0 ? z1 + 12.45 : z0 - 0.45;
         ramp(P.ramp, cx2 - 1.8, rz0, cx2 + 1.8, rz1, 0, s > 0 ? WH2 + 0.35 : 0, s > 0 ? 0 : WH2 + 0.35, 'z');
         scan(cx2, s > 0 ? rz1 + 1 : rz0 - 1, cx2, s > 0 ? rz0 - 10 : rz1 + 10);
       }
       box(P.parapet, xd - (s > 0 ? 0.45 : -0.45) * 0.66, WH2 + 0.35, z0 - 0.45, xd + (s > 0 ? 0 : 0.45) * 0.66, WH2 + 1.5, z1 + 0.45);
-      sign(s > 0 ? '-x' : '+x', xd + (s > 0 ? -0.5 : 0.5), 3.95, cz2, 0.62, theme === 'castle' ? 'BARRACKS' : theme === 'garden' ? 'GREENHOUSE' : 'DEPOT', P.signC);
+      sign(s > 0 ? '-x' : '+x', xd + (s > 0 ? -0.5 : 0.5), 3.95, cz2, 0.62, P.depot, P.signC);
       reserve(x0 - 1.4, Math.min(rz0, z0) - 1, x1 + 1.4, Math.max(rz1, z1) + 1);
     }
   } else {                 // open yards: big theme cover at mid-wall
     for (const s of [1, -1]) {
       const yx = s * (W - 7), yz = s * 4;
-      if (theme === 'industrial') { container(s > 0 ? libMat('paintRed') : libMat('paintGreen'), P.pillar, yx, yz, 0, 'z');
+      if (P.yard === 'containers') { container(s > 0 ? libMat('paintRed') : libMat('paintGreen'), P.pillar, yx, yz, 0, 'z');
         container(P.cover2 === P.cover ? P.cover : libMat('corrugated'), P.pillar, yx - s * 3.5, yz - s * 7, 0, 'x'); }
-      else if (theme === 'volcanic') { boulder(P.cover, yx, 1.1, yz, 2.1, seed * 23 + s * 3); boulder(P.cover, yx - s * 2.4, 0.7, yz - s * 3.4, 1.3, seed * 23 + s * 5); }
+      else if (P.yard === 'boulders') { boulder(P.cover, yx, 1.1, yz, 2.1, seed * 23 + s * 3); boulder(P.cover, yx - s * 2.4, 0.7, yz - s * 3.4, 1.3, seed * 23 + s * 5); }
+      else if (P.yard === 'crates') {                                // desert: a stores dump under an awning
+        for (const [ox, oz, hy] of [[0, 0, 0.9], [2.3, -1.1, 0.9], [1.1, 0.9, 2.5]])
+          bevelCbox(P.cover, yx + s * ox, hy, yz + s * oz, 1.7, 1.7, 1.7, true);
+        for (const px of [-2.2, 2.2]) for (const pz of [-2.2, 2.2]) cbox(P.cover2, yx + px, 1.8, yz + pz, 0.25, 3.6, 0.25);
+        box(P.cover2, yx - 2.5, 3.6, yz - 2.5, yx + 2.5, 3.75, yz + 2.5);
+      }
       else { for (const px of [-1.6, 1.6]) for (const pz of [-1.2, 1.2]) cbox(P.cover2, yx + px, 1.3, yz + pz, 0.22, 2.6, 0.22);
         ramp(P.cover, yx - 2, yz - 1.7, yx + 2, yz + 1.7, 2.5, 3.15, 2.65, 'z');
         cyl(P.cover2, yx - 1, yz + 0.8, 0, 1.25, 0.52, 10); bevelCbox(P.cover, yx + 0.9, 0.5, yz - 0.6, 1.0, 1.0, 1.0, true); }
@@ -2341,10 +2667,16 @@ function buildArena(seed, theme, size, footprint) {
   }
 
   // ---- garden paths (before cover, so lanes stay clear) ----
-  if (theme === 'garden' && P.path != null) {
+  if (P.path != null) {
     box(P.path, -2.2, 0, -W + 1, 2.2, 0.06, W - 1);
     box(P.path, -W + 1, 0, -2.2, W - 1, 0.06, 2.2);
     reserve(-2.6, -W, 2.6, W); reserve(-W, -2.6, W, 2.6);
+  }
+
+  // ---- the deferred wall-foot decoration, now that there is something to test against ----
+  for (const [lx, lz, lr, fn] of LATE) {
+    if (AV.some(a => lx > a[0] - lr && lx < a[2] + lr && lz > a[1] - lr && lz < a[3] + lr)) continue;
+    fn(); reserve(lx - lr * 0.7, lz - lr * 0.7, lx + lr * 0.7, lz + lr * 0.7);
   }
 
   // ---- seeded mirrored cover, rejection-sampled against everything reserved ----
@@ -2353,10 +2685,16 @@ function buildArena(seed, theme, size, footprint) {
   let placed = 0, guard = 0;
   while (placed < nCover && guard++ < 90) {
     const sx = (rc() * 2 - 1) * (W - 6), sz = (rc() * 2 - 1) * (W - 13);
-    if (AV.some(r => sx > r[0] - 1.8 && sx < r[2] + 1.8 && sz > r[1] - 1.8 && sz < r[3] + 1.8)) continue;
+    // BOTH copies are tested, not just the candidate. The reserved rects are only approximately
+    // point-symmetric — a footprint corner mass shrinks per corner, and the two side buildings carry
+    // their own seeds — so a position clear on one side could put its mirror image inside a ramp
+    // mouth. That is exactly what dropped a stacked crate across the west tier-1 ramp on large
+    // stepped-hill arenas while the east ramp stayed clean.
+    const clear = (px, pz) => !AV.some(r => px > r[0] - 1.8 && px < r[2] + 1.8 && pz > r[1] - 1.8 && pz < r[3] + 1.8);
+    if (!clear(sx, sz) || !clear(-sx, -sz)) continue;
     const stack = rc() < 0.4, kind = rc();
     for (const [x, z] of [[sx, sz], [-sx, -sz]]) {
-      if (theme === 'volcanic') boulder(kind < 0.5 ? P.cover : P.cover2, x, 0.7, z, 1.2 + kind, seed * 7 + placed * 3 + (x > 0 ? 1 : 0));
+      if (P.yard === 'boulders' && P.foliage !== 'frozen') boulder(kind < 0.5 ? P.cover : P.cover2, x, 0.7, z, 1.2 + kind, seed * 7 + placed * 3 + (x > 0 ? 1 : 0));
       else {
         bevelCbox(kind < 0.5 ? P.cover : P.cover2, x, 0.85, z, 2, 1.7, 2, true);
         if (stack) bevelCbox(kind < 0.5 ? P.cover2 : P.cover, x + 0.15, 2.4, z - 0.1, 1.4, 1.4, 1.4, true);
@@ -2400,14 +2738,42 @@ function buildArena(seed, theme, size, footprint) {
       reserve(Math.min(s * (W - 9), s * (W - 3)), Math.min(s * (W - 9), s * (W - 3)),
         Math.max(s * (W - 9), s * (W - 3)), Math.max(s * (W - 9), s * (W - 3)));
     }
+  } else if (F === 'dunes') {                                       // desert: drifted sand and dry scrub
+    const rs = rng(seed * 71 + 3), bark3 = libMat('bark', { base: [0.86, 0.78, 0.62] });
+    for (const s of [1, -1]) {                                      // sand piled into the lee corners
+      for (let q = 0; q < 4; q++) boulder(P.ground, s * (W - 4 - rs() * 7), 0.1 + rs() * 0.25, s * -(W - 4 - rs() * 7),
+        1.8 + rs() * 2.2, seed * 29 + q * 5 + (s > 0 ? 1 : 0));
+      deadTree(bark3, s * (W - 13), s * -(W - 17), 0, seed * 67 + s);
+    }
+    scatterFoliage(P.reedM, -W + 2, -W + 2, W - 2, W - 2, (W / 1.5) | 0, (seed * 3 + 29) | 0,
+      { avoid: AV, sMin: 0.4, sMax: 0.75 });
+  } else if (F === 'frozen') {                                      // frost: bare conifers and dry reeds
+    const rf = rng(seed * 83 + 7);
+    // hoisted: libMat(id, override) mints a NEW material every call, so asking for the same tinted
+    // bark inside the loop would emit one material (and one primitive) per tree
+    const bark2 = libMat('bark', { base: [0.6, 0.58, 0.58] }), leaf2 = libMat('leaves', { base: [0.62, 0.72, 0.7] });
+    let trees = 0, tg = 0;
+    while (trees < 3 && tg++ < 40) {
+      const tx = (rf() * 2 - 1) * (W - 8), tz = (rf() * 2 - 1) * (W - 14);
+      if (AV.some(r => tx > r[0] - 2.2 && tx < r[2] + 2.2 && tz > r[1] - 2.2 && tz < r[3] + 2.2)) continue;
+      for (const [x, z] of [[tx, tz], [-tx, -tz]]) {
+        conifer(bark2, leaf2, x, z, 0, (seed * 43 + trees * 9 + (x > 0 ? 1 : 0)) | 0);
+        boulder(P.snow, x, 0.12, z, 1.5 + rf() * 0.8, seed * 47 + trees * 3 + (x > 0 ? 1 : 0));   // snow round its foot
+      }
+      reserve(tx - 2, tz - 2, tx + 2, tz + 2); reserve(-tx - 2, -tz - 2, -tx + 2, -tz + 2);
+      trees++;
+    }
+    scatterFoliage(P.reedM, -W + 2, -W + 2, W - 2, W - 2, (W / 2) | 0, (seed * 3 + 31) | 0,
+      { avoid: AV, sMin: 0.35, sMax: 0.65 });
+  } else if (F === 'none') {                                        // facility: swept, nothing grows
+    for (const s of [1, -1]) decal(P.D, 'up', s * (W - 9), 0.03, s * -(W - 12), 5, 4.4, DECAL.LINE, s > 0 ? 0 : 180);
   } else {                                                          // industrial: weeds in the seams
     scatterFoliage(P.reedM, -W + 1, -W + 1, W - 1, -W + 3, 8, seed * 3 + 19, { sMin: 0.4, sMax: 0.7 });
     scatterFoliage(P.reedM, -W + 1, W - 3, W - 1, W - 1, 8, seed * 3 + 23, { sMin: 0.4, sMax: 0.7 });
   }
 
   // ---- signage + ramp-foot chevrons ----
-  const N1 = { industrial: ['IRON', 'CARGO', 'GRID', 'BOLT'], castle: ['STONE', 'CROWN', 'RAVEN', 'OAK'],
-    volcanic: ['EMBER', 'ASH', 'BASALT', 'CINDER'], garden: ['MOSS', 'BLOOM', 'WILLOW', 'CLOVER'] }[theme];
+  const N1 = P.names;
   const N2 = ['YARD', 'RING', 'COURT', 'CROSS', 'HOLLOW', 'RUN'];
   const arenaName = N1[(rr() * N1.length) | 0] + ' ' + N2[(rr() * N2.length) | 0];
   sign('-x', W - 0.04, WALL_H * 0.62, 0, 1.2, arenaName, P.signC);
@@ -2730,7 +3096,7 @@ if (which === 'tex') {   // fast iteration: node tools/levelgen.mjs tex <library
 }
 if ((which !== 'arena' && !LAYOUTS[which]) || !out) {
   console.error('usage: node tools/levelgen.mjs <' + Object.keys(LAYOUTS).join('|') + '> <out.glb>');
-  console.error('       node tools/levelgen.mjs arena <out.glb> [seed] [industrial|castle|volcanic|garden|auto] [small|medium|large] [square|cross|octagon|diagonal|auto]');
+  console.error('       node tools/levelgen.mjs arena <out.glb> [seed] [' + ARENA_THEMES.join('|') + '|auto] [small|medium|large] [square|cross|octagon|diagonal|auto]');
   process.exit(1);
 }
 const info = which === 'arena'

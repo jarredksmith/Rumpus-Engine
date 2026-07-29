@@ -23,5 +23,5 @@ assert(/grid\.visible = \(worldCfg\.grid !== false\)/.test(awc), 'toggle without
 const sl = extractFunction('serializeLevel');
 assert(/world:\s*Object\.assign\(\{\}, worldCfg\)/.test(sl), 'grid saved inside world config');
 const rl = extractFunction('restoreLevel');
-assert(/level\.world\)\{ worldCfg = Object\.assign\(\{\}, DEFAULT_WORLD, level\.world\); applyWorldCfg\(\);/.test(rl), 'restoreLevel reapplies saved world config');
+assert(/level\.world\)\{ worldCfg = _worldFrom\(level\.world\); applyWorldCfg\(\);/.test(rl), 'restoreLevel reapplies saved world config');
 done('ground-grid visibility persists across save/reload + arena rebuilds');

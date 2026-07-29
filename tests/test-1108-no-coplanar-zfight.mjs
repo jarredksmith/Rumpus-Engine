@@ -56,7 +56,7 @@ const overlapArea = (a, b) => {
 
 process.env.TEXSIZE = '64';   // the painters run either way; keep them cheap
 let checkedThemes = 0, checkedFaces = 0, buried = null;
-for (const theme of ['industrial', 'castle', 'volcanic', 'garden']) {
+for (const theme of ['industrial', 'castle', 'volcanic', 'garden', 'desert', 'frost', 'facility']) {
   const api = await factory(host, { from:()=>{}, alloc:()=>{}, concat:()=>{} }, { env: process.env, argv: [] });
   api.buildArena(5, theme, 'medium');
   // a face is buried if a point just past it is inside any solid (shrunk, so merely touching a
@@ -106,7 +106,7 @@ for (const theme of ['industrial', 'castle', 'volcanic', 'garden']) {
     (worst ? ' (worst: ' + worst.m + ', ' + worst.ov + ' m² on plane ' + worst.key + ' rect ' + worst.at + ')' : ''));
   checkedThemes++;
 }
-eq(checkedThemes, 4, 'all four themes checked');
+eq(checkedThemes, 7, 'every theme checked');
 assert(checkedFaces > 4000, 'the sweep actually looked at the geometry (' + checkedFaces + ' faces)');
 
 done('build 1108: nothing is laid flush against anything else — no z-fighting');

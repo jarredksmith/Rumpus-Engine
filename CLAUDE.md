@@ -115,42 +115,85 @@ work-alike + fflate for deflate). Keep it dual-environment — never add a bare 
 
 - `node tools/levelgen.mjs <keep|spine|museum|castle|caldera> <out.glb>`
 - `node tools/levelgen.mjs arena <out.glb> [seed] [theme|auto] [small|medium|large] [square|cross|octagon|diagonal|auto]`
+  themes: industrial | castle | volcanic | garden | desert | frost | facility
 - `node tools/levelgen.mjs tex <libid> <out.png>` — fast single-texture iteration
 - Env knobs: `TEXSIZE` (texture res), `TEXAUX` (aux-map divisor), `NOTEX/NOMR/NONRM/NOLM` (bisection)
 
 Conventions that are easy to break:
 - **Nothing flush.** Decoration stands off structure by `PROUD` (5 cm) and rings are mitred. Two
-  coplanar front-facing surfaces z-fight and flash as the camera moves. `test-1108` sweeps all four
+  coplanar front-facing surfaces z-fight and flash as the camera moves. `test-1108` sweeps all seven
   themes for this and will catch it.
 - **`nocollide*`** named nodes are decoration (grass): engine build 1093 skips them in every
   collider and neutralises their raycast; 1096 also stops them receiving shadows.
 - **Interiors need `addLight`.** The bake integrates sky visibility + one sun bounce, so anything
   under a roof bakes black without a registered light. Light range is capped at the tracer's search
   distance (9.5) or the shadow test can't see occluders and light leaks through walls.
-- **Probe before shipping geometry.** Ramps must read `pushed: 0` in the engine probe
-  (scratchpad `probe-gen.mjs`), not just look right.
+- **Author to the collider, not to the eye (build 1113).** The engine turns an imported model into a
+  ~1-unit COLUMN grid and a column goes solid for its whole width as soon as a triangle touches it,
+  so every surface stands up to a cell proud of where it was modelled — and a face lying exactly ON
+  a cell boundary (round-numbered architecture does this constantly) costs the entire next cell.
+  Measured: a 0.45-thick wall collides 2.0 thick. Hence `GRID_PAD` / `BOT_R` / `BOT_LANE` (3.8) in
+  levelgen: **anything a bot must walk through is at least BOT_LANE wide**, doorways included.
+- **Decoration waits its turn.** Wall-foot pieces are proposed via `later(...)` during the perimeter
+  dressing and dropped after everything has reserved its ground; placing them immediately drops a
+  boulder onto a gallery ramp. Mirrored cover tests BOTH copies against the reserved rects.
+- **Probe before shipping geometry.** Ramps and stairs must read no pushes in the engine probe, not
+  just look right. `tests/test-1113-stairs-bot-clearance.mjs` is the durable version of that probe:
+  it builds geometry, runs breach.html's own `buildModelGridBoxes` over the triangles, replays the
+  enemy obstacle resolution, and flood-fills to prove a bot reaches the roof. For ad-hoc work on a
+  whole `.glb`, rebuild a scratchpad `probe-gen.mjs` the same way (parse the GLB, same two steps).
 
-## Open work (as of build 1112)
+## Rendering: the colour pipeline (build 1115)
+
+The frame is sRGB-encoded exactly once, at the end. Two things make that non-obvious:
+
+- `renderer.outputEncoding = THREE.sRGBEncoding` only covers three's BUILT-IN materials. The post
+  chain is raw `ShaderMaterial`s writing `gl_FragColor`, which `<encodings_fragment>` never touches,
+  so the pass that writes the CANVAS applies the OETF itself via the shared `_OETF_GLSL` snippet and
+  a `uEncode` uniform. Three passes can be last (DoF present, composite, afterimage copy) and each
+  sets `uEncode` per frame. **Encode an intermediate target and the next pass blurs and grades
+  gamma-encoded values** — that is the bug this design exists to prevent.
+- `ColorManagement.legacyMode = false` linearises every hex colour on the way in, INCLUDING light
+  colours. A saturated dark light colour loses most of its luminance (`0x4a6c7a` keeps ~34%), so
+  intensities tuned before this change now read dim. Albedo moves the same way, and that is the
+  stock level's real limiter: `floorColor 0x141c22` linearises to 0.0089.
+
+Do NOT scale `lightMapIntensity` by PI. r149 already does it on upload
+(`lightMapIntensity.value = material.lightMapIntensity * (physicallyCorrectLights !== true ? PI : 1)`).
+An audit claimed otherwise from r13x-era reasoning; the double multiply blew the bake out 3.14x and
+was caught only by capturing the frame and measuring it.
+
+Levels carry `world.colorV`. Absent = authored before this build = rendered through `LEGACY_EXPOSURE`,
+because correct rendering makes old content brighter than its author ever saw. `_worldFrom()` is the
+only place that decides it — a legacy level must not inherit the default's `colorV:2` through an
+`Object.assign`.
+
+## Headless capture
+
+The engine renders under Chromium + SwiftShader, so visual changes can be measured, not argued about.
+The whole game lives inside `window.GAME_START = function(){...}`, so page-level JS cannot reach its
+internals: a harness has to drive the real UI. Capture at a FIXED generator seed or before/after
+frames are different arenas and prove nothing.
+
+## Open work (as of build 1115)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
-(groundwork only, 1112) → more themes/materials (not started) → emit gameplay data with the GLB
-(not started).
+(done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (not started).
 
-Two known bugs, both with exact repros:
+No known geometry bugs: both of the build-1112 repros (multi-storey stairs pushing enemies, the
+cover crate clipping a ramp mouth) are fixed and covered by tests.
 
-1. **Multi-storey stairs push enemies.** `roomBlock({storeys:2})` builds a switchback stairwell and
-   is unit-tested, but the arena keeps it OFF (`const twoUp = (rr(), false);`) because the probe
-   reports enemies pushed at 31/31 sample points on the stairs. Ruled out: lane width (identical at
-   2.5 and 3.5) and flight geometry (scan reads a clean 0.24 rise/unit, 0.12→3.63). Next step: at
-   one pushed point, dump every collider box overlapping the enemy band and check whether the build
-   1094 exemption's `surfaceTopUnder` returns `-Infinity` — that's the only branch that falls
-   through to a push. Repro: force `twoUp` true, `arena t.glb 13 industrial medium`, probe scan
-   `[21.3,-6.4,21.3,8.4]`.
-2. **Cover crate clips a ramp mouth.** On *large* stepped-hill arenas a stacked crate lands at
-   collider box `x -25.5..-21.7, z 0.8..4.6, y 0..2.6`, overlapping the west tier-1 ramp which
-   starts at x=-22 (2/19 scan points pushed; the east ramp is clean, so it's asymmetric). Suspect
-   the mirrored-cover sampler tests only the ORIGINAL candidate against reserved rects, never the
-   mirrored copy. Repro: `TEXSIZE=256 node tools/levelgen.mjs arena out.glb 7 industrial large square`.
+Themes are DATA (build 1114): a palette entry names its materials plus the treatments it wants —
+`dress`, `joinery`, `plaza`, `yard`, `foliage`, `lightCol`, `depot`, `names` — and `buildArena`
+contains no `theme === ...` branch. Adding the eighth theme is one `arenaPalette` entry, one
+`arenaMood` entry, whatever new treatment names it introduces, and the editor's theme list.
+
+Worth considering next, in the ENGINE rather than the generator: `buildModelGridBoxes` could emit
+each column's box tight to the triangles that actually stamped it instead of spanning the whole
+cell. That is the root cause behind `GRID_PAD`, and it would make every imported level's doorways
+and corridors passable rather than only the ones this generator authors. It needs care — a
+paper-thin wall must not collapse to a zero-thickness box a player can tunnel through — and it
+changes collision for every existing level, so it deserves its own build and a browser pass.
 
 Also outstanding (user actions): upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.

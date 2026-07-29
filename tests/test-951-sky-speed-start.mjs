@@ -20,7 +20,7 @@ assert(/\['None',''\]/.test(src), 'None stays');
 assert(!/2294472375_24a3b8ef46_o\.jpg/.test(src) && !/puydesancy\.jpg/.test(src) && !/kandao3\.jpg/.test(src), 'the old JPG panoramas are gone');
 
 // default pace
-assert(/const DEFAULT_WORLD = \{ walk:6, run:12, jump:13, grav:30, crouch:2,/.test(src), 'defaults: walk 6 / run 12 / crouch 2');
+assert(/const DEFAULT_WORLD = \{ colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2,/.test(src), 'defaults: walk 6 / run 12 / crouch 2');
 
 // unmissable START (build 1007: the 951 forced-green !important override silently defeated every
 // later lobby restyle — START's prominence now comes from the filled accent CTA family instead)

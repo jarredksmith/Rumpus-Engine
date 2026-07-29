@@ -12,7 +12,7 @@ assert(/addEventListener\('mousedown', e=>\{\n  if\(radialOpen\)\{ if\(e\.button
 
 // 96: client adopts host world + hides spawn/route visuals
 const ll = extractFunction('loadLevelFromNet');
-assert(/if\(level\.world\)\{ worldCfg = Object\.assign\(\{\}, DEFAULT_WORLD, level\.world\); _skyHdriUrl = null; applyWorldCfg\(\);/.test(ll), 'client applies host world (sky/ground/fog), resetting the sky guard');
+assert(/if\(level\.world\)\{ worldCfg = _worldFrom\(level\.world\); _skyHdriUrl = null; applyWorldCfg\(\);/.test(ll), 'client applies host world (sky/ground/fog), resetting the sky guard');
 assert(/setSpawnMarkersVisible\(editorOpen\)/.test(ll), 'client hides spawn markers + route lines during play');
 
 // 97: host SFX sync
