@@ -1088,15 +1088,23 @@ function cbox(m, cx, cy, cz, sx, sy, sz, unit) { box(m, cx - sx / 2, cy - sy / 2
 // version derived corners from a climb direction, which mirrored the quads (inverting their
 // faces) for one of the two directions. The engine probe caught it: raycasts fell straight
 // through half the ramp tops.
-function ramp(m, x0, z0, x1, z1, yBase, yAtMin, yAtMax, axis) {
+//
+// build 1113: pass `thick` and the underside runs PARALLEL to the top instead of flat at yBase —
+// a stair flight as a slab rather than a solid wedge. That is not cosmetic. A wedge's underside
+// sits at yBase for the whole run, so every column it touches is solid from yBase up: a flight
+// beside you (the other half of a switchback) becomes a wall along its entire length. As a slab
+// it only occupies its own thickness, so the space under and beside a flight stays open — which
+// is what lets a bot climb the lane next to it.
+function ramp(m, x0, z0, x1, z1, yBase, yAtMin, yAtMax, axis, thick) {
   let E, F, G, H;   // top corners at (x0,z0) (x1,z0) (x1,z1) (x0,z1)
   if (axis === 'x') { E = [x0, yAtMin, z0]; F = [x1, yAtMax, z0]; G = [x1, yAtMax, z1]; H = [x0, yAtMin, z1]; }
   else              { E = [x0, yAtMin, z0]; F = [x1, yAtMin, z0]; G = [x1, yAtMax, z1]; H = [x0, yAtMax, z1]; }
-  const A = [x0, yBase, z0], B = [x1, yBase, z0], C = [x1, yBase, z1], D = [x0, yBase, z1];
+  const bot = (c) => thick ? [c[0], c[1] - thick, c[2]] : [c[0], yBase, c[2]];
+  const A = bot(E), B = bot(F), C = bot(G), D = bot(H);
   for (let q = 0; q < 4; q++) {   // AO occluder: the wedge as four rising slabs
     const t0 = q / 4, t1 = (q + 1) / 4;
     const hA = yAtMin + (yAtMax - yAtMin) * t0, hB = yAtMin + (yAtMax - yAtMin) * t1;
-    const lo = Math.min(yBase, hA, hB), hi = Math.max(hA, hB);
+    const lo = thick ? Math.min(hA, hB) - thick : Math.min(yBase, hA, hB), hi = Math.max(hA, hB);
     if (axis === 'x') SOLIDS.push([x0 + (x1 - x0) * t0, lo, z0, x0 + (x1 - x0) * t1, hi, z1]);
     else SOLIDS.push([x0, lo, z0 + (z1 - z0) * t0, x1, hi, z0 + (z1 - z0) * t1]);
   }
@@ -1157,7 +1165,14 @@ function wallRun(m, axis, a0, a1, o0, o1, y0, y1, openings = []) {
     axis === 'x' ? box(m, s0, yy0, o0, s1, yy1, o1) : box(m, o0, yy0, s0, o1, yy1, s1); };
   let cur = a0;
   for (const op of ops) {
-    const w0 = op.at - op.w / 2, w1 = op.at + op.w / 2, sill = op.sill || 0;
+    // build 1113: an opening never overruns its wall. Doorways are wide now (see BOT_LANE), and a
+    // wide one on a short wall used to run past the end — seg() then dropped the inverted piece and
+    // the wall silently lost its pier. Clamp inside, shrink to fit, and leave the wall solid rather
+    // than emit nonsense if there is genuinely no room.
+    const PIER = 0.35, w = Math.min(op.w, (a1 - a0) - PIER * 2);
+    if (w < 0.4) continue;
+    const at = Math.max(a0 + PIER + w / 2, Math.min(a1 - PIER - w / 2, op.at));
+    const w0 = at - w / 2, w1 = at + w / 2, sill = op.sill || 0;
     seg(cur, w0, y0, y1);
     if (sill > 0) seg(w0, w1, y0, y0 + sill);
     seg(w0, w1, y0 + sill + op.h, y1);
@@ -1173,56 +1188,126 @@ function wallRun(m, axis, a0, a1, o0, o1, y0, y1, openings = []) {
 // (emissive) plus a baked light, which is the half that makes an interior readable at all.
 //
 // Returns the leaf rooms as {x0,z0,x1,z1} so the caller can furnish them / reserve them.
+// ---- build 1113: what the ENGINE's collider costs an opening ---------------------------
+// An imported model becomes a grid of per-column boxes ~1 unit across (MGRID_CELL), and a column
+// is solid for its WHOLE width the moment a triangle touches it. So every surface stands up to one
+// cell proud of where it was modelled, and a face that lands exactly ON a cell boundary — which
+// round-numbered architecture does constantly — costs the entire next cell. Measured on the
+// generated buildings: a 0.45-thick wall collides 2.0 thick, and a 2.56-wide doorway leaves 1.0 of
+// gap. An enemy resolves against those boxes with a 0.9 clearance radius and no escape hatch, so
+// anything a bot must walk through needs BOT_LANE of modelled width before it is passable at all.
+// This is why the build-1112 stairwell failed: not the slope, not the flights — the lanes were
+// simply narrower than the engine's own arithmetic allows.
+const GRID_PAD = 1.0, BOT_R = 0.9;
+const BOT_LANE = 2 * GRID_PAD + 2 * BOT_R;   // 3.8: the narrowest opening a bot can pass at all
 function roomBlock(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts = {}) {
-  const rr = rng(seed2), T = opts.wall || 0.45, DOOR = opts.door || 1.6, DOORH = opts.doorH || 2.5;
+  const rr = rng(seed2), T = opts.wall || 0.45;
+  // Doorways are openings, not doors: BOT_LANE plus a margin, or bots simply cannot enter the
+  // building they are being lit and furnished for. (Before this they could not — probed.)
+  const DOOR = opts.door || (BOT_LANE + 0.4), DOORH = opts.doorH || 2.9;
   const minRoom = opts.minRoom || 5.5;
-  // ---- build 1112: STOREYS. A stair bay is carved off the -x edge and runs the full depth; the
-  // rooms partition what's left. Every upper floor plate and the roof omit the bay, so the shaft is
-  // open top to bottom and the ramps inside it are the way up — including onto the roof, which is
-  // why a multi-storey block needs no outside ramp. Ramps alternate direction per storey, so the
-  // climb switchbacks instead of running one impossible 20-unit straight.
+  // ---- build 1112/1113: STOREYS. A stair bay is carved off one x edge and runs the full depth;
+  // the rooms partition what's left, open to the bay across their whole edge. Every upper floor
+  // plate and the roof omit the bay, so the shaft is open top to bottom and the flights inside it
+  // are the way up — including onto the roof, which is why a multi-storey block needs no outside
+  // ramp. Flights alternate lane and direction, so the climb switchbacks instead of running one
+  // impossible 20-unit straight.
   const storeys = Math.max(1, opts.storeys || 1);
-  // 7 wide, so each switchback lane is 3.5. It is not enough to clear the enemy capsule (1.8
-  // across): the collider grid quantises the ramp's SIDE face outward by up to a cell, so an
-  // obstacle effectively stands ~1 unit inside each lane edge. At 2.5-wide lanes that leaves 0.75
-  // of clearance at the centreline — inside the 0.9 push radius, and the probe showed bots shoved
-  // at every single step of the stairs. 3.5 puts it back outside.
-  const bayW = storeys > 1 ? (opts.bay || 7) : 0;
-  const bx = x0 + bayW;                       // interior (room) area starts here
+  // Each lane is half the bay and must clear BOT_LANE (3.8) on its own, so 9 — 4.5 a lane, which
+  // leaves a 0.7-wide band of stable footing at the worst-case grid phase. 7 (build 1112) gave
+  // 3.5 and the probe found bots shoved at all 31 sample points.
+  const bayW = storeys > 1 ? (opts.bay || 9) : 0;
+  // Which x edge holds the bay. The arena puts it on the courtyard side of BOTH side buildings, so
+  // the mirrored pair reads the same from the middle of the map.
+  const bayAtMin = opts.baySide !== '+x';
+  const BX = (u) => bayAtMin ? x0 + u : x1 - u;               // bay-local (0 = outer edge) -> world x
+  const xr = (u0, u1) => [Math.min(BX(u0), BX(u1)), Math.max(BX(u0), BX(u1))];
+  const bx = BX(bayW);                                       // interior (room) area starts here
+  const rmX = bayW ? [Math.min(bx, bayAtMin ? x1 : x0), Math.max(bx, bayAtMin ? x1 : x0)] : [x0, x1];
+  // The floor plate reaches the shaft edge and the rooms start a nosing's width back from it, so the
+  // plate's exposed edge and a partition wall's end are never the same plane — coplanar and both
+  // facing into the shaft is exactly the flashing overlap build 1108 hunted down.
+  const RB_LIP = 0.06;
+  const rwX = bayW ? (bayAtMin ? [rmX[0] + RB_LIP, rmX[1]] : [rmX[0], rmX[1] - RB_LIP]) : rmX;
   const perStorey = [];
   for (let k = 0; k < storeys; k++) {
     const yk = y0 + k * h;
-    const rooms = _rbStorey(mWall, mFloor, mTrim, bx, z0, x1, z1, yk, h, (seed2 * 31 + k * 7) | 0, opts, T, DOOR, DOORH, minRoom);
+    // walls stand ON their floor (the ground slab, or this storey's plate). Starting them at the
+    // slab's BOTTOM left every wall's underside coplanar with the slab's underside, both facing down
+    // into the storey below — invisible on the ground floor (the arena slab buries it) and a
+    // flashing overlap on every floor above it.
+    const rooms = _rbStorey(mWall, mFloor, mTrim, rwX[0], z0, rwX[1], z1, yk, h, (seed2 * 31 + k * 7) | 0,
+      opts, T, DOOR, DOORH, minRoom, yk + (k ? 0.2 : 0.12));
     perStorey.push(rooms);
-    if (k > 0) box(mFloor, bx - T, yk, z0, x1, yk + 0.2, z1);          // this storey's plate (bay stays open)
-    if (bayW) {
-      // Switchback flights sit SIDE BY SIDE in their own lanes. Stacking them over the same span
-      // looks fine on paper — flight k+1 starts exactly where flight k ended — but the two surfaces
-      // then converge along the run, so the headroom climbing the lower flight shrinks to nothing
-      // at the top. Two lanes: even flights climb toward +z in lane 0, odd flights climb back
-      // toward -z in lane 1, and each one's foot meets the previous one's head at the same height.
-      const lane = (k % 2), lx0 = x0 + lane * (bayW / 2), lx1 = lx0 + bayW / 2;
-      const up = lane === 0;
-      ramp(mFloor, lx0 + 0.1, z0 + 0.3, lx1 - 0.1, z1 - 0.3, yk, up ? yk : yk + h, up ? yk + h : yk, 'z');
-      box(mTrim, bx - 0.12, yk + h, z0, bx, yk + h + 1.0, z1);         // rail so the shaft reads as a drop
-    }
+    // this storey's plate — exactly the rooms area, so it never reaches over the shaft (a plate
+    // that overhung the bay by the wall thickness put the guard rail and the top flight inside it)
+    if (k > 0) box(mFloor, rmX[0], yk, z0, rmX[1], yk + 0.2, z1);
+    if (bayW) _rbFlight(mFloor, mTrim, xr, bayW, z0, z1, yk, h, k, storeys);
   }
   const leaves = perStorey[0];
+  // the stair centrelines, for the engine probe: one per flight plus the crossover on each landing
+  leaves.stairScans = bayW ? _rbStairScans(BX, bayW, z0, z1, storeys) : [];
   // ---- shell + roof, spanning every storey ----
   const H = h * storeys;
-  _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts);
+  // An entrance in the stair bay's own face must open onto the bay's GROUND landing, not into the
+  // flank of the first flight: walk in at the middle of that face and the stairs are already 1.9
+  // up, so the doorway's own lintel lands in the bot's chest.
+  const entAt = (bayW && (opts.entrance || '-x') === (bayAtMin ? '-x' : '+x')) ? z0 + RB_LAND * 0.75 : null;
+  _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts, entAt);
   box(mFloor, x0, y0, z0, x1, y0 + 0.12, z1);                          // ground floor (under the bay too)
   if (bayW) {                                                          // roof: everything but the shaft
-    box(mWall, bx - T, y0 + H, z0 - T, x1 + T, y0 + H + 0.35, z1 + T);
-    box(mWall, x0 - T, y0 + H, z0 - T, bx - T, y0 + H + 0.35, z0);
-    box(mWall, x0 - T, y0 + H, z1, bx - T, y0 + H + 0.35, z1 + T);
-    box(mWall, x0 - T, y0 + H, z0, x0, y0 + H + 0.35, z1);
+    const inner = xr(bayW - T, bayW - T), edge = xr(0, 0);
+    const rx0 = Math.min(inner[0], edge[0]), rx1 = Math.max(inner[0], edge[0]);
+    box(mWall, bayAtMin ? inner[0] : x0 - T, y0 + H, z0 - T, bayAtMin ? x1 + T : inner[0], y0 + H + 0.35, z1 + T);
+    box(mWall, rx0 - (bayAtMin ? T : 0), y0 + H, z0 - T, rx1 + (bayAtMin ? 0 : T), y0 + H + 0.35, z0);
+    box(mWall, rx0 - (bayAtMin ? T : 0), y0 + H, z1, rx1 + (bayAtMin ? 0 : T), y0 + H + 0.35, z1 + T);
+    box(mWall, bayAtMin ? x0 - T : x1, y0 + H, z0, bayAtMin ? x0 : x1 + T, y0 + H + 0.35, z1);
   } else box(mWall, x0 - T, y0 + H, z0 - T, x1 + T, y0 + H + 0.35, z1 + T);
   return leaves;
 }
+// One flight of the switchback plus the LANDING it arrives on. The landing is what makes the thing
+// work: it spans the whole bay at the flight's top height, so a bot crosses to the other lane on
+// flat ground (where the build-1094 step exemption applies) instead of trying to side-step between
+// two converging slopes, and it is also how you step off onto the storey's floor plate or the roof.
+// Flights are SLABS (see ramp()'s `thick`): a solid wedge in the next lane walls in the lane you
+// are climbing, which is the other half of why build 1112's stairs were unwalkable.
+// A landing is deep enough that its half away from the end wall is still clear of that wall's
+// quantised collider face by a bot's radius — otherwise the crossover happens in the one strip of
+// the stairwell a bot can never stand in, which is exactly how build 1112's shaft failed.
+const RB_LAND = 2 * (GRID_PAD + BOT_R), RB_SLAB = 0.35;
+function _rbFlight(mFloor, mTrim, xr, bayW, z0, z1, yk, h, k, storeys) {
+  const lane = k % 2, up = lane === 0;
+  const lx = xr(lane * bayW / 2, (lane + 1) * bayW / 2);     // the two lanes meet, so no slot to fall in
+  const fz0 = z0 + RB_LAND, fz1 = z1 - RB_LAND;              // the sloped run, between the two landings
+  const yFoot = k === 0 ? yk + 0.12 : yk, yTop = yk + h;     // flight 0 starts ON the ground-floor slab
+  ramp(mFloor, lx[0], fz0, lx[1], fz1, 0, up ? yFoot : yTop, up ? yTop : yFoot, 'z', RB_SLAB);
+  const bw = xr(0, bayW);
+  box(mFloor, bw[0], yTop - RB_SLAB, up ? fz1 : z0, bw[1], yTop, up ? z1 : fz0);
+  // Guard rail along the shaft edge, standing ON the deck it guards (the storey's plate, or the roof
+  // for the last flight) — a rail whose base hung at deck level instead shared an underside plane
+  // with the plate: a z-fight. It stops where THIS flight's landing meets the deck, or it would wall
+  // off the one place the climb is supposed to deliver you.
+  const deck = k === storeys - 1 ? 0.35 : 0.2, rail = xr(bayW, bayW + 0.12);
+  box(mTrim, rail[0], yTop + deck, up ? z0 : fz0, rail[1], yTop + deck + 1.0, up ? fz1 : z1);
+}
+// The centreline of every flight and every landing crossover — the manifest the engine probe walks
+// to prove a bot can actually climb what was generated.
+function _rbStairScans(BX, bayW, z0, z1, storeys) {
+  const out = [], fz0 = z0 + RB_LAND, fz1 = z1 - RB_LAND;
+  const cl = [BX(bayW * 0.25), BX(bayW * 0.75)];
+  for (let k = 0; k < storeys; k++) {
+    const up = k % 2 === 0, c = cl[k % 2];
+    out.push([c, up ? fz0 : fz1, c, up ? fz1 : fz0]);                    // the flight itself
+    // the crossover runs down the middle of the landing's USABLE half — its far half is inside the
+    // end wall's quantised collider, where nothing can stand
+    const lz = up ? (fz1 + z1 - GRID_PAD - BOT_R) / 2 : (fz0 + z0 + GRID_PAD + BOT_R) / 2;
+    out.push([cl[0], lz, cl[1], lz]);                                    // crossing to the next lane
+  }
+  return out;
+}
 // One storey's rooms: the partition + its lights. Split out of roomBlock so every storey of a
 // tower gets its own seeded floor plan instead of the same one stacked.
-function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, DOOR, DOORH, minRoom) {
+function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, DOOR, DOORH, minRoom, yw) {
   const rr = rng(seed2);
   const leaves = [];
   (function split(r, depth) {
@@ -1235,12 +1320,12 @@ function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, 
     const lo = (alongX ? r.x0 : r.z0) + minRoom, hi = (alongX ? r.x1 : r.z1) - minRoom;
     const cut = lo + rr() * (hi - lo);
     if (alongX) {
-      wallRun(mWall, 'z', r.z0, r.z1, cut - T / 2, cut + T / 2, y0, y0 + h,
+      wallRun(mWall, 'z', r.z0, r.z1, cut - T / 2, cut + T / 2, yw ?? y0, y0 + h,
         [{ at: r.z0 + (r.z1 - r.z0) * (0.3 + rr() * 0.4), w: DOOR, h: DOORH }]);
       split({ x0: r.x0, z0: r.z0, x1: cut - T / 2, z1: r.z1 }, depth + 1);
       split({ x0: cut + T / 2, z0: r.z0, x1: r.x1, z1: r.z1 }, depth + 1);
     } else {
-      wallRun(mWall, 'x', r.x0, r.x1, cut - T / 2, cut + T / 2, y0, y0 + h,
+      wallRun(mWall, 'x', r.x0, r.x1, cut - T / 2, cut + T / 2, yw ?? y0, y0 + h,
         [{ at: r.x0 + (r.x1 - r.x0) * (0.3 + rr() * 0.4), w: DOOR, h: DOORH }]);
       split({ x0: r.x0, z0: r.z0, x1: r.x1, z1: cut - T / 2 }, depth + 1);
       split({ x0: r.x0, z0: cut + T / 2, x1: r.x1, z1: r.z1 }, depth + 1);
@@ -1261,9 +1346,11 @@ function _rbStorey(mWall, mFloor, mTrim, x0, z0, x1, z1, y0, h, seed2, opts, T, 
 // The outer shell: an entrance on the requested face at ground level, windows everywhere else on
 // every storey — so an upper floor reads as inhabited from outside, and gives defenders firing
 // positions rather than a blank box.
-function _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts) {
+function _rbShell(mWall, x0, z0, x1, z1, y0, H, h, storeys, T, DOOR, opts, entAt) {
   const ent = opts.entrance || '-x';
-  const doorOn = (a0, a1) => [{ at: (a0 + a1) / 2, w: DOOR * 1.6, h: 3 }];
+  // The entrance is the widest opening in the block and the only way in, so it gets DOOR plus a
+  // margin — and a lintel high enough to clear a bot standing on whatever is behind it.
+  const doorOn = (a0, a1) => [{ at: entAt != null ? entAt : (a0 + a1) / 2, w: DOOR + 1.0, h: 3.4 }];
   for (let k = 0; k < storeys; k++) {
     const yk = y0 + k * h, ground = k === 0;
     const W2 = (a0, a1) => [{ at: a0 + (a1 - a0) * 0.28, w: 1.8, h: 1.4, sill: 1.5 },
@@ -2242,25 +2329,26 @@ function buildArena(seed, theme, size, footprint) {
       reserve(Math.min(gx0, gx1) - 1, -gz - 11, Math.max(gx0, gx1) + 1, gz + 11);
       scan(s * (W - 3), gz + 9, s * (W - 3), 0);
     }
-  } else if (ss === 1) {   // build 1111/1112: real BUILDINGS — rooms, doorways, lit interiors,
-    // build 1112: roomBlock CAN stack storeys with a switchback stairwell (see its `storeys`
-    // option, unit-tested), but the arena does not use it yet: the engine probe shows enemies
-    // pushed at EVERY step of the generated stairs (31/31 sample points), on both the 2.5- and
-    // 3.5-wide lane variants, so widening the shaft is not the cause. Until that is understood,
-    // arena buildings stay single-storey — shipping stairs bots refuse to climb would be worse
-    // than shipping none. rr() is still consumed so seeds keep their existing layouts.
-    const twoUp = (rr(), false);
+  } else if (ss === 1) {   // build 1111/1113: real BUILDINGS — rooms, doorways, lit interiors,
+    // and, half the time, a second storey reached by the switchback stairwell inside. Build 1112
+    // shipped that stairwell disabled because the probe found bots shoved at all 31 sample points;
+    // build 1113 found why (the lanes were narrower than the engine's collider grid allows — see
+    // BOT_LANE) and turned it on.
+    const twoUp = rr() < 0.5;
     const STO = 3.7, bzE = ((rr() * 10) | 0) - 5;
     const bx = W - 10.5, WH2 = twoUp ? STO * 2 : 4.6;
     for (const s of [1, -1]) {
       const cx2 = s * bx, cz2 = s * bzE;
-      // the stair bay is carved off the block's -x edge, so mirror the block for the west copy to
-      // keep both entrances facing the courtyard
-      const x0 = cx2 - (twoUp ? 8 : 6), x1 = cx2 + (twoUp ? 8 : 6), z0 = cz2 - 8, z1 = cz2 + 8;
+      // deep enough (20) that the stairwell still gets a real flight between its two landings: the
+      // landings cost RB_LAND each, and what is left has to hold 3.7 of rise under the ramp limit
+      const x0 = cx2 - 8, x1 = cx2 + 8, z0 = cz2 - 10, z1 = cz2 + 10;
       const xd = s > 0 ? x0 : x1;                                  // door face looks at the courtyard
+      // the stair bay sits on the SAME face as the entrance, so both copies of the pair present the
+      // same face to the middle of the map — a 180°-symmetric arena cannot put one team's stairs on
+      // the courtyard and the other's against the perimeter wall
       const rooms = roomBlock(P.wall, libMat('plankGrey'), P.trim, x0, z0, x1, z1, 0, twoUp ? STO : 4.6,
         (seed * 97 + s * 13) | 0, { entrance: s > 0 ? '-x' : '+x', depth: 2, minRoom: 5.5,
-          storeys: twoUp ? 2 : 1, bay: 7,
+          storeys: twoUp ? 2 : 1, baySide: s > 0 ? '-x' : '+x',
           lightCol: theme === 'volcanic' ? [1, 0.62, 0.3] : theme === 'castle' ? [1, 0.78, 0.5] : [1, 0.93, 0.78] });
       // furnish: a crate in the largest room, so the interior is worth entering
       const big = rooms.slice().sort((a, b) => (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0))[0];
@@ -2270,7 +2358,7 @@ function buildArena(seed, theme, size, footprint) {
         // no outside ramp: 7.75 of rise would need a 18-unit run. The internal stairs go all the
         // way to the roof, so the height advantage is earned by going INSIDE.
         rz0 = z0; rz1 = z1;
-        scan(x0 + 1.75, z0 + 0.6, x0 + 1.75, z1 - 0.6);            // lane 0 of the stair bay
+        for (const sc of rooms.stairScans) scan(...sc);            // every flight and every landing
       } else {
         rz0 = s > 0 ? z1 + 0.45 : z0 - 12.45; rz1 = s > 0 ? z1 + 12.45 : z0 - 0.45;
         ramp(P.ramp, cx2 - 1.8, rz0, cx2 + 1.8, rz1, 0, s > 0 ? WH2 + 0.35 : 0, s > 0 ? 0 : WH2 + 0.35, 'z');
