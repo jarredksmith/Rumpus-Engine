@@ -26,20 +26,18 @@ assert(oetf, 'the sRGB OETF is defined once, as a shared GLSL snippet');
 assert(/uniform float uEncode;/.test(oetf[1]), '...gated by a uniform');
 assert(/vec3 _out\(vec3 c\)\{ return mix\(c, _oetf\(c\), uEncode\); \}/.test(oetf[1]),
   '...so a pass that is not final passes its colour through untouched');
-// ...used by every material that can be the last pass, and by nothing else.
+// ...used by the two passes that can be the last LINEAR stage, and by nothing else. Build 1117
+// moved the encode earlier: the composite always encodes (so the grade after it runs in display
+// space), which leaves the afterimage copy a plain blit.
 const users = [...src.matchAll(/_OETF_GLSL,/g)].length;
-eq(users, 3, 'exactly three passes can write the canvas: the DoF present, the composite, and the afterimage copy');
-
-// The composite is final ONLY when motion blur is off; with it on, _compRT must stay linear.
-assert(/cu\.uEncode\.value=1;\s*\/\/ build 1115: composite IS the final pass here/.test(src),
-  'composite-straight-to-screen encodes');
-assert(/cu\.uEncode\.value=0;\s*\/\/ \.\.\.but with motion blur on it feeds _compRT/.test(src),
-  '...and the same material does not encode when it feeds the afterimage buffer');
+eq(users, 2, 'exactly two passes encode: the DoF present, and the composite');
+assert(/cu\.uEncode\.value=1;\s*\n\s*if\(!_mbOn\)\{/.test(src),
+  'the composite encodes unconditionally — motion blur no longer changes where the encode happens');
 assert(/_dofMatV\.uniforms\.uEncode\.value = \(out === null\) \? 1 : 0;/.test(src),
   'the DoF present pass encodes only when it is the frame\'s last pass, not when it feeds the post chain');
-// _matCopy only ever presents, so its encode is permanently on
-assert(/_matCopy=new THREE\.ShaderMaterial\(\{[^]*?uEncode:\{value:1\}/.test(src),
-  'the afterimage present pass encodes unconditionally');
+// _matCopy blits display-referred pixels: encoding again would double-apply the transfer function
+assert(!/_matCopy=new THREE\.ShaderMaterial\(\{[^]*?_out\(/.test(src),
+  'the afterimage present pass does NOT encode — its input is already display-referred');
 
 // A pass that writes an intermediate must not encode: the bright-pass reads _postRT and writes
 // _bloomRT, and never touches the canvas.

@@ -594,7 +594,7 @@
   body.touch #stats { min-width:84px; }
   body.touch #ammoPanel { min-width:84px; }
   body.touch #stats .label, body.touch #ammoPanel .label { font-size:9px; letter-spacing:1.2px; }
-  body.touch #nadeKbd { display:none; }   /* "[G] THROW" is keyboard-only on mobile */
+  body.touch #nadeKbd { display:none; }   /* the throw-key chip is keyboard-only on mobile (build 1121: its label is resolved from BINDS) */
   body.touch #stats .bar { height:4px; margin-top:4px; }
   /* controls, landscape-tuned + notch-safe */
   body.touch #tStick  { left: calc(20px + env(safe-area-inset-left));  bottom: calc(20px + env(safe-area-inset-bottom)); width:120px; height:120px; }
@@ -1151,7 +1151,7 @@
   <div id="ammoPanel" class="panel">
     <div class="label" id="wepName">RIFLE</div>
     <div class="big"><span id="ammo">30</span><span style="font-size:16px;color:#5a7d72">/<span id="reserve">90</span></span></div>
-    <div class="label" style="margin-top:6px">⊕ <span id="nades">0</span><span id="nadeKbd"> &nbsp; [G] THROW</span></div>
+    <div class="label" style="margin-top:6px">⊕ <span id="nades">0</span><span id="nadeKbd"></span></div>
   </div>
 
   <div id="wavePanel" class="panel">
@@ -1230,8 +1230,8 @@
     <button class="modalClose" aria-label="Close" data-close="instrModal">✕</button>
     <h2>INSTRUCTIONS</h2>
     <div id="controls">
-      <b>WASD</b> move &nbsp;·&nbsp; <b>MOUSE</b> look &nbsp;·&nbsp; <b>L-CLICK</b> fire &nbsp;·&nbsp; <b>R-CLICK</b> aim &nbsp;·&nbsp; <b>SHIFT</b> sprint &nbsp;·&nbsp; <b>SPACE</b> jump &nbsp;·&nbsp; <b>CTRL</b> crouch &nbsp;·&nbsp; <b>SPRINT+C</b> slide<br>
-      <b>R</b> reload (rotates the ghost while building) &nbsp;·&nbsp; <b>V</b> melee (auto when dry) &nbsp;·&nbsp; <b>G</b> throw grenade &nbsp;·&nbsp; <b>E</b> use station / open cache &nbsp;·&nbsp; <b>1·2·3</b> / <b>scroll</b> weapons<br>
+      <b data-bind="fwd">W</b><b data-bind="left">A</b><b data-bind="back">S</b><b data-bind="right">D</b> move &nbsp;·&nbsp; <b>MOUSE</b> look &nbsp;·&nbsp; <b>L-CLICK</b> fire &nbsp;·&nbsp; <b>R-CLICK</b> aim &nbsp;·&nbsp; <b data-bind="sprint">Shift</b> sprint &nbsp;·&nbsp; <b data-bind="jump">Space</b> jump &nbsp;·&nbsp; <b data-bind="crouch">Ctrl</b> crouch &nbsp;·&nbsp; <b data-bind="sprint">Shift</b>+<b data-bind="slide">C</b> slide<br>
+      <b data-bind="reload">R</b> reload (rotates the ghost while building) &nbsp;·&nbsp; <b data-bind="melee">V</b> melee (auto when dry) &nbsp;·&nbsp; <b data-bind="grenade">F</b> throw grenade &nbsp;·&nbsp; <b data-bind="interact">E</b> use station / open cache &nbsp;·&nbsp; <b>1·2·3</b> / <b>scroll</b> weapons<br>
       <b>ESC</b> pause &nbsp;·&nbsp; <b>P</b> open the in-game model/transform editor<br>
       <span style="color:var(--gold)">Kill enemies for ◆ credits — spend them at the ammo station and supply caches.</span>
       <div id="padNote" style="display:none;margin-top:10px;color:var(--accent)"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="11" x2="10" y2="11"/><line x1="8" y1="9" x2="8" y2="13"/><line x1="15" y1="12" x2="15.01" y2="12"/><line x1="18" y1="10" x2="18.01" y2="10"/><rect width="20" height="12" x="2" y="6" rx="2"/></svg>Controller connected — <b>L-stick</b> move · <b>R-stick</b> look · <b>RT</b> fire · <b>LT</b> aim · <b>A</b> jump · <b>X</b> reload · <b>Y</b> use · <b>B</b> grenade · <b>LB/RB</b> weapons · <b>L3</b> sprint · <b>any button</b> deploys &nbsp; <span style="color:#5a7d72">(press <b>`</b> for controller test)</span></div>
@@ -6836,6 +6836,11 @@ function _adaptResTick(frameMs, now){
   } else { _adaptGood=0; if(_adaptUpNeed>6 && now-_adaptShiftAt>45000){ _adaptUpNeed=6; _adaptShiftAt=now; } }
 }
 renderer.shadowMap.enabled = true;
+// build 1122: r149 clears renderer.info at the START of every render() call, and one frame makes
+// many calls (scene, shadow map, four post quads, the viewmodel, preview windows). Left on, the
+// numbers the perf HUD showed were whatever the LAST call did — a fullscreen quad — so it read
+// "draws 1  tris 0k" no matter what the level contained. Reset once a frame, read once a frame.
+renderer.info.autoReset = false;
 renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;   // static by default; _dirtyShadows() requests a refresh
 renderer.shadowMap.type = IS_COARSE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 // build 1095: filmic pipeline. ACES tone mapping rolls highlights off like film instead of clipping
@@ -6867,6 +6872,26 @@ const _OETF_GLSL = [
   'vec3 _oetf(vec3 c){ return mix(c*12.92, 1.055*pow(max(c,vec3(0.0)), vec3(0.4166667))-0.055, step(vec3(0.0031308), c)); }',
   'vec3 _out(vec3 c){ return mix(c, _oetf(c), uEncode); }'
 ].join('\n');
+// build 1118: the post chain carries LINEAR light, and 8 bits of linear is nowhere near enough at
+// the bottom end — one code step is 1/255 of full brightness, so everything under linear 0.0039
+// collapses to zero and the encode at the end then stretches those steps into visible bands. The
+// fingerprint is unmistakable: whole regions drawn from {0,13,22,28,33,38,42,46,49,53,56,59,62},
+// which is exactly OETF(n/255) for n <= 12. Half float fixes it at the source. WebGL2 guarantees
+// EXT_color_buffer_half_float; if the allocation throws anyway we fall back rather than lose the
+// frame, because a working 8-bit chain beats a black screen.
+let _rtType = null;
+function _postRTType(){
+  if(_rtType !== null) return _rtType;
+  _rtType = THREE.UnsignedByteType;
+  try{
+    if(renderer.capabilities && renderer.capabilities.isWebGL2 && THREE.HalfFloatType){
+      const probe = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
+      renderer.setRenderTarget(probe); renderer.setRenderTarget(null); probe.dispose();
+      _rtType = THREE.HalfFloatType;
+    }
+  }catch(e){ _rtType = THREE.UnsignedByteType; }
+  return _rtType;
+}
 // ---------- Depth of field (optional post-process) ----------
 // Self-contained: no external composer addons. We render the scene into a color target that also has a
 // depth texture, then draw a fullscreen quad whose shader blurs each pixel by how far its depth is from
@@ -6880,7 +6905,7 @@ function ensureDof(){
   if(!THREE.WebGLRenderTarget || !THREE.DepthTexture) return false;
   const [w,h] = _dofSize();
   const mkRT = (withDepth)=>{
-    const rt = new THREE.WebGLRenderTarget(w, h, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:THREE.UnsignedByteType });
+    const rt = new THREE.WebGLRenderTarget(w, h, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:_postRTType() });
     if(withDepth){ rt.depthTexture = new THREE.DepthTexture(w, h); rt.depthTexture.format = THREE.DepthFormat; rt.depthTexture.type = THREE.UnsignedShortType; }
     return rt;
   };
@@ -6947,12 +6972,12 @@ function _runDofTo(scn, cam, out){
 function renderScene(scn, cam){
   const _r=perfOn?_pnow():0;
   if(_postOn && !_postFail && typeof ensurePost==='function' && ensurePost()){
-    try{ _renderPostFX(scn, cam); _perfCalls=renderer.info.render.calls; _perfTris=renderer.info.render.triangles; if(perfOn)_prof.render+=_pnow()-_r; return; }
+    try{ _renderPostFX(scn, cam); if(perfOn)_prof.render+=_pnow()-_r; return; }   // build 1122: counters are read once, at the end of the frame
     catch(e){ _postFail=true; try{ renderer.setRenderTarget(null); }catch(_e){} if(typeof console!=='undefined') console.warn('Post-FX disabled after an error:', e&&e.message); }
   }
   if(!dofEnabled || !ensureDof()){ renderer.render(scn, cam); }
   else { _runDofTo(scn, cam, null); }
-  _perfCalls=renderer.info.render.calls; _perfTris=renderer.info.render.triangles; if(perfOn)_prof.render+=_pnow()-_r;
+  if(perfOn)_prof.render+=_pnow()-_r;
 }
 
 // ---------- Post-processing: bloom + color grade + vignette + film grain + motion blur ----------
@@ -6978,7 +7003,7 @@ function ensurePost(){
   if(_postRT) return true;
   if(!THREE.WebGLRenderTarget) return false;
   const [w,h] = _postSize(); const hw=Math.max(1,w>>1), hh=Math.max(1,h>>1);
-  const mkRT = (rw,rh)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:THREE.UnsignedByteType });
+  const mkRT = (rw,rh)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:_postRTType() });
   _postRT=mkRT(w,h); _bloomRT=mkRT(hw,hh); _compRT=mkRT(w,h); _afterA=mkRT(w,h); _afterB=mkRT(w,h);
   // build 872: the scene pass is the ONLY place geometry rasterizes when effects are on, and a plain render
   // target gets zero antialiasing — the canvas's antialias:true never applied, so effects-on meant jagged
@@ -7006,12 +7031,19 @@ function ensurePost(){
       'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
       _OETF_GLSL,
+      // build 1117: bloom is added in LINEAR (light adds like light), then the frame is encoded, and
+      // only then is it graded. Grading before the encode ran contrast on scene-linear values, where
+      // uCon 1.05 — the shipped default — drives everything below linear 0.024 negative and clamps it
+      // to pure black. That is everything under sRGB 43/255, an eighth of the display range crushed,
+      // with grain then speckling the boundary. Contrast, saturation, vignette and grain are all
+      // display-referred operations; this is where they belong.
       'void main(){ vec3 c=texture2D(tColor,vUv).rgb; c += texture2D(tBloom,vUv).rgb * uBloom;',
+      '  c=_out(clamp(c,0.0,1.0));',                              // -> display space
       '  c=(c-0.5)*uCon+0.5;',                                    // contrast
       '  float l=dot(c, vec3(0.299,0.587,0.114)); c=mix(vec3(l), c, uSat);',   // saturation
       '  float r=length(vUv-0.5); c *= 1.0 - smoothstep(0.42,0.78,r)*uVig;',   // vignette
       '  float n=fract(sin(dot(vUv*(uTime+1.0), vec2(12.9898,78.233)))*43758.5453); c += (n-0.5)*uGrain;',   // grain
-      '  gl_FragColor=vec4(_out(clamp(c,0.0,1.0)), 1.0); }'
+      '  gl_FragColor=vec4(clamp(c,0.0,1.0), 1.0); }'
     ].join('\n') });
   // temporal afterimage motion blur: keep the brighter of (new) and (old * damp) -> decaying trails on motion
   _matAfter=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
@@ -7020,12 +7052,11 @@ function ensurePost(){
       'varying vec2 vUv; uniform sampler2D tNew; uniform sampler2D tOld; uniform float uDamp;',
       'void main(){ vec4 nw=texture2D(tNew,vUv); vec4 od=texture2D(tOld,vUv)*uDamp; gl_FragColor=max(nw, od); }'
     ].join('\n') });
-  // the present pass: it only ever writes the canvas (line ~7003 assigns it as the quad's starting
-  // material and every render replaces that), so its encode is on permanently
+  // build 1117: a plain blit. The composite now encodes unconditionally, so _compRT and the
+  // afterimage buffers already hold display-referred pixels and this pass must NOT encode again.
   _matCopy=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null}, uEncode:{value:1} }, vertexShader:vert,
-    fragmentShader:['varying vec2 vUv; uniform sampler2D tColor;', _OETF_GLSL,
-      'void main(){ gl_FragColor=vec4(_out(texture2D(tColor,vUv).rgb), 1.0); }'].join('\n') });
+    uniforms:{ tColor:{value:null} }, vertexShader:vert,
+    fragmentShader:'varying vec2 vUv; uniform sampler2D tColor; void main(){ gl_FragColor=texture2D(tColor,vUv); }' });
   _postScene=new THREE.Scene(); _postCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
   _postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2), _matCopy); _postScene.add(_postQuad);
   return true;
@@ -7052,12 +7083,14 @@ function _renderPostFX(scn, cam){
   // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
   // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
   const _mbOn = _postMotion>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);
+  // build 1117: the composite always encodes — it is the last stage that sees linear light either
+  // way, and the grade after it has to run in display space. Everything downstream is a blit or a
+  // temporal blend, both of which are fine on display-referred pixels.
+  cu.uEncode.value=1;
   if(!_mbOn){
-    cu.uEncode.value=1;   // build 1115: composite IS the final pass here — encode
     _postQuad.material=_matComp; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
     return;
   }
-  cu.uEncode.value=0;     // ...but with motion blur on it feeds _compRT, which must stay linear
   _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
   // 4) motion blur: blend with the previous frame -> _afterB
   _matAfter.uniforms.tNew.value=_compRT.texture; _matAfter.uniforms.tOld.value=_afterA.texture; _matAfter.uniforms.uDamp.value=_postMotion;
@@ -7099,9 +7132,45 @@ const moon = new THREE.DirectionalLight(0x9fd8ff, 0.9);
 moon.position.set(40, 80, 20);
 moon.castShadow = true;
 moon.shadow.mapSize.set(IS_COARSE ? 1024 : 2048, IS_COARSE ? 1024 : 2048);
-moon.shadow.camera.near = 1; moon.shadow.camera.far = 200;
+moon.shadow.camera.near = 1; moon.shadow.camera.far = 260;
+// build 1120: the shadow volume FOLLOWS THE CAMERA instead of being a fixed box at the world origin.
+// It was +/-80 on a 2048 map — 7.8 cm a texel — and nailed to (0,0), while worldCfg.arena goes to
+// 2000: past 80 units from the origin a level simply had no shadows at all, which is most of any
+// large level. Fitting it to what the camera can see makes the same 2048 map cover a 30-unit radius
+// at 2.9 cm a texel (a 2.7x sharpening) AND removes the size limit entirely.
 moon.shadow.camera.left = -80; moon.shadow.camera.right = 80;
 moon.shadow.camera.top = 80; moon.shadow.camera.bottom = -80;
+const _sunTarget = new THREE.Object3D(); scene.add(_sunTarget); moon.target = _sunTarget;
+const _fitF = new THREE.Vector3(), _fitAx = new THREE.Vector3(), _fitAy = new THREE.Vector3(), _fitL = new THREE.Vector3();
+let _fitFx = 1e9, _fitFz = 1e9;
+function _fitSunShadow(cam){
+  if(!cam || !cam.isCamera) return false;
+  const E = Math.max(8, Math.min(400, +((typeof worldCfg!=='undefined' && worldCfg.shadowDist) || 30)));
+  // aim a little ahead of the eye, on the ground: a player looks forward, so spending the volume
+  // behind them wastes half of it
+  _fitF.set(0,0,-1).applyQuaternion(cam.quaternion); _fitF.y = 0;
+  if(_fitF.lengthSq() < 1e-6) _fitF.set(0,0,-1);
+  _fitF.normalize();
+  let fx = cam.position.x + _fitF.x * E * 0.55, fz = cam.position.z + _fitF.z * E * 0.55;
+  // Snap the focus to the shadow map's own texel grid, measured along the LIGHT's axes. Without
+  // this the map slides by a fraction of a texel every frame and every shadow edge crawls — the
+  // classic shimmer, and far more distracting than a slightly stale shadow.
+  const px = moon.shadow.mapSize.x || 2048, texel = (2 * E) / px;
+  _fitL.copy(moon.position).normalize();                       // light direction (it orbits the origin)
+  _fitAx.set(-_fitL.z, 0, _fitL.x);                            // light-space right, flattened to the ground
+  if(_fitAx.lengthSq() < 1e-6) _fitAx.set(1,0,0);
+  _fitAx.normalize(); _fitAy.set(-_fitAx.z, 0, _fitAx.x);
+  const u = Math.round((fx*_fitAx.x + fz*_fitAx.z) / texel) * texel;
+  const v = Math.round((fx*_fitAy.x + fz*_fitAy.z) / texel) * texel;
+  fx = u*_fitAx.x + v*_fitAy.x; fz = u*_fitAx.z + v*_fitAy.z;
+  const moved = Math.abs(fx - _fitFx) > texel*0.5 || Math.abs(fz - _fitFz) > texel*0.5;
+  const sized = Math.abs(moon.shadow.camera.right - E) > 1e-3;
+  if(!moved && !sized) return false;
+  _fitFx = fx; _fitFz = fz;
+  _sunTarget.position.set(fx, 0, fz); _sunTarget.updateMatrixWorld();
+  if(sized){ const c = moon.shadow.camera; c.left = -E; c.right = E; c.top = E; c.bottom = -E; c.updateProjectionMatrix(); }
+  return true;   // the caller dirties the map: a moved volume must be re-rendered or it smears
+}
 // Kill shadow acne (the striped self-shadowing bands on flat faces): normalBias offsets the shadow
 // lookup along the surface normal by ~1 world unit, which clears banding on large planes like the marble
 // and stair treads; the small negative depth bias handles grazing angles. Keep normalBias modest so thin
@@ -7121,7 +7190,11 @@ const _WEATHER_BOX = { w:46, h:30 };
 // Place the sun on its 90m orbit (build 855 math, factored in 861 so the day/night cycle can drive it too).
 function _sunOrbit(azimDeg, elevDeg){
   const az=azimDeg*Math.PI/180, el=elevDeg*Math.PI/180, r=90, h=Math.cos(el)*r;
-  moon.position.set(Math.sin(az)*h, Math.sin(el)*r, Math.cos(az)*h);
+  // build 1120: relative to the shadow focus, not the world origin — the orthographic volume is
+  // centred on the target, so a light left orbiting (0,0) points its 260-unit depth range at the
+  // wrong place once the player walks away.
+  const t = (typeof _sunTarget!=='undefined' && _sunTarget) ? _sunTarget.position : { x:0, z:0 };
+  moon.position.set(t.x + Math.sin(az)*h, Math.sin(el)*r, t.z + Math.cos(az)*h);
 }
 // ---- Day/night cycle (build 861) ----
 // One pure function models the sky: phase 0=dawn, 0.25=noon, 0.5=dusk, 0.75=midnight.
@@ -7198,10 +7271,180 @@ function updateLightBudget(){
 // Arena half-extent. Editable at runtime (saved with the level as worldCfg.arena); rebuildArena()
 // regenerates the floor, grid, and boundary walls, and the player/enemy clamps read it live.
 let ARENA = 70;
-const floorMat = new THREE.MeshPhysicalMaterial({ color:0x141c22, roughness:.95, metalness:.1 });
+// build 1117: polygonOffset so this plane always LOSES a depth tie. It sits at y=0 (position is
+// never assigned) and spans ARENA*2, while every generated arena's ground slab has its top face
+// at exactly y=0 (tools/levelgen.mjs: box(P.ground, ..., 0, ...)) — two coplanar surfaces, so the
+// GPU picks per pixel and the placed arena's sand is cut by bands of engine floor. It reads as
+// pure black because 0x141c22 is 0.007 linear, and ACES clamps anything under 0.00325 to zero.
+// Offsetting depth (not position) leaves collision, the nav grid, surfaceTopAt and spawn heights
+// untouched — moving the plane would change all of them.
+const floorMat = new THREE.MeshPhysicalMaterial({ color:0x141c22, roughness:.95, metalness:.1,
+  polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1 });
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), floorMat);
 floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
 scene.add(floor);
+
+// ---------- build 1119: a real sky ----------
+// One analytic model, written twice from one constants block: as GLSL for the dome the camera sees,
+// and as JS for everything the sky has to DRIVE — the image-based lighting, the hemisphere fill and
+// the fog. Before this the background was a flat fill of worldCfg.fogColor (sampling the same frame
+// at two heights returned identical pixels: zero gradient), and the environment fallback was a
+// 256x128 canvas with a white blob painted on it for a sun.
+//
+// Shape, all in LINEAR space: a zenith->horizon ramp whose tightness is the turbidity, a Mie forward
+// lobe around the sun, a limb-softened disc, and a ground half below the horizon. No texture fetch,
+// two pow and one exp, so it costs a few dozen ALU on 12 triangles drawn after the opaques.
+const SKY_DEF = { zenith:[0.18,0.30,0.54], horizon:[0.52,0.60,0.70], ground:[0.20,0.19,0.17],
+                  turb:0.35, sunSize:1.6, sunGlow:1.0, exp:1.0 };
+function _skyP(){
+  const w = (typeof worldCfg!=='undefined') ? worldCfg : null;
+  const hex = (h, d) => { if(h==null) return d.slice();
+    const c = new THREE.Color(h>>>0); return [c.r, c.g, c.b]; };   // legacyMode:false -> already linear
+  return {
+    zenith: hex(w && w.skyZenith, SKY_DEF.zenith),
+    horizon: hex(w && w.skyHorizon, SKY_DEF.horizon),
+    ground: hex(w && w.skyGround, SKY_DEF.ground),
+    turb: (w && w.skyTurb != null) ? +w.skyTurb : SKY_DEF.turb,
+    sunSize: (w && w.skySunSize != null) ? +w.skySunSize : SKY_DEF.sunSize,
+    sunGlow: (w && w.skySunGlow != null) ? +w.skySunGlow : SKY_DEF.sunGlow,
+    exp: (w && w.skyExp != null) ? +w.skyExp : SKY_DEF.exp,
+  };
+}
+// the sun's world direction from the authored azimuth/elevation (the same numbers that aim the
+// shadow-casting light, so the disc in the sky is where the shadows say it is)
+function _sunDir(){
+  const az = ((typeof worldCfg!=='undefined' ? +worldCfg.sunAzim : 63) || 0) * Math.PI/180;
+  const el = Math.max(-0.2, ((typeof worldCfg!=='undefined' ? +worldCfg.sunElev : 61) || 0) * Math.PI/180);
+  return [Math.cos(el)*Math.sin(az), Math.sin(el), Math.cos(el)*Math.cos(az)];
+}
+// The JS twin. Must stay numerically identical to the GLSL below — test-1119 evaluates both.
+function skyRadiance(dx, dy, dz, P, S){
+  const falloff = 1.6 + (1 - P.turb) * 3.4;                 // hazy -> clear tightens the ramp
+  const t = Math.pow(1 - Math.max(dy, 0), falloff);
+  const out = [0,0,0];
+  for(let i=0;i<3;i++) out[i] = P.zenith[i] + (P.horizon[i] - P.zenith[i]) * t;
+  if(dy < 0){                                                // ground half, softly blended at the line
+    const g = Math.min(1, -dy / 0.35);
+    for(let i=0;i<3;i++) out[i] = out[i] + (P.ground[i] - out[i]) * (g*g*(3-2*g));
+  }
+  const cd = Math.max(-1, Math.min(1, dx*S[0] + dy*S[1] + dz*S[2]));
+  const glow = Math.pow(Math.max(cd, 0), 8 + (1 - P.turb) * 56) * P.sunGlow;   // Mie forward lobe
+  const ang = Math.acos(cd) * 180/Math.PI;
+  const disc = 1 - Math.min(1, Math.max(0, (ang - P.sunSize*0.5) / Math.max(0.05, P.sunSize*0.35)));
+  const add = glow * 0.45 + disc * disc * 12;
+  for(let i=0;i<3;i++) out[i] = (out[i] + add * (i===0?1:i===1?0.94:0.82)) * P.exp;
+  return out;
+}
+const SKY_GLSL = [
+  'uniform vec3 uZen; uniform vec3 uHor; uniform vec3 uGnd; uniform vec3 uSun;',
+  'uniform float uFall; uniform float uGlowP; uniform float uSunSize; uniform float uSunGlow; uniform float uExp;',
+  'vec3 skyRadiance(vec3 d){',
+  '  float t = pow(1.0 - max(d.y, 0.0), uFall);',
+  '  vec3 c = mix(uZen, uHor, t);',
+  '  if(d.y < 0.0) c = mix(c, uGnd, smoothstep(0.0, 1.0, min(1.0, -d.y/0.35)));',
+  '  float cd = clamp(dot(d, uSun), -1.0, 1.0);',
+  '  float glow = pow(max(cd, 0.0), uGlowP) * uSunGlow;',
+  '  float ang = degrees(acos(cd));',
+  '  float disc = 1.0 - clamp((ang - uSunSize*0.5) / max(0.05, uSunSize*0.35), 0.0, 1.0);',
+  '  float add = glow*0.45 + disc*disc*12.0;',
+  '  return (c + add*vec3(1.0, 0.94, 0.82)) * uExp;',
+  '}'
+].join('\n');
+let _skyMesh = null, _skyMat = null, _skyDomeRT = null, _skyDomePMREM = null, _skyKey = '';
+function _skyUniforms(){
+  const P = _skyP(), S = _sunDir();
+  return { uZen:{value:new THREE.Vector3(...P.zenith)}, uHor:{value:new THREE.Vector3(...P.horizon)},
+    uGnd:{value:new THREE.Vector3(...P.ground)}, uSun:{value:new THREE.Vector3(...S)},
+    uFall:{value:1.6+(1-P.turb)*3.4}, uGlowP:{value:8+(1-P.turb)*56},
+    uSunSize:{value:P.sunSize}, uSunGlow:{value:P.sunGlow}, uExp:{value:P.exp} };
+}
+function _ensureSky(){
+  if(_skyMesh) return _skyMesh;
+  _skyMat = new THREE.ShaderMaterial({ side:THREE.BackSide, depthWrite:false, fog:false,
+    uniforms:_skyUniforms(),
+    vertexShader:['varying vec3 vDir;','void main(){ vDir = position;',
+      // xyww pins the dome to the far plane, so it can never clip geometry or the near plane
+      '  vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }'].join('\n'),
+    fragmentShader:['varying vec3 vDir;', SKY_GLSL,
+      'void main(){ gl_FragColor = vec4(skyRadiance(normalize(vDir)), 1.0); }'].join('\n') });
+  _skyMesh = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), _skyMat);
+  _skyMesh.frustumCulled = false; _skyMesh.renderOrder = 1000; _skyMesh.name = 'nocollide-sky';
+  // The dome is a 2-unit box, so it has to travel with the eye — left at the world origin the camera
+  // simply walks out of it and the "sky" becomes a small cube in the distance. onBeforeRender gets
+  // the camera actually being rendered, which means this works for the gameplay camera, the editor
+  // camera and the cinematic preview without any of them knowing about it.
+  _skyMesh.onBeforeRender = function(r, sc, cam){ if(cam && cam.position){ _skyMesh.position.copy(cam.position); _skyMesh.updateMatrixWorld(); } };
+  scene.add(_skyMesh);
+  return _skyMesh;
+}
+// The sky IS the image-based lighting: render the same material to a small cube and PMREM it, so a
+// metal surface reflects the sky it is standing under instead of a painted canvas. Rebuilt only when
+// the sky parameters actually change (the key), never per frame.
+function _skyEnv(){
+  try{
+    const P=_skyP(), S=_sunDir();
+    const key = JSON.stringify([P,S.map(v=>+v.toFixed(3))]);
+    if(key === _skyKey && _skyDomeRT) return _skyDomeRT.texture;
+    if(!THREE.PMREMGenerator || !THREE.WebGLCubeRenderTarget) return null;
+    const size = (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 64 : 128;
+    const sc = new THREE.Scene();
+    const m = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.ShaderMaterial({
+      side:THREE.BackSide, depthWrite:false, fog:false, uniforms:_skyUniforms(),
+      vertexShader:'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader:['varying vec3 vDir;', SKY_GLSL, 'void main(){ gl_FragColor=vec4(skyRadiance(normalize(vDir)),1.0); }'].join('\n') }));
+    m.frustumCulled=false; sc.add(m);
+    const cubeRT = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType });
+    const cam = new THREE.CubeCamera(0.1, 10, cubeRT);
+    const prev = renderer.getRenderTarget();
+    cam.update(renderer, sc);
+    renderer.setRenderTarget(prev);
+    if(!_skyDomePMREM){ _skyDomePMREM = new THREE.PMREMGenerator(renderer); _skyDomePMREM.compileCubemapShader(); }
+    const out = _skyDomePMREM.fromCubemap(cubeRT.texture);
+    if(_skyDomeRT && _skyDomeRT.dispose) _skyDomeRT.dispose();
+    _skyDomeRT = out; _skyKey = key;
+    cubeRT.dispose(); m.geometry.dispose(); m.material.dispose();
+    return _skyEnvRT.texture;
+  }catch(e){ return null; }
+}
+// Everything the sky drives, applied together so they can never disagree: the dome's uniforms, the
+// hemisphere fill (sampled from the model itself rather than a hand-picked hex), the fog colour
+// along the view horizon, and the environment map.
+function applySky(){
+  // _skyHdriUrl is declared further down the file; guard the read (this file has a history of
+  // boot-time TDZ errors from exactly this pattern). An authored HDRI always outranks the model.
+  const hdri = (typeof _skyHdriUrl !== 'undefined') && _skyHdriUrl;
+  const on = (typeof worldCfg!=='undefined') && worldCfg.skyMode === 'sky' && !hdri;
+  if(_skyMesh) _skyMesh.visible = on;
+  if(!on) return false;
+  _ensureSky();
+  const u = _skyUniforms();
+  for(const k in u) if(_skyMat.uniforms[k]) _skyMat.uniforms[k].value = u[k].value;
+  _skyMesh.visible = true;
+  const P=_skyP(), S=_sunDir();
+  // hemisphere fill: the average of the upper and lower hemispheres of the SAME model. A hard floor
+  // keeps shadowed ground off zero — a surface lit only by bounce must still show its texture.
+  const avg = (sign)=>{ const a=[0,0,0]; let n=0;
+    for(let i=0;i<8;i++){ const th=i/8*Math.PI*2;
+      for(const el of [0.15,0.5,0.85]){ const y=sign*el, r=Math.sqrt(Math.max(0,1-y*y));
+        const c=skyRadiance(Math.cos(th)*r, y, Math.sin(th)*r, P, S);
+        a[0]+=c[0]; a[1]+=c[1]; a[2]+=c[2]; n++; } }
+    return a.map(v=>Math.max(0.012, v/n)); };
+  const up=avg(1), dn=avg(-1);
+  if(typeof skyLight!=='undefined'){ skyLight.color.setRGB(up[0],up[1],up[2]); skyLight.groundColor.setRGB(dn[0],dn[1],dn[2]); }
+  if(typeof scene!=='undefined') scene.background = null;   // the dome draws it now
+  // Fog is the sky at the horizon. Fading distance toward a separately authored fogColor is what
+  // makes a pasted-on skybox obvious: geometry recedes into a colour that is nowhere in the sky
+  // above it. Sampling the model's own horizon ring means the far plane and the sky meet.
+  if(typeof SCENE_FOG!=='undefined'){
+    const h=[0,0,0];
+    for(let i=0;i<8;i++){ const th=i/8*Math.PI*2;
+      const c=skyRadiance(Math.cos(th), 0.04, Math.sin(th), P, S);
+      h[0]+=c[0]/8; h[1]+=c[1]/8; h[2]+=c[2]/8; }
+    SCENE_FOG.color.setRGB(Math.min(1,h[0]), Math.min(1,h[1]), Math.min(1,h[2]));
+  }
+  const env = _skyEnv(); if(env && typeof scene!=='undefined') scene.environment = env;
+  return true;
+}
 
 // ---------- build 875: floor material painting (splat map) ----------
 // Paint up to THREE extra textures over the base floor (grass -> a soft-edged dirt path) with a brush.
@@ -14434,7 +14677,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
 // versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
 // The dark stock palette needs an art pass, which belongs with the sky/lighting work.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null, shadowDist:30, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -14447,6 +14690,10 @@ function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.pos
 function _worldFrom(w){
   const out = Object.assign({}, DEFAULT_WORLD, w || {});
   out.colorV = (w && w.colorV != null) ? (w.colorV | 0) : (w ? 1 : 2);
+  // build 1119: a level authored before the sky existed was lit and graded against a flat fill of
+  // fogColor. Giving it a gradient and sky-driven fill would change every frame of it, so legacy
+  // content keeps the flat background unless its author opts in.
+  if(out.colorV < 2 && (!w || w.skyMode == null)) out.skyMode = 'flat';
   return out;
 }
 let worldCfg = _worldFrom((savedLevel && savedLevel.world) || null);
@@ -14708,7 +14955,11 @@ function applyWorldCfg(){
       renderer.toneMapping = wantTM;
       scene.traverse(o=>{ const ms=o.material; if(!ms) return; (Array.isArray(ms)?ms:[ms]).forEach(m=>{ if(m) m.needsUpdate=true; }); });
     }
-    if(!_skyHdriUrl){ _ensureDefaultEnv(); if(_envDefaultRT && scene.environment !== _envDefaultRT.texture) scene.environment = _envDefaultRT.texture; }
+    // build 1119: the procedural sky supplies the background, the hemisphere fill and the
+    // environment map together. Only fall back to the painted canvas when it is off.
+    if(!(typeof applySky==='function' && applySky())){
+      if(!_skyHdriUrl){ _ensureDefaultEnv(); if(_envDefaultRT && scene.environment !== _envDefaultRT.texture) scene.environment = _envDefaultRT.texture; }
+    }
   }
   SPEED = worldCfg.walk; SPRINT = worldCfg.run / worldCfg.walk;
   JUMP = worldCfg.jump; GRAV = worldCfg.grav; CROUCH_SPEED = worldCfg.crouch;
@@ -14756,7 +15007,9 @@ function applyWorldCfg(){
   worldCfg.fogDensity = Math.max(0, Math.min(0.2, worldCfg.fogDensity == null ? DEFAULT_WORLD.fogDensity : +worldCfg.fogDensity));
   if(worldCfg.fogColor == null) worldCfg.fogColor = DEFAULT_WORLD.fogColor;
   if(typeof SCENE_FOG !== 'undefined'){ SCENE_FOG.density = worldCfg.fogDensity; SCENE_FOG.color.setHex(worldCfg.fogColor>>>0); }
-  if(typeof scene !== 'undefined' && !(scene.background && scene.background.isTexture)) scene.background = new THREE.Color(worldCfg.fogColor>>>0);
+  // build 1119: with the sky dome on, the background stays null — the dome IS the background
+  if(typeof scene !== 'undefined' && !(scene.background && scene.background.isTexture)
+     && !(worldCfg.skyMode === 'sky' && !_skyHdriUrl)) scene.background = new THREE.Color(worldCfg.fogColor>>>0);
   // ground grid visibility
   if(typeof grid !== 'undefined' && grid) grid.visible = (worldCfg.grid !== false);
   // depth of field
@@ -14806,13 +15059,35 @@ const BIND_LABEL = { fwd:'Move forward', back:'Move back', left:'Strafe left', r
   reload:'Reload', melee:'Melee', interact:'Use / interact', grab:'Grab / drop prop', flashlight:'Flashlight', grenade:'Grenade', inventory:'Inventory', map:'Tactical map', chat:'Chat (multiplayer)', radial:'Deploy menu', objective:'Recall objective' };
 const BINDS = Object.assign({}, BIND_DEFAULTS);
 try{ const _bv=JSON.parse(localStorage.getItem('breach_binds_v1')||'null'); if(_bv && typeof _bv==='object'){ for(const k in BIND_DEFAULTS){ if(typeof _bv[k]==='string' && _bv[k]) BINDS[k]=_bv[k]; } } }catch(e){}
-function saveBinds(){ try{ localStorage.setItem('breach_binds_v1', JSON.stringify(BINDS)); }catch(e){} }
+function saveBinds(){ try{ localStorage.setItem('breach_binds_v1', JSON.stringify(BINDS)); }catch(e){}
+  // build 1121: every rebind funnels through here (remap and reset alike), so this is the one
+  // place that has to re-resolve the on-screen labels.
+  if(typeof refreshBindLabels==='function') refreshBindLabels(); }
 function _rebuildGameKeys(){
+  if(typeof refreshBindLabels==='function') refreshBindLabels();   // build 1121: labels track the live binds
   for(const k in GAME_KEYS) delete GAME_KEYS[k];
   for(const k of ['Space','ShiftLeft','ShiftRight','ControlLeft','ControlRight','KeyW','KeyA','KeyS','KeyD','KeyC','KeyE','KeyF','KeyG','KeyR','KeyV','KeyQ','Digit1','Digit2','Digit3','Digit4','Digit5']) GAME_KEYS[k]=1;
   for(const a in BINDS){ const c=BINDS[a]; if(c && c!=='Escape') GAME_KEYS[c]=1; }
 }
 _rebuildGameKeys();
+// build 1121: every player-facing key label is RESOLVED from the live binding. The HUD shipped
+// "[G] THROW" as literal markup while BIND_DEFAULTS.grenade was KeyF and KeyG was grab — so the game
+// instructed every player to press the wrong key, and remapping never updated the text either.
+// Anything carrying data-bind="<action>" gets filled in here, and so does the grenade chip.
+let _bindLabelsRetried = false;
+function refreshBindLabels(){
+  try{
+    const B = (typeof BINDS!=='undefined' && BINDS) ? BINDS : BIND_DEFAULTS;
+    document.querySelectorAll('[data-bind]').forEach(el=>{
+      const a = el.getAttribute('data-bind'); if(a && B[a]) el.textContent = _keyLabel(B[a]);
+    });
+    const chip = document.getElementById('nadeKbd');
+    if(chip) chip.innerHTML = ' &nbsp; [' + _keyLabel(B.grenade || BIND_DEFAULTS.grenade) + '] THROW';
+    // The boot call can land before the HUD markup exists, and the labels are no longer hardcoded in
+    // the page — an empty chip would be worse than the wrong key. Retry once on the next frame.
+    else if(!_bindLabelsRetried){ _bindLabelsRetried = true; requestAnimationFrame(refreshBindLabels); }
+  }catch(e){}
+}
 function _keyLabel(code){ if(!code) return '?'; return String(code).replace(/^Key/,'').replace(/^Digit/,'').replace(/^Arrow/,'').replace('ControlLeft','Ctrl').replace('ControlRight','R-Ctrl').replace('ShiftLeft','Shift').replace('ShiftRight','R-Shift').replace('AltLeft','Alt').replace('AltRight','R-Alt'); }
 // ---- Touch / mobile input ----
 let isTouch = (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);   // primary input is a touchscreen
@@ -18328,7 +18603,11 @@ function randomSpawn(){
 }
 function sendToPlayer(id, msg){
   if(NET.mode==='host'){ const c=NET.conns[id]; if(c) try{ c.send(msg); }catch(e){} }
-  else if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send(msg); }catch(e){} }   // client's only peer is the host (id 0)
+  // build 1122: a client's only peer IS the host — but that silently made every message addressed to
+  // another player land on the host instead. A client shooting a second client damaged the HOST, so
+  // any match past two humans was unplayable. The host is the only router in a star topology, so say
+  // who the message is FOR and let it forward. `to` is ignored by a host reading its own mail.
+  else if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send((id!=null && +id!==0 && +id!==NET.myId) ? Object.assign({ to:+id }, msg) : msg); }catch(e){} }
 }
 function netStatus(msg){ const el=document.getElementById('mpStatus'); if(el) el.textContent = msg || ''; }
 // (Replay is now an in-place rematch over the live connection — see hostRematch/replayMatch — so there is
@@ -20758,6 +21037,15 @@ function netTick(dt){
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
+  // build 1122: forward anything addressed to a third player. `from` is rewritten to the VERIFIED
+  // sender (the connection's own id) rather than whatever the packet claimed, so a client cannot
+  // attribute its damage to someone else. A `to` naming the host, or an unknown peer, falls through
+  // and is handled here as normal.
+  if(msg && msg.to != null && +msg.to !== 0 && +msg.to !== id){
+    const dest = NET.conns[+msg.to];
+    if(dest){ const fwd = Object.assign({}, msg, { from: id }); delete fwd.to;
+      try{ dest.send(fwd); }catch(e){} return; }
+  }
   if(msg.t==='st'){ setRemoteState(id, msg); }
   else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, msg.d, (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
@@ -24185,7 +24473,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1116 · 2026-07-29';
+const BUILD_VERSION = 'build 1124 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28679,7 +28967,15 @@ addEventListener('visibilitychange', ()=>{
 addEventListener('blur', ()=>{ if(typeof clearMovementInput==='function') clearMovementInput(); });   // build 843: same for focus loss without a tab switch (e.g. clicking another window)
 function loop(){
   requestAnimationFrame(loop);
-  if(_tabHidden) return;   // backgrounded: stop rendering AND stepping physics — a hidden tab simulating is what gets the page killed on mobile
+  if(_tabHidden) return;
+  try{ renderer.info.reset(); }catch(e){}   // build 1122: one accumulation window per frame   // backgrounded: stop rendering AND stepping physics — a hidden tab simulating is what gets the page killed on mobile
+  // build 1120: re-fit the sun's shadow volume to the active camera BEFORE deciding whether the map
+  // needs re-rendering — a volume that moved must be re-rendered or the old shadows smear across it.
+  // the editor flies the same `camera`, so one fit covers authoring and play alike
+  if(typeof _fitSunShadow==='function' && _fitSunShadow(camera)){
+    if(typeof _sunOrbit==='function' && typeof worldCfg!=='undefined') _sunOrbit(worldCfg.sunAzim||0, Math.max(5, worldCfg.sunElev||61));
+    _dirtyShadows(1);
+  }
   if(_shadowDirtyFrames>0){ renderer.shadowMap.needsUpdate = true; _shadowDirtyFrames--; }
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
@@ -29581,6 +29877,8 @@ function loop(){
   if(editorOpen && typeof _renderCinePvWindow==='function') _renderCinePvWindow();
   if(typeof _renderVcamPvWindow==='function') _renderVcamPvWindow();   // build 1084
   renderViewmodel();
+  // build 1122: every pass of this frame has now run, so these are the frame's real totals
+  _perfCalls=renderer.info.render.calls; _perfTris=renderer.info.render.triangles;
 }
 loop();
 
@@ -37307,7 +37605,7 @@ self.onmessage = async (e) => {
     const w = api.writeGLB('out.glb');
     const bytes = host.out;
     const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    postMessage({ ok:true, name:info.name, world:info.world||null, kb:Math.round(w.bytes/1024), tris:w.tris, glb:ab }, [ab]);
+    postMessage({ ok:true, name:info.name, world:info.world||null, spawns:info.spawns||null, kb:Math.round(w.bytes/1024), tris:w.tris, glb:ab }, [ab]);
   } catch(err){ postMessage({ ok:false, err:String(err && err.message || err) }); }
 };`;
 function _lgGenerate(opts, done){
@@ -37370,7 +37668,17 @@ function _lgOpenDialog(){
       actRow.querySelectorAll('.lgRes').forEach(b=>b.remove());
       const place=document.createElement('button'); place.className='lgRes lgCTA'; place.textContent='Place in level'; place.style.cssText='flex:1;padding:8px;font-size:12px;';
       place.onclick=()=>{ pushUndoSnapshot();
-        spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).'); }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
+        spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed, player spawn moved to BASE 1. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).'); }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
+        // build 1124: an arena is not a prop — it lands at the origin, which is where the level's
+        // default player spawn already is, and every footprint the generator builds puts a structure
+        // at its centre. Measured on KILN RUN: the central mass's underside sits at y 2.25, so the
+        // player spawned into a 0.55 m undercroft with no sun, no sky and a rock for a ceiling.
+        // The generator names its base rooms; start the player in one, facing the middle.
+        if(r.spawns && r.spawns.length && typeof playerSpawn!=='undefined'){
+          const s=r.spawns[0]; playerSpawn.x=+s[0]||0; playerSpawn.z=+s[1]||0; playerSpawn.y=0;
+          playerSpawn.yaw=Math.atan2(playerSpawn.x, playerSpawn.z);   // look at the arena centre: forward is (-sin yaw, -cos yaw)
+          if(typeof refreshPlayerSpawnMarker==='function') refreshPlayerSpawnMarker();
+        }
         if(moodCb.checked && r.world){ Object.assign(worldCfg, r.world); applyWorldCfg(); }
         if(typeof renderEditorFields==='function') renderEditorFields();
         p.remove(); _lgPanel=null; };

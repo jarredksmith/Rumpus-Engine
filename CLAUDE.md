@@ -175,10 +175,30 @@ The whole game lives inside `window.GAME_START = function(){...}`, so page-level
 internals: a harness has to drive the real UI. Capture at a FIXED generator seed or before/after
 frames are different arenas and prove nothing.
 
-## Open work (as of build 1115)
+**Know where the camera is before you judge the frame (build 1124).** Four rounds of visual
+critique — "no sky", "contact shadows detached", "flat sunless lighting", "break the arena canopy
+lid" — were all one bug: the player spawned at the origin, which is under the generated arena's
+central mass, with 0.55 m of headroom. The rust "sky" was the underside of a rock. Nothing was
+wrong with the sky, the shadows or the light. When a frame looks inexplicable, probe the scene
+before theorising: a temporary `window.__probeUp` hook that raycasts up from `camera.position` and
+stuffs the hit list into `document.title` costs one capture run and settles it, because
+`page.title()` reaches out of the closure that `page.evaluate` cannot. Zeroing a suspect parameter
+to its most extreme value is the other cheap discriminator — `normalBias = 0` producing NO acne
+proved the geometry was never in the shadow map, which no amount of bias tuning would have shown.
+
+## Open work (as of build 1124)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
-(done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (not started).
+(done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
+1124: `info.spawns`).
+
+**Gameplay data with the GLB.** Build 1124 added the first piece — `buildArena` returns
+`spawns: [[x,z],[x,z]]` (BASE 1, BASE 2), the worker carries it back beside `world`, and *Place in
+level* moves `playerSpawn` there facing the centre. The engine's forward is `(-sin yaw, -cos yaw)`,
+so facing the origin from `(x,z)` is `atan2(x, z)` — `atan2(-x,-z)` looks the wrong way (there is
+an instance of the wrong form in the maze generator, untouched). Next candidates, same channel:
+enemy spawn markers at the arena's cover positions, the ramp centrelines (`scans`) as bot routes,
+and pickup spots.
 
 No known geometry bugs: both of the build-1112 repros (multi-storey stairs pushing enemies, the
 cover crate clipping a ramp mouth) are fixed and covered by tests.
@@ -191,9 +211,26 @@ contains no `theme === ...` branch. Adding the eighth theme is one `arenaPalette
 Worth considering next, in the ENGINE rather than the generator: `buildModelGridBoxes` could emit
 each column's box tight to the triangles that actually stamped it instead of spanning the whole
 cell. That is the root cause behind `GRID_PAD`, and it would make every imported level's doorways
-and corridors passable rather than only the ones this generator authors. It needs care — a
-paper-thin wall must not collapse to a zero-thickness box a player can tunnel through — and it
-changes collision for every existing level, so it deserves its own build and a browser pass.
+and corridors passable rather than only the ones this generator authors.
+
+**Attempted and reverted (build 1123).** Recording it so the next attempt starts past the trap.
+Tracking each column's real XZ footprint (a byte per edge, ~4 mm at a 1-unit cell) and emitting
+boxes tight to it is easy, and both collider tests still pass. It does NOT fix a doorway. Measured
+on a 0.2-thick wall with an ordinary 1.6 m opening: the collider gap stays zero, one box spanning
+the whole wall.
+
+Two reasons, in order:
+1. The greedy merge groups columns by identical vertical runs, so a doorway's thin jamb columns
+   carry the same full-height run as the wall either side, merge with it, and the union of the
+   footprints spans the opening again. Adding the footprint to the merge key is necessary...
+2. ...but not sufficient, and this is the real blocker: a footprint is per COLUMN while a column
+   holds several RUNS. A doorway column contains the floor (occupying the whole cell) and the
+   wall's jamb face (a sliver). Their union is the whole cell, so the key never distinguishes them.
+
+The footprint therefore has to be per (column, run). Per-slot storage is 4 bytes x N x K, which is
+fine for an arena (~750 KB) and 24 MB on the 331x148x366 skyscraper this feature exists to serve —
+so it needs a budget and a fallback to per-column, in the style of MGRID_BITS. Do that first, then
+the merge key, then the tight emit.
 
 Also outstanding (user actions): upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.

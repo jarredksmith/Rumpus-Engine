@@ -2780,8 +2780,15 @@ function buildArena(seed, theme, size, footprint) {
   for (const sc of SCANS.slice(0, 2)) decal(P.D, 'up', sc[0], 0.03, sc[1], 3.2, 2.8, DECAL.CHEV, Math.abs(sc[1]) > Math.abs(sc[0]) ? (sc[1] > 0 ? 0 : 180) : (sc[0] > 0 ? 90 : 270));
 
   const MOOD = arenaMood(theme);
+  // Where a player belongs. An arena is not a prop: dropped at the origin it puts its CENTRE at the
+  // level's default spawn, and every footprint this generator builds puts a structure there — KILN
+  // RUN's central mass has its underside at y 2.25, so a 1.7-high player spawned at (0,0) stands in
+  // a 0.55 m undercroft, sealed from the sun, looking at the inside of a rock. That is what every
+  // generated-arena screenshot was until this build. The two base rooms (z = ±(W-4), reserved by
+  // the team-base pass and open to the sky) are where a match actually starts, so say so and let
+  // the editor put the player there. Ordered: [0] is BASE 1, [1] is BASE 2.
   return { name: `${arenaName} (seed ${seed} · ${theme} · ${size}${footprint !== 'square' ? ' · ' + footprint : ''})`,
-    scans: SCANS, light: MOOD.light, world: MOOD.world };
+    scans: SCANS, spawns: [[0, W - 4], [0, -(W - 4)]], light: MOOD.light, world: MOOD.world };
 }
 
 // -------------------------------------------------------------- baked lighting (AO) ----
@@ -3108,5 +3115,6 @@ const aoMs = Number(process.hrtime.bigint() - t0) / 1e6 | 0;
 const w = writeGLB(out);
 console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets, lightmap ${LM ? LM.A : 0}px / ${PATCHES.length} patches in ${aoMs} ms over ${SOLIDS.length} solids)`);
 if (info.scans) console.log('SCANS ' + JSON.stringify(info.scans));
+if (info.spawns) console.log('SPAWNS ' + JSON.stringify(info.spawns));
 if (info.world) console.log('WORLD ' + JSON.stringify(info.world));
 }
