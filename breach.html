@@ -7601,6 +7601,37 @@ function updateLightBudget(){
     emitterLights[i].light.intensity = emitterLights[i].baseIntensity * f;
   }
 }
+// ---------- build 1132: how many PLACED lights may cast a shadow at once ----------
+// A shadow-casting spot costs a whole extra depth pass over the scene, so this is not something a
+// creator should be able to buy by dropping twenty lamps in a corridor. The nearest few to the camera
+// keep their shadow and the rest quietly stop casting — the same principle as the light budget above,
+// and for the same reason. Two on a phone, four elsewhere; the adaptive rung takes it to zero when
+// the machine is already struggling, because a depth pass per light is exactly what to shed first.
+function _maxShadowLights(){
+  if(typeof _hiFxOn!=='undefined' && !_hiFxOn) return 0;
+  return (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 2 : 4;
+}
+let _shadowLightT = 0;
+function updateShadowLightBudget(dt){
+  // re-ranking every frame would thrash three's shadow-map allocation; a third of a second is far
+  // faster than a player can move between lamps
+  _shadowLightT += (dt||0); if(_shadowLightT < 0.33) return; _shadowLightT = 0;
+  if(typeof lightModels==='undefined') return;
+  const want = [];
+  for(const g of lightModels){ if(g && g.userData && g.userData.wantShadow && g.userData.light) want.push(g); }
+  if(!want.length) return;
+  const cap = _maxShadowLights();
+  if(want.length > 1){
+    for(const g of want){ g.getWorldPosition(_lp); g._sd = _lp.distanceToSquared(camera.position); }
+    want.sort((a,b)=>a._sd - b._sd);
+  }
+  let changed = false;
+  for(let i=0;i<want.length;i++){
+    const L = want[i].userData.light, on = i < cap && want[i].userData.lon !== false;
+    if(L.castShadow !== on){ L.castShadow = on; changed = true; }
+  }
+  if(changed && typeof _dirtyShadows==='function') _dirtyShadows(2);   // a light that just started casting has no map yet
+}
 
 // ---------- Arena ----------
 // Arena half-extent. Editable at runtime (saved with the level as worldCfg.arena); rebuildArena()
@@ -14635,6 +14666,7 @@ function _lightOpts(g){
   if(g.userData.startOff) o.startOff=true;
   if(g.userData.name) o.nm=String(g.userData.name).slice(0,60); if(g.userData.edHide) o.eh=1; if(g.userData.edLock) o.elk=1;   // build 1036: outliner name/hide/lock
   if(g.userData.lfade!=null && g.userData.lfade!==0.4) o.fade=+g.userData.lfade;
+  if(g.userData.wantShadow) o.shadow=1;   // build 1132
   return o;
 }
 function buildLight(opts){
@@ -14652,6 +14684,30 @@ function buildLight(opts){
     light=new THREE.HemisphereLight(col, (opts.ground!=null?opts.ground:0x222a30), inten); g.add(light); mcol=0x9fd8ff;
   } else {
     light=new THREE.PointLight(col, inten, (opts.distance!=null?opts.distance:22)); g.add(light); mcol=col;
+  }
+  // ---------- build 1132: a placed light can cast a shadow ----------
+  // No light a creator placed could cast one before this: buildLight never touched castShadow, so
+  // every lamp, floodlight and spotlight in every hand-authored level shone straight through walls.
+  // The sun was the only shadow-caster in the engine.
+  //
+  // Opt-in per light, and only on SPOT and DIRECTIONAL. A point light's shadow is a cube map — six
+  // depth passes for one lamp — which is not a cost a browser engine should let a creator apply by
+  // accident to a room with eight of them; a spot is one pass, and a spot is what you reach for when
+  // you want a visible shadow anyway. `_shadowLightBudget` then caps how many are live at once.
+  if(opts.shadow && (type==='spot' || type==='dir')){
+    g.userData.wantShadow = true;
+    try{
+      const px = (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 512 : 1024;
+      light.shadow.mapSize.set(px, px);
+      light.shadow.bias = -0.0005;
+      // the same rule as the sun (build 1125): normalBias is a TEXEL quantity. A spot's shadow camera
+      // is perspective, so the texel size varies with distance — size it from the light's own range,
+      // which is the far plane, at the map resolution actually in use.
+      const range = (type==='spot') ? Math.max(1, +light.distance || 30) : 60;
+      light.shadow.normalBias = Math.min(0.35, Math.max(0.01, (2 * range / px) * 7.7));
+      if(type==='spot'){ light.shadow.camera.near = 0.4; light.shadow.camera.far = range; }
+      light.castShadow = true;
+    }catch(e){ g.userData.wantShadow = false; }
   }
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(0.45, 12, 12),
@@ -24916,7 +24972,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1131 · 2026-07-29';
+const BUILD_VERSION = 'build 1132 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30319,6 +30375,7 @@ function loop(){
   if(typeof updateFragments==='function') updateFragments();   // advance/cleanup destruction debris
   if(typeof _syncAttachedLights==='function') _syncAttachedLights();   // build 997: glue attached lights to their props
   updateLightBudget();
+  if(typeof updateShadowLightBudget==='function') updateShadowLightBudget(dt);   // build 1132
 
   { const _a=perfOn?_pnow():0; netTick(dt); if(perfOn)_prof.net+=_pnow()-_a; }   // send/receive networked state + smooth remote entities
 
@@ -36716,6 +36773,31 @@ function renderEditorFields(){
       soCb.onchange=()=>{ pushUndoSnapshot(); g0.userData.startOff=soCb.checked; if(!soCb.checked) delete g0.userData.startOff; };
       const soSp=document.createElement('span'); soSp.textContent='Starts off (lit by a signal)';
       soLab.appendChild(soCb); soLab.appendChild(soSp); urlHost.appendChild(soLab);
+      // build 1132: shadow casting, on spot and directional only. A point light's shadow is a cube map
+      // (six depth passes for one lamp), which is not a cost to hand a creator behind a checkbox.
+      if(g0.userData.ltype==='spot' || g0.userData.ltype==='dir'){
+        const shLab=document.createElement('label'); shLab.style.cssText='display:flex;gap:6px;align-items:center;margin:6px 0 2px;font-size:11px;color:#9fe6cf;cursor:pointer;';
+        const shCb=document.createElement('input'); shCb.type='checkbox'; shCb.checked=!!g0.userData.wantShadow;
+        shCb.onchange=()=>{ pushUndoSnapshot(); const on=shCb.checked;
+          // Rebuilt through buildLight rather than toggled in place: the shadow camera's near/far and
+          // the texel-derived normalBias are configured there, and a light that was never a caster has
+          // none of it. Same in-place replace the type switch uses, so order and selection hold.
+          const idx=lightModels.indexOf(g0); if(idx<0) return;
+          const o=_lightOpts(g0); if(on) o.shadow=1; else delete o.shadow;
+          removeLight(idx);
+          const ng=buildLight(o);
+          lightModels.splice(lightModels.indexOf(ng),1); lightModels.splice(idx,0,ng);
+          if(ng.userData.marker) ng.userData.marker.visible=true;
+          editorTargets.lights.idx=idx; selLights=[ng];
+          if(typeof syncSelToIdx==='function') syncSelToIdx();
+          if(typeof _dirtyShadows==='function') _dirtyShadows(3);
+          renderEditorFields(); };
+        const shSp=document.createElement('span'); shSp.textContent='Casts shadows';
+        shLab.appendChild(shCb); shLab.appendChild(shSp); urlHost.appendChild(shLab);
+        const shHint=document.createElement('div'); shHint.className='hint'; shHint.style.cssText='font-size:10px;margin:0 0 4px;opacity:.75;';
+        shHint.textContent='One extra depth pass per casting light. The nearest few to the camera keep their shadow; the rest stop casting.';
+        urlHost.appendChild(shHint);
+      }
       const fdWrap=document.createElement('label'); fdWrap.className='field';
       const fsp=document.createElement('span'); fsp.textContent='Fade (s)';
       const fin=document.createElement('input'); fin.type='number'; fin.className='valnum'; fin.step=0.1; fin.min=0; fin.value=(g0.userData.lfade!=null?g0.userData.lfade:0.4);
