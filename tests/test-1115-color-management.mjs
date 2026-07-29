@@ -29,15 +29,30 @@ assert(/vec3 _out\(vec3 c\)\{ return mix\(c, _oetf\(c\), uEncode\); \}/.test(oet
 // ...used by the two passes that can be the last LINEAR stage, and by nothing else. Build 1117
 // moved the encode earlier: the composite always encodes (so the grade after it runs in display
 // space), which leaves the afterimage copy a plain blit.
+// build 1127 added two more users, both in the SKY, and for the same reason the snippet exists: a raw
+// ShaderMaterial gets neither renderer.outputEncoding nor three's tone mapping, so the dome had been
+// the one surface in the frame on a different curve. The dome's uEncode is settled per frame (it must
+// encode only when effects are off and it therefore writes the canvas itself); the reflection probe
+// tone-maps but never encodes, because a PMREM is sampled as linear radiance.
 const users = [...src.matchAll(/_OETF_GLSL,/g)].length;
-eq(users, 2, 'exactly two passes encode: the DoF present, and the composite');
+eq(users, 4, 'four passes can encode: the DoF present, the composite, and the two sky materials');
+assert(/uEncode\) u\.uEncode\.value = \(typeof _postOn!=='undefined' && _postOn/.test(src),
+  'the sky dome encodes only when the post chain is NOT going to');
+{
+  const env = src.slice(src.indexOf('function _skyEnv()'), src.indexOf('function applySky'));
+  assert(/_aces\(skyRadiance/.test(env) && !/_out\(_aces/.test(env),
+    'the reflection probe tone-maps but never encodes — it is convolved and then sampled as linear');
+}
 assert(/cu\.uEncode\.value=1;\n(?:\s*\/\/[^\n]*\n)*\s*const _fx = [^\n]*\n\s*if\(!_mbOn\)\{/.test(src),
   'the composite encodes unconditionally — motion blur no longer changes where the encode happens');
 assert(/_dofMatV\.uniforms\.uEncode\.value = \(out === null\) \? 1 : 0;/.test(src),
   'the DoF present pass encodes only when it is the frame\'s last pass, not when it feeds the post chain');
 // _matCopy blits display-referred pixels: encoding again would double-apply the transfer function
-assert(!/_matCopy=new THREE\.ShaderMaterial\(\{[^]*?_out\(/.test(src),
-  'the afterimage present pass does NOT encode — its input is already display-referred');
+{
+  const copy = src.slice(src.indexOf('_matCopy=new THREE.ShaderMaterial'), src.indexOf('_postScene=new THREE.Scene()'));
+  assert(!/_out\(|_oetf\(/.test(copy),
+    'the afterimage present pass does NOT encode — its input is already display-referred');
+}
 
 // A pass that writes an intermediate must not encode: the bright-pass reads _postRT and writes
 // _bloomRT, and never touches the canvas.

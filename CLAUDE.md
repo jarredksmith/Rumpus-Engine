@@ -192,6 +192,25 @@ Three traps in that prepass, all of which shipped broken once:
 carries MSAA *and* SSAO. `wipeScene` → `_postOffWorld` zeroes `ssao` along with the other post
 settings — which silently disabled AO in every capture until `arenaMood` started emitting `ssao`.
 
+## The sky (build 1127) — three traps
+
+- `_skyEnv()` had returned `_skyEnvRT.texture` since build 1119: the HDRI path's target, declared
+  7,300 lines below, so at boot it was a **TDZ ReferenceError** swallowed by the surrounding catch.
+  The procedural sky lit nothing for eight builds and nothing said so. If a `catch(e){ return null; }`
+  guards something whose absence is invisible, that absence needs a test.
+- **A raw `ShaderMaterial` gets neither ACES nor `outputEncoding`** — three injects both only into its
+  own material programs. `_ACES_GLSL` (beside `_OETF_GLSL`) is three's verbatim fit, written out
+  because `#include <tonemapping_fragment>` cannot work here: the program prefix defines
+  `toneMapping()` as a wrapper calling `ACESFilmicToneMapping`, which the chunk declares *after* the
+  prefix, so the call is a forward reference and the program fails to compile — silently, and the mesh
+  vanishes. The water shader is the remaining surface with this problem.
+- **`typeof x` does NOT guard a temporal dead zone.** It throws for an uninitialised `let`. Declaring
+  `_skyDayDim` below the `_skyP()` that reads it turned the entire sky black on the first frame.
+
+`_sunDir()` now measures the direction from the light to `_sunTarget` rather than re-deriving it from
+`worldCfg` — the day cycle and build 1120's shadow fit both move the light without touching the
+config, so a config-derived sun disagreed with the one casting the shadows.
+
 ## Headless capture
 
 The engine renders under Chromium + SwiftShader, so visual changes can be measured, not argued about.
