@@ -12,7 +12,8 @@ for (const id of ['file', 'edit', 'tools', 'help'])
 
 // the actions the user asked for by name — Save, New, settings, node editor, help
 assert(/New level/.test(M), 'File offers New level');
-assert(/'Save',\s*key:'', run:\(\)=>_edClick\('edSave'\)/.test(M), 'File > Save clicks the panel\'s own Save button');
+// build 1129: Save finally has a shortcut to advertise (Ctrl+S was preventDefaulted and bound to nothing).
+assert(/'Save',\s*key:'Ctrl\+S', run:\(\)=>_edClick\('edSave'\)/.test(M), 'File > Save clicks the panel\'s own Save button');
 assert(/Logic graph[\s\S]{0,60}_lgOpen/.test(M), 'Tools opens the node/logic graph');
 assert(/Settings[\s\S]{0,80}setEditorMode\('settings'\)/.test(M), 'Tools jumps to Settings');
 assert(/Field manual[\s\S]{0,60}_edClick\('edHelp'\)/.test(M), 'Help opens the field manual');

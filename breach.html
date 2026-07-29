@@ -15566,6 +15566,20 @@ addEventListener('keydown', e=>{
     if(tag!=='INPUT' && tag!=='TEXTAREA'){ if(typeof performUndo==='function') performUndo(); e.preventDefault(); }
     return;
   }
+  // build 1129: redo on both conventions (Ctrl+Shift+Z everywhere, Ctrl+Y on Windows), and SAVE on
+  // Ctrl+S. Ctrl+S was already being swallowed further down — the WASD guard preventDefaults it so the
+  // browser's Save Page dialog cannot appear — but nothing was listening, so the most reflexive key in
+  // any editor did literally nothing.
+  if(editorOpen && (e.ctrlKey||e.metaKey) && ((e.code==='KeyZ' && e.shiftKey) || e.code==='KeyY')){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){ if(typeof performRedo==='function') performRedo(); e.preventDefault(); }
+    return;
+  }
+  if(editorOpen && (e.ctrlKey||e.metaKey) && e.code==='KeyS' && !e.shiftKey && !e.altKey){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){ e.preventDefault(); const b=document.getElementById('edSave'); if(b) b.click(); }
+    return;
+  }
   if(editorOpen && (e.code==='Delete' || e.code==='Backspace')){
     if(editorActive==='props') deleteSelectedProp();
     else if(editorActive==='lights') deleteSelectedLight();
@@ -24873,7 +24887,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1128 · 2026-07-29';
+const BUILD_VERSION = 'build 1129 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32756,6 +32770,7 @@ function renderCampaignPanel(){
 // the most recent snapshot. Simple and robust (no per-command inverse logic); restore rebuilds the
 // props/lights and re-applies gun/aim/station/world/loot settings.
 const editorUndo = [];
+const editorRedo = [];   // build 1129: the forward half of the history
 let editorUndoActive = false;
 function pushUndoSnapshot(){
   if(editorUndoActive || !editorOpen) return;
@@ -32765,6 +32780,10 @@ function pushUndoSnapshot(){
     if(editorUndo.length && editorUndo[editorUndo.length-1] === snap) return;   // identical to last -> skip
     editorUndo.push(snap);
     if(editorUndo.length > 60) editorUndo.shift();
+    // build 1129: editing after an undo forks the history — the old forward branch is unreachable and
+    // keeping it would redo work the author has already replaced.
+    editorRedo.length = 0;
+    if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   } catch(e){}
 }
 function restoreLevel(level){
@@ -32853,13 +32872,41 @@ function restoreLevel(level){
   if(typeof syncSelToIdx==='function') syncSelToIdx();
   renderEditorFields();
 }
+// build 1129: undo/redo is a two-stack history, the way every tool does it. Ctrl+Z was a ONE-WAY
+// trapdoor before this — an accidental undo threw away work with no way back, and the editor is a
+// direct-manipulation tool where an accidental undo is a matter of one stray keypress.
+//
+// pushUndoSnapshot stores the state BEFORE an edit, so `editorUndo` is a stack of pre-edit states.
+// Undoing therefore has to capture the state it is leaving (the post-edit one) to have anything to
+// redo, which is why the redo stack is filled here and not in performUndo's caller.
 function performUndo(){
   if(!editorUndo.length) return false;
   const snap = editorUndo.pop();
   let level; try { level = JSON.parse(snap); } catch(e){ return false; }
+  let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
   editorUndoActive = true;
   try { restoreLevel(level); } finally { editorUndoActive = false; }
+  if(cur != null){ editorRedo.push(cur); if(editorRedo.length > 60) editorRedo.shift(); }
+  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
+}
+function performRedo(){
+  if(!editorRedo.length) return false;
+  const snap = editorRedo.pop();
+  let level; try { level = JSON.parse(snap); } catch(e){ return false; }
+  let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
+  editorUndoActive = true;   // the restore must not push a snapshot of its own
+  try { restoreLevel(level); } finally { editorUndoActive = false; }
+  if(cur != null){ editorUndo.push(cur); if(editorUndo.length > 60) editorUndo.shift(); }
+  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
+  return true;
+}
+// Grey the buttons out when there is nothing to go back or forward to — a control that looks live and
+// does nothing is worse than one that says so.
+function _edSyncHistoryBtns(){
+  const u=document.getElementById('edUndo'), r=document.getElementById('edRedo');
+  if(u) u.disabled = !editorUndo.length;
+  if(r) r.disabled = !editorRedo.length;
 }
 
 // Reusable search UI (gun/enemy/loot/grenade/station/player). Calls onPick(model, statusEl) on a click.
@@ -33177,7 +33224,7 @@ function buildEditorPanel(){
     + '</div>'
     + '<div id="edShell"><div class="edModes" id="edModes"></div><div id="edMain">'
     + '<div class="hint" id="edHint"></div>'
-    + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;min-width:44px">↶</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
+    + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;min-width:44px">↶</button><button id="edRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" style="flex:0 0 auto;min-width:44px">↷</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
     + '<div id="edSearchRow"><input id="edSearch" type="search" placeholder="Search settings\u2026" spellcheck="false" aria-label="Search settings"></div>'
     + '<div id="edSearchChips"></div>'
     + '<div class="tabs" id="edTabs"></div>'
@@ -33486,6 +33533,8 @@ function buildEditorPanel(){
   if(modeRow){ for(const m of EDITOR_MODES){ const mb=document.createElement('div'); mb.className='edMode'; mb.dataset.mode=m; mb.innerHTML=(MODE_ICON[m]||'')+'<span class="edModeLbl">'+MODE_LABEL[m]+'</span>'; mb.title=MODE_LABEL[m]; mb.onclick=()=>setEditorMode(m); modeRow.appendChild(mb); } }
   p.querySelector('#edReset').onclick = ()=>{ resetEditorTarget(editorActive); };
   { const ub=p.querySelector('#edUndo'); if(ub) ub.onclick=()=>{ if(typeof performUndo==='function') performUndo(); }; }   // build 910: undo without a keyboard (touch authors had none)
+  { const rb=p.querySelector('#edRedo'); if(rb) rb.onclick=()=>{ if(typeof performRedo==='function') performRedo(); }; }   // build 1129: and forward again
+  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   p.querySelector('#edPlay').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); startGame(); };           // test the live-built level immediately (no save/reload)
   p.querySelector('#edMenu').onclick = ()=>{ editorToMenu(); };        // back to the start overlay
   { const ac=p.querySelector('#edAutoSave'); if(ac){ ac.checked=_autoSaveOn; ac.onchange=()=>{ setAutoSaveOn(ac.checked); const st=p.querySelector('#edAutoStatus'); if(st) st.textContent=ac.checked?'Saves automatically as you work.':'Autosave off — remember to Save.'; }; } }
@@ -38105,7 +38154,7 @@ function _lgOpenDialog(){
 const ED_MENUS = [
   { id:'file', label:'File', items:[
     { label:'New level\u2026',        run:()=>_edNewLevel(), danger:true },
-    { label:'Save',                 key:'', run:()=>_edClick('edSave') },
+    { label:'Save',                 key:'Ctrl+S', run:()=>_edClick('edSave') },
     { sep:1 },
     { label:'Import \u2026',          run:()=>_edClick('edImport') },
     { label:'Export',               run:()=>_edClick('edExport') },
@@ -38117,6 +38166,7 @@ const ED_MENUS = [
   ]},
   { id:'edit', label:'Edit', items:[
     { label:'Undo', key:'Ctrl+Z',   run:()=>{ if(typeof performUndo==='function') performUndo(); } },
+    { label:'Redo', key:'Ctrl+Shift+Z', run:()=>{ if(typeof performRedo==='function') performRedo(); } },
     { sep:1 },
     { label:'Delete all objects',   run:()=>{ if(typeof wipeScene==='function') uiConfirm('Delete every object in the scene? Your world, gameplay and other settings are kept \u2014 use File \u203a New level to clear those too.', ()=>{ wipeScene(); if(typeof flashToast==='function') flashToast('Scene cleared'); }, 'Delete'); }, danger:true },
   ]},
