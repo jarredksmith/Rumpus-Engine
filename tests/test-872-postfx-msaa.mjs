@@ -12,7 +12,7 @@ const src = gameSource();
 assert(/function _desiredPostSamples\(\)\{\s*\n\s*if\(!\(renderer\.capabilities && renderer\.capabilities\.isWebGL2\)\) return 0;/.test(src) && /_postRT\.samples = _desiredPostSamples\(\);/.test(src),
   'the post-FX scene target is 4x multisampled on WebGL2 (build 880: only at the full-res step)');
 // it must land inside ensurePost, AFTER the target exists and BEFORE the pass materials
-assert(/_postRT=mkRT\(w,h\); _bloomRT=mkRT\(hw,hh\); _compRT=mkRT\(w,h\); _afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\);[\s\S]{0,900}_postRT\.samples = _desiredPostSamples\(\);/.test(src),
+assert(/_postRT=mkRT\(w,h\); _compRT=mkRT\(w,h\); _afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\);[\s\S]{0,2000}_postRT\.samples = _desiredPostSamples\(\);/.test(src),
   'samples set at target creation inside ensurePost');
 // ONLY the scene pass is multisampled — the quad passes draw no geometry, and the DoF target carries a
 // DepthTexture (can't be multisampled in r149). Exactly one `.samples =` assignment exists.
@@ -31,7 +31,9 @@ assert(/const arc=document\.getElementById\('adaptResCb'\); if\(arc\)\{ arc\.che
   'checkbox reflects the live state');
 assert(/localStorage\.setItem\('breach_adaptres', _adaptOn\?'on':'off'\)/.test(src),
   'persists to the same key build 810 introduced (existing opt-outs keep working)');
-assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \/\* build 883[^*]*\*\/ _msaaOn=true; _msaaFails=0; \}/.test(src),
+// build 1126: the rung carries SSAO as well as MSAA now, so it is named _hiFxOn — the behaviour
+// this pin guards (clearing the strike-out when the creator turns adaptive resolution off) is unchanged.
+assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \/\* build 883[^*]*\*\/ _hiFxOn=true; _hiFxFails=0; \}/.test(src),
   'turning it OFF snaps back to full resolution immediately (build 883: and re-arms MSAA)');
 
 done('build 872: post-FX keeps MSAA (4x scene target) + adaptive resolution is a real setting');

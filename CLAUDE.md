@@ -168,6 +168,49 @@ because correct rendering makes old content brighter than its author ever saw. `
 only place that decides it — a legacy level must not inherit the default's `colorV:2` through an
 `Object.assign`.
 
+## Post-processing: the AO prepass (build 1126)
+
+SSAO needs depth, and r149 **cannot** attach a depth texture to a multisampled target — which is
+where build 872's 4× MSAA lives, the only antialiasing the engine has. Trading MSAA for FXAA was
+tried and **measured**: on a pillar edge against the sky, MSAA gives a 1.02-pixel coverage gradient
+on 100 of 100 scanlines; FXAA in its place left a hard edge on 94 of 99. So AO gets its own half-res
+G-buffer prepass (`_aoGeoRT`, view normal in rgb + view distance in a) written with
+`scene.overrideMaterial`, and MSAA stays. FXAA survives only on the DoF path, which was never
+multisampled anyway. `tests/test-1126` and `scratchpad/edgeq.mjs` are the durable versions of that
+measurement.
+
+Three traps in that prepass, all of which shipped broken once:
+- **"nothing drawn here" must be geometric, not a magic depth value.** The clear leaves the target's
+  alpha near zero but *not* zero, so `a <= 1e-4` let every sky pixel through and AO shaded the whole
+  upper half of the frame dark grey. A packed normal's channels sum to ≥ 0.63 for any unit vector and
+  to ~0 when cleared — test that.
+- `overrideMaterial` replaces `depthWrite:false` too, so the **sky dome fills the buffer** unless it
+  is hidden for the pass. Weather points do the same.
+- The prepass must run **after** the main scene pass or it consumes the frame's shadow-map refresh.
+
+`_msaaOn`/`_msaaFails` are now `_hiFxOn`/`_hiFxFails`: build 883's ladder rung is unchanged, but it
+carries MSAA *and* SSAO. `wipeScene` → `_postOffWorld` zeroes `ssao` along with the other post
+settings — which silently disabled AO in every capture until `arenaMood` started emitting `ssao`.
+
+## The sky (build 1127) — three traps
+
+- `_skyEnv()` had returned `_skyEnvRT.texture` since build 1119: the HDRI path's target, declared
+  7,300 lines below, so at boot it was a **TDZ ReferenceError** swallowed by the surrounding catch.
+  The procedural sky lit nothing for eight builds and nothing said so. If a `catch(e){ return null; }`
+  guards something whose absence is invisible, that absence needs a test.
+- **A raw `ShaderMaterial` gets neither ACES nor `outputEncoding`** — three injects both only into its
+  own material programs. `_ACES_GLSL` (beside `_OETF_GLSL`) is three's verbatim fit, written out
+  because `#include <tonemapping_fragment>` cannot work here: the program prefix defines
+  `toneMapping()` as a wrapper calling `ACESFilmicToneMapping`, which the chunk declares *after* the
+  prefix, so the call is a forward reference and the program fails to compile — silently, and the mesh
+  vanishes. The water shader is the remaining surface with this problem.
+- **`typeof x` does NOT guard a temporal dead zone.** It throws for an uninitialised `let`. Declaring
+  `_skyDayDim` below the `_skyP()` that reads it turned the entire sky black on the first frame.
+
+`_sunDir()` now measures the direction from the light to `_sunTarget` rather than re-deriving it from
+`worldCfg` — the day cycle and build 1120's shadow fit both move the light without touching the
+config, so a config-derived sun disagreed with the one casting the shadows.
+
 ## Headless capture
 
 The engine renders under Chromium + SwiftShader, so visual changes can be measured, not argued about.
@@ -191,6 +234,14 @@ proved the geometry was never in the shadow map, which no amount of bias tuning 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
 1124: `info.spawns`).
+
+**Shadow parameters are TEXEL quantities (build 1125).** `normalBias` is a world-space offset whose
+correct size is a few texels of `2 * extent / mapSize`. Build 1095 tuned it to 0.6 against the fixed
+±80 volume (7.7 texels); build 1120 made the volume `shadowDist` and the constant silently became
+~20 texels — longer than the whole ground shadow a crate casts at noon. `_sunNormalBias(extent, px)`
+is now the single derivation, used at boot and on every re-fit. `moon.shadow.bias` is a DEPTH bias
+against an unchanged near/far and deliberately does NOT scale with it. If you touch the shadow
+volume again, check what else was tuned against its old size.
 
 **Gameplay data with the GLB.** Build 1124 added the first piece — `buildArena` returns
 `spawns: [[x,z],[x,z]]` (BASE 1, BASE 2), the worker carries it back beside `world`, and *Place in
