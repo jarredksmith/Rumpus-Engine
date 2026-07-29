@@ -115,7 +115,10 @@ const floorAt = (tris, x, z) => { let top = -Infinity;
         'from (' + x + ',' + z + ') the spawn yaw points AT the origin, not away from it');
     }
   }
-  assert(/refreshPlayerSpawnMarker\(\);\n        \}/.test(src), '...and moving the editor marker with it');
+  assert(/if\(typeof refreshPlayerSpawnMarker==='function'\) refreshPlayerSpawnMarker\(\);/.test(src), '...and moving the editor marker with it');
+  // build 1126: and the author's own camera, which build 1124 left standing in the central mass
+  assert(/_lgPlacePlayer\(\{ x:playerSpawn\.x, y:0, z:playerSpawn\.z \}\);/.test(src),
+    '...and the editor camera, so the creator is not left looking at the inside of a rock');
   // a hand-built layout (keep/spine/museum) has no spawns; it must be left alone, not moved to (0,0)
   assert(/info\.spawns\|\|null/.test(src), 'a layout without spawns reports null rather than an empty move');
 }

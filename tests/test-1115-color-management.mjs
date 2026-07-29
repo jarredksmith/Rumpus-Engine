@@ -31,7 +31,7 @@ assert(/vec3 _out\(vec3 c\)\{ return mix\(c, _oetf\(c\), uEncode\); \}/.test(oet
 // space), which leaves the afterimage copy a plain blit.
 const users = [...src.matchAll(/_OETF_GLSL,/g)].length;
 eq(users, 2, 'exactly two passes encode: the DoF present, and the composite');
-assert(/cu\.uEncode\.value=1;\s*\n\s*if\(!_mbOn\)\{/.test(src),
+assert(/cu\.uEncode\.value=1;\n(?:\s*\/\/[^\n]*\n)*\s*const _fx = [^\n]*\n\s*if\(!_mbOn\)\{/.test(src),
   'the composite encodes unconditionally — motion blur no longer changes where the encode happens');
 assert(/_dofMatV\.uniforms\.uEncode\.value = \(out === null\) \? 1 : 0;/.test(src),
   'the DoF present pass encodes only when it is the frame\'s last pass, not when it feeds the post chain');

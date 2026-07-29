@@ -168,6 +168,30 @@ because correct rendering makes old content brighter than its author ever saw. `
 only place that decides it — a legacy level must not inherit the default's `colorV:2` through an
 `Object.assign`.
 
+## Post-processing: the AO prepass (build 1126)
+
+SSAO needs depth, and r149 **cannot** attach a depth texture to a multisampled target — which is
+where build 872's 4× MSAA lives, the only antialiasing the engine has. Trading MSAA for FXAA was
+tried and **measured**: on a pillar edge against the sky, MSAA gives a 1.02-pixel coverage gradient
+on 100 of 100 scanlines; FXAA in its place left a hard edge on 94 of 99. So AO gets its own half-res
+G-buffer prepass (`_aoGeoRT`, view normal in rgb + view distance in a) written with
+`scene.overrideMaterial`, and MSAA stays. FXAA survives only on the DoF path, which was never
+multisampled anyway. `tests/test-1126` and `scratchpad/edgeq.mjs` are the durable versions of that
+measurement.
+
+Three traps in that prepass, all of which shipped broken once:
+- **"nothing drawn here" must be geometric, not a magic depth value.** The clear leaves the target's
+  alpha near zero but *not* zero, so `a <= 1e-4` let every sky pixel through and AO shaded the whole
+  upper half of the frame dark grey. A packed normal's channels sum to ≥ 0.63 for any unit vector and
+  to ~0 when cleared — test that.
+- `overrideMaterial` replaces `depthWrite:false` too, so the **sky dome fills the buffer** unless it
+  is hidden for the pass. Weather points do the same.
+- The prepass must run **after** the main scene pass or it consumes the frame's shadow-map refresh.
+
+`_msaaOn`/`_msaaFails` are now `_hiFxOn`/`_hiFxFails`: build 883's ladder rung is unchanged, but it
+carries MSAA *and* SSAO. `wipeScene` → `_postOffWorld` zeroes `ssao` along with the other post
+settings — which silently disabled AO in every capture until `arenaMood` started emitting `ssao`.
+
 ## Headless capture
 
 The engine renders under Chromium + SwiftShader, so visual changes can be measured, not argued about.

@@ -14,12 +14,12 @@ const src = gameSource();
 const code = `
 let _adaptOn=true, _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
 let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
-let _msaaOn=true, _msaaFails=0;   // build 883: the MSAA rung + strike-out
+let _hiFxOn=true, _hiFxFails=0;   // build 883: the top-quality rung + strike-out (build 1126: MSAA *and* SSAO ride it)
 let _prStepI=0, _prScale=1;
 const _PR_STEPS=[1,0.85,0.72,0.66];
 function _applyPixelRatio(){}
 ${extractFunction('_adaptResTick', src)}
-function harness(){ return { tick:_adaptResTick, get:()=>({ step:_prStepI, upNeed:_adaptUpNeed, good:_adaptGood, msaa:_msaaOn, fails:_msaaFails }) }; }`;
+function harness(){ return { tick:_adaptResTick, get:()=>({ step:_prStepI, upNeed:_adaptUpNeed, good:_adaptGood, msaa:_hiFxOn, fails:_hiFxFails }) }; }`;
 const { tick, get } = evalDecl(code, 'harness', { Math })();
 let t = 10000;   // mid-session: past any boot grace
 const win = (avg) => { for (let i = 0; i < 9; i++) tick(avg, t); t += 501; tick(avg, t); };   // one evaluated 500ms window
@@ -56,9 +56,9 @@ settle(); for (let i = 0; i < 95; i++) win(18);
 eq(get().upNeed, 6, '45s of stability resets the climb requirement (scene changes stay responsive)');
 
 // ---- MSAA rides the top step only ----
-assert(/return \(_prStepI===0 && \(typeof _msaaOn==='undefined' \|\| _msaaOn\)\) \? 4 : 0;/.test(src),
+assert(/return \(_prStepI===0 && \(typeof _hiFxOn==='undefined' \|\| _hiFxOn\)\) \? 4 : 0;/.test(src),
   '4x MSAA only at full resolution AND with the MSAA rung armed (build 883)');
-assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \/\* build 883[^*]*\*\/ _msaaOn=true; _msaaFails=0; \}/.test(src),
+assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \/\* build 883[^*]*\*\/ _hiFxOn=true; _hiFxFails=0; \}/.test(src),
   'turning adaptive res off restores full quality and clears the strike-out');
 assert(/\|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost\(\); ensurePost\(\); \}/.test(src),
   'the per-frame size check also rebuilds when the desired sample count changes');
@@ -66,7 +66,7 @@ assert(/\|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost
 // ---- step changes stop recompiling shaders ----
 assert(/function ensurePost\(\)\{\s*\n\s*if\(_postRT\) return true;/.test(src), 'ensurePost keys on the targets, not the scene');
 assert(/if\(_postScene\) return true;   \/\/ build 880: materials \+ scene survive disposePost/.test(src), 'materials are created once and reused across rebuilds');
-assert(/_postRT=_bloomRT=_compRT=_afterA=_afterB=null;   \/\/ build 880: keep _postScene/.test(src), 'disposePost drops targets only');
+assert(/_postRT=_bloomRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=null;   \/\/ build 880: keep _postScene/.test(src), 'disposePost drops targets only');
 assert(/function resizePost\(\)\{ if\(_postRT\) disposePost\(\); \}/.test(src), 'window resize path updated to the same rule');
 
 // ---- brush-ring raycast throttle ----

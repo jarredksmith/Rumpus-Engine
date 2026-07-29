@@ -6809,7 +6809,11 @@ let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
 // step-0 MSAA, the 45s forgiveness restarted the cycle and the game dipped every backoff period, forever
 // ("FPS is jittering again for no reason"). Three failed re-arms now lock MSAA off for the session:
 // the machine settles at full-resolution-no-MSAA and is never probed again.
-let _msaaOn=true, _msaaFails=0;
+// build 1126: the rung's PAYLOAD changed, its tuning did not. 4x MSAA is gone — a multisampled
+// target cannot carry a depth TEXTURE in r149, and depth is what screen-space ambient occlusion
+// reads — so antialiasing moved to an FXAA pass and this rung now sheds SSAO instead. Same ladder,
+// same "shed before any resolution drop, re-arm last, three strikes and it stays off" behaviour.
+let _hiFxOn=true, _hiFxFails=0;
 const ADAPT_ENABLED_DEFAULT = true;   // build 810: on by default everywhere (was touch-only) — desktop laptops need the relief too; opt out via the setting
 let _adaptOn = ADAPT_ENABLED_DEFAULT;
 try{ const v=localStorage.getItem('breach_adaptres'); if(v==='on') _adaptOn=true; else if(v==='off') _adaptOn=false; }catch(e){}
@@ -6821,16 +6825,16 @@ function _adaptResTick(frameMs, now){
   if(_adaptN < 8){ _adaptAcc=0; _adaptN=0; return; }   // need a real sample
   const avg = _adaptAcc/_adaptN; _adaptAcc=0; _adaptN=0;
   if(now < _adaptCool) return;            // settling after a change
-  if(avg > 20 && _prStepI===0 && _msaaOn){             // build 883: first relief is the cheap one — drop the 4x MSAA, keep full resolution
-    if(_adaptUpAt>0 && now - _adaptUpAt < 6000){ _adaptUpNeed = Math.min(48, _adaptUpNeed*2); _msaaFails++; }   // a re-arm that failed this fast counts a strike
-    _msaaOn=false; _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;   // no _applyPixelRatio: the post pipeline swaps targets on its own
+  if(avg > 20 && _prStepI===0 && _hiFxOn){             // build 883: first relief is the cheap one — drop the top FX rung, keep full resolution
+    if(_adaptUpAt>0 && now - _adaptUpAt < 6000){ _adaptUpNeed = Math.min(48, _adaptUpNeed*2); _hiFxFails++; }   // a re-arm that failed this fast counts a strike
+    _hiFxOn=false; _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;   // no _applyPixelRatio: the post pipeline swaps targets on its own
   } else if(avg > 20 && _prStepI < _PR_STEPS.length-1){   // still slow -> now trade resolution
     if(_adaptUpAt>0 && now - _adaptUpAt < 6000) _adaptUpNeed = Math.min(48, _adaptUpNeed*2);   // build 880: that climb failed — retry later, not sooner (guard: a session's FIRST downshift is not a failed climb)
     _prStepI++; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;
-  } else if(avg < 17 && (_prStepI > 0 || (!_msaaOn && _msaaFails < 3))){   // headroom -> climb; MSAA is the final rung, and 3 failed re-arms lock it off for the session
+  } else if(avg < 17 && (_prStepI > 0 || (!_hiFxOn && _hiFxFails < 3))){   // headroom -> climb; the FX rung is the final one, and 3 failed re-arms lock it off for the session
     if(++_adaptGood >= _adaptUpNeed){
       if(_prStepI > 0){ _prStepI--; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); }
-      else _msaaOn=true;
+      else _hiFxOn=true;
       _adaptGood=0; _adaptCool=now+900; _adaptUpAt=now; _adaptShiftAt=now;
     }
   } else { _adaptGood=0; if(_adaptUpNeed>6 && now-_adaptShiftAt>45000){ _adaptUpNeed=6; _adaptShiftAt=now; } }
@@ -6990,6 +6994,22 @@ let _postFail = false;
 let _postBloom = 0.65, _postMotion = 0.62, _postVig = 0.42, _postGrain = 0.05, _postSat = 1.08, _postCon = 1.05, _postThresh = 0.62;
 let _postRT=null, _bloomRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
 let _matBright=null, _matComp=null, _matAfter=null, _matCopy=null;
+// build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
+// resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
+let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
+let _ssaoAmt = 0.9, _ssaoRadius = 0.9;   // driven by worldCfg.ssao / worldCfg.ssaoRadius
+// 12 points in a hemisphere around +z, clustered toward the origin (cubic falloff) so most samples
+// land where occlusion actually varies. Fixed, not random: the per-pixel rotation is what breaks
+// up the pattern, and a fixed set keeps the AO stable frame to frame instead of boiling.
+const _AO_KERNEL = (()=>{ const k=[], N=12; let s=1;
+  const rnd=()=>{ s=(s*1103515245+12345)&0x7fffffff; return s/0x7fffffff; };
+  for(let i=0;i<N;i++){
+    let x=rnd()*2-1, y=rnd()*2-1, z=rnd();
+    const l=Math.hypot(x,y,z)||1; x/=l; y/=l; z/=l;
+    const t=(i+1)/N, w=0.25+0.75*t*t;     // pack the near end
+    k.push(new THREE.Vector3(x*w, y*w, z*w));
+  }
+  return k; })();
 function _postSize(){ return [Math.max(2, Math.floor(_vpW * renderer.getPixelRatio())), Math.max(2, Math.floor(_vpH * renderer.getPixelRatio()))]; }   // build 892: track the canvas box, not the window
 // build 880: MSAA only at the FULL-resolution step. 4x multisample (build 872's aliasing fix) is exactly
 // the load a struggling GPU needs shed — when the adaptive scaler drops a step, the samples go with it,
@@ -6997,19 +7017,31 @@ function _postSize(){ return [Math.max(2, Math.floor(_vpW * renderer.getPixelRat
 function _desiredPostSamples(){
   if(!(renderer.capabilities && renderer.capabilities.isWebGL2)) return 0;
   if(typeof _prStepI==='undefined') return 4;
-  return (_prStepI===0 && (typeof _msaaOn==='undefined' || _msaaOn)) ? 4 : 0;   // build 883: the MSAA rung
+  return (_prStepI===0 && (typeof _hiFxOn==='undefined' || _hiFxOn)) ? 4 : 0;   // build 883: the top-quality rung
 }
 function ensurePost(){
   if(_postRT) return true;
   if(!THREE.WebGLRenderTarget) return false;
   const [w,h] = _postSize(); const hw=Math.max(1,w>>1), hh=Math.max(1,h>>1);
-  const mkRT = (rw,rh)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:_postRTType() });
+  const mkRT = (rw,rh,type)=> new THREE.WebGLRenderTarget(rw, rh, { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, type:type||_postRTType() });
   _postRT=mkRT(w,h); _bloomRT=mkRT(hw,hh); _compRT=mkRT(w,h); _afterA=mkRT(w,h); _afterB=mkRT(w,h);
+  // build 1126: the AO buffers. _aoGeoRT is a half-resolution G-BUFFER — view normal in rgb, view
+  // distance in a — written by a second, material-free pass over the scene.
+  //
+  // Why a prepass and not the scene's own depth: r149 cannot attach a depth TEXTURE to a
+  // multisampled target, and build 872's 4x MSAA on the scene target is the only antialiasing this
+  // engine has. Measured on the stock level, swapping it for FXAA turned a 1.02-pixel coverage
+  // gradient on 100 of 100 scanlines of a pillar edge into a hard edge on 94 of 99 — a clear loss.
+  // The prepass costs a second set of draw calls; it buys back MSAA and gives REAL normals, which
+  // are worth more to AO than reconstructed ones. It rides the adaptive rung, so it is the first
+  // thing a slow machine sheds.
+  _aoGeoRT=mkRT(hw,hh); _aoRT=mkRT(hw,hh,THREE.UnsignedByteType); _aoRT2=mkRT(hw,hh,THREE.UnsignedByteType);
   // build 872: the scene pass is the ONLY place geometry rasterizes when effects are on, and a plain render
   // target gets zero antialiasing — the canvas's antialias:true never applied, so effects-on meant jagged
   // edges everywhere. MSAA on this one target restores it (WebGL2 resolves via blitFramebuffer). The quad
   // passes (bloom/composite/afterimage) draw no geometry and stay single-sample. Known gap: with DoF active
-  // the scene rasterizes into the DoF target instead (DepthTexture can't be multisampled in r149).
+  // the scene rasterizes into the DoF target instead (DepthTexture can't be multisampled in r149) — build
+  // 1126 covers that case with FXAA, which is weaker than MSAA but far better than nothing.
   _postRT.samples = _desiredPostSamples();
   if(_postScene) return true;   // build 880: materials + scene survive disposePost — a resolution shift rebuilds TARGETS only (no shader recompiles, no hitch)
   const vert='varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }';
@@ -7026,10 +7058,29 @@ function ensurePost(){
     ].join('\n') });
   // composite: scene + bloom, then contrast/saturation grade, vignette, and film grain
   _matComp=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null}, tBloom:{value:null}, uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1} },
+    uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0},
+      uAoTexel:{value:new THREE.Vector2(1,1)}, uFar:{value:400},
+      uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1} },
     vertexShader:vert, fragmentShader:[
-      'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom;',
+      'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom; uniform sampler2D tAO; uniform sampler2D tGeo;',
+      'uniform float uAO; uniform vec2 uAoTexel; uniform float uFar;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
+      // build 1126: BILATERAL UPSAMPLE. AO is computed at half resolution, and a plain bilinear tap
+      // across a silhouette reads occlusion that belongs to the object and paints it onto whatever
+      // is behind — it showed up as a blocky grey halo where a pillar met the sky. Weight the four
+      // half-res taps by how well their view distance agrees with the centre and the taps on the far
+      // side of the silhouette drop out. A pixel with nothing drawn on it is rejected outright.
+      'bool _aoEmpty(vec4 g){ return (g.r+g.g+g.b) < 0.3; }',
+      'float _ao(){',
+      '  vec4 g0=texture2D(tGeo,vUv); float z0=g0.a;',
+      '  if(_aoEmpty(g0) || z0 >= uFar*0.995) return 1.0;',
+      '  float s=0.0, w=0.0;',
+      '  for(int i=0;i<4;i++){',
+      '    vec2 o = vec2(i==0||i==2 ? -0.5 : 0.5, i<2 ? -0.5 : 0.5) * uAoTexel;',
+      '    vec4 gi=texture2D(tGeo,vUv+o); float zi=gi.a;',
+      '    float wi=_aoEmpty(gi) ? 0.0 : exp(-abs(zi-z0)*8.0);',
+      '    s+=texture2D(tAO,vUv+o).r*wi; w+=wi; }',
+      '  return w > 1e-4 ? s/w : texture2D(tAO,vUv).r; }',
       _OETF_GLSL,
       // build 1117: bloom is added in LINEAR (light adds like light), then the frame is encoded, and
       // only then is it graded. Grading before the encode ran contrast on scene-linear values, where
@@ -7037,7 +7088,13 @@ function ensurePost(){
       // to pure black. That is everything under sRGB 43/255, an eighth of the display range crushed,
       // with grain then speckling the boundary. Contrast, saturation, vignette and grain are all
       // display-referred operations; this is where they belong.
-      'void main(){ vec3 c=texture2D(tColor,vUv).rgb; c += texture2D(tBloom,vUv).rgb * uBloom;',
+      // build 1126: AO multiplies the scene BEFORE bloom is added. Occluded light must not bloom —
+      // adding first would let a crevice the AO just darkened glow out of it. Applied to the whole
+      // colour rather than the ambient term alone: a forward renderer has no split to apply it to,
+      // and every forward engine that ships SSAO makes the same approximation.
+      'void main(){ vec3 c=texture2D(tColor,vUv).rgb;',
+      '  if(uAO > 0.0) c *= mix(1.0, _ao(), uAO);',
+      '  c += texture2D(tBloom,vUv).rgb * uBloom;',
       '  c=_out(clamp(c,0.0,1.0));',                              // -> display space
       '  c=(c-0.5)*uCon+0.5;',                                    // contrast
       '  float l=dot(c, vec3(0.299,0.587,0.114)); c=mix(vec3(l), c, uSat);',   // saturation
@@ -7057,13 +7114,126 @@ function ensurePost(){
   _matCopy=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
     uniforms:{ tColor:{value:null} }, vertexShader:vert,
     fragmentShader:'varying vec2 vUv; uniform sampler2D tColor; void main(){ gl_FragColor=texture2D(tColor,vUv); }' });
+  // ---------- build 1126: SSAO ----------
+  // The G-buffer pass. Runs over the whole scene with scene.overrideMaterial, so it must reproduce
+  // three's own skinning — an animated enemy would otherwise write its REST pose into the buffer and
+  // trail a pool of occlusion behind it. The chunk includes below are exactly what MeshNormalMaterial
+  // compiles to, minus everything that is not normal or position.
+  _matAOGeo=new THREE.ShaderMaterial({
+    uniforms:{},
+    vertexShader:[
+      '#include <common>',
+      '#include <skinning_pars_vertex>',
+      'varying vec3 vAoN; varying float vAoZ;',
+      'void main(){',
+      '  #include <beginnormal_vertex>',
+      '  #include <skinbase_vertex>',
+      '  #include <skinnormal_vertex>',
+      '  #include <defaultnormal_vertex>',
+      '  #include <begin_vertex>',
+      '  #include <skinning_vertex>',
+      '  #include <project_vertex>',
+      '  vAoN = normalize(transformedNormal); vAoZ = -mvPosition.z;',
+      '}'
+    ].join('\n'),
+    fragmentShader:[
+      'varying vec3 vAoN; varying float vAoZ;',
+      'void main(){ gl_FragColor = vec4(normalize(vAoN)*0.5+0.5, vAoZ); }'
+    ].join('\n') });
+  // Hemisphere sampling in view space against the G-buffer.
+  _matAO=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
+    uniforms:{ tGeo:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uFar:{value:400},
+      uRadius:{value:_ssaoRadius}, uBias:{value:0.025},
+      uProjScale:{value:new THREE.Vector2(1,1)}, uProj:{value:new THREE.Matrix4()}, uKern:{value:_AO_KERNEL} },
+    vertexShader:vert, fragmentShader:[
+      'varying vec2 vUv;',
+      'uniform sampler2D tGeo; uniform vec2 uTexel; uniform float uFar;',
+      'uniform float uRadius; uniform float uBias; uniform vec2 uProjScale;',
+      'uniform mat4 uProj; uniform vec3 uKern[12];',
+      'vec3 vpos(vec2 uv, float z){ vec2 n=uv*2.0-1.0; return vec3(n.x*uProjScale.x*z, n.y*uProjScale.y*z, -z); }',
+      // "nothing was drawn on this pixel" has to be a GEOMETRIC test, not a magic depth value.
+      // The clear leaves the target at an alpha that is near zero but measurably not zero, so
+      // `a <= epsilon` let every sky pixel through and the AO pass happily computed occlusion for
+      // the sky: the first working build shaded the entire upper half of the frame dark grey.
+      // A packed normal is n*0.5+0.5, so its three channels always sum to 1.5 + 0.5*(nx+ny+nz),
+      // which for any unit vector is at least 1.5 - 0.866 = 0.63. A cleared pixel sums to ~0.
+      'bool _empty(vec4 g){ return (g.r+g.g+g.b) < 0.3; }',
+      'void main(){',
+      '  vec4 g = texture2D(tGeo, vUv);',
+      '  float z = g.a;',
+      '  if(_empty(g) || z >= uFar*0.995){ gl_FragColor = vec4(1.0); return; }',   // sky / nothing drawn: nothing occludes it
+      '  vec3 n = normalize(g.rgb*2.0 - 1.0);',
+      '  vec3 p = vpos(vUv, z);',
+      // the fixed kernel is rotated per pixel; that is what turns 12 taps into a smooth field
+      '  float a = fract(sin(dot(vUv, vec2(12.9898,78.233)))*43758.5453)*6.2831853;',
+      '  float ca=cos(a), sa=sin(a);',
+      '  float occ = 0.0;',
+      '  for(int i=0;i<12;i++){',
+      '    vec3 k = uKern[i];',
+      '    vec3 s = vec3(k.x*ca - k.y*sa, k.x*sa + k.y*ca, k.z);',
+      '    if(dot(s, n) < 0.0) s = -s;',                       // fold the hemisphere onto the real normal
+      '    vec3 sp = p + s*uRadius;',
+      '    vec4 cl = uProj * vec4(sp, 1.0);',
+      '    vec2 suv = cl.xy/cl.w * 0.5 + 0.5;',
+      '    if(suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;',
+      '    vec4 sg = texture2D(tGeo, suv); float sz = sg.a;',
+      '    if(_empty(sg)) continue;',                          // the sample landed on sky, which occludes nothing
+      '    float range = smoothstep(0.0, 1.0, uRadius / max(1e-4, abs(z - sz)));',   // an occluder far outside the radius is not one
+      '    occ += step(uBias, (-sp.z) - sz) * range;',
+      '  }',
+      '  gl_FragColor = vec4(vec3(clamp(1.0 - occ/12.0, 0.0, 1.0)), 1.0); }'
+    ].join('\n') });
+  // separable blur, weighted by depth so AO cannot bleed across a silhouette
+  _matAOBlur=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
+    uniforms:{ tAO:{value:null}, tGeo:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uDir:{value:new THREE.Vector2(1,0)} },
+    vertexShader:vert, fragmentShader:[
+      'varying vec2 vUv; uniform sampler2D tAO; uniform sampler2D tGeo;',
+      'uniform vec2 uTexel; uniform vec2 uDir;',
+      'bool _empty(vec4 g){ return (g.r+g.g+g.b) < 0.3; }',
+      'void main(){ vec4 g0=texture2D(tGeo,vUv); float z0=g0.a; float s=0.0, w=0.0;',
+      '  for(int i=-3;i<=3;i++){ vec2 o=uDir*uTexel*float(i);',
+      '    vec4 gi=texture2D(tGeo,vUv+o); float zi=gi.a;',
+      '    float wi=_empty(gi)==_empty(g0) ? exp(-abs(zi-z0)*3.0) : 0.0;',
+      '    s+=texture2D(tAO,vUv+o).r*wi; w+=wi; }',
+      '  gl_FragColor=vec4(vec3(s/max(w,1e-4)), 1.0); }'
+    ].join('\n') });
+  // ---------- build 1126: FXAA, for the ONE path MSAA cannot reach ----------
+  // Depth of field rasterises the scene into its own target, which carries a depth texture and so
+  // cannot be multisampled — build 872's known gap, where turning DoF on silently turned AA off.
+  // FXAA is measurably weaker than 4x MSAA on this engine's hard silhouettes (1.02 px of coverage
+  // gradient becomes ~0), so it runs ONLY when MSAA is not in effect. It is a floor, not a swap.
+  // Runs LAST, on display-referred pixels (the composite already applied the OETF) — luminance
+  // thresholds are perceptual and are wrong on scene-linear values.
+  _matFXAA=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
+    uniforms:{ tColor:{value:null}, uTexel:{value:new THREE.Vector2(1,1)} },
+    vertexShader:vert, fragmentShader:[
+      'varying vec2 vUv; uniform sampler2D tColor; uniform vec2 uTexel;',
+      'float L(vec3 c){ return dot(c, vec3(0.299,0.587,0.114)); }',
+      'void main(){',
+      '  vec3 rgbM = texture2D(tColor, vUv).rgb; float lM = L(rgbM);',
+      '  float lNW=L(texture2D(tColor, vUv+vec2(-1.0,-1.0)*uTexel).rgb);',
+      '  float lNE=L(texture2D(tColor, vUv+vec2( 1.0,-1.0)*uTexel).rgb);',
+      '  float lSW=L(texture2D(tColor, vUv+vec2(-1.0, 1.0)*uTexel).rgb);',
+      '  float lSE=L(texture2D(tColor, vUv+vec2( 1.0, 1.0)*uTexel).rgb);',
+      '  float lMin=min(lM, min(min(lNW,lNE), min(lSW,lSE)));',
+      '  float lMax=max(lM, max(max(lNW,lNE), max(lSW,lSE)));',
+      '  if(lMax-lMin < max(0.0312, lMax*0.125)){ gl_FragColor=vec4(rgbM,1.0); return; }',
+      '  vec2 dir = vec2(-((lNW+lNE)-(lSW+lSE)), ((lNW+lSW)-(lNE+lSE)));',
+      '  float red = max((lNW+lNE+lSW+lSE)*0.03125, 0.0078125);',
+      '  float rcp = 1.0/(min(abs(dir.x),abs(dir.y)) + red);',
+      '  dir = clamp(dir*rcp, -8.0, 8.0)*uTexel;',
+      '  vec3 a = 0.5*(texture2D(tColor, vUv+dir*(-1.0/6.0)).rgb + texture2D(tColor, vUv+dir*(1.0/6.0)).rgb);',
+      '  vec3 b = a*0.5 + 0.25*(texture2D(tColor, vUv-dir*0.5).rgb + texture2D(tColor, vUv+dir*0.5).rgb);',
+      '  float lB = L(b);',
+      '  gl_FragColor = vec4((lB < lMin || lB > lMax) ? a : b, 1.0); }'
+    ].join('\n') });
   _postScene=new THREE.Scene(); _postCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
   _postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2), _matCopy); _postScene.add(_postQuad);
   return true;
 }
 function disposePost(){
-  for(const rt of [_postRT,_bloomRT,_compRT,_afterA,_afterB]){ if(rt && rt.dispose) rt.dispose(); }
-  _postRT=_bloomRT=_compRT=_afterA=_afterB=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
+  for(const rt of [_postRT,_bloomRT,_compRT,_afterA,_afterB,_aoGeoRT,_aoRT,_aoRT2]){ if(rt && rt.dispose) rt.dispose(); }
+  _postRT=_bloomRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
 }
 function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next render
 function _renderPostFX(scn, cam){
@@ -7073,11 +7243,42 @@ function _renderPostFX(scn, cam){
   // 1) scene -> full-res color (run DoF first when active, so bloom/grade operate on the focus-blurred image)
   if(dofEnabled && ensureDof()){ _runDofTo(scn, cam, _postRT); }
   else { renderer.setRenderTarget(_postRT); renderer.render(scn, cam); }
+  // 1b) build 1126: screen-space ambient occlusion — G-buffer prepass, AO, bilateral blur, all at
+  // half resolution. Perspective only: the AO shader rebuilds view rays from a tangent-of-fov
+  // scale, which an orthographic camera does not have, so the editor's ortho views go without.
+  const _aoWant = _ssaoAmt > 0.001 && _hiFxOn && _aoGeoRT && cam && cam.isPerspectiveCamera;
+  if(_aoWant){
+    // the prepass runs AFTER the scene pass so it cannot consume this frame's shadow-map refresh,
+    // and with the sky dome and weather hidden — overrideMaterial would give the dome depthWrite
+    // and it would fill the entire buffer at the far plane, and snow would pock it with occluders
+    const _pv=scn.overrideMaterial, _skyV=_skyMesh&&_skyMesh.visible, _wV=(typeof _weatherPts!=='undefined')&&_weatherPts&&_weatherPts.visible;
+    const _sa=renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate=false;
+    if(_skyMesh) _skyMesh.visible=false; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=false;
+    scn.overrideMaterial=_matAOGeo;
+    renderer.setRenderTarget(_aoGeoRT); renderer.render(scn, cam);
+    scn.overrideMaterial=_pv;
+    if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
+    renderer.shadowMap.autoUpdate=_sa;
+    const au=_matAO.uniforms;
+    au.tGeo.value=_aoGeoRT.texture; au.uTexel.value.set(1/hw,1/hh);
+    au.uFar.value=cam.far; au.uRadius.value=_ssaoRadius;
+    au.uProj.value.copy(cam.projectionMatrix);
+    const _t=Math.tan(cam.fov*Math.PI/360); au.uProjScale.value.set(_t*cam.aspect, _t);
+    _postQuad.material=_matAO; renderer.setRenderTarget(_aoRT); renderer.render(_postScene,_postCam);
+    const bu=_matAOBlur.uniforms;
+    bu.tGeo.value=_aoGeoRT.texture; bu.uTexel.value.set(1/hw,1/hh);
+    bu.tAO.value=_aoRT.texture; bu.uDir.value.set(1,0);
+    _postQuad.material=_matAOBlur; renderer.setRenderTarget(_aoRT2); renderer.render(_postScene,_postCam);
+    bu.tAO.value=_aoRT2.texture; bu.uDir.value.set(0,1);
+    renderer.setRenderTarget(_aoRT); renderer.render(_postScene,_postCam);
+  }
   // 2) bright-pass + blur -> half-res bloom
   _matBright.uniforms.tColor.value=_postRT.texture; _matBright.uniforms.uTexel.value.set(1/hw,1/hh); _matBright.uniforms.uThresh.value=_postThresh;
   _postQuad.material=_matBright; renderer.setRenderTarget(_bloomRT); renderer.render(_postScene,_postCam);
   // 3) composite (scene + bloom + grade + vignette + grain) -> full res
   const cu=_matComp.uniforms; cu.tColor.value=_postRT.texture; cu.tBloom.value=_bloomRT.texture;
+  cu.tAO.value = _aoWant ? _aoRT.texture : null; cu.uAO.value = _aoWant ? _ssaoAmt : 0;
+  if(_aoWant){ cu.tGeo.value=_aoGeoRT.texture; cu.uAoTexel.value.set(1/hw,1/hh); cu.uFar.value=cam.far; }
   cu.uBloom.value=_postBloom; cu.uVig.value=_postVig; cu.uGrain.value=_postGrain; cu.uSat.value=_postSat; cu.uCon.value=_postCon; cu.uTime.value=(performance.now()*0.001)%1000;
   // build 810: with motion blur ~0 (or shed by adaptive res at its lowest step), composite STRAIGHT TO SCREEN — the
   // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
@@ -7087,16 +7288,26 @@ function _renderPostFX(scn, cam){
   // way, and the grade after it has to run in display space. Everything downstream is a blit or a
   // temporal blend, both of which are fine on display-referred pixels.
   cu.uEncode.value=1;
+  // build 1126: FXAA covers the one path 4x MSAA cannot — DoF, which rasterises into a
+  // depth-carrying target that r149 will not multisample. When MSAA IS in effect the frame skips
+  // FXAA entirely: measured on a pillar edge, MSAA gives a 1.02-pixel coverage gradient on every
+  // scanline where this FXAA gives none, so running both would only cost a pass and soften texture.
+  const _fx = _matFXAA && (_postRT.samples||0) === 0;
   if(!_mbOn){
-    _postQuad.material=_matComp; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
+    if(!_fx){ _postQuad.material=_matComp; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam); return; }
+    _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
+    _matFXAA.uniforms.tColor.value=_compRT.texture; _matFXAA.uniforms.uTexel.value.set(1/w,1/h);
+    _postQuad.material=_matFXAA; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
     return;
   }
   _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
   // 4) motion blur: blend with the previous frame -> _afterB
   _matAfter.uniforms.tNew.value=_compRT.texture; _matAfter.uniforms.tOld.value=_afterA.texture; _matAfter.uniforms.uDamp.value=_postMotion;
   _postQuad.material=_matAfter; renderer.setRenderTarget(_afterB); renderer.render(_postScene,_postCam);
-  // 5) present -> screen
-  _matCopy.uniforms.tColor.value=_afterB.texture; _postQuad.material=_matCopy; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
+  // 5) present -> screen (through FXAA when the top rung is up)
+  if(_fx){ _matFXAA.uniforms.tColor.value=_afterB.texture; _matFXAA.uniforms.uTexel.value.set(1/w,1/h); _postQuad.material=_matFXAA; }
+  else { _matCopy.uniforms.tColor.value=_afterB.texture; _postQuad.material=_matCopy; }
+  renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
   // 6) swap accumulation buffers (this frame's result becomes next frame's "old")
   const t=_afterA; _afterA=_afterB; _afterB=t;
 }
@@ -14687,11 +14898,11 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
 // versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
 // The dark stock palette needs an art pass, which belongs with the sky/lighting work.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, filmic:1, exposure:1.25, terrain:null, shadowDist:30, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:30, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
-function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.postVig=0; w.postGrain=0; w.postSat=1; w.postCon=1; return w; }
+function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.postVig=0; w.postGrain=0; w.postSat=1; w.postCon=1; w.ssao=0; return w; }
 // build 1115: which colour pipeline a level was AUTHORED against. Everything saved before the sRGB
 // encode landed was tuned by eye against an image that displayed ~2.2 gamma too dark, so creators
 // compensated with sun/exposure that now read too hot. Such a level carries no colorV — and it must
@@ -15036,6 +15247,10 @@ function applyWorldCfg(){
     _postSat    = Math.max(0,   Math.min(2,    worldCfg.postSat    == null ? DEFAULT_WORLD.postSat    : +worldCfg.postSat));
     _postCon    = Math.max(0.5, Math.min(2,    worldCfg.postCon    == null ? DEFAULT_WORLD.postCon    : +worldCfg.postCon));
     _postThresh = Math.max(0,   Math.min(1,    worldCfg.postThresh == null ? DEFAULT_WORLD.postThresh : +worldCfg.postThresh));
+    // build 1126: ambient occlusion. Authorable because the right amount is a look decision — a
+    // bright outdoor arena wants less of it than an interior, and a stylised level may want none.
+    _ssaoAmt    = Math.max(0,   Math.min(1,    worldCfg.ssao       == null ? DEFAULT_WORLD.ssao       : +worldCfg.ssao));
+    _ssaoRadius = Math.max(0.1, Math.min(4,    worldCfg.ssaoRadius == null ? DEFAULT_WORLD.ssaoRadius : +worldCfg.ssaoRadius));
     // build 595: pickup look (base disc + bounce/rotate). _animatePickup reads these live; refresh editor markers now.
     if(worldCfg.pickupBase==null) worldCfg.pickupBase = DEFAULT_WORLD.pickupBase;
     if(worldCfg.pickupAnim==null) worldCfg.pickupAnim = DEFAULT_WORLD.pickupAnim;
@@ -24483,7 +24698,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1125 · 2026-07-29';
+const BUILD_VERSION = 'build 1126 · 2026-07-29';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33744,7 +33959,8 @@ function renderEditorFields(){
       if(typeof _postOn!=='undefined' && _postOn){
         slider(b,'Bloom','postBloom',0,2,0.05); slider(b,'Motion blur','postMotion',0,0.95,0.02); slider(b,'Vignette','postVig',0,1,0.02);
         slider(b,'Film grain','postGrain',0,0.3,0.01); slider(b,'Saturation','postSat',0,2,0.02); slider(b,'Contrast','postCon',0.5,2,0.02); slider(b,'Bloom threshold','postThresh',0,1,0.02);
-        hint(b,'','0 0 4px').textContent='Motion blur = trail strength. Bloom threshold = how bright a surface must be to glow. These save with the level; the on/off switch is a global preference.';
+        slider(b,'Ambient occlusion','ssao',0,1,0.05); slider(b,'AO radius','ssaoRadius',0.1,4,0.1);   // build 1126
+        hint(b,'','0 0 4px').textContent='Motion blur = trail strength. Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }
     { const b=subSec('Sky','sky',true);
       hint(b,'Equirectangular panorama: <b>.hdr</b> (full HDR lighting) or .jpg/.png. Lights reflections too. Blank = flat color.','2px 0 4px');
@@ -37688,6 +37904,14 @@ function _lgOpenDialog(){
           const s=r.spawns[0]; playerSpawn.x=+s[0]||0; playerSpawn.z=+s[1]||0; playerSpawn.y=0;
           playerSpawn.yaw=Math.atan2(playerSpawn.x, playerSpawn.z);   // look at the arena centre: forward is (-sin yaw, -cos yaw)
           if(typeof refreshPlayerSpawnMarker==='function') refreshPlayerSpawnMarker();
+          // build 1126: and move the AUTHOR there too. Build 1124 moved the spawn the level plays
+          // from, but the editor's own camera stayed at the origin — which is exactly the solid
+          // central mass the spawn had to be moved out of, so the first thing a creator saw after
+          // pressing "Place in level" was the inside of a rock.
+          if(typeof _lgPlacePlayer==='function'){
+            _lgPlacePlayer({ x:playerSpawn.x, y:0, z:playerSpawn.z });
+            if(typeof player!=='undefined'){ player.yaw=playerSpawn.yaw; player.pitch=0; }
+          }
         }
         if(moodCb.checked && r.world){ Object.assign(worldCfg, r.world); applyWorldCfg(); }
         if(typeof renderEditorFields==='function') renderEditorFields();
@@ -39061,7 +39285,7 @@ function bindPauseMenu(){
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
   // build 872: adaptive resolution gets a visible switch (it was on-by-default with only a localStorage
   // escape hatch since build 810). Turning it OFF also snaps back to full resolution immediately.
-  const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); /* build 883: full quality — MSAA strike-out cleared */ _msaaOn=true; _msaaFails=0; } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
+  const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); /* build 883/1126: full quality — the FX rung's strike-out is cleared too */ _hiFxOn=true; _hiFxFails=0; } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vMu=document.getElementById('volMusic'); if(vMu){ vMu.value=Math.round(audioSettings.music*100); vMu.oninput=()=>{ audioSettings.music=(+vMu.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vS=document.getElementById('volSfx'); if(vS){ vS.value=Math.round(audioSettings.sfx*100); vS.oninput=()=>{ audioSettings.sfx=(+vS.value)/100; applyAudioSettings(); saveAudioSettings(); initAudio(); SFX.coin(); }; }   // tick so it's
