@@ -2386,11 +2386,23 @@ function groundMood(gnd, rough, metal) {
   const y = 0.2126 * gnd[0] + 0.7152 * gnd[1] + 0.0722 * gnd[2];
   return { floorColor: skyHex(gnd), floorRough: rough != null ? rough : 0.95, floorMetal: metal != null ? metal : 0.05,
     wallColor: skyHex(gnd.map((v) => v * 0.55)), wallRough: 0.85, wallMetal: 0.08,
-    bounce: +Math.max(0.05, Math.min(0.8, 0.0535 / Math.max(1e-4, y))).toFixed(2) };
+    bounce: +Math.max(0.05, Math.min(1.0, 0.0535 / Math.max(1e-4, y))).toFixed(2) };
+  // build 1151: the upper clamp is 1.0, not 0.8. Once `gnd` became the albedo actually DRAWN, garden's
+  // ground measured Y 0.056 (dark grass) and asked for 0.96 to deliver the standard fill; 0.8 held it
+  // 16% short and broke the equal-fill property this derivation exists for. 0.8 was arbitrary, the
+  // equal fill is not.
 }
+// build 1151: each theme's `gnd` is the albedo of the ground material the generator ACTUALLY DRAWS —
+// `MATS[palette.ground].base` times the mean of its texture, linearised per pixel. It used to be a
+// hand-picked triple, and measured against the drawn material it was wrong in every theme, by 0.35x
+// (garden) to 1.59x (facility). Four things derive from this one value and all four want the real one:
+// the bake's sun-bounce colour, the sky dome's ground band, the engine plane's floorColor/wallColor
+// (1143), and the one-bounce fill factor (1149). `tests/test-1151` recomputes all seven from the real
+// generator and fails if a texture is retuned without updating them, so the link is enforced rather
+// than restated — which is what build 1143 wanted and did not get.
 function arenaMood(theme) {
   if (theme === 'castle') {   // golden hour: low warm sun, long shadows, warm haze
-    const zen = [0.14, 0.19, 0.34], hor = [0.50, 0.37, 0.28], gnd = [0.22, 0.19, 0.15];
+    const zen = [0.14, 0.19, 0.34], hor = [0.50, 0.37, 0.28], gnd = [0.154, 0.136, 0.113];   // cobble, measured
     return {
       light: { sunAzim: 245, sunElev: 26, sunCol: [1, 0.72, 0.45], skyZen: zen, skyHor: hor, groundAlb: gnd },
       world: { sun: 1.05, sunColor: 0xffd2a0, sunAzim: 245, sunElev: 26, sky: 0.35, skyColor: 0x92a6c8, ambient: 0.05,
@@ -2398,7 +2410,7 @@ function arenaMood(theme) {
         ...skyMood(zen, hor, gnd, 0.55, 1.5, 2.2), ...groundMood(gnd) } };
   }
   if (theme === 'volcanic') { // ashen overcast with ember accents
-    const zen = [0.15, 0.145, 0.15], hor = [0.28, 0.25, 0.23], gnd = [0.16, 0.13, 0.10];
+    const zen = [0.15, 0.145, 0.15], hor = [0.28, 0.25, 0.23], gnd = [0.142, 0.091, 0.053];   // dirt, measured
     return {
       light: { sunAzim: 130, sunElev: 38, sunCol: [1, 0.80, 0.60], skyZen: zen, skyHor: hor, groundAlb: gnd },
       world: { sun: 0.75, sunColor: 0xffc9a0, sunAzim: 130, sunElev: 38, sky: 0.5, skyColor: 0x8e8d90, ambient: 0.06,
@@ -2406,7 +2418,7 @@ function arenaMood(theme) {
         ...skyMood(zen, hor, gnd, 0.8, 0.35, 1.2), ...groundMood(gnd, 0.9, 0.12) } };   // cooled lava keeps a faint sheen
   }
   if (theme === 'garden') {   // bright clear day; the ground bounce is green
-    const zen = [0.18, 0.28, 0.50], hor = [0.38, 0.42, 0.48], gnd = [0.12, 0.18, 0.08];
+    const zen = [0.18, 0.28, 0.50], hor = [0.38, 0.42, 0.48], gnd = [0.034, 0.067, 0.011];   // grass x its base, measured
     return {
       light: { sunAzim: 115, sunElev: 52, sunCol: [1, 0.94, 0.85], skyZen: zen, skyHor: hor, groundAlb: gnd },
       world: { sun: 1.0, sunColor: 0xfff0da, sunAzim: 115, sunElev: 52, sky: 0.36, skyColor: 0xa5c0e0, ambient: 0.03,
@@ -2416,7 +2428,7 @@ function arenaMood(theme) {
   if (theme === 'desert') {   // high noon: a near-vertical sun, bleached shadows, dust haze.
     // The ground bounce is the loudest term in the whole rig here — sand throws a lot of warm light
     // back up, which is why desert shadows photograph open and golden rather than blue.
-    const zen = [0.22, 0.34, 0.58], hor = [0.55, 0.52, 0.44], gnd = [0.42, 0.34, 0.22];
+    const zen = [0.22, 0.34, 0.58], hor = [0.55, 0.52, 0.44], gnd = [0.511, 0.372, 0.185];   // sand, measured
     return {
       light: { sunAzim: 160, sunElev: 72, sunCol: [1, 0.97, 0.9], skyZen: zen, skyHor: hor, groundAlb: gnd },
       world: { sun: 1.25, sunColor: 0xfff6e2, sunAzim: 160, sunElev: 72, sky: 0.3, skyColor: 0xbcc9d8, ambient: 0.04,
@@ -2424,7 +2436,7 @@ function arenaMood(theme) {
         ...skyMood(zen, hor, gnd, 0.5, 1.1, 1.4), ...groundMood(gnd, 0.96, 0.0) } };   // sand: no specular at all
   }
   if (theme === 'frost') {    // late blue hour over snow: a low raking sun, everything else sky
-    const zen = [0.20, 0.30, 0.55], hor = [0.42, 0.52, 0.68], gnd = [0.60, 0.64, 0.70];
+    const zen = [0.20, 0.30, 0.55], hor = [0.42, 0.52, 0.68], gnd = [0.779, 0.829, 0.900];   // snow, measured
     return {
       light: { sunAzim: 285, sunElev: 14, sunCol: [1, 0.85, 0.72], skyZen: zen, skyHor: hor, groundAlb: gnd },
       world: { sun: 0.9, sunColor: 0xffdcbe, sunAzim: 285, sunElev: 14, sky: 0.55, skyColor: 0xb6cbe6, ambient: 0.05,
@@ -2432,7 +2444,7 @@ function arenaMood(theme) {
         ...skyMood(zen, hor, gnd, 0.45, 1.3, 2.0), ...groundMood(gnd, 0.8, 0.02) } };   // packed snow has a sheen
   }
   if (theme === 'facility') { // night on the pad: the sun is a rim light, the strips do the work
-    const zen = [0.05, 0.07, 0.12], hor = [0.10, 0.14, 0.20], gnd = [0.10, 0.12, 0.14];
+    const zen = [0.05, 0.07, 0.12], hor = [0.10, 0.14, 0.20], gnd = [0.165, 0.189, 0.222];   // scifiFloor, measured
     return {
       light: { sunAzim: 40, sunElev: 12, sunCol: [0.62, 0.72, 0.9], skyZen: zen, skyHor: hor, groundAlb: gnd },
       world: { sun: 0.4, sunColor: 0xa8c0e8, sunAzim: 40, sunElev: 12, sky: 0.2, skyColor: 0x2b3a4e, ambient: 0.05,
@@ -2440,7 +2452,7 @@ function arenaMood(theme) {
         ...skyMood(zen, hor, gnd, 0.3, 0.6, 1.6), ...groundMood(gnd, 0.7, 0.18) } };   // sealed apron: wet-looking
   }
   {                           // industrial: cool clear working day
-    const zen = [0.16, 0.25, 0.45], hor = [0.34, 0.38, 0.45], gnd = [0.20, 0.21, 0.22];
+    const zen = [0.16, 0.25, 0.45], hor = [0.34, 0.38, 0.45], gnd = [0.110, 0.114, 0.117];   // concrete x its base, measured
     return {
       light: { sunAzim: 100, sunElev: 55, sunCol: [1, 0.95, 0.88], skyZen: zen, skyHor: hor, groundAlb: gnd },
       world: { sun: 1.1, sunColor: 0xfff2e0, sunAzim: 100, sunElev: 55, sky: 0.22, skyColor: 0xa8c2dd, ambient: 0.03,

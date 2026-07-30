@@ -411,13 +411,9 @@ material actually drawn is `base × texture mean`, and the two disagree in every
 | frost | `snow` | 0.779/0.829/0.899 | 0.60/0.64/0.70 | 1.29× |
 | facility | `scifiFloor` | 0.165/0.189/0.222 | 0.10/0.12/0.14 | **1.59×** |
 
-THREE consumers now derive from the abstraction — the bake's sun bounce, the engine plane's `floorColor` and
-`wallColor` (1143), and the one-bounce fill (1149) — while the renderer draws the texture. That is this
-section's own lesson one level deeper: naming the ground once is not enough when the thing named is not the
-thing drawn. The fix is to DERIVE `groundAlb` from the ground material (`base × texture mean`, which the
-generator can measure because it builds the texture) instead of hand-picking it, and it is a generator
-change needing its own capture pass — on garden the engine's plane is ~3× BRIGHTER than the grass it butts
-against, the same class of seam as the desert one and in the opposite direction.
+FOUR consumers derived from the abstraction while the renderer drew the texture. **Fixed in build 1151** —
+see "The ground albedo is now the ground it draws", where every theme's `gnd` became the drawn value and a
+test recomputes all seven from the real palette so the two cannot drift apart again.
 
 Each theme now names `zen` / `hor` / `gnd` **once**. They were written out twice per theme before (in the
 `light` block and again inside the `skyMood(...)` call) and this build would have made it three times —
@@ -748,7 +744,119 @@ coherent form is `envMapIntensity = 1` everywhere with `worldCfg.sky` scaled dow
 ambient, and that needs a legacy-`sky` story; the `max(floor, metal)` shape is a compatibility hack that
 only ever had an argument for engine-built materials.
 
-## Open work (as of build 1150)
+## The ground albedo is now the ground it draws (build 1151)
+
+Build 1143 introduced `groundMood` so "the plane the player walks past and the bounce the bake assumed are
+the same surface". Measured in build 1150, they were not: `light.groundAlb` was a hand-picked triple and the
+material the generator actually DRAWS is `MATS[palette.ground].base × mean(texture)`, linearised per pixel.
+Wrong in every theme, from 0.35× to 1.59×:
+
+```
+theme        drawn (linear)        was                ratio    bounce now
+industrial   0.110/0.114/0.117     0.20/0.21/0.22     0.54x    0.47
+castle       0.154/0.136/0.113     0.22/0.19/0.15     0.71x    0.39
+volcanic     0.142/0.091/0.053     0.16/0.13/0.10     0.74x    0.54
+garden       0.034/0.067/0.011     0.12/0.18/0.08     0.35x    0.96
+desert       0.511/0.372/0.185     0.42/0.34/0.22     1.11x    0.14
+frost        0.779/0.829/0.900     0.60/0.64/0.70     1.29x    0.06
+facility     0.165/0.189/0.222     0.10/0.12/0.14     1.59x    0.29
+```
+
+FOUR things derive from that one value, and all four want the real one — which is why this was worth doing
+rather than tolerating: the bake's sun-bounce colour, the sky dome's ground band, the engine plane's
+`floorColor`/`wallColor` (1143), and the one-bounce fill factor (1149). Every one of them now describes the
+same surface, verified per channel per theme.
+
+**`Tex.rgb` is sRGB, not linear.** `toBytes` writes `px * 255` with no transfer and the glTF
+`baseColorTexture` is sRGB-tagged, so the renderer decodes it. The effective albedo is therefore
+`base × mean(srgb2lin(rgb))` — **linearise per pixel, then average**. Averaging first and linearising after
+is a different and wrong number, and it is the easy mistake here.
+
+**The fill clamp moved from 0.8 to 1.0.** Once `gnd` was real, garden's grass measured Y 0.056 and asked for
+0.96 to deliver the standard fill; 0.8 held it 16% short and broke the equal-fill property the derivation
+exists for. 0.8 was arbitrary; the equal fill is not. Every theme now delivers within 1.10×.
+
+**The test enforces the link rather than restating the numbers.** `test-1151` recomputes all seven from the
+REAL generator — `arenaPalette(theme).ground` → `MATS[idx]` → `TEXS[tex].rgb` → base — so retuning a texture
+without updating the mood fails there instead of silently putting the engine's ground a stop away from the
+arena's. That is what 1143 wanted and did not get: naming a value once is not the same as deriving it from
+the thing it describes. It needs no browser and runs at `TEXSIZE=128`, where the mean is stable (checked at
+64/128/256: grass and sand agree to four decimals, the patterned `scifiFloor` drifts 4%).
+
+Two pins moved with it, both correctly: `test-1143`'s "facility is a dark cool apron" threshold (the drawn
+apron really is 1.59× brighter than the guess, so the plane matches it at 113,120,130 — cool still holds),
+and `test-1149`'s clamp bound.
+
+**The capture could NOT verify this build, and that is worth stating.** Garden and frost were captured as the
+two extremes (0.35× and 1.29×) to check nothing crushed or blew out — nothing did: garden's near ground
+measures min 78/67/46 with no channel at or below 8, frame mean 120,124,118. But that near ground reads warm
+brown (86/77/55, R>G>B) while garden's new `floorColor` is a dark green — so the surface in shot is the
+IMPORTED ground, and the engine plane is not in the frame at all. Whether it is depends on where the
+generator put the spawn: the desert `arena-walk` shot happens to stand outside the footprint, garden's does
+not. So the capture is a sanity check here and the *verification* is `test-1151`'s exact per-channel
+assertions.
+
+That is the third time in one session that a frame did not contain the surface being reasoned about (see
+"the arena-edge seam was never a seam"). The cheap guard is already built: the radiance probe's `WHO[...]`
+label names the mesh, its geometry, whether the material is `floorMat`/`wallMat`, and whether it is
+instanced. **Read WHO before attributing anything to a surface.**
+
+**Frost's clipping, A/B'd against its own pre-1151 value**, because a 1.29× brighter ground is where a
+blow-out would show. Same seed, same camera, only `gnd` changed:
+
+```
+                   pixels >= 254    frame mean       snow field mean
+pre-1151 gnd            1.10%      128,136,138       159,167,169
+1151 (drawn) gnd        1.59%      129,137,140       162,171,172
+```
+So the change costs **half a percentage point of clipped pixels and three code values** on the snow. Frost
+already clipped 1.10% before it — a sunlit snowfield clips, and so do photographs of one. Worth stating
+plainly rather than hiding: this build does make frost's brightest surfaces marginally more clipped, and it
+is the right trade because the albedo is now a measured fact about the texture rather than a guess. If it
+ever needs pulling back, the lever is frost's `exposure` (1.2), not `gnd`.
+
+`moodCb.checked` defaults to true, so "Place in level" really does apply the generated world block —
+`Object.assign(worldCfg, r.world); applyWorldCfg()`. Checked because "the mood never reached the engine"
+would have been a tidy explanation for a dark plane, and it is not the explanation.
+
+## A muzzle flash was writing itself into the AO buffer (build 1152)
+
+Reported from play, with a screenshot: a hard, slightly **brighter** rectangle around muzzle flashes and
+explosion/impact sprites — the PNG quad's own edge, the transparent area reading lighter than the scene.
+
+The AO prepass renders with `scene.overrideMaterial = _matAOGeo`, and **`overrideMaterial` replaces
+`transparent` and `depthWrite:false` along with everything else.** So a sprite wrote its whole QUAD into the
+half-res G-buffer as though it were solid geometry a metre from the camera; SSAO then derived that square's
+occlusion from a flat camera-facing surface — unoccluded — while the world around it kept its real
+occlusion. Less darkening inside the square than outside it, with a quad edge.
+
+**This is the same trap build 1126 recorded and build 1128 hit again, now for the third time.** 1126: "the
+sky dome fills the buffer unless it is hidden for the pass. Weather points do the same." Both were fixed by
+NAME, and the flipbook VFX arrived later. Naming a third would only buy a fourth, so the test is now a
+property of the material: **nothing that does not write depth belongs in a depth-derived G-buffer.** The
+prepass hides any object whose material has `depthWrite === false || transparent === true` and restores it
+after — one traverse, which is nothing beside the extra half-res scene render the pass already costs.
+
+Three details in the predicate, each of which would be a bug on its own:
+- **Already-invisible objects are not collected**, or the restore would switch them ON — editor gizmos in
+  play, which is a bug build 1139 already recorded from the other direction (`Raycaster` ignores a mesh's own
+  `visible:false` but not its ancestors').
+- **One offending slot in a multi-material array is enough**, because the object is drawn or it is not.
+- **The viewmodel still goes in** (build 1140). It is opaque geometry and its own occlusion is that build's
+  entire point; this must not sweep it out.
+
+**Sprite sheets were the wrong suspect, and worth recording as such.** The procedural sheets are clean: every
+gradient in `_drawExplosionFrame` / `_drawMuzzleFrame` / `_drawSmokeFrame` ends at `rgba(0,0,0,0)`, and
+`AdditiveBlending` in three is `src·srcAlpha + dst`, so a transparent pixel adds exactly nothing. Reading the
+report as "the PNG's transparency is wrong" would have sent the fix into the sheet baker, which is correct
+code.
+
+**Probably not caused by this session's builds, but plausibly made visible by one.** The prepass is 1126 and
+nothing since touched it — but 1149 added a bounce term that lifts the ambient, and SSAO multiplies the
+ambient, so the AO term's visible contrast went up. A pre-existing artifact getting easier to see is
+consistent with a report of "now".
+
+## Open work (as of build 1152)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
