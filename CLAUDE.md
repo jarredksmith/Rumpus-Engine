@@ -819,7 +819,44 @@ ever needs pulling back, the lever is frost's `exposure` (1.2), not `gnd`.
 `Object.assign(worldCfg, r.world); applyWorldCfg()`. Checked because "the mood never reached the engine"
 would have been a tidy explanation for a dark plane, and it is not the explanation.
 
-## Open work (as of build 1151)
+## A muzzle flash was writing itself into the AO buffer (build 1152)
+
+Reported from play, with a screenshot: a hard, slightly **brighter** rectangle around muzzle flashes and
+explosion/impact sprites — the PNG quad's own edge, the transparent area reading lighter than the scene.
+
+The AO prepass renders with `scene.overrideMaterial = _matAOGeo`, and **`overrideMaterial` replaces
+`transparent` and `depthWrite:false` along with everything else.** So a sprite wrote its whole QUAD into the
+half-res G-buffer as though it were solid geometry a metre from the camera; SSAO then derived that square's
+occlusion from a flat camera-facing surface — unoccluded — while the world around it kept its real
+occlusion. Less darkening inside the square than outside it, with a quad edge.
+
+**This is the same trap build 1126 recorded and build 1128 hit again, now for the third time.** 1126: "the
+sky dome fills the buffer unless it is hidden for the pass. Weather points do the same." Both were fixed by
+NAME, and the flipbook VFX arrived later. Naming a third would only buy a fourth, so the test is now a
+property of the material: **nothing that does not write depth belongs in a depth-derived G-buffer.** The
+prepass hides any object whose material has `depthWrite === false || transparent === true` and restores it
+after — one traverse, which is nothing beside the extra half-res scene render the pass already costs.
+
+Three details in the predicate, each of which would be a bug on its own:
+- **Already-invisible objects are not collected**, or the restore would switch them ON — editor gizmos in
+  play, which is a bug build 1139 already recorded from the other direction (`Raycaster` ignores a mesh's own
+  `visible:false` but not its ancestors').
+- **One offending slot in a multi-material array is enough**, because the object is drawn or it is not.
+- **The viewmodel still goes in** (build 1140). It is opaque geometry and its own occlusion is that build's
+  entire point; this must not sweep it out.
+
+**Sprite sheets were the wrong suspect, and worth recording as such.** The procedural sheets are clean: every
+gradient in `_drawExplosionFrame` / `_drawMuzzleFrame` / `_drawSmokeFrame` ends at `rgba(0,0,0,0)`, and
+`AdditiveBlending` in three is `src·srcAlpha + dst`, so a transparent pixel adds exactly nothing. Reading the
+report as "the PNG's transparency is wrong" would have sent the fix into the sheet baker, which is correct
+code.
+
+**Probably not caused by this session's builds, but plausibly made visible by one.** The prepass is 1126 and
+nothing since touched it — but 1149 added a bounce term that lifts the ambient, and SSAO multiplies the
+ambient, so the AO term's visible contrast went up. A pre-existing artifact getting easier to see is
+consistent with a report of "now".
+
+## Open work (as of build 1152)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

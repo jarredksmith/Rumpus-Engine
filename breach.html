@@ -7437,9 +7437,26 @@ function _renderPostFX(scn, cam){
     const _pv=scn.overrideMaterial, _skyV=_skyMesh&&_skyMesh.visible, _wV=(typeof _weatherPts!=='undefined')&&_weatherPts&&_weatherPts.visible;
     const _sa=renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate=false;
     if(_skyMesh) _skyMesh.visible=false; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=false;
+    // build 1152: and EVERY transparent decoration, for the same reason and by a rule rather than by name.
+    // overrideMaterial replaces `transparent` and `depthWrite:false` along with everything else, so a muzzle
+    // flash, an explosion, a damage number or a name tag wrote its whole QUAD into the G-buffer as if it were
+    // solid geometry a metre in front of the camera. SSAO then computed that square's occlusion from a flat
+    // camera-facing surface — which is unoccluded — so the sprite's transparent area came out LESS darkened
+    // than the world around it: a hard, visibly brighter rectangle wherever a sprite was on screen.
+    //
+    // Builds 1126 and 1128 fixed this twice by NAME (the sky dome, then the weather points) and the third
+    // instance arrived with the flipbook VFX. Naming the next one would only buy the same bug again, so the
+    // test is now a property of the material: nothing that does not write depth belongs in a depth-derived
+    // G-buffer. One traverse is nothing beside the extra half-res scene render this pass already costs.
+    const _aoHid=[];
+    scn.traverse(o=>{ if(!o.visible) return;
+      const m=o.material; if(!m) return;
+      const ms=Array.isArray(m)?m:[m];
+      if(ms.some(q=>q && (q.depthWrite===false || q.transparent===true))){ o.visible=false; _aoHid.push(o); } });
     scn.overrideMaterial=_matAOGeo;
     renderer.setRenderTarget(_aoGeoRT); renderer.render(scn, cam);
     scn.overrideMaterial=_pv;
+    for(const o of _aoHid) o.visible=true;
     // build 1140: the weapon goes in the G-buffer too. Without this the AO term at the weapon's pixels
     // is computed from the WORLD BEHIND IT and then multiplied into it — the gun picked up the shading
     // of whatever it happened to be standing in front of, and had no occlusion of its own anywhere.
@@ -25773,7 +25790,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1151 · 2026-07-30';
+const BUILD_VERSION = 'build 1152 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
