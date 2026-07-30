@@ -26255,7 +26255,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1172 · 2026-07-30';
+const BUILD_VERSION = 'build 1173 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37000,6 +37000,16 @@ function renderEditorFields(){
       // build 1146: snapping. On by default, because a level editor whose handles cannot line two objects
       // up is not a level editor; Ctrl inverts it for one drag, which is the escape hatch every DCC has.
       {
+        // build 1173: world/local space toggle — a rotated wall becomes slidable along its own length
+        const sw=document.createElement('div'); sw.style.cssText='display:flex;gap:5px;margin:7px 0 2px;';
+        for(const sp of ['world','local']){
+          const b=document.createElement('button'); b.textContent=(sp==='world'?'World':'Local')+' axes';
+          b.title=(sp==='world'?'Handles follow the world grid':'Handles follow the selected object\u2019s own rotation \u2014 slide a rotated wall along its length');
+          b.style.cssText='flex:1;font-size:11px;padding:3px 0;border-radius:5px;border:1px solid '+(gizmoSpace===sp?'var(--accent)':'#2a3a42')+';background:'+(gizmoSpace===sp?'#12312a':'#0c1418')+';color:'+(gizmoSpace===sp?'#9fe6cf':'#7f9a92')+';cursor:pointer;';
+          b.onclick=()=>{ gizmoSpace=sp; _saveSnapPrefs(); if(typeof updateGizmo==='function') updateGizmo(); renderEditorFields(); };
+          sw.appendChild(b);
+        }
+        gz.appendChild(sw);
         const lab=document.createElement('label');
         lab.style.cssText='display:flex;align-items:center;gap:7px;margin:7px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer;';
         const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=gizmoSnap; cb.style.accentColor='var(--accent)';
@@ -38635,17 +38645,31 @@ let scaleProportional = true;       // default: uniform scaling; checkbox lets t
 let gizmoSnap = true;
 let snapGrid = 0.5;        // metres per translate step
 let snapAngleDeg = 15;     // degrees per rotate step — 15 divides 90 and 360, so corners land exactly
+// build 1173: WORLD vs LOCAL gizmo space. The handles were world-axis only — a wall rotated 30° could not
+// be slid along its own length; the numeric fields at five decimals were the only way. In local mode the
+// drag axes (translate, per-axis scale) and the rotate normals are the PRIMARY object's own axes, and the
+// gizmo visual turns with it so the handle you see is the axis you get. Scale math needed no change: it
+// always scaled the object's own components — only its handles pointed the wrong way in world mode.
+let gizmoSpace = 'world';
+function _gizmoRefQuat(){
+  if(gizmoSpace!=='local') return null;
+  const o = editorActive==='props' ? propModels[editorTargets.props.idx]
+    : editorActive==='turrets' ? turretModels[editorTargets.turrets.idx] : null;   // lights/zones/markers are unrotated — world is correct for them
+  return (o && o.quaternion) ? o.quaternion : null;
+}
 let snapScaleStep = 0.25;  // scale units per step; a box primitive's scale IS its size in metres
 try{
   const v = localStorage.getItem('breach_gizsnap'); if(v==='off') gizmoSnap=false; else if(v==='on') gizmoSnap=true;
   const g = parseFloat(localStorage.getItem('breach_gizsnap_g')); if(isFinite(g) && g>=0) snapGrid=g;
   const a = parseFloat(localStorage.getItem('breach_gizsnap_a')); if(isFinite(a) && a>=0) snapAngleDeg=a;
+  if(localStorage.getItem('breach_gizspace')==='local') gizmoSpace='local';   // build 1173
   const c = parseFloat(localStorage.getItem('breach_gizsnap_s')); if(isFinite(c) && c>=0) snapScaleStep=c;
 }catch(e){}
 function _saveSnapPrefs(){ try{
   localStorage.setItem('breach_gizsnap', gizmoSnap?'on':'off');
   localStorage.setItem('breach_gizsnap_g', String(snapGrid));
   localStorage.setItem('breach_gizsnap_a', String(snapAngleDeg));
+  localStorage.setItem('breach_gizspace', gizmoSpace);   // build 1173
   localStorage.setItem('breach_gizsnap_s', String(snapScaleStep));
 }catch(e){} }
 // Ctrl (or Cmd) INVERTS the setting rather than enabling it — with snapping on, which is the default, the
@@ -39113,6 +39137,7 @@ function updateGizmo(){
   const pos = (movable && !_lk) ? getSelPos() : null;
   if(!pos){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; gizmo.visible = false; return; }
   gizmo.position.copy(pos);
+  { const q=_gizmoRefQuat(); if(q) gizmo.quaternion.copy(q); else gizmo.quaternion.set(0,0,0,1); }   // build 1173: the handle you see is the axis you get
   if(activeCam()===camera){ const d = camera.position.distanceTo(pos); gizmo.scale.setScalar(Math.max(0.4, d*0.06) * (isTouch?1.5:1)); }
   else { gizmo.scale.setScalar(Math.max(0.6, topZoom*0.03)); }
   // lights + spawns have no scale; force translate/rotate only for them
@@ -39168,6 +39193,7 @@ function tryGizmoGrab(e){
 
   if(kind==='translate'){
     const dir = new THREE.Vector3(axis==='x'?1:0, axis==='y'?1:0, axis==='z'?1:0);
+    { const q=_gizmoRefQuat(); if(q) dir.applyQuaternion(q).normalize(); }   // build 1173: local mode drags along the OBJECT'S axis
     gizmoDrag = { kind, dir, startParam: axisParamUnderPointer(e, pos, dir), startPos: pos.clone() };
   } else if(kind==='scale'){
     const sc = getSelScale(); if(!sc) return false;
@@ -39175,12 +39201,14 @@ function tryGizmoGrab(e){
       gizmoDrag = { kind, axis:'all', startScale: sc.clone(), refDist: scaleRefDistance(e, pos) };
     } else {
       const dir = new THREE.Vector3(axis==='x'?1:0, axis==='y'?1:0, axis==='z'?1:0);
+      { const q=_gizmoRefQuat(); if(q) dir.applyQuaternion(q).normalize(); }   // build 1173: the scale handle you grab points along the local axis it scales
       const sp = axisParamUnderPointer(e, pos, dir);
       gizmoDrag = { kind, axis, dir, startParam: sp || 0.0001, startScale: sc.clone() };
     }
   } else if(kind==='rotate'){
     const rot = getSelRot(); if(!rot) return false;
     const normal = new THREE.Vector3(axis==='x'?1:0, axis==='y'?1:0, axis==='z'?1:0);
+    { const q=_gizmoRefQuat(); if(q) normal.applyQuaternion(q).normalize(); }   // build 1173: rotate about the object's own axis
     const hit = pointerOnPlane(e, pos, normal);
     if(!hit) return false;
     const start = hit.clone().sub(pos);
