@@ -16528,6 +16528,7 @@ let _jumpHeldPrev=false; const JUMP_CD=0.5;   // jump must be a fresh press, and
 // ledge (or one frame before landing) was eaten. COYOTE: the jump is still honoured this long after the
 // ground flickers away. BUFFER: a press this early before touchdown fires on the first grounded frame.
 let _coyoteT=0, _jumpBufT=0; const COYOTE_T=0.10, JUMP_BUF=0.15;
+const MOVE_ACCEL_K=14, MOVE_BRAKE_K=20, MOVE_AIR_K=3.5, MOVE_AIR_BRAKE_K=0.4;   // build 1171: the acceleration model's four rates (see the movement block)
 const TOUCH_LOOK_SENS = 0.0042, TOUCH_ADS_SENS = 0.0022;
 // Pointer Lock isn't supported on iOS Safari (the methods are undefined). Route every call through these
 // guards so a missing API can't throw — touch devices steer via the on-screen look pad instead.
@@ -26245,7 +26246,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1170 · 2026-07-30';
+const BUILD_VERSION = 'build 1171 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30968,8 +30969,26 @@ function loop(){
   let speedBase = sprinting() ? SPEED*SPRINT : SPEED;
   if(crouching) speedBase = CROUCH_SPEED;          // crouch overrides sprint
   const sp = speedBase * (buffs.speed>0?1.4:1) * moveScale * run.speedMul;
-  player.vel.x = wish.x * sp;
-  player.vel.z = wish.z * sp;
+  // build 1171: movement has MASS. `vel = wish*sp` teleported velocity to the input every frame — zero
+  // start-up weight, dead-stop on key release EVEN MID-AIR (release W at the apex and the arc collapsed to a
+  // vertical drop), instantaneous 180s at full speed. Velocity now CHASES the input target exponentially,
+  // which keeps every tuned speed byte-identical at steady state (the target IS wish*sp) while giving
+  // starts, stops and direction changes a ramp. Four rates, because the four situations are different:
+  //   ACCEL 14 — reaches 95% of top speed in ~210ms: weight without sluggishness.
+  //   BRAKE 20 — a run stops in ~0.6m, a sprint in ~1.1m: crisp, and genre-typical (UE CMC lands ~0.9m).
+  //   AIR 3.5  — air control exists (course corrections work) but cannot carve like ground.
+  //   AIR_BRAKE 0.4 — release the keys mid-jump and the arc CARRIES (~67% of speed still there after 1s).
+  // The slide branch below still writes velocity directly (its decay is authored), and when a slide ends the
+  // model inherits its speed and bleeds it smoothly instead of snapping to wish*sp on the next frame.
+  // dt spikes clamp f to 1, which degrades exactly to the old behaviour rather than overshooting.
+  {
+    const _tx = wish.x * sp, _tz = wish.z * sp;
+    const _mvIn = (wish.x !== 0 || wish.z !== 0);
+    const _k = player.onGround ? (_mvIn ? MOVE_ACCEL_K : MOVE_BRAKE_K) : (_mvIn ? MOVE_AIR_K : MOVE_AIR_BRAKE_K);
+    const _f = Math.min(1, _k * dt);
+    player.vel.x += (_tx - player.vel.x) * _f;
+    player.vel.z += (_tz - player.vel.z) * _f;
+  }
   // build 874: side-scroll lane hold — kill off-lane velocity and ease back onto the lane (knockback
   // and slides can push off it; the lane is captured at deploy by _updateViewAim). Cars roam free.
   if(_vm874==='side' && _sideLock!=null && !drivingCar){
