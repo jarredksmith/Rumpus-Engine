@@ -6828,7 +6828,7 @@ function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); }
 _applyPixelRatio();
 // Rolling frame-time monitor (always on, ~free). Targets ~50fps; if we miss it for a stretch, drop a
 // step; if we beat ~58fps comfortably for longer, climb back. Asymmetric: quick to relieve, slow to push.
-let _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
+let _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0, _adaptSlow=0;   // build 1141: _adaptSlow counts the frames that were actually slow
 // build 880: upshift backoff. The scaler used to climb back after 3 good seconds into the EXACT state
 // that just failed, producing a 60↔20fps ping-pong ("jittery even on a clear level"). A downshift that
 // lands within 6s of an upshift marks the climb as failed and doubles the required good streak
@@ -6844,21 +6844,43 @@ let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
 // reads — so antialiasing moved to an FXAA pass and this rung now sheds SSAO instead. Same ladder,
 // same "shed before any resolution drop, re-arm last, three strikes and it stays off" behaviour.
 let _hiFxOn=true, _hiFxFails=0;
+// build 1141: no single frame may contribute more than this to the window's mean. 250 ms is well past
+// any frame time worth reacting to, so a sustained 400 ms load still reads as slow while one 3-second
+// hitch reads as one slow frame instead of forty.
+const ADAPT_FRAME_CAP = 250;
+// ...and a window needs this much observed frame time before it is allowed to decide anything. A COUNT of
+// frames cannot serve: eight frames per 500 ms window is 16 fps, and requiring it silenced the scaler on
+// everything slower. Two 200 ms frames is 400 ms of evidence and is conclusive.
+const ADAPT_MIN_SAMPLE_MS = 250;
 const ADAPT_ENABLED_DEFAULT = true;   // build 810: on by default everywhere (was touch-only) — desktop laptops need the relief too; opt out via the setting
 let _adaptOn = ADAPT_ENABLED_DEFAULT;
 try{ const v=localStorage.getItem('breach_adaptres'); if(v==='on') _adaptOn=true; else if(v==='off') _adaptOn=false; }catch(e){}
 function _adaptResTick(frameMs, now){
   if(!_adaptOn) return;
-  _adaptAcc += frameMs; _adaptN++;
+  // build 1141: a single frame's contribution is CAPPED. One 3-second hitch — a level load, a GC pause,
+  // a shader compile — used to dominate the mean and cost the player a rung of quality for something
+  // that was never a sustained load. The cap keeps a pathological frame from outweighing the window, and
+  // _adaptSlow makes the downshift test a MAJORITY question rather than an average one.
+  _adaptAcc += Math.min(frameMs, ADAPT_FRAME_CAP); _adaptN++; if(frameMs > 20) _adaptSlow++;
   if(now < _adaptNext) return;
   _adaptNext = now + 500;                 // evaluate twice a second
-  if(_adaptN < 8){ _adaptAcc=0; _adaptN=0; return; }   // need a real sample
-  const avg = _adaptAcc/_adaptN; _adaptAcc=0; _adaptN=0;
+  // build 1141: "a real sample" is a quantity of TIME, not a count of frames. This was `if(_adaptN < 8)
+  // { _adaptAcc=0; _adaptN=0; return; }` — eight frames inside a 500 ms window, i.e. 16 fps — so on any
+  // machine slower than that it discarded its evidence and returned EVERY window and the scaler never
+  // acted at all. The worse the device, the more certainly the relief never arrived, which is the exact
+  // inverse of what this system is for. Measured by driving this function with steady synthetic frames:
+  // 22-70 ms/frame reached the bottom rung within a minute; 100, 150, 200 and 400 ms never moved.
+  // Two frames of 200 ms is 400 ms of evidence and is plenty; two frames is the floor, because ONE long
+  // frame is a hitch (a level load, a GC pause) and must not cost the player any quality. And the
+  // deficient case no longer THROWS the samples away — it keeps them and re-checks next window, so even
+  // a machine rendering slower than one frame per window eventually has two.
+  if(_adaptN < 8 && !(_adaptN >= 2 && _adaptAcc >= ADAPT_MIN_SAMPLE_MS)) return;
+  const avg = _adaptAcc/_adaptN, slowFrac = _adaptSlow/_adaptN; _adaptAcc=0; _adaptN=0; _adaptSlow=0;
   if(now < _adaptCool) return;            // settling after a change
-  if(avg > 20 && _prStepI===0 && _hiFxOn){             // build 883: first relief is the cheap one — drop the top FX rung, keep full resolution
+  if(avg > 20 && slowFrac >= 0.5 && _prStepI===0 && _hiFxOn){             // build 883: first relief is the cheap one — drop the top FX rung, keep full resolution
     if(_adaptUpAt>0 && now - _adaptUpAt < 6000){ _adaptUpNeed = Math.min(48, _adaptUpNeed*2); _hiFxFails++; }   // a re-arm that failed this fast counts a strike
     _hiFxOn=false; _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;   // no _applyPixelRatio: the post pipeline swaps targets on its own
-  } else if(avg > 20 && _prStepI < _PR_STEPS.length-1){   // still slow -> now trade resolution
+  } else if(avg > 20 && slowFrac >= 0.5 && _prStepI < _PR_STEPS.length-1){   // still slow -> now trade resolution
     if(_adaptUpAt>0 && now - _adaptUpAt < 6000) _adaptUpNeed = Math.min(48, _adaptUpNeed*2);   // build 880: that climb failed — retry later, not sooner (guard: a session's FIRST downshift is not a failed climb)
     _prStepI++; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;
   } else if(avg < 17 && (_prStepI > 0 || (!_hiFxOn && _hiFxFails < 3))){   // headroom -> climb; the FX rung is the final one, and 3 failed re-arms lock it off for the session
@@ -25349,7 +25371,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1140 · 2026-07-30';
+const BUILD_VERSION = 'build 1141 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

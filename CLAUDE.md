@@ -323,7 +323,32 @@ Measured, stock level, same camera: weapon body 2,473 → 5,837 unique colours; 
 (world AO). A/B on the G-buffer pass alone, everything else in place: weapon grip 69,80,67 → 56,65,56
 while the crate foot stays byte-identical — so the weapon's occlusion is its own, not the vignette's.
 
-## Open work (as of build 1140)
+## The adaptive quality ladder (build 1141) — it never fired when it mattered
+
+`_adaptResTick` opened with `if(_adaptN < 8){ _adaptAcc=0; _adaptN=0; return; }` — "need a real sample".
+Eight frames inside a 500 ms window **is 16 fps**, so on anything slower the gate was never satisfied: it
+threw its evidence away and returned every window, forever. The worse the device, the more certainly the
+relief never arrived, which is the exact inverse of what the system is for. Measured by driving the real
+function with steady synthetic frame times for 60 s of simulated play: 22–70 ms/frame reached the bottom
+rung; **100, 150, 200 and 400 ms/frame never moved at all.**
+
+"A real sample" is now a quantity of TIME (`ADAPT_MIN_SAMPLE_MS`, with a two-frame floor), and a deficient
+window KEEPS its samples instead of discarding them, so even a machine slower than one frame per window
+eventually has two.
+
+Fixing that exposed a second flaw that had always been live at normal frame rates: a window's **mean** is
+dominated by one pathological frame, so a single 3-second hitch — a level load, a GC pause, a shader
+compile — cost the player a rung for a load that was never sustained. So a frame contributes at most
+`ADAPT_FRAME_CAP` to the mean, and both downshift rungs now require `slowFrac >= 0.5` (a majority-slow
+window) beside the mean. The CLIMB is deliberately *not* gated on `slowFrac` — recovering means the mean
+came down, which is the right question there.
+
+`tests/test-1141` executes all of it: every sustained load from 22 ms to 900 ms reaches the bottom rung,
+8–20 ms is left alone, hitches of 300 ms to 12 s cost nothing, recovery climbs all the way back, and the
+opt-out still holds. `scratchpad/ladder2.mjs` is the sweep that found it — worth rebuilding rather than
+reasoning, because the failure is invisible from the code and needs no browser to reproduce.
+
+## Open work (as of build 1141)
 
 **`arenaMood` never emits `floorColor` or `wallColor`.** Every other world key it touches (sky, fog,
 post, `ssao`) it sets, but a generated desert arena still sits on the engine's default grey-blue floor

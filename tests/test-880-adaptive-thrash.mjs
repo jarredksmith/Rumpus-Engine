@@ -12,7 +12,8 @@ const src = gameSource();
 
 // ---- the scaler, executed: simulate windows of frame times against a fake clock ----
 const code = `
-let _adaptOn=true, _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
+let _adaptOn=true, _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0, _adaptSlow=0;
+const ADAPT_FRAME_CAP=250, ADAPT_MIN_SAMPLE_MS=250;   // build 1141: a capped per-frame contribution + a time-based sample gate
 let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
 let _hiFxOn=true, _hiFxFails=0;   // build 883: the top-quality rung + strike-out (build 1126: MSAA *and* SSAO ride it)
 let _prStepI=0, _prScale=1;
