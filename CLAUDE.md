@@ -967,6 +967,20 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Authored wave manifests (build 1179) — PHASE 2 COMPLETE
+
+Random-mode composition was a hardcoded formula (n = 3 + wave*2, thresholds for the mix); "wave 3 = 2
+brutes + a shielded from the north gate" was unauthorable. Manifests are a MINI-LANGUAGE (the dialogue
+system's precedent — a textarea beats a widget forest), one line per wave: `3x grunt, 2x runner @gate`,
+`-` for an intentional breather, blank = pure formula. `@tag` clusters the squad on the tagged prop with
+the logic-spawn ring; no tag scatters at the arena edge like the formula. Caps: 20/term, 40/wave, 2
+bosses, 50 waves; unknown types demote to grunt; a missing tag falls back to the edge (never (0,0)).
+Waves PAST the manifest fall back to the formula so endless still escalates, and a manifest wave never
+gets the automatic milestone boss — the author owns its composition (this falls out of structure: the
+milestone boss lives in randomWaveDescriptors). The SOURCE text serialises (`game.wavesText`, 2000 chars)
+and both loaders re-parse it, so the editor round-trips exactly what was typed. Two serializer pins moved
+(33, 62). Phase 2 of the critic roadmap is complete.
+
 ## Chat gets a filter and a mute (build 1178)
 
 The platform critic: chat capped length and escaped HTML but never filtered CONTENT. The filter runs
@@ -1463,7 +1477,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1178)
+## Open work (as of build 1179)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
