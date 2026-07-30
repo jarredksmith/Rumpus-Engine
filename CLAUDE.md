@@ -435,12 +435,43 @@ Three numbers worth keeping from the investigation, each isolated by capture:
   ~8:1 on a horizontal surface). Fixing that is a whole-engine rebalance with a legacy-content story like
   `colorV`'s, not a one-line change — do not start it without that plan.
 
-## Open work (as of build 1144)
+## Object-space detail for UV-less models (build 1145)
 
-**The rifle has no roughness or normal map.** `propMeshMap` counts 9 meshes with no maps at all and
-they are all the weapon GLB, so there is not one specular break-up or AO crease anywhere on the object
-that occupies 11% of every gameplay frame. `applyProcSurface` deliberately does not reach it (imported
-models keep their own materials), so this wants the viewmodel's own treatment.
+Build 1139's detail set needs texture coordinates. **The shipped weapon has none** — read out of gun.glb,
+every primitive carries only `NORMAL` and `POSITION`, and its four materials all sit at the identical
+roughness 0.415087 / metalness 0.4 with no maps of any kind. That is the whole of the critic's "not one
+specular pixel" on the object filling 11% of every frame, and no texture can fix it: with no UVs there is
+nowhere to put one. The low-poly sources this engine points creators at ship UV-less meshes constantly.
+
+So `applyObjDetail` patches three's own `MeshStandardMaterial` through `onBeforeCompile` — the technique
+`floorMat` already uses for the paint splat, and deliberately **not** a raw `ShaderMaterial` (this file has
+twice lost a subsystem to a raw shader failing to compile silently; a patched built-in keeps three's
+lighting, shadows, fog and tone mapping intact). Four things in it are load-bearing:
+
+- **Object space, not world space.** A viewmodel bobs and a prop can be carried; world-space noise makes
+  the grain SWIM across the surface as the object moves. `vOdPos = position`.
+- **Frequency is CYCLES ACROSS THE MESH, never per unit.** A GLB arrives in whatever units its author
+  used — gun.glb, the museum and a Poly Pizza crate differ by orders of magnitude — so a per-unit figure is
+  invisible on one asset and aliased to noise on the next. `_objDetailFreq` normalises by each mesh's own
+  local bounding box.
+- **The roughness patch runs BEFORE the normal patch**, because three emits `roughnessmap_fragment` before
+  `normal_fragment_maps`, so the field is evaluated once into shader globals and the normal patch
+  differences against it — four noise evaluations per pixel instead of five. `test-1145` verifies that
+  ordering **against the real three build** (`ShaderLib.physical.fragmentShader`), because if an upgrade
+  reorders them `_odBase` is read before it is written and the perturbation silently becomes garbage.
+- **`customProgramCacheKey` is a constant.** Every patched material produces the same program; without it
+  three compiles a variant per material.
+
+An authored map of any kind (`map` / `normalMap` / `roughnessMap` / `metalnessMap`) or the presence of UVs
+disqualifies a material — a creator's asset always wins, and two detail systems on one surface is double
+grain. The gradient is projected onto the tangent plane so the perturbation cannot rotate a normal off its
+own surface, and roughness is a bounded *multiplier* of the authored value.
+
+Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean held at 92,102,108 → 92,102,109,
+world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
+unique-colour measurement — `postGrain` is stochastic per frame.
+
+## Open work (as of build 1145)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

@@ -7903,6 +7903,121 @@ function retileProcSurface(root, span){
 // deck and a 22x4.5x3 corner wall then carry the same grain, which is what makes them read as the same
 // material rather than as two differently-zoomed photographs of it.
 function _propProcSpan(obj){ const s = obj && obj.scale; return s ? Math.max(Math.abs(s.x), Math.abs(s.y), Math.abs(s.z)) : 1; }
+
+// ---------- build 1145: surface detail for models with NO UVs ----------
+// The detail set above needs texture coordinates. The engine's own weapon has NONE — read straight out of
+// gun.glb, every primitive carries only NORMAL and POSITION, and its four materials all sit at the
+// identical roughness 0.415 / metalness 0.400 with no maps of any kind. That is the whole of a critic's
+// "not one specular pixel and not one AO crease" on the object that occupies 11% of every gameplay frame,
+// and it is not a fixable-by-texture problem: with no UVs there is nowhere to put one. The low-poly
+// sources this engine points creators at (Poly Pizza, Sketchfab) ship UV-less meshes constantly, so this
+// is the general case, not one asset.
+//
+// So the detail goes in OBJECT space, in the shader, via onBeforeCompile on three's own
+// MeshStandardMaterial — the same technique floorMat already uses for the paint splat, and deliberately
+// NOT a raw ShaderMaterial (this file has twice lost a whole subsystem to a raw shader failing to compile
+// silently; a patched built-in keeps three's lighting, shadows, fog and tone mapping intact).
+//
+// Object space, not world space: a viewmodel bobs with the walk cycle and a prop can be carried, and
+// world-space noise would make the grain SWIM across the surface as the object moves. Object space sticks.
+// The frequency is expressed as CYCLES ACROSS THE OBJECT, never as cycles per unit: a GLB arrives in
+// whatever units its author used — gun.glb, the museum, a Poly Pizza crate all differ by orders of
+// magnitude — so a per-unit figure would be invisible on one asset and aliased to noise on the next. Each
+// mesh's own local bounding box normalises it, which also means every imported model gets the same
+// apparent grain density however it was exported.
+const OBJ_DETAIL_CYCLES = 34.0;  // noise cycles across a mesh's longest local axis
+const OBJ_DETAIL_ROUGH = 0.30;   // +/- fraction it swings the authored roughness
+const OBJ_DETAIL_BUMP = 0.35;    // normal perturbation, in gradient units
+// One value-noise field, hashed rather than sampled: no texture, no UVs, no upload.
+const _OBJ_NOISE_GLSL = [
+  'float _odHash(vec3 p){ p = fract(p*0.3183099 + vec3(0.71,0.113,0.419)); p *= 17.0;',
+  '  return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }',
+  'float _odNoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);',
+  '  return mix(mix(mix(_odHash(i+vec3(0,0,0)),_odHash(i+vec3(1,0,0)),f.x),',
+  '                 mix(_odHash(i+vec3(0,1,0)),_odHash(i+vec3(1,1,0)),f.x),f.y),',
+  '             mix(mix(_odHash(i+vec3(0,0,1)),_odHash(i+vec3(1,0,1)),f.x),',
+  '                 mix(_odHash(i+vec3(0,1,1)),_odHash(i+vec3(1,1,1)),f.x),f.y),f.z); }',
+  // two octaves: a broad panel-to-panel variation plus a fine machined grain
+  'float _odField(vec3 p){ return _odNoise(p)*0.65 + _odNoise(p*3.1)*0.35; }',
+].join('\n');
+// Does this geometry have anywhere to put a texture?
+function objDetailWanted(geo, mat){
+  if(!geo || !mat || !mat.isMeshStandardMaterial) return false;          // Basic/Phong have no roughness
+  if(geo.attributes && geo.attributes.uv) return false;                  // it has UVs: the texture path serves it
+  if(mat.map || mat.normalMap || mat.roughnessMap || mat.metalnessMap) return false;   // authored maps win, always
+  return true;
+}
+function applyObjDetail(mat, freq){
+  if(!mat || mat.userData._objDetail) return mat;
+  mat.userData._objDetail = true;
+  const f = (freq > 0) ? freq : OBJ_DETAIL_CYCLES;
+  mat.onBeforeCompile = (shader)=>{
+    shader.uniforms.uOdFreq = { value: f };
+    shader.uniforms.uOdRough = { value: OBJ_DETAIL_ROUGH };
+    shader.uniforms.uOdBump = { value: OBJ_DETAIL_BUMP };
+    shader.vertexShader = 'varying vec3 vOdPos;\n' + shader.vertexShader
+      .replace('#include <begin_vertex>', 'vOdPos = position;\n#include <begin_vertex>');
+    // _odP and _odBase are shader-globals on purpose: three's meshphysical fragment shader runs
+    // roughnessmap_fragment BEFORE normal_fragment_maps, so the field is evaluated once in the first
+    // patch and reused by the second — four noise evaluations per pixel instead of five.
+    shader.fragmentShader = 'varying vec3 vOdPos;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump;\n'
+      + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase;\n' + shader.fragmentShader
+      // Roughness first: this is the term that breaks a swept highlight into a surface. roughnessFactor
+      // is declared by the chunk, so the patch has to come AFTER it.
+      .replace('#include <roughnessmap_fragment>', [
+        '#include <roughnessmap_fragment>',
+        '_odP = vOdPos * uOdFreq;',
+        '_odBase = _odField(_odP);',
+        'roughnessFactor = clamp(roughnessFactor * mix(1.0 - uOdRough, 1.0 + uOdRough, _odBase), 0.03, 1.0);',
+      ].join('\n'))
+      // Then the normal. A low-poly facet is ONE flat shading value across its whole area, which is the
+      // single loudest "this is an untextured model" tell; a few degrees of micro-relief is what breaks
+      // it. The gradient is projected onto the tangent plane so the perturbation cannot tilt the normal
+      // away from the surface it belongs to.
+      .replace('#include <normal_fragment_maps>', [
+        '#include <normal_fragment_maps>',
+        '{ float _odE = 0.6;',
+        '  vec3 _odG = vec3(_odField(_odP + vec3(_odE,0.0,0.0)) - _odBase,',
+        '                   _odField(_odP + vec3(0.0,_odE,0.0)) - _odBase,',
+        '                   _odField(_odP + vec3(0.0,0.0,_odE)) - _odBase);',
+        '  _odG -= normal * dot(_odG, normal);',
+        '  normal = normalize(normal + _odG * uOdBump);',
+        '}',
+      ].join('\n'));
+  };
+  // Every patched material produces the SAME program, so they can all share one — but three keys its
+  // program cache on the material's own signature and would otherwise compile a variant per material.
+  mat.customProgramCacheKey = ()=> 'objDetail';
+  mat.needsUpdate = true;
+  return mat;
+}
+// The frequency a mesh should use: `cycles` noise periods across its longest LOCAL axis. Returns 0 for a
+// degenerate or unmeasurable mesh, which applyObjDetail reads as "use the default".
+function _objDetailFreq(geo, cycles){
+  if(!geo) return 0;
+  if(!geo.boundingBox) { try{ geo.computeBoundingBox(); }catch(e){ return 0; } }
+  const b = geo.boundingBox; if(!b) return 0;
+  const span = Math.max(b.max.x-b.min.x, b.max.y-b.min.y, b.max.z-b.min.z);
+  if(!(span > 1e-6) || !isFinite(span)) return 0;
+  return (cycles > 0 ? cycles : OBJ_DETAIL_CYCLES) / span;
+}
+// Walk a loaded model and give every UV-less standard material the object-space detail, at a frequency
+// derived from each mesh's own extent. `cycles` overrides the density for a caller that wants coarser or
+// finer grain than the default. Returns how many materials were patched, so a caller can log or test it.
+//
+// NOTE the shared-material hazard: two meshes of very different size that share ONE material get one
+// frequency (whichever patched first), because the frequency is baked into that material's uniform. That
+// is correct for the common case — a GLB's materials are per-look, and its parts are of similar scale —
+// and cloning per mesh to avoid it would multiply programs for no visible gain.
+function installObjDetail(root, cycles){
+  if(!root || !root.traverse) return 0;
+  let n = 0;
+  root.traverse(o=>{ if(!o.isMesh || !o.material) return;
+    const ms = Array.isArray(o.material) ? o.material : [o.material];
+    const f = _objDetailFreq(o.geometry, cycles);
+    for(const m of ms) if(objDetailWanted(o.geometry, m)){ applyObjDetail(m, f); n++; } });
+  return n;
+}
 // The detail set is a FALLBACK, not a one-shot assignment, and getting that wrong is why the first cut
 // of this build measured ZERO change in the frame. floorMat.map was set here at construction and then
 // nulled by the first applyWorldCfg — worldCfg.floorTex is '' by default, and _loadSurfaceMap's "no url"
@@ -14734,6 +14849,11 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
     // grass speckling the lawn with shadow is what grounds it.
     for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)){ o.receiveShadow = false; break; } }
     if(typeof _installRaycastBVH === 'function') _installRaycastBVH(o);   // build 1097: rays vs this model stop testing every triangle
+    // build 1145: an imported mesh with no UVs cannot carry a texture, so it gets object-space detail
+    // instead. Only UV-less standard materials with no authored maps are touched — a properly textured
+    // import is left exactly alone. Coarser than the viewmodel's density: a prop is metres across, not
+    // half a metre, and it is seen from further away.
+    if(typeof installObjDetail === 'function') installObjDetail(o, 18);
     // build 1095: sharpen every imported texture at grazing angles (floors especially)
     if(typeof MAX_ANISO !== 'undefined' && MAX_ANISO > 1){ const ms = Array.isArray(o.material) ? o.material : [o.material];
       for(const m of ms){ if(!m) continue; for(const k of ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap']) if(m[k]) m[k].anisotropy = MAX_ANISO;
@@ -16520,6 +16640,10 @@ function showWeaponModel(key){
       }
       applyWepView(model, key);
       model.traverse(o=>{ if(o.isMesh){ o.castShadow=false; o.frustumCulled=false; o.renderOrder=999; if(o.material){ o.material.depthTest=true; } } });
+      // build 1145: the weapon is on screen at all times across ~11% of it, and the shipped one has no
+      // UVs and four materials at one identical roughness. Object-space detail is the only kind that can
+      // reach it. A viewmodel is authored at ~0.5 units, so the frequency is the default.
+      if(typeof installObjDetail==='function') installObjDetail(model);
       gun.add(model);
       gunModelByWep[key] = model;
       model.visible = (key === curWep);          // only show if it's still the active weapon
@@ -25410,7 +25534,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1144 · 2026-07-30';
+const BUILD_VERSION = 'build 1145 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
