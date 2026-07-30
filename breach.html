@@ -17133,6 +17133,20 @@ function reload(){
 const enemies = [];
 let nextEnemyId = 1;   // stable ids so co-op clients can reference enemies over the network
 const enemyGeo = new THREE.CapsuleGeometry(0.7, 1.4, 4, 10);
+// build 1154: an enemy's MOVEMENT radius — how far the obstacle pass holds it off every collider box.
+//
+// Reported from play: enemies stuck on ramps and around boxes, "with the default capsule enemies as well",
+// using a model scaled to 0.38. Both halves of that are one number. The capsule's real radius is 0.7 (the
+// geometry above) but its footprint was 0.9, and an imported model's was `Math.max(0.9, realHalfWidth)` —
+// so a 0.38-scaled model whose true half-width is 0.365 was held off obstacles by 0.9, TWO AND A HALF TIMES
+// its own width. Worse, both are wider than the PLAYER's 0.8: an enemy could not follow you through a gap
+// you had just walked through, which is what reads as "stuck" rather than "slow".
+//
+// Replayed through the engine's own obstacle pass over a crate beside a ramp (scratchpad/botstuck.mjs), a
+// 1.2 m gap: eR 0.9 pushed 0.50, eR 0.8 pushed 0.40, eR 0.5 pushed 0.10, eR 0.3 fitted. The floor is now
+// small enough for a scaled-down character and the real half-width drives everything above it.
+const ENEMY_CAP_R = 0.7;    // the capsule's own radius, so the default enemy is held off by what it IS
+const ENEMY_MIN_R = 0.3;    // a floor for degenerate//tiny models — never zero, never the old 0.9
 // Optional uploaded enemy model (GLB, animated). When set, each enemy shows this model instead of the
 // capsule; saved with the level (under "enemy"). The logical body stays a capsule-sized Group so all the
 // AI / collision / networking code is unchanged — only the visual child swaps.
@@ -17195,7 +17209,7 @@ function buildEnemyVisual(body){
     const eye = new THREE.Mesh(new THREE.SphereGeometry(.18,8,8), new THREE.MeshBasicMaterial({color:0xffd166}));
     eye.position.set(0, 0.7, -0.55);   // slightly forward so you can read facing
     cap.add(eye);
-    body.add(cap); body.userData.visual = cap; body.userData.modelY = 0; body.userData.hasModel = false; body.userData.footprint = 0.9*ty.scale;   // MOVEMENT spacing (auto; independent of the damage cylinder)
+    body.add(cap); body.userData.visual = cap; body.userData.modelY = 0; body.userData.hasModel = false; body.userData.footprint = ENEMY_CAP_R*ty.scale;   // build 1154: the capsule's REAL radius (CapsuleGeometry(0.7,...)), not 0.9 — see ENEMY_MIN_R
     cap.traverse(o=>{ o.raycast = ()=>{}; });   // shots test the hit-proxy cylinder, not the capsule mesh
     setEnemyHitProxy(body, mc.cr > 0 ? mc.cr : body.userData.footprint, mc.ch > 0 ? mc.ch : 2.8*ty.scale);   // capsule is 2.8u tall
   };
@@ -17221,7 +17235,7 @@ function buildEnemyVisual(body){
         const lbox = wbox.clone().applyMatrix4(_seatInv.copy(body.matrixWorld).invert());   // model extent relative to the body
         const cx = (lbox.min.x+lbox.max.x)/2, cz = (lbox.min.z+lbox.max.z)/2;
         model.position.set(model.position.x - cx + mc.xoff, model.position.y - lbox.min.y - 1.4 + mc.yoff, model.position.z - cz + mc.zoff);
-        body.userData.footprint = Math.max(0.9, Math.min(3.5, Math.max((lbox.max.x-lbox.min.x)/2, (lbox.max.z-lbox.min.z)/2)));   // MOVEMENT spacing from the real footprint (auto)
+        body.userData.footprint = Math.max(ENEMY_MIN_R, Math.min(3.5, Math.max((lbox.max.x-lbox.min.x)/2, (lbox.max.z-lbox.min.z)/2)));   // build 1154: MOVEMENT spacing from the model's REAL half-width; the old 0.9 floor made a scaled-down model 2.5x its own width
         body.userData.autoColH = Math.max(0.6, lbox.max.y - lbox.min.y);   // real model height -> default collider height
       }
       body.userData.visual = model;
@@ -17970,7 +17984,9 @@ function _animateFire(g, tms, dt){
     alp[i]=Math.max(0, op)*(smoke?0.5:0.9)*(p.bright||0.8); // smoke is semi-transparent so layers occlude into a plume
   }
   u.geo.attributes.position.needsUpdate=true; u.geo.attributes.aColor.needsUpdate=true; u.geo.attributes.aSize.needsUpdate=true; u.geo.attributes.aAlpha.needsUpdate=true;
-  if(u.light) u.light.intensity = u.li*(0.62 + 0.5*Math.abs(Math.sin(ts*7.3)) + 0.12*Math.sin(ts*23.1));
+  if(u.light){ u.light.intensity = u.li*(0.62 + 0.5*Math.abs(Math.sin(ts*7.3)) + 0.12*Math.sin(ts*23.1));
+    // build 1155: a pooled light is not parented to the group (see buildPropFireGroup), so it is aimed here.
+    if(u.lightPooled) u.light.position.set(g.position.x, g.position.y + (u.lightY||0), g.position.z); }
   u.emberT -= dt;
   if(spk && u.emberT<=0 && typeof spark==='function'){ u.emberT = 0.16+Math.random()*0.22; const a=Math.random()*Math.PI*2, rr=Math.sqrt(Math.random())*u.baseR*0.8; spark({ x:g.position.x+Math.cos(a)*rr, y:g.position.y+baseY+0.4, z:g.position.z+Math.sin(a)*rr }, (u.emberCol||0xff8a2a)); }
 }
@@ -19157,6 +19173,49 @@ function updateFireZones(dt){
   if(playerDps>0) _applyFireToPlayer(playerDps, dt); else { _fireBurnAccum=0; _fireTickT=0; }
 }
 // ---- Burning props: a prop can be "on fire" (flames + contact damage); an explosive one can burn then blow ----
+// build 1155: the FOURTH instance of "the number of lights in the scene must not change during play" (see
+// builds 636, 977, 1153). `buildPropFireGroup` did `new THREE.PointLight(...)` + `scene.add(grp)` the moment a
+// prop caught fire — and the commonest way that happens is SHOOTING AN EXPLOSIVE BARREL, mid-match, in combat.
+// Adding a light invalidates every lit material's program, so the first barrel you shot froze the game for
+// seconds; shattering it removed the light and did it again. Same pool shape as the loot boxes.
+const _fireLightPool = [];     // { light, busy }
+// Sized from what the LEVEL can actually burn, so a level with no fire pays nothing: every seated point light
+// sits in NUM_POINT_LIGHTS and is looped over per pixel by every material forever, seated or not.
+const FIRE_LIGHT_MAX = 12;
+function _burnablePropCount(){
+  if(typeof propModels==='undefined' || !propModels) return 0;
+  let n=0; for(const o of propModels){ if(!o||!o.userData) continue;
+    if(o.userData.onFire || (o.userData.explosive && (+o.userData.fireFuse||0)>0)) n++; }
+  return n;
+}
+function _ensureFireLights(){
+  if(typeof scene === 'undefined') return;
+  const want = Math.min(FIRE_LIGHT_MAX, _burnablePropCount());
+  while(_fireLightPool.length < want){
+    const L = new THREE.PointLight(0xff6a1a, 0, 10);
+    L.castShadow = false; L.visible = true; L.position.set(0, -9999, 0);
+    scene.add(L); _fireLightPool.push({ light: L, busy: false });
+  }
+}
+function _claimFireLight(dist){
+  for(const e of _fireLightPool){ if(e.busy) continue;
+    e.busy = true; e.light.distance = dist; e.light.intensity = 0; return e.light; }
+  return null;                 // exhausted: flames without a light beats a frozen frame
+}
+function _releaseFireLight(L){
+  if(!L) return;
+  for(const e of _fireLightPool){ if(e.light !== L) continue; e.busy = false; e.light.intensity = 0; e.light.position.set(0, -9999, 0); return; }
+}
+// A prop can leave `propModels` while burning (clearRuntimeProps, a shatter, a level swap), which would orphan
+// its group and strand the beam — and a stranded beam is not cosmetic: it is one fewer fire that ever glows for
+// the rest of the match. Reconcile against the live set rather than patching every removal path.
+function _reconcileFireLights(){
+  if(!_fireLightPool.length) return;
+  const live = new Set();
+  if(typeof propModels!=='undefined' && propModels){ for(const o of propModels){
+    const g = o && o.userData && o.userData._fireGroup; if(g && g.userData && g.userData.light) live.add(g.userData.light); } }
+  for(const e of _fireLightPool){ if(e.busy && !live.has(e.light)){ e.busy=false; e.light.intensity=0; e.light.position.set(0,-9999,0); } }
+}
 function buildPropFireGroup(o){
   o.updateMatrixWorld(true);
   const box=new THREE.Box3().setFromObject(o); const sz=new THREE.Vector3(); box.getSize(sz);
@@ -19166,17 +19225,20 @@ function buildPropFireGroup(o){
   const count=Math.max(140, Math.min(420, Math.round(rad*260)));
   const sizeW=Math.max(0.16, Math.min(0.5, rad*0.34));
   const fp=_addFireParticles(grp, count, rad*0.85, rise, sizeW);
-  const light=new THREE.PointLight(0xff6a1a, 2.0, Math.max(6, rad*5)); light.position.y=rise*0.4; grp.add(light);
-  grp.userData={ parts:fp.parts, geo:fp.geo, posArr:fp.posArr, colArr:fp.colArr, sizeArr:fp.sizeArr, alphaArr:fp.alphaArr, sizeW:fp.sizeW, light, li:2.0, baseR:rad*0.85, baseY:0, riseH0:rise, emberT:0 };
+  // NOT parented to the group: removing the group would take the light out of the scene and change the count
+  // on the way out too. It lives in the scene permanently and is aimed in world space by _animateFire.
+  const light=_claimFireLight(Math.max(6, rad*5));
+  grp.userData={ parts:fp.parts, geo:fp.geo, posArr:fp.posArr, colArr:fp.colArr, sizeArr:fp.sizeArr, alphaArr:fp.alphaArr, sizeW:fp.sizeW, light, lightPooled:true, lightY:rise*0.4, li:2.0, baseR:rad*0.85, baseY:0, riseH0:rise, emberT:0 };
   return grp;
 }
 function _propFireVisual(o){ if(o.userData._fireGroup) return; const g=buildPropFireGroup(o); g.position.copy(o.position); scene.add(g); o.userData._fireGroup=g; }
-function _removePropFireVisual(o){ const g=o.userData._fireGroup; if(!g) return; scene.remove(g); g.traverse(x=>{ if(x.geometry)x.geometry.dispose(); if(x.material&&x.material.dispose)x.material.dispose(); }); o.userData._fireGroup=null; }
+function _removePropFireVisual(o){ const g=o.userData._fireGroup; if(!g) return; if(g.userData.lightPooled) _releaseFireLight(g.userData.light); g.userData.light=null; scene.remove(g); g.traverse(x=>{ if(x.geometry)x.geometry.dispose(); if(x.material&&x.material.dispose)x.material.dispose(); }); o.userData._fireGroup=null; }
 // Ignite at runtime (deploy, or when a fused explosive is shot): arm the burn + (for fused explosives) the fuse.
 function igniteProp(o){ if(!o||o.userData._fireIgnited) return; o.userData._fireIgnited=true;
   if(o.userData.explosive && (+o.userData.fireFuse||0)>0 && o.userData._fireFuseT==null) o.userData._fireFuseT=+o.userData.fireFuse; }
 // Re-arm authored fires + clear runtime ignites on each deploy.
-function resetPropFires(){ for(const o of propModels){ if(!o) continue; o.userData._fireIgnited=false; o.userData._fireFuseT=null; if(o.userData.onFire) igniteProp(o); } }
+function resetPropFires(){ _ensureFireLights();   // deploy already recompiles — growing the pool must never happen mid-match
+  for(const o of propModels){ if(!o) continue; o.userData._fireIgnited=false; o.userData._fireFuseT=null; if(o.userData.onFire) igniteProp(o); } }
 let _propFireAccum=0, _propFireTickT=0;
 function _applyPropFireToPlayer(dps, dt){
   _propFireAccum += dps*dt; _propFireTickT += dt;
@@ -19186,6 +19248,9 @@ function _applyPropFireToPlayer(dps, dt){
 function updateBurningProps(dt){
   if(typeof propModels==='undefined' || !propModels.length) return;
   const showing = ((typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver)) || (typeof editorOpen!=='undefined' && editorOpen);
+  // build 1155: authoring is not play — a creator who has just placed a barrel needs its glow now, and growing
+  // the pool here costs an editor hitch rather than a mid-match freeze. Deploy re-seats from the finished level.
+  if(typeof editorOpen!=='undefined' && editorOpen) _ensureFireLights();
   const tms=performance.now();
   // visuals (editor shows authored fires; play shows authored + ignited) — and cleanup on shatter/off
   for(const o of propModels){ if(!o) continue;
@@ -19193,6 +19258,7 @@ function updateBurningProps(dt){
     if(litVis && showing){ _propFireVisual(o); const g=o.userData._fireGroup; if(g){ g.position.copy(o.position); _animateFire(g, tms, dt); } }
     else if(o.userData._fireGroup){ _removePropFireVisual(o); }
   }
+  _reconcileFireLights();
   const live = gameOn && !editorOpen && !gameOver
     && !(typeof _cineActive!=='undefined' && _cineActive)
     && !(typeof _levelLoaderActive!=='undefined' && _levelLoaderActive)
@@ -23107,7 +23173,7 @@ function loadVfxTexture(kind){
     undefined,
     ()=>{ console.warn('[VFX] no '+kind+' sheet at '+cfg.url+' — using the built-in procedural one'); });   // keep the procedural sheet
 }
-function preloadVfx(){ for(const k in VFX) loadVfxTexture(k); _ensureBlastLights(); _ensureMuzzleLights(); warmFlipbookShaders(); }   // build 636: seat the pooled lights + warm all combat shaders at LOAD (behind the loading screen), so the first explosion can't trigger a multi-second recompile freeze
+function preloadVfx(){ for(const k in VFX) loadVfxTexture(k); _ensureBlastLights(); _ensureMuzzleLights(); if(typeof _ensureChestLights==='function') _ensureChestLights(); warmFlipbookShaders(); }   // build 1153: the loot-box beam pool is seated here too, so the count is final before warmFlipbookShaders compiles against it   // build 636: seat the pooled lights + warm all combat shaders at LOAD (behind the loading screen), so the first explosion can't trigger a multi-second recompile freeze
 // build 622: the first rocket/explosion used to FREEZE the frame. The texture was pre-uploaded, but the Sprite
 // shader PROGRAM that draws a flipbook is only compiled/linked by the GPU the first time such a sprite is
 // actually rendered — and the load-time renderer.compile() pass runs before any flipbook sprite exists in the
@@ -23500,11 +23566,101 @@ function buildProceduralChest(){
 let nextChestId = 1;
 // Build the visual container for a loot crate (model or procedural) at (x,z). Shared by the host's
 // spawnChest and the client's snapshot upsert so both render identically.
+// build 1155: FOUR builds have now shipped the same fault — 636 (the first explosion), 977 (the first
+// flashlight toggle), 1153 (the first loot box), 1155 (the first barrel you shoot). Every one arrived as a
+// player reporting a multi-second freeze, and every one was then found by someone GUESSING which subsystem
+// had made a light. The engine should name the fifth itself.
+//
+// It costs nothing in a normal frame. A recompile of every material in a level is a 1-3 second frame, so the
+// check only looks at frames past HITCH_MS — and the baseline it compares against is taken at DEPLOY, a
+// moment that already stalls, so even the very FIRST offending frame has something to compare to.
+const HITCH_MS = 220;                       // far past any frame worth reacting to; a full recompile is ~10x this
+let _lightWatchN = -1, _lightWatchSaid = 0;
+// traverseVisible, NOT traverse: three's projectObject skips an invisible subtree entirely, so an invisible
+// light is not counted — which is precisely build 977's trap, and a plain traverse would be blind to it.
+function _countSceneLights(){
+  if(typeof scene === 'undefined' || !scene) return -1;
+  let n = 0; scene.traverseVisible(o=>{ if(o.isLight) n++; }); return n;
+}
+function _lightWatchBaseline(){ _lightWatchN = _countSceneLights(); }
+function _hitchLightWatch(frameMs){
+  if(!(frameMs >= HITCH_MS) || _lightWatchN < 0) return;
+  if(!(typeof gameOn!=='undefined' && gameOn) || (typeof editorOpen!=='undefined' && editorOpen)) return;
+  const n = _countSceneLights(); const was = _lightWatchN; _lightWatchN = n;
+  if(n === was || n < 0) return;
+  if(_lightWatchSaid >= 3) return;          // say it a few times, then stop shouting
+  _lightWatchSaid++;
+  const byType = {}; scene.traverseVisible(o=>{ if(o.isLight) byType[o.type] = (byType[o.type]||0)+1; });
+  console.warn('[rumpus] ' + Math.round(frameMs) + 'ms frame and the scene\'s light count moved ' + was + ' -> ' + n +
+    ' during play (' + Object.keys(byType).map(k=>k+' '+byType[k]).join(', ') + '). Adding or removing a light — or ' +
+    'toggling .visible on one — invalidates every lit material\'s program, which is what this freeze IS. ' +
+    'Whatever just created that light needs a pre-seated pool (see _blastLightPool / _chestLightPool / _fireLightPool).');
+}
+// build 1153: loot-box beams come from a POOL that is seated once and never leaves the scene.
+//
+// Every loot box used to do `new THREE.PointLight(...)` and `mesh.add(beam)`. Adding a light CHANGES THE
+// SCENE'S LIGHT COUNT, and in three that invalidates every lit material's program — so the first crate to
+// spawn mid-match recompiled every shader in the level and froze the frame for seconds. Removing the crate
+// took the light out with it and did the same thing again on the way out. Editor markers made it worse
+// still: they are built by this same function and toggled with `.visible`, and an invisible light is not
+// counted, so opening and closing the editor recompiled too.
+//
+// This is the third time this exact fault has been fixed here. Build 636 pre-seated `_blastLightPool` so an
+// explosion only ever RE-AIMS an existing light; build 977 left the flashlight "ALWAYS visible at intensity
+// 0 — toggling .visible changes the light count and recompiles every shader (the first-L freeze)". The rule
+// both of those encode: **the number of lights in the scene must not change during play.** Position, colour,
+// distance and intensity are plain uniforms and are free to change; existence is not.
+//
+// So: a fixed pool, created up front, always in the scene, always visible, parked at intensity 0. A crate
+// claims one and a released crate hands it back. The pool is sized from the level's own loot spots plus the
+// random-spawn cap, so a level's crates always have a beam; past that a crate simply spawns without one,
+// which is a missing glow rather than a frozen game.
+const _chestLightPool = [];      // { light, busy }
+function _ensureChestLights(){
+  if(typeof scene === 'undefined') return;
+  const want = Math.max(4, Math.min(24, 2 + ((typeof lootSpots !== 'undefined' && lootSpots) ? lootSpots.length : 0) * 2 + 2));
+  while(_chestLightPool.length < want){
+    const L = new THREE.PointLight(0xffd166, 0, 16);
+    L.castShadow = false;        // a beam that cast shadows would also add a shadow map to the count
+    L.visible = true;            // build 977: NEVER toggle .visible on a light that is already in the scene
+    L.position.set(0, -9999, 0);
+    scene.add(L);
+    _chestLightPool.push({ light: L, busy: false });
+  }
+}
+function _claimChestLight(color, inten, x, y, z){
+  _ensureChestLights();
+  for(const e of _chestLightPool){
+    if(e.busy) continue;
+    e.busy = true;
+    e.light.color.setHex(color >>> 0); e.light.intensity = inten; e.light.position.set(x, y, z);
+    return e.light;
+  }
+  return null;                   // pool exhausted: no beam, but no recompile either
+}
+function _releaseChestLight(L){
+  for(const e of _chestLightPool) if(e.light === L){ e.busy = false; e.light.intensity = 0; e.light.position.set(0,-9999,0); return; }
+}
+// Hand back any beam whose owner has gone. Chests are removed from four different places (the co-op
+// snapshot reconciler, a client's buyChest, the local buy, and wipeScene), so reconciling here means no
+// removal path can leak a light — and a leaked light is not a visual bug, it is a crate that never glows
+// again for the rest of the match.
+function _reconcileChestLights(){
+  if(!_chestLightPool.length) return;
+  const live = new Set();
+  const note = (m)=>{ const b = m && m.userData && m.userData.beam; if(b) live.add(b); };
+  if(typeof chests !== 'undefined') for(const ch of chests) note(ch && ch.mesh);
+  if(typeof lootMarkers !== 'undefined') for(const m of lootMarkers) note(m);
+  for(const e of _chestLightPool) if(e.busy && !live.has(e.light)){ e.busy = false; e.light.intensity = 0; e.light.position.set(0,-9999,0); }
+}
 function buildChestMesh(px, pz, opts){
   const o = opts || {};
   const mesh = new THREE.Group();
   mesh.position.set(px, 0.7 + (+o.y||0), pz);
-  const beam = new THREE.PointLight((o.glowColor!=null?+o.glowColor:0xffd166), (o.glowI!=null?+o.glowI:8), 16); beam.position.y=3; mesh.add(beam);
+  // the beam sat at local y=3 on the group; a pooled light lives in the scene instead, so it is placed in
+  // world space. The crate's idle bob is +-0.08, which a 16 m point light cannot show.
+  const beam = _claimChestLight((o.glowColor!=null?+o.glowColor:0xffd166), (o.glowI!=null?+o.glowI:8),
+    px, 0.7 + (+o.y||0) + 3, pz);
   mesh.userData.beam = beam;
   if(chestModelUrl){
     loadGLTFCached(chestModelUrl,
@@ -23512,6 +23668,12 @@ function buildChestMesh(px, pz, opts){
         const model = THREE.cloneSkinned(gltf.scene);
         model.scale.setScalar(chestModelScale || 1);
         model.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+        // build 1153: strip any light the GLB brings with it. GLTFLoader turns KHR_lights_punctual into real
+        // three lights, and a crate that adds one on every spawn changes the scene's light count — which is
+        // the exact recompile freeze this build exists to remove, arriving by a second route. The crate has a
+        // pooled beam already, so a model's own light is redundant as well as expensive.
+        { const kill = []; model.traverse(o=>{ if(o.isLight) kill.push(o); });
+          for(const L of kill){ if(L.parent) L.parent.remove(L); } }
         mesh.add(model);
         playModelAnimations(model, gltf);
       },
@@ -23531,7 +23693,37 @@ function _rollLootItems(n){
 }
 // Spawn the AUTHORED loot boxes (lootSpots) at their placed positions with their chosen contents. Called once
 // when a level starts. Empty contents -> 3 random items, so a placed box without a chosen loadout still works.
+// build 1153: compile the crate MODEL at load too. `buildChestMesh` calls loadGLTFCached lazily, so with a
+// custom lootbox.glb the first crate of a match paid for the fetch, the parse AND the first-render program
+// compile of its materials. That is a smaller hitch than the light-count recompile — per material, not per
+// scene — but it lands at the same moment and would have been mistaken for the same bug still being there.
+// Warmed the way build 622 warms the flipbook programs: instantiate it once, off-screen, compile, remove.
+let _chestModelWarmed = '';
+function warmChestModel(){
+  const url = (typeof chestModelUrl === 'string') ? chestModelUrl.trim() : '';
+  if(!url || _chestModelWarmed === url) return;
+  if(typeof loadGLTFCached !== 'function' || typeof renderer === 'undefined') return;
+  _chestModelWarmed = url;
+  loadGLTFCached(url, (gltf)=>{
+    try{
+      const m = THREE.cloneSkinned(gltf.scene);
+      m.scale.setScalar(chestModelScale || 1);
+      const kill = []; m.traverse(o=>{ if(o.isLight) kill.push(o); });
+      for(const L of kill){ if(L.parent) L.parent.remove(L); }   // never let the warm pass move the light count
+      m.position.set(0, -99999, 0);
+      scene.add(m);
+      renderer.compile(scene, camera);
+      scene.remove(m);
+    }catch(e){}
+  }, ()=>{ _chestModelWarmed = ''; });   // a failed load may be retried on the next deploy
+}
 function spawnPlacedLoot(){
+  // build 1153: seat the beam pool HERE, at deploy, before the match starts. Growing the pool is itself a
+  // light-count change, so it has to happen at a moment that already recompiles — a level load does, the
+  // middle of a firefight does not. The size comes from this level's own loot spots (a marker and a crate
+  // can be live for the same spot at once) plus the random-spawn cap.
+  if(typeof _ensureChestLights === 'function') _ensureChestLights();
+  if(typeof warmChestModel === 'function') warmChestModel();
   if(typeof isClient!=='undefined' && isClient) return;   // host/solo authoritative; clients receive via snapshot
   for(const sp of lootSpots){
     const mesh = buildChestMesh(sp.x, sp.z, { y:sp.y, glowColor:sp.glowColor, glowI:sp.glowI });
@@ -23552,6 +23744,7 @@ function spawnChest(){
 }
 function updateChests(dt){
   for(const ch of chests){ ch.spin += dt; ch.mesh.rotation.y = Math.sin(ch.spin*0.5)*0.1; ch.mesh.position.y = 0.7 + Math.sin(ch.spin*1.5)*0.08; }
+  _reconcileChestLights();   // build 1153: reclaim beams from crates that have been removed by any path
 }
 
 // ---------- Shop / interaction ----------
@@ -25790,7 +25983,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1152 · 2026-07-30';
+const BUILD_VERSION = 'build 1155 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30340,7 +30533,7 @@ function loop(){
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
   let dt = rawDt;
-  { const _anow=_pnow(); if(_adaptLast) _adaptResTick(_anow-_adaptLast, _anow); _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); if(typeof _touchCtxTick==='function') _touchCtxTick(_anow); if(typeof _buildModeTick==='function') _buildModeTick(); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish) · build 908: context touch buttons
+  { const _anow=_pnow(); if(_adaptLast){ _adaptResTick(_anow-_adaptLast, _anow); if(typeof _hitchLightWatch==='function') _hitchLightWatch(_anow-_adaptLast); } _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); if(typeof _touchCtxTick==='function') _touchCtxTick(_anow); if(typeof _buildModeTick==='function') _buildModeTick(); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish) · build 908: context touch buttons · build 1155: name a light-count recompile instead of shipping the fifth one
   updatePerfHud();   // measure real frame time every frame (before any early-out)
   if(editorOpen || _cineActive) _dirtyShadows(1);   // authoring + camera moves: keep shadows current
   else {
@@ -31053,7 +31246,15 @@ function loop(){
         let dx=a.x-b.x, dz=a.z-b.z, d=Math.hypot(dx,dz);
         if(d < minD){
           if(d < 1e-4){ dx=Math.cos(enemies[i].id*1.7); dz=Math.sin(enemies[i].id*1.7); d=1; }   // exact overlap: deterministic nudge
-          const push=Math.min((minD-d)*0.5, 3.5*dt), nx=dx/d, nz=dz/d;   // build 995: cap at a slide speed — a packed huddle used to apply full corrections every frame and visibly vibrate
+          // build 995 capped this at a slide speed because a packed huddle applying full corrections every
+          // frame visibly vibrated. But 3.5 is 0.058 per frame at 60fps, while a grunt CHASES at 6-9 u/s —
+          // 0.10 to 0.15 per frame each, so two enemies converging on the player close up to 0.2 per frame.
+          // Steering out-ran separation by 3.4x, which is why enemies chasing the same target sank into one
+          // another and stayed there. The cap now tracks their own speed, so separation can always keep up;
+          // the (minD-d)*0.5 term is what actually prevents overshoot, so raising the ceiling cannot
+          // reintroduce the vibration build 995 fixed.
+          const sepCap = Math.max(3.5, (enemies[i].speed||0) + (enemies[j].speed||0));
+          const push=Math.min((minD-d)*0.5, sepCap*dt), nx=dx/d, nz=dz/d;
           a.x += nx*push; a.z += nz*push; b.x -= nx*push; b.z -= nz*push;
         }
       }
@@ -39840,6 +40041,7 @@ function startGame(){
   resetDynamicProps();        // dynamic objects return to their authored spots each deploy
   teardownInstancing(); buildInstancing();   // (re)collapse repeated static shapes for play
   if(typeof buildPhysWorld==='function') buildPhysWorld();   // build a FRESH physics world for this level every match — never inherit a stale one from a previous session (fixes the client free-fly when no assets were pending, so the loader/reveal never rebuilt it)
+  if(typeof _lightWatchBaseline==='function') _lightWatchBaseline();   // build 1155: every pool is seated by now — this is the count play must hold to
   if(typeof maybeStartIntroCine==='function'){   // optional authored intro flythrough (no-op if disabled / no path)
     const _introWillPlay = (typeof cineCfg!=='undefined' && cineCfg.on && typeof _ccHasData==='function' && _ccHasData(cineCfg));
     if(_introWillPlay && !_levelLoaderActive){ showLevelLoader(); waitAssetsThenReveal(); }   // build 554: even with assets already cached, hold a cover so the live scene never flashes for a beat before the cinematic takes the camera; reveal() starts the cinematic, then drops the cover

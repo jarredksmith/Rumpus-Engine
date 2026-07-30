@@ -8,8 +8,14 @@ import { gameSource, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // ---- separation is a slide now ----
-assert(/const push=Math\.min\(\(minD-d\)\*0\.5, 3\.5\*dt\), nx=dx\/d, nz=dz\/d;/.test(src),
-  'the separation shove is capped at a 3.5 m/s slide (was an uncapped instant correction)');
+// build 1154: the ceiling now tracks the pair's own speed, because a fixed 3.5 (0.058/frame at 60fps) was
+// slower than two enemies CHASING converge (up to 0.2/frame) — they sank into each other and stayed there.
+// What build 995 actually protects is that the shove is a SLIDE, not an instant correction, and that is
+// still true: it is capped, 3.5 remains the floor, and (minD-d)*0.5 is the term that prevents overshoot.
+assert(/const push=Math\.min\(\(minD-d\)\*0\.5, sepCap\*dt\), nx=dx\/d, nz=dz\/d;/.test(src),
+  'the separation shove is a capped slide (was an uncapped instant correction)');
+assert(/const sepCap = Math\.max\(3\.5, \(enemies\[i\]\.speed\|\|0\) \+ \(enemies\[j\]\.speed\|\|0\)\);/.test(src),
+  '...with 3.5 still the floor, so a standing huddle slides exactly as build 995 made it');
 assert(/if\(d < 1e-4\)\{ dx=Math\.cos\(enemies\[i\]\.id\*1\.7\); dz=Math\.sin\(enemies\[i\]\.id\*1\.7\); d=1; \}/.test(src),
   'the deterministic exact-overlap nudge is unchanged');
 

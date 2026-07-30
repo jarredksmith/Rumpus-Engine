@@ -30,7 +30,7 @@ assert(/const _prBase = Math\.min\(devicePixelRatio, IS_COARSE \? 2\.0 : 1\.5\);
 assert(/renderer\.setPixelRatio\(_prBase \* _prScale\)/.test(src), 'effective ratio = base * adaptive scale');
 assert(/const _PR_FLOOR = IS_COARSE \? 0\.5 : 0\.66;/.test(src), 'a blur floor exists per device class');
 const loop = extractFunction('loop');
-assert(/if\(_adaptLast\) _adaptResTick\(_anow-_adaptLast, _anow\); _adaptLast=_anow;/.test(loop), 'loop feeds the scaler real wall-clock frame time');
+assert(/if\(_adaptLast\)\{ _adaptResTick\(_anow-_adaptLast, _anow\);[\s\S]{0,180}?\} _adaptLast=_anow;/.test(loop), 'loop feeds the scaler real wall-clock frame time');
 assert(/try\{ const v=localStorage\.getItem\('breach_adaptres'\); if\(v==='on'\) _adaptOn=true; else if\(v==='off'\) _adaptOn=false; \}/.test(src), 'adaptive res is a persisted preference');
 assert(/const ADAPT_ENABLED_DEFAULT = true;/.test(src), 'adaptive resolution defaults ON everywhere (build 810); the setting still opts out');
 

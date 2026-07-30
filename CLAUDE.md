@@ -908,7 +908,148 @@ nothing since touched it — but 1149 added a bounce term that lifts the ambient
 ambient, so the AO term's visible contrast went up. A pre-existing artifact getting easier to see is
 consistent with a report of "now".
 
-## Open work (as of build 1152)
+## The number of lights must not change during play (build 1153)
+
+Reported from play: **loot boxes spawning mid-match froze the game for 2-3 seconds.** The user's guess was
+right — `buildChestMesh` did `new THREE.PointLight(...)` and `mesh.add(beam)` for every crate. Adding a light
+changes the SCENE'S LIGHT COUNT, and in three that invalidates every lit material's program, so the first
+crate to appear recompiled every shader in the level. Removing the crate took the light out with it and did
+the same on the way out. Editor markers are built by the same function and toggled with `.visible`, and an
+invisible light is not counted, so opening the editor recompiled too.
+
+**This is the THIRD time this exact fault has shipped**, which is why it is now written down as a rule rather
+than fixed once more in place:
+
+| build | what it hit | what it did |
+|---|---|---|
+| 636 | the first explosion | `_blastLightPool`, pre-seated at load, so a blast only ever RE-AIMS an existing light |
+| 977 | the first flashlight toggle | left it *"ALWAYS visible at intensity 0 — toggling `.visible` changes the light count and recompiles every shader (the first-L freeze)"* |
+| 1153 | the first loot box | a pooled beam, claimed and released |
+
+**The rule: the number of lights in the scene must not change during play.** Position, colour, distance and
+intensity are plain uniforms and are free to change every frame. Existence is not — and neither is
+`.visible`, which is the trap that catches people who know the first half of the rule.
+
+Four decisions in the loot-box pool worth keeping:
+- **The beam is not parented to the crate.** That is what made removal a second recompile. Pooled lights sit
+  in the scene permanently and are positioned in world space; the crate's idle bob is ±0.08, which a 16 m
+  point light cannot show anyway.
+- **Seated where a recompile is already happening** — at load beside `_ensureBlastLights`, and again at
+  DEPLOY in `spawnPlacedLoot`. Growing the pool is itself a count change, so it must never happen mid-match.
+- **Sized from the level's own loot spots** (a marker and a crate can be live for the same spot at once) plus
+  the random-spawn cap. Past that a crate spawns with NO beam: a missing glow is a far better failure than a
+  frozen game.
+- **A reconcile, not four edits.** Crates are removed from four places — the co-op snapshot reconciler, a
+  client's `buyChest`, the local buy, and `wipeScene`. `updateChests` reclaims any beam whose owner has gone,
+  so no removal path can leak one, and a leaked beam is not cosmetic: it is a crate that never glows again
+  for the rest of the match.
+
+**The same fault arrives by a second route on a custom crate model, and that is fixed here too.** GLTFLoader
+turns `KHR_lights_punctual` into a real three light, and nothing in this engine's model path touches
+`o.isLight` — so a `lootbox.glb` containing a light adds one to the scene on EVERY spawn, which is the
+identical recompile by a different door. A crate already has its pooled beam, so a model's own light is
+redundant as well as expensive: `buildChestMesh` now strips them, removing them from their parent rather
+than hiding them (hiding a light changes the count too — build 977).
+
+And `buildChestMesh` calls `loadGLTFCached` LAZILY, so with a custom model the first crate of a match also
+paid for the fetch, the parse and the first-render program compile of its materials. `warmChestModel()` does
+that at deploy the way build 622 warms the flipbook programs — instantiate once off-screen, compile, remove —
+and strips lights from the warm instance too, or warming would itself move the count. It runs once per url,
+and a failed load resets so the next deploy retries.
+
+Worth knowing for the general case: **imported models' own lights are unhandled everywhere else.** Only the
+loot box is fixed, because that is the one that spawns mid-match. Any prop with a light in its GLB will move
+the count when it loads; in the editor that is a hitch, and for anything spawned during play it is this bug
+again. The general fix is either to strip them on import or to route them through `registerEmitterLight`,
+and it needs a decision about creators who legitimately ship a lamp model with a light in it.
+
+## The fourth light, and the guard that names the fifth (build 1155)
+
+Build 1153 fixed the loot box and wrote down the rule. **The same fault was live one screen away**, on the
+commonest action in the game: `buildPropFireGroup` did `new THREE.PointLight(...)` + `grp.add(light)` +
+`scene.add(grp)` the moment a prop caught fire, and the way a prop catches fire is
+`damageProp → igniteProp` on a fused explosive — *shooting a barrel*, mid-match, in combat. Shattering it took
+the light back out and recompiled again. Fixed the same way: `_fireLightPool`, seated at deploy, claimed and
+released, unparented and aimed in world space by `_animateFire`, with `_reconcileFireLights` so no removal path
+can strand a beam.
+
+Two things are different from the chest pool and both are deliberate:
+- **No floor on the pool size.** `min(FIRE_LIGHT_MAX, burnablePropCount())`, and burnable means
+  `onFire || (explosive && fireFuse > 0)` — the two conditions `igniteProp` is reachable from. Every seated
+  point light sits in `NUM_POINT_LIGHTS` and is looped over per pixel by every material whether or not anything
+  has claimed it, so a level with no fire must pay nothing. The chest pool's floor of 4 is right for *it*
+  (crates spawn randomly, so a level with no loot spots can still get one); nothing spawns a fire.
+- **The editor seats the pool itself.** Authoring is not play: a creator who has just placed a barrel needs its
+  glow now, and growing the pool there costs an editor hitch instead of a mid-match freeze.
+
+Fire ZONES are untouched, and that is a judgement not an oversight: `refreshFireZones` disposes N lights and
+builds N synchronously, so the count at the next render is unchanged — no recompile. Only the per-prop fire was
+a genuine mid-match add.
+
+**Four builds have now shipped this fault** — 636 (the first explosion), 977 (the first flashlight toggle),
+1153 (the first loot box), 1155 (the first barrel). Every one arrived as a player reporting a multi-second
+freeze, and every one was then found by *guessing* which subsystem had made a light. So this build also adds the
+standing guard, `_hitchLightWatch`:
+
+- **It costs nothing in a normal frame.** A recompile of every material in a level is a 1–3 second frame, so it
+  only looks past `HITCH_MS` (220) — and only during play, because authoring legitimately moves the count.
+- **The baseline is taken at DEPLOY**, after every pool is seated, so even the very first offending frame has
+  something to compare against. Sampling only on hitches would have had nothing to compare on the first one.
+- **`traverseVisible`, not `traverse`.** Three's `projectObject` skips an invisible subtree entirely, so an
+  invisible light is not counted — which is exactly build 977's trap, and a plain traverse would be blind to it.
+- It warns with the delta, the per-type breakdown and the names of the three pools, then stops after three.
+
+**`test-01-syntax` had never parsed the one `type="module"` block.** `vm.SourceTextModule` needs
+`--experimental-vm-modules`, which `run-all` does not pass, so the harness reported a failure whose message was
+about the instrument (`is not a constructor`) rather than the source — and the Rapier loader went unchecked. It
+now rewrites top-level `import`/`export`/`import.meta` out of the body and parses it as an async function body,
+with a check that a deliberately broken body still fails, so the rewrite cannot swallow a real error.
+
+## An enemy must fit wherever the player fits (build 1154)
+
+Reported from play with a screenshot: enemies could not get up the default level's ramps or around its
+boxes, and were clipping into one another — **"this was happening with the default capsule enemies as
+well"**, using an imported model scaled to 0.38409. That last clause is what solved it: it ruled out the
+model and pointed at a shared constant. Two numbers, neither about the GLB.
+
+**1. The movement radius was bigger than the body — and bigger than the player.** The obstacle pass holds an
+enemy `footprint` away from every collider box. The capsule's real radius is 0.7 (`CapsuleGeometry(0.7, 1.4,
+...)`) but its footprint was `0.9*ty.scale`; an imported model's was `Math.max(0.9, realHalfWidth)`, so the
+reported model — true half-width 0.365 — was held off obstacles by **2.5× its own width**. Both exceed the
+PLAYER's `radius: 0.8`, which is the part that reads as "stuck": an enemy could not follow you through a gap
+you had just walked through.
+
+Replayed through the engine's own obstacle pass (`scratchpad/botstuck.mjs`) over a crate beside a ramp, a
+1.2 m gap:
+
+```
+eR 0.9  PUSHED 0.50      eR 0.8  PUSHED 0.40      eR 0.5  PUSHED 0.10      eR 0.3  fits
+```
+Now `ENEMY_CAP_R = 0.7` for the capsule and the model's real half-width otherwise, floored at
+`ENEMY_MIN_R = 0.3`. A genuinely wide model is still wider than the player — this is per-size, not a blanket
+shrink.
+
+**2. Separation lost a race it could not win.** Build 995 capped the anti-overlap push at `3.5*dt` because a
+packed huddle applying full corrections every frame visibly vibrated. But 3.5 is **0.058 per frame** at
+60fps, while a grunt CHASES at 6-9 u/s — 0.10 to 0.15 per frame each, so two enemies converging on the
+player close at up to **0.2 per frame**. Steering out-ran separation by 3.4×, so enemies chasing the same
+target sank into each other and stayed there. The cap now tracks the pair's own speed
+(`max(3.5, speedA + speedB)`), giving 0.20-0.30 per frame.
+
+Raising it cannot bring back build 995's vibration, and that is worth understanding rather than trusting:
+`Math.min((minD-d)*0.5, cap*dt)` — the FIRST term is what prevents overshoot. The cap only limits speed. 995
+fixed the vibration by adding the cap at a moment when the first term was doing the real work anyway; the
+ceiling was never the stabiliser.
+
+**Not the cause, and worth stating because it is the natural suspect:** the editor's *Collider radius* and
+*Collider height* size the DAMAGE hit-cylinder only — the hint under them says so — so the reported 0.3 / 0
+settings were correct and irrelevant. Height 0 means auto-fit.
+
+Three pins moved with it, all preserving their intent rather than their literal: build 995's (the shove is
+still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
+auto, decoupled from the collider radius" — still true, from a different constant.
+
+## Open work (as of build 1155)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
