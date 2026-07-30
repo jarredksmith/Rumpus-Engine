@@ -967,6 +967,21 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Your own .glb without their server (build 1177)
+
+The editor critic's "asset import requires their server", verified: no local model path existed at all —
+offline or host-down, a creator could not use their own asset. A dropped .glb/.gltf (viewport drag-and-drop,
+editor only — play never hijacks a drag) is content-hashed (SHA-256, time-key fallback on http origins),
+stored as a blob in its own IndexedDB db (`rumpus_local_models`), and resolved by a `local:` src scheme
+through a branch BESIDE `sketchfab:` in `loadGLTFCached` — same cache, same waiter/pump, same
+GLTFLoader/manager so codecs still apply. `isModelSrc` learned the scheme (cache accounting, part editor,
+model release all follow). The filename rides the key so the asset browser shows a name, size capped 64MB,
+and the sharing story is honest three ways: the import toast says "this device only", the Level Check warns
+before publishing, and on another device the load fails into 1167's missing-model report instead of hanging.
+The server upload remains the "make it shareable" step. Note: the codebase deliberately writes `\u2014`-style
+escapes inside JS strings (307 of them) — a python-edit anchor containing a real em-dash will miss those
+lines; match the escape or anchor elsewhere.
+
 ## The editor gets a clipboard (build 1176)
 
 There was NO clipboard — carrying a configured object between levels meant formalising it into a prefab.
@@ -1435,7 +1450,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1176)
+## Open work (as of build 1177)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

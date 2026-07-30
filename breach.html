@@ -10718,7 +10718,7 @@ function _installRaycastBVH(o){
 // True if this prop is an imported model (URL / Poly Pizza / Sketchfab / .glb) rather than a built-in
 // primitive. Imported models are concave (stairs, archways), so a single bounding box is a poor player
 // collider even though Rapier already has their exact trimesh for dynamic objects.
-function isModelSrc(src){ return typeof src==='string' && (/^(https?:|blob:|data:|sketchfab:)/i.test(src) || /\.(glb|gltf)(\?|$)/i.test(src)); }
+function isModelSrc(src){ return typeof src==='string' && (/^(https?:|blob:|data:|sketchfab:|local:)/i.test(src) || /\.(glb|gltf)(\?|$)/i.test(src)); }   // build 1177: local: = IndexedDB-resident import
 const _mgA=new THREE.Vector3(), _mgB=new THREE.Vector3(), _mgC=new THREE.Vector3();
 // Approximate a concave model's solid volume as a grid of per-column boxes built from its REAL triangles
 // (world space). Each occupied column gets one box spanning the min..max height of the triangles in it.
@@ -14876,6 +14876,43 @@ function _ensureKTX2(){
   })();
   return _ktx2Promise;
 }
+// build 1177: LOCAL MODELS. Importing your own .glb REQUIRED the community server — no drag-and-drop, no
+// file input; offline or server-down meant a creator could not use their own asset at all. A dropped file
+// now lives in IndexedDB keyed by content hash, and a `local:` src scheme resolves it through the same
+// GLTFLoader/manager path as every other model (codecs and all). The src string serialises like any other,
+// so on ANOTHER device the load fails cleanly into build 1167's Level Check report — and the Level Check
+// also warns that local models are this-device-only, with the server upload as the "make it shareable" step.
+let _lmDbP=null;
+function _lmDb(){ if(_lmDbP) return _lmDbP;
+  _lmDbP=new Promise((res,rej)=>{ try{ const rq=indexedDB.open('rumpus_local_models',1);
+    rq.onupgradeneeded=()=>{ try{ rq.result.createObjectStore('models'); }catch(e){} };
+    rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }catch(e){ rej(e); } });
+  return _lmDbP; }
+function _localModelPut(key, blob){ return _lmDb().then(db=>new Promise((res,rej)=>{ const tx=db.transaction('models','readwrite'); tx.objectStore('models').put(blob, key); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); })); }
+function _localModelGet(key){ return _lmDb().then(db=>new Promise((res,rej)=>{ const rq=db.transaction('models').objectStore('models').get(key); rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>rej(rq.error); })); }
+function _loadLocalModel(url, cb, errcb){
+  _localModelGet(url.slice(6))
+    .then(blob=>{ if(!blob) throw new Error('local model not on this device — re-import or upload it'); return blob.arrayBuffer(); })
+    .then(buf=>{ const loader=new THREE.GLTFLoader(gltfManager()); loader.parse(buf, '', (g)=>cb(g), (e)=>errcb(e||new Error('glb parse failed'))); })
+    .catch(errcb);
+}
+const LOCAL_MODEL_MAX_MB = 64;
+function _importLocalModel(file, atPoint){
+  if(!file || !/\.(glb|gltf)$/i.test(file.name)){ if(typeof flashToast==='function') flashToast('Drop a .glb or .gltf file'); return; }
+  if(file.size > LOCAL_MODEL_MAX_MB*1024*1024){ if(typeof flashToast==='function') flashToast('Model too large ('+Math.round(file.size/1048576)+' MB — cap is '+LOCAL_MODEL_MAX_MB+')'); return; }
+  file.arrayBuffer().then(buf=>{
+    const hash=(crypto && crypto.subtle) ? crypto.subtle.digest('SHA-256', buf) : Promise.resolve(null);
+    return hash.then(h=>{
+      let hex='f'+Date.now().toString(36);   // no subtle-crypto (http origin): fall back to a time key — still stable for this import
+      if(h){ hex=[...new Uint8Array(h)].slice(0,10).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+      const key=hex+'/'+String(file.name).slice(0,60);
+      return _localModelPut(key, new Blob([buf])).then(()=>key);
+    });
+  }).then(key=>{
+    const src='local:'+key;
+    if(typeof addSceneProp==='function') addSceneProp(src, { name:file.name, at:atPoint, onAdded:()=>{ if(typeof flashToast==='function') flashToast('Imported "'+file.name+'" (this device only — upload it to share the level)'); } });
+  }).catch(e=>{ if(typeof flashToast==='function') flashToast('Import failed: '+((e&&e.message)||e)); });
+}
 function loadGLTFCached(url, cb, errcb){
   url = _migrateAssetUrl(url);   // build 973: dead-host heal — one choke point for every model load
   if(gltfCache[url]){ _modelTouch(url); cb(gltfCache[url]); return; }   // cached: synchronous, nothing to wait on
@@ -14898,6 +14935,7 @@ function loadGLTFCached(url, cb, errcb){
   };
   const start = ()=>{
     if(_glbCancel[url]){ _cxl(); return; }   // build 945: cancelled while still queued
+    if(url && url.indexOf('local:')===0){ _loadLocalModel(url, (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, _ec); return; }   // build 1177
     if(url && url.indexOf('sketchfab:')===0){ const _ac=new AbortController(); _glbAborters[url]=_ac; loadSketchfabModel(url.slice(10), (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, _ec, _ac.signal); return; }
     if(!THREE.GLTFLoader){ _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(new Error('GLTFLoader unavailable')); }catch(_){} } return; }
     const mgr = gltfManager();
@@ -16769,6 +16807,16 @@ let _lastLookDX = 0, _lastLookDY = 0;   // running reference of recent per-event
 const MAX_LOOK_DELTA = 300;   // px per mousemove event; guards against spurious spikes that snap the view
 let editorDragLook = false, editorDragMoved = false, editorDragPan = false;   // editor mouse states
 renderer.domElement.addEventListener('click', ()=>{ if(!isTouch && gameOn && !locked && !shopOpen && !invOpen && !editorOpen && !paused) tryPointerLock(); });
+// build 1177: drag a .glb/.gltf from your desktop onto the viewport while editing — no server round-trip.
+renderer.domElement.addEventListener('dragover', (e)=>{ if(typeof editorOpen!=='undefined' && editorOpen){ e.preventDefault(); } });
+renderer.domElement.addEventListener('drop', (e)=>{
+  if(!(typeof editorOpen!=='undefined' && editorOpen)) return;
+  const fs=(e.dataTransfer && e.dataTransfer.files) ? [...e.dataTransfer.files] : [];
+  const f=fs.find(x=>/\.(glb|gltf)$/i.test(x.name));
+  if(!f) return;
+  e.preventDefault();
+  if(typeof _importLocalModel==='function') _importLocalModel(f, null);
+});
 document.addEventListener('pointerlockchange', ()=>{ const was=locked; locked = document.pointerLockElement === renderer.domElement; if(locked && !was){ lookFresh = true; _lastLookDX=0; _lastLookDY=0; if(paused) resumeGame(); }
   if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat)
 // Ctrl+W (crouch + forward) is the browser's close-tab shortcut and can't be cancelled from a keydown.
@@ -26268,7 +26316,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1176 · 2026-07-30';
+const BUILD_VERSION = 'build 1177 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35447,6 +35495,10 @@ function levelIssues(){
     if(typeof assetLoadFailures!=='undefined') for(const [src, e] of assetLoadFailures){
       const short = src.length>46 ? '…'+src.slice(-45) : src;
       issues.push('A model failed to load ('+e.msg+')'+(e.n>1?' ×'+e.n:'')+': '+short); }
+    // build 1177: local: models exist only in THIS device's IndexedDB — anyone else loading the level gets
+    // the missing-model report above. Sharing needs the server upload; say so before they publish.
+    { let loc=0; for(const o of propModels){ if(o && o.userData && /^local:/i.test(String(o.userData.src||''))) loc++; }
+      if(loc) issues.push(loc+' model'+(loc>1?'s are':' is')+' local to this device (drag-and-drop import) \u2014 upload via Files \u2192 model upload before sharing, or other players will see missing props.'); }
     const locks=new Set(); for(const o of propModels){ if(o && o.userData && o.userData.lockId) locks.add(o.userData.lockId); }
     const keys=new Set(); for(const s of pickupSpots){ const k=POWERUP_KINDS[s.kind]; if(k && k.key) keys.add(k.key); }
     for(const lk of locks) if(!keys.has(lk)) issues.push('Something is locked with the '+keyDisplayName(lk)+', but no matching key pad is placed.');
