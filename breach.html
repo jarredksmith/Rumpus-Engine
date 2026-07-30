@@ -21441,6 +21441,37 @@ function _ensureThumbR(){
     return true;
   }catch(e){ _thumbR=false; return false; }   // a 2nd WebGL context can fail on some devices -> fall back to the gradient
 }
+// build 1147: a thumbnail of any MODEL, for the scene-asset browser. The character path above frames a
+// bust and takes a whole cfg; this takes a url and frames the whole object, which is what a content
+// browser wants. Same renderer, same LRU cache, same "a second WebGL context can fail" fallback.
+function _renderAssetThumb(url, el, onDone){
+  if(!url || !el) return;
+  const apply=(u)=>{ el.style.backgroundImage='url("'+u+'")'; el.style.backgroundSize='contain';
+    el.style.backgroundPosition='center'; el.style.backgroundRepeat='no-repeat'; };
+  const k = 'asset|' + url;
+  if(_thumbCache[k]){ apply(_thumbCache[k]); if(onDone) onDone(true); return; }
+  if(!_ensureThumbR()){ if(onDone) onDone(false); return; }
+  loadGLTFCached(url, (gltf)=>{
+    try{
+      const src=(gltf.scene)||(gltf.scenes&&gltf.scenes[0]); if(!src){ if(onDone) onDone(false); return; }
+      const model=src.clone(true);
+      const root=new THREE.Group(); root.add(model); root.rotation.y=Math.PI*0.18;   // a 3/4 turn reads as volume
+      _thumbScene.add(root); root.updateMatrixWorld(true);
+      const box=new THREE.Box3().setFromObject(root), size=box.getSize(new THREE.Vector3()), ctr=box.getCenter(new THREE.Vector3());
+      model.position.sub(ctr); root.updateMatrixWorld(true);
+      // Frame by the object's largest dimension, whatever its units: a Poly Pizza crate and the museum
+      // differ by orders of magnitude, and a content browser has to show both at the same apparent size.
+      const maxd=Math.max(size.x,size.y,size.z)||1, fov=30;
+      const dist=(maxd*0.5)/Math.tan(fov*Math.PI/360)*1.5;
+      _thumbCam.position.set(dist*0.45, maxd*0.28, dist); _thumbCam.lookAt(0,0,0);
+      _thumbR.render(_thumbScene, _thumbCam);
+      const u=_thumbR.domElement.toDataURL('image/png');
+      _thumbScene.remove(root);
+      _thumbCachePut(k, u); apply(u);
+      if(onDone) onDone(true);
+    }catch(e){ if(onDone) onDone(false); }
+  }, ()=>{ if(onDone) onDone(false); });
+}
 function _renderCharThumb(cfg, swatchEl, opts){
   if(!cfg) return;
   const apply=(url)=>{ if(swatchEl){ const bg=(swatchEl.dataset&&swatchEl.dataset.bg)||''; swatchEl.style.backgroundImage='url("'+url+'")'+(bg?(', '+bg):''); swatchEl.style.backgroundSize='cover'; swatchEl.style.backgroundPosition='center'; swatchEl.style.backgroundRepeat='no-repeat'; swatchEl.style.backgroundColor='#0c2026'; } };   // build 1007: a data-bg tint stays composited BEHIND the transparent render
@@ -25534,7 +25565,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1146 · 2026-07-30';
+const BUILD_VERSION = 'build 1147 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33793,6 +33824,110 @@ function openHdriBrowser(){
   else { status.textContent='Loading Poly Haven HDRIs\u2026'; phApi('/assets?t=hdris', d=>{ _phHdris=d||{}; render(); }, err=>{ status.textContent='Could not load the HDRI list'+_phHint(err)+'. Your CORS proxy may need to allow api.polyhaven.com.'; }); }
 }
 // Render the browser into a host element (only on the Props tab). Caches query+results across re-renders.
+// ---------- build 1147: the scene-asset browser ----------
+// The editor could search the WEB for models (Poly Pizza / Sketchfab, below) but had no view of the assets
+// the level ALREADY uses. Every other engine's second-most-used panel is exactly that — Unity's Project
+// window, Unreal's Content Browser — and without it there is no way to see what a level is built from, to
+// place another of something already used without searching for it again, or to select every instance of
+// one asset. A level with 57 props was a numbered list you stepped through one at a time.
+//
+// Everything here comes from data the engine already holds: propModels' `src`, the GLTF cache, and build
+// 813's offscreen thumbnail renderer. Nothing new is downloaded and nothing is stored in the level.
+function sceneAssetList(){
+  const by = new Map();
+  const list = (typeof propModels!=='undefined') ? propModels : [];
+  for(const o of list){
+    if(!o || !o.userData) continue;
+    const src = o.userData.src;
+    if(!isModelSrc(src)) continue;                 // primitives are the "Add a shape" row, not assets
+    let e = by.get(src);
+    if(!e){ e = { src, count:0, name:'', objs:[] }; by.set(src, e); }
+    e.count++; e.objs.push(o);
+    if(!e.name && o.userData.name) e.name = String(o.userData.name);
+  }
+  // A stable order the creator can rely on: most-used first, then by the name they will actually read.
+  // Frequency first because the thing a level is made of is the thing you reach for again.
+  const out = [...by.values()];
+  for(const e of out) if(!e.name) e.name = assetShortName(e.src);
+  out.sort((a,b)=> (b.count - a.count) || a.name.localeCompare(b.name));
+  return out;
+}
+// A readable label from a URL. Poly Pizza serves bare UUIDs, so a hex-looking basename is not a name.
+function assetShortName(src){
+  let s = String(src||'');
+  try{ s = decodeURIComponent(s); }catch(e){}
+  s = s.split('?')[0].split('#')[0];
+  const base = (s.split('/').pop() || s).replace(/\.(glb|gltf)$/i, '');
+  if(!base) return 'model';
+  if(/^[0-9a-f]{8}-?[0-9a-f]{4}/i.test(base) || /^[0-9a-f]{16,}$/i.test(base)) return 'model · ' + base.slice(0, 6);
+  return base.replace(/[_-]+/g, ' ').trim().slice(0, 40) || 'model';
+}
+function renderSceneAssets(host){
+  if(!host) return;
+  host.innerHTML = '';
+  const items = sceneAssetList();
+  const head = document.createElement('div'); head.className='hint'; head.style.margin='2px 0 6px';
+  const total = items.reduce((n,e)=>n+e.count, 0);
+  // the fold is already titled "In this level", so the hint carries the COUNTS and the two actions
+  head.innerHTML = items.length
+    ? ('<b>' + items.length + ' model' + (items.length>1?'s':'') + ', ' + total + ' instance' + (total>1?'s':'') + '</b> — click a tile to add another; \u25c9 selects every copy.')
+    : 'No imported models yet — search below, or add a shape.';
+  host.appendChild(head);
+  if(!items.length) return;
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:5px;';
+  for(const e of items){
+    const card = document.createElement('div');
+    card.style.cssText = 'display:flex;flex-direction:column;gap:2px;background:#0c1418;border:1px solid #24323a;border-radius:6px;padding:4px;overflow:hidden;';
+    const add = document.createElement('button');
+    add.title = 'Add another — ' + e.src;
+    add.style.cssText = 'display:block;width:100%;aspect-ratio:1;background:#06090b;border:1px solid #1b262c;border-radius:3px;padding:0;cursor:pointer;position:relative;';
+    // a count badge, so "what is this level made of" is answerable at a glance
+    const badge = document.createElement('span'); badge.textContent = '×' + e.count;
+    badge.style.cssText = 'position:absolute;right:2px;bottom:2px;font-size:10px;line-height:1;padding:1px 3px;border-radius:3px;background:rgba(6,9,11,.82);color:#a8ccbf;pointer-events:none;';
+    add.appendChild(badge);
+    add.onclick = ()=>{ if(typeof addSceneProp==='function') addSceneProp(e.src, { name:e.name }); };
+    // Select-all overlays the tile's top-right rather than sitting beside the caption. In a 3-column grid
+    // inside a 344px panel a tile is ~100px wide, and a button on that row left the NAME — the thing a
+    // content browser exists to show — with about six characters.
+    const pick = document.createElement('span'); pick.textContent='\u25c9'; pick.setAttribute('role','button'); pick.tabIndex=0;
+    pick.title = 'Select all ' + e.count + ' — the gizmo, the transform fields and Delete then act on every copy';
+    pick.style.cssText='position:absolute;right:2px;top:2px;width:15px;height:15px;display:flex;align-items:center;justify-content:center;'
+      + 'font-size:10px;line-height:1;border-radius:3px;background:rgba(6,9,11,.82);color:#a8ccbf;cursor:pointer;';
+    const doPick = (ev)=>{ ev.preventDefault(); ev.stopPropagation(); selectAssetInstances(e.src); };   // never also fire "add another"
+    pick.onclick = doPick;
+    pick.onkeydown = (ev)=>{ if(ev.key==='Enter' || ev.key===' ') doPick(ev); };
+    add.appendChild(pick);
+    // The thumbnail is rendered offscreen and cached by url, so re-rendering this panel is free after the
+    // first paint. A device where a second WebGL context fails keeps the empty tile rather than breaking.
+    if(typeof _renderAssetThumb==='function') _renderAssetThumb(e.src, add);
+    card.appendChild(add);
+    const cap = document.createElement('div'); cap.textContent = e.name; cap.title = e.name + '  \u2014  ' + e.src;
+    cap.style.cssText = 'font-size:10px;color:#9fe6cf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    card.appendChild(cap);
+    grid.appendChild(card);
+  }
+  host.appendChild(grid);
+}
+// Select every instance of one asset, so a whole material or transform edit lands on all of them. Reuses
+// the multi-selection build 564 already threads through the gizmo, the fields and Delete.
+function selectAssetInstances(src){
+  const objs = (typeof propModels!=='undefined' ? propModels : []).filter(o=>o && o.userData && o.userData.src===src);
+  if(!objs.length) return 0;
+  if(typeof editorActive!=='undefined') editorActive='props';
+  selProps.length = 0; for(const o of objs) selProps.push(o);
+  const i = propModels.indexOf(objs[0]);
+  if(i>=0 && editorTargets && editorTargets.props) editorTargets.props.idx = i;   // the primary, for the fields
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof syncPropStateFromObj==='function') syncPropStateFromObj();
+  if(typeof updateGizmo==='function') updateGizmo();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  // build 1137 gave the editor a camera that can go to the selection; a browser that selects something
+  // off screen and leaves the view where it was is the same "nothing happened" this panel exists to fix.
+  if(typeof _edFrameSelected==='function') _edFrameSelected();
+  if(typeof flashToast==='function') flashToast('Selected ' + objs.length + ' × ' + assetShortName(src));
+  return objs.length;
+}
 function renderModelBrowser(host){
   host.innerHTML='';
   _modelSourceBar(host, ()=>renderModelBrowser(host));
@@ -33911,6 +34046,7 @@ function buildEditorPanel(){
           '<div id="edPropTag"></div>'
         + '<div id="edPicker"></div>'
         + subfold('Add a shape', 'o_shapes', '<div id="edShapes"></div>', true)
+        + subfold('In this level', 'o_assets', '<div id="edAssets"></div>', true)
         + subfold('Model &amp; texture', 'o_model', '<div id="edModels"></div><div id="edUrl"></div>', true)
         + subfold('Animation', 'o_anim', '<div id="edAnim"></div>', false)
         + subfold('Interaction &amp; logic', 'o_logic', '<div id="edBehave"></div>', false)
@@ -36058,6 +36194,11 @@ function renderEditorFields(){
       lib.appendChild(grid);
     }
   }
+  // build 1147: what this level is already built from (Props tab only) — the content-browser half of the
+  // pair. It renders BEFORE the web search, because the asset you want next is most often one you already
+  // used, and a panel that answers that should not be below a search box.
+  const assetsHost = editorEl.querySelector('#edAssets');
+  if(assetsHost){ assetsHost.innerHTML=''; if(tgt.addable && tgt.urlField && typeof renderSceneAssets==='function') renderSceneAssets(assetsHost); }
   // Poly Pizza search browser (Props tab only)
   const modelsHost = editorEl.querySelector('#edModels');
   if(modelsHost){ modelsHost.innerHTML=''; if(tgt.addable && tgt.urlField) renderModelBrowser(modelsHost); }

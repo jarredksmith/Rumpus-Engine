@@ -499,7 +499,34 @@ reaches for and one key serves both — but an invisible inverting modifier is a
 so. `Shift` is deliberately not the key: it is already multi-select here. A step of 0 turns snapping off for
 that channel only, which the field's tooltip states.
 
-## Open work (as of build 1146)
+## The scene-asset browser (build 1147)
+
+The editor could search the WEB for models (`renderModelBrowser` — Poly Pizza / Sketchfab) but had no view
+of its own content. Every other engine's second-most-used panel is exactly that (Unity's Project window,
+Unreal's Content Browser), and without it there is no way to see what a level is built from, to place
+another of something already used without searching for it again, or to act on every instance of one asset
+at once — a level with 57 props was a numbered list you stepped through one prop at a time.
+
+`sceneAssetList()` groups `propModels` by `userData.src`, excluding primitives (those are the *Add a shape*
+row; mixing them in buries the imports among 57 boxes). Ordered most-used first — the thing a level is made
+of is the thing you reach for again — then by name for a stable tie-break. `renderSceneAssets` draws a tile
+per asset with a live thumbnail, an instance count badge, click-to-add-another, and a `◉` overlay that
+selects every copy via build 564's multi-selection and then frames it with build 1137's `_edFrameSelected`
+— a browser that selects something off screen is the same "nothing happened" the panel exists to fix.
+
+Three details worth keeping:
+- `_renderAssetThumb` shares build 813's offscreen renderer and its LRU cache, keyed by url alone, so
+  re-rendering the panel is free after the first paint. It frames by the mesh's largest dimension so a
+  Poly Pizza crate and the museum show at the same apparent size whatever units they arrived in, and a
+  device where a second WebGL context fails keeps an empty tile rather than breaking the panel.
+- The select-all control **stops the event**, or clicking it would also fire the tile's add-another.
+- Poly Pizza serves bare UUIDs, so `assetShortName` labels a hex basename as `model · 78846e` rather than
+  printing an id as if it were a name. The full name and url live in the tooltip: a three-column grid in a
+  344px panel gives a tile ~100px, which is about twelve characters.
+
+Nothing is downloaded and nothing is stored in the level — it is data the engine already held.
+
+## Open work (as of build 1147)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
