@@ -868,6 +868,16 @@
   .padFocus { outline:2px solid var(--accent) !important; outline-offset:2px; box-shadow:0 0 14px rgba(var(--accent-rgb),.55) !important; border-radius:6px; }   /* build 911: controller focus ring in menus */
   #chatInput { display:none; width:min(300px, 86vw); background:rgba(5,10,12,0.92); border:1px solid #4fd0ff; color:#eafff7; border-radius:5px; padding:5px 8px; font:600 12px ui-monospace,monospace; outline:none; pointer-events:auto; }
   #chatBox.chatOpen #chatInput { display:block; }
+  #edViewInfo { position:fixed; left:12px; bottom:12px; z-index:26; display:none; align-items:flex-end; gap:8px;
+    pointer-events:none; font:11px/1.45 var(--ui-font), ui-monospace, monospace; color:#a9d8c9;
+    text-shadow:0 1px 3px rgba(0,0,0,.85); }
+  #edViewInfo.on { display:flex; }
+  #edAxis { width:44px; height:44px; flex:0 0 auto; overflow:visible; }
+  #edAxis line { stroke-width:1.6; stroke-linecap:round; }
+  #edAxis #axX { stroke:#ff6b6b; } #edAxis #axZ { stroke:#5aa9ff; } #edAxis #axY { stroke:#5ce6a8; }
+  #edAxis circle { fill:#cfeee2; }
+  #edAxis text { fill:#cfeee2; font:600 9px var(--ui-font), monospace; text-anchor:middle; }
+  #edViewTxt { padding-bottom:3px; white-space:pre; letter-spacing:.02em; }
   #padDebug { display:none; position:fixed; top:12px; left:12px; z-index:60; background:rgba(5,10,12,0.85); color:#9fe6cf; border:1px solid rgba(var(--accent-rgb),0.4); border-radius:6px; padding:8px 12px; font:11px/1.5 ui-monospace,monospace; white-space:pre; pointer-events:none; max-width:340px; }
   #controls b { color:#a8d6c8; }
   .hidden { display:none !important; }
@@ -1391,6 +1401,11 @@
   </div>
 </div>
 <div id="padDebug"></div>
+<!-- build 1137: the editor viewport's only readout. A critic's verdict was that the authoring
+     viewport "carries not one tool affordance - no axis widget, no camera readout"; this is both,
+     in the corner where every DCC tool puts them. Editor-only, and pointer-transparent so it can
+     never eat a click meant for the scene. -->
+<div id="edViewInfo"><svg id="edAxis" viewBox="-22 -22 44 44" aria-hidden="true"><line id="axZ" x1="0" y1="0" x2="0" y2="-16"/><line id="axX" x1="0" y1="0" x2="16" y2="0"/><line id="axY" x1="0" y1="0" x2="0" y2="14"/><text id="axZT" x="0" y="-17">Z</text><text id="axXT" x="18" y="3">X</text><circle cx="0" cy="0" r="1.8"/></svg><div id="edViewTxt"></div></div>
 
 <script>
 // build 961: boot veil — this runs ~3% into the document, long before the game script at the end
@@ -15792,7 +15807,11 @@ addEventListener('keydown', e=>{
   if(editorOpen && !e.repeat && (e.code==='KeyF' || e.code==='KeyT') && !e.ctrlKey && !e.metaKey && !e.altKey){
     const tag = (e.target && e.target.tagName) || '';
     if(tag!=='INPUT' && tag!=='TEXTAREA'){
-      if(e.code==='KeyF'){ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } keys['KeyF']=false; }
+      // build 1137: F frames the selection (Unity/Unreal/Blender all bind it there). Shift+F keeps the
+      // free-fly toggle it used to hold, and with nothing selected F still falls through to the toggle
+      // so the key is never dead.
+      if(e.code==='KeyF' && !e.shiftKey && typeof _edFrameSelected==='function' && _edFrameSelected()){ keys['KeyF']=false; }
+      else if(e.code==='KeyF'){ editorFreeFly=!editorFreeFly; if(editorFreeFly){ editorTopView=false; flyInit=false; } keys['KeyF']=false; }
       else { editorTopView=!editorTopView; if(editorTopView){ editorFreeFly=false; topPanX=0; topPanZ=0; topZoom=Math.min(Math.max(75, ARENA*1.12), 2600); } }   // build 829: enter top view fitted to the WHOLE arena
       if(typeof renderEditorFields==='function') renderEditorFields();
       e.preventDefault();
@@ -16133,6 +16152,10 @@ function _ensureVmEnv(){
 }
 function renderViewmodel(){
   if(activeCam() !== camera || !gun.visible) return;   // skip the editor's top-down view / when the weapon is hidden
+  // build 1137: never in the editor. The rifle was drawn across the lower-right of the AUTHORING
+  // viewport — measured by a critic at 11% of it — hiding whatever the author was placing there, and
+  // it is not a tool affordance by any reading. gun.visible stays untouched so play is unaffected.
+  if(typeof editorOpen!=='undefined' && editorOpen) return;
   if(typeof _scopedNow!=='undefined' && _scopedNow) return;   // looking through the optic: no viewmodel
   if(typeof _animFists==='function') _animFists();   // build 672: punch lunge
   const _r=perfOn?_pnow():0;
@@ -22861,7 +22884,11 @@ function updateChests(dt){
 let shopOpen = false;
 // editorOpen is declared early (next to applyWorldCfg) to avoid a temporal-dead-zone error during init
 let editorTopView = false;     // overhead straight-down camera for placement
-let editorFreeFly = false;     // free-fly camera: detach from the player, fly anywhere with WASD + mouse-look
+// build 1137: the editor opens in the FLY camera. It used to open on the player's own walking
+// gameplay camera — eye height, gravity, a body that collides with the level you are trying to build —
+// which is not how any level editor works and made the viewport read as "a render of the game with a
+// form beside it". F still toggles back to the walk camera for testing a sightline on foot.
+let editorFreeFly = true;      // free-fly camera: detach from the player, fly anywhere with WASD + mouse-look
 let _charPrevDist = 4.6, _charPrevInit = false;   // Player tab: third-person orbit distance + first-frame seed flag
 const flyPos = new THREE.Vector3();   // free-fly camera position (seeded from the player on enable)
 let flyInit = false;
@@ -25089,7 +25116,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1136 · 2026-07-30';
+const BUILD_VERSION = 'build 1137 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30492,6 +30519,7 @@ function loop(){
   if(typeof updateFragments==='function') updateFragments();   // advance/cleanup destruction debris
   if(typeof _syncAttachedLights==='function') _syncAttachedLights();   // build 997: glue attached lights to their props
   updateLightBudget();
+  if(typeof updateEditorViewInfo==='function') updateEditorViewInfo(_pnow());   // build 1137
   if(typeof updateShadowLightBudget==='function') updateShadowLightBudget(dt);   // build 1132
 
   { const _a=perfOn?_pnow():0; netTick(dt); if(perfOn)_prof.net+=_pnow()-_a; }   // send/receive networked state + smooth remote entities
@@ -33440,7 +33468,7 @@ function buildEditorPanel(){
     + '</div>'
     + '<div id="edShell"><div class="edModes" id="edModes"></div><div id="edMain">'
     + '<div class="hint" id="edHint"></div>'
-    + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;min-width:44px">↶</button><button id="edRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" style="flex:0 0 auto;min-width:44px">↷</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
+    + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;width:32px;min-width:32px;padding:6px 0">↶</button><button id="edRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" style="flex:0 0 auto;width:32px;min-width:32px;padding:6px 0">↷</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
     + '<div id="edSearchRow"><input id="edSearch" type="search" placeholder="Search settings\u2026" spellcheck="false" aria-label="Search settings"></div>'
     + '<div id="edSearchChips"></div>'
     + '<div class="tabs" id="edTabs"></div>'
@@ -37320,6 +37348,66 @@ function syncPropStateFromObj(){
   s.rx=o.rotation.x*DEG; s.ry=o.rotation.y*DEG; s.rz=o.rotation.z*DEG;
   s.sx=o.scale.x; s.sy=o.scale.y; s.sz=o.scale.z;
 }
+// ---------- build 1137: FRAME SELECTED ----------
+// The outliner and the Prev/Next stepper could both move the selection anywhere in the level, and
+// nothing could move the CAMERA to it — so stepping through 28 props looked like nothing happening at
+// all, because 27 of them were off screen. F is the industry-standard binding for this (Unity, Unreal,
+// Blender all use it); the free-fly toggle it used to hold moves to Shift+F, and the View buttons in
+// the toolbar still drive both, so nothing becomes keyboard-only.
+const _frmBox = new THREE.Box3(), _frmCtr = new THREE.Vector3(), _frmSz = new THREE.Vector3();
+// build 1137: the viewport readout — camera mode, eye position, and a world-axis widget that turns with
+// the view. Throttled to 6 Hz: it is text, and re-laying it out every frame is pure waste.
+let _edViewT = 0;
+function updateEditorViewInfo(now){
+  const el = document.getElementById('edViewInfo'); if(!el) return;
+  const on = !!editorOpen;
+  if(el.classList.contains('on') !== on) el.classList.toggle('on', on);
+  if(!on || now < _edViewT) return;
+  _edViewT = now + 160;
+  const cam = (typeof activeCam==='function') ? activeCam() : camera;
+  const p = editorTopView ? { x:topPanX, y:topZoom, z:topPanZ } : (editorFreeFly ? flyPos : player.pos);
+  const mode = editorTopView ? 'TOP' : (editorFreeFly ? 'FLY' : 'WALK');
+  const sel = (typeof selectedSceneObject==='function' && selectedSceneObject()) ? editorActive : '\u2014';
+  const t = document.getElementById('edViewTxt');
+  if(t) t.textContent = mode + '  ' + p.x.toFixed(1) + ', ' + p.y.toFixed(1) + ', ' + p.z.toFixed(1)
+    + '\n' + Math.round(((player.yaw * 180 / Math.PI) % 360 + 360) % 360) + '\u00b0  sel ' + sel;
+  // the widget: the world's X/Z axes seen from the camera's yaw. Screen up is -Z when yaw is 0, which is
+  // the engine's own convention (forward is (-sin yaw, -cos yaw)), so the SVG rotates by -yaw.
+  const g = document.getElementById('edAxis');
+  if(g){ const d = -player.yaw * 180 / Math.PI;
+    g.style.transform = 'rotate(' + d.toFixed(1) + 'deg)';
+    const zt = document.getElementById('axZT'), xt = document.getElementById('axXT');
+    // counter-rotate the labels so they stay readable
+    if(zt) zt.setAttribute('transform', 'rotate(' + (-d).toFixed(1) + ' 0 -17)');
+    if(xt) xt.setAttribute('transform', 'rotate(' + (-d).toFixed(1) + ' 18 3)');
+  }
+}
+function _edFrameSelected(){
+  const o = (typeof selectedSceneObject==='function') ? selectedSceneObject() : null;
+  if(!o) return false;
+  // a light's own group has no renderable extent — frame the marker the author can actually see
+  const t = (o.userData && o.userData.marker) ? o.userData.marker : o;
+  try{ _frmBox.setFromObject(t, true); }catch(e){ return false; }
+  if(!isFinite(_frmBox.min.x) || _frmBox.isEmpty()) return false;
+  _frmBox.getCenter(_frmCtr); _frmBox.getSize(_frmSz);
+  // pull back far enough that the whole thing fits the vertical FOV, with a margin, and never so close
+  // that the near plane clips it
+  const radius = Math.max(0.6, _frmSz.length() * 0.5);
+  const dist = Math.max(camera.near * 4, radius / Math.tan(camera.fov * Math.PI / 360) * 1.6);
+  editorTopView = false; editorFreeFly = true; flyInit = true;   // framing implies the fly camera
+  // approach from the camera's current side so the view does not jump to the other side of the object
+  const dx = flyPos.x - _frmCtr.x, dz = flyPos.z - _frmCtr.z;
+  const l = Math.hypot(dx, dz) || 1;
+  const yaw = Math.atan2(dx / l, dz / l);                        // forward is (-sin yaw, -cos yaw)
+  const pitch = -0.45;                                           // look slightly down, as an editor does
+  const cp = Math.cos(pitch);
+  flyPos.set(_frmCtr.x + Math.sin(yaw) * cp * dist,
+             _frmCtr.y - Math.sin(pitch) * dist,
+             _frmCtr.z + Math.cos(yaw) * cp * dist);
+  player.yaw = yaw; player.pitch = pitch;
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  return true;
+}
 function selectedSceneObject(){
   if(selPickup>=0 && pickupMarkers[selPickup]) return pickupMarkers[selPickup];
   if(editorActive==='station') return station && station.model;
@@ -38592,6 +38680,10 @@ function toggleEditor(){
   if(typeof grid!=='undefined' && grid) grid.visible = _gridWanted();   // build 1133: the grid follows the editor, not the level
   if(editorOpen){
     if(typeof _raceClearBots==='function') _raceClearBots();   // build 833: rivals are runtime-only — never ghosts in the editor
+    // build 1137: a session STARTS in the fly camera. Setting the initial value alone was not enough —
+    // every path that leaves the editor sets editorFreeFly=false, so re-opening it always landed back on
+    // the player's walking gameplay camera. F (with nothing selected) and the View buttons still switch.
+    editorFreeFly = true; editorTopView = false; flyInit = false;
     if(!editorEl) buildEditorPanel();
     editorEl.style.display = 'block';
     if(typeof stopMusic==='function') stopMusic();   // silence the level's music/ambience while editing
