@@ -821,7 +821,31 @@ Three lessons, and the first is the one that cost the most:
   Four rounds of that produced four wrong answers; one float-target read produced the right one. When the
   question is about the render equation, measure in the render equation's own space.
 
-**What the same A/B did establish, and it matters more:** the bake carries the arena's block field almost
+**The confirming run added the first sun-to-shade measured in SCENE-LINEAR space.** A vertical fan of nine
+samples down one third of the frame: eight hit the same engine surface (`env0.12`, roughness 0.85,
+metalness 0.08) and one of those eight is in shadow. Same material, same frame, so the ratio is the light
+alone — and unlike every earlier figure it is read before ACES, so no tone curve is folded into it:
+
+```
+                  radiance              IRRADIANCE          per channel
+lit    0.1385/0.1371/0.0911   2.022/2.371/2.016
+shade  0.0245/0.0441/0.0391   0.358/0.763/0.866   R 5.6:1   G 3.1:1   B 2.3:1
+```
+**The ratio is strongly per-channel: red loses 5.6× going into shade, blue only 2.3×.** That is build 1149's
+finding, independently and properly measured: a shadow lit only by a blue sky keeps its blue and loses its
+red, which is why the fix had to be a WARM bounce term rather than more ambient of any colour. The
+`EMISSIVE!` label also fired correctly on the marker (`x1.00`), so the instrument's own blind spot is closed.
+
+**One loose end, deliberately not chased.** All eight of those samples report `col = 0.068/0.058/0.045`
+(`0x4a443c`), which matches no value the desert theme emits — its `wallColor` is `0x847864` and the CLI does
+emit that correctly (verified against frost, whose `wallColor` decodes exactly to `groundAlb × 0.55` through
+`skyHex`). Roughness 0.85 / metalness 0.08 matches `groundMood`'s wall, but `_envInten(0.08) = 0.12` also
+matches any PRIMITIVE at that metalness, so the surface is not identified. **Do not infer which it is from
+the arithmetic** — that is what produced four wrong answers on this same frame. One line in the probe
+settles it: report `o.name`, `geometry.type`, and whether the hit is in `propModels`. Then, if it really is
+`wallMat` rendering at 0.068 where the theme says 0.231, that is a 3.4× albedo error worth its own build.
+
+**What the bake A/B established, and it matters more than the seam ever did:** the bake carries the arena's block field almost
 entirely. With `lightMapIntensity = 0`, the blocks go `148,115,91 → 98,80,65` and their p50 luminance
 `0.191 → 0.0496` — a quarter of the light. That is the first quantification of "the bake is the only thing
 lighting generated geometry", and it is what build 1150's fix restores on every device whose driver reports
