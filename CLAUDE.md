@@ -944,10 +944,24 @@ Four decisions in the loot-box pool worth keeping:
   so no removal path can leak one, and a leaked beam is not cosmetic: it is a crate that never glows again
   for the rest of the match.
 
-Worth noting for the next one: a GLB-backed loot box (`chestModelUrl`) ALSO brings new materials on first
-load, which compiles their programs. That is a smaller, per-material hitch rather than a whole-scene
-recompile, and it is not what this build fixed — measure before assuming the freeze is gone entirely for
-levels using a custom crate model.
+**The same fault arrives by a second route on a custom crate model, and that is fixed here too.** GLTFLoader
+turns `KHR_lights_punctual` into a real three light, and nothing in this engine's model path touches
+`o.isLight` — so a `lootbox.glb` containing a light adds one to the scene on EVERY spawn, which is the
+identical recompile by a different door. A crate already has its pooled beam, so a model's own light is
+redundant as well as expensive: `buildChestMesh` now strips them, removing them from their parent rather
+than hiding them (hiding a light changes the count too — build 977).
+
+And `buildChestMesh` calls `loadGLTFCached` LAZILY, so with a custom model the first crate of a match also
+paid for the fetch, the parse and the first-render program compile of its materials. `warmChestModel()` does
+that at deploy the way build 622 warms the flipbook programs — instantiate once off-screen, compile, remove —
+and strips lights from the warm instance too, or warming would itself move the count. It runs once per url,
+and a failed load resets so the next deploy retries.
+
+Worth knowing for the general case: **imported models' own lights are unhandled everywhere else.** Only the
+loot box is fixed, because that is the one that spawns mid-match. Any prop with a light in its GLB will move
+the count when it loads; in the editor that is a hitch, and for anything spawned during play it is this bug
+again. The general fix is either to strip them on import or to route them through `registerEmitterLight`,
+and it needs a decision about creators who legitimately ship a lamp model with a light in it.
 
 ## Open work (as of build 1153)
 

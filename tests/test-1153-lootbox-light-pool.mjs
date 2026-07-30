@@ -141,4 +141,28 @@ const src = gameSource();
     'and build 1153 writes the shared rule down in one place, since three builds have now hit it');
 }
 
+// ---------------------------------------------------------------- the model path, same fault by two routes
+{
+  const fn = extractFunction('buildChestMesh');
+  // 1. a GLB can CARRY a light. GLTFLoader turns KHR_lights_punctual into a real three light, so a crate
+  //    model containing one changes the scene's light count on every spawn — the same freeze, second route.
+  assert(/const kill = \[\]; model\.traverse\(o=>\{ if\(o\.isLight\) kill\.push\(o\); \}\);/.test(fn),
+    'a crate model\'s own lights are stripped');
+  assert(/for\(const L of kill\)\{ if\(L\.parent\) L\.parent\.remove\(L\); \}/.test(fn),
+    '...removed from their parent, not just hidden — hiding a light changes the count too (build 977)');
+}
+{
+  // 2. the first crate of a match also paid for the model's fetch, parse and first-render program compile.
+  const fn = extractFunction('warmChestModel');
+  assert(/if\(!url \|\| _chestModelWarmed === url\) return;/.test(fn), 'the model is warmed once per url, not per deploy');
+  assert(/renderer\.compile\(scene, camera\);/.test(fn), '...by compiling it for real');
+  assert(/m\.position\.set\(0, -99999, 0\);/.test(fn), '...off-screen while it happens');
+  assert(/scene\.remove\(m\);/.test(fn), '...and the throwaway instance leaves the scene');
+  assert(/if\(o\.isLight\) kill\.push\(o\)/.test(fn),
+    'and the WARM pass strips lights too, or warming would itself move the light count');
+  assert(/_chestModelWarmed = '';/.test(fn), 'a failed load resets, so it can be retried on the next deploy');
+  assert(/if\(typeof warmChestModel === 'function'\) warmChestModel\(\);/.test(extractFunction('spawnPlacedLoot')),
+    'and it runs at deploy, which happens whether or not the level places any loot');
+}
+
 done('build 1153: loot-box beams come from a pre-seated pool — spawning a crate mid-match no longer changes the scene\'s light count, which was recompiling every shader in the level');

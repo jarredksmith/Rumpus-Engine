@@ -23572,6 +23572,12 @@ function buildChestMesh(px, pz, opts){
         const model = THREE.cloneSkinned(gltf.scene);
         model.scale.setScalar(chestModelScale || 1);
         model.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+        // build 1153: strip any light the GLB brings with it. GLTFLoader turns KHR_lights_punctual into real
+        // three lights, and a crate that adds one on every spawn changes the scene's light count — which is
+        // the exact recompile freeze this build exists to remove, arriving by a second route. The crate has a
+        // pooled beam already, so a model's own light is redundant as well as expensive.
+        { const kill = []; model.traverse(o=>{ if(o.isLight) kill.push(o); });
+          for(const L of kill){ if(L.parent) L.parent.remove(L); } }
         mesh.add(model);
         playModelAnimations(model, gltf);
       },
@@ -23591,12 +23597,37 @@ function _rollLootItems(n){
 }
 // Spawn the AUTHORED loot boxes (lootSpots) at their placed positions with their chosen contents. Called once
 // when a level starts. Empty contents -> 3 random items, so a placed box without a chosen loadout still works.
+// build 1153: compile the crate MODEL at load too. `buildChestMesh` calls loadGLTFCached lazily, so with a
+// custom lootbox.glb the first crate of a match paid for the fetch, the parse AND the first-render program
+// compile of its materials. That is a smaller hitch than the light-count recompile — per material, not per
+// scene — but it lands at the same moment and would have been mistaken for the same bug still being there.
+// Warmed the way build 622 warms the flipbook programs: instantiate it once, off-screen, compile, remove.
+let _chestModelWarmed = '';
+function warmChestModel(){
+  const url = (typeof chestModelUrl === 'string') ? chestModelUrl.trim() : '';
+  if(!url || _chestModelWarmed === url) return;
+  if(typeof loadGLTFCached !== 'function' || typeof renderer === 'undefined') return;
+  _chestModelWarmed = url;
+  loadGLTFCached(url, (gltf)=>{
+    try{
+      const m = THREE.cloneSkinned(gltf.scene);
+      m.scale.setScalar(chestModelScale || 1);
+      const kill = []; m.traverse(o=>{ if(o.isLight) kill.push(o); });
+      for(const L of kill){ if(L.parent) L.parent.remove(L); }   // never let the warm pass move the light count
+      m.position.set(0, -99999, 0);
+      scene.add(m);
+      renderer.compile(scene, camera);
+      scene.remove(m);
+    }catch(e){}
+  }, ()=>{ _chestModelWarmed = ''; });   // a failed load may be retried on the next deploy
+}
 function spawnPlacedLoot(){
   // build 1153: seat the beam pool HERE, at deploy, before the match starts. Growing the pool is itself a
   // light-count change, so it has to happen at a moment that already recompiles — a level load does, the
   // middle of a firefight does not. The size comes from this level's own loot spots (a marker and a crate
   // can be live for the same spot at once) plus the random-spawn cap.
   if(typeof _ensureChestLights === 'function') _ensureChestLights();
+  if(typeof warmChestModel === 'function') warmChestModel();
   if(typeof isClient!=='undefined' && isClient) return;   // host/solo authoritative; clients receive via snapshot
   for(const sp of lootSpots){
     const mesh = buildChestMesh(sp.x, sp.z, { y:sp.y, glowColor:sp.glowColor, glowI:sp.glowI });
