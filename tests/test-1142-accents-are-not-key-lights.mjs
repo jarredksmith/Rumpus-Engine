@@ -100,15 +100,21 @@ const linRGB = (hex) => [16, 8, 0].map(sh => lin((hex >> sh) & 255));
   // a neutral-ish key light, which is only true when no saturated accent dominates.
   const dw = src.match(/const DEFAULT_WORLD = \{[\s\S]*?\};/)[0];
   const floor = linRGB(parseInt(dw.match(/floorColor:\s*0x([0-9a-f]{6})/)[1], 16));
-  assert(floor[2] > floor[1] && floor[1] > floor[0], 'the default floor albedo is B>G>R (a cool grey-blue)');
   const sunC = linRGB(parseInt(dw.match(/sunColor:\s*0x([0-9a-f]{6})/)[1], 16));
   const sun = +dw.match(/sun:\s*([\d.]+)/)[1];
   assert(sunC[0] >= sunC[1] && sunC[1] >= sunC[2], 'the sun is warm, R>=G>=B');
-  // sun x albedo keeps the albedo's order for the two channels that matter here, because the sun's
-  // warmth is mild — so a frame in which the floor's blue is its LOWEST channel cannot be the sun's doing
+  // build 1156 made the default floor WARM (it now shares the sky dome's ground band), so the literal
+  // "B>G>R" this originally asserted is no longer true — and it was never the point. The invariant is that
+  // the KEY LIGHT preserves whatever order the albedo has: a saturated accent loud enough to be the key is
+  // exactly what reverses it, which is what 1142 found and what this must keep catching.
+  const order = (a) => a.map((v, i) => [v, i]).sort((p, q) => q[0] - p[0]).map(p => p[1]).join('');
   const lit = floor.map((v, i) => v * sunC[i] * sun);
-  assert(lit[2] > lit[0], 'sun-lit, the floor still has more blue than red (' + lit[2].toFixed(4) + ' vs ' + lit[0].toFixed(4)
-    + ') — which is why the measured frame having LESS was proof of a third light, not of the sun or the albedo');
+  eq(order(lit), order(floor),
+    'sun-lit, the floor still renders its own channel order (albedo ' + order(floor) + ', lit ' + order(lit) +
+    ') — so a FRAME that reverses it is proof of a third light, not of the sun or the albedo');
+  assert(Math.abs(floor[0] - floor[2]) > 0.01,
+    'and the albedo has a real channel order to preserve (R ' + floor[0].toFixed(4) + ' vs B ' + floor[2].toFixed(4) +
+    '), or the test above would pass on a neutral grey by accident');
 }
 
 done('build 1142: the pillar accent stops being the engine\'s key light, and no far-reaching hardcoded light outshines the sun');
