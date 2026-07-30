@@ -967,6 +967,16 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Jump learns what slide already knew (build 1160)
+
+The gate was `_jPressed && player.onGround` on the EXACT frame. Build 926 documented this precise failure for
+slide — "onGround flickers mid-stride... ate ~half of all slides" — and buffered it; jump never got the same
+fix, so a press one frame after walking off a ledge (or one frame before landing) was eaten. Now: a 0.10s
+coyote window refreshed while grounded, a 0.15s press buffer, jump fires when they overlap, and BOTH windows
+are consumed on fire (plus `JUMP_CD`) so coyote can never grant a second jump mid-air. `test-1160` replays
+the window logic frame-by-frame: coyote catch, buffered landing, no double jump, both expiries, cooldown.
+Five pins moved (160, 360, 392, 493, 89), each keeping its lock (loader, warmup, ledge, slide-cancel).
+
 ## The review panel, and its first confirmed kill (build 1159)
 
 Six independent harsh-critic reviews (rendering, editor UX, gameplay feel, performance, feature surface,
@@ -1204,7 +1214,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1159)
+## Open work (as of build 1160)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

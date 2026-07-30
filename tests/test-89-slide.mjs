@@ -8,5 +8,5 @@ assert(/if\(!sliding && slideCD<=0 && _slideBufT>0 && \(_sprinting \|\| _sprintG
 assert(/const slSpeed = SPEED\*SPRINT\*1\.75 \* \(0\.4 \+ 0\.6\*k\)/.test(src), 'fast launch decaying to a walk');
 assert(/crouching = true; crouchT = Math\.min\(1, crouchT \+ dt\*10\);/.test(src), 'camera dips during the slide');
 assert(/if\(slideT<=0 \|\| !player\.onGround\)\{ sliding=false; slideCD=0\.55; \}/.test(src), 'slide ends on timeout / leaving the ground, with a cooldown');
-assert(/player\.vel\.y = JUMP; player\.onGround=false; sliding=false;/.test(src), 'jumping cancels the slide');
+assert(/player\.vel\.y = JUMP; player\.onGround=false; _coyoteT=0; _jumpBufT=0; sliding=false;/.test(src), 'jumping cancels the slide');
 done('slide');

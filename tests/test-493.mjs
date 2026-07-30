@@ -8,7 +8,7 @@ assert(/const MANTLE_MIN = STEP \+ 0\.05, MANTLE_MAX = 2\.05, MANTLE_DUR = 0\.42
 const MIN = 0.6 + 0.05;   // STEP + 0.05
 
 // --- wiring in the movement loop (build 644: grab now HANGS, then pull-up or drop) ---
-assert(/if\(!_ledge && _jPressed && player\.onGround/.test(src), 'a fresh jump is suppressed on the frame a ledge is grabbed');
+assert(/if\(!_ledge && _jumpBufT>0 && \(player\.onGround \|\| _coyoteT>0\)/.test(src), 'a fresh jump is suppressed on the frame a ledge is grabbed');
 assert(/const _lt = mantleLedge\(_fx, _fz, _fy\);/.test(src), 'movement probes for a ledge in front');
 assert(/wish\.dot\(forward\) > 0\.5/.test(src), 'only grabs when actually pushing forward (input-agnostic: keys or stick)');
 assert(/_ledge = \{ ph:'hang'/.test(src), 'grabbing a ledge starts in the HANG phase');
