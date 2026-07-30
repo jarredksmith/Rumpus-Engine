@@ -3,6 +3,13 @@
 // three collider builders (the model grid rasteriser, the per-mesh box builder, the Rapier
 // trimesh) and its raycast is neutralised so it never blocks movement probes, sight, or bullets.
 import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+// The grid's own constants, taken from breach.html. Restating them here meant that adding one (build 1148's
+// footprint budget) made this harness throw a ReferenceError from inside the function it was testing.
+function gridConsts(){
+  return [/const MGRID_CELL = [^;]+;/, /const MGRID_BITS = [^;]+;/, /const MGRID_FOOT_BYTES = [^;]+;/,
+    /const MGRID_MIN_THICK = [^;]+;/]
+    .map(re=>{ const m=src.match(re); assert(m, 'the grid constant ' + re + ' is declared in one place'); return m[0]; }).join('\n');
+}
 
 const src = gameSource();
 const bg = extractFunction('buildModelGridBoxes');
@@ -44,7 +51,9 @@ assert(/const _ncNoRay = function\(\)\{\};/.test(src), 'the shared raycast no-op
   const obj = { traverse(fn){ fn(block); fn(grass); } };
   const overall = { min: new V3(0,0,0), max: new V3(15, 3, 11) };
   const fn = new Function('THREE','_mgA','_mgB','_mgC','IS_COARSE',
-    `const MGRID_CELL = 1.0, MGRID_SLOT = 0.35;\nconst MGRID_BITS = 48 << 20;\n${bg}\nreturn buildModelGridBoxes;`
+    // build 1148: the collider constants are READ from the source rather than restated here, so a
+    // change to the grid's budget or resolution reaches this harness instead of throwing inside it.
+    `${gridConsts()}\n${bg}\nreturn buildModelGridBoxes;`
   )({ Vector3: V3, Box3 }, new V3(), new V3(), new V3(), false);
   const boxes = fn(obj, overall);
   assert(boxes && boxes.length, 'the builder still produces boxes for the real wall');

@@ -128,12 +128,14 @@ Conventions that are easy to break:
 - **Interiors need `addLight`.** The bake integrates sky visibility + one sun bounce, so anything
   under a roof bakes black without a registered light. Light range is capped at the tracer's search
   distance (9.5) or the shadow test can't see occluders and light leaks through walls.
-- **Author to the collider, not to the eye (build 1113).** The engine turns an imported model into a
-  ~1-unit COLUMN grid and a column goes solid for its whole width as soon as a triangle touches it,
-  so every surface stands up to a cell proud of where it was modelled — and a face lying exactly ON
-  a cell boundary (round-numbered architecture does this constantly) costs the entire next cell.
-  Measured: a 0.45-thick wall collides 2.0 thick. Hence `GRID_PAD` / `BOT_R` / `BOT_LANE` (3.8) in
-  levelgen: **anything a bot must walk through is at least BOT_LANE wide**, doorways included.
+- **Author to the collider, not to the eye (build 1113, relaxed by 1148).** The engine used to turn an
+  imported model into a ~1-unit COLUMN grid where a column went solid for its whole width as soon as a
+  triangle touched it: a 0.45-thick wall collided 2.0 thick and a 1.6 m doorway had ZERO passable gap.
+  Hence `GRID_PAD` / `BOT_R` / `BOT_LANE` (3.8) in levelgen: **anything a bot must walk through is at
+  least BOT_LANE wide**, doorways included. Build 1148 made the collider tight to the triangles (that
+  wall now collides 0.500, that doorway passes 1.49 m), so these are a MARGIN rather than a
+  requirement — but they are unchanged, because narrowing them is a generator change that needs its
+  own probe pass, not a side effect of an engine build.
 - **Decoration waits its turn.** Wall-foot pieces are proposed via `later(...)` during the perimeter
   dressing and dropped after everything has reserved its ground; placing them immediately drops a
   boulder onto a gallery ramp. Mirrored cover tests BOTH copies against the reserved rects.
@@ -526,7 +528,64 @@ Three details worth keeping:
 
 Nothing is downloaded and nothing is stored in the level — it is data the engine already held.
 
-## Open work (as of build 1147)
+## The collider was a cell wider than the model (build 1148)
+
+`buildModelGridBoxes` turns an imported model into a ~1-unit COLUMN grid, and a column went solid for its
+whole width as soon as a triangle touched it. Measured on the build-1123 repro — a thin wall with an
+ordinary 1.6 m doorway — the passable gap was **0.00 m**: one merged box spanned the opening. A 0.45-thick
+wall collided **2.000** thick. That is the root cause behind the generator's `GRID_PAD` / `BOT_LANE`, and
+it meant every OTHER creator's imported building was un-walkable unless they had happened to pad it.
+
+Each (column, **slot**) now remembers the real XZ extent of the triangles that stamped it, one byte per
+edge (~4 mm at a 1-unit cell). Build 1123 tried this per COLUMN and opened no doorway; the reason is the
+load-bearing insight here and it recurs one level down:
+
+- **Per column is not enough**, because a column holds several RUNS and a doorway column holds the floor
+  slab (which fills the cell) beside the wall's jamb face (a sliver). Their union is the whole cell.
+- **Per slot is not enough either** — a run's footprint is the union over its slots, and a wall's BASE slot
+  holds the floor slab too, so the union inherits the slab's full cell. Measured before segmenting: the
+  0.2 wall still collided 2.0 and the doorway was still shut. So a run **splits wherever its footprint
+  changes**, compared at `FOOT_Q = 16` levels per edge so a few millimetres between slots cannot shatter a
+  wall into K boxes.
+- **Merging is only lossless while the footprint spans the whole cell on the merge axis.** Two adjacent
+  columns each holding a sliver at the same relative position are two thin walls with a gap between them,
+  and one merged box bridges it — solid where the model is open, the very fault this build removes. A
+  wall's columns are full along its run and thin across it, so the case that matters still collapses.
+
+**Widening a too-thin footprint is where this went wrong twice, and both wrong answers were plausible.**
+Zero-thickness geometry (which low-poly levels are full of) would emit a box of no thickness, so a
+footprint is widened to `MGRID_MIN_THICK` (0.25) — but toward WHICH side is not a guess:
+1. *Centred on the measurement.* A 0.45 wall straddling a cell boundary became two 0.25 slabs at z=±0.25
+   with a **walk-through gap at z=0** — a worse failure than the over-solid cell.
+2. *Grow to the nearer cell edge.* A 1.4 wall's two faces sit near the outer edges of their cells, so both
+   grew **outward, away from each other**, hollowing the wall out.
+3. *Ask the occupancy grid.* If the neighbour cell is solid at the same slot the wall continues across that
+   boundary, so this cell's footprint must reach it; the two halves then meet and the wall is solid. Solid
+   on both sides means the cell is interior and fills. One bit lookup, and it is not a guess.
+
+`PLANE_B` (2/255 of a cell, ~8 mm) is what distinguishes a single SURFACE from a thin measurement: a wall
+wholly inside one cell records BOTH its faces, so it is not a plane at all and keeps its measured position,
+widening about its own centre — otherwise a 0.2 wall in mid-cell would be dragged out to a cell edge.
+
+**Fail SOLID, never open.** An unstamped slot starts at min 255 / max 0, and a slot that is solid with no
+recorded fragment falls back to the whole cell. The budget (`MGRID_FOOT_BYTES`, 24 MB, halved on phones)
+degrades per-slot → per-column → none, and *none* is exactly the pre-1148 behaviour rather than a broken
+grid: 4 bytes × N × K is ~750 KB for an arena and 24 MB on the 331×148×366 skyscraper this serves.
+
+Measured, doorway repro: **1.6 m opening 0.00 → 1.49 m passable**, 2.56 → 2.49, 3.8 → 3.49. Wall collider
+thickness: 0.1 → 0.500, 0.2 → 0.500, **0.45 → 0.500 (was 2.000)**, 0.9 → 0.875, 1.4 → 1.375.
+
+**It costs boxes, and every consumer walks the list per query.** A real 3-storey generated block (16,368
+triangles, 45×74×37): **795 boxes / 110 ms → 2,291 / 137 ms**. A `FOOT_Q` sweep of 4/8/16/32 gave
+2,240/2,277/2,291/2,321 — so the increase is structural (a tight collider genuinely has more pieces), not
+quantisation noise, and tuning `FOOT_Q` will not buy it back. The enemy resolve already rejected a prop on
+its overall box before walking its box list; `_surfCull`, `clearAt`, `insideSolid` and `ceilingAt` did not,
+and now do. `segmentBlocked` is deliberately left — it walks a SEGMENT, not a point, so it needs a
+segment-bbox test rather than the same four comparisons.
+
+Still true, and not introduced here: a hollow shell thicker than two cells has empty interior cells.
+
+## Open work (as of build 1148)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
@@ -556,29 +615,10 @@ Themes are DATA (build 1114): a palette entry names its materials plus the treat
 contains no `theme === ...` branch. Adding the eighth theme is one `arenaPalette` entry, one
 `arenaMood` entry, whatever new treatment names it introduces, and the editor's theme list.
 
-Worth considering next, in the ENGINE rather than the generator: `buildModelGridBoxes` could emit
-each column's box tight to the triangles that actually stamped it instead of spanning the whole
-cell. That is the root cause behind `GRID_PAD`, and it would make every imported level's doorways
-and corridors passable rather than only the ones this generator authors.
-
-**Attempted and reverted (build 1123).** Recording it so the next attempt starts past the trap.
-Tracking each column's real XZ footprint (a byte per edge, ~4 mm at a 1-unit cell) and emitting
-boxes tight to it is easy, and both collider tests still pass. It does NOT fix a doorway. Measured
-on a 0.2-thick wall with an ordinary 1.6 m opening: the collider gap stays zero, one box spanning
-the whole wall.
-
-Two reasons, in order:
-1. The greedy merge groups columns by identical vertical runs, so a doorway's thin jamb columns
-   carry the same full-height run as the wall either side, merge with it, and the union of the
-   footprints spans the opening again. Adding the footprint to the merge key is necessary...
-2. ...but not sufficient, and this is the real blocker: a footprint is per COLUMN while a column
-   holds several RUNS. A doorway column contains the floor (occupying the whole cell) and the
-   wall's jamb face (a sliver). Their union is the whole cell, so the key never distinguishes them.
-
-The footprint therefore has to be per (column, run). Per-slot storage is 4 bytes x N x K, which is
-fine for an arena (~750 KB) and 24 MB on the 331x148x366 skyscraper this feature exists to serve —
-so it needs a budget and a fallback to per-column, in the style of MGRID_BITS. Do that first, then
-the merge key, then the tight emit.
+**`GRID_PAD` / `BOT_LANE` are now a MARGIN, not a requirement (build 1148).** The engine's collider is
+tight to the triangles, so the generator no longer has to author a 3.8 m doorway to get a 1.6 m one.
+Narrowing them is a *generator* change with its own probe pass — do not do it as part of an engine
+build, and keep `tests/test-1113` as the gate.
 
 Also outstanding (user actions): upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.

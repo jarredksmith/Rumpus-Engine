@@ -10573,6 +10573,24 @@ const _mgA=new THREE.Vector3(), _mgB=new THREE.Vector3(), _mgC=new THREE.Vector3
 // because occupancy is a bitset rather than a byte per slot.
 const MGRID_CELL = 1.0, MGRID_SLOT = 0.35;   // target column width / slot height, in world units
 const MGRID_BITS = 48 << 20;                 // ~6 MB of occupancy (halved on phones)
+// build 1148: the FOOTPRINT. A column used to go solid for its whole 1-unit width the moment a triangle
+// touched it, so every imported surface stood up to a cell proud of where it was modelled — measured on
+// the generated buildings, a 0.45-thick wall collided 2.0 thick, and a face lying exactly ON a cell
+// boundary (round-numbered architecture does this constantly) cost the entire next cell. That is the root
+// cause behind the generator's GRID_PAD / BOT_LANE, and it is why an imported level's doorways were
+// passable only when its author had padded them.
+//
+// Each (column, vertical slot) now remembers the real XZ extent of the triangles that stamped it, as one
+// byte per edge — 1/255 of a cell, about 4 mm. Build 1123 tried this PER COLUMN and it did not open a
+// single doorway, for a reason worth keeping: a column holds several RUNS, and a doorway column holds the
+// floor (which fills the cell) and the wall's jamb face (a sliver). Their union is the whole cell, so a
+// per-column footprint can never tell them apart. Per SLOT, unioned per run, can.
+const MGRID_FOOT_BYTES = 24 << 20;           // 24 MB cap for footprints (halved on phones)
+// A single-plane wall — zero-thickness geometry, which low-poly levels are full of — would emit a box of
+// no thickness, and a body would walk straight through what used to be a solid cell. So a footprint is
+// widened to at least this, centred on what the triangles actually covered. Still 4x tighter than the
+// whole cell it replaced.
+const MGRID_MIN_THICK = 0.25;
 function buildModelGridBoxes(obj, overall){
   if(!overall) return null;
   const sx=overall.max.x-overall.min.x, sy=overall.max.y-overall.min.y, sz=overall.max.z-overall.min.z;
@@ -10591,6 +10609,17 @@ function buildModelGridBoxes(obj, overall){
   const occ=new Uint32Array(((N*K)+31)>>5);                         // bitset: slot (gx*nz+gz)*K + sl
   const setSlot=(i)=>{ occ[i>>5] |= (1<<(i&31)); };
   const getSlot=(i)=>  (occ[i>>5] >>> (i&31)) & 1;
+  // build 1148: footprints, at the finest granularity the budget affords. PER SLOT is what actually opens
+  // a doorway; PER COLUMN still tightens a thin wall from a whole cell to its real thickness, which is
+  // most of the "author to the collider" tax; NONE is the old whole-cell behaviour.
+  let fx0=null, fx1=null, fz0=null, fz1=null, footPer=0;   // 0 none, 1 per column, 2 per slot
+  { const cap=(typeof IS_COARSE!=='undefined' && IS_COARSE) ? (MGRID_FOOT_BYTES>>1) : MGRID_FOOT_BYTES;
+    const want = (n)=>{ fx0=new Uint8Array(n).fill(255); fz0=new Uint8Array(n).fill(255);
+      fx1=new Uint8Array(n); fz1=new Uint8Array(n); };
+    if(4*N*K <= cap){ want(N*K); footPer=2; }
+    else if(4*N <= cap){ want(N); footPer=1; } }
+  // index of the footprint cell for (column base, slot)
+  const fi=(base, sl)=> footPer===2 ? (base+sl) : ((base/K)|0);
   let tris=0, bail=false, work=0;
   obj.traverse(o=>{
     if(bail || !o.isMesh || o.visible===false || !o.geometry) return;
@@ -10630,6 +10659,10 @@ function buildModelGridBoxes(obj, overall){
       for(let gx=gx0;gx<=gx1;gx++) for(let gz=gz0;gz<=gz1;gz++){
         const base=(gx*nz+gz)*K;
         let lo=miY, hi=maY;
+        // build 1148: the fragment's XZ extent, needed for the footprint. Declared HERE because the
+        // clipped polygon lives inside the `multi` branch below and reading it outside was a real bug —
+        // caught by test-1113, which runs this function for real rather than pinning it.
+        let fax0=miX, fax1=maX, faz0=miZ, faz1=maZ;
         if(multi){
           let poly=[[_mgA.x,_mgA.y,_mgA.z],[_mgB.x,_mgB.y,_mgB.z],[_mgC.x,_mgC.y,_mgC.z]];
           const rx0=ox+gx*cw, rx1=rx0+cw, rz0=oz+gz*cd, rz1=rz0+cd;
@@ -10646,12 +10679,29 @@ function buildModelGridBoxes(obj, overall){
           }
           work += 4;
           if(!poly.length) continue;             // in the box, but the triangle never enters this cell
-          lo=Infinity; hi=-Infinity;
-          for(const v of poly){ if(v[1]<lo) lo=v[1]; if(v[1]>hi) hi=v[1]; }
+          lo=Infinity; hi=-Infinity; fax0=Infinity; fax1=-Infinity; faz0=Infinity; faz1=-Infinity;
+          for(const v of poly){ if(v[1]<lo) lo=v[1]; if(v[1]>hi) hi=v[1];
+            if(v[0]<fax0) fax0=v[0]; if(v[0]>fax1) fax1=v[0];
+            if(v[2]<faz0) faz0=v[2]; if(v[2]>faz1) faz1=v[2]; }
         }
         const cs0=Math.max(0,Math.min(K-1,Math.floor((lo-oy)/sh)));
         const cs1=Math.max(cs0,Math.min(K-1,Math.floor((hi-oy)/sh)));
         work += cs1-cs0+2;
+        if(footPer){
+          // build 1148: the fragment's real XZ extent inside THIS cell, as cell-relative bytes. For a
+          // clipped fragment that is the clipped polygon's own extent; for a triangle wholly inside one
+          // cell it is the triangle's bounding box. Computed once per cell, then only min/max per slot.
+          const rx0=ox+gx*cw, rz0=oz+gz*cd;
+          const q0=(v,r,w)=>{ const t=(v-r)/w; return t<=0?0:t>=1?255:Math.floor(t*255); };
+          const q1=(v,r,w)=>{ const t=(v-r)/w; return t<=0?0:t>=1?255:Math.ceil(t*255); };
+          const bx0b=q0(fax0,rx0,cw), bx1b=q1(fax1,rx0,cw), bz0b=q0(faz0,rz0,cd), bz1b=q1(faz1,rz0,cd);
+          const s0f=(footPer===2)?cs0:0, s1f=(footPer===2)?cs1:0;
+          for(let sl=s0f;sl<=s1f;sl++){
+            const i=(footPer===2)?(base+sl):((base/K)|0);
+            if(bx0b<fx0[i]) fx0[i]=bx0b; if(bx1b>fx1[i]) fx1[i]=bx1b;
+            if(bz0b<fz0[i]) fz0[i]=bz0b; if(bz1b>fz1[i]) fz1[i]=bz1b;
+          }
+        }
         for(let sl=cs0;sl<=cs1;sl++) setSlot(base+sl);
       }
     }
@@ -10660,17 +10710,97 @@ function buildModelGridBoxes(obj, overall){
   // Per column, the contiguous vertical runs of solid slots. A column under an archway holds a low threshold
   // run and a high crown run with an EMPTY gap between them, so a body passes through; a solid wall column is
   // one floor-to-top run; stair treads are single low runs you step up.
-  const key=new Array(N); let solid=0;
+  //
+  // build 1148: each run also carries the UNION of its slots' footprints, widened to MGRID_MIN_THICK and
+  // quantised — so the key and the emitted box agree, and two columns whose footprints differ only below
+  // the minimum thickness still merge.
+  const minBx=Math.min(255, Math.max(1, Math.ceil(MGRID_MIN_THICK/cw*255)));
+  const minBz=Math.min(255, Math.max(1, Math.ceil(MGRID_MIN_THICK/cd*255)));
+  // Widening a too-thin footprint has to extend it toward the NEARER CELL EDGE, not around its centre.
+  // A single plane records no information about which side of it the solid lies on, and a wall thinner
+  // than a cell puts its two faces in DIFFERENT cells — so each cell sees one plane, and centring the
+  // widening pushed both boxes away from the wall's own interior. Measured on the repro: a 0.45-thick wall
+  // became two 0.25 slabs at z=±0.25 with a WALK-THROUGH GAP between them, which is a worse failure than
+  // the over-solid cell this build set out to fix. A face near a cell edge almost always continues into
+  // the next cell, so extending to that edge is both the safe guess and the right one: the two halves then
+  // meet at the boundary and the wall is solid again, at 0.5 rather than 2.0.
+  // ...but it must grow FROM the plane to that edge, not replace it. A 0.9-thick wall straddling a cell
+  // boundary records a plane at 0.45 from the edge in each cell; growing from it gives each cell its true
+  // 0.45 and the pair measures 0.9 exactly, where replacing it gave 0.25 each and a collider thinner than
+  // the model. And a wall wholly INSIDE one cell records BOTH its faces, so it is not a plane at all — that
+  // case keeps its measured position and only widens around its own centre, or a 0.2 wall in mid-cell would
+  // be dragged out to the cell edge.
+  // ...and WHICH edge is not a guess: the occupancy grid already knows. If the neighbouring cell is solid
+  // at the same slot, the wall continues across that boundary, so this cell's footprint must reach it — the
+  // two halves then meet and the wall is solid. Guessing from the plane's position instead was measured
+  // wrong twice: centring it left a 0.45 wall as two slabs with a walk-through gap, and "grow to the nearer
+  // edge" sent a 1.4 wall's two faces outward, away from each other, hollowing it out. Neighbour occupancy
+  // is the actual answer and it costs one bit lookup.
+  //
+  // A wall wholly INSIDE one cell records BOTH its faces, so it is not a plane at all: that case keeps its
+  // measured position and widens about its own centre, or a 0.2 wall in mid-cell would be dragged to an edge.
+  const PLANE_B = 2;                                 // <= 2/255 of a cell (~8 mm) is a single surface
+  const widen=(lo, hi, minB, nbLo, nbHi)=>{
+    if(hi - lo >= minB) return [lo, hi];             // the geometry measured its own thickness: keep it
+    if(hi - lo <= PLANE_B && (nbLo || nbHi)){
+      if(nbLo && nbHi) return [0, 255];              // solid both sides: this cell is interior, fill it
+      const a = nbHi ? lo : 0, b = nbHi ? 255 : hi;  // grow FROM the surface to the boundary it continues past
+      if(b - a >= minB) return [a, b];
+      return nbHi ? [Math.max(0, 255 - minB), 255] : [0, Math.min(255, minB)];
+    }
+    const c = (lo + hi) >> 1, h = minB >> 1;         // an isolated thin plate: widen about its own centre
+    let a = c - h, b = a + minB;
+    if(a < 0){ a = 0; b = Math.min(255, minB); }
+    if(b > 255){ b = 255; a = Math.max(0, 255 - minB); }
+    return [a, b];
+  };
+  //
+  // A run is split wherever its FOOTPRINT changes, not just where the occupancy does. Build 1123 stored one
+  // footprint per column and that opened no doorway; per run is not enough either, and the reason is the
+  // same one level down — a wall's base slot holds the FLOOR SLAB as well as the wall, so its footprint is
+  // the whole cell, and a union taken over the whole run inherits it. Measured on the repro before
+  // segmenting: a 0.2-thick wall still collided 2.0 thick and a 1.6 m doorway was still shut. Segmenting
+  // gives that column a full-cell box for the floor slot and a thin box for the wall above it, which is
+  // what the model actually is.
+  //
+  // Footprints are compared QUANTISED (FOOT_Q levels per edge) so a few millimetres of difference between
+  // neighbouring slots cannot shatter a wall into K boxes.
+  const FOOT_Q = 16, FQ = Math.ceil(255/FOOT_Q);
+  const qz = (v)=> Math.min(255, Math.round(v/FQ)*FQ);
+  const key=new Array(N), foot=new Array(N); let solid=0;
   for(let gx=0;gx<nx;gx++) for(let gz=0;gz<nz;gz++){
     const ci=gx*nz+gz, base=ci*K;
-    let k='', sl=0;
+    let k='', sl=0; const fs=[];
     while(sl<K){
       if(!getSlot(base+sl)){ sl++; continue; }
-      let run=sl; while(run<K && getSlot(base+run)) run++;
-      k += (k?',':'') + sl + ':' + run;
+      // this slot's footprint, quantised — the segment runs while the next slot is solid AND matches it
+      const slotFoot=(q)=>{
+        if(!footPer) return [0,255,0,255];
+        const i=fi(base, q);
+        if(fx1[i] < fx0[i]) return [0,255,0,255];        // solid but no fragment recorded: whole cell
+        return [qz(fx0[i]), qz(fx1[i]), qz(fz0[i]), qz(fz1[i])];
+      };
+      const f0=slotFoot(sl);
+      let run=sl+1;
+      while(run<K && getSlot(base+run)){
+        const fn=slotFoot(run);
+        if(fn[0]!==f0[0] || fn[1]!==f0[1] || fn[2]!==f0[2] || fn[3]!==f0[3]) break;
+        run++;
+      }
+      let a0=f0[0], a1=f0[1], b0=f0[2], b1=f0[3];
+      if(footPer){
+        // does the solid continue into the neighbouring cell at this slot? Sampled at the segment's first
+        // slot, which is where its footprint was read.
+        const nb=(dx,dz)=>{ const x2=gx+dx, z2=gz+dz;
+          return (x2>=0 && x2<nx && z2>=0 && z2<nz) ? !!getSlot(((x2*nz+z2)*K)+sl) : false; };
+        const wx=widen(a0,a1,minBx, nb(-1,0), nb(1,0)), wz=widen(b0,b1,minBz, nb(0,-1), nb(0,1));
+        a0=wx[0]; a1=wx[1]; b0=wz[0]; b1=wz[1];
+      }
+      fs.push([a0,a1,b0,b1]);
+      k += (k?',':'') + sl + ':' + run + ':' + a0 + ':' + a1 + ':' + b0 + ':' + b1;
       sl=run;
     }
-    key[ci]=k; if(k) solid++;
+    key[ci]=k; foot[ci]=fs; if(k) solid++;
   }
   if(!solid) return null;
   // Greedy-merge identical columns into rectangles before emitting boxes. At this resolution a building is
@@ -10678,19 +10808,33 @@ function buildModelGridBoxes(obj, overall){
   // walks the box list per query — a raw per-column emit would trade one bug for a framerate one. Long walls
   // and wide floors are exactly the case greedy meshing collapses best.
   const boxes=[], ey=1e-3, used=new Uint8Array(N);
+  // build 1148: merging along an axis is only LOSSLESS while the footprint spans the whole cell on that
+  // axis. Two adjacent columns each holding a sliver at the same relative position are two thin walls with
+  // a gap between them, and one merged box would bridge it — solid where the model is open, which is the
+  // very fault this build exists to remove. A wall's columns are full along its RUN and thin across it, so
+  // the case that matters most still collapses; a floor slab is full both ways and still merges both ways.
+  const fullX=(ci)=> foot[ci].every(f=> f[0]===0 && f[1]===255);
+  const fullZ=(ci)=> foot[ci].every(f=> f[2]===0 && f[3]===255);
   for(let gx=0;gx<nx;gx++) for(let gz=0;gz<nz;gz++){
     const ci=gx*nz+gz; if(used[ci] || !key[ci]) continue;
     const k=key[ci];
-    let z1=gz; while(z1+1<nz && !used[gx*nz+z1+1] && key[gx*nz+z1+1]===k) z1++;   // extend along Z
+    const canZ = !footPer || fullZ(ci), canX = !footPer || fullX(ci);
+    let z1=gz; if(canZ) while(z1+1<nz && !used[gx*nz+z1+1] && key[gx*nz+z1+1]===k) z1++;   // extend along Z
     let x1=gx;                                                                    // ...then widen along X
-    outer: while(x1+1<nx){
+    if(canX) outer: while(x1+1<nx){
       for(let z=gz; z<=z1; z++){ const c2=(x1+1)*nz+z; if(used[c2] || key[c2]!==k) break outer; }
       x1++;
     }
     for(let x=gx; x<=x1; x++) for(let z=gz; z<=z1; z++) used[x*nz+z]=1;
-    const bx0=ox+gx*cw-ey, bx1=ox+(x1+1)*cw+ey, bz0=oz+gz*cd-ey, bz1=oz+(z1+1)*cd+ey;
-    for(const part of k.split(',')){
-      const p=part.split(':');
+    const cx0=ox+gx*cw, cz0=oz+gz*cd;
+    const spanX=(x1-gx+1)*cw, spanZ=(z1-gz+1)*cd;
+    for(let pi=0; pi<foot[ci].length; pi++){
+      const p=key[ci].split(',')[pi].split(':'), f=foot[ci][pi];
+      // Tight to the triangles that actually stamped this run, not to the cell that contains them. On a
+      // merged rectangle the footprint is full on the merged axis by construction, so scaling it across the
+      // whole span is exact.
+      const bx0=cx0+(f[0]/255)*spanX-ey, bx1=cx0+(f[1]/255)*spanX+ey;
+      const bz0=cz0+(f[2]/255)*spanZ-ey, bz1=cz0+(f[3]/255)*spanZ+ey;
       boxes.push(new THREE.Box3(new THREE.Vector3(bx0, oy+(+p[0])*sh, bz0), new THREE.Vector3(bx1, oy+(+p[1])*sh, bz1)));
     }
   }
@@ -25565,7 +25709,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1147 · 2026-07-30';
+const BUILD_VERSION = 'build 1148 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29046,6 +29190,11 @@ function _surfCull(x, z){
   for(let i=0;i<colliders.length;i++){ const c=colliders[i];
     const bs = c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]));
     if(!bs){ out.push(c); continue; }
+    // build 1148: reject against the OVERALL box first. Every part lies inside it, so this cannot change an
+    // answer — and the footprint work made an imported building's part list ~3x longer (795 -> 2291 boxes on
+    // a generated 3-storey block), which this per-bot-per-frame loop pays in full for every collider a bot
+    // is NOT standing on. The enemy resolve has done exactly this since build 1094; this had not.
+    { const b0=c.userData.box; if(b0 && (x<b0.min.x-M || x>b0.max.x+M || z<b0.min.z-M || z>b0.max.z+M)) continue; }
     for(let k=0;k<bs.length;k++){ const b=bs[k]; if(x>=b.min.x-M && x<=b.max.x+M && z>=b.min.z-M && z<=b.max.z+M){ out.push(c); break; } }
   }
   return out;
@@ -29174,6 +29323,7 @@ function clearAt(x, z, feetY, surfHint){
   const bandLo = standY + STEP, bandHi = standY + effPlayerHeight();
   for(const c of colliders){
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
+    { const b0=c.userData.box; if(b0 && (x < b0.min.x-R || x > b0.max.x+R || z < b0.min.z-R || z > b0.max.z+R)) continue; }   // build 1148: coarse reject — parts live inside the overall box
     for(const b of bs){
       if(x < b.min.x - R || x > b.max.x + R || z < b.min.z - R || z > b.max.z + R) continue;   // outside this part's footprint
       if(!(b.min.y < bandHi && b.max.y > bandLo + 1e-4)) continue;                              // not in the body band (e.g. overhead -> walk under)
@@ -29199,6 +29349,7 @@ function clearAt(x, z, feetY, surfHint){
   }
   return true;
 }
+const CB_EPS = 0.01;   // build 1148: slack for the 1 mm skin a grid box carries past the overall box
 // Is the player's CENTER literally inside solid geometry (no radius margin)? Used as an escape hatch so a
 // player who ends up embedded (spawned inside, shoved in) can always walk back out instead of freezing.
 function insideSolid(x, z, feetY){
@@ -29206,6 +29357,10 @@ function insideSolid(x, z, feetY){
   for(const c of colliders){
     const r = c.rotation; if(r && (Math.abs(r.x)>0.05 || Math.abs(r.z)>0.05)) continue;
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
+    // build 1148: coarse reject on the overall box. Every part lies inside it, so this cannot change an
+    // answer — with one caveat worth the epsilon: a grid box is emitted with a 1 mm skin (`ey`), so it can
+    // poke a hair outside the overall box. CB_EPS keeps the reject strictly conservative.
+    { const b0=c.userData.box; if(b0 && (x < b0.min.x-CB_EPS || x > b0.max.x+CB_EPS || z < b0.min.z-CB_EPS || z > b0.max.z+CB_EPS)) continue; }
     for(const b of bs){
       if(x < b.min.x || x > b.max.x || z < b.min.z || z > b.max.z) continue;   // center strictly inside footprint
       if(b.min.y < bandHi && b.max.y > bandLo) return true;
@@ -29219,6 +29374,10 @@ function ceilingAt(x, z, feetY){
   let lowest = Infinity;
   for(const c of colliders){
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
+    // build 1148: coarse reject on the overall box. Every part lies inside it, so this cannot change an
+    // answer — with one caveat worth the epsilon: a grid box is emitted with a 1 mm skin (`ey`), so it can
+    // poke a hair outside the overall box. CB_EPS keeps the reject strictly conservative.
+    { const b0=c.userData.box; if(b0 && (x < b0.min.x-CB_EPS || x > b0.max.x+CB_EPS || z < b0.min.z-CB_EPS || z > b0.max.z+CB_EPS)) continue; }
     for(const b of bs){
       if(x < b.min.x || x > b.max.x || z < b.min.z || z > b.max.z) continue;   // center outside this part's footprint
       if(b.min.y > feetY + STEP && b.min.y < lowest) lowest = b.min.y;          // an overhead underside
