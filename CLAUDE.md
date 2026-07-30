@@ -787,6 +787,20 @@ Two pins moved with it, both correctly: `test-1143`'s "facility is a dark cool a
 apron really is 1.59× brighter than the guess, so the plane matches it at 113,120,130 — cool still holds),
 and `test-1149`'s clamp bound.
 
+**The capture could NOT verify this build, and that is worth stating.** Garden and frost were captured as the
+two extremes (0.35× and 1.29×) to check nothing crushed or blew out — nothing did: garden's near ground
+measures min 78/67/46 with no channel at or below 8, frame mean 120,124,118. But that near ground reads warm
+brown (86/77/55, R>G>B) while garden's new `floorColor` is a dark green — so the surface in shot is the
+IMPORTED ground, and the engine plane is not in the frame at all. Whether it is depends on where the
+generator put the spawn: the desert `arena-walk` shot happens to stand outside the footprint, garden's does
+not. So the capture is a sanity check here and the *verification* is `test-1151`'s exact per-channel
+assertions.
+
+That is the third time in one session that a frame did not contain the surface being reasoned about (see
+"the arena-edge seam was never a seam"). The cheap guard is already built: the radiance probe's `WHO[...]`
+label names the mesh, its geometry, whether the material is `floorMat`/`wallMat`, and whether it is
+instanced. **Read WHO before attributing anything to a surface.**
+
 ## Open work (as of build 1151)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
