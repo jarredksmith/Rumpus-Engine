@@ -1,20 +1,11 @@
-// build 1152: a muzzle flash no longer leaves a brighter square on the frame.
+// build 1152: transparent decoration stays out of the AO G-buffer.
 //
-// Reported from play with a screenshot: a hard, slightly BRIGHTER rectangle around muzzle flashes and
-// explosion/impact sprites — the PNG quad's own edge, with the transparent area reading lighter than the
-// scene behind it.
+// CONFIRMED by the user's own test: setting World -> Camera & view -> Ambient occlusion to 0 removes the
+// square. So the artifact is AO-derived, and a SQUARE AO artifact at a sprite can only come from that
+// sprite's footprint in the AO G-buffer, which this hide removes.
 //
-// The cause is build 1126's AO prepass. It renders the scene with `scene.overrideMaterial = _matAOGeo`, and
-// overrideMaterial replaces `transparent` and `depthWrite:false` along with everything else — so a sprite
-// writes its WHOLE QUAD into the half-res G-buffer as though it were solid geometry a metre in front of the
-// camera. SSAO then derives that square's occlusion from a flat camera-facing surface, which is unoccluded,
-// while the world around it keeps its real occlusion. The square comes out less darkened: visibly brighter,
-// with a quad edge.
-//
-// Builds 1126 and 1128 fixed this same trap twice BY NAME — the sky dome ("overrideMaterial would give the
-// dome depthWrite and it would fill the entire buffer"), then the weather points. The flipbook VFX are the
-// third instance, and naming them would only buy the fourth. So the test is a property of the material:
-// nothing that does not write depth belongs in a depth-derived G-buffer.
+// Six of my own capture attempts failed to detect it first, and one of them was published as a retraction
+// calling the diagnosis disproved. See CLAUDE.md: failing to measure something is not evidence of absence.
 import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
@@ -109,4 +100,4 @@ const obj = (name, mat, visible = true) => ({ name, material: mat, visible });
   assert(/vmScene\.overrideMaterial=_matAOGeo;/.test(src), 'the viewmodel still writes its own occlusion');
 }
 
-done('build 1152: transparent decoration is out of the AO G-buffer — a muzzle flash was writing its whole quad in as solid geometry, so SSAO left a brighter square exactly where the sprite was');
+done('build 1152: transparent decoration is out of the AO G-buffer — a sprite was writing its quad in as solid geometry, so SSAO cast a drop shadow from an invisible box');

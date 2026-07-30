@@ -819,7 +819,59 @@ ever needs pulling back, the lever is frost's `exposure` (1.2), not `gnd`.
 `Object.assign(worldCfg, r.world); applyWorldCfg()`. Checked because "the mood never reached the engine"
 would have been a tidy explanation for a dark plane, and it is not the explanation.
 
-## A muzzle flash was writing itself into the AO buffer (build 1152)
+## A sprite was casting a drop shadow out of the AO buffer (build 1152)
+
+Reported from play with a screenshot: a hard square around muzzle flashes and impact sprites. **The user
+diagnosed it, after I had measured six times and published the opposite conclusion.** Their read: AO is
+giving the transparent quad a DROP SHADOW. The one-line test settles it — set **World → Camera & view →
+Ambient occlusion to 0** and the square is gone.
+
+The cause: the prepass renders with `scene.overrideMaterial = _matAOGeo`, which replaces `transparent` and
+`depthWrite:false` along with everything else, so a sprite writes its quad into the half-res G-buffer as
+solid geometry. SSAO then treats that quad as an OCCLUDER and darkens the world around and behind it — an
+invisible box casting a shadow. Builds 1126 and 1128 fixed this same trap twice by NAME (the sky dome, then
+the weather points); the flipbook VFX are the third instance, so 1152 replaces the naming with a rule:
+nothing that fails to write depth belongs in a depth-derived buffer.
+
+**Why no further capture is needed:** AO=0 removes the artifact, so it is AO-derived; a SQUARE AO artifact at
+a sprite can only come from that sprite's own footprint in the AO G-buffer; hiding the sprite from that pass
+removes the footprint.
+
+### Six failed measurements, and why each one lied
+
+Worth the space, because every one produced a plausible-looking result and four would have been reported as
+findings:
+
+| # | attempt | why it failed |
+|---|---|---|
+| 1 | fire at the horizon | sprite against SKY — no occlusion there to differ. Clean null. |
+| 2 | "pitch down" then fire | the mouse moves netted zero movementY. Same null again. |
+| 3 | 3 page loads, pinned rotation | 53% of the frame differed — in the CONTROL too. `postGrain` is stochastic per frame. |
+| 4 | animated smoke, block means | 26 "bright blocks"… the control showed 28. Animation phase across respawns. |
+| 5 | static fully-transparent quad | effect ordered by CAPTURE TIME, not by the flag. Settling drift. |
+| 6 | read the AO buffers directly | all zeros INCLUDING the reference patch — `_aoGeoRT` is HalfFloat, read into a `Uint8Array`. |
+
+Only #5 and #6 carried controls, and that is the only reason I knew they had failed. **Without the reference
+patch in #6 I would have reported "the sprite is definitively not in the G-buffer" as a measured fact.** A
+control pair is not optional in this engine: grain, weapon sway, animation phase and settling drift each
+exceed the effects being looked for.
+
+Why #5 was insensitive, which is the technical lesson: `overrideMaterial` replaces `SpriteMaterial`, and a
+`Sprite`'s billboarding lives in that material's own vertex shader. What reaches the G-buffer is the raw unit
+quad through a standard vertex shader — an axis-aligned quad in the world XY plane, not a camera-facing
+billboard. Depending on camera yaw that quad can be nearly EDGE-ON, with almost no footprint. The ghost
+sprite was very likely edge-on: the configuration in which the bug cannot show. **The mechanism was right and
+the probe was pointed the wrong way.**
+
+And the meta-lesson, which cost the most: I stated a mechanism-level diagnosis, failed to confirm it, then
+published a retraction calling it disproved. **Failing to measure something is not evidence of its absence**
+— least of all with an instrument that had already failed five times. The retraction was worse than the
+original claim, because the original was correct. When a code-level mechanism is solid and the measurement
+is null, suspect the measurement.
+
+### What the build actually changed
+
+
 
 Reported from play, with a screenshot: a hard, slightly **brighter** rectangle around muzzle flashes and
 explosion/impact sprites — the PNG quad's own edge, the transparent area reading lighter than the scene.
