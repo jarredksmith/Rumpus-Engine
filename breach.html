@@ -7155,6 +7155,7 @@ function renderScene(scn, cam){
     catch(e){ _postFail=true; _vmDone=false;   // build 1140: the weapon may have gone into the buffer we just threw away — let the plain path draw it
       try{ renderer.setRenderTarget(null); }catch(_e){} if(typeof console!=='undefined') console.warn('Post-FX disabled after an error:', e&&e.message); }
   }
+  _SOFT_P.value.x = 0;   /* build 1183: no post chain = no fresh G-buffer = no soft fade */
   if(!dofEnabled || !ensureDof()){ renderer.render(scn, cam); }
   else { _runDofTo(scn, cam, null); }
   if(perfOn)_prof.render+=_pnow()-_r;
@@ -7233,6 +7234,37 @@ let _bloomMips=[], _matBloomDown=null, _matBloomUp=null;
 // build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
 // resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
 let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
+// build 1183: SOFT PARTICLES. A flipbook quad slicing through world geometry drew a hard line across the
+// intersection — the classic billboard artifact. The AO G-buffer (build 1126) already holds the scene's
+// view distance at half res, swept clean of everything that doesn't write depth (1152/1158) — including
+// these very sprites — so it is exactly the "world behind the particle" a soft fade needs. The fade reads
+// LAST frame's buffer (the prepass runs after the scene pass); one frame of lag on a fade band is
+// invisible. Gated on the same _aoWant that keeps the buffer fresh: AO off = hard edges, never stale data.
+const _SOFT_GEO = { value:null };                        /* _aoGeoRT.texture (view distance in .a) */
+const _SOFT_P = { value:{ x:0, y:0, z:1, w:1 } };        /* x: on/off · zw: the scene pass's viewport in px */
+function _softSprite(mat, band){
+  mat.userData.softBand = Math.max(0.05, band||0.5);
+  mat.onBeforeCompile = (shader)=>{
+    shader.uniforms.uSoftGeo = _SOFT_GEO;                /* BY REFERENCE — one write per frame reaches every soft sprite */
+    shader.uniforms.uSoftP = _SOFT_P;
+    shader.uniforms.uSoftInv = { value: 1/mat.userData.softBand };   /* per-material: the band scales with the sprite */
+    shader.vertexShader = 'varying float vSoftZ;\n' + shader.vertexShader.replace(
+      'gl_Position = projectionMatrix * mvPosition;',
+      'vSoftZ = - mvPosition.z;\n\tgl_Position = projectionMatrix * mvPosition;');
+    shader.fragmentShader = 'uniform sampler2D uSoftGeo; uniform vec4 uSoftP; uniform float uSoftInv; varying float vSoftZ;\n' + shader.fragmentShader.replace(
+      '#include <output_fragment>', [
+      'if( uSoftP.x > 0.5 ){',
+      '  vec4 _sg = texture2D( uSoftGeo, gl_FragCoord.xy / uSoftP.zw );',
+      /* a cleared texel is SKY: packed-normal channels sum >= 0.63 for any unit vector, ~0 when cleared
+         (build 1126's geometric test) — sky must mean "infinitely far", or sprites vanish against it */
+      '  float _sd = ( _sg.r + _sg.g + _sg.b ) < 0.3 ? 1e6 : _sg.a;',
+      '  diffuseColor.a *= clamp( ( _sd - vSoftZ ) * uSoftInv, 0.0, 1.0 );',
+      '}',
+      '#include <output_fragment>' ].join('\n'));
+  };
+  mat.customProgramCacheKey = ()=>'soft1';               /* every soft sprite shares ONE program (build 1145's lesson) */
+  return mat;
+}
 let _ssaoAmt = 0.9, _ssaoRadius = 0.9;   // driven by worldCfg.ssao / worldCfg.ssaoRadius
 // 12 points in a hemisphere around +z, clustered toward the origin (cubic falloff) so most samples
 // land where occlusion actually varies. Fixed, not random: the per-pixel rotation is what breaks
@@ -7590,6 +7622,8 @@ function _renderPostFX(scn, cam){
   // jagged silhouette still reads as an object standing somewhere. AO now survives the MSAA shed
   // and goes only when the scaler starts trading RESOLUTION, at which point everything is soft anyway.
   const _aoWant = _ssaoAmt > 0.001 && _prStepI === 0 && _aoGeoRT && cam && cam.isPerspectiveCamera;
+  _SOFT_P.value.x = _aoWant ? 1 : 0; _SOFT_P.value.z = w; _SOFT_P.value.w = h;   /* build 1183: soft particles ride the same gate */
+  if(_aoGeoRT) _SOFT_GEO.value = _aoGeoRT.texture;
   if(_aoWant){
     // the prepass runs AFTER the scene pass so it cannot consume this frame's shadow-map refresh,
     // and with the sky dome and weather hidden — overrideMaterial would give the dome depthWrite
@@ -23620,8 +23654,8 @@ function spawnNetGrenade(o, v, by, auth){
 // Frame order is left-to-right, top-to-bottom. Adjust cols/rows/frames to match whatever sheet you drop in.
 const VFX_BASE = 'vfx/';   // relative to breach.html on your host
 const VFX = {
-  explosion: { url:VFX_BASE+'explosion.png', cols:5, rows:5, frames:25, dur:0.75, size:6,  blend:'add',    grow:1.15, fade:false },
-  smoke:     { url:VFX_BASE+'smoke.png',     cols:8, rows:8, frames:64, dur:1.8,  size:5,  blend:'normal', grow:2.4,  fade:true  },
+  explosion: { url:VFX_BASE+'explosion.png', cols:5, rows:5, frames:25, dur:0.75, size:6,  blend:'add',    grow:1.15, fade:false, soft:true },
+  smoke:     { url:VFX_BASE+'smoke.png',     cols:8, rows:8, frames:64, dur:1.8,  size:5,  blend:'normal', grow:2.4,  fade:true,  soft:true, lit:true },
   fire:      { url:VFX_BASE+'fire.png',      cols:6, rows:6, frames:36, dur:0.9,  size:3,  blend:'add',    grow:1.1,  fade:true  },
   muzzle:    { url:VFX_BASE+'muzzle.png',    cols:4, rows:4, frames:16, dur:0.10, size:1.1,blend:'add',    grow:1.0,  fade:false },
 };
@@ -23745,6 +23779,7 @@ function warmFlipbookShaders(){
     parent.add(sp); made.push(sp);
   };
   drop(scene, THREE.AdditiveBlending, true); drop(scene, THREE.NormalBlending, true);   // world explosions/smoke
+  { const _sm=made[made.length-1]; if(typeof _softSprite==='function') _softSprite(_sm.material, 1); }   // build 1183: the SOFT variant is its own program — warm it too
   if(typeof vmScene!=='undefined') drop(vmScene, THREE.AdditiveBlending, true);          // viewmodel muzzle flash
   // build 636: also warm the debris PBR shader (both shading variants) so the FIRST shatter doesn't compile a
   // MeshStandardMaterial mid-combat
@@ -23766,6 +23801,12 @@ function playFlipbook(kind, pos, scale, parent, durMul){
   if(parent){ mat.depthTest=true; }   // viewmodel space: let the gun occlude the flash (sits behind the barrel, not pasted on top)
   const sp = new THREE.Sprite(mat);
   const base = (cfg.size||1) * (scale||1);
+  /* build 1183: big volumetric quads fade where they slice geometry (band scales with the sprite).
+     Muzzle stays hard — it lives centimetres from a gun, where any fade just dims the flash. */
+  if(cfg.soft && !parent) _softSprite(mat, base*0.3);
+  /* build 1183: smoke is scene-LIT at spawn — an unlit white sheet glows at night. Luminance only,
+     floored so it never goes black; the day factor is 1 whenever the day cycle is off. */
+  if(cfg.lit){ const _dl = 0.30 + 0.70*((typeof _dayActive!=='undefined' && _dayActive) ? _dayF : 1); mat.color.setScalar(_dl); }
   sp.scale.setScalar(base); sp.position.copy(pos); sp.renderOrder = 9000;
   const fb = { sp, tex, cfg, t:0, base, dur: cfg.dur * (durMul||1), ox:0, oy:1 - 1/cfg.rows };
   // Several flipbooks share one texture, so each sets ITS frame offset right before its own draw call.
@@ -26527,7 +26568,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1182 · 2026-07-30';
+const BUILD_VERSION = 'build 1183 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

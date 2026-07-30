@@ -1548,7 +1548,36 @@ stub whose `readRenderTargetPixels` THROWS, so the sync path cannot quietly come
 window, level thumbnails) are user-initiated one-offs where a stall is invisible; anything that reads the
 GPU back **every frame or on a cadence** must use this pattern.
 
-## Open work (as of build 1182)
+## Soft particles, and smoke that knows what time it is (build 1183)
+
+A flipbook quad slicing through world geometry drew a hard line across the intersection — the classic
+billboard artifact, on the biggest sprites in the game (explosions grow to ~4m). The AO G-buffer (1126)
+already holds the scene's view distance at half res, swept clean of everything that doesn't write depth
+(1152/1158) — **including these very sprites** — so it is exactly the "world behind the particle" a soft
+fade needs, for free. `_softSprite(mat, band)` patches `SpriteMaterial` via `onBeforeCompile` (a patched
+built-in, per 1145 — never a raw ShaderMaterial), fading `diffuseColor.a` over a band that scales with the
+sprite (30% of its size). Uniforms are shared BY REFERENCE (1181's trick — but assigned into
+`shader.uniforms` directly in `onBeforeCompile`, which does not have 1181's ShaderLib-merge problem).
+
+The details that are each a bug if lost:
+- **A cleared G-buffer texel is SKY and must read as INFINITELY FAR** (`(r+g+b) < 0.3 ? 1e6 : a` — 1126's
+  geometric test). Without it, every sprite fades out against the sky.
+- **The fade reads LAST frame's buffer** (the prepass runs after the scene pass). One frame of lag on a
+  fade band is invisible; sampling this frame's buffer is impossible anyway.
+- **Gated on the same `_aoWant` that keeps the buffer fresh**, fed beside it; the plain render path (post
+  off) writes the gate OFF, or sprites would sample a frozen buffer. AO off = hard edges, never stale data.
+- **Muzzle is deliberately HARD, and viewmodel sprites are never softened** — a flash lives centimetres
+  from a gun; the geometry behind it is at nearly its own depth, so a soft fade only dims every shot.
+- **`customProgramCacheKey` is a constant and `warmFlipbookShaders` compiles the soft variant at load** —
+  the first explosion must not compile a new program mid-combat (the 622/1153 freeze, by a new door).
+- **Both `replace()` anchors are pinned against the REAL three build** in `test-1183` — a renamed chunk
+  makes a string-replace a silent no-op, which is how 1181 nearly shipped nothing.
+
+Scene-lit smoke: the smoke sheet is unlit white, so it GLOWED at night. `lit:true` scales the material
+colour by `0.30 + 0.70*dayF` at spawn — luminance only, floored so it never goes black, exactly 1 when the
+day cycle is off (so no existing level changes by a single code value unless it uses the cycle).
+
+## Open work (as of build 1183)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
