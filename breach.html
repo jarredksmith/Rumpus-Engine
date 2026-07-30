@@ -26255,7 +26255,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1173 · 2026-07-30';
+const BUILD_VERSION = 'build 1174 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31542,8 +31542,17 @@ function loop(){
           // active chasers. A patrol enemy heading to a wander/last-known waypoint used to beeline and grind on the
           // corner; now it navigates the halls like a chaser, so it stops getting "confused" around walls/objects.
           const _wp=_botFollowPath(en._nav||(en._nav={ pos:en.mesh.position }), td.tx, td.tz, dt);
+          if(en._jmpCd>0) en._jmpCd-=dt;
           if(_wp){ const _pdx=_wp.x-en.mesh.position.x, _pdz=_wp.z-en.mesh.position.z, _pl=Math.hypot(_pdx,_pdz);
-            if(_pl > 0.5){ _mvx=_pdx/_pl; _mvz=_pdz/_pl; } }
+            if(_pl > 0.5){ _mvx=_pdx/_pl; _mvz=_pdz/_pl; }
+            // build 1174: HONOUR THE JUMP HINT. The nav grid marks a slab-top walkable when it is within
+            // JUMP reach (NAV_UP is derived from the jump apex) — semantics the BOTS have executed since
+            // build 620 (wp.jump at their follow site) but PvE enemies silently ignored. So the path said
+            // "hop the knee-high slab", the enemy couldn't, and it ground against the very obstacle its
+            // route crossed — "stuck behind props, can't navigate out". Same launch-arc machinery the
+            // traps use; same cooldown shape as the bots' so a tall wall isn't jackhammered.
+            if(_wp.jump && en.grounded!==false && (en._jmpCd||0)<=0 && (en.launchY||0)<=0){
+              en.vy=JUMP; en.launchY=0.001; en.grounded=false; en._jmpCd=0.9; } }
         }
         if(en._stuckT>0.2){   // build 540/546/620 wall-follow; build 977: ESCALATE instead of grinding one side forever (concave corners beat a fixed side)
           if(!en._stuckSide) en._stuckSide=((en.id%2)?1:-1);
@@ -31610,6 +31619,25 @@ function loop(){
           const cz = Math.max(b.min.z, Math.min(en.mesh.position.z, b.max.z));
           const dx = en.mesh.position.x - cx, dz = en.mesh.position.z - cz;
           const d = Math.hypot(dx,dz);
+          if(d < eR && d <= 1e-4){
+            // build 1174: the enemy's CENTER is inside this box, where the old `d > 1e-4` gate meant NO push
+            // ever again. Combined with 1158's edge exemption this was a clip-through: a CURVED prop's flank
+            // (sphere, cylinder — the centre-arena dome) reads LOW at the sample point just inside the box
+            // edge, so the enemy was exempted in; once its centre crossed the box, the resolver went silent
+            // and it walked straight through. Standing ON the collider's surface is legitimate (mid-ramp,
+            // mid-stairs — the surface is at its feet); BURIED in it is not — expel along the shortest
+            // horizontal exit, capped per frame so it's a shove, not a teleport.
+            const feetB = en.mesh.position.y - 1.4;
+            const own = (typeof propSurfaceAt==='function') ? propSurfaceAt(c, en.mesh.position.x, en.mesh.position.z) : -Infinity;
+            if(!(own > -Infinity && own <= feetB + STEP + 1e-4)){
+              const exL=en.mesh.position.x-(b.min.x-eR), exR=(b.max.x+eR)-en.mesh.position.x;
+              const ezL=en.mesh.position.z-(b.min.z-eR), ezR=(b.max.z+eR)-en.mesh.position.z;
+              const mm=Math.min(exL,exR,ezL,ezR), st=Math.min(mm, 0.3);
+              if(mm===exL) en.mesh.position.x-=st; else if(mm===exR) en.mesh.position.x+=st;
+              else if(mm===ezL) en.mesh.position.z-=st; else en.mesh.position.z+=st;
+            }
+            continue;
+          }
           if(d < eR && d > 1e-4){
             // build 1158: ask the question the PLAYER asks. Builds 1092/1094 gated the ramp exemption on
             // `b.max.y - feetY < STEP + 0.5` — the box's TOP being within about a step of the feet — which is

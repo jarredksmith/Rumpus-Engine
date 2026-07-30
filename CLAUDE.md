@@ -967,6 +967,20 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Curved props stopped swallowing enemies; enemies learned to hop (build 1174)
+
+Two play reports, each verified to a mechanism. (1) CLIP-THROUGH: 1158's edge exemption reads a curved
+prop's flank as LOW near the silhouette (sphere/cylinder/dome), exempting the enemy INTO the footprint —
+and once its centre crossed the box, the resolver's `d > 1e-4` gate meant no push ever again. 1158's probe
+tested wedges/boxes, never a curved prop. Now centre-inside-box is HANDLED: expelled along the shortest
+horizontal exit, capped 0.3/frame, unless the enemy is standing ON this collider's surface at its own
+column (mid-ramp/stairs protected — the surface is at its feet). Outside the footprint the ordinary push
+owns the rim, so through-traffic is dead. (2) STUCK BEHIND PROPS: the nav grid marks slab-tops walkable
+within JUMP reach (NAV_UP derives from the jump apex) — semantics the BOTS execute (`wp.jump`, build 620)
+but PvE enemies silently ignored, so the path said "hop the slab" and the enemy ground against the very
+obstacle its route crossed. Enemies now honour the hint via the trap launch-arc machinery (`en.vy=JUMP`,
+`launchY` integrator), with the bots' 0.9s cooldown so a tall wall isn't jackhammered.
+
 ## The gizmo learns local space (build 1173)
 
 The editor critic, verified: every drag axis in `tryGizmoGrab` was a WORLD unit vector — a wall rotated 30°
@@ -1395,7 +1409,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1173)
+## Open work (as of build 1174)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
