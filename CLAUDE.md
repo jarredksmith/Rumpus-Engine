@@ -967,6 +967,21 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The gizmo learns local space (build 1173)
+
+The editor critic, verified: every drag axis in `tryGizmoGrab` was a WORLD unit vector — a wall rotated 30°
+could not be slid along its own length. A World/Local toggle (persisted, `breach_gizspace`) now rotates the
+translate axes, per-axis scale handles and rotate normals by the PRIMARY object's quaternion via
+`_gizmoRefQuat()`, and `updateGizmo` turns the visual to match — the handle you see is the axis you get.
+Three things that made this small: scale MATH needed no change (it always scaled the object's own
+components; only its handles pointed wrong in world mode); the rotated axis is stored IN the drag, so
+`applyGizmoDrag` and the group path inherit it with zero changes; and lights/zones/markers return null from
+the resolver (they are unrotated — world IS their local), as does a missing primary, so world mode is
+byte-identical to before. Snap composes unchanged: `_snapAlong` snaps the component along whatever axis the
+drag carries. FOURTH container rollback recovered during this build — same signature (906 harnesses), same
+one-command recovery; the scripted-edit habit made the re-apply free again. (Also twice now: a heredoc
+python step run from tests/ silently missed CLAUDE.md — run docs edits from the repo root.)
+
 ## Reload cancel + per-weapon draw (build 1172)
 
 The panel's "reload jail", verified then opened: `reload()` was a setTimeout that always completed and
@@ -1380,7 +1395,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1172)
+## Open work (as of build 1173)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
