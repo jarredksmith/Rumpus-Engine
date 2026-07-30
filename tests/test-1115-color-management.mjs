@@ -100,7 +100,7 @@ assert(/const DEFAULT_WORLD = \{ colorV:2,/.test(src), 'new levels are stamped w
   eq(fn({ sun: 2 }).sun, 2, 'the rest of the world still merges over the defaults');
   eq(fn({}).sun, 1.1, 'and missing keys still fall back to the default');
 }
-assert(/renderer\.toneMappingExposure = worldCfg\.exposure \* \(\(\(worldCfg\.colorV\|0\) >= 2\) \? 1 : LEGACY_EXPOSURE\);/.test(src),
+assert(/_expBase = worldCfg\.exposure \* \(\(\(worldCfg\.colorV\|0\) >= 2\) \? 1 : LEGACY_EXPOSURE\);/.test(src),   // build 1180: same derivation, captured as the auto-exposure BASE (renderer gets base × adaptive multiplier)
   'a legacy level is exposure-compensated, since it is now rendered brighter than its author ever saw');
 {
   const m = src.match(/const LEGACY_EXPOSURE = ([0-9.]+);/);

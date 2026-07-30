@@ -967,6 +967,22 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Auto-exposure (build 1180) — PHASE 3 OPENS
+
+toneMappingExposure was a static authored value — desert noon into a dark interior, nothing adapted; every
+competitor ships eye adaptation by default. The meter blits `_postRT` through `_matCopy` into a 16x16 target
+(the blit also RESOLVES a multisampled _postRT, so both adaptive rungs read safely), log-averages luminance
+every 5th frame (~12Hz — the readback is not a per-frame stall), and eases a MULTIPLIER around the authored
+exposure with tau 0.9s. Post-ACES metering is deliberate: exposure moves → the metered value follows → the
+feedback loop CONVERGES. Authorship survives three ways: ±1.5-stop clamp around `_expBase` (the authored
+exposure × the colorV legacy factor — captured where 16444 used to set the renderer directly; renderer now
+always gets base × multiplier), a 0.15-EV dead-zone so a balanced frame never breathes, and
+`worldCfg.autoExp` (0..1, default 0.7, slider beside Exposure) where 0 snaps cleanly back to exactly the old
+static behaviour. A failed readback falls to neutral instead of throwing mid-frame. One pin moved (1115 —
+same derivation, captured as the base). NOT capture-verified headless yet — the stock frame is outdoor and
+balanced (inside the dead-zone by design); the visible proof needs an interior, which is exactly the case it
+exists for. Verify in browser: walk under the arena structures and watch the lift.
+
 ## Authored wave manifests (build 1179) — PHASE 2 COMPLETE
 
 Random-mode composition was a hardcoded formula (n = 3 + wave*2, thresholds for the mix); "wave 3 = 2
@@ -1477,7 +1493,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1179)
+## Open work (as of build 1180)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
