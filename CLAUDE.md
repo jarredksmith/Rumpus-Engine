@@ -967,6 +967,17 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Reload cancel + per-weapon draw (build 1172)
+
+The panel's "reload jail", verified then opened: `reload()` was a setTimeout that always completed and
+`switchWeapon` hard-returned `if(reloading)` — a 1.6s sniper reload locked out every response while a
+charger lunged. Now switching CANCELS the reload via a token: the pending timeout completes only if its
+token is still current, so a cancelled reload leaves the mag exactly as it was (test-1172 proves the stale
+timeout is a no-op and reserve debits once), and the cost of cancelling is honest — two draw times. Draw is
+per-weapon (`drawMs`: pistol 220, shotgun 340, sniper 420, launcher 450, fists 200, rifle/smg default 300)
+with the viewmodel dip dividing by the same `_drawDur`, so a slow draw dips long instead of popping. Three
+pins moved (227, 229, 965). Deferred from this item: shotgun shell-by-shell reload — its own build.
+
 ## Movement has mass (build 1171)
 
 The gameplay critic's #1 feel finding: `player.vel = wish*sp` TELEPORTED velocity to the input every frame —
@@ -1369,7 +1380,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1171)
+## Open work (as of build 1172)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

@@ -10,13 +10,13 @@ import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 
 assert(/const DRAW_MS = 300;/.test(src) && /let _drawUntil = 0;/.test(src), 'draw state exists');
-assert(/_drawUntil = performance\.now\(\) \+ DRAW_MS;/.test(src), 'switching arms the draw');
+assert(/_drawDur = WEAPONS\[key\]\.drawMs \|\| DRAW_MS; _drawUntil = performance\.now\(\) \+ _drawDur;/.test(src), 'switching arms the draw');   // build 1172: per-weapon duration, DRAW_MS fallback
 assert(/if\(now < _drawUntil\) return;/.test(src), 'the trigger is held while drawing');
 assert(/if\(_rlP > 0\.35\) return;/.test(src), 'the trigger is held while recovering from a reload');
 assert(/_rlP \+= \(\(reloading\?1:0\) - _rlP\) \* Math\.min\(1, dt\*12\);/.test(src), 'the reload dip eases both ways');
 assert(/gun\.position\.y = move - recoil\*0\.5 \+ _rlP\*-0\.25/.test(src) && /gun\.rotation\.x = _rlP\*0\.5/.test(src),
   'the smoothed pose drives the viewmodel (no more snap)');
-assert(/const _dw = Math\.max\(0, Math\.min\(1, \(_drawUntil - performance\.now\(\)\) \/ DRAW_MS\)\);/.test(src)
+assert(/const _dw = Math\.max\(0, Math\.min\(1, \(_drawUntil - performance\.now\(\)\) \/ \(_drawDur\|\|DRAW_MS\)\)\);/.test(src)
   && /gun\.position\.y -= _dw\*0\.45; gun\.rotation\.x \+= _dw\*0\.85;/.test(src),
   'the draw visibly raises the gun from a lowered pose');
 

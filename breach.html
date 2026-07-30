@@ -17156,13 +17156,13 @@ flash.position.set(0,0,0); flash.visible = false; vmMuzzle.add(flash);   // soli
 // ---------- Weapon system (data-driven) ----------
 const WEAPONS = {
   rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0 },
-  pistol:  { name:'PISTOL',  mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85 },   // build 976: single-shot semi-auto sidearm
+  pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85 },   // build 976: single-shot semi-auto sidearm
   smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7 },
-  shotgun: { name:'SHOTGUN', mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
-  sniper:  { name:'SNIPER',  mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
-  launcher:{ name:'ROCKET',  mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
-  crowbar: { name:'CROWBAR', mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
-  hands:   { name:'FISTS',   mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
+  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
+  sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
+  launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
+  crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
+  hands:   { name:'FISTS',   drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
 };
 // build 623: the factory damage of each weapon, captured before any saved override is applied, so the editor can
 // show/reset to default and serialize ONLY a damage that was actually changed (keeps old levels on the defaults).
@@ -17295,6 +17295,7 @@ applyAttachments();   // apply any saved loadout at startup (this is what mounts
 let reloading = false;
 let lastShot = 0, recoil = 0;
 const DRAW_MS = 300;   // build 965: weapon draw time — the gun rises for this long after a switch, trigger held
+let _drawDur = DRAW_MS;   // build 1172: the CURRENT weapon's draw time (per-weapon drawMs, DRAW_MS fallback) — the dip animation divides by this, not the constant
 let _drawUntil = 0;    // performance.now() timestamp when the current draw completes
 let _rlP = 0;          // build 965: smoothed reload pose (0 = up, 1 = fully dipped) — recovery gates the trigger
 // Top up every weapon to a full mag + full reserve (used by solo start and duel respawn).
@@ -17308,10 +17309,11 @@ function giveDuelLoadout(){
   owned=l; curWep=l.find(k=>k!=='crowbar')||l[0]; refillAllWeapons(); reloading=false; applyWeaponAim(curWep); applyWeaponMuzzle(curWep); }
 
 function switchWeapon(key){
-  if(!owned.includes(key) || key===curWep || reloading) return;
+  if(!owned.includes(key) || key===curWep) return;
+  if(reloading){ reloading = false; _reloadTok++; updateHUD(); }   // build 1172: switching CANCELS the reload instead of being refused by it
   if(typeof _allowedWep==='function' && !_allowedWep(key)) return;   // build 1014: host match rules
   curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim('equip', 320);   // third-person draw/equip pose
-  _drawUntil = performance.now() + DRAW_MS;   // build 965: the viewmodel rises before the trigger works
+  _drawDur = WEAPONS[key].drawMs || DRAW_MS; _drawUntil = performance.now() + _drawDur;   // build 965: the viewmodel rises before the trigger works · build 1172: per-weapon — a pistol should not draw at a launcher's pace
   showWeaponModel(key);   // show this weapon's own viewmodel (loads on first use)
   applyWeaponAim(key);    // load this weapon's saved ADS pose
   applyWeaponMuzzle(key); // load this weapon's saved muzzle position
@@ -17330,12 +17332,19 @@ function showWeaponToast(){
   w.style.opacity='1'; clearTimeout(w._t); w._t=setTimeout(()=>w.style.opacity='0',900);
 }
 
+// build 1172: reload is CANCELLABLE by switching weapons — baseline FPS grammar since Half-Life, and the
+// review panel's "reload jail": a 1.6s sniper reload used to lock you out of switching while a charger
+// lunged. The token is what makes the cancel safe: the pending setTimeout completes only if ITS token is
+// still current, so a cancelled reload leaves the mag exactly as it was (no rounds appear, none vanish) and
+// a re-reload later starts a fresh token/need pair. The cost of cancelling is honest — two draw times.
+let _reloadTok = 0;
 function reload(){
   const w = W();
   if(reloading || w.mag===w.magSize || w.reserve<=0) return;
-  reloading = true; SFX.reload(); triggerGunAnim('reload');
+  reloading = true; const tok = ++_reloadTok; SFX.reload(); triggerGunAnim('reload');
   const need = w.magSize - w.mag;
   setTimeout(()=>{
+    if(tok !== _reloadTok || !reloading) return;   // switch-cancelled: the mag stays as it was
     const take = Math.min(need, w.reserve);
     w.mag += take; w.reserve -= take; reloading=false; updateHUD();
   }, w.reloadMs);
@@ -26246,7 +26255,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1171 · 2026-07-30';
+const BUILD_VERSION = 'build 1172 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31320,7 +31329,7 @@ function loop(){
   gun.rotation.x = _rlP*0.5 + ADS_ROT.x*adsBlend;
   gun.rotation.y = ADS_ROT.y*adsBlend;
   gun.rotation.z = ADS_ROT.z*adsBlend;
-  { const _dw = Math.max(0, Math.min(1, (_drawUntil - performance.now()) / DRAW_MS));   // build 965: draw — 1 = just switched (down), 0 = up
+  { const _dw = Math.max(0, Math.min(1, (_drawUntil - performance.now()) / (_drawDur||DRAW_MS)));   // build 965: draw — 1 = just switched (down), 0 = up · build 1172: per-weapon duration
     if(_dw>0){ gun.position.y -= _dw*0.45; gun.rotation.x += _dw*0.85; } }
   // build 678: the built-in "punch thrust" shoves the whole viewmodel forward on a melee swing. Fists rely on their
   // own (imported or procedural) punch animation instead, so skip it for a fists weapon.
