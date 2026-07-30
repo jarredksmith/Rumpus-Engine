@@ -15266,6 +15266,20 @@ function _propRigCfg(url){
       if(mk) modelRigs[u]=mk; else delete modelRigs[u];
       if(typeof _levelDirty!=='undefined') _levelDirty=true; } };
 }
+// build 1167: a failed model load is a VISIBLE fact, not a console line. A 404/CORS'd prop used to become a
+// silent null hole in propModels — the commonest failure a creator ever hits, and unless they had devtools
+// open they concluded the engine ate their prop. Failures are now recorded (deduped by url, capped) and the
+// Level Check panel reports them with the reason. Cleared whenever the prop set is rebuilt from scratch
+// (restoreLevel / wipe), because stale entries about a previous level are their own kind of lie; a RETRY that
+// succeeds also clears its url, so a flaky network heals the report.
+const assetLoadFailures = new Map();   // src -> { msg, n }
+function _noteAssetFailure(src, err){
+  const key = String(src||'').slice(0, 300);
+  const e = assetLoadFailures.get(key);
+  if(e){ e.n++; }
+  else if(assetLoadFailures.size < 40) assetLoadFailures.set(key, { msg: String((err && err.message) || err || 'load failed').slice(0, 120), n: 1 });
+  try{ if(typeof renderLevelIssues==='function' && typeof editorOpen!=='undefined' && editorOpen) renderLevelIssues(); }catch(e2){}
+}
 function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip){
   if(isPrimitive(src)){
     const obj = finalizeProp(PRIMITIVE_BUILDERS[src](), src, t, null, slot, animMode, mat, nid, animClip);
@@ -15274,8 +15288,9 @@ function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip)
   }
   loadGLTFCached(src,
     (gltf)=>{ _applyModelRig(gltf, src);   // build 1080: grow the authored skeleton BEFORE the first clone is taken
+      assetLoadFailures.delete(String(src||'').slice(0, 300));   // build 1167: a later success heals the report
       const obj = finalizeProp(THREE.cloneSkinned(gltf.scene), src, t, gltf, slot, animMode, mat, nid, animClip); if(typeof _scheduleWarmCompile==='function') _scheduleWarmCompile(); if(onReady) onReady(obj); },
-    (err)=>{ console.warn('Prop load failed for', src, '-', err && err.message); if(onError) onError(err); }
+    (err)=>{ console.warn('Prop load failed for', src, '-', err && err.message); _noteAssetFailure(src, err); if(onError) onError(err); }
   );
 }
 // Delete EVERYTHING placed in the editor — a fresh scene. Uses the per-item removers so physics bodies,
@@ -15283,6 +15298,7 @@ function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip)
 function wipeScene(){ pushUndoSnapshot(); _wipeSceneCore(); }
 // build 879: the wipe body, callable without its own undo snapshot (the example loader pushes one first)
 function _wipeSceneCore(){
+  if(typeof assetLoadFailures!=='undefined') assetLoadFailures.clear();   // build 1167: a fresh scene starts with a clean report
   for(let i=propModels.length-1;i>=0;i--) removeProp(i);
   if(typeof removeLight==='function') for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
   if(typeof removeSpawnMarker==='function') for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
@@ -26135,7 +26151,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1166 · 2026-07-30';
+const BUILD_VERSION = 'build 1167 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34174,6 +34190,7 @@ function _levelFormatCheck(level){
 function restoreLevel(level){
   if(!level) return;
   if(!_levelFormatCheck(level).ok) return;   // build 1165: refuse BEFORE the teardown — a refusal must cost nothing
+  if(typeof assetLoadFailures!=='undefined') assetLoadFailures.clear();   // build 1167: stale failures about a previous level are their own kind of lie
   // build 893: world (TERRAIN) first — prop y is stored relative to the terrain under it, so placement
   // must lift against THIS level's terrain, not whatever the previous level left behind.
   if(level.world){ worldCfg = _worldFrom(level.world); applyWorldCfg(); }
@@ -35195,6 +35212,11 @@ function edFold(host, id, title, openDefault, subtitle){
 function levelIssues(){
   const issues=[];
   try{
+    // build 1167: failed asset loads lead the list — "my prop vanished" is the #1 support thread and the
+    // answer was sitting in the console. The url's tail is shown because Poly Pizza urls only differ there.
+    if(typeof assetLoadFailures!=='undefined') for(const [src, e] of assetLoadFailures){
+      const short = src.length>46 ? '…'+src.slice(-45) : src;
+      issues.push('A model failed to load ('+e.msg+')'+(e.n>1?' ×'+e.n:'')+': '+short); }
     const locks=new Set(); for(const o of propModels){ if(o && o.userData && o.userData.lockId) locks.add(o.userData.lockId); }
     const keys=new Set(); for(const s of pickupSpots){ const k=POWERUP_KINDS[s.kind]; if(k && k.key) keys.add(k.key); }
     for(const lk of locks) if(!keys.has(lk)) issues.push('Something is locked with the '+keyDisplayName(lk)+', but no matching key pad is placed.');
