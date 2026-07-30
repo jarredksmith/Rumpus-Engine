@@ -26090,7 +26090,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1160 · 2026-07-30';
+const BUILD_VERSION = 'build 1161 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27993,7 +27993,16 @@ function shoot(){
     raycaster.setFromCamera(_muzNdc, camera);
     raycaster.ray.at(2.2, muzzleWorld);
   }
-  const spread = w.spread * (1 - adsBlend*0.8);   // aiming tightens spread up to 80%
+  // build 1161: movement finally costs accuracy. The base spread tightens up to 80% in ADS as before, but
+  // running scales it up and being AIRBORNE adds a floor that even 0-spread weapons (rifle, sniper) pay —
+  // a multiplier alone would leave sprint-jump-360 sniping pixel-accurate, because x1.8 of zero is zero.
+  // Bots have paid a run-and-gun penalty since build 933; this is the player's copy of the same rule.
+  // ADS mitigates the penalty (x0.4 at full aim) but never erases it.
+  const _hspd = Math.hypot(player.vel.x, player.vel.z);
+  const _mob = Math.min(1, _hspd / 12);                                  // 12 = default run speed
+  const _penScale = (1 + 1.2*_mob) * (player.onGround ? 1 : 1.8);
+  const _penAdd = (0.012*_mob + (player.onGround ? 0 : 0.030)) * (1 - adsBlend*0.6);
+  const spread = w.spread * (1 - adsBlend*0.8) * _penScale + _penAdd;
   // build 885: true twin-stick ballistics. Build 874 cast pellets from the CAMERA through the cursor
   // with the weapon's screen-space spread — from a bird's-eye camera an enemy is a few pixels wide, so
   // hip spread threw most pellets clean past a dead-on cursor ("the gun doesn't hurt enemies"). Now the
@@ -28021,7 +28030,12 @@ function shoot(){
     netFire(muzzleWorld, _fd); }   // others see the tracer leave the character, pointed at the target
 
   for(let p=0; p<w.pellets; p++){
-    const sx = (Math.random()-0.5)*spread, sy = (Math.random()-0.5)*spread;
+    // build 1161: sample the cone as angle + sqrt-radius, not two independent axes. (rand-0.5, rand-0.5)
+    // is a SQUARE in aim space — a shotgun's corner pellets landed wider than its edge pellets by √2.
+    // sqrt(rand) keeps the density uniform over the disc; 0.5*spread preserves the old maximum deviation,
+    // so every weapon's tuned reach is unchanged.
+    const _sa = Math.random()*Math.PI*2, _sr = Math.sqrt(Math.random())*0.5*spread;
+    const sx = Math.cos(_sa)*_sr, sy = Math.sin(_sa)*_sr;
     if(_vmA){   // build 885: pellet = body -> cursor target, spread as an angular cone (matches the fps feel at any camera height)
       const _pd=_vmTgt.clone().sub(_vmOrig).normalize();
       const _pu=(Math.abs(_pd.y)<0.99) ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
@@ -31134,8 +31148,10 @@ function loop(){
   // own (imported or procedural) punch animation instead, so skip it for a fists weapon.
   const _mp = _isFistsWep(curWep) ? 0 : (1 - Math.min(1, (performance.now()-_meleeT)/250));   // quick out-and-back punch thrust
   if(_mp>0){ const j=Math.sin(_mp*Math.PI); gun.position.z -= j*0.55; gun.position.y -= j*0.12; gun.rotation.x -= j*0.25; }
-  recoil *= 0.85;
-  muzzle.intensity *= 0.6; flashMat.opacity *= 0.5;
+  // build 1161: decay is a HALF-LIFE, not a per-frame multiplier. `*= 0.85` recovered 2.4x faster at 144Hz
+  // than at 60 and wallowed at 30 — the one dt-blindness in a codebase that uses dt everywhere else.
+  recoil *= Math.pow(0.85, dt*60);
+  muzzle.intensity *= Math.pow(0.6, dt*60); flashMat.opacity *= Math.pow(0.5, dt*60);
 
   if((firing || padFiring || touchFiring || touchFireBufT>performance.now()) && !heldProp && !editorOpen && !_levelLoaderActive && !drivingCar && !(typeof buildMode!=='undefined' && buildMode)){ if(mountedTurret) turretFire(); else shoot(); }   // hands on the wheel — no shooting while driving (Phase 1); build 947: fire PLACES while building, never shoots
 

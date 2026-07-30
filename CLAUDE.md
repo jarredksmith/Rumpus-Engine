@@ -967,6 +967,20 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Weapon feel: dt, movement cost, and a round cone (build 1161)
+
+Three panel findings, each verified then fixed in one scoped build:
+- `recoil *= 0.85` was PER FRAME — 144Hz recovered ~2.4x faster than 60fps, phones wallowed. Now
+  `Math.pow(0.85, dt*60)` (and the muzzle flash the same), so one second of decay is identical at any
+  framerate and exactly equals the 60fps value the guns were tuned at.
+- Movement cost the player NOTHING — bots have paid a run-and-gun penalty since 933; the player never did.
+  The load-bearing part is the additive airborne floor (0.030, ADS-mitigated x0.4): rifle and sniper have
+  spread 0.0 and a multiplier of zero is zero, so a scale-only penalty would have left sprint-jump-sniping
+  pixel-accurate. Standing-still values are byte-identical to the old tuning — nothing authored moved.
+- Pellets sampled (rand-.5, rand-.5) — a SQUARE, corner pellets √2 wider than edge. Now angle+sqrt-radius
+  over a disc, max deviation preserved (0.5*spread) so tuned reach is unchanged; ~21% of old pellets fell
+  outside the intended circle.
+
 ## Jump learns what slide already knew (build 1160)
 
 The gate was `_jPressed && player.onGround` on the EXACT frame. Build 926 documented this precise failure for
@@ -1214,7 +1228,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1160)
+## Open work (as of build 1161)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
