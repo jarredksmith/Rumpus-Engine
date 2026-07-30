@@ -26084,7 +26084,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1158 · 2026-07-30';
+const BUILD_VERSION = 'build 1159 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28724,7 +28724,16 @@ function updateEnemyShots(dt){
     emitBoltTrail(p);
     let dead = (now - s.born) > s.life || p.y < terrainHeightAt(p.x,p.z)+0.1;
     if(!dead){ for(const pl of ps){ const dx=pl.pos.x-p.x, dy=((pl.eyeY!=null?pl.eyeY:(pl.pos.y!=null?pl.pos.y:1.4)))-p.y, dz=pl.pos.z-p.z; if(dx*dx+dy*dy+dz*dz < 1.1*1.1){ if(pl.hurt && !s.noDmg) pl.hurt(s.dmg, s.from?s.from.x:null, s.from?s.from.z:null); dead=true; break; } } }
-    if(!dead){ for(const c of colliders){ const b=c.userData.box; if(!b) continue; if(p.x>=b.min.x&&p.x<=b.max.x&&p.y>=b.min.y&&p.y<=b.max.y&&p.z>=b.min.z&&p.z<=b.max.z){ dead=true; break; } } }
+    // build 1159: test the PER-PART boxes, not the overall model box. The overall box encloses an imported
+    // building's doorways and interior, so an enemy standing inside (or firing out through an opening) had
+    // its bolt die on frame 1 against an invisible box — enemies in buildings visibly fired and never landed
+    // anything. Build 1148 gave every collider a tight per-part `boxes` list; this consumer was never
+    // updated. The overall box survives as the coarse reject, same shape as the enemy resolve.
+    if(!dead){ for(const c of colliders){ const b0=c.userData.box; if(!b0) continue;
+      if(p.x<b0.min.x||p.x>b0.max.x||p.y<b0.min.y||p.y>b0.max.y||p.z<b0.min.z||p.z>b0.max.z) continue;
+      const bs=c.userData.boxes||[b0];
+      for(const b of bs){ if(p.x>=b.min.x&&p.x<=b.max.x&&p.y>=b.min.y&&p.y<=b.max.y&&p.z>=b.min.z&&p.z<=b.max.z){ dead=true; break; } }
+      if(dead) break; } }
     if(dead){ boltImpact(p, boltCfg.impactColor); scene.remove(s.mesh); enemyShots.splice(i,1); }
   }
 }
