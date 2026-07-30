@@ -57,13 +57,14 @@ const TAU  = +src.match(/AE_TAU=([\d.]+)/)[1];
   assert(/renderer\.toneMappingExposure = _expBase \* _expAuto;/.test(src),
     '...and what the renderer gets is base × the adaptive multiplier — authorship is multiplied around, never replaced');
   assert(/renderer\.toneMappingExposure=_expBase\*_expAuto;/.test(src), 'the frame loop applies the eased value');
-  assert(/\} else if\(_expAuto!==1\)\{ _expAuto=1; _aeTargetMul=1; renderer\.toneMappingExposure=_expBase; \}/.test(src),
-    'turning the slider to 0 snaps cleanly back to the static authored exposure');
-  assert(/if\(\(\+\+_aeFrame % 5\)===0\)/.test(src), 'metering runs every 5th frame (~12Hz) — the readback is not a per-frame stall');
+  assert(/\} else if\(_expAuto!==1 \|\| _aeFence\)\{ _expAuto=1; _aeTargetMul=1; renderer\.toneMappingExposure=_expBase;/.test(src),
+    'turning the slider to 0 snaps cleanly back to the static authored exposure (and since 1182, cleans up any in-flight read)');
+  assert(/if\(!_aeFence && \(\+\+_aeFrame % 5\)===0\)/.test(src),
+    'metering runs every 5th frame (~12Hz) — and since 1182, only when no read is already in flight');
   assert(/_matCopy\.uniforms\.tColor\.value=_postRT\.texture/.test(src),
     'the meter blits through _matCopy, which also RESOLVES a multisampled _postRT before the read');
-  assert(/try\{ renderer\.readRenderTargetPixels\(_aeRT,0,0,16,16,_aeBuf\);/.test(src),
-    '...and a failed readback falls back to neutral instead of throwing mid-frame');
+  assert(/_gl\.getBufferSubData\(_gl\.PIXEL_PACK_BUFFER,0,_aeBuf\)/.test(src) && /catch\(e\)\{ _aeFence=null; _aePBO=null; _aeTargetMul=1; \}/.test(src),
+    'the read is asynchronous since 1182 (PBO + fence — its own test), and a failed readback still falls back to neutral instead of throwing mid-frame');
   assert(/autoExp:0\.7,/.test(src), 'DEFAULT_WORLD ships adaptation on at 0.7 — bounded by the clamp, disabled by one slider');
   assert(/slider\(b,'Auto exposure','autoExp',0,1,0\.05\);/.test(src), 'the slider lives beside Exposure in Camera & view');
 }

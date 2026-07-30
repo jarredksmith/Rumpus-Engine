@@ -1519,7 +1519,36 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
-## Open work (as of build 1181)
+## The meter was stalling the pipeline it was measuring (build 1182)
+
+Reported from play the day 1180 shipped: **any auto-exposure strength above 0 produced visible stutter on
+all visuals, with no fps drop.** That signature — time lost with the frame counter unmoved — is a pipeline
+STALL, not a load: `readRenderTargetPixels` is synchronous, so every 5th frame the CPU drained the entire
+queued GPU frame before copying 1 KB. A 12Hz judder the fps counter cannot see, because the time went to
+waiting, not working. (Strength 0 was smooth, which is what implicated the readback: the blit is a 16×16
+draw and the easing is arithmetic — the sync read was the only candidate left.)
+
+The metering now lives in `_aeMeter()` and reads back asynchronously: `readPixels` into a
+`PIXEL_PACK_BUFFER` (returns immediately), `fenceSync` behind it, and a harvest that polls
+`clientWaitSync(fence, 0, **0**)` — timeout zero, so the poll can never become the very block it replaces.
+The pixels arrive a few frames late, which a ~1s eased eye cannot show. Four details that are each a bug
+if lost:
+- **One read in flight at a time** (`!_aeFence && (++_aeFrame % 5)===0`) — issuing over a pending read
+  would need a PBO ring for nothing; the cadence just skips a beat.
+- **`PIXEL_PACK_BUFFER` is unbound immediately** — three's own `readRenderTargetPixels` (cine preview,
+  thumbnails, captures) would otherwise write into our PBO instead of its client array.
+- **WebGL1 has no PBO/fence: the meter is gated on `capabilities.isWebGL2` and auto-exposure goes quietly
+  INERT there** — a missing feature beats reintroducing the stutter on the devices least able to hide it.
+- **Strength 0 mid-flight deletes the pending fence**; `WAIT_FAILED` and a thrown call (context loss) drop
+  the GL objects and fall back to neutral, and the next 5th frame re-issues.
+
+`test-1182` drives the real extracted `_aeMeter` with a stub GL through all of it — including a renderer
+stub whose `readRenderTargetPixels` THROWS, so the sync path cannot quietly come back — and pins that every
+`clientWaitSync` in it passes timeout 0. Worth generalising: the engine's other readbacks (cine preview
+window, level thumbnails) are user-initiated one-offs where a stall is invisible; anything that reads the
+GPU back **every frame or on a cadence** must use this pattern.
+
+## Open work (as of build 1182)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

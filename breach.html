@@ -7177,8 +7177,53 @@ let _matComp=null, _matAfter=null, _matCopy=null;
 // authored exposure toward the target. Creators keep authorship three ways: the multiplier is clamped to
 // ±1.5 stops around THEIR exposure, a dead-zone stops it breathing on balanced frames, and worldCfg.autoExp
 // (0..1, a slider next to Exposure) scales the whole effect — 0 is exactly the old static behaviour.
-let _aeRT=null, _aeFrame=0, _aeTargetMul=1, _expAuto=1, _expBase=1.25, _aeLastT=0;
+let _aeRT=null, _aeFrame=0, _aeTargetMul=1, _expAuto=1, _expBase=1.25, _aeLastT=0, _aePBO=null, _aeFence=null;
 const _aeBuf=new Uint8Array(16*16*4);
+// build 1182: the meter reads back ASYNCHRONOUSLY. readRenderTargetPixels is a full pipeline stall — the
+// CPU drains every queued GPU command before the copy returns, so metering at 12Hz was a visible 12Hz
+// judder with NO fps drop (reported from play; strength 0 was smooth, which is what implicated the read).
+// WebGL2: readPixels into a PIXEL_PACK_BUFFER returns immediately, a fence marks completion, and the
+// harvest polls clientWaitSync with timeout 0 (never blocks), mapping the buffer only after the GPU has
+// signalled — the value arrives a few frames late, which a ~1s eased eye cannot show. One read in flight
+// at a time. WebGL1 has no PBO/fence: auto-exposure is quietly INERT there rather than stuttering.
+function _aeMeter(){
+  const _aeS=(typeof worldCfg!=='undefined' && worldCfg.autoExp!=null)?+worldCfg.autoExp:0;
+  if(_aeS>0.001 && renderer.capabilities.isWebGL2){
+    const _gl=renderer.getContext();
+    if(_aeFence){ try{                                        /* harvest: poll, never wait */
+      const _st=_gl.clientWaitSync(_aeFence,0,0);
+      if(_st===_gl.ALREADY_SIGNALED || _st===_gl.CONDITION_SATISFIED){
+        _gl.deleteSync(_aeFence); _aeFence=null;
+        _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,_aePBO);
+        _gl.getBufferSubData(_gl.PIXEL_PACK_BUFFER,0,_aeBuf);
+        _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,null);
+        let _ls=0; for(let i=0;i<1024;i+=4){ const l=(0.2126*_aeBuf[i]+0.7152*_aeBuf[i+1]+0.0722*_aeBuf[i+2])/255; _ls+=Math.log(Math.max(0.001,l)); }
+        const _avg=Math.exp(_ls/256);
+        let _ev=Math.log2(AE_KEY/Math.max(0.001,_avg));
+        if(Math.abs(_ev)<AE_DEAD) _ev=0;                      /* dead-zone: no breathing on a balanced frame */
+        _ev=Math.max(-AE_CLAMP, Math.min(AE_CLAMP, _ev))*_aeS; /* creator authorship: bounded, scaled */
+        _aeTargetMul=Math.pow(2,_ev);
+      } else if(_st===_gl.WAIT_FAILED){ _gl.deleteSync(_aeFence); _aeFence=null; }
+    }catch(e){ _aeFence=null; _aePBO=null; _aeTargetMul=1; } }
+    if(!_aeFence && (++_aeFrame % 5)===0){                    /* issue: only when nothing is in flight */
+      if(!_aeRT) _aeRT=new THREE.WebGLRenderTarget(16,16,{ minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, depthBuffer:false });
+      _matCopy.uniforms.tColor.value=_postRT.texture; const _aePm=_postQuad.material; _postQuad.material=_matCopy;
+      renderer.setRenderTarget(_aeRT); renderer.render(_postScene,_postCam); _postQuad.material=_aePm;
+      try{                                                    /* _aeRT is still bound, so readPixels targets it */
+        if(!_aePBO) _aePBO=_gl.createBuffer();
+        _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,_aePBO);
+        _gl.bufferData(_gl.PIXEL_PACK_BUFFER,1024,_gl.STREAM_READ);
+        _gl.readPixels(0,0,16,16,_gl.RGBA,_gl.UNSIGNED_BYTE,0);   /* offset into the PBO — returns immediately */
+        _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,null);               /* three's own readbacks must not inherit the binding */
+        _aeFence=_gl.fenceSync(_gl.SYNC_GPU_COMMANDS_COMPLETE,0);
+      }catch(e){ _aePBO=null; _aeTargetMul=1; }
+    }
+    const _aeNow=performance.now(); const _aeDt=Math.min(0.25, Math.max(0.001,(_aeNow-_aeLastT)/1000)); _aeLastT=_aeNow;
+    _expAuto += (_aeTargetMul-_expAuto)*(1-Math.exp(-_aeDt/AE_TAU));
+    renderer.toneMappingExposure=_expBase*_expAuto;
+  } else if(_expAuto!==1 || _aeFence){ _expAuto=1; _aeTargetMul=1; renderer.toneMappingExposure=_expBase;
+    if(_aeFence){ try{ renderer.getContext().deleteSync(_aeFence); }catch(e){} _aeFence=null; } }
+}
 const AE_KEY=0.42, AE_CLAMP=1.5, AE_DEAD=0.15, AE_TAU=0.9;
 // build 1128: bloom is a mip pyramid — _bloomMips[0] is half resolution and each level halves again.
 // Five levels reach a glow radius of ~16 half-res texels (a quarter of a 720p frame), which is the
@@ -7526,27 +7571,8 @@ function _renderPostFX(scn, cam){
   // build 1180: meter the frame, ease the exposure multiplier for the NEXT frame (materials consume
   // toneMappingExposure during the scene pass, so this frame is already drawn — a one-frame-lag feedback
   // loop, which is how every engine's eye adaptation works). The blit through _matCopy also RESOLVES a
-  // multisampled _postRT, so the 16x16 read is safe on both adaptive rungs.
-  { const _aeS=(typeof worldCfg!=='undefined' && worldCfg.autoExp!=null)?+worldCfg.autoExp:0;
-    if(_aeS>0.001){
-      if((++_aeFrame % 5)===0){
-        if(!_aeRT) _aeRT=new THREE.WebGLRenderTarget(16,16,{ minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, depthBuffer:false });
-        _matCopy.uniforms.tColor.value=_postRT.texture; const _aePm=_postQuad.material; _postQuad.material=_matCopy;
-        renderer.setRenderTarget(_aeRT); renderer.render(_postScene,_postCam); _postQuad.material=_aePm;
-        try{ renderer.readRenderTargetPixels(_aeRT,0,0,16,16,_aeBuf);
-          let _ls=0; for(let i=0;i<1024;i+=4){ const l=(0.2126*_aeBuf[i]+0.7152*_aeBuf[i+1]+0.0722*_aeBuf[i+2])/255; _ls+=Math.log(Math.max(0.001,l)); }
-          const _avg=Math.exp(_ls/256);
-          let _ev=Math.log2(AE_KEY/Math.max(0.001,_avg));
-          if(Math.abs(_ev)<AE_DEAD) _ev=0;                              // dead-zone: no breathing on a balanced frame
-          _ev=Math.max(-AE_CLAMP, Math.min(AE_CLAMP, _ev))*_aeS;        // creator authorship: bounded, scaled
-          _aeTargetMul=Math.pow(2,_ev);
-        }catch(e){ _aeTargetMul=1; }
-      }
-      const _aeNow=performance.now(); const _aeDt=Math.min(0.25, Math.max(0.001,(_aeNow-_aeLastT)/1000)); _aeLastT=_aeNow;
-      _expAuto += (_aeTargetMul-_expAuto)*(1-Math.exp(-_aeDt/AE_TAU));
-      renderer.toneMappingExposure=_expBase*_expAuto;
-    } else if(_expAuto!==1){ _expAuto=1; _aeTargetMul=1; renderer.toneMappingExposure=_expBase; }
-  }
+  // multisampled _postRT, so the 16x16 read is safe on both adaptive rungs. Async since build 1182.
+  _aeMeter();
   // 1a) build 1140: the weapon joins the frame. It used to be drawn to the CANVAS after renderScene had
   // finished, i.e. after bloom, the colour grade, the vignette, the grain and the motion blur — so the
   // one object on screen at all times, across 11% of it, was the only object outside the frame's look.
@@ -26501,7 +26527,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1181 · 2026-07-30';
+const BUILD_VERSION = 'build 1182 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
