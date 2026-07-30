@@ -819,45 +819,58 @@ ever needs pulling back, the lever is frost's `exposure` (1.2), not `gnd`.
 `Object.assign(worldCfg, r.world); applyWorldCfg()`. Checked because "the mood never reached the engine"
 would have been a tidy explanation for a dark plane, and it is not the explanation.
 
-## A muzzle flash was writing itself into the AO buffer (build 1152) — DIAGNOSIS DISPROVED
+## A sprite was casting a drop shadow out of the AO buffer (build 1152)
 
-**Read this first: the fix below is correct hygiene but it is NOT the cause of the reported artifact.**
-Measured after committing it, with the instrument that finally worked: a STATIC sprite whose texture is
-entirely `alpha = 0`, so it draws nothing and its only possible contribution is its footprint in the AO
-G-buffer. Grain and motion blur off, the hide gated on a runtime flag, four frames in one session — two test
-pairs and two controls. The sprite's quad region minus a reference patch of the same ground:
+Reported from play with a screenshot: a hard square around muzzle flashes and impact sprites. **The user
+diagnosed it, after I had measured six times and published the opposite conclusion.** Their read: AO is
+giving the transparent quad a DROP SHADOW. The one-line test settles it — set **World → Camera & view →
+Ambient occlusion to 0** and the square is gone.
 
-```
-capture order   flag        quad - ref
-fixed           hide ON       -13.517
-unfixed         hide OFF      -13.813
-fixed2          hide ON       -13.837
-unfixed2        hide OFF      -13.865
-```
-Monotonic in CAPTURE ORDER, not in the flag. If the hide mattered the two ON frames would group and the two
-OFF frames would group; they do not. The effect is under 0.3 code values and smaller than the drift between
-consecutive frames. **The AO prepass is not producing the user's bright square.**
+The cause: the prepass renders with `scene.overrideMaterial = _matAOGeo`, which replaces `transparent` and
+`depthWrite:false` along with everything else, so a sprite writes its quad into the half-res G-buffer as
+solid geometry. SSAO then treats that quad as an OCCLUDER and darkens the world around and behind it — an
+invisible box casting a shadow. Builds 1126 and 1128 fixed this same trap twice by NAME (the sky dome, then
+the weather points); the flipbook VFX are the third instance, so 1152 replaces the naming with a rule:
+nothing that fails to write depth belongs in a depth-derived buffer.
 
-Why the code argument was not enough: `overrideMaterial` does replace `transparent` and `depthWrite:false`,
-so a sprite IS drawn into the G-buffer — but a `Sprite`'s billboarding and scale live in `SpriteMaterial`'s
-own vertex shader, which the override replaces too. What actually lands in the buffer is the raw unit quad
-through a standard vertex shader, not the on-screen billboard. The mechanism is real; the footprint is not
-the square the user sees.
+**Why no further capture is needed:** AO=0 removes the artifact, so it is AO-derived; a SQUARE AO artifact at
+a sprite can only come from that sprite's own footprint in the AO G-buffer; hiding the sprite from that pass
+removes the footprint.
 
-**Next candidate, stated as a hypothesis and NOT acted on: atlas cell bleed.** `_procVfxSheet` packs frames
-edge to edge with `minFilter/magFilter = LinearFilter`, `generateMipmaps = false`, and selects a frame with
-`tex.repeat.set(1/cols, 1/rows)` + `tex.offset`. There is no padding between cells and no half-texel inset,
-so at the quad's boundary the sampler interpolates into the NEIGHBOURING cell — which for an explosion sheet
-holds a bright frame. That predicts a bright rim exactly at the PNG square's edge, which is what the report
-describes ("a very defined edge around the png square"). It is testable: the artifact should scale with the
-neighbouring cell's brightness and vanish with a half-texel inset. Do that measurement before changing
-anything.
+### Six failed measurements, and why each one lied
 
-**Also ruled out, so nobody re-runs them:** the sheets' transparency is clean (every gradient ends at
-`rgba(0,0,0,0)`, and three's `AdditiveBlending` is `src·srcAlpha + dst`, so a transparent pixel adds
-nothing); and canvas premultiplied alpha would produce DARK fringes, not bright ones.
+Worth the space, because every one produced a plausible-looking result and four would have been reported as
+findings:
 
-### What the build actually changed (kept, on its own merits)
+| # | attempt | why it failed |
+|---|---|---|
+| 1 | fire at the horizon | sprite against SKY — no occlusion there to differ. Clean null. |
+| 2 | "pitch down" then fire | the mouse moves netted zero movementY. Same null again. |
+| 3 | 3 page loads, pinned rotation | 53% of the frame differed — in the CONTROL too. `postGrain` is stochastic per frame. |
+| 4 | animated smoke, block means | 26 "bright blocks"… the control showed 28. Animation phase across respawns. |
+| 5 | static fully-transparent quad | effect ordered by CAPTURE TIME, not by the flag. Settling drift. |
+| 6 | read the AO buffers directly | all zeros INCLUDING the reference patch — `_aoGeoRT` is HalfFloat, read into a `Uint8Array`. |
+
+Only #5 and #6 carried controls, and that is the only reason I knew they had failed. **Without the reference
+patch in #6 I would have reported "the sprite is definitively not in the G-buffer" as a measured fact.** A
+control pair is not optional in this engine: grain, weapon sway, animation phase and settling drift each
+exceed the effects being looked for.
+
+Why #5 was insensitive, which is the technical lesson: `overrideMaterial` replaces `SpriteMaterial`, and a
+`Sprite`'s billboarding lives in that material's own vertex shader. What reaches the G-buffer is the raw unit
+quad through a standard vertex shader — an axis-aligned quad in the world XY plane, not a camera-facing
+billboard. Depending on camera yaw that quad can be nearly EDGE-ON, with almost no footprint. The ghost
+sprite was very likely edge-on: the configuration in which the bug cannot show. **The mechanism was right and
+the probe was pointed the wrong way.**
+
+And the meta-lesson, which cost the most: I stated a mechanism-level diagnosis, failed to confirm it, then
+published a retraction calling it disproved. **Failing to measure something is not evidence of its absence**
+— least of all with an instrument that had already failed five times. The retraction was worse than the
+original claim, because the original was correct. When a code-level mechanism is solid and the measurement
+is null, suspect the measurement.
+
+### What the build actually changed
+
 
 
 Reported from play, with a screenshot: a hard, slightly **brighter** rectangle around muzzle flashes and
