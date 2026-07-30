@@ -1396,6 +1396,7 @@
     <button id="pauseSprintMode" class="pBtnGhost">Sprint: Hold</button>
     <button id="pauseCrouchMode" class="pBtnGhost">Crouch: Hold</button>
     <button id="pauseLoadout" class="pBtnGhost">&#9881; Weapon loadout</button>
+    <button id="pauseCredits" class="pBtnGhost">&#9825; Asset credits</button>
     <div class="pauseAudio">
       <label class="paLbl"><input type="checkbox" id="muteCb"> Mute all</label>
       <label class="paLbl"><input type="checkbox" id="postFxCb"> Visual effects (bloom · motion blur)</label>
@@ -26134,7 +26135,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1165 · 2026-07-30';
+const BUILD_VERSION = 'build 1166 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35221,6 +35222,11 @@ function levelIssues(){
       if(tg){ for(const p of propModels){ const ss=p && p.userData && p.userData.signals; if(!ss) continue;
         for(const s of ss){ if(s.target===tg){ wired=true; break; } } if(wired) break; } }
       if(!wired) issues.push('A Signals-only mechanism can never move \u2014 '+(tg ? ("nothing targets its tag '"+tg+"'.") : 'it has no tag for signals to target.')); }
+    // build 1166: a Sketchfab model with no recorded attribution is a LICENSING exposure, not a cosmetic one \u2014
+    // Sketchfab downloadable models are typically CC-BY, and CC-BY is only satisfied if the credit ships.
+    // (Models placed through the in-editor search always carry one; this catches hand-pasted sketchfab: urls.)
+    { let bare=0; for(const o of propModels){ if(o && o.userData && /^sketchfab:/i.test(String(o.userData.src||'')) && !o.userData.attribution) bare++; }
+      if(bare) issues.push(bare+' Sketchfab model'+(bare>1?'s have':' has')+' no attribution recorded \u2014 CC-BY requires the credit to ship with the level (see Asset credits in the pause menu).'); }
   }catch(e){}
   return issues;
 }
@@ -41205,6 +41211,7 @@ function bindPauseMenu(){
   const pb=document.getElementById('pauseBtn'); if(pb) pb.onclick=openPause;
   const r=document.getElementById('pauseResume'); if(r) r.onclick=resumeGame;
   const plb=document.getElementById('pauseLoadout'); if(plb) plb.onclick=()=>{ if(typeof openLoadout==='function') openLoadout(); };
+  const pcr=document.getElementById('pauseCredits'); if(pcr) pcr.onclick=()=>{ if(typeof showCreditsModal==='function') showCreditsModal(); };   // build 1166: CC-BY attribution must be reachable at play time
   const eh=document.getElementById('pauseEditHud'); if(eh) eh.onclick=()=>{ const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.add('hidden'); enterTouchEdit(); };
   const smb=document.getElementById('pauseSprintMode'); if(smb){ const upds=()=>{ smb.textContent='Sprint: '+(_sprintMode==='toggle'?'Toggle':'Hold'); }; upds(); smb.onclick=()=>{ _sprintMode = _sprintMode==='toggle'?'hold':'toggle'; _sprintToggled=false; try{ localStorage.setItem('breach_sprint_mode', _sprintMode); }catch(e){} upds(); }; }
   const crmb=document.getElementById('pauseCrouchMode'); if(crmb){ const updc=()=>{ crmb.textContent='Crouch: '+(_crouchMode==='toggle'?'Toggle':'Hold'); }; updc(); crmb.onclick=()=>{ _crouchMode = _crouchMode==='toggle'?'hold':'toggle'; _crouchToggled=false; try{ localStorage.setItem('breach_crouch_mode', _crouchMode); }catch(e){} updc(); }; }   // Toggle lets players crouch-walk without the Ctrl+W browser close-combo
@@ -41263,6 +41270,45 @@ const ASSET_SOURCES = [
 ];
 const assetCredits = new Set();   // attributions for slots that don't carry their own credit (enemy/pickup/chest/coin/attachment models, sounds). build 835: serialized with the level (see serializeLevel.credits) and re-seeded on every load, so published levels keep their CC attributions.
 function creditAsset(s){ if(s && typeof s==='string'){ const t=s.trim(); if(t) assetCredits.add(t); } }   // build 549: register a CC asset credit (called by the model/sound pickers)
+// build 1166: ONE authoritative credits list. Attribution lived in two systems that never met — per-prop
+// `userData.attribution` (Sketchfab/Poly Pizza CC-BY models placed in the scene) and the `assetCredits` set
+// (every non-prop slot: enemies, pickups, chests, coins, attachments, sounds, HDRIs). CLAUDE.md has carried
+// "asset licensing + a credits screen are release blockers" for hundreds of builds; a CC-BY licence is only
+// satisfied if the attribution is actually REACHABLE at play time, so this merges both systems plus the
+// engine's own dependencies, deduped, and the pause menu shows it in every session — no creator opt-in.
+const ENGINE_CREDITS = [
+  'three.js (MIT) — threejs.org',
+  'Rapier physics (Apache-2.0) — rapier.rs',
+  'PeerJS / WebRTC (MIT) — peerjs.com',
+  'fflate (MIT) — github.com/101arrowz/fflate',
+];
+function levelCreditsList(){
+  const out = new Set();
+  try{ for(const s of assetCredits) out.add(s); }catch(e){}
+  try{ if(typeof propModels!=='undefined') for(const o of propModels){ const a=o&&o.userData&&o.userData.attribution; if(a && typeof a==='string' && a.trim()) out.add(a.trim()); } }catch(e){}
+  return [...out].sort((a,b)=>a.localeCompare(b));
+}
+let _creditsEl = null;
+function showCreditsModal(){
+  if(_creditsEl){ _creditsEl.remove(); _creditsEl=null; }
+  const list = levelCreditsList();
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;inset:0;background:rgba(4,8,12,.88);z-index:10000;display:flex;align-items:center;justify-content:center;';
+  const card = document.createElement('div');
+  card.style.cssText = 'max-width:560px;max-height:78vh;overflow:auto;background:#0d141b;border:1px solid #2a3a46;border-radius:10px;padding:22px 26px;font:13px/1.6 monospace;color:#cfe0ea;';
+  const h = (t)=>{ const d=document.createElement('div'); d.style.cssText='font-size:15px;letter-spacing:2px;color:#7fd6c2;margin:10px 0 6px;'; d.textContent=t; return d; };
+  const li = (t)=>{ const d=document.createElement('div'); d.textContent='· '+t; return d; };   // textContent: attributions are UNTRUSTED level data
+  card.appendChild(h('ASSET CREDITS'));
+  if(list.length) list.forEach(s=>card.appendChild(li(s)));
+  else { const d=document.createElement('div'); d.style.opacity=.7; d.textContent='This level uses no externally-credited assets.'; card.appendChild(d); }
+  card.appendChild(h('ENGINE'));
+  ENGINE_CREDITS.forEach(s=>card.appendChild(li(s)));
+  const x = document.createElement('button'); x.textContent='Close'; x.style.cssText='margin-top:14px;padding:6px 18px;';
+  x.onclick = ()=>{ el.remove(); _creditsEl=null; };
+  card.appendChild(x);
+  el.onclick = (e)=>{ if(e.target===el){ el.remove(); _creditsEl=null; } };
+  el.appendChild(card); document.body.appendChild(el); _creditsEl = el;
+}
 if(savedLevel && Array.isArray(savedLevel.credits)) savedLevel.credits.forEach(c=>creditAsset(String(c)));   // build 835: boot path — the saved level's credits come back with it
 function collectLevelCredits(){   // de-duped, sorted per-asset attributions: placed props (persisted) + anything picked this session
   const set=new Set();

@@ -967,6 +967,17 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The credits screen exists (build 1166)
+
+"Asset licensing + a credits screen are release blockers" has been in this file for hundreds of builds.
+Attribution lived in two systems that never met: per-prop `userData.attribution` (placed CC-BY models) and
+the `assetCredits` set (enemy/pickup/chest/coin/attachment models, sounds). A CC-BY licence is only satisfied
+if the credit is REACHABLE at play time, so: `levelCreditsList()` merges both plus `ENGINE_CREDITS`
+(three.js/Rapier/PeerJS/fflate), deduped and sorted; the pause menu carries **Asset credits** in every
+session with no creator opt-in; entries render via `textContent` because attributions are untrusted level
+data; and `levelIssues()` flags a `sketchfab:` prop with no recorded attribution as the licensing exposure
+it is (models placed through the in-editor search always carry one — this catches hand-pasted urls).
+
 ## The level format version is finally read (build 1165)
 
 `serializeLevel` has written `v:1` since the field existed and nothing ever inspected it — across ~1160
@@ -1279,7 +1290,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1165)
+## Open work (as of build 1166)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
