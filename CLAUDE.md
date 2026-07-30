@@ -398,6 +398,27 @@ the bounce the bake assumed are the same surface. `wallColor` is that albedo at 
 same world one value down rather than a different one. `floorColor` therefore equals `skyGround`, which
 also removes the horizon seam between the dome's ground band and the real ground.
 
+**Measured in build 1150, and "the same surface" is FALSE.** `groundAlb` is a hand-picked triple; the ground
+material actually drawn is `base × texture mean`, and the two disagree in every theme — by 0.35× to 1.59×:
+
+| theme | ground material | drawn albedo (linear) | `groundAlb` | Y ratio |
+|---|---|---|---|---|
+| industrial | `concrete` ×[.30,.31,.33] | 0.110/0.114/0.117 | 0.20/0.21/0.22 | 0.54× |
+| castle | `cobble` | 0.154/0.136/0.113 | 0.22/0.19/0.15 | 0.71× |
+| volcanic | `dirt` | 0.142/0.091/0.053 | 0.16/0.13/0.10 | 0.74× |
+| garden | `grass` ×[.74,.80,.62] | 0.034/0.067/0.011 | 0.12/0.18/0.08 | **0.35×** |
+| desert | `sand` | 0.511/0.372/0.185 | 0.42/0.34/0.22 | 1.11× |
+| frost | `snow` | 0.779/0.829/0.899 | 0.60/0.64/0.70 | 1.29× |
+| facility | `scifiFloor` | 0.165/0.189/0.222 | 0.10/0.12/0.14 | **1.59×** |
+
+THREE consumers now derive from the abstraction — the bake's sun bounce, the engine plane's `floorColor` and
+`wallColor` (1143), and the one-bounce fill (1149) — while the renderer draws the texture. That is this
+section's own lesson one level deeper: naming the ground once is not enough when the thing named is not the
+thing drawn. The fix is to DERIVE `groundAlb` from the ground material (`base × texture mean`, which the
+generator can measure because it builds the texture) instead of hand-picking it, and it is a generator
+change needing its own capture pass — on garden the engine's plane is ~3× BRIGHTER than the grass it butts
+against, the same class of seam as the desert one and in the opposite direction.
+
 Each theme now names `zen` / `hor` / `gnd` **once**. They were written out twice per theme before (in the
 `light` block and again inside the `skyMood(...)` call) and this build would have made it three times —
 which is exactly how a mood ends up baking against one ground and showing the player another.
@@ -762,28 +783,43 @@ tight to the triangles, so the generator no longer has to author a 3.8 m doorway
 Narrowing them is a *generator* change with its own probe pass — do not do it as part of an engine
 build, and keep `tests/test-1113` as the gate.
 
-**The arena-edge seam: THREE hypotheses measured and eliminated, cause still unknown.** Do not start a
-fourth attempt without reading this. On the desert arena at seed 4242, walking outside the footprint, the
-engine's ground plane reads `111,103,79` and the arena's slab lip beside it reads `243,204,152`. Each of
-these was stated confidently before being measured, and each is wrong:
+**The arena-edge seam was never a seam. CLOSED — I was measuring a light.** Four builds of hypotheses about
+why the desert arena's ground reads 2.3 stops brighter than the engine plane beside it, and the answer is
+that the bright strip is the arena's **team-A base marker**: `mat('teamA', { base: [1, 0.55, 0.23],
+glow: 0.32 })` — a deliberately EMISSIVE gameplay marking painted along the base edge. It is supposed to be
+bright. I picked the sample region off a screenshot by eye at y 395–406 and never checked what mesh was
+there until a probe reported `col=1.000/0.550/0.230` with `glow`.
 
-1. *"The sand TEXTURE's albedo is brighter than the theme's `groundAlb`."* Measured: `sand` is
-   0.511/0.372/0.185 linear against a stated 0.42/0.34/0.22. The generator's grounds are honest.
-2. *"`envMapIntensity` is 1.00 on imports and 0.12 on engine surfaces — an 8x ambient gap."* The gap is
-   real (probed) but is NOT the seam. Unifying it moved the lip `246,212,164 → 243,204,152` — three to
-   twelve code values — while costing the weapon 27% (`91,104,111 → 66,78,85`). Implemented, measured,
-   reverted. Principled change, negligible benefit, large cost.
-3. *"The baked `lightMap` is additive, so an open-sky surface receives the sky twice."* A/B with
-   `lightMapIntensity = 0` and nothing else changed: the lip is **BYTE-IDENTICAL** at `243,204,152`. The
-   bake contributes nothing there.
+The scene-linear radiance probe (`scratchpad/probe-radiance.mjs`) settles it in one run. Rendering the live
+scene into a **FloatType** render target with `toneMapping = NoToneMapping` gives the radiance the renderer
+actually produced, before ACES and before the encode, so `radiance / albedo` is the IRRADIANCE a surface
+received — and two surfaces in the same sunlight must report the same number:
 
-So the surface does not respond to any ambient term, which means it is sun-driven — and the remaining
-question is whether `243` on a pale up-facing surface at 72° noon is even wrong. Region statistics cannot
-answer that, because comparing a post-ACES frame value against an albedo-times-irradiance estimate mixes
-two spaces and every approximation in the chain is worth a factor. **The next attempt needs a different
-instrument, not another hypothesis:** a probe that reports, for ONE pixel, the surface albedo and the
-SCENE-LINEAR radiance before tone mapping, so the render equation can be checked term by term instead of
-estimated. Build that first.
+```
+surface                       radiance              albedo               IRRADIANCE
+arena edge strip (teamA)   1.871/1.110/0.436   1.000/0.550/0.230    1.87/2.02/1.89   <- EMISSIVE
+engine boundary wall       0.140/0.120/0.082   0.068/0.058/0.045    2.04/2.07/1.81
+                           0.145/0.120/0.083   0.068/0.058/0.045    2.11/2.08/1.84
+                           0.140/0.116/0.079   0.068/0.058/0.045    2.04/2.01/1.74
+```
+**The irradiance is identical.** The renderer was delivering the same light all along; the 14.6× ratio in red
+is albedo, and one of the two albedos belongs to an emitter. In hindsight every eliminated hypothesis was
+eliminated *because* the surface was emissive — zeroing the bake and closing the 8× `envMapIntensity` gap
+both left it byte-identical, which is exactly what an emitter does.
+
+Three lessons, and the first is the one that cost the most:
+- **Know what SURFACE you are measuring before you call it a defect.** Build 1124 established "know where
+  the camera is before you judge the frame"; this is the same error one level down. A region picked by eye
+  off a screenshot is a guess about geometry, and here it was wrong twice: the surface I had been calling
+  "the engine's ground plane" reports `env0.12` and no `src`, which makes it **`wallMat`** — the engine's
+  boundary WALL, not its floor. Both halves of a comparison I ran for four builds were misidentified.
+- **`radiance / albedo` is irradiance only for a NON-EMISSIVE material.** The probe's own first run made
+  this mistake, reading 1.87 off the marker as if it were ground irradiance. It now prints
+  `EMISSIVE!x<intensity> (IRR above is NOT irradiance)` so the next reader cannot repeat it.
+- **Frame statistics cannot test a lighting hypothesis.** Comparing a post-ACES 8-bit value against an
+  albedo-times-irradiance estimate mixes two spaces and every approximation in the chain is worth a factor.
+  Four rounds of that produced four wrong answers; one float-target read produced the right one. When the
+  question is about the render equation, measure in the render equation's own space.
 
 **What the same A/B did establish, and it matters more:** the bake carries the arena's block field almost
 entirely. With `lightMapIntensity = 0`, the blocks go `148,115,91 → 98,80,65` and their p50 luminance
