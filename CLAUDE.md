@@ -211,6 +211,29 @@ settings — which silently disabled AO in every capture until `arenaMood` start
 `worldCfg` — the day cycle and build 1120's shadow fit both move the light without touching the
 config, so a config-derived sun disagreed with the one casting the shadows.
 
+## Two things I got wrong here, twice (build 1136)
+
+Both were plausible hypotheses stated before measuring, and both cost a capture cycle:
+
+1. **"The teal cast is the emissive bleeding through bloom."** The channel signature (G+48, B+50,
+   R+14) matched the teal accent, so it looked settled. Cutting the emissive from 1.6 to 0.55 moved
+   the measurement by **1 code value**. Comparing a *lit* pixel to its authored albedo hex is not a
+   valid comparison in the first place — the pixel is albedo × light, tone-mapped.
+2. **"The IBL dominates and is swamping the sun."** Correcting the probe (see below) and scaling it
+   by `sky` changed **0.95%** of the frame. Raising the sun 50% and halving the hemisphere fill
+   changed **38.6%**. The environment map was never the loud term.
+
+The real answer was arithmetic, not a bug: a shadowed deck measured R/G 0.33, and the albedo's own
+R/G (0.58) × the blue sky's (0.51) = 0.30. The renderer was reproducing exactly what it was given.
+A monochrome frame with cool albedos under a cool sky is **content**, not code. Warm the architecture
+and keep the props cool and the frame gets three notes.
+
+**The environment probe must be RAW RADIANCE.** Build 1127 tone-mapped it "to match what the eye sees
+of the same sky" — wrong. Materials multiply the environment against albedo *before* three tone-maps
+the shaded result, so ACES was being applied twice. The dome (a final colour) tone-maps and encodes;
+the probe (radiance) does neither. `worldCfg.sky` now scales the probe as well as the hemisphere light,
+because r149 has no global environment intensity and walking every material on every change is worse.
+
 ## Headless capture
 
 The engine renders under Chromium + SwiftShader, so visual changes can be measured, not argued about.

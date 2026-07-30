@@ -7136,12 +7136,12 @@ function ensurePost(){
     ].join('\n') });
   // composite: scene + bloom, then contrast/saturation grade, vignette, and film grain
   _matComp=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0}, uBloomNorm:{value:1/_BLOOM_MIPS},
+    uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0}, uAOPow:{value:2.0}, uBloomNorm:{value:1/_BLOOM_MIPS},
       uAoTexel:{value:new THREE.Vector2(1,1)}, uFar:{value:400},
       uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1} },
     vertexShader:vert, fragmentShader:[
       'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom; uniform sampler2D tAO; uniform sampler2D tGeo;',
-      'uniform float uAO; uniform vec2 uAoTexel; uniform float uFar; uniform float uBloomNorm;',
+      'uniform float uAO; uniform float uAOPow; uniform vec2 uAoTexel; uniform float uFar; uniform float uBloomNorm;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
       // build 1126: BILATERAL UPSAMPLE. AO is computed at half resolution, and a plain bilinear tap
       // across a silhouette reads occlusion that belongs to the object and paints it onto whatever
@@ -7171,7 +7171,13 @@ function ensurePost(){
       // colour rather than the ambient term alone: a forward renderer has no split to apply it to,
       // and every forward engine that ships SSAO makes the same approximation.
       'void main(){ vec3 c=texture2D(tColor,vUv).rgb;',
-      '  if(uAO > 0.0) c *= mix(1.0, _ao(), uAO);',
+      // build 1135: a POWER curve on the AO term. The raw occlusion fraction is linear, and in an
+      // open scene a surface next to a crate is only ~15-25% occluded, so linearly it lands at 0.8
+      // and reads as nothing at all — the grounding only showed in deep creases. Squaring pushes the
+      // mid-range down (0.8 -> 0.64) while leaving 1.0 exactly 1.0, so unoccluded surfaces are
+      // untouched and it cannot darken the scene overall. This is the `AO power` every engine
+      // exposes; the authored `ssao` amount still scales the whole thing.
+      '  if(uAO > 0.0) c *= mix(1.0, pow(_ao(), uAOPow), uAO);',
       // build 1128: normalised by the pyramid depth. Each of the five levels carries roughly the
       // same energy, so the sum is ~5x what the old single gather produced and postBloom would
       // have silently changed meaning — every level ever saved would have come back washed out.
@@ -7330,7 +7336,12 @@ function _renderPostFX(scn, cam){
   // 1b) build 1126: screen-space ambient occlusion — G-buffer prepass, AO, bilateral blur, all at
   // half resolution. Perspective only: the AO shader rebuilds view rays from a tangent-of-fov
   // scale, which an orthographic camera does not have, so the editor's ortho views go without.
-  const _aoWant = _ssaoAmt > 0.001 && _hiFxOn && _aoGeoRT && cam && cam.isPerspectiveCamera;
+  // build 1135: AO outranks MSAA on the quality ladder. It used to ride the same rung, so the first
+  // hiccup threw away the engine's main grounding cue — the thing that makes objects sit on the
+  // floor — while keeping 4x multisampling on their edges. That is the wrong trade: a slightly
+  // jagged silhouette still reads as an object standing somewhere. AO now survives the MSAA shed
+  // and goes only when the scaler starts trading RESOLUTION, at which point everything is soft anyway.
+  const _aoWant = _ssaoAmt > 0.001 && _prStepI === 0 && _aoGeoRT && cam && cam.isPerspectiveCamera;
   if(_aoWant){
     // the prepass runs AFTER the scene pass so it cannot consume this frame's shadow-map refresh,
     // and with the sky dome and weather hidden — overrideMaterial would give the dome depthWrite
@@ -7608,7 +7619,8 @@ function updateLightBudget(){
 // and for the same reason. Two on a phone, four elsewhere; the adaptive rung takes it to zero when
 // the machine is already struggling, because a depth pass per light is exactly what to shed first.
 function _maxShadowLights(){
-  if(typeof _hiFxOn!=='undefined' && !_hiFxOn) return 0;
+  // build 1135: same priority as AO — kept through the MSAA shed, dropped when resolution starts to go
+  if(typeof _prStepI!=='undefined' && _prStepI > 0) return 0;
   return (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 2 : 4;
 }
 let _shadowLightT = 0;
@@ -7806,13 +7818,25 @@ function _skyEnv(){
     if(!THREE.PMREMGenerator || !THREE.WebGLCubeRenderTarget) return null;
     const size = (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 64 : 128;
     const sc = new THREE.Scene();
+    // build 1136: worldCfg.sky scales the probe as well as the hemisphere light, so "sky" finally means
+    // the whole sky's contribution. three has no global environment intensity in r149 and setting
+    // envMapIntensity would mean walking every material in the scene on every change; scaling the probe
+    // at the point it is built is one place and cannot fall out of step.
+    const _envU = _skyUniforms();
+    if(_envU.uExp) _envU.uExp.value *= Math.max(0.05, Math.min(2, (typeof worldCfg!=='undefined' && worldCfg.sky!=null) ? +worldCfg.sky : 0.55));
     const m = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.ShaderMaterial({
-      side:THREE.BackSide, depthWrite:false, fog:false, uniforms:_skyUniforms(),
+      side:THREE.BackSide, depthWrite:false, fog:false, uniforms:_envU,
       vertexShader:'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-      fragmentShader:['varying vec3 vDir;', SKY_GLSL, _OETF_GLSL, _ACES_GLSL,
-        // the probe is convolved into an environment map, which is sampled as LINEAR radiance, so
-        // this one tone-maps (to match what the eye sees of the same sky) but never encodes.
-        'void main(){ gl_FragColor=vec4(_aces(skyRadiance(normalize(vDir))),1.0); }'].join('\n') }));
+      fragmentShader:['varying vec3 vDir;', SKY_GLSL,
+        // build 1136: NO tone mapping here. Build 1127 added it to "match what the eye sees of the same
+        // sky", and that was wrong: this cube is convolved into an environment map, which materials
+        // multiply against albedo BEFORE three tone-maps the shaded result. Tone-mapping it first
+        // applies ACES twice, and ACES lifts mid-tones — so the image-based ambient came out far
+        // brighter than the sky's real radiance and swamped the sun. Measured on the default level, a
+        // sunlit and a shadowed face of the same deck differed by only 1.16x in luminance; raising the
+        // sun 50% and halving the hemisphere fill moved that by 0.00, which is what proved the IBL was
+        // the dominant term rather than either light. An environment map holds RADIANCE.
+        'void main(){ gl_FragColor=vec4(skyRadiance(normalize(vDir)),1.0); }'].join('\n') }));
     m.frustumCulled=false; sc.add(m);
     const cubeRT = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType });
     const cam = new THREE.CubeCamera(0.1, 10, cubeRT);
@@ -14650,13 +14674,24 @@ function buildPillar(){
 // colour, roughness and emissive so the frame has values in it. Everything is a real editable prop,
 // exactly as before — this is content, not a new system.
 const _DL = {                                   // the default level's palette
-  deck:   { col:0x33434e, shine:{ r:0.85, m:0.10 } },   // platform decks
-  wall:   { col:0x2b3941, shine:{ r:0.75, m:0.18 } },   // structure
-  crate:  { col:0x4c5c65, shine:{ r:0.60, m:0.25 } },   // cover you hide behind
-  crateH: { col:0x5a6b74, shine:{ r:0.55, m:0.30 } },   // taller cover, one value up so the grade reads
-  pipe:   { col:0x1f2a31, shine:{ r:0.40, m:0.55 } },   // dark metal, catches a highlight
-  glowA:  { col:0x123038, emit:{ c:0x2fe0b0, i:1.6 }, shine:{ r:0.4, m:0.2 } },   // team A accent
-  glowB:  { col:0x38251a, emit:{ c:0xff8c3c, i:1.6 }, shine:{ r:0.4, m:0.2 } },   // team B accent
+  // build 1136: the ARCHITECTURE is warm and the PROPS are cool. The first pass made everything cool
+  // slate, and under a blue sky that gives a frame with one temperature in it. This is not a rendering
+  // fault — measured, a shadowed deck came back at R/G 0.33, and the albedo's own R/G (0.58) times the
+  // blue sky's (0.51) is 0.30, so the renderer was reproducing exactly what it was given. The fix is
+  // the content: warm concrete lit by a warm sun, cool metal crates on top of it, blue sky in the
+  // shadows. Three notes instead of one.
+  deck:   { col:0x4a443c, shine:{ r:0.85, m:0.08 } },   // warm concrete decks
+  wall:   { col:0x3a352f, shine:{ r:0.78, m:0.10 } },   // structure, a value down
+  crate:  { col:0x5c6670, shine:{ r:0.55, m:0.35 } },   // cool metal cover, reads against the concrete
+  crateH: { col:0x6d7883, shine:{ r:0.50, m:0.40 } },   // taller cover, one value up so the grade reads
+  pipe:   { col:0x24201c, shine:{ r:0.35, m:0.60 } },   // warm dark metal, catches a highlight
+  // build 1135: 0.55, not 1.6. A saturated emissive at 1.6 is above the bloom threshold everywhere it
+  // appears, and build 1128's five-level pyramid then spreads it across the whole frame — measured on
+  // the spawn view, the deck read (51,98,112) against an authored (51,67,78) and a crate (90,140,151)
+  // against (76,92,101). The channel signature gives it away: G and B lifted 3x more than R, i.e. the
+  // teal. An accent's job is to draw the eye to one edge, not to tint the picture.
+  glowA:  { col:0x123038, emit:{ c:0x2fe0b0, i:0.55 }, shine:{ r:0.4, m:0.2 } },   // cool accent
+  glowB:  { col:0x38251a, emit:{ c:0xff8c3c, i:0.55 }, shine:{ r:0.4, m:0.2 } },   // warm accent
 };
 function generateOriginalScene(){
   const P = (src, t, mat) => spawnProp(src, t, null, null, 'loop', mat || null);
@@ -14669,7 +14704,9 @@ function generateOriginalScene(){
   P('box',    [0, 1.6, 0, 0, 0, 0, 4, 0.12, 4], _DL.glowA);           // a lit plate on the dais floor
   // ---- team platforms, N and S: a deck, a lip to crouch behind, a ramp, an accent band ----
   for(const sz of [-1, 1]){
-    const z = sz*30, accent = sz > 0 ? _DL.glowA : _DL.glowB;
+    // the player starts on the +z platform, so that one is warm: a cool sky over a cool foreground is
+    // one temperature and reads flat, and the contrast is what makes the near edge legible
+    const z = sz*30, accent = sz > 0 ? _DL.glowB : _DL.glowA;
     P('box',  [0, 0, z, 0, 0, 0, 22, 1.2, 9], _DL.deck);
     P('box',  [0, 1.2, z + sz*4.2, 0, 0, 0, 22, 1.0, 0.7], _DL.wall);  // parapet facing out
     P('box',  [0, 2.2, z + sz*4.2, 0, 0, 0, 22, 0.25, 0.8], accent);   // band along its top
@@ -14696,7 +14733,7 @@ function generateOriginalScene(){
   for(const sx of [-1, 1]) for(const sz of [-1, 1]){
     P('box', [sx*34, 0, sz*26, 0, 0, 0, 3, 4.5, 14], _DL.wall);
     P('box', [sx*28, 0, sz*33, 0, 0, 0, 14, 4.5, 3], _DL.wall);
-    P('box', [sx*34, 4.5, sz*26, 0, 0, 0, 3.2, 0.3, 14.2], sz > 0 ? _DL.glowA : _DL.glowB);
+    P('box', [sx*34, 4.5, sz*26, 0, 0, 0, 3.2, 0.3, 14.2], _DL.crateH);   // a capping course, not a light
   }
   // The player used to spawn at (0,0), which is now the dais — the same mistake build 1124 found in the
   // generated arenas. Start on a team platform looking at the middle. Recorded rather than applied:
@@ -15209,7 +15246,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
 // versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
 // The dark stock palette needs an art pass, which belongs with the sky/lighting work.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:30, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -25052,7 +25089,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1134 · 2026-07-29';
+const BUILD_VERSION = 'build 1136 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

@@ -95,14 +95,16 @@ const src = gameSource();
   assert(/if\(changed && typeof _dirtyShadows==='function'\) _dirtyShadows\(2\);/.test(fn),
     '...and dirties the map, because a light that just started casting has none yet');
   const cap = extractFunction('_maxShadowLights');
-  assert(/if\(typeof _hiFxOn!=='undefined' && !_hiFxOn\) return 0;/.test(cap),
-    'the adaptive rung takes it to zero — a depth pass per light is exactly what to shed first');
+  // build 1135: same priority as AO — kept through the MSAA shed, dropped when resolution starts to go
+  assert(/if\(typeof _prStepI!=='undefined' && _prStepI > 0\) return 0;/.test(cap),
+    'the adaptive ladder takes it to zero once resolution starts dropping');
   assert(/IS_COARSE\) \? 2 : 4;/.test(cap), 'two on a phone, four elsewhere');
   // executable: the cap responds to the rung and the device
-  const mk = (hi, coarse) => new Function('_hiFxOn', 'IS_COARSE', extractFunction('_maxShadowLights') + '; return _maxShadowLights;')(hi, coarse);
-  eq(mk(true, false)(), 4, 'desktop, rung up');
-  eq(mk(true, true)(), 2, 'phone, rung up');
-  eq(mk(false, false)(), 0, 'rung shed: nothing casts');
+  const mk = (step, coarse) => new Function('_prStepI', 'IS_COARSE', extractFunction('_maxShadowLights') + '; return _maxShadowLights;')(step, coarse);
+  eq(mk(0, false)(), 4, 'desktop, full resolution');
+  eq(mk(0, true)(), 2, 'phone, full resolution');
+  eq(mk(1, false)(), 0, 'resolution dropped: nothing casts');
+  eq(mk(3, false)(), 0, '...and stays off further down the ladder');
 }
 assert(/if\(typeof updateShadowLightBudget==='function'\) updateShadowLightBudget\(dt\);   \/\/ build 1132/.test(src),
   'the budget runs from the frame loop, beside the intensity budget it mirrors');

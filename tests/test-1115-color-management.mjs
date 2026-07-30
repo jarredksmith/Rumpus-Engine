@@ -29,19 +29,23 @@ assert(/vec3 _out\(vec3 c\)\{ return mix\(c, _oetf\(c\), uEncode\); \}/.test(oet
 // ...used by the two passes that can be the last LINEAR stage, and by nothing else. Build 1117
 // moved the encode earlier: the composite always encodes (so the grade after it runs in display
 // space), which leaves the afterimage copy a plain blit.
-// build 1127 added two more users, both in the SKY, and for the same reason the snippet exists: a raw
+// build 1127 added one more user, in the SKY DOME, and for the same reason the snippet exists: a raw
 // ShaderMaterial gets neither renderer.outputEncoding nor three's tone mapping, so the dome had been
-// the one surface in the frame on a different curve. The dome's uEncode is settled per frame (it must
-// encode only when effects are off and it therefore writes the canvas itself); the reflection probe
-// tone-maps but never encodes, because a PMREM is sampled as linear radiance.
+// the one surface in the frame on a different curve. Its uEncode is settled per frame, because it must
+// encode only when effects are off and it therefore writes the canvas itself.
+//
+// Build 1136 took BOTH off the reflection probe again. The probe is convolved into an environment map
+// which materials multiply against albedo BEFORE three tone-maps the shaded result, so tone-mapping it
+// applies ACES twice, and encoding it would be worse still. An environment map holds RADIANCE.
 const users = [...src.matchAll(/_OETF_GLSL,/g)].length;
-eq(users, 4, 'four passes can encode: the DoF present, the composite, and the two sky materials');
+eq(users, 3, 'three passes can encode: the DoF present, the composite, and the sky dome');
 assert(/uEncode\) u\.uEncode\.value = \(typeof _postOn!=='undefined' && _postOn/.test(src),
   'the sky dome encodes only when the post chain is NOT going to');
 {
   const env = src.slice(src.indexOf('function _skyEnv()'), src.indexOf('function applySky'));
-  assert(/_aces\(skyRadiance/.test(env) && !/_out\(_aces/.test(env),
-    'the reflection probe tone-maps but never encodes — it is convolved and then sampled as linear');
+  assert(!/_aces\(/.test(env) && !/_out\(/.test(env),
+    'the reflection probe neither tone-maps nor encodes — it is convolved and then sampled as linear radiance');
+  assert(/gl_FragColor=vec4\(skyRadiance\(normalize\(vDir\)\),1\.0\)/.test(env), '...it writes the raw radiance');
 }
 assert(/cu\.uEncode\.value=1;\n(?:\s*\/\/[^\n]*\n)*\s*const _fx = [^\n]*\n\s*if\(!_mbOn\)\{/.test(src),
   'the composite encodes unconditionally — motion blur no longer changes where the encode happens');
