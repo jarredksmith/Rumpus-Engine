@@ -1,8 +1,11 @@
-// build 1152: a muzzle flash no longer leaves a brighter square on the frame.
+// build 1152: transparent decoration stays out of the AO G-buffer.
 //
-// Reported from play with a screenshot: a hard, slightly BRIGHTER rectangle around muzzle flashes and
-// explosion/impact sprites — the PNG quad's own edge, with the transparent area reading lighter than the
-// scene behind it.
+// NOTE ON WHY THIS EXISTS: it was written to fix a reported bright square around muzzle flashes, and the
+// measurement afterwards DISPROVED that diagnosis — a static fully-transparent sprite moved the frame by
+// under 0.3 code values with the hide on vs off, less than the drift between consecutive captures. See
+// CLAUDE.md. The rule is kept because it is correct on its own terms (a depth-derived buffer should not
+// contain objects that do not write depth, and build 1126 hit that twice by name), NOT because it fixed the
+// reported artifact. Do not cite this test as evidence for that.
 //
 // The cause is build 1126's AO prepass. It renders the scene with `scene.overrideMaterial = _matAOGeo`, and
 // overrideMaterial replaces `transparent` and `depthWrite:false` along with everything else — so a sprite
@@ -109,4 +112,4 @@ const obj = (name, mat, visible = true) => ({ name, material: mat, visible });
   assert(/vmScene\.overrideMaterial=_matAOGeo;/.test(src), 'the viewmodel still writes its own occlusion');
 }
 
-done('build 1152: transparent decoration is out of the AO G-buffer — a muzzle flash was writing its whole quad in as solid geometry, so SSAO left a brighter square exactly where the sprite was');
+done('build 1152: transparent decoration is out of the AO G-buffer — correct hygiene, and measured NOT to be the cause of the reported bright square (see CLAUDE.md)');

@@ -819,7 +819,46 @@ ever needs pulling back, the lever is frost's `exposure` (1.2), not `gnd`.
 `Object.assign(worldCfg, r.world); applyWorldCfg()`. Checked because "the mood never reached the engine"
 would have been a tidy explanation for a dark plane, and it is not the explanation.
 
-## A muzzle flash was writing itself into the AO buffer (build 1152)
+## A muzzle flash was writing itself into the AO buffer (build 1152) — DIAGNOSIS DISPROVED
+
+**Read this first: the fix below is correct hygiene but it is NOT the cause of the reported artifact.**
+Measured after committing it, with the instrument that finally worked: a STATIC sprite whose texture is
+entirely `alpha = 0`, so it draws nothing and its only possible contribution is its footprint in the AO
+G-buffer. Grain and motion blur off, the hide gated on a runtime flag, four frames in one session — two test
+pairs and two controls. The sprite's quad region minus a reference patch of the same ground:
+
+```
+capture order   flag        quad - ref
+fixed           hide ON       -13.517
+unfixed         hide OFF      -13.813
+fixed2          hide ON       -13.837
+unfixed2        hide OFF      -13.865
+```
+Monotonic in CAPTURE ORDER, not in the flag. If the hide mattered the two ON frames would group and the two
+OFF frames would group; they do not. The effect is under 0.3 code values and smaller than the drift between
+consecutive frames. **The AO prepass is not producing the user's bright square.**
+
+Why the code argument was not enough: `overrideMaterial` does replace `transparent` and `depthWrite:false`,
+so a sprite IS drawn into the G-buffer — but a `Sprite`'s billboarding and scale live in `SpriteMaterial`'s
+own vertex shader, which the override replaces too. What actually lands in the buffer is the raw unit quad
+through a standard vertex shader, not the on-screen billboard. The mechanism is real; the footprint is not
+the square the user sees.
+
+**Next candidate, stated as a hypothesis and NOT acted on: atlas cell bleed.** `_procVfxSheet` packs frames
+edge to edge with `minFilter/magFilter = LinearFilter`, `generateMipmaps = false`, and selects a frame with
+`tex.repeat.set(1/cols, 1/rows)` + `tex.offset`. There is no padding between cells and no half-texel inset,
+so at the quad's boundary the sampler interpolates into the NEIGHBOURING cell — which for an explosion sheet
+holds a bright frame. That predicts a bright rim exactly at the PNG square's edge, which is what the report
+describes ("a very defined edge around the png square"). It is testable: the artifact should scale with the
+neighbouring cell's brightness and vanish with a half-texel inset. Do that measurement before changing
+anything.
+
+**Also ruled out, so nobody re-runs them:** the sheets' transparency is clean (every gradient ends at
+`rgba(0,0,0,0)`, and three's `AdditiveBlending` is `src·srcAlpha + dst`, so a transparent pixel adds
+nothing); and canvas premultiplied alpha would produce DARK fringes, not bright ones.
+
+### What the build actually changed (kept, on its own merits)
+
 
 Reported from play, with a screenshot: a hard, slightly **brighter** rectangle around muzzle flashes and
 explosion/impact sprites — the PNG quad's own edge, the transparent area reading lighter than the scene.
