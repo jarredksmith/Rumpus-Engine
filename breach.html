@@ -7096,6 +7096,16 @@ let _postFail = false;
 let _postBloom = 0.65, _postMotion = 0.62, _postVig = 0.42, _postGrain = 0.05, _postSat = 1.08, _postCon = 1.05, _postThresh = 0.62;
 let _postRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
 let _matComp=null, _matAfter=null, _matCopy=null;
+// build 1180: AUTO-EXPOSURE. toneMappingExposure was a static authored value — walk from desert noon into
+// a dark interior and nothing adapted (every competitor ships eye adaptation by default). The meter reads a
+// 16x16 blit of _postRT (post-ACES, so the loop is a stable feedback: exposure moves, the metered value
+// follows, it converges), computes a log-average luminance at ~12Hz, and eases a MULTIPLIER on top of the
+// authored exposure toward the target. Creators keep authorship three ways: the multiplier is clamped to
+// ±1.5 stops around THEIR exposure, a dead-zone stops it breathing on balanced frames, and worldCfg.autoExp
+// (0..1, a slider next to Exposure) scales the whole effect — 0 is exactly the old static behaviour.
+let _aeRT=null, _aeFrame=0, _aeTargetMul=1, _expAuto=1, _expBase=1.25, _aeLastT=0;
+const _aeBuf=new Uint8Array(16*16*4);
+const AE_KEY=0.42, AE_CLAMP=1.5, AE_DEAD=0.15, AE_TAU=0.9;
 // build 1128: bloom is a mip pyramid — _bloomMips[0] is half resolution and each level halves again.
 // Five levels reach a glow radius of ~16 half-res texels (a quarter of a 720p frame), which is the
 // scale a real bloom works at; the old single 5x5 gather reached six full-res pixels.
@@ -7439,6 +7449,30 @@ function _renderPostFX(scn, cam){
   // 1) scene -> full-res color (run DoF first when active, so bloom/grade operate on the focus-blurred image)
   if(dofEnabled && ensureDof()){ _runDofTo(scn, cam, _postRT); }
   else { renderer.setRenderTarget(_postRT); renderer.render(scn, cam); }
+  // build 1180: meter the frame, ease the exposure multiplier for the NEXT frame (materials consume
+  // toneMappingExposure during the scene pass, so this frame is already drawn — a one-frame-lag feedback
+  // loop, which is how every engine's eye adaptation works). The blit through _matCopy also RESOLVES a
+  // multisampled _postRT, so the 16x16 read is safe on both adaptive rungs.
+  { const _aeS=(typeof worldCfg!=='undefined' && worldCfg.autoExp!=null)?+worldCfg.autoExp:0;
+    if(_aeS>0.001){
+      if((++_aeFrame % 5)===0){
+        if(!_aeRT) _aeRT=new THREE.WebGLRenderTarget(16,16,{ minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, depthBuffer:false });
+        _matCopy.uniforms.tColor.value=_postRT.texture; const _aePm=_postQuad.material; _postQuad.material=_matCopy;
+        renderer.setRenderTarget(_aeRT); renderer.render(_postScene,_postCam); _postQuad.material=_aePm;
+        try{ renderer.readRenderTargetPixels(_aeRT,0,0,16,16,_aeBuf);
+          let _ls=0; for(let i=0;i<1024;i+=4){ const l=(0.2126*_aeBuf[i]+0.7152*_aeBuf[i+1]+0.0722*_aeBuf[i+2])/255; _ls+=Math.log(Math.max(0.001,l)); }
+          const _avg=Math.exp(_ls/256);
+          let _ev=Math.log2(AE_KEY/Math.max(0.001,_avg));
+          if(Math.abs(_ev)<AE_DEAD) _ev=0;                              // dead-zone: no breathing on a balanced frame
+          _ev=Math.max(-AE_CLAMP, Math.min(AE_CLAMP, _ev))*_aeS;        // creator authorship: bounded, scaled
+          _aeTargetMul=Math.pow(2,_ev);
+        }catch(e){ _aeTargetMul=1; }
+      }
+      const _aeNow=performance.now(); const _aeDt=Math.min(0.25, Math.max(0.001,(_aeNow-_aeLastT)/1000)); _aeLastT=_aeNow;
+      _expAuto += (_aeTargetMul-_expAuto)*(1-Math.exp(-_aeDt/AE_TAU));
+      renderer.toneMappingExposure=_expBase*_expAuto;
+    } else if(_expAuto!==1){ _expAuto=1; _aeTargetMul=1; renderer.toneMappingExposure=_expBase; }
+  }
   // 1a) build 1140: the weapon joins the frame. It used to be drawn to the CANVAS after renderScene had
   // finished, i.e. after bloom, the colour grade, the vignette, the grain and the motion blur — so the
   // one object on screen at all times, across 11% of it, was the only object outside the frame's look.
@@ -16145,7 +16179,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -16441,7 +16475,8 @@ function applyWorldCfg(){
     // single monotone transfer difference, so one exposure knob is the honest approximation of it;
     // it is not exact (gamma moves midtones most, exposure moves everything), and re-saving a level
     // stamps colorV 2 and opts it into the true pipeline for good.
-    renderer.toneMappingExposure = worldCfg.exposure * (((worldCfg.colorV|0) >= 2) ? 1 : LEGACY_EXPOSURE);
+    _expBase = worldCfg.exposure * (((worldCfg.colorV|0) >= 2) ? 1 : LEGACY_EXPOSURE);   // build 1180: the AUTHORED exposure — auto-exposure multiplies around it, never replaces it
+    renderer.toneMappingExposure = _expBase * _expAuto;
     const wantTM = worldCfg.filmic ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
     if(renderer.toneMapping !== wantTM){
       renderer.toneMapping = wantTM;
@@ -26392,7 +26427,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1179 · 2026-07-30';
+const BUILD_VERSION = 'build 1180 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36077,7 +36112,7 @@ function renderEditorFields(){
       const fmCb=document.createElement('input'); fmCb.type='checkbox'; fmCb.checked=(worldCfg.filmic!==0 && worldCfg.filmic!==false); fmCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
       fmCb.onchange=()=>{ pushUndoSnapshot(); worldCfg.filmic=fmCb.checked?1:0; applyWorldCfg(); renderEditorFields(); };
       const fmSp=document.createElement('span'); fmSp.innerHTML='<b>Filmic tone mapping</b> — ACES highlight rolloff'; fmRow.appendChild(fmCb); fmRow.appendChild(fmSp); b.appendChild(fmRow);
-      if(worldCfg.filmic!==0 && worldCfg.filmic!==false){ slider(b,'Exposure','exposure',0.4,2.5,0.05);
+      if(worldCfg.filmic!==0 && worldCfg.filmic!==false){ slider(b,'Exposure','exposure',0.4,2.5,0.05); slider(b,'Auto exposure','autoExp',0,1,0.05); hint(b,'Eye adaptation: the camera brightens dark interiors and tames overexposed noon, within \u00b11.5 stops of your Exposure. 0 = fixed exposure.','1px 0 4px');
         hint(b,'','0 0 4px').textContent='Filmic rolls bright areas off like film instead of clipping to white. Exposure is the overall brightness of the graded image.'; }
       // build 582: post-processing look (bloom / motion blur / grade). Master on/off is the global toggle (also in the pause menu); the look values save with the level.
       const pfxRow=document.createElement('label'); pfxRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:10px 0 4px;cursor:pointer;';
