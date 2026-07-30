@@ -14896,7 +14896,20 @@ function buildPillar(){
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.4,.6,12),
     new THREE.MeshStandardMaterial({ color:0x0c1418, emissive:0x38f5b5, emissiveIntensity:1 }));
   ring.position.y = 2;
-  const pl = new THREE.PointLight(0x38f5b5, 8, 22); pl.position.y = 4;
+  // build 1142: 4.0 at 18 m, not 8 at 22. This was the loudest light in the engine — 5.3x the sun's
+  // 1.5 — and four of them stand around the default level's spawn, so a saturated teal (linear R 0.028,
+  // G 0.745) was the frame's actual key light. Every surface came out the wrong hue: measured, the floor
+  // plane read 56,101,101 against an albedo of 0x4f5d66 whose blue channel is its HIGHEST. Zeroing these
+  // four lights alone restored 55,71,83 across the frame, warm decks and cool crates, with nothing else
+  // changed. The value is chosen by sweep, not taste: 4.0/18 is the most light that leaves the frame's
+  // hue albedo-correct (mid floor stays B>G>R) while the pillar still lays a real teal pool at its own
+  // foot (G +20 over unlit, 722 -> 1,370 unique colours there). An accent lights its surroundings; it
+  // does not light the level.
+  //
+  // It was never wrong when it was written — build 1135 raised the sun to 1.5 and gave the level a
+  // daylight sky, and this was tuned against the dark greybox that came before. THAT is the lesson:
+  // when the key light changes, every fill and accent tuned against the old one is now wrong.
+  const pl = new THREE.PointLight(0x38f5b5, 4.0, 18); pl.position.y = 4;
   g.add(pil, ring, pl);
   return g;
 }
@@ -25371,7 +25384,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1141 · 2026-07-30';
+const BUILD_VERSION = 'build 1142 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

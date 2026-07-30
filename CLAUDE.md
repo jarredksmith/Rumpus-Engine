@@ -348,20 +348,45 @@ came down, which is the right question there.
 opt-out still holds. `scratchpad/ladder2.mjs` is the sweep that found it — worth rebuilding rather than
 reasoning, because the failure is invisible from the code and needs no browser to reproduce.
 
-## Open work (as of build 1141)
+## The loudest light in the engine was a decoration (build 1142)
+
+The default level's floor rendered olive-green — (87,105,77) against an albedo `0x4f5d66` that is
+(79,93,102), i.e. the blue channel HIGHEST in the albedo and LOWEST in the frame, which no positive light
+times that albedo produces. Recorded in the 1139 open work as needing the zero-one-term method. What
+actually settled it in ONE run was **enumerating the scene's real light list**: 29 lights, four of them
+`PointLight(0x38f5b5, 8, 22)` from `buildPillar` — intensity 8 against a sun of 1.5, in a teal whose
+linear channels are R 0.028, G 0.745, B 0.434, and four of them stand around the spawn. The frame's key
+light was a decoration.
+
+A/B with those four lights zeroed and nothing else changed: mid floor 56,101,101 → 55,71,83 (B>G>R
+restored), near deck 81,101,70 → 78,66,51 (warm concrete finally warm), crate 116,149,146 → 115,125,132.
+They also carried most of the frame's *variation* (4,027 → 1,074 unique colours), so the answer is accent
+strength, not zero: **4.0 at 18 m** is the most light that leaves the frame's hue albedo-correct while
+still laying a real pool at the pillar's own foot (G +20 over unlit, 722 → 1,370 unique colours there).
+
+Two things worth carrying forward:
+
+- **When the key light changes, every fill and accent tuned against the old one is now wrong.** This light
+  was correct for the dark greybox it was written for; build 1135 raised the sun to 1.5 and gave the level
+  a daylight sky and nobody revisited it. Build 1135 had in fact chased the same teal cast and cut the
+  accent's *emissive* from 1.6 to 0.55, measuring only 1 code value of change — because the emissive was
+  never the emitter. The light beside it was.
+- **Probe the LIGHT LIST, not just the material.** Builds 1124 (`__probeUp`) and 1139 (`__surfProbe`)
+  established probing geometry and materials; a `__floorProbe` that dumps every light's type, hex,
+  intensity and range, grouped, plus the material's linear albedo, answered in one run what two builds of
+  reasoning had not. `test-1142` turns it into a standing guard: no hardcoded light may be both
+  far-reaching and more than 3× the sun.
+
+The station beacon `PointLight(0x38c8f5, 6, 14)` was the obvious second suspect and is **deliberately
+unchanged** — dropping it to 2.0/12 moved the dais by 4 code values and the floor by none. Its 14 m range
+confines it to the landmark it marks. Measured, not assumed, and recorded so it is not "tidied up" later.
+
+## Open work (as of build 1142)
 
 **`arenaMood` never emits `floorColor` or `wallColor`.** Every other world key it touches (sky, fog,
 post, `ssao`) it sets, but a generated desert arena still sits on the engine's default grey-blue floor
 plane — visible in `arena-editor` as an olive plane butting against cream sand where the imported ground
 ends. One line per theme in `tools/levelgen.mjs`, using the same `light.groundAlb` the bake already has.
-
-**The default level's floor plane reads olive-green.** Measured in the near band (300,660→700,715) it is
-(87,105,77) while its albedo `floorColor 0x4f5d66` is (79,93,102) — the blue channel is the HIGHEST in
-the albedo and the LOWEST in the frame, which no positive light times that albedo produces. It measures
-the same in build 1138, so it is not a 1139 regression, and it is NOT the grid (hidden in play, and the
-play and editor frames measure identically). Diagnose it the way build 1136 should have been: zero one
-term at a time (sun, hemisphere, `scene.environment`, the `_paintU` splat, `specularIntensity`) rather
-than reasoning about the hex — and remember a lit pixel is never comparable to an authored albedo.
 
 **The rifle has no roughness or normal map.** `propMeshMap` counts 9 meshes with no maps at all and
 they are all the weapon GLB, so there is not one specular break-up or AO crease anywhere on the object
