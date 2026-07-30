@@ -8444,6 +8444,10 @@ const SKY_GLSL = [
   '}'
 ].join('\n');
 let _skyMesh = null, _skyMat = null, _skyDomeRT = null, _skyDomePMREM = null, _skyKey = '', _skyEnvAt = -1e9;
+// build 1186: the SCENE reflection probe's state — declared HERE because applySky reads _spRT per frame
+// and `typeof x` does NOT guard a temporal dead zone (build 1127 turned the sky black learning that).
+let _spCube=null, _spCube2=null, _spCam=null, _spCam2=null, _spScene2=null, _spInvMat=null, _spPM=null, _spRT=null;
+let _spAt=-1e9, _spSkyKey='', _spQueue=[], _spSkyScale=1;
 function _skyUniforms(){
   const P = _skyP(), S = _sunDir();
   return { uZen:{value:new THREE.Vector3(...P.zenith)}, uHor:{value:new THREE.Vector3(...P.horizon)},
@@ -8457,6 +8461,7 @@ function _skyUniforms(){
     uExpo:{value:(typeof renderer!=='undefined') ? renderer.toneMappingExposure : 1},
     uEncode:{value:0} };
 }
+const _skyCamPos = new THREE.Vector3();   // scratch for the dome-follow (no per-frame allocation — build 1168)
 function _ensureSky(){
   if(_skyMesh) return _skyMesh;
   _skyMat = new THREE.ShaderMaterial({ side:THREE.BackSide, depthWrite:false, fog:false,
@@ -8485,13 +8490,17 @@ function _ensureSky(){
   // simply walks out of it and the "sky" becomes a small cube in the distance. onBeforeRender gets
   // the camera actually being rendered, which means this works for the gameplay camera, the editor
   // camera and the cinematic preview without any of them knowing about it.
-  _skyMesh.onBeforeRender = function(r, sc, cam){ if(cam && cam.position){ _skyMesh.position.copy(cam.position); _skyMesh.updateMatrixWorld(); }
+  // build 1186: WORLD position, not .position — a CubeCamera's face cameras are CHILDREN of the rig, so
+  // their local .position is (0,0,0): the dome teleported to the world origin for every probe face and the
+  // scene probe rendered a BLACK sky, which then blackened the env-lit viewmodel. Found by reading the
+  // probe's own cube back (rawUp 11/255 where sky should be ~180) — the frame alone only showed the symptom.
+  _skyMesh.onBeforeRender = function(r, sc, cam){ if(cam && cam.getWorldPosition){ _skyMesh.position.copy(cam.getWorldPosition(_skyCamPos)); _skyMesh.updateMatrixWorld(); }
     // build 1127: the post chain renders into a LINEAR target and encodes at the end, so the dome
     // must not encode when it is on. With effects off the dome writes the canvas directly, and
     // outputEncoding does not reach a raw ShaderMaterial, so then it must.
     const u=_skyMat.uniforms;
     if(u.uEncode) u.uEncode.value = (typeof _postOn!=='undefined' && _postOn && !(typeof _postFail!=='undefined' && _postFail)) ? 0 : 1;
-    if(u.uExpo) u.uExpo.value = r.toneMappingExposure;
+    if(u.uExpo) u.uExpo.value = r.toneMappingExposure * ((typeof _spSkyScale!=='undefined') ? _spSkyScale : 1);   /* build 1186: during the probe render the SKY alone is scaled by worldCfg.sky — geometry radiance is already correct */
     if(u.uTM) u.uTM.value = (r.toneMapping === THREE.NoToneMapping) ? 0 : 1; };
   scene.add(_skyMesh);
   return _skyMesh;
@@ -8589,8 +8598,90 @@ function applySky(){
       h[0]+=c[0]/8; h[1]+=c[1]/8; h[2]+=c[2]/8; }
     SCENE_FOG.color.setRGB(Math.min(1,h[0]), Math.min(1,h[1]), Math.min(1,h[2]));
   }
-  const env = _skyEnv(); if(env && typeof scene!=='undefined') scene.environment = env;
+  const env = _spRT ? _spRT.texture : _skyEnv(); if(env && typeof scene!=='undefined') scene.environment = env;   // build 1186: the scene probe supersedes the sky-only probe while it exists
   return true;
+}
+
+// ---------- build 1186: the SCENE reflection probe ----------
+// scene.environment was the SKY alone, so a chrome sphere in a courtyard reflected bare sky through the
+// walls around it. The probe now renders the REAL scene from the spawn's eye into a small cube at deploy.
+// The catch is build 1136's law — the environment must be RAW RADIANCE — and the scene pass has ACES baked
+// into every material's program (switching renderer.toneMapping off to re-render clean would RECOMPILE
+// every shader: the 636/977/1153 freeze). So a second cube render puts the first through the EXACT ACES
+// inverse (matrices are the numeric inverses of _ACES_GLSL's pair; test-1186 re-derives them from the
+// forward pair in the source, so they cannot drift apart). Values ACES clipped past 1.0 are gone — the
+// probe's highlights saturate where the frame's did, which is the correct-by-construction compromise.
+// A CubeCamera does the face bookkeeping in BOTH passes — hand-built face bases are how probes ship
+// subtly rotated. worldCfg.sky scales the SKY'S contribution only, applied AT THE DOME during the cube
+// pass (_spSkyScale): the sky pixels then match the sky-only probe exactly, while geometry radiance —
+// already lit by the sun and the sky-scaled ambient — passes through at 1. Scaling the whole cube was
+// measured wrong twice over: geometry reflections dimmed 3x and the env-lit viewmodel's camera-facing
+// side crushed to 0,0,0. Residual, measured on the stock frame: whole -5 code values (the probe's lower
+// hemisphere is the level's REAL ground radiance, not the sky model's brighter painted band) and the
+// weapon reads blue-steel (95,101,94 -> 75,82,80 region mean) — its top rail now carries the sky and its
+// sides the ground, which is what reflecting the world means for the one metal object always on screen.
+function buildSceneProbe(){
+  try{
+    if(typeof IS_COARSE!=='undefined' && IS_COARSE) return false;                 /* phones keep the sky-only probe */
+    if(!THREE.PMREMGenerator || !THREE.WebGLCubeRenderTarget) return false;
+    if(typeof renderer==='undefined' || typeof scene==='undefined' || typeof playerSpawn==='undefined') return false;
+    if(!_spCube){
+      _spCube = new THREE.WebGLCubeRenderTarget(128, { type:THREE.HalfFloatType });
+      _spCam = new THREE.CubeCamera(0.25, 480, _spCube);
+      _spCube2 = new THREE.WebGLCubeRenderTarget(128, { type:THREE.HalfFloatType });
+      _spCam2 = new THREE.CubeCamera(0.1, 10, _spCube2);
+      _spScene2 = new THREE.Scene();
+      _spInvMat = new THREE.ShaderMaterial({ side:THREE.BackSide, depthWrite:false, fog:false,
+        uniforms:{ tCube:{ value:null }, uInvExpo:{ value:1 }, uInvOn:{ value:1 }, uScale:{ value:0.3 } },
+        vertexShader:'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+        fragmentShader:[
+          'varying vec3 vDir; uniform samplerCube tCube; uniform float uInvExpo; uniform float uInvOn; uniform float uScale;',
+          'vec3 _unfit(vec3 y){',                                                 /* per-channel inverse of the ACES rational fit */
+          '  vec3 A = 1.0 - 0.983729*y; vec3 B = 0.0245786 - 0.4329510*y; vec3 C = -(0.000090537 + 0.238081*y);',
+          '  return (-B + sqrt(max(vec3(0.0), B*B - 4.0*A*C))) / (2.0*A);',
+          '}',
+          'void main(){',
+          '  vec3 c = textureCube(tCube, normalize(vDir)).rgb;',
+          '  if(uInvOn > 0.5){',
+          '    c = clamp(c, 0.0, 0.999);',                                        /* keeps the quadratic away from its pole at ~1.0167 */
+          '    const mat3 outInv = mat3(vec3(0.643038,0.059269,0.005962), vec3(0.311187,0.931436,0.063929), vec3(0.045775,0.009295,0.930118));',
+          '    const mat3 inInv  = mat3(vec3(1.764741,-0.147028,-0.036337), vec3(-0.675778,1.160252,-0.162436), vec3(-0.088963,-0.013224,1.198773));',
+          '    c = inInv * _unfit(outInv * c);',
+          '    c = max(c, vec3(0.0)) / max(0.05, uInvExpo);',                     /* the scene pass multiplied by expo/0.6 before the fit */
+          '  }',
+          '  gl_FragColor = vec4(c * uScale, 1.0);',
+          '}'].join('\n') });
+      const bm = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), _spInvMat); bm.frustumCulled = false; _spScene2.add(bm);
+    }
+    const gy = (typeof terrainHeightAt==='function') ? terrainHeightAt(playerSpawn.x, playerSpawn.z) : 0;
+    _spCam.position.set(playerSpawn.x, gy + (playerSpawn.y||0) + 1.7, playerSpawn.z);
+    const prev = renderer.getRenderTarget();
+    _spSkyScale = Math.max(0.05, Math.min(2, (typeof worldCfg!=='undefined' && worldCfg.sky!=null) ? +worldCfg.sky : 0.55));
+    try{ _spCam.update(renderer, scene); } finally { _spSkyScale = 1; }             /* shadow maps already built; autoUpdate=false means no extra passes */
+    _spInvMat.uniforms.tCube.value = _spCube.texture;
+    _spInvMat.uniforms.uInvOn.value = (((typeof worldCfg!=='undefined' && worldCfg.filmic!=null) ? +worldCfg.filmic : 1) > 0.5) ? 1 : 0;
+    _spInvMat.uniforms.uInvExpo.value = Math.max(0.05, renderer.toneMappingExposure / 0.6);
+    _spInvMat.uniforms.uScale.value = 1;                                          /* the sky was scaled at the dome; scaling geometry too was measured wrong (see note above) */
+    _spCam2.update(renderer, _spScene2);
+    renderer.setRenderTarget(prev);
+    if(!_spPM){ _spPM = new THREE.PMREMGenerator(renderer); _spPM.compileCubemapShader(); }
+    const out = _spPM.fromCubemap(_spCube2.texture);
+    if(_spRT && _spRT.dispose) _spRT.dispose();
+    _spRT = out; _spSkyKey = _skyKey; _spAt = (typeof performance!=='undefined') ? performance.now() : 0;
+    if(typeof worldCfg!=='undefined' && worldCfg.skyMode==='sky' && !((typeof _skyHdriUrl!=='undefined') && _skyHdriUrl) && scene.environment)
+      scene.environment = _spRT.texture;                                          /* live now; applySky keeps it current — and an authored HDRI always outranks it */
+    return true;
+  }catch(e){ return false; }
+}
+// Two shots per deploy: one after the level settles, one after slow assets (models, textures) land. The
+// day cycle moves the sky continuously, so a changed sky key rebuilds at most every 3 seconds.
+function requestSceneProbe(){ const n = (typeof performance!=='undefined') ? performance.now() : 0; _spQueue = [n+1200, n+9000]; }
+function _spTick(){
+  if(typeof IS_COARSE!=='undefined' && IS_COARSE) return;
+  if(typeof worldCfg!=='undefined' && (worldCfg.skyMode!=='sky' || ((typeof _skyHdriUrl!=='undefined') && _skyHdriUrl))) return;
+  const n = (typeof performance!=='undefined') ? performance.now() : 0;
+  if(_spQueue.length && n >= _spQueue[0]){ _spQueue.shift(); buildSceneProbe(); return; }
+  if(_spRT && _skyKey !== _spSkyKey && n - _spAt > 3000) buildSceneProbe();
 }
 
 // ---------- build 875: floor material painting (splat map) ----------
@@ -26686,7 +26777,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1185 · 2026-07-30';
+const BUILD_VERSION = 'build 1186 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31302,6 +31393,7 @@ function loop(){
     if(!_shDirty && !_shSlow && typeof dynamicProps!=='undefined'){ for(const o of dynamicProps){ const b=o&&o.userData&&o.userData.phys&&o.userData.phys.body; if(b && typeof b.isSleeping==='function' && !b.isSleeping()){ _shSlow=true; break; } } }   // an awake (moving) physics prop
     if(_shDirty || (_shSlow && _shadowTick===0)) _dirtyShadows(1);
   }
+  if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
   if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
@@ -40913,6 +41005,7 @@ function startGame(){
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _wakeLockTry==='function') setTimeout(_wakeLockTry, 0);   // build 908: keep the phone awake during play (gameOn is set below; next tick reads it true)
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
+  if(typeof requestSceneProbe==='function') requestSceneProbe();   // build 1186: reflections of THIS level, captured once it settles
   if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
   clearMovementInput();   // start fresh: no input held over from a previous round/death
   mapWaypoint=null;   // drop any waypoint left over from a previous mission (e.g. a solo marker bleeding into a multiplayer round)

@@ -66,7 +66,8 @@ assert(/scene\.environment = /.test(src), 'something still installs an environme
   // uEncode has to be decided per frame, because whether the dome writes the canvas is a runtime toggle
   assert(/u\.uEncode\.value = \(typeof _postOn!=='undefined' && _postOn && !\(typeof _postFail!=='undefined' && _postFail\)\) \? 0 : 1;/.test(es),
     'the dome encodes only when the post chain will not');
-  assert(/u\.uExpo\.value = r\.toneMappingExposure;/.test(es), 'and tracks the live exposure');
+  assert(/u\.uExpo\.value = r\.toneMappingExposure \* \(\(typeof _spSkyScale!=='undefined'\) \? _spSkyScale : 1\);/.test(es),
+    'and tracks the live exposure (times the probe-scoped sky scale, 1 outside a probe render — build 1186)');
   assert(/u\.uTM\.value = \(r\.toneMapping === THREE\.NoToneMapping\) \? 0 : 1;/.test(es), '...and the live tone-mapping mode');
 }
 {

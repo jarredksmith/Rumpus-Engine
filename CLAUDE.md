@@ -1643,7 +1643,47 @@ show a resolution step. NOT capture-verified — the browser pass should walk a 
 for the seam, distant acne, and grass brightness (the 2×-light guard). One harness moved (1120 — its
 scope gained the null `moonFar`, so it now drives the phone path; 1185 drives the far cascade).
 
-## Open work (as of build 1185)
+## The scene reflection probe, and the capture that was measuring build 1156 (build 1186)
+
+`scene.environment` was the SKY alone — a chrome sphere in a courtyard reflected bare sky through the
+walls around it. The probe now renders the REAL scene from the spawn's eye into a 128 cube at deploy (two
+shots: +1.2s and +9s, for slow assets), inverts the ACES that is baked into every material's program
+(switching `renderer.toneMapping` off to render clean would RECOMPILE every shader — the 636/977/1153
+freeze), PMREMs the result, and supersedes the sky-only probe in `applySky`. The inverse matrices are the
+numeric inverses of `_ACESin`/`_ACESout`; `test-1186` re-derives them from the forward pair in the source
+(1151's pattern) and round-trips the full fit to 1e-3. Values ACES clipped past ~1.0 are unrecoverable —
+probe highlights saturate where the frame's did. Phones keep the sky-only probe; an authored HDRI outranks
+everything; the day cycle rebuilds at most every 3s.
+
+**First: every capture this stretch had been measuring build 1156.** `drive.mjs` serves
+`scratchpad/head.html` — a SNAPSHOT — and the byte-identical frame means that "verified" builds 1181-1185
+were the snapshot agreeing with itself. Build 1124 said know where the camera is; 1151 said know what
+surface you are measuring; the completion is **know what BUILD you are measuring** — stamp it or diff it.
+`head.html` must be refreshed from the repo before any capture run.
+
+The real captures then found two shipped bugs in this very build:
+- **The dome followed `cam.position` — a CubeCamera's face cameras are CHILDREN, local position (0,0,0).**
+  So the dome teleported to the world origin for every probe face and the probe rendered a BLACK sky.
+  Found by reading the probe's own cube back (sky face 11/255 where ~180 belongs) — the frame alone only
+  showed the symptom: the env-lit viewmodel crushed to 0,0,0 (the weapon's fill IS the environment —
+  `_drawViewmodel` mirrors `scene.environment` into `vmScene`). Fixed with `getWorldPosition` into a
+  scratch vector; every camera the engine will ever render through now carries the dome correctly.
+- **Scaling the whole probe by `worldCfg.sky` was wrong, measured twice over.** Geometry radiance already
+  contains the sun and the sky-scaled ambient — scaling it again dimmed every reflection 3× (weapon region
+  70,74,67 vs 95,101,94; whole frame −8). The scale now applies to the SKY ALONE, at the dome, during the
+  cube pass (`_spSkyScale`, restored in a `finally`): sky pixels match the old probe exactly, geometry
+  passes at 1.
+
+Measured residue, stated plainly: whole frame 134,146,150 → 129,141,147 (−3.7%) because the probe's lower
+hemisphere is the level's REAL ground radiance rather than the sky model's brighter painted band — a
+physically honest shift; and the weapon reads blue-steel (region 95,101,94 → 75,82,80): its top rail
+carries the sky, its sides the ground, which is what reflecting the world means for the one metal object
+always on screen. Auto-exposure separately measured +22 code values on this frame (its dead-zone does not
+hold at the stock frame's log-average — worth knowing when comparing captures across 1180).
+
+Three pins moved (1119, 1127 — dome-follow and dome-exposure took the new forms; 1186's own uScale pin).
+
+## Open work (as of build 1186)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
