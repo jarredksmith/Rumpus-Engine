@@ -908,7 +908,48 @@ nothing since touched it — but 1149 added a bounce term that lifts the ambient
 ambient, so the AO term's visible contrast went up. A pre-existing artifact getting easier to see is
 consistent with a report of "now".
 
-## Open work (as of build 1152)
+## The number of lights must not change during play (build 1153)
+
+Reported from play: **loot boxes spawning mid-match froze the game for 2-3 seconds.** The user's guess was
+right — `buildChestMesh` did `new THREE.PointLight(...)` and `mesh.add(beam)` for every crate. Adding a light
+changes the SCENE'S LIGHT COUNT, and in three that invalidates every lit material's program, so the first
+crate to appear recompiled every shader in the level. Removing the crate took the light out with it and did
+the same on the way out. Editor markers are built by the same function and toggled with `.visible`, and an
+invisible light is not counted, so opening the editor recompiled too.
+
+**This is the THIRD time this exact fault has shipped**, which is why it is now written down as a rule rather
+than fixed once more in place:
+
+| build | what it hit | what it did |
+|---|---|---|
+| 636 | the first explosion | `_blastLightPool`, pre-seated at load, so a blast only ever RE-AIMS an existing light |
+| 977 | the first flashlight toggle | left it *"ALWAYS visible at intensity 0 — toggling `.visible` changes the light count and recompiles every shader (the first-L freeze)"* |
+| 1153 | the first loot box | a pooled beam, claimed and released |
+
+**The rule: the number of lights in the scene must not change during play.** Position, colour, distance and
+intensity are plain uniforms and are free to change every frame. Existence is not — and neither is
+`.visible`, which is the trap that catches people who know the first half of the rule.
+
+Four decisions in the loot-box pool worth keeping:
+- **The beam is not parented to the crate.** That is what made removal a second recompile. Pooled lights sit
+  in the scene permanently and are positioned in world space; the crate's idle bob is ±0.08, which a 16 m
+  point light cannot show anyway.
+- **Seated where a recompile is already happening** — at load beside `_ensureBlastLights`, and again at
+  DEPLOY in `spawnPlacedLoot`. Growing the pool is itself a count change, so it must never happen mid-match.
+- **Sized from the level's own loot spots** (a marker and a crate can be live for the same spot at once) plus
+  the random-spawn cap. Past that a crate spawns with NO beam: a missing glow is a far better failure than a
+  frozen game.
+- **A reconcile, not four edits.** Crates are removed from four places — the co-op snapshot reconciler, a
+  client's `buyChest`, the local buy, and `wipeScene`. `updateChests` reclaims any beam whose owner has gone,
+  so no removal path can leak one, and a leaked beam is not cosmetic: it is a crate that never glows again
+  for the rest of the match.
+
+Worth noting for the next one: a GLB-backed loot box (`chestModelUrl`) ALSO brings new materials on first
+load, which compiles their programs. That is a smaller, per-material hitch rather than a whole-scene
+recompile, and it is not what this build fixed — measure before assuming the freeze is gone entirely for
+levels using a custom crate model.
+
+## Open work (as of build 1153)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

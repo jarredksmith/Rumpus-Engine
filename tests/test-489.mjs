@@ -17,7 +17,13 @@ assert(/_ensureBlastLights\(\)/.test(warm) && /_ensureMuzzleLights\(\)/.test(war
 assert(/new THREE\.MeshStandardMaterial\(\{ color:0x888888[\s\S]*?flatShading:_flat/.test(warm), 'the warm pass also compiles the debris PBR shader (both shading variants)');
 assert(/renderer\.compile\(scene/.test(warm), 'and runs a compile pass');
 const pv = extractFunction('preloadVfx');
-assert(/_ensureBlastLights\(\); _ensureMuzzleLights\(\); warmFlipbookShaders\(\);/.test(pv), 'preloadVfx seats the lights + warms shaders at load (behind the loading screen)');
+// build 1153 added a THIRD pool (the loot-box beams) to the same line. What this pin protects is the
+// ORDER — every pool seated before the compile — not the exact set, so it now checks that directly.
+assert(/_ensureBlastLights\(\)/.test(pv) && /_ensureMuzzleLights\(\)/.test(pv) && /_ensureChestLights\(\)/.test(pv),
+  'preloadVfx seats every light pool at load (behind the loading screen)');
+for(const seat of ['_ensureBlastLights', '_ensureMuzzleLights', '_ensureChestLights'])
+  assert(pv.indexOf(seat) < pv.indexOf('warmFlipbookShaders'),
+    seat + ' is seated BEFORE the shaders are warmed, so materials bake for the final light count');
 
 // --- executable: ensuring is idempotent and creates a FIXED count of 4 ---
 const deps = `
