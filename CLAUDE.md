@@ -967,6 +967,148 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Reload cancel + per-weapon draw (build 1172)
+
+The panel's "reload jail", verified then opened: `reload()` was a setTimeout that always completed and
+`switchWeapon` hard-returned `if(reloading)` — a 1.6s sniper reload locked out every response while a
+charger lunged. Now switching CANCELS the reload via a token: the pending timeout completes only if its
+token is still current, so a cancelled reload leaves the mag exactly as it was (test-1172 proves the stale
+timeout is a no-op and reserve debits once), and the cost of cancelling is honest — two draw times. Draw is
+per-weapon (`drawMs`: pistol 220, shotgun 340, sniper 420, launcher 450, fists 200, rifle/smg default 300)
+with the viewmodel dip dividing by the same `_drawDur`, so a slow draw dips long instead of popping. Three
+pins moved (227, 229, 965). Deferred from this item: shotgun shell-by-shell reload — its own build.
+
+## Movement has mass (build 1171)
+
+The gameplay critic's #1 feel finding: `player.vel = wish*sp` TELEPORTED velocity to the input every frame —
+zero start-up weight, dead-stop on key release even mid-air (release W at the apex and the arc collapsed),
+instantaneous 180s. Velocity now chases the target exponentially; the safe-change constraint is that the
+TARGET is `wish*sp`, so every tuned speed is byte-identical at steady state. Four rates (the four situations
+differ): ACCEL 14 (95% of top speed in ~210ms), BRAKE 20 (a run stops in ~0.6m — crisp, genre-typical),
+AIR 3.5 (course corrections work, cannot carve like ground), AIR_BRAKE 0.4 (a released jump keeps ~67% of
+its speed after 1s — the arc finally carries). The blend clamps at 1 so a dt spike degrades exactly to the
+old behaviour; the slide still writes velocity directly (authored decay) and the model bleeds its exit speed
+smoothly. `test-1171` simulates all of it frame-by-frame. Note: a test comparing an early-time ratio must
+measure DURING the build-up — by 0.5s the ground turn has saturated and the ratio measures only the shared
+target (the first draft made exactly that mistake).
+
+**THIRD CONTAINER ROLLBACK, and the first that bit mid-build.** After 1170's push the tree reverted to
+mid-1164 state; the 1171 edits were unknowingly applied to that stale base (the anchors existed in both
+states), and the tell was the suite reporting 906 harnesses with 1164-era failures — FEWER harnesses than
+the previous run is the rollback signature; check `git log` FIRST. Recovery unchanged: copy new files
+aside, `git fetch` + `reset --hard FETCH_HEAD`, re-apply from the scripted edit (which made it free).
+
+## Props gain a runtime lifecycle (build 1170)
+
+The feature audit's single biggest expressiveness gap: no verb could touch a PROP at runtime — the ball in a
+sports level could not be reset, a bridge could not drop. Four verbs by tag (`showprop/hideprop/moveprop/
+delprop`), host-authoritative, mirrored to clients over the existing `wact` channel, offered by the Do node
+(tag field + place field extended). Four decisions worth keeping:
+- **hide is intangible too** — collider out of the list, a dynamic prop's body removed and remembered
+  (`_pvWasDyn`); an invisible wall is worse than no verb. show reverses every part, idempotently.
+- **move preserves height ABOVE GROUND** (crate on a ledge → valley floor lands ON the floor), and a dynamic
+  prop's body is removed before and re-added after so physHome recaptures at the new home.
+- **del rides `shatterProp`, deliberately not `removeProp`** — debris, the prop's own 'destroyed' signals,
+  deploy-restore and net reconcile all inherited; removeProp would splice the prop out of propModels and the
+  next SAVE would lose the creator's prop. A runtime verb must never edit the level.
+- **deploy un-hides everything** (in resetDynamicProps): hide is MATCH state, not a level edit.
+Three pins moved (1033, 1073, 1077 — the verb/tag/place field lists grew). Spawn-prop-by-prefab is the
+deferred other half: it needs the prefab def + net id story, its own build.
+
+## The logic graph learns arithmetic and its first question (build 1169) — PHASE 2 OPENS
+
+The feature audit's two cheapest CRITICAL walls, closed with two nodes in the STATE palette:
+- **Math** — `var = A op B` with + − × ÷ min max mod. A and B resolve as literals OR variable names via the
+  same `_lgNum` rule Branch uses, so `coins = coins × 2` finally works. ÷0 and mod 0 yield 0, never NaN —
+  one NaN would silently poison every later compare in the level. Modulo is the positive (counting) kind.
+- **Read game stat** — the graph's first world-state QUERY: player HP/maxHP, ammo mag/reserve, score,
+  credits, wave, enemies-alive (hp>0, hole-safe), seconds-elapsed (zeroed at `_lgRunT` each run) → a
+  variable. Pulse-driven like every state node: wire off an interval to poll, or read at the decision.
+  Host state, and the graph already runs host-authoritative, so nothing new crosses the wire.
+
+The sanitizer needed no change (unknown types pass through inert), autocomplete learned both nodes'
+variable names, and test-1028's palette↔runtime parity list gained the two types — the parity it exists to
+hold. `test-1169` drives the REAL `_lgPulse` switch for every operator, both poison guards, self-reference,
+and all nine stats.
+
+## Frame-loop allocation hygiene (build 1168)
+
+The perf critic's measured residue, all hoisted to module scratch (the codebase's own _lp/_pcV pattern):
+movement basis + wish (3 vectors/frame) and the stick-input clones; the editor-fly basis; the ledge grab's
+full-subtree `Box3().setFromObject(avatar)` (ran every airborne-forward frame — now a 1x/s cached height
+with the same 1.1–3 sanity band); `allPlayers()` (fresh array + 2 closures per entry per frame — now cached
+per frame keyed on `_frameNo`, which loop() bumps, so joins are stale for at most one frame);
+`_aoHideNoDepth` (array + closure per OBJECT across 2 scenes per frame — now an allocation-free walk with
+the identical predicate); and `surfaceTopUnder`'s `dynamicProps.filter()` per query while holding a prop
+(now one reused module array). Behaviour pinned identical; three pins moved (1084, 1158, 966), each keeping
+its assertion's intent. NOT done (bigger than hygiene): pooling spark velocity V3s (they outlive frames),
+and replacing _aoHideNoDepth's traverse with a transparent-material registry.
+
+One self-inflicted lesson repeated: an inline `//` comment appended to a REPLACEMENT that lands mid-line
+comments out the rest of the original line (the surfaceTopUnder edit swallowed its own raycast). The
+syntax check caught it; use /* */ or place comments on their own line when patching mid-line.
+
+## Asset failures are visible (build 1167)
+
+The commonest creator failure — a model url that 404s or CORS-fails — was a console.warn plus a silent null
+hole in propModels; without devtools the conclusion was "the engine ate my prop". `_noteAssetFailure` records
+failures (deduped by url with a repeat count, capped at 40), `levelIssues()` LEADS with them (url tail shown —
+Poly Pizza urls only differ there), a later successful load for the same url heals the entry, and the report
+clears on restoreLevel/wipe because stale failures about a previous level are their own kind of lie. A
+failure landing while the editor is open refreshes the panel live.
+
+## The credits screen exists (build 1166)
+
+"Asset licensing + a credits screen are release blockers" has been in this file for hundreds of builds.
+Attribution lived in two systems that never met: per-prop `userData.attribution` (placed CC-BY models) and
+the `assetCredits` set (enemy/pickup/chest/coin/attachment models, sounds). A CC-BY licence is only satisfied
+if the credit is REACHABLE at play time, so: `levelCreditsList()` merges both plus `ENGINE_CREDITS`
+(three.js/Rapier/PeerJS/fflate), deduped and sorted; the pause menu carries **Asset credits** in every
+session with no creator opt-in; entries render via `textContent` because attributions are untrusted level
+data; and `levelIssues()` flags a `sketchfab:` prop with no recorded attribution as the licensing exposure
+it is (models placed through the in-editor search always carry one — this catches hand-pasted urls).
+
+## The level format version is finally read (build 1165)
+
+`serializeLevel` has written `v:1` since the field existed and nothing ever inspected it — across ~1160
+builds. The single-file GitHub-Pages model guarantees stale cached clients exist, so "new level opened in an
+old engine" is a normal event, and it silently dropped whatever the old client didn't recognise. Now
+`LEVEL_FORMAT_V` is a named constant, `serializeLevel` writes it, and `_levelFormatCheck` gates
+`restoreLevel` BEFORE the teardown (a refusal must cost nothing): a newer `v` still loads — tolerance is the
+right default — but warns loudly naming both versions and the fix (refresh the page); a newer `minV` is the
+author's declaration that a partial read is load-bearing wrong and refuses cleanly. Bump `v` when the schema
+changes shape; set `minV` only when an old client's partial read would corrupt rather than degrade.
+
+## The host bounds the claim — movement and damage rate (build 1164)
+
+The panel's two netcode CRITICALs, both verified at the exact lines. Build 1130 established "bound the
+claim" for damage MAGNITUDE and identity; this extends it to the two surfaces it never covered:
+- **Movement.** `setRemoteState` wrote a client's reported position verbatim — teleport/noclip/speedhack
+  were one console line, propagated to every peer as truth. Now `_plausibleMove` (host only; clients keep
+  trusting the host's relays) caps per-tick displacement at 40 u/s (90 in a car), with ONE oversized jump
+  allowed per 3s window — that is the legitimate-teleport allowance (respawn, the teleport verb, a jump
+  pad's first frame). A speedhack is continuous, so it spends the allowance instantly and rubber-bands
+  along its own claimed direction; a real respawn is rare and passes untouched.
+- **Damage rate.** `_netDmg` caps one packet, so 50 capped pvpHits per frame was an instakill through
+  walls. `_netDmgBudget` is a leaky bucket per SOURCE per KIND (pvp 500/s, pve 1500/s — generous multiples
+  of the best legitimate output: SMG headshot spray ≈290/s single-target, splash across a crowd multiplies
+  the PvE figure). Per-kind so melting a wave never crowds out PvP claims; per-source so one cheater's
+  bucket cannot tax an innocent player. test-1164 proves 50 sniper-cap packets land exactly the 1s budget
+  and a full second of the fastest legitimate spray passes 100% intact.
+
+Four pins moved (1122, 1130, 389, 459) — each asserts the same intent through the new wrapped call; 1122's
+harness injects the budget as pass-through because that test is about ROUTING, not the clamp.
+
+## Undo keeps the selection; hide/lock become undoable (build 1163)
+
+Two panel findings, both verified. restoreLevel ends with `selProps.length = 0` — right for a level load,
+wrong for undo/redo which run through the same path: every Ctrl+Z threw the selection away. performUndo/
+performRedo now record the selected NIDs (stable serialized identity) before the restore and reselect after,
+with a 350ms second pass because models respawn async — primitives reselect instantly, imports as they land,
+and a prop the undone edit deleted is simply not found. And the outliner's hide/lock buttons mutate
+SERIALIZED state (e.eh/e.elk) with no snapshot — now one `pushUndoSnapshot()` per GESTURE (row buttons and
+folder-wide toggles alike; the setters stay snapshot-free so callers own granularity).
+
 ## Duplicate keeps the configuration (build 1162)
 
 The editor panel's worst trust-breaker, verified then fixed: both duplicate paths (toolbar + Alt-drag)
@@ -1238,7 +1380,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1162)
+## Open work (as of build 1172)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

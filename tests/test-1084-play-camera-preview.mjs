@@ -104,7 +104,7 @@ assert(/flyPos\.copy\(_vcamCam\.position\)/.test(goto), '...at the play camera p
 // gives yaw = atan2(-x,-z) and pitch = asin(y). Get this wrong and "stand in it" faces the wrong way.
 assert(/player\.yaw=Math\.atan2\(-_vcamDir\.x, -_vcamDir\.z\)/.test(goto), '...facing the way it points');
 assert(/player\.pitch=Math\.asin\(Math\.max\(-1, Math\.min\(1, _vcamDir\.y\)\)\)/.test(goto), '...at its pitch, clamped for asin');
-assert(/fwd = new THREE\.Vector3\(-sy\*cp, sp, -cy\*cp\)/.test(src), 'sanity: that inverse matches the free-fly basis');
+assert(/fwd = _flyFwd\.set\(-sy\*cp, sp, -cy\*cp\)/.test(src), 'sanity: that inverse matches the free-fly basis');   // build 1168: basis moved to module scratch, same components
 assert(/if\(!_vcamMode\(\)\) return false/.test(goto), 'and it does nothing in a first-person level');
 
 // ---------------------------------------------------------------- wiring

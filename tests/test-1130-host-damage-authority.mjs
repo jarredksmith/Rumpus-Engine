@@ -55,10 +55,10 @@ const src = gameSource();
 // ---------------------------------------------------------------- every damage path goes through it
 {
   const h = extractFunction('handleClientMsg');
-  assert(/applyPvpDamage\(_netDmg\(msg\.d\), id\)/.test(h), 'pvpHit: clamped, and attributed to the CONNECTION');
+  assert(/applyPvpDamage\(_netDmgBudget\(id,'pvp',_netDmg\(msg\.d\)\), id\)/.test(h), 'pvpHit: clamped, and attributed to the CONNECTION');
   assert(!/applyPvpDamage\(msg\.d, msg\.from\)/.test(h), '...never to the claimed sender');
-  assert(/enemyHurt\(en, _netDmg\(msg\.d\)/.test(h), 'co-op enemy damage is clamped');
-  assert(/botHurt\(b, _netDmg\(msg\.d\)/.test(h), 'bot damage is clamped');
+  assert(/enemyHurt\(en, _netDmgBudget\(id,'pve',_netDmg\(msg\.d\)\)/.test(h), 'co-op enemy damage is clamped');
+  assert(/botHurt\(b, _netDmgBudget\(id,'pvp',_netDmg\(msg\.d\)\)/.test(h), 'bot damage is clamped');
   assert(/damageProp\(o, _netDmg\(msg\.d\)/.test(h), 'prop damage is clamped');
   assert(!/damageProp\(o, msg\.d\|\|0/.test(h), '...replacing the `|| 0` that let a string or NaN through');
   // botHit's team check and kill credit both used the CLAIMED sender

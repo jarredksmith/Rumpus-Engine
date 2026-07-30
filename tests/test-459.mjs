@@ -3,7 +3,7 @@ const src = gameSource();
 // build 605: co-op multi-kill credit for the client (and the host's own kills), without desyncing the sim.
 
 // host attributes a client's hit, and on a kill tells that client to register it
-assert(/_coopKillFor=id; const _killed=enemyHurt\(en, _netDmg\(msg\.d\),[^;]*; _coopKillFor=null; if\(_killed\) sendToPlayer\(id, \{t:'frag'\}\)/.test(src), 'host frags the client that landed the killing hit');
+assert(/_coopKillFor=id; const _killed=enemyHurt\(en, _netDmgBudget\(id,'pve',_netDmg\(msg\.d\)\),[^;]*; _coopKillFor=null; if\(_killed\) sendToPlayer\(id, \{t:'frag'\}\)/.test(src), 'host frags the client that landed the killing hit');
 // the client turns a frag into a local multi-kill tick
 assert(/else if\(msg\.t==='frag'\)\{ registerLocalKill\(\); \}/.test(src), 'client registers the kill on frag');
 

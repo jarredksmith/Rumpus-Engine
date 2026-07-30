@@ -1396,6 +1396,7 @@
     <button id="pauseSprintMode" class="pBtnGhost">Sprint: Hold</button>
     <button id="pauseCrouchMode" class="pBtnGhost">Crouch: Hold</button>
     <button id="pauseLoadout" class="pBtnGhost">&#9881; Weapon loadout</button>
+    <button id="pauseCredits" class="pBtnGhost">&#9825; Asset credits</button>
     <div class="pauseAudio">
       <label class="paLbl"><input type="checkbox" id="muteCb"> Mute all</label>
       <label class="paLbl"><input type="checkbox" id="postFxCb"> Visual effects (bloom · motion blur)</label>
@@ -7420,10 +7421,15 @@ function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next 
 // Already-invisible objects are NOT collected, or the restore would switch them on (editor gizmos in play).
 // One offending slot in a multi-material array is enough, because the object is drawn or it is not.
 function _aoHideNoDepth(root, out){
+  // build 1168: this runs over 2 scenes per frame with AO on, and the old wrap-into-an-array + a per-object
+  // predicate closure allocated per OBJECT — thousands of transients a frame. Same predicate, zero allocation:
+  // one offending slot in a multi-material array is still enough, because the object is drawn or it is not.
   root.traverse(o=>{ if(!o.visible) return;
     const m=o.material; if(!m) return;
-    const ms=Array.isArray(m)?m:[m];
-    if(ms.some(q=>q && (q.depthWrite===false || q.transparent===true))){ o.visible=false; out.push(o); } });
+    let bad=false;
+    if(Array.isArray(m)){ for(let i=0;i<m.length;i++){ const q=m[i]; if(q && (q.depthWrite===false || q.transparent===true)){ bad=true; break; } } }
+    else bad = (m.depthWrite===false || m.transparent===true);
+    if(bad){ o.visible=false; out.push(o); } });
   return out;
 }
 function _renderPostFX(scn, cam){
@@ -7697,6 +7703,7 @@ scene.add(moon);
 let _shadowDirtyFrames = 2;
 let _shadowTick = 0;   // build 808: 3-frame cadence for TRANSIENT shadow movers (corpses / settling props)
 let _adaptLast = 0;
+let _frameNo = 0;   // build 1168: bumped once per loop() — per-frame caches key on it
 function _dirtyShadows(n){ _shadowDirtyFrames = Math.max(_shadowDirtyFrames, n||2); }   // call whenever something the sun casts moves/spawns/breaks
 // Weather state (build 863) — declared HERE because applyWorldCfg touches it during boot (TDZ otherwise).
 let _weatherPts=null, _weatherKind='none', _weatherData=null, _weatherT=0; let _weatherSpriteTex=null;   // build 866: this one was missed in the 863 hoist — snow at boot hit the TDZ
@@ -9384,6 +9391,7 @@ function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(PERSIS
 let _lgTimers = [];                                                // pending delay / interval / repeat continuations
 let _lgState = {};                                                 // per-node runtime (counter counts, once flags)
 let _lgBudget = 0, _lgWarned = false;
+let _lgRunT = 0;   // build 1169: when this run's logic started (the Read-stat 'time' zero)
 function _lgNode(id){ for(const n of logicGraph.nodes){ if(n.id===id) return n; } return null; }
 // A value field accepts a NUMBER or a VARIABLE NAME — '5', '-2.5', 'score', '#i' all work.
 function _lgNum(v){
@@ -9421,6 +9429,7 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
   if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
   if(typeof _lgMusic!=='undefined') _lgMusic=null;           // ...and the level's own music track comes back
   if(typeof NET!=='undefined' && NET.mode==='client') return;
+  _lgRunT = performance.now();   // build 1169: the 'time' stat reads seconds since this deploy
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
   _lgFireEvents('start','');
 }
@@ -9437,6 +9446,32 @@ function _lgPulse(id, pin){
         else logicVars[k]=_lgNum(p.value);
       } _lgFollow(id,0); break; }
     case 'addvar': { const k=String(p.name||'').trim(); if(k) logicVars[k]=(+logicVars[k]||0)+_lgNum(p.value); _lgFollow(id,0); break; }
+    // build 1169: MATH — variable = A op B. The one arithmetic surface the graph ever lacked; A and B are
+    // literals or variable names (_lgNum resolves both, same as branch). Divide/modulo by zero yield 0, not
+    // NaN, because one NaN silently poisons every later compare in the level.
+    case 'math': { const k=String(p.name||'').trim(); if(k){ const a=_lgNum(p.a), b=_lgNum(p.b), op=p.op||'+';
+        const v = op==='+' ? a+b : op==='-' ? a-b : op==='×' ? a*b : op==='÷' ? (b===0?0:a/b)
+                : op==='min' ? Math.min(a,b) : op==='max' ? Math.max(a,b) : (b===0?0:((a%b)+b)%b);
+        logicVars[k] = isFinite(v) ? v : 0;
+      } _lgFollow(id,0); break; }
+    // build 1169: READ GAME STAT — the graph's first world-state QUERY. Events give edges; this gives the
+    // number behind them (host state — the graph already runs host-authoritative). Pulse-driven like every
+    // state node: wire it off an interval to poll, or read at the moment of decision.
+    case 'read': { const k=String(p.name||'').trim(); if(k){ let v=0;
+        const w=(typeof WEAPONS!=='undefined' && typeof curWep!=='undefined') ? WEAPONS[curWep] : null;
+        switch(p.stat||'hp'){
+          case 'hp':      v=(typeof player!=='undefined')?Math.round(player.hp||0):0; break;
+          case 'maxhp':   v=(typeof player!=='undefined')?Math.round(player.maxHp||0):0; break;
+          case 'ammo':    v=w?(w.mag|0):0; break;
+          case 'reserve': v=w?(w.reserve|0):0; break;
+          case 'score':   v=(typeof score!=='undefined')?(score|0):0; break;
+          case 'credits': v=(typeof credits!=='undefined')?(credits|0):0; break;
+          case 'wave':    v=(typeof wave!=='undefined')?(wave|0):0; break;
+          case 'enemies': { v=0; if(typeof enemies!=='undefined') for(const e of enemies){ if(e && e.hp>0) v++; } break; }
+          case 'time':    v=Math.round((performance.now()-_lgRunT)/1000); break;
+        }
+        logicVars[k]=v;
+      } _lgFollow(id,0); break; }
     case 'branch': { const a=_lgNum(p.a), b=_lgNum(p.b), op=p.op||'==';
       const ok = op==='==' ? a===b : op==='!=' ? a!==b : op==='<' ? a<b : op==='<=' ? a<=b : op==='>' ? a>b : a>=b;
       _lgFollow(id, ok?0:1); break; }
@@ -9689,7 +9724,9 @@ const LG_DEFS = {
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
+  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed']]},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -9705,7 +9742,7 @@ function _lgVarOptions(){   // build 1060: every variable name in play — from 
   const addName=(v)=>{ const t=String(v==null?'':v).trim(); if(t && !/^[-+]?[0-9.]/.test(t) && /^[\w#]+$/.test(t) && t!=='#i') set.add(t); };
   const addRefs=(txt)=>{ String(txt==null?'':txt).replace(/\{([\w#]+)\}/g,(m,k)=>{ if(k!=='#i') set.add(k); return m; }); };
   if(typeof logicGraph!=='undefined' && logicGraph.nodes) for(const n of logicGraph.nodes){ const q=n.p||{};
-    if(n.type==='setvar'||n.type==='addvar') addName(q.name);
+    if(n.type==='setvar'||n.type==='addvar'||n.type==='math'||n.type==='read') addName(q.name);   // build 1169
     if(n.type==='branch'){ addName(q.a); addName(q.b); }
     if(n.type==='toast'||n.type==='do') addRefs(q.text);
   }
@@ -10120,6 +10157,42 @@ function _lgPlacePlayer(p){
 }
 // One message carries every world verb that lands on a REMOTE player, so co-op teammates get teleported,
 // hurt and healed by the same rule that moved the host — without a new message type per verb.
+// build 1170: PROP LIFECYCLE VERBS — the feature audit's single biggest expressiveness gap. Nothing could
+// show, hide, move or destroy a PROP at runtime: the ball in a sports level could not be reset, a bridge
+// could not drop. Four verbs, all by tag, all host-authoritative and mirrored to clients via wact:
+//  - hide: invisible AND intangible (collider out; a dynamic prop's body is removed and remembered) —
+//    an invisible wall is worse than no verb at all. show reverses every part of it.
+//  - move: teleport to a place, preserving the prop's height ABOVE THE GROUND (a crate on a ledge moved to
+//    a valley lands ON the valley floor, not hovering at its old altitude). Dynamic props re-seat their body.
+//  - del: rides shatterProp — debris burst, the prop's own 'destroyed' signals fire, restoreDestroyedProps
+//    brings authored props back next deploy, and the existing net reconcile already syncs it. Deliberately
+//    NOT removeProp: that splices the prop out of propModels, and the next save would LOSE the creator's
+//    prop — a runtime verb must never edit the level.
+// On deploy, resetDynamicProps un-hides everything (same contract as restoreDestroyedProps).
+function _pvApplyOne(o, act, at){
+  const u=o.userData;
+  if(act==='del'){ if(typeof shatterProp==='function') try{ shatterProp(o, null, null, 0); }catch(e){} return; }
+  if(act==='hide'){ if(u._pvHidden) return; u._pvHidden=true; o.visible=false;
+    if(u.phys){ u._pvWasDyn=true; try{ removeDynamicProp(o); }catch(e){} }
+    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; } return; }
+  if(act==='show'){ if(!u._pvHidden){ o.visible=true; return; } u._pvHidden=false; o.visible=true;
+    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; }
+    if(u._pvWasDyn){ u._pvWasDyn=false; try{ setPropDynamic(o, true); }catch(e){} } return; }
+  if(act==='move' && at){
+    const wasDyn=!!u.phys; if(wasDyn) try{ removeDynamicProp(o); }catch(e){}
+    const g0=(typeof terrainHeightAt==='function')?terrainHeightAt(o.position.x, o.position.z):0;
+    const g1=(typeof terrainHeightAt==='function')?terrainHeightAt(at.x, at.z):0;
+    const dy=o.position.y-g0;
+    o.position.x=at.x; o.position.z=at.z; o.position.y=g1+dy;
+    if(wasDyn) try{ setPropDynamic(o, true); }catch(e){}   // re-seats the body + recaptures physHome at the new spot
+    else if(typeof refreshPropCollider==='function') try{ refreshPropCollider(o); }catch(e){}
+    return; }
+}
+function _lgPropVerb(act, tag, at){
+  if(!tag || typeof propModels==='undefined') return;
+  const list=[]; for(const o of propModels){ if(o && o.userData && o.userData.tag===tag && !o.userData._shattered) list.push(o); }
+  for(const o of list) _pvApplyOne(o, act, at);
+}
 function _wactSend(o){
   if(typeof NET==='undefined' || NET.mode!=='host') return;
   for(const cid in NET.conns){ try{ NET.conns[cid].send(Object.assign({ t:'wact' }, o)); }catch(e){} }
@@ -10159,6 +10232,15 @@ function _applyWorldAction(s){
     const n=Math.max(1, Math.min(99, Math.round(+s.n||1)));
     try{ if(s.do==='give'){ if(typeof giveItem==='function') giveItem(id, n); } else if(typeof takeItem==='function') takeItem(id, n); }catch(e){}
     _wactSend(s.do==='give' ? { gi:[id,n] } : { ti:[id,n] });     // a co-op reward reaches the whole team
+    return;
+  }
+  if(s.do==='showprop'||s.do==='hideprop'||s.do==='delprop'||s.do==='moveprop'){
+    const tg=String(s.target||'').trim(); if(!tg) return;
+    const act=s.do.slice(0, -4);                                   // show | hide | del | move
+    const at=(s.do==='moveprop') ? _lgPlaceAt(s.at) : null;
+    if(s.do==='moveprop' && !at) return;                           // a place that does not exist: do nothing
+    _lgPropVerb(act, tg, at);
+    _wactSend({ pv:[act, tg, at?[at.x, +at.y||0, at.z]:0] });      // clients mirror it instantly; the snapshot reconcile confirms
     return;
   }
   if(s.do==='stat'){ const w=LG_STATS[s.stat]?s.stat:'speed', m=Math.max(0.05, Math.min(10, +s.mul||1));
@@ -15265,6 +15347,20 @@ function _propRigCfg(url){
       if(mk) modelRigs[u]=mk; else delete modelRigs[u];
       if(typeof _levelDirty!=='undefined') _levelDirty=true; } };
 }
+// build 1167: a failed model load is a VISIBLE fact, not a console line. A 404/CORS'd prop used to become a
+// silent null hole in propModels — the commonest failure a creator ever hits, and unless they had devtools
+// open they concluded the engine ate their prop. Failures are now recorded (deduped by url, capped) and the
+// Level Check panel reports them with the reason. Cleared whenever the prop set is rebuilt from scratch
+// (restoreLevel / wipe), because stale entries about a previous level are their own kind of lie; a RETRY that
+// succeeds also clears its url, so a flaky network heals the report.
+const assetLoadFailures = new Map();   // src -> { msg, n }
+function _noteAssetFailure(src, err){
+  const key = String(src||'').slice(0, 300);
+  const e = assetLoadFailures.get(key);
+  if(e){ e.n++; }
+  else if(assetLoadFailures.size < 40) assetLoadFailures.set(key, { msg: String((err && err.message) || err || 'load failed').slice(0, 120), n: 1 });
+  try{ if(typeof renderLevelIssues==='function' && typeof editorOpen!=='undefined' && editorOpen) renderLevelIssues(); }catch(e2){}
+}
 function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip){
   if(isPrimitive(src)){
     const obj = finalizeProp(PRIMITIVE_BUILDERS[src](), src, t, null, slot, animMode, mat, nid, animClip);
@@ -15273,8 +15369,9 @@ function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip)
   }
   loadGLTFCached(src,
     (gltf)=>{ _applyModelRig(gltf, src);   // build 1080: grow the authored skeleton BEFORE the first clone is taken
+      assetLoadFailures.delete(String(src||'').slice(0, 300));   // build 1167: a later success heals the report
       const obj = finalizeProp(THREE.cloneSkinned(gltf.scene), src, t, gltf, slot, animMode, mat, nid, animClip); if(typeof _scheduleWarmCompile==='function') _scheduleWarmCompile(); if(onReady) onReady(obj); },
-    (err)=>{ console.warn('Prop load failed for', src, '-', err && err.message); if(onError) onError(err); }
+    (err)=>{ console.warn('Prop load failed for', src, '-', err && err.message); _noteAssetFailure(src, err); if(onError) onError(err); }
   );
 }
 // Delete EVERYTHING placed in the editor — a fresh scene. Uses the per-item removers so physics bodies,
@@ -15282,6 +15379,7 @@ function spawnProp(src, t, onReady, slot, animMode, mat, onError, nid, animClip)
 function wipeScene(){ pushUndoSnapshot(); _wipeSceneCore(); }
 // build 879: the wipe body, callable without its own undo snapshot (the example loader pushes one first)
 function _wipeSceneCore(){
+  if(typeof assetLoadFailures!=='undefined') assetLoadFailures.clear();   // build 1167: a fresh scene starts with a clean report
   for(let i=propModels.length-1;i>=0;i--) removeProp(i);
   if(typeof removeLight==='function') for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
   if(typeof removeSpawnMarker==='function') for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
@@ -16416,6 +16514,13 @@ let touchMoveX=0, touchMoveZ=0, touchSprint=false, touchFiring=false, touchAds=f
 let touchFireBufT=0;   // build 992: a FIRE tap is valid until this timestamp — a tap that starts and ends between two frames (or during the fire-rate cooldown) still fires instead of vanishing
 let touchCrouch=false;   // build 908: on-screen crouch TOGGLE (touch players finally crouch/slide/ledge-drop)
 let touchBoost=false, touchHandbrake=false;   // build 788: dedicated mobile driving buttons (held) for boost + handbrake
+// build 1168: frame-loop allocation hygiene. The loop allocated ~9 vectors + a Box3 traversal per frame
+// (movement basis, stick clones, editor-fly basis, ledge avatar-height probe) and allPlayers() built a fresh
+// array with two closures per entry per frame — exactly the steady-state garbage behind the periodic GC
+// pauses the adaptive ladder then has to forgive. Module scratch, the codebase's own _lp/_pcV pattern.
+const _mvFwd=new THREE.Vector3(), _mvRight=new THREE.Vector3(), _mvWish=new THREE.Vector3();
+const _flyFwd=new THREE.Vector3(), _flyRight=new THREE.Vector3();
+let _avHCache=1.7, _avHCacheT=-1e9; const _avHBox=new THREE.Box3();   // avatar height, re-measured at most 1x/s
 let _jumpHeldPrev=false; const JUMP_CD=0.5;   // jump must be a fresh press, and at least JUMP_CD seconds apart — stops hold-to-bunny-hop
 // build 1160: coyote time + jump buffering. Build 926 proved this exact fault for SLIDE — "demanding
 // sprint+grounded on the EXACT press frame ate ~half of all slides (onGround flickers mid-stride)" — and
@@ -16423,6 +16528,7 @@ let _jumpHeldPrev=false; const JUMP_CD=0.5;   // jump must be a fresh press, and
 // ledge (or one frame before landing) was eaten. COYOTE: the jump is still honoured this long after the
 // ground flickers away. BUFFER: a press this early before touchdown fires on the first grounded frame.
 let _coyoteT=0, _jumpBufT=0; const COYOTE_T=0.10, JUMP_BUF=0.15;
+const MOVE_ACCEL_K=14, MOVE_BRAKE_K=20, MOVE_AIR_K=3.5, MOVE_AIR_BRAKE_K=0.4;   // build 1171: the acceleration model's four rates (see the movement block)
 const TOUCH_LOOK_SENS = 0.0042, TOUCH_ADS_SENS = 0.0022;
 // Pointer Lock isn't supported on iOS Safari (the methods are undefined). Route every call through these
 // guards so a missing API can't throw — touch devices steer via the on-screen look pad instead.
@@ -17050,13 +17156,13 @@ flash.position.set(0,0,0); flash.visible = false; vmMuzzle.add(flash);   // soli
 // ---------- Weapon system (data-driven) ----------
 const WEAPONS = {
   rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0 },
-  pistol:  { name:'PISTOL',  mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85 },   // build 976: single-shot semi-auto sidearm
+  pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85 },   // build 976: single-shot semi-auto sidearm
   smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7 },
-  shotgun: { name:'SHOTGUN', mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
-  sniper:  { name:'SNIPER',  mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
-  launcher:{ name:'ROCKET',  mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
-  crowbar: { name:'CROWBAR', mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
-  hands:   { name:'FISTS',   mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
+  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
+  sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
+  launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
+  crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
+  hands:   { name:'FISTS',   drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
 };
 // build 623: the factory damage of each weapon, captured before any saved override is applied, so the editor can
 // show/reset to default and serialize ONLY a damage that was actually changed (keeps old levels on the defaults).
@@ -17189,6 +17295,7 @@ applyAttachments();   // apply any saved loadout at startup (this is what mounts
 let reloading = false;
 let lastShot = 0, recoil = 0;
 const DRAW_MS = 300;   // build 965: weapon draw time — the gun rises for this long after a switch, trigger held
+let _drawDur = DRAW_MS;   // build 1172: the CURRENT weapon's draw time (per-weapon drawMs, DRAW_MS fallback) — the dip animation divides by this, not the constant
 let _drawUntil = 0;    // performance.now() timestamp when the current draw completes
 let _rlP = 0;          // build 965: smoothed reload pose (0 = up, 1 = fully dipped) — recovery gates the trigger
 // Top up every weapon to a full mag + full reserve (used by solo start and duel respawn).
@@ -17202,10 +17309,11 @@ function giveDuelLoadout(){
   owned=l; curWep=l.find(k=>k!=='crowbar')||l[0]; refillAllWeapons(); reloading=false; applyWeaponAim(curWep); applyWeaponMuzzle(curWep); }
 
 function switchWeapon(key){
-  if(!owned.includes(key) || key===curWep || reloading) return;
+  if(!owned.includes(key) || key===curWep) return;
+  if(reloading){ reloading = false; _reloadTok++; updateHUD(); }   // build 1172: switching CANCELS the reload instead of being refused by it
   if(typeof _allowedWep==='function' && !_allowedWep(key)) return;   // build 1014: host match rules
   curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim('equip', 320);   // third-person draw/equip pose
-  _drawUntil = performance.now() + DRAW_MS;   // build 965: the viewmodel rises before the trigger works
+  _drawDur = WEAPONS[key].drawMs || DRAW_MS; _drawUntil = performance.now() + _drawDur;   // build 965: the viewmodel rises before the trigger works · build 1172: per-weapon — a pistol should not draw at a launcher's pace
   showWeaponModel(key);   // show this weapon's own viewmodel (loads on first use)
   applyWeaponAim(key);    // load this weapon's saved ADS pose
   applyWeaponMuzzle(key); // load this weapon's saved muzzle position
@@ -17224,12 +17332,19 @@ function showWeaponToast(){
   w.style.opacity='1'; clearTimeout(w._t); w._t=setTimeout(()=>w.style.opacity='0',900);
 }
 
+// build 1172: reload is CANCELLABLE by switching weapons — baseline FPS grammar since Half-Life, and the
+// review panel's "reload jail": a 1.6s sniper reload used to lock you out of switching while a charger
+// lunged. The token is what makes the cancel safe: the pending setTimeout completes only if ITS token is
+// still current, so a cancelled reload leaves the mag exactly as it was (no rounds appear, none vanish) and
+// a re-reload later starts a fresh token/need pair. The cost of cancelling is honest — two draw times.
+let _reloadTok = 0;
 function reload(){
   const w = W();
   if(reloading || w.mag===w.magSize || w.reserve<=0) return;
-  reloading = true; SFX.reload(); triggerGunAnim('reload');
+  reloading = true; const tok = ++_reloadTok; SFX.reload(); triggerGunAnim('reload');
   const need = w.magSize - w.mag;
   setTimeout(()=>{
+    if(tok !== _reloadTok || !reloading) return;   // switch-cancelled: the mag stays as it was
     const take = Math.min(need, w.reserve);
     w.mag += take; w.reserve -= take; reloading=false; updateHUD();
   }, w.reloadMs);
@@ -20041,7 +20156,12 @@ function netStatus(msg){ const el=document.getElementById('mpStatus'); if(el) el
 
 // Players the host simulates against (enemy targeting + coin pickup). Each has a credit()/hurt()
 // that routes locally or over the wire. In solo or on a client this is just the local player.
+// build 1168: called every frame from the enemy block (and more), and every call built a fresh array with
+// two closures per entry. The roster only changes on join/leave/mode-change — cache per FRAME (the loop
+// bumps _frameNo), which is exactly the lifetime its consumers assume anyway.
+let _apFrame=-1, _apList=null;
 function allPlayers(){
+  if(_apFrame===_frameNo && _apList) return _apList;
   const list = [{ id:NET.myId, pos:player.pos, eyeY:effEyeY(), local:true,
     credit:v=>{ credits+=v; SFX.coin(); updateHUD(); },
     hurt:(d,sx,sz)=>applyEnemyDamageToSelf(d,sx,sz) }];
@@ -20053,7 +20173,7 @@ function allPlayers(){
         hurt:d=>{ if(conn) try{ conn.send({t:'hurt', d}); }catch(e){} } });
     }
   }
-  return list;
+  _apFrame=_frameNo; _apList=list; return list;
 }
 // Fall damage: convert a downward impact speed into damage (0 if disabled or below the safe speed).
 let _playerWasAir = false;
@@ -22103,8 +22223,31 @@ function netHostLost(){
   if(typeof toast==='function') toast('Host disconnected');
   setTimeout(()=>{ NET.mode='off'; NET.gameMode='coop'; try{ location.reload(); }catch(e){} }, 1600);
 }
+// build 1164: BOUND THE MOVEMENT CLAIM. The host used to write whatever position a client reported,
+// verbatim — teleport/noclip/speedhack were one console line and propagated to every peer as truth. Full
+// re-simulation is impossible P2P; what the host CAN do is what build 1130 did for damage magnitude: bound
+// the claim. Per accepted tick the displacement is capped at a generous top speed (higher in a car); a jump
+// past the cap is accepted ONCE per cooldown — that is the legitimate-teleport allowance (respawn, the
+// logic graph's teleport verb, a jump pad's first frame) — and past that allowance the claim is CLAMPED
+// along its own direction. A speedhack is continuous, so it spends the allowance instantly and rubber-bands;
+// a real respawn is rare and passes untouched. Host-side only: clients keep trusting the host's relays.
+const _MOVE_CAP = 40, _MOVE_CAP_CAR = 90, _TP_ALLOW_MS = 3000;
+function _plausibleMove(rp, x, y, z, inCar){
+  const now = performance.now();
+  if(rp._mvT == null || !isFinite(rp.posEye.x)){ rp._mvT = now; return null; }   // first report: accept, start the clock
+  const dtl = Math.max(1/30, Math.min(0.5, (now - rp._mvT) / 1000));   // generous on slow tickers, bounded on stalls
+  rp._mvT = now;
+  const cap = (inCar ? _MOVE_CAP_CAR : _MOVE_CAP) * dtl;
+  const dx = x - rp.posEye.x, dy = y - rp.posEye.y, dz = z - rp.posEye.z;
+  const d = Math.hypot(dx, dy, dz);
+  if(d <= cap) return null;                                            // plausible: accept verbatim
+  if(now - (rp._tpT || 0) > _TP_ALLOW_MS){ rp._tpT = now; return null; }   // one big jump per window = a teleport, not a hack
+  const k = cap / d;
+  return { x: rp.posEye.x + dx*k, y: rp.posEye.y + dy*k, z: rp.posEye.z + dz*k };
+}
 function setRemoteState(id, msg){
   const rp=ensureRemotePlayer(id, msg.n);
+  if(NET.mode==='host'){ const cl=_plausibleMove(rp, +msg.p[0], +msg.p[1], +msg.p[2], !!msg.c); if(cl){ msg.p=[cl.x, cl.y, cl.z]; } }
   rp.posEye.set(msg.p[0], msg.p[1], msg.p[2]);
   rp.target.set(msg.p[0], msg.p[1]-EYE, msg.p[2]);   // synced feet (no flat-0 clamp; netInterpolate glues grounded avatars to the LOCAL terrain)
   rp.yaw = msg.y; rp.pitch = msg.pi||0; if(msg.hp!=null) rp.hp=msg.hp; if(msg.w!=null) rp.wep=msg.w; if(msg.g) rp.grip=_unpackGrip(msg.g); rp.air = !!msg.j; rp.slide = !!msg.sl; rp.ads = !!msg.ad; rp.crouch = !!msg.cr; rp.hd = msg.hd||0; rp.hs = msg.hs||0; rp.mt = (msg.mt!=null?msg.mt:-1); rp.cl = msg.cl||0; rp.car = msg.c||null;   // build 548/644: turret index + climbing anim code travel in the state; build 895: the car they're driving
@@ -22520,6 +22663,27 @@ function _netDmg(d){
   if(!isFinite(v) || v <= 0) return 0;
   return Math.min(v, _netDmgCap());
 }
+// build 1164: BOUND THE DAMAGE RATE. _netDmg (1130) caps one PACKET's magnitude — but nothing bounded how
+// many packets a second, so a cheating client could send 50 capped pvpHits per frame and instakill anyone
+// on the map, through walls, from spawn. A leaky bucket per source connection: damage drains over a 1s
+// window and grants stop at the cap. The caps are generous multiples of the highest legitimate output
+// (SMG headshot spray ≈ 290/s to one target; splash across a crowd multiplies the PvE figure), so a real
+// player never feels them — they turn "instakill" into "slightly above the best real gun", which is the
+// honest ceiling for P2P. Per-kind buckets: melting a whole WAVE of enemies is legitimate throughput that
+// must never crowd out (or be crowded out by) player-vs-player claims.
+const _dmgAcc = {};                     // source id -> { t, pvp, pve }
+const _DMG_RATE_PVP = 500, _DMG_RATE_PVE = 1500;
+function _netDmgBudget(id, kind, d){
+  if(!(d > 0)) return 0;
+  const now = performance.now();
+  let a = _dmgAcc[id]; if(!a) a = _dmgAcc[id] = { t: now, pvp: 0, pve: 0 };
+  const el = (now - a.t) / 1000;
+  if(el > 0){ const keep = Math.max(0, 1 - el); a.pvp *= keep; a.pve *= keep; a.t = now; }
+  const cap = (kind === 'pvp') ? _DMG_RATE_PVP : _DMG_RATE_PVE;
+  const grant = Math.min(d, Math.max(0, cap - a[kind]));
+  a[kind] += grant;
+  return grant;
+}
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
@@ -22533,13 +22697,13 @@ function handleClientMsg(conn, msg){
       try{ dest.send(fwd); }catch(e){} return; }
   }
   if(msg.t==='st'){ setRemoteState(id, msg); }
-  else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmg(msg.d), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
+  else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmgBudget(id,'pve',_netDmg(msg.d)), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
   else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
-  else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmg(msg.d), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
+  else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmgBudget(id,'pvp',_netDmg(msg.d)), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
   else if(msg.t==='died'){ const _by=+msg.by; if(_by===0 || NET.conns[_by]) registerDuelKill(_by, id); }            // a client died; credit the killer — build 1130: only a player who is actually in the match
-  else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(id, msg.id)){ const _s=NET.players[id]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, _netDmg(msg.d), _sx, _sz)) registerDuelKill(id, msg.id); } }   // a client shot a bot — build 1130: the shooter is the connection, so a claimed `from` can no longer dodge the sameTeam check or steal the credit
+  else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(id, msg.id)){ const _s=NET.players[id]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, _netDmgBudget(id,'pvp',_netDmg(msg.d)), _sx, _sz)) registerDuelKill(id, msg.id); } }   // a client shot a bot — build 1130: the shooter is the connection, so a claimed `from` can no longer dodge the sameTeam check or steal the credit
   else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } if(NET.phase==='lobby') refreshLobby(); }   // a client changed character (the lobby card updates live)
   else if(msg.t==='rocket'){ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), d=new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]); fireRocket(o,d,id,true,msg.r||7,WEAPONS.launcher.dmg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'rocket', o:msg.o, d:msg.d, r:msg.r, by:id}); }catch(e){} } } }   // a client fired a rocket: host simulates it + relays the visual
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), id, true); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'nade', o:msg.o, v:msg.v, by:id}); }catch(e){} } } }   // build 670: a client threw a grenade: host simulates it (authors damage) + relays the visual to the others
@@ -22635,6 +22799,7 @@ function handleHostMsg(msg){
     if(msg.ti && typeof takeItem==='function') try{ takeItem(String(msg.ti[0]), +msg.ti[1]||1); }catch(e){}
     if(msg.st && typeof _lgApplyStat==='function') _lgApplyStat(String(msg.st[0]), +msg.st[1]||1);
     if(msg.mu!=null && typeof _lgSetMusic==='function') _lgSetMusic(msg.mu);
+    if(msg.pv && typeof _lgPropVerb==='function'){ const a=msg.pv; _lgPropVerb(String(a[0]), String(a[1]), a[2]?{x:+a[2][0], y:+a[2][1], z:+a[2][2]}:null); }   // build 1170: prop lifecycle verbs reach clients
   }
 }
 
@@ -26090,7 +26255,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1162 · 2026-07-30';
+const BUILD_VERSION = 'build 1172 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27762,6 +27927,8 @@ function resetDynamicProps(){
     if(obj.userData.physHomeQ) obj.quaternion.copy(obj.userData.physHomeQ); else obj.quaternion.identity();
     if(obj.userData.breakable !== false && obj.userData.maxHp) obj.userData.hp = obj.userData.maxHp;   // refill destructible health
   }
+  // build 1170: runtime-hidden props return on deploy — hide is a MATCH state, not a level edit
+  if(typeof propModels!=='undefined') for(const o of propModels){ if(o && o.userData && o.userData._pvHidden && typeof _pvApplyOne==='function') _pvApplyOne(o, 'show', null); }
   if(typeof resetPropFires==='function') resetPropFires();   // re-light authored burning props; clear runtime ignites
   buildPhysWorld();
 }
@@ -29651,13 +29818,14 @@ function surfaceTopAt(x, z, exclude, skipDynamic, ceilY, skipVehicles){
 // build 1088: `fromY` is where the probe ray STARTS. It defaults to the original 300, so every existing
 // caller is unchanged — but a spawn authored at y=600 needs the ray to begin above it or the roof it is
 // meant to land on is simply never hit, and the height silently stops snapping to anything.
+const _stuDyn = [];   // build 1168: reused held-prop-excluded list for surfaceTopUnder
 function surfaceTopUnder(x, z, ceilY, fromY){
   const _from = (fromY!=null && fromY>300) ? fromY : 300;
   _downOrigin.set(x, _from, z); _downRay.set(_downOrigin, _downDir); _downRay.far = Math.max(600, _from*2);
   let top = -Infinity;
   const hits = _downRay.intersectObjects(_surfCull(x,z), true);
   for(const h of hits){ if(h.point.y <= ceilY && h.point.y > top) top = h.point.y; }
-  if(dynamicProps.length){ const list = heldProp ? dynamicProps.filter(o=>o!==heldProp) : dynamicProps; const dh = _downRay.intersectObjects(list, true); for(const h of dh){ if(h.point.y <= ceilY && h.point.y > top) top = h.point.y; } }
+  if(dynamicProps.length){ /* build 1168: no filter()-per-query while holding a prop */ let list = dynamicProps; if(heldProp){ _stuDyn.length=0; for(const o of dynamicProps) if(o!==heldProp) _stuDyn.push(o); list=_stuDyn; } const dh = _downRay.intersectObjects(list, true); for(const h of dh){ if(h.point.y <= ceilY && h.point.y > top) top = h.point.y; } }
   return top;
 }
 // The floor under the play space at (x,z): highest surface at/below the player's head, else terrain. Used for
@@ -30665,6 +30833,7 @@ function loop(){
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
   let dt = rawDt;
+  _frameNo++;
   { const _anow=_pnow(); if(_adaptLast){ _adaptResTick(_anow-_adaptLast, _anow); if(typeof _hitchLightWatch==='function') _hitchLightWatch(_anow-_adaptLast); } _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); if(typeof _touchCtxTick==='function') _touchCtxTick(_anow); if(typeof _buildModeTick==='function') _buildModeTick(); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish) · build 908: context touch buttons · build 1155: name a light-count recompile instead of shipping the fifth one
   updatePerfHud();   // measure real frame time every frame (before any early-out)
   if(editorOpen || _cineActive) _dirtyShadows(1);   // authoring + camera moves: keep shadows current
@@ -30768,8 +30937,8 @@ function loop(){
   camera.rotation.x = player.pitch;
 
   // movement relative to yaw
-  const forward = new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
-  const right = new THREE.Vector3(Math.cos(player.yaw),0,-Math.sin(player.yaw));
+  const forward = _mvFwd.set(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
+  const right = _mvRight.set(Math.cos(player.yaw),0,-Math.sin(player.yaw));
   // build 874: in the fixed-camera views WASD is screen-relative, not facing-relative (the body faces
   // the cursor). Top: W = up-screen (world -Z), D = right-screen (world +X). Side: only the lane axis.
   const _vm874 = activeViewMode();
@@ -30779,12 +30948,12 @@ function loop(){
   if(_vm874==='top'){ const _ya=(typeof _vcamYawRad==='function')?_vcamYawRad('top'):0; forward.set(-Math.sin(_ya),0,-Math.cos(_ya)); right.set(Math.cos(_ya),0,-Math.sin(_ya)); }
   else if(_vm874==='side'){ if(gameCfg.viewAxis==='z'){ right.set(0,0,-1); } else { right.set(1,0,0); } forward.set(0,0,0); }
   else if(typeof chaseCursorOn==='function' && chaseCursorOn()){ forward.set(-Math.sin(_ccYaw),0,-Math.cos(_ccYaw)); right.set(Math.cos(_ccYaw),0,-Math.sin(_ccYaw)); }   // build 1103: WASD relative to the frozen camera, not the cursor-spun body
-  const wish = new THREE.Vector3();
+  const wish = _mvWish.set(0,0,0);
   let moveScale = 1;   // analog when using the stick, full when using keys
   const mvx = padMoveX || touchMoveX, mvz = padMoveZ || touchMoveZ;
   if(mvx || mvz){
-    wish.add(right.clone().multiplyScalar(mvx));
-    wish.add(forward.clone().multiplyScalar(-mvz));   // stick up (-Y) = forward
+    wish.addScaledVector(right, mvx);
+    wish.addScaledVector(forward, -mvz);   // stick up (-Y) = forward — no clones; addScaledVector reads, never mutates its argument
     moveScale = Math.min(1, Math.hypot(mvx, mvz));
   } else {
     if(keys[BINDS.fwd]) wish.add(forward);
@@ -30809,8 +30978,26 @@ function loop(){
   let speedBase = sprinting() ? SPEED*SPRINT : SPEED;
   if(crouching) speedBase = CROUCH_SPEED;          // crouch overrides sprint
   const sp = speedBase * (buffs.speed>0?1.4:1) * moveScale * run.speedMul;
-  player.vel.x = wish.x * sp;
-  player.vel.z = wish.z * sp;
+  // build 1171: movement has MASS. `vel = wish*sp` teleported velocity to the input every frame — zero
+  // start-up weight, dead-stop on key release EVEN MID-AIR (release W at the apex and the arc collapsed to a
+  // vertical drop), instantaneous 180s at full speed. Velocity now CHASES the input target exponentially,
+  // which keeps every tuned speed byte-identical at steady state (the target IS wish*sp) while giving
+  // starts, stops and direction changes a ramp. Four rates, because the four situations are different:
+  //   ACCEL 14 — reaches 95% of top speed in ~210ms: weight without sluggishness.
+  //   BRAKE 20 — a run stops in ~0.6m, a sprint in ~1.1m: crisp, and genre-typical (UE CMC lands ~0.9m).
+  //   AIR 3.5  — air control exists (course corrections work) but cannot carve like ground.
+  //   AIR_BRAKE 0.4 — release the keys mid-jump and the arc CARRIES (~67% of speed still there after 1s).
+  // The slide branch below still writes velocity directly (its decay is authored), and when a slide ends the
+  // model inherits its speed and bleeds it smoothly instead of snapping to wish*sp on the next frame.
+  // dt spikes clamp f to 1, which degrades exactly to the old behaviour rather than overshooting.
+  {
+    const _tx = wish.x * sp, _tz = wish.z * sp;
+    const _mvIn = (wish.x !== 0 || wish.z !== 0);
+    const _k = player.onGround ? (_mvIn ? MOVE_ACCEL_K : MOVE_BRAKE_K) : (_mvIn ? MOVE_AIR_K : MOVE_AIR_BRAKE_K);
+    const _f = Math.min(1, _k * dt);
+    player.vel.x += (_tx - player.vel.x) * _f;
+    player.vel.z += (_tz - player.vel.z) * _f;
+  }
   // build 874: side-scroll lane hold — kill off-lane velocity and ease back onto the lane (knockback
   // and slides can push off it; the lane is captured at deploy by _updateViewAim). Cars roam free.
   if(_vm874==='side' && _sideLock!=null && !drivingCar){
@@ -30858,7 +31045,7 @@ function loop(){
       // size the drop to the ACTUAL avatar so the raised hands land on the lip.
       let _fd=0.55; for(let _d=0.08;_d<=0.9;_d+=0.03){ const _t2=surfaceTopAt(player.pos.x+forward.x*_d, player.pos.z+forward.z*_d); if(isFinite(_t2) && _t2>=_lt-0.08){ _fd=_d; break; } }
       const _gap=0.34, _hx=player.pos.x+forward.x*(_fd-_gap), _hz=player.pos.z+forward.z*(_fd-_gap);
-      let _vh=1.7; try{ if(typeof _ownAvatar!=='undefined' && _ownAvatar && _ownAvatar.visible){ const _bb=new THREE.Box3().setFromObject(_ownAvatar); const _h2=_bb.max.y-_bb.min.y; if(_h2>1.1 && _h2<3) _vh=_h2; } }catch(e){}
+      let _vh=1.7; try{ if(typeof _ownAvatar!=='undefined' && _ownAvatar && _ownAvatar.visible){ const _nw=performance.now(); if(_nw-_avHCacheT>1000){ _avHCacheT=_nw; const _bb=_avHBox.setFromObject(_ownAvatar); const _h2=_bb.max.y-_bb.min.y; _avHCache=(_h2>1.1 && _h2<3)?_h2:1.7; } _vh=_avHCache; } }catch(e){}   // build 1168: a full-subtree Box3 traversal ran every airborne-forward frame; the avatar's height changes ~never
       _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:player.yaw, fy0:player.pos.y, hy:_lt + EYE - _vh*1.02, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE };
       player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
   }
@@ -31047,8 +31234,8 @@ function loop(){
     // WASD moves along the view direction; Space/E rise, Q/Ctrl fall; Shift sprints — all in world space
     const spd = (keys['ShiftLeft']||keys['ShiftRight']?60:26) * dt;
     const cy = Math.cos(player.yaw), sy = Math.sin(player.yaw), cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
-    const fwd = new THREE.Vector3(-sy*cp, sp, -cy*cp);          // camera forward (matches the look basis below)
-    const right = new THREE.Vector3(cy, 0, -sy);
+    const fwd = _flyFwd.set(-sy*cp, sp, -cy*cp);          // camera forward (matches the look basis below)
+    const right = _flyRight.set(cy, 0, -sy);
     if(keys['KeyW']) flyPos.addScaledVector(fwd, spd);
     if(keys['KeyS']) flyPos.addScaledVector(fwd, -spd);
     if(keys['KeyD']) flyPos.addScaledVector(right, spd);
@@ -31142,7 +31329,7 @@ function loop(){
   gun.rotation.x = _rlP*0.5 + ADS_ROT.x*adsBlend;
   gun.rotation.y = ADS_ROT.y*adsBlend;
   gun.rotation.z = ADS_ROT.z*adsBlend;
-  { const _dw = Math.max(0, Math.min(1, (_drawUntil - performance.now()) / DRAW_MS));   // build 965: draw — 1 = just switched (down), 0 = up
+  { const _dw = Math.max(0, Math.min(1, (_drawUntil - performance.now()) / (_drawDur||DRAW_MS)));   // build 965: draw — 1 = just switched (down), 0 = up · build 1172: per-weapon duration
     if(_dw>0){ gun.position.y -= _dw*0.45; gun.rotation.x += _dw*0.85; } }
   // build 678: the built-in "punch thrust" shoves the whole viewmodel forward on a melee swing. Fists rely on their
   // own (imported or procedural) punch animation instead, so skip it for a fists weapon.
@@ -33378,7 +33565,7 @@ function propIndexByNid(nid){ for(let i=0;i<propModels.length;i++){ const o=prop
 function serializeLevel(){
   const lightHex = g=>{ const L=g.userData.light; return (Math.round(L.color.r*255)<<16)|(Math.round(L.color.g*255)<<8)|Math.round(L.color.b*255); };
   return {
-    v: 1,
+    v: LEVEL_FORMAT_V,   // build 1165: the version is now READ on load (see _levelFormatCheck) — bump it when the schema changes shape, and set minV only when an old client's partial read would be load-bearing wrong
     gun:     { url: gunModelUrl,     state: Object.assign({}, editorTargets.gun.state) },
     weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); if(w.model || w.view || w.clips || dmgChg || w.noMuzzle) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined }; return acc; }, {}),   // build 623: per-weapon damage; build 684: muzzle-flash toggle
     aim:     { state: Object.assign({}, editorTargets.aim.state) },
@@ -34101,8 +34288,35 @@ function pushUndoSnapshot(){
     if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   } catch(e){}
 }
+// build 1165: the format version is finally READ. `serializeLevel` has written `v:1` since the field was
+// added and nothing ever inspected it — so a level authored on a newer engine opened in an older cached
+// client (the single-file GitHub-Pages model guarantees stale clients exist) silently dropped whatever it
+// didn't recognise, and the creator's work just wasn't there, with no message. The tolerant reader stays —
+// same-version and older levels load exactly as before — but now:
+//  - `v` newer than this engine → load anyway (tolerance is the right default) with a LOUD warning that
+//    names both versions and says the fix is refreshing the page.
+//  - `minV` newer than this engine → the author has said "this level cannot survive a partial read"
+//    (a future serializer sets it only when a load-bearing structure changes) → REFUSE, before any
+//    teardown, so the refusal costs the player nothing.
+const LEVEL_FORMAT_V = 1;
+function _levelFormatCheck(level){
+  const v = +(level && level.v) || 1;
+  const minV = +(level && level.minV) || 1;
+  if(minV > LEVEL_FORMAT_V){
+    const m = 'This level needs a newer RUMPUS ENGINE (level format v'+minV+', this build reads v'+LEVEL_FORMAT_V+'). Refresh the page to update, then load it again.';
+    if(typeof flashToast==='function') flashToast(m); else console.warn(m);
+    return { ok:false };
+  }
+  if(v > LEVEL_FORMAT_V){
+    const m = 'This level was made with a newer RUMPUS ENGINE (format v'+v+' > v'+LEVEL_FORMAT_V+') — loading anyway, but some newer features may be missing. Refresh the page to update.';
+    if(typeof flashToast==='function') flashToast(m); console.warn(m);
+  }
+  return { ok:true };
+}
 function restoreLevel(level){
   if(!level) return;
+  if(!_levelFormatCheck(level).ok) return;   // build 1165: refuse BEFORE the teardown — a refusal must cost nothing
+  if(typeof assetLoadFailures!=='undefined') assetLoadFailures.clear();   // build 1167: stale failures about a previous level are their own kind of lie
   // build 893: world (TERRAIN) first — prop y is stored relative to the terrain under it, so placement
   // must lift against THIS level's terrain, not whatever the previous level left behind.
   if(level.world){ worldCfg = _worldFrom(level.world); applyWorldCfg(); }
@@ -34194,14 +34408,36 @@ function restoreLevel(level){
 // pushUndoSnapshot stores the state BEFORE an edit, so `editorUndo` is a stack of pre-edit states.
 // Undoing therefore has to capture the state it is leaving (the post-edit one) to have anything to
 // redo, which is why the redo stack is filled here and not in performUndo's caller.
+// build 1163: SELECTION SURVIVES UNDO. restoreLevel tears down and respawns every prop, and ends with
+// `selProps.length = 0` — correct for a level load, but undo/redo run through the same path, so every
+// Ctrl+Z threw the selection away and the core editing rhythm (tweak, undo, tweak again) meant reselecting
+// each time. Props carry stable serialized nids, so the fix is to remember the selected nids across the
+// restore and reselect by identity. Models respawn ASYNC (GLB loads), so a second pass runs after a beat —
+// primitives reselect instantly, imports as they land; a prop the undone edit deleted simply isn't found.
+function _selNids(){ return (typeof selProps!=='undefined' && selProps ? selProps : []).filter(o=>o&&o.userData&&o.userData.nid).map(o=>o.userData.nid); }
+function _reselectByNids(nids){
+  if(!nids || !nids.length) return;
+  const apply=()=>{
+    const got=[]; for(const nid of nids){ const o=(typeof propByNid==='function')?propByNid(nid):null; if(o) got.push(o); }
+    if(!got.length) return 0;
+    selProps=got.slice(); editorActive='props'; editorTargets.props.idx=Math.max(0, propModels.indexOf(got[got.length-1]));
+    if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    return got.length;
+  };
+  const first=apply();
+  if(first < nids.length) setTimeout(apply, 350);   // late async spawns: pick up what landed since
+}
 function performUndo(){
   if(!editorUndo.length) return false;
   const snap = editorUndo.pop();
   let level; try { level = JSON.parse(snap); } catch(e){ return false; }
   let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
+  const selN = _selNids();   // build 1163: reselect the same props (by nid) after the rebuild
   editorUndoActive = true;
   try { restoreLevel(level); } finally { editorUndoActive = false; }
   if(cur != null){ editorRedo.push(cur); if(editorRedo.length > 60) editorRedo.shift(); }
+  _reselectByNids(selN);
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }
@@ -34210,9 +34446,11 @@ function performRedo(){
   const snap = editorRedo.pop();
   let level; try { level = JSON.parse(snap); } catch(e){ return false; }
   let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
+  const selN = _selNids();   // build 1163: same courtesy on the way forward
   editorUndoActive = true;   // the restore must not push a snapshot of its own
   try { restoreLevel(level); } finally { editorUndoActive = false; }
   if(cur != null){ editorUndo.push(cur); if(editorUndo.length > 60) editorUndo.shift(); }
+  _reselectByNids(selN);
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }
@@ -35100,6 +35338,11 @@ function edFold(host, id, title, openDefault, subtitle){
 function levelIssues(){
   const issues=[];
   try{
+    // build 1167: failed asset loads lead the list — "my prop vanished" is the #1 support thread and the
+    // answer was sitting in the console. The url's tail is shown because Poly Pizza urls only differ there.
+    if(typeof assetLoadFailures!=='undefined') for(const [src, e] of assetLoadFailures){
+      const short = src.length>46 ? '…'+src.slice(-45) : src;
+      issues.push('A model failed to load ('+e.msg+')'+(e.n>1?' ×'+e.n:'')+': '+short); }
     const locks=new Set(); for(const o of propModels){ if(o && o.userData && o.userData.lockId) locks.add(o.userData.lockId); }
     const keys=new Set(); for(const s of pickupSpots){ const k=POWERUP_KINDS[s.kind]; if(k && k.key) keys.add(k.key); }
     for(const lk of locks) if(!keys.has(lk)) issues.push('Something is locked with the '+keyDisplayName(lk)+', but no matching key pad is placed.');
@@ -35127,6 +35370,11 @@ function levelIssues(){
       if(tg){ for(const p of propModels){ const ss=p && p.userData && p.userData.signals; if(!ss) continue;
         for(const s of ss){ if(s.target===tg){ wired=true; break; } } if(wired) break; } }
       if(!wired) issues.push('A Signals-only mechanism can never move \u2014 '+(tg ? ("nothing targets its tag '"+tg+"'.") : 'it has no tag for signals to target.')); }
+    // build 1166: a Sketchfab model with no recorded attribution is a LICENSING exposure, not a cosmetic one \u2014
+    // Sketchfab downloadable models are typically CC-BY, and CC-BY is only satisfied if the credit ships.
+    // (Models placed through the in-editor search always carry one; this catches hand-pasted sketchfab: urls.)
+    { let bare=0; for(const o of propModels){ if(o && o.userData && /^sketchfab:/i.test(String(o.userData.src||'')) && !o.userData.attribution) bare++; }
+      if(bare) issues.push(bare+' Sketchfab model'+(bare>1?'s have':' has')+' no attribution recorded \u2014 CC-BY requires the credit to ship with the level (see Asset credits in the pause menu).'); }
   }catch(e){}
   return issues;
 }
@@ -39488,9 +39736,9 @@ function _outRowEl(kind, it, inFolder){
   if(it.tag){ const tc=document.createElement('span'); tc.className='outTagChip'; tc.textContent=it.tag; tc.title='tag: '+it.tag; r.appendChild(tc); }
   if(kind!=='pickups'){
     const hb=_outIconBtn(u.edHide?'eyeoff':'eye', !!u.edHide, u.edHide?'Show':'Hide while editing (play is never affected)');
-    hb.onclick=(e)=>{ e.stopPropagation(); _outSetHide(o, !u.edHide); _outRefresh(); }; r.appendChild(hb);
+    hb.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _outSetHide(o, !u.edHide); _outRefresh(); }; r.appendChild(hb);   // build 1163: hide is serialized state (e.eh) — it must snapshot or Ctrl+Z can't undo it
     const kb=_outIconBtn(u.edLock?'lock':'unlock', !!u.edLock, u.edLock?'Unlock':'Lock — viewport clicks pass through it');
-    kb.onclick=(e)=>{ e.stopPropagation(); _outSetLock(o, !u.edLock); _outRefresh(); }; r.appendChild(kb);
+    kb.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _outSetLock(o, !u.edLock); _outRefresh(); }; r.appendChild(kb);   // build 1163: same for lock (e.elk)
   }
   if(kind==='props'){   // build 1038: rows drag into folders
     r.draggable=true;
@@ -39563,9 +39811,9 @@ function _outRefresh(){
           const fsa=_outIconBtn('sel', false, 'Select the folder contents');
           fsa.onclick=(e)=>{ e.stopPropagation(); _outSelectAll('props', fitems.filter(it=>!it.o.userData.edLock).map(it=>it.o)); _outRefresh(); }; fh.appendChild(fsa);
           const fhb=_outIconBtn(allH?'eyeoff':'eye', allH, allH?'Show the whole folder':'Hide the whole folder while editing');
-          fhb.onclick=(e)=>{ e.stopPropagation(); for(const it of fitems) _outSetHide(it.o, !allH); _outRefresh(); }; fh.appendChild(fhb);
+          fhb.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); for(const it of fitems) _outSetHide(it.o, !allH); _outRefresh(); }; fh.appendChild(fhb);   // build 1163: one snapshot per gesture, not per member
           const flb=_outIconBtn(allL?'lock':'unlock', allL, allL?'Unlock the whole folder':'Lock the whole folder');
-          flb.onclick=(e)=>{ e.stopPropagation(); for(const it of fitems) _outSetLock(it.o, !allL); _outRefresh(); }; fh.appendChild(flb);
+          flb.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); for(const it of fitems) _outSetLock(it.o, !allL); _outRefresh(); }; fh.appendChild(flb);
           fh.onclick=()=>{ _outClick2('folder:'+fname,
             ()=>{ const now=_outFolds['f:'+fname]!==false; _outFolds['f:'+fname]=!now; _outSaveFolds(); _outRefresh(); },
             ()=>{ _outFolds['f:'+fname]=true; _outSaveFolds(); _outRenameFolder(fname, fitems, fn); }); };   // build 1038: keyed double-click renames (and re-opens the fold the first click toggled)
@@ -41111,6 +41359,7 @@ function bindPauseMenu(){
   const pb=document.getElementById('pauseBtn'); if(pb) pb.onclick=openPause;
   const r=document.getElementById('pauseResume'); if(r) r.onclick=resumeGame;
   const plb=document.getElementById('pauseLoadout'); if(plb) plb.onclick=()=>{ if(typeof openLoadout==='function') openLoadout(); };
+  const pcr=document.getElementById('pauseCredits'); if(pcr) pcr.onclick=()=>{ if(typeof showCreditsModal==='function') showCreditsModal(); };   // build 1166: CC-BY attribution must be reachable at play time
   const eh=document.getElementById('pauseEditHud'); if(eh) eh.onclick=()=>{ const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.add('hidden'); enterTouchEdit(); };
   const smb=document.getElementById('pauseSprintMode'); if(smb){ const upds=()=>{ smb.textContent='Sprint: '+(_sprintMode==='toggle'?'Toggle':'Hold'); }; upds(); smb.onclick=()=>{ _sprintMode = _sprintMode==='toggle'?'hold':'toggle'; _sprintToggled=false; try{ localStorage.setItem('breach_sprint_mode', _sprintMode); }catch(e){} upds(); }; }
   const crmb=document.getElementById('pauseCrouchMode'); if(crmb){ const updc=()=>{ crmb.textContent='Crouch: '+(_crouchMode==='toggle'?'Toggle':'Hold'); }; updc(); crmb.onclick=()=>{ _crouchMode = _crouchMode==='toggle'?'hold':'toggle'; _crouchToggled=false; try{ localStorage.setItem('breach_crouch_mode', _crouchMode); }catch(e){} updc(); }; }   // Toggle lets players crouch-walk without the Ctrl+W browser close-combo
@@ -41169,6 +41418,45 @@ const ASSET_SOURCES = [
 ];
 const assetCredits = new Set();   // attributions for slots that don't carry their own credit (enemy/pickup/chest/coin/attachment models, sounds). build 835: serialized with the level (see serializeLevel.credits) and re-seeded on every load, so published levels keep their CC attributions.
 function creditAsset(s){ if(s && typeof s==='string'){ const t=s.trim(); if(t) assetCredits.add(t); } }   // build 549: register a CC asset credit (called by the model/sound pickers)
+// build 1166: ONE authoritative credits list. Attribution lived in two systems that never met — per-prop
+// `userData.attribution` (Sketchfab/Poly Pizza CC-BY models placed in the scene) and the `assetCredits` set
+// (every non-prop slot: enemies, pickups, chests, coins, attachments, sounds, HDRIs). CLAUDE.md has carried
+// "asset licensing + a credits screen are release blockers" for hundreds of builds; a CC-BY licence is only
+// satisfied if the attribution is actually REACHABLE at play time, so this merges both systems plus the
+// engine's own dependencies, deduped, and the pause menu shows it in every session — no creator opt-in.
+const ENGINE_CREDITS = [
+  'three.js (MIT) — threejs.org',
+  'Rapier physics (Apache-2.0) — rapier.rs',
+  'PeerJS / WebRTC (MIT) — peerjs.com',
+  'fflate (MIT) — github.com/101arrowz/fflate',
+];
+function levelCreditsList(){
+  const out = new Set();
+  try{ for(const s of assetCredits) out.add(s); }catch(e){}
+  try{ if(typeof propModels!=='undefined') for(const o of propModels){ const a=o&&o.userData&&o.userData.attribution; if(a && typeof a==='string' && a.trim()) out.add(a.trim()); } }catch(e){}
+  return [...out].sort((a,b)=>a.localeCompare(b));
+}
+let _creditsEl = null;
+function showCreditsModal(){
+  if(_creditsEl){ _creditsEl.remove(); _creditsEl=null; }
+  const list = levelCreditsList();
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;inset:0;background:rgba(4,8,12,.88);z-index:10000;display:flex;align-items:center;justify-content:center;';
+  const card = document.createElement('div');
+  card.style.cssText = 'max-width:560px;max-height:78vh;overflow:auto;background:#0d141b;border:1px solid #2a3a46;border-radius:10px;padding:22px 26px;font:13px/1.6 monospace;color:#cfe0ea;';
+  const h = (t)=>{ const d=document.createElement('div'); d.style.cssText='font-size:15px;letter-spacing:2px;color:#7fd6c2;margin:10px 0 6px;'; d.textContent=t; return d; };
+  const li = (t)=>{ const d=document.createElement('div'); d.textContent='· '+t; return d; };   // textContent: attributions are UNTRUSTED level data
+  card.appendChild(h('ASSET CREDITS'));
+  if(list.length) list.forEach(s=>card.appendChild(li(s)));
+  else { const d=document.createElement('div'); d.style.opacity=.7; d.textContent='This level uses no externally-credited assets.'; card.appendChild(d); }
+  card.appendChild(h('ENGINE'));
+  ENGINE_CREDITS.forEach(s=>card.appendChild(li(s)));
+  const x = document.createElement('button'); x.textContent='Close'; x.style.cssText='margin-top:14px;padding:6px 18px;';
+  x.onclick = ()=>{ el.remove(); _creditsEl=null; };
+  card.appendChild(x);
+  el.onclick = (e)=>{ if(e.target===el){ el.remove(); _creditsEl=null; } };
+  el.appendChild(card); document.body.appendChild(el); _creditsEl = el;
+}
 if(savedLevel && Array.isArray(savedLevel.credits)) savedLevel.credits.forEach(c=>creditAsset(String(c)));   // build 835: boot path — the saved level's credits come back with it
 function collectLevelCredits(){   // de-duped, sorted per-asset attributions: placed props (persisted) + anything picked this session
   const set=new Set();

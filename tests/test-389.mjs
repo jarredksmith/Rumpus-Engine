@@ -15,7 +15,7 @@ assert(/const E=enemies\.map\(e=>\(\{ id:e\.id, p:\[[^\]]+\], hd:e\._netHitDir\|
   'each enemy in the snapshot carries hd/hs');
 
 // ---- a client shooting an enemy now supplies its position (directional flinch) ----
-assert(/msg\.t==='hit'\)\{ const en=enemies\.find\(e=>e\.id===msg\.e\); if\(en\)\{ spark\([^)]*\); const _s=NET\.players\[id\]; _coopKillFor=id; const _killed=enemyHurt\(en, _netDmg\(msg\.d\), \(_s&&_s\.posEye\)\?_s\.posEye\.x:null, \(_s&&_s\.posEye\)\?_s\.posEye\.z:null\); _coopKillFor=null; if\(_killed\) sendToPlayer\(id, \{t:'frag'\}\); \}/.test(src),
+assert(/msg\.t==='hit'\)\{ const en=enemies\.find\(e=>e\.id===msg\.e\); if\(en\)\{ spark\([^)]*\); const _s=NET\.players\[id\]; _coopKillFor=id; const _killed=enemyHurt\(en, _netDmgBudget\(id,'pve',_netDmg\(msg\.d\)\), \(_s&&_s\.posEye\)\?_s\.posEye\.x:null, \(_s&&_s\.posEye\)\?_s\.posEye\.z:null\); _coopKillFor=null; if\(_killed\) sendToPlayer\(id, \{t:'frag'\}\); \}/.test(src),
   'a client hit on an enemy is credited with the shooter position');
 
 // ---- client ingest stores hd/hs and seeds _lastHs so spawning never flinches ----

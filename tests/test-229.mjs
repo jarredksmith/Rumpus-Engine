@@ -22,7 +22,7 @@ assert(/if\(!_playWepStates\(key, model, gltf\)\) playModelAnimations\(model, gl
 // gameplay triggers
 assert(/triggerGunAnim\('shoot'\);   \/\/ fire the model's shoot clip if it has one/.test(src), 'shoot() triggers the clip');
 assert(/triggerGunAnim\('shoot'\); meleeAttack\(w\)/.test(src), 'melee swing triggers too');
-assert(/reloading = true; SFX\.reload\(\); triggerGunAnim\('reload'\)/.test(src), 'reload triggers the clip');
+assert(/reloading = true; const tok = \+\+_reloadTok; SFX\.reload\(\); triggerGunAnim\('reload'\)/.test(src), 'reload triggers the clip');   // build 1172: reload gained its cancel token on the same line
 
 // persistence: serialized + restored on all three weapons paths
 assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle\) acc\[k\]=\{ model:w\.model\|\|'', view:w\.view\|\|null, clips:w\.clips\|\|null, dmg: dmgChg \? w\.dmg : undefined, noMuzzle: w\.noMuzzle \? true : undefined \}/.test(src), 'clips (and changed damage + muzzle toggle) serialized');
