@@ -12,16 +12,15 @@ const src = gameSource();
 // ---------------------------------------------------------------- the rule, executed
 // The hide block is lifted out and driven over a fake scene, because a source pin cannot tell you whether
 // the predicate actually catches a SpriteMaterial or restores what it hid.
-const BLOCK = (() => {
-  const m = src.match(/    const _aoHid=\[\];\n[\s\S]*?_aoHid\.push\(o\); \} \}\);/);
-  assert(m, 'the AO prepass hides non-depth-writing objects in one readable block');
-  return m[0];
-})();
+// build 1158 lifted this out of _renderPostFX into `_aoHideNoDepth`, because the block was applied to the
+// world scene only while the muzzle flash lives in the VIEWMODEL scene. Same predicate, one caller became
+// two — so this drives the function rather than a block scraped out of the middle of a render pass.
+const BLOCK = extractFunction('_aoHideNoDepth');
+assert(BLOCK, 'the AO prepass sweep is one named function both callers share');
 
 function run(objs){
-  const scn = { traverse(fn){ for(const o of objs) fn(o); } };
-  const hid = new Function('scn', BLOCK + '\n; return _aoHid;')(scn);
-  return hid;
+  const scn = { visible: true, traverse(fn){ for(const o of objs) fn(o); } };
+  return new Function('root', 'out', BLOCK + '\nreturn _aoHideNoDepth(root, out);')(scn, []);
 }
 const obj = (name, mat, visible = true) => ({ name, material: mat, visible });
 

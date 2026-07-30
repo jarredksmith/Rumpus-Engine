@@ -882,6 +882,10 @@ half-res G-buffer as though it were solid geometry a metre from the camera; SSAO
 occlusion from a flat camera-facing surface — unoccluded — while the world around it kept its real
 occlusion. Less darkening inside the square than outside it, with a quad edge.
 
+**FIXED AGAIN IN BUILD 1158 — this section's fix covered the world scene only.** The muzzle flash lives in
+the VIEWMODEL scene, which build 1140 renders into the same G-buffer, and that render had no sweep. See
+"Two fixes that were applied to the wrong half".
+
 **This is the same trap build 1126 recorded and build 1128 hit again, now for the third time.** 1126: "the
 sky dome fills the buffer unless it is hidden for the pass. Weather points do the same." Both were fixed by
 NAME, and the flipbook VFX arrived later. Naming a third would only buy a fourth, so the test is now a
@@ -962,6 +966,55 @@ build 1157**, which routes every imported prop's lights through `registerEmitter
 of glTF candela and giving them a finite reach. The "decision about creators who legitimately ship a lamp"
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
+
+## Two fixes that were applied to the wrong half (build 1158)
+
+Both of these were reported as "still broken" after a build that had claimed them. Neither earlier fix was
+wrong; each was **complete for the half of the problem it was tested against**, and that is the pattern worth
+carrying: a rule stated in one place and applied in one place is not the same as a rule.
+
+**1. The sprite's drop shadow, third time.** Build 1152 established the rule — nothing that fails to write
+depth belongs in a depth-derived G-buffer — and swept `scn`. But the muzzle flash a player sees on almost
+every trigger pull is `playFlipbook('muzzle', ..., vmMuzzle)`: a Sprite inside the **viewmodel scene**, which
+build 1140 renders into that same `_aoGeoRT` through its own `renderer.render(vmScene, vmCam)`. So the world
+explosions were fixed and the commonest sprite in the game was not, which is exactly what "still there" meant.
+The sweep is now `_aoHideNoDepth(root, out)` and **both** callers use it. 1126 named the sky dome, 1128 named
+the weather points, 1152 replaced naming with a rule and left it inline in one caller; the only way back to
+this bug now is to add a third render into the G-buffer without calling the function.
+
+**2. Enemies on ramps.** Build 1154 fixed the movement RADIUS — real, and measured — but the thing actually
+stopping them was vertical. Builds 1092/1094 gated the ramp exemption on `b.max.y - feetY < STEP + 0.5`:
+**a statement about the bounding box, not about the surface.** A ramp primitive is one mesh, so
+`refreshPropCollider` gives it ONE box spanning floor to summit. Standing at the foot of a 2.4 m ramp that
+difference is 2.4, the gate fails, the raycast never runs, and the enemy is pushed away from the ramp it is
+trying to climb. It could only ever get on near the top, where the box top finally came within 1.1 m of its
+feet.
+
+`clearAt` has asked the right question since long before: `propSurfaceAt(c, cx, cz)` — **this collider's own
+surface at the contact point** — walkable if within a step, or a genuinely sloped surface within `RAMP_RISE`.
+A flat-topped wall fails both (its top is out of reach, or has no slope), so nothing becomes walk-through.
+Build 1154 made an enemy fit wherever the player fits horizontally; this is the same rule vertically.
+
+Measured by replaying the real obstacle pass over a real wedge with a real raycaster — 4 seconds of walking
+straight at each obstacle at chase speed, reporting the highest ground reached:
+
+```
+                              OLD gate              NEW (clearAt's question)
+ramp, 4x8, rises to 2.40   climbed 0.00 (z -0.70)   climbed 2.39 (z 25.5)
+wall, 3.0 tall             climbed 0.00 (z -0.95)   climbed 0.00 (z -0.95)
+ledge, 1.2 flat-topped     climbed 0.00 (z -2.70)   climbed 0.00 (z -2.70)
+kerb, 0.4 tall             climbed 0.40 (walked over)  unchanged
+```
+
+**0.00 metres, forever** — that is the whole bug, and the wall and the flat ledge stop an enemy at a
+byte-identical position, which is the evidence that relaxing the test cost nothing. `tests/test-1158` is the
+durable version of that probe (it builds the geometry and drives both predicates), and `scratchpad/rampstuck.mjs`
+is the ad-hoc one.
+
+**Four pins moved with it — 1092, 1094, 1152, 1154 — and every one kept its assertion's intent.** 1094 is worth
+reading: what that build established (never sample on the box boundary, and never at a merged box's centre,
+because either mistakes a ramp mouth for a wall) is *still true and still pinned*; only the gate around it
+changed.
 
 ## A GLB's own lights arrived raw (build 1157)
 
@@ -1136,7 +1189,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1157)
+## Open work (as of build 1158)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

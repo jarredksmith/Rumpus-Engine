@@ -7406,6 +7406,26 @@ function disposePost(){
   _postRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
 }
 function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next render
+// build 1158: the AO prepass renders with `scene.overrideMaterial`, which replaces `transparent` and
+// `depthWrite:false` along with everything else — so anything that does not write depth writes its whole QUAD
+// into the depth-derived G-buffer as if it were solid geometry, and SSAO then derives that square's occlusion
+// from a flat camera-facing surface. That is the hard, slightly brighter rectangle around a muzzle flash.
+//
+// It has now been fixed FOUR times: build 1126 named the sky dome, 1128 named the weather points, 1152 replaced
+// naming with this rule — and still applied it to the world scene only, while the muzzle flash a player sees on
+// every trigger pull lives in the VIEWMODEL scene, which build 1140 renders into the same buffer. So the sweep
+// is a function, and every caller that renders into the G-buffer calls it. Adding a third such caller without
+// calling this is the only way to bring the bug back.
+//
+// Already-invisible objects are NOT collected, or the restore would switch them on (editor gizmos in play).
+// One offending slot in a multi-material array is enough, because the object is drawn or it is not.
+function _aoHideNoDepth(root, out){
+  root.traverse(o=>{ if(!o.visible) return;
+    const m=o.material; if(!m) return;
+    const ms=Array.isArray(m)?m:[m];
+    if(ms.some(q=>q && (q.depthWrite===false || q.transparent===true))){ o.visible=false; out.push(o); } });
+  return out;
+}
 function _renderPostFX(scn, cam){
   const [w,h]=_postSize();
   if(_postRT.width!==w || _postRT.height!==h || (_postRT.samples||0)!==_desiredPostSamples()){ disposePost(); ensurePost(); }   // build 880: samples follow the adaptive step
@@ -7448,11 +7468,14 @@ function _renderPostFX(scn, cam){
     // instance arrived with the flipbook VFX. Naming the next one would only buy the same bug again, so the
     // test is now a property of the material: nothing that does not write depth belongs in a depth-derived
     // G-buffer. One traverse is nothing beside the extra half-res scene render this pass already costs.
+    //
+    // build 1158: and the SAME rule on vmScene below. 1152 applied it to `scn` only — but the first-person
+    // muzzle flash is `playFlipbook('muzzle', ..., vmMuzzle)`, i.e. a Sprite inside the VIEWMODEL scene, which
+    // build 1140 renders into this same G-buffer through its own `renderer.render(vmScene, vmCam)`. So the one
+    // sprite a player sees on almost every trigger pull was still writing its quad. Fixed by making the sweep
+    // a function both callers use, rather than a block one of them happens to contain.
     const _aoHid=[];
-    scn.traverse(o=>{ if(!o.visible) return;
-      const m=o.material; if(!m) return;
-      const ms=Array.isArray(m)?m:[m];
-      if(ms.some(q=>q && (q.depthWrite===false || q.transparent===true))){ o.visible=false; _aoHid.push(o); } });
+    _aoHideNoDepth(scn, _aoHid);
     scn.overrideMaterial=_matAOGeo;
     renderer.setRenderTarget(_aoGeoRT); renderer.render(scn, cam);
     scn.overrideMaterial=_pv;
@@ -7463,11 +7486,14 @@ function _renderPostFX(scn, cam){
     // vmCam shares the main camera's fov and aspect and sits at its own origin looking down -z, so the
     // view distance it writes into alpha is directly comparable with the scene's.
     if(_vmHere){
+      const _vmHid=[];
+      _aoHideNoDepth(vmScene, _vmHid);   // build 1158: the muzzle flash lives HERE, not in scn
       const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matAOGeo;
       const _vac=renderer.autoClear; renderer.autoClear=false;
       renderer.clearDepth();          // same rule as the colour pass: the weapon is always in front
       renderer.render(vmScene, vmCam);
       renderer.autoClear=_vac; vmScene.overrideMaterial=_vpv;
+      for(const o of _vmHid) o.visible=true;
     }
     if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
     renderer.shadowMap.autoUpdate=_sa;
@@ -26058,7 +26084,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1157 · 2026-07-30';
+const BUILD_VERSION = 'build 1158 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31362,18 +31388,36 @@ function loop(){
           const dx = en.mesh.position.x - cx, dz = en.mesh.position.z - cz;
           const d = Math.hypot(dx,dz);
           if(d < eR && d > 1e-4){
-            // build 1092: on a slope, the column one cell upslope tops out more than STEP above the
-            // feet once slot quantisation is added — so the very ramp an enemy is climbing read as
-            // an obstacle and shoved it back down. A marginal box whose top matches the real walk
-            // surface over that box is the ground one step ahead, not a wall. Checked only on
-            // actual contact with a near-step-height box, so the raycast cost stays rare.
-            // build 1094: sample the surface just inside the box at the CONTACT point, not the box
-            // centre — the greedy merge can fuse a ramp mouth into a long wall box whose centre
-            // hangs over open air, which made the exemption fail exactly at a ramp's summit. The
-            // tolerance also covers worst-case quantisation (0.45 slope/cell + 0.36 slot).
-            if(b.max.y - (en.mesh.position.y-1.4) < STEP + 0.5 && typeof surfaceTopUnder==='function'){
-              const st = surfaceTopUnder(cx - dx/d*0.1, cz - dz/d*0.1, b.max.y+0.05, b.max.y+2);
-              if(st > -Infinity && b.max.y - st < 0.85) continue;
+            // build 1158: ask the question the PLAYER asks. Builds 1092/1094 gated the ramp exemption on
+            // `b.max.y - feetY < STEP + 0.5` — the box's TOP being within about a step of the feet — which is
+            // a statement about the bounding box, not about the surface. A ramp primitive is ONE mesh, so
+            // refreshPropCollider gives it ONE box spanning floor to summit: standing at the foot of a 2.4 m
+            // ramp, `b.max.y - feetY` is 2.4, the gate fails, the raycast never runs and the enemy is shoved
+            // away from the very ramp it is trying to climb. It could only ever get on near the top, where the
+            // box top finally came within 1.1 m of its feet — which is exactly "enemies can't make it up the
+            // default level's ramps".
+            //
+            // `clearAt` has had the right test since long before: `propSurfaceAt(c, cx, cz)` is THIS
+            // collider's own surface at the contact point, and a box is walkable-onto if that surface is
+            // within a step, or is a genuinely sloped ramp within RAMP_RISE. A flat-topped wall fails both —
+            // its top is either out of reach or has no slope — so nothing becomes walk-through. Build 1154
+            // made an enemy fit wherever the player fits horizontally; this is the same rule vertically.
+            const feetY = en.mesh.position.y - 1.4;
+            if(typeof propSurfaceAt==='function'){
+              // sample just INSIDE the box edge: a ray at the exact boundary grazes the mesh and reads
+              // -Infinity, which would call a ramp base a wall (the reason clearAt nudges too)
+              const bcx=(b.min.x+b.max.x)*0.5, bcz=(b.min.z+b.max.z)*0.5;
+              const sx = cx + Math.sign(bcx-cx)*Math.min(0.25, Math.abs(bcx-cx));
+              const sz = cz + Math.sign(bcz-cz)*Math.min(0.25, Math.abs(bcz-cz));
+              const es = propSurfaceAt(c, sx, sz);
+              if(es > -Infinity){
+                if(es <= feetY + STEP + 1e-4) continue;                       // a low step / a ramp's base — walk on
+                if(es <= feetY + RAMP_RISE){                                  // higher: only if it really is a slope here
+                  const e2=0.4, ex=propSurfaceAt(c, sx+e2, sz), ez=propSurfaceAt(c, sx, sz+e2);
+                  const slope = Math.hypot((ex>-Infinity?ex-es:0), (ez>-Infinity?ez-es:0))/e2;
+                  if(slope > RAMP_SLOPE_MIN && slope < RAMP_SLOPE_MAX) continue;
+                }
+              }
             }
             const push=eR-d; en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push;
           }
