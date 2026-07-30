@@ -967,6 +967,23 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Props gain a runtime lifecycle (build 1170)
+
+The feature audit's single biggest expressiveness gap: no verb could touch a PROP at runtime — the ball in a
+sports level could not be reset, a bridge could not drop. Four verbs by tag (`showprop/hideprop/moveprop/
+delprop`), host-authoritative, mirrored to clients over the existing `wact` channel, offered by the Do node
+(tag field + place field extended). Four decisions worth keeping:
+- **hide is intangible too** — collider out of the list, a dynamic prop's body removed and remembered
+  (`_pvWasDyn`); an invisible wall is worse than no verb. show reverses every part, idempotently.
+- **move preserves height ABOVE GROUND** (crate on a ledge → valley floor lands ON the floor), and a dynamic
+  prop's body is removed before and re-added after so physHome recaptures at the new home.
+- **del rides `shatterProp`, deliberately not `removeProp`** — debris, the prop's own 'destroyed' signals,
+  deploy-restore and net reconcile all inherited; removeProp would splice the prop out of propModels and the
+  next SAVE would lose the creator's prop. A runtime verb must never edit the level.
+- **deploy un-hides everything** (in resetDynamicProps): hide is MATCH state, not a level edit.
+Three pins moved (1033, 1073, 1077 — the verb/tag/place field lists grew). Spawn-prop-by-prefab is the
+deferred other half: it needs the prefab def + net id story, its own build.
+
 ## The logic graph learns arithmetic and its first question (build 1169) — PHASE 2 OPENS
 
 The feature audit's two cheapest CRITICAL walls, closed with two nodes in the STATE palette:
@@ -1332,7 +1349,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1169)
+## Open work (as of build 1170)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
