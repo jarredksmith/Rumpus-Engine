@@ -6809,6 +6809,77 @@ function stopMusic(){ if(_musicTimer){ clearInterval(_musicTimer); _musicTimer=n
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x070b10);
 const SCENE_FOG = new THREE.FogExp2(0x070b10, 0.018);
+// build 1181: HEIGHT FOG + SUN INSCATTER. The fog was a single global exp2 — one colour, no altitude
+// falloff, no awareness of the sun; the 1998 version of aerial perspective. Overriding three's OWN fog
+// chunks patches every built-in material in one place (a raw ShaderMaterial like the sky/water is untouched
+// by design — the dome is a final colour and the water gets its fog in its own rebuild).
+//
+// THE LOAD-BEARING TRICK: chunks cannot add per-material uniforms, but `UniformsLib.fog` CAN grow — and
+// UniformsUtils.clone deep-clones Vector/Color values while copying PLAIN OBJECTS BY REFERENCE. So the two
+// extra uniforms are plain {x,y,z} objects (WebGL upload reads .x/.y/.z, a Vector3 is not required), every
+// fogged material's clone shares these exact objects, and one CPU write per frame reaches all of them.
+// test-1181 verifies the by-reference behaviour against the REAL three build, because if an upgrade ever
+// deep-clones plain objects the whole system silently freezes at its boot values.
+const _fogSunDirU = { x:0, y:1, z:0 };                       // TOWARD the sun (world), fed from _sunDir() each frame
+const _fogParamsU = { x:0.04, y:0, z:0.5 };                  // x: height falloff /m · y: base Y · z: inscatter strength
+THREE.UniformsLib.fog.fogSunDirW = { value:_fogSunDirU };
+THREE.UniformsLib.fog.fogHeightP = { value:_fogParamsU };
+// ...but ShaderLib MERGED UniformsLib.fog at module load, so a late add to the lib alone reaches NOTHING:
+// initMaterial clones ShaderLib[shaderID].uniforms and seqWithValue silently drops any program uniform with
+// no value — both new uniforms would sit at GL zero forever (falloff 0 = plain exp2 fog, inscatter 0).
+// Verified against the real build in test-1181. So every already-merged fogged entry gets them too:
+for(const _slk in THREE.ShaderLib){ const _slu = THREE.ShaderLib[_slk].uniforms; if(_slu && _slu.fogColor){ _slu.fogSunDirW = { value:_fogSunDirU }; _slu.fogHeightP = { value:_fogParamsU }; } }
+// The sprite vertex shader has no `transformed` (no begin_vertex) — the shared fog_vertex below would fail
+// to compile there and every fogged Sprite (muzzle flash, explosions) would VANISH silently, the raw-shader
+// trap from build 1127. A sprite is small: its world ORIGIN is its fog position.
+THREE.ShaderLib.sprite.vertexShader = THREE.ShaderLib.sprite.vertexShader.replace('#include <fog_vertex>', [
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z;',
+  '  vFogWorldPos = ( modelMatrix * vec4( 0.0, 0.0, 0.0, 1.0 ) ).xyz;',
+  '#endif'].join('\n'));
+THREE.ShaderChunk.fog_pars_vertex = [
+  '#ifdef USE_FOG',
+  '  varying float vFogDepth;',
+  '  varying vec3 vFogWorldPos;',
+  '#endif'].join('\n');
+THREE.ShaderChunk.fog_vertex = [
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z;',
+  '  vec4 _fwp = vec4( transformed, 1.0 );',
+  '#ifdef USE_INSTANCING',
+  '  _fwp = instanceMatrix * _fwp;',                          // project_vertex folded this into mvPosition, not into `transformed`
+  '#endif',
+  '  vFogWorldPos = ( modelMatrix * _fwp ).xyz;',
+  '#endif'].join('\n');
+THREE.ShaderChunk.fog_pars_fragment = [
+  '#ifdef USE_FOG',
+  '  uniform vec3 fogColor;',
+  '  uniform vec3 fogSunDirW;',
+  '  uniform vec3 fogHeightP;',
+  '  varying float vFogDepth;',
+  '  varying vec3 vFogWorldPos;',
+  '  #ifdef FOG_EXP2',
+  '    uniform float fogDensity;',
+  '  #else',
+  '    uniform float fogNear;',
+  '    uniform float fogFar;',
+  '  #endif',
+  '#endif'].join('\n');
+THREE.ShaderChunk.fog_fragment = [
+  '#ifdef USE_FOG',
+  // exp-height falloff: fog thins with altitude above the base, so towers rise OUT of it and valleys pool
+  '  float _fogH = exp( - max( 0.0, ( vFogWorldPos.y - fogHeightP.y ) ) * fogHeightP.x );',
+  '  #ifdef FOG_EXP2',
+  '    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth * _fogH );',
+  '  #else',
+  '    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth ) * _fogH;',
+  '  #endif',
+  // sun inscatter: looking down-sun, the fog itself glows warm — cheap aerial perspective
+  '  vec3 _fogV = normalize( vFogWorldPos - cameraPosition );',
+  '  float _fogSun = pow( max( dot( _fogV, fogSunDirW ), 0.0 ), 8.0 ) * fogHeightP.z;',
+  '  vec3 _fogCol = mix( fogColor, fogColor * vec3( 1.30, 1.08, 0.75 ) + vec3( 0.22, 0.11, 0.02 ), _fogSun );',
+  '  gl_FragColor.rgb = mix( gl_FragColor.rgb, _fogCol, fogFactor );',
+  '#endif'].join('\n');
 scene.fog = SCENE_FOG;
 
 const camera = new THREE.PerspectiveCamera(78, innerWidth/innerHeight, 0.1, 400);
@@ -7074,6 +7145,9 @@ function _runDofTo(scn, cam, out){
 // file has taken the whole sky out twice by declaring a `let` under the function that reads it.
 let _vmDone = false;
 function renderScene(scn, cam){
+  // build 1181: feed the shared fog uniforms — one write reaches every fogged material (see the trick note)
+  if(typeof _sunDir==='function'){ const sd=_sunDir(); if(sd){ _fogSunDirU.x=-sd.x; _fogSunDirU.y=-sd.y; _fogSunDirU.z=-sd.z; } }   // _sunDir points sun→scene; inscatter wants TOWARD the sun
+  if(typeof worldCfg!=='undefined'){ _fogParamsU.x=(worldCfg.fogHeight!=null?+worldCfg.fogHeight:0.04); _fogParamsU.z=(worldCfg.fogSun!=null?+worldCfg.fogSun:0.5); }
   const _r=perfOn?_pnow():0;
   _vmDone = false;   // a new frame's worth of scene: whoever gets there first draws the weapon
   if(_postOn && !_postFail && typeof ensurePost==='function' && ensurePost()){
@@ -16179,7 +16253,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -26427,7 +26501,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1180 · 2026-07-30';
+const BUILD_VERSION = 'build 1181 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36095,7 +36169,7 @@ function renderEditorFields(){
       colorRow(b,'Sky light color','skyColor');   // build 584: the hemisphere fill's hue (set near-neutral to remove any color cast)
       hint(b,'','2px 0 0').textContent='Sky light color tints the ambient fill from above. The default leans cool/teal; pick a neutral grey to remove the green cast.'; }
     { const b=subSec('Camera \u0026 view','cam',true);
-      slider(b,'Field of view','fov',50,110,1); slider(b,'View distance','viewDist',60,2000,10); slider(b,'Fog density','fogDensity',0,0.08,0.001); colorRow(b,'Fog color','fogColor');
+      slider(b,'Field of view','fov',50,110,1); slider(b,'View distance','viewDist',60,2000,10); slider(b,'Fog density','fogDensity',0,0.08,0.001); colorRow(b,'Fog color','fogColor'); slider(b,'Fog height falloff','fogHeight',0,0.2,0.005); slider(b,'Fog sun glow','fogSun',0,1,0.05); hint(b,'Height falloff thins fog with altitude (towers rise out of it, valleys pool). Sun glow warms the fog when you look toward the sun \u2014 cheap aerial perspective.','1px 0 4px');
       const gridRow=document.createElement('label'); gridRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0;cursor:pointer;';
       const gridCb=document.createElement('input'); gridCb.type='checkbox'; gridCb.checked=(worldCfg.grid!==false); gridCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
       gridCb.onchange=()=>{ pushUndoSnapshot(); worldCfg.grid=gridCb.checked; applyWorldCfg(); };

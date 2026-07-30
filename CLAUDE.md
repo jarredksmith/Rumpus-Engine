@@ -1493,7 +1493,33 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1180)
+## The fog learns altitude and where the sun is (build 1181)
+
+Fog was one global `FogExp2` — a single colour at every height, blind to the sun. Overriding three's OWN
+fog chunks (`fog_pars_vertex/fog_vertex/fog_pars_fragment/fog_fragment`) patches every built-in material in
+one place: an exp height falloff (`fogHeight`, towers rise out of the fog, valleys pool — applied to the
+OPTICAL DEPTH under exp2, so both fog models keep it) and a warm inscatter lobe looking down-sun (`fogSun`,
+pow-8, colour `fogColor*[1.30,1.08,0.75]+[0.22,0.11,0.02]`). Raw ShaderMaterials (sky, water) untouched by
+design. `renderScene` feeds `_sunDir()` NEGATED (it points sun→scene; inscatter wants toward the sun).
+
+**The uniform plumbing was a silent no-op as first written, and the real three build said so before any
+capture could.** The plan — "extend `UniformsLib.fog` with PLAIN-OBJECT values; `UniformsUtils.clone`
+copies plain objects by reference, so every material's per-material clone shares them, one CPU write per
+frame" — is true about clone (verified: Vector3 deep-clones, plain object rides by reference), but
+**ShaderLib merged `UniformsLib.fog` at module load**, so a late add to the lib reaches NOTHING:
+`initMaterial` clones `ShaderLib[id].uniforms` and `seqWithValue` silently DROPS any program uniform with
+no value — both uniforms would sit at GL zero forever, which is exactly "falloff 0 + inscatter 0", a
+perfectly plausible-looking frame. So the engine also walks `ShaderLib` and adds both uniforms to every
+entry whose uniforms carry `fogColor`. The same pre-test run caught a second silent kill: **the sprite
+vertex shader has no `transformed`** (no `begin_vertex`), so the shared `fog_vertex` would fail to compile
+there and every fogged Sprite — the muzzle flash — would VANISH, build 1127's raw-shader trap. Sprites get
+their fog include string-replaced to fog at their world ORIGIN. Instanced meshes apply `instanceMatrix`
+inside the chunk (`project_vertex` folds it into `mvPosition`, never into `transformed`) or every batched
+prop would fog at the batch origin. `test-1181` drives ALL of this against the real three build — the clone
+semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
+(optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
+
+## Open work (as of build 1181)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
