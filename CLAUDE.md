@@ -957,11 +957,47 @@ that at deploy the way build 622 warms the flipbook programs — instantiate onc
 and strips lights from the warm instance too, or warming would itself move the count. It runs once per url,
 and a failed load resets so the next deploy retries.
 
-Worth knowing for the general case: **imported models' own lights are unhandled everywhere else.** Only the
-loot box is fixed, because that is the one that spawns mid-match. Any prop with a light in its GLB will move
-the count when it loads; in the editor that is a hitch, and for anything spawned during play it is this bug
-again. The general fix is either to strip them on import or to route them through `registerEmitterLight`,
-and it needs a decision about creators who legitimately ship a lamp model with a light in it.
+Worth knowing for the general case: imported models' own lights were unhandled everywhere else — **CLOSED in
+build 1157**, which routes every imported prop's lights through `registerEmitterLight` after rescaling them out
+of glTF candela and giving them a finite reach. The "decision about creators who legitimately ship a lamp"
+turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
+independently of the freeze.
+
+## A GLB's own lights arrived raw (build 1157)
+
+Build 1153 recorded this as open work — *"imported models' own lights are unhandled everywhere else. Only the
+loot box is fixed, because that is the one that spawns mid-match"* — and framed it as needing a decision about
+creators who legitimately ship a lamp model with a light in it. Reading GLTFLoader settles the framing: the
+freeze was never the worst of it. Three things arrive raw, and each is a defect on its own.
+
+```js
+const range = lightDef.range !== undefined ? lightDef.range : 0;   // 0 is INFINITE in three
+lightNode.distance = range;
+if ( lightDef.intensity !== undefined ) lightNode.intensity = lightDef.intensity;   // glTF states CANDELA
+```
+
+- **Intensity is in candela.** Blender writes the hundreds or thousands. This engine's own decorative point
+  lights sit at 2–8 and its SUN is 1.5, so one imported lamp is two to three orders of magnitude past the key
+  light — build 1142's fault, arriving through the front door.
+- **`range` is optional and defaults to 0**, which three reads as infinite. A lamp in a corner lights the whole
+  level, through walls.
+- **Nothing bounded the count.** Forty emitters in a chandelier GLB is forty entries in `NUM_POINT_LIGHTS`,
+  looped per pixel by every material in the level.
+
+So they are **adopted, not stripped** — a creator who ships a light means it. `adoptModelLights` scales the
+whole model's set by ONE factor so the brightest lands at `MODEL_LIGHT_TARGET` (5.0) and the author's relative
+intent between two lights in one model survives; gives a light with no stated range a reach derived from the
+model's own bounding box (a GLB arrives in whatever units its author used, so a fixed metre figure is wrong on
+one asset and absurd on the next); keeps the `MODEL_LIGHT_MAX` (4) brightest and removes the rest from the
+graph rather than hiding them (build 977); forces `castShadow=false`; and registers each with build 811's
+existing `emitterLights` budget so distance culls them like every other emitter. `finalizeProp` is the single
+chokepoint every imported prop passes through.
+
+**The normalisation must run exactly once, and a prop can leave and re-enter the scene.** `shatterProp` hands
+the lights back to the budget and `restoreDestroyedProps` re-adopts them, so `adoptModelLights` is idempotent
+via the remembered `userData.modelLights` — re-scaling on the way back would darken a lamp every time it was
+destroyed. The loot box is deliberately NOT routed through this: it has a pooled beam and 1153 strips its
+model's lights, and two glows on one crate is one too many.
 
 ## The horizon had two different grounds (build 1156)
 
@@ -1100,7 +1136,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1156)
+## Open work (as of build 1157)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

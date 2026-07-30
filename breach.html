@@ -15030,6 +15030,65 @@ function _propFootR(o){
   try{ const b=new THREE.Box3().setFromObject(o); if(isFinite(b.min.x) && !b.isEmpty()) return 0.5*Math.hypot(b.max.x-b.min.x, b.max.z-b.min.z); }catch(e){}
   return 1.0;
 }
+// ---------- build 1157: a model's OWN lights ----------
+// GLTFLoader turns `KHR_lights_punctual` into a real three light and hands it over untouched. Build 1153 hit
+// one consequence of that on the loot box (a light appearing mid-match recompiles every shader) and stripped
+// them there; everywhere else they arrived raw, and raw is three separate faults, none of them cosmetic:
+//
+//  1. `lightNode.intensity = lightDef.intensity`, and glTF states a punctual light in CANDELA. Blender writes
+//     the hundreds or thousands. This engine's own decorative point lights sit at 2-8. So one imported lamp
+//     is not "a bit bright", it is two to three orders of magnitude past the sun.
+//  2. `lightNode.distance = range`, and glTF's `range` is OPTIONAL and defaults to 0 — which in three means
+//     INFINITE. A lamp in a corner lights the entire level, through walls.
+//  3. Nothing bounded how MANY. A chandelier GLB carrying forty emitters puts forty point lights into
+//     NUM_POINT_LIGHTS, and every material in the level then loops over forty of them per pixel.
+//
+// A creator who ships a lamp model with a light in it means it, so these are ADOPTED rather than stripped:
+// re-scaled into the engine's own range, given a finite reach, capped in number, and registered with build
+// 811's light budget so distance culls them like every other emitter. The relative brightness the author
+// authored between two lights in one model is preserved — the whole set is scaled by one factor.
+const MODEL_LIGHT_MAX = 4;        // per model. Past this the dimmest are removed outright.
+const MODEL_LIGHT_TARGET = 5.0;   // the brightest light of a model lands here — the engine's own accent range
+const MODEL_LIGHT_MAX_DIST = 26;  // and no imported light reaches further than this
+function adoptModelLights(obj){
+  if(!obj) return [];
+  // idempotent: a shattered prop hands its lights back and is re-adopted when it is restored, and the
+  // normalisation below must run ONCE or the scale factor compounds every time.
+  if(obj.userData.modelLights){
+    for(const L of obj.userData.modelLights)
+      if(typeof registerEmitterLight==='function' && !emitterLights.some(e=>e.light===L)) registerEmitterLight(L);
+    return obj.userData.modelLights;
+  }
+  const found = [];
+  obj.traverse(o=>{ if(o.isLight) found.push(o); });
+  if(!found.length) return [];
+  // keep the brightest, drop the rest from the graph entirely (hiding a light still counts it — build 977)
+  found.sort((a,b)=>(+b.intensity||0)-(+a.intensity||0));
+  const keep = found.slice(0, MODEL_LIGHT_MAX), drop = found.slice(MODEL_LIGHT_MAX);
+  for(const L of drop){ if(L.parent) L.parent.remove(L); }
+  // one scale factor for the whole model, so the author's relative intent survives
+  const peak = Math.max(...keep.map(L=>+L.intensity||0));
+  const k = (peak > 0) ? (MODEL_LIGHT_TARGET / peak) : 0;
+  // a finite reach, derived from the model's own size — a GLB arrives in whatever units its author used
+  let span = 8;
+  try{ const b=new THREE.Box3().setFromObject(obj); if(!b.isEmpty() && isFinite(b.min.x))
+    span = Math.hypot(b.max.x-b.min.x, b.max.y-b.min.y, b.max.z-b.min.z); }catch(e){}
+  const reach = Math.max(4, Math.min(MODEL_LIGHT_MAX_DIST, span * 2.5));
+  for(const L of keep){
+    L.intensity = Math.max(0, (+L.intensity||0) * k);
+    L.castShadow = false;                                   // a shadow map per imported lamp is a whole depth pass
+    if(L.isPointLight || L.isSpotLight){ if(!(L.distance > 0) || L.distance > MODEL_LIGHT_MAX_DIST) L.distance = reach; }
+    if(typeof registerEmitterLight==='function') registerEmitterLight(L);   // build 811's budget culls it by distance
+  }
+  obj.userData.modelLights = keep;
+  return keep;
+}
+// Unregister only — the normalised set is REMEMBERED on the prop, so a shatter/restore round trip re-registers
+// the same lights rather than re-scaling them.
+function releaseModelLights(obj){
+  const ls = obj && obj.userData && obj.userData.modelLights; if(!ls) return;
+  for(const L of ls){ if(typeof unregisterEmitterLight==='function') unregisterEmitterLight(L); }
+}
 function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.position.set(t[0], t[1], t[2]);   // provisional; the terrain lift is applied below once the footprint is known
   obj.rotation.set(t[3], t[4], t[5]);
@@ -15077,6 +15136,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
           m.needsUpdate = true;
         }
       } } } });
+  if(gltf) adoptModelLights(obj);   // build 1157: a GLB's own KHR_lights_punctual lights, made sane and budgeted
   obj.userData.src = src;
   if(nid && typeof propByNid==='function' && propByNid(nid)) nid = genNid();   // build 905: stored levels can carry DUPLICATE nids (props copied across saves) — nid-keyed sync (pDel/pMov/the reconciler's maps) then hits the wrong prop, so a live collision gets a fresh id (the next save writes it back, healing the level)
   obj.userData.nid = nid || genNid();   // assign once; load/net paths pass an existing id to keep peers aligned
@@ -15220,6 +15280,7 @@ function removeProp(idx){
   const obj = propModels[idx]; if(!obj) return;
   if(obj.userData._fireGroup && typeof _removePropFireVisual==='function') _removePropFireVisual(obj);   // drop any attached flames
   if(obj.userData.emitLight && typeof unregisterEmitterLight==='function') unregisterEmitterLight(obj.userData.emitLight);
+  if(typeof releaseModelLights==='function') releaseModelLights(obj);   // build 1157: and any the GLB brought with it
   if(obj.userData.phys && typeof removeDynamicProp==='function') removeDynamicProp(obj);
   scene.remove(obj);
   const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1);
@@ -25997,7 +26058,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1156 · 2026-07-30';
+const BUILD_VERSION = 'build 1157 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27492,6 +27553,7 @@ function shatterProp(obj, point, dir, power, byId){
   if(!obj || obj.userData._shattered) return;
   obj.userData._shattered = true;
   if(obj.userData._fireGroup && typeof _removePropFireVisual==='function') _removePropFireVisual(obj);   // drop its flames with it
+  if(typeof releaseModelLights==='function') releaseModelLights(obj);   // build 1157: a destroyed lamp gives its budget slot back (restoreDestroyedProps re-adopts it)
   if(typeof NET==='undefined' || NET.mode!=='client'){ try{ fireSignals(obj, 'destroyed'); }catch(e){} }   // clients converge via the actions' own broadcasts
   obj.updateMatrixWorld(true);
   _shBox.setFromObject(obj, true); _shBox.getSize(_shSize); _shBox.getCenter(_shCtr);
@@ -27653,6 +27715,7 @@ function restoreDestroyedProps(){   // bring back authored props destroyed durin
     o.userData._destroyed=false; o.userData._shattered=false;
     if(home){ o.position.copy(home.p); o.quaternion.copy(home.q); }
     o.visible=true; if(!o.parent) scene.add(o);
+    if(o.userData.modelLights && typeof adoptModelLights==='function') adoptModelLights(o);   // build 1157: re-register, never re-scale
     if(o.userData._wasDyn){ o.userData._wasDyn=false; setPropDynamic(o, true); }   // re-register dynamic (recaptures physHome from the restored position)
     else { refreshPropCollider(o); if(colliders.indexOf(o)<0) colliders.push(o); }
     if(o.userData.maxHp) o.userData.hp = o.userData.maxHp;
