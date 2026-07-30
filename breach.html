@@ -32,7 +32,10 @@
   /* build 954: brand wordmark face — served from fonts/ beside the game (works on any host, no CORS) */
   @font-face { font-family:'Kaph'; src:url('fonts/Kaph-Regular.woff') format('woff'); font-display:swap; }
 
-  :root{ --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Rajdhani', sans-serif; --display-font:'Rajdhani', sans-serif; }
+  /* build 1138: color-scheme did not appear once in the whole file, so every native control —
+     checkboxes, radios, scrollbars, spinners — rendered in the browser's LIGHT theme: a white
+     checkbox in the darkest panel in the product. One declaration fixes all of them. */
+  :root{ color-scheme: dark; --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Rajdhani', sans-serif; --display-font:'Rajdhani', sans-serif; }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #05070a; font-family:var(--ui-font); }
@@ -89,7 +92,7 @@
   #editor.dockLeft { left:0; right:auto; border-left:none; border-right:1px solid rgba(var(--accent-rgb),0.35); box-shadow:6px 0 24px rgba(0,0,0,0.5); }
   #editor.dockLeft #editorResize { left:auto; right:-3px; }
   #editor h3 { margin: 0 0 6px; font-size: 13px; color: var(--accent); letter-spacing: .04em; }
-  #editor .hint { color: #5a7d72; font-size: 11px; margin-bottom: 10px; }
+  #editor .hint { color: #a8ccbf; font-size: 11px; margin-bottom: 10px; }
   #editor .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
   /* primary mode switch — groups the panel so only the relevant tabs+sections show at once */
   #editor .edModes { display:flex; flex-wrap:wrap; gap:2px; margin-bottom:12px; border-bottom:2px solid rgba(var(--accent-rgb),0.28); }   /* build 907: 8 tabs at min-content overflowed the 320px panel — HUD/Files were clipped off on every device */
@@ -413,6 +416,10 @@
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     width: 26px; height: 26px;
     transition: opacity .12s;
+    /* build 1138: the reticle is drawn over whatever the level happens to be, and measured 1.07:1
+       against snow — invisible exactly when aiming matters. A 1px dark outline under every stroke costs
+       nothing and makes it legible on white and on black, which is what every shipped shooter does. */
+    filter: drop-shadow(0 0 1px rgba(0,0,0,.95)) drop-shadow(0 0 2px rgba(0,0,0,.55));
   }
   #crosshair::before, #crosshair::after { display:none; }   /* crosshair is built in JS now (configurable) */
   #crosshair .dot {
@@ -423,13 +430,19 @@
   /* Bottom-left status */
   .panel {
     position: absolute; padding: 14px 18px;
-    background: linear-gradient(135deg, rgba(8,18,22,calc(.82*var(--hud-panel-op,1))), rgba(8,18,22,calc(.5*var(--hud-panel-op,1))));
+    /* build 1138: the low stop was .5, which let the LEVEL's albedo set the HUD's brightness. Over a
+       bright level (blown snow, sunlit sand) the panel composited to #84888a, and against that even
+       WHITE text measures 3.58:1 and the secondary label 1.27:1 — below every legibility threshold
+       there is, on a surface whose whole job is to be read at a glance. At .84 the same worst case
+       composites to #30383b and the secondary hits 6.87:1. Still a gradient, still translucent over
+       a dark level; --hud-panel-op remains, so a creator can go sheerer knowingly. */
+    background: linear-gradient(135deg, rgba(8,18,22,calc(.92*var(--hud-panel-op,1))), rgba(8,18,22,calc(.84*var(--hud-panel-op,1))));
     border: 1px solid rgba(var(--accent-rgb),.35);
     backdrop-filter: blur(4px);
     clip-path: polygon(0 0, 100% 0, 100% 70%, 92% 100%, 0 100%);
   }
   #stats { left: 26px; bottom: 26px; min-width: 230px; }
-  .label { font-size: 11px; letter-spacing: 2px; color: #5a7d72; text-transform: uppercase; }
+  .label { font-size: 11px; letter-spacing: 2px; color: #a8ccbf; text-transform: uppercase; }
   .big { font-size: 34px; font-weight: 700; line-height: 1; margin-top: 2px; }
   .bar { height: 6px; background: rgba(255,255,255,.08); margin-top: 8px; border-radius: 2px; overflow: hidden; }
   .bar i { display: block; height: 100%; transition: width .15s; }
@@ -444,7 +457,7 @@
   #wavePanel { top: 70px; left: 50%; transform: translateX(-50%); text-align: center;
     clip-path: polygon(6% 0, 94% 0, 100% 100%, 0 100%); min-width: 220px; }
   #waveNum { font-size: 22px; font-weight: 700; color: var(--accent); letter-spacing: 3px; }
-  #enemyCount { font-size: 12px; color: #5a7d72; letter-spacing: 2px; margin-top:2px; }
+  #enemyCount { font-size: 12px; color: #a8ccbf; letter-spacing: 2px; margin-top:2px; }
 
   #score { position:absolute; top: 26px; right: 26px; text-align:right; }
   #scoreVal { font-size: 26px; font-weight:700; color:var(--gold); }
@@ -768,7 +781,7 @@
     border:1px solid rgba(var(--accent-rgb),.14); background:rgba(8,16,18,.45);
     border-radius:12px; padding:14px 22px;
   }
-  #controls { margin-top: 26px; color:#5a7d72; font-size: 12px; letter-spacing:2px; line-height:1.9; }
+  #controls { margin-top: 26px; color:#a8ccbf; font-size: 12px; letter-spacing:2px; line-height:1.9; }
   #mpBox { margin-top: 16px; display:flex; flex-direction:column; align-items:center; gap:8px; }
   .mpHead { color:#7fa99c; font:600 12px/1 var(--ui-font); letter-spacing:4px; margin-bottom:4px; }
   .mpRow { display:flex; gap:8px; align-items:center; justify-content:center; }
@@ -1068,14 +1081,16 @@
   .buff { padding:6px 12px; font-size:12px; letter-spacing:1px; font-weight:600;
     background:rgba(8,18,22,.8); border-left:3px solid var(--accent); color:#d6f5e8;
     display:flex; gap:8px; align-items:center; min-width:140px; }
-  .buff .t { margin-left:auto; color:#5a7d72; font-variant-numeric:tabular-nums; }
+  .buff .t { margin-left:auto; color:#a8ccbf; font-variant-numeric:tabular-nums; }
 
   /* Interaction prompt */
   #prompt { position:absolute; left:50%; bottom:120px;
     transform:translateX(-50%) translate(var(--el-prompt-dx,0px),var(--el-prompt-dy,0px)) scale(var(--el-prompt-s,1)); transform-origin:center bottom; opacity:var(--el-prompt-op,1);
     text-align:center; color:var(--el-tint, var(--accent,#ffd166)); font-size:15px; letter-spacing:1px; font-weight:600;
     font-family:var(--el-font, var(--hud-font, var(--ui-font))), ui-monospace, monospace;
-    background:linear-gradient(135deg, rgba(8,18,22,calc(.88*var(--hud-panel-op,1))), rgba(8,18,22,calc(.6*var(--hud-panel-op,1))));
+    /* build 1138: the interact prompt is the same class of surface as .panel and had the same fault —
+       a .6 low stop composites to #6b7173 over a white level, where even the accent measures 3.52:1. */
+    background:linear-gradient(135deg, rgba(8,18,22,calc(.92*var(--hud-panel-op,1))), rgba(8,18,22,calc(.84*var(--hud-panel-op,1))));
     backdrop-filter:blur(4px); padding:10px 20px; border:1px solid rgba(var(--accent-rgb,255,209,102),.4);
     clip-path:polygon(4% 0,96% 0,100% 100%,0 100%); display:none; }
   #prompt b { color:#06120f; background:var(--el-tint, var(--accent,#ffd166)); padding:1px 8px; border-radius:3px; }
@@ -1110,7 +1125,7 @@
   .shopName { font-weight:700; font-size:15px; color:#e8fff6; letter-spacing:.5px; }
   .shopDesc { font-size:11px; color:#7fa99c; margin-top:2px; }
   .shopCost { font-weight:700; color:var(--gold); font-size:16px; white-space:nowrap; }
-  .shopFoot { color:#5a7d72; font-size:11px; letter-spacing:2px; margin-top:14px; text-align:center; }
+  .shopFoot { color:#a8ccbf; font-size:11px; letter-spacing:2px; margin-top:14px; text-align:center; }
 
   #fade { animation: fadein .4s ease; }
   @keyframes fadein { from{opacity:0} to{opacity:1} }
@@ -1160,7 +1175,7 @@
 
   <div id="ammoPanel" class="panel">
     <div class="label" id="wepName">RIFLE</div>
-    <div class="big"><span id="ammo">30</span><span style="font-size:16px;color:#5a7d72">/<span id="reserve">90</span></span></div>
+    <div class="big"><span id="ammo">30</span><span style="font-size:16px;color:#a8ccbf">/<span id="reserve">90</span></span></div>
     <div class="label" style="margin-top:6px">⊕ <span id="nades">0</span><span id="nadeKbd"></span></div>
   </div>
 
@@ -1244,7 +1259,7 @@
       <b data-bind="reload">R</b> reload (rotates the ghost while building) &nbsp;·&nbsp; <b data-bind="melee">V</b> melee (auto when dry) &nbsp;·&nbsp; <b data-bind="grenade">F</b> throw grenade &nbsp;·&nbsp; <b data-bind="interact">E</b> use station / open cache &nbsp;·&nbsp; <b>1·2·3</b> / <b>scroll</b> weapons<br>
       <b>ESC</b> pause &nbsp;·&nbsp; <b>P</b> open the in-game model/transform editor<br>
       <span style="color:var(--gold)">Kill enemies for ◆ credits — spend them at the ammo station and supply caches.</span>
-      <div id="padNote" style="display:none;margin-top:10px;color:var(--accent)"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="11" x2="10" y2="11"/><line x1="8" y1="9" x2="8" y2="13"/><line x1="15" y1="12" x2="15.01" y2="12"/><line x1="18" y1="10" x2="18.01" y2="10"/><rect width="20" height="12" x="2" y="6" rx="2"/></svg>Controller connected — <b>L-stick</b> move · <b>R-stick</b> look · <b>RT</b> fire · <b>LT</b> aim · <b>A</b> jump · <b>X</b> reload · <b>Y</b> use · <b>B</b> grenade · <b>LB/RB</b> weapons · <b>L3</b> sprint · <b>any button</b> deploys &nbsp; <span style="color:#5a7d72">(press <b>`</b> for controller test)</span></div>
+      <div id="padNote" style="display:none;margin-top:10px;color:var(--accent)"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="11" x2="10" y2="11"/><line x1="8" y1="9" x2="8" y2="13"/><line x1="15" y1="12" x2="15.01" y2="12"/><line x1="18" y1="10" x2="18.01" y2="10"/><rect width="20" height="12" x="2" y="6" rx="2"/></svg>Controller connected — <b>L-stick</b> move · <b>R-stick</b> look · <b>RT</b> fire · <b>LT</b> aim · <b>A</b> jump · <b>X</b> reload · <b>Y</b> use · <b>B</b> grenade · <b>LB/RB</b> weapons · <b>L3</b> sprint · <b>any button</b> deploys &nbsp; <span style="color:#a8ccbf">(press <b>`</b> for controller test)</span></div>
     </div>
     <div id="controlsTouch" style="display:none">
       <b>Left stick</b> move · push to the edge to <b>sprint</b><br>
@@ -25116,7 +25131,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1137 · 2026-07-30';
+const BUILD_VERSION = 'build 1138 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39160,8 +39175,8 @@ function _sndRow(label, get, set){
   const inp=document.createElement('input'); inp.type='text'; inp.spellcheck=false; inp.placeholder='https://…/sound.mp3'; inp.value=get()||'';
   inp.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:11px;';
   const test=document.createElement('button'); test.textContent='▶'; test.title='Test'; test.style.cssText='flex:0 0 auto;width:26px;background:rgba(var(--accent-rgb),.16);border:1px solid var(--accent);color:#eafff7;border-radius:4px;cursor:pointer;';
-  const st=document.createElement('span'); st.style.cssText='flex:0 0 auto;width:14px;text-align:center;font-size:12px;color:#5a7d72;';
-  const mark=(x)=>{ st.textContent = x==='ok'?'✓':x==='loading'?'…':x==='error'?'✗':''; st.style.color = x==='error'?'#ff6b6b':(x==='ok'?'var(--accent)':'#5a7d72'); };
+  const st=document.createElement('span'); st.style.cssText='flex:0 0 auto;width:14px;text-align:center;font-size:12px;color:#a8ccbf;';
+  const mark=(x)=>{ st.textContent = x==='ok'?'✓':x==='loading'?'…':x==='error'?'✗':''; st.style.color = x==='error'?'#ff6b6b':(x==='ok'?'var(--accent)':'#a8ccbf'); };
   inp.onchange=()=>{ const u=inp.value.trim(); set(u); saveAudioSettings(); if(u){ initAudio(); loadSound(u, mark); } else mark(''); };
   test.onclick=()=>{ const u=inp.value.trim(); if(!u){ return; } initAudio(); loadSound(u, (x)=>{ mark(x); if(x==='ok'){ playSample(u); } else if(x==='loading'){ setTimeout(()=>{ if(playSample(u)) mark('ok'); }, 500); } }); };
   const u0=get(); if(u0){ const b=_soundBuffers[u0]; if(b && b.duration!==undefined) mark('ok'); else { mark('loading'); loadSound(u0, mark); } }
@@ -39236,7 +39251,7 @@ function renderFreesoundBrowser(host, refresh, directTarget){
       const card=document.createElement('div'); card.style.cssText='border:1px solid #233;border-radius:6px;padding:6px;display:flex;gap:6px;align-items:center;';
       const info=document.createElement('div'); info.style.cssText='flex:1;min-width:0;';
       const nm=document.createElement('div'); nm.textContent=snd.name; nm.style.cssText='color:#cfeee2;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-      const meta=document.createElement('div'); meta.style.cssText='color:#5a7d72;font-size:10px;'; meta.textContent=(snd.username?('by '+snd.username):'')+(snd.duration?(' \u00b7 '+snd.duration.toFixed(1)+'s'):'')+(snd.license?(' \u00b7 '+fsLicShort(snd.license)):'');
+      const meta=document.createElement('div'); meta.style.cssText='color:#a8ccbf;font-size:10px;'; meta.textContent=(snd.username?('by '+snd.username):'')+(snd.duration?(' \u00b7 '+snd.duration.toFixed(1)+'s'):'')+(snd.license?(' \u00b7 '+fsLicShort(snd.license)):'');
       info.appendChild(nm); info.appendChild(meta);
       const _fsAtt=(snd.name||'Sound')+(snd.username?(' by '+snd.username):'')+' ['+fsLicShort(snd.license)+'] — via Freesound'+(snd.license?(' · '+snd.license):'');   // build 549: credit string for the picked sound
       const play=document.createElement('button'); play.textContent='\u25b6'; play.title='Preview'; play.style.cssText='flex:0 0 auto;width:26px;'+B;

@@ -14,7 +14,7 @@ assert(/ctx\.strokeStyle = 'rgba\('\+_mAccRgb\+',0\.12\)';/.test(src), 'minimap 
 assert(/blip\(extractPos\.x, extractPos\.z, _mAcc/.test(src), 'minimap objective blips use the per-level accent');
 
 // :root stays a real color (not circular) so the whole var system resolves
-assert(/:root\{ --accent:#38f5b5;/.test(page), ':root accent is a concrete color (not self-referential)');
+assert(/:root\{ color-scheme: dark; --accent:#38f5b5;/.test(page), ':root accent is a concrete color (not self-referential)');
 // the JS-built DOM now leans on the CSS var broadly
 assert(page.split('var(--accent)').length - 1 >= 90, 'the accent variable now drives ~all of the DOM UI');
 // world/gameplay colors (THREE 0x38f5b5) were intentionally left alone
