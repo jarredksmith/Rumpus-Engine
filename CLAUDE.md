@@ -471,7 +471,35 @@ Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean he
 world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
 unique-colour measurement — `postGrain` is stochastic per frame.
 
-## Open work (as of build 1145)
+## The gizmo snaps (build 1146)
+
+The transform gizmo moved, rotated and scaled in raw continuous mouse units. Nothing in the product could
+put two crates on one lattice, sit a wall flush against another, or turn a prop exactly 90 degrees — except
+the numeric fields, at five decimal places, one axis at a time. Build 929's `buildSnap` is a *different*
+feature and is untouched: that snaps the PLACEMENT of a new block against the face you aim at; this snaps
+the TRANSFORM of something already in the scene.
+
+Four decisions, each of which could reasonably have gone the other way:
+- **A single object snaps its resulting POSITION** to the world lattice, so two crates placed in separate
+  drags land on the same grid. `_snapAlong` snaps only the component along the drag axis — snapping the
+  whole vector would drag the two axes the creator is *not* touching onto the grid, so an object
+  deliberately placed off-lattice would jump the moment any axis was nudged.
+- **A group snaps the DISTANCE MOVED.** Snapping each member absolutely pulls a deliberate arrangement
+  apart — two crates 1.2 apart become 1.0 or 1.5 apart. The delta keeps the cluster rigid.
+- **Scale snaps the SIZE, not the factor.** A box primitive's scale *is* its size in metres, so what a
+  creator wants is a wall exactly 3.0 wide; the factor is derived back out of the snapped size, which keeps
+  proportional scaling proportional while landing the dragged axis on a round number. The all-axes handle
+  and a group scale have no single size to land, so there the factor is what snaps.
+- **Rotate snaps the ANGLE TURNED**, before the quaternion is built. Decomposing an orientation back out of
+  a quaternion is ambiguous, and "a quarter turn from here" is what the handle is for. 15° divides 90 and 360.
+
+`Ctrl`/`Cmd` **inverts** rather than enables: with snapping on (the default) the modifier is how you nudge
+into a gap, and with it off the modifier is how you grab the lattice for one drag. Both are what a creator
+reaches for and one key serves both — but an invisible inverting modifier is a trap, so the checkbox says
+so. `Shift` is deliberately not the key: it is already multi-select here. A step of 0 turns snapping off for
+that channel only, which the field's tooltip states.
+
+## Open work (as of build 1146)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

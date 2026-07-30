@@ -25534,7 +25534,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1145 · 2026-07-30';
+const BUILD_VERSION = 'build 1146 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36005,6 +36005,34 @@ function renderEditorFields(){
         lab.appendChild(cb); lab.appendChild(span);
         gz.appendChild(lab);
       }
+      // build 1146: snapping. On by default, because a level editor whose handles cannot line two objects
+      // up is not a level editor; Ctrl inverts it for one drag, which is the escape hatch every DCC has.
+      {
+        const lab=document.createElement('label');
+        lab.style.cssText='display:flex;align-items:center;gap:7px;margin:7px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer;';
+        const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=gizmoSnap; cb.style.accentColor='var(--accent)';
+        cb.onchange=()=>{ gizmoSnap=cb.checked; _saveSnapPrefs(); renderEditorFields(); };
+        const span=document.createElement('span'); span.innerHTML='Snap to grid <b>(hold Ctrl to invert)</b>';
+        lab.appendChild(cb); lab.appendChild(span);
+        gz.appendChild(lab);
+        const steps=document.createElement('div');
+        // flex-wrap and a tight input: three labelled numbers do not fit the 342px inspector on one line,
+        // and the third was clipped by the panel edge in the capture
+        steps.style.cssText='display:flex;flex-wrap:wrap;gap:4px 8px;margin:2px 0 4px;'+(gizmoSnap?'':'opacity:0.45;');
+        const mk=(title, get, set, min, step)=>{
+          const w=document.createElement('label'); w.style.cssText='display:flex;align-items:center;gap:4px;color:#a8ccbf;font-size:11px;';
+          const t=document.createElement('span'); t.textContent=title;
+          const inp=document.createElement('input'); inp.type='number'; inp.min=String(min); inp.step=String(step); inp.value=String(get());
+          inp.title='0 turns snapping off for this channel only';
+          inp.style.cssText='width:46px;min-width:46px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+          inp.onchange=()=>{ const v=parseFloat(inp.value); if(isFinite(v) && v>=0){ set(v); _saveSnapPrefs(); } inp.value=String(get()); };
+          w.appendChild(t); w.appendChild(inp); return w;
+        };
+        steps.appendChild(mk('grid',  ()=>snapGrid,      (v)=>{ snapGrid=v; },      0, 0.25));
+        steps.appendChild(mk('angle\u00b0', ()=>snapAngleDeg, (v)=>{ snapAngleDeg=v; }, 0, 5));
+        steps.appendChild(mk('scale', ()=>snapScaleStep, (v)=>{ snapScaleStep=v; }, 0, 0.05));
+        gz.appendChild(steps);
+      }
     }
   }
 
@@ -37600,6 +37628,42 @@ function _setJointGiz(o){
 let gizmo = null, gizmoDrag = null;
 let gizmoMode = 'translate';        // 'translate' | 'rotate' | 'scale'
 let scaleProportional = true;       // default: uniform scaling; checkbox lets the user go non-uniform
+// ---- build 1146: gizmo snapping ----
+// The transform gizmo moved, rotated and scaled in raw continuous mouse units. Nothing in the product
+// could put two crates on one lattice, sit a wall flush against another, or turn a prop exactly 90
+// degrees — the numeric fields could, at five decimal places, one axis at a time. Every editor a creator
+// has used (Unreal, Unity, Blender, Godot) snaps by default and holds a modifier to escape it. Build
+// 929's `buildSnap` is a different feature: it snaps PLACEMENT of a new block against the face you aim
+// at. This snaps the TRANSFORM of something already in the scene.
+let gizmoSnap = true;
+let snapGrid = 0.5;        // metres per translate step
+let snapAngleDeg = 15;     // degrees per rotate step — 15 divides 90 and 360, so corners land exactly
+let snapScaleStep = 0.25;  // scale units per step; a box primitive's scale IS its size in metres
+try{
+  const v = localStorage.getItem('breach_gizsnap'); if(v==='off') gizmoSnap=false; else if(v==='on') gizmoSnap=true;
+  const g = parseFloat(localStorage.getItem('breach_gizsnap_g')); if(isFinite(g) && g>=0) snapGrid=g;
+  const a = parseFloat(localStorage.getItem('breach_gizsnap_a')); if(isFinite(a) && a>=0) snapAngleDeg=a;
+  const c = parseFloat(localStorage.getItem('breach_gizsnap_s')); if(isFinite(c) && c>=0) snapScaleStep=c;
+}catch(e){}
+function _saveSnapPrefs(){ try{
+  localStorage.setItem('breach_gizsnap', gizmoSnap?'on':'off');
+  localStorage.setItem('breach_gizsnap_g', String(snapGrid));
+  localStorage.setItem('breach_gizsnap_a', String(snapAngleDeg));
+  localStorage.setItem('breach_gizsnap_s', String(snapScaleStep));
+}catch(e){} }
+// Ctrl (or Cmd) INVERTS the setting rather than enabling it — with snapping on, which is the default, the
+// modifier is how you nudge something into a gap; with it off, the modifier is how you grab the lattice
+// for one drag. Both directions are what a creator reaches for, and one key serves both.
+function _snapOn(e){ const inv = !!(e && (e.ctrlKey || e.metaKey)); return gizmoSnap !== inv; }
+const _snapTo = (v, step) => (step > 0 && isFinite(v)) ? Math.round(v / step) * step : v;
+// Snap a POSITION's component along one axis to the world lattice, leaving the perpendicular part exactly
+// as it was. Snapping the whole vector would drag the two axes the creator is not touching onto the grid
+// too — so an object deliberately placed off-lattice would jump the moment any axis was nudged.
+function _snapAlong(p, dir, step){
+  if(!(step > 0) || !p || !dir) return p;
+  const t = p.dot(dir);                       // dir is a unit axis
+  return p.addScaledVector(dir, _snapTo(t, step) - t);
+}
 const AXIS_COL = { x:0xff5566, y:0x66ff88, z:0x5599ff };
 // ---- Multi-selection (shift+click props to select several; >1 transforms as a group) ----
 let selProps = [];        // selected prop meshes; the "primary" is editorTargets.props.idx
@@ -38146,16 +38210,31 @@ function gizmoDragMove(e){
   if(d.group){ applyGroupDrag(e, d); return; }   // multi-selection: transform the whole group about the pivot
   if(d.kind==='translate'){
     const s = axisParamUnderPointer(e, d.startPos, d.dir);
-    setSelPos(d.startPos.clone().addScaledVector(d.dir, s - d.startParam));
+    let p = d.startPos.clone().addScaledVector(d.dir, s - d.startParam);
+    // build 1146: a SINGLE object snaps its resulting position to the world lattice, so two crates placed
+    // in separate drags land on the same grid and read as flush. (A group snaps its delta instead — see
+    // applyGroupDrag: snapping each member absolutely would pull a deliberate arrangement apart.)
+    if(_snapOn(e)) p = _snapAlong(p, d.dir, snapGrid);
+    setSelPos(p);
   } else if(d.kind==='scale'){
     if(d.axis==='all'){
       const pos = getSelPos();
-      const f = Math.max(0.02, scaleRefDistance(e, pos) / d.refDist);
+      let f = Math.max(0.02, scaleRefDistance(e, pos) / d.refDist);
+      // the centre handle has no axis to land on a round size, so the FACTOR is what snaps
+      if(_snapOn(e)) f = Math.max(0.02, _snapTo(f, snapScaleStep));
       setSelScale(d.startScale.clone().multiplyScalar(f));
     } else {
       const pos = getSelPos();
       const cur = axisParamUnderPointer(e, pos, d.dir);
-      const f = Math.max(0.02, cur / d.startParam);
+      let f = Math.max(0.02, cur / d.startParam);
+      // build 1146: snap the SIZE, not the factor. A box primitive's scale is its size in metres, so what
+      // a creator wants is a wall exactly 3.0 wide — and deriving f back out of the snapped size keeps
+      // proportional scaling proportional while still landing the dragged axis on a round number.
+      const ax = (d.axis==='x') ? 'x' : (d.axis==='y') ? 'y' : 'z';
+      if(_snapOn(e) && snapScaleStep > 0 && d.startScale[ax] > 1e-6){
+        const want = _snapTo(d.startScale[ax] * f, snapScaleStep);
+        if(want >= snapScaleStep * 0.5) f = want / d.startScale[ax];   // never snap a size to zero
+      }
       if(scaleProportional){
         setSelScale(d.startScale.clone().multiplyScalar(f));
       } else {
@@ -38173,6 +38252,10 @@ function gizmoDragMove(e){
     // signed angle from startVec to cur around the axis normal
     let ang = Math.atan2(cur.clone().cross(d.startVec).dot(d.normal), cur.dot(d.startVec));
     ang = -ang;
+    // build 1146: the ANGLE TURNED snaps, not the resulting orientation. Snapping the orientation would
+    // need the rotation decomposed back out of a quaternion, which is ambiguous; and a creator asking for
+    // "a quarter turn from here" is what the handle is for. 15 degrees divides both 90 and 360.
+    if(_snapOn(e) && snapAngleDeg > 0) ang = _snapTo(ang, snapAngleDeg * Math.PI / 180);
     const q0 = new THREE.Quaternion().setFromEuler(d.startEuler);
     const dq = new THREE.Quaternion().setFromAxisAngle(d.normal, ang);
     const euler = new THREE.Euler().setFromQuaternion(dq.multiply(q0));
@@ -38190,12 +38273,19 @@ function applyGroupDrag(e, d){
   const touch = (o)=>{ if(!isL){ if(typeof retileProcSurface==='function') retileProcSurface(o, _propProcSpan(o)); refreshPropCollider(o); _homeSync(o); } };   // lights have no collider; build 713: keep dynamic props' authored home synced; build 1139: keep the grain's physical size through a gizmo scale
   if(d.kind==='translate'){
     const s = axisParamUnderPointer(e, pivot, d.dir);
-    const off = d.dir.clone().multiplyScalar(s - d.startParam);
+    // build 1146: a GROUP snaps the DISTANCE MOVED, not each member's position. Snapping every member to
+    // the lattice independently would pull a deliberate arrangement apart the first time it was nudged —
+    // two crates 1.2 apart would become 1.0 or 1.5 apart. The delta keeps the cluster rigid and still
+    // lets it travel in exact steps.
+    let dist = s - d.startParam;
+    if(_snapOn(e)) dist = _snapTo(dist, snapGrid);
+    const off = d.dir.clone().multiplyScalar(dist);
     for(const it of d.group){ it.obj.position.copy(it.pos).add(off); touch(it.obj); }
   } else if(d.kind==='rotate'){
     const hit = pointerOnPlane(e, pivot, d.normal); if(!hit) return;
     const cur = hit.clone().sub(pivot);
     let ang = Math.atan2(cur.clone().cross(d.startVec).dot(d.normal), cur.dot(d.startVec)); ang = -ang;
+    if(_snapOn(e) && snapAngleDeg > 0) ang = _snapTo(ang, snapAngleDeg * Math.PI / 180);   // build 1146
     _gdq.setFromAxisAngle(d.normal, ang);
     for(const it of d.group){
       it.obj.position.copy(_gtmp.copy(it.pos).sub(pivot).applyQuaternion(_gdq)).add(pivot);   // orbit about the pivot
@@ -38206,6 +38296,9 @@ function applyGroupDrag(e, d){
     let f;
     if(d.axis==='all') f = Math.max(0.02, scaleRefDistance(e, pivot) / d.refDist);
     else { const cur = axisParamUnderPointer(e, pivot, d.dir); f = Math.max(0.02, cur / d.startParam); }
+    // build 1146: a group scale spreads the whole cluster, so there is no single size to land on a round
+    // number — the FACTOR is the only meaningful thing to snap here.
+    if(_snapOn(e)) f = Math.max(0.02, _snapTo(f, snapScaleStep));
     for(const it of d.group){   // group scaling spreads/contracts the cluster about the pivot
       it.obj.position.copy(_gtmp.copy(it.pos).sub(pivot).multiplyScalar(f)).add(pivot);
       if(!isL) it.obj.scale.copy(it.scale).multiplyScalar(f);   // lights don't scale; just spread their positions
