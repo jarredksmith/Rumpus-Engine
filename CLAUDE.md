@@ -292,7 +292,38 @@ creator's own normal map would inherit whatever scale was left behind. `STR` was
 read as crumpled foil with grazing-angle moiré; the Sobel sums eight taps of a unit-amplitude field, so
 micro-relief is `STR ≈ 0.3` (steepest slope ~8°).
 
-## Open work (as of build 1139)
+## The viewmodel is part of the frame (build 1140)
+
+`renderViewmodel()` used to draw straight to the CANVAS from the frame loop, *after* `renderScene` had
+finished — so the one object on screen at all times, across 11% of it, was the only object outside the
+frame's look: no bloom on its muzzle flash or its metal, no vignette, no grain, its own colour response.
+It was also absent from the SSAO G-buffer, so the AO term at its pixels came from the WORLD BEHIND IT and
+was then multiplied into it — the weapon wore the shading of whatever it stood in front of and had no
+occlusion of its own anywhere.
+
+It is now three functions: `_vmWanted()` (the predicate, asked by both callers), `_drawViewmodel()`
+(draws into **whatever target is bound** — the caller owns it), and `renderViewmodel()` (the frame loop's
+straight-to-canvas call, a no-op when `_vmDone`). `_renderPostFX` binds `_postRT` and draws the weapon
+after the scene and after DoF (a first-person weapon stays sharp) and before bloom, then renders `vmScene`
+with `_matAOGeo` into `_aoGeoRT` inside the existing `_aoWant` gate, so the extra pass disappears with AO.
+That last part only works because `vmCam` tracks the main camera's fov/aspect and the G-buffer stores a
+raw view distance — if either changes, the weapon's AO silently goes wrong.
+
+**The default level had NO post-processing at all.** `if(!(savedLevel && savedLevel.world))
+_postOffWorld(worldCfg)` — build 796 — zeroed bloom, motion blur, vignette, grain, the grade and `ssao`
+for a first-time scene. Probed on the stock frame: `bloom=0 vig=0 aoAmt=0`. That was right when the
+first-time scene was 22 boxes at `Math.random()` positions; from build 1133 it is a designed level, so
+every visual system builds 1126, 1128, 1135 and 1136 added was switched off in the first frame anybody
+ever sees — and *unmeasurable there*, which is why those builds were all measured on generated arenas.
+An EMPTY scene still starts clean: `_wipeSceneCore` keeps calling `_postOffWorld`, and that is where 796's
+actual intent lives.
+
+Measured, stock level, same camera: weapon body 2,473 → 5,837 unique colours; weapon grip mean
+72,81,71 → 56,65,56; frame corner 70,74,62 → 57,59,50 (the vignette); crate foot 109,143,139 → 97,133,128
+(world AO). A/B on the G-buffer pass alone, everything else in place: weapon grip 69,80,67 → 56,65,56
+while the crate foot stays byte-identical — so the weapon's occlusion is its own, not the vignette's.
+
+## Open work (as of build 1140)
 
 **`arenaMood` never emits `floorColor` or `wallColor`.** Every other world key it touches (sky, fog,
 post, `ssao`) it sets, but a generated desert arena still sits on the engine's default grey-blue floor

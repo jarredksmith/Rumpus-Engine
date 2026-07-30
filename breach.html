@@ -7024,11 +7024,18 @@ function _runDofTo(scn, cam, out){
   renderer.setRenderTarget(out); renderer.render(_dofScene, _dofCam);
   return true;
 }
+// build 1140: has this frame's viewmodel already been drawn? The post chain draws it inside itself (so it
+// is graded with the rest of the frame) and the frame loop's trailing renderViewmodel() then stands down.
+// Declared HERE, above its first reader, rather than beside the viewmodel code 9,000 lines below — this
+// file has taken the whole sky out twice by declaring a `let` under the function that reads it.
+let _vmDone = false;
 function renderScene(scn, cam){
   const _r=perfOn?_pnow():0;
+  _vmDone = false;   // a new frame's worth of scene: whoever gets there first draws the weapon
   if(_postOn && !_postFail && typeof ensurePost==='function' && ensurePost()){
     try{ _renderPostFX(scn, cam); if(perfOn)_prof.render+=_pnow()-_r; return; }   // build 1122: counters are read once, at the end of the frame
-    catch(e){ _postFail=true; try{ renderer.setRenderTarget(null); }catch(_e){} if(typeof console!=='undefined') console.warn('Post-FX disabled after an error:', e&&e.message); }
+    catch(e){ _postFail=true; _vmDone=false;   // build 1140: the weapon may have gone into the buffer we just threw away — let the plain path draw it
+      try{ renderer.setRenderTarget(null); }catch(_e){} if(typeof console!=='undefined') console.warn('Post-FX disabled after an error:', e&&e.message); }
   }
   if(!dofEnabled || !ensureDof()){ renderer.render(scn, cam); }
   else { _runDofTo(scn, cam, null); }
@@ -7363,6 +7370,14 @@ function _renderPostFX(scn, cam){
   // 1) scene -> full-res color (run DoF first when active, so bloom/grade operate on the focus-blurred image)
   if(dofEnabled && ensureDof()){ _runDofTo(scn, cam, _postRT); }
   else { renderer.setRenderTarget(_postRT); renderer.render(scn, cam); }
+  // 1a) build 1140: the weapon joins the frame. It used to be drawn to the CANVAS after renderScene had
+  // finished, i.e. after bloom, the colour grade, the vignette, the grain and the motion blur — so the
+  // one object on screen at all times, across 11% of it, was the only object outside the frame's look.
+  // No bloom on its muzzle flash or its metal highlights, no vignette, no grain, its own colour
+  // response. Drawn here it is inside all of it. DoF ran above and deliberately does NOT reach it: a
+  // first-person weapon stays sharp.
+  const _vmHere = _vmWanted();
+  if(_vmHere){ renderer.setRenderTarget(_postRT); _drawViewmodel(); }
   // 1b) build 1126: screen-space ambient occlusion — G-buffer prepass, AO, bilateral blur, all at
   // half resolution. Perspective only: the AO shader rebuilds view rays from a tangent-of-fov
   // scale, which an orthographic camera does not have, so the editor's ortho views go without.
@@ -7382,6 +7397,18 @@ function _renderPostFX(scn, cam){
     scn.overrideMaterial=_matAOGeo;
     renderer.setRenderTarget(_aoGeoRT); renderer.render(scn, cam);
     scn.overrideMaterial=_pv;
+    // build 1140: the weapon goes in the G-buffer too. Without this the AO term at the weapon's pixels
+    // is computed from the WORLD BEHIND IT and then multiplied into it — the gun picked up the shading
+    // of whatever it happened to be standing in front of, and had no occlusion of its own anywhere.
+    // vmCam shares the main camera's fov and aspect and sits at its own origin looking down -z, so the
+    // view distance it writes into alpha is directly comparable with the scene's.
+    if(_vmHere){
+      const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matAOGeo;
+      const _vac=renderer.autoClear; renderer.autoClear=false;
+      renderer.clearDepth();          // same rule as the colour pass: the weapon is always in front
+      renderer.render(vmScene, vmCam);
+      renderer.autoClear=_vac; vmScene.overrideMaterial=_vpv;
+    }
     if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
     renderer.shadowMap.autoUpdate=_sa;
     const au=_matAO.uniforms;
@@ -15462,7 +15489,14 @@ function _worldFrom(w){
   return out;
 }
 let worldCfg = _worldFrom((savedLevel && savedLevel.world) || null);
-if(!(savedLevel && savedLevel.world)) _postOffWorld(worldCfg);   // build 796: first-time scene (no saved world) -> post FX off by default
+// build 1140: the first-time scene keeps the engine's authored look. Build 796 zeroed the whole post
+// chain right here — "so a first-time canvas isn't pre-loaded with heavy effects" — which was correct
+// when that scene was 22 boxes at Math.random() positions, and wrong from build 1133 onward, which made
+// it a DESIGNED level. Probed on the stock frame it read bloom 0, vignette 0, grain 0, grade neutral,
+// ssao 0: every visual system builds 1126 (AO), 1128 (the bloom pyramid), 1135 and 1136 (the grade and
+// the daylight balance) added was switched OFF in the first frame anybody ever sees, and none of it
+// could be measured there. An EMPTY scene still starts clean — _wipeSceneCore keeps calling
+// _postOffWorld, and that is where build 796's actual intent lives.
 
 // Apply (or clear) a tiling texture on a shared material. Stores the current url on the material under
 // `urlKey` so re-applying the same url is a no-op. Cross-origin textures load via the proxying loader.
@@ -16333,15 +16367,23 @@ function _ensureVmEnv(){
     _vmEnvFallback = pm.fromEquirectangular(tex).texture; tex.dispose(); pm.dispose();
   }catch(e){ _vmEnvFallback=null; }
 }
-function renderViewmodel(){
-  if(activeCam() !== camera || !gun.visible) return;   // skip the editor's top-down view / when the weapon is hidden
+// Is the viewmodel pass wanted at all this frame? Split out of renderViewmodel (build 1140) because the
+// post chain has to ask the same question one step earlier, before it decides what to composite.
+function _vmWanted(){
+  if(activeCam() !== camera || !gun.visible) return false;   // the editor's top-down view / weapon hidden
   // build 1137: never in the editor. The rifle was drawn across the lower-right of the AUTHORING
   // viewport — measured by a critic at 11% of it — hiding whatever the author was placing there, and
   // it is not a tool affordance by any reading. gun.visible stays untouched so play is unaffected.
-  if(typeof editorOpen!=='undefined' && editorOpen) return;
-  if(typeof _scopedNow!=='undefined' && _scopedNow) return;   // looking through the optic: no viewmodel
+  if(typeof editorOpen!=='undefined' && editorOpen) return false;
+  if(typeof _scopedNow!=='undefined' && _scopedNow) return false;   // looking through the optic: no viewmodel
+  return true;
+}
+// build 1140: the viewmodel is drawn INTO whatever target is bound, with the depth buffer cleared so it
+// always sits on top and can never intersect a nearby wall. The caller owns the target — which is the
+// whole point of the build: when the post chain is running it binds _postRT and calls this BEFORE bloom,
+// so the weapon is part of the frame that gets graded instead of a sprite pasted over the finished one.
+function _drawViewmodel(){
   if(typeof _animFists==='function') _animFists();   // build 672: punch lunge
-  const _r=perfOn?_pnow():0;
   _ensureVmEnv();
   vmScene.environment = scene.environment || _vmEnvFallback;   // metallic gun materials need an env map to reflect — without it they render BLACK
   vmCam.fov = camera.fov; vmCam.aspect = camera.aspect; vmCam.updateProjectionMatrix();
@@ -16349,6 +16391,14 @@ function renderViewmodel(){
   renderer.clearDepth();              // keep the world's color, drop its depth so the gun draws on top
   renderer.render(vmScene, vmCam);
   renderer.autoClear = ac;
+  _vmDone = true;
+}
+// The frame loop's call. It runs LAST, straight to the canvas, and is a no-op on any frame the post
+// chain already drew the weapon into its own buffer — which is every frame post-FX is on.
+function renderViewmodel(){
+  if(_vmDone || !_vmWanted()) return;
+  const _r=perfOn?_pnow():0;
+  _drawViewmodel();
   if(perfOn)_prof.render+=_pnow()-_r;
 }
 
@@ -25299,7 +25349,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1139 · 2026-07-30';
+const BUILD_VERSION = 'build 1140 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

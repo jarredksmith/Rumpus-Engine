@@ -2,7 +2,7 @@
 // rendered black. Sync the world environment into vmScene, with a neutral fallback when there's no sky.
 import { gameSource, extractFunction, done, assert } from './harness.mjs';
 const src = gameSource();
-const rv = extractFunction('renderViewmodel');
+const rv = extractFunction('_drawViewmodel');   // build 1140: the drawing half of the old renderViewmodel
 assert(/vmScene\.environment = scene\.environment \|\| _vmEnvFallback/.test(rv), 'viewmodel reflects the world env (or a fallback)');
 assert(/_ensureVmEnv\(\);/.test(rv), 'the fallback env is ensured before rendering');
 const ev = extractFunction('_ensureVmEnv');

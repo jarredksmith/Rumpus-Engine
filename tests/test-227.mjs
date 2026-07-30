@@ -20,7 +20,9 @@ assert(/border-radius:50%/.test(so), 'center reticle ring');
 assert(/_scopedNow = !!\(\(ads \|\| padAds \|\| touchAds\) && WEAPONS\[curWep\] && WEAPONS\[curWep\]\.scope && adsBlend > 0\.6 && gameOn && !editorOpen\)/.test(src), 'scope state derived from ADS blend in the loop (every aim input since build 913)');
 assert(/_setScopeOverlay\(_scopedNow\)/.test(src), 'overlay toggled each frame');
 assert(/crosshairEl\.style\.opacity = _scopedNow \? '0'/.test(src), 'normal crosshair hidden under the scope');
-assert(/_scopedNow\) return;   \/\/ looking through the optic: no viewmodel/.test(src), 'gun viewmodel hidden while scoped');
+// build 1140: the viewmodel's early-outs moved into _vmWanted(), which the post chain asks one step
+// earlier so it can decide whether to composite the weapon. Same rule, one caller more.
+assert(/_scopedNow\) return false;   \/\/ looking through the optic: no viewmodel/.test(extractFunction('_vmWanted')), 'gun viewmodel hidden while scoped');
 
 // feel: heavier kick, deep report, key slots, resets
 assert(/\(w\.scope\?2\.4:1\)/.test(src), 'scoped shot kicks harder');
