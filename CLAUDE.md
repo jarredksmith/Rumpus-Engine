@@ -967,6 +967,26 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Movement has mass (build 1171)
+
+The gameplay critic's #1 feel finding: `player.vel = wish*sp` TELEPORTED velocity to the input every frame —
+zero start-up weight, dead-stop on key release even mid-air (release W at the apex and the arc collapsed),
+instantaneous 180s. Velocity now chases the target exponentially; the safe-change constraint is that the
+TARGET is `wish*sp`, so every tuned speed is byte-identical at steady state. Four rates (the four situations
+differ): ACCEL 14 (95% of top speed in ~210ms), BRAKE 20 (a run stops in ~0.6m — crisp, genre-typical),
+AIR 3.5 (course corrections work, cannot carve like ground), AIR_BRAKE 0.4 (a released jump keeps ~67% of
+its speed after 1s — the arc finally carries). The blend clamps at 1 so a dt spike degrades exactly to the
+old behaviour; the slide still writes velocity directly (authored decay) and the model bleeds its exit speed
+smoothly. `test-1171` simulates all of it frame-by-frame. Note: a test comparing an early-time ratio must
+measure DURING the build-up — by 0.5s the ground turn has saturated and the ratio measures only the shared
+target (the first draft made exactly that mistake).
+
+**THIRD CONTAINER ROLLBACK, and the first that bit mid-build.** After 1170's push the tree reverted to
+mid-1164 state; the 1171 edits were unknowingly applied to that stale base (the anchors existed in both
+states), and the tell was the suite reporting 906 harnesses with 1164-era failures — FEWER harnesses than
+the previous run is the rollback signature; check `git log` FIRST. Recovery unchanged: copy new files
+aside, `git fetch` + `reset --hard FETCH_HEAD`, re-apply from the scripted edit (which made it free).
+
 ## Props gain a runtime lifecycle (build 1170)
 
 The feature audit's single biggest expressiveness gap: no verb could touch a PROP at runtime — the ball in a
@@ -1349,7 +1369,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1170)
+## Open work (as of build 1171)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
