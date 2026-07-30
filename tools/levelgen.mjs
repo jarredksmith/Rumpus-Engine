@@ -2366,44 +2366,77 @@ function skyMood(zen, hor, gnd, turb, glow, size) {
   return { skyZenith: skyHex(zen), skyHorizon: skyHex(hor), skyGround: skyHex(gnd),
     skyTurb: turb, skySunGlow: glow, skySunSize: size };
 }
+// build 1143: a mood now describes the GROUND as well as the sky. `groundAlb` is already the ground's
+// albedo — the number the lightmap bake integrates for the sun bounce — so handing the same value to the
+// engine's own floor plane costs nothing and closes the most visible seam in a generated level: the
+// imported ground stops at ±W and the engine's plane runs on to ±ARENA, so a desert arena sat on the
+// engine default 0x4f5d66 (a cool grey-blue) butting straight against cream sand. The boundary walls get
+// the same albedo at 55%, so the surround reads as the same world one value down rather than as a
+// different one. Each theme's albedos are named ONCE here and used three times — by the bake, by the sky
+// dome and now by the ground — because three copies of the same literal is how they end up disagreeing.
+function groundMood(gnd, rough, metal) {
+  return { floorColor: skyHex(gnd), floorRough: rough != null ? rough : 0.95, floorMetal: metal != null ? metal : 0.05,
+    wallColor: skyHex(gnd.map((v) => v * 0.55)), wallRough: 0.85, wallMetal: 0.08 };
+}
 function arenaMood(theme) {
-  if (theme === 'castle') return {   // golden hour: low warm sun, long shadows, warm haze
-    light: { sunAzim: 245, sunElev: 26, sunCol: [1, 0.72, 0.45], skyZen: [0.14, 0.19, 0.34], skyHor: [0.50, 0.37, 0.28], groundAlb: [0.22, 0.19, 0.15] },
-    world: { sun: 1.05, sunColor: 0xffd2a0, sunAzim: 245, sunElev: 26, sky: 0.35, skyColor: 0x92a6c8, ambient: 0.05,
-      fogDensity: 0.005, fogColor: 0x8a7663, ssao: 0.95, exposure: 1.3, postBloom: 0.5, postVig: 0.34, postSat: 1.1,
-      ...skyMood([0.14, 0.19, 0.34], [0.50, 0.37, 0.28], [0.22, 0.19, 0.15], 0.55, 1.5, 2.2) } };
-  if (theme === 'volcanic') return { // ashen overcast with ember accents
-    light: { sunAzim: 130, sunElev: 38, sunCol: [1, 0.80, 0.60], skyZen: [0.15, 0.145, 0.15], skyHor: [0.28, 0.25, 0.23], groundAlb: [0.16, 0.13, 0.10] },
-    world: { sun: 0.75, sunColor: 0xffc9a0, sunAzim: 130, sunElev: 38, sky: 0.5, skyColor: 0x8e8d90, ambient: 0.06,
-      fogDensity: 0.007, fogColor: 0x4a453f, ssao: 1.0, exposure: 1.25, postBloom: 0.7, postVig: 0.4, postSat: 1.04,
-      ...skyMood([0.15, 0.145, 0.15], [0.28, 0.25, 0.23], [0.16, 0.13, 0.10], 0.8, 0.35, 1.2) } };
-  if (theme === 'garden') return {   // bright clear day; the ground bounce is green
-    light: { sunAzim: 115, sunElev: 52, sunCol: [1, 0.94, 0.85], skyZen: [0.18, 0.28, 0.50], skyHor: [0.38, 0.42, 0.48], groundAlb: [0.12, 0.18, 0.08] },
-    world: { sun: 1.0, sunColor: 0xfff0da, sunAzim: 115, sunElev: 52, sky: 0.36, skyColor: 0xa5c0e0, ambient: 0.03,
-      fogDensity: 0.004, fogColor: 0x9fb0c2, ssao: 0.85, exposure: 1.12, postBloom: 0.45, postVig: 0.3, postSat: 1.06,
-      ...skyMood([0.18, 0.28, 0.50], [0.38, 0.42, 0.48], [0.12, 0.18, 0.08], 0.25, 0.9, 1.5) } };
-  if (theme === 'desert') return {   // high noon: a near-vertical sun, bleached shadows, dust haze.
+  if (theme === 'castle') {   // golden hour: low warm sun, long shadows, warm haze
+    const zen = [0.14, 0.19, 0.34], hor = [0.50, 0.37, 0.28], gnd = [0.22, 0.19, 0.15];
+    return {
+      light: { sunAzim: 245, sunElev: 26, sunCol: [1, 0.72, 0.45], skyZen: zen, skyHor: hor, groundAlb: gnd },
+      world: { sun: 1.05, sunColor: 0xffd2a0, sunAzim: 245, sunElev: 26, sky: 0.35, skyColor: 0x92a6c8, ambient: 0.05,
+        fogDensity: 0.005, fogColor: 0x8a7663, ssao: 0.95, exposure: 1.3, postBloom: 0.5, postVig: 0.34, postSat: 1.1,
+        ...skyMood(zen, hor, gnd, 0.55, 1.5, 2.2), ...groundMood(gnd) } };
+  }
+  if (theme === 'volcanic') { // ashen overcast with ember accents
+    const zen = [0.15, 0.145, 0.15], hor = [0.28, 0.25, 0.23], gnd = [0.16, 0.13, 0.10];
+    return {
+      light: { sunAzim: 130, sunElev: 38, sunCol: [1, 0.80, 0.60], skyZen: zen, skyHor: hor, groundAlb: gnd },
+      world: { sun: 0.75, sunColor: 0xffc9a0, sunAzim: 130, sunElev: 38, sky: 0.5, skyColor: 0x8e8d90, ambient: 0.06,
+        fogDensity: 0.007, fogColor: 0x4a453f, ssao: 1.0, exposure: 1.25, postBloom: 0.7, postVig: 0.4, postSat: 1.04,
+        ...skyMood(zen, hor, gnd, 0.8, 0.35, 1.2), ...groundMood(gnd, 0.9, 0.12) } };   // cooled lava keeps a faint sheen
+  }
+  if (theme === 'garden') {   // bright clear day; the ground bounce is green
+    const zen = [0.18, 0.28, 0.50], hor = [0.38, 0.42, 0.48], gnd = [0.12, 0.18, 0.08];
+    return {
+      light: { sunAzim: 115, sunElev: 52, sunCol: [1, 0.94, 0.85], skyZen: zen, skyHor: hor, groundAlb: gnd },
+      world: { sun: 1.0, sunColor: 0xfff0da, sunAzim: 115, sunElev: 52, sky: 0.36, skyColor: 0xa5c0e0, ambient: 0.03,
+        fogDensity: 0.004, fogColor: 0x9fb0c2, ssao: 0.85, exposure: 1.12, postBloom: 0.45, postVig: 0.3, postSat: 1.06,
+        ...skyMood(zen, hor, gnd, 0.25, 0.9, 1.5), ...groundMood(gnd, 0.97, 0.0) } };   // turf is the most matte surface here
+  }
+  if (theme === 'desert') {   // high noon: a near-vertical sun, bleached shadows, dust haze.
     // The ground bounce is the loudest term in the whole rig here — sand throws a lot of warm light
     // back up, which is why desert shadows photograph open and golden rather than blue.
-    light: { sunAzim: 160, sunElev: 72, sunCol: [1, 0.97, 0.9], skyZen: [0.22, 0.34, 0.58], skyHor: [0.55, 0.52, 0.44], groundAlb: [0.42, 0.34, 0.22] },
-    world: { sun: 1.25, sunColor: 0xfff6e2, sunAzim: 160, sunElev: 72, sky: 0.3, skyColor: 0xbcc9d8, ambient: 0.04,
-      fogDensity: 0.0055, fogColor: 0xc2ab86, ssao: 0.9, exposure: 1.05, postBloom: 0.55, postVig: 0.36, postSat: 1.0,
-      ...skyMood([0.22, 0.34, 0.58], [0.55, 0.52, 0.44], [0.42, 0.34, 0.22], 0.5, 1.1, 1.4) } };
-  if (theme === 'frost') return {    // late blue hour over snow: a low raking sun, everything else sky
-    light: { sunAzim: 285, sunElev: 14, sunCol: [1, 0.85, 0.72], skyZen: [0.20, 0.30, 0.55], skyHor: [0.42, 0.52, 0.68], groundAlb: [0.60, 0.64, 0.70] },
-    world: { sun: 0.9, sunColor: 0xffdcbe, sunAzim: 285, sunElev: 14, sky: 0.55, skyColor: 0xb6cbe6, ambient: 0.05,
-      fogDensity: 0.006, fogColor: 0xa9bdd4, ssao: 0.8, exposure: 1.2, postBloom: 0.6, postVig: 0.3, postSat: 0.94,
-      ...skyMood([0.20, 0.30, 0.55], [0.42, 0.52, 0.68], [0.60, 0.64, 0.70], 0.45, 1.3, 2.0) } };
-  if (theme === 'facility') return { // night on the pad: the sun is a rim light, the strips do the work
-    light: { sunAzim: 40, sunElev: 12, sunCol: [0.62, 0.72, 0.9], skyZen: [0.05, 0.07, 0.12], skyHor: [0.10, 0.14, 0.20], groundAlb: [0.10, 0.12, 0.14] },
-    world: { sun: 0.4, sunColor: 0xa8c0e8, sunAzim: 40, sunElev: 12, sky: 0.2, skyColor: 0x2b3a4e, ambient: 0.05,
-      fogDensity: 0.0075, fogColor: 0x16222e, ssao: 1.0, exposure: 1.35, postBloom: 0.95, postVig: 0.46, postSat: 1.12,
-      ...skyMood([0.05, 0.07, 0.12], [0.10, 0.14, 0.20], [0.10, 0.12, 0.14], 0.3, 0.6, 1.6) } };
-  return {                           // industrial: cool clear working day
-    light: { sunAzim: 100, sunElev: 55, sunCol: [1, 0.95, 0.88], skyZen: [0.16, 0.25, 0.45], skyHor: [0.34, 0.38, 0.45], groundAlb: [0.20, 0.21, 0.22] },
-    world: { sun: 1.1, sunColor: 0xfff2e0, sunAzim: 100, sunElev: 55, sky: 0.22, skyColor: 0xa8c2dd, ambient: 0.03,
-      fogDensity: 0.0045, fogColor: 0x8d9aa8, ssao: 0.95, exposure: 1.15, postBloom: 0.5, postVig: 0.32, postSat: 1.08,
-      ...skyMood([0.16, 0.25, 0.45], [0.34, 0.38, 0.45], [0.20, 0.21, 0.22], 0.3, 0.9, 1.5) } };
+    const zen = [0.22, 0.34, 0.58], hor = [0.55, 0.52, 0.44], gnd = [0.42, 0.34, 0.22];
+    return {
+      light: { sunAzim: 160, sunElev: 72, sunCol: [1, 0.97, 0.9], skyZen: zen, skyHor: hor, groundAlb: gnd },
+      world: { sun: 1.25, sunColor: 0xfff6e2, sunAzim: 160, sunElev: 72, sky: 0.3, skyColor: 0xbcc9d8, ambient: 0.04,
+        fogDensity: 0.0055, fogColor: 0xc2ab86, ssao: 0.9, exposure: 1.05, postBloom: 0.55, postVig: 0.36, postSat: 1.0,
+        ...skyMood(zen, hor, gnd, 0.5, 1.1, 1.4), ...groundMood(gnd, 0.96, 0.0) } };   // sand: no specular at all
+  }
+  if (theme === 'frost') {    // late blue hour over snow: a low raking sun, everything else sky
+    const zen = [0.20, 0.30, 0.55], hor = [0.42, 0.52, 0.68], gnd = [0.60, 0.64, 0.70];
+    return {
+      light: { sunAzim: 285, sunElev: 14, sunCol: [1, 0.85, 0.72], skyZen: zen, skyHor: hor, groundAlb: gnd },
+      world: { sun: 0.9, sunColor: 0xffdcbe, sunAzim: 285, sunElev: 14, sky: 0.55, skyColor: 0xb6cbe6, ambient: 0.05,
+        fogDensity: 0.006, fogColor: 0xa9bdd4, ssao: 0.8, exposure: 1.2, postBloom: 0.6, postVig: 0.3, postSat: 0.94,
+        ...skyMood(zen, hor, gnd, 0.45, 1.3, 2.0), ...groundMood(gnd, 0.8, 0.02) } };   // packed snow has a sheen
+  }
+  if (theme === 'facility') { // night on the pad: the sun is a rim light, the strips do the work
+    const zen = [0.05, 0.07, 0.12], hor = [0.10, 0.14, 0.20], gnd = [0.10, 0.12, 0.14];
+    return {
+      light: { sunAzim: 40, sunElev: 12, sunCol: [0.62, 0.72, 0.9], skyZen: zen, skyHor: hor, groundAlb: gnd },
+      world: { sun: 0.4, sunColor: 0xa8c0e8, sunAzim: 40, sunElev: 12, sky: 0.2, skyColor: 0x2b3a4e, ambient: 0.05,
+        fogDensity: 0.0075, fogColor: 0x16222e, ssao: 1.0, exposure: 1.35, postBloom: 0.95, postVig: 0.46, postSat: 1.12,
+        ...skyMood(zen, hor, gnd, 0.3, 0.6, 1.6), ...groundMood(gnd, 0.7, 0.18) } };   // sealed apron: wet-looking
+  }
+  {                           // industrial: cool clear working day
+    const zen = [0.16, 0.25, 0.45], hor = [0.34, 0.38, 0.45], gnd = [0.20, 0.21, 0.22];
+    return {
+      light: { sunAzim: 100, sunElev: 55, sunCol: [1, 0.95, 0.88], skyZen: zen, skyHor: hor, groundAlb: gnd },
+      world: { sun: 1.1, sunColor: 0xfff2e0, sunAzim: 100, sunElev: 55, sky: 0.22, skyColor: 0xa8c2dd, ambient: 0.03,
+        fogDensity: 0.0045, fogColor: 0x8d9aa8, ssao: 0.95, exposure: 1.15, postBloom: 0.5, postVig: 0.32, postSat: 1.08,
+        ...skyMood(zen, hor, gnd, 0.3, 0.9, 1.5), ...groundMood(gnd, 0.9, 0.1) } };
+  }
 }
 const ARENA_THEMES = ['industrial', 'castle', 'volcanic', 'garden', 'desert', 'frost', 'facility'];
 function buildArena(seed, theme, size, footprint) {

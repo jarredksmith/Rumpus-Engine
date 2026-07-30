@@ -381,12 +381,27 @@ The station beacon `PointLight(0x38c8f5, 6, 14)` was the obvious second suspect 
 unchanged** — dropping it to 2.0/12 moved the dais by 4 code values and the floor by none. Its 14 m range
 confines it to the landmark it marks. Measured, not assumed, and recorded so it is not "tidied up" later.
 
-## Open work (as of build 1142)
+## Themes describe the ground too (build 1143)
 
-**`arenaMood` never emits `floorColor` or `wallColor`.** Every other world key it touches (sky, fog,
-post, `ssao`) it sets, but a generated desert arena still sits on the engine's default grey-blue floor
-plane — visible in `arena-editor` as an olive plane butting against cream sand where the imported ground
-ends. One line per theme in `tools/levelgen.mjs`, using the same `light.groundAlb` the bake already has.
+`arenaMood` set sky, fog, post and `ssao` but never `floorColor` or `wallColor`, so the ENGINE's own
+ground plane and boundary walls stayed at `DEFAULT_WORLD`'s cool grey-blue in every generated level. That
+is directly visible, because the imported ground stops at ±W and the engine's plane runs on to ±ARENA:
+measured on the desert arena, the plane read (103,114,87) — olive, G highest — butting against sand at
+(185,173,139). It now reads (100,94,74), R>G>B, the same order as the ground beside it, and the imported
+ground is unchanged.
+
+`groundMood(gnd, rough, metal)` sits beside `skyMood` and takes the theme's **`light.groundAlb`** — the
+albedo the lightmap bake already integrates for the sun bounce — so the plane the player walks past and
+the bounce the bake assumed are the same surface. `wallColor` is that albedo at 55% in linear space: the
+same world one value down rather than a different one. `floorColor` therefore equals `skyGround`, which
+also removes the horizon seam between the dome's ground band and the real ground.
+
+Each theme now names `zen` / `hor` / `gnd` **once**. They were written out twice per theme before (in the
+`light` block and again inside the `skyMood(...)` call) and this build would have made it three times —
+which is exactly how a mood ends up baking against one ground and showing the player another.
+`test-1143` counts the literals to keep it that way.
+
+## Open work (as of build 1143)
 
 **The rifle has no roughness or normal map.** `propMeshMap` counts 9 meshes with no maps at all and
 they are all the weapon GLB, so there is not one specular break-up or AO crease anywhere on the object
