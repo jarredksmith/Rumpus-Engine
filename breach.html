@@ -7421,10 +7421,15 @@ function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next 
 // Already-invisible objects are NOT collected, or the restore would switch them on (editor gizmos in play).
 // One offending slot in a multi-material array is enough, because the object is drawn or it is not.
 function _aoHideNoDepth(root, out){
+  // build 1168: this runs over 2 scenes per frame with AO on, and the old wrap-into-an-array + a per-object
+  // predicate closure allocated per OBJECT — thousands of transients a frame. Same predicate, zero allocation:
+  // one offending slot in a multi-material array is still enough, because the object is drawn or it is not.
   root.traverse(o=>{ if(!o.visible) return;
     const m=o.material; if(!m) return;
-    const ms=Array.isArray(m)?m:[m];
-    if(ms.some(q=>q && (q.depthWrite===false || q.transparent===true))){ o.visible=false; out.push(o); } });
+    let bad=false;
+    if(Array.isArray(m)){ for(let i=0;i<m.length;i++){ const q=m[i]; if(q && (q.depthWrite===false || q.transparent===true)){ bad=true; break; } } }
+    else bad = (m.depthWrite===false || m.transparent===true);
+    if(bad){ o.visible=false; out.push(o); } });
   return out;
 }
 function _renderPostFX(scn, cam){
@@ -7698,6 +7703,7 @@ scene.add(moon);
 let _shadowDirtyFrames = 2;
 let _shadowTick = 0;   // build 808: 3-frame cadence for TRANSIENT shadow movers (corpses / settling props)
 let _adaptLast = 0;
+let _frameNo = 0;   // build 1168: bumped once per loop() — per-frame caches key on it
 function _dirtyShadows(n){ _shadowDirtyFrames = Math.max(_shadowDirtyFrames, n||2); }   // call whenever something the sun casts moves/spawns/breaks
 // Weather state (build 863) — declared HERE because applyWorldCfg touches it during boot (TDZ otherwise).
 let _weatherPts=null, _weatherKind='none', _weatherData=null, _weatherT=0; let _weatherSpriteTex=null;   // build 866: this one was missed in the 863 hoist — snow at boot hit the TDZ
@@ -16433,6 +16439,13 @@ let touchMoveX=0, touchMoveZ=0, touchSprint=false, touchFiring=false, touchAds=f
 let touchFireBufT=0;   // build 992: a FIRE tap is valid until this timestamp — a tap that starts and ends between two frames (or during the fire-rate cooldown) still fires instead of vanishing
 let touchCrouch=false;   // build 908: on-screen crouch TOGGLE (touch players finally crouch/slide/ledge-drop)
 let touchBoost=false, touchHandbrake=false;   // build 788: dedicated mobile driving buttons (held) for boost + handbrake
+// build 1168: frame-loop allocation hygiene. The loop allocated ~9 vectors + a Box3 traversal per frame
+// (movement basis, stick clones, editor-fly basis, ledge avatar-height probe) and allPlayers() built a fresh
+// array with two closures per entry per frame — exactly the steady-state garbage behind the periodic GC
+// pauses the adaptive ladder then has to forgive. Module scratch, the codebase's own _lp/_pcV pattern.
+const _mvFwd=new THREE.Vector3(), _mvRight=new THREE.Vector3(), _mvWish=new THREE.Vector3();
+const _flyFwd=new THREE.Vector3(), _flyRight=new THREE.Vector3();
+let _avHCache=1.7, _avHCacheT=-1e9; const _avHBox=new THREE.Box3();   // avatar height, re-measured at most 1x/s
 let _jumpHeldPrev=false; const JUMP_CD=0.5;   // jump must be a fresh press, and at least JUMP_CD seconds apart — stops hold-to-bunny-hop
 // build 1160: coyote time + jump buffering. Build 926 proved this exact fault for SLIDE — "demanding
 // sprint+grounded on the EXACT press frame ate ~half of all slides (onGround flickers mid-stride)" — and
@@ -20058,7 +20071,12 @@ function netStatus(msg){ const el=document.getElementById('mpStatus'); if(el) el
 
 // Players the host simulates against (enemy targeting + coin pickup). Each has a credit()/hurt()
 // that routes locally or over the wire. In solo or on a client this is just the local player.
+// build 1168: called every frame from the enemy block (and more), and every call built a fresh array with
+// two closures per entry. The roster only changes on join/leave/mode-change — cache per FRAME (the loop
+// bumps _frameNo), which is exactly the lifetime its consumers assume anyway.
+let _apFrame=-1, _apList=null;
 function allPlayers(){
+  if(_apFrame===_frameNo && _apList) return _apList;
   const list = [{ id:NET.myId, pos:player.pos, eyeY:effEyeY(), local:true,
     credit:v=>{ credits+=v; SFX.coin(); updateHUD(); },
     hurt:(d,sx,sz)=>applyEnemyDamageToSelf(d,sx,sz) }];
@@ -20070,7 +20088,7 @@ function allPlayers(){
         hurt:d=>{ if(conn) try{ conn.send({t:'hurt', d}); }catch(e){} } });
     }
   }
-  return list;
+  _apFrame=_frameNo; _apList=list; return list;
 }
 // Fall damage: convert a downward impact speed into damage (0 if disabled or below the safe speed).
 let _playerWasAir = false;
@@ -26151,7 +26169,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1167 · 2026-07-30';
+const BUILD_VERSION = 'build 1168 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29712,13 +29730,14 @@ function surfaceTopAt(x, z, exclude, skipDynamic, ceilY, skipVehicles){
 // build 1088: `fromY` is where the probe ray STARTS. It defaults to the original 300, so every existing
 // caller is unchanged — but a spawn authored at y=600 needs the ray to begin above it or the roof it is
 // meant to land on is simply never hit, and the height silently stops snapping to anything.
+const _stuDyn = [];   // build 1168: reused held-prop-excluded list for surfaceTopUnder
 function surfaceTopUnder(x, z, ceilY, fromY){
   const _from = (fromY!=null && fromY>300) ? fromY : 300;
   _downOrigin.set(x, _from, z); _downRay.set(_downOrigin, _downDir); _downRay.far = Math.max(600, _from*2);
   let top = -Infinity;
   const hits = _downRay.intersectObjects(_surfCull(x,z), true);
   for(const h of hits){ if(h.point.y <= ceilY && h.point.y > top) top = h.point.y; }
-  if(dynamicProps.length){ const list = heldProp ? dynamicProps.filter(o=>o!==heldProp) : dynamicProps; const dh = _downRay.intersectObjects(list, true); for(const h of dh){ if(h.point.y <= ceilY && h.point.y > top) top = h.point.y; } }
+  if(dynamicProps.length){ /* build 1168: no filter()-per-query while holding a prop */ let list = dynamicProps; if(heldProp){ _stuDyn.length=0; for(const o of dynamicProps) if(o!==heldProp) _stuDyn.push(o); list=_stuDyn; } const dh = _downRay.intersectObjects(list, true); for(const h of dh){ if(h.point.y <= ceilY && h.point.y > top) top = h.point.y; } }
   return top;
 }
 // The floor under the play space at (x,z): highest surface at/below the player's head, else terrain. Used for
@@ -30726,6 +30745,7 @@ function loop(){
   else renderer.shadowMap.needsUpdate = false;
   const rawDt = Math.min(clock.getDelta(), 0.05);
   let dt = rawDt;
+  _frameNo++;
   { const _anow=_pnow(); if(_adaptLast){ _adaptResTick(_anow-_adaptLast, _anow); if(typeof _hitchLightWatch==='function') _hitchLightWatch(_anow-_adaptLast); } _adaptLast=_anow; if(typeof _vpDriftTick==='function') _vpDriftTick(_anow); if(typeof _touchCtxTick==='function') _touchCtxTick(_anow); if(typeof _buildModeTick==='function') _buildModeTick(); }   // adaptive resolution: its own always-on timer · build 892: viewport-drift watchdog (phone bar squish) · build 908: context touch buttons · build 1155: name a light-count recompile instead of shipping the fifth one
   updatePerfHud();   // measure real frame time every frame (before any early-out)
   if(editorOpen || _cineActive) _dirtyShadows(1);   // authoring + camera moves: keep shadows current
@@ -30829,8 +30849,8 @@ function loop(){
   camera.rotation.x = player.pitch;
 
   // movement relative to yaw
-  const forward = new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
-  const right = new THREE.Vector3(Math.cos(player.yaw),0,-Math.sin(player.yaw));
+  const forward = _mvFwd.set(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
+  const right = _mvRight.set(Math.cos(player.yaw),0,-Math.sin(player.yaw));
   // build 874: in the fixed-camera views WASD is screen-relative, not facing-relative (the body faces
   // the cursor). Top: W = up-screen (world -Z), D = right-screen (world +X). Side: only the lane axis.
   const _vm874 = activeViewMode();
@@ -30840,12 +30860,12 @@ function loop(){
   if(_vm874==='top'){ const _ya=(typeof _vcamYawRad==='function')?_vcamYawRad('top'):0; forward.set(-Math.sin(_ya),0,-Math.cos(_ya)); right.set(Math.cos(_ya),0,-Math.sin(_ya)); }
   else if(_vm874==='side'){ if(gameCfg.viewAxis==='z'){ right.set(0,0,-1); } else { right.set(1,0,0); } forward.set(0,0,0); }
   else if(typeof chaseCursorOn==='function' && chaseCursorOn()){ forward.set(-Math.sin(_ccYaw),0,-Math.cos(_ccYaw)); right.set(Math.cos(_ccYaw),0,-Math.sin(_ccYaw)); }   // build 1103: WASD relative to the frozen camera, not the cursor-spun body
-  const wish = new THREE.Vector3();
+  const wish = _mvWish.set(0,0,0);
   let moveScale = 1;   // analog when using the stick, full when using keys
   const mvx = padMoveX || touchMoveX, mvz = padMoveZ || touchMoveZ;
   if(mvx || mvz){
-    wish.add(right.clone().multiplyScalar(mvx));
-    wish.add(forward.clone().multiplyScalar(-mvz));   // stick up (-Y) = forward
+    wish.addScaledVector(right, mvx);
+    wish.addScaledVector(forward, -mvz);   // stick up (-Y) = forward — no clones; addScaledVector reads, never mutates its argument
     moveScale = Math.min(1, Math.hypot(mvx, mvz));
   } else {
     if(keys[BINDS.fwd]) wish.add(forward);
@@ -30919,7 +30939,7 @@ function loop(){
       // size the drop to the ACTUAL avatar so the raised hands land on the lip.
       let _fd=0.55; for(let _d=0.08;_d<=0.9;_d+=0.03){ const _t2=surfaceTopAt(player.pos.x+forward.x*_d, player.pos.z+forward.z*_d); if(isFinite(_t2) && _t2>=_lt-0.08){ _fd=_d; break; } }
       const _gap=0.34, _hx=player.pos.x+forward.x*(_fd-_gap), _hz=player.pos.z+forward.z*(_fd-_gap);
-      let _vh=1.7; try{ if(typeof _ownAvatar!=='undefined' && _ownAvatar && _ownAvatar.visible){ const _bb=new THREE.Box3().setFromObject(_ownAvatar); const _h2=_bb.max.y-_bb.min.y; if(_h2>1.1 && _h2<3) _vh=_h2; } }catch(e){}
+      let _vh=1.7; try{ if(typeof _ownAvatar!=='undefined' && _ownAvatar && _ownAvatar.visible){ const _nw=performance.now(); if(_nw-_avHCacheT>1000){ _avHCacheT=_nw; const _bb=_avHBox.setFromObject(_ownAvatar); const _h2=_bb.max.y-_bb.min.y; _avHCache=(_h2>1.1 && _h2<3)?_h2:1.7; } _vh=_avHCache; } }catch(e){}   // build 1168: a full-subtree Box3 traversal ran every airborne-forward frame; the avatar's height changes ~never
       _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:player.yaw, fy0:player.pos.y, hy:_lt + EYE - _vh*1.02, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE };
       player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
   }
@@ -31108,8 +31128,8 @@ function loop(){
     // WASD moves along the view direction; Space/E rise, Q/Ctrl fall; Shift sprints — all in world space
     const spd = (keys['ShiftLeft']||keys['ShiftRight']?60:26) * dt;
     const cy = Math.cos(player.yaw), sy = Math.sin(player.yaw), cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
-    const fwd = new THREE.Vector3(-sy*cp, sp, -cy*cp);          // camera forward (matches the look basis below)
-    const right = new THREE.Vector3(cy, 0, -sy);
+    const fwd = _flyFwd.set(-sy*cp, sp, -cy*cp);          // camera forward (matches the look basis below)
+    const right = _flyRight.set(cy, 0, -sy);
     if(keys['KeyW']) flyPos.addScaledVector(fwd, spd);
     if(keys['KeyS']) flyPos.addScaledVector(fwd, -spd);
     if(keys['KeyD']) flyPos.addScaledVector(right, spd);

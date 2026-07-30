@@ -29,7 +29,7 @@ const CAP_R = K('ENEMY_CAP_R');
     'the rule is a property of the MATERIAL, not a list of names (build 1152)');
   assert(/if\(!o\.visible\) return;/.test(fn),
     'already-invisible objects are not collected, or the restore would switch them on (editor gizmos in play)');
-  assert(/ms\.some\(/.test(fn), 'one offending slot in a multi-material array is enough — the object is drawn or it is not');
+  assert(/for\(let i=0;i<m\.length;i\+\+\)/.test(fn), 'one offending slot in a multi-material array is enough — the object is drawn or it is not (build 1168: allocation-free walk, same predicate)');
 }
 {
   const post = extractFunction('_renderPostFX');

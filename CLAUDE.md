@@ -967,6 +967,23 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Frame-loop allocation hygiene (build 1168)
+
+The perf critic's measured residue, all hoisted to module scratch (the codebase's own _lp/_pcV pattern):
+movement basis + wish (3 vectors/frame) and the stick-input clones; the editor-fly basis; the ledge grab's
+full-subtree `Box3().setFromObject(avatar)` (ran every airborne-forward frame — now a 1x/s cached height
+with the same 1.1–3 sanity band); `allPlayers()` (fresh array + 2 closures per entry per frame — now cached
+per frame keyed on `_frameNo`, which loop() bumps, so joins are stale for at most one frame);
+`_aoHideNoDepth` (array + closure per OBJECT across 2 scenes per frame — now an allocation-free walk with
+the identical predicate); and `surfaceTopUnder`'s `dynamicProps.filter()` per query while holding a prop
+(now one reused module array). Behaviour pinned identical; three pins moved (1084, 1158, 966), each keeping
+its assertion's intent. NOT done (bigger than hygiene): pooling spark velocity V3s (they outlive frames),
+and replacing _aoHideNoDepth's traverse with a transparent-material registry.
+
+One self-inflicted lesson repeated: an inline `//` comment appended to a REPLACEMENT that lands mid-line
+comments out the rest of the original line (the surfaceTopUnder edit swallowed its own raycast). The
+syntax check caught it; use /* */ or place comments on their own line when patching mid-line.
+
 ## Asset failures are visible (build 1167)
 
 The commonest creator failure — a model url that 404s or CORS-fails — was a console.warn plus a silent null
@@ -1299,7 +1316,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1167)
+## Open work (as of build 1168)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
