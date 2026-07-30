@@ -1577,7 +1577,35 @@ Scene-lit smoke: the smoke sheet is unlit white, so it GLOWED at night. `lit:tru
 colour by `0.30 + 0.70*dayF` at spawn — luminance only, floored so it never goes black, exactly 1 when the
 day cycle is off (so no existing level changes by a single code value unless it uses the cycle).
 
-## Open work (as of build 1183)
+## The water joins the colour pipeline (build 1184)
+
+The water surface, the waterfall sheets and the plunge foam were the last raw ShaderMaterials writing
+straight `gl_FragColor` — no ACES, no exposure, no fog. So water ignored the filmic response, the creator's
+exposure, 1180's auto-exposure and 1181's height fog: a lake at dusk sat at its own private brightness
+inside a fogged, graded frame. Each now applies the SHARED `_ACES_GLSL` (the dome's `uTM`/`uExpo` pair —
+`uTM 0` returns the input untouched, so filmic-off is byte-identical to the old shader) and ends in the
+engine's own `fog_fragment` chunk, tone-map before fog, three's own order.
+
+The mechanism worth keeping: **`material.fog = true` on a ShaderMaterial makes three refresh
+`fogColor`/`fogDensity` per frame — but it writes into uniforms the material must already HAVE, and throws
+on one that doesn't.** `_waterFogUniforms()` supplies the set once for all four materials: fog colour +
+density with real initial values, plus `fogSunDirW`/`fogHeightP` riding 1181's shared plain objects by
+reference (one CPU write reaches the water too), plus `uTM`/`uExpo`. The vertex shaders write
+`vFogDepth`/`vFogWorldPos` directly under `#ifdef USE_FOG` — the shared `fog_vertex` chunk needs
+`transformed`, which these shaders don't have (the sprite lesson from 1181, applied preemptively).
+
+The surface also gains a soft SHORELINE: 1183's G-buffer read (sharing the same `_SOFT_GEO`/`_SOFT_P`
+uniform wrappers outright), fading the disc's rim over ~0.7 m where the ground sits just behind the
+surface along the view ray. `vVZ` is view-Z — the same quantity the buffer stores; a euclidean distance
+would tilt the band with view angle. Same freshness gate: AO off = the old hard rim, never stale depth.
+
+Exposure is read LIVE (`renderer.toneMappingExposure` = base × auto), so the water breathes with 1180's
+eye adaptation instead of ignoring it. Two pins moved (868 — sheets/foam still dim with `uLight`, now
+inside `_aces(...)`; 858 — a `{0,1600}` window widened to 2400, anchor unchanged). NOT capture-verified:
+water needs a browser pass — the zone panel, a waterfall, dusk with the day cycle, and the shoreline with
+AO on and off.
+
+## Open work (as of build 1184)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

@@ -18517,11 +18517,32 @@ function _waterLightF(){
   const b=(typeof bounceLight!=='undefined')?bounceLight.intensity:0;
   return Math.max(0.04, Math.min(1.6, s*0.75 + k*0.65 + a*0.5 + b*0.25));
 }
-const _WATER_VSH = 'varying vec3 vWP;\nvoid main(){ vec4 wp = modelMatrix * vec4(position,1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }';
+// build 1184: the water family joins the colour pipeline. These were the last raw ShaderMaterials writing
+// straight gl_FragColor with no ACES, no exposure and no fog — so water ignored the filmic response, the
+// creator's exposure, build 1180's auto-exposure AND build 1181's height fog. Each now applies _ACES_GLSL
+// (uTM/uExpo, the dome's exact pair — uTM 0 is byte-identical to the old shader) and ends in the engine's
+// own fog_fragment chunk via material.fog=true (three refreshes fogColor/fogDensity per frame for any
+// material with fog:true, and the chunk's extra uniforms ride the same shared plain objects as 1181).
+function _waterFogUniforms(){ return {
+  fogColor:{ value:new THREE.Color(0x2e3b47) }, fogDensity:{ value:0.006 }, fogNear:{ value:1 }, fogFar:{ value:1000 },
+  fogSunDirW:{ value:_fogSunDirU }, fogHeightP:{ value:_fogParamsU },   /* shared by reference — one write reaches these too */
+  uTM:{ value:1 }, uExpo:{ value:1.25 } }; }
+const _WATER_VSH = [
+  'varying vec3 vWP; varying float vVZ;',
+  '#include <fog_pars_vertex>',
+  'void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vWP = wp.xyz; vec4 mvPosition = viewMatrix * wp; vVZ = - mvPosition.z; gl_Position = projectionMatrix * mvPosition;',
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z; vFogWorldPos = wp.xyz;',   /* the shared fog_vertex needs `transformed`; write the varyings directly */
+  '#endif',
+  '}'
+].join('\n');
 const _WATER_FSH = [
+  _ACES_GLSL,
+  '#include <fog_pars_fragment>',
   'uniform vec3 uDeep; uniform vec3 uSky; uniform float uOp; uniform float uTime; uniform float uWave; uniform vec2 uFlow; uniform float uLight;',
   'uniform vec3 uSunDir; uniform vec3 uSunCol;',
-  'varying vec3 vWP;',
+  'uniform sampler2D uSoftGeo; uniform vec4 uSoftP;',
+  'varying vec3 vWP; varying float vVZ;',
   'void main(){',
   '  vec2 p = vWP.xz * 0.55 - uFlow * uTime;',
   // two crossed sine waves + a diagonal chop; grad is their analytic slope -> a cheap rippling normal
@@ -18532,7 +18553,16 @@ const _WATER_FSH = [
   '  float fres = pow(1.0 - abs(dot(n, V)), 3.0);',                       // abs: sane from underwater too
   '  float spec = pow(max(dot(reflect(-uSunDir, n), V), 0.0), 90.0);',
   '  vec3 col = mix(uDeep, uSky, fres*0.75)*uLight + uSunCol * spec * 0.9;',   // build 868: the body dims/brightens with the scene; the glint tracks the sun on its own
-  '  gl_FragColor = vec4(col, clamp(uOp + fres*0.18 + spec*0.35, 0.0, 0.97));',
+  '  float a = clamp(uOp + fres*0.18 + spec*0.35, 0.0, 0.97);',
+  // build 1184: soft SHORELINE — where the ground sits just behind the surface along the view ray, the
+  // disc's hard rim fades out (1183's G-buffer read; vVZ is view-Z, the same quantity the buffer stores).
+  '  if( uSoftP.x > 0.5 ){',
+  '    vec4 _sg = texture2D( uSoftGeo, gl_FragCoord.xy / uSoftP.zw );',
+  '    float _sd = ( _sg.r + _sg.g + _sg.b ) < 0.3 ? 1e6 : _sg.a;',
+  '    a *= clamp( ( _sd - vVZ ) * 1.4, 0.0, 1.0 );',
+  '  }',
+  '  gl_FragColor = vec4(_aces(col), a);',
+  '#include <fog_fragment>',
   '}'
 ].join('\n');
 function _waterSurfaceMat(z){
@@ -18547,9 +18577,11 @@ function _waterSurfaceMat(z){
       uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.2) },
       uSunCol: { value: new THREE.Color(0xffffff) },
       uLight:  { value: 1 },
+      uSoftGeo: _SOFT_GEO, uSoftP: _SOFT_P,   /* build 1184: the soft-shore read shares 1183's wrappers outright */
+      ..._waterFogUniforms(),
     },
     vertexShader: _WATER_VSH, fragmentShader: _WATER_FSH,
-    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true,
   });
 }
 function buildWaterZoneGroup(z, sel){
@@ -18721,7 +18753,8 @@ function updateWaterZones(dt){
     if(!g) continue; g.visible=showing;
     if(g.userData.editorBits) for(const m of g.userData.editorBits) m.visible=_eo;
     const u=g.userData.surf && g.userData.surf.material.uniforms;
-    if(u){ u.uTime.value=_waterTime; u.uLight.value=_waterLightF(); if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof moon!=='undefined'?moon.intensity:1))); } }
+    if(u){ u.uTime.value=_waterTime; u.uLight.value=_waterLightF(); if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof moon!=='undefined'?moon.intensity:1))); }
+      u.uExpo.value=renderer.toneMappingExposure; u.uTM.value=(typeof worldCfg!=='undefined' && worldCfg.filmic!=null)?+worldCfg.filmic:1; }   /* build 1184: the water sees the same exposure (incl. auto) and filmic switch as the scene */
   }
   // underwater tint: a fixed overlay while the EYE is below a surface (cheap, sells the dive)
   if(!_waterTintEl){
@@ -18743,6 +18776,8 @@ let waterfallFx = []; const _fallRT = [];
 function _fallGainFor(d, audR, vol){ return Math.max(0, Math.min(1, (vol==null?0.8:+vol)) * (1 - d/Math.max(1, audR))); }
 function _fallAudR(f){ return Math.max(14, (+f.w||6)*2 + (+f.h||8)*1.2); }   // bigger falls are audible further
 const _FALL_FSH = [
+  _ACES_GLSL,
+  '#include <fog_pars_fragment>',
   'uniform vec3 uCol; uniform float uOp; uniform float uTime; uniform float uSpd; uniform float uLight;',
   'varying vec2 vUv;',
   'void main(){',
@@ -18762,10 +18797,13 @@ const _FALL_FSH = [
   '  float foam = smoothstep(0.42,0.0,vUv.y);',
   '  vec3 col = mix(uCol, vec3(1.0), clamp(0.2*streaks + 0.6*foam + lip, 0.0, 1.0));',
   '  float a = uOp * edge * head * (0.35+0.65*streaks) * (0.55+0.45*gaps) * (0.9+0.45*foam);',
-  '  gl_FragColor = vec4(col*uLight, clamp(a, 0.0, 0.95));',   // build 868: falls dim at night too
+  '  gl_FragColor = vec4(_aces(col*uLight), clamp(a, 0.0, 0.95));',   // build 868: falls dim at night too; 1184: through the same response as the scene
+  '#include <fog_fragment>',
   '}'
 ].join('\n');
 const _FOAM_FSH = [
+  _ACES_GLSL,
+  '#include <fog_pars_fragment>',
   'uniform float uTime; uniform float uOp; uniform float uLight;',
   'varying vec2 vUv;',
   'void main(){',
@@ -18773,21 +18811,30 @@ const _FOAM_FSH = [
   '  vec2 c = vUv*2.0-1.0; float r = length(c); float ang = atan(c.y, c.x);',
   '  float churn = 0.55 + 0.25*sin(r*16.0 - uTime*5.0) + 0.2*sin(ang*7.0 + uTime*2.3 + r*9.0);',
   '  float a = uOp * churn * smoothstep(1.0,0.15,r) * (0.6+0.4*smoothstep(0.0,0.35,r));',
-  '  gl_FragColor = vec4(vec3(uLight), clamp(a,0.0,0.9));',
+  '  gl_FragColor = vec4(_aces(vec3(uLight)), clamp(a,0.0,0.9));',
+  '#include <fog_fragment>',
   '}'
 ].join('\n');
-const _FALL_VSH = 'varying vec2 vUv;\nvoid main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }';
+const _FALL_VSH = [
+  'varying vec2 vUv;',
+  '#include <fog_pars_vertex>',
+  'void main(){ vUv = uv; vec4 wp = modelMatrix * vec4(position,1.0); vec4 mvPosition = viewMatrix * wp; gl_Position = projectionMatrix * mvPosition;',
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z; vFogWorldPos = wp.xyz;',
+  '#endif',
+  '}'
+].join('\n');
 function buildWaterfallGroup(f){
   const grp=new THREE.Group(); const w=Math.max(0.5,+f.w||6), h=Math.max(1,+f.h||8);
   const mkSheet=(spdMul, opMul, zOff)=>{
-    const m=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,(f.op!=null?+f.op:0.55)))*opMul }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1))*spdMul }, uLight:{ value:1 } }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+    const m=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,(f.op!=null?+f.op:0.55)))*opMul }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1))*spdMul }, uLight:{ value:1 }, ..._waterFogUniforms() }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide, fog:true });
     const s=new THREE.Mesh(new THREE.PlaneGeometry(w,h), m);
     s.position.set(0, (+f.y||0)-h/2, zOff); s.renderOrder=2; grp.add(s); return m;
   };
   // build 865: TWO layers — a back sheet running slightly slower/dimmer gives the fall visual depth
   grp.userData.sheetMat=mkSheet(1, 1, 0);
   grp.userData.sheetMat2=mkSheet(0.82, 0.55, -0.35);
-  const foamMat=new THREE.ShaderMaterial({ uniforms:{ uTime:{ value:0 }, uOp:{ value:Math.max(0,Math.min(1.7,0.5*(f.splash!=null?+f.splash:1))) }, uLight:{ value:1 } }, vertexShader:_FALL_VSH, fragmentShader:_FOAM_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+  const foamMat=new THREE.ShaderMaterial({ uniforms:{ uTime:{ value:0 }, uOp:{ value:Math.max(0,Math.min(1.7,0.5*(f.splash!=null?+f.splash:1))) }, uLight:{ value:1 }, ..._waterFogUniforms() }, vertexShader:_FALL_VSH, fragmentShader:_FOAM_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide, fog:true });
   const pool=Math.max(0.2, Math.min(2.5, f.pool!=null?+f.pool:1.15));   // build 865: author-controlled pool width (x sheet width)
   const foam=new THREE.Mesh(new THREE.CircleGeometry(w*0.5, 36), foamMat);
   foam.scale.set(pool, pool*0.62, 1);   // elliptical: wider along the sheet than out from it (local Y becomes depth after the rotate)
@@ -18822,10 +18869,12 @@ function updateWaterfalls(dt){
   if(!waterfalls.length) return;
   const showing=((typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver)) || (typeof editorOpen!=='undefined'&&editorOpen);
   const _lf=_waterLightF();
+  const _lExpo=renderer.toneMappingExposure, _lTM=(typeof worldCfg!=='undefined' && worldCfg.filmic!=null)?+worldCfg.filmic:1;
+  const _wfTone=(m)=>{ if(m && m.uniforms && m.uniforms.uExpo){ m.uniforms.uExpo.value=_lExpo; m.uniforms.uTM.value=_lTM; } };
   for(const g of waterfallFx){ if(!g) continue; g.visible=showing;
-    if(g.userData.sheetMat){  g.userData.sheetMat.uniforms.uTime.value=_waterTime;  g.userData.sheetMat.uniforms.uLight.value=_lf; }
-    if(g.userData.sheetMat2){ g.userData.sheetMat2.uniforms.uTime.value=_waterTime; g.userData.sheetMat2.uniforms.uLight.value=_lf; }
-    if(g.userData.foamMat){   g.userData.foamMat.uniforms.uTime.value=_waterTime;   g.userData.foamMat.uniforms.uLight.value=_lf; } }
+    if(g.userData.sheetMat){  g.userData.sheetMat.uniforms.uTime.value=_waterTime;  g.userData.sheetMat.uniforms.uLight.value=_lf; _wfTone(g.userData.sheetMat); }
+    if(g.userData.sheetMat2){ g.userData.sheetMat2.uniforms.uTime.value=_waterTime; g.userData.sheetMat2.uniforms.uLight.value=_lf; _wfTone(g.userData.sheetMat2); }
+    if(g.userData.foamMat){   g.userData.foamMat.uniforms.uTime.value=_waterTime;   g.userData.foamMat.uniforms.uLight.value=_lf; _wfTone(g.userData.foamMat); } }
   const live=(typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver) && !(typeof editorOpen!=='undefined'&&editorOpen)
     && !(typeof paused!=='undefined'&&paused) && !(typeof _cineActive!=='undefined'&&_cineActive);
   for(let i=0;i<waterfalls.length;i++){
@@ -26568,7 +26617,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1183 · 2026-07-30';
+const BUILD_VERSION = 'build 1184 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
