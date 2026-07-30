@@ -7,6 +7,10 @@ const env = [
   'const SHAPE_PRIMS = ' + extractConst('SHAPE_PRIMS') + ';',
   'const MAT_PRIMS = ' + extractConst('MAT_PRIMS') + ';',   // build 871: shine now covers the material-editable set
   'const PRIM_DEFAULT_ROUGH=0.65, PRIM_DEFAULT_METAL=0.35;',
+  // build 1144: applyPropShine sets envMapIntensity through _envInten, so the floor and the helper come
+  // from the real source too — injecting a copy here would let the two drift.
+  gameSource().match(/const SKY_ENV_FLOOR = [\d.]+;/)[0],
+  gameSource().match(/const _envInten = [^;]+;/)[0],
   extractFunction('isShapePrimitive'),
   extractFunction('isMatPrimitive'),
   extractFunction('eachPrimMesh'),
@@ -16,7 +20,18 @@ const env = [
 const { applyPropShine, PRIM_DEFAULT_ROUGH, PRIM_DEFAULT_METAL } = new Function('Math', '"use strict";'+env)(Math);
 // the injected defaults must match what the game actually declares
 assert(/const PRIM_DEFAULT_ROUGH = 0\.65, PRIM_DEFAULT_METAL = 0\.35;/.test(gameSource()), 'game declares roughness 0.65 / metalness 0.35 defaults');
+// build 1144: metalness still drives the environment term, but never down to zero — a matte prop has to
+// keep being lit by the sky. See test-1144 for the derivation of the floor.
+{
+  const F = +gameSource().match(/const SKY_ENV_FLOOR = ([\d.]+);/)[1];
+  const q = mockPropEarly('box'); applyPropShine(q, 0.9, 0);
+  near(q._mesh.material.envMapIntensity, F, 1e-9, 'a matte prop still sees the sky');
+  const r2 = mockPropEarly('box'); applyPropShine(r2, 0.2, 0.8);
+  near(r2._mesh.material.envMapIntensity, 0.8, 1e-9, '...and a metal one reflects at full strength');
+}
 
+function mockPropEarly(src){ const mesh={ isMesh:true, material:{ roughness:0.65, metalness:0.35, envMapIntensity:0, needsUpdate:false } };
+  return { userData:{ src }, _mesh:mesh, traverse(fn){ fn(this); fn(mesh); } }; }
 function mockProp(src){
   const mesh = { isMesh:true, material:{ roughness:0.65, metalness:0.35, needsUpdate:false } };
   return { userData:{ src }, _mesh:mesh, traverse(fn){ fn(this); fn(mesh); } };

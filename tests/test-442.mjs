@@ -16,7 +16,7 @@ assert(/const _em=o\.userData\.emit/.test(uf) && /_em\.c/.test(uf) && /m\.materi
 // instead — so the guarantee now rests on two things: the fallback material is black-emissive, and a
 // prop that HAS an emitter is never batched in the first place.
 const bi = extractFunction('buildInstancing');
-assert(/const mat = src0 \? src0\.clone\(\) : new THREE\.MeshStandardMaterial\(\{ color:PRIM_DEFAULT_COLOR, roughness:PRIM_DEFAULT_ROUGH, metalness:PRIM_DEFAULT_METAL \}\);/.test(bi),
+assert(/const mat = src0 \? src0\.clone\(\) : new THREE\.MeshStandardMaterial\(\{ color:PRIM_DEFAULT_COLOR, roughness:PRIM_DEFAULT_ROUGH, metalness:PRIM_DEFAULT_METAL, envMapIntensity:_envInten\(PRIM_DEFAULT_METAL\) \}\);/.test(bi),
   'the batch material is a clone of a real prop, or a plain default with no emissive at all');
 assert(!/emissive:0x[1-9a-f]/i.test(bi), 'and nothing in the batch path introduces an emissive colour');
 assert(/!o\.userData\.emit/.test(extractFunction('instanceEligible')),

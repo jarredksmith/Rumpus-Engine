@@ -401,7 +401,41 @@ Each theme now names `zen` / `hor` / `gnd` **once**. They were written out twice
 which is exactly how a mood ends up baking against one ground and showing the player another.
 `test-1143` counts the literals to keep it that way.
 
-## Open work (as of build 1143)
+## `envMapIntensity` is the ambient, not a reflection knob (build 1144)
+
+In r149 `getIBLIrradiance` returns `PI * envMapColor.rgb * envMapIntensity` — the **diffuse** ambient. This
+engine wrote `envMapIntensity = metalness` in three places ("reflections track the metal slider"), which
+is the r13x mental model where envMap was a reflection map you turned up for chrome. In a PBR pipeline the
+environment IS the ambient light, so `= metalness` meant **a matte surface received no sky light at all**.
+Build 1095 added a default environment so "metals don't render black"; that line then withheld it from
+every dielectric.
+
+Removing the gating entirely, measured on the stock level: floor plane 54,79,88 → 85,116,136, crate face
+116,133,137 → 143,160,168, warm deck 74,71,54 → 99,100,89, **sky byte-identical**. So the *amount* was
+accidentally in the right range and the fault was the coupling. Hence `SKY_ENV_FLOOR = 0.12` and
+`_envInten(metal, bright)` — metals keep exactly what they were tuned with, nothing is ever unlit, and the
+stock frame is preserved (a crate at metalness 0.35 is byte-identical; the floor moves one code value).
+`primitiveMat` had never set the property at all, so a fresh box took three's default 1.0 while any prop
+whose shine had been touched got 0.35 — the same object lit two ways depending on whether a slider had
+been dragged. Both sites now share the one derivation.
+
+**Be honest about the size of this one:** it is a contained correctness fix, not a visual overhaul. The
+0.12 floor only bites at metalness ≈ 0, and at desert noon (sun elevation 72°, N·L ≈ 0.95) the sun swamps
+it — the desert plane measures byte-identical before and after, with `env=SET` and `floorEnvI=0.12`
+confirmed by probe, so that is the sun dominating, not a missing environment.
+
+Three numbers worth keeping from the investigation, each isolated by capture:
+- The engine's ambient is **~80% probe, ~20% hemisphere light**. Zeroing `skyLight` entirely took a
+  shadowed floor from 0.105 to 0.0846 linear. `applySky` sets the hemisphere light's two colours from the
+  hemispherical average of the *same* `skyRadiance` model the probe renders, so they are two integrations
+  of one sky — a genuine double count, just a small one.
+- Sun-to-shade on the stock level is **3.3:1 linear** as shipped, which is the low end of real daylight.
+  Ungating the environment to 1.0 takes it to 1.58:1, which reads flat.
+- For a strictly physical balance the sun is roughly **4× too weak** relative to the sky (real daylight is
+  ~8:1 on a horizontal surface). Fixing that is a whole-engine rebalance with a legacy-content story like
+  `colorV`'s, not a one-line change — do not start it without that plan.
+
+## Open work (as of build 1144)
 
 **The rifle has no roughness or normal map.** `propMeshMap` counts 9 meshes with no maps at all and
 they are all the weapon GLB, so there is not one specular break-up or AO crease anywhere on the object

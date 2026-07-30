@@ -6912,6 +6912,27 @@ renderer.toneMappingExposure = 1.25;
 // false makes every .setHex/.set convert sRGB -> linear on the way in, so all shading math finally
 // happens in linear space and the encode happens once, at the end.
 const LEGACY_EXPOSURE = 0.78;   // build 1115: see applyWorldCfg — compat for levels authored pre-encode
+// build 1144: the FLOOR under a material's share of the environment. In r149 `envMapIntensity` scales the
+// whole image-based lighting term, and `getIBLIrradiance` returns `PI * envMapColor.rgb * envMapIntensity`
+// — that is the DIFFUSE ambient, not just a reflection. So `envMapIntensity = metalness`, which is what
+// this engine wrote everywhere, meant a matte surface (metalness 0) received NO SKY LIGHT AT ALL. It is
+// the r13x mental model, where envMap was a reflection map you turned up for chrome, applied to a PBR
+// pipeline where the environment IS the ambient light — and it withheld it from exactly the dielectrics
+// that have nothing else. Build 1095 added a default environment so "metals don't render black and
+// roughness has something to respond to"; this line then threw it away for everything that was not metal.
+//
+// Measured on the stock level, floorMetal 0.1 -> ungated: the floor plane 54,79,88 -> 85,116,136 and a
+// crate face 116,133,137 -> 143,160,168, with the sky byte-identical. So the AMOUNT was accidentally in
+// the right range (0.1 for the floor, 0.35 for props) — the fault was that it was a per-material
+// coupling, and at metalness 0 it was zero. Hence a floor, not a rewrite: metals keep exactly the
+// reflection strength they were tuned with, and nothing is ever unlit by the sky.
+//
+// 0.12 is derived, not chosen. Isolating the two ambient terms by capture: the probe delivers 0.0846
+// linear to a shadowed floor and the hemisphere light only 0.0204, while the sun delivers 0.061. A
+// sun-to-shade ratio of 3:1 — the low end of real daylight — needs total ambient at 0.0305, which is
+// the hemisphere plus 0.12 of the probe. At a full 1.0 the ratio is 1.58:1, which reads flat.
+const SKY_ENV_FLOOR = 0.12;
+const _envInten = (metal, bright) => Math.max(SKY_ENV_FLOOR, +metal || 0) * ((bright == null) ? 1 : bright);
 THREE.ColorManagement.legacyMode = false;
 renderer.outputEncoding = THREE.sRGBEncoding;
 // build 1095: anisotropic filtering — ground textures at grazing angles stop dissolving into mush.
@@ -10595,7 +10616,12 @@ const PRIM_DEFAULT_COLOR = 0x2a3a42;
 // build 1139: every primitive gets the detail set. The map is near-white so the authored colour is
 // preserved to within a percent, and applyProcSurface never displaces a texture a creator set — so an
 // existing level gains relief and roughness break-up without any of its choices changing.
-function primitiveMat(){ return applyProcSurface(new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:.65, metalness:.35, emissive:0x000000, emissiveIntensity:0 }), 1); }
+// build 1144: envMapIntensity is set HERE too, and to the same expression applyPropShine uses. It was
+// simply absent, so a fresh primitive took three's default of 1.0 while any prop whose shine had ever
+// been touched got its metalness (0.35) — the same object, lit two different ways depending on whether a
+// slider had been dragged. Two sites, one derivation.
+function primitiveMat(){ return applyProcSurface(new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:.65, metalness:.35,
+  envMapIntensity:_envInten(0.35), emissive:0x000000, emissiveIntensity:0 }), 1); }
 // Which primitives accept material edits (the pillar is a pre-built composite, so it's excluded).
 const SHAPE_PRIMS = { box:1, sphere:1, cylinder:1, cone:1 };
 function isShapePrimitive(src){ return SHAPE_PRIMS.hasOwnProperty(src); }
@@ -10801,7 +10827,7 @@ function applyPropShine(obj, rough, metal){
   if(!obj || !isMatPrimitive(obj.userData.src)) return;
   const r = Math.max(0, Math.min(1, rough)), m = Math.max(0, Math.min(1, metal));
   obj.userData.shine = { r, m };
-  eachPrimMesh(obj, o=>{ o.material.roughness = r; o.material.metalness = m; o.material.envMapIntensity = m; o.material.needsUpdate = true; });   // metal 0 => no environment reflection
+  eachPrimMesh(obj, o=>{ o.material.roughness = r; o.material.metalness = m; o.material.envMapIntensity = _envInten(m); o.material.needsUpdate = true; });   // build 1144: metal drives reflection strength; the floor keeps a matte prop lit by the sky
 }
 // build 871: opacity — glass, plastic, force fields. <1 turns on alpha blending; depthWrite stays on
 // down to ~0.6 (solid-ish plastic sorts fine) and turns off below (true glass never occludes itself).
@@ -15812,7 +15838,7 @@ function applyWorldCfg(){
     floorMat.color.setHex(worldCfg.floorColor>>>0);
     if(worldCfg.floorRough!=null) floorMat.roughness = Math.max(0, Math.min(1, +worldCfg.floorRough));
     if(worldCfg.floorMetal!=null) floorMat.metalness = Math.max(0, Math.min(1, +worldCfg.floorMetal));
-    floorMat.envMapIntensity = floorMat.metalness * worldCfg.skyBright;   // reflections track the metal slider, scaled by sky reflection strength
+    floorMat.envMapIntensity = _envInten(floorMat.metalness, worldCfg.skyBright);   // build 1144: metal drives REFLECTION strength, but never below the floor every surface needs to see the sky at all
     floorMat.specularIntensity = floorMat.metalness;   // metal 0 => no dielectric sun-sheen (truly matte)
     if(+worldCfg.floorTile>0 && !(+worldCfg.floorTileU>0) && !(+worldCfg.floorTileV>0)){ worldCfg.floorTileU=worldCfg.floorTileV=+worldCfg.floorTile; worldCfg.floorTile=0; }   // migrate legacy uniform tile
     const fAuto = Math.max(2, Math.round(ARENA/4));
@@ -15824,7 +15850,7 @@ function applyWorldCfg(){
     wallMat.color.setHex(worldCfg.wallColor>>>0);
     if(worldCfg.wallRough!=null) wallMat.roughness = Math.max(0, Math.min(1, +worldCfg.wallRough));
     if(worldCfg.wallMetal!=null) wallMat.metalness = Math.max(0, Math.min(1, +worldCfg.wallMetal));
-    wallMat.envMapIntensity = wallMat.metalness * worldCfg.skyBright;
+    wallMat.envMapIntensity = _envInten(wallMat.metalness, worldCfg.skyBright);   // build 1144
     wallMat.specularIntensity = wallMat.metalness;   // metal 0 => matte (no sun-sheen)
     if(+worldCfg.wallTile>0 && !(+worldCfg.wallTileU>0) && !(+worldCfg.wallTileV>0)){ worldCfg.wallTileU=worldCfg.wallTileV=+worldCfg.wallTile; worldCfg.wallTile=0; }   // migrate legacy uniform tile
     const wAuto = Math.max(2, Math.round(ARENA/8));
@@ -25384,7 +25410,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1143 · 2026-07-30';
+const BUILD_VERSION = 'build 1144 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27156,7 +27182,7 @@ function buildInstancing(){
     // A clone of a real member's material, so colour, shine, opacity, envMapIntensity and the
     // procedural detail set all carry into the batch — whatever the material happens to hold.
     const src0 = (list[0].isMesh && list[0].material) ? list[0].material : null;
-    const mat = src0 ? src0.clone() : new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:PRIM_DEFAULT_ROUGH, metalness:PRIM_DEFAULT_METAL });
+    const mat = src0 ? src0.clone() : new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:PRIM_DEFAULT_ROUGH, metalness:PRIM_DEFAULT_METAL, envMapIntensity:_envInten(PRIM_DEFAULT_METAL) });
     if(src0 && src0.userData) mat.userData = Object.assign({}, src0.userData);   // clone() shallow-copies userData by reference in r149
     const im = new THREE.InstancedMesh(instanceGeoFor(shape), mat, list.length);
     im.castShadow = true; im.receiveShadow = true;
