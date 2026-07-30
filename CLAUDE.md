@@ -967,6 +967,21 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The editor gets a clipboard (build 1176)
+
+There was NO clipboard — carrying a configured object between levels meant formalising it into a prefab.
+Ctrl+C serialises the selection through the same `_pfEntryOf` pair duplicate (1162) and prefabs use — full
+config, identity stripped, pivot-relative so arrangements survive — into `_propClipboard` AND the system
+clipboard as tagged JSON (`format:'rumpusprops'`), which makes paste work across levels and TABS. Ctrl+V
+prefers the system clipboard (may be newer; only its own tagged format is accepted from that untrusted
+text), falls back to memory when `readText` is refused, spawns at the editor drop point through the
+loader-mirroring `_pfSpawnEntry`, groups a multi-prop paste under ONE fresh gid, selects the result, takes
+one undo snapshot (Ctrl+Z removes the whole paste), and caps hostile pastes at 100 entries. Copy YIELDS to
+a real text selection and only preventDefaults when something was actually copied; with no multi-selection
+it falls back to the primary prop, which is the desired UX (the test initially got that wrong, not the
+engine). Paste sanitisation note: pasted entries go through the exact apply block level files already go
+through — nothing looser.
+
 ## Corpses lie on the floor, not in it (build 1175)
 
 Reported from play: capsules AND the feet-origin chub GLB sank partway through the floor on death. Build
@@ -1420,7 +1435,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1175)
+## Open work (as of build 1176)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

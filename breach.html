@@ -16601,6 +16601,19 @@ addEventListener('keydown', e=>{
     if(tag!=='INPUT' && tag!=='TEXTAREA'){ e.preventDefault(); const b=document.getElementById('edSave'); if(b) b.click(); }
     return;
   }
+  // build 1176: copy/paste. Copy yields to a REAL text selection (stealing the browser's copy while the
+  // creator has text highlighted would be hostile); paste always claims the key in the editor.
+  if(editorOpen && (e.ctrlKey||e.metaKey) && e.code==='KeyC' && !e.shiftKey && !e.altKey){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA' && !(window.getSelection && String(window.getSelection()))){
+      if(typeof copySelectedProps==='function' && copySelectedProps()>0) e.preventDefault(); }
+    return;
+  }
+  if(editorOpen && (e.ctrlKey||e.metaKey) && e.code==='KeyV' && !e.shiftKey && !e.altKey){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){ e.preventDefault(); if(typeof pasteProps==='function') pasteProps(); }
+    return;
+  }
   if(editorOpen && (e.code==='Delete' || e.code==='Backspace')){
     if(editorActive==='props') deleteSelectedProp();
     else if(editorActive==='lights') deleteSelectedLight();
@@ -26255,7 +26268,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1175 · 2026-07-30';
+const BUILD_VERSION = 'build 1176 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33213,6 +33226,50 @@ function _pickPropAt(e){
 function _dupSpawnFrom(o, dx, dz, gid, cb){
   const e = _pfEntryOf(o, { x:0, y:0, z:0 });   // full config; nid/gid/pf stripped = fresh identity
   _pfSpawnEntry(e, { x:dx, y:0, z:dz }, null, gid, cb);
+}
+// build 1176: COPY/PASTE. There was no clipboard at all — the only way to carry a configured object
+// between levels was to formalise it into a prefab first. Copy serialises the selection through the same
+// `_pfEntryOf` pair duplicate (1162) and prefabs use — full config, identity stripped, pivot-relative so
+// the arrangement survives — into an in-memory slot AND the system clipboard as tagged JSON, which makes
+// paste work across levels and even across TABS. Paste prefers the system clipboard (it may be newer),
+// falls back to memory (readText needs a permission some browsers refuse), spawns at the editor drop
+// point through the loader-mirroring apply block, groups a multi-prop paste so it moves as one, selects
+// the result, and CAPS a hostile paste at 100 entries. System-clipboard text is untrusted; it goes
+// through the exact apply block level files already go through, nothing looser.
+let _propClipboard = null;
+function copySelectedProps(){
+  const list=(typeof selProps!=='undefined' && selProps && selProps.length) ? selProps.filter(Boolean)
+    : [ propModels[editorTargets.props.idx] ].filter(Boolean);
+  if(!list.length){ if(typeof flashToast==='function') flashToast('Nothing selected to copy'); return 0; }
+  const pivot=_pfPivotOf(list);
+  _propClipboard={ props:list.map(o=>_pfEntryOf(o, pivot)) };
+  try{ if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(JSON.stringify({ format:'rumpusprops', v:1, props:_propClipboard.props })); }catch(e){}
+  if(typeof flashToast==='function') flashToast('Copied '+list.length+' prop'+(list.length>1?'s':''));
+  return list.length;
+}
+function _pasteEntries(entries){
+  entries=(entries||[]).slice(0,100); if(!entries.length) return;
+  pushUndoSnapshot();
+  const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):null;
+  const at=_dp?{ x:+_dp.x.toFixed(2), y:0, z:+_dp.z.toFixed(2) }:{ x:0, y:0, z:0 };
+  const gid=(entries.length>1)?_newGroupId():null;
+  const made=[]; let pending=entries.length;
+  const fin=()=>{ if(--pending>0) return; if(made.length){ selProps=made.slice(); editorActive='props'; editorTargets.props.idx=Math.max(0, propModels.indexOf(made[made.length-1])); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateSelectionHighlight==='function') updateSelectionHighlight(); } };
+  for(const p of entries) _pfSpawnEntry(p, at, null, gid, (obj)=>{ made.push(obj); fin(); });
+  if(typeof flashToast==='function') flashToast('Pasted '+entries.length+' prop'+(entries.length>1?'s':''));
+}
+function pasteProps(){
+  const fromMem=()=>{ if(_propClipboard && _propClipboard.props && _propClipboard.props.length) _pasteEntries(JSON.parse(JSON.stringify(_propClipboard.props))); };
+  try{
+    if(navigator.clipboard && navigator.clipboard.readText){
+      navigator.clipboard.readText().then(txt=>{
+        try{ const d=JSON.parse(txt); if(d && d.format==='rumpusprops' && Array.isArray(d.props) && d.props.length){ _pasteEntries(d.props.map(q=>JSON.parse(JSON.stringify(q)))); return; } }catch(e){}
+        fromMem();
+      }).catch(fromMem);
+      return;
+    }
+  }catch(e){}
+  fromMem();
 }
 function _dupPropForDrag(o){
   _altDup = null;
