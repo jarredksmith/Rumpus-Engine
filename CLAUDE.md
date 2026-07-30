@@ -963,7 +963,51 @@ the count when it loads; in the editor that is a hitch, and for anything spawned
 again. The general fix is either to strip them on import or to route them through `registerEmitterLight`,
 and it needs a decision about creators who legitimately ship a lamp model with a light in it.
 
-## Open work (as of build 1153)
+## An enemy must fit wherever the player fits (build 1154)
+
+Reported from play with a screenshot: enemies could not get up the default level's ramps or around its
+boxes, and were clipping into one another — **"this was happening with the default capsule enemies as
+well"**, using an imported model scaled to 0.38409. That last clause is what solved it: it ruled out the
+model and pointed at a shared constant. Two numbers, neither about the GLB.
+
+**1. The movement radius was bigger than the body — and bigger than the player.** The obstacle pass holds an
+enemy `footprint` away from every collider box. The capsule's real radius is 0.7 (`CapsuleGeometry(0.7, 1.4,
+...)`) but its footprint was `0.9*ty.scale`; an imported model's was `Math.max(0.9, realHalfWidth)`, so the
+reported model — true half-width 0.365 — was held off obstacles by **2.5× its own width**. Both exceed the
+PLAYER's `radius: 0.8`, which is the part that reads as "stuck": an enemy could not follow you through a gap
+you had just walked through.
+
+Replayed through the engine's own obstacle pass (`scratchpad/botstuck.mjs`) over a crate beside a ramp, a
+1.2 m gap:
+
+```
+eR 0.9  PUSHED 0.50      eR 0.8  PUSHED 0.40      eR 0.5  PUSHED 0.10      eR 0.3  fits
+```
+Now `ENEMY_CAP_R = 0.7` for the capsule and the model's real half-width otherwise, floored at
+`ENEMY_MIN_R = 0.3`. A genuinely wide model is still wider than the player — this is per-size, not a blanket
+shrink.
+
+**2. Separation lost a race it could not win.** Build 995 capped the anti-overlap push at `3.5*dt` because a
+packed huddle applying full corrections every frame visibly vibrated. But 3.5 is **0.058 per frame** at
+60fps, while a grunt CHASES at 6-9 u/s — 0.10 to 0.15 per frame each, so two enemies converging on the
+player close at up to **0.2 per frame**. Steering out-ran separation by 3.4×, so enemies chasing the same
+target sank into each other and stayed there. The cap now tracks the pair's own speed
+(`max(3.5, speedA + speedB)`), giving 0.20-0.30 per frame.
+
+Raising it cannot bring back build 995's vibration, and that is worth understanding rather than trusting:
+`Math.min((minD-d)*0.5, cap*dt)` — the FIRST term is what prevents overshoot. The cap only limits speed. 995
+fixed the vibration by adding the cap at a moment when the first term was doing the real work anyway; the
+ceiling was never the stabiliser.
+
+**Not the cause, and worth stating because it is the natural suspect:** the editor's *Collider radius* and
+*Collider height* size the DAMAGE hit-cylinder only — the hint under them says so — so the reported 0.3 / 0
+settings were correct and irrelevant. Height 0 means auto-fit.
+
+Three pins moved with it, all preserving their intent rather than their literal: build 995's (the shove is
+still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
+auto, decoupled from the collider radius" — still true, from a different constant.
+
+## Open work (as of build 1154)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

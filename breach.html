@@ -17133,6 +17133,20 @@ function reload(){
 const enemies = [];
 let nextEnemyId = 1;   // stable ids so co-op clients can reference enemies over the network
 const enemyGeo = new THREE.CapsuleGeometry(0.7, 1.4, 4, 10);
+// build 1154: an enemy's MOVEMENT radius — how far the obstacle pass holds it off every collider box.
+//
+// Reported from play: enemies stuck on ramps and around boxes, "with the default capsule enemies as well",
+// using a model scaled to 0.38. Both halves of that are one number. The capsule's real radius is 0.7 (the
+// geometry above) but its footprint was 0.9, and an imported model's was `Math.max(0.9, realHalfWidth)` —
+// so a 0.38-scaled model whose true half-width is 0.365 was held off obstacles by 0.9, TWO AND A HALF TIMES
+// its own width. Worse, both are wider than the PLAYER's 0.8: an enemy could not follow you through a gap
+// you had just walked through, which is what reads as "stuck" rather than "slow".
+//
+// Replayed through the engine's own obstacle pass over a crate beside a ramp (scratchpad/botstuck.mjs), a
+// 1.2 m gap: eR 0.9 pushed 0.50, eR 0.8 pushed 0.40, eR 0.5 pushed 0.10, eR 0.3 fitted. The floor is now
+// small enough for a scaled-down character and the real half-width drives everything above it.
+const ENEMY_CAP_R = 0.7;    // the capsule's own radius, so the default enemy is held off by what it IS
+const ENEMY_MIN_R = 0.3;    // a floor for degenerate//tiny models — never zero, never the old 0.9
 // Optional uploaded enemy model (GLB, animated). When set, each enemy shows this model instead of the
 // capsule; saved with the level (under "enemy"). The logical body stays a capsule-sized Group so all the
 // AI / collision / networking code is unchanged — only the visual child swaps.
@@ -17195,7 +17209,7 @@ function buildEnemyVisual(body){
     const eye = new THREE.Mesh(new THREE.SphereGeometry(.18,8,8), new THREE.MeshBasicMaterial({color:0xffd166}));
     eye.position.set(0, 0.7, -0.55);   // slightly forward so you can read facing
     cap.add(eye);
-    body.add(cap); body.userData.visual = cap; body.userData.modelY = 0; body.userData.hasModel = false; body.userData.footprint = 0.9*ty.scale;   // MOVEMENT spacing (auto; independent of the damage cylinder)
+    body.add(cap); body.userData.visual = cap; body.userData.modelY = 0; body.userData.hasModel = false; body.userData.footprint = ENEMY_CAP_R*ty.scale;   // build 1154: the capsule's REAL radius (CapsuleGeometry(0.7,...)), not 0.9 — see ENEMY_MIN_R
     cap.traverse(o=>{ o.raycast = ()=>{}; });   // shots test the hit-proxy cylinder, not the capsule mesh
     setEnemyHitProxy(body, mc.cr > 0 ? mc.cr : body.userData.footprint, mc.ch > 0 ? mc.ch : 2.8*ty.scale);   // capsule is 2.8u tall
   };
@@ -17221,7 +17235,7 @@ function buildEnemyVisual(body){
         const lbox = wbox.clone().applyMatrix4(_seatInv.copy(body.matrixWorld).invert());   // model extent relative to the body
         const cx = (lbox.min.x+lbox.max.x)/2, cz = (lbox.min.z+lbox.max.z)/2;
         model.position.set(model.position.x - cx + mc.xoff, model.position.y - lbox.min.y - 1.4 + mc.yoff, model.position.z - cz + mc.zoff);
-        body.userData.footprint = Math.max(0.9, Math.min(3.5, Math.max((lbox.max.x-lbox.min.x)/2, (lbox.max.z-lbox.min.z)/2)));   // MOVEMENT spacing from the real footprint (auto)
+        body.userData.footprint = Math.max(ENEMY_MIN_R, Math.min(3.5, Math.max((lbox.max.x-lbox.min.x)/2, (lbox.max.z-lbox.min.z)/2)));   // build 1154: MOVEMENT spacing from the model's REAL half-width; the old 0.9 floor made a scaled-down model 2.5x its own width
         body.userData.autoColH = Math.max(0.6, lbox.max.y - lbox.min.y);   // real model height -> default collider height
       }
       body.userData.visual = model;
@@ -25887,7 +25901,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1153 · 2026-07-30';
+const BUILD_VERSION = 'build 1154 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31150,7 +31164,15 @@ function loop(){
         let dx=a.x-b.x, dz=a.z-b.z, d=Math.hypot(dx,dz);
         if(d < minD){
           if(d < 1e-4){ dx=Math.cos(enemies[i].id*1.7); dz=Math.sin(enemies[i].id*1.7); d=1; }   // exact overlap: deterministic nudge
-          const push=Math.min((minD-d)*0.5, 3.5*dt), nx=dx/d, nz=dz/d;   // build 995: cap at a slide speed — a packed huddle used to apply full corrections every frame and visibly vibrate
+          // build 995 capped this at a slide speed because a packed huddle applying full corrections every
+          // frame visibly vibrated. But 3.5 is 0.058 per frame at 60fps, while a grunt CHASES at 6-9 u/s —
+          // 0.10 to 0.15 per frame each, so two enemies converging on the player close up to 0.2 per frame.
+          // Steering out-ran separation by 3.4x, which is why enemies chasing the same target sank into one
+          // another and stayed there. The cap now tracks their own speed, so separation can always keep up;
+          // the (minD-d)*0.5 term is what actually prevents overshoot, so raising the ceiling cannot
+          // reintroduce the vibration build 995 fixed.
+          const sepCap = Math.max(3.5, (enemies[i].speed||0) + (enemies[j].speed||0));
+          const push=Math.min((minD-d)*0.5, sepCap*dt), nx=dx/d, nz=dz/d;
           a.x += nx*push; a.z += nz*push; b.x -= nx*push; b.z -= nz*push;
         }
       }

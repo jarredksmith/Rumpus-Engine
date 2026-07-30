@@ -21,7 +21,8 @@ assert(/setEnemyHitProxy\(body, mc\.cr > 0 \? mc\.cr : body\.userData\.footprint
 assert(/setEnemyHitProxy\(body, mc\.cr > 0 \? mc\.cr : body\.userData\.footprint, mc\.ch > 0 \? mc\.ch : \(body\.userData\.autoColH \|\| 2\.6\)\)/.test(src), 'model: cr sizes the hit cylinder, footprint stays auto');
 // movement footprint must NOT be overridden by the collider radius (that was trapping enemies)
 assert(!/if\(mc\.cr > 0\) body\.userData\.footprint = mc\.cr/.test(src), 'collider radius no longer inflates movement spacing');
-assert(/body\.userData\.footprint = 0\.9\*ty\.scale;/.test(src), 'capsule movement footprint is auto');
+// build 1154: from the capsule's own radius, not a larger constant — see ENEMY_CAP_R.
+assert(/body\.userData\.footprint = ENEMY_CAP_R\*ty\.scale;/.test(src), 'capsule movement footprint is auto');
 
 // visualization: live enemy hit-cylinders drawn when "show colliders" is on
 const vz = extractFunction('updateColliderViz');

@@ -39,7 +39,9 @@ assert(/if\(!mc\.url\)\{ useCapsule\(\); return; \}/.test(bev), 'no url -> capsu
 assert(/_loadGLTFWithLib\(mc\.url, mc/.test(bev), 'loads the type model (via the anim-library shim, build 919)');
 assert(/-\s*lbox\.min\.y\s*-\s*1\.4\s*\+\s*mc\.yoff/.test(bev), 'seating adds the type Y offset');
 assert(/setEnemyHitProxy\(body, mc\.cr > 0 \? mc\.cr : body\.userData\.footprint/.test(bev), 'collider radius sizes the hit cylinder per type');
-assert(/footprint = 0\.9\*ty\.scale/.test(bev), 'capsule movement footprint is auto (decoupled from collider radius)');
+// build 1154: the capsule is held off obstacles by its OWN radius (CapsuleGeometry(0.7,...)) rather than a
+// larger 0.9, which made it wider than the player and unable to follow you through your own gaps.
+assert(/footprint = ENEMY_CAP_R\*ty\.scale/.test(bev), 'capsule movement footprint is auto (decoupled from collider radius)');
 assert(/body\.userData\.hasModel = true; body\.userData\.faceOff = mc\.face/.test(bev), 'stores per-enemy facing');
 assert(/url !== mc\.url\) return/.test(bev), 'stale-load guard when a type url changes');
 
