@@ -967,6 +967,17 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The level format version is finally read (build 1165)
+
+`serializeLevel` has written `v:1` since the field existed and nothing ever inspected it — across ~1160
+builds. The single-file GitHub-Pages model guarantees stale cached clients exist, so "new level opened in an
+old engine" is a normal event, and it silently dropped whatever the old client didn't recognise. Now
+`LEVEL_FORMAT_V` is a named constant, `serializeLevel` writes it, and `_levelFormatCheck` gates
+`restoreLevel` BEFORE the teardown (a refusal must cost nothing): a newer `v` still loads — tolerance is the
+right default — but warns loudly naming both versions and the fix (refresh the page); a newer `minV` is the
+author's declaration that a partial read is load-bearing wrong and refuses cleanly. Bump `v` when the schema
+changes shape; set `minV` only when an old client's partial read would corrupt rather than degrade.
+
 ## The host bounds the claim — movement and damage rate (build 1164)
 
 The panel's two netcode CRITICALs, both verified at the exact lines. Build 1130 established "bound the
@@ -1268,7 +1279,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1164)
+## Open work (as of build 1165)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

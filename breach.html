@@ -26134,7 +26134,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1164 · 2026-07-30';
+const BUILD_VERSION = 'build 1165 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33422,7 +33422,7 @@ function propIndexByNid(nid){ for(let i=0;i<propModels.length;i++){ const o=prop
 function serializeLevel(){
   const lightHex = g=>{ const L=g.userData.light; return (Math.round(L.color.r*255)<<16)|(Math.round(L.color.g*255)<<8)|Math.round(L.color.b*255); };
   return {
-    v: 1,
+    v: LEVEL_FORMAT_V,   // build 1165: the version is now READ on load (see _levelFormatCheck) — bump it when the schema changes shape, and set minV only when an old client's partial read would be load-bearing wrong
     gun:     { url: gunModelUrl,     state: Object.assign({}, editorTargets.gun.state) },
     weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); if(w.model || w.view || w.clips || dmgChg || w.noMuzzle) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined }; return acc; }, {}),   // build 623: per-weapon damage; build 684: muzzle-flash toggle
     aim:     { state: Object.assign({}, editorTargets.aim.state) },
@@ -34145,8 +34145,34 @@ function pushUndoSnapshot(){
     if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   } catch(e){}
 }
+// build 1165: the format version is finally READ. `serializeLevel` has written `v:1` since the field was
+// added and nothing ever inspected it — so a level authored on a newer engine opened in an older cached
+// client (the single-file GitHub-Pages model guarantees stale clients exist) silently dropped whatever it
+// didn't recognise, and the creator's work just wasn't there, with no message. The tolerant reader stays —
+// same-version and older levels load exactly as before — but now:
+//  - `v` newer than this engine → load anyway (tolerance is the right default) with a LOUD warning that
+//    names both versions and says the fix is refreshing the page.
+//  - `minV` newer than this engine → the author has said "this level cannot survive a partial read"
+//    (a future serializer sets it only when a load-bearing structure changes) → REFUSE, before any
+//    teardown, so the refusal costs the player nothing.
+const LEVEL_FORMAT_V = 1;
+function _levelFormatCheck(level){
+  const v = +(level && level.v) || 1;
+  const minV = +(level && level.minV) || 1;
+  if(minV > LEVEL_FORMAT_V){
+    const m = 'This level needs a newer RUMPUS ENGINE (level format v'+minV+', this build reads v'+LEVEL_FORMAT_V+'). Refresh the page to update, then load it again.';
+    if(typeof flashToast==='function') flashToast(m); else console.warn(m);
+    return { ok:false };
+  }
+  if(v > LEVEL_FORMAT_V){
+    const m = 'This level was made with a newer RUMPUS ENGINE (format v'+v+' > v'+LEVEL_FORMAT_V+') — loading anyway, but some newer features may be missing. Refresh the page to update.';
+    if(typeof flashToast==='function') flashToast(m); console.warn(m);
+  }
+  return { ok:true };
+}
 function restoreLevel(level){
   if(!level) return;
+  if(!_levelFormatCheck(level).ok) return;   // build 1165: refuse BEFORE the teardown — a refusal must cost nothing
   // build 893: world (TERRAIN) first — prop y is stored relative to the terrain under it, so placement
   // must lift against THIS level's terrain, not whatever the previous level left behind.
   if(level.world){ worldCfg = _worldFrom(level.world); applyWorldCfg(); }
