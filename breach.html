@@ -26255,7 +26255,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1174 · 2026-07-30';
+const BUILD_VERSION = 'build 1175 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28353,7 +28353,26 @@ function _fallbackDeath(mesh, dx, dz){
     const ax=new THREE.Vector3(dz/l, 0, -dx/l);   // horizontal axis perpendicular to the hit -> the body tips AWAY from the shooter
     const mats=[];
     mesh.traverse(o=>{ if(o.isMesh && o.material){ const arr=Array.isArray(o.material)?o.material:[o.material]; const cl=arr.map(m=>{ const c=m.clone(); c.transparent=true; return c; }); o.material=Array.isArray(o.material)?cl:cl[0]; for(const c of cl) mats.push(c); } });
-    _fadeCorpses.push({ mesh, ax, mats, t:0, y0:mesh.position.y, q0:mesh.quaternion.clone() });
+    // build 1175: the lie-down drop is MEASURED, not the old hardcoded 1.0. A capsule (radius 0.7) lying
+    // down needs 0.7 — it was buried 0.3; a feet-origin GLB (the chub character) needs to RISE by half its
+    // width, and dropping it 1.0 put the origin a metre underground: "falls over, goes halfway through the
+    // floor". Apply the FINAL topple quaternion once, measure the real lying bbox, and solve the y that
+    // rests its bottom exactly where the standing bottom was. Two setFromObject traversals per death —
+    // event-scale, not per-frame. Sink depth is the lying THICKNESS (+ margin), for the same reason.
+    const q0=mesh.quaternion.clone();
+    let dy=-1.0, sink=1.4;
+    try{
+      const box0=new THREE.Box3().setFromObject(mesh);
+      _fcQ.setFromAxisAngle(ax, 1.5);
+      mesh.quaternion.copy(q0).premultiply(_fcQ); mesh.updateMatrixWorld(true);
+      const box1=new THREE.Box3().setFromObject(mesh);
+      mesh.quaternion.copy(q0); mesh.updateMatrixWorld(true);
+      if(isFinite(box0.min.y) && isFinite(box1.min.y) && !box0.isEmpty() && !box1.isEmpty()){
+        dy = box0.min.y - box1.min.y;                       // + raises a feet-origin body, − lowers a centre-origin one
+        sink = Math.max(0.5, (box1.max.y - box1.min.y) + 0.3);
+      }
+    }catch(e){}
+    _fadeCorpses.push({ mesh, ax, mats, t:0, y0:mesh.position.y, q0, dy, sink });
     if(_fadeCorpses.length>FADE_CORPSE_MAX) _removeFadeCorpse(_fadeCorpses.shift());
   }catch(e){ try{ scene.remove(mesh); }catch(_e){} }
 }
@@ -28365,11 +28384,11 @@ function updateFadeCorpses(dt){
       const k=c.t/TOPPLE, e=k*k*(3-2*k);   // smoothstep: slow tip, fast slam
       _fcQ.setFromAxisAngle(c.ax, e*1.5);
       c.mesh.quaternion.copy(c.q0).premultiply(_fcQ);
-      c.mesh.position.y = c.y0 - e*1.0;    // centre drops as the body lies down
+      c.mesh.position.y = c.y0 + e*(c.dy!=null?c.dy:-1.0);   // build 1175: to the MEASURED resting height — the body lies ON the floor, whatever its pivot
     } else if(c.t<TOPPLE+HOLD){ /* lie still */ }
     else if(c.t<TOPPLE+HOLD+SINK){
       const k=(c.t-TOPPLE-HOLD)/SINK;
-      c.mesh.position.y = c.y0 - 1.0 - k*1.4;
+      c.mesh.position.y = c.y0 + (c.dy!=null?c.dy:-1.0) - k*(c.sink!=null?c.sink:1.4);
       for(const m of c.mats){ if(m.opacity>1-k) m.opacity=1-k; }
     } else { _removeFadeCorpse(c); _fadeCorpses.splice(i,1); }
   }

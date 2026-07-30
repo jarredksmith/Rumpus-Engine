@@ -967,6 +967,17 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Corpses lie on the floor, not in it (build 1175)
+
+Reported from play: capsules AND the feet-origin chub GLB sank partway through the floor on death. Build
+994's fallback death lowered every toppling corpse by a HARDCODED 1.0. A capsule (radius 0.7, centre
+origin) needs 0.7 — buried 0.3; a feet-origin GLB needs to RISE by half its width — dropped a metre
+underground. `_fallbackDeath` now applies the FINAL topple quaternion once at death, measures the real
+lying bbox, and solves the y that rests its bottom exactly where the standing bottom was (`dy = box0.min.y
+- box1.min.y` — sign handles both pivots with no special cases); the sink phase descends by the measured
+lying thickness. Unmeasurable meshes fall back to the old constants. test-994's pin moved from the
+hardcoded offset to the PROPERTY (lying bbox bottom ≈ ground), which is what that build always meant.
+
 ## Curved props stopped swallowing enemies; enemies learned to hop (build 1174)
 
 Two play reports, each verified to a mechanism. (1) CLIP-THROUGH: 1158's edge exemption reads a curved
@@ -1409,7 +1420,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1174)
+## Open work (as of build 1175)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
