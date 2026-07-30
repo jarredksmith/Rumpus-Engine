@@ -22103,8 +22103,31 @@ function netHostLost(){
   if(typeof toast==='function') toast('Host disconnected');
   setTimeout(()=>{ NET.mode='off'; NET.gameMode='coop'; try{ location.reload(); }catch(e){} }, 1600);
 }
+// build 1164: BOUND THE MOVEMENT CLAIM. The host used to write whatever position a client reported,
+// verbatim — teleport/noclip/speedhack were one console line and propagated to every peer as truth. Full
+// re-simulation is impossible P2P; what the host CAN do is what build 1130 did for damage magnitude: bound
+// the claim. Per accepted tick the displacement is capped at a generous top speed (higher in a car); a jump
+// past the cap is accepted ONCE per cooldown — that is the legitimate-teleport allowance (respawn, the
+// logic graph's teleport verb, a jump pad's first frame) — and past that allowance the claim is CLAMPED
+// along its own direction. A speedhack is continuous, so it spends the allowance instantly and rubber-bands;
+// a real respawn is rare and passes untouched. Host-side only: clients keep trusting the host's relays.
+const _MOVE_CAP = 40, _MOVE_CAP_CAR = 90, _TP_ALLOW_MS = 3000;
+function _plausibleMove(rp, x, y, z, inCar){
+  const now = performance.now();
+  if(rp._mvT == null || !isFinite(rp.posEye.x)){ rp._mvT = now; return null; }   // first report: accept, start the clock
+  const dtl = Math.max(1/30, Math.min(0.5, (now - rp._mvT) / 1000));   // generous on slow tickers, bounded on stalls
+  rp._mvT = now;
+  const cap = (inCar ? _MOVE_CAP_CAR : _MOVE_CAP) * dtl;
+  const dx = x - rp.posEye.x, dy = y - rp.posEye.y, dz = z - rp.posEye.z;
+  const d = Math.hypot(dx, dy, dz);
+  if(d <= cap) return null;                                            // plausible: accept verbatim
+  if(now - (rp._tpT || 0) > _TP_ALLOW_MS){ rp._tpT = now; return null; }   // one big jump per window = a teleport, not a hack
+  const k = cap / d;
+  return { x: rp.posEye.x + dx*k, y: rp.posEye.y + dy*k, z: rp.posEye.z + dz*k };
+}
 function setRemoteState(id, msg){
   const rp=ensureRemotePlayer(id, msg.n);
+  if(NET.mode==='host'){ const cl=_plausibleMove(rp, +msg.p[0], +msg.p[1], +msg.p[2], !!msg.c); if(cl){ msg.p=[cl.x, cl.y, cl.z]; } }
   rp.posEye.set(msg.p[0], msg.p[1], msg.p[2]);
   rp.target.set(msg.p[0], msg.p[1]-EYE, msg.p[2]);   // synced feet (no flat-0 clamp; netInterpolate glues grounded avatars to the LOCAL terrain)
   rp.yaw = msg.y; rp.pitch = msg.pi||0; if(msg.hp!=null) rp.hp=msg.hp; if(msg.w!=null) rp.wep=msg.w; if(msg.g) rp.grip=_unpackGrip(msg.g); rp.air = !!msg.j; rp.slide = !!msg.sl; rp.ads = !!msg.ad; rp.crouch = !!msg.cr; rp.hd = msg.hd||0; rp.hs = msg.hs||0; rp.mt = (msg.mt!=null?msg.mt:-1); rp.cl = msg.cl||0; rp.car = msg.c||null;   // build 548/644: turret index + climbing anim code travel in the state; build 895: the car they're driving
@@ -22520,6 +22543,27 @@ function _netDmg(d){
   if(!isFinite(v) || v <= 0) return 0;
   return Math.min(v, _netDmgCap());
 }
+// build 1164: BOUND THE DAMAGE RATE. _netDmg (1130) caps one PACKET's magnitude — but nothing bounded how
+// many packets a second, so a cheating client could send 50 capped pvpHits per frame and instakill anyone
+// on the map, through walls, from spawn. A leaky bucket per source connection: damage drains over a 1s
+// window and grants stop at the cap. The caps are generous multiples of the highest legitimate output
+// (SMG headshot spray ≈ 290/s to one target; splash across a crowd multiplies the PvE figure), so a real
+// player never feels them — they turn "instakill" into "slightly above the best real gun", which is the
+// honest ceiling for P2P. Per-kind buckets: melting a whole WAVE of enemies is legitimate throughput that
+// must never crowd out (or be crowded out by) player-vs-player claims.
+const _dmgAcc = {};                     // source id -> { t, pvp, pve }
+const _DMG_RATE_PVP = 500, _DMG_RATE_PVE = 1500;
+function _netDmgBudget(id, kind, d){
+  if(!(d > 0)) return 0;
+  const now = performance.now();
+  let a = _dmgAcc[id]; if(!a) a = _dmgAcc[id] = { t: now, pvp: 0, pve: 0 };
+  const el = (now - a.t) / 1000;
+  if(el > 0){ const keep = Math.max(0, 1 - el); a.pvp *= keep; a.pve *= keep; a.t = now; }
+  const cap = (kind === 'pvp') ? _DMG_RATE_PVP : _DMG_RATE_PVE;
+  const grant = Math.min(d, Math.max(0, cap - a[kind]));
+  a[kind] += grant;
+  return grant;
+}
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
@@ -22533,13 +22577,13 @@ function handleClientMsg(conn, msg){
       try{ dest.send(fwd); }catch(e){} return; }
   }
   if(msg.t==='st'){ setRemoteState(id, msg); }
-  else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmg(msg.d), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
+  else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmgBudget(id,'pve',_netDmg(msg.d)), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
   else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
-  else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmg(msg.d), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
+  else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmgBudget(id,'pvp',_netDmg(msg.d)), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
   else if(msg.t==='died'){ const _by=+msg.by; if(_by===0 || NET.conns[_by]) registerDuelKill(_by, id); }            // a client died; credit the killer — build 1130: only a player who is actually in the match
-  else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(id, msg.id)){ const _s=NET.players[id]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, _netDmg(msg.d), _sx, _sz)) registerDuelKill(id, msg.id); } }   // a client shot a bot — build 1130: the shooter is the connection, so a claimed `from` can no longer dodge the sameTeam check or steal the credit
+  else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(id, msg.id)){ const _s=NET.players[id]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, _netDmgBudget(id,'pvp',_netDmg(msg.d)), _sx, _sz)) registerDuelKill(id, msg.id); } }   // a client shot a bot — build 1130: the shooter is the connection, so a claimed `from` can no longer dodge the sameTeam check or steal the credit
   else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } if(NET.phase==='lobby') refreshLobby(); }   // a client changed character (the lobby card updates live)
   else if(msg.t==='rocket'){ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), d=new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]); fireRocket(o,d,id,true,msg.r||7,WEAPONS.launcher.dmg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'rocket', o:msg.o, d:msg.d, r:msg.r, by:id}); }catch(e){} } } }   // a client fired a rocket: host simulates it + relays the visual
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), id, true); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'nade', o:msg.o, v:msg.v, by:id}); }catch(e){} } } }   // build 670: a client threw a grenade: host simulates it (authors damage) + relays the visual to the others
@@ -26090,7 +26134,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1163 · 2026-07-30';
+const BUILD_VERSION = 'build 1164 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

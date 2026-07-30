@@ -967,6 +967,26 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The host bounds the claim — movement and damage rate (build 1164)
+
+The panel's two netcode CRITICALs, both verified at the exact lines. Build 1130 established "bound the
+claim" for damage MAGNITUDE and identity; this extends it to the two surfaces it never covered:
+- **Movement.** `setRemoteState` wrote a client's reported position verbatim — teleport/noclip/speedhack
+  were one console line, propagated to every peer as truth. Now `_plausibleMove` (host only; clients keep
+  trusting the host's relays) caps per-tick displacement at 40 u/s (90 in a car), with ONE oversized jump
+  allowed per 3s window — that is the legitimate-teleport allowance (respawn, the teleport verb, a jump
+  pad's first frame). A speedhack is continuous, so it spends the allowance instantly and rubber-bands
+  along its own claimed direction; a real respawn is rare and passes untouched.
+- **Damage rate.** `_netDmg` caps one packet, so 50 capped pvpHits per frame was an instakill through
+  walls. `_netDmgBudget` is a leaky bucket per SOURCE per KIND (pvp 500/s, pve 1500/s — generous multiples
+  of the best legitimate output: SMG headshot spray ≈290/s single-target, splash across a crowd multiplies
+  the PvE figure). Per-kind so melting a wave never crowds out PvP claims; per-source so one cheater's
+  bucket cannot tax an innocent player. test-1164 proves 50 sniper-cap packets land exactly the 1s budget
+  and a full second of the fastest legitimate spray passes 100% intact.
+
+Four pins moved (1122, 1130, 389, 459) — each asserts the same intent through the new wrapped call; 1122's
+harness injects the budget as pass-through because that test is about ROUTING, not the clamp.
+
 ## Undo keeps the selection; hide/lock become undoable (build 1163)
 
 Two panel findings, both verified. restoreLevel ends with `selProps.length = 0` — right for a level load,
@@ -1248,7 +1268,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1163)
+## Open work (as of build 1164)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
