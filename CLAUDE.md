@@ -252,7 +252,65 @@ stuffs the hit list into `document.title` costs one capture run and settles it, 
 to its most extreme value is the other cheap discriminator — `normalBias = 0` producing NO acne
 proved the geometry was never in the shadow map, which no amount of bias tuning would have shown.
 
-## Open work (as of build 1124)
+**Probe the MATERIAL, not just the geometry (build 1139).** The same technique settles "why did my
+material change do nothing". A `window.__surfProbe` that raycasts through a few screen points and
+reports, per hit, the object's src, its material type and colour, and which of `map`/`normalMap`/
+`roughnessMap` are set, found in one run what four rounds of reasoning had not. Two cautions learned
+the hard way: filter the sky dome out of the hit list (it is a mesh one unit from the camera and wins
+every ray), and remember `Raycaster` ignores a mesh's own `visible:false` but NOT its ancestors' — so
+editor gizmo geometry shows up in play. An `InstancedMesh` hit reports the SHARED geometry (a unit box
+at the origin) with a correct world hit point; that mismatch is the signature of a batch, not a bug.
+
+## Procedural surface detail (build 1139) — three ways to ship nothing
+
+`_procSurface()` bakes one 256×256 tiling value-noise field into a Sobel `normalMap` and a
+`roughnessMap`; `applyProcSurface(mat, span)` / `retileProcSurface(root, span)` hand it to `floorMat`,
+`wallMat` and every `primitiveMat()`. Each of the three faults below produced a frame that measured
+IDENTICAL to the one before it, so none would have been caught by looking.
+
+- **A map assigned at material construction is not a map.** `worldCfg.floorTex` is `''` by default, so
+  the first `applyWorldCfg` ran `_loadSurfaceMap`'s no-url branch and wrote `null` over `floorMat.map`
+  before the first frame. The detail set is therefore a REMEMBERED FALLBACK (`mat.userData.procSurf`,
+  read by `_procFallback`) that every clear path restores. Anything that writes `mat[slot] = null`
+  needs to go through it.
+- **UV tiling is not a physical size.** The box primitive is a unit cube, so one repeat value gives an
+  11 m blotch on a 22 m deck and a 50 cm one on a 1 m crate — the same material reading as two
+  differently-zoomed photographs. Callers pass a world SPAN; `_procRepeatFor` quantises `span /
+  PROC_TILE_M` onto `_PROC_STEPS` so the clone cache stays ~7 entries.
+- **`buildInstancing()` rebuilt the batch material from scratch.** It grouped by `shape|colour` and
+  constructed a fresh `MeshStandardMaterial` at the default roughness .65 / metalness .35 — so every
+  instanced prop lost the detail set in play and got it back in the editor, and had been silently
+  losing its authored *shine* and *opacity* the same way since long before this build. It now clones a
+  real member's material and `_instKey` carries colour, shine, opacity and grain scale.
+
+**An albedo `map` cannot be exposure-neutral.** It multiplies the material colour, so it only darkens:
+a near-white 226..255 field averages 0.87 in LINEAR space and measured −19% across the frame (a deck
+91,105,90 → 74,91,68). Neutrality would need values above 255. Since this retrofits detail onto colours
+creators already chose, the set carries relief and roughness only — `PROC_SLOTS`. Relief is also baked
+into the map rather than set as `material.normalScale`, because `floorMat`/`wallMat` are shared and a
+creator's own normal map would inherit whatever scale was left behind. `STR` was 2.6, then 1.8, and both
+read as crumpled foil with grazing-angle moiré; the Sobel sums eight taps of a unit-amplitude field, so
+micro-relief is `STR ≈ 0.3` (steepest slope ~8°).
+
+## Open work (as of build 1139)
+
+**`arenaMood` never emits `floorColor` or `wallColor`.** Every other world key it touches (sky, fog,
+post, `ssao`) it sets, but a generated desert arena still sits on the engine's default grey-blue floor
+plane — visible in `arena-editor` as an olive plane butting against cream sand where the imported ground
+ends. One line per theme in `tools/levelgen.mjs`, using the same `light.groundAlb` the bake already has.
+
+**The default level's floor plane reads olive-green.** Measured in the near band (300,660→700,715) it is
+(87,105,77) while its albedo `floorColor 0x4f5d66` is (79,93,102) — the blue channel is the HIGHEST in
+the albedo and the LOWEST in the frame, which no positive light times that albedo produces. It measures
+the same in build 1138, so it is not a 1139 regression, and it is NOT the grid (hidden in play, and the
+play and editor frames measure identically). Diagnose it the way build 1136 should have been: zero one
+term at a time (sun, hemisphere, `scene.environment`, the `_paintU` splat, `specularIntensity`) rather
+than reasoning about the hex — and remember a lit pixel is never comparable to an authored albedo.
+
+**The rifle has no roughness or normal map.** `propMeshMap` counts 9 meshes with no maps at all and
+they are all the weapon GLB, so there is not one specular break-up or AO crease anywhere on the object
+that occupies 11% of every gameplay frame. `applyProcSurface` deliberately does not reach it (imported
+models keep their own materials), so this wants the viewmodel's own treatment.
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

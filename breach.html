@@ -7686,8 +7686,165 @@ let ARENA = 70;
 // pure black because 0x141c22 is 0.007 linear, and ACES clamps anything under 0.00325 to zero.
 // Offsetting depth (not position) leaves collision, the nav grid, surfaceTopAt and spawn heights
 // untouched — moving the plane would change all of them.
+// ---------- build 1139: procedural surface detail for the engine's OWN surfaces ----------
+// A critic's measurement: a generated arena's ground patch holds 1,745 unique colours over 10,800
+// pixels; the default level's floor holds THREE over 18,900. Every primitive and both boundary
+// surfaces were flat albedo — one colour, one roughness, no relief — which is the difference between
+// "a render" and "a photograph of something" no matter how good the lighting on top of it is.
+//
+// This is one 256x256 height field, generated once, turned into a NORMAL map by Sobel (which is what
+// catches the sun and gives the surface relief) and a ROUGHNESS map so highlights break up instead of
+// sweeping evenly. Deliberately NO albedo map — see below, it is the one of the three that cannot be
+// exposure-neutral. No external asset, no download, ~170 KB of VRAM for the whole engine, and it is
+// shared by every material that opts in.
+let _surfTex = null;
+function _procSurface(){
+  if(_surfTex !== null) return _surfTex;
+  try{
+    const N = 256;
+    // a deterministic value-noise field: three octaves of smoothed lattice noise. Deterministic matters
+    // — a level that looks different on every load cannot be screenshotted or shared (build 1133).
+    let seed = 0x9e3779b9;
+    const rnd = ()=>{ seed ^= seed<<13; seed ^= seed>>>17; seed ^= seed<<5; return ((seed>>>0)/4294967296); };
+    const H = new Float32Array(N*N);
+    for(const [cells, amp] of [[8, 0.55], [24, 0.3], [64, 0.15]]){
+      const g = new Float32Array(cells*cells);
+      for(let i=0;i<g.length;i++) g[i] = rnd();
+      const sm = (t)=> t*t*(3-2*t);                                  // smoothstep, so cells do not show
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+        const fx = x/N*cells, fy = y/N*cells;
+        const x0 = Math.floor(fx)%cells, y0 = Math.floor(fy)%cells;
+        const x1 = (x0+1)%cells, y1 = (y0+1)%cells;                  // wrap: the texture must tile
+        const tx = sm(fx-Math.floor(fx)), ty = sm(fy-Math.floor(fy));
+        const a = g[y0*cells+x0]*(1-tx) + g[y0*cells+x1]*tx;
+        const b = g[y1*cells+x0]*(1-tx) + g[y1*cells+x1]*tx;
+        H[y*N+x] += (a*(1-ty) + b*ty) * amp;
+      }
+    }
+    // There is NO albedo map here, and that is a measured decision, not an omission. A `map` multiplies
+    // the material colour, so it can only ever darken: a near-white 226..255 field averages 0.87 in
+    // LINEAR space, and captured before/after it took the whole frame down ~19% (a deck 91,105,90 ->
+    // 74,91,68). Making it exposure-neutral would need values above 255. Since this feature retrofits
+    // detail onto colours creators already chose, darkening every existing level is not a trade to make
+    // — and per this file's own note, noise in albedo does not respond to the light moving anyway.
+    // Relief and roughness do, they are what read as MATERIAL, and neither shifts exposure.
+    //
+    // normals, by Sobel on the same field. This is the term that reads as SURFACE.
+    const nc = document.createElement('canvas'); nc.width = nc.height = N;
+    const nctx = nc.getContext('2d'), nimg = nctx.createImageData(N, N);
+    const at = (x,y)=> H[((y+N)%N)*N + ((x+N)%N)];
+    // Relief strength is baked into the MAP, not applied as material.normalScale: floorMat and wallMat
+    // are shared, and a creator who loads their own normal map would inherit whatever scale we left on
+    // the material. Bake it and the default (1,1) is correct for both cases.
+    //
+    // This number was 1.8 and then 2.6, and both were badly wrong — measured off a capture, the crates
+    // read as crumpled foil and the floor as choppy water. The Sobel sums eight taps of a field whose
+    // amplitude is 1, so on the coarse octave dx reaches ~0.5; at 1.8 that tilts the normal past 30
+    // degrees, which is a bump-mapping demo, not a surface. MICRO-relief is a handful of degrees:
+    // 0.3 puts the steepest slope near 8. It also kills the grazing-angle moire the strong version
+    // showed across the mid-ground floor, which no amount of anisotropy was going to fix.
+    const STR = 0.3;                                                  // relief strength, in height units
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+      const dx = (at(x+1,y-1)+2*at(x+1,y)+at(x+1,y+1)) - (at(x-1,y-1)+2*at(x-1,y)+at(x-1,y+1));
+      const dy = (at(x-1,y+1)+2*at(x,y+1)+at(x+1,y+1)) - (at(x-1,y-1)+2*at(x,y-1)+at(x+1,y-1));
+      let nx = -dx*STR, ny = -dy*STR, nz = 1;
+      const l = Math.hypot(nx,ny,nz); nx/=l; ny/=l; nz/=l;
+      const i = (y*N+x)*4;
+      nimg.data[i] = Math.round((nx*0.5+0.5)*255);
+      nimg.data[i+1] = Math.round((ny*0.5+0.5)*255);
+      nimg.data[i+2] = Math.round((nz*0.5+0.5)*255);
+      nimg.data[i+3] = 255;
+    }
+    nctx.putImageData(nimg, 0, 0);
+    const normalMap = new THREE.CanvasTexture(nc);
+    // roughness: the same field. A single roughness value makes every highlight sweep the surface as
+    // one shape, which is the other half of the plastic look.
+    const rc = document.createElement('canvas'); rc.width = rc.height = N;
+    const rctx = rc.getContext('2d'), rimg = rctx.createImageData(N, N);
+    for(let i=0;i<N*N;i++){
+      // A NARROW range on purpose: this multiplies the authored roughness, and the first cut's
+      // 0.59..0.96 swing turned a matte concrete deck semi-glossy in patches.
+      const v = 212 + Math.round((1-H[i])*43);   // x0.83 .. x1.00
+      rimg.data[i*4] = rimg.data[i*4+1] = rimg.data[i*4+2] = v; rimg.data[i*4+3] = 255;
+    }
+    rctx.putImageData(rimg, 0, 0);
+    const roughnessMap = new THREE.CanvasTexture(rc);
+    for(const t of [normalMap, roughnessMap]){
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      if(typeof MAX_ANISO !== 'undefined') t.anisotropy = MAX_ANISO;
+    }
+    _surfTex = { normalMap, roughnessMap };
+  }catch(e){ _surfTex = false; }   // no canvas (headless oddity) -> flat surfaces, never a broken boot
+  return _surfTex;
+}
+// Give a material the detail set at a chosen tiling. Repeat is per-material, not per-texture, so one
+// texture set serves the floor at 64 tiles and a crate at 1 without a second upload... except three
+// reads repeat from the TEXTURE, so a distinct tiling needs its own clone. Cheap: clones share the image.
+const PROC_SLOTS = ['normalMap', 'roughnessMap'];
+const _surfClones = {};
+function _procSet(repeat){
+  const S = _procSurface(); if(!S) return null;
+  const key = String(repeat);
+  let set = _surfClones[key];
+  if(!set){
+    set = {};
+    for(const k of PROC_SLOTS){
+      const t = S[k].clone(); t.needsUpdate = true;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat);
+      if(typeof MAX_ANISO !== 'undefined') t.anisotropy = MAX_ANISO;
+      set[k] = t;
+    }
+    _surfClones[key] = set;
+  }
+  return set;
+}
+// The grain has to be the same PHYSICAL size on every surface, and UV tiling is not: the box primitive
+// is a unit cube, so one repeat value gives an 11 m blotch on a 22 m deck and a 50 cm one on a 1 m
+// crate. Every caller therefore passes the surface's world SPAN and the tiling is derived from it,
+// quantised to a short ladder so the clone cache stays a handful of entries rather than one per prop.
+const PROC_TILE_M = 2.2;                                  // metres per tile of grain
+const _PROC_STEPS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128];
+function _procRepeatFor(span){
+  const want = Math.max(1, (+span || 1) / PROC_TILE_M);
+  let rep = _PROC_STEPS[0];
+  for(const v of _PROC_STEPS) if(Math.abs(v - want) < Math.abs(rep - want)) rep = v;
+  return rep;
+}
+function applyProcSurface(mat, span){
+  const set = _procSet(_procRepeatFor(span)); if(!set || !mat) return mat;
+  for(const k of PROC_SLOTS) if(!mat[k]) mat[k] = set[k];   // never displace a texture a creator set
+  mat.userData.procSurf = set;   // remembered, because assigning it once is not enough — see below
+  mat.needsUpdate = true;
+  return mat;
+}
+// Re-tile a material (or a whole prop) that has been resized. Only slots still holding OUR texture are
+// swapped, so a creator's own map, normal or roughness is never touched.
+function retileProcSurface(root, span){
+  const set = _procSet(_procRepeatFor(span)); if(!set || !root) return;
+  const one = (m)=>{ if(!m || !m.userData) return; const cur = m.userData.procSurf; if(!cur || cur === set) return;
+    let hit = false;
+    for(const k of PROC_SLOTS) if(m[k] === cur[k]){ m[k] = set[k]; hit = true; }
+    m.userData.procSurf = set; if(hit) m.needsUpdate = true; };
+  if(root.isMaterial) one(root);
+  else if(root.traverse) root.traverse(o=>{ if(!o.isMesh || !o.material) return;
+    const ms = Array.isArray(o.material) ? o.material : [o.material]; for(const m of ms) one(m); });
+}
+// The world span a prop's grain should be measured against: its largest scaled dimension. A 22x1.2x9
+// deck and a 22x4.5x3 corner wall then carry the same grain, which is what makes them read as the same
+// material rather than as two differently-zoomed photographs of it.
+function _propProcSpan(obj){ const s = obj && obj.scale; return s ? Math.max(Math.abs(s.x), Math.abs(s.y), Math.abs(s.z)) : 1; }
+// The detail set is a FALLBACK, not a one-shot assignment, and getting that wrong is why the first cut
+// of this build measured ZERO change in the frame. floorMat.map was set here at construction and then
+// nulled by the first applyWorldCfg — worldCfg.floorTex is '' by default, and _loadSurfaceMap's "no url"
+// branch wrote null — all before the first frame was ever drawn. Every path that CLEARS an authored
+// texture now restores this instead, which also means clearing a floor texture in the editor returns
+// the surface to detailed rather than to flat albedo.
+function _procFallback(mat, slot){ const s = mat && mat.userData && mat.userData.procSurf; return (s && s[slot]) || null; }
 const floorMat = new THREE.MeshPhysicalMaterial({ color:0x141c22, roughness:.95, metalness:.1,
   polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1 });
+// build 1139: the floor plane's UVs span the whole 2*ARENA quad, so its tiling is derived from the arena
+// size and re-derived in rebuildArena whenever that changes. An authored floorTex still replaces all of it.
+applyProcSurface(floorMat, 140);
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), floorMat);
 floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
 scene.add(floor);
@@ -8038,6 +8195,7 @@ function _gridWanted(){
 
 // walls
 const wallMat = new THREE.MeshPhysicalMaterial({ color:0x1a242b, roughness:.8, metalness:.2 });
+applyProcSurface(wallMat, 140);   // build 1139: same, re-derived from the arena span in rebuildArena
 const colliders = [];
 const H = 8;
 const arenaWalls = [];   // the 4 boundary walls (rebuilt on resize); other colliders (props) are untouched
@@ -8127,6 +8285,9 @@ function rebuildArena(){
   NAV.built=false;   // arena changed -> the nav grid must be rebuilt
   // floor (flat, or a displaced height-mesh when worldCfg.terrain is set)
   setTerrainFromCfg(true);
+  // build 1139: the floor and boundary walls carry UVs spanning their whole extent, so the surface
+  // grain's physical size depends on ARENA. Re-derive it here, where the extent is decided.
+  try{ if(typeof retileProcSurface==='function'){ retileProcSurface(floorMat, ARENA*2); retileProcSurface(wallMat, ARENA*2); } }catch(e){}
   // grid
   if(grid){ scene.remove(grid); grid.geometry.dispose(); }
   const divs = Math.max(8, Math.min(400, Math.round(ARENA*2/2.5)));   // build 827: cap the line count so a huge racing arena's grid stays light (cells just grow past ~1 km)
@@ -10377,15 +10538,15 @@ function refreshPropCollider(obj){
 // A built-in box primitive (used when src === 'box'): a 1×1×1 crate you scale via the transform.
 function buildBoxProp(){
   const geo = new THREE.BoxGeometry(1,1,1); geo.translate(0, 0.5, 0);  // base at y=0 so it sits on the floor
-  const m = new THREE.Mesh(
-    geo,
-    new THREE.MeshStandardMaterial({ color:0x2a3a42, roughness:.65, metalness:.35, emissive:0x000000, emissiveIntensity:0 })
-  );
+  const m = new THREE.Mesh(geo, primitiveMat());   // build 1139: one place builds the primitive material, so the detail set reaches the box too
   return m;
 }
 // Shared material for the built-in primitives so they read as one family.
 const PRIM_DEFAULT_COLOR = 0x2a3a42;
-function primitiveMat(){ return new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:.65, metalness:.35, emissive:0x000000, emissiveIntensity:0 }); }
+// build 1139: every primitive gets the detail set. The map is near-white so the authored colour is
+// preserved to within a percent, and applyProcSurface never displaces a texture a creator set — so an
+// existing level gains relief and roughness break-up without any of its choices changing.
+function primitiveMat(){ return applyProcSurface(new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:.65, metalness:.35, emissive:0x000000, emissiveIntensity:0 }), 1); }
 // Which primitives accept material edits (the pillar is a pre-built composite, so it's excluded).
 const SHAPE_PRIMS = { box:1, sphere:1, cylinder:1, cone:1 };
 function isShapePrimitive(src){ return SHAPE_PRIMS.hasOwnProperty(src); }
@@ -10453,7 +10614,10 @@ function applyPropTexture(obj, url){
       o.material.roughnessMap = obj.userData.texR ? texInstance(obj.userData.texR, rep[0], rep[1], false, rot) : null;
       o.material.color.setHex(obj.userData.col != null ? obj.userData.col : 0xffffff);   // tint the image by the prop color (white = true colors)
     } else {
-      o.material.map = null; o.material.normalMap = null; o.material.roughnessMap = null;
+      o.material.map = null;
+      // build 1139: the relief and roughness go back to the procedural detail set, not to flat
+      o.material.normalMap = _procFallback(o.material, 'normalMap');
+      o.material.roughnessMap = _procFallback(o.material, 'roughnessMap');
       o.material.color.setHex(obj.userData.col != null ? obj.userData.col : PRIM_DEFAULT_COLOR);
     }
     o.material.needsUpdate = true;
@@ -14483,6 +14647,8 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.rotation.set(t[3], t[4], t[5]);
   if(t.length >= 9) obj.scale.set(t[6], t[7], t[8]);   // non-uniform (e.g. cover crates)
   else obj.scale.setScalar(t[6]);
+  // build 1139: the procedural grain tiles in UV space, so a primitive's tiling follows its world size
+  if(typeof retileProcSurface==='function') retileProcSurface(obj, _propProcSpan(obj));
   // build 642: rigged/skinned models compute their bounding sphere from the REST pose, so the MAIN camera can
   // frustum-cull them (the whole prop vanishes) even while their shadow still renders from the sun's wider frustum
   // — the "shadows on the ground but no props" you hit while hosting. Disable culling on skinned meshes so they
@@ -15305,7 +15471,9 @@ function _loadSurfaceMap(mat, slot, url, ru, rv, srgb, rot){   // load/clear one
   url = (url||'').trim(); const key = '_'+slot+'Url';
   if(mat[key] === url){ if(url && mat[slot]){ _surfTf(mat[slot], ru, rv, rot); mat.needsUpdate=true; } return; }   // url unchanged: live-update tiling/rotation
   mat[key] = url;
-  if(!url){ if(mat[slot]){ mat[slot] = null; mat.needsUpdate = true; } return; }
+  // build 1139: clearing a slot falls back to the procedural detail set, not to null
+  if(!url){ const fb = (typeof _procFallback==='function') ? _procFallback(mat, slot) : null;
+    if(mat[slot] !== fb){ mat[slot] = fb; mat.needsUpdate = true; } return; }
   const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous');
   let _tdone=false; const _texFin=()=>{ if(_tdone) return; _tdone=true; _texPending=Math.max(0,_texPending-1); }; _texPending++;   // count toward the level loading screen so materials don't pop in
   const finish = (tex)=>{ _texFin(); if(mat[key] !== url){ if(tex.dispose) tex.dispose(); return; }   // a newer url won the race
@@ -25131,7 +25299,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1138 · 2026-07-30';
+const BUILD_VERSION = 'build 1139 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26876,20 +27044,35 @@ let instancingActive = false;
 function instanceEligible(o){
   return o && isShapePrimitive(o.userData.src) && !o.userData.tex && !o.userData.emit && !o.userData.phys && !o.userData.vehicle && !(o.userData.xa && o.userData.xa.on);   // animated mechanisms + drivable vehicles must stay individual movable meshes (instancing bakes a static matrix)
 }
+// build 1139: the batch key. It used to be shape|colour, and the batch material was BUILT FROM SCRATCH at
+// the default roughness .65 / metalness .35 — so every instanced prop silently lost its authored shine
+// (and its opacity, and, once this build existed, its surface detail) the moment play started, then got
+// it all back on returning to the editor. The play frame did not match the frame the level was authored
+// in. Everything the material carries now goes in the key and the batch CLONES a real prop's material.
+function _instKey(o){
+  const col = (o.userData.col != null ? o.userData.col : PRIM_DEFAULT_COLOR);
+  const sh = o.userData.shine || { r:PRIM_DEFAULT_ROUGH, m:PRIM_DEFAULT_METAL };
+  const rep = (typeof _procRepeatFor==='function') ? _procRepeatFor(_propProcSpan(o)) : 0;
+  return o.userData.src + '|' + col + '|' + (+sh.r).toFixed(3) + '|' + (+sh.m).toFixed(3)
+       + '|' + (o.userData.op != null ? (+o.userData.op).toFixed(3) : '1') + '|' + rep;
+}
 function buildInstancing(){
   if(instancingActive || editorOpen) return;
-  const groups = {};   // key shape|colorHex -> [props]
+  const groups = {};   // key shape|colour|rough|metal|opacity|grain -> [props]
   for(const o of propModels){
     if(!instanceEligible(o)) continue;
-    const col = (o.userData.col != null ? o.userData.col : PRIM_DEFAULT_COLOR);
-    const key = o.userData.src + '|' + col;
+    const key = _instKey(o);
     (groups[key] || (groups[key]=[])).push(o);
   }
   for(const key in groups){
     const list = groups[key];
     if(list.length < 2) continue;   // singletons aren't worth instancing
-    const [shape, colStr] = key.split('|');
-    const mat = new THREE.MeshStandardMaterial({ color:parseInt(colStr,10), roughness:.65, metalness:.35, emissive:0x000000, emissiveIntensity:0 });
+    const shape = key.split('|')[0];
+    // A clone of a real member's material, so colour, shine, opacity, envMapIntensity and the
+    // procedural detail set all carry into the batch — whatever the material happens to hold.
+    const src0 = (list[0].isMesh && list[0].material) ? list[0].material : null;
+    const mat = src0 ? src0.clone() : new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:PRIM_DEFAULT_ROUGH, metalness:PRIM_DEFAULT_METAL });
+    if(src0 && src0.userData) mat.userData = Object.assign({}, src0.userData);   // clone() shallow-copies userData by reference in r149
     const im = new THREE.InstancedMesh(instanceGeoFor(shape), mat, list.length);
     im.castShadow = true; im.receiveShadow = true;
     const m = new THREE.Matrix4();
@@ -30714,6 +30897,7 @@ const editorTargets = {
     apply(){ const o=this.obj(), s=this.state; if(!o) return;
       o.position.set(s.px,s.py,s.pz); o.scale.set(s.sx,s.sy,s.sz);
       o.rotation.set(s.rx*RAD, s.ry*RAD, s.rz*RAD);
+      if(typeof retileProcSurface==='function') retileProcSurface(o, _propProcSpan(o));   // build 1139: resizing a primitive keeps its grain the same physical size
       refreshPropCollider(o); _homeSync(o);   // keep the solid hitbox aligned with what you see + the dynamic-prop authored home in sync (build 713)
       if(o.userData.emit) applyPropEmissive(o, o.userData.emit.c, o.userData.emit.i);   // re-spread emitter lights along the new longest axis
     },
@@ -37768,7 +37952,7 @@ const _gdq = new THREE.Quaternion(), _gtmp = new THREE.Vector3();
 function applyGroupDrag(e, d){
   const pivot = d.pivot;
   const isL = d.lights;
-  const touch = (o)=>{ if(!isL){ refreshPropCollider(o); _homeSync(o); } };   // lights have no collider; build 713: keep dynamic props' authored home synced
+  const touch = (o)=>{ if(!isL){ if(typeof retileProcSurface==='function') retileProcSurface(o, _propProcSpan(o)); refreshPropCollider(o); _homeSync(o); } };   // lights have no collider; build 713: keep dynamic props' authored home synced; build 1139: keep the grain's physical size through a gizmo scale
   if(d.kind==='translate'){
     const s = axisParamUnderPointer(e, pivot, d.dir);
     const off = d.dir.clone().multiplyScalar(s - d.startParam);
