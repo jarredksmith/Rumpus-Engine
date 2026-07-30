@@ -26090,7 +26090,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1162 · 2026-07-30';
+const BUILD_VERSION = 'build 1163 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34194,14 +34194,36 @@ function restoreLevel(level){
 // pushUndoSnapshot stores the state BEFORE an edit, so `editorUndo` is a stack of pre-edit states.
 // Undoing therefore has to capture the state it is leaving (the post-edit one) to have anything to
 // redo, which is why the redo stack is filled here and not in performUndo's caller.
+// build 1163: SELECTION SURVIVES UNDO. restoreLevel tears down and respawns every prop, and ends with
+// `selProps.length = 0` — correct for a level load, but undo/redo run through the same path, so every
+// Ctrl+Z threw the selection away and the core editing rhythm (tweak, undo, tweak again) meant reselecting
+// each time. Props carry stable serialized nids, so the fix is to remember the selected nids across the
+// restore and reselect by identity. Models respawn ASYNC (GLB loads), so a second pass runs after a beat —
+// primitives reselect instantly, imports as they land; a prop the undone edit deleted simply isn't found.
+function _selNids(){ return (typeof selProps!=='undefined' && selProps ? selProps : []).filter(o=>o&&o.userData&&o.userData.nid).map(o=>o.userData.nid); }
+function _reselectByNids(nids){
+  if(!nids || !nids.length) return;
+  const apply=()=>{
+    const got=[]; for(const nid of nids){ const o=(typeof propByNid==='function')?propByNid(nid):null; if(o) got.push(o); }
+    if(!got.length) return 0;
+    selProps=got.slice(); editorActive='props'; editorTargets.props.idx=Math.max(0, propModels.indexOf(got[got.length-1]));
+    if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    return got.length;
+  };
+  const first=apply();
+  if(first < nids.length) setTimeout(apply, 350);   // late async spawns: pick up what landed since
+}
 function performUndo(){
   if(!editorUndo.length) return false;
   const snap = editorUndo.pop();
   let level; try { level = JSON.parse(snap); } catch(e){ return false; }
   let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
+  const selN = _selNids();   // build 1163: reselect the same props (by nid) after the rebuild
   editorUndoActive = true;
   try { restoreLevel(level); } finally { editorUndoActive = false; }
   if(cur != null){ editorRedo.push(cur); if(editorRedo.length > 60) editorRedo.shift(); }
+  _reselectByNids(selN);
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }
@@ -34210,9 +34232,11 @@ function performRedo(){
   const snap = editorRedo.pop();
   let level; try { level = JSON.parse(snap); } catch(e){ return false; }
   let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
+  const selN = _selNids();   // build 1163: same courtesy on the way forward
   editorUndoActive = true;   // the restore must not push a snapshot of its own
   try { restoreLevel(level); } finally { editorUndoActive = false; }
   if(cur != null){ editorUndo.push(cur); if(editorUndo.length > 60) editorUndo.shift(); }
+  _reselectByNids(selN);
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }
@@ -39488,9 +39512,9 @@ function _outRowEl(kind, it, inFolder){
   if(it.tag){ const tc=document.createElement('span'); tc.className='outTagChip'; tc.textContent=it.tag; tc.title='tag: '+it.tag; r.appendChild(tc); }
   if(kind!=='pickups'){
     const hb=_outIconBtn(u.edHide?'eyeoff':'eye', !!u.edHide, u.edHide?'Show':'Hide while editing (play is never affected)');
-    hb.onclick=(e)=>{ e.stopPropagation(); _outSetHide(o, !u.edHide); _outRefresh(); }; r.appendChild(hb);
+    hb.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _outSetHide(o, !u.edHide); _outRefresh(); }; r.appendChild(hb);   // build 1163: hide is serialized state (e.eh) — it must snapshot or Ctrl+Z can't undo it
     const kb=_outIconBtn(u.edLock?'lock':'unlock', !!u.edLock, u.edLock?'Unlock':'Lock — viewport clicks pass through it');
-    kb.onclick=(e)=>{ e.stopPropagation(); _outSetLock(o, !u.edLock); _outRefresh(); }; r.appendChild(kb);
+    kb.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); _outSetLock(o, !u.edLock); _outRefresh(); }; r.appendChild(kb);   // build 1163: same for lock (e.elk)
   }
   if(kind==='props'){   // build 1038: rows drag into folders
     r.draggable=true;
@@ -39563,9 +39587,9 @@ function _outRefresh(){
           const fsa=_outIconBtn('sel', false, 'Select the folder contents');
           fsa.onclick=(e)=>{ e.stopPropagation(); _outSelectAll('props', fitems.filter(it=>!it.o.userData.edLock).map(it=>it.o)); _outRefresh(); }; fh.appendChild(fsa);
           const fhb=_outIconBtn(allH?'eyeoff':'eye', allH, allH?'Show the whole folder':'Hide the whole folder while editing');
-          fhb.onclick=(e)=>{ e.stopPropagation(); for(const it of fitems) _outSetHide(it.o, !allH); _outRefresh(); }; fh.appendChild(fhb);
+          fhb.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); for(const it of fitems) _outSetHide(it.o, !allH); _outRefresh(); }; fh.appendChild(fhb);   // build 1163: one snapshot per gesture, not per member
           const flb=_outIconBtn(allL?'lock':'unlock', allL, allL?'Unlock the whole folder':'Lock the whole folder');
-          flb.onclick=(e)=>{ e.stopPropagation(); for(const it of fitems) _outSetLock(it.o, !allL); _outRefresh(); }; fh.appendChild(flb);
+          flb.onclick=(e)=>{ e.stopPropagation(); pushUndoSnapshot(); for(const it of fitems) _outSetLock(it.o, !allL); _outRefresh(); }; fh.appendChild(flb);
           fh.onclick=()=>{ _outClick2('folder:'+fname,
             ()=>{ const now=_outFolds['f:'+fname]!==false; _outFolds['f:'+fname]=!now; _outSaveFolds(); _outRefresh(); },
             ()=>{ _outFolds['f:'+fname]=true; _outSaveFolds(); _outRenameFolder(fname, fitems, fn); }); };   // build 1038: keyed double-click renames (and re-opens the fold the first click toggled)

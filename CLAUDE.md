@@ -967,6 +967,16 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Undo keeps the selection; hide/lock become undoable (build 1163)
+
+Two panel findings, both verified. restoreLevel ends with `selProps.length = 0` — right for a level load,
+wrong for undo/redo which run through the same path: every Ctrl+Z threw the selection away. performUndo/
+performRedo now record the selected NIDs (stable serialized identity) before the restore and reselect after,
+with a 350ms second pass because models respawn async — primitives reselect instantly, imports as they land,
+and a prop the undone edit deleted is simply not found. And the outliner's hide/lock buttons mutate
+SERIALIZED state (e.eh/e.elk) with no snapshot — now one `pushUndoSnapshot()` per GESTURE (row buttons and
+folder-wide toggles alike; the setters stay snapshot-free so callers own granularity).
+
 ## Duplicate keeps the configuration (build 1162)
 
 The editor panel's worst trust-breaker, verified then fixed: both duplicate paths (toolbar + Alt-drag)
@@ -1238,7 +1248,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1162)
+## Open work (as of build 1163)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
