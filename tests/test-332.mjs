@@ -7,9 +7,9 @@ assert(/let _altDup = null, _altDupActive = false;/.test(src), 'alt-drag state d
 const pick = extractFunction('_pickPropAt');
 assert(/raycaster\.setFromCamera/.test(pick) && /for\(const p of propModels\)/.test(pick) && /propModels\.indexOf\(root\)>=0\) return root/.test(pick), 'picks the prop root under the pointer');
 const dup = extractFunction('_dupPropForDrag');
-assert(/o\.position\.x, o\.position\.y, o\.position\.z/.test(dup), 'clones at the EXACT source position (no offset — the drag positions it)');
+assert(/_dupSpawnFrom\(o, 0, 0, /.test(dup), 'clones at the EXACT source position — zero offset; the drag positions it (build 1162: via the full-config entry path)');
 assert(/_altDup = obj; editorActive='props'; editorTargets\.props\.idx = propModels\.indexOf\(obj\); selProps=\[obj\]/.test(dup), 'the fresh duplicate becomes the dragged + selected object');
-assert(/propMaterialDesc\(o\)/.test(dup), 'duplicate keeps the material');
+assert(/p\.mat \|\| \(p\.tex \? \{tex:p\.tex\} : null\)/.test(extractFunction('_pfSpawnEntry')), 'duplicate keeps the material — the entry path it now rides applies mat/tex (build 1162)');
 
 // mousedown: alt + prop => start drag-dup, suppress look/select
 assert(/if\(e\.altKey\)\{ const o=_pickPropAt\(e\); if\(o\)\{ e\.preventDefault\(\); pushUndoSnapshot\(\); _dupPropForDrag\(o\); _altDupActive = true; editorDragMoved = true; return; \} \}/.test(src), 'Alt+mousedown on a prop starts the drag-duplicate and suppresses look/select');

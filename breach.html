@@ -26090,7 +26090,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1161 · 2026-07-30';
+const BUILD_VERSION = 'build 1162 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32969,12 +32969,20 @@ function _pickPropAt(e){
   return null;
 }
 // Clone a prop at its EXACT position (no offset) and hand the new object to the drag.
+// build 1162: a duplicate is the FULL prop, not a bare mesh. Both duplicate paths used to spawn only
+// src/transform/dynamic/material — signals, tag, name, interact, locks, dialogue, NPC name, xa animation,
+// joints and vehicle tuning were all silently dropped, so duplicating a configured door produced a dumb
+// copy and the hour of wiring evaporated without a word. The correct serializer has existed since build
+// 1030: `_pfEntryOf` captures the complete propEntry config with identity stripped, and `_pfSpawnEntry`
+// is the apply block the level loader itself mirrors. Duplicate now rides that pair — one path, and when
+// entry fields grow, duplicate inherits them for free instead of drifting again.
+function _dupSpawnFrom(o, dx, dz, gid, cb){
+  const e = _pfEntryOf(o, { x:0, y:0, z:0 });   // full config; nid/gid/pf stripped = fresh identity
+  _pfSpawnEntry(e, { x:dx, y:0, z:dz }, null, gid, cb);
+}
 function _dupPropForDrag(o){
-  const srcUrl = o.userData.src || PROP_MODEL_URL;
-  const t = [ o.position.x, o.position.y, o.position.z, o.rotation.x, o.rotation.y, o.rotation.z, o.scale.x, o.scale.y, o.scale.z ];
-  const wasDyn = !!o.userData.phys;
   _altDup = null;
-  spawnProp(srcUrl, t, (obj)=>{ if(wasDyn) setPropDynamic(obj, true); _altDup = obj; editorActive='props'; editorTargets.props.idx = propModels.indexOf(obj); selProps=[obj]; if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateSelectionHighlight==='function') updateSelectionHighlight(); }, undefined, o.userData.animMode || 'loop', propMaterialDesc(o));
+  _dupSpawnFrom(o, 0, 0, o.userData.groupId ? _newGroupId() : null, (obj)=>{ _altDup = obj; editorActive='props'; editorTargets.props.idx = propModels.indexOf(obj); selProps=[obj]; if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateSelectionHighlight==='function') updateSelectionHighlight(); });
 }
 // build 798: PROP GROUPING — bind several props into one "group" by a shared id. Clicking any member selects the whole
 // group, so the existing multi-selection gizmo moves / rotates / scales them together (about the group's centroid). It's a
@@ -33013,11 +33021,11 @@ function duplicateSelectedProp(){
   const made=[]; let pending=list.length;
   const finish=()=>{ if(pending>0) return; if(made.length){ selProps=made.slice(); editorActive='props'; editorTargets.props.idx=propModels.indexOf(made[made.length-1]); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof updateSelectionHighlight==='function') updateSelectionHighlight(); } };
   for(const o of list){ if(!o){ pending--; continue; }
-    const src=o.userData.src || PROP_MODEL_URL;
-    const t=[ o.position.x + DUP_OFFSET, o.position.y, o.position.z, o.rotation.x, o.rotation.y, o.rotation.z, o.scale.x, o.scale.y, o.scale.z ];
-    const wasDyn=!!o.userData.phys, oldGid=o.userData.groupId;
+    const oldGid=o.userData.groupId;
     const gid = oldGid ? (remap[oldGid] || (remap[oldGid]=_newGroupId())) : null;
-    spawnProp(src, t, (obj)=>{ if(wasDyn) setPropDynamic(obj, true); if(gid) obj.userData.groupId=gid; made.push(obj); pending--; finish(); }, undefined, o.userData.animMode || 'loop', propMaterialDesc(o));
+    // build 1162: through the prefab entry path — the copy carries signals, locks, dialogue, xa, joints,
+    // vehicle tuning and all, with fresh nid/group identity. See _dupSpawnFrom.
+    _dupSpawnFrom(o, DUP_OFFSET, 0, gid, (obj)=>{ made.push(obj); pending--; finish(); });
   }
 }
 // ---------- PREFABS (build 1030) ----------

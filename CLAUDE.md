@@ -967,6 +967,16 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Duplicate keeps the configuration (build 1162)
+
+The editor panel's worst trust-breaker, verified then fixed: both duplicate paths (toolbar + Alt-drag)
+spawned only src/transform/dynamic/material — signals, tag, name, interact, locks, dialogue, NPC name, xa
+animation, joints and vehicle tuning silently dropped. The correct pair has existed since build 1030:
+`_pfEntryOf` (full propEntry config, identity stripped) + `_pfSpawnEntry` (the apply block the level loader
+mirrors). `_dupSpawnFrom` now routes both paths through it — so when entry fields grow, duplicate inherits
+them instead of drifting again. Group duplication still remaps to ONE fresh gid. `test-332`'s two pins moved
+with it (same intent: zero-offset clone, material kept — now proven via the entry path).
+
 ## Weapon feel: dt, movement cost, and a round cone (build 1161)
 
 Three panel findings, each verified then fixed in one scoped build:
@@ -1228,7 +1238,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1161)
+## Open work (as of build 1162)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
