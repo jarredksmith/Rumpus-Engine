@@ -19,11 +19,11 @@ assert(audFn({ w:30, h:40 }) > audFn({ w:6, h:8 }), 'bigger falls carry further'
 const sheet = src.match(/const _FALL_FSH = \[[\s\S]{0,1600}?\]\.join/)[0];
 assert(/uTime\*uSpd/.test(sheet) && /smoothstep\(0\.0,0\.10,vUv\.x\)/.test(sheet), 'scrolling sheet with soft edges');   // build 865 reshaped the shader
 assert(/smoothstep\(0\.42,0\.0,vUv\.y\)/.test(sheet), 'whiter/mistier toward the plunge');
-assert(!/WebGLRenderTarget/.test(src.match(/function buildWaterfallGroup[\s\S]{0,1800}/)[0]), 'no render targets');
+assert(!/WebGLRenderTarget/.test(extractFunction('buildWaterfallGroup')), 'no render targets');
 assert(/CircleGeometry\(w\*0\.5, 36\)/.test(src) && /foam\.scale\.set\(pool, pool\*0\.62, 1\)/.test(src), 'foam pool disc at the base (elliptical, author-scaled since 865)');
 
 // ---- sound path mirrors the audio zones (sfxBus => master/SFX/mute apply) ----
-const upd = src.match(/function updateWaterfalls[\s\S]{0,2600}/)[0];
+const upd = extractFunction('updateWaterfalls');
 assert(/connect\(rt\.gain\)\.connect\(sfxBus\)/.test(upd), 'looped through the SFX bus');
 assert(/loadSound\(f\.snd\)/.test(upd), 'sound buffers lazy-load like audio zones');
 assert(/setTargetAtTime\(vol, actx\.currentTime, 0\.1\)/.test(upd), 'smooth gain ramps (no clicks)');

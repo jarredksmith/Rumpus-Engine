@@ -13,7 +13,7 @@ const rw = src.match(/function refreshWeather\(\)\{[\s\S]{0,2600}?\n\}/)[0];
 assert(/new THREE\.LineSegments\(geo, mat\)/.test(rw), 'rain is a LineSegments streak field');
 assert(/new Float32Array\(n\*6\)/.test(rw), '...with 2 verts per drop');
 assert(/map:_weatherSprite\(\)/.test(rw) && /alphaTest:0\.04/.test(rw), 'snow flakes render through the soft sprite');
-assert(/createRadialGradient/.test(src.match(/function _weatherSprite[\s\S]{0,900}/)[0]), 'the sprite is a radial-gradient canvas (round + soft)');
+assert(/createRadialGradient/.test(extractFunction('_weatherSprite')), 'the sprite is a radial-gradient canvas (round + soft)');
 
 // the streak geometry leans with the velocity — executable
 const windFn = new Function('worldCfg','Math', extractFunction('_weatherWindVec') + 'return _weatherWindVec;');

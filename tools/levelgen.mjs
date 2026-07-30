@@ -2374,9 +2374,19 @@ function skyMood(zen, hor, gnd, turb, glow, size) {
 // the same albedo at 55%, so the surround reads as the same world one value down rather than as a
 // different one. Each theme's albedos are named ONCE here and used three times — by the bake, by the sky
 // dome and now by the ground — because three copies of the same literal is how they end up disagreeing.
+// build 1149: `bounce` comes from the same albedo. The engine's one-bounce term is coloured by the
+// level's own floor, so its delivered fill scales with that floor's brightness — which is right as
+// physics and wrong as art direction across a set of themes whose grounds span 5:1 in luminance
+// (frost snow Y 0.64 against facility apron Y 0.12). A fixed factor over-fills the bright ones toward
+// clipping (measured: the desert's sand went 244,208,160 -> 250,218,170, which is nearly white) while
+// under-filling the dark ones. So each theme asks for a CONSTANT AMOUNT OF FILL, and the factor is
+// derived by dividing it out: 0.0535 is the engine default (0.50) times the stock level's own floor
+// luminance (0.107). Named once here, so an eighth theme gets it without knowing it exists.
 function groundMood(gnd, rough, metal) {
+  const y = 0.2126 * gnd[0] + 0.7152 * gnd[1] + 0.0722 * gnd[2];
   return { floorColor: skyHex(gnd), floorRough: rough != null ? rough : 0.95, floorMetal: metal != null ? metal : 0.05,
-    wallColor: skyHex(gnd.map((v) => v * 0.55)), wallRough: 0.85, wallMetal: 0.08 };
+    wallColor: skyHex(gnd.map((v) => v * 0.55)), wallRough: 0.85, wallMetal: 0.08,
+    bounce: +Math.max(0.05, Math.min(0.8, 0.0535 / Math.max(1e-4, y))).toFixed(2) };
 }
 function arenaMood(theme) {
   if (theme === 'castle') {   // golden hour: low warm sun, long shadows, warm haze

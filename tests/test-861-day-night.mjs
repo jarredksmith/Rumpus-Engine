@@ -21,7 +21,10 @@ eq(calc(0.75).duskF, 0, 'no warmth at midnight');
 assert(calc(1.25).elDeg === calc(0.25).elDeg, 'phase wraps');
 
 // ---- runtime wiring ----
-const upd = src.match(/function updateDayNight[\s\S]{0,2600}/)[0];
+// build 1149: extractFunction, not a fixed 2600-character window — adding one line to the cycle (the
+// bounce term) pushed the last assertion's needle past the end of the slice and failed a pin that was
+// still true.
+const upd = extractFunction('updateDayNight');
 assert(/_sunOrbit\(\(\+worldCfg\.sunAzim\|\|0\) \+ _dayPhase\*360, Math\.max\(5, d\.elDeg\)\)/.test(upd), 'azimuth revolves; elevation floors at 5° (valid shadows all night)');
 assert(/_dayShadowT>=0\.4/.test(upd), 'shadow re-renders are throttled, not per-frame');
 assert(/applyWorldCfg\(\)/.test(upd), 'stopping the cycle restores the authored sky');

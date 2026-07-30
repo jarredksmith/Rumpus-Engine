@@ -5,13 +5,13 @@
 // and selected, values prefilled from last time). Verified headless with window.prompt stubbed
 // to THROW: modal renders 2 fields, Escape cancels ("Submission cancelled."), filled values
 // flow through to the POST and persist to localStorage; screenshot eyeballed.
-import { gameSource, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, done } from './harness.mjs';
 
 const src = gameSource();
 
 // the helper exists beside its dialog siblings and never uses browser chrome
 assert(/function uiPromptForm\(title, fields, cb\)\{/.test(src), 'uiPromptForm exists');
-const fn = src.match(/function uiPromptForm\(title, fields, cb\)\{[\s\S]{0,3200}/)[0];
+const fn = extractFunction('uiPromptForm');
 assert(/inp\.type='text'/.test(fn) && /inputs\.push\(inp\)/.test(fn), 'it builds real text inputs');
 assert(/e\.key==='Escape'/.test(fn) && /close\(null\)/.test(fn), 'Escape cancels with null');
 assert(/e\.key==='Enter'/.test(fn) && /close\(inputs\.map\(i=>i\.value\)\)/.test(fn), 'Enter submits the values');

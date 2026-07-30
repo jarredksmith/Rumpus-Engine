@@ -585,7 +585,82 @@ segment-bbox test rather than the same four comparisons.
 
 Still true, and not introduced here: a hollow shell thicker than two cells has empty interior cells.
 
-## Open work (as of build 1148)
+## The shade had lost a channel (build 1149)
+
+Measured on the stock level's floor inside a cast shadow, per channel: **R min 0, p50 2, max 6 — with 19%
+of the patch at EXACTLY zero and 73% at or below 2** — against G 38 and B 50. That is why the first frame
+anybody sees reads as teal murk, and why no grade could recover it: there was nothing left to recover.
+
+The cause is structural, not a tuning slip. A `HemisphereLight` gives an up-facing surface 100% of the SKY
+colour and none of the ground colour, and a cosine lobe over a cubemap probe excludes the lower hemisphere
+entirely. Both are correct for a bare sky. Both are wrong for a scene with walls and crates standing around
+it — a real floor in shade is lit mostly by light bounced off its surroundings, and this engine has no GI to
+supply that. So the shade was lit by nothing but blue, times a floor albedo (`0x4f5d66` → linear R 0.078,
+B 0.138) that is itself blue-dominant. Red had nowhere to come from.
+
+`bounceLight` is the standard pre-GI stand-in: **one bounce of the SUN off the level's own surfaces.** Four
+things about it are deliberate:
+- **An `AmbientLight`.** A bounce arrives from every direction, which is the one thing that light models
+  correctly. It is also free.
+- **Coloured `sunColor × mix(floorColor, wallColor, 0.4)`**, in linear (`setHex` does the transfer on the
+  way in). That is redder than the sky by 4× in R:B, which is the whole point — a term with the sky's own
+  hue could not have fixed a missing red channel.
+- **Scaled by `sun`, and by the day cycle's `dayF`.** A bounce is the key light coming back off a surface,
+  so it dies with the key. A flat lift cannot do that, which is why this is a new term rather than a bigger
+  default for `ambient` — that one stays the creator's arbitrary white lift, untouched.
+- **`0.50` is derived, not chosen.** The albedo is already in the light's colour, so the bounced irradiance
+  lands at 7–12% of the sun's on a horizontal surface — what a ~10%-albedo floor actually returns for one
+  bounce. Raise a level's floor albedo and its bounce grows with it, correctly and for free.
+
+Swept by capture at 0 / 0.15 / 0.30 / 0.50 — sunlit floor `79,115,117 → 83,120,122` (+4 at the top of the
+range), shade `2,38,50 → 9,47,60`, red-at-exactly-zero `19% → 5% → 0% → 0%`, sun-to-shade `9.46:1 → 6.86:1`.
+0.30 clears the clip; 0.50 clears it with margin (min 3) for four code values on the lit surface.
+
+**Not gated on `colorV`, unlike build 1115.** That build moved every pixel through a different transfer
+curve; this one only ADDS light, and only where there was none. Leaving a clipped channel in every level
+that already exists is the worse outcome. The lit-surface delta above is the evidence for that call.
+
+**Two corrections to what was recorded before this build.** Both were derived from scene-linear term
+isolation rather than from the frame, and the frame disagrees:
+- *"Sun-to-shade on the stock level is 3.3:1 linear as shipped, the low end of real daylight."* Measured
+  off the frame on a lit and a shadowed patch of the SAME floor: **9.46:1**. The shadows were never shallow.
+- *"For a strictly physical balance the sun is roughly 4× too weak relative to the sky."* Raising the sun
+  would have deepened a shadow that was already crushing a channel to zero. The defect was the ambient's
+  COLOUR and its lack of a bounce term, not the key light's strength. The whole-engine rebalance that note
+  warns against should not be started; there is nothing there to fix.
+
+An analytic model of the light terms said the stock level sat at 3.0:1 and the generated arenas at
+1.2–3.3:1. It was wrong in both directions, and one capture settled it. **Model the lights to decide what to
+try; measure the frame to decide what is true.**
+
+**The generator states its own value, derived from the same albedo.** The bounce is coloured by the level's
+floor, so its delivered fill scales with that floor's brightness — right as physics, wrong as art direction
+across seven themes whose grounds span 5:1 in luminance (frost snow Y 0.64 against the facility apron's
+0.12). At the engine default the desert's imported sand measured `244,208,160 → 250,218,170`, which is
+nearly white. So `groundMood` divides the target fill back out — `0.0535 / lum(groundAlb)`, the engine
+default times the stock floor's own luminance — and every theme delivers the same fill to within 12%:
+industrial 0.26, castle 0.28, volcanic 0.40, garden 0.33, desert 0.15, frost 0.08, facility 0.46. Named in
+ONE place beside the floor and wall colours that come from the same albedo, which is build 1143's lesson.
+
+Measured three ways on the desert arena at seed 4242 — as shipped before, at the engine default, and at the
+theme's derived 0.15:
+```
+imported sand    244,208,160  ->  250,218,170  ->  246,212,164     (nearly white, then back)
+arena blocks p10      0.0234  ->       0.0366  ->       0.0270     (shadow ratio 24.5 -> 15.9 -> 21.3)
+engine plane      109,101,78  ->   116,106,81  ->   111,103,79
+```
+So the theme gets a real lift in its deep shadows without pushing a ground that was already near clipping
+any further. That middle column is why the generator states a value instead of inheriting one.
+
+**A source pin must not be scoped by a character count.** Three harnesses failed this build for one
+reason — `src.match(/function applyWorldCfg[\s\S]{0,4000}/)`, `{0,2600}` on `updateDayNight` — and in every
+case the assertion was still TRUE; adding a comment had simply pushed the needle past the end of the slice.
+`extractFunction(name)` brace-matches and cannot drift. Every UNANCHORED window has now been converted
+(856, 858, 859, 863, 864, 865, 959, 1127). The remaining ones anchor on a closing brace or on a named
+following declaration, so they fail loudly only when a function outgrows its budget — and converting
+those would change what the assertion covers, so leave them.
+
+## Open work (as of build 1149)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
@@ -619,6 +694,37 @@ contains no `theme === ...` branch. Adding the eighth theme is one `arenaPalette
 tight to the triangles, so the generator no longer has to author a 3.8 m doorway to get a 1.6 m one.
 Narrowing them is a *generator* change with its own probe pass — do not do it as part of an engine
 build, and keep `tests/test-1113` as the gate.
+
+**The imported ground is 2.3 stops brighter than the plane it butts against (found build 1149, not fixed).**
+On the desert arena at seed 4242, walking outside the arena footprint: the engine's own ground plane reads
+`109,101,78` and the generated arena's sand reads `244,208,160` — nearly clipping — with a hard seam between
+them. Build 1143 matched the two grounds' HUE (both R>G>B) and that part holds; it never matched their LEVEL.
+
+The likely cause is a double-counted ambient: an imported mesh's baked `lightMap` is ADDITIVE
+(`rumpusLightmap` → `lightMapIntensity`), so an open-sky surface receives the sky once from the bake and
+again from the hemisphere light plus the probe, while the engine's plane gets only the runtime pair. The
+competing explanation is that the sand TEXTURE's own albedo is simply brighter than the theme's `groundAlb`,
+which is legitimate. Build 1139's `__surfProbe` settles which — report the hit's material colour, its maps,
+and whether it carries a `lightMap` — and that probe must come first.
+
+If it is the double count, the fix is not a blanket scale on the bake: the bake also carries the interior
+LIGHTS (`for (const L of LIGHTS)`), which are the only thing lighting a generated interior, so scaling the
+whole texture down darkens exactly the rooms it exists to light. It needs the sky-visibility term split from
+the local-light term — plausibly the occlusion part as `aoMap` (multiplicative, which is what it is) and the
+bounce + lamps as `lightMap` (additive, which is what those are). Two maps, so it needs a texture budget.
+
+**Still visible on the stock frame after 1149, and worth a build each.** All three are content or
+composition, not code, and all three are what a first-time player sees:
+- The frame reads MONOCHROME TEAL. `floorColor 0x4f5d66` is blue-dominant in its own albedo (linear R
+  0.078 vs B 0.138), so under a blue sky red has nowhere to come from and the bounce can only return
+  what the albedo carries. Build 1136's recommendation — "warm the architecture and keep the props cool"
+  — is still the fix, and it is a one-hex change plus a capture. Preserve luminance when doing it: the
+  current floor is Y 0.107, so a warm grey at the same Y (about `0x615b53`) swaps hue without moving the
+  exposure the whole grade is tuned against.
+- The WEAPON is the brightest object in the frame by a wide margin, near-white against a world in the
+  110s. It pulls the eye off the level permanently, across 11% of every frame.
+- A hard horizontal SEAM runs across the middle of the frame where the teal floor plane meets an olive
+  band. Two large flat areas of different colour meeting on a straight line, with no transition.
 
 Also outstanding (user actions): upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.

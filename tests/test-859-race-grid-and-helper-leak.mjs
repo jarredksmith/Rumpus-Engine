@@ -7,12 +7,12 @@
 //     hit-area box / joint marker, but the DIRECT editor-close paths (startGame on Deploy, endGame)
 //     didn't: with a car selected, Deploy carried them into play. Both paths hide them now.
 //     (Verified end-to-end in a headless browser: all helpers false right after startGame + 70 frames.)
-import { gameSource, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 import { readFileSync } from 'fs';
 const src = gameSource();
 
 // 1 — the grid block inside _raceSetup
-const setup = src.match(/function _raceSetup\(\)\{[\s\S]{0,2600}/)[0];
+const setup = extractFunction('_raceSetup');
 assert(/_racePathAt\(_racePath\.total-4, 2\.7\)/.test(setup), 'pole position just ahead of the bots (they start at total-7-6i)');
 assert(/if\(_racePath && \(typeof NET==='undefined' \|\| NET\.mode==='off'\)\)\{/.test(setup), 'solo only — MP humans are the field');
 assert(/!p\.userData\.runtime/.test(setup), 'grids the AUTHORED car, never a bot clone');

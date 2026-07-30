@@ -7553,6 +7553,42 @@ const skyLight = new THREE.HemisphereLight(0x4a6c7a, 0x0a0f14, 0.55);
 scene.add(skyLight);
 const worldAmbient = new THREE.AmbientLight(0xffffff, 0);   // global brightness lift, driven by worldCfg.ambient
 scene.add(worldAmbient);
+// build 1149: THE ONE BOUNCE. A HemisphereLight gives an up-facing surface 100% of the SKY colour and
+// none of the ground colour, and a cosine lobe over a cubemap probe excludes the lower hemisphere
+// entirely — both correct for a bare sky, and both wrong for a scene with walls and crates standing
+// around. So a horizontal surface in shadow was lit by nothing but blue, and the engine has no GI to
+// supply the rest. Measured on the stock level's floor in a cast shadow: R min 0, p50 2, with 19% of
+// the patch at EXACTLY zero and 73% at or below 2, against G 38 / B 50. A whole channel was gone —
+// which is why the frame read as teal murk and why no amount of grading could recover it: there was
+// nothing left to recover. With the bounce at its default that same patch reads 9,47,60, min 3.
+//
+// This is the standard pre-GI stand-in: one bounce of the SUN off the level's own surfaces, flat and
+// direction-independent (a bounce arrives from everywhere, which is the one thing an AmbientLight
+// models correctly). Its colour is sunColor x the level's own floor/wall albedo, so it is warm where
+// the architecture is warm and it vanishes at night with the sun that feeds it — an arbitrary white
+// lift is what `ambient` already is, and that one is the creator's, not the engine's.
+const bounceLight = new THREE.AmbientLight(0xffffff, 0);
+scene.add(bounceLight);
+const _bnA = new THREE.Color(), _bnB = new THREE.Color(), _bnC = new THREE.Color();
+// `sunF` is the day cycle's 0..1 daylight factor; 1 when there is no cycle.
+// Deliberately NOT guarded with `typeof worldCfg !== 'undefined'`: worldCfg is a `let` declared 8,000
+// lines below, and typeof THROWS inside a temporal dead zone rather than returning 'undefined' — a
+// guard here would read as safe and not be. Both callers (applyWorldCfg, updateDayNight) run well
+// after it exists, and that is the actual guarantee.
+function _applyBounce(sunF){
+  const w = worldCfg;
+  // legacyMode is false, so setHex converts sRGB -> linear on the way in: this whole product is a
+  // linear-space multiply, which is the only space in which "light times albedo" means anything.
+  _bnA.setHex((w.sunColor == null ? DEFAULT_WORLD.sunColor : w.sunColor) >>> 0);
+  _bnB.setHex((w.floorColor == null ? DEFAULT_WORLD.floorColor : w.floorColor) >>> 0);
+  _bnC.setHex((w.wallColor == null ? DEFAULT_WORLD.wallColor : w.wallColor) >>> 0);
+  _bnB.lerp(_bnC, 0.4);                       // the ground bounces most of it; the walls the rest
+  bounceLight.color.copy(_bnA).multiply(_bnB);
+  // Tied to the SUN, not to a constant: a bounce is the key light coming back off a surface, so it
+  // scales with the key and disappears when the key does. That also means it cannot flatten a night
+  // scene, which is the failure mode a flat lift has.
+  bounceLight.intensity = Math.max(0, +w.bounce || 0) * Math.max(0, +w.sun || 0) * (sunF == null ? 1 : sunF);
+}
 const moon = new THREE.DirectionalLight(0x9fd8ff, 0.9);
 moon.position.set(40, 80, 20);
 moon.castShadow = true;
@@ -7644,13 +7680,13 @@ function _dayCalc(phase){
   const duskF=Math.max(0, 1-Math.abs(elDeg)/15) * (elDeg>-8?1:0);
   return { elDeg, dayF, duskF };
 }
-let _dayPhase=null, _dayShadowT=0, _daySkyT=0, _dayActive=false;
+let _dayPhase=null, _dayShadowT=0, _daySkyT=0, _dayActive=false, _dayF=1;   // build 1149: _dayF is the live daylight factor, so applyWorldCfg can re-derive the bounce mid-cycle
 const _dayCol=new THREE.Color(), _dayWarm=new THREE.Color(0xffb070), _dayNight=new THREE.Color(0x8fb0d8);
 function _dayIsNight(){ return _dayActive && _dayPhase!=null && _dayCalc(_dayPhase).elDeg < 2; }
 function updateDayNight(dt){
   const on = (typeof worldCfg!=='undefined') && worldCfg.dayCycle && (typeof gameOn!=='undefined' && gameOn) && !(typeof editorOpen!=='undefined' && editorOpen);
   if(!on){
-    if(_dayActive){ _dayActive=false; _dayPhase=null; _skyDayDim=1; if(typeof applyWorldCfg==='function') applyWorldCfg(); }   // hand the sky back to the authored settings (build 1127: including its brightness)
+    if(_dayActive){ _dayActive=false; _dayPhase=null; _skyDayDim=1; _dayF=1; if(typeof applyWorldCfg==='function') applyWorldCfg(); }   // hand the sky back to the authored settings (build 1127: including its brightness)
     return;
   }
   if(_dayPhase==null) _dayPhase=((+worldCfg.dayStart||0)%1+1)%1;
@@ -7666,6 +7702,7 @@ function updateDayNight(dt){
   else if(d.duskF>0) _dayCol.lerp(_dayWarm, d.duskF*0.7);              // golden hour
   moon.color.copy(_dayCol);
   if(typeof skyLight!=='undefined') skyLight.intensity=(+worldCfg.sky||0.55)*(0.18+0.82*d.dayF);
+  _dayF = d.dayF; if(typeof _applyBounce==='function') _applyBounce(d.dayF);   // build 1149: the bounce follows the key light down to nothing at night
   const dim=0.22+0.78*d.dayF;   // fog + flat-sky darken toward night (an HDRI sky can't be dimmed — prefer a plain sky for convincing nights)
   // build 1127: drive the PROCEDURAL sky too. The cycle moved the light and dimmed the fog, but the
   // dome was only ever refreshed by applyWorldCfg, and the flat-background line below cannot touch it
@@ -15794,7 +15831,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
 // versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
 // The dark stock palette needs an art pass, which belongs with the sky/lighting work.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -16043,6 +16080,20 @@ function applyWorldCfg(){
   worldCfg.skyBright = Math.max(0, Math.min(4, worldCfg.skyBright == null ? DEFAULT_WORLD.skyBright : +worldCfg.skyBright));
   worldCfg.skyRot = ((((+worldCfg.skyRot || 0) % 360) + 360) % 360);
   worldCfg.ambient = Math.max(0, worldCfg.ambient == null ? DEFAULT_WORLD.ambient : +worldCfg.ambient);
+  // build 1149: a level saved before the one-bounce term inherits the default through _worldFrom's
+  // Object.assign, and that is deliberate. Build 1115 gated its change behind colorV because it moved
+  // EVERY pixel through a different transfer curve; this one only ADDS light, and only where there was
+  // none. Swept on the stock level's floor at bounce 0 / 0.15 / 0.30 / 0.50:
+  //   sunlit    79,115,117 -> 80,117,118 -> 81,118,120 -> 83,120,122      (+4 at the top of the range)
+  //   in shadow  2,38,50   ->  3,40,53   ->  5,43,56   ->  9,47,60
+  //   red at exactly 0        19%        ->     5%     ->     0%     ->  0% (min 3, so with margin)
+  // Sun-to-shade goes 9.46:1 -> 6.86:1, still firmly daylight. Leaving a clipped channel in every level
+  // that already exists is the worse outcome, so this one is not gated.
+  //
+  // 0.50 is not a taste value: the ALBEDO is already in the light's colour, so the bounced irradiance
+  // comes out at 7-12% of the sun's on a horizontal surface — which is what a ~10%-albedo floor returns
+  // for one bounce. Raise a level's floor albedo and its bounce grows with it, for free and correctly.
+  worldCfg.bounce = Math.max(0, Math.min(2, worldCfg.bounce == null ? DEFAULT_WORLD.bounce : +worldCfg.bounce));
   if(worldCfg.sunColor == null) worldCfg.sunColor = DEFAULT_WORLD.sunColor;
   // build 855: sun DIRECTION — azimuth (compass spin) + elevation (height above the horizon). The light
   // orbits the origin at the same ~90m radius the fixed position always used, so the ±80 shadow box and
@@ -16065,6 +16116,7 @@ function applyWorldCfg(){
   }
   if(typeof skyLight!=='undefined'){ skyLight.intensity = worldCfg.sky; skyLight.color.setHex(((worldCfg.skyColor==null?DEFAULT_WORLD.skyColor:worldCfg.skyColor)>>>0)); }   // build 584: sky hemisphere color is now adjustable (was a hardcoded teal that tinted everything green)
   if(typeof worldAmbient!=='undefined') worldAmbient.intensity = worldCfg.ambient;
+  if(typeof _applyBounce==='function') _applyBounce(_dayActive ? _dayF : 1);   // build 1149: one bounce of the sun off the level's own albedo
   // build 1095: filmic pipeline — ACES tone mapping + exposure, saved with the level. Toggling
   // recompiles every material (tone mapping is baked into the programs), so only touch on change.
   worldCfg.filmic = (worldCfg.filmic === false || worldCfg.filmic === 0) ? 0 : 1;
@@ -17915,7 +17967,10 @@ let _waterTime = 0, _waterTintEl = null, _waterSwimming = false;
 function _waterLightF(){
   const s=(typeof moon!=='undefined')?moon.intensity:0.9, k=(typeof skyLight!=='undefined')?skyLight.intensity:0.55;
   const a=(typeof worldAmbient!=='undefined')?worldAmbient.intensity:0;
-  return Math.max(0.04, Math.min(1.6, s*0.75 + k*0.65 + a*0.5));
+  // build 1149: the one-bounce term counts here too. This estimate exists so the water tracks every other
+  // surface in the scene, and a light the estimate does not know about is exactly how it stops doing that.
+  const b=(typeof bounceLight!=='undefined')?bounceLight.intensity:0;
+  return Math.max(0.04, Math.min(1.6, s*0.75 + k*0.65 + a*0.5 + b*0.25));
 }
 const _WATER_VSH = 'varying vec3 vWP;\nvoid main(){ vec4 wp = modelMatrix * vec4(position,1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }';
 const _WATER_FSH = [
@@ -25709,7 +25764,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1148 · 2026-07-30';
+const BUILD_VERSION = 'build 1149 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35102,7 +35157,9 @@ function renderEditorFields(){
       slider(b,'Eye height','eyeHeight',0.4,20,0.05);   // build 702/703: first-person camera height (up to 20m)
       hint(b,'','1px 0 2px').textContent='Crouch: hold Ctrl (R3 on a controller). Eye height sets the first-person camera level (1.7 = default; up to 20m for a tall/overhead view). View only — collision is unchanged. Gravity change affects props on next Deploy.'; }
     { const b=subSec('Lighting','light',true);
-      slider(b,'Sun (directional)','sun',0,4,0.05); slider(b,'Sky (ambient fill)','sky',0,3,0.05); slider(b,'Brightness lift','ambient',0,2,0.05);
+      slider(b,'Sun (directional)','sun',0,4,0.05); slider(b,'Sky (ambient fill)','sky',0,3,0.05);
+      slider(b,'Bounce (sun off the ground)','bounce',0,2,0.05); slider(b,'Brightness lift','ambient',0,2,0.05);
+      hint(b,'','1px 0 4px').textContent='Bounce is one bounce of the sun off this level\u2019s own floor and walls \u2014 it fills shadows with the colour of the ground rather than more sky, and fades out with the sun at night. Turn it down for a hard, airless look; up for an open courtyard. Brightness lift is a flat white raise on everything, shadows included.';
       slider(b,'Sun direction °','sunAzim',0,360,1); slider(b,'Sun height °','sunElev',5,89,1);   // build 855: rotate the sun — shadows follow live
       hint(b,'','1px 0 4px').textContent='Direction spins the sun around the map (match it to your HDRI sky’s sun); Height is the angle above the horizon — low = long dramatic shadows, high = short noon shadows.';
       { const dcLab=document.createElement('label'); dcLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 2px;cursor:pointer;';

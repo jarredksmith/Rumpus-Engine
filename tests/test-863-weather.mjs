@@ -3,7 +3,7 @@
 // when they fall out, zero per-frame allocation, count scales with Amount and halves on touch devices.
 // World > Sky gets None/Rain/Snow buttons + an Amount slider; settings live in worldCfg so they save,
 // share and carry to multiplayer like everything else.
-import { gameSource, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 const rw = src.match(/function refreshWeather\(\)\{[\s\S]{0,1800}?\n\}/)[0];
@@ -22,7 +22,10 @@ assert(/needsUpdate=true/.test(uw), 'positions upload once per frame');
 // plumbing
 assert(/weather:'none', weatherAmt:0\.6,/.test(src.match(/const DEFAULT_WORLD = \{[^\n]*/)[0]), 'defaults ship');
 assert(/worldCfg\.weather = \(worldCfg\.weather==='rain'\|\|worldCfg\.weather==='snow'\) \? worldCfg\.weather : 'none';/.test(src), 'sanitized to the three valid values');
-assert(/refreshWeather\(\);/.test(src.match(/function applyWorldCfg[\s\S]{0,4000}/)[0]), 'applyWorldCfg rebuilds the cloud when settings change (covers load/share/restore too)');
+// build 1149: extractFunction, not a fixed 4000-character window — adding a comment block to
+// applyWorldCfg pushed this needle past the end of the slice and failed a pin that was still true.
+assert(/refreshWeather\(\);/.test(extractFunction('applyWorldCfg')),
+  'applyWorldCfg rebuilds the cloud when settings change (covers load/share/restore too)');
 assert(/updateWeather\(dt\);/.test(src.match(/updateDayNight\(dt\);[^\n]*/)[0]), 'ticked beside the day/night cycle');
 assert(/\[\['none','None'\],\['rain','Rain'\],\['snow','Snow'\]\]/.test(src), 'World > Sky exposes the three modes');
 // the state must live ABOVE applyWorldCfg (it reads it at boot — the TDZ class the boot harness exists for)

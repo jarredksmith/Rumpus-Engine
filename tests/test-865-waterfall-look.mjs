@@ -6,13 +6,13 @@
 //  - NEW 'Pool width' control (0.2-2.5 x the sheet width, default 1.15): the old pool was hardcoded to
 //    0.84x the width — the "stuck at half the waterfall" complaint — and it's elliptical now (wider
 //    along the sheet than out from it).
-import { gameSource, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // layered sheet
 const bwg = src.match(/function buildWaterfallGroup\(f\)\{[\s\S]{0,2600}?\n\}/)[0];
 assert(/mkSheet\(1, 1, 0\)/.test(bwg) && /mkSheet\(0\.82, 0\.55, -0\.35\)/.test(bwg), 'two sheets: back layer slower, dimmer, set back');
-assert(/sheetMat2.*uniforms\.uTime\.value=_waterTime/.test(src.match(/function updateWaterfalls[\s\S]{0,900}/)[0]), 'both layers tick their time uniform');
+assert(/sheetMat2.*uniforms\.uTime\.value=_waterTime/.test(extractFunction('updateWaterfalls')), 'both layers tick their time uniform');
 const sheet = src.match(/const _FALL_FSH = \[[\s\S]{0,2000}?\]\.join/)[0];
 assert(/0\.22\*s1 \+ 0\.16\*s2 \+ 0\.12\*s3/.test(sheet), 'three streak octaves');
 assert(/float gaps = smoothstep\(0\.25, 0\.6,/.test(sheet), 'see-through gaps between streams');
