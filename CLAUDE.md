@@ -963,6 +963,48 @@ the count when it loads; in the editor that is a hitch, and for anything spawned
 again. The general fix is either to strip them on import or to route them through `registerEmitterLight`,
 and it needs a decision about creators who legitimately ship a lamp model with a light in it.
 
+## The fourth light, and the guard that names the fifth (build 1155)
+
+Build 1153 fixed the loot box and wrote down the rule. **The same fault was live one screen away**, on the
+commonest action in the game: `buildPropFireGroup` did `new THREE.PointLight(...)` + `grp.add(light)` +
+`scene.add(grp)` the moment a prop caught fire, and the way a prop catches fire is
+`damageProp → igniteProp` on a fused explosive — *shooting a barrel*, mid-match, in combat. Shattering it took
+the light back out and recompiled again. Fixed the same way: `_fireLightPool`, seated at deploy, claimed and
+released, unparented and aimed in world space by `_animateFire`, with `_reconcileFireLights` so no removal path
+can strand a beam.
+
+Two things are different from the chest pool and both are deliberate:
+- **No floor on the pool size.** `min(FIRE_LIGHT_MAX, burnablePropCount())`, and burnable means
+  `onFire || (explosive && fireFuse > 0)` — the two conditions `igniteProp` is reachable from. Every seated
+  point light sits in `NUM_POINT_LIGHTS` and is looped over per pixel by every material whether or not anything
+  has claimed it, so a level with no fire must pay nothing. The chest pool's floor of 4 is right for *it*
+  (crates spawn randomly, so a level with no loot spots can still get one); nothing spawns a fire.
+- **The editor seats the pool itself.** Authoring is not play: a creator who has just placed a barrel needs its
+  glow now, and growing the pool there costs an editor hitch instead of a mid-match freeze.
+
+Fire ZONES are untouched, and that is a judgement not an oversight: `refreshFireZones` disposes N lights and
+builds N synchronously, so the count at the next render is unchanged — no recompile. Only the per-prop fire was
+a genuine mid-match add.
+
+**Four builds have now shipped this fault** — 636 (the first explosion), 977 (the first flashlight toggle),
+1153 (the first loot box), 1155 (the first barrel). Every one arrived as a player reporting a multi-second
+freeze, and every one was then found by *guessing* which subsystem had made a light. So this build also adds the
+standing guard, `_hitchLightWatch`:
+
+- **It costs nothing in a normal frame.** A recompile of every material in a level is a 1–3 second frame, so it
+  only looks past `HITCH_MS` (220) — and only during play, because authoring legitimately moves the count.
+- **The baseline is taken at DEPLOY**, after every pool is seated, so even the very first offending frame has
+  something to compare against. Sampling only on hitches would have had nothing to compare on the first one.
+- **`traverseVisible`, not `traverse`.** Three's `projectObject` skips an invisible subtree entirely, so an
+  invisible light is not counted — which is exactly build 977's trap, and a plain traverse would be blind to it.
+- It warns with the delta, the per-type breakdown and the names of the three pools, then stops after three.
+
+**`test-01-syntax` had never parsed the one `type="module"` block.** `vm.SourceTextModule` needs
+`--experimental-vm-modules`, which `run-all` does not pass, so the harness reported a failure whose message was
+about the instrument (`is not a constructor`) rather than the source — and the Rapier loader went unchecked. It
+now rewrites top-level `import`/`export`/`import.meta` out of the body and parses it as an async function body,
+with a check that a deliberately broken body still fails, so the rewrite cannot swallow a real error.
+
 ## An enemy must fit wherever the player fits (build 1154)
 
 Reported from play with a screenshot: enemies could not get up the default level's ramps or around its
@@ -1007,7 +1049,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1154)
+## Open work (as of build 1155)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
