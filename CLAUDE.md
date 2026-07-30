@@ -967,6 +967,48 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Authored wave manifests (build 1179) — PHASE 2 COMPLETE
+
+Random-mode composition was a hardcoded formula (n = 3 + wave*2, thresholds for the mix); "wave 3 = 2
+brutes + a shielded from the north gate" was unauthorable. Manifests are a MINI-LANGUAGE (the dialogue
+system's precedent — a textarea beats a widget forest), one line per wave: `3x grunt, 2x runner @gate`,
+`-` for an intentional breather, blank = pure formula. `@tag` clusters the squad on the tagged prop with
+the logic-spawn ring; no tag scatters at the arena edge like the formula. Caps: 20/term, 40/wave, 2
+bosses, 50 waves; unknown types demote to grunt; a missing tag falls back to the edge (never (0,0)).
+Waves PAST the manifest fall back to the formula so endless still escalates, and a manifest wave never
+gets the automatic milestone boss — the author owns its composition (this falls out of structure: the
+milestone boss lives in randomWaveDescriptors). The SOURCE text serialises (`game.wavesText`, 2000 chars)
+and both loaders re-parse it, so the editor round-trips exactly what was typed. Two serializer pins moved
+(33, 62). Phase 2 of the critic roadmap is complete.
+
+## Chat gets a filter and a mute (build 1178)
+
+The platform critic: chat capped length and escaped HTML but never filtered CONTENT. The filter runs
+CLIENT-SIDE AT RENDER — a hostile peer can send anything; what matters is what is shown. Stranger links
+collapse to [link] (the top P2P harm vector), a baseline profanity list masks in place after
+leet-normalisation (0→o 1→i 3→e 4→a 5→s 7→t @→a $→s), and your OWN text shows as typed. `/mute Name` /
+`/unmute Name` are local commands intercepted in sendChat BEFORE display-or-send; mute is per-session by
+display name because the relay carries names, not ids (a renamed troll costs one more /mute — accepted for
+v1). Substring matching catches embedded words (Scunthorpe) — the accepted trade for catching leetspeak.
+Deferred: a report affordance needs the lobby backend. AND: hit the mid-line-`//`-comment trap AGAIN
+(documented in 1168) — the addChatLine insert swallowed its own one-line tail; the syntax check caught it.
+Use /* */ when patching one-liners, no exceptions.
+
+## Your own .glb without their server (build 1177)
+
+The editor critic's "asset import requires their server", verified: no local model path existed at all —
+offline or host-down, a creator could not use their own asset. A dropped .glb/.gltf (viewport drag-and-drop,
+editor only — play never hijacks a drag) is content-hashed (SHA-256, time-key fallback on http origins),
+stored as a blob in its own IndexedDB db (`rumpus_local_models`), and resolved by a `local:` src scheme
+through a branch BESIDE `sketchfab:` in `loadGLTFCached` — same cache, same waiter/pump, same
+GLTFLoader/manager so codecs still apply. `isModelSrc` learned the scheme (cache accounting, part editor,
+model release all follow). The filename rides the key so the asset browser shows a name, size capped 64MB,
+and the sharing story is honest three ways: the import toast says "this device only", the Level Check warns
+before publishing, and on another device the load fails into 1167's missing-model report instead of hanging.
+The server upload remains the "make it shareable" step. Note: the codebase deliberately writes `\u2014`-style
+escapes inside JS strings (307 of them) — a python-edit anchor containing a real em-dash will miss those
+lines; match the escape or anchor elsewhere.
+
 ## The editor gets a clipboard (build 1176)
 
 There was NO clipboard — carrying a configured object between levels meant formalising it into a prefab.
@@ -1435,7 +1477,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1176)
+## Open work (as of build 1179)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

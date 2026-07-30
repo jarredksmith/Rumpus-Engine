@@ -10718,7 +10718,7 @@ function _installRaycastBVH(o){
 // True if this prop is an imported model (URL / Poly Pizza / Sketchfab / .glb) rather than a built-in
 // primitive. Imported models are concave (stairs, archways), so a single bounding box is a poor player
 // collider even though Rapier already has their exact trimesh for dynamic objects.
-function isModelSrc(src){ return typeof src==='string' && (/^(https?:|blob:|data:|sketchfab:)/i.test(src) || /\.(glb|gltf)(\?|$)/i.test(src)); }
+function isModelSrc(src){ return typeof src==='string' && (/^(https?:|blob:|data:|sketchfab:|local:)/i.test(src) || /\.(glb|gltf)(\?|$)/i.test(src)); }   // build 1177: local: = IndexedDB-resident import
 const _mgA=new THREE.Vector3(), _mgB=new THREE.Vector3(), _mgC=new THREE.Vector3();
 // Approximate a concave model's solid volume as a grid of per-column boxes built from its REAL triangles
 // (world space). Each occupied column gets one box spanning the min..max height of the triangles in it.
@@ -14876,6 +14876,43 @@ function _ensureKTX2(){
   })();
   return _ktx2Promise;
 }
+// build 1177: LOCAL MODELS. Importing your own .glb REQUIRED the community server — no drag-and-drop, no
+// file input; offline or server-down meant a creator could not use their own asset at all. A dropped file
+// now lives in IndexedDB keyed by content hash, and a `local:` src scheme resolves it through the same
+// GLTFLoader/manager path as every other model (codecs and all). The src string serialises like any other,
+// so on ANOTHER device the load fails cleanly into build 1167's Level Check report — and the Level Check
+// also warns that local models are this-device-only, with the server upload as the "make it shareable" step.
+let _lmDbP=null;
+function _lmDb(){ if(_lmDbP) return _lmDbP;
+  _lmDbP=new Promise((res,rej)=>{ try{ const rq=indexedDB.open('rumpus_local_models',1);
+    rq.onupgradeneeded=()=>{ try{ rq.result.createObjectStore('models'); }catch(e){} };
+    rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }catch(e){ rej(e); } });
+  return _lmDbP; }
+function _localModelPut(key, blob){ return _lmDb().then(db=>new Promise((res,rej)=>{ const tx=db.transaction('models','readwrite'); tx.objectStore('models').put(blob, key); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); })); }
+function _localModelGet(key){ return _lmDb().then(db=>new Promise((res,rej)=>{ const rq=db.transaction('models').objectStore('models').get(key); rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>rej(rq.error); })); }
+function _loadLocalModel(url, cb, errcb){
+  _localModelGet(url.slice(6))
+    .then(blob=>{ if(!blob) throw new Error('local model not on this device — re-import or upload it'); return blob.arrayBuffer(); })
+    .then(buf=>{ const loader=new THREE.GLTFLoader(gltfManager()); loader.parse(buf, '', (g)=>cb(g), (e)=>errcb(e||new Error('glb parse failed'))); })
+    .catch(errcb);
+}
+const LOCAL_MODEL_MAX_MB = 64;
+function _importLocalModel(file, atPoint){
+  if(!file || !/\.(glb|gltf)$/i.test(file.name)){ if(typeof flashToast==='function') flashToast('Drop a .glb or .gltf file'); return; }
+  if(file.size > LOCAL_MODEL_MAX_MB*1024*1024){ if(typeof flashToast==='function') flashToast('Model too large ('+Math.round(file.size/1048576)+' MB — cap is '+LOCAL_MODEL_MAX_MB+')'); return; }
+  file.arrayBuffer().then(buf=>{
+    const hash=(crypto && crypto.subtle) ? crypto.subtle.digest('SHA-256', buf) : Promise.resolve(null);
+    return hash.then(h=>{
+      let hex='f'+Date.now().toString(36);   // no subtle-crypto (http origin): fall back to a time key — still stable for this import
+      if(h){ hex=[...new Uint8Array(h)].slice(0,10).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+      const key=hex+'/'+String(file.name).slice(0,60);
+      return _localModelPut(key, new Blob([buf])).then(()=>key);
+    });
+  }).then(key=>{
+    const src='local:'+key;
+    if(typeof addSceneProp==='function') addSceneProp(src, { name:file.name, at:atPoint, onAdded:()=>{ if(typeof flashToast==='function') flashToast('Imported "'+file.name+'" (this device only — upload it to share the level)'); } });
+  }).catch(e=>{ if(typeof flashToast==='function') flashToast('Import failed: '+((e&&e.message)||e)); });
+}
 function loadGLTFCached(url, cb, errcb){
   url = _migrateAssetUrl(url);   // build 973: dead-host heal — one choke point for every model load
   if(gltfCache[url]){ _modelTouch(url); cb(gltfCache[url]); return; }   // cached: synchronous, nothing to wait on
@@ -14898,6 +14935,7 @@ function loadGLTFCached(url, cb, errcb){
   };
   const start = ()=>{
     if(_glbCancel[url]){ _cxl(); return; }   // build 945: cancelled while still queued
+    if(url && url.indexOf('local:')===0){ _loadLocalModel(url, (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, _ec); return; }   // build 1177
     if(url && url.indexOf('sketchfab:')===0){ const _ac=new AbortController(); _glbAborters[url]=_ac; loadSketchfabModel(url.slice(10), (gltf)=>{ gltfCache[url]=gltf; _cb(gltf); }, _ec, _ac.signal); return; }
     if(!THREE.GLTFLoader){ _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(new Error('GLTFLoader unavailable')); }catch(_){} } return; }
     const mgr = gltfManager();
@@ -15881,6 +15919,55 @@ function pickEnemyType(waveNum, rng){
   if(waveNum>=3){ return r<0.48 ? 'grunt' : (r<0.72 ? 'runner' : (r<0.86 ? 'gunner' : (r<0.95 ? 'sapper' : 'brute'))); }
   return r<0.74 ? 'grunt' : (r<0.92 ? 'runner' : (r<0.98 ? 'gunner' : 'brute'));
 }
+// build 1179: AUTHORED WAVE MANIFESTS. Random mode's composition was a hardcoded formula (n = 3 + wave*2,
+// type mix by thresholds) — no way to author "wave 3 = 2 brutes + a shielded from the north gate". A
+// manifest is a mini-language, one line per wave (the dialogue system's precedent), parsed once and stored:
+//     3x grunt, 2x runner @gate
+//     4x gunner, boss
+//     -                        <- a literal dash = an intentionally empty breather wave
+// `N x TYPE [@tag]` terms, comma-separated; @tag clusters the squad around the tagged prop (the logic
+// graph's spawn ring), no tag scatters at the arena edge like the formula. Unknown types become grunts;
+// counts cap at 20/term, 40/wave. Waves PAST the manifest fall back to the formula, so endless still
+// escalates; a manifest wave never gets the automatic milestone boss (the author owns its composition).
+function parseWaveManifest(text){
+  const out=[];
+  const lines=String(text||'').split('\n');
+  for(const ln of lines){
+    const t=ln.trim(); if(!t) continue;
+    if(t==='-'){ out.push({ list:[] }); continue; }
+    const list=[]; let total=0;
+    for(const term of t.split(',')){
+      const m=term.trim().match(/^(?:(\d+)\s*x\s*)?([a-z]+)(?:\s*@\s*(\S+))?$/i);
+      if(!m) continue;
+      const ty=m[2].toLowerCase();
+      let n=Math.max(1, Math.min(20, parseInt(m[1]||'1',10)||1));
+      if(ty==='boss') n=Math.min(n, 2);
+      if(total+n>40) n=Math.max(0, 40-total);
+      if(n>0){ list.push({ type:ty, n, at:(m[3]||'').slice(0,40) }); total+=n; }
+    }
+    out.push({ list });
+  }
+  return out.slice(0, 50);
+}
+function manifestWaveDescriptors(wv, arena, rng){
+  rng = rng || Math.random; const out=[];
+  for(const e of ((wv && wv.list) || [])){
+    const ty=(typeof ENEMY_TYPES!=='undefined' && ENEMY_TYPES[e.type]) ? e.type : 'grunt';
+    let ax=null, az=null;
+    if(e.at && typeof propModels!=='undefined'){
+      for(const o of propModels){ if(o && o.userData && o.userData.tag===e.at){ ax=o.position.x; az=o.position.z; break; } }
+    }
+    for(let i=0;i<e.n;i++){
+      if(ax!=null){ const a=rng()*Math.PI*2, rr=(e.n>1)?(1.5+rng()*2.5):0;   // the logic-spawn ring: never stack a squad on one point
+        out.push({ x:ax+Math.cos(a)*rr, z:az+Math.sin(a)*rr, mode:'hunt', type:ty }); }
+      else { let px=0, pz=0, guard=0;
+        do { const a=rng()*Math.PI*2, rr=arena*0.6+rng()*arena*0.3; px=Math.cos(a)*rr; pz=Math.sin(a)*rr; guard++; }
+        while((Math.abs(px)>arena-3 || Math.abs(pz)>arena-3) && guard<8);
+        out.push({ x:px, z:pz, mode:'hunt', type:ty }); }
+    }
+  }
+  return out;
+}
 // Random-mode wave: N hostiles scattered around the arena edge, mixed types.
 function randomWaveDescriptors(waveNum, arena, rng){
   rng = rng || Math.random;
@@ -15912,7 +15999,9 @@ let gameCfg = {
   raceBotSkill: (savedLevel && savedLevel.game && savedLevel.game.raceBotSkill!=null) ? savedLevel.game.raceBotSkill : 0.85,   // build 833: rival pace (fraction of the ideal line speed)
   extractHold: (savedLevel && savedLevel.game && savedLevel.game.extractHold!=null) ? savedLevel.game.extractHold : 5,
   extractRadius: (savedLevel && savedLevel.game && savedLevel.game.extractRadius!=null) ? savedLevel.game.extractRadius : 3.5,
-  bossWave: (savedLevel && savedLevel.game && savedLevel.game.bossWave!=null) ? savedLevel.game.bossWave : 5,   // random mode: spawn a BOSS every Nth wave (0 = never)
+  bossWave: (savedLevel && savedLevel.game && savedLevel.game.bossWave!=null) ? savedLevel.game.bossWave : 5,
+  wavesText: (savedLevel && savedLevel.game && typeof savedLevel.game.wavesText==='string') ? savedLevel.game.wavesText.slice(0,2000) : '',   // build 1179: the manifest source, round-tripped for the editor
+  waves: (savedLevel && savedLevel.game && typeof savedLevel.game.wavesText==='string') ? parseWaveManifest(savedLevel.game.wavesText) : null,   // random mode: spawn a BOSS every Nth wave (0 = never)
   noRespawn: !!(savedLevel && savedLevel.game && savedLevel.game.noRespawn),   // pre-built: spawn authored markers once, don't respawn cleared waves
   // build 672: "hands" / unarmed support — turns the game into a fist-fight / adventure / puzzle base
   unarmed: !!(savedLevel && savedLevel.game && savedLevel.game.unarmed),        // start with fists only (no guns)
@@ -16769,6 +16858,16 @@ let _lastLookDX = 0, _lastLookDY = 0;   // running reference of recent per-event
 const MAX_LOOK_DELTA = 300;   // px per mousemove event; guards against spurious spikes that snap the view
 let editorDragLook = false, editorDragMoved = false, editorDragPan = false;   // editor mouse states
 renderer.domElement.addEventListener('click', ()=>{ if(!isTouch && gameOn && !locked && !shopOpen && !invOpen && !editorOpen && !paused) tryPointerLock(); });
+// build 1177: drag a .glb/.gltf from your desktop onto the viewport while editing — no server round-trip.
+renderer.domElement.addEventListener('dragover', (e)=>{ if(typeof editorOpen!=='undefined' && editorOpen){ e.preventDefault(); } });
+renderer.domElement.addEventListener('drop', (e)=>{
+  if(!(typeof editorOpen!=='undefined' && editorOpen)) return;
+  const fs=(e.dataTransfer && e.dataTransfer.files) ? [...e.dataTransfer.files] : [];
+  const f=fs.find(x=>/\.(glb|gltf)$/i.test(x.name));
+  if(!f) return;
+  e.preventDefault();
+  if(typeof _importLocalModel==='function') _importLocalModel(f, null);
+});
 document.addEventListener('pointerlockchange', ()=>{ const was=locked; locked = document.pointerLockElement === renderer.domElement; if(locked && !was){ lookFresh = true; _lastLookDX=0; _lastLookDY=0; if(paused) resumeGame(); }
   if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat)
 // Ctrl+W (crouch + forward) is the browser's close-tab shortcut and can't be cancelled from a keydown.
@@ -20857,8 +20956,33 @@ function _wireChatInput(){ if(_chatWired) return; const inp=document.getElementB
   inp.addEventListener('keyup', e=>e.stopPropagation()); }
 function openChat(){ if(chatOpen || NET.mode==='off') return; const box=document.getElementById('chatBox'), inp=document.getElementById('chatInput'); if(!box||!inp) return; _wireChatInput(); chatOpen=true; box.classList.add('chatOpen'); if(typeof clearMovementInput==='function') clearMovementInput(); safeExitPointerLock(); inp.value=''; setTimeout(()=>{ try{ inp.focus(); }catch(e){} }, 0); }
 function closeChat(send){ if(!chatOpen) return; const box=document.getElementById('chatBox'), inp=document.getElementById('chatInput'); const txt=(inp && inp.value || '').trim(); chatOpen=false; if(box) box.classList.remove('chatOpen'); if(inp){ inp.value=''; try{ inp.blur(); }catch(e){} } if(send && txt) sendChat(txt); if(!isTouch && gameOn && !gameOver && !editorOpen) tryPointerLock(); }
-function sendChat(text){ text=(''+text).slice(0,200); if(!text) return; const nm=NET.name||'You'; addChatLine(nm, text, true); if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'chat', name:nm, text}); }catch(e){} } } else if(NET.mode==='client' && NET.conn){ try{ NET.conn.send({t:'chat', text}); }catch(e){} } }
-function addChatLine(name, text, mine){ const log=document.getElementById('chatLog'); if(!log) return; const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx); log.appendChild(row); while(log.children.length>8) log.removeChild(log.firstChild); setTimeout(()=>{ row.classList.add('chatFade'); }, 9000); }
+// build 1178: the chat gets a filter and a mute — a public UGC game with raw P2P chat is a liability.
+// The filter is CLIENT-SIDE AT RENDER (a hostile peer can send anything; what matters is what gets shown):
+// links from strangers become [link] (the top P2P harm vector) and a baseline profanity list is masked
+// after leet-normalisation. Mute is per-session by display name — /mute Name, /unmute Name — because the
+// relay carries names, not ids; a renamed troll costs one more /mute, which is acceptable for v1.
+const _chatMuted = new Set();
+const _CHAT_BAD = ['fuck','shit','bitch','asshole','cunt','dick','faggot','nigger','nigga','whore','slut'];
+function _chatClean(text){
+  let t = ('' + (text || '')).slice(0, 200);
+  t = t.replace(/(https?:\/\/|www\.)\S+/gi, '[link]');
+  const norm = t.toLowerCase().replace(/0/g,'o').replace(/1/g,'i').replace(/3/g,'e').replace(/4/g,'a').replace(/5/g,'s').replace(/7/g,'t').replace(/@/g,'a').replace(/\$/g,'s');
+  let out = t.split('');
+  for(const w of _CHAT_BAD){ let i = 0; while((i = norm.indexOf(w, i)) >= 0){ for(let k = i; k < i + w.length; k++) out[k] = '\u2217'; i += w.length; } }
+  return out.join('');
+}
+function sendChat(text){ text=(''+text).slice(0,200); if(!text) return;
+  // /mute Name and /unmute Name are local commands, never sent
+  const mm = text.match(/^\/(un)?mute\s+(.+)$/i);
+  if(mm){ const who = mm[2].trim().toLowerCase();
+    if(mm[1]){ _chatMuted.delete(who); if(typeof flashToast==='function') flashToast('Unmuted '+mm[2].trim()); }
+    else { _chatMuted.add(who); if(typeof flashToast==='function') flashToast('Muted '+mm[2].trim()+' for this session'); }
+    return; }
+  const nm=NET.name||'You'; addChatLine(nm, text, true); if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'chat', name:nm, text}); }catch(e){} } } else if(NET.mode==='client' && NET.conn){ try{ NET.conn.send({t:'chat', text}); }catch(e){} } }
+function addChatLine(name, text, mine){ const log=document.getElementById('chatLog'); if(!log) return;
+  if(!mine && _chatMuted.has((''+(name||'')).trim().toLowerCase())) return;   // build 1178: muted senders render nothing
+  if(!mine) text = _chatClean(text);   /* build 1178: filter at RENDER — your own text shows as typed */
+  const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx); log.appendChild(row); while(log.children.length>8) log.removeChild(log.firstChild); setTimeout(()=>{ row.classList.add('chatFade'); }, 9000); }
 function applyPvpDamage(dmg, from){
   if(duelDead || duelInvuln>0) return;
   if(sameTeam(from, NET.myId)) return;   // no friendly fire in team modes
@@ -21057,7 +21181,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim;   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim;   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -26268,7 +26392,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1176 · 2026-07-30';
+const BUILD_VERSION = 'build 1179 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29762,7 +29886,9 @@ function startWave(){
     for(const g of spawnMarkers){ if(spawnAppearsOnWave(g.userData.mark, wave)) spawnQueue.push(descFromMarker(g)); }
     toSpawn = spawnQueue.length;
   } else {
-    for(const d of randomWaveDescriptors(wave, ARENA, Math.random)) spawnQueue.push(d);
+    const _mf = (gameCfg.waves && gameCfg.waves[wave-1]);   // build 1179: an authored wave wins over the formula
+    if(_mf){ for(const d of manifestWaveDescriptors(_mf, ARENA, Math.random)) spawnQueue.push(d); }
+    else for(const d of randomWaveDescriptors(wave, ARENA, Math.random)) spawnQueue.push(d);
     toSpawn = spawnQueue.length;
   }
   objectiveHUD();
@@ -33721,7 +33847,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', autoRig:c.autoRig||undefined, ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -34444,7 +34570,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim;   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim;   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -35447,6 +35573,10 @@ function levelIssues(){
     if(typeof assetLoadFailures!=='undefined') for(const [src, e] of assetLoadFailures){
       const short = src.length>46 ? '…'+src.slice(-45) : src;
       issues.push('A model failed to load ('+e.msg+')'+(e.n>1?' ×'+e.n:'')+': '+short); }
+    // build 1177: local: models exist only in THIS device's IndexedDB — anyone else loading the level gets
+    // the missing-model report above. Sharing needs the server upload; say so before they publish.
+    { let loc=0; for(const o of propModels){ if(o && o.userData && /^local:/i.test(String(o.userData.src||''))) loc++; }
+      if(loc) issues.push(loc+' model'+(loc>1?'s are':' is')+' local to this device (drag-and-drop import) \u2014 upload via Files \u2192 model upload before sharing, or other players will see missing props.'); }
     const locks=new Set(); for(const o of propModels){ if(o && o.userData && o.userData.lockId) locks.add(o.userData.lockId); }
     const keys=new Set(); for(const s of pickupSpots){ const k=POWERUP_KINDS[s.kind]; if(k && k.key) keys.add(k.key); }
     for(const lk of locks) if(!keys.has(lk)) issues.push('Something is locked with the '+keyDisplayName(lk)+', but no matching key pad is placed.');
@@ -36661,6 +36791,20 @@ function renderEditorFields(){
     bwN.onchange=()=>{ gameCfg.bossWave=Math.max(0,Math.min(20,parseInt(bwN.value,10)||0)); renderEditorFields(); };
     bwLab.appendChild(bwSp); bwLab.appendChild(bwN); bWav.appendChild(bwLab);
     hint(bWav, '', '2px 0 0').textContent = (gameCfg.bossWave>0) ? ('Random mode: a BOSS joins every '+gameCfg.bossWave+' wave'+(gameCfg.bossWave===1?'':'s')+'. (Pre-built: place boss spawns on the Spawns tab.)') : 'No automatic bosses (you can still place boss spawns on the Spawns tab).';
+    { // build 1179: authored wave manifests — one line per wave, terms comma-separated
+      const wl=document.createElement('div'); wl.className='hint'; wl.style.margin='8px 0 3px';
+      wl.innerHTML='<b>Wave manifests</b> \u2014 one line per wave: <code>3x grunt, 2x runner @gate</code> \u00b7 <code>-</code> = breather \u00b7 blank = use the formula from there on';
+      bWav.appendChild(wl);
+      const ta=document.createElement('textarea'); ta.rows=4; ta.placeholder='(empty = classic escalating waves)';
+      ta.style.cssText='width:100%;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 6px;font:11px monospace;resize:vertical;';
+      ta.value=gameCfg.wavesText||'';
+      ta.onchange=()=>{ pushUndoSnapshot(); gameCfg.wavesText=ta.value.slice(0,2000); gameCfg.waves=gameCfg.wavesText.trim()?parseWaveManifest(gameCfg.wavesText):null;
+        const n=(gameCfg.waves||[]).length; wst.textContent=n?('Authored: waves 1\u2013'+n+' \u00b7 formula takes over from wave '+(n+1)):'No manifest \u2014 formula waves.'; };
+      bWav.appendChild(ta);
+      const wst=document.createElement('div'); wst.className='hint'; wst.style.margin='2px 0 0';
+      const n0=(gameCfg.waves||[]).length; wst.textContent=n0?('Authored: waves 1\u2013'+n0+' \u00b7 formula takes over from wave '+(n0+1)):'No manifest \u2014 formula waves.';
+      bWav.appendChild(wst);
+    }
     const ugLab=document.createElement('label'); ugLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 2px;cursor:pointer;';
     const ugCb=document.createElement('input'); ugCb.type='checkbox'; ugCb.checked=(gameCfg.upgrades!==false); ugCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
     ugCb.onchange=()=>{ pushUndoSnapshot(); gameCfg.upgrades=ugCb.checked; };
