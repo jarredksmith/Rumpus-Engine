@@ -70,11 +70,19 @@ assert(/scene\.environment = /.test(src), 'something still installs an environme
   assert(/u\.uTM\.value = \(r\.toneMapping === THREE\.NoToneMapping\) \? 0 : 1;/.test(es), '...and the live tone-mapping mode');
 }
 {
-  // the reflection probe renders the SAME sky and must share the curve, but never the encode
+  // The reflection probe renders the same sky but must be RAW RADIANCE. Build 1127 tone-mapped it "to
+  // match what the eye sees", and build 1136 took that back out: materials multiply the environment
+  // against albedo BEFORE three tone-maps the shaded result, so tone-mapping the probe applies ACES
+  // twice, and ACES lifts mid-tones — the image-based ambient came out brighter than the sky's real
+  // radiance. Measured contribution to the default level once corrected and scaled: 0.95% of pixels,
+  // which is also how it was established that the IBL was NOT what was flattening the key light.
   const env = extractFunction('_skyEnv');
-  assert(/'void main\(\)\{ gl_FragColor=vec4\(_aces\(skyRadiance\(normalize\(vDir\)\)\),1\.0\); \}'/.test(env),
-    'the probe tone-maps to match what the eye sees of the same sky');
-  assert(!/_out\(_aces/.test(env), '...and does not encode: a PMREM is convolved and sampled as linear radiance');
+  assert(/'void main\(\)\{ gl_FragColor=vec4\(skyRadiance\(normalize\(vDir\)\),1\.0\); \}'/.test(env),
+    'the probe writes raw radiance');
+  assert(!/_aces\(/.test(env) && !/_out\(/.test(env), '...neither tone-mapped nor encoded');
+  // and worldCfg.sky scales it, so one knob covers the hemisphere light AND the image-based ambient
+  assert(/_envU\.uExp\.value \*= Math\.max\(0\.05, Math\.min\(2,/.test(env),
+    'the sky fill knob scales the probe too — r149 has no global environment intensity, and walking every material on every change is worse');
 }
 
 // ---------------------------------------------------------------- 3. the sun has one source of truth

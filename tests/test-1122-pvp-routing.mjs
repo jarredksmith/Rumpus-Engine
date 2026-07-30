@@ -57,9 +57,11 @@ const src = gameSource();
   const NET = { _seen: {}, conns: { 2: { send: (m) => deliveredTo2.push(m) } } };
   const calls = [];
   const stub = (n) => () => calls.push(n);
-  const fn = new Function('NET', 'setRemoteState', 'enemies', 'applyPvpDamage', 'player', 'performance',
+  // build 1130: the host clamps claimed damage through _netDmg before applying it, so the harness has
+  // to supply it — pass it through unchanged here, since this test is about ROUTING, not the clamp.
+  const fn = new Function('NET', 'setRemoteState', 'enemies', 'applyPvpDamage', 'player', 'performance', '_netDmg',
     extractFunction('handleClientMsg') + '; return handleClientMsg;'
-  )(NET, stub('setRemoteState'), [], stub('applyPvpDamage'), { extVel: {}, vel: {} }, { now: () => 0 });
+  )(NET, stub('setRemoteState'), [], stub('applyPvpDamage'), { extVel: {}, vel: {} }, { now: () => 0 }, (d) => +d || 0);
   fn({ _pid: 1 }, { t: 'pvpHit', d: 40, to: 2, from: 99 });
   eq(deliveredTo2.length, 1, 'the packet reaches client 2');
   eq(deliveredTo2[0].d, 40, '...with its damage intact');

@@ -7136,12 +7136,12 @@ function ensurePost(){
     ].join('\n') });
   // composite: scene + bloom, then contrast/saturation grade, vignette, and film grain
   _matComp=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0}, uBloomNorm:{value:1/_BLOOM_MIPS},
+    uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0}, uAOPow:{value:2.0}, uBloomNorm:{value:1/_BLOOM_MIPS},
       uAoTexel:{value:new THREE.Vector2(1,1)}, uFar:{value:400},
       uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1} },
     vertexShader:vert, fragmentShader:[
       'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom; uniform sampler2D tAO; uniform sampler2D tGeo;',
-      'uniform float uAO; uniform vec2 uAoTexel; uniform float uFar; uniform float uBloomNorm;',
+      'uniform float uAO; uniform float uAOPow; uniform vec2 uAoTexel; uniform float uFar; uniform float uBloomNorm;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
       // build 1126: BILATERAL UPSAMPLE. AO is computed at half resolution, and a plain bilinear tap
       // across a silhouette reads occlusion that belongs to the object and paints it onto whatever
@@ -7171,7 +7171,13 @@ function ensurePost(){
       // colour rather than the ambient term alone: a forward renderer has no split to apply it to,
       // and every forward engine that ships SSAO makes the same approximation.
       'void main(){ vec3 c=texture2D(tColor,vUv).rgb;',
-      '  if(uAO > 0.0) c *= mix(1.0, _ao(), uAO);',
+      // build 1135: a POWER curve on the AO term. The raw occlusion fraction is linear, and in an
+      // open scene a surface next to a crate is only ~15-25% occluded, so linearly it lands at 0.8
+      // and reads as nothing at all — the grounding only showed in deep creases. Squaring pushes the
+      // mid-range down (0.8 -> 0.64) while leaving 1.0 exactly 1.0, so unoccluded surfaces are
+      // untouched and it cannot darken the scene overall. This is the `AO power` every engine
+      // exposes; the authored `ssao` amount still scales the whole thing.
+      '  if(uAO > 0.0) c *= mix(1.0, pow(_ao(), uAOPow), uAO);',
       // build 1128: normalised by the pyramid depth. Each of the five levels carries roughly the
       // same energy, so the sum is ~5x what the old single gather produced and postBloom would
       // have silently changed meaning — every level ever saved would have come back washed out.
@@ -7330,7 +7336,12 @@ function _renderPostFX(scn, cam){
   // 1b) build 1126: screen-space ambient occlusion — G-buffer prepass, AO, bilateral blur, all at
   // half resolution. Perspective only: the AO shader rebuilds view rays from a tangent-of-fov
   // scale, which an orthographic camera does not have, so the editor's ortho views go without.
-  const _aoWant = _ssaoAmt > 0.001 && _hiFxOn && _aoGeoRT && cam && cam.isPerspectiveCamera;
+  // build 1135: AO outranks MSAA on the quality ladder. It used to ride the same rung, so the first
+  // hiccup threw away the engine's main grounding cue — the thing that makes objects sit on the
+  // floor — while keeping 4x multisampling on their edges. That is the wrong trade: a slightly
+  // jagged silhouette still reads as an object standing somewhere. AO now survives the MSAA shed
+  // and goes only when the scaler starts trading RESOLUTION, at which point everything is soft anyway.
+  const _aoWant = _ssaoAmt > 0.001 && _prStepI === 0 && _aoGeoRT && cam && cam.isPerspectiveCamera;
   if(_aoWant){
     // the prepass runs AFTER the scene pass so it cannot consume this frame's shadow-map refresh,
     // and with the sky dome and weather hidden — overrideMaterial would give the dome depthWrite
@@ -7601,6 +7612,38 @@ function updateLightBudget(){
     emitterLights[i].light.intensity = emitterLights[i].baseIntensity * f;
   }
 }
+// ---------- build 1132: how many PLACED lights may cast a shadow at once ----------
+// A shadow-casting spot costs a whole extra depth pass over the scene, so this is not something a
+// creator should be able to buy by dropping twenty lamps in a corridor. The nearest few to the camera
+// keep their shadow and the rest quietly stop casting — the same principle as the light budget above,
+// and for the same reason. Two on a phone, four elsewhere; the adaptive rung takes it to zero when
+// the machine is already struggling, because a depth pass per light is exactly what to shed first.
+function _maxShadowLights(){
+  // build 1135: same priority as AO — kept through the MSAA shed, dropped when resolution starts to go
+  if(typeof _prStepI!=='undefined' && _prStepI > 0) return 0;
+  return (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 2 : 4;
+}
+let _shadowLightT = 0;
+function updateShadowLightBudget(dt){
+  // re-ranking every frame would thrash three's shadow-map allocation; a third of a second is far
+  // faster than a player can move between lamps
+  _shadowLightT += (dt||0); if(_shadowLightT < 0.33) return; _shadowLightT = 0;
+  if(typeof lightModels==='undefined') return;
+  const want = [];
+  for(const g of lightModels){ if(g && g.userData && g.userData.wantShadow && g.userData.light) want.push(g); }
+  if(!want.length) return;
+  const cap = _maxShadowLights();
+  if(want.length > 1){
+    for(const g of want){ g.getWorldPosition(_lp); g._sd = _lp.distanceToSquared(camera.position); }
+    want.sort((a,b)=>a._sd - b._sd);
+  }
+  let changed = false;
+  for(let i=0;i<want.length;i++){
+    const L = want[i].userData.light, on = i < cap && want[i].userData.lon !== false;
+    if(L.castShadow !== on){ L.castShadow = on; changed = true; }
+  }
+  if(changed && typeof _dirtyShadows==='function') _dirtyShadows(2);   // a light that just started casting has no map yet
+}
 
 // ---------- Arena ----------
 // Arena half-extent. Editable at runtime (saved with the level as worldCfg.arena); rebuildArena()
@@ -7775,13 +7818,25 @@ function _skyEnv(){
     if(!THREE.PMREMGenerator || !THREE.WebGLCubeRenderTarget) return null;
     const size = (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 64 : 128;
     const sc = new THREE.Scene();
+    // build 1136: worldCfg.sky scales the probe as well as the hemisphere light, so "sky" finally means
+    // the whole sky's contribution. three has no global environment intensity in r149 and setting
+    // envMapIntensity would mean walking every material in the scene on every change; scaling the probe
+    // at the point it is built is one place and cannot fall out of step.
+    const _envU = _skyUniforms();
+    if(_envU.uExp) _envU.uExp.value *= Math.max(0.05, Math.min(2, (typeof worldCfg!=='undefined' && worldCfg.sky!=null) ? +worldCfg.sky : 0.55));
     const m = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.ShaderMaterial({
-      side:THREE.BackSide, depthWrite:false, fog:false, uniforms:_skyUniforms(),
+      side:THREE.BackSide, depthWrite:false, fog:false, uniforms:_envU,
       vertexShader:'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-      fragmentShader:['varying vec3 vDir;', SKY_GLSL, _OETF_GLSL, _ACES_GLSL,
-        // the probe is convolved into an environment map, which is sampled as LINEAR radiance, so
-        // this one tone-maps (to match what the eye sees of the same sky) but never encodes.
-        'void main(){ gl_FragColor=vec4(_aces(skyRadiance(normalize(vDir))),1.0); }'].join('\n') }));
+      fragmentShader:['varying vec3 vDir;', SKY_GLSL,
+        // build 1136: NO tone mapping here. Build 1127 added it to "match what the eye sees of the same
+        // sky", and that was wrong: this cube is convolved into an environment map, which materials
+        // multiply against albedo BEFORE three tone-maps the shaded result. Tone-mapping it first
+        // applies ACES twice, and ACES lifts mid-tones — so the image-based ambient came out far
+        // brighter than the sky's real radiance and swamped the sun. Measured on the default level, a
+        // sunlit and a shadowed face of the same deck differed by only 1.16x in luminance; raising the
+        // sun 50% and halving the hemisphere fill moved that by 0.00, which is what proved the IBL was
+        // the dominant term rather than either light. An environment map holds RADIANCE.
+        'void main(){ gl_FragColor=vec4(skyRadiance(normalize(vDir)),1.0); }'].join('\n') }));
     m.frustumCulled=false; sc.add(m);
     const cubeRT = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType });
     const cam = new THREE.CubeCamera(0.1, 10, cubeRT);
@@ -7938,6 +7993,18 @@ function _paintCommit(){
 
 // grid glow (rebuilt with the arena so its extent + divisions track the size)
 let grid = null;
+// build 1133: the grid is a VIEWPORT AID, not scenery. It was on during play by default, and at a
+// grazing angle from eye height its lines alias into horizontal bands across the floor — which is
+// the single most recognisable "this is a prototype" tell in a game frame. Every other engine shows
+// its grid in the editor and never in the running game. worldCfg.grid still decides whether the
+// author wants it at all; this only stops it leaking into play.
+function _gridWanted(){
+  if(typeof worldCfg==='undefined' || !worldCfg || worldCfg.grid === false) return false;
+  // try/catch, not typeof: both editorOpen and gameOn are `let`s declared below this, and `typeof` on
+  // an uninitialised let THROWS rather than returning 'undefined'. rebuildArena calls this at boot.
+  try{ if(editorOpen) return true; }catch(e){ return true; }
+  try{ return !gameOn; }catch(e){ return true; }
+}
 
 // walls
 const wallMat = new THREE.MeshPhysicalMaterial({ color:0x1a242b, roughness:.8, metalness:.2 });
@@ -8038,7 +8105,7 @@ function rebuildArena(){
   // honor the saved grid-visibility toggle on every rebuild (incl. the deferred arena-resize rebuild,
   // which otherwise recreates a visible grid after applyWorldCfg already hid it). try/catch guards the
   // very first rebuildArena() call, which runs before worldCfg is initialized.
-  try { if(typeof worldCfg !== 'undefined' && worldCfg) grid.visible = (worldCfg.grid !== false); } catch(e){}
+  try { if(typeof worldCfg !== 'undefined' && worldCfg) grid.visible = _gridWanted(); } catch(e){}
   // boundary walls — remove old (from scene + colliders), rebuild at the new extent
   for(const w of arenaWalls){ scene.remove(w); const ci=colliders.indexOf(w); if(ci>=0) colliders.splice(ci,1); if(w.geometry) w.geometry.dispose(); }
   arenaWalls.length = 0;
@@ -14590,17 +14657,91 @@ function buildPillar(){
 }
 // Build the original scattered cover + glowing pillars as editable props. Only when there's no saved
 // layout — a saved layout already contains them, so generating again would duplicate the field.
+// build 1133: a DESIGNED default level, and the same one every time.
+//
+// What was here: 22 boxes at Math.random() positions with Math.random() sizes, plus six pillars on a
+// ring. Three problems, and this is the first thing anyone sees after pressing DEPLOY.
+//
+//  * It was NON-DETERMINISTIC. Math.random() meant the "default level" was a different level on every
+//    page load, so it could not be shared, screenshotted twice, learned, or spoken about.
+//  * It had no composition. Scattered boxes give no sightlines, no lanes, no cover relationships and
+//    no focal point — the three things a shooter arena is actually made of.
+//  * Every surface was the one default colour, so the whole frame was a single value: a greybox.
+//
+// This is the same primitives, arranged. Bilateral symmetry across x (so neither side of a duel has
+// the advantage) with the two halves' detail differing, a raised centre as the contested focal point,
+// graded cover heights so there is something to crouch behind and something to climb, and per-prop
+// colour, roughness and emissive so the frame has values in it. Everything is a real editable prop,
+// exactly as before — this is content, not a new system.
+const _DL = {                                   // the default level's palette
+  // build 1136: the ARCHITECTURE is warm and the PROPS are cool. The first pass made everything cool
+  // slate, and under a blue sky that gives a frame with one temperature in it. This is not a rendering
+  // fault — measured, a shadowed deck came back at R/G 0.33, and the albedo's own R/G (0.58) times the
+  // blue sky's (0.51) is 0.30, so the renderer was reproducing exactly what it was given. The fix is
+  // the content: warm concrete lit by a warm sun, cool metal crates on top of it, blue sky in the
+  // shadows. Three notes instead of one.
+  deck:   { col:0x4a443c, shine:{ r:0.85, m:0.08 } },   // warm concrete decks
+  wall:   { col:0x3a352f, shine:{ r:0.78, m:0.10 } },   // structure, a value down
+  crate:  { col:0x5c6670, shine:{ r:0.55, m:0.35 } },   // cool metal cover, reads against the concrete
+  crateH: { col:0x6d7883, shine:{ r:0.50, m:0.40 } },   // taller cover, one value up so the grade reads
+  pipe:   { col:0x24201c, shine:{ r:0.35, m:0.60 } },   // warm dark metal, catches a highlight
+  // build 1135: 0.55, not 1.6. A saturated emissive at 1.6 is above the bloom threshold everywhere it
+  // appears, and build 1128's five-level pyramid then spreads it across the whole frame — measured on
+  // the spawn view, the deck read (51,98,112) against an authored (51,67,78) and a crate (90,140,151)
+  // against (76,92,101). The channel signature gives it away: G and B lifted 3x more than R, i.e. the
+  // teal. An accent's job is to draw the eye to one edge, not to tint the picture.
+  glowA:  { col:0x123038, emit:{ c:0x2fe0b0, i:0.55 }, shine:{ r:0.4, m:0.2 } },   // cool accent
+  glowB:  { col:0x38251a, emit:{ c:0xff8c3c, i:0.55 }, shine:{ r:0.4, m:0.2 } },   // warm accent
+};
 function generateOriginalScene(){
-  for(let i=0;i<22;i++){
-    const s = 2.5 + Math.random()*3, ht = Math.min(s*0.7, 2.6);   // footprint 2.5–5.5, climbable height
-    let px, pz; do { px=(Math.random()-.5)*ARENA*1.7; pz=(Math.random()-.5)*ARENA*1.7; } while(Math.hypot(px,pz)<8);
-    spawnProp('box', [px, 0, pz, 0, 0, 0, s, ht, s]);            // 9-tuple = non-uniform crate
+  const P = (src, t, mat) => spawnProp(src, t, null, null, 'loop', mat || null);
+  // ---- the contested centre: a raised dais, four corner pipes, stairs on the long axis ----
+  P('box',    [0, 0, 0, 0, 0, 0, 16, 1.6, 16], _DL.deck);
+  for(const sx of [-1, 1]) for(const sz of [-1, 1])
+    P('box',  [sx*7, 1.6, sz*7, 0, 0, 0, 1.1, 3.2, 1.1], _DL.pipe);
+  for(const sz of [-1, 1])                                            // ramps up, one per side
+    P('wedge',[0, 0, sz*11, 0, sz > 0 ? 0 : Math.PI, 0, 7, 1.6, 6], _DL.wall);
+  P('box',    [0, 1.6, 0, 0, 0, 0, 4, 0.12, 4], _DL.glowA);           // a lit plate on the dais floor
+  // ---- team platforms, N and S: a deck, a lip to crouch behind, a ramp, an accent band ----
+  for(const sz of [-1, 1]){
+    // the player starts on the +z platform, so that one is warm: a cool sky over a cool foreground is
+    // one temperature and reads flat, and the contrast is what makes the near edge legible
+    const z = sz*30, accent = sz > 0 ? _DL.glowB : _DL.glowA;
+    P('box',  [0, 0, z, 0, 0, 0, 22, 1.2, 9], _DL.deck);
+    P('box',  [0, 1.2, z + sz*4.2, 0, 0, 0, 22, 1.0, 0.7], _DL.wall);  // parapet facing out
+    P('box',  [0, 2.2, z + sz*4.2, 0, 0, 0, 22, 0.25, 0.8], accent);   // band along its top
+    for(const sx of [-1, 1]) P('box', [sx*8, 1.2, z, 0, 0, 0, 2.4, 2.4, 2.4], _DL.crateH);
+    P('wedge',[0, 0, z - sz*7, 0, sz > 0 ? Math.PI : 0, 0, 8, 1.2, 5], _DL.wall);
+    for(const sx of [-1, 1]) P('pillar', [sx*13, 1.2, z, 0, 0, 0, 1]);
   }
-  for(let i=0;i<6;i++){
-    const a = i/6*Math.PI*2;
-    spawnProp('pillar', [Math.cos(a)*ARENA*0.7, 0, Math.sin(a)*ARENA*0.7, 0, 0, 0, 1]);
+  // ---- mid-field: staggered cover along both flanks, graded so heights read as a choice ----
+  for(const sx of [-1, 1]){
+    const x = sx*24;
+    P('box',  [x, 0, 0, 0, 0, 0, 3.0, 2.6, 12], _DL.wall);            // a long wall to break the flank
+    P('box',  [x - sx*5, 0, -8, 0, 0, 0, 3.2, 1.1, 3.2], _DL.crate);  // waist-high
+    P('box',  [x - sx*5, 0, 8, 0, 0, 0, 3.2, 1.8, 3.2], _DL.crateH);  // chest-high
+    P('box',  [x - sx*9, 0, 0, 0, 0, 0, 2.4, 0.8, 2.4], _DL.crate);   // a step up onto the taller one
+    P('cylinder', [x + sx*4, 0, -14, 0, 0, 0, 2.2, 3.4, 2.2], _DL.pipe);
+    P('cylinder', [x + sx*4, 0, 14, 0, 0, 0, 2.2, 3.4, 2.2], _DL.pipe);
   }
+  // ---- diagonal cover between the lanes: the reason the centre is not a shooting gallery ----
+  for(const [sx, sz] of [[1,1],[-1,-1],[1,-1],[-1,1]]){
+    P('box', [sx*13, 0, sz*17, 0, sx*sz*0.6, 0, 4.4, 1.5, 2.2], _DL.crate);
+    P('box', [sx*17, 0, sz*11, 0, sx*sz*-0.5, 0, 3.0, 2.2, 2.0], _DL.crateH);
+  }
+  // ---- corners: L-walls so the perimeter has depth instead of being an empty ring ----
+  for(const sx of [-1, 1]) for(const sz of [-1, 1]){
+    P('box', [sx*34, 0, sz*26, 0, 0, 0, 3, 4.5, 14], _DL.wall);
+    P('box', [sx*28, 0, sz*33, 0, 0, 0, 14, 4.5, 3], _DL.wall);
+    P('box', [sx*34, 4.5, sz*26, 0, 0, 0, 3.2, 0.3, 14.2], _DL.crateH);   // a capping course, not a light
+  }
+  // The player used to spawn at (0,0), which is now the dais — the same mistake build 1124 found in the
+  // generated arenas. Start on a team platform looking at the middle. Recorded rather than applied:
+  // playerSpawn is declared ~300 lines below this call and `typeof` does NOT guard a temporal dead
+  // zone (it throws for an uninitialised let), which is the trap that took the whole sky out in 1127.
+  _DL_SPAWN = { x:0, y:1.2, z:30 };
 }
+let _DL_SPAWN = null;
 if(!(savedLevel && Array.isArray(savedLevel.props))) generateOriginalScene();
 
 // ---------- Scene lights (addable/editable in the editor) ----------
@@ -14635,6 +14776,7 @@ function _lightOpts(g){
   if(g.userData.startOff) o.startOff=true;
   if(g.userData.name) o.nm=String(g.userData.name).slice(0,60); if(g.userData.edHide) o.eh=1; if(g.userData.edLock) o.elk=1;   // build 1036: outliner name/hide/lock
   if(g.userData.lfade!=null && g.userData.lfade!==0.4) o.fade=+g.userData.lfade;
+  if(g.userData.wantShadow) o.shadow=1;   // build 1132
   return o;
 }
 function buildLight(opts){
@@ -14652,6 +14794,30 @@ function buildLight(opts){
     light=new THREE.HemisphereLight(col, (opts.ground!=null?opts.ground:0x222a30), inten); g.add(light); mcol=0x9fd8ff;
   } else {
     light=new THREE.PointLight(col, inten, (opts.distance!=null?opts.distance:22)); g.add(light); mcol=col;
+  }
+  // ---------- build 1132: a placed light can cast a shadow ----------
+  // No light a creator placed could cast one before this: buildLight never touched castShadow, so
+  // every lamp, floodlight and spotlight in every hand-authored level shone straight through walls.
+  // The sun was the only shadow-caster in the engine.
+  //
+  // Opt-in per light, and only on SPOT and DIRECTIONAL. A point light's shadow is a cube map — six
+  // depth passes for one lamp — which is not a cost a browser engine should let a creator apply by
+  // accident to a room with eight of them; a spot is one pass, and a spot is what you reach for when
+  // you want a visible shadow anyway. `_shadowLightBudget` then caps how many are live at once.
+  if(opts.shadow && (type==='spot' || type==='dir')){
+    g.userData.wantShadow = true;
+    try{
+      const px = (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 512 : 1024;
+      light.shadow.mapSize.set(px, px);
+      light.shadow.bias = -0.0005;
+      // the same rule as the sun (build 1125): normalBias is a TEXEL quantity. A spot's shadow camera
+      // is perspective, so the texel size varies with distance — size it from the light's own range,
+      // which is the far plane, at the map resolution actually in use.
+      const range = (type==='spot') ? Math.max(1, +light.distance || 30) : 60;
+      light.shadow.normalBias = Math.min(0.35, Math.max(0.01, (2 * range / px) * 7.7));
+      if(type==='spot'){ light.shadow.camera.near = 0.4; light.shadow.camera.far = range; }
+      light.castShadow = true;
+    }catch(e){ g.userData.wantShadow = false; }
   }
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(0.45, 12, 12),
@@ -15017,6 +15183,13 @@ let playerSpawn = {
   y:   (savedLevel && savedLevel.pstart && savedLevel.pstart.y  !=null) ? savedLevel.pstart.y   : 0,   // height ABOVE the ground (for second stories / platform tops); 0 = on the floor
   yaw: (savedLevel && savedLevel.pstart && savedLevel.pstart.yaw!=null) ? savedLevel.pstart.yaw : 0,
 };
+// build 1133: the default level's own start, applied here because this is where playerSpawn exists.
+// Only when the default scene was actually generated (no saved level) AND the save carried no start of
+// its own, so an author's choice is never overwritten.
+if(typeof _DL_SPAWN!=='undefined' && _DL_SPAWN && !(savedLevel && savedLevel.pstart)){
+  playerSpawn.x = _DL_SPAWN.x; playerSpawn.y = _DL_SPAWN.y; playerSpawn.z = _DL_SPAWN.z;
+  playerSpawn.yaw = Math.atan2(playerSpawn.x, playerSpawn.z);   // forward is (-sin yaw, -cos yaw)
+}
 let playerSpawnMarker = null;
 function buildPlayerSpawnMarker(){
   const g = new THREE.Group();
@@ -15073,7 +15246,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
 // versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
 // The dark stock palette needs an art pass, which belongs with the sky/lighting work.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:0.9, sunColor:0xcfedff, sunAzim:63, sunElev:61, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.55, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.018, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:30, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -15407,7 +15580,7 @@ function applyWorldCfg(){
   if(typeof scene !== 'undefined' && !(scene.background && scene.background.isTexture)
      && !(worldCfg.skyMode === 'sky' && !_skyHdriUrl)) scene.background = new THREE.Color(worldCfg.fogColor>>>0);
   // ground grid visibility
-  if(typeof grid !== 'undefined' && grid) grid.visible = (worldCfg.grid !== false);
+  if(typeof grid !== 'undefined' && grid) grid.visible = _gridWanted();
   // depth of field
   if(typeof dofEnabled !== 'undefined'){
     dofEnabled  = (worldCfg.dof === true) && !IS_COARSE;   // DoF post-process is too heavy for mobile
@@ -15564,6 +15737,20 @@ addEventListener('keydown', e=>{
   if(editorOpen && (e.ctrlKey||e.metaKey) && e.code==='KeyZ' && !e.shiftKey){
     const tag = (e.target && e.target.tagName) || '';
     if(tag!=='INPUT' && tag!=='TEXTAREA'){ if(typeof performUndo==='function') performUndo(); e.preventDefault(); }
+    return;
+  }
+  // build 1129: redo on both conventions (Ctrl+Shift+Z everywhere, Ctrl+Y on Windows), and SAVE on
+  // Ctrl+S. Ctrl+S was already being swallowed further down — the WASD guard preventDefaults it so the
+  // browser's Save Page dialog cannot appear — but nothing was listening, so the most reflexive key in
+  // any editor did literally nothing.
+  if(editorOpen && (e.ctrlKey||e.metaKey) && ((e.code==='KeyZ' && e.shiftKey) || e.code==='KeyY')){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){ if(typeof performRedo==='function') performRedo(); e.preventDefault(); }
+    return;
+  }
+  if(editorOpen && (e.ctrlKey||e.metaKey) && e.code==='KeyS' && !e.shiftKey && !e.altKey){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){ e.preventDefault(); const b=document.getElementById('edSave'); if(b) b.click(); }
     return;
   }
   if(editorOpen && (e.code==='Delete' || e.code==='Backspace')){
@@ -21434,6 +21621,35 @@ function netTick(dt){
 }
 
 // ---- message handlers ----
+// ---------- build 1130: the host does not take a client's word for damage ----------
+// Every damage packet a client sent was applied verbatim: applyPvpDamage(msg.d, msg.from),
+// botHurt(b, msg.d), damageProp(o, msg.d). A client is a web page the player controls, so `d` was
+// whatever they typed into the console — one packet with d:1e9 killed anything in the match — and
+// `from` was whoever they said they were, which also slipped past every sameTeam() check.
+//
+// Full server authority is not available to a peer-to-peer host: it cannot re-simulate the client's
+// shot. What it CAN do is bound the claim. Two rules, and neither of them can break an authored level:
+//
+//  * `from` is never read from the packet. The connection knows which player it belongs to.
+//  * `d` is clamped to what the LEVEL's own numbers could produce. The cap is derived, not hardcoded,
+//    because a level authors its own weapon and grenade damage — a fixed ceiling would quietly nerf
+//    a level that legitimately hits hard. HEADSHOT_MUL covers a head hit, one factor of 2 covers the
+//    2x-damage pickup, and 4 is headroom for stacked roguelite upgrades, which live on the ATTACKER's
+//    machine where the host cannot see them.
+function _netDmgCap(){
+  let m = 0;
+  try{ for(const k in WEAPONS){ const w = WEAPONS[k]; if(w && +w.dmg > m) m = +w.dmg; } }catch(e){}
+  try{ if(typeof GRENADE!=='undefined' && GRENADE && +GRENADE.damage > m) m = +GRENADE.damage; }catch(e){}
+  const head = (typeof HEADSHOT_MUL!=='undefined') ? +HEADSHOT_MUL : 2;
+  return Math.max(1, m) * head * 2 * 4;
+}
+// A claimed damage value, made safe: non-finite and negative are dropped to 0 (a negative would HEAL
+// the target, which is the same exploit wearing a hat), and the rest is clamped to the derived cap.
+function _netDmg(d){
+  const v = +d;
+  if(!isFinite(v) || v <= 0) return 0;
+  return Math.min(v, _netDmgCap());
+}
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
@@ -21447,18 +21663,18 @@ function handleClientMsg(conn, msg){
       try{ dest.send(fwd); }catch(e){} return; }
   }
   if(msg.t==='st'){ setRemoteState(id, msg); }
-  else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, msg.d, (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
+  else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmg(msg.d), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
   else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
-  else if(msg.t==='pvpHit'){ applyPvpDamage(msg.d, msg.from); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us)
+  else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmg(msg.d), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
-  else if(msg.t==='died'){ registerDuelKill(msg.by, id); }            // a client died; credit the killer
-  else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(msg.from, msg.id)){ const _s=NET.players[msg.from]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, msg.d, _sx, _sz)) registerDuelKill(msg.from, msg.id); } }   // a client shot a bot
+  else if(msg.t==='died'){ const _by=+msg.by; if(_by===0 || NET.conns[_by]) registerDuelKill(_by, id); }            // a client died; credit the killer — build 1130: only a player who is actually in the match
+  else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(id, msg.id)){ const _s=NET.players[id]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, _netDmg(msg.d), _sx, _sz)) registerDuelKill(id, msg.id); } }   // a client shot a bot — build 1130: the shooter is the connection, so a claimed `from` can no longer dodge the sameTeam check or steal the credit
   else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } if(NET.phase==='lobby') refreshLobby(); }   // a client changed character (the lobby card updates live)
   else if(msg.t==='rocket'){ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), d=new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]); fireRocket(o,d,id,true,msg.r||7,WEAPONS.launcher.dmg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'rocket', o:msg.o, d:msg.d, r:msg.r, by:id}); }catch(e){} } } }   // a client fired a rocket: host simulates it + relays the visual
   else if(msg.t==='nade'){ spawnNetGrenade(new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), new THREE.Vector3(msg.v[0],msg.v[1],msg.v[2]), id, true); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'nade', o:msg.o, v:msg.v, by:id}); }catch(e){} } } }   // build 670: a client threw a grenade: host simulates it (authors damage) + relays the visual to the others
   else if(msg.t==='push'){ const o=propByNid(msg.nid); if(o) pushDynamic(o, new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]), msg.s||6, msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null); }   // a client shot a dynamic prop (legacy knockback-only)
-  else if(msg.t==='propHit'){ const o=propByNid(msg.nid); if(o){ const dir=new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]); const pt=msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null; const broke=damageProp(o, msg.d||0, pt, dir, msg.s||6, id); if(!broke) pushDynamic(o, dir, msg.s||6, pt); } }   // a client shot a prop: damage (breaks/detonates) + knockback, credited to the client
+  else if(msg.t==='propHit'){ const o=propByNid(msg.nid); if(o){ const dir=new THREE.Vector3(msg.dir[0],msg.dir[1],msg.dir[2]); const pt=msg.pt?{x:msg.pt[0],y:msg.pt[1],z:msg.pt[2]}:null; const broke=damageProp(o, _netDmg(msg.d), pt, dir, msg.s||6, id); if(!broke) pushDynamic(o, dir, msg.s||6, pt); } }   // a client shot a prop: damage (breaks/detonates) + knockback, credited to the client
   else if(msg.t==='bDel'){ const o=propByNid(msg.nid); if(o && o.userData.runtime && !o.userData._shattered) shatterProp(o, null, null, 5, id); }   // build 941: a client deleted a build-placed prop (authored level props are refused)
   else if(msg.t==='pPush'){ const o=propByNid(msg.nid); const b=o && o.userData.phys && o.userData.phys.body; if(b){ const sh=Math.max(0, Math.min(9, +msg.s||0)); try{ b.applyImpulse({ x:(+msg.nx||0)*sh*0.6, y:0, z:(+msg.nz||0)*sh*0.6 }, true); }catch(e){} } }   // build 923: a client walked into a dynamic prop — apply their shove here (clamped), the D snapshot carries it back
   else if(msg.t==='grab'){ const _go=propByNid(msg.nid); if(!_go || !_go.userData.phys || _go.userData.noGrab) return; if(heldProp===_go) return; if(!_remoteHold[msg.nid]) _remoteHold[msg.nid]={by:id}; }   // a client grabbed a prop (build 924: look it up by NET nid — dynamicById matches the numeric snapshot id and always missed)
@@ -24873,7 +25089,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1128 · 2026-07-29';
+const BUILD_VERSION = 'build 1136 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28551,13 +28767,26 @@ function moveHorizontal(x, z, dx, dz, feetY){
   // Probe the destination CENTER — clearAt expands obstacles by the body radius internally. Probing a
   // point R ahead (as before) read the slope a body-radius up a ramp as too tall to step onto, which
   // fenced you off the ramp until you jumped on.
-  if(dx !== 0){
-    const destX = x + dx;
-    if(stuck || clearAt(destX, z, feetY)) nx = destX;
-  }
-  if(dz !== 0){
-    const destZ = z + dz;
-    if(stuck || clearAt(nx, destZ, feetY)) nz = destZ;
+  //
+  // build 1131: SUBSTEPPED. Testing only the destination is a discrete check on a continuous motion:
+  // if one frame's step is long enough, both the start and the end can be clear while the path
+  // between them passes straight through a wall. That is not hypothetical here — dt is clamped to
+  // 0.05, so at 20 fps ordinary running already covers 0.6 m per frame, and a grenade blast or a jump
+  // pad adds extVel on top. Walk the motion in pieces no longer than half a body radius and the gap
+  // can never be jumped. At 60 fps this is one iteration, i.e. exactly the old cost; it only does more
+  // work in the case that used to be broken.
+  //
+  // `stuck` keeps its escape hatch: a player already embedded in geometry moves freely so they can get
+  // out rather than freeze, and substepping that would just be 16 unconditional steps, so it stays 1.
+  const dist = Math.hypot(dx, dz);
+  const stepMax = Math.max(0.05, R * 0.5);
+  const steps = (stuck || dist <= stepMax) ? 1 : Math.min(16, Math.ceil(dist / stepMax));
+  const sx = dx / steps, sz = dz / steps;
+  for(let i = 0; i < steps; i++){
+    let moved = false;
+    if(sx !== 0){ const destX = nx + sx; if(stuck || clearAt(destX, nz, feetY)){ nx = destX; moved = true; } }
+    if(sz !== 0){ const destZ = nz + sz; if(stuck || clearAt(nx, destZ, feetY)){ nz = destZ; moved = true; } }
+    if(!moved) break;   // blocked on every axis that wanted to move: later substeps cannot do better
   }
   player.pos.x = nx; player.pos.z = nz;
   const lim = ARENA - 1.5;
@@ -30263,6 +30492,7 @@ function loop(){
   if(typeof updateFragments==='function') updateFragments();   // advance/cleanup destruction debris
   if(typeof _syncAttachedLights==='function') _syncAttachedLights();   // build 997: glue attached lights to their props
   updateLightBudget();
+  if(typeof updateShadowLightBudget==='function') updateShadowLightBudget(dt);   // build 1132
 
   { const _a=perfOn?_pnow():0; netTick(dt); if(perfOn)_prof.net+=_pnow()-_a; }   // send/receive networked state + smooth remote entities
 
@@ -32756,6 +32986,7 @@ function renderCampaignPanel(){
 // the most recent snapshot. Simple and robust (no per-command inverse logic); restore rebuilds the
 // props/lights and re-applies gun/aim/station/world/loot settings.
 const editorUndo = [];
+const editorRedo = [];   // build 1129: the forward half of the history
 let editorUndoActive = false;
 function pushUndoSnapshot(){
   if(editorUndoActive || !editorOpen) return;
@@ -32765,6 +32996,10 @@ function pushUndoSnapshot(){
     if(editorUndo.length && editorUndo[editorUndo.length-1] === snap) return;   // identical to last -> skip
     editorUndo.push(snap);
     if(editorUndo.length > 60) editorUndo.shift();
+    // build 1129: editing after an undo forks the history — the old forward branch is unreachable and
+    // keeping it would redo work the author has already replaced.
+    editorRedo.length = 0;
+    if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   } catch(e){}
 }
 function restoreLevel(level){
@@ -32853,13 +33088,41 @@ function restoreLevel(level){
   if(typeof syncSelToIdx==='function') syncSelToIdx();
   renderEditorFields();
 }
+// build 1129: undo/redo is a two-stack history, the way every tool does it. Ctrl+Z was a ONE-WAY
+// trapdoor before this — an accidental undo threw away work with no way back, and the editor is a
+// direct-manipulation tool where an accidental undo is a matter of one stray keypress.
+//
+// pushUndoSnapshot stores the state BEFORE an edit, so `editorUndo` is a stack of pre-edit states.
+// Undoing therefore has to capture the state it is leaving (the post-edit one) to have anything to
+// redo, which is why the redo stack is filled here and not in performUndo's caller.
 function performUndo(){
   if(!editorUndo.length) return false;
   const snap = editorUndo.pop();
   let level; try { level = JSON.parse(snap); } catch(e){ return false; }
+  let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
   editorUndoActive = true;
   try { restoreLevel(level); } finally { editorUndoActive = false; }
+  if(cur != null){ editorRedo.push(cur); if(editorRedo.length > 60) editorRedo.shift(); }
+  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
+}
+function performRedo(){
+  if(!editorRedo.length) return false;
+  const snap = editorRedo.pop();
+  let level; try { level = JSON.parse(snap); } catch(e){ return false; }
+  let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
+  editorUndoActive = true;   // the restore must not push a snapshot of its own
+  try { restoreLevel(level); } finally { editorUndoActive = false; }
+  if(cur != null){ editorUndo.push(cur); if(editorUndo.length > 60) editorUndo.shift(); }
+  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
+  return true;
+}
+// Grey the buttons out when there is nothing to go back or forward to — a control that looks live and
+// does nothing is worse than one that says so.
+function _edSyncHistoryBtns(){
+  const u=document.getElementById('edUndo'), r=document.getElementById('edRedo');
+  if(u) u.disabled = !editorUndo.length;
+  if(r) r.disabled = !editorRedo.length;
 }
 
 // Reusable search UI (gun/enemy/loot/grenade/station/player). Calls onPick(model, statusEl) on a click.
@@ -33177,7 +33440,7 @@ function buildEditorPanel(){
     + '</div>'
     + '<div id="edShell"><div class="edModes" id="edModes"></div><div id="edMain">'
     + '<div class="hint" id="edHint"></div>'
-    + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;min-width:44px">↶</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
+    + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;min-width:44px">↶</button><button id="edRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" style="flex:0 0 auto;min-width:44px">↷</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
     + '<div id="edSearchRow"><input id="edSearch" type="search" placeholder="Search settings\u2026" spellcheck="false" aria-label="Search settings"></div>'
     + '<div id="edSearchChips"></div>'
     + '<div class="tabs" id="edTabs"></div>'
@@ -33486,6 +33749,8 @@ function buildEditorPanel(){
   if(modeRow){ for(const m of EDITOR_MODES){ const mb=document.createElement('div'); mb.className='edMode'; mb.dataset.mode=m; mb.innerHTML=(MODE_ICON[m]||'')+'<span class="edModeLbl">'+MODE_LABEL[m]+'</span>'; mb.title=MODE_LABEL[m]; mb.onclick=()=>setEditorMode(m); modeRow.appendChild(mb); } }
   p.querySelector('#edReset').onclick = ()=>{ resetEditorTarget(editorActive); };
   { const ub=p.querySelector('#edUndo'); if(ub) ub.onclick=()=>{ if(typeof performUndo==='function') performUndo(); }; }   // build 910: undo without a keyboard (touch authors had none)
+  { const rb=p.querySelector('#edRedo'); if(rb) rb.onclick=()=>{ if(typeof performRedo==='function') performRedo(); }; }   // build 1129: and forward again
+  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   p.querySelector('#edPlay').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); startGame(); };           // test the live-built level immediately (no save/reload)
   p.querySelector('#edMenu').onclick = ()=>{ editorToMenu(); };        // back to the start overlay
   { const ac=p.querySelector('#edAutoSave'); if(ac){ ac.checked=_autoSaveOn; ac.onchange=()=>{ setAutoSaveOn(ac.checked); const st=p.querySelector('#edAutoStatus'); if(st) st.textContent=ac.checked?'Saves automatically as you work.':'Autosave off — remember to Save.'; }; } }
@@ -36625,6 +36890,31 @@ function renderEditorFields(){
       soCb.onchange=()=>{ pushUndoSnapshot(); g0.userData.startOff=soCb.checked; if(!soCb.checked) delete g0.userData.startOff; };
       const soSp=document.createElement('span'); soSp.textContent='Starts off (lit by a signal)';
       soLab.appendChild(soCb); soLab.appendChild(soSp); urlHost.appendChild(soLab);
+      // build 1132: shadow casting, on spot and directional only. A point light's shadow is a cube map
+      // (six depth passes for one lamp), which is not a cost to hand a creator behind a checkbox.
+      if(g0.userData.ltype==='spot' || g0.userData.ltype==='dir'){
+        const shLab=document.createElement('label'); shLab.style.cssText='display:flex;gap:6px;align-items:center;margin:6px 0 2px;font-size:11px;color:#9fe6cf;cursor:pointer;';
+        const shCb=document.createElement('input'); shCb.type='checkbox'; shCb.checked=!!g0.userData.wantShadow;
+        shCb.onchange=()=>{ pushUndoSnapshot(); const on=shCb.checked;
+          // Rebuilt through buildLight rather than toggled in place: the shadow camera's near/far and
+          // the texel-derived normalBias are configured there, and a light that was never a caster has
+          // none of it. Same in-place replace the type switch uses, so order and selection hold.
+          const idx=lightModels.indexOf(g0); if(idx<0) return;
+          const o=_lightOpts(g0); if(on) o.shadow=1; else delete o.shadow;
+          removeLight(idx);
+          const ng=buildLight(o);
+          lightModels.splice(lightModels.indexOf(ng),1); lightModels.splice(idx,0,ng);
+          if(ng.userData.marker) ng.userData.marker.visible=true;
+          editorTargets.lights.idx=idx; selLights=[ng];
+          if(typeof syncSelToIdx==='function') syncSelToIdx();
+          if(typeof _dirtyShadows==='function') _dirtyShadows(3);
+          renderEditorFields(); };
+        const shSp=document.createElement('span'); shSp.textContent='Casts shadows';
+        shLab.appendChild(shCb); shLab.appendChild(shSp); urlHost.appendChild(shLab);
+        const shHint=document.createElement('div'); shHint.className='hint'; shHint.style.cssText='font-size:10px;margin:0 0 4px;opacity:.75;';
+        shHint.textContent='One extra depth pass per casting light. The nearest few to the camera keep their shadow; the rest stop casting.';
+        urlHost.appendChild(shHint);
+      }
       const fdWrap=document.createElement('label'); fdWrap.className='field';
       const fsp=document.createElement('span'); fsp.textContent='Fade (s)';
       const fin=document.createElement('input'); fin.type='number'; fin.className='valnum'; fin.step=0.1; fin.min=0; fin.value=(g0.userData.lfade!=null?g0.userData.lfade:0.4);
@@ -38105,7 +38395,7 @@ function _lgOpenDialog(){
 const ED_MENUS = [
   { id:'file', label:'File', items:[
     { label:'New level\u2026',        run:()=>_edNewLevel(), danger:true },
-    { label:'Save',                 key:'', run:()=>_edClick('edSave') },
+    { label:'Save',                 key:'Ctrl+S', run:()=>_edClick('edSave') },
     { sep:1 },
     { label:'Import \u2026',          run:()=>_edClick('edImport') },
     { label:'Export',               run:()=>_edClick('edExport') },
@@ -38117,6 +38407,7 @@ const ED_MENUS = [
   ]},
   { id:'edit', label:'Edit', items:[
     { label:'Undo', key:'Ctrl+Z',   run:()=>{ if(typeof performUndo==='function') performUndo(); } },
+    { label:'Redo', key:'Ctrl+Shift+Z', run:()=>{ if(typeof performRedo==='function') performRedo(); } },
     { sep:1 },
     { label:'Delete all objects',   run:()=>{ if(typeof wipeScene==='function') uiConfirm('Delete every object in the scene? Your world, gameplay and other settings are kept \u2014 use File \u203a New level to clear those too.', ()=>{ wipeScene(); if(typeof flashToast==='function') flashToast('Scene cleared'); }, 'Delete'); }, danger:true },
   ]},
@@ -38298,6 +38589,7 @@ function toggleEditor(){
   if(!editorOpen && pvpMode()){ if(typeof flashToast==='function') flashToast('Editor is disabled in this mode'); return; }   // no mid-match settings changes / cheating
   if(!editorOpen && drivingCar && typeof exitCar==='function') exitCar();   // build 766: opening the editor forces you out of the car (no stuck speedo HUD)
   editorOpen = !editorOpen; _editorOpenFlag = editorOpen;
+  if(typeof grid!=='undefined' && grid) grid.visible = _gridWanted();   // build 1133: the grid follows the editor, not the level
   if(editorOpen){
     if(typeof _raceClearBots==='function') _raceClearBots();   // build 833: rivals are runtime-only — never ghosts in the editor
     if(!editorEl) buildEditorPanel();
@@ -38431,6 +38723,7 @@ function startGame(){
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
   if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); if(typeof _clearDust==='function') _clearDust(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/728/732/738: kill engine + HUD + skid + dust + restore crosshair on (re)deploy
   if(typeof preloadSignalSounds==='function') preloadSignalSounds();   // build 750: warm up custom signal clips so the first trigger plays
+  if(typeof grid!=='undefined' && grid) grid.visible = false;   // build 1133: never show the viewport grid in a running game
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _wakeLockTry==='function') setTimeout(_wakeLockTry, 0);   // build 908: keep the phone awake during play (gameOn is set below; next tick reads it true)
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them

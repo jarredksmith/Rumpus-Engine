@@ -11,7 +11,12 @@
 import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
-assert(/shadowDist:30,/.test(src), 'the shadow radius is authorable and defaults to 30');
+// build 1135: 60, not 30. Build 1120 chose 30 for texel sharpness (2.9 cm), but worldCfg.arena
+// defaults to 70, i.e. a 140-unit play space — so a 30-unit volume left the entire mid-ground with no
+// shadows at all and reading as cardboard. 60 covers what a player can actually see, at 5.9 cm a texel,
+// still sharper than the fixed +/-80 box this replaced. _sunNormalBias tracks it automatically.
+assert(/shadowDist:60,/.test(src), 'the shadow radius is authorable and defaults to 60');
+assert(/arena:70,/.test(src), '...against a default arena of 70, i.e. 140 units across');
 assert(/const _sunTarget = new THREE\.Object3D\(\); scene\.add\(_sunTarget\); moon\.target = _sunTarget;/.test(src),
   'the sun aims at a target that can move (a DirectionalLight volume is centred on its target)');
 

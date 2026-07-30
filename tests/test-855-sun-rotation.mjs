@@ -1,13 +1,17 @@
 // (build 855) SUN ROTATION — the directional light was hard-fixed at (40,80,20) since day one; now
 // World > Lighting exposes 'Sun direction °' (azimuth 0-360) and 'Sun height °' (elevation 5-89).
 // The light orbits the origin at the same ~90m radius so the ±80 ortho shadow box and 200 far plane
-// still cover the arena; the defaults (63°/61°) reproduce the historical position so every existing
+// still cover the arena; the azimuth default (63°) reproduces the historical direction so every existing
 // level looks unchanged. Elevation is floored at 5° — a horizontal sun degenerates the shadow map.
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 
 // defaults ship (and reproduce the historical fixed position)
-assert(/sunAzim:63, sunElev:61,/.test(src.match(/const DEFAULT_WORLD = \{[^\n]*/)[0]), 'defaults 63°/61° in DEFAULT_WORLD');
+// build 1135: the elevation default moved 61 -> 34. At 61 degrees a 2 m object casts 1.11 m of shadow,
+// which is barely visible from eye height — the frame had no key-light read at all and every critic said
+// so. At 34 it casts 2.97 m. The AZIMUTH is unchanged, so the light still comes from the historical
+// direction; any level that saved a world block carries its own values and is untouched.
+assert(/sunAzim:63, sunElev:34,/.test(src.match(/const DEFAULT_WORLD = \{[^\n]*/)[0]), 'defaults 63°/34° in DEFAULT_WORLD');
 
 // run the REAL apply snippet: sanitize + position math, against a stub moon
 // (build 861 factored the orbit into _sunOrbit so the day/night cycle can drive it — include it)

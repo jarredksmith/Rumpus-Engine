@@ -97,7 +97,11 @@ assert(/_aoGeoRT,_aoRT,_aoRT2/.test(extractFunction('disposePost')), 'a resize d
   }
   assert(/cam\.isPerspectiveCamera/.test(rp),
     'AO is skipped on an orthographic camera, whose view rays the tan-of-fov reconstruction cannot describe');
-  assert(/_hiFxOn/.test(rp), '...and on the adaptive ladder, so a slow machine sheds it first');
+  // build 1135: AO is gated on the RESOLUTION step, not on the MSAA rung. It used to ride the same rung,
+  // so the first hiccup threw away the engine's main grounding cue while keeping 4x multisampling on the
+  // edges — the wrong trade. It now survives the MSAA shed and goes when resolution starts dropping.
+  assert(/_prStepI === 0/.test(rp), '...and on the adaptive ladder, but a rung BELOW MSAA');
+  assert(!/_ssaoAmt > 0\.001 && _hiFxOn/.test(rp), 'AO no longer dies with MSAA');
   // AO must multiply BEFORE bloom is added, or a crevice it darkened still glows out of the frame
   const ep = extractFunction('ensurePost');
   const comp = ep.slice(ep.indexOf('_matComp=new THREE.ShaderMaterial'));
