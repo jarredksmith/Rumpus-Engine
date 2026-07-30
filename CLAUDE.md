@@ -967,6 +967,22 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The logic graph learns arithmetic and its first question (build 1169) — PHASE 2 OPENS
+
+The feature audit's two cheapest CRITICAL walls, closed with two nodes in the STATE palette:
+- **Math** — `var = A op B` with + − × ÷ min max mod. A and B resolve as literals OR variable names via the
+  same `_lgNum` rule Branch uses, so `coins = coins × 2` finally works. ÷0 and mod 0 yield 0, never NaN —
+  one NaN would silently poison every later compare in the level. Modulo is the positive (counting) kind.
+- **Read game stat** — the graph's first world-state QUERY: player HP/maxHP, ammo mag/reserve, score,
+  credits, wave, enemies-alive (hp>0, hole-safe), seconds-elapsed (zeroed at `_lgRunT` each run) → a
+  variable. Pulse-driven like every state node: wire off an interval to poll, or read at the decision.
+  Host state, and the graph already runs host-authoritative, so nothing new crosses the wire.
+
+The sanitizer needed no change (unknown types pass through inert), autocomplete learned both nodes'
+variable names, and test-1028's palette↔runtime parity list gained the two types — the parity it exists to
+hold. `test-1169` drives the REAL `_lgPulse` switch for every operator, both poison guards, self-reference,
+and all nine stats.
+
 ## Frame-loop allocation hygiene (build 1168)
 
 The perf critic's measured residue, all hoisted to module scratch (the codebase's own _lp/_pcV pattern):
@@ -1316,7 +1332,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1168)
+## Open work (as of build 1169)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

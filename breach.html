@@ -9391,6 +9391,7 @@ function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(PERSIS
 let _lgTimers = [];                                                // pending delay / interval / repeat continuations
 let _lgState = {};                                                 // per-node runtime (counter counts, once flags)
 let _lgBudget = 0, _lgWarned = false;
+let _lgRunT = 0;   // build 1169: when this run's logic started (the Read-stat 'time' zero)
 function _lgNode(id){ for(const n of logicGraph.nodes){ if(n.id===id) return n; } return null; }
 // A value field accepts a NUMBER or a VARIABLE NAME — '5', '-2.5', 'score', '#i' all work.
 function _lgNum(v){
@@ -9428,6 +9429,7 @@ function logicStart(){       // a match begins: fresh state, seed the repeating 
   if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
   if(typeof _lgMusic!=='undefined') _lgMusic=null;           // ...and the level's own music track comes back
   if(typeof NET!=='undefined' && NET.mode==='client') return;
+  _lgRunT = performance.now();   // build 1169: the 'time' stat reads seconds since this deploy
   for(const n of logicGraph.nodes){ if(n.type==='interval') _lgTimers.push({ at:Math.max(0.1,_lgNum(n.p.sec||1)), node:n.id, kind:'interval' }); }
   _lgFireEvents('start','');
 }
@@ -9444,6 +9446,32 @@ function _lgPulse(id, pin){
         else logicVars[k]=_lgNum(p.value);
       } _lgFollow(id,0); break; }
     case 'addvar': { const k=String(p.name||'').trim(); if(k) logicVars[k]=(+logicVars[k]||0)+_lgNum(p.value); _lgFollow(id,0); break; }
+    // build 1169: MATH — variable = A op B. The one arithmetic surface the graph ever lacked; A and B are
+    // literals or variable names (_lgNum resolves both, same as branch). Divide/modulo by zero yield 0, not
+    // NaN, because one NaN silently poisons every later compare in the level.
+    case 'math': { const k=String(p.name||'').trim(); if(k){ const a=_lgNum(p.a), b=_lgNum(p.b), op=p.op||'+';
+        const v = op==='+' ? a+b : op==='-' ? a-b : op==='×' ? a*b : op==='÷' ? (b===0?0:a/b)
+                : op==='min' ? Math.min(a,b) : op==='max' ? Math.max(a,b) : (b===0?0:((a%b)+b)%b);
+        logicVars[k] = isFinite(v) ? v : 0;
+      } _lgFollow(id,0); break; }
+    // build 1169: READ GAME STAT — the graph's first world-state QUERY. Events give edges; this gives the
+    // number behind them (host state — the graph already runs host-authoritative). Pulse-driven like every
+    // state node: wire it off an interval to poll, or read at the moment of decision.
+    case 'read': { const k=String(p.name||'').trim(); if(k){ let v=0;
+        const w=(typeof WEAPONS!=='undefined' && typeof curWep!=='undefined') ? WEAPONS[curWep] : null;
+        switch(p.stat||'hp'){
+          case 'hp':      v=(typeof player!=='undefined')?Math.round(player.hp||0):0; break;
+          case 'maxhp':   v=(typeof player!=='undefined')?Math.round(player.maxHp||0):0; break;
+          case 'ammo':    v=w?(w.mag|0):0; break;
+          case 'reserve': v=w?(w.reserve|0):0; break;
+          case 'score':   v=(typeof score!=='undefined')?(score|0):0; break;
+          case 'credits': v=(typeof credits!=='undefined')?(credits|0):0; break;
+          case 'wave':    v=(typeof wave!=='undefined')?(wave|0):0; break;
+          case 'enemies': { v=0; if(typeof enemies!=='undefined') for(const e of enemies){ if(e && e.hp>0) v++; } break; }
+          case 'time':    v=Math.round((performance.now()-_lgRunT)/1000); break;
+        }
+        logicVars[k]=v;
+      } _lgFollow(id,0); break; }
     case 'branch': { const a=_lgNum(p.a), b=_lgNum(p.b), op=p.op||'==';
       const ok = op==='==' ? a===b : op==='!=' ? a!==b : op==='<' ? a<b : op==='<=' ? a<=b : op==='>' ? a>b : a>=b;
       _lgFollow(id, ok?0:1); break; }
@@ -9696,6 +9724,8 @@ const LG_DEFS = {
   once:     { t:'Only once',       cat:'fl', ins:['in','reset'], outs:['\u25b6'], params:[] },
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
+  math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
+  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed']]},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
   do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
@@ -9712,7 +9742,7 @@ function _lgVarOptions(){   // build 1060: every variable name in play — from 
   const addName=(v)=>{ const t=String(v==null?'':v).trim(); if(t && !/^[-+]?[0-9.]/.test(t) && /^[\w#]+$/.test(t) && t!=='#i') set.add(t); };
   const addRefs=(txt)=>{ String(txt==null?'':txt).replace(/\{([\w#]+)\}/g,(m,k)=>{ if(k!=='#i') set.add(k); return m; }); };
   if(typeof logicGraph!=='undefined' && logicGraph.nodes) for(const n of logicGraph.nodes){ const q=n.p||{};
-    if(n.type==='setvar'||n.type==='addvar') addName(q.name);
+    if(n.type==='setvar'||n.type==='addvar'||n.type==='math'||n.type==='read') addName(q.name);   // build 1169
     if(n.type==='branch'){ addName(q.a); addName(q.b); }
     if(n.type==='toast'||n.type==='do') addRefs(q.text);
   }
@@ -26169,7 +26199,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1168 · 2026-07-30';
+const BUILD_VERSION = 'build 1169 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
