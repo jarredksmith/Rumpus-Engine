@@ -801,6 +801,24 @@ That is the third time in one session that a frame did not contain the surface b
 label names the mesh, its geometry, whether the material is `floorMat`/`wallMat`, and whether it is
 instanced. **Read WHO before attributing anything to a surface.**
 
+**Frost's clipping, A/B'd against its own pre-1151 value**, because a 1.29× brighter ground is where a
+blow-out would show. Same seed, same camera, only `gnd` changed:
+
+```
+                   pixels >= 254    frame mean       snow field mean
+pre-1151 gnd            1.10%      128,136,138       159,167,169
+1151 (drawn) gnd        1.59%      129,137,140       162,171,172
+```
+So the change costs **half a percentage point of clipped pixels and three code values** on the snow. Frost
+already clipped 1.10% before it — a sunlit snowfield clips, and so do photographs of one. Worth stating
+plainly rather than hiding: this build does make frost's brightest surfaces marginally more clipped, and it
+is the right trade because the albedo is now a measured fact about the texture rather than a guess. If it
+ever needs pulling back, the lever is frost's `exposure` (1.2), not `gnd`.
+
+`moodCb.checked` defaults to true, so "Place in level" really does apply the generated world block —
+`Object.assign(worldCfg, r.world); applyWorldCfg()`. Checked because "the mood never reached the engine"
+would have been a tidy explanation for a dark plane, and it is not the explanation.
+
 ## Open work (as of build 1151)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
