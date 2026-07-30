@@ -7406,6 +7406,26 @@ function disposePost(){
   _postRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
 }
 function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next render
+// build 1158: the AO prepass renders with `scene.overrideMaterial`, which replaces `transparent` and
+// `depthWrite:false` along with everything else — so anything that does not write depth writes its whole QUAD
+// into the depth-derived G-buffer as if it were solid geometry, and SSAO then derives that square's occlusion
+// from a flat camera-facing surface. That is the hard, slightly brighter rectangle around a muzzle flash.
+//
+// It has now been fixed FOUR times: build 1126 named the sky dome, 1128 named the weather points, 1152 replaced
+// naming with this rule — and still applied it to the world scene only, while the muzzle flash a player sees on
+// every trigger pull lives in the VIEWMODEL scene, which build 1140 renders into the same buffer. So the sweep
+// is a function, and every caller that renders into the G-buffer calls it. Adding a third such caller without
+// calling this is the only way to bring the bug back.
+//
+// Already-invisible objects are NOT collected, or the restore would switch them on (editor gizmos in play).
+// One offending slot in a multi-material array is enough, because the object is drawn or it is not.
+function _aoHideNoDepth(root, out){
+  root.traverse(o=>{ if(!o.visible) return;
+    const m=o.material; if(!m) return;
+    const ms=Array.isArray(m)?m:[m];
+    if(ms.some(q=>q && (q.depthWrite===false || q.transparent===true))){ o.visible=false; out.push(o); } });
+  return out;
+}
 function _renderPostFX(scn, cam){
   const [w,h]=_postSize();
   if(_postRT.width!==w || _postRT.height!==h || (_postRT.samples||0)!==_desiredPostSamples()){ disposePost(); ensurePost(); }   // build 880: samples follow the adaptive step
@@ -7448,11 +7468,14 @@ function _renderPostFX(scn, cam){
     // instance arrived with the flipbook VFX. Naming the next one would only buy the same bug again, so the
     // test is now a property of the material: nothing that does not write depth belongs in a depth-derived
     // G-buffer. One traverse is nothing beside the extra half-res scene render this pass already costs.
+    //
+    // build 1158: and the SAME rule on vmScene below. 1152 applied it to `scn` only — but the first-person
+    // muzzle flash is `playFlipbook('muzzle', ..., vmMuzzle)`, i.e. a Sprite inside the VIEWMODEL scene, which
+    // build 1140 renders into this same G-buffer through its own `renderer.render(vmScene, vmCam)`. So the one
+    // sprite a player sees on almost every trigger pull was still writing its quad. Fixed by making the sweep
+    // a function both callers use, rather than a block one of them happens to contain.
     const _aoHid=[];
-    scn.traverse(o=>{ if(!o.visible) return;
-      const m=o.material; if(!m) return;
-      const ms=Array.isArray(m)?m:[m];
-      if(ms.some(q=>q && (q.depthWrite===false || q.transparent===true))){ o.visible=false; _aoHid.push(o); } });
+    _aoHideNoDepth(scn, _aoHid);
     scn.overrideMaterial=_matAOGeo;
     renderer.setRenderTarget(_aoGeoRT); renderer.render(scn, cam);
     scn.overrideMaterial=_pv;
@@ -7463,11 +7486,14 @@ function _renderPostFX(scn, cam){
     // vmCam shares the main camera's fov and aspect and sits at its own origin looking down -z, so the
     // view distance it writes into alpha is directly comparable with the scene's.
     if(_vmHere){
+      const _vmHid=[];
+      _aoHideNoDepth(vmScene, _vmHid);   // build 1158: the muzzle flash lives HERE, not in scn
       const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matAOGeo;
       const _vac=renderer.autoClear; renderer.autoClear=false;
       renderer.clearDepth();          // same rule as the colour pass: the weapon is always in front
       renderer.render(vmScene, vmCam);
       renderer.autoClear=_vac; vmScene.overrideMaterial=_vpv;
+      for(const o of _vmHid) o.visible=true;
     }
     if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
     renderer.shadowMap.autoUpdate=_sa;
@@ -15030,6 +15056,65 @@ function _propFootR(o){
   try{ const b=new THREE.Box3().setFromObject(o); if(isFinite(b.min.x) && !b.isEmpty()) return 0.5*Math.hypot(b.max.x-b.min.x, b.max.z-b.min.z); }catch(e){}
   return 1.0;
 }
+// ---------- build 1157: a model's OWN lights ----------
+// GLTFLoader turns `KHR_lights_punctual` into a real three light and hands it over untouched. Build 1153 hit
+// one consequence of that on the loot box (a light appearing mid-match recompiles every shader) and stripped
+// them there; everywhere else they arrived raw, and raw is three separate faults, none of them cosmetic:
+//
+//  1. `lightNode.intensity = lightDef.intensity`, and glTF states a punctual light in CANDELA. Blender writes
+//     the hundreds or thousands. This engine's own decorative point lights sit at 2-8. So one imported lamp
+//     is not "a bit bright", it is two to three orders of magnitude past the sun.
+//  2. `lightNode.distance = range`, and glTF's `range` is OPTIONAL and defaults to 0 — which in three means
+//     INFINITE. A lamp in a corner lights the entire level, through walls.
+//  3. Nothing bounded how MANY. A chandelier GLB carrying forty emitters puts forty point lights into
+//     NUM_POINT_LIGHTS, and every material in the level then loops over forty of them per pixel.
+//
+// A creator who ships a lamp model with a light in it means it, so these are ADOPTED rather than stripped:
+// re-scaled into the engine's own range, given a finite reach, capped in number, and registered with build
+// 811's light budget so distance culls them like every other emitter. The relative brightness the author
+// authored between two lights in one model is preserved — the whole set is scaled by one factor.
+const MODEL_LIGHT_MAX = 4;        // per model. Past this the dimmest are removed outright.
+const MODEL_LIGHT_TARGET = 5.0;   // the brightest light of a model lands here — the engine's own accent range
+const MODEL_LIGHT_MAX_DIST = 26;  // and no imported light reaches further than this
+function adoptModelLights(obj){
+  if(!obj) return [];
+  // idempotent: a shattered prop hands its lights back and is re-adopted when it is restored, and the
+  // normalisation below must run ONCE or the scale factor compounds every time.
+  if(obj.userData.modelLights){
+    for(const L of obj.userData.modelLights)
+      if(typeof registerEmitterLight==='function' && !emitterLights.some(e=>e.light===L)) registerEmitterLight(L);
+    return obj.userData.modelLights;
+  }
+  const found = [];
+  obj.traverse(o=>{ if(o.isLight) found.push(o); });
+  if(!found.length) return [];
+  // keep the brightest, drop the rest from the graph entirely (hiding a light still counts it — build 977)
+  found.sort((a,b)=>(+b.intensity||0)-(+a.intensity||0));
+  const keep = found.slice(0, MODEL_LIGHT_MAX), drop = found.slice(MODEL_LIGHT_MAX);
+  for(const L of drop){ if(L.parent) L.parent.remove(L); }
+  // one scale factor for the whole model, so the author's relative intent survives
+  const peak = Math.max(...keep.map(L=>+L.intensity||0));
+  const k = (peak > 0) ? (MODEL_LIGHT_TARGET / peak) : 0;
+  // a finite reach, derived from the model's own size — a GLB arrives in whatever units its author used
+  let span = 8;
+  try{ const b=new THREE.Box3().setFromObject(obj); if(!b.isEmpty() && isFinite(b.min.x))
+    span = Math.hypot(b.max.x-b.min.x, b.max.y-b.min.y, b.max.z-b.min.z); }catch(e){}
+  const reach = Math.max(4, Math.min(MODEL_LIGHT_MAX_DIST, span * 2.5));
+  for(const L of keep){
+    L.intensity = Math.max(0, (+L.intensity||0) * k);
+    L.castShadow = false;                                   // a shadow map per imported lamp is a whole depth pass
+    if(L.isPointLight || L.isSpotLight){ if(!(L.distance > 0) || L.distance > MODEL_LIGHT_MAX_DIST) L.distance = reach; }
+    if(typeof registerEmitterLight==='function') registerEmitterLight(L);   // build 811's budget culls it by distance
+  }
+  obj.userData.modelLights = keep;
+  return keep;
+}
+// Unregister only — the normalised set is REMEMBERED on the prop, so a shatter/restore round trip re-registers
+// the same lights rather than re-scaling them.
+function releaseModelLights(obj){
+  const ls = obj && obj.userData && obj.userData.modelLights; if(!ls) return;
+  for(const L of ls){ if(typeof unregisterEmitterLight==='function') unregisterEmitterLight(L); }
+}
 function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.position.set(t[0], t[1], t[2]);   // provisional; the terrain lift is applied below once the footprint is known
   obj.rotation.set(t[3], t[4], t[5]);
@@ -15077,6 +15162,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
           m.needsUpdate = true;
         }
       } } } });
+  if(gltf) adoptModelLights(obj);   // build 1157: a GLB's own KHR_lights_punctual lights, made sane and budgeted
   obj.userData.src = src;
   if(nid && typeof propByNid==='function' && propByNid(nid)) nid = genNid();   // build 905: stored levels can carry DUPLICATE nids (props copied across saves) — nid-keyed sync (pDel/pMov/the reconciler's maps) then hits the wrong prop, so a live collision gets a fresh id (the next save writes it back, healing the level)
   obj.userData.nid = nid || genNid();   // assign once; load/net paths pass an existing id to keep peers aligned
@@ -15220,6 +15306,7 @@ function removeProp(idx){
   const obj = propModels[idx]; if(!obj) return;
   if(obj.userData._fireGroup && typeof _removePropFireVisual==='function') _removePropFireVisual(obj);   // drop any attached flames
   if(obj.userData.emitLight && typeof unregisterEmitterLight==='function') unregisterEmitterLight(obj.userData.emitLight);
+  if(typeof releaseModelLights==='function') releaseModelLights(obj);   // build 1157: and any the GLB brought with it
   if(obj.userData.phys && typeof removeDynamicProp==='function') removeDynamicProp(obj);
   scene.remove(obj);
   const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1);
@@ -15857,7 +15944,21 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // crushed a generated arena's ground plane to literal black (78.5% of a sampled region at RGB<=1,
 // versus 0% before). Lighting values do not get retuned here until that mechanism is understood.
 // The dark stock palette needs an art pass, which belongs with the sky/lighting work.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x4f5d66, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+//
+// build 1156: `floorColor` is the first piece of that art pass, and it is DERIVED, not picked. The dome's own
+// ground band — `skyGround: 0x6b6660` — is warm (linear B/R 0.80) while the ground plane it abuts read
+// 0x4f5d66, blue-dominant at B/R 1.70. The horizon had two different grounds, and the blue one was also the
+// largest surface in the frame, which is what made the stock level read as monochrome teal. It is now
+// skyGround's HUE at the floor's OWN luminance (linear Y 0.1045, unchanged to four decimals) — the same
+// derivation `groundMood` performs for every generated theme, applied here where it never was. Preserving the
+// luminance is deliberate: the whole grade, the bounce term and the exposure are tuned against it, so this
+// swaps hue and moves nothing else.
+//
+// `wallColor` is deliberately left COOL. `groundMood` also derives the boundary walls (the same albedo at 55%)
+// but that would halve this level's wall luminance, which is a different change from the one being made; and
+// measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
+// cool-distance note that a warm ground reads against. See test-1156 for the numbers.
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -25983,7 +26084,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1155 · 2026-07-30';
+const BUILD_VERSION = 'build 1158 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27478,6 +27579,7 @@ function shatterProp(obj, point, dir, power, byId){
   if(!obj || obj.userData._shattered) return;
   obj.userData._shattered = true;
   if(obj.userData._fireGroup && typeof _removePropFireVisual==='function') _removePropFireVisual(obj);   // drop its flames with it
+  if(typeof releaseModelLights==='function') releaseModelLights(obj);   // build 1157: a destroyed lamp gives its budget slot back (restoreDestroyedProps re-adopts it)
   if(typeof NET==='undefined' || NET.mode!=='client'){ try{ fireSignals(obj, 'destroyed'); }catch(e){} }   // clients converge via the actions' own broadcasts
   obj.updateMatrixWorld(true);
   _shBox.setFromObject(obj, true); _shBox.getSize(_shSize); _shBox.getCenter(_shCtr);
@@ -27639,6 +27741,7 @@ function restoreDestroyedProps(){   // bring back authored props destroyed durin
     o.userData._destroyed=false; o.userData._shattered=false;
     if(home){ o.position.copy(home.p); o.quaternion.copy(home.q); }
     o.visible=true; if(!o.parent) scene.add(o);
+    if(o.userData.modelLights && typeof adoptModelLights==='function') adoptModelLights(o);   // build 1157: re-register, never re-scale
     if(o.userData._wasDyn){ o.userData._wasDyn=false; setPropDynamic(o, true); }   // re-register dynamic (recaptures physHome from the restored position)
     else { refreshPropCollider(o); if(colliders.indexOf(o)<0) colliders.push(o); }
     if(o.userData.maxHp) o.userData.hp = o.userData.maxHp;
@@ -31285,18 +31388,36 @@ function loop(){
           const dx = en.mesh.position.x - cx, dz = en.mesh.position.z - cz;
           const d = Math.hypot(dx,dz);
           if(d < eR && d > 1e-4){
-            // build 1092: on a slope, the column one cell upslope tops out more than STEP above the
-            // feet once slot quantisation is added — so the very ramp an enemy is climbing read as
-            // an obstacle and shoved it back down. A marginal box whose top matches the real walk
-            // surface over that box is the ground one step ahead, not a wall. Checked only on
-            // actual contact with a near-step-height box, so the raycast cost stays rare.
-            // build 1094: sample the surface just inside the box at the CONTACT point, not the box
-            // centre — the greedy merge can fuse a ramp mouth into a long wall box whose centre
-            // hangs over open air, which made the exemption fail exactly at a ramp's summit. The
-            // tolerance also covers worst-case quantisation (0.45 slope/cell + 0.36 slot).
-            if(b.max.y - (en.mesh.position.y-1.4) < STEP + 0.5 && typeof surfaceTopUnder==='function'){
-              const st = surfaceTopUnder(cx - dx/d*0.1, cz - dz/d*0.1, b.max.y+0.05, b.max.y+2);
-              if(st > -Infinity && b.max.y - st < 0.85) continue;
+            // build 1158: ask the question the PLAYER asks. Builds 1092/1094 gated the ramp exemption on
+            // `b.max.y - feetY < STEP + 0.5` — the box's TOP being within about a step of the feet — which is
+            // a statement about the bounding box, not about the surface. A ramp primitive is ONE mesh, so
+            // refreshPropCollider gives it ONE box spanning floor to summit: standing at the foot of a 2.4 m
+            // ramp, `b.max.y - feetY` is 2.4, the gate fails, the raycast never runs and the enemy is shoved
+            // away from the very ramp it is trying to climb. It could only ever get on near the top, where the
+            // box top finally came within 1.1 m of its feet — which is exactly "enemies can't make it up the
+            // default level's ramps".
+            //
+            // `clearAt` has had the right test since long before: `propSurfaceAt(c, cx, cz)` is THIS
+            // collider's own surface at the contact point, and a box is walkable-onto if that surface is
+            // within a step, or is a genuinely sloped ramp within RAMP_RISE. A flat-topped wall fails both —
+            // its top is either out of reach or has no slope — so nothing becomes walk-through. Build 1154
+            // made an enemy fit wherever the player fits horizontally; this is the same rule vertically.
+            const feetY = en.mesh.position.y - 1.4;
+            if(typeof propSurfaceAt==='function'){
+              // sample just INSIDE the box edge: a ray at the exact boundary grazes the mesh and reads
+              // -Infinity, which would call a ramp base a wall (the reason clearAt nudges too)
+              const bcx=(b.min.x+b.max.x)*0.5, bcz=(b.min.z+b.max.z)*0.5;
+              const sx = cx + Math.sign(bcx-cx)*Math.min(0.25, Math.abs(bcx-cx));
+              const sz = cz + Math.sign(bcz-cz)*Math.min(0.25, Math.abs(bcz-cz));
+              const es = propSurfaceAt(c, sx, sz);
+              if(es > -Infinity){
+                if(es <= feetY + STEP + 1e-4) continue;                       // a low step / a ramp's base — walk on
+                if(es <= feetY + RAMP_RISE){                                  // higher: only if it really is a slope here
+                  const e2=0.4, ex=propSurfaceAt(c, sx+e2, sz), ez=propSurfaceAt(c, sx, sz+e2);
+                  const slope = Math.hypot((ex>-Infinity?ex-es:0), (ez>-Infinity?ez-es:0))/e2;
+                  if(slope > RAMP_SLOPE_MIN && slope < RAMP_SLOPE_MAX) continue;
+                }
+              }
             }
             const push=eR-d; en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push;
           }

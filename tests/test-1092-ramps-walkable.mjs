@@ -78,17 +78,24 @@ assert(/const multi = \(gx1>gx0 \|\| gz1>gz0\);/.test(bg), 'single-cell triangle
 // ---------------------------------------------------------------- the floor-not-obstacle exemption
 // It lives inside the Phase 3 contact branch: only on actual overlap, only for near-step boxes,
 // and it asks the real surface — so a crate still pushes, but the ramp underfoot does not.
-const m = src.match(/if\(d < eR && d > 1e-4\)\{\n([\s\S]{0,2000}?)\n          \}/);
+//
+// build 1158 REPLACED the gate, and this pin moves with it. The old form asked whether the BOX TOP was
+// within about a step of the feet — which is a fact about the bounding box, and a ramp primitive is one mesh
+// with one box spanning floor to summit, so at the foot of a 2.4 m ramp the gate failed and the exemption
+// never ran at all. The intent asserted here is unchanged: a ramp underfoot must not shove, and a crate must.
+const m = src.match(/if\(d < eR && d > 1e-4\)\{\n([\s\S]{0,3000}?)\n          \}/);
 assert(m, 'the enemy resolve contact branch is found');
-assert(/b\.max\.y - \(en\.mesh\.position\.y-1\.4\) < STEP \+ 0\.5/.test(m[1]),
-  'the exemption gates on a near-step box top — a crate or parapet never qualifies');
-assert(/typeof surfaceTopUnder==='function'/.test(m[1]), '...guarded, since surfaceTopUnder lives far below');
-// build 1094: the surface is sampled just inside the box at the CONTACT point (box-centre
-// sampling failed when the greedy merge fused a ramp mouth into a long wall box)
-assert(/surfaceTopUnder\(cx - dx\/d\*0\.1, cz - dz\/d\*0\.1, b\.max\.y\+0\.05, b\.max\.y\+2\)/.test(m[1]),
-  '...and asks for the real walkable surface at the contact point on the box');
-assert(/if\(st > -Infinity && b\.max\.y - st < 0\.85\) continue;/.test(m[1]),
-  'a box whose top matches the surface is ground one step ahead — skipped, not shoved');
+assert(/const es = propSurfaceAt\(c, sx, sz\);/.test(m[1]),
+  "the exemption asks THIS collider's own surface at the contact point");
+assert(/typeof propSurfaceAt==='function'/.test(m[1]), '...guarded, since propSurfaceAt lives far below');
+// build 1094's lesson survives the rewrite: sample just INSIDE the box edge, never on the boundary, or a
+// ray grazes the mesh and reads -Infinity and a ramp base is mistaken for a wall
+assert(/Math\.min\(0\.25, Math\.abs\(bcx-cx\)\)/.test(m[1]) && /Math\.min\(0\.25, Math\.abs\(bcz-cz\)\)/.test(m[1]),
+  '...nudged just inside the box edge, not sampled on the boundary');
+assert(/if\(es <= feetY \+ STEP \+ 1e-4\) continue;/.test(m[1]),
+  'a surface within a step is ground one step ahead — skipped, not shoved');
+assert(/if\(slope > RAMP_SLOPE_MIN && slope < RAMP_SLOPE_MAX\) continue;/.test(m[1]),
+  '...and a real slope within RAMP_RISE is a ramp; a flat-topped crate has no slope and still pushes');
 assert(/const push=eR-d; en\.mesh\.position\.x \+= dx\/d\*push; en\.mesh\.position\.z \+= dz\/d\*push;/.test(m[1]),
   'everything else still pushes exactly as before');
 

@@ -882,6 +882,10 @@ half-res G-buffer as though it were solid geometry a metre from the camera; SSAO
 occlusion from a flat camera-facing surface — unoccluded — while the world around it kept its real
 occlusion. Less darkening inside the square than outside it, with a quad edge.
 
+**FIXED AGAIN IN BUILD 1158 — this section's fix covered the world scene only.** The muzzle flash lives in
+the VIEWMODEL scene, which build 1140 renders into the same G-buffer, and that render had no sweep. See
+"Two fixes that were applied to the wrong half".
+
 **This is the same trap build 1126 recorded and build 1128 hit again, now for the third time.** 1126: "the
 sky dome fills the buffer unless it is hidden for the pass. Weather points do the same." Both were fixed by
 NAME, and the flipbook VFX arrived later. Naming a third would only buy a fourth, so the test is now a
@@ -957,11 +961,147 @@ that at deploy the way build 622 warms the flipbook programs — instantiate onc
 and strips lights from the warm instance too, or warming would itself move the count. It runs once per url,
 and a failed load resets so the next deploy retries.
 
-Worth knowing for the general case: **imported models' own lights are unhandled everywhere else.** Only the
-loot box is fixed, because that is the one that spawns mid-match. Any prop with a light in its GLB will move
-the count when it loads; in the editor that is a hitch, and for anything spawned during play it is this bug
-again. The general fix is either to strip them on import or to route them through `registerEmitterLight`,
-and it needs a decision about creators who legitimately ship a lamp model with a light in it.
+Worth knowing for the general case: imported models' own lights were unhandled everywhere else — **CLOSED in
+build 1157**, which routes every imported prop's lights through `registerEmitterLight` after rescaling them out
+of glTF candela and giving them a finite reach. The "decision about creators who legitimately ship a lamp"
+turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
+independently of the freeze.
+
+## Two fixes that were applied to the wrong half (build 1158)
+
+Both of these were reported as "still broken" after a build that had claimed them. Neither earlier fix was
+wrong; each was **complete for the half of the problem it was tested against**, and that is the pattern worth
+carrying: a rule stated in one place and applied in one place is not the same as a rule.
+
+**1. The sprite's drop shadow, third time.** Build 1152 established the rule — nothing that fails to write
+depth belongs in a depth-derived G-buffer — and swept `scn`. But the muzzle flash a player sees on almost
+every trigger pull is `playFlipbook('muzzle', ..., vmMuzzle)`: a Sprite inside the **viewmodel scene**, which
+build 1140 renders into that same `_aoGeoRT` through its own `renderer.render(vmScene, vmCam)`. So the world
+explosions were fixed and the commonest sprite in the game was not, which is exactly what "still there" meant.
+The sweep is now `_aoHideNoDepth(root, out)` and **both** callers use it. 1126 named the sky dome, 1128 named
+the weather points, 1152 replaced naming with a rule and left it inline in one caller; the only way back to
+this bug now is to add a third render into the G-buffer without calling the function.
+
+**2. Enemies on ramps.** Build 1154 fixed the movement RADIUS — real, and measured — but the thing actually
+stopping them was vertical. Builds 1092/1094 gated the ramp exemption on `b.max.y - feetY < STEP + 0.5`:
+**a statement about the bounding box, not about the surface.** A ramp primitive is one mesh, so
+`refreshPropCollider` gives it ONE box spanning floor to summit. Standing at the foot of a 2.4 m ramp that
+difference is 2.4, the gate fails, the raycast never runs, and the enemy is pushed away from the ramp it is
+trying to climb. It could only ever get on near the top, where the box top finally came within 1.1 m of its
+feet.
+
+`clearAt` has asked the right question since long before: `propSurfaceAt(c, cx, cz)` — **this collider's own
+surface at the contact point** — walkable if within a step, or a genuinely sloped surface within `RAMP_RISE`.
+A flat-topped wall fails both (its top is out of reach, or has no slope), so nothing becomes walk-through.
+Build 1154 made an enemy fit wherever the player fits horizontally; this is the same rule vertically.
+
+Measured by replaying the real obstacle pass over a real wedge with a real raycaster — 4 seconds of walking
+straight at each obstacle at chase speed, reporting the highest ground reached:
+
+```
+                              OLD gate              NEW (clearAt's question)
+ramp, 4x8, rises to 2.40   climbed 0.00 (z -0.70)   climbed 2.39 (z 25.5)
+wall, 3.0 tall             climbed 0.00 (z -0.95)   climbed 0.00 (z -0.95)
+ledge, 1.2 flat-topped     climbed 0.00 (z -2.70)   climbed 0.00 (z -2.70)
+kerb, 0.4 tall             climbed 0.40 (walked over)  unchanged
+```
+
+**0.00 metres, forever** — that is the whole bug, and the wall and the flat ledge stop an enemy at a
+byte-identical position, which is the evidence that relaxing the test cost nothing. `tests/test-1158` is the
+durable version of that probe (it builds the geometry and drives both predicates), and `scratchpad/rampstuck.mjs`
+is the ad-hoc one.
+
+**Four pins moved with it — 1092, 1094, 1152, 1154 — and every one kept its assertion's intent.** 1094 is worth
+reading: what that build established (never sample on the box boundary, and never at a merged box's centre,
+because either mistakes a ramp mouth for a wall) is *still true and still pinned*; only the gate around it
+changed.
+
+## A GLB's own lights arrived raw (build 1157)
+
+Build 1153 recorded this as open work — *"imported models' own lights are unhandled everywhere else. Only the
+loot box is fixed, because that is the one that spawns mid-match"* — and framed it as needing a decision about
+creators who legitimately ship a lamp model with a light in it. Reading GLTFLoader settles the framing: the
+freeze was never the worst of it. Three things arrive raw, and each is a defect on its own.
+
+```js
+const range = lightDef.range !== undefined ? lightDef.range : 0;   // 0 is INFINITE in three
+lightNode.distance = range;
+if ( lightDef.intensity !== undefined ) lightNode.intensity = lightDef.intensity;   // glTF states CANDELA
+```
+
+- **Intensity is in candela.** Blender writes the hundreds or thousands. This engine's own decorative point
+  lights sit at 2–8 and its SUN is 1.5, so one imported lamp is two to three orders of magnitude past the key
+  light — build 1142's fault, arriving through the front door.
+- **`range` is optional and defaults to 0**, which three reads as infinite. A lamp in a corner lights the whole
+  level, through walls.
+- **Nothing bounded the count.** Forty emitters in a chandelier GLB is forty entries in `NUM_POINT_LIGHTS`,
+  looped per pixel by every material in the level.
+
+So they are **adopted, not stripped** — a creator who ships a light means it. `adoptModelLights` scales the
+whole model's set by ONE factor so the brightest lands at `MODEL_LIGHT_TARGET` (5.0) and the author's relative
+intent between two lights in one model survives; gives a light with no stated range a reach derived from the
+model's own bounding box (a GLB arrives in whatever units its author used, so a fixed metre figure is wrong on
+one asset and absurd on the next); keeps the `MODEL_LIGHT_MAX` (4) brightest and removes the rest from the
+graph rather than hiding them (build 977); forces `castShadow=false`; and registers each with build 811's
+existing `emitterLights` budget so distance culls them like every other emitter. `finalizeProp` is the single
+chokepoint every imported prop passes through.
+
+**The normalisation must run exactly once, and a prop can leave and re-enter the scene.** `shatterProp` hands
+the lights back to the budget and `restoreDestroyedProps` re-adopts them, so `adoptModelLights` is idempotent
+via the remembered `userData.modelLights` — re-scaling on the way back would darken a lamp every time it was
+destroyed. The loot box is deliberately NOT routed through this: it has a pooled beam and 1153 strips its
+model's lights, and two glows on one crate is one too many.
+
+## The horizon had two different grounds (build 1156)
+
+The stock level — the first frame anybody who opens the game ever sees — read as monochrome teal. Measured at
+the real spawn pose: **63.7% of the lower frame had blue as its largest channel**, against 22.1% red.
+
+It was not the grade, the sky or the lights. `DEFAULT_WORLD.skyGround` (the dome's own ground band) is
+`0x6b6660`, **warm**, linear B/R 0.80 — while the ground plane it abuts at the horizon was `0x4f5d66`, blue at
+B/R 1.70, and it is the largest surface in the frame. Two different grounds either side of one horizon.
+
+That is precisely what build 1143 fixed for GENERATED levels and 1151 made derivable: `groundMood` names the
+ground albedo once and hands the same value to the bake, the dome's band and the engine plane. **`DEFAULT_WORLD`
+was never run through it.** So `floorColor` is now skyGround's HUE at the floor's OWN luminance —
+`0x5f5a55`, linear Y 0.1045, unchanged to four decimals. Holding the luminance is the whole reason this is a
+one-line change rather than a re-tune: the grade, the exposure and build 1149's bounce term are all tuned
+against it. `test-1156` pins the LINK, not the hex, so retuning the dome without the plane fails there.
+
+Measured headless at the spawn pose, **control pair first** — two runs of the unchanged build agreed to 0.1 of
+a percentage point on every figure, so everything below is far outside run-to-run spread:
+
+```
+                 frame mean     distant architecture     lower frame: B is the largest channel
+before          111,128,138       103,121,128 (B>G>R)         63.7%   (reddest 22.1%)
+floor warmed    114,128,135       114,119,117 (neutral)       46.6%   (reddest 33.5%)
++ wall too      115,128,134       115,119,116                 41.5%   (reddest 39.4%)
+```
+
+**The wall change was measured and NOT shipped.** `groundMood` also derives the boundary walls (the same albedo
+at 55%), but applying that here would halve this level's wall luminance — a different change from the one being
+made — and warming the wall at its own luminance instead buys 5 percentage points while spending the
+cool-distance note that a warm ground reads against. Recorded so it is not re-derived.
+
+**Two things in the open-work list were wrong and are now settled by the same capture:**
+- *"A hard horizontal SEAM runs across the middle of the frame where the teal floor plane meets an olive
+  band."* The largest row-to-row jump in the frame is at y=337 with a magnitude of 333 — that is the **horizon**
+  (sky 191,199,208 above, ground 75,90,98 below), which is supposed to be there. The largest jump BELOW it is
+  105 at y=498 and it is a **luminance** edge — a raised platform's shadowed face — whose magnitude this build
+  does not change (105.5 → 103.9) and should not. What DID change is its character: the surface above it went
+  `75,106,111` (B highest) to `90,104,96` (neutral), so it is now a light/dark step rather than a teal-to-olive
+  hue break. There is no hue seam to fix.
+- *Build 1136's recipe, "warm the architecture and keep the props cool", is backwards for this level.* The
+  probe says the architecture ALREADY reads warm (albedo 0.042/0.036/0.028, R>G>B) and it is the engine's
+  ground plane that was cool — and brighter than everything standing on it. The ground was the term to move.
+
+**And the pose is the finding, not a detail.** The first capture of this build was taken at a camera I picked
+(0, 1.7, 14) and nine of its ten probe points hit `src=wedge` — a ramp 4.85 m in front of the player. At that
+pose the frame measured 52.4% RED-dominant and the conclusion would have been "there is no teal problem". The
+spawn is `(0, 2.9, 30)`. `stock.mjs` therefore defaults to **no pose at all**: it captures where the game
+actually puts you, and `POSE=` env overrides only when a specific vantage is the question. Build 1124 said know
+where the camera is; the corollary is that for "what does a new player see", the only valid camera is the
+game's own.
 
 ## The fourth light, and the guard that names the fifth (build 1155)
 
@@ -1049,7 +1189,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1155)
+## Open work (as of build 1158)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
@@ -1163,22 +1303,26 @@ no anisotropic filtering. The `aoMap`/`lightMap` split is still the right eventu
 is multiplicative, lamps and bounce are additive) and still needs a texture budget — but it is not a seam
 fix, and now there is a number for what removing the bake costs.
 
-**Still visible on the stock frame after 1149, and worth a build each.** All three are content or
-composition, not code, and all three are what a first-time player sees:
-- The frame reads MONOCHROME TEAL. `floorColor 0x4f5d66` is blue-dominant in its own albedo (linear R
-  0.078 vs B 0.138), so under a blue sky red has nowhere to come from and the bounce can only return
-  what the albedo carries. Build 1136's recommendation — "warm the architecture and keep the props cool"
-  — is still the fix, and it is a one-hex change plus a capture. Preserve luminance when doing it: the
-  current floor is Y 0.107, so a warm grey at the same Y (about `0x615b53`) swaps hue without moving the
-  exposure the whole grade is tuned against.
+**Three things were listed as visible on the stock frame after 1149. All three are now closed, and only one
+of them was real.** They are kept here because two were wrong in instructive ways:
+- ~~The frame reads MONOCHROME TEAL.~~ **Real, and FIXED in build 1156** — 63.7% of the lower frame was
+  blue-dominant and is now 46.6%. The cause was not what this entry said, though: it blamed the albedo being
+  blue "under a blue sky", when the actual fault was that the dome's own ground band was already warm and the
+  ground plane disagreed with it. The suggested hex (`0x615b53`) happened to land within a few code values of
+  the derived answer (`0x5f5a55`) — a lucky guess, not a derivation. See the build 1156 section.
+- ~~A hard horizontal SEAM runs across the middle of the frame where the teal floor plane meets an olive
+  band.~~ **Wrong — measured and withdrawn.** The largest jump in the frame is the HORIZON, which belongs
+  there; the largest one below it is a luminance edge at a platform's shadowed face, unchanged by any colour
+  work. There was never a hue seam. Numbers in the build 1156 section.
 - ~~The WEAPON is the brightest object in the frame by a wide margin, near-white against a world in the
   110s.~~ **Wrong — measured and withdrawn.** That was written from looking at the frame. The weapon block
   means `91,104,111` against a frame mean of `127,142,152`: it is DARKER than the world behind it. What
   reads as "near-white" is a specular highlight on the top rail's thin edge (`p90 0.209` over a 17-pixel
   strip), which is what a rail edge is supposed to do. Judging a frame by eye is the failure mode the
   Headless capture section exists to prevent, and it caught me writing this list.
-- A hard horizontal SEAM runs across the middle of the frame where the teal floor plane meets an olive
-  band. Two large flat areas of different colour meeting on a straight line, with no transition.
+
+Two of three written from looking at the frame, two of three wrong about the mechanism. The list was worth
+keeping only because each entry named a capture that could settle it.
 
 Also outstanding (user actions): upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.

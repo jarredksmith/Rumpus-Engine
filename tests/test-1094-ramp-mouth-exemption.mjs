@@ -10,21 +10,30 @@
 import { gameSource, assert, done } from './harness.mjs';
 
 const src = gameSource();
-const m = src.match(/if\(d < eR && d > 1e-4\)\{\n([\s\S]{0,2000}?)\n          \}/);
+const m = src.match(/if\(d < eR && d > 1e-4\)\{\n([\s\S]{0,3000}?)\n          \}/);
 assert(m, 'the enemy resolve contact branch is found');
 const body = m[1];
 
-// the sample point is nudged INSIDE the box along the contact normal: cx - dx/d*0.1. dx points
-// from the box toward the enemy, so subtracting walks 0.1 into the box — onto the merged box's
-// own footprint right where the enemy touches it, never over open air beside it.
-assert(/const st = surfaceTopUnder\(cx - dx\/d\*0\.1, cz - dz\/d\*0\.1, b\.max\.y\+0\.05, b\.max\.y\+2\);/.test(body),
-  'the surface is sampled at the contact point, 0.1 inside the box face');
+// build 1158 rewrote the exemption to ask the PLAYER's question — this collider's own surface at the contact
+// point, within a step or a walkable slope — and the reason is that 1092/1094's gate was a fact about the
+// BOUNDING BOX. A ramp primitive is one mesh with one box floor-to-summit, so at the foot of a 2.4 m ramp
+// `b.max.y - feetY` is 2.4, the gate failed, the raycast never ran, and an enemy was fenced off the ramp
+// entirely. Measured by replaying the real pass: 0.00 m climbed in four seconds. See test-1158.
+//
+// What THIS build established survives the rewrite and is what is pinned now: never sample on the box
+// boundary. A ray aimed at the exact edge grazes the mesh and reads -Infinity, and over a merged box the
+// centre can hang over open air beside the ramp — either way a ramp mouth is mistaken for a wall.
+assert(/const sx = cx \+ Math\.sign\(bcx-cx\)\*Math\.min\(0\.25, Math\.abs\(bcx-cx\)\);/.test(body),
+  'the sample point is nudged INSIDE the box, never taken on its boundary');
+assert(/const sz = cz \+ Math\.sign\(bcz-cz\)\*Math\.min\(0\.25, Math\.abs\(bcz-cz\)\);/.test(body), '...on both axes');
+assert(/Math\.min\(0\.25,/.test(body),
+  '...and the nudge is CLAMPED, so a thin box is not sampled past its own far face');
 assert(!/surfaceTopUnder\(\(b\.min\.x\+b\.max\.x\)\/2/.test(body), 'the old box-centre sample is gone');
 
-// 0.85 tolerance: strictly more than the worst quantisation overshoot at the steepest generated
-// slope (0.45/cell + 0.36 slot ~= 0.81), strictly less than the 1.1 near-step gate above it —
-// so a 1.1+ parapet or a 1.7 crate still pushes exactly as before.
-assert(/b\.max\.y - st < 0\.85\) continue;/.test(body), 'tolerance covers slope+slot quantisation');
-assert(/b\.max\.y - \(en\.mesh\.position\.y-1\.4\) < STEP \+ 0\.5/.test(body), 'the near-step gate still guards the raycast');
+// and it asks that collider alone, so a merged box can no longer answer with the distant ground floor
+assert(/propSurfaceAt\(c, sx, sz\)/.test(body),
+  'the surface question is scoped to THIS collider — a merged box cannot answer with the floor beside it');
+assert(!/b\.max\.y - \(en\.mesh\.position\.y-1\.4\) < STEP \+ 0\.5/.test(body),
+  'and the bounding-box gate that made a tall ramp unreachable is gone (build 1158)');
 
-done('build 1094: ramp summits merged into wall boxes no longer shove climbers');
+done('build 1094: the walk-surface sample is taken inside the box at the contact point, never on its boundary or centre — still true after build 1158 rewrote the exemption around it');

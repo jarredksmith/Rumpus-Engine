@@ -93,8 +93,10 @@ const STEP     = num(/const STEP = ([\d.]+);/, 'STEP');
   // changes the RADIUS, not the vertical rules, and a regression in either would look identical from play.
   assert(/const eFeetY = en\.mesh\.position\.y - 1\.4 \+ STEP, eHeadY = en\.mesh\.position\.y \+ 0\.55;/.test(src),
     'the body band still starts a STEP above the feet (build 1089)');
-  assert(/if\(st > -Infinity && b\.max\.y - st < 0\.85\) continue;/.test(src),
-    'and the ramp exemption still lets a bot climb the slope it is standing on (build 1094)');
+  // build 1158 replaced the exemption's gate (it asked about the BOUNDING BOX, which fenced enemies off any
+  // ramp taller than about a metre). The intent pinned here is unchanged: a bot may climb the slope it is on.
+  assert(/if\(es <= feetY \+ STEP \+ 1e-4\) continue;/.test(src),
+    'and the ramp exemption still lets a bot climb the slope it is standing on (builds 1094, 1158)');
   assert(STEP === 0.6, 'STEP is unchanged at ' + STEP);
 }
 
