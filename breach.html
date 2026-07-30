@@ -20905,8 +20905,33 @@ function _wireChatInput(){ if(_chatWired) return; const inp=document.getElementB
   inp.addEventListener('keyup', e=>e.stopPropagation()); }
 function openChat(){ if(chatOpen || NET.mode==='off') return; const box=document.getElementById('chatBox'), inp=document.getElementById('chatInput'); if(!box||!inp) return; _wireChatInput(); chatOpen=true; box.classList.add('chatOpen'); if(typeof clearMovementInput==='function') clearMovementInput(); safeExitPointerLock(); inp.value=''; setTimeout(()=>{ try{ inp.focus(); }catch(e){} }, 0); }
 function closeChat(send){ if(!chatOpen) return; const box=document.getElementById('chatBox'), inp=document.getElementById('chatInput'); const txt=(inp && inp.value || '').trim(); chatOpen=false; if(box) box.classList.remove('chatOpen'); if(inp){ inp.value=''; try{ inp.blur(); }catch(e){} } if(send && txt) sendChat(txt); if(!isTouch && gameOn && !gameOver && !editorOpen) tryPointerLock(); }
-function sendChat(text){ text=(''+text).slice(0,200); if(!text) return; const nm=NET.name||'You'; addChatLine(nm, text, true); if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'chat', name:nm, text}); }catch(e){} } } else if(NET.mode==='client' && NET.conn){ try{ NET.conn.send({t:'chat', text}); }catch(e){} } }
-function addChatLine(name, text, mine){ const log=document.getElementById('chatLog'); if(!log) return; const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx); log.appendChild(row); while(log.children.length>8) log.removeChild(log.firstChild); setTimeout(()=>{ row.classList.add('chatFade'); }, 9000); }
+// build 1178: the chat gets a filter and a mute — a public UGC game with raw P2P chat is a liability.
+// The filter is CLIENT-SIDE AT RENDER (a hostile peer can send anything; what matters is what gets shown):
+// links from strangers become [link] (the top P2P harm vector) and a baseline profanity list is masked
+// after leet-normalisation. Mute is per-session by display name — /mute Name, /unmute Name — because the
+// relay carries names, not ids; a renamed troll costs one more /mute, which is acceptable for v1.
+const _chatMuted = new Set();
+const _CHAT_BAD = ['fuck','shit','bitch','asshole','cunt','dick','faggot','nigger','nigga','whore','slut'];
+function _chatClean(text){
+  let t = ('' + (text || '')).slice(0, 200);
+  t = t.replace(/(https?:\/\/|www\.)\S+/gi, '[link]');
+  const norm = t.toLowerCase().replace(/0/g,'o').replace(/1/g,'i').replace(/3/g,'e').replace(/4/g,'a').replace(/5/g,'s').replace(/7/g,'t').replace(/@/g,'a').replace(/\$/g,'s');
+  let out = t.split('');
+  for(const w of _CHAT_BAD){ let i = 0; while((i = norm.indexOf(w, i)) >= 0){ for(let k = i; k < i + w.length; k++) out[k] = '\u2217'; i += w.length; } }
+  return out.join('');
+}
+function sendChat(text){ text=(''+text).slice(0,200); if(!text) return;
+  // /mute Name and /unmute Name are local commands, never sent
+  const mm = text.match(/^\/(un)?mute\s+(.+)$/i);
+  if(mm){ const who = mm[2].trim().toLowerCase();
+    if(mm[1]){ _chatMuted.delete(who); if(typeof flashToast==='function') flashToast('Unmuted '+mm[2].trim()); }
+    else { _chatMuted.add(who); if(typeof flashToast==='function') flashToast('Muted '+mm[2].trim()+' for this session'); }
+    return; }
+  const nm=NET.name||'You'; addChatLine(nm, text, true); if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'chat', name:nm, text}); }catch(e){} } } else if(NET.mode==='client' && NET.conn){ try{ NET.conn.send({t:'chat', text}); }catch(e){} } }
+function addChatLine(name, text, mine){ const log=document.getElementById('chatLog'); if(!log) return;
+  if(!mine && _chatMuted.has((''+(name||'')).trim().toLowerCase())) return;   // build 1178: muted senders render nothing
+  if(!mine) text = _chatClean(text);   /* build 1178: filter at RENDER — your own text shows as typed */
+  const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx); log.appendChild(row); while(log.children.length>8) log.removeChild(log.firstChild); setTimeout(()=>{ row.classList.add('chatFade'); }, 9000); }
 function applyPvpDamage(dmg, from){
   if(duelDead || duelInvuln>0) return;
   if(sameTeam(from, NET.myId)) return;   // no friendly fire in team modes
@@ -26316,7 +26341,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1177 · 2026-07-30';
+const BUILD_VERSION = 'build 1178 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

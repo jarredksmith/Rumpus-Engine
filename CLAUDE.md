@@ -967,6 +967,19 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Chat gets a filter and a mute (build 1178)
+
+The platform critic: chat capped length and escaped HTML but never filtered CONTENT. The filter runs
+CLIENT-SIDE AT RENDER — a hostile peer can send anything; what matters is what is shown. Stranger links
+collapse to [link] (the top P2P harm vector), a baseline profanity list masks in place after
+leet-normalisation (0→o 1→i 3→e 4→a 5→s 7→t @→a $→s), and your OWN text shows as typed. `/mute Name` /
+`/unmute Name` are local commands intercepted in sendChat BEFORE display-or-send; mute is per-session by
+display name because the relay carries names, not ids (a renamed troll costs one more /mute — accepted for
+v1). Substring matching catches embedded words (Scunthorpe) — the accepted trade for catching leetspeak.
+Deferred: a report affordance needs the lobby backend. AND: hit the mid-line-`//`-comment trap AGAIN
+(documented in 1168) — the addChatLine insert swallowed its own one-line tail; the syntax check caught it.
+Use /* */ when patching one-liners, no exceptions.
+
 ## Your own .glb without their server (build 1177)
 
 The editor critic's "asset import requires their server", verified: no local model path existed at all —
@@ -1450,7 +1463,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1177)
+## Open work (as of build 1178)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
