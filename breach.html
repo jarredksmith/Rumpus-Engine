@@ -15035,9 +15035,17 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
     // import is left exactly alone. Coarser than the viewmodel's density: a prop is metres across, not
     // half a metre, and it is seen from further away.
     if(typeof installObjDetail === 'function') installObjDetail(o, 18);
-    // build 1095: sharpen every imported texture at grazing angles (floors especially)
-    if(typeof MAX_ANISO !== 'undefined' && MAX_ANISO > 1){ const ms = Array.isArray(o.material) ? o.material : [o.material];
-      for(const m of ms){ if(!m) continue; for(const k of ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap']) if(m[k]) m[k].anisotropy = MAX_ANISO;
+    // build 1150: ONE pass over the imported materials. Build 1095 wrote this as a single
+    // `if(MAX_ANISO > 1){...}` block with the lightmap adoption nested inside it — so on any device
+    // whose driver reports no anisotropic filtering, a generated level's radiance bake stayed in the
+    // aoMap slot and merely darkened the ambient instead of adding the interior light it exists to
+    // supply. Sharpening a texture and adopting a bake have nothing to do with each other; only the
+    // first one depends on the capability.
+    { const ms = Array.isArray(o.material) ? o.material : [o.material];
+      for(const m of ms){ if(!m) continue;
+        // build 1095: sharpen every imported texture at grazing angles (floors especially)
+        if(typeof MAX_ANISO !== 'undefined' && MAX_ANISO > 1)
+          for(const k of ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap']) if(m[k]) m[k].anisotropy = MAX_ANISO;
         // build 1095: a generated level can mark its bake as a full RGB radiance lightmap (glTF
         // material extras.rumpusLightmap). Move it from aoMap (darkens ambient only) to lightMap
         // (ADDS colored indirect light: sky-blue shade, warm sun bounce) — the AAA split: baked GI
@@ -15050,7 +15058,8 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
           // — so multiplying here too blows the bake out by 3.14x. Measured, not assumed.
           m.lightMapIntensity = +m.userData.rumpusLightmap || 1;
           m.needsUpdate = true;
-        } } } } });
+        }
+      } } } });
   obj.userData.src = src;
   if(nid && typeof propByNid==='function' && propByNid(nid)) nid = genNid();   // build 905: stored levels can carry DUPLICATE nids (props copied across saves) — nid-keyed sync (pDel/pMov/the reconciler's maps) then hits the wrong prop, so a live collision gets a fresh id (the next save writes it back, healing the level)
   obj.userData.nid = nid || genNid();   // assign once; load/net paths pass an existing id to keep peers aligned
@@ -25764,7 +25773,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1149 · 2026-07-30';
+const BUILD_VERSION = 'build 1150 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

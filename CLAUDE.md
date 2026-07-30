@@ -660,7 +660,65 @@ case the assertion was still TRUE; adding a comment had simply pushed the needle
 following declaration, so they fail loudly only when a function outgrows its budget — and converting
 those would change what the assertion covers, so leave them.
 
-## Open work (as of build 1149)
+## The bake was gated on a texture-filtering capability (build 1150)
+
+Build 1095 put two unrelated things in one statement in the imported-material pass:
+
+```js
+if(MAX_ANISO > 1){ for(const m of ms){ ...anisotropy...
+  if(m.userData.rumpusLightmap && m.aoMap && !m.lightMap){ ...adopt as lightMap... } } }
+```
+
+`MAX_ANISO` is `Math.min(8, getMaxAnisotropy())`, which is **1** on a driver that reports no anisotropic
+filtering — low-end Android, some software rasterisers. On any such device the whole block was skipped, so
+a generated level's radiance bake stayed in the `aoMap` slot. That is not cosmetic: `aoMap` MULTIPLIES the
+ambient and can only darken, while `lightMap` ADDS coloured indirect light — and the bake carries the
+interior lamps, which are the only thing lighting a generated building's inside. The device that could
+least afford it lost its interior lighting and got a dirty AO wash instead. `test-1150` drives the block
+directly at `MAX_ANISO` 1 and 8, because a source pin cannot tell you which branch a nested `if` guards.
+
+## What the ground probe settled (build 1150)
+
+Build 1149 recorded the desert arena's 2.3-stop ground seam with two candidate causes and the instruction
+to probe before theorising. The probe (`scratchpad/probe-ground.mjs` — raycast down at eight forward
+offsets, report per hit the src, the material colour in linear, every map slot, `envMapIntensity` and
+`lightMapIntensity`) answered both in one run:
+
+- **NOT the texture albedo.** `sand` measures 0.511/0.372/0.185 linear against the desert theme's stated
+  `groundAlb` of 0.42/0.34/0.22 — close enough that the generator's grounds are honest about themselves.
+  This was the leading hypothesis and it is wrong.
+- **It is `envMapIntensity`.** The imported ground reads `env1.00`; the engine's own boundary wall, same
+  roughness class, reads `env0.12`. Build 1144 made that property one expression — `_envInten(metalness)`
+  — for `floorMat`, `wallMat`, `primitiveMat`, `applyPropShine` and the instancing batch, and it never
+  reached an imported model, which keeps three's default of 1.0. **8× the image-based ambient for two
+  surfaces meant to be the same world.**
+
+**`SKY_ENV_FLOOR = 0.12` was derived from a ratio build 1149 disproved — and survives re-deriving.** Build
+1144 justified 0.12 as "a sun-to-shade ratio of 3:1 needs total ambient at 0.0305", and 1149 measured the
+frame at 9.46:1. So the stated derivation is void. Swept by capture on the stock level, with the bounce in
+place, measuring lit and shadowed patches of the same floor:
+
+```
+SKY_ENV_FLOOR   0.12     0.30     0.55     1.00
+lit floor       83,120,121  88,125,130  95,132,140  105,143,154
+shade            9,47,59    18,58,74    30,71,92     49,93,118
+sun-to-shade      6.90:1     5.07:1     3.75:1       2.57:1
+```
+Real daylight on a horizontal surface is ~8:1, so **0.12 is the closest of the four** and raising it walks
+the frame toward overcast. 1144's other figure — "at a full 1.0 the ratio is 1.58:1" — is also wrong;
+measured it is 2.57:1. Right value, void reasoning: re-derive it here rather than trusting either note.
+
+**The unification is written and deliberately NOT shipped in this build.** Bringing imports onto
+`_envInten` closes the seam, but `_envInten(m) = max(SKY_ENV_FLOOR, m)` still couples to metalness above
+the floor, and the shipped weapon's materials are all metalness 0.4 — so it would drop from 1.0 to 0.4 and
+the weapon block measured `91,104,111 → 66,78,84`, a 27% darkening of an asset that was never tuned
+against that coupling (builds 1140 and 1145 measured it at 1.0). 1144's compatibility argument — "metals
+keep exactly the reflection strength they were tuned with" — applies to engine materials and to nothing a
+creator imported. The next build needs to decide whether the viewmodel is carved out, or whether the
+`max(floor, metal)` shape goes away entirely in favour of `envMapIntensity = 1` with `worldCfg.sky` scaled
+down to deliver the same ambient — which is the physically coherent form and needs a legacy-`sky` story.
+
+## Open work (as of build 1150)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
@@ -695,22 +753,18 @@ tight to the triangles, so the generator no longer has to author a 3.8 m doorway
 Narrowing them is a *generator* change with its own probe pass — do not do it as part of an engine
 build, and keep `tests/test-1113` as the gate.
 
-**The imported ground is 2.3 stops brighter than the plane it butts against (found build 1149, not fixed).**
-On the desert arena at seed 4242, walking outside the arena footprint: the engine's own ground plane reads
-`109,101,78` and the generated arena's sand reads `244,208,160` — nearly clipping — with a hard seam between
-them. Build 1143 matched the two grounds' HUE (both R>G>B) and that part holds; it never matched their LEVEL.
+**The imported ground is 2.3 stops brighter than the plane it butts against — cause found (1150), fix not
+shipped.** See "What the ground probe settled" above: it is `envMapIntensity`, 1.00 on every imported
+material against `_envInten(metalness)` on every engine-built one. The patch is one line in the
+imported-material pass; what is undecided is the metalness coupling's effect on the shipped weapon. Start
+there, with the arena seam measured at the unified value.
 
-The likely cause is a double-counted ambient: an imported mesh's baked `lightMap` is ADDITIVE
-(`rumpusLightmap` → `lightMapIntensity`), so an open-sky surface receives the sky once from the bake and
-again from the hemisphere light plus the probe, while the engine's plane gets only the runtime pair. The
-competing explanation is that the sand TEXTURE's own albedo is simply brighter than the theme's `groundAlb`,
-which is legitimate. Build 1139's `__surfProbe` settles which — report the hit's material colour, its maps,
-and whether it carries a `lightMap` — and that probe must come first.
-
-If it is the double count, the fix is not a blanket scale on the bake: the bake also carries the interior
-LIGHTS (`for (const L of LIGHTS)`), which are the only thing lighting a generated interior, so scaling the
-whole texture down darkens exactly the rooms it exists to light. It needs the sky-visibility term split from
-the local-light term — plausibly the occlusion part as `aoMap` (multiplicative, which is what it is) and the
+The additive-`lightMap` double count is still real and still unquantified — an open-sky surface receives the
+sky once from the bake and again from the hemisphere light plus the probe — but it is NOT the dominant term
+in that seam, and fixing it is not a blanket scale on the bake: the bake also carries the interior LIGHTS
+(`for (const L of LIGHTS)`), which are the only thing lighting a generated interior, so scaling the whole
+texture down darkens exactly the rooms it exists to light. It needs the sky-visibility term split from the
+local-light term — plausibly the occlusion part as `aoMap` (multiplicative, which is what it is) and the
 bounce + lamps as `lightMap` (additive, which is what those are). Two maps, so it needs a texture budget.
 
 **Still visible on the stock frame after 1149, and worth a build each.** All three are content or
@@ -721,8 +775,12 @@ composition, not code, and all three are what a first-time player sees:
   — is still the fix, and it is a one-hex change plus a capture. Preserve luminance when doing it: the
   current floor is Y 0.107, so a warm grey at the same Y (about `0x615b53`) swaps hue without moving the
   exposure the whole grade is tuned against.
-- The WEAPON is the brightest object in the frame by a wide margin, near-white against a world in the
-  110s. It pulls the eye off the level permanently, across 11% of every frame.
+- ~~The WEAPON is the brightest object in the frame by a wide margin, near-white against a world in the
+  110s.~~ **Wrong — measured and withdrawn.** That was written from looking at the frame. The weapon block
+  means `91,104,111` against a frame mean of `127,142,152`: it is DARKER than the world behind it. What
+  reads as "near-white" is a specular highlight on the top rail's thin edge (`p90 0.209` over a 17-pixel
+  strip), which is what a rail edge is supposed to do. Judging a frame by eye is the failure mode the
+  Headless capture section exists to prevent, and it caught me writing this list.
 - A hard horizontal SEAM runs across the middle of the frame where the teal floor plane meets an olive
   band. Two large flat areas of different colour meeting on a straight line, with no transition.
 
