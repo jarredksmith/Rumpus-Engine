@@ -29,7 +29,9 @@ assert(/const _h = _authoredHome\(o\);[\s\S]*?const hx = _h\.x, hy = _h\.y, hz =
 // --- every editor move chokepoint keeps the home in sync ---
 assert(/o\.position\.copy\(v\); refreshPropCollider\(o\); _homeSync\(o\);/.test(src), 'gizmo translate syncs the home');
 assert(/o\.rotation\.copy\(euler\); refreshPropCollider\(o\); _homeSync\(o\);/.test(src), 'gizmo rotate syncs the home');
-assert(/const touch = \(o\)=>\{ if\(!isL\)\{ refreshPropCollider\(o\); _homeSync\(o\); \} \};/.test(src), 'group drag syncs the home');
+// build 1139 added a surface re-tile ahead of these two on the same line — anchor on the pair, not on
+// the whole statement, so the assertion keeps testing that a group drag syncs the home.
+assert(/const touch = \(o\)=>\{ if\(!isL\)\{ [^}]*refreshPropCollider\(o\); _homeSync\(o\); \} \};/.test(src), 'group drag syncs the home');
 assert(/refreshPropCollider\(o\); _homeSync\(o\);   \/\/ keep the solid hitbox/.test(src), 'numeric-field apply syncs the home');
 
 done('build 713: editor moves to dynamic props now save (no revert to the original spot)');

@@ -252,7 +252,254 @@ stuffs the hit list into `document.title` costs one capture run and settles it, 
 to its most extreme value is the other cheap discriminator — `normalBias = 0` producing NO acne
 proved the geometry was never in the shadow map, which no amount of bias tuning would have shown.
 
-## Open work (as of build 1124)
+**Probe the MATERIAL, not just the geometry (build 1139).** The same technique settles "why did my
+material change do nothing". A `window.__surfProbe` that raycasts through a few screen points and
+reports, per hit, the object's src, its material type and colour, and which of `map`/`normalMap`/
+`roughnessMap` are set, found in one run what four rounds of reasoning had not. Two cautions learned
+the hard way: filter the sky dome out of the hit list (it is a mesh one unit from the camera and wins
+every ray), and remember `Raycaster` ignores a mesh's own `visible:false` but NOT its ancestors' — so
+editor gizmo geometry shows up in play. An `InstancedMesh` hit reports the SHARED geometry (a unit box
+at the origin) with a correct world hit point; that mismatch is the signature of a batch, not a bug.
+
+## Procedural surface detail (build 1139) — three ways to ship nothing
+
+`_procSurface()` bakes one 256×256 tiling value-noise field into a Sobel `normalMap` and a
+`roughnessMap`; `applyProcSurface(mat, span)` / `retileProcSurface(root, span)` hand it to `floorMat`,
+`wallMat` and every `primitiveMat()`. Each of the three faults below produced a frame that measured
+IDENTICAL to the one before it, so none would have been caught by looking.
+
+- **A map assigned at material construction is not a map.** `worldCfg.floorTex` is `''` by default, so
+  the first `applyWorldCfg` ran `_loadSurfaceMap`'s no-url branch and wrote `null` over `floorMat.map`
+  before the first frame. The detail set is therefore a REMEMBERED FALLBACK (`mat.userData.procSurf`,
+  read by `_procFallback`) that every clear path restores. Anything that writes `mat[slot] = null`
+  needs to go through it.
+- **UV tiling is not a physical size.** The box primitive is a unit cube, so one repeat value gives an
+  11 m blotch on a 22 m deck and a 50 cm one on a 1 m crate — the same material reading as two
+  differently-zoomed photographs. Callers pass a world SPAN; `_procRepeatFor` quantises `span /
+  PROC_TILE_M` onto `_PROC_STEPS` so the clone cache stays ~7 entries.
+- **`buildInstancing()` rebuilt the batch material from scratch.** It grouped by `shape|colour` and
+  constructed a fresh `MeshStandardMaterial` at the default roughness .65 / metalness .35 — so every
+  instanced prop lost the detail set in play and got it back in the editor, and had been silently
+  losing its authored *shine* and *opacity* the same way since long before this build. It now clones a
+  real member's material and `_instKey` carries colour, shine, opacity and grain scale.
+
+**An albedo `map` cannot be exposure-neutral.** It multiplies the material colour, so it only darkens:
+a near-white 226..255 field averages 0.87 in LINEAR space and measured −19% across the frame (a deck
+91,105,90 → 74,91,68). Neutrality would need values above 255. Since this retrofits detail onto colours
+creators already chose, the set carries relief and roughness only — `PROC_SLOTS`. Relief is also baked
+into the map rather than set as `material.normalScale`, because `floorMat`/`wallMat` are shared and a
+creator's own normal map would inherit whatever scale was left behind. `STR` was 2.6, then 1.8, and both
+read as crumpled foil with grazing-angle moiré; the Sobel sums eight taps of a unit-amplitude field, so
+micro-relief is `STR ≈ 0.3` (steepest slope ~8°).
+
+## The viewmodel is part of the frame (build 1140)
+
+`renderViewmodel()` used to draw straight to the CANVAS from the frame loop, *after* `renderScene` had
+finished — so the one object on screen at all times, across 11% of it, was the only object outside the
+frame's look: no bloom on its muzzle flash or its metal, no vignette, no grain, its own colour response.
+It was also absent from the SSAO G-buffer, so the AO term at its pixels came from the WORLD BEHIND IT and
+was then multiplied into it — the weapon wore the shading of whatever it stood in front of and had no
+occlusion of its own anywhere.
+
+It is now three functions: `_vmWanted()` (the predicate, asked by both callers), `_drawViewmodel()`
+(draws into **whatever target is bound** — the caller owns it), and `renderViewmodel()` (the frame loop's
+straight-to-canvas call, a no-op when `_vmDone`). `_renderPostFX` binds `_postRT` and draws the weapon
+after the scene and after DoF (a first-person weapon stays sharp) and before bloom, then renders `vmScene`
+with `_matAOGeo` into `_aoGeoRT` inside the existing `_aoWant` gate, so the extra pass disappears with AO.
+That last part only works because `vmCam` tracks the main camera's fov/aspect and the G-buffer stores a
+raw view distance — if either changes, the weapon's AO silently goes wrong.
+
+**The default level had NO post-processing at all.** `if(!(savedLevel && savedLevel.world))
+_postOffWorld(worldCfg)` — build 796 — zeroed bloom, motion blur, vignette, grain, the grade and `ssao`
+for a first-time scene. Probed on the stock frame: `bloom=0 vig=0 aoAmt=0`. That was right when the
+first-time scene was 22 boxes at `Math.random()` positions; from build 1133 it is a designed level, so
+every visual system builds 1126, 1128, 1135 and 1136 added was switched off in the first frame anybody
+ever sees — and *unmeasurable there*, which is why those builds were all measured on generated arenas.
+An EMPTY scene still starts clean: `_wipeSceneCore` keeps calling `_postOffWorld`, and that is where 796's
+actual intent lives.
+
+Measured, stock level, same camera: weapon body 2,473 → 5,837 unique colours; weapon grip mean
+72,81,71 → 56,65,56; frame corner 70,74,62 → 57,59,50 (the vignette); crate foot 109,143,139 → 97,133,128
+(world AO). A/B on the G-buffer pass alone, everything else in place: weapon grip 69,80,67 → 56,65,56
+while the crate foot stays byte-identical — so the weapon's occlusion is its own, not the vignette's.
+
+## The adaptive quality ladder (build 1141) — it never fired when it mattered
+
+`_adaptResTick` opened with `if(_adaptN < 8){ _adaptAcc=0; _adaptN=0; return; }` — "need a real sample".
+Eight frames inside a 500 ms window **is 16 fps**, so on anything slower the gate was never satisfied: it
+threw its evidence away and returned every window, forever. The worse the device, the more certainly the
+relief never arrived, which is the exact inverse of what the system is for. Measured by driving the real
+function with steady synthetic frame times for 60 s of simulated play: 22–70 ms/frame reached the bottom
+rung; **100, 150, 200 and 400 ms/frame never moved at all.**
+
+"A real sample" is now a quantity of TIME (`ADAPT_MIN_SAMPLE_MS`, with a two-frame floor), and a deficient
+window KEEPS its samples instead of discarding them, so even a machine slower than one frame per window
+eventually has two.
+
+Fixing that exposed a second flaw that had always been live at normal frame rates: a window's **mean** is
+dominated by one pathological frame, so a single 3-second hitch — a level load, a GC pause, a shader
+compile — cost the player a rung for a load that was never sustained. So a frame contributes at most
+`ADAPT_FRAME_CAP` to the mean, and both downshift rungs now require `slowFrac >= 0.5` (a majority-slow
+window) beside the mean. The CLIMB is deliberately *not* gated on `slowFrac` — recovering means the mean
+came down, which is the right question there.
+
+`tests/test-1141` executes all of it: every sustained load from 22 ms to 900 ms reaches the bottom rung,
+8–20 ms is left alone, hitches of 300 ms to 12 s cost nothing, recovery climbs all the way back, and the
+opt-out still holds. `scratchpad/ladder2.mjs` is the sweep that found it — worth rebuilding rather than
+reasoning, because the failure is invisible from the code and needs no browser to reproduce.
+
+## The loudest light in the engine was a decoration (build 1142)
+
+The default level's floor rendered olive-green — (87,105,77) against an albedo `0x4f5d66` that is
+(79,93,102), i.e. the blue channel HIGHEST in the albedo and LOWEST in the frame, which no positive light
+times that albedo produces. Recorded in the 1139 open work as needing the zero-one-term method. What
+actually settled it in ONE run was **enumerating the scene's real light list**: 29 lights, four of them
+`PointLight(0x38f5b5, 8, 22)` from `buildPillar` — intensity 8 against a sun of 1.5, in a teal whose
+linear channels are R 0.028, G 0.745, B 0.434, and four of them stand around the spawn. The frame's key
+light was a decoration.
+
+A/B with those four lights zeroed and nothing else changed: mid floor 56,101,101 → 55,71,83 (B>G>R
+restored), near deck 81,101,70 → 78,66,51 (warm concrete finally warm), crate 116,149,146 → 115,125,132.
+They also carried most of the frame's *variation* (4,027 → 1,074 unique colours), so the answer is accent
+strength, not zero: **4.0 at 18 m** is the most light that leaves the frame's hue albedo-correct while
+still laying a real pool at the pillar's own foot (G +20 over unlit, 722 → 1,370 unique colours there).
+
+Two things worth carrying forward:
+
+- **When the key light changes, every fill and accent tuned against the old one is now wrong.** This light
+  was correct for the dark greybox it was written for; build 1135 raised the sun to 1.5 and gave the level
+  a daylight sky and nobody revisited it. Build 1135 had in fact chased the same teal cast and cut the
+  accent's *emissive* from 1.6 to 0.55, measuring only 1 code value of change — because the emissive was
+  never the emitter. The light beside it was.
+- **Probe the LIGHT LIST, not just the material.** Builds 1124 (`__probeUp`) and 1139 (`__surfProbe`)
+  established probing geometry and materials; a `__floorProbe` that dumps every light's type, hex,
+  intensity and range, grouped, plus the material's linear albedo, answered in one run what two builds of
+  reasoning had not. `test-1142` turns it into a standing guard: no hardcoded light may be both
+  far-reaching and more than 3× the sun.
+
+The station beacon `PointLight(0x38c8f5, 6, 14)` was the obvious second suspect and is **deliberately
+unchanged** — dropping it to 2.0/12 moved the dais by 4 code values and the floor by none. Its 14 m range
+confines it to the landmark it marks. Measured, not assumed, and recorded so it is not "tidied up" later.
+
+## Themes describe the ground too (build 1143)
+
+`arenaMood` set sky, fog, post and `ssao` but never `floorColor` or `wallColor`, so the ENGINE's own
+ground plane and boundary walls stayed at `DEFAULT_WORLD`'s cool grey-blue in every generated level. That
+is directly visible, because the imported ground stops at ±W and the engine's plane runs on to ±ARENA:
+measured on the desert arena, the plane read (103,114,87) — olive, G highest — butting against sand at
+(185,173,139). It now reads (100,94,74), R>G>B, the same order as the ground beside it, and the imported
+ground is unchanged.
+
+`groundMood(gnd, rough, metal)` sits beside `skyMood` and takes the theme's **`light.groundAlb`** — the
+albedo the lightmap bake already integrates for the sun bounce — so the plane the player walks past and
+the bounce the bake assumed are the same surface. `wallColor` is that albedo at 55% in linear space: the
+same world one value down rather than a different one. `floorColor` therefore equals `skyGround`, which
+also removes the horizon seam between the dome's ground band and the real ground.
+
+Each theme now names `zen` / `hor` / `gnd` **once**. They were written out twice per theme before (in the
+`light` block and again inside the `skyMood(...)` call) and this build would have made it three times —
+which is exactly how a mood ends up baking against one ground and showing the player another.
+`test-1143` counts the literals to keep it that way.
+
+## `envMapIntensity` is the ambient, not a reflection knob (build 1144)
+
+In r149 `getIBLIrradiance` returns `PI * envMapColor.rgb * envMapIntensity` — the **diffuse** ambient. This
+engine wrote `envMapIntensity = metalness` in three places ("reflections track the metal slider"), which
+is the r13x mental model where envMap was a reflection map you turned up for chrome. In a PBR pipeline the
+environment IS the ambient light, so `= metalness` meant **a matte surface received no sky light at all**.
+Build 1095 added a default environment so "metals don't render black"; that line then withheld it from
+every dielectric.
+
+Removing the gating entirely, measured on the stock level: floor plane 54,79,88 → 85,116,136, crate face
+116,133,137 → 143,160,168, warm deck 74,71,54 → 99,100,89, **sky byte-identical**. So the *amount* was
+accidentally in the right range and the fault was the coupling. Hence `SKY_ENV_FLOOR = 0.12` and
+`_envInten(metal, bright)` — metals keep exactly what they were tuned with, nothing is ever unlit, and the
+stock frame is preserved (a crate at metalness 0.35 is byte-identical; the floor moves one code value).
+`primitiveMat` had never set the property at all, so a fresh box took three's default 1.0 while any prop
+whose shine had been touched got 0.35 — the same object lit two ways depending on whether a slider had
+been dragged. Both sites now share the one derivation.
+
+**Be honest about the size of this one:** it is a contained correctness fix, not a visual overhaul. The
+0.12 floor only bites at metalness ≈ 0, and at desert noon (sun elevation 72°, N·L ≈ 0.95) the sun swamps
+it — the desert plane measures byte-identical before and after, with `env=SET` and `floorEnvI=0.12`
+confirmed by probe, so that is the sun dominating, not a missing environment.
+
+Three numbers worth keeping from the investigation, each isolated by capture:
+- The engine's ambient is **~80% probe, ~20% hemisphere light**. Zeroing `skyLight` entirely took a
+  shadowed floor from 0.105 to 0.0846 linear. `applySky` sets the hemisphere light's two colours from the
+  hemispherical average of the *same* `skyRadiance` model the probe renders, so they are two integrations
+  of one sky — a genuine double count, just a small one.
+- Sun-to-shade on the stock level is **3.3:1 linear** as shipped, which is the low end of real daylight.
+  Ungating the environment to 1.0 takes it to 1.58:1, which reads flat.
+- For a strictly physical balance the sun is roughly **4× too weak** relative to the sky (real daylight is
+  ~8:1 on a horizontal surface). Fixing that is a whole-engine rebalance with a legacy-content story like
+  `colorV`'s, not a one-line change — do not start it without that plan.
+
+## Object-space detail for UV-less models (build 1145)
+
+Build 1139's detail set needs texture coordinates. **The shipped weapon has none** — read out of gun.glb,
+every primitive carries only `NORMAL` and `POSITION`, and its four materials all sit at the identical
+roughness 0.415087 / metalness 0.4 with no maps of any kind. That is the whole of the critic's "not one
+specular pixel" on the object filling 11% of every frame, and no texture can fix it: with no UVs there is
+nowhere to put one. The low-poly sources this engine points creators at ship UV-less meshes constantly.
+
+So `applyObjDetail` patches three's own `MeshStandardMaterial` through `onBeforeCompile` — the technique
+`floorMat` already uses for the paint splat, and deliberately **not** a raw `ShaderMaterial` (this file has
+twice lost a subsystem to a raw shader failing to compile silently; a patched built-in keeps three's
+lighting, shadows, fog and tone mapping intact). Four things in it are load-bearing:
+
+- **Object space, not world space.** A viewmodel bobs and a prop can be carried; world-space noise makes
+  the grain SWIM across the surface as the object moves. `vOdPos = position`.
+- **Frequency is CYCLES ACROSS THE MESH, never per unit.** A GLB arrives in whatever units its author
+  used — gun.glb, the museum and a Poly Pizza crate differ by orders of magnitude — so a per-unit figure is
+  invisible on one asset and aliased to noise on the next. `_objDetailFreq` normalises by each mesh's own
+  local bounding box.
+- **The roughness patch runs BEFORE the normal patch**, because three emits `roughnessmap_fragment` before
+  `normal_fragment_maps`, so the field is evaluated once into shader globals and the normal patch
+  differences against it — four noise evaluations per pixel instead of five. `test-1145` verifies that
+  ordering **against the real three build** (`ShaderLib.physical.fragmentShader`), because if an upgrade
+  reorders them `_odBase` is read before it is written and the perturbation silently becomes garbage.
+- **`customProgramCacheKey` is a constant.** Every patched material produces the same program; without it
+  three compiles a variant per material.
+
+An authored map of any kind (`map` / `normalMap` / `roughnessMap` / `metalnessMap`) or the presence of UVs
+disqualifies a material — a creator's asset always wins, and two detail systems on one surface is double
+grain. The gradient is projected onto the tangent plane so the perturbation cannot rotate a normal off its
+own surface, and roughness is a bounded *multiplier* of the authored value.
+
+Measured on the weapon's receiver panel: 4,782 → 5,378 unique colours, mean held at 92,102,108 → 92,102,109,
+world away from the weapon unchanged at 132,141,147. Expect a few percent of run-to-run spread in any
+unique-colour measurement — `postGrain` is stochastic per frame.
+
+## The gizmo snaps (build 1146)
+
+The transform gizmo moved, rotated and scaled in raw continuous mouse units. Nothing in the product could
+put two crates on one lattice, sit a wall flush against another, or turn a prop exactly 90 degrees — except
+the numeric fields, at five decimal places, one axis at a time. Build 929's `buildSnap` is a *different*
+feature and is untouched: that snaps the PLACEMENT of a new block against the face you aim at; this snaps
+the TRANSFORM of something already in the scene.
+
+Four decisions, each of which could reasonably have gone the other way:
+- **A single object snaps its resulting POSITION** to the world lattice, so two crates placed in separate
+  drags land on the same grid. `_snapAlong` snaps only the component along the drag axis — snapping the
+  whole vector would drag the two axes the creator is *not* touching onto the grid, so an object
+  deliberately placed off-lattice would jump the moment any axis was nudged.
+- **A group snaps the DISTANCE MOVED.** Snapping each member absolutely pulls a deliberate arrangement
+  apart — two crates 1.2 apart become 1.0 or 1.5 apart. The delta keeps the cluster rigid.
+- **Scale snaps the SIZE, not the factor.** A box primitive's scale *is* its size in metres, so what a
+  creator wants is a wall exactly 3.0 wide; the factor is derived back out of the snapped size, which keeps
+  proportional scaling proportional while landing the dragged axis on a round number. The all-axes handle
+  and a group scale have no single size to land, so there the factor is what snaps.
+- **Rotate snaps the ANGLE TURNED**, before the quaternion is built. Decomposing an orientation back out of
+  a quaternion is ambiguous, and "a quarter turn from here" is what the handle is for. 15° divides 90 and 360.
+
+`Ctrl`/`Cmd` **inverts** rather than enables: with snapping on (the default) the modifier is how you nudge
+into a gap, and with it off the modifier is how you grab the lattice for one drag. Both are what a creator
+reaches for and one key serves both — but an invisible inverting modifier is a trap, so the checkbox says
+so. `Shift` is deliberately not the key: it is already multi-select here. A step of 0 turns snapping off for
+that channel only, which the field's tooltip states.
+
+## Open work (as of build 1146)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

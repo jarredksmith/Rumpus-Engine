@@ -16,13 +16,14 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- 1. the rifle is not a tool
 {
-  const fn = extractFunction('renderViewmodel');
-  assert(/if\(typeof editorOpen!=='undefined' && editorOpen\) return;/.test(fn),
+  // build 1140 moved these early-outs into _vmWanted(), which both the frame loop and the post chain ask.
+  const fn = extractFunction('_vmWanted');
+  assert(/if\(typeof editorOpen!=='undefined' && editorOpen\) return false;/.test(fn),
     'the viewmodel is skipped while the editor is open');
   // gun.visible must NOT be what does it — that flag is gameplay state and the editor's own gun/aim
   // tabs set it deliberately
-  assert(/!gun\.visible\) return;/.test(fn), 'the existing gun.visible early-out is untouched');
-  const at = fn.indexOf('editorOpen) return;'), vis = fn.indexOf('!gun.visible) return;');
+  assert(/!gun\.visible\) return false;/.test(fn), 'the existing gun.visible early-out is untouched');
+  const at = fn.indexOf('editorOpen) return false;'), vis = fn.indexOf('!gun.visible) return false;');
   assert(vis >= 0 && at > vis, 'the editor check is an additional early-out, not a replacement');
 }
 

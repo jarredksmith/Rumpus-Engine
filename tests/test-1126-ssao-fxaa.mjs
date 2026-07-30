@@ -128,7 +128,8 @@ assert(/_aoGeoRT,_aoRT,_aoRT2/.test(extractFunction('disposePost')), 'a resize d
   assert(/let _hiFxOn=true, _hiFxFails=0;/.test(src), 'the top rung is named for what it now carries: MSAA and SSAO together');
   assert(!/_msaaOn/.test(src), 'the old MSAA-only name is gone');
   const fn = extractFunction('_adaptResTick');
-  assert(/if\(avg > 20 && _prStepI===0 && _hiFxOn\)\{/.test(fn), 'it is still shed BEFORE any resolution drop');
+  // build 1141 added the majority-slow term beside the mean; the ORDER is what this asserts
+  assert(/if\(avg > 20 && slowFrac >= 0\.5 && _prStepI===0 && _hiFxOn\)\{/.test(fn), 'it is still shed BEFORE any resolution drop');
   assert(/_hiFxFails\+\+/.test(fn) && /_hiFxFails < 3/.test(fn),
     '...and still locked off after three failed re-arms, which is the build-883 anti-thrash rule');
   assert(/else _hiFxOn=true;/.test(fn), '...and re-armed last on the way back up');

@@ -6828,7 +6828,7 @@ function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); }
 _applyPixelRatio();
 // Rolling frame-time monitor (always on, ~free). Targets ~50fps; if we miss it for a stretch, drop a
 // step; if we beat ~58fps comfortably for longer, climb back. Asymmetric: quick to relieve, slow to push.
-let _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0;
+let _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0, _adaptSlow=0;   // build 1141: _adaptSlow counts the frames that were actually slow
 // build 880: upshift backoff. The scaler used to climb back after 3 good seconds into the EXACT state
 // that just failed, producing a 60↔20fps ping-pong ("jittery even on a clear level"). A downshift that
 // lands within 6s of an upshift marks the climb as failed and doubles the required good streak
@@ -6844,21 +6844,43 @@ let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
 // reads — so antialiasing moved to an FXAA pass and this rung now sheds SSAO instead. Same ladder,
 // same "shed before any resolution drop, re-arm last, three strikes and it stays off" behaviour.
 let _hiFxOn=true, _hiFxFails=0;
+// build 1141: no single frame may contribute more than this to the window's mean. 250 ms is well past
+// any frame time worth reacting to, so a sustained 400 ms load still reads as slow while one 3-second
+// hitch reads as one slow frame instead of forty.
+const ADAPT_FRAME_CAP = 250;
+// ...and a window needs this much observed frame time before it is allowed to decide anything. A COUNT of
+// frames cannot serve: eight frames per 500 ms window is 16 fps, and requiring it silenced the scaler on
+// everything slower. Two 200 ms frames is 400 ms of evidence and is conclusive.
+const ADAPT_MIN_SAMPLE_MS = 250;
 const ADAPT_ENABLED_DEFAULT = true;   // build 810: on by default everywhere (was touch-only) — desktop laptops need the relief too; opt out via the setting
 let _adaptOn = ADAPT_ENABLED_DEFAULT;
 try{ const v=localStorage.getItem('breach_adaptres'); if(v==='on') _adaptOn=true; else if(v==='off') _adaptOn=false; }catch(e){}
 function _adaptResTick(frameMs, now){
   if(!_adaptOn) return;
-  _adaptAcc += frameMs; _adaptN++;
+  // build 1141: a single frame's contribution is CAPPED. One 3-second hitch — a level load, a GC pause,
+  // a shader compile — used to dominate the mean and cost the player a rung of quality for something
+  // that was never a sustained load. The cap keeps a pathological frame from outweighing the window, and
+  // _adaptSlow makes the downshift test a MAJORITY question rather than an average one.
+  _adaptAcc += Math.min(frameMs, ADAPT_FRAME_CAP); _adaptN++; if(frameMs > 20) _adaptSlow++;
   if(now < _adaptNext) return;
   _adaptNext = now + 500;                 // evaluate twice a second
-  if(_adaptN < 8){ _adaptAcc=0; _adaptN=0; return; }   // need a real sample
-  const avg = _adaptAcc/_adaptN; _adaptAcc=0; _adaptN=0;
+  // build 1141: "a real sample" is a quantity of TIME, not a count of frames. This was `if(_adaptN < 8)
+  // { _adaptAcc=0; _adaptN=0; return; }` — eight frames inside a 500 ms window, i.e. 16 fps — so on any
+  // machine slower than that it discarded its evidence and returned EVERY window and the scaler never
+  // acted at all. The worse the device, the more certainly the relief never arrived, which is the exact
+  // inverse of what this system is for. Measured by driving this function with steady synthetic frames:
+  // 22-70 ms/frame reached the bottom rung within a minute; 100, 150, 200 and 400 ms never moved.
+  // Two frames of 200 ms is 400 ms of evidence and is plenty; two frames is the floor, because ONE long
+  // frame is a hitch (a level load, a GC pause) and must not cost the player any quality. And the
+  // deficient case no longer THROWS the samples away — it keeps them and re-checks next window, so even
+  // a machine rendering slower than one frame per window eventually has two.
+  if(_adaptN < 8 && !(_adaptN >= 2 && _adaptAcc >= ADAPT_MIN_SAMPLE_MS)) return;
+  const avg = _adaptAcc/_adaptN, slowFrac = _adaptSlow/_adaptN; _adaptAcc=0; _adaptN=0; _adaptSlow=0;
   if(now < _adaptCool) return;            // settling after a change
-  if(avg > 20 && _prStepI===0 && _hiFxOn){             // build 883: first relief is the cheap one — drop the top FX rung, keep full resolution
+  if(avg > 20 && slowFrac >= 0.5 && _prStepI===0 && _hiFxOn){             // build 883: first relief is the cheap one — drop the top FX rung, keep full resolution
     if(_adaptUpAt>0 && now - _adaptUpAt < 6000){ _adaptUpNeed = Math.min(48, _adaptUpNeed*2); _hiFxFails++; }   // a re-arm that failed this fast counts a strike
     _hiFxOn=false; _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;   // no _applyPixelRatio: the post pipeline swaps targets on its own
-  } else if(avg > 20 && _prStepI < _PR_STEPS.length-1){   // still slow -> now trade resolution
+  } else if(avg > 20 && slowFrac >= 0.5 && _prStepI < _PR_STEPS.length-1){   // still slow -> now trade resolution
     if(_adaptUpAt>0 && now - _adaptUpAt < 6000) _adaptUpNeed = Math.min(48, _adaptUpNeed*2);   // build 880: that climb failed — retry later, not sooner (guard: a session's FIRST downshift is not a failed climb)
     _prStepI++; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;
   } else if(avg < 17 && (_prStepI > 0 || (!_hiFxOn && _hiFxFails < 3))){   // headroom -> climb; the FX rung is the final one, and 3 failed re-arms lock it off for the session
@@ -6890,6 +6912,27 @@ renderer.toneMappingExposure = 1.25;
 // false makes every .setHex/.set convert sRGB -> linear on the way in, so all shading math finally
 // happens in linear space and the encode happens once, at the end.
 const LEGACY_EXPOSURE = 0.78;   // build 1115: see applyWorldCfg — compat for levels authored pre-encode
+// build 1144: the FLOOR under a material's share of the environment. In r149 `envMapIntensity` scales the
+// whole image-based lighting term, and `getIBLIrradiance` returns `PI * envMapColor.rgb * envMapIntensity`
+// — that is the DIFFUSE ambient, not just a reflection. So `envMapIntensity = metalness`, which is what
+// this engine wrote everywhere, meant a matte surface (metalness 0) received NO SKY LIGHT AT ALL. It is
+// the r13x mental model, where envMap was a reflection map you turned up for chrome, applied to a PBR
+// pipeline where the environment IS the ambient light — and it withheld it from exactly the dielectrics
+// that have nothing else. Build 1095 added a default environment so "metals don't render black and
+// roughness has something to respond to"; this line then threw it away for everything that was not metal.
+//
+// Measured on the stock level, floorMetal 0.1 -> ungated: the floor plane 54,79,88 -> 85,116,136 and a
+// crate face 116,133,137 -> 143,160,168, with the sky byte-identical. So the AMOUNT was accidentally in
+// the right range (0.1 for the floor, 0.35 for props) — the fault was that it was a per-material
+// coupling, and at metalness 0 it was zero. Hence a floor, not a rewrite: metals keep exactly the
+// reflection strength they were tuned with, and nothing is ever unlit by the sky.
+//
+// 0.12 is derived, not chosen. Isolating the two ambient terms by capture: the probe delivers 0.0846
+// linear to a shadowed floor and the hemisphere light only 0.0204, while the sun delivers 0.061. A
+// sun-to-shade ratio of 3:1 — the low end of real daylight — needs total ambient at 0.0305, which is
+// the hemisphere plus 0.12 of the probe. At a full 1.0 the ratio is 1.58:1, which reads flat.
+const SKY_ENV_FLOOR = 0.12;
+const _envInten = (metal, bright) => Math.max(SKY_ENV_FLOOR, +metal || 0) * ((bright == null) ? 1 : bright);
 THREE.ColorManagement.legacyMode = false;
 renderer.outputEncoding = THREE.sRGBEncoding;
 // build 1095: anisotropic filtering — ground textures at grazing angles stop dissolving into mush.
@@ -7024,11 +7067,18 @@ function _runDofTo(scn, cam, out){
   renderer.setRenderTarget(out); renderer.render(_dofScene, _dofCam);
   return true;
 }
+// build 1140: has this frame's viewmodel already been drawn? The post chain draws it inside itself (so it
+// is graded with the rest of the frame) and the frame loop's trailing renderViewmodel() then stands down.
+// Declared HERE, above its first reader, rather than beside the viewmodel code 9,000 lines below — this
+// file has taken the whole sky out twice by declaring a `let` under the function that reads it.
+let _vmDone = false;
 function renderScene(scn, cam){
   const _r=perfOn?_pnow():0;
+  _vmDone = false;   // a new frame's worth of scene: whoever gets there first draws the weapon
   if(_postOn && !_postFail && typeof ensurePost==='function' && ensurePost()){
     try{ _renderPostFX(scn, cam); if(perfOn)_prof.render+=_pnow()-_r; return; }   // build 1122: counters are read once, at the end of the frame
-    catch(e){ _postFail=true; try{ renderer.setRenderTarget(null); }catch(_e){} if(typeof console!=='undefined') console.warn('Post-FX disabled after an error:', e&&e.message); }
+    catch(e){ _postFail=true; _vmDone=false;   // build 1140: the weapon may have gone into the buffer we just threw away — let the plain path draw it
+      try{ renderer.setRenderTarget(null); }catch(_e){} if(typeof console!=='undefined') console.warn('Post-FX disabled after an error:', e&&e.message); }
   }
   if(!dofEnabled || !ensureDof()){ renderer.render(scn, cam); }
   else { _runDofTo(scn, cam, null); }
@@ -7363,6 +7413,14 @@ function _renderPostFX(scn, cam){
   // 1) scene -> full-res color (run DoF first when active, so bloom/grade operate on the focus-blurred image)
   if(dofEnabled && ensureDof()){ _runDofTo(scn, cam, _postRT); }
   else { renderer.setRenderTarget(_postRT); renderer.render(scn, cam); }
+  // 1a) build 1140: the weapon joins the frame. It used to be drawn to the CANVAS after renderScene had
+  // finished, i.e. after bloom, the colour grade, the vignette, the grain and the motion blur — so the
+  // one object on screen at all times, across 11% of it, was the only object outside the frame's look.
+  // No bloom on its muzzle flash or its metal highlights, no vignette, no grain, its own colour
+  // response. Drawn here it is inside all of it. DoF ran above and deliberately does NOT reach it: a
+  // first-person weapon stays sharp.
+  const _vmHere = _vmWanted();
+  if(_vmHere){ renderer.setRenderTarget(_postRT); _drawViewmodel(); }
   // 1b) build 1126: screen-space ambient occlusion — G-buffer prepass, AO, bilateral blur, all at
   // half resolution. Perspective only: the AO shader rebuilds view rays from a tangent-of-fov
   // scale, which an orthographic camera does not have, so the editor's ortho views go without.
@@ -7382,6 +7440,18 @@ function _renderPostFX(scn, cam){
     scn.overrideMaterial=_matAOGeo;
     renderer.setRenderTarget(_aoGeoRT); renderer.render(scn, cam);
     scn.overrideMaterial=_pv;
+    // build 1140: the weapon goes in the G-buffer too. Without this the AO term at the weapon's pixels
+    // is computed from the WORLD BEHIND IT and then multiplied into it — the gun picked up the shading
+    // of whatever it happened to be standing in front of, and had no occlusion of its own anywhere.
+    // vmCam shares the main camera's fov and aspect and sits at its own origin looking down -z, so the
+    // view distance it writes into alpha is directly comparable with the scene's.
+    if(_vmHere){
+      const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matAOGeo;
+      const _vac=renderer.autoClear; renderer.autoClear=false;
+      renderer.clearDepth();          // same rule as the colour pass: the weapon is always in front
+      renderer.render(vmScene, vmCam);
+      renderer.autoClear=_vac; vmScene.overrideMaterial=_vpv;
+    }
     if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
     renderer.shadowMap.autoUpdate=_sa;
     const au=_matAO.uniforms;
@@ -7686,8 +7756,280 @@ let ARENA = 70;
 // pure black because 0x141c22 is 0.007 linear, and ACES clamps anything under 0.00325 to zero.
 // Offsetting depth (not position) leaves collision, the nav grid, surfaceTopAt and spawn heights
 // untouched — moving the plane would change all of them.
+// ---------- build 1139: procedural surface detail for the engine's OWN surfaces ----------
+// A critic's measurement: a generated arena's ground patch holds 1,745 unique colours over 10,800
+// pixels; the default level's floor holds THREE over 18,900. Every primitive and both boundary
+// surfaces were flat albedo — one colour, one roughness, no relief — which is the difference between
+// "a render" and "a photograph of something" no matter how good the lighting on top of it is.
+//
+// This is one 256x256 height field, generated once, turned into a NORMAL map by Sobel (which is what
+// catches the sun and gives the surface relief) and a ROUGHNESS map so highlights break up instead of
+// sweeping evenly. Deliberately NO albedo map — see below, it is the one of the three that cannot be
+// exposure-neutral. No external asset, no download, ~170 KB of VRAM for the whole engine, and it is
+// shared by every material that opts in.
+let _surfTex = null;
+function _procSurface(){
+  if(_surfTex !== null) return _surfTex;
+  try{
+    const N = 256;
+    // a deterministic value-noise field: three octaves of smoothed lattice noise. Deterministic matters
+    // — a level that looks different on every load cannot be screenshotted or shared (build 1133).
+    let seed = 0x9e3779b9;
+    const rnd = ()=>{ seed ^= seed<<13; seed ^= seed>>>17; seed ^= seed<<5; return ((seed>>>0)/4294967296); };
+    const H = new Float32Array(N*N);
+    for(const [cells, amp] of [[8, 0.55], [24, 0.3], [64, 0.15]]){
+      const g = new Float32Array(cells*cells);
+      for(let i=0;i<g.length;i++) g[i] = rnd();
+      const sm = (t)=> t*t*(3-2*t);                                  // smoothstep, so cells do not show
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+        const fx = x/N*cells, fy = y/N*cells;
+        const x0 = Math.floor(fx)%cells, y0 = Math.floor(fy)%cells;
+        const x1 = (x0+1)%cells, y1 = (y0+1)%cells;                  // wrap: the texture must tile
+        const tx = sm(fx-Math.floor(fx)), ty = sm(fy-Math.floor(fy));
+        const a = g[y0*cells+x0]*(1-tx) + g[y0*cells+x1]*tx;
+        const b = g[y1*cells+x0]*(1-tx) + g[y1*cells+x1]*tx;
+        H[y*N+x] += (a*(1-ty) + b*ty) * amp;
+      }
+    }
+    // There is NO albedo map here, and that is a measured decision, not an omission. A `map` multiplies
+    // the material colour, so it can only ever darken: a near-white 226..255 field averages 0.87 in
+    // LINEAR space, and captured before/after it took the whole frame down ~19% (a deck 91,105,90 ->
+    // 74,91,68). Making it exposure-neutral would need values above 255. Since this feature retrofits
+    // detail onto colours creators already chose, darkening every existing level is not a trade to make
+    // — and per this file's own note, noise in albedo does not respond to the light moving anyway.
+    // Relief and roughness do, they are what read as MATERIAL, and neither shifts exposure.
+    //
+    // normals, by Sobel on the same field. This is the term that reads as SURFACE.
+    const nc = document.createElement('canvas'); nc.width = nc.height = N;
+    const nctx = nc.getContext('2d'), nimg = nctx.createImageData(N, N);
+    const at = (x,y)=> H[((y+N)%N)*N + ((x+N)%N)];
+    // Relief strength is baked into the MAP, not applied as material.normalScale: floorMat and wallMat
+    // are shared, and a creator who loads their own normal map would inherit whatever scale we left on
+    // the material. Bake it and the default (1,1) is correct for both cases.
+    //
+    // This number was 1.8 and then 2.6, and both were badly wrong — measured off a capture, the crates
+    // read as crumpled foil and the floor as choppy water. The Sobel sums eight taps of a field whose
+    // amplitude is 1, so on the coarse octave dx reaches ~0.5; at 1.8 that tilts the normal past 30
+    // degrees, which is a bump-mapping demo, not a surface. MICRO-relief is a handful of degrees:
+    // 0.3 puts the steepest slope near 8. It also kills the grazing-angle moire the strong version
+    // showed across the mid-ground floor, which no amount of anisotropy was going to fix.
+    const STR = 0.3;                                                  // relief strength, in height units
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+      const dx = (at(x+1,y-1)+2*at(x+1,y)+at(x+1,y+1)) - (at(x-1,y-1)+2*at(x-1,y)+at(x-1,y+1));
+      const dy = (at(x-1,y+1)+2*at(x,y+1)+at(x+1,y+1)) - (at(x-1,y-1)+2*at(x,y-1)+at(x+1,y-1));
+      let nx = -dx*STR, ny = -dy*STR, nz = 1;
+      const l = Math.hypot(nx,ny,nz); nx/=l; ny/=l; nz/=l;
+      const i = (y*N+x)*4;
+      nimg.data[i] = Math.round((nx*0.5+0.5)*255);
+      nimg.data[i+1] = Math.round((ny*0.5+0.5)*255);
+      nimg.data[i+2] = Math.round((nz*0.5+0.5)*255);
+      nimg.data[i+3] = 255;
+    }
+    nctx.putImageData(nimg, 0, 0);
+    const normalMap = new THREE.CanvasTexture(nc);
+    // roughness: the same field. A single roughness value makes every highlight sweep the surface as
+    // one shape, which is the other half of the plastic look.
+    const rc = document.createElement('canvas'); rc.width = rc.height = N;
+    const rctx = rc.getContext('2d'), rimg = rctx.createImageData(N, N);
+    for(let i=0;i<N*N;i++){
+      // A NARROW range on purpose: this multiplies the authored roughness, and the first cut's
+      // 0.59..0.96 swing turned a matte concrete deck semi-glossy in patches.
+      const v = 212 + Math.round((1-H[i])*43);   // x0.83 .. x1.00
+      rimg.data[i*4] = rimg.data[i*4+1] = rimg.data[i*4+2] = v; rimg.data[i*4+3] = 255;
+    }
+    rctx.putImageData(rimg, 0, 0);
+    const roughnessMap = new THREE.CanvasTexture(rc);
+    for(const t of [normalMap, roughnessMap]){
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      if(typeof MAX_ANISO !== 'undefined') t.anisotropy = MAX_ANISO;
+    }
+    _surfTex = { normalMap, roughnessMap };
+  }catch(e){ _surfTex = false; }   // no canvas (headless oddity) -> flat surfaces, never a broken boot
+  return _surfTex;
+}
+// Give a material the detail set at a chosen tiling. Repeat is per-material, not per-texture, so one
+// texture set serves the floor at 64 tiles and a crate at 1 without a second upload... except three
+// reads repeat from the TEXTURE, so a distinct tiling needs its own clone. Cheap: clones share the image.
+const PROC_SLOTS = ['normalMap', 'roughnessMap'];
+const _surfClones = {};
+function _procSet(repeat){
+  const S = _procSurface(); if(!S) return null;
+  const key = String(repeat);
+  let set = _surfClones[key];
+  if(!set){
+    set = {};
+    for(const k of PROC_SLOTS){
+      const t = S[k].clone(); t.needsUpdate = true;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat);
+      if(typeof MAX_ANISO !== 'undefined') t.anisotropy = MAX_ANISO;
+      set[k] = t;
+    }
+    _surfClones[key] = set;
+  }
+  return set;
+}
+// The grain has to be the same PHYSICAL size on every surface, and UV tiling is not: the box primitive
+// is a unit cube, so one repeat value gives an 11 m blotch on a 22 m deck and a 50 cm one on a 1 m
+// crate. Every caller therefore passes the surface's world SPAN and the tiling is derived from it,
+// quantised to a short ladder so the clone cache stays a handful of entries rather than one per prop.
+const PROC_TILE_M = 2.2;                                  // metres per tile of grain
+const _PROC_STEPS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128];
+function _procRepeatFor(span){
+  const want = Math.max(1, (+span || 1) / PROC_TILE_M);
+  let rep = _PROC_STEPS[0];
+  for(const v of _PROC_STEPS) if(Math.abs(v - want) < Math.abs(rep - want)) rep = v;
+  return rep;
+}
+function applyProcSurface(mat, span){
+  const set = _procSet(_procRepeatFor(span)); if(!set || !mat) return mat;
+  for(const k of PROC_SLOTS) if(!mat[k]) mat[k] = set[k];   // never displace a texture a creator set
+  mat.userData.procSurf = set;   // remembered, because assigning it once is not enough — see below
+  mat.needsUpdate = true;
+  return mat;
+}
+// Re-tile a material (or a whole prop) that has been resized. Only slots still holding OUR texture are
+// swapped, so a creator's own map, normal or roughness is never touched.
+function retileProcSurface(root, span){
+  const set = _procSet(_procRepeatFor(span)); if(!set || !root) return;
+  const one = (m)=>{ if(!m || !m.userData) return; const cur = m.userData.procSurf; if(!cur || cur === set) return;
+    let hit = false;
+    for(const k of PROC_SLOTS) if(m[k] === cur[k]){ m[k] = set[k]; hit = true; }
+    m.userData.procSurf = set; if(hit) m.needsUpdate = true; };
+  if(root.isMaterial) one(root);
+  else if(root.traverse) root.traverse(o=>{ if(!o.isMesh || !o.material) return;
+    const ms = Array.isArray(o.material) ? o.material : [o.material]; for(const m of ms) one(m); });
+}
+// The world span a prop's grain should be measured against: its largest scaled dimension. A 22x1.2x9
+// deck and a 22x4.5x3 corner wall then carry the same grain, which is what makes them read as the same
+// material rather than as two differently-zoomed photographs of it.
+function _propProcSpan(obj){ const s = obj && obj.scale; return s ? Math.max(Math.abs(s.x), Math.abs(s.y), Math.abs(s.z)) : 1; }
+
+// ---------- build 1145: surface detail for models with NO UVs ----------
+// The detail set above needs texture coordinates. The engine's own weapon has NONE — read straight out of
+// gun.glb, every primitive carries only NORMAL and POSITION, and its four materials all sit at the
+// identical roughness 0.415 / metalness 0.400 with no maps of any kind. That is the whole of a critic's
+// "not one specular pixel and not one AO crease" on the object that occupies 11% of every gameplay frame,
+// and it is not a fixable-by-texture problem: with no UVs there is nowhere to put one. The low-poly
+// sources this engine points creators at (Poly Pizza, Sketchfab) ship UV-less meshes constantly, so this
+// is the general case, not one asset.
+//
+// So the detail goes in OBJECT space, in the shader, via onBeforeCompile on three's own
+// MeshStandardMaterial — the same technique floorMat already uses for the paint splat, and deliberately
+// NOT a raw ShaderMaterial (this file has twice lost a whole subsystem to a raw shader failing to compile
+// silently; a patched built-in keeps three's lighting, shadows, fog and tone mapping intact).
+//
+// Object space, not world space: a viewmodel bobs with the walk cycle and a prop can be carried, and
+// world-space noise would make the grain SWIM across the surface as the object moves. Object space sticks.
+// The frequency is expressed as CYCLES ACROSS THE OBJECT, never as cycles per unit: a GLB arrives in
+// whatever units its author used — gun.glb, the museum, a Poly Pizza crate all differ by orders of
+// magnitude — so a per-unit figure would be invisible on one asset and aliased to noise on the next. Each
+// mesh's own local bounding box normalises it, which also means every imported model gets the same
+// apparent grain density however it was exported.
+const OBJ_DETAIL_CYCLES = 34.0;  // noise cycles across a mesh's longest local axis
+const OBJ_DETAIL_ROUGH = 0.30;   // +/- fraction it swings the authored roughness
+const OBJ_DETAIL_BUMP = 0.35;    // normal perturbation, in gradient units
+// One value-noise field, hashed rather than sampled: no texture, no UVs, no upload.
+const _OBJ_NOISE_GLSL = [
+  'float _odHash(vec3 p){ p = fract(p*0.3183099 + vec3(0.71,0.113,0.419)); p *= 17.0;',
+  '  return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }',
+  'float _odNoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);',
+  '  return mix(mix(mix(_odHash(i+vec3(0,0,0)),_odHash(i+vec3(1,0,0)),f.x),',
+  '                 mix(_odHash(i+vec3(0,1,0)),_odHash(i+vec3(1,1,0)),f.x),f.y),',
+  '             mix(mix(_odHash(i+vec3(0,0,1)),_odHash(i+vec3(1,0,1)),f.x),',
+  '                 mix(_odHash(i+vec3(0,1,1)),_odHash(i+vec3(1,1,1)),f.x),f.y),f.z); }',
+  // two octaves: a broad panel-to-panel variation plus a fine machined grain
+  'float _odField(vec3 p){ return _odNoise(p)*0.65 + _odNoise(p*3.1)*0.35; }',
+].join('\n');
+// Does this geometry have anywhere to put a texture?
+function objDetailWanted(geo, mat){
+  if(!geo || !mat || !mat.isMeshStandardMaterial) return false;          // Basic/Phong have no roughness
+  if(geo.attributes && geo.attributes.uv) return false;                  // it has UVs: the texture path serves it
+  if(mat.map || mat.normalMap || mat.roughnessMap || mat.metalnessMap) return false;   // authored maps win, always
+  return true;
+}
+function applyObjDetail(mat, freq){
+  if(!mat || mat.userData._objDetail) return mat;
+  mat.userData._objDetail = true;
+  const f = (freq > 0) ? freq : OBJ_DETAIL_CYCLES;
+  mat.onBeforeCompile = (shader)=>{
+    shader.uniforms.uOdFreq = { value: f };
+    shader.uniforms.uOdRough = { value: OBJ_DETAIL_ROUGH };
+    shader.uniforms.uOdBump = { value: OBJ_DETAIL_BUMP };
+    shader.vertexShader = 'varying vec3 vOdPos;\n' + shader.vertexShader
+      .replace('#include <begin_vertex>', 'vOdPos = position;\n#include <begin_vertex>');
+    // _odP and _odBase are shader-globals on purpose: three's meshphysical fragment shader runs
+    // roughnessmap_fragment BEFORE normal_fragment_maps, so the field is evaluated once in the first
+    // patch and reused by the second — four noise evaluations per pixel instead of five.
+    shader.fragmentShader = 'varying vec3 vOdPos;\nuniform float uOdFreq; uniform float uOdRough; uniform float uOdBump;\n'
+      + _OBJ_NOISE_GLSL + '\nvec3 _odP; float _odBase;\n' + shader.fragmentShader
+      // Roughness first: this is the term that breaks a swept highlight into a surface. roughnessFactor
+      // is declared by the chunk, so the patch has to come AFTER it.
+      .replace('#include <roughnessmap_fragment>', [
+        '#include <roughnessmap_fragment>',
+        '_odP = vOdPos * uOdFreq;',
+        '_odBase = _odField(_odP);',
+        'roughnessFactor = clamp(roughnessFactor * mix(1.0 - uOdRough, 1.0 + uOdRough, _odBase), 0.03, 1.0);',
+      ].join('\n'))
+      // Then the normal. A low-poly facet is ONE flat shading value across its whole area, which is the
+      // single loudest "this is an untextured model" tell; a few degrees of micro-relief is what breaks
+      // it. The gradient is projected onto the tangent plane so the perturbation cannot tilt the normal
+      // away from the surface it belongs to.
+      .replace('#include <normal_fragment_maps>', [
+        '#include <normal_fragment_maps>',
+        '{ float _odE = 0.6;',
+        '  vec3 _odG = vec3(_odField(_odP + vec3(_odE,0.0,0.0)) - _odBase,',
+        '                   _odField(_odP + vec3(0.0,_odE,0.0)) - _odBase,',
+        '                   _odField(_odP + vec3(0.0,0.0,_odE)) - _odBase);',
+        '  _odG -= normal * dot(_odG, normal);',
+        '  normal = normalize(normal + _odG * uOdBump);',
+        '}',
+      ].join('\n'));
+  };
+  // Every patched material produces the SAME program, so they can all share one — but three keys its
+  // program cache on the material's own signature and would otherwise compile a variant per material.
+  mat.customProgramCacheKey = ()=> 'objDetail';
+  mat.needsUpdate = true;
+  return mat;
+}
+// The frequency a mesh should use: `cycles` noise periods across its longest LOCAL axis. Returns 0 for a
+// degenerate or unmeasurable mesh, which applyObjDetail reads as "use the default".
+function _objDetailFreq(geo, cycles){
+  if(!geo) return 0;
+  if(!geo.boundingBox) { try{ geo.computeBoundingBox(); }catch(e){ return 0; } }
+  const b = geo.boundingBox; if(!b) return 0;
+  const span = Math.max(b.max.x-b.min.x, b.max.y-b.min.y, b.max.z-b.min.z);
+  if(!(span > 1e-6) || !isFinite(span)) return 0;
+  return (cycles > 0 ? cycles : OBJ_DETAIL_CYCLES) / span;
+}
+// Walk a loaded model and give every UV-less standard material the object-space detail, at a frequency
+// derived from each mesh's own extent. `cycles` overrides the density for a caller that wants coarser or
+// finer grain than the default. Returns how many materials were patched, so a caller can log or test it.
+//
+// NOTE the shared-material hazard: two meshes of very different size that share ONE material get one
+// frequency (whichever patched first), because the frequency is baked into that material's uniform. That
+// is correct for the common case — a GLB's materials are per-look, and its parts are of similar scale —
+// and cloning per mesh to avoid it would multiply programs for no visible gain.
+function installObjDetail(root, cycles){
+  if(!root || !root.traverse) return 0;
+  let n = 0;
+  root.traverse(o=>{ if(!o.isMesh || !o.material) return;
+    const ms = Array.isArray(o.material) ? o.material : [o.material];
+    const f = _objDetailFreq(o.geometry, cycles);
+    for(const m of ms) if(objDetailWanted(o.geometry, m)){ applyObjDetail(m, f); n++; } });
+  return n;
+}
+// The detail set is a FALLBACK, not a one-shot assignment, and getting that wrong is why the first cut
+// of this build measured ZERO change in the frame. floorMat.map was set here at construction and then
+// nulled by the first applyWorldCfg — worldCfg.floorTex is '' by default, and _loadSurfaceMap's "no url"
+// branch wrote null — all before the first frame was ever drawn. Every path that CLEARS an authored
+// texture now restores this instead, which also means clearing a floor texture in the editor returns
+// the surface to detailed rather than to flat albedo.
+function _procFallback(mat, slot){ const s = mat && mat.userData && mat.userData.procSurf; return (s && s[slot]) || null; }
 const floorMat = new THREE.MeshPhysicalMaterial({ color:0x141c22, roughness:.95, metalness:.1,
   polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1 });
+// build 1139: the floor plane's UVs span the whole 2*ARENA quad, so its tiling is derived from the arena
+// size and re-derived in rebuildArena whenever that changes. An authored floorTex still replaces all of it.
+applyProcSurface(floorMat, 140);
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), floorMat);
 floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
 scene.add(floor);
@@ -8038,6 +8380,7 @@ function _gridWanted(){
 
 // walls
 const wallMat = new THREE.MeshPhysicalMaterial({ color:0x1a242b, roughness:.8, metalness:.2 });
+applyProcSurface(wallMat, 140);   // build 1139: same, re-derived from the arena span in rebuildArena
 const colliders = [];
 const H = 8;
 const arenaWalls = [];   // the 4 boundary walls (rebuilt on resize); other colliders (props) are untouched
@@ -8127,6 +8470,9 @@ function rebuildArena(){
   NAV.built=false;   // arena changed -> the nav grid must be rebuilt
   // floor (flat, or a displaced height-mesh when worldCfg.terrain is set)
   setTerrainFromCfg(true);
+  // build 1139: the floor and boundary walls carry UVs spanning their whole extent, so the surface
+  // grain's physical size depends on ARENA. Re-derive it here, where the extent is decided.
+  try{ if(typeof retileProcSurface==='function'){ retileProcSurface(floorMat, ARENA*2); retileProcSurface(wallMat, ARENA*2); } }catch(e){}
   // grid
   if(grid){ scene.remove(grid); grid.geometry.dispose(); }
   const divs = Math.max(8, Math.min(400, Math.round(ARENA*2/2.5)));   // build 827: cap the line count so a huge racing arena's grid stays light (cells just grow past ~1 km)
@@ -10377,15 +10723,20 @@ function refreshPropCollider(obj){
 // A built-in box primitive (used when src === 'box'): a 1×1×1 crate you scale via the transform.
 function buildBoxProp(){
   const geo = new THREE.BoxGeometry(1,1,1); geo.translate(0, 0.5, 0);  // base at y=0 so it sits on the floor
-  const m = new THREE.Mesh(
-    geo,
-    new THREE.MeshStandardMaterial({ color:0x2a3a42, roughness:.65, metalness:.35, emissive:0x000000, emissiveIntensity:0 })
-  );
+  const m = new THREE.Mesh(geo, primitiveMat());   // build 1139: one place builds the primitive material, so the detail set reaches the box too
   return m;
 }
 // Shared material for the built-in primitives so they read as one family.
 const PRIM_DEFAULT_COLOR = 0x2a3a42;
-function primitiveMat(){ return new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:.65, metalness:.35, emissive:0x000000, emissiveIntensity:0 }); }
+// build 1139: every primitive gets the detail set. The map is near-white so the authored colour is
+// preserved to within a percent, and applyProcSurface never displaces a texture a creator set — so an
+// existing level gains relief and roughness break-up without any of its choices changing.
+// build 1144: envMapIntensity is set HERE too, and to the same expression applyPropShine uses. It was
+// simply absent, so a fresh primitive took three's default of 1.0 while any prop whose shine had ever
+// been touched got its metalness (0.35) — the same object, lit two different ways depending on whether a
+// slider had been dragged. Two sites, one derivation.
+function primitiveMat(){ return applyProcSurface(new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:.65, metalness:.35,
+  envMapIntensity:_envInten(0.35), emissive:0x000000, emissiveIntensity:0 }), 1); }
 // Which primitives accept material edits (the pillar is a pre-built composite, so it's excluded).
 const SHAPE_PRIMS = { box:1, sphere:1, cylinder:1, cone:1 };
 function isShapePrimitive(src){ return SHAPE_PRIMS.hasOwnProperty(src); }
@@ -10453,7 +10804,10 @@ function applyPropTexture(obj, url){
       o.material.roughnessMap = obj.userData.texR ? texInstance(obj.userData.texR, rep[0], rep[1], false, rot) : null;
       o.material.color.setHex(obj.userData.col != null ? obj.userData.col : 0xffffff);   // tint the image by the prop color (white = true colors)
     } else {
-      o.material.map = null; o.material.normalMap = null; o.material.roughnessMap = null;
+      o.material.map = null;
+      // build 1139: the relief and roughness go back to the procedural detail set, not to flat
+      o.material.normalMap = _procFallback(o.material, 'normalMap');
+      o.material.roughnessMap = _procFallback(o.material, 'roughnessMap');
       o.material.color.setHex(obj.userData.col != null ? obj.userData.col : PRIM_DEFAULT_COLOR);
     }
     o.material.needsUpdate = true;
@@ -10588,7 +10942,7 @@ function applyPropShine(obj, rough, metal){
   if(!obj || !isMatPrimitive(obj.userData.src)) return;
   const r = Math.max(0, Math.min(1, rough)), m = Math.max(0, Math.min(1, metal));
   obj.userData.shine = { r, m };
-  eachPrimMesh(obj, o=>{ o.material.roughness = r; o.material.metalness = m; o.material.envMapIntensity = m; o.material.needsUpdate = true; });   // metal 0 => no environment reflection
+  eachPrimMesh(obj, o=>{ o.material.roughness = r; o.material.metalness = m; o.material.envMapIntensity = _envInten(m); o.material.needsUpdate = true; });   // build 1144: metal drives reflection strength; the floor keeps a matte prop lit by the sky
 }
 // build 871: opacity — glass, plastic, force fields. <1 turns on alpha blending; depthWrite stays on
 // down to ~0.6 (solid-ish plastic sorts fine) and turns off below (true glass never occludes itself).
@@ -14483,6 +14837,8 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.rotation.set(t[3], t[4], t[5]);
   if(t.length >= 9) obj.scale.set(t[6], t[7], t[8]);   // non-uniform (e.g. cover crates)
   else obj.scale.setScalar(t[6]);
+  // build 1139: the procedural grain tiles in UV space, so a primitive's tiling follows its world size
+  if(typeof retileProcSurface==='function') retileProcSurface(obj, _propProcSpan(obj));
   // build 642: rigged/skinned models compute their bounding sphere from the REST pose, so the MAIN camera can
   // frustum-cull them (the whole prop vanishes) even while their shadow still renders from the sun's wider frustum
   // — the "shadows on the ground but no props" you hit while hosting. Disable culling on skinned meshes so they
@@ -14493,6 +14849,11 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
     // grass speckling the lawn with shadow is what grounds it.
     for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)){ o.receiveShadow = false; break; } }
     if(typeof _installRaycastBVH === 'function') _installRaycastBVH(o);   // build 1097: rays vs this model stop testing every triangle
+    // build 1145: an imported mesh with no UVs cannot carry a texture, so it gets object-space detail
+    // instead. Only UV-less standard materials with no authored maps are touched — a properly textured
+    // import is left exactly alone. Coarser than the viewmodel's density: a prop is metres across, not
+    // half a metre, and it is seen from further away.
+    if(typeof installObjDetail === 'function') installObjDetail(o, 18);
     // build 1095: sharpen every imported texture at grazing angles (floors especially)
     if(typeof MAX_ANISO !== 'undefined' && MAX_ANISO > 1){ const ms = Array.isArray(o.material) ? o.material : [o.material];
       for(const m of ms){ if(!m) continue; for(const k of ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap']) if(m[k]) m[k].anisotropy = MAX_ANISO;
@@ -14681,7 +15042,20 @@ function buildPillar(){
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.4,.6,12),
     new THREE.MeshStandardMaterial({ color:0x0c1418, emissive:0x38f5b5, emissiveIntensity:1 }));
   ring.position.y = 2;
-  const pl = new THREE.PointLight(0x38f5b5, 8, 22); pl.position.y = 4;
+  // build 1142: 4.0 at 18 m, not 8 at 22. This was the loudest light in the engine — 5.3x the sun's
+  // 1.5 — and four of them stand around the default level's spawn, so a saturated teal (linear R 0.028,
+  // G 0.745) was the frame's actual key light. Every surface came out the wrong hue: measured, the floor
+  // plane read 56,101,101 against an albedo of 0x4f5d66 whose blue channel is its HIGHEST. Zeroing these
+  // four lights alone restored 55,71,83 across the frame, warm decks and cool crates, with nothing else
+  // changed. The value is chosen by sweep, not taste: 4.0/18 is the most light that leaves the frame's
+  // hue albedo-correct (mid floor stays B>G>R) while the pillar still lays a real teal pool at its own
+  // foot (G +20 over unlit, 722 -> 1,370 unique colours there). An accent lights its surroundings; it
+  // does not light the level.
+  //
+  // It was never wrong when it was written — build 1135 raised the sun to 1.5 and gave the level a
+  // daylight sky, and this was tuned against the dark greybox that came before. THAT is the lesson:
+  // when the key light changes, every fill and accent tuned against the old one is now wrong.
+  const pl = new THREE.PointLight(0x38f5b5, 4.0, 18); pl.position.y = 4;
   g.add(pil, ring, pl);
   return g;
 }
@@ -15296,7 +15670,14 @@ function _worldFrom(w){
   return out;
 }
 let worldCfg = _worldFrom((savedLevel && savedLevel.world) || null);
-if(!(savedLevel && savedLevel.world)) _postOffWorld(worldCfg);   // build 796: first-time scene (no saved world) -> post FX off by default
+// build 1140: the first-time scene keeps the engine's authored look. Build 796 zeroed the whole post
+// chain right here — "so a first-time canvas isn't pre-loaded with heavy effects" — which was correct
+// when that scene was 22 boxes at Math.random() positions, and wrong from build 1133 onward, which made
+// it a DESIGNED level. Probed on the stock frame it read bloom 0, vignette 0, grain 0, grade neutral,
+// ssao 0: every visual system builds 1126 (AO), 1128 (the bloom pyramid), 1135 and 1136 (the grade and
+// the daylight balance) added was switched OFF in the first frame anybody ever sees, and none of it
+// could be measured there. An EMPTY scene still starts clean — _wipeSceneCore keeps calling
+// _postOffWorld, and that is where build 796's actual intent lives.
 
 // Apply (or clear) a tiling texture on a shared material. Stores the current url on the material under
 // `urlKey` so re-applying the same url is a no-op. Cross-origin textures load via the proxying loader.
@@ -15305,7 +15686,9 @@ function _loadSurfaceMap(mat, slot, url, ru, rv, srgb, rot){   // load/clear one
   url = (url||'').trim(); const key = '_'+slot+'Url';
   if(mat[key] === url){ if(url && mat[slot]){ _surfTf(mat[slot], ru, rv, rot); mat.needsUpdate=true; } return; }   // url unchanged: live-update tiling/rotation
   mat[key] = url;
-  if(!url){ if(mat[slot]){ mat[slot] = null; mat.needsUpdate = true; } return; }
+  // build 1139: clearing a slot falls back to the procedural detail set, not to null
+  if(!url){ const fb = (typeof _procFallback==='function') ? _procFallback(mat, slot) : null;
+    if(mat[slot] !== fb){ mat[slot] = fb; mat.needsUpdate = true; } return; }
   const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous');
   let _tdone=false; const _texFin=()=>{ if(_tdone) return; _tdone=true; _texPending=Math.max(0,_texPending-1); }; _texPending++;   // count toward the level loading screen so materials don't pop in
   const finish = (tex)=>{ _texFin(); if(mat[key] !== url){ if(tex.dispose) tex.dispose(); return; }   // a newer url won the race
@@ -15575,7 +15958,7 @@ function applyWorldCfg(){
     floorMat.color.setHex(worldCfg.floorColor>>>0);
     if(worldCfg.floorRough!=null) floorMat.roughness = Math.max(0, Math.min(1, +worldCfg.floorRough));
     if(worldCfg.floorMetal!=null) floorMat.metalness = Math.max(0, Math.min(1, +worldCfg.floorMetal));
-    floorMat.envMapIntensity = floorMat.metalness * worldCfg.skyBright;   // reflections track the metal slider, scaled by sky reflection strength
+    floorMat.envMapIntensity = _envInten(floorMat.metalness, worldCfg.skyBright);   // build 1144: metal drives REFLECTION strength, but never below the floor every surface needs to see the sky at all
     floorMat.specularIntensity = floorMat.metalness;   // metal 0 => no dielectric sun-sheen (truly matte)
     if(+worldCfg.floorTile>0 && !(+worldCfg.floorTileU>0) && !(+worldCfg.floorTileV>0)){ worldCfg.floorTileU=worldCfg.floorTileV=+worldCfg.floorTile; worldCfg.floorTile=0; }   // migrate legacy uniform tile
     const fAuto = Math.max(2, Math.round(ARENA/4));
@@ -15587,7 +15970,7 @@ function applyWorldCfg(){
     wallMat.color.setHex(worldCfg.wallColor>>>0);
     if(worldCfg.wallRough!=null) wallMat.roughness = Math.max(0, Math.min(1, +worldCfg.wallRough));
     if(worldCfg.wallMetal!=null) wallMat.metalness = Math.max(0, Math.min(1, +worldCfg.wallMetal));
-    wallMat.envMapIntensity = wallMat.metalness * worldCfg.skyBright;
+    wallMat.envMapIntensity = _envInten(wallMat.metalness, worldCfg.skyBright);   // build 1144
     wallMat.specularIntensity = wallMat.metalness;   // metal 0 => matte (no sun-sheen)
     if(+worldCfg.wallTile>0 && !(+worldCfg.wallTileU>0) && !(+worldCfg.wallTileV>0)){ worldCfg.wallTileU=worldCfg.wallTileV=+worldCfg.wallTile; worldCfg.wallTile=0; }   // migrate legacy uniform tile
     const wAuto = Math.max(2, Math.round(ARENA/8));
@@ -16165,15 +16548,23 @@ function _ensureVmEnv(){
     _vmEnvFallback = pm.fromEquirectangular(tex).texture; tex.dispose(); pm.dispose();
   }catch(e){ _vmEnvFallback=null; }
 }
-function renderViewmodel(){
-  if(activeCam() !== camera || !gun.visible) return;   // skip the editor's top-down view / when the weapon is hidden
+// Is the viewmodel pass wanted at all this frame? Split out of renderViewmodel (build 1140) because the
+// post chain has to ask the same question one step earlier, before it decides what to composite.
+function _vmWanted(){
+  if(activeCam() !== camera || !gun.visible) return false;   // the editor's top-down view / weapon hidden
   // build 1137: never in the editor. The rifle was drawn across the lower-right of the AUTHORING
   // viewport — measured by a critic at 11% of it — hiding whatever the author was placing there, and
   // it is not a tool affordance by any reading. gun.visible stays untouched so play is unaffected.
-  if(typeof editorOpen!=='undefined' && editorOpen) return;
-  if(typeof _scopedNow!=='undefined' && _scopedNow) return;   // looking through the optic: no viewmodel
+  if(typeof editorOpen!=='undefined' && editorOpen) return false;
+  if(typeof _scopedNow!=='undefined' && _scopedNow) return false;   // looking through the optic: no viewmodel
+  return true;
+}
+// build 1140: the viewmodel is drawn INTO whatever target is bound, with the depth buffer cleared so it
+// always sits on top and can never intersect a nearby wall. The caller owns the target — which is the
+// whole point of the build: when the post chain is running it binds _postRT and calls this BEFORE bloom,
+// so the weapon is part of the frame that gets graded instead of a sprite pasted over the finished one.
+function _drawViewmodel(){
   if(typeof _animFists==='function') _animFists();   // build 672: punch lunge
-  const _r=perfOn?_pnow():0;
   _ensureVmEnv();
   vmScene.environment = scene.environment || _vmEnvFallback;   // metallic gun materials need an env map to reflect — without it they render BLACK
   vmCam.fov = camera.fov; vmCam.aspect = camera.aspect; vmCam.updateProjectionMatrix();
@@ -16181,6 +16572,14 @@ function renderViewmodel(){
   renderer.clearDepth();              // keep the world's color, drop its depth so the gun draws on top
   renderer.render(vmScene, vmCam);
   renderer.autoClear = ac;
+  _vmDone = true;
+}
+// The frame loop's call. It runs LAST, straight to the canvas, and is a no-op on any frame the post
+// chain already drew the weapon into its own buffer — which is every frame post-FX is on.
+function renderViewmodel(){
+  if(_vmDone || !_vmWanted()) return;
+  const _r=perfOn?_pnow():0;
+  _drawViewmodel();
   if(perfOn)_prof.render+=_pnow()-_r;
 }
 
@@ -16241,6 +16640,10 @@ function showWeaponModel(key){
       }
       applyWepView(model, key);
       model.traverse(o=>{ if(o.isMesh){ o.castShadow=false; o.frustumCulled=false; o.renderOrder=999; if(o.material){ o.material.depthTest=true; } } });
+      // build 1145: the weapon is on screen at all times across ~11% of it, and the shipped one has no
+      // UVs and four materials at one identical roughness. Object-space detail is the only kind that can
+      // reach it. A viewmodel is authored at ~0.5 units, so the frequency is the default.
+      if(typeof installObjDetail==='function') installObjDetail(model);
       gun.add(model);
       gunModelByWep[key] = model;
       model.visible = (key === curWep);          // only show if it's still the active weapon
@@ -25131,7 +25534,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1138 · 2026-07-30';
+const BUILD_VERSION = 'build 1146 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -26876,20 +27279,35 @@ let instancingActive = false;
 function instanceEligible(o){
   return o && isShapePrimitive(o.userData.src) && !o.userData.tex && !o.userData.emit && !o.userData.phys && !o.userData.vehicle && !(o.userData.xa && o.userData.xa.on);   // animated mechanisms + drivable vehicles must stay individual movable meshes (instancing bakes a static matrix)
 }
+// build 1139: the batch key. It used to be shape|colour, and the batch material was BUILT FROM SCRATCH at
+// the default roughness .65 / metalness .35 — so every instanced prop silently lost its authored shine
+// (and its opacity, and, once this build existed, its surface detail) the moment play started, then got
+// it all back on returning to the editor. The play frame did not match the frame the level was authored
+// in. Everything the material carries now goes in the key and the batch CLONES a real prop's material.
+function _instKey(o){
+  const col = (o.userData.col != null ? o.userData.col : PRIM_DEFAULT_COLOR);
+  const sh = o.userData.shine || { r:PRIM_DEFAULT_ROUGH, m:PRIM_DEFAULT_METAL };
+  const rep = (typeof _procRepeatFor==='function') ? _procRepeatFor(_propProcSpan(o)) : 0;
+  return o.userData.src + '|' + col + '|' + (+sh.r).toFixed(3) + '|' + (+sh.m).toFixed(3)
+       + '|' + (o.userData.op != null ? (+o.userData.op).toFixed(3) : '1') + '|' + rep;
+}
 function buildInstancing(){
   if(instancingActive || editorOpen) return;
-  const groups = {};   // key shape|colorHex -> [props]
+  const groups = {};   // key shape|colour|rough|metal|opacity|grain -> [props]
   for(const o of propModels){
     if(!instanceEligible(o)) continue;
-    const col = (o.userData.col != null ? o.userData.col : PRIM_DEFAULT_COLOR);
-    const key = o.userData.src + '|' + col;
+    const key = _instKey(o);
     (groups[key] || (groups[key]=[])).push(o);
   }
   for(const key in groups){
     const list = groups[key];
     if(list.length < 2) continue;   // singletons aren't worth instancing
-    const [shape, colStr] = key.split('|');
-    const mat = new THREE.MeshStandardMaterial({ color:parseInt(colStr,10), roughness:.65, metalness:.35, emissive:0x000000, emissiveIntensity:0 });
+    const shape = key.split('|')[0];
+    // A clone of a real member's material, so colour, shine, opacity, envMapIntensity and the
+    // procedural detail set all carry into the batch — whatever the material happens to hold.
+    const src0 = (list[0].isMesh && list[0].material) ? list[0].material : null;
+    const mat = src0 ? src0.clone() : new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:PRIM_DEFAULT_ROUGH, metalness:PRIM_DEFAULT_METAL, envMapIntensity:_envInten(PRIM_DEFAULT_METAL) });
+    if(src0 && src0.userData) mat.userData = Object.assign({}, src0.userData);   // clone() shallow-copies userData by reference in r149
     const im = new THREE.InstancedMesh(instanceGeoFor(shape), mat, list.length);
     im.castShadow = true; im.receiveShadow = true;
     const m = new THREE.Matrix4();
@@ -30714,6 +31132,7 @@ const editorTargets = {
     apply(){ const o=this.obj(), s=this.state; if(!o) return;
       o.position.set(s.px,s.py,s.pz); o.scale.set(s.sx,s.sy,s.sz);
       o.rotation.set(s.rx*RAD, s.ry*RAD, s.rz*RAD);
+      if(typeof retileProcSurface==='function') retileProcSurface(o, _propProcSpan(o));   // build 1139: resizing a primitive keeps its grain the same physical size
       refreshPropCollider(o); _homeSync(o);   // keep the solid hitbox aligned with what you see + the dynamic-prop authored home in sync (build 713)
       if(o.userData.emit) applyPropEmissive(o, o.userData.emit.c, o.userData.emit.i);   // re-spread emitter lights along the new longest axis
     },
@@ -35586,6 +36005,34 @@ function renderEditorFields(){
         lab.appendChild(cb); lab.appendChild(span);
         gz.appendChild(lab);
       }
+      // build 1146: snapping. On by default, because a level editor whose handles cannot line two objects
+      // up is not a level editor; Ctrl inverts it for one drag, which is the escape hatch every DCC has.
+      {
+        const lab=document.createElement('label');
+        lab.style.cssText='display:flex;align-items:center;gap:7px;margin:7px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer;';
+        const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=gizmoSnap; cb.style.accentColor='var(--accent)';
+        cb.onchange=()=>{ gizmoSnap=cb.checked; _saveSnapPrefs(); renderEditorFields(); };
+        const span=document.createElement('span'); span.innerHTML='Snap to grid <b>(hold Ctrl to invert)</b>';
+        lab.appendChild(cb); lab.appendChild(span);
+        gz.appendChild(lab);
+        const steps=document.createElement('div');
+        // flex-wrap and a tight input: three labelled numbers do not fit the 342px inspector on one line,
+        // and the third was clipped by the panel edge in the capture
+        steps.style.cssText='display:flex;flex-wrap:wrap;gap:4px 8px;margin:2px 0 4px;'+(gizmoSnap?'':'opacity:0.45;');
+        const mk=(title, get, set, min, step)=>{
+          const w=document.createElement('label'); w.style.cssText='display:flex;align-items:center;gap:4px;color:#a8ccbf;font-size:11px;';
+          const t=document.createElement('span'); t.textContent=title;
+          const inp=document.createElement('input'); inp.type='number'; inp.min=String(min); inp.step=String(step); inp.value=String(get());
+          inp.title='0 turns snapping off for this channel only';
+          inp.style.cssText='width:46px;min-width:46px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+          inp.onchange=()=>{ const v=parseFloat(inp.value); if(isFinite(v) && v>=0){ set(v); _saveSnapPrefs(); } inp.value=String(get()); };
+          w.appendChild(t); w.appendChild(inp); return w;
+        };
+        steps.appendChild(mk('grid',  ()=>snapGrid,      (v)=>{ snapGrid=v; },      0, 0.25));
+        steps.appendChild(mk('angle\u00b0', ()=>snapAngleDeg, (v)=>{ snapAngleDeg=v; }, 0, 5));
+        steps.appendChild(mk('scale', ()=>snapScaleStep, (v)=>{ snapScaleStep=v; }, 0, 0.05));
+        gz.appendChild(steps);
+      }
     }
   }
 
@@ -37181,6 +37628,42 @@ function _setJointGiz(o){
 let gizmo = null, gizmoDrag = null;
 let gizmoMode = 'translate';        // 'translate' | 'rotate' | 'scale'
 let scaleProportional = true;       // default: uniform scaling; checkbox lets the user go non-uniform
+// ---- build 1146: gizmo snapping ----
+// The transform gizmo moved, rotated and scaled in raw continuous mouse units. Nothing in the product
+// could put two crates on one lattice, sit a wall flush against another, or turn a prop exactly 90
+// degrees — the numeric fields could, at five decimal places, one axis at a time. Every editor a creator
+// has used (Unreal, Unity, Blender, Godot) snaps by default and holds a modifier to escape it. Build
+// 929's `buildSnap` is a different feature: it snaps PLACEMENT of a new block against the face you aim
+// at. This snaps the TRANSFORM of something already in the scene.
+let gizmoSnap = true;
+let snapGrid = 0.5;        // metres per translate step
+let snapAngleDeg = 15;     // degrees per rotate step — 15 divides 90 and 360, so corners land exactly
+let snapScaleStep = 0.25;  // scale units per step; a box primitive's scale IS its size in metres
+try{
+  const v = localStorage.getItem('breach_gizsnap'); if(v==='off') gizmoSnap=false; else if(v==='on') gizmoSnap=true;
+  const g = parseFloat(localStorage.getItem('breach_gizsnap_g')); if(isFinite(g) && g>=0) snapGrid=g;
+  const a = parseFloat(localStorage.getItem('breach_gizsnap_a')); if(isFinite(a) && a>=0) snapAngleDeg=a;
+  const c = parseFloat(localStorage.getItem('breach_gizsnap_s')); if(isFinite(c) && c>=0) snapScaleStep=c;
+}catch(e){}
+function _saveSnapPrefs(){ try{
+  localStorage.setItem('breach_gizsnap', gizmoSnap?'on':'off');
+  localStorage.setItem('breach_gizsnap_g', String(snapGrid));
+  localStorage.setItem('breach_gizsnap_a', String(snapAngleDeg));
+  localStorage.setItem('breach_gizsnap_s', String(snapScaleStep));
+}catch(e){} }
+// Ctrl (or Cmd) INVERTS the setting rather than enabling it — with snapping on, which is the default, the
+// modifier is how you nudge something into a gap; with it off, the modifier is how you grab the lattice
+// for one drag. Both directions are what a creator reaches for, and one key serves both.
+function _snapOn(e){ const inv = !!(e && (e.ctrlKey || e.metaKey)); return gizmoSnap !== inv; }
+const _snapTo = (v, step) => (step > 0 && isFinite(v)) ? Math.round(v / step) * step : v;
+// Snap a POSITION's component along one axis to the world lattice, leaving the perpendicular part exactly
+// as it was. Snapping the whole vector would drag the two axes the creator is not touching onto the grid
+// too — so an object deliberately placed off-lattice would jump the moment any axis was nudged.
+function _snapAlong(p, dir, step){
+  if(!(step > 0) || !p || !dir) return p;
+  const t = p.dot(dir);                       // dir is a unit axis
+  return p.addScaledVector(dir, _snapTo(t, step) - t);
+}
 const AXIS_COL = { x:0xff5566, y:0x66ff88, z:0x5599ff };
 // ---- Multi-selection (shift+click props to select several; >1 transforms as a group) ----
 let selProps = [];        // selected prop meshes; the "primary" is editorTargets.props.idx
@@ -37727,16 +38210,31 @@ function gizmoDragMove(e){
   if(d.group){ applyGroupDrag(e, d); return; }   // multi-selection: transform the whole group about the pivot
   if(d.kind==='translate'){
     const s = axisParamUnderPointer(e, d.startPos, d.dir);
-    setSelPos(d.startPos.clone().addScaledVector(d.dir, s - d.startParam));
+    let p = d.startPos.clone().addScaledVector(d.dir, s - d.startParam);
+    // build 1146: a SINGLE object snaps its resulting position to the world lattice, so two crates placed
+    // in separate drags land on the same grid and read as flush. (A group snaps its delta instead — see
+    // applyGroupDrag: snapping each member absolutely would pull a deliberate arrangement apart.)
+    if(_snapOn(e)) p = _snapAlong(p, d.dir, snapGrid);
+    setSelPos(p);
   } else if(d.kind==='scale'){
     if(d.axis==='all'){
       const pos = getSelPos();
-      const f = Math.max(0.02, scaleRefDistance(e, pos) / d.refDist);
+      let f = Math.max(0.02, scaleRefDistance(e, pos) / d.refDist);
+      // the centre handle has no axis to land on a round size, so the FACTOR is what snaps
+      if(_snapOn(e)) f = Math.max(0.02, _snapTo(f, snapScaleStep));
       setSelScale(d.startScale.clone().multiplyScalar(f));
     } else {
       const pos = getSelPos();
       const cur = axisParamUnderPointer(e, pos, d.dir);
-      const f = Math.max(0.02, cur / d.startParam);
+      let f = Math.max(0.02, cur / d.startParam);
+      // build 1146: snap the SIZE, not the factor. A box primitive's scale is its size in metres, so what
+      // a creator wants is a wall exactly 3.0 wide — and deriving f back out of the snapped size keeps
+      // proportional scaling proportional while still landing the dragged axis on a round number.
+      const ax = (d.axis==='x') ? 'x' : (d.axis==='y') ? 'y' : 'z';
+      if(_snapOn(e) && snapScaleStep > 0 && d.startScale[ax] > 1e-6){
+        const want = _snapTo(d.startScale[ax] * f, snapScaleStep);
+        if(want >= snapScaleStep * 0.5) f = want / d.startScale[ax];   // never snap a size to zero
+      }
       if(scaleProportional){
         setSelScale(d.startScale.clone().multiplyScalar(f));
       } else {
@@ -37754,6 +38252,10 @@ function gizmoDragMove(e){
     // signed angle from startVec to cur around the axis normal
     let ang = Math.atan2(cur.clone().cross(d.startVec).dot(d.normal), cur.dot(d.startVec));
     ang = -ang;
+    // build 1146: the ANGLE TURNED snaps, not the resulting orientation. Snapping the orientation would
+    // need the rotation decomposed back out of a quaternion, which is ambiguous; and a creator asking for
+    // "a quarter turn from here" is what the handle is for. 15 degrees divides both 90 and 360.
+    if(_snapOn(e) && snapAngleDeg > 0) ang = _snapTo(ang, snapAngleDeg * Math.PI / 180);
     const q0 = new THREE.Quaternion().setFromEuler(d.startEuler);
     const dq = new THREE.Quaternion().setFromAxisAngle(d.normal, ang);
     const euler = new THREE.Euler().setFromQuaternion(dq.multiply(q0));
@@ -37768,15 +38270,22 @@ const _gdq = new THREE.Quaternion(), _gtmp = new THREE.Vector3();
 function applyGroupDrag(e, d){
   const pivot = d.pivot;
   const isL = d.lights;
-  const touch = (o)=>{ if(!isL){ refreshPropCollider(o); _homeSync(o); } };   // lights have no collider; build 713: keep dynamic props' authored home synced
+  const touch = (o)=>{ if(!isL){ if(typeof retileProcSurface==='function') retileProcSurface(o, _propProcSpan(o)); refreshPropCollider(o); _homeSync(o); } };   // lights have no collider; build 713: keep dynamic props' authored home synced; build 1139: keep the grain's physical size through a gizmo scale
   if(d.kind==='translate'){
     const s = axisParamUnderPointer(e, pivot, d.dir);
-    const off = d.dir.clone().multiplyScalar(s - d.startParam);
+    // build 1146: a GROUP snaps the DISTANCE MOVED, not each member's position. Snapping every member to
+    // the lattice independently would pull a deliberate arrangement apart the first time it was nudged —
+    // two crates 1.2 apart would become 1.0 or 1.5 apart. The delta keeps the cluster rigid and still
+    // lets it travel in exact steps.
+    let dist = s - d.startParam;
+    if(_snapOn(e)) dist = _snapTo(dist, snapGrid);
+    const off = d.dir.clone().multiplyScalar(dist);
     for(const it of d.group){ it.obj.position.copy(it.pos).add(off); touch(it.obj); }
   } else if(d.kind==='rotate'){
     const hit = pointerOnPlane(e, pivot, d.normal); if(!hit) return;
     const cur = hit.clone().sub(pivot);
     let ang = Math.atan2(cur.clone().cross(d.startVec).dot(d.normal), cur.dot(d.startVec)); ang = -ang;
+    if(_snapOn(e) && snapAngleDeg > 0) ang = _snapTo(ang, snapAngleDeg * Math.PI / 180);   // build 1146
     _gdq.setFromAxisAngle(d.normal, ang);
     for(const it of d.group){
       it.obj.position.copy(_gtmp.copy(it.pos).sub(pivot).applyQuaternion(_gdq)).add(pivot);   // orbit about the pivot
@@ -37787,6 +38296,9 @@ function applyGroupDrag(e, d){
     let f;
     if(d.axis==='all') f = Math.max(0.02, scaleRefDistance(e, pivot) / d.refDist);
     else { const cur = axisParamUnderPointer(e, pivot, d.dir); f = Math.max(0.02, cur / d.startParam); }
+    // build 1146: a group scale spreads the whole cluster, so there is no single size to land on a round
+    // number — the FACTOR is the only meaningful thing to snap here.
+    if(_snapOn(e)) f = Math.max(0.02, _snapTo(f, snapScaleStep));
     for(const it of d.group){   // group scaling spreads/contracts the cluster about the pivot
       it.obj.position.copy(_gtmp.copy(it.pos).sub(pivot).multiplyScalar(f)).add(pivot);
       if(!isL) it.obj.scale.copy(it.scale).multiplyScalar(f);   // lights don't scale; just spread their positions
