@@ -27,7 +27,9 @@ assert(/ge\.textContent='\[G \/ MMB\] Grab';/.test(ae), 'a sample grab hint is f
 assert(/body\.hudPreview:not\(\.hud-hide-prompt\) #prompt, body\.hudPreview:not\(\.hud-hide-grab\) #grabHint \{\s*display: block !important; pointer-events: auto; cursor: move;/.test(html), 'the prompt + grab hint are force-shown + draggable in the HUD editor');
 
 // --- build 697: the prompt + grab hint panel chrome now follows the HUD theme ---
-assert(/#prompt \{[^}]*background:linear-gradient\(135deg, rgba\(8,18,22,calc\(\.88\*var\(--hud-panel-op,1\)\)\)/.test(html), 'prompt background honours the panel-opacity theme');
+// build 1138: .92/.84, up from .88/.6 — the prompt is the same class of surface as .panel and had the
+// same legibility fault. Still var-driven, which is what this pin is actually guarding.
+assert(/#prompt \{[^}]*background:linear-gradient\(135deg, rgba\(8,18,22,calc\(\.92\*var\(--hud-panel-op,1\)\)\)/.test(html), 'prompt background honours the panel-opacity theme');
 assert(/#prompt \{[^}]*border:1px solid rgba\(var\(--accent-rgb,255,209,102\),\.4\)/.test(html), 'prompt border tints with the accent');
 assert(/#grabHint \{[^}]*background:rgba\(6,12,15,calc\(\.55\*var\(--hud-panel-op,1\)\)\)[^}]*border:1px solid rgba\(var\(--accent-rgb,120,200,180\),\.3\)/.test(html), 'grab hint follows the panel-opacity + accent theme');
 assert(/body\.hud-shape-rounded #prompt, body\.hud-shape-square #prompt \{ clip-path: none !important; \}/.test(html), 'the prompt drops its angular clip for rounded/square shapes');
