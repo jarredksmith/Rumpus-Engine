@@ -66,7 +66,10 @@ for (const theme of api.ARENA_THEMES) {
   const garden = hue(api.arenaMood('garden').world.floorColor);
   assert(garden.g > garden.r && garden.g > garden.b, 'garden ground is green (' + JSON.stringify(garden) + ')');
   const facility = hue(api.arenaMood('facility').world.floorColor);
-  assert(facility.b > facility.r && facility.b < 120, 'facility ground is a dark cool apron (' + JSON.stringify(facility) + ')');
+  // build 1151: the threshold was 120 when groundAlb was hand-picked at 0.10/0.12/0.14. The apron the
+  // generator actually DRAWS (scifiFloor) measures 0.165/0.189/0.222 — 1.59x brighter — so the plane now
+  // matches it at (113,120,130). Cool still holds; "dark" is a shade lighter than someone once guessed.
+  assert(facility.b > facility.r && facility.b < 150, 'facility ground is a cool, unlit apron (' + JSON.stringify(facility) + ')');
   const volcanic = hue(api.arenaMood('volcanic').world.floorColor);
   assert(volcanic.r > volcanic.b, 'volcanic ground is warm ash (' + JSON.stringify(volcanic) + ')');
   // and no two themes ship the same ground, or the feature achieves nothing

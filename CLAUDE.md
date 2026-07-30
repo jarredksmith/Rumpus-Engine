@@ -411,13 +411,9 @@ material actually drawn is `base × texture mean`, and the two disagree in every
 | frost | `snow` | 0.779/0.829/0.899 | 0.60/0.64/0.70 | 1.29× |
 | facility | `scifiFloor` | 0.165/0.189/0.222 | 0.10/0.12/0.14 | **1.59×** |
 
-THREE consumers now derive from the abstraction — the bake's sun bounce, the engine plane's `floorColor` and
-`wallColor` (1143), and the one-bounce fill (1149) — while the renderer draws the texture. That is this
-section's own lesson one level deeper: naming the ground once is not enough when the thing named is not the
-thing drawn. The fix is to DERIVE `groundAlb` from the ground material (`base × texture mean`, which the
-generator can measure because it builds the texture) instead of hand-picking it, and it is a generator
-change needing its own capture pass — on garden the engine's plane is ~3× BRIGHTER than the grass it butts
-against, the same class of seam as the desert one and in the opposite direction.
+FOUR consumers derived from the abstraction while the renderer drew the texture. **Fixed in build 1151** —
+see "The ground albedo is now the ground it draws", where every theme's `gnd` became the drawn value and a
+test recomputes all seven from the real palette so the two cannot drift apart again.
 
 Each theme now names `zen` / `hor` / `gnd` **once**. They were written out twice per theme before (in the
 `light` block and again inside the `skyMood(...)` call) and this build would have made it three times —
@@ -748,7 +744,50 @@ coherent form is `envMapIntensity = 1` everywhere with `worldCfg.sky` scaled dow
 ambient, and that needs a legacy-`sky` story; the `max(floor, metal)` shape is a compatibility hack that
 only ever had an argument for engine-built materials.
 
-## Open work (as of build 1150)
+## The ground albedo is now the ground it draws (build 1151)
+
+Build 1143 introduced `groundMood` so "the plane the player walks past and the bounce the bake assumed are
+the same surface". Measured in build 1150, they were not: `light.groundAlb` was a hand-picked triple and the
+material the generator actually DRAWS is `MATS[palette.ground].base × mean(texture)`, linearised per pixel.
+Wrong in every theme, from 0.35× to 1.59×:
+
+```
+theme        drawn (linear)        was                ratio    bounce now
+industrial   0.110/0.114/0.117     0.20/0.21/0.22     0.54x    0.47
+castle       0.154/0.136/0.113     0.22/0.19/0.15     0.71x    0.39
+volcanic     0.142/0.091/0.053     0.16/0.13/0.10     0.74x    0.54
+garden       0.034/0.067/0.011     0.12/0.18/0.08     0.35x    0.96
+desert       0.511/0.372/0.185     0.42/0.34/0.22     1.11x    0.14
+frost        0.779/0.829/0.900     0.60/0.64/0.70     1.29x    0.06
+facility     0.165/0.189/0.222     0.10/0.12/0.14     1.59x    0.29
+```
+
+FOUR things derive from that one value, and all four want the real one — which is why this was worth doing
+rather than tolerating: the bake's sun-bounce colour, the sky dome's ground band, the engine plane's
+`floorColor`/`wallColor` (1143), and the one-bounce fill factor (1149). Every one of them now describes the
+same surface, verified per channel per theme.
+
+**`Tex.rgb` is sRGB, not linear.** `toBytes` writes `px * 255` with no transfer and the glTF
+`baseColorTexture` is sRGB-tagged, so the renderer decodes it. The effective albedo is therefore
+`base × mean(srgb2lin(rgb))` — **linearise per pixel, then average**. Averaging first and linearising after
+is a different and wrong number, and it is the easy mistake here.
+
+**The fill clamp moved from 0.8 to 1.0.** Once `gnd` was real, garden's grass measured Y 0.056 and asked for
+0.96 to deliver the standard fill; 0.8 held it 16% short and broke the equal-fill property the derivation
+exists for. 0.8 was arbitrary; the equal fill is not. Every theme now delivers within 1.10×.
+
+**The test enforces the link rather than restating the numbers.** `test-1151` recomputes all seven from the
+REAL generator — `arenaPalette(theme).ground` → `MATS[idx]` → `TEXS[tex].rgb` → base — so retuning a texture
+without updating the mood fails there instead of silently putting the engine's ground a stop away from the
+arena's. That is what 1143 wanted and did not get: naming a value once is not the same as deriving it from
+the thing it describes. It needs no browser and runs at `TEXSIZE=128`, where the mean is stable (checked at
+64/128/256: grass and sand agree to four decimals, the patterned `scifiFloor` drifts 4%).
+
+Two pins moved with it, both correctly: `test-1143`'s "facility is a dark cool apron" threshold (the drawn
+apron really is 1.59× brighter than the guess, so the plane matches it at 113,120,130 — cool still holds),
+and `test-1149`'s clamp bound.
+
+## Open work (as of build 1151)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

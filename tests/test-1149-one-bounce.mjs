@@ -157,7 +157,7 @@ function mk(world){
     const m = api.arenaMood(t);
     const b = m.world.bounce;
     assert(b != null, t + ' names a bounce of its own rather than inheriting the engine default');
-    assert(b >= 0.05 && b <= 0.8, t + ' bounce ' + b + ' is inside the clamp');
+    assert(b >= 0.05 && b <= 1.0, t + ' bounce ' + b + ' is inside the clamp');   // build 1151 raised the ceiling: garden's real grass asks 0.96
     fills.push([t, b * lum(m.light.groundAlb)]);
   }
   // THE property: every theme delivers about the same amount of fill, whatever its ground is made of
@@ -172,7 +172,7 @@ function mk(world){
   assert(byName.desert < byName.volcanic, '...and bleached sand less than ash');
   // it is derived in ONE place, beside the floor and wall colours that come from the same albedo —
   // build 1143's lesson, which is that a mood written out twice is a mood that ends up disagreeing
-  assert(/bounce: \+Math\.max\(0\.05, Math\.min\(0\.8, 0\.0535 \/ Math\.max\(1e-4, y\)\)\)\.toFixed\(2\)/.test(lg),
+  assert(/bounce: \+Math\.max\(0\.05, Math\.min\(1\.0, 0\.0535 \/ Math\.max\(1e-4, y\)\)\)\.toFixed\(2\)/.test(lg),
     'and it is derived inside groundMood, so an eighth theme gets it without knowing it exists');
   const moodBody = lg.slice(lg.indexOf('function arenaMood('), lg.indexOf('function arenaMood(') + 4000);
   assert(!/bounce:/.test(moodBody), '...with no theme naming it by hand');
