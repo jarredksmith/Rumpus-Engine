@@ -687,11 +687,18 @@ offsets, report per hit the src, the material colour in linear, every map slot, 
 - **NOT the texture albedo.** `sand` measures 0.511/0.372/0.185 linear against the desert theme's stated
   `groundAlb` of 0.42/0.34/0.22 — close enough that the generator's grounds are honest about themselves.
   This was the leading hypothesis and it is wrong.
-- **It is `envMapIntensity`.** The imported ground reads `env1.00`; the engine's own boundary wall, same
+- **There is a real `envMapIntensity` gap, and it is NOT the seam** (established after this build was
+  written — see Open work). The imported ground reads `env1.00`; the engine's own boundary wall, same
   roughness class, reads `env0.12`. Build 1144 made that property one expression — `_envInten(metalness)`
   — for `floorMat`, `wallMat`, `primitiveMat`, `applyPropShine` and the instancing batch, and it never
-  reached an imported model, which keeps three's default of 1.0. **8× the image-based ambient for two
-  surfaces meant to be the same world.**
+  reached an imported model, which keeps three's default of 1.0: 8× the image-based ambient for two
+  surfaces meant to be the same world. Closing it moved the seam by 3–12 code values and cost the weapon
+  27%, so it was measured and reverted. Worth knowing the gap exists; do not expect it to fix anything.
+- **A related surprise worth keeping:** 29 standard materials are constructed in `breach.html` and exactly
+  ONE sets `envMapIntensity`. Build 1144 established the derivation for the world surfaces — floor, walls,
+  primitives — and every decorative prop the engine builds (coins, pickups, debris, remote bodies) sits at
+  three's default 1.0 alongside every import. "The engine uses 0.12" was never true; it is a minority
+  convention, and the ground plane is on the dark side of it.
 
 **`SKY_ENV_FLOOR = 0.12` was derived from a ratio build 1149 disproved — and survives re-deriving.** Build
 1144 justified 0.12 as "a sun-to-shade ratio of 3:1 needs total ambient at 0.0305", and 1149 measured the
@@ -708,15 +715,17 @@ Real daylight on a horizontal surface is ~8:1, so **0.12 is the closest of the f
 the frame toward overcast. 1144's other figure — "at a full 1.0 the ratio is 1.58:1" — is also wrong;
 measured it is 2.57:1. Right value, void reasoning: re-derive it here rather than trusting either note.
 
-**The unification is written and deliberately NOT shipped in this build.** Bringing imports onto
-`_envInten` closes the seam, but `_envInten(m) = max(SKY_ENV_FLOOR, m)` still couples to metalness above
+**The unification was written, measured, and thrown away.** It does NOT close the seam — see Open work for
+the numbers. It was parked here because `_envInten(m) = max(SKY_ENV_FLOOR, m)` still couples to metalness above
 the floor, and the shipped weapon's materials are all metalness 0.4 — so it would drop from 1.0 to 0.4 and
-the weapon block measured `91,104,111 → 66,78,84`, a 27% darkening of an asset that was never tuned
+the weapon block measured `91,104,111 → 66,78,85`, a 27% darkening of an asset that was never tuned
 against that coupling (builds 1140 and 1145 measured it at 1.0). 1144's compatibility argument — "metals
 keep exactly the reflection strength they were tuned with" — applies to engine materials and to nothing a
-creator imported. The next build needs to decide whether the viewmodel is carved out, or whether the
-`max(floor, metal)` shape goes away entirely in favour of `envMapIntensity = 1` with `worldCfg.sky` scaled
-down to deliver the same ambient — which is the physically coherent form and needs a legacy-`sky` story.
+creator imported. That trade — 27% off the weapon for 3–12 code values on the
+seam — is why it is not in the tree. If a future build wants the consistency for its own sake, the physically
+coherent form is `envMapIntensity = 1` everywhere with `worldCfg.sky` scaled down to deliver the same
+ambient, and that needs a legacy-`sky` story; the `max(floor, metal)` shape is a compatibility hack that
+only ever had an argument for engine-built materials.
 
 ## Open work (as of build 1150)
 
@@ -753,19 +762,36 @@ tight to the triangles, so the generator no longer has to author a 3.8 m doorway
 Narrowing them is a *generator* change with its own probe pass — do not do it as part of an engine
 build, and keep `tests/test-1113` as the gate.
 
-**The imported ground is 2.3 stops brighter than the plane it butts against — cause found (1150), fix not
-shipped.** See "What the ground probe settled" above: it is `envMapIntensity`, 1.00 on every imported
-material against `_envInten(metalness)` on every engine-built one. The patch is one line in the
-imported-material pass; what is undecided is the metalness coupling's effect on the shipped weapon. Start
-there, with the arena seam measured at the unified value.
+**The arena-edge seam: THREE hypotheses measured and eliminated, cause still unknown.** Do not start a
+fourth attempt without reading this. On the desert arena at seed 4242, walking outside the footprint, the
+engine's ground plane reads `111,103,79` and the arena's slab lip beside it reads `243,204,152`. Each of
+these was stated confidently before being measured, and each is wrong:
 
-The additive-`lightMap` double count is still real and still unquantified — an open-sky surface receives the
-sky once from the bake and again from the hemisphere light plus the probe — but it is NOT the dominant term
-in that seam, and fixing it is not a blanket scale on the bake: the bake also carries the interior LIGHTS
-(`for (const L of LIGHTS)`), which are the only thing lighting a generated interior, so scaling the whole
-texture down darkens exactly the rooms it exists to light. It needs the sky-visibility term split from the
-local-light term — plausibly the occlusion part as `aoMap` (multiplicative, which is what it is) and the
-bounce + lamps as `lightMap` (additive, which is what those are). Two maps, so it needs a texture budget.
+1. *"The sand TEXTURE's albedo is brighter than the theme's `groundAlb`."* Measured: `sand` is
+   0.511/0.372/0.185 linear against a stated 0.42/0.34/0.22. The generator's grounds are honest.
+2. *"`envMapIntensity` is 1.00 on imports and 0.12 on engine surfaces — an 8x ambient gap."* The gap is
+   real (probed) but is NOT the seam. Unifying it moved the lip `246,212,164 → 243,204,152` — three to
+   twelve code values — while costing the weapon 27% (`91,104,111 → 66,78,85`). Implemented, measured,
+   reverted. Principled change, negligible benefit, large cost.
+3. *"The baked `lightMap` is additive, so an open-sky surface receives the sky twice."* A/B with
+   `lightMapIntensity = 0` and nothing else changed: the lip is **BYTE-IDENTICAL** at `243,204,152`. The
+   bake contributes nothing there.
+
+So the surface does not respond to any ambient term, which means it is sun-driven — and the remaining
+question is whether `243` on a pale up-facing surface at 72° noon is even wrong. Region statistics cannot
+answer that, because comparing a post-ACES frame value against an albedo-times-irradiance estimate mixes
+two spaces and every approximation in the chain is worth a factor. **The next attempt needs a different
+instrument, not another hypothesis:** a probe that reports, for ONE pixel, the surface albedo and the
+SCENE-LINEAR radiance before tone mapping, so the render equation can be checked term by term instead of
+estimated. Build that first.
+
+**What the same A/B did establish, and it matters more:** the bake carries the arena's block field almost
+entirely. With `lightMapIntensity = 0`, the blocks go `148,115,91 → 98,80,65` and their p50 luminance
+`0.191 → 0.0496` — a quarter of the light. That is the first quantification of "the bake is the only thing
+lighting generated geometry", and it is what build 1150's fix restores on every device whose driver reports
+no anisotropic filtering. The `aoMap`/`lightMap` split is still the right eventual decomposition (occlusion
+is multiplicative, lamps and bounce are additive) and still needs a texture budget — but it is not a seam
+fix, and now there is a number for what removing the bake costs.
 
 **Still visible on the stock frame after 1149, and worth a build each.** All three are content or
 composition, not code, and all three are what a first-time player sees:
