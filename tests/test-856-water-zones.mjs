@@ -47,9 +47,9 @@ const LAKE = [{ x:0, z:0, r:10, y:0, h:3, flowDir:0, flowSpd:0 }];
   near(r.vel.x, 7, 0.001, 'outside the zone nothing changes'); }
 
 // ---- the surface shader is the cheap kind ----
-assert(/new THREE\.ShaderMaterial\(/.test(src.match(/function _waterSurfaceMat[\s\S]{0,1200}/)[0]), 'surface is a ShaderMaterial');
-assert(!/WebGLRenderTarget/.test(src.match(/function buildWaterZoneGroup[\s\S]{0,1600}/)[0]), 'no render targets anywhere near the water build (no reflections/refraction cost)');
-assert(/uSunDir/.test(src) && /moon\.position/.test(src.match(/function updateWaterZones[\s\S]{0,2400}/)[0]), 'the glint tracks the real sun (build 855 rotation included)');
+assert(/new THREE\.ShaderMaterial\(/.test(extractFunction('_waterSurfaceMat')), 'surface is a ShaderMaterial');
+assert(!/WebGLRenderTarget/.test(extractFunction('buildWaterZoneGroup')), 'no render targets anywhere near the water build (no reflections/refraction cost)');
+assert(/uSunDir/.test(src) && /moon\.position/.test(extractFunction('updateWaterZones')), 'the glint tracks the real sun (build 855 rotation included)');
 assert(/reflect\(-uSunDir, n\)/.test(src), 'specular glint in the fragment shader');
 
 // ---- zone plumbing ----

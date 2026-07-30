@@ -50,8 +50,13 @@ const V3 = class { constructor(x=0,y=0,z=0){ this.x=x; this.y=y; this.z=z; }
   fromBufferAttribute(a,i){ this.x=a.array[i*3]; this.y=a.array[i*3+1]; this.z=a.array[i*3+2]; return this; }
   applyMatrix4(){ return this; } };
 const Box3 = class { constructor(min,max){ this.min=min; this.max=max; } };
+// the grid's constants come from the SOURCE, not restated here — build 1148 added two more and a
+// hardcoded copy would have silently diverged from what the engine actually runs
+const gridConsts = [/const MGRID_CELL = [^;]+;/, /const MGRID_BITS = [^;]+;/, /const MGRID_FOOT_BYTES = [^;]+;/, /const MGRID_MIN_THICK = [^;]+;/]
+  .map(re=>{ const m=gameSource().match(re); assert(m, 'the grid constant ' + re + ' is declared in one place'); return m[0]; }).join('\n');
+assert(/const MGRID_CELL = 1\.0, MGRID_SLOT = 0\.35;/.test(gameSource()), 'cell and slot are declared together, so one match carries both');
 const buildGrid = new Function('THREE','_mgA','_mgB','_mgC','IS_COARSE',
-  `const MGRID_CELL = 1.0, MGRID_SLOT = 0.35;\nconst MGRID_BITS = 48 << 20;\n${extractFunction('buildModelGridBoxes')}\nreturn buildModelGridBoxes;`
+  `${gridConsts}\n${extractFunction('buildModelGridBoxes')}\nreturn buildModelGridBoxes;`
 )({ Vector3: V3, Box3 }, new V3(), new V3(), new V3(), false);
 
 // every emitted triangle, in world space, read through the index buffer

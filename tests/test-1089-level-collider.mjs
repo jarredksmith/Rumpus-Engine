@@ -1,5 +1,12 @@
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
+// The grid's own constants, taken from breach.html. Restating them here meant that adding one (build 1148's
+// footprint budget) made this harness throw a ReferenceError from inside the function it was testing.
+function gridConsts(){
+  return [/const MGRID_CELL = [^;]+;/, /const MGRID_BITS = [^;]+;/, /const MGRID_FOOT_BYTES = [^;]+;/,
+    /const MGRID_MIN_THICK = [^;]+;/]
+    .map(re=>{ const m=src.match(re); assert(m, 'the grid constant ' + re + ' is declared in one place'); return m[0]; }).join('\n');
+}
 // build 1089, user-reported: a 5 MB skyscraper GLB used as a whole level. "Enemies seem to get stuck in
 // invisible meshes." The player walked it perfectly. Three separate causes, all measured against the real
 // asset (331 x 148 x 366 units, 1,763 meshes, 265,151 triangles).
@@ -45,7 +52,8 @@ assert(/IS_COARSE/.test(bg), '...on a halved budget for phones');
 // a per-column emit at this resolution would be tens of thousands of boxes, and every consumer walks the
 // list per query — so identical columns are merged into rectangles first
 assert(/Greedy-merge identical columns into rectangles/.test(bg), 'the boxes are greedy-merged');
-assert(/let z1=gz; while\(z1\+1<nz && !used\[gx\*nz\+z1\+1\] && key\[gx\*nz\+z1\+1\]===k\) z1\+\+;/.test(bg), '...along Z');
+assert(/let z1=gz; if\(canZ\) while\(z1\+1<nz && !used\[gx\*nz\+z1\+1\] && key\[gx\*nz\+z1\+1\]===k\) z1\+\+;/.test(bg),
+  '...along Z (build 1148 gates it on the footprint spanning the whole cell — merging two slivers would bridge the gap between them)');
 assert(/outer: while\(x1\+1<nx\)\{/.test(bg), '...then widened along X');
 
 // ---------------------------------------------------------------- run the real builder on a two-storey box
@@ -70,7 +78,9 @@ assert(/outer: while\(x1\+1<nx\)\{/.test(bg), '...then widened along X');
   const obj = { traverse(fn){ fn(mesh); } };
   const overall = { min: new V3(-5, 0, -5), max: new V3(5, 3.2, 5) };
   const fn = new Function('THREE','_mgA','_mgB','_mgC','IS_COARSE',
-    `const MGRID_CELL = 1.0, MGRID_SLOT = 0.35;\nconst MGRID_BITS = 48 << 20;\n${bg}\nreturn buildModelGridBoxes;`
+    // build 1148: the collider constants are READ from the source rather than restated here, so a
+    // change to the grid's budget or resolution reaches this harness instead of throwing inside it.
+    `${gridConsts()}\n${bg}\nreturn buildModelGridBoxes;`
   )(THREE, new V3(), new V3(), new V3(), false);
   const boxes = fn(obj, overall);
   assert(boxes && boxes.length, 'the builder produces boxes for a two-storey room (' + (boxes ? boxes.length : 0) + ')');
@@ -82,7 +92,10 @@ assert(/outer: while\(x1\+1<nx\)\{/.test(bg), '...then widened along X');
   assert(atCentre.some(b => b.max.y <= 0.6), '...the floor slab is still there, below the band');
   assert(atCentre.some(b => b.min.y >= bodyHi), '...and so is the ceiling, clear above the band (the two used to be one slab)');
   // the walls are still solid
-  const atWall = boxes.filter(b => b.min.x <= -4.6 && b.max.x >= -4.6 && b.min.z <= 0 && b.max.z >= 0);
+  // build 1148: sampled at -4.9 rather than -4.6. These walls are ZERO-THICKNESS planes at x=+-5, and the
+  // collider is now tight to the triangles (widened to MGRID_MIN_THICK) instead of filling the whole cell —
+  // so it spans -5.00..-4.75, which is what the model actually is.
+  const atWall = boxes.filter(b => b.min.x <= -4.9 && b.max.x >= -4.9 && b.min.z <= 0 && b.max.z >= 0);
   assert(atWall.some(b => b.min.y < bodyHi && b.max.y > bodyLo), 'a wall still blocks the band — this is not just "delete the collider"');
   // greedy merging actually did something: a 10x10 room is 100+ columns but far fewer boxes
   assert(boxes.length < 60, 'greedy merging collapsed the slabs (' + boxes.length + ' boxes for a 10x10 room)');

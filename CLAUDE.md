@@ -128,12 +128,14 @@ Conventions that are easy to break:
 - **Interiors need `addLight`.** The bake integrates sky visibility + one sun bounce, so anything
   under a roof bakes black without a registered light. Light range is capped at the tracer's search
   distance (9.5) or the shadow test can't see occluders and light leaks through walls.
-- **Author to the collider, not to the eye (build 1113).** The engine turns an imported model into a
-  ~1-unit COLUMN grid and a column goes solid for its whole width as soon as a triangle touches it,
-  so every surface stands up to a cell proud of where it was modelled — and a face lying exactly ON
-  a cell boundary (round-numbered architecture does this constantly) costs the entire next cell.
-  Measured: a 0.45-thick wall collides 2.0 thick. Hence `GRID_PAD` / `BOT_R` / `BOT_LANE` (3.8) in
-  levelgen: **anything a bot must walk through is at least BOT_LANE wide**, doorways included.
+- **Author to the collider, not to the eye (build 1113, relaxed by 1148).** The engine used to turn an
+  imported model into a ~1-unit COLUMN grid where a column went solid for its whole width as soon as a
+  triangle touched it: a 0.45-thick wall collided 2.0 thick and a 1.6 m doorway had ZERO passable gap.
+  Hence `GRID_PAD` / `BOT_R` / `BOT_LANE` (3.8) in levelgen: **anything a bot must walk through is at
+  least BOT_LANE wide**, doorways included. Build 1148 made the collider tight to the triangles (that
+  wall now collides 0.500, that doorway passes 1.49 m), so these are a MARGIN rather than a
+  requirement — but they are unchanged, because narrowing them is a generator change that needs its
+  own probe pass, not a side effect of an engine build.
 - **Decoration waits its turn.** Wall-foot pieces are proposed via `later(...)` during the perimeter
   dressing and dropped after everything has reserved its ground; placing them immediately drops a
   boulder onto a gallery ramp. Mirrored cover tests BOTH copies against the reserved rects.
@@ -396,6 +398,27 @@ the bounce the bake assumed are the same surface. `wallColor` is that albedo at 
 same world one value down rather than a different one. `floorColor` therefore equals `skyGround`, which
 also removes the horizon seam between the dome's ground band and the real ground.
 
+**Measured in build 1150, and "the same surface" is FALSE.** `groundAlb` is a hand-picked triple; the ground
+material actually drawn is `base × texture mean`, and the two disagree in every theme — by 0.35× to 1.59×:
+
+| theme | ground material | drawn albedo (linear) | `groundAlb` | Y ratio |
+|---|---|---|---|---|
+| industrial | `concrete` ×[.30,.31,.33] | 0.110/0.114/0.117 | 0.20/0.21/0.22 | 0.54× |
+| castle | `cobble` | 0.154/0.136/0.113 | 0.22/0.19/0.15 | 0.71× |
+| volcanic | `dirt` | 0.142/0.091/0.053 | 0.16/0.13/0.10 | 0.74× |
+| garden | `grass` ×[.74,.80,.62] | 0.034/0.067/0.011 | 0.12/0.18/0.08 | **0.35×** |
+| desert | `sand` | 0.511/0.372/0.185 | 0.42/0.34/0.22 | 1.11× |
+| frost | `snow` | 0.779/0.829/0.899 | 0.60/0.64/0.70 | 1.29× |
+| facility | `scifiFloor` | 0.165/0.189/0.222 | 0.10/0.12/0.14 | **1.59×** |
+
+THREE consumers now derive from the abstraction — the bake's sun bounce, the engine plane's `floorColor` and
+`wallColor` (1143), and the one-bounce fill (1149) — while the renderer draws the texture. That is this
+section's own lesson one level deeper: naming the ground once is not enough when the thing named is not the
+thing drawn. The fix is to DERIVE `groundAlb` from the ground material (`base × texture mean`, which the
+generator can measure because it builds the texture) instead of hand-picking it, and it is a generator
+change needing its own capture pass — on garden the engine's plane is ~3× BRIGHTER than the grass it butts
+against, the same class of seam as the desert one and in the opposite direction.
+
 Each theme now names `zen` / `hor` / `gnd` **once**. They were written out twice per theme before (in the
 `light` block and again inside the `skyMood(...)` call) and this build would have made it three times —
 which is exactly how a mood ends up baking against one ground and showing the player another.
@@ -499,7 +522,233 @@ reaches for and one key serves both — but an invisible inverting modifier is a
 so. `Shift` is deliberately not the key: it is already multi-select here. A step of 0 turns snapping off for
 that channel only, which the field's tooltip states.
 
-## Open work (as of build 1146)
+## The scene-asset browser (build 1147)
+
+The editor could search the WEB for models (`renderModelBrowser` — Poly Pizza / Sketchfab) but had no view
+of its own content. Every other engine's second-most-used panel is exactly that (Unity's Project window,
+Unreal's Content Browser), and without it there is no way to see what a level is built from, to place
+another of something already used without searching for it again, or to act on every instance of one asset
+at once — a level with 57 props was a numbered list you stepped through one prop at a time.
+
+`sceneAssetList()` groups `propModels` by `userData.src`, excluding primitives (those are the *Add a shape*
+row; mixing them in buries the imports among 57 boxes). Ordered most-used first — the thing a level is made
+of is the thing you reach for again — then by name for a stable tie-break. `renderSceneAssets` draws a tile
+per asset with a live thumbnail, an instance count badge, click-to-add-another, and a `◉` overlay that
+selects every copy via build 564's multi-selection and then frames it with build 1137's `_edFrameSelected`
+— a browser that selects something off screen is the same "nothing happened" the panel exists to fix.
+
+Three details worth keeping:
+- `_renderAssetThumb` shares build 813's offscreen renderer and its LRU cache, keyed by url alone, so
+  re-rendering the panel is free after the first paint. It frames by the mesh's largest dimension so a
+  Poly Pizza crate and the museum show at the same apparent size whatever units they arrived in, and a
+  device where a second WebGL context fails keeps an empty tile rather than breaking the panel.
+- The select-all control **stops the event**, or clicking it would also fire the tile's add-another.
+- Poly Pizza serves bare UUIDs, so `assetShortName` labels a hex basename as `model · 78846e` rather than
+  printing an id as if it were a name. The full name and url live in the tooltip: a three-column grid in a
+  344px panel gives a tile ~100px, which is about twelve characters.
+
+Nothing is downloaded and nothing is stored in the level — it is data the engine already held.
+
+## The collider was a cell wider than the model (build 1148)
+
+`buildModelGridBoxes` turns an imported model into a ~1-unit COLUMN grid, and a column went solid for its
+whole width as soon as a triangle touched it. Measured on the build-1123 repro — a thin wall with an
+ordinary 1.6 m doorway — the passable gap was **0.00 m**: one merged box spanned the opening. A 0.45-thick
+wall collided **2.000** thick. That is the root cause behind the generator's `GRID_PAD` / `BOT_LANE`, and
+it meant every OTHER creator's imported building was un-walkable unless they had happened to pad it.
+
+Each (column, **slot**) now remembers the real XZ extent of the triangles that stamped it, one byte per
+edge (~4 mm at a 1-unit cell). Build 1123 tried this per COLUMN and opened no doorway; the reason is the
+load-bearing insight here and it recurs one level down:
+
+- **Per column is not enough**, because a column holds several RUNS and a doorway column holds the floor
+  slab (which fills the cell) beside the wall's jamb face (a sliver). Their union is the whole cell.
+- **Per slot is not enough either** — a run's footprint is the union over its slots, and a wall's BASE slot
+  holds the floor slab too, so the union inherits the slab's full cell. Measured before segmenting: the
+  0.2 wall still collided 2.0 and the doorway was still shut. So a run **splits wherever its footprint
+  changes**, compared at `FOOT_Q = 16` levels per edge so a few millimetres between slots cannot shatter a
+  wall into K boxes.
+- **Merging is only lossless while the footprint spans the whole cell on the merge axis.** Two adjacent
+  columns each holding a sliver at the same relative position are two thin walls with a gap between them,
+  and one merged box bridges it — solid where the model is open, the very fault this build removes. A
+  wall's columns are full along its run and thin across it, so the case that matters still collapses.
+
+**Widening a too-thin footprint is where this went wrong twice, and both wrong answers were plausible.**
+Zero-thickness geometry (which low-poly levels are full of) would emit a box of no thickness, so a
+footprint is widened to `MGRID_MIN_THICK` (0.25) — but toward WHICH side is not a guess:
+1. *Centred on the measurement.* A 0.45 wall straddling a cell boundary became two 0.25 slabs at z=±0.25
+   with a **walk-through gap at z=0** — a worse failure than the over-solid cell.
+2. *Grow to the nearer cell edge.* A 1.4 wall's two faces sit near the outer edges of their cells, so both
+   grew **outward, away from each other**, hollowing the wall out.
+3. *Ask the occupancy grid.* If the neighbour cell is solid at the same slot the wall continues across that
+   boundary, so this cell's footprint must reach it; the two halves then meet and the wall is solid. Solid
+   on both sides means the cell is interior and fills. One bit lookup, and it is not a guess.
+
+`PLANE_B` (2/255 of a cell, ~8 mm) is what distinguishes a single SURFACE from a thin measurement: a wall
+wholly inside one cell records BOTH its faces, so it is not a plane at all and keeps its measured position,
+widening about its own centre — otherwise a 0.2 wall in mid-cell would be dragged out to a cell edge.
+
+**Fail SOLID, never open.** An unstamped slot starts at min 255 / max 0, and a slot that is solid with no
+recorded fragment falls back to the whole cell. The budget (`MGRID_FOOT_BYTES`, 24 MB, halved on phones)
+degrades per-slot → per-column → none, and *none* is exactly the pre-1148 behaviour rather than a broken
+grid: 4 bytes × N × K is ~750 KB for an arena and 24 MB on the 331×148×366 skyscraper this serves.
+
+Measured, doorway repro: **1.6 m opening 0.00 → 1.49 m passable**, 2.56 → 2.49, 3.8 → 3.49. Wall collider
+thickness: 0.1 → 0.500, 0.2 → 0.500, **0.45 → 0.500 (was 2.000)**, 0.9 → 0.875, 1.4 → 1.375.
+
+**It costs boxes, and every consumer walks the list per query.** A real 3-storey generated block (16,368
+triangles, 45×74×37): **795 boxes / 110 ms → 2,291 / 137 ms**. A `FOOT_Q` sweep of 4/8/16/32 gave
+2,240/2,277/2,291/2,321 — so the increase is structural (a tight collider genuinely has more pieces), not
+quantisation noise, and tuning `FOOT_Q` will not buy it back. The enemy resolve already rejected a prop on
+its overall box before walking its box list; `_surfCull`, `clearAt`, `insideSolid` and `ceilingAt` did not,
+and now do. `segmentBlocked` is deliberately left — it walks a SEGMENT, not a point, so it needs a
+segment-bbox test rather than the same four comparisons.
+
+Still true, and not introduced here: a hollow shell thicker than two cells has empty interior cells.
+
+## The shade had lost a channel (build 1149)
+
+Measured on the stock level's floor inside a cast shadow, per channel: **R min 0, p50 2, max 6 — with 19%
+of the patch at EXACTLY zero and 73% at or below 2** — against G 38 and B 50. That is why the first frame
+anybody sees reads as teal murk, and why no grade could recover it: there was nothing left to recover.
+
+The cause is structural, not a tuning slip. A `HemisphereLight` gives an up-facing surface 100% of the SKY
+colour and none of the ground colour, and a cosine lobe over a cubemap probe excludes the lower hemisphere
+entirely. Both are correct for a bare sky. Both are wrong for a scene with walls and crates standing around
+it — a real floor in shade is lit mostly by light bounced off its surroundings, and this engine has no GI to
+supply that. So the shade was lit by nothing but blue, times a floor albedo (`0x4f5d66` → linear R 0.078,
+B 0.138) that is itself blue-dominant. Red had nowhere to come from.
+
+`bounceLight` is the standard pre-GI stand-in: **one bounce of the SUN off the level's own surfaces.** Four
+things about it are deliberate:
+- **An `AmbientLight`.** A bounce arrives from every direction, which is the one thing that light models
+  correctly. It is also free.
+- **Coloured `sunColor × mix(floorColor, wallColor, 0.4)`**, in linear (`setHex` does the transfer on the
+  way in). That is redder than the sky by 4× in R:B, which is the whole point — a term with the sky's own
+  hue could not have fixed a missing red channel.
+- **Scaled by `sun`, and by the day cycle's `dayF`.** A bounce is the key light coming back off a surface,
+  so it dies with the key. A flat lift cannot do that, which is why this is a new term rather than a bigger
+  default for `ambient` — that one stays the creator's arbitrary white lift, untouched.
+- **`0.50` is derived, not chosen.** The albedo is already in the light's colour, so the bounced irradiance
+  lands at 7–12% of the sun's on a horizontal surface — what a ~10%-albedo floor actually returns for one
+  bounce. Raise a level's floor albedo and its bounce grows with it, correctly and for free.
+
+Swept by capture at 0 / 0.15 / 0.30 / 0.50 — sunlit floor `79,115,117 → 83,120,122` (+4 at the top of the
+range), shade `2,38,50 → 9,47,60`, red-at-exactly-zero `19% → 5% → 0% → 0%`, sun-to-shade `9.46:1 → 6.86:1`.
+0.30 clears the clip; 0.50 clears it with margin (min 3) for four code values on the lit surface.
+
+**Not gated on `colorV`, unlike build 1115.** That build moved every pixel through a different transfer
+curve; this one only ADDS light, and only where there was none. Leaving a clipped channel in every level
+that already exists is the worse outcome. The lit-surface delta above is the evidence for that call.
+
+**Two corrections to what was recorded before this build.** Both were derived from scene-linear term
+isolation rather than from the frame, and the frame disagrees:
+- *"Sun-to-shade on the stock level is 3.3:1 linear as shipped, the low end of real daylight."* Measured
+  off the frame on a lit and a shadowed patch of the SAME floor: **9.46:1**. The shadows were never shallow.
+- *"For a strictly physical balance the sun is roughly 4× too weak relative to the sky."* Raising the sun
+  would have deepened a shadow that was already crushing a channel to zero. The defect was the ambient's
+  COLOUR and its lack of a bounce term, not the key light's strength. The whole-engine rebalance that note
+  warns against should not be started; there is nothing there to fix.
+
+An analytic model of the light terms said the stock level sat at 3.0:1 and the generated arenas at
+1.2–3.3:1. It was wrong in both directions, and one capture settled it. **Model the lights to decide what to
+try; measure the frame to decide what is true.**
+
+**The generator states its own value, derived from the same albedo.** The bounce is coloured by the level's
+floor, so its delivered fill scales with that floor's brightness — right as physics, wrong as art direction
+across seven themes whose grounds span 5:1 in luminance (frost snow Y 0.64 against the facility apron's
+0.12). At the engine default the desert's imported sand measured `244,208,160 → 250,218,170`, which is
+nearly white. So `groundMood` divides the target fill back out — `0.0535 / lum(groundAlb)`, the engine
+default times the stock floor's own luminance — and every theme delivers the same fill to within 12%:
+industrial 0.26, castle 0.28, volcanic 0.40, garden 0.33, desert 0.15, frost 0.08, facility 0.46. Named in
+ONE place beside the floor and wall colours that come from the same albedo, which is build 1143's lesson.
+
+Measured three ways on the desert arena at seed 4242 — as shipped before, at the engine default, and at the
+theme's derived 0.15:
+```
+imported sand    244,208,160  ->  250,218,170  ->  246,212,164     (nearly white, then back)
+arena blocks p10      0.0234  ->       0.0366  ->       0.0270     (shadow ratio 24.5 -> 15.9 -> 21.3)
+engine plane      109,101,78  ->   116,106,81  ->   111,103,79
+```
+So the theme gets a real lift in its deep shadows without pushing a ground that was already near clipping
+any further. That middle column is why the generator states a value instead of inheriting one.
+
+**A source pin must not be scoped by a character count.** Three harnesses failed this build for one
+reason — `src.match(/function applyWorldCfg[\s\S]{0,4000}/)`, `{0,2600}` on `updateDayNight` — and in every
+case the assertion was still TRUE; adding a comment had simply pushed the needle past the end of the slice.
+`extractFunction(name)` brace-matches and cannot drift. Every UNANCHORED window has now been converted
+(856, 858, 859, 863, 864, 865, 959, 1127). The remaining ones anchor on a closing brace or on a named
+following declaration, so they fail loudly only when a function outgrows its budget — and converting
+those would change what the assertion covers, so leave them.
+
+## The bake was gated on a texture-filtering capability (build 1150)
+
+Build 1095 put two unrelated things in one statement in the imported-material pass:
+
+```js
+if(MAX_ANISO > 1){ for(const m of ms){ ...anisotropy...
+  if(m.userData.rumpusLightmap && m.aoMap && !m.lightMap){ ...adopt as lightMap... } } }
+```
+
+`MAX_ANISO` is `Math.min(8, getMaxAnisotropy())`, which is **1** on a driver that reports no anisotropic
+filtering — low-end Android, some software rasterisers. On any such device the whole block was skipped, so
+a generated level's radiance bake stayed in the `aoMap` slot. That is not cosmetic: `aoMap` MULTIPLIES the
+ambient and can only darken, while `lightMap` ADDS coloured indirect light — and the bake carries the
+interior lamps, which are the only thing lighting a generated building's inside. The device that could
+least afford it lost its interior lighting and got a dirty AO wash instead. `test-1150` drives the block
+directly at `MAX_ANISO` 1 and 8, because a source pin cannot tell you which branch a nested `if` guards.
+
+## What the ground probe settled (build 1150)
+
+Build 1149 recorded the desert arena's 2.3-stop ground seam with two candidate causes and the instruction
+to probe before theorising. The probe (`scratchpad/probe-ground.mjs` — raycast down at eight forward
+offsets, report per hit the src, the material colour in linear, every map slot, `envMapIntensity` and
+`lightMapIntensity`) answered both in one run:
+
+- **NOT the texture albedo.** `sand` measures 0.511/0.372/0.185 linear against the desert theme's stated
+  `groundAlb` of 0.42/0.34/0.22 — close enough that the generator's grounds are honest about themselves.
+  This was the leading hypothesis and it is wrong.
+- **There is a real `envMapIntensity` gap, and it is NOT the seam** (established after this build was
+  written — see Open work). The imported ground reads `env1.00`; the engine's own boundary wall, same
+  roughness class, reads `env0.12`. Build 1144 made that property one expression — `_envInten(metalness)`
+  — for `floorMat`, `wallMat`, `primitiveMat`, `applyPropShine` and the instancing batch, and it never
+  reached an imported model, which keeps three's default of 1.0: 8× the image-based ambient for two
+  surfaces meant to be the same world. Closing it moved the seam by 3–12 code values and cost the weapon
+  27%, so it was measured and reverted. Worth knowing the gap exists; do not expect it to fix anything.
+- **A related surprise worth keeping:** 29 standard materials are constructed in `breach.html` and exactly
+  ONE sets `envMapIntensity`. Build 1144 established the derivation for the world surfaces — floor, walls,
+  primitives — and every decorative prop the engine builds (coins, pickups, debris, remote bodies) sits at
+  three's default 1.0 alongside every import. "The engine uses 0.12" was never true; it is a minority
+  convention, and the ground plane is on the dark side of it.
+
+**`SKY_ENV_FLOOR = 0.12` was derived from a ratio build 1149 disproved — and survives re-deriving.** Build
+1144 justified 0.12 as "a sun-to-shade ratio of 3:1 needs total ambient at 0.0305", and 1149 measured the
+frame at 9.46:1. So the stated derivation is void. Swept by capture on the stock level, with the bounce in
+place, measuring lit and shadowed patches of the same floor:
+
+```
+SKY_ENV_FLOOR   0.12     0.30     0.55     1.00
+lit floor       83,120,121  88,125,130  95,132,140  105,143,154
+shade            9,47,59    18,58,74    30,71,92     49,93,118
+sun-to-shade      6.90:1     5.07:1     3.75:1       2.57:1
+```
+Real daylight on a horizontal surface is ~8:1, so **0.12 is the closest of the four** and raising it walks
+the frame toward overcast. 1144's other figure — "at a full 1.0 the ratio is 1.58:1" — is also wrong;
+measured it is 2.57:1. Right value, void reasoning: re-derive it here rather than trusting either note.
+
+**The unification was written, measured, and thrown away.** It does NOT close the seam — see Open work for
+the numbers. It was parked here because `_envInten(m) = max(SKY_ENV_FLOOR, m)` still couples to metalness above
+the floor, and the shipped weapon's materials are all metalness 0.4 — so it would drop from 1.0 to 0.4 and
+the weapon block measured `91,104,111 → 66,78,85`, a 27% darkening of an asset that was never tuned
+against that coupling (builds 1140 and 1145 measured it at 1.0). 1144's compatibility argument — "metals
+keep exactly the reflection strength they were tuned with" — applies to engine materials and to nothing a
+creator imported. That trade — 27% off the weapon for 3–12 code values on the
+seam — is why it is not in the tree. If a future build wants the consistency for its own sake, the physically
+coherent form is `envMapIntensity = 1` everywhere with `worldCfg.sky` scaled down to deliver the same
+ambient, and that needs a legacy-`sky` story; the `max(floor, metal)` shape is a compatibility hack that
+only ever had an argument for engine-built materials.
+
+## Open work (as of build 1150)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
@@ -529,29 +778,106 @@ Themes are DATA (build 1114): a palette entry names its materials plus the treat
 contains no `theme === ...` branch. Adding the eighth theme is one `arenaPalette` entry, one
 `arenaMood` entry, whatever new treatment names it introduces, and the editor's theme list.
 
-Worth considering next, in the ENGINE rather than the generator: `buildModelGridBoxes` could emit
-each column's box tight to the triangles that actually stamped it instead of spanning the whole
-cell. That is the root cause behind `GRID_PAD`, and it would make every imported level's doorways
-and corridors passable rather than only the ones this generator authors.
+**`GRID_PAD` / `BOT_LANE` are now a MARGIN, not a requirement (build 1148).** The engine's collider is
+tight to the triangles, so the generator no longer has to author a 3.8 m doorway to get a 1.6 m one.
+Narrowing them is a *generator* change with its own probe pass — do not do it as part of an engine
+build, and keep `tests/test-1113` as the gate.
 
-**Attempted and reverted (build 1123).** Recording it so the next attempt starts past the trap.
-Tracking each column's real XZ footprint (a byte per edge, ~4 mm at a 1-unit cell) and emitting
-boxes tight to it is easy, and both collider tests still pass. It does NOT fix a doorway. Measured
-on a 0.2-thick wall with an ordinary 1.6 m opening: the collider gap stays zero, one box spanning
-the whole wall.
+**The arena-edge seam was never a seam. CLOSED — I was measuring a light.** Four builds of hypotheses about
+why the desert arena's ground reads 2.3 stops brighter than the engine plane beside it, and the answer is
+that the bright strip is the arena's **team-A base marker**: `mat('teamA', { base: [1, 0.55, 0.23],
+glow: 0.32 })` — a deliberately EMISSIVE gameplay marking painted along the base edge. It is supposed to be
+bright. I picked the sample region off a screenshot by eye at y 395–406 and never checked what mesh was
+there until a probe reported `col=1.000/0.550/0.230` with `glow`.
 
-Two reasons, in order:
-1. The greedy merge groups columns by identical vertical runs, so a doorway's thin jamb columns
-   carry the same full-height run as the wall either side, merge with it, and the union of the
-   footprints spans the opening again. Adding the footprint to the merge key is necessary...
-2. ...but not sufficient, and this is the real blocker: a footprint is per COLUMN while a column
-   holds several RUNS. A doorway column contains the floor (occupying the whole cell) and the
-   wall's jamb face (a sliver). Their union is the whole cell, so the key never distinguishes them.
+The scene-linear radiance probe (`scratchpad/probe-radiance.mjs`) settles it in one run. Rendering the live
+scene into a **FloatType** render target with `toneMapping = NoToneMapping` gives the radiance the renderer
+actually produced, before ACES and before the encode, so `radiance / albedo` is the IRRADIANCE a surface
+received — and two surfaces in the same sunlight must report the same number:
 
-The footprint therefore has to be per (column, run). Per-slot storage is 4 bytes x N x K, which is
-fine for an arena (~750 KB) and 24 MB on the 331x148x366 skyscraper this feature exists to serve —
-so it needs a budget and a fallback to per-column, in the style of MGRID_BITS. Do that first, then
-the merge key, then the tight emit.
+```
+surface                       radiance              albedo               IRRADIANCE
+arena edge strip (teamA)   1.871/1.110/0.436   1.000/0.550/0.230    1.87/2.02/1.89   <- EMISSIVE
+engine boundary wall       0.140/0.120/0.082   0.068/0.058/0.045    2.04/2.07/1.81
+                           0.145/0.120/0.083   0.068/0.058/0.045    2.11/2.08/1.84
+                           0.140/0.116/0.079   0.068/0.058/0.045    2.04/2.01/1.74
+```
+**The irradiance is identical.** The renderer was delivering the same light all along; the 14.6× ratio in red
+is albedo, and one of the two albedos belongs to an emitter. In hindsight every eliminated hypothesis was
+eliminated *because* the surface was emissive — zeroing the bake and closing the 8× `envMapIntensity` gap
+both left it byte-identical, which is exactly what an emitter does.
+
+Three lessons, and the first is the one that cost the most:
+- **Know what SURFACE you are measuring before you call it a defect.** Build 1124 established "know where
+  the camera is before you judge the frame"; this is the same error one level down. A region picked by eye
+  off a screenshot is a guess about geometry, and here it was wrong twice: the surface I had been calling
+  "the engine's ground plane" reports `env0.12` and no `src`, which makes it **`wallMat`** — the engine's
+  boundary WALL, not its floor. Both halves of a comparison I ran for four builds were misidentified.
+- **`radiance / albedo` is irradiance only for a NON-EMISSIVE material.** The probe's own first run made
+  this mistake, reading 1.87 off the marker as if it were ground irradiance. It now prints
+  `EMISSIVE!x<intensity> (IRR above is NOT irradiance)` so the next reader cannot repeat it.
+- **Frame statistics cannot test a lighting hypothesis.** Comparing a post-ACES 8-bit value against an
+  albedo-times-irradiance estimate mixes two spaces and every approximation in the chain is worth a factor.
+  Four rounds of that produced four wrong answers; one float-target read produced the right one. When the
+  question is about the render equation, measure in the render equation's own space.
+
+**The confirming run added the first sun-to-shade measured in SCENE-LINEAR space.** A vertical fan of nine
+samples down one third of the frame: eight hit the same engine surface (`env0.12`, roughness 0.85,
+metalness 0.08) and one of those eight is in shadow. Same material, same frame, so the ratio is the light
+alone — and unlike every earlier figure it is read before ACES, so no tone curve is folded into it:
+
+```
+                  radiance              IRRADIANCE          per channel
+lit    0.1385/0.1371/0.0911   2.022/2.371/2.016
+shade  0.0245/0.0441/0.0391   0.358/0.763/0.866   R 5.6:1   G 3.1:1   B 2.3:1
+```
+**The ratio is strongly per-channel: red loses 5.6× going into shade, blue only 2.3×.** That is build 1149's
+finding, independently and properly measured: a shadow lit only by a blue sky keeps its blue and loses its
+red, which is why the fix had to be a WARM bounce term rather than more ambient of any colour. The
+`EMISSIVE!` label also fired correctly on the marker (`x1.00`), so the instrument's own blind spot is closed.
+
+**That loose end is now closed, with no defect.** The eight samples reporting `col = 0.068/0.058/0.045`
+turned out to be `WHO[(unnamed)/BoxGeometry|INSTANCED]` — a **batched box primitive**, so its material is
+`buildInstancing`'s clone and neither `floorMat` nor `wallMat`. (Build 1139 already recorded the signature: an
+`InstancedMesh` hit reports the shared unit-box geometry with a correct world hit point.) I had flagged a
+possible "3.4× albedo error in wallMat" as its own build; it does not exist. The generator's colour
+round-trip is **exact in all seven themes** — `groundAlb → skyHex → setHex` returns the albedo it started
+with, to three decimals:
+
+```
+theme        floorColor -> linear      wallColor -> linear     groundAlb        expected wall (x0.55)
+desert       0xad9e81  0.418/0.342/0.220   0x847862  0.231/0.188/0.122   0.42/0.34/0.22   0.231/0.187/0.121
+frost        0xcbd1da  0.597/0.638/0.701   0x9ba0a7  0.328/0.352/0.386   0.60/0.64/0.70   0.330/0.352/0.385
+facility     0x596169  0.100/0.120/0.141   0x42494e  0.054/0.067/0.076   0.10/0.12/0.14   0.055/0.066/0.077
+```
+Worth keeping because it retires a whole class of suspicion: `skyHex`/`setHex` is not double-encoding
+anything, so a future "the colours are wrong somewhere in the transfer" hypothesis can start already knowing
+this link is clean. It also cost nothing to check — no browser, one Node call against the real `arenaMood`.
+
+**What the bake A/B established, and it matters more than the seam ever did:****What the bake A/B established, and it matters more than the seam ever did:** the bake carries the arena's block field almost
+entirely. With `lightMapIntensity = 0`, the blocks go `148,115,91 → 98,80,65` and their p50 luminance
+`0.191 → 0.0496` — a quarter of the light. That is the first quantification of "the bake is the only thing
+lighting generated geometry", and it is what build 1150's fix restores on every device whose driver reports
+no anisotropic filtering. The `aoMap`/`lightMap` split is still the right eventual decomposition (occlusion
+is multiplicative, lamps and bounce are additive) and still needs a texture budget — but it is not a seam
+fix, and now there is a number for what removing the bake costs.
+
+**Still visible on the stock frame after 1149, and worth a build each.** All three are content or
+composition, not code, and all three are what a first-time player sees:
+- The frame reads MONOCHROME TEAL. `floorColor 0x4f5d66` is blue-dominant in its own albedo (linear R
+  0.078 vs B 0.138), so under a blue sky red has nowhere to come from and the bounce can only return
+  what the albedo carries. Build 1136's recommendation — "warm the architecture and keep the props cool"
+  — is still the fix, and it is a one-hex change plus a capture. Preserve luminance when doing it: the
+  current floor is Y 0.107, so a warm grey at the same Y (about `0x615b53`) swaps hue without moving the
+  exposure the whole grade is tuned against.
+- ~~The WEAPON is the brightest object in the frame by a wide margin, near-white against a world in the
+  110s.~~ **Wrong — measured and withdrawn.** That was written from looking at the frame. The weapon block
+  means `91,104,111` against a frame mean of `127,142,152`: it is DARKER than the world behind it. What
+  reads as "near-white" is a specular highlight on the top rail's thin edge (`p90 0.209` over a 17-pixel
+  strip), which is what a rail edge is supposed to do. Judging a frame by eye is the failure mode the
+  Headless capture section exists to prevent, and it caught me writing this list.
+- A hard horizontal SEAM runs across the middle of the frame where the teal floor plane meets an olive
+  band. Two large flat areas of different colour meeting on a straight line, with no transition.
 
 Also outstanding (user actions): upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.

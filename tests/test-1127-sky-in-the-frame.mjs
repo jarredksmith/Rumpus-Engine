@@ -134,6 +134,9 @@ assert(/scene\.environment = /.test(src), 'something still installs an environme
     'the dim is declared BEFORE the function that reads it');
   assert(!/typeof _skyDayDim/.test(src), '...so no `typeof` pseudo-guard is needed, and none is there to mislead');
 }
-assert(/let _dayPhase=null, _dayShadowT=0, _daySkyT=0, _dayActive=false;/.test(src), 'the sky throttle is declared with the other day-cycle clocks');
+// build 1149 added _dayF to the same declaration — the daylight factor, so applyWorldCfg can re-derive
+// the bounce term mid-cycle. The point of the pin is that these clocks live in ONE place.
+assert(/let _dayPhase=null, _dayShadowT=0, _daySkyT=0, _dayActive=false, _dayF=1;/.test(src),
+  'the sky throttle is declared with the other day-cycle clocks');
 
 done('build 1127: the sky lights the world, shares the frame\'s tone curve, and follows the day cycle');
