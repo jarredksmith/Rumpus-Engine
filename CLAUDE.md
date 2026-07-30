@@ -836,16 +836,25 @@ finding, independently and properly measured: a shadow lit only by a blue sky ke
 red, which is why the fix had to be a WARM bounce term rather than more ambient of any colour. The
 `EMISSIVE!` label also fired correctly on the marker (`x1.00`), so the instrument's own blind spot is closed.
 
-**One loose end, deliberately not chased.** All eight of those samples report `col = 0.068/0.058/0.045`
-(`0x4a443c`), which matches no value the desert theme emits — its `wallColor` is `0x847864` and the CLI does
-emit that correctly (verified against frost, whose `wallColor` decodes exactly to `groundAlb × 0.55` through
-`skyHex`). Roughness 0.85 / metalness 0.08 matches `groundMood`'s wall, but `_envInten(0.08) = 0.12` also
-matches any PRIMITIVE at that metalness, so the surface is not identified. **Do not infer which it is from
-the arithmetic** — that is what produced four wrong answers on this same frame. One line in the probe
-settles it: report `o.name`, `geometry.type`, and whether the hit is in `propModels`. Then, if it really is
-`wallMat` rendering at 0.068 where the theme says 0.231, that is a 3.4× albedo error worth its own build.
+**That loose end is now closed, with no defect.** The eight samples reporting `col = 0.068/0.058/0.045`
+turned out to be `WHO[(unnamed)/BoxGeometry|INSTANCED]` — a **batched box primitive**, so its material is
+`buildInstancing`'s clone and neither `floorMat` nor `wallMat`. (Build 1139 already recorded the signature: an
+`InstancedMesh` hit reports the shared unit-box geometry with a correct world hit point.) I had flagged a
+possible "3.4× albedo error in wallMat" as its own build; it does not exist. The generator's colour
+round-trip is **exact in all seven themes** — `groundAlb → skyHex → setHex` returns the albedo it started
+with, to three decimals:
 
-**What the bake A/B established, and it matters more than the seam ever did:** the bake carries the arena's block field almost
+```
+theme        floorColor -> linear      wallColor -> linear     groundAlb        expected wall (x0.55)
+desert       0xad9e81  0.418/0.342/0.220   0x847862  0.231/0.188/0.122   0.42/0.34/0.22   0.231/0.187/0.121
+frost        0xcbd1da  0.597/0.638/0.701   0x9ba0a7  0.328/0.352/0.386   0.60/0.64/0.70   0.330/0.352/0.385
+facility     0x596169  0.100/0.120/0.141   0x42494e  0.054/0.067/0.076   0.10/0.12/0.14   0.055/0.066/0.077
+```
+Worth keeping because it retires a whole class of suspicion: `skyHex`/`setHex` is not double-encoding
+anything, so a future "the colours are wrong somewhere in the transfer" hypothesis can start already knowing
+this link is clean. It also cost nothing to check — no browser, one Node call against the real `arenaMood`.
+
+**What the bake A/B established, and it matters more than the seam ever did:****What the bake A/B established, and it matters more than the seam ever did:** the bake carries the arena's block field almost
 entirely. With `lightMapIntensity = 0`, the blocks go `148,115,91 → 98,80,65` and their p50 luminance
 `0.191 → 0.0496` — a quarter of the light. That is the first quantification of "the bake is the only thing
 lighting generated geometry", and it is what build 1150's fix restores on every device whose driver reports
