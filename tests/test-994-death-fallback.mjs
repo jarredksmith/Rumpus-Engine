@@ -45,7 +45,10 @@ assert(body.material.transparent === true && body.material.color.getHex() === 0x
 // topple phase: by the end the body has rotated ~86 deg and its centre dropped ~1.0
 for(let t=0;t<0.45;t+=0.05) updateFadeCorpses(0.05);
 assert(mesh.quaternion.angleTo(q0) > 1.3, 'the body has toppled (rotated ~1.5 rad from upright)');
-near(mesh.position.y, 1.4 - 1.0, 0.15, 'the centre dropped as the body lay down');
+// build 1175: the drop is now MEASURED so the body rests ON the floor — assert the property itself:
+// the lying mesh's bottom sits at ground level (standing bottom was y=0), not a hardcoded offset.
+{ const lyBox = new THREE.Box3().setFromObject(mesh);
+  near(lyBox.min.y, 0, 0.15, 'the body came to rest ON the ground — bottom at floor level, not through it'); }
 
 // hold phase: nothing moves
 const yHold = mesh.position.y;

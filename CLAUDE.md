@@ -967,6 +967,46 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Corpses lie on the floor, not in it (build 1175)
+
+Reported from play: capsules AND the feet-origin chub GLB sank partway through the floor on death. Build
+994's fallback death lowered every toppling corpse by a HARDCODED 1.0. A capsule (radius 0.7, centre
+origin) needs 0.7 — buried 0.3; a feet-origin GLB needs to RISE by half its width — dropped a metre
+underground. `_fallbackDeath` now applies the FINAL topple quaternion once at death, measures the real
+lying bbox, and solves the y that rests its bottom exactly where the standing bottom was (`dy = box0.min.y
+- box1.min.y` — sign handles both pivots with no special cases); the sink phase descends by the measured
+lying thickness. Unmeasurable meshes fall back to the old constants. test-994's pin moved from the
+hardcoded offset to the PROPERTY (lying bbox bottom ≈ ground), which is what that build always meant.
+
+## Curved props stopped swallowing enemies; enemies learned to hop (build 1174)
+
+Two play reports, each verified to a mechanism. (1) CLIP-THROUGH: 1158's edge exemption reads a curved
+prop's flank as LOW near the silhouette (sphere/cylinder/dome), exempting the enemy INTO the footprint —
+and once its centre crossed the box, the resolver's `d > 1e-4` gate meant no push ever again. 1158's probe
+tested wedges/boxes, never a curved prop. Now centre-inside-box is HANDLED: expelled along the shortest
+horizontal exit, capped 0.3/frame, unless the enemy is standing ON this collider's surface at its own
+column (mid-ramp/stairs protected — the surface is at its feet). Outside the footprint the ordinary push
+owns the rim, so through-traffic is dead. (2) STUCK BEHIND PROPS: the nav grid marks slab-tops walkable
+within JUMP reach (NAV_UP derives from the jump apex) — semantics the BOTS execute (`wp.jump`, build 620)
+but PvE enemies silently ignored, so the path said "hop the slab" and the enemy ground against the very
+obstacle its route crossed. Enemies now honour the hint via the trap launch-arc machinery (`en.vy=JUMP`,
+`launchY` integrator), with the bots' 0.9s cooldown so a tall wall isn't jackhammered.
+
+## The gizmo learns local space (build 1173)
+
+The editor critic, verified: every drag axis in `tryGizmoGrab` was a WORLD unit vector — a wall rotated 30°
+could not be slid along its own length. A World/Local toggle (persisted, `breach_gizspace`) now rotates the
+translate axes, per-axis scale handles and rotate normals by the PRIMARY object's quaternion via
+`_gizmoRefQuat()`, and `updateGizmo` turns the visual to match — the handle you see is the axis you get.
+Three things that made this small: scale MATH needed no change (it always scaled the object's own
+components; only its handles pointed wrong in world mode); the rotated axis is stored IN the drag, so
+`applyGizmoDrag` and the group path inherit it with zero changes; and lights/zones/markers return null from
+the resolver (they are unrotated — world IS their local), as does a missing primary, so world mode is
+byte-identical to before. Snap composes unchanged: `_snapAlong` snaps the component along whatever axis the
+drag carries. FOURTH container rollback recovered during this build — same signature (906 harnesses), same
+one-command recovery; the scripted-edit habit made the re-apply free again. (Also twice now: a heredoc
+python step run from tests/ silently missed CLAUDE.md — run docs edits from the repo root.)
+
 ## Reload cancel + per-weapon draw (build 1172)
 
 The panel's "reload jail", verified then opened: `reload()` was a setTimeout that always completed and
@@ -1380,7 +1420,7 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1172)
+## Open work (as of build 1175)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

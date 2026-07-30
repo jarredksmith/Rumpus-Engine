@@ -26255,7 +26255,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1172 · 2026-07-30';
+const BUILD_VERSION = 'build 1175 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28353,7 +28353,26 @@ function _fallbackDeath(mesh, dx, dz){
     const ax=new THREE.Vector3(dz/l, 0, -dx/l);   // horizontal axis perpendicular to the hit -> the body tips AWAY from the shooter
     const mats=[];
     mesh.traverse(o=>{ if(o.isMesh && o.material){ const arr=Array.isArray(o.material)?o.material:[o.material]; const cl=arr.map(m=>{ const c=m.clone(); c.transparent=true; return c; }); o.material=Array.isArray(o.material)?cl:cl[0]; for(const c of cl) mats.push(c); } });
-    _fadeCorpses.push({ mesh, ax, mats, t:0, y0:mesh.position.y, q0:mesh.quaternion.clone() });
+    // build 1175: the lie-down drop is MEASURED, not the old hardcoded 1.0. A capsule (radius 0.7) lying
+    // down needs 0.7 — it was buried 0.3; a feet-origin GLB (the chub character) needs to RISE by half its
+    // width, and dropping it 1.0 put the origin a metre underground: "falls over, goes halfway through the
+    // floor". Apply the FINAL topple quaternion once, measure the real lying bbox, and solve the y that
+    // rests its bottom exactly where the standing bottom was. Two setFromObject traversals per death —
+    // event-scale, not per-frame. Sink depth is the lying THICKNESS (+ margin), for the same reason.
+    const q0=mesh.quaternion.clone();
+    let dy=-1.0, sink=1.4;
+    try{
+      const box0=new THREE.Box3().setFromObject(mesh);
+      _fcQ.setFromAxisAngle(ax, 1.5);
+      mesh.quaternion.copy(q0).premultiply(_fcQ); mesh.updateMatrixWorld(true);
+      const box1=new THREE.Box3().setFromObject(mesh);
+      mesh.quaternion.copy(q0); mesh.updateMatrixWorld(true);
+      if(isFinite(box0.min.y) && isFinite(box1.min.y) && !box0.isEmpty() && !box1.isEmpty()){
+        dy = box0.min.y - box1.min.y;                       // + raises a feet-origin body, − lowers a centre-origin one
+        sink = Math.max(0.5, (box1.max.y - box1.min.y) + 0.3);
+      }
+    }catch(e){}
+    _fadeCorpses.push({ mesh, ax, mats, t:0, y0:mesh.position.y, q0, dy, sink });
     if(_fadeCorpses.length>FADE_CORPSE_MAX) _removeFadeCorpse(_fadeCorpses.shift());
   }catch(e){ try{ scene.remove(mesh); }catch(_e){} }
 }
@@ -28365,11 +28384,11 @@ function updateFadeCorpses(dt){
       const k=c.t/TOPPLE, e=k*k*(3-2*k);   // smoothstep: slow tip, fast slam
       _fcQ.setFromAxisAngle(c.ax, e*1.5);
       c.mesh.quaternion.copy(c.q0).premultiply(_fcQ);
-      c.mesh.position.y = c.y0 - e*1.0;    // centre drops as the body lies down
+      c.mesh.position.y = c.y0 + e*(c.dy!=null?c.dy:-1.0);   // build 1175: to the MEASURED resting height — the body lies ON the floor, whatever its pivot
     } else if(c.t<TOPPLE+HOLD){ /* lie still */ }
     else if(c.t<TOPPLE+HOLD+SINK){
       const k=(c.t-TOPPLE-HOLD)/SINK;
-      c.mesh.position.y = c.y0 - 1.0 - k*1.4;
+      c.mesh.position.y = c.y0 + (c.dy!=null?c.dy:-1.0) - k*(c.sink!=null?c.sink:1.4);
       for(const m of c.mats){ if(m.opacity>1-k) m.opacity=1-k; }
     } else { _removeFadeCorpse(c); _fadeCorpses.splice(i,1); }
   }
@@ -31542,8 +31561,17 @@ function loop(){
           // active chasers. A patrol enemy heading to a wander/last-known waypoint used to beeline and grind on the
           // corner; now it navigates the halls like a chaser, so it stops getting "confused" around walls/objects.
           const _wp=_botFollowPath(en._nav||(en._nav={ pos:en.mesh.position }), td.tx, td.tz, dt);
+          if(en._jmpCd>0) en._jmpCd-=dt;
           if(_wp){ const _pdx=_wp.x-en.mesh.position.x, _pdz=_wp.z-en.mesh.position.z, _pl=Math.hypot(_pdx,_pdz);
-            if(_pl > 0.5){ _mvx=_pdx/_pl; _mvz=_pdz/_pl; } }
+            if(_pl > 0.5){ _mvx=_pdx/_pl; _mvz=_pdz/_pl; }
+            // build 1174: HONOUR THE JUMP HINT. The nav grid marks a slab-top walkable when it is within
+            // JUMP reach (NAV_UP is derived from the jump apex) — semantics the BOTS have executed since
+            // build 620 (wp.jump at their follow site) but PvE enemies silently ignored. So the path said
+            // "hop the knee-high slab", the enemy couldn't, and it ground against the very obstacle its
+            // route crossed — "stuck behind props, can't navigate out". Same launch-arc machinery the
+            // traps use; same cooldown shape as the bots' so a tall wall isn't jackhammered.
+            if(_wp.jump && en.grounded!==false && (en._jmpCd||0)<=0 && (en.launchY||0)<=0){
+              en.vy=JUMP; en.launchY=0.001; en.grounded=false; en._jmpCd=0.9; } }
         }
         if(en._stuckT>0.2){   // build 540/546/620 wall-follow; build 977: ESCALATE instead of grinding one side forever (concave corners beat a fixed side)
           if(!en._stuckSide) en._stuckSide=((en.id%2)?1:-1);
@@ -31610,6 +31638,25 @@ function loop(){
           const cz = Math.max(b.min.z, Math.min(en.mesh.position.z, b.max.z));
           const dx = en.mesh.position.x - cx, dz = en.mesh.position.z - cz;
           const d = Math.hypot(dx,dz);
+          if(d < eR && d <= 1e-4){
+            // build 1174: the enemy's CENTER is inside this box, where the old `d > 1e-4` gate meant NO push
+            // ever again. Combined with 1158's edge exemption this was a clip-through: a CURVED prop's flank
+            // (sphere, cylinder — the centre-arena dome) reads LOW at the sample point just inside the box
+            // edge, so the enemy was exempted in; once its centre crossed the box, the resolver went silent
+            // and it walked straight through. Standing ON the collider's surface is legitimate (mid-ramp,
+            // mid-stairs — the surface is at its feet); BURIED in it is not — expel along the shortest
+            // horizontal exit, capped per frame so it's a shove, not a teleport.
+            const feetB = en.mesh.position.y - 1.4;
+            const own = (typeof propSurfaceAt==='function') ? propSurfaceAt(c, en.mesh.position.x, en.mesh.position.z) : -Infinity;
+            if(!(own > -Infinity && own <= feetB + STEP + 1e-4)){
+              const exL=en.mesh.position.x-(b.min.x-eR), exR=(b.max.x+eR)-en.mesh.position.x;
+              const ezL=en.mesh.position.z-(b.min.z-eR), ezR=(b.max.z+eR)-en.mesh.position.z;
+              const mm=Math.min(exL,exR,ezL,ezR), st=Math.min(mm, 0.3);
+              if(mm===exL) en.mesh.position.x-=st; else if(mm===exR) en.mesh.position.x+=st;
+              else if(mm===ezL) en.mesh.position.z-=st; else en.mesh.position.z+=st;
+            }
+            continue;
+          }
           if(d < eR && d > 1e-4){
             // build 1158: ask the question the PLAYER asks. Builds 1092/1094 gated the ramp exemption on
             // `b.max.y - feetY < STEP + 0.5` — the box's TOP being within about a step of the feet — which is
@@ -37000,6 +37047,16 @@ function renderEditorFields(){
       // build 1146: snapping. On by default, because a level editor whose handles cannot line two objects
       // up is not a level editor; Ctrl inverts it for one drag, which is the escape hatch every DCC has.
       {
+        // build 1173: world/local space toggle — a rotated wall becomes slidable along its own length
+        const sw=document.createElement('div'); sw.style.cssText='display:flex;gap:5px;margin:7px 0 2px;';
+        for(const sp of ['world','local']){
+          const b=document.createElement('button'); b.textContent=(sp==='world'?'World':'Local')+' axes';
+          b.title=(sp==='world'?'Handles follow the world grid':'Handles follow the selected object\u2019s own rotation \u2014 slide a rotated wall along its length');
+          b.style.cssText='flex:1;font-size:11px;padding:3px 0;border-radius:5px;border:1px solid '+(gizmoSpace===sp?'var(--accent)':'#2a3a42')+';background:'+(gizmoSpace===sp?'#12312a':'#0c1418')+';color:'+(gizmoSpace===sp?'#9fe6cf':'#7f9a92')+';cursor:pointer;';
+          b.onclick=()=>{ gizmoSpace=sp; _saveSnapPrefs(); if(typeof updateGizmo==='function') updateGizmo(); renderEditorFields(); };
+          sw.appendChild(b);
+        }
+        gz.appendChild(sw);
         const lab=document.createElement('label');
         lab.style.cssText='display:flex;align-items:center;gap:7px;margin:7px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer;';
         const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=gizmoSnap; cb.style.accentColor='var(--accent)';
@@ -38635,17 +38692,31 @@ let scaleProportional = true;       // default: uniform scaling; checkbox lets t
 let gizmoSnap = true;
 let snapGrid = 0.5;        // metres per translate step
 let snapAngleDeg = 15;     // degrees per rotate step — 15 divides 90 and 360, so corners land exactly
+// build 1173: WORLD vs LOCAL gizmo space. The handles were world-axis only — a wall rotated 30° could not
+// be slid along its own length; the numeric fields at five decimals were the only way. In local mode the
+// drag axes (translate, per-axis scale) and the rotate normals are the PRIMARY object's own axes, and the
+// gizmo visual turns with it so the handle you see is the axis you get. Scale math needed no change: it
+// always scaled the object's own components — only its handles pointed the wrong way in world mode.
+let gizmoSpace = 'world';
+function _gizmoRefQuat(){
+  if(gizmoSpace!=='local') return null;
+  const o = editorActive==='props' ? propModels[editorTargets.props.idx]
+    : editorActive==='turrets' ? turretModels[editorTargets.turrets.idx] : null;   // lights/zones/markers are unrotated — world is correct for them
+  return (o && o.quaternion) ? o.quaternion : null;
+}
 let snapScaleStep = 0.25;  // scale units per step; a box primitive's scale IS its size in metres
 try{
   const v = localStorage.getItem('breach_gizsnap'); if(v==='off') gizmoSnap=false; else if(v==='on') gizmoSnap=true;
   const g = parseFloat(localStorage.getItem('breach_gizsnap_g')); if(isFinite(g) && g>=0) snapGrid=g;
   const a = parseFloat(localStorage.getItem('breach_gizsnap_a')); if(isFinite(a) && a>=0) snapAngleDeg=a;
+  if(localStorage.getItem('breach_gizspace')==='local') gizmoSpace='local';   // build 1173
   const c = parseFloat(localStorage.getItem('breach_gizsnap_s')); if(isFinite(c) && c>=0) snapScaleStep=c;
 }catch(e){}
 function _saveSnapPrefs(){ try{
   localStorage.setItem('breach_gizsnap', gizmoSnap?'on':'off');
   localStorage.setItem('breach_gizsnap_g', String(snapGrid));
   localStorage.setItem('breach_gizsnap_a', String(snapAngleDeg));
+  localStorage.setItem('breach_gizspace', gizmoSpace);   // build 1173
   localStorage.setItem('breach_gizsnap_s', String(snapScaleStep));
 }catch(e){} }
 // Ctrl (or Cmd) INVERTS the setting rather than enabling it — with snapping on, which is the default, the
@@ -39113,6 +39184,7 @@ function updateGizmo(){
   const pos = (movable && !_lk) ? getSelPos() : null;
   if(!pos){ gr.translate.visible=gr.scale.visible=gr.rotate.visible=false; gizmo.visible = false; return; }
   gizmo.position.copy(pos);
+  { const q=_gizmoRefQuat(); if(q) gizmo.quaternion.copy(q); else gizmo.quaternion.set(0,0,0,1); }   // build 1173: the handle you see is the axis you get
   if(activeCam()===camera){ const d = camera.position.distanceTo(pos); gizmo.scale.setScalar(Math.max(0.4, d*0.06) * (isTouch?1.5:1)); }
   else { gizmo.scale.setScalar(Math.max(0.6, topZoom*0.03)); }
   // lights + spawns have no scale; force translate/rotate only for them
@@ -39168,6 +39240,7 @@ function tryGizmoGrab(e){
 
   if(kind==='translate'){
     const dir = new THREE.Vector3(axis==='x'?1:0, axis==='y'?1:0, axis==='z'?1:0);
+    { const q=_gizmoRefQuat(); if(q) dir.applyQuaternion(q).normalize(); }   // build 1173: local mode drags along the OBJECT'S axis
     gizmoDrag = { kind, dir, startParam: axisParamUnderPointer(e, pos, dir), startPos: pos.clone() };
   } else if(kind==='scale'){
     const sc = getSelScale(); if(!sc) return false;
@@ -39175,12 +39248,14 @@ function tryGizmoGrab(e){
       gizmoDrag = { kind, axis:'all', startScale: sc.clone(), refDist: scaleRefDistance(e, pos) };
     } else {
       const dir = new THREE.Vector3(axis==='x'?1:0, axis==='y'?1:0, axis==='z'?1:0);
+      { const q=_gizmoRefQuat(); if(q) dir.applyQuaternion(q).normalize(); }   // build 1173: the scale handle you grab points along the local axis it scales
       const sp = axisParamUnderPointer(e, pos, dir);
       gizmoDrag = { kind, axis, dir, startParam: sp || 0.0001, startScale: sc.clone() };
     }
   } else if(kind==='rotate'){
     const rot = getSelRot(); if(!rot) return false;
     const normal = new THREE.Vector3(axis==='x'?1:0, axis==='y'?1:0, axis==='z'?1:0);
+    { const q=_gizmoRefQuat(); if(q) normal.applyQuaternion(q).normalize(); }   // build 1173: rotate about the object's own axis
     const hit = pointerOnPlane(e, pos, normal);
     if(!hit) return false;
     const start = hit.clone().sub(pos);
