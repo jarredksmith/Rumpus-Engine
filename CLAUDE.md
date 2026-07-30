@@ -1605,7 +1605,45 @@ inside `_aces(...)`; 858 — a `{0,1600}` window widened to 2400, anchor unchang
 water needs a browser pass — the zone panel, a waterfall, dusk with the day cycle, and the shoreline with
 AO on and off.
 
-## Open work (as of build 1184)
+## Two-cascade sun shadows (build 1185)
+
+The rendering critic's #1 CRITICAL, and the oldest visible defect in the engine: one shadow volume was a
+trade with no right answer — tight (build 1120's fit) gives sharp contacts and a HARD CLIFF where shadows
+end ("the world floats" past `shadowDist`); wide gives no cliff and mud everywhere. Now the near volume
+stays exactly 1120's camera-following fit and **`moonFar`** — a second directional light, seated at BOOT
+because the light count must never change during play (636/977/1153/1155), desktop only — covers **4×**
+that extent behind it. Each fragment takes the sun from exactly ONE cascade.
+
+The pick is by COVERAGE, not by a split distance: a chunk patch after `getDirectionalLightInfo` reads the
+near map's own projected coord (`vDirectionalShadowCoord[0]`, 2% margin) — a derived split distance gets
+the screen corners wrong (they leave the near volume laterally before they leave it in depth); the coord
+cannot be wrong about what the map covers. Three guards, each load-bearing:
+- **`#if NUM_DIR_LIGHT_SHADOWS >= 2`** keeps the gate out of every scene that isn't running the cascades —
+  the thumbnail/inspector rigs are two-directional-light setups whose rim light this must not touch.
+- **`USE_SHADOWMAP` absent** (an object with `receiveShadow=false` — the nocollide grass) cannot read the
+  coord; it takes the NEAR sun unshadowed. Without that branch such objects receive BOTH suns = 2× light.
+- **`csmSunP.y`** (shared plain object; the value walked into every merged lit `ShaderLib` entry — 1181's
+  lesson, reproven in `test-1185`) is the runtime switch: 0 on phones, where a creator's own two
+  shadow-casting directionals could otherwise trip the compiled gate.
+
+The far fit lives inside `_fitSunShadow`: snapped to its OWN 4×-coarser texel grid (snapping to the near
+grid would slide it a fraction of its own texel per step — `test-1185` proves whole-texel movement along
+the fit's own axes); the light stands `D = 90 + F` back so the whole ±F volume fits its depth range (a
+light left on the 90 orbit would spill ~110 units behind itself at F=240); `normalBias` is 1125's texel
+rule at the far map's own scale with its own cap (the near 0.6 cap is a near-volume quantity — clamping
+the far bias to it would acne every distant surface). Colour/intensity/visibility mirror `moon` every call
+BEFORE the early return, because the day cycle writes them per frame. Sun→scene direction is measured
+target-relative (`moon.position - _sunTarget.position`) — `normalize(moon.position)` is only the light
+direction when the target sits at the origin, which 1120's own snap axes still assume (pre-existing,
+harmless for a grid, left alone).
+
+Costs and residue, stated plainly: every shadow refresh now renders two maps (desktop only); the cliff
+still exists at 4× `shadowDist` (240 m default) — SSAO and distance carry past that; the cascade seam can
+show a resolution step. NOT capture-verified — the browser pass should walk a big generated arena and look
+for the seam, distant acne, and grass brightness (the 2×-light guard). One harness moved (1120 — its
+scope gained the null `moonFar`, so it now drives the phone path; 1185 drives the far cascade).
+
+## Open work (as of build 1185)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

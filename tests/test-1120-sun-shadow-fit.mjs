@@ -41,7 +41,8 @@ assert(/const _sunTarget = new THREE\.Object3D\(\); scene\.add\(_sunTarget\); mo
     const nb = src.match(/const SUN_NB_TEXELS = [^\n]*\nconst _sunNormalBias = [^\n]*\n/);
     assert(nb, 'the normal-bias helper is a named, single-source expression');
     const fn = new Function('THREE', 'moon', '_sunTarget', 'worldCfg', 'Math',
-      'const _fitF=new THREE.Vector3(), _fitAx=new THREE.Vector3(), _fitAy=new THREE.Vector3(), _fitL=new THREE.Vector3();' +
+      'const _fitF=new THREE.Vector3(), _fitAx=new THREE.Vector3(), _fitAy=new THREE.Vector3(), _fitL=new THREE.Vector3(), _fitL2=new THREE.Vector3();' +
+      'const moonFar=null, _sunTargetFar=null;' +   // build 1185: this harness drives the single-cascade (phone) path; test-1185 drives the far cascade
       'let _fitFx=1e9,_fitFz=1e9;' + nb[0] + extractFunction('_fitSunShadow') + '; return _fitSunShadow;'
     )({ Vector3: V3 }, moon, _sunTarget, { shadowDist }, Math);
     return { fn, moon, _sunTarget };

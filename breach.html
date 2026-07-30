@@ -7850,6 +7850,9 @@ function _fitSunShadow(cam){
   const u = Math.round((fx*_fitAx.x + fz*_fitAx.z) / texel) * texel;
   const v = Math.round((fx*_fitAy.x + fz*_fitAy.z) / texel) * texel;
   fx = u*_fitAx.x + v*_fitAy.x; fz = u*_fitAx.z + v*_fitAy.z;
+  // build 1185: the far cascade mirrors the sun every frame (colour/intensity are written in
+  // applyWorldCfg AND per-frame by the day cycle — chasing every write site is how a mirror drifts).
+  if(moonFar){ moonFar.color.copy(moon.color); moonFar.intensity = moon.intensity; moonFar.visible = moon.visible; }
   const moved = Math.abs(fx - _fitFx) > texel*0.5 || Math.abs(fz - _fitFz) > texel*0.5;
   const sized = Math.abs(moon.shadow.camera.right - E) > 1e-3;
   if(!moved && !sized) return false;
@@ -7857,6 +7860,26 @@ function _fitSunShadow(cam){
   _sunTarget.position.set(fx, 0, fz); _sunTarget.updateMatrixWorld();
   if(sized){ const c = moon.shadow.camera; c.left = -E; c.right = E; c.top = E; c.bottom = -E; c.updateProjectionMatrix();
     moon.shadow.normalBias = _sunNormalBias(E, moon.shadow.mapSize.x); }
+  if(moonFar){
+    const F = Math.min(500, E*4);
+    // the same light-space snap, on the FAR map's own (4x coarser) texel grid — snapping this volume to
+    // the near grid would slide it a fraction of its own texel per step and crawl every distant edge
+    const fpx = moonFar.shadow.mapSize.x || 2048, ftex = (2 * F) / fpx;
+    const fu = Math.round(u/ftex)*ftex, fv = Math.round(v/ftex)*ftex;
+    _sunTargetFar.position.set(fu*_fitAx.x + fv*_fitAy.x, 0, fu*_fitAx.z + fv*_fitAy.z); _sunTargetFar.updateMatrixWorld();
+    // stand the light far enough back that the whole +/-F volume fits inside its depth range: the near
+    // sun orbits 90 out, so a +/-240 volume would spill ~110 units BEHIND a light left at that distance
+    const D = 90 + F;
+    _fitL2.copy(moon.position).sub(_sunTarget.position).normalize();
+    moonFar.position.copy(_sunTargetFar.position).addScaledVector(_fitL2, D);
+    const fc = moonFar.shadow.camera;
+    if(Math.abs(fc.right - F) > 1e-3 || Math.abs(fc.far - (D + F)) > 1e-3){
+      fc.left = -F; fc.right = F; fc.top = F; fc.bottom = -F; fc.near = 1; fc.far = D + F; fc.updateProjectionMatrix();
+      // the texel rule (1125) at the far map's own scale; the 0.6 cap is a NEAR-volume quantity, so the
+      // far cascade carries its own — 7.7 texels of a 240-extent map is ~1.8m, fine at the distances it serves
+      moonFar.shadow.normalBias = Math.min(2.2, Math.max(0.02, (2 * F / fpx) * SUN_NB_TEXELS));
+    }
+  }
   return true;   // the caller dirties the map: a moved volume must be re-rendered or it smears
 }
 // Kill shadow acne (the striped self-shadowing bands on flat faces): normalBias offsets the shadow
@@ -7866,6 +7889,52 @@ function _fitSunShadow(cam){
 moon.shadow.bias = -0.0004;
 moon.shadow.normalBias = _sunNormalBias(moon.shadow.camera.right, moon.shadow.mapSize.x);   // build 1095: was 1.2 — contact shadows were detaching (peter-panning) on generated levels. Build 1125: the 0.6 that replaced it is 7.7 texels of the +/-80 volume this line runs against, so say THAT and it survives the first _fitSunShadow
 scene.add(moon);
+// build 1185: TWO-CASCADE SUN SHADOWS. One volume was a trade with no right answer: tight = sharp
+// contacts but a hard cliff where shadows END (the rendering critic's #1 — "the world floats" past
+// shadowDist); wide = no cliff but mud everywhere. Now the same map budget is spent twice: the near
+// volume stays exactly build 1120's camera-following fit, and moonFar covers 4x that extent behind it.
+// moonFar is seated at BOOT (the light count must never change during play — builds 636/977/1153/1155),
+// desktop only: a phone keeps one cascade and one shadow pass, decided once before the first compile.
+const moonFar = IS_COARSE ? null : new THREE.DirectionalLight(0x9fd8ff, 0.9);
+const _sunTargetFar = new THREE.Object3D(); scene.add(_sunTargetFar);
+const _fitL2 = new THREE.Vector3();
+if(moonFar){
+  moonFar.castShadow = true;
+  moonFar.shadow.mapSize.set(2048, 2048);
+  moonFar.shadow.bias = -0.0004;
+  moonFar.target = _sunTargetFar;
+  scene.add(moonFar);
+}
+// The per-fragment cascade pick. Each fragment takes the sun from exactly ONE of the first two
+// directional lights: the near one wherever its shadow map actually covers (its projected coord, with a
+// margin — a derived split DISTANCE gets the screen corners wrong, the coord cannot), the far one
+// everywhere else. Guards, each load-bearing:
+//  - NUM_DIR_LIGHT_SHADOWS >= 2 keeps the gate out of every scene that isn't running the two cascades —
+//    the thumbnail/inspector rigs use two-directional-light setups whose rim light this must not touch.
+//  - USE_SHADOWMAP absent (an object with receiveShadow=false — the nocollide grass) cannot read the
+//    coord; it takes the NEAR sun unshadowed. Without that branch such objects get BOTH suns = 2x light.
+//  - csmSunP.y (shared plain object, 1181's trick) is the runtime switch: 0 on phones, where a creator's
+//    own two shadow-casting directional lights could otherwise trip the compiled gate.
+const _csmP = { x:0, y: moonFar?1:0, z:0 };
+THREE.ShaderChunk.lights_pars_begin = 'uniform vec3 csmSunP;\n' + THREE.ShaderChunk.lights_pars_begin;
+THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
+  'getDirectionalLightInfo( directionalLight, geometry, directLight );',
+  ['getDirectionalLightInfo( directionalLight, geometry, directLight );',
+   '#if NUM_DIR_LIGHT_SHADOWS >= 2',
+   'if ( csmSunP.y > 0.5 && UNROLLED_LOOP_INDEX < 2 ) {',
+   '#if defined( USE_SHADOWMAP )',
+   'vec2 _cs0 = vDirectionalShadowCoord[ 0 ].xy / vDirectionalShadowCoord[ 0 ].w;',
+   'bool _csN = _cs0.x > 0.02 && _cs0.x < 0.98 && _cs0.y > 0.02 && _cs0.y < 0.98;',
+   '#else',
+   'bool _csN = true;',
+   '#endif',
+   'if ( ( UNROLLED_LOOP_INDEX == 0 ) != _csN ) directLight.color = vec3( 0.0 );',
+   '}',
+   '#endif'].join('\n\t\t'));
+// ShaderLib merged UniformsLib.lights at module load (the 1181 lesson, same shape): the value must be
+// added to every already-merged lit entry or it sits at GL zero and the far cascade never lights anything.
+THREE.UniformsLib.lights.csmSunP = { value:_csmP };
+for(const _clk in THREE.ShaderLib){ const _clu = THREE.ShaderLib[_clk].uniforms; if(_clu && _clu.directionalLights){ _clu.csmSunP = { value:_csmP }; } }
 // Shadow-refresh bookkeeping lives HERE (not by the render loop) since build 855: applyWorldCfg runs at
 // boot and now calls _dirtyShadows when the sun moves — declaring these ~11k lines later was a TDZ crash.
 let _shadowDirtyFrames = 2;
@@ -26617,7 +26686,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1184 · 2026-07-30';
+const BUILD_VERSION = 'build 1185 · 2026-07-30';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
