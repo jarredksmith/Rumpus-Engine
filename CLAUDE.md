@@ -1802,7 +1802,30 @@ field's placeholder is its factory value, so blank visibly means factory. Three 
 the factory line and the game-serializer window; intents kept). "Factions" (enemies fighting each other)
 is deliberately NOT this build — it needs a targeting rework, its own build.
 
-## Open work (as of build 1191)
+## Imported models instance (build 1192)
+
+Primitives have batched since before 1139; every imported GLB copy still walked its whole subtree per
+frame — fifty trees were fifty draw hierarchies. Eligible model props now collapse into one
+`InstancedMesh` per (geometry, material) part of the group's first member, matrices
+`memberWorld × (templateWorld⁻¹ × partWorld)` so per-member position/rotation/scale all ride the root —
+the multiply order is EXECUTED against the real three build in `test-1192` for a rotated+scaled member,
+because a transposed order produces plausible frames that are wrong only for rotated copies.
+
+Eligibility is decoration-grade ONLY, mirroring `instanceEligible`'s contract: physics, vehicles, running
+animations, tags (the prop verbs), interact/dialogue/NPC, signals, locks, and adopted model lights all
+disqualify (ten conditions, each executed in the test); a skinned or lit subtree disqualifies at batch
+time, as does a >24-part model (one draw per part — a hundred-part model is not a batching win). Model
+batches need ≥3 copies. They SHARE the template's live geometry/materials (the template returns to the
+editor on teardown), so batch teardown is flagged not to dispose them. Same lists, same lifecycle, same
+teardown as the primitive path.
+
+Verified rather than assumed: **r149's `InstancedMesh` constructor ships `frustumCulled=false`** — a batch
+spread across the map is never wrongly culled and no engine code was needed; the fact is pinned so an
+upgrade that changes the default fails a test instead of blinking props out at screen edges. 1139's
+raycast signature (an instanced hit reports the shared geometry with a correct world point) now applies
+to model batches too.
+
+## Open work (as of build 1192)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

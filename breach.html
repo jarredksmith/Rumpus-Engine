@@ -26894,7 +26894,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1191 · 2026-07-31';
+const BUILD_VERSION = 'build 1192 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28655,6 +28655,26 @@ function _instKey(o){
   return o.userData.src + '|' + col + '|' + (+sh.r).toFixed(3) + '|' + (+sh.m).toFixed(3)
        + '|' + (o.userData.op != null ? (+o.userData.op).toFixed(3) : '1') + '|' + rep;
 }
+// build 1192: IMPORTED MODELS instance too. Fifty copies of a tree were fifty full draw hierarchies;
+// they are now one InstancedMesh per (geometry, material) part of a shared template. Eligibility is
+// DECORATION-GRADE only: anything the game must touch individually at runtime — physics, vehicles,
+// running animations, tags (the prop verbs), interact/dialogue/NPC, signals, locks, adopted lights —
+// stays an individual mesh, mirroring instanceEligible's contract for primitives. Skinned or lit
+// subtrees disqualify at batch time. (r149's InstancedMesh constructor sets frustumCulled=false, so a
+// batch spread across the map is never wrongly culled — verified against the real build in test-1192.)
+function modelInstanceEligible(o){
+  const u = o && o.userData; if(!u) return false;
+  if(!(typeof isModelSrc==='function' && isModelSrc(u.src))) return false;
+  if(u.phys || u.vehicle || (u.xa && u.xa.on) || u.tex) return false;
+  if(u.tag || u.interact || u.dialogue || u.npcName || (u.signals && u.signals.length) || u.lockId) return false;
+  if(u.modelLights && u.modelLights.length) return false;
+  return true;
+}
+function _instKeyModel(o){
+  const sh = o.userData.shine || null;
+  return 'M|' + o.userData.src + '|' + (sh ? (+sh.r).toFixed(3) + '|' + (+sh.m).toFixed(3) : 'f')
+       + '|' + (o.userData.op != null ? (+o.userData.op).toFixed(3) : '1');
+}
 function buildInstancing(){
   if(instancingActive || editorOpen) return;
   const groups = {};   // key shape|colour|rough|metal|opacity|grain -> [props]
@@ -28679,11 +28699,41 @@ function buildInstancing(){
     im.instanceMatrix.needsUpdate = true;
     scene.add(im); instanceMeshes.push(im);
   }
+  // build 1192: the model pass. Same lifecycle, same lists, same teardown — a batch is one InstancedMesh
+  // per (geometry, material) part of the group's FIRST member, each instance's matrix being
+  // memberWorld x (templateWorld^-1 x partWorld), so per-member position/rotation/scale all ride the root.
+  // Batch meshes SHARE the template's geometry and materials (the template goes back to the editor on
+  // teardown), so they are flagged and never disposed with the batch.
+  {
+    const mGroups = {};
+    for(const o of propModels){ if(!modelInstanceEligible(o)) continue; const k=_instKeyModel(o); (mGroups[k]||(mGroups[k]=[])).push(o); }
+    const _m = new THREE.Matrix4();
+    for(const k in mGroups){
+      const list = mGroups[k];
+      if(list.length < 3) continue;                       /* a model batch costs one draw PER PART — worth it from three copies */
+      const tpl = list[0]; tpl.updateMatrixWorld(true);
+      const inv = new THREE.Matrix4().copy(tpl.matrixWorld).invert();
+      const parts = []; let bad = false;
+      tpl.traverse(n=>{ if(bad) return;
+        if(n.isSkinnedMesh || n.isLight){ bad = true; return; }   /* skinning can't instance; a lamp's light can't either */
+        if(n.isMesh && n.visible){ parts.push({ geo:n.geometry, mat:n.material, rel:new THREE.Matrix4().copy(inv).multiply(n.matrixWorld), cast:n.castShadow, recv:n.receiveShadow }); } });
+      if(bad || !parts.length || parts.length > 24) continue;     /* a 100-part model is not a batching win */
+      for(const part of parts){
+        const im = new THREE.InstancedMesh(part.geo, part.mat, list.length);
+        im.castShadow = part.cast; im.receiveShadow = part.recv;
+        im.userData._sharedMat = true;
+        list.forEach((o, i)=>{ o.updateMatrixWorld(true); _m.copy(o.matrixWorld).multiply(part.rel); im.setMatrixAt(i, _m); });
+        im.instanceMatrix.needsUpdate = true;
+        scene.add(im); instanceMeshes.push(im);
+      }
+      for(const o of list){ scene.remove(o); instancedProps.push(o); }
+    }
+  }
   instancingActive = true;
 }
 function teardownInstancing(){
   if(!instancingActive) return;
-  for(const im of instanceMeshes){ scene.remove(im); im.geometry && im.material && im.material.dispose && im.material.dispose(); }
+  for(const im of instanceMeshes){ scene.remove(im); if(!im.userData._sharedMat && im.geometry && im.material && im.material.dispose) im.material.dispose(); }   /* build 1192: model batches share the template's live materials */
   instanceMeshes = [];
   for(const o of instancedProps){ if(propModels.indexOf(o)>=0) scene.add(o); }   // restore for editing
   instancedProps = [];
