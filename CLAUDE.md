@@ -1519,6 +1519,33 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The library learns what people play (build 1230)
+
+The feature panel's "no play-count/rating flywheel": the community library was a flat newest-first list
+forever — no signal for what people actually play, which is the one thing a browsing player wants.
+`server/api/plays.php` is a lobbies.php sibling (flat-file, no DB, no accounts): GET returns
+`{id:{p,up}}`, POST `?id&a=play` counts a play at most once per IP per level per HOUR, POST `?a=up` a
+thumbs-up once per IP ever. lobbies.php's hardening carried over whole: server clock only, salted IP
+hashes (shared `rumpus-salt.txt` — one salt per host) never returned, id charset validation, 500-level
+record cap, 5000-voter list cap, flock-atomic writes, the limiter table pruned every request. The
+existing `.htaccess` already denies direct reads of every `.json`, so the new store is covered with no
+change. **Deploy is a user action**: upload `api/plays.php` beside `lobbies.php` (see server/README.md).
+
+Client wiring, all in the community modal: counts fetch IN PARALLEL with the index (rows render
+immediately, counts pop in when they land — the library must never block on a second endpoint), the row
+meta gains "· N plays", each row gets a 👍 button (one per browser via localStorage, the server dedups
+by IP regardless; already-voted renders spent), and the sort menu gains **Most played** (plays → thumbs
+→ newest) — offered ONLY once count data actually exists, so an unreachable endpoint leaves the menu
+exactly as it was. A play reports when a library level loads FOR PLAY — an editor open is deliberately
+not a play. Every write is fire-and-forget; `breach_plays_db` overrides the endpoint ('off' disables).
+
+Two instrument notes: `_playsDb` ends a regex with `//`, which `extractFunction`'s brace-matcher reads
+as a line comment (the documented string-literal trap, comment edition) — the test slices it between
+function markers instead. And the first edit-script run aborted on the sort-menu anchor because the
+"A – Z" label uses THIN SPACES (\u2009) around its en-dash — the atomic write-at-end meant nothing
+half-applied, which is exactly why the scripts are written that way. One pin moved (970 — the sort list
+gained a conditional head entry; intent kept).
+
 ## The editor teaches itself (build 1229)
 
 The panel critic's onboarding finding, closed with machinery the engine already proved: build 938's
@@ -2840,5 +2867,5 @@ of them was real.** They are kept here because two were wrong in instructive way
 Two of three written from looking at the frame, two of three wrong about the mechanism. The list was worth
 keeping only because each entry named a capture that could settle it.
 
-Also outstanding (user actions): upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
+Also outstanding (user actions): upload `server/api/plays.php` beside lobbies.php (build 1230's flywheel is client-live but counts nothing until then); upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.

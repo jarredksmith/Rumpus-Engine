@@ -20,6 +20,22 @@ The game's endpoint is set by `LOBBY_DB` in `breach.html`. Self-hosters can poin
 their copy elsewhere with `localStorage.setItem('breach_lobby_db', 'https://their-host/api/lobbies.php')`
 (or `'off'` to disable the browser), no rebuild needed.
 
+## Deploying play counts + thumbs (`api/plays.php`) — build 1230
+
+1. Upload `api/plays.php` into the same `public_html/api` folder as `lobbies.php`.
+2. That's it — same pattern: no database, data lives in `rumpus-plays.json` next to
+   itself (the existing `.htaccess` already blocks direct reads of every `.json`),
+   and it shares `rumpus-salt.txt` with the lobby directory (one IP salt per host).
+
+Smoke test: open `https://www.rumpusengine.com/api/plays.php` — you should see `{}`.
+Play a community-library level in the game and reload: its file name appears with a
+count. Rate limits: one play per level per IP per hour; one thumbs-up per level per
+IP ever. IPs are stored only as salted hashes and never returned.
+
+Self-hosters point their copy elsewhere with
+`localStorage.setItem('breach_plays_db', 'https://their-host/api/plays.php')`
+(or `'off'` to disable the feature), no rebuild needed.
+
 ## Deploying community submissions (`api/submit.php` + `api/admin.php`) — build 958
 
 1. **Edit `api/admin.php` first**: change the `$ADMIN_PASSWORD = 'CHANGE-ME';` line near the

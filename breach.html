@@ -27736,7 +27736,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1229 · 2026-07-31';
+const BUILD_VERSION = 'build 1230 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -44115,6 +44115,27 @@ function _commCaptureThumb(RW, RH, q, cap){
   }catch(e){ return ''; }
 }
 let _commFilter='all', _commSearch='', _commSort='new', _commLevels=null;
+// ---- build 1230: THE FLYWHEEL. The library had no popularity signal at all — no way to see what
+// people actually play, so every level sat in a flat newest-first list forever. plays.php (sibling of
+// lobbies.php: flat-file, salted-IP-hash rate limits, no accounts) counts plays and thumbs; the client
+// reports a play when a library level is loaded FOR PLAY (not into the editor), fetches the map in
+// parallel with the index (rows render immediately, counts pop in when they land — the library must
+// never block on a second endpoint), and every write is fire-and-forget. localStorage
+// 'breach_plays_db' overrides the endpoint for self-hosters ('off' disables the whole feature).
+const PLAYS_DB_DEFAULT = 'https://www.rumpusengine.com/api/plays.php';
+function _playsDb(){ try{ const o=(localStorage.getItem('breach_plays_db')||'').trim(); if(o==='off') return ''; if(/^https?:\/\//.test(o)) return o; }catch(e){} return PLAYS_DB_DEFAULT; }
+function _playsId(entry){ return String((entry&&entry.file)||'').toLowerCase().replace(/[^a-z0-9._-]/g,'').slice(0,64); }   // the catalog file name IS the stable id
+let _playsMap=null;
+function _playsOf(entry){ const r=_playsMap && _playsMap[_playsId(entry)]; return { p: r ? (r.p|0) : 0, up: r ? (r.up|0) : 0 }; }
+async function _playsFetch(){ const b=_playsDb(); if(!b) return false;
+  try{ const r=await fetch(b, { cache:'no-cache' }); if(!r.ok) return false; const j=await r.json(); if(j && typeof j==='object'){ _playsMap=j; return true; } }catch(e){}
+  return false; }
+function _playsReport(entry){ const b=_playsDb(), id=_playsId(entry); if(!b || !id) return;
+  try{ fetch(b+'?id='+encodeURIComponent(id)+'&a=play', { method:'POST' }).catch(()=>{}); }catch(e){} }
+function _playsVoted(entry){ try{ return !!localStorage.getItem('breach_voted_'+_playsId(entry)); }catch(e){ return false; } }
+function _playsVote(entry){ const b=_playsDb(), id=_playsId(entry); if(!b || !id) return;
+  try{ localStorage.setItem('breach_voted_'+id, '1'); }catch(e){}   // the UI guard; the server dedups by IP hash regardless
+  try{ fetch(b+'?id='+encodeURIComponent(id)+'&a=up', { method:'POST' }).catch(()=>{}); }catch(e){} }
 async function renderCommunity(){
   const list=document.getElementById('commList'); if(!list) return;
   list.innerHTML='<div style="color:#cfe9df;font-size:13px">Loading the library…</div>';
@@ -44134,6 +44155,7 @@ async function renderCommunity(){
   const levels=(idx && Array.isArray(idx.levels)) ? idx.levels : [];
   _commLevels=levels.map((L,i)=>Object.assign({_i:i}, L));   // _i = catalog position; the index is newest-first
   _commRenderUI();
+  _playsFetch().then(ok=>{ if(ok && document.getElementById('commRows')) _commRenderUI(); });   // build 1230: counts pop in when they land (full UI re-render: the sort menu gains Most played only once the data exists)
 }
 // build 970: search + sort. The chips/search/sort controls rebuild only the row area below them,
 // so typing in the search box re-filters live without ever losing input focus.
@@ -44165,7 +44187,7 @@ function _commRenderUI(){
     const s=document.createElement('select');
     s.setAttribute('aria-label','Sort levels');
     s.style.cssText='padding:7px 8px;font-size:12px;border-radius:6px;border:1px solid #2a3a42;background:#0c1418;color:#9fc4ba;cursor:pointer;';
-    for(const [v,t] of [['new','Newest'],['old','Oldest'],['az','A – Z'],['author','By author']]){
+    for(const [v,t] of [ ...(_playsMap?[['top','Most played']]:[]), ['new','Newest'],['old','Oldest'],['az','A – Z'],['author','By author']]){   /* build 1230 */
       const o=document.createElement('option'); o.value=v; o.textContent=t; s.appendChild(o);
     }
     s.value=_commSort;
@@ -44183,7 +44205,8 @@ function _commRenderRows(){
   const q=_commSearch.trim().toLowerCase();
   const hit=L=>!q || ((L.name||'')+' '+(L.author||'')+' '+(L.desc||'')).toLowerCase().includes(q);
   const shown=(_commLevels||[]).filter(L=>(_commFilter==='all' || String(L.objective||'other')===_commFilter) && hit(L));
-  const by={ new:(a,b)=>a._i-b._i, old:(a,b)=>b._i-a._i,
+  const by={ top:(a,b)=>(_playsOf(b).p-_playsOf(a).p) || (_playsOf(b).up-_playsOf(a).up) || (a._i-b._i),   /* build 1230: plays, thumbs, then newest */
+             new:(a,b)=>a._i-b._i, old:(a,b)=>b._i-a._i,
              az:(a,b)=>String(a.name||'').localeCompare(String(b.name||'')),
              author:(a,b)=>String(a.author||'').localeCompare(String(b.author||'')) || String(a.name||'').localeCompare(String(b.name||'')) };
   shown.sort(by[_commSort]||by.new);
@@ -44205,7 +44228,8 @@ function _commRenderRows(){
     const info=document.createElement('div'); info.style.cssText='flex:1;min-width:170px;';
     const nm=document.createElement('div'); nm.style.cssText='color:#eafff7;font-weight:700;font-size:14px;'; nm.textContent=L.name||L.file;
     const meta=document.createElement('div'); meta.style.cssText='color:#a9d3c6;font-size:11px;margin-top:1px;letter-spacing:0.5px;';
-    meta.textContent=(L.objective?String(L.objective).toUpperCase()+' · ':'')+'by '+(L.author||'anonymous')+(L.date?' · '+L.date:'');
+    const _pc=_playsOf(L);   /* build 1230 */
+    meta.textContent=(L.objective?String(L.objective).toUpperCase()+' · ':'')+'by '+(L.author||'anonymous')+(L.date?' · '+L.date:'')+(_pc.p?(' · '+_pc.p+' play'+(_pc.p===1?'':'s')):'');
     let bd=null;
     if(L.sketchfab){   // build 857: its own row (inline it wrapped mid-badge on narrow cards), nowrap so it can never break internally
       bd=document.createElement('div');
@@ -44222,6 +44246,16 @@ function _commRenderRows(){
     row.appendChild(info);
     row.appendChild(mkBtn('Play', true, ()=>_commLoad(L, false)));
     row.appendChild(mkBtn('Open in editor', false, ()=>_commLoad(L, true)));
+    { // build 1230: one thumbs-up per browser per level (the server dedups by IP hash regardless)
+      const vb=mkBtn('\ud83d\udc4d'+(_pc.up?(' '+_pc.up):''), false, ()=>{
+        if(_playsVoted(L)) return;
+        _playsVote(L);
+        vb.textContent='\ud83d\udc4d '+(_pc.up+1); vb.disabled=true; vb.style.opacity='0.55';
+        if(typeof flashToast==='function') flashToast('Thanks \u2014 vote counted');
+      });
+      vb.title='Thumbs up \u2014 helps this level rise in Most played';
+      if(_playsVoted(L)){ vb.disabled=true; vb.style.opacity='0.55'; }
+      row.appendChild(vb); }
     rows.appendChild(row);
   }
 }
@@ -44241,6 +44275,7 @@ async function _commLoad(entry, toEditor){
     setTimeout(()=>{ try{ restoreLevel(level); if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" opened in the editor'); }catch(e){ console.warn('community level failed to load', e); } }, 200);
   } else {
     restoreLevel(level);
+    _playsReport(entry);   // build 1230: loaded FOR PLAY (an editor open is not a play)
     if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" loaded — press Deploy');
   }
 }

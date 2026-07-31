@@ -15,8 +15,8 @@ assert(/q\.oninput=\(\)=>\{ _commSearch=q\.value; _commRenderRows\(\); \};/.test
   'typing re-renders ROWS only — the input is never rebuilt, so focus survives');
 assert(/s\.onchange=\(\)=>\{ _commSort=s\.value; _commRenderRows\(\); \};/.test(ui),
   'sort change re-renders rows only too');
-assert(/\[\['new','Newest'\],\['old','Oldest'\],\['az','A[^']+Z'\],\['author','By author'\]\]/.test(ui),
-  'the four sort orders are offered');   // A–Z label uses thin-space dashes; match loosely
+assert(/\['new','Newest'\],\['old','Oldest'\],\['az','A[^']+Z'\],\['author','By author'\]\]/.test(ui),
+  'the four sort orders are offered');   // A–Z label uses thin-space dashes; match loosely. build 1230: Most played joins the list ahead of them (only when count data exists), so the anchor no longer pins the opening bracket
 assert(/aria-label','Search levels'/.test(ui) && /aria-label','Sort levels'/.test(ui),
   'controls carry aria labels');
 assert(/b\.onclick=\(\)=>\{ _commFilter=k; _commRenderUI\(\); \};/.test(ui),
