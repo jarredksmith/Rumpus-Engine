@@ -6471,8 +6471,32 @@ let editorOpen = false;   // editor panel open — declared first so async boot 
 // ---------- Audio (procedural, no files — works fully offline) ----------
 let actx = null;
 function initAudio(){ if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended') actx.resume(); buildAudioBuses(); preloadCustomSounds(); }
-function tone({freq=440, type='sine', dur=0.1, vol=0.2, slideTo=null, attack=0.005}={}){
+// build 1208: POSITIONAL AUDIO. Every sound routed flat into sfxBus — enemy gunfire, a charger winding up
+// behind you, an explosion to your left all arrived dead-centre, so the ear did none of the threat
+// detection it does in every commercial FPS and the directional hit indicator carried the whole load.
+// _spatialOut(at) returns a StereoPanner (equal-power, so no centre volume dip) feeding sfxBus, panned by
+// the source's position along the CAMERA'S OWN right axis (from matrixWorld — so it tracks pitch, vehicles
+// and the play-camera views, not just yaw) and attenuated by distance; with no `at`, or on a browser
+// without createStereoPanner, it is sfxBus unchanged, so UI/self sounds and old browsers are byte-identical.
+const _SND_MAXDIST = 55;
+function _spatialOut(at){
+  const bus = sfxBus || (actx && actx.destination);
+  if(!at || !actx || !actx.createStereoPanner || typeof camera==='undefined' || !camera) return bus;
+  try{
+    const e = camera.matrixWorld.elements;
+    let dx = at.x - e[12], dy = at.y - e[13], dz = at.z - e[14];
+    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1e-4;
+    let g = 1 - dist/_SND_MAXDIST; if(g <= 0.02) return null; g = g*g;   // null = too far to bother; the caller skips
+    const pan = Math.max(-1, Math.min(1, (e[0]*dx + e[1]*dy + e[2]*dz) / dist));   // component along camera-right
+    const p = actx.createStereoPanner(); p.pan.value = pan;
+    const dg = actx.createGain(); dg.gain.value = g;
+    p.connect(dg).connect(bus);
+    return p;
+  }catch(err){ return bus; }
+}
+function tone({freq=440, type='sine', dur=0.1, vol=0.2, slideTo=null, attack=0.005, at=null}={}){
   if(!actx) return;
+  const out = _spatialOut(at); if(!out) return;
   const t = actx.currentTime;
   const osc = actx.createOscillator();
   const g = actx.createGain();
@@ -6481,11 +6505,12 @@ function tone({freq=440, type='sine', dur=0.1, vol=0.2, slideTo=null, attack=0.0
   g.gain.setValueAtTime(0, t);
   g.gain.linearRampToValueAtTime(vol, t+attack);
   g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
-  osc.connect(g).connect(sfxBus||actx.destination);
+  osc.connect(g).connect(out);
   osc.start(t); osc.stop(t+dur+0.02);
 }
-function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass'}={}){
+function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass', at=null}={}){
   if(!actx) return;
+  const out = _spatialOut(at); if(!out) return;
   const t = actx.currentTime;
   const n = Math.floor(actx.sampleRate*dur);
   const buf = actx.createBuffer(1, n, actx.sampleRate);
@@ -6494,7 +6519,7 @@ function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass'}={}){
   const src = actx.createBufferSource(); src.buffer = buf;
   const filt = actx.createBiquadFilter(); filt.type=type; filt.frequency.value=filterFreq;
   const g = actx.createGain(); g.gain.value = vol;
-  src.connect(filt).connect(g).connect(sfxBus||actx.destination);
+  src.connect(filt).connect(g).connect(out);
   src.start(t);
 }
 const SFX = {
@@ -6504,15 +6529,16 @@ const SFX = {
     else if(curWep==='smg'){ tone({freq:380, type:'square', dur:0.05, vol:0.10, slideTo:150}); noise({dur:0.05, vol:0.15, filterFreq:3000, type:'highpass'}); }
     else if(curWep==='sniper'){ tone({freq:95, type:'square', dur:0.22, vol:0.22, slideTo:38}); noise({dur:0.26, vol:0.34, filterFreq:1000, type:'lowpass'}); }
     else { tone({freq:320, type:'square', dur:0.08, vol:0.12, slideTo:120}); noise({dur:0.07, vol:0.18, filterFreq:2200, type:'highpass'}); } },
-  enemyShot(){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass'}); },
-  shootAt(pos){ if(!actx||!sfxBus) return; let g=1; try{ const dx=pos.x-player.pos.x, dy=pos.y-player.pos.y, dz=pos.z-player.pos.z; g=Math.max(0, 1-Math.sqrt(dx*dx+dy*dy+dz*dz)/45); g*=g; }catch(e){} if(g<=0.02) return; const t=actx.currentTime; const gain=actx.createGain(); gain.gain.value=g; gain.connect(sfxBus);
+  enemyShot(at){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105, at}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass', at}); },
+  shootAt(pos){ if(!actx||!sfxBus) return; const gain=_spatialOut(pos); if(!gain) return;   /* build 1208: shared panner replaces the hand-rolled distance-only gain — a shot to your side now reads to your side */
+    const t=actx.currentTime;
     const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
     const n=Math.floor(actx.sampleRate*0.07); const buf=actx.createBuffer(1,n,actx.sampleRate); const dd=buf.getChannelData(0); for(let i=0;i<n;i++) dd[i]=(Math.random()*2-1)*(1-i/n); const src=actx.createBufferSource(); src.buffer=buf; const filt=actx.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=2000; const ng=actx.createGain(); ng.gain.value=0.18; src.connect(filt).connect(ng).connect(gain); src.start(t); },
   reload(){ const r=curSounds().reload; const u=(r&&typeof r==='object')?(r[curWep]||r._all):r; if(playSample(u)) return; tone({freq:200, type:'square', dur:0.06, vol:0.1}); setTimeout(()=>tone({freq:300, type:'square', dur:0.08, vol:0.1}),550); },
-  hit(){ if(playSample(curSounds().hit, {vary:0.06})) return; tone({freq:600, type:'sine', dur:0.05, vol:0.12, slideTo:900}); },
-  shatter(){ noise({dur:0.22, vol:0.22, filterFreq:3000, type:'highpass'}); tone({freq:220, type:'square', dur:0.12, vol:0.13, slideTo:70}); setTimeout(()=>noise({dur:0.12, vol:0.12, filterFreq:1600}),40); },
+  hit(at){ if(playSample(curSounds().hit, {vary:0.06, at})) return; tone({freq:600, type:'sine', dur:0.05, vol:0.12, slideTo:900, at}); },
+  shatter(at){ noise({dur:0.22, vol:0.22, filterFreq:3000, type:'highpass', at}); tone({freq:220, type:'square', dur:0.12, vol:0.13, slideTo:70, at}); setTimeout(()=>noise({dur:0.12, vol:0.12, filterFreq:1600, at}),40); },
   puff(){ noise({dur:0.18, vol:0.14, filterFreq:700, type:'lowpass'}); tone({freq:160, type:'sine', dur:0.1, vol:0.08, slideTo:90}); },
-  kill(type){ const ek=curSounds().enemyKill||{}; if(playSample((type&&ek[type])||curSounds().kill, {vary:0.05})) return; tone({freq:160, type:'sawtooth', dur:0.3, vol:0.16, slideTo:50}); noise({dur:0.25, vol:0.15, filterFreq:800}); },   // build 752: per-enemy-type kill clip + pitch wobble
+  kill(type, at){ const ek=curSounds().enemyKill||{}; if(playSample((type&&ek[type])||curSounds().kill, {vary:0.05, at})) return; tone({freq:160, type:'sawtooth', dur:0.3, vol:0.16, slideTo:50, at}); noise({dur:0.25, vol:0.15, filterFreq:800, at}); },   // build 752: per-enemy-type kill clip + pitch wobble
   hurt(){ if(playSample(curSounds().hurt, {vary:0.05})) return; tone({freq:140, type:'sawtooth', dur:0.2, vol:0.2, slideTo:70}); },
   pickup(){ if(playSample(curSounds().pickup)) return; tone({freq:520, type:'triangle', dur:0.1, vol:0.18, slideTo:780}); setTimeout(()=>tone({freq:780, type:'triangle', dur:0.12, vol:0.18, slideTo:1100}),90); },   // build 751: custom pickup clip, else the chime
   empty(){ tone({freq:180, type:'square', dur:0.04, vol:0.08}); },
@@ -6522,7 +6548,7 @@ const SFX = {
   buy(){ tone({freq:660, type:'triangle', dur:0.08, vol:0.16, slideTo:990}); setTimeout(()=>tone({freq:990, type:'triangle', dur:0.1, vol:0.16, slideTo:1320}),80); },
   deny(){ tone({freq:160, type:'sawtooth', dur:0.12, vol:0.14, slideTo:90}); },
   throw(){ tone({freq:220, type:'sine', dur:0.18, vol:0.12, slideTo:380}); },
-  explode(){ if(playSample(curSounds().explode)) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35}); noise({dur:0.45, vol:0.3, filterFreq:600}); },
+  explode(at){ if(playSample(curSounds().explode, {at})) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35, at}); noise({dur:0.45, vol:0.3, filterFreq:600, at}); },
   power(){ tone({freq:440, type:'triangle', dur:0.1, vol:0.16, slideTo:660}); setTimeout(()=>tone({freq:660, type:'triangle', dur:0.1, vol:0.16, slideTo:880}),90); setTimeout(()=>tone({freq:880, type:'triangle', dur:0.14, vol:0.16, slideTo:1320}),180); },
   swap(){ tone({freq:300, type:'square', dur:0.05, vol:0.08, slideTo:500}); },
   slide(){ if(!actx||!sfxBus) return; const t=actx.currentTime, dur=0.45;
@@ -6575,7 +6601,9 @@ function playSample(url, opts){
   try{ const src=actx.createBufferSource(); src.buffer=buf;
     const vary=(opts&&opts.vary)||0;
     if(vary>0) src.playbackRate.value = Math.max(0.5, 1 + (Math.random()*2-1)*vary);   // build 752: small pitch wobble so repeated hits/kills don't sound identical
-    src.connect(sfxBus); src.start(); return true; }catch(e){ return false; }
+    const out = _spatialOut(opts&&opts.at);   // build 1208: a positioned clip pans + attenuates like the synth
+    if(!out) return true;   // too far to be worth playing (the spatial gate said so) — count it as handled
+    src.connect(out); src.start(); return true; }catch(e){ return false; }
 }
 function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); if(s.enemyKill){ for(const k in s.enemyKill) loadSound(s.enemyKill[k]); } for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump']) loadSound(s[k]); }
 // build 750: preload every signal's custom clip (do:'sound') so a light switch / button plays on the first press, not the second.
@@ -23938,7 +23966,7 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='break'){   // host shattered a prop — show the debris locally (pDel removes the prop itself)
     const ctr=new THREE.Vector3(msg.ctr[0],msg.ctr[1],msg.ctr[2]); const sz=new THREE.Vector3(msg.sz[0],msg.sz[1],msg.sz[2]);
     if(msg.st==='puff'){ spark(ctr, msg.c||0xcfeee6); if(typeof SFX!=='undefined' && SFX.puff) SFX.puff(); }
-    else { if(typeof spawnFragmentsVisual==='function') spawnFragmentsVisual(ctr, sz, msg.c, msg.n||8, msg.sf, msg.sh); spark(ctr, msg.c||0xffd166); if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(); }
+    else { if(typeof spawnFragmentsVisual==='function') spawnFragmentsVisual(ctr, sz, msg.c, msg.n||8, msg.sf, msg.sh); spark(ctr, msg.c||0xffd166); if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(ctr); }
     if(msg.exp){ explodeAt(ctr.clone(), msg.br||7, 0, null); }   // explosive prop: blast visual (host already applied damage)
   }
   else if(msg.t==='buyChest'){ const ci=chests.findIndex(c=>c.id===msg.id); if(ci>=0){ scene.remove(chests[ci].mesh); chests.splice(ci,1); } }   // a client bought a crate -> remove it for everyone
@@ -24838,7 +24866,7 @@ function _blastLightAt(pos, R){
 // breakable props are damaged too, so a shot propane can chain-detonate a cluster. Clients call it for
 // visuals only (NET.mode==='client' skips the damage; the host stays authoritative).
 function explodeAt(pos, R, dmg, byId){
-  if(typeof SFX!=='undefined' && SFX.explode) SFX.explode();
+  if(typeof SFX!=='undefined' && SFX.explode) SFX.explode(pos);
   addShake(Math.max(0, 1 - player.pos.distanceTo(pos)/22) * 0.9);
   const bl=_blastLightAt(pos, R);   // build 632: pooled light (no per-blast add/remove -> no shader recompile)
   const eScale=Math.max(0.4, R*0.18);
@@ -27506,7 +27534,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1207 · 2026-07-31';
+const BUILD_VERSION = 'build 1208 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29035,7 +29063,7 @@ function shatterProp(obj, point, dir, power, byId){
     const shape = (obj.userData.debrisShape==='cubes') ? 'cubes' : 'shards';
     spawnFragments(_shCtr, _shSize, colorHex, count, dir, power||6, sizeFrac, shape);
     spark(_shCtr, colorHex); spark(_shCtr, 0xffd166);
-    if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter();
+    if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(_shCtr);
     obj.userData._breakFx = { sf:sizeFrac, sh:shape };   // stash so the net message below carries them
   } else {
     // puff: no debris cloud — a quick particle burst + soft pop, then despawn
@@ -29621,7 +29649,7 @@ function enemyHurt(en, dmg, sx, sz){
 function killEnemy(en, sx, sz){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onkill','');   // build 1027: 'On enemy killed' entries
   runKills++;
-  spark(en.mesh.position, 0xff2d55); SFX.kill(en.type);   // build 752: per-enemy-type kill sound
+  spark(en.mesh.position, 0xff2d55); SFX.kill(en.type, en.mesh.position);   // build 752: per-enemy-type kill sound; build 1208: panned to the kill
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
   else if(NET.mode==='host' && _coopKillFor==null) registerLocalKill();   // co-op host's OWN kill -> callout (no slow-mo, gated inside); client kills are credited via {t:'frag'}
   // drop 1-2 coins worth scaling slightly with wave
@@ -30224,7 +30252,7 @@ function fireEnemyShot(en, target, spread){
   if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);   // muzzle flash at the enemy's gun (scaled by boltCfg)
   const vel = dir.multiplyScalar(en.projSpeed);
   enemyShots.push({ mesh, vel, dmg: en.dmg, born: performance.now(), life: 3500, from: from.clone() });
-  if(SFX && SFX.enemyShot) SFX.enemyShot();
+  if(SFX && SFX.enemyShot) SFX.enemyShot(from);
   // build 1020: co-op joiners never saw enemy gunfire at all — the bolts lived only on the host.
   // Relay each shot; clients fly a cosmetic copy (damage still arrives via {t:'hurt'}).
   if(NET.mode==='host'){ const m={ t:'eshot', o:[+from.x.toFixed(2),+from.y.toFixed(2),+from.z.toFixed(2)], v:[+vel.x.toFixed(2),+vel.y.toFixed(2),+vel.z.toFixed(2)] }; for(const cid in NET.conns){ try{ NET.conns[cid].send(m); }catch(e){} } }
@@ -30238,7 +30266,7 @@ function remoteEnemyShot(o, v){   // build 1020: a host-relayed enemy shot — c
   scene.add(mesh);
   if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);
   enemyShots.push({ mesh, vel, dmg:0, noDmg:true, born:performance.now(), life:3500, from:from.clone() });
-  if(SFX && SFX.enemyShot) SFX.enemyShot();
+  if(SFX && SFX.enemyShot) SFX.enemyShot(from);
 }
 function updateEnemyShots(dt){
   if(!enemyShots.length) return;

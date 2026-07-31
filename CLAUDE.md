@@ -1519,6 +1519,29 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The engine finally has ears (build 1208)
+
+The gameplay-feel panel's #1: there was NO positional audio anywhere — every sound routed flat into
+`sfxBus`, so enemy gunfire, an explosion to your left, a charger winding up behind you all arrived
+dead-centre, and the directional hit indicator carried threat-detection the ear should have done a second
+earlier. `_spatialOut(at)` returns a `StereoPanner` (equal-power, so no centre volume dip) feeding
+`sfxBus`, panned by the source's position along the CAMERA'S OWN right axis — read from `matrixWorld`, so
+it tracks pitch, vehicles and the top-down/side play-cameras, not just yaw — and attenuated by distance,
+returning `null` past ~55 m so the caller skips an inaudible node entirely. With no `at`, no `camera` yet,
+or a browser without `createStereoPanner`, it is `sfxBus` unchanged, so UI/self sounds and old browsers are
+byte-identical.
+
+`tone`/`noise`/`playSample` gained an `at` option that routes through it; the world-positioned SFX
+(`enemyShot`, `explode`, `shatter`, `kill`, `hit`, and the pre-existing distance-only `shootAt`, whose
+hand-rolled gain the shared panner replaces) forward a position, and the call sites pass one — the bolt
+origin at both enemy-fire sites, the blast centre, the enemy mesh, where a prop broke. UI/HUD sounds
+(coin, buy, wave, pickup, jump, deny) deliberately stay unpositioned — they are player-centric, not world
+events. `test-1208` executes `_spatialOut` against a fake WebAudio graph (hard-right/left/centre pans,
+distance attenuation, out-of-range null-skip, camera-basis tracking proven under a yawed camera, and all
+three graceful-fallback paths) and pins the threading. Five pins across four audio tests moved to the
+`at`-bearing signatures, intent kept, and the 53 runnable harness gained `_spatialOut` in its isolated
+scope. The three-layer weapon-body/tail/compressor work the same critic flagged is a separate build.
+
 ## The room got a ceiling and a rate limit (build 1207)
 
 The fresh panel's multiplayer CRITICAL #2. `on('connection')` accepted every peer unconditionally, and

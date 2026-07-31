@@ -13,13 +13,13 @@ assert(/preloadCustomSounds\(\);/.test(src) && /buildAudioBuses\(\); preloadCust
 assert(/shoot\(\)\{ if\(playSample\(\(curSounds\(\)\.shoot\|\|\{\}\)\[curWep\], \{vary:0\.04\}\)\) return;/.test(src), 'per-weapon shoot sample overrides the synth (with pitch wobble, build 752)');
 // build 748: reload is per-weapon now (with _all legacy fallback)
 assert(/reload\(\)\{ const r=curSounds\(\)\.reload; const u=\(r&&typeof r==='object'\)\?\(r\[curWep\]\|\|r\._all\):r; if\(playSample\(u\)\) return;/.test(src), 'per-weapon reload sample overrides the synth');
-for(const ev of ['explode','coin'])
-  assert(new RegExp(ev+'\\(\\)\\{ if\\(playSample\\(curSounds\\(\\)\\.'+ev+'\\)\\) return;').test(src), ev+' sample overrides the synth');
+assert(/coin\(\)\{ if\(playSample\(curSounds\(\)\.coin\)\) return;/.test(src), 'coin sample overrides the synth');
+assert(/explode\(at\)\{ if\(playSample\(curSounds\(\)\.explode, \{at\}\)\) return;/.test(src), 'explode sample overrides the synth (build 1208: positioned)');
 // build 752: hit/hurt get a pitch wobble, kill is per-enemy-type + wobble
-assert(/hit\(\)\{ if\(playSample\(curSounds\(\)\.hit, \{vary:0\.06\}\)\) return;/.test(src), 'hit sample overrides the synth (pitch wobble)');
+assert(/hit\(at\)\{ if\(playSample\(curSounds\(\)\.hit, \{vary:0\.06, at\}\)\) return;/.test(src), 'hit sample overrides the synth (pitch wobble; positioned since 1208)');
 assert(/hurt\(\)\{ if\(playSample\(curSounds\(\)\.hurt, \{vary:0\.05\}\)\) return;/.test(src), 'hurt sample overrides the synth (pitch wobble)');
-assert(/kill\(type\)\{ const ek=curSounds\(\)\.enemyKill\|\|\{\}; if\(playSample\(\(type&&ek\[type\]\)\|\|curSounds\(\)\.kill, \{vary:0\.05\}\)\) return;/.test(src), 'kill plays the per-enemy-type clip (else shared), with a wobble');
-assert(/SFX\.kill\(en\.type\)/.test(src), 'the kill site passes the enemy type');
+assert(/kill\(type, at\)\{ const ek=curSounds\(\)\.enemyKill\|\|\{\}; if\(playSample\(\(type&&ek\[type\]\)\|\|curSounds\(\)\.kill, \{vary:0\.05, at\}\)\) return;/.test(src), 'kill plays the per-enemy-type clip (else shared), with a wobble; positioned since 1208');
+assert(/SFX\.kill\(en\.type, en\.mesh\.position\)/.test(src), 'the kill site passes the enemy type and its position (build 1208)');
 // build 752: playSample picks a random clip from an array + applies the pitch wobble
 assert(/if\(Array\.isArray\(url\)\)\{ if\(!url\.length\) return false; url=url\[Math\.floor\(Math\.random\(\)\*url\.length\)\]; \}/.test(src), 'a slot may hold several clips, picked at random');
 assert(/if\(vary>0\) src\.playbackRate\.value = Math\.max\(0\.5, 1 \+ \(Math\.random\(\)\*2-1\)\*vary\);/.test(src), 'playSample applies the pitch wobble');
@@ -35,6 +35,8 @@ globalThis.fetch = async (u)=> u.includes('bad') ? { ok:false } : { ok:true, arr
 
 const env = new Function('actx','sfxBus','initAudio', `
   const _soundBuffers = {};
+  const _SND_MAXDIST = 55;   // build 1208: playSample now routes through _spatialOut
+  ${extractFunction('_spatialOut')}
   ${extractFunction('loadSound')}
   ${extractFunction('playSample')}
   return { loadSound, playSample, buffers:_soundBuffers };

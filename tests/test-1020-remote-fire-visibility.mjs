@@ -29,7 +29,7 @@ assert(/tracer\(from, end \|\| from\.clone\(\)\.addScaledVector\(dir, 60\)\)/.te
 // ---- 3) enemy gunfire reaches co-op joiners ----
 const fes = extractFunction('fireEnemyShot', src);
 assert(/if\(NET\.mode==='host'\)\{ const m=\{ t:'eshot', o:\[/.test(fes), 'the host relays each enemy shot');
-assert(/if\(SFX && SFX\.enemyShot\) SFX\.enemyShot\(\);/.test(fes), 'host/solo still HEAR enemy fire (regression guard: the relay must not eat the SFX call)');
+assert(/if\(SFX && SFX\.enemyShot\) SFX\.enemyShot\(from\);/.test(fes), 'host/solo still HEAR enemy fire, now PANNED to the bolt origin (build 1208); the relay must not eat the SFX call');
 const res = extractFunction('remoteEnemyShot', src);
 assert(/dmg:0, noDmg:true/.test(res), 'the client copy is cosmetic — zero damage, flagged');
 assert(/makeEnemyBolt\(\)/.test(res) && /playFlipbook\('muzzle', from, 0\.7\*boltCfg\.muzzle\)/.test(res),
