@@ -1788,7 +1788,21 @@ over every gun's (possibly authored) sheet; `test-1190` executes it and proves t
 byte-identical values at factory settings while the pistol finally resets too. Four pins moved (227, 229,
 476, 530 — the reducer gained `st`, the reset became the loop; each keeps its assertion's intent).
 
-## Open work (as of build 1190)
+## Per-level enemy tuning (build 1191)
+
+The wave manifest (1179) authors COMPOSITION; the stat sheet (1190) authors the guns; the enemies
+themselves were engine constants. Each type's hp, damage and speed are now level-authorable through the
+1190 pattern: `ENEMY_BASE` captured at boot, `gameCfg.enemyMods` carrying only-changed values, ONE clamped
+sanitizer (`_sanitizeEnemyMods`) on every path in AND out — boot, both loaders, and the SERIALIZER, so
+nothing out-of-range ever enters a share code (hp floor 1, dmg cap 999, speed 0.25-3×). Speed is a
+MULTIPLIER of the type's min and max together, so gait variance survives tuning. Application is at SPAWN
+TIME via `_enemyEff(typeKey)` in the one factory, so formula waves, manifests and placed spawns all
+inherit it with zero extra plumbing. The editor grid lives in the waves fold beside the manifests; each
+field's placeholder is its factory value, so blank visibly means factory. Three pins moved (21, 33, 62 —
+the factory line and the game-serializer window; intents kept). "Factions" (enemies fighting each other)
+is deliberately NOT this build — it needs a targeting rework, its own build.
+
+## Open work (as of build 1191)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
