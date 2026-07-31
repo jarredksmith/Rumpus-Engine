@@ -67,7 +67,7 @@ assert(/\|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost
 // ---- step changes stop recompiling shaders ----
 assert(/function ensurePost\(\)\{\s*\n\s*if\(_postRT\) return true;/.test(src), 'ensurePost keys on the targets, not the scene');
 assert(/if\(_postScene\) return true;   \/\/ build 880: materials \+ scene survive disposePost/.test(src), 'materials are created once and reused across rebuilds');
-assert(/_postRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=null;   \/\/ build 880: keep _postScene/.test(src), 'disposePost drops targets only');
+assert(/_postRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=_raysRT=null;   \/\/ build 880: keep _postScene/.test(src), 'disposePost drops targets only');   // build 1242: the rays target joins the list
 assert(/_bloomMips=\[\];/.test(extractFunction('disposePost', src)), 'build 1128: and the bloom pyramid, which is an array of targets');
 assert(/function resizePost\(\)\{ if\(_postRT\) disposePost\(\); \}/.test(src), 'window resize path updated to the same rule');
 
