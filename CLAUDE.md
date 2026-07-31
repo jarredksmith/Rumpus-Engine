@@ -1519,6 +1519,32 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The sky becomes authorable (build 1234)
+
+Reported from play: *"How can you change the sky color? No matter what it's always bright."* Two
+verified findings behind one report: the procedural dome has been fully parameterised since 1119
+(zenith/horizon/ground colours, haze, sun size/glow, its own exposure — all serialized with every
+level) but **no editor UI ever wrote those fields** — only the arena generator's themes did; and a
+dark dome alone cannot darken the SCENE, because the sun keeps lighting it and auto-exposure (1180)
+lifts a dark frame right back up.
+
+So the Sky fold gains the seven controls (three colour rows, Sky brightness, Haze, Sun size/glow) AND
+five mood presets — ☀ Day / 🌅 Sunset / 🌙 Night / ☁ Overcast / 🌑 Blood moon — where a preset sets
+the COHERENT PACKAGE: dome colours + sun strength/colour/elevation + fog colour + auto-exposure
+strength. Night dims the sun to 0.28 (the dim cool "sun" IS the moonlight) and holds autoExp at 0.15,
+or the eye undoes the dark; "night" without those is a black ceiling over a sunny afternoon. A preset
+also CLEARS any HDRI URL — an active HDRI silently covers the dome (the 1223 class of confusion), and
+choosing a procedural mood is choosing the procedural sky. Day is DEFAULT_WORLD's sky restated
+field-for-field (test-enforced), so stock is always one click back. Every field stays individually
+editable; the day/night cycle animates on top of whatever is authored.
+
+`test-1234` executes the REAL dome model with the presets — Night's zenith reads >10x darker than
+Day's and a Blood-moon horizon is red-dominant, proving the model was never the limit — and executes
+`applySkyMood` (sun dimmed, autoExp held, HDRI cleared, unrelated fields untouched, one
+applyWorldCfg). One pin moved (1115 — its slice anchored on the bare prefix `function applySky`,
+which `applySkyMood` now matches first; anchor gained parens). NOT capture-verified: eyeball the five
+presets in a browser once.
+
 ## The ground query was reading the roof (build 1233)
 
 Reported from play: *"I added enemies onto a multistorey building and they would randomly clip through

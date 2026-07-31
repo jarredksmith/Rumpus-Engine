@@ -42,7 +42,8 @@ eq(users, 3, 'three passes can encode: the DoF present, the composite, and the s
 assert(/uEncode\) u\.uEncode\.value = \(typeof _postOn!=='undefined' && _postOn/.test(src),
   'the sky dome encodes only when the post chain is NOT going to');
 {
-  const env = src.slice(src.indexOf('function _skyEnv()'), src.indexOf('function applySky'));
+  // build 1234: the window's end anchor gained parens — applySkyMood now sits between _skyEnv and applySky, and the bare prefix matched it first, truncating the slice
+const env = src.slice(src.indexOf('function _skyEnv()'), src.indexOf('function applySky()'));
   assert(!/_aces\(/.test(env) && !/_out\(/.test(env),
     'the reflection probe neither tone-maps nor encodes — it is convolved and then sampled as linear radiance');
   assert(/gl_FragColor=vec4\(skyRadiance\(normalize\(vDir\)\),1\.0\)/.test(env), '...it writes the raw radiance');
