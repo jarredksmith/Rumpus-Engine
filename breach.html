@@ -18249,13 +18249,23 @@ const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k]
 const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets'];
 const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[1,24] };
 const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k]; GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets }; _w.reserve0=_w.reserve; }
+// build 1240: RENAME WEAPONS — reported from play ("add a sword/axe/staff... we have melee, so maybe
+// the answer is the ability to rename"). The name follows 1190's exact pattern: a factory baseline
+// captured at boot, only-changed values serialized (nm), one sanitizer every loader routes through.
+// Every display site already reads WEAPONS[k].name live — HUD, weapon wheel, kill feed, pickups,
+// attachments, the loadout picker — so renaming 'Fists' to 'Sword' renames it EVERYWHERE, including
+// the pickup spawner's label. Cap 24 chars; blank restores factory.
+const GUN_BASE_NAME = {}; for(const _k in WEAPONS) GUN_BASE_NAME[_k] = WEAPONS[_k].name;
+function _wepApplyName(k, nm){ const w=WEAPONS[k]; if(!w) return;
+  const t = String(nm==null?'':nm).trim().slice(0,24);
+  w.name = t || GUN_BASE_NAME[k] || k; }
 function _wepApplyStats(k, st){ const w=WEAPONS[k], b=GUN_BASE[k]; if(!w||!b) return;
   for(const s of GUN_STAT_KEYS){ let v = (st && st[s]!=null) ? +st[s] : b[s];
     const L=GUN_STAT_LIM[s]; if(!isFinite(v)) v=b[s]; v=Math.max(L[0], Math.min(L[1], v));
     w[s]=v; } }
 // Restore per-weapon model + framing saved to localStorage (serialized under "weapons"). Without this the
 // hardcoded model:''/view:null above would wipe gun edits on every reload.
-if(savedLevel && savedLevel.weapons){ for(const k in WEAPONS){ const wd = savedLevel.weapons[k]; if(wd){ WEAPONS[k].model = wd.model || ''; WEAPONS[k].view = wd.view || null; if(wd.dmg!=null) WEAPONS[k].dmg = +wd.dmg; if(wd.clips) WEAPONS[k].clips = Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); } } }   // build 1190: st = the stat sheet
+if(savedLevel && savedLevel.weapons){ for(const k in WEAPONS){ const wd = savedLevel.weapons[k]; if(wd){ WEAPONS[k].model = wd.model || ''; WEAPONS[k].view = wd.view || null; if(wd.dmg!=null) WEAPONS[k].dmg = +wd.dmg; if(wd.clips) WEAPONS[k].clips = Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); _wepApplyName(k, wd.nm); } } }   // build 1190: st = the stat sheet; build 1240: nm = the authored name
 let owned = ['rifle'];           // weapons the player has
 let curWep = 'rifle';            // current weapon key
 loadGunModel();                  // load the starting weapon's viewmodel (now that WEAPONS/curWep exist)
@@ -22473,7 +22483,7 @@ function loadLevelFromNet(level){
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; refreshPlayerSpawnMarker(); }
-  if(level.weapons){ for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; if(wd.clips) WEAPONS[k].clips=Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); } else { _wepApplyStats(k, null); } } }   // build 1190: a joiner plays the host's tuning, and a weapon with no entry plays factory
+  if(level.weapons){ for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; if(wd.clips) WEAPONS[k].clips=Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); _wepApplyName(k, wd.nm); } else { _wepApplyStats(k, null); _wepApplyName(k, null); } } }   // build 1190: a joiner plays the host's tuning, and a weapon with no entry plays factory; build 1240: names too
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
   if(level.enemies || level.enemy){   // adopt the host's per-type enemy models so clients render the same hostiles
     applyEnemyModelData(level.enemies, level.enemy);
@@ -27898,7 +27908,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1239 · 2026-07-31';
+const BUILD_VERSION = 'build 1240 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35749,7 +35759,7 @@ function serializeLevel(){
   return {
     v: LEVEL_FORMAT_V,   // build 1165: the version is now READ on load (see _levelFormatCheck) — bump it when the schema changes shape, and set minV only when an old client's partial read would be load-bearing wrong
     gun:     { url: gunModelUrl,     state: Object.assign({}, editorTargets.gun.state) },
-    weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); let st; for(const s of GUN_STAT_KEYS){ if(w[s]!=null && GUN_BASE[k] && w[s]!==GUN_BASE[k][s]){ (st=st||{})[s]=w[s]; } } if(w.model || w.view || w.clips || dmgChg || w.noMuzzle || st) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined, st }; return acc; }, {}),   // build 623: per-weapon damage; build 684: muzzle-flash toggle; build 1190: the full stat sheet (only changed values)
+    weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); let st; for(const s of GUN_STAT_KEYS){ if(w[s]!=null && GUN_BASE[k] && w[s]!==GUN_BASE[k][s]){ (st=st||{})[s]=w[s]; } } const nmChg = (typeof GUN_BASE_NAME!=='undefined' && GUN_BASE_NAME[k] && w.name!==GUN_BASE_NAME[k]); if(w.model || w.view || w.clips || dmgChg || w.noMuzzle || st || nmChg) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined, st, nm: nmChg ? w.name : undefined }; return acc; }, {}),   /* build 1240: authored names ride the diff */   // build 623: per-weapon damage; build 684: muzzle-flash toggle; build 1190: the full stat sheet (only changed values)
     aim:     { state: Object.assign({}, editorTargets.aim.state) },
     aimWep:  JSON.parse(JSON.stringify(aimByWep)),
     mountWep: (typeof mountByWep!=='undefined') ? JSON.parse(JSON.stringify(mountByWep)) : {},
@@ -40035,6 +40045,16 @@ function renderEditorFields(){
       renderModelSearch(psHost, (m, st)=>{ inp.value=m.glb; tgt.pickedThumb=m.thumb||''; if(tgt.setUrl) tgt.setUrl(m.glb); creditAsset(m.attribution); if(st) st.textContent='Using "'+m.title+'" — credit: '+(m.attribution||''); }, { placeholder:'e.g. pistol, robot, barrel' });
     }
     if(tgt===editorTargets.gun){   // build 623: per-weapon DAMAGE control
+      { // build 1240: rename the weapon — a sword is a renamed Fists, a staff a renamed launcher
+        const nh=document.createElement('div'); nh.className='hint'; nh.style.margin='10px 0 2px'; nh.innerHTML='<b>Name</b> \u2014 shows on the HUD, pickups, the loadout picker, everywhere';
+        urlHost.appendChild(nh);
+        const nrow=document.createElement('div'); nrow.className='row2';
+        const ninp=document.createElement('input'); ninp.type='text'; ninp.maxLength=24; ninp.placeholder=GUN_BASE_NAME[curWep]||curWep; ninp.style.cssText='flex:1;font-size:12px;';
+        ninp.value=(WEAPONS[curWep] && WEAPONS[curWep].name!==GUN_BASE_NAME[curWep]) ? WEAPONS[curWep].name : '';
+        ninp.onchange=()=>{ pushUndoSnapshot(); _wepApplyName(curWep, ninp.value); if(typeof _levelDirty!=='undefined') _levelDirty=true; if(typeof updateHUD==='function') updateHUD(); renderEditorFields(); };
+        const nreset=document.createElement('button'); nreset.textContent='Default'; nreset.style.cssText='flex:0 0 auto;font-size:10px;padding:3px 8px;';
+        nreset.onclick=()=>{ pushUndoSnapshot(); _wepApplyName(curWep, null); if(typeof _levelDirty!=='undefined') _levelDirty=true; if(typeof updateHUD==='function') updateHUD(); renderEditorFields(); };
+        nrow.appendChild(ninp); nrow.appendChild(nreset); urlHost.appendChild(nrow); }
       const wnD=(WEAPONS[curWep]&&WEAPONS[curWep].name)?WEAPONS[curWep].name:curWep;
       const dh=document.createElement('div'); dh.className='hint'; dh.style.margin='10px 0 2px';
       dh.innerHTML='<b>Damage</b> — '+wnD+' per hit'+(WEAPONS[curWep]&&WEAPONS[curWep].pellets>1?' (per pellet ×'+WEAPONS[curWep].pellets+')':'')+(WEAPONS[curWep]&&WEAPONS[curWep].projectile?' (rocket impact)':'');

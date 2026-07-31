@@ -1519,6 +1519,20 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Weapons can be renamed (build 1240)
+
+Asked from play: "add a sword/handheld weapon (axe, staff)… we have melee, so maybe the answer is
+just the ability to rename weapons." It is — every display surface already reads `WEAPONS[k].name`
+live (HUD, weapon wheel, kill feed, pickup labels, loadout picker, attachments header), so an
+authored name renames the weapon EVERYWHERE, including the logic pickup-spawner's label. 1190's exact
+pattern: `GUN_BASE_NAME` factory baseline captured at boot, `_wepApplyName` the one sanitizer (trim,
+24-char cap, blank restores factory, key fallback), `nm` serialized only-when-changed so untouched
+levels are byte-identical, BOTH loaders apply it with the no-entry branch restoring factory so a
+renamed Fists in level A never leaks into level B. UI: a Name field atop the Kit panel's per-weapon
+section (placeholder = the factory name, Default restores). Melee "sword" recipe: rename Fists,
+give it a model, tune dmg/reach in the stat sheet. Three pins moved (476, 530, 229 — the serializer
+gate + record shape grew nm; intents kept).
+
 ## The ledge hang sinks below the lip (build 1239)
 
 Reported from play: the hang "positions the chest/belly at the edge, torso/arms/head way over the
