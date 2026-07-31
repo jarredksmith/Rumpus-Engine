@@ -5,7 +5,7 @@ const src = gameSource();
 
 // buses + routing
 assert(/masterBus=actx\.createGain\(\); masterBus\.connect\(actx\.destination\)/.test(src), 'master bus -> destination');
-assert(/sfxBus=actx\.createGain\(\); sfxBus\.connect\(masterBus\)/.test(src) && /musicBus=actx\.createGain\(\); musicBus\.connect\(masterBus\)/.test(src), 'sfx + music buses feed master');
+assert(/sfxBus\.connect\(_cmp\); _cmp\.connect\(masterBus\)/.test(src) && /catch\(e\)\{ sfxBus\.connect\(masterBus\); \}/.test(src) && /musicBus=actx\.createGain\(\); musicBus\.connect\(masterBus\)/.test(src), 'sfx feeds master through the 1211 bus compressor (plain connect as the fallback); music feeds master directly');
 assert(/osc\.connect\(g\)\.connect\(out\)/.test(src) && /src\.connect\(filt\)\.connect\(g\)\.connect\(out\)/.test(src) && /const out = _spatialOut\(at\)/.test(src), 'SFX route through the spatial out, which is the sfx bus when unpositioned (build 1208)');
 assert(/function initAudio\(\)\{[^}]*buildAudioBuses\(\);/.test(src), 'initAudio builds the buses');
 

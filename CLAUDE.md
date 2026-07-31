@@ -1519,6 +1519,29 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Gunshots got weight, and reload audio tells the truth (build 1211)
+
+The gameplay-feel panel's CRITICAL #3, completing the audio pair with 1208. Every shot was one tone + one
+noise — no sub-bass transient, no tail, no compressor — so weapons were distinguishable but all sounded
+like the same toy at different pitches, and mag-dumping was N identical clipping-adjacent blips. Now:
+- **`_SHOT_LAYERS`** gives each weapon three layers: a sub-bass sine thump (45–70 Hz, fast attack — the
+  weight), the EXACT tuned body/crack pair the guns always had (byte-for-byte, pinned — the safe-change
+  rule), and a delayed lowpassed noise re-trigger as a pseudo-tail (the space answering). The sniper thumps
+  deepest and rings longest; the SMG stays snappy; the suppressed 'phut' is deliberately tail-less —
+  that is what a suppressor is for.
+- **A gentle `DynamicsCompressor` on `sfxBus`** (threshold −18, ratio 4, fast attack) so layered and
+  overlapping shots stack musically instead of clipping; every SFX already routes through the bus, so no
+  call site changed, and construction falls back to the plain connect if unavailable.
+- **Reload clicks track the real `reloadMs`** — start, mag-out at ~45%, mag-in at `reloadMs−120` — where
+  the old pair was hardcoded 550 ms apart, so the pistol's audio finished late and the sniper's a second
+  early. The 1172 reload-cancel token makes a cancelled reload's later clicks... still fire (the timeouts
+  are not tokenised) — a cosmetic stale click on cancel, noted as the known cost; tokenising the SFX
+  timeouts rides the next audio build if it bothers anyone in play.
+
+`test-1211` extracts and executes the layer table (authored values preserved, per-weapon shaping compared)
+and the real `reload()` under fake timers (sniper 1600 ms and pistol 700 ms schedules both land), and pins
+the compressor + fallback. Three pins moved (227, 44, 91), each keeping its intent through the table.
+
 ## The first-person camera has a body (build 1210)
 
 The gameplay-feel panel's HIGH: on foot the camera never reacted to the player's own body — build 730's
