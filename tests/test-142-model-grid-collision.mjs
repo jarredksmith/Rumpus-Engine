@@ -1,8 +1,8 @@
-import { gameSource, assert, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
 assert(/function buildModelGridBoxes\(obj, overall\)/.test(src), 'grid-box builder exists');
 assert(/function isModelSrc\(src\)/.test(src) && /sketchfab:/.test(src), 'isModelSrc classifies imported models');
-assert(/if\(isModelSrc\(obj\.userData\.src\)\)\{ const grid = buildModelGridBoxes/.test(src), 'refreshPropCollider uses grid boxes for imported models');
+assert(/if\(isModelSrc\(obj\.userData\.src\)\)\{/.test(extractFunction('refreshPropCollider')) && /_mgridCore\(g\.tri, g\.n, bmin, bmax, opts\)/.test(src), 'refreshPropCollider derives grid boxes for imported models (split into gather+core, workered for big models, in 1203)');
 // vertical run-splitting: a column emits one box per contiguous solid run (archway opening stays open between threshold + crown)
 // build 1089: occupancy is a BITSET (8x the resolution for the same memory) and the resolution is chosen
 // from the model's real size rather than capped at 64x64x48. The run-splitting is unchanged in meaning.

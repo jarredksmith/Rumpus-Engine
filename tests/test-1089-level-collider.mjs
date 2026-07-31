@@ -15,10 +15,10 @@ function gridConsts(){
 // The old guard bailed at 200k triangles and fell back to ONE AXIS-ALIGNED BOX PER MESH. On architecture
 // each mesh is a whole building, so its box is a solid block spanning the interior, the doorways and the
 // full height — 1,763 invisible solid blocks. A level model is exactly the case that needs the grid most.
-const bg = extractFunction('buildModelGridBoxes');
+const bg = [extractFunction('_mgridGatherTris'), extractFunction('_mgridCore'), extractFunction('_mgridOpts'), extractFunction('_mgridWrap'), extractFunction('buildModelGridBoxes')].join('\n');   // build 1203 split the derivation; the concatenation still holds every internal this test pins
 assert(!/if\(\+\+tris>200000\)/.test(bg), 'the 200k triangle cap is gone');
-assert(/if\(\+\+tris>2000000 \|\| work>40000000\)\{ bail=true; return; \}/.test(bg),
-  'the budget is now on SLOTS WRITTEN, which is what actually costs time — one huge floor triangle can touch the whole grid');
+assert(/if\(total>2000000\) return \{ tri:null, n:0, over:true \};/.test(bg) && /if\(work>40000000\)\{ bail=true; break; \}/.test(bg),
+  'the budget is now on SLOTS WRITTEN, which is what actually costs time — one huge floor triangle can touch the whole grid (split across gather/core in 1203, both caps intact)');
 // build 1092: work is now accumulated per column (the clip pass and the slots the clipped
 // fragment actually writes), not as one bulk product of the whole triangle's AABB.
 assert(/work \+= 4;/.test(bg) && /work \+= cs1-cs0\+2;/.test(bg), '...and that work is actually counted');
@@ -28,7 +28,7 @@ assert(/work \+= 4;/.test(bg) && /work \+= cs1-cs0\+2;/.test(bg), '...and that w
 // and 3.09 unit slots — so each storey's FLOOR and its CEILING landed in the same slot and fused into one
 // solid slab. The whole interior became solid.
 assert(/const MGRID_CELL = 1\.0, MGRID_SLOT = 0\.35;/.test(src), 'resolution is now a target cell size');
-assert(/Math\.ceil\(sx\/MGRID_CELL\)/.test(bg) && /Math\.round\(sy\/MGRID_SLOT\)/.test(bg),
+assert(/Math\.ceil\(sx\/opts\.cell\)/.test(bg) && /Math\.round\(sy\/opts\.slot\)/.test(bg),
   '...derived from the model\'s real extent');
 assert(/const f=Math\.cbrt\(budget\/total\);/.test(bg),
   '...and scaled down proportionally when it will not fit, so it cannot go fine on one axis and useless on another');

@@ -1519,6 +1519,36 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The collider grid derives off-thread (build 1203)
+
+The perf critic's #5 other half. `buildModelGridBoxes` measured 110-137 ms on the main thread for a
+level-sized GLB (1148's own numbers) — a guaranteed hitch on every big import, including MID-SESSION ones
+(co-op level sync, the `local:` drop path). The derivation is now three pieces, and the split is the whole
+design: `_mgridGatherTris` walks the scene (the only part that needs it; 1089's 2M-triangle cap intact),
+**`_mgridCore` is a PURE function of a flat triangle array** — no THREE, no `MGRID_*`, no `IS_COARSE`, no
+scratch vectors — and the worker runs `_mgridCore`'s own `toString()` from a Blob (the levelgen worker's
+precedent). One implementation serves both threads, so the algorithm tests (1092/1113/1148/1159), which
+EXECUTE the code on real geometry, keep guarding the exact source the worker runs; `test-1203` proves the
+purity directly by executing the core in an empty scope on 1148's doorway repro (door open, wall solid,
+lintel solid, deterministic, flat `Float32Array` output).
+
+The async path lives in `refreshPropCollider`: models over `MGRID_SYNC_TRIS` (30k triangles) post their
+gathered triangles to the worker by TRANSFER and get the boxes back by transfer; smaller models stay
+synchronous because their derivation is cheaper than the round trip. While the answer is in flight the prop
+keeps per-mesh AABBs — the pre-grid, fail-SOLID behaviour: a building is briefly over-solid, never
+walk-through. Delivery is token-guarded (`_mgridTok` bumps on every re-derivation, so an in-flight answer
+for the OLD transform can never land) and a landed grid re-teaches the spatial grid (`_cgDirty`, 1188) and
+the nav grid (`_navDirtyProp`, 1200). Physics needs nothing: the Rapier statics are trimeshes of the real
+triangles, not `userData.boxes`. Failure degrades, never opens: a dead worker fails every pending job to
+null (per-mesh boxes stand) and future derivations go synchronous; a failed `postMessage` RE-GATHERS before
+the sync fallback because the transfer may already have consumed the buffer.
+
+The old single function's history comments (1089 budgets, 1092 clipping, 1148 footprints, the widening
+that shipped wrong twice) ride with the piece they describe — the core's text is the pre-1203 code with the
+vertex reads renamed, moved by string surgery rather than retyped. Six test files moved with the split
+(06 passed untouched; 1089, 1092, 1093, 1113, 1148, 142, 1159 — harnesses now concatenate the split
+functions; every assertion kept its intent, and the executable ones kept their exact numbers).
+
 ## The pursuit remembers which storey (build 1202)
 
 Build 1200's recorded other half, closed: PvE enemies pathed to layer A because `enemyDesiredTarget`
