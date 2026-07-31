@@ -1519,6 +1519,53 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Nothing invisible stops a bullet (build 1236)
+
+Reported from play with screenshots: *"some bullets hit an invisible wall and leave decals just
+floating"* — body-height decal clusters hanging in a doorway. Two ways an undrawn surface is
+raycastable, and combat rays were blind to both: a mesh whose MATERIAL is invisible
+(`material.visible=false` / opacity ~0 — how asset packs ship collision volumes inside a GLB, and
+exactly the trick the enemy hit proxies use on purpose), and a mesh under an invisible ANCESTOR
+(the Raycaster honours a mesh's own `visible:false` but never its ancestors' — 1139's documented
+trap; editor-helper children live under hidden groups). A pellet that hits one leaves a floating
+decal on air; a rocket detonates mid-doorway.
+
+`_shotGhost(o, hit)` + `_firstSolidHit(hits)`: combat rays skip any hit the renderer would not draw —
+walking the ancestor chain, reading the HIT FACE's material slot on multi-material meshes (slot 0
+alone would misjudge mixed meshes), treating opacity ≤ 0.02 as undrawn while real glass (0.3) still
+stops a bullet — EXCEPT `isHitProxy`, which is invisible-and-shootable by design and checked FIRST so
+an invisible material can never eat an enemy hit. Routed through the cursor-resolve ray (a ghost must
+not become the aim point), every pellet, and the rocket sweep. Only-ghosts-on-the-ray is a clean miss
+(tracer to the sky), never a floating decal. The 1152 rule, ballistics edition: nothing that does not
+write depth belongs in a depth-derived buffer; nothing that is not drawn stops a shot. Four pins moved
+(1109, 885, 328, and 1236's own during writing — each keeps its intent through the filtered forms).
+Deliberately NOT applied to enemy-bolt box tests, the camera collider, or movement — those are
+collision, not ballistics, and a creator's invisible wall may be a legitimate barrier there.
+
+## A death animation finally plays (build 1235)
+
+Reported from play with a screenshot of a corpse standing on its head: *"Enemies go stiff and bob up
+and get stuck in the floor on death. They aren't playing their death animation."* All three symptoms
+were one path: killEnemy's no-ragdoll branch spliced the mixer, had `_poseDeath` BAKE the die clip's
+final frame in zero seconds, then stacked 994's generic 86° topple ON TOP — a clip that already lies
+the body down ended ~180° over (the head-stand), and 1175's bbox solve measured the BIND pose
+(`Box3.setFromObject` cannot see skinned deformation), placing a resting height for a pose the body
+wasn't in: the bob, the burial. The machinery to do it right existed all along — the die-clip
+taxonomy (`/die|death|dead|killed|defeat/i`), LoopOnce + clampWhenFinished, directional variants the
+BOTS have played since 21719.
+
+`_clipDeath(mesh, sx, sz)`: a model that ships a die-family clip now PLAYS it — mixer kept alive, no
+quaternion, no height solve (the clip owns the pose), directional variant from the shot direction
+(shot from the front falls backward — the bots' rule) — then lingers clamped on its last frame, sinks
+and fades. Models WITHOUT a die clip keep 994/1175's topple byte-identically. Two traps in it, both
+pinned: **the gate reads `acts.die/dieFront/dieBack` DIRECTLY** — `_stateActionKey` walks the fallback
+chain and die's fallback is IDLE, so asking it "is there a die clip?" answers yes for any model that
+can stand; and **`_removeFadeCorpse` releases the mixer on EVERY exit** (natural end and the
+FADE_CORPSE_MAX cap-shift alike), or each death leaks a mixer update forever. `_fcCloneMats` is the
+factored material-clone both roads share (the fade must never dim a live enemy sharing materials).
+The ragdoll path still bakes the final frame deliberately — physics owns that motion. Three pins moved
+(779, 994×2 — the old road is now the else of the clip-first try; intents kept).
+
 ## The sky becomes authorable (build 1234)
 
 Reported from play: *"How can you change the sky color? No matter what it's always bright."* Two

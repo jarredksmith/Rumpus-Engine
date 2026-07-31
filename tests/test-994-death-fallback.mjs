@@ -7,7 +7,7 @@ import { gameSource, extractFunction, assert, eq, near, done } from './harness.m
 const src = gameSource();
 
 // ---- wiring: the no-ragdoll branch topples instead of removing ----
-assert(/if\(!_rag\)\{ if\(en\.mesh\.userData\.mixer\)\{ const mi=mixers\.indexOf\(en\.mesh\.userData\.mixer\); if\(mi>=0\) mixers\.splice\(mi,1\); \} if\(typeof _poseDeath==='function'\) _poseDeath\(en\.mesh\); _fallbackDeath\(en\.mesh, _rdx, _rdz\); \}/.test(src),
+assert(/else \{ if\(en\.mesh\.userData\.mixer\)\{ const mi=mixers\.indexOf\(en\.mesh\.userData\.mixer\); if\(mi>=0\) mixers\.splice\(mi,1\); \} if\(typeof _poseDeath==='function'\) _poseDeath\(en\.mesh\); _fallbackDeath\(en\.mesh, _rdx, _rdz\); \}/.test(src),   // build 1235: the same road, now the else of the clip-first try
   'no ragdoll -> mixer detaches, die-clip pose snaps, then the topple/fade fallback (no scene.remove)');
 assert(/const _rag = \(gameCfg\.ragdoll && typeof spawnCorpse==='function'\) \? spawnCorpse\(/.test(src),
   'ragdoll levels still take the physics corpse path');
@@ -24,6 +24,7 @@ const mkFns = () => {
   const code = 'let _fadeCorpses=[];\n'
     + 'const FADE_CORPSE_MAX=24;\n'
     + extractFunction('_removeFadeCorpse', src) + '\n'
+    + extractFunction('_fcCloneMats', src) + '\n'   // build 1235: the material clone was factored out for the clip road to share
     + extractFunction('_fallbackDeath', src) + '\n'
     + 'const _fcQ = new THREE.Quaternion();\n'
     + extractFunction('updateFadeCorpses', src) + '\n'

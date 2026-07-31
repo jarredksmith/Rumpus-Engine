@@ -15,7 +15,7 @@ assert(/raycaster\.setFromCamera\(_vAimTmpNdc\.set\(_vmA\.x, _vmA\.y\), camera\)
   'the cursor ray resolves the aim target once per shot');
 // (build 1109: cursor views still fall back to the aim-plane point; a tilted chase camera has no
 // such point, so it falls back to a far point on the crosshair ray)
-assert(/_vmTgt = _cHits\.length \? _cHits\[0\]\.point\.clone\(\) : \(cursorAimActive\(\) \? _vAimPt\.clone\(\) : raycaster\.ray\.at\(120, new THREE\.Vector3\(\)\)\);/.test(src), 'empty space falls back to the aim-plane point');
+assert(/_vmTgt = _cH \? _cH\.point\.clone\(\) : \(cursorAimActive\(\) \? _vAimPt\.clone\(\) : raycaster\.ray\.at\(120, new THREE\.Vector3\(\)\)\);/.test(src), 'empty space falls back to the aim-plane point');   // build 1236: the resolve is ghost-filtered (_cH) — the fallback chain itself is unchanged
 assert(/if\(_vmTgt\.distanceToSquared\(_vmOrig\) < 1\)/.test(src), 'cursor on top of yourself degenerates to facing direction, not a zero-length ray');
 // the pellet cone
 assert(/const _pr=new THREE\.Vector3\(\)\.crossVectors\(_pd,_pu\)\.normalize\(\);/.test(src) && /const _pv=new THREE\.Vector3\(\)\.crossVectors\(_pr,_pd\);/.test(src),
