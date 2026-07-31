@@ -23867,10 +23867,28 @@ function handleClientMsg(conn, msg){
   // sender (the connection's own id) rather than whatever the packet claimed, so a client cannot
   // attribute its damage to someone else. A `to` naming the host, or an unknown peer, falls through
   // and is handled here as normal.
+  //
+  // build 1205: BOUND THE RELAYED CLAIM. Builds 1130/1164 clamp damage aimed AT THE HOST — but a packet
+  // addressed to a third client was forwarded VERBATIM, so in any 3+ player FFA a cheat could send
+  // {t:'pvpHit', to:victim, d:1e9} and one-shot anyone, through walls, unrated: the marquee competitive
+  // mode had none of the protection the docs advertised. The host mediates now. A damage-bearing type
+  // is clamped through the SAME magnitude cap and per-source rate bucket a host-addressed hit gets
+  // (keyed to the VERIFIED sender, never the claim) before it is relayed; a bucket-exhausted or
+  // zero-magnitude claim is dropped, not forwarded. Non-damage types (fire/char/chat/nade/rocket
+  // visuals, race, hold) still forward verbatim — a whitelist would rot as new cosmetics arrive, so the
+  // rule is the inverse: only KNOWN damage types are mediated, everything else passes.
   if(msg && msg.to != null && +msg.to !== NET.myId && +msg.to !== id){   /* build 1201: a promoted host is not id 0 */
     const dest = NET.conns[+msg.to];
-    if(dest){ const fwd = Object.assign({}, msg, { from: id }); delete fwd.to;
-      try{ dest.send(fwd); }catch(e){} return; }
+    if(dest){
+      if(msg.t==='pvpHit'){                                   // client-vs-client damage: clamp before relaying
+        const d = _netDmgBudget(id, 'pvp', _netDmg(msg.d));
+        if(!(d > 0)) return;                                  // over budget or non-positive: drop, never forward a raw claim
+        const fwd = Object.assign({}, msg, { from: id, d }); delete fwd.to;
+        try{ dest.send(fwd); }catch(e){} return;
+      }
+      const fwd = Object.assign({}, msg, { from: id }); delete fwd.to;
+      try{ dest.send(fwd); }catch(e){} return;
+    }
   }
   if(msg.t==='st'){ setRemoteState(id, msg); }
   else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmgBudget(id,'pve',_netDmg(msg.d)), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
@@ -27449,7 +27467,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1204 · 2026-07-31';
+const BUILD_VERSION = 'build 1205 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

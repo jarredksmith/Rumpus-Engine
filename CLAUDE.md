@@ -1519,6 +1519,54 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The relayed claim was unbounded (build 1205)
+
+A fresh six-critic panel (run against build 1204, the roadmap-complete tree) surfaced this as a verified
+CRITICAL, and it is a real security hole in the marquee competitive mode. Builds 1130/1164 clamp damage
+aimed AT THE HOST, but `handleClientMsg`'s build-1122 forward path relayed a packet addressed to a THIRD
+client VERBATIM — so in any 3+ player FFA a cheat sent `{t:'pvpHit', to:victim, d:1e9}` and one-shot
+anyone, through walls, unrated. The docs advertised protection the relay path never had.
+
+The host mediates now. A relayed `pvpHit` runs through the SAME magnitude cap (`_netDmg`) and per-SOURCE
+rate bucket (`_netDmgBudget`, keyed to the VERIFIED sender `conn._pid`, never the claim) a host-addressed
+hit gets, and an over-budget or non-positive claim is DROPPED rather than forwarded. The rule is the
+inverse of a whitelist: only KNOWN damage types are mediated (`pvpHit` today), everything else
+(fire/char/chat/nade/rocket visuals, race, hold) forwards verbatim — a whitelist would rot as new
+cosmetics arrive and silently block them. `test-1205` executes the real forward branch with the real clamp
+helpers: a 1e9 one-shot clamps to the cap, a 50-packet burst relays at most one window's PvP budget and
+drops the rest, cosmetic relays pass verbatim, host-addressed hits still handle locally.
+
+**The fresh panel's other findings are recorded for the roadmap, not yet built** (this build took the one
+security-CRITICAL first). Ranked highlights, all VERIFIED-IN-CODE unless noted:
+- *Rendering:* no SSR / parallax-corrected reflections (the 1186 probe is one spawn-point cubemap); the
+  default "motion blur" is a brightness-keep afterimage, not velocity blur; no specular/temporal AA for the
+  1139/1145 procedural normal maps; one adaptive downshift sheds SSAO + soft particles + soft shorelines
+  together; unshadowed sun-in-fog term; water reflects a hardcoded blue; CSM split is a hard cut at ~120 m.
+- *Gameplay feel:* NO positional audio anywhere (every sound is mono — the single largest feel gap); enemies
+  have no stagger/flinch/hit-slow; gunshots are single synth blips (no layers/tail/sub-bass, no compressor);
+  the hitmarker shows a false KILL marker on a non-lethal PvP headshot; no landing impact / sprint-FOV / lean
+  on the first-person camera; random difficulty plateaus at wave 5 and shielded/charger never spawn from it.
+- *Editor UX:* the logic graph is a black box (no live inspector, `do`-verb failures swallowed silently —
+  route them to `levelIssues()`); events carry no identity/position/payload (the per-actor ceiling, same root
+  as deferred per-player vars); no play-from-here / start-at-wave; props and lights are disjoint selections so
+  a lamp+light composite can't be moved/prefabbed as a unit; first-hour editor onboarding is a manual not the
+  do-to-advance pill 938 already proved; no align/distribute/array; terrain is a fixed 48×48 grid stretched
+  over any arena size.
+- *Performance:* the 1195 vertex-AO bake re-runs IN FULL on any `colliders.length` change — a logic-blinked
+  door restarts it forever at 6 ms/frame (CRITICAL); two unbounded texture caches (`_texInst`, `texCache`)
+  never evict or dispose across level swaps; enemy bolt trails allocate a Mesh+material clone per bolt per
+  frame (1168's class, uncleared); the reflection probe re-renders the scene ×6 + PMREM every 3 s under the
+  day cycle; `checkProximity` walks the full prop list ×5/frame; several always-on O(N) `loop()` scans.
+- *Feature surface:* multiplayer is 8 hardcoded modes a creator can't extend (needs per-player/team logic
+  scoping); no play-count/rating/comment flywheel (a `plays.php` sibling to `lobbies.php`); logic can't
+  CREATE a prop at runtime (spawn-prop-by-prefab, 1170's deferred half — `_pfSpawnEntry` is ready); saves
+  are one un-namespaced global bucket; every moving creature is hostile (no wandering NPC); day/night and
+  weather are invisible to the logic graph.
+- *Multiplayer/platform (beyond this build):* no connection cap or inbound rate limiting (one-line DoS +
+  `pAdd` scene injection); fully client-authoritative hits with no lag comp / geometry validation; free
+  shared-cred TURN is the only relay; no persistent identity / social graph; join-in-progress has no
+  ack/retry if the forced keyframe drops.
+
 ## The arena arrives knowing its own gameplay (build 1204)
 
 The generator roadmap's "emit gameplay data with the GLB" item, second piece (1124's `spawns` was the
