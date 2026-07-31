@@ -1744,7 +1744,26 @@ The design decisions that carry the correctness:
 Three harnesses moved (32, 303 — pass-through `_cgQuery` injected, the 1122 precedent: those tests are
 about the blocking logic, not candidate sourcing; 32's cover pin now names the grid).
 
-## Open work (as of build 1188)
+## Ranged enemies use the level (build 1189)
+
+PvP bots have hunted, flanked and broken for cover since 1003-1006; PvE gunners held a standoff ring and
+strafed — competent, but they never USED the level. The port takes the bot brain's two best moves:
+- **Cover break.** A hit that drops a gunner under its bravery fraction (0.30-0.45, rolled per individual
+  so a squad doesn't break in unison) sends it to real cover for a ~2.5s beat, then it re-engages; a 9s
+  cooldown stops it turtling. **Cover is a BEAT, not a state** — PvE enemies don't heal, so a health-gated
+  state (the bots' shape) would turtle forever; the trigger is EDGE-based (hp dropped this frame), which
+  `test-1189` replays. `_botFindCover` is reused VERBATIM through a `{pos:{x,y,z}}` shim — it only reads
+  `.pos`, proven by driving it with enemy-shaped input. Firing already requires `_see`, so cover going up
+  silences the gun with no extra gate. No cover found (open field) = the trigger simply never fires.
+- **Flank.** With the player unseen, the gunner approaches the last-known spot from a side angle — the
+  bots' exact 0.7-radian / 5-metre shape, pinned as shared between both AIs. This also removes a quiet
+  wallhack: the old block steered toward the player's LIVE position even when unseen.
+
+The gunner opts in (`cover:true`); the BOSS deliberately does not (a boss doesn't cower); melee types are
+untouched — closing is their whole design. The original standoff/strafe body survives byte-identical as
+the seen-and-healthy branch. The roadmap item's "+ trace bot bullets" half is deferred to its own build.
+
+## Open work (as of build 1189)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

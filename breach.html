@@ -16313,7 +16313,7 @@ const ENEMY_TYPES = {
   grunt:  { name:'Grunt',  hp:30, speedMin:6,   speedMax:9,  scale:1.0, tint:0xff2d55, dmg:9 },
   runner: { name:'Runner', hp:16, speedMin:11,  speedMax:13, scale:0.8, tint:0xffd166, dmg:6 },
   brute:  { name:'Brute',  hp:90, speedMin:3.5, speedMax:5,  scale:1.5, tint:0x9b6cff, dmg:18 },
-  gunner: { name:'Gunner', hp:24, speedMin:4,   speedMax:6,  scale:1.0, tint:0x4dd2ff, dmg:4, ranged:true, standoff:11, fireCd:1.6, projSpeed:38, burst:4, burstGap:0.09, strafe:true },   // build 633: gunners strafe sideways while holding standoff (harder to hit, more alive)
+  gunner: { name:'Gunner', hp:24, speedMin:4,   speedMax:6,  scale:1.0, tint:0x4dd2ff, dmg:4, ranged:true, standoff:11, fireCd:1.6, projSpeed:38, burst:4, burstGap:0.09, strafe:true, cover:true },   // build 1189: breaks for cover when chunked   // build 633: gunners strafe sideways while holding standoff (harder to hit, more alive)
   boss:   { name:'BOSS',   hp:900,speedMin:2.8, speedMax:4.2,scale:2.6, tint:0xff7b00, dmg:28, ranged:true, standoff:14, fireCd:1.1, projSpeed:26 },
   // build 628: Sapper — a fast, fragile rusher that doesn't swing; it DETONATES (blast + falloff) when it reaches
   // you OR when killed. Kill it from range or it takes a chunk out of you (and launches you). dmg:0 = no melee.
@@ -18133,6 +18133,7 @@ function spawnEnemy(spawn){
     ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
     exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
     strafe: !!ty.strafe,   // build 633: ranged enemy strafes while holding standoff
+    cover: !!ty.cover, bravery: ty.cover ? (0.30 + Math.random()*0.15) : 0, flankSide: Math.random()<0.5?1:-1,   // build 1189: the bot brain's cover-break + flank, per type
     shielded: !!ty.shielded,   // build 634: soaks frontal damage, must be flanked
     charger: !!ty.charger, lungeRange: ty.lungeRange||16, lungeSpeed: ty.lungeSpeed||30, lungeDur: ty.lungeDur||0.45, lungeWind: ty.lungeWind||520,   // build 635: Charger lunge
 
@@ -26864,7 +26865,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1188 · 2026-07-31';
+const BUILD_VERSION = 'build 1189 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32144,6 +32145,33 @@ function loop(){
       }
       if(_charging){ /* the lunge owns movement this frame */ }
       else if(en.ranged && td.chase){
+        // build 1189: the bot brain's two best moves, ported to ranged PvE. (1) COVER BREAK: a hit that
+        // drops the enemy under its bravery fraction sends it to real cover — _botFindCover, the bots' own
+        // finder, works VERBATIM because it only reads .pos — for a ~2.5s beat, then it re-engages; a 9s
+        // cooldown keeps the wave coming instead of turtling, and firing already needs _see, so cover
+        // going up silences it with no extra gate. (2) FLANK: with the player unseen it approaches the
+        // last-known spot from a side angle (the bots' exact 0.7 rad / 5m shape), not straight down the
+        // sightline it just lost. Melee types are untouched — closing is their whole design.
+        if(en.cover && !editorOpen && typeof _botFindCover==='function'){
+          if(en._lastHp==null) en._lastHp = en.hp;
+          if(en.hp < en._lastHp && en.hp/(en.maxHp||1) < en.bravery && nowMs > (en._aiCoverCd||0)){
+            const cv = _botFindCover({ pos:{ x:en.mesh.position.x, y:en.mesh.position.y-1.4, z:en.mesh.position.z } }, { pos:near.pos });
+            if(cv){ en._aiCover = cv; en._aiCoverT = 2.2 + Math.random()*1.2; en._aiCoverCd = nowMs + 9000; }
+          }
+          en._lastHp = en.hp;
+        }
+        if(en._aiCover && (en._aiCoverT||0) > 0){
+          en._aiCoverT -= dt;
+          const cvx = en._aiCover.x - en.mesh.position.x, cvz = en._aiCover.z - en.mesh.position.z, cvd = Math.hypot(cvx,cvz);
+          if(cvd > 1.0){ en._wantMove = true; en.mesh.position.x += cvx/cvd*en.speed*dt; en.mesh.position.z += cvz/cvd*en.speed*dt; }
+          if(en._aiCoverT <= 0) en._aiCover = null;
+        }
+        else if(!en._see){
+          const _ba = Math.atan2(td.tz - en.mesh.position.z, td.tx - en.mesh.position.x) + en.flankSide*0.7;
+          const _fx = td.tx + Math.cos(_ba)*5 - en.mesh.position.x, _fz = td.tz + Math.sin(_ba)*5 - en.mesh.position.z, _fd = Math.hypot(_fx,_fz)||1;
+          en._wantMove = true; en.mesh.position.x += _fx/_fd*en.speed*dt; en.mesh.position.z += _fz/_fd*en.speed*dt;
+        }
+        else {
         // hold a standoff range: close in if too far, back off if the player crowds it, else hold + shoot
         const toPx = near.pos.x - en.mesh.position.x, toPz = near.pos.z - en.mesh.position.z, pd = Math.hypot(toPx,toPz)||1;
         if(pd > en.standoff + 1){ en._wantMove=true; en.mesh.position.x += toPx/pd*en.speed*dt; en.mesh.position.z += toPz/pd*en.speed*dt; }
@@ -32154,6 +32182,7 @@ function loop(){
           const nx = en.mesh.position.x + sx*en.speed*0.62*dt, nz = en.mesh.position.z + sz*en.speed*0.62*dt;
           if(typeof insideSolid!=='function' || !insideSolid(nx, nz, (en._groundY!=null?en._groundY:0)+0.4)){ en._wantMove=true; en.mesh.position.x = nx; en.mesh.position.z = nz; }
           else { en._strafeFlip = 0; }   // wall ahead -> reverse next frame
+        }
         }
       } else if(d > stopAt){
         // beeline straight at the target — the pre-531 behavior that always produces motion in the open.
