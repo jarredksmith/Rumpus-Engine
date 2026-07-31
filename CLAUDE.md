@@ -1519,6 +1519,30 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The room got a ceiling and a rate limit (build 1207)
+
+The fresh panel's multiplayer CRITICAL #2. `on('connection')` accepted every peer unconditionally, and
+pAdd/pMov/pDel/chat had no inbound rate cap — so anyone with the room code (the lobby directory publishes
+them) could open unlimited connections to exhaust the host's 20 Hz fan-out and CPU, or flood `pAdd` to
+inject thousands of props and force every peer to fetch a hostile GLB. Two guards, both mirroring the
+1164 damage-bucket pattern:
+
+- **A mode-shaped player ceiling.** `_maxPlayersFor()` is 2 for a duel (strictly 1v1), 8 otherwise.
+  `_hostOnConnection` refuses a fresh peer once `clients + 1 (host) >= cap` with a clean `{t:'full'}` send
+  then close — the client surfaces "room is full" instead of hanging on "connecting". A rejoiner reclaiming
+  a FREE id (`_rejoinFree`, factored out of the 1201 id-keep test) is admitted even at the ceiling, so
+  migration and reconnection are never blocked by the cap.
+- **A structural leaky bucket.** `_structAllow(id)` refills at `STRUCT_RATE` (20/s) per source with a
+  `STRUCT_BURST` (40) ceiling; pAdd/pMov/pDel/chat each spend one token and are DROPPED over budget before
+  they apply or relay. Per-source, so one flooder cannot starve an innocent client; generous against any
+  real editor or chat cadence. `dropClient` frees both the struct and damage buckets with the leaver.
+
+`test-1207` executes the real accept decision (8th player fills the room, 9th refused, duel caps at 2,
+free-slot rejoiner admitted past the ceiling) and the real bucket (a 200-message flood passes only the
+burst, sources independent, refills over a second). One 1201 pin moved for the `_rejoinFree` rename, intent
+kept. The deeper netcode items the panel raised — lag-compensated / geometry-validated hits, a real TURN,
+persistent identity — are larger and recorded, not built here.
+
 ## The bake stopped restarting itself (build 1206)
 
 The fresh panel's performance CRITICAL. `_bakeTick` gated on `_bakeDoneN === colliders.length`, so ANY

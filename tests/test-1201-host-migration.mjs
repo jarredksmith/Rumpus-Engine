@@ -77,8 +77,8 @@ const src = gameSource();
     'the client mirrors remember type/hp/kind — the promoted host adopts them verbatim');
   const hoc = extractFunction('_hostOnConnection');
   assert(/conn\.metadata && conn\.metadata\.rejoin!=null/.test(hoc) &&
-    /conn\._pid = \(_rj!=null && _rj>=1 && !NET\.conns\[_rj\]\) \? _rj : NET\.nextId\+\+;/.test(hoc),
-    'a rejoiner keeps its OLD id when free (metadata arrives before open, so every score/team lookup is right from the first byte)');
+    /const _rejoinFree = \(_rj!=null && _rj>=1 && !NET\.conns\[_rj\]\);/.test(hoc) && /conn\._pid = _rejoinFree \? _rj : NET\.nextId\+\+;/.test(hoc),
+    'a rejoiner keeps its OLD id when free (metadata arrives before open, so every score/team lookup is right from the first byte; the free-slot test is named _rejoinFree since 1207 so the connection cap can honour a rejoin past the ceiling)');
   assert(/if\(conn\._pid >= NET\.nextId\) NET\.nextId = conn\._pid\+1;/.test(hoc), '...and the fountain never falls behind an honoured rejoin id');
   assert(/if\(_rj==null\) try\{ level = serializeLevel\(\); \}catch\(e\)\{\}/.test(hoc), 'a rejoiner skips the level serialization — it is already standing in the level');
   eq((src.match(/NET\.peer\.on\('connection', _hostOnConnection\);/g) || []).length, 2,

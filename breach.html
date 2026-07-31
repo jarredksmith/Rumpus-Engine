@@ -23253,6 +23253,7 @@ function dropClient(pid, why){
   removeRemotePlayer(pid);
   delete NET.conns[pid];
   if(NET._seen) delete NET._seen[pid];
+  try{ if(typeof _structAcc!=='undefined') delete _structAcc[pid]; if(typeof _dmgAcc!=='undefined') delete _dmgAcc[pid]; }catch(e){}   // build 1207: a leaver's rate buckets go with it
   try{ for(const nid in _remoteHold){ if(_remoteHold[nid] && _remoteHold[nid].by===pid) delete _remoteHold[nid]; } }catch(e){}   // build 843: a leaver's carried prop is released, not velocity-driven at a stale target forever
   try{ if(typeof _raceNet!=='undefined') delete _raceNet[pid]; }catch(e){}   // build 843: leavers drop out of the race standings
   if(NET.phase==='lobby' && typeof refreshLobby==='function') refreshLobby();
@@ -23871,9 +23872,24 @@ function _netDmgBudget(id, kind, d){
   a[kind] += grant;
   return grant;
 }
+// build 1207: a leaky bucket for STRUCTURAL messages, mirroring the damage buckets (1164). pAdd spawns a
+// prop (and fetches its GLB), pMov/pDel edit the scene, chat renders — none were rate-limited, so a flood
+// injected thousands of props / forced every peer to fetch a hostile model / spammed chat. The token
+// refills at STRUCT_RATE per second per source and each structural message spends one; over budget, the
+// message is dropped (never applied, never relayed). Generous vs any real editor/chat cadence.
+const _structAcc = {}; const STRUCT_RATE = 20, STRUCT_BURST = 40;
+function _structAllow(id){
+  const now = performance.now();
+  let a = _structAcc[id]; if(!a){ a = _structAcc[id] = { t: now, n: 0 }; }
+  const el = (now - a.t) / 1000; a.t = now;
+  a.n = Math.max(0, a.n - el * STRUCT_RATE);
+  if(a.n >= STRUCT_BURST) return false;
+  a.n += 1; return true;
+}
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
+  if(msg && (msg.t==='pAdd'||msg.t==='pMov'||msg.t==='pDel'||msg.t==='chat') && !_structAllow(id)) return;   // build 1207: structural flood control
   // build 1122: forward anything addressed to a third player. `from` is rewritten to the VERIFIED
   // sender (the connection's own id) rather than whatever the packet claimed, so a client cannot
   // attribute its damage to someone else. A `to` naming the host, or an unknown peer, falls through
@@ -23983,6 +23999,7 @@ function handleHostMsg(msg){
   else if(msg.t==='frag'){ registerLocalKill(); }   // co-op: the host confirmed our shot killed an enemy -> multi-kill tracking
   else if(msg.t==='actEv'){ if(typeof logicEvent==='function') logicEvent(String(msg.n||'').slice(0,60)); }   // build 1071: a client's action pulses the host's logic graph
   else if(msg.t==='hudv'){ if(msg.v && typeof msg.v==='object') for(const k in msg.v) logicVars[k]=+msg.v[k]||0; }   // build 1058: the host mirrors widget-watched logic variables
+  else if(msg.t==='full'){ NET._lost=true; if(typeof netStatus==='function') netStatus('That room is full ('+(msg.max||8)+' players).'); if(typeof toast==='function') toast('Room is full'); }   // build 1207: the host refused us at the cap
   else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200)); }   // chat from the host or relayed from another player
   else if(msg.t==='duelOver'){ showDuelResult(msg.w, msg.wt); }
   else if(msg.t==='race'){ _raceNet[msg.from]={ lap:msg.lap|0, f:+msg.f||0 }; }   // build 836: another racer's progress (standings)
@@ -24076,9 +24093,20 @@ function _applyMpRules(r){ try{
 // score/team lookup use the right id from the first byte) and keeps it if it is free — scores, teams and
 // prop-id prefixes survive the migration. A rejoiner also skips the level serialization: it is already
 // standing in the level, and its 'welcome' is inert on arrival (NET.joined guards it).
+// build 1207: the room has a CEILING. Before this, `on('connection')` accepted every peer unconditionally
+// — anyone who learned the room code (the lobby directory publishes them) could open unlimited connections,
+// each adding to the 20Hz snapshot fan-out and the host's CPU, or simply exhaust it. The cap is
+// mode-shaped (a duel is strictly 1v1) and counts EXISTING players so a rejoiner reclaiming its slot is
+// never refused; a fresh peer past the ceiling gets a clean 'full' close, not a silent hang.
+function _maxPlayersFor(){ return (NET.gameMode==='duel') ? 2 : 8; }
 function _hostOnConnection(conn){
     const _rj=(conn.metadata && conn.metadata.rejoin!=null) ? +conn.metadata.rejoin : null;
-    conn._pid = (_rj!=null && _rj>=1 && !NET.conns[_rj]) ? _rj : NET.nextId++;
+    const _rejoinFree = (_rj!=null && _rj>=1 && !NET.conns[_rj]);
+    if(!_rejoinFree && (Object.keys(NET.conns).length + 1) >= _maxPlayersFor()){   // +1 for the host itself
+      try{ conn.on('open', ()=>{ try{ conn.send({ t:'full', max:_maxPlayersFor() }); }catch(e){} setTimeout(()=>{ try{ conn.close(); }catch(e){} }, 250); }); }catch(e){}
+      return;
+    }
+    conn._pid = _rejoinFree ? _rj : NET.nextId++;
     if(conn._pid >= NET.nextId) NET.nextId = conn._pid+1;
     conn.on('open', ()=>{
       NET.conns[conn._pid]=conn;
@@ -27478,7 +27506,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1206 · 2026-07-31';
+const BUILD_VERSION = 'build 1207 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
