@@ -1519,6 +1519,26 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Water reflects the live sky (build 1217)
+
+The rendering panel's finding, verified in code: `_waterSurfaceMat` set `uSky` to `0x9fc8d8` at CONSTRUCTION
+and `updateWaterZones` wrote uTime/uLight/uSunDir/uSunCol but never uSky — so at sunset, at night, under an
+authored HDRI or a volcanic sky, a lake held a flat noon-blue sheen at grazing angles while everything
+around it changed colour. `SCENE_FOG.color` IS the sky at the horizon (`applySky` sets it from a ring of
+`skyRadiance` horizon samples of the same sky model, recomputed on the day-cycle cadence), so
+`updateWaterZones` now copies it into `uSky` every frame — one `Color` copy per zone, no new pass. A lake
+goes warm at dusk and dark at night. The constructor value is now just a seed. `test-1217` executes the
+copy semantics and pins that the write lives in the per-zone uniform block and that `SCENE_FOG.color` is the
+averaged horizon radiance. The richer per-direction env-cube reflection the critic also mentioned is the
+larger follow-up; this closes the "flat wrong colour" half. **Needs a browser pass to see** (the Node
+harness can't render water) — capture a lake at dusk.
+
+**NINTH container rollback, recovered mid-build**, same signature (tree + HEAD reverted to 1182, bump assert
+aborted atomically). Recovery `git fetch` + `reset --hard FETCH_HEAD`. Worth noting for the re-apply: the
+water uniform block had been split across two lines by build 1184, so the 1182-era anchor missed on the
+recovered 1216 tree — a reminder that a rollback restores an OLD file and the re-apply anchors must match
+the RECOVERED build, not the one the aborted edit was written against.
+
 ## The logic graph can create a prop now (build 1216)
 
 The feature-surface panel's HIGH, and build 1170's explicitly-deferred other half: show/hide/move/destroy

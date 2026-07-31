@@ -19192,7 +19192,7 @@ function _waterSurfaceMat(z){
   return new THREE.ShaderMaterial({
     uniforms: {
       uDeep:   { value: new THREE.Color((z.color!=null?+z.color:0x14586e)>>>0) },
-      uSky:    { value: new THREE.Color(0x9fc8d8) },
+      uSky:    { value: new THREE.Color(0x9fc8d8) },   /* build 1217: a NOON-blue seed; updateWaterZones drives it from the live sky each frame */
       uOp:     { value: Math.max(0.1, Math.min(0.95, z.op!=null?+z.op:0.72)) },
       uTime:   { value: 0 },
       uWave:   { value: Math.max(0, Math.min(2.5, z.wave!=null?+z.wave:1)) },
@@ -19377,7 +19377,12 @@ function updateWaterZones(dt){
     if(g.userData.editorBits) for(const m of g.userData.editorBits) m.visible=_eo;
     const u=g.userData.surf && g.userData.surf.material.uniforms;
     if(u){ u.uTime.value=_waterTime; u.uLight.value=_waterLightF(); if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof moon!=='undefined'?moon.intensity:1))); }
-      u.uExpo.value=renderer.toneMappingExposure; u.uTM.value=(typeof worldCfg!=='undefined' && worldCfg.filmic!=null)?+worldCfg.filmic:1; }   /* build 1184: the water sees the same exposure (incl. auto) and filmic switch as the scene */
+      u.uExpo.value=renderer.toneMappingExposure; u.uTM.value=(typeof worldCfg!=='undefined' && worldCfg.filmic!=null)?+worldCfg.filmic:1;
+      // build 1217: the surface reflects the LIVE sky, not a hardcoded noon-blue. SCENE_FOG.color IS the
+      // sky at the horizon (applySky sets it from the same skyRadiance model, recomputed on the day cycle),
+      // so a lake goes warm at sunset, dark at night, and picks up an authored sky's hue — one Color copy
+      // per zone per frame, no new pass.
+      if(typeof SCENE_FOG!=='undefined' && SCENE_FOG.color) u.uSky.value.copy(SCENE_FOG.color); }   /* build 1184: the water sees the same exposure (incl. auto) and filmic switch as the scene */
   }
   // underwater tint: a fixed overlay while the EYE is below a surface (cheap, sells the dive)
   if(!_waterTintEl){
@@ -27627,7 +27632,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1216 · 2026-07-31';
+const BUILD_VERSION = 'build 1217 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
