@@ -1715,7 +1715,36 @@ get wrong. Decisions that are each a bug if lost:
 were already pushed; recovery was one fetch + reset, and the 1187 re-apply was free. The capture snapshot
 (`scratchpad/head.html`) must be re-copied after any rollback recovery too.
 
-## Open work (as of build 1187)
+## The collider grid (build 1188) — PHASE 4 OPENS
+
+Build 1148's tight collider tripled the box count (795 → 2,291 on a 3-storey block) and every hot query
+still walked the WHOLE collider list: the per-enemy obstacle resolve, per-bolt hit tests, `segmentBlocked`
+(AI line-of-sight), `_surfCull` under every bot, `clearAt`/`ceilingAt`/`insideSolid`. An 8m XZ hash over
+each collider's overall box (`_cgQuery`) turns those walks into a few cell lookups. Eight consumers
+converted — with **byte-identical loop bodies**: the grid replaces only where candidates come from, never
+what is done with them, and `test-1188` proves the superset property (300 random queries, zero misses vs
+the linear walk) rather than trusting the hash.
+
+The design decisions that carry the correctness:
+- **Movers are never hashed.** A physics body, a running xa animation, a kinematic body, or a collider
+  with no box yet lives in a side list appended to EVERY query — their boxes change per frame, and
+  re-hashing movers per frame would cost more than the walk ever did.
+- **Classification self-heals through the stale flag.** A static prop that starts moving dirties the grid
+  on its first `refreshPropCollider` (its stamp still says static), one rebuild reclassifies it, and after
+  that its per-frame refreshes are stamp-guarded and rebuild nothing. Adds/removes are caught by a length
+  check, so no push/splice site needs to know the grid exists; the one same-length swap site (the power
+  station) calls `refreshPropCollider` and is caught by the flag.
+- **One scratch array per consumer.** `clearAt` calls `surfaceTopAt` (through `_surfCull`) before its own
+  query; a shared scratch would be clobbered the day that order matters (1168's rule).
+- **A query rect must cover the consumer's own coarse-reject margin** (`clearAt` ±R, the enemy resolve
+  ±eR, `_surfCull` ±0.3, point tests ±CB_EPS) — that is what makes the superset exact. `segmentBlocked`
+  queries the segment's bbox: a crossed box contains a sample point, and every sample lies on the segment.
+- Outside ±4096 the key clamps into edge cells — conservative, never wrong.
+
+Three harnesses moved (32, 303 — pass-through `_cgQuery` injected, the 1122 precedent: those tests are
+about the blocking logic, not candidate sourcing; 32's cover pin now names the grid).
+
+## Open work (as of build 1188)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

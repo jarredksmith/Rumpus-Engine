@@ -8839,6 +8839,49 @@ function _gridWanted(){
 const wallMat = new THREE.MeshPhysicalMaterial({ color:0x1a242b, roughness:.8, metalness:.2 });
 applyProcSurface(wallMat, 140);   // build 1139: same, re-derived from the arena span in rebuildArena
 const colliders = [];
+// build 1188: THE COLLIDER GRID. Build 1148's tight collider tripled the box count (795 -> 2,291 on a
+// 3-storey block) and every hot query — the per-enemy obstacle resolve, per-bolt hit tests, segmentBlocked,
+// _surfCull under every bot, clearAt/ceilingAt/insideSolid — still walked the WHOLE collider list. An 8m
+// XZ hash over each collider's overall box turns those walks into a few cell lookups. Two invariants:
+//  - MOBILE colliders (a physics body, a running xa animation, a kinematic body, or no box yet) live in a
+//    side list consulted on EVERY query — their boxes move per frame, and re-hashing movers per frame
+//    would cost more than the walk ever did. Classification self-heals: a static prop that STARTS moving
+//    dirties the grid on its first refreshPropCollider (its stamp is still 'static'), and the rebuild
+//    reclassifies it; after that its per-frame refreshes are stamp-guarded and rebuild nothing.
+//  - The query returns a SUPERSET of what the linear walk's own coarse rejects kept, so the loop bodies
+//    are UNCHANGED — the grid replaces only where candidates come from, never what is done with them.
+const CG_CELL = 8, CG_HALF = 512;                 /* 8m cells over +/-4096m of world; outside clamps into edge cells (conservative) */
+const _cgMap = new Map(); const _cgDyn = [];
+let _cgLen = -1, _cgStale = true, _cgSeen = 0;
+function _cgDirty(){ _cgStale = true; }
+function _cgMobileNow(c){ const u = c.userData || {}; return !u.box || !!(u.phys && u.phys.body) || !!(u.xa && u.xa.on) || !!u._kbody; }
+function _cgKey(ix, iz){ return ((Math.max(-CG_HALF, Math.min(CG_HALF - 1, ix)) + CG_HALF) << 10) | (Math.max(-CG_HALF, Math.min(CG_HALF - 1, iz)) + CG_HALF); }
+function _cgRebuild(){
+  _cgMap.clear(); _cgDyn.length = 0; _cgLen = colliders.length; _cgStale = false;
+  for(const c of colliders){ const u = c.userData || (c.userData = {});
+    if(_cgMobileNow(c)){ u._cgMobile = true; _cgDyn.push(c); continue; }
+    u._cgMobile = false; const b = u.box;
+    const x0 = Math.floor((b.min.x - 0.01) / CG_CELL), x1 = Math.floor((b.max.x + 0.01) / CG_CELL);   /* 0.01: the 1mm grid-box skin (1148) */
+    const z0 = Math.floor((b.min.z - 0.01) / CG_CELL), z1 = Math.floor((b.max.z + 0.01) / CG_CELL);
+    for(let ix = x0; ix <= x1; ix++) for(let iz = z0; iz <= z1; iz++){
+      const k = _cgKey(ix, iz); let arr = _cgMap.get(k); if(!arr){ arr = []; _cgMap.set(k, arr); } arr.push(c);
+    }
+  }
+}
+function _cgQuery(minX, maxX, minZ, maxZ, out){
+  if(_cgStale || _cgLen !== colliders.length) _cgRebuild();   /* adds/removes change the length; box changes on statics set the stale flag */
+  out.length = 0; const s = ++_cgSeen;
+  const x0 = Math.floor(minX / CG_CELL), x1 = Math.floor(maxX / CG_CELL), z0 = Math.floor(minZ / CG_CELL), z1 = Math.floor(maxZ / CG_CELL);
+  for(let ix = x0; ix <= x1; ix++) for(let iz = z0; iz <= z1; iz++){
+    const arr = _cgMap.get(_cgKey(ix, iz)); if(!arr) continue;
+    for(let i = 0; i < arr.length; i++){ const c = arr[i], u = c.userData; if(u._cgSeen === s) continue; u._cgSeen = s; out.push(c); }
+  }
+  for(let i = 0; i < _cgDyn.length; i++) out.push(_cgDyn[i]);
+  return out;
+}
+/* one scratch per consumer — clearAt calls surfaceTopAt (which queries through _surfCull) BEFORE its own
+   query, and a shared array would be clobbered mid-use the day someone reorders that (build 1168's rule) */
+const _cgSurf = [], _cgClear = [], _cgInside = [], _cgCeil = [], _cgSeg = [], _cgBolt = [], _cgEnemy = [];
 const H = 8;
 const arenaWalls = [];   // the 4 boundary walls (rebuilt on resize); other colliders (props) are untouched
 function wall(w,h,d,x,y,z){
@@ -8952,7 +8995,7 @@ function rebuildArena(){
   try { if(typeof worldCfg !== 'undefined' && worldCfg){ const _wv = worldCfg.wallsVisible !== false; for(const w of arenaWalls) w.visible = _wv; } } catch(e){}
 }
 // Build/refresh a wall's collision box from its current geometry + transform (walls are axis-aligned boxes).
-function refreshWallCollider(m){
+function refreshWallCollider(m){ if(typeof _cgDirty==='function') _cgDirty();
   m.updateMatrixWorld(true);
   const b = new THREE.Box3().setFromObject(m);
   m.userData.box = b; m.userData.boxes = [b]; m.userData.climbable = false; m.userData.src = 'wall';
@@ -11373,6 +11416,7 @@ function buildModelGridBoxes(obj, overall){
   return boxes.length ? boxes : null;
 }
 function refreshPropCollider(obj){
+  if(obj && obj.userData && !obj.userData._cgMobile && typeof _cgDirty==='function') _cgDirty();   /* build 1188: a mover's per-frame refresh must NOT rebuild the grid; statics that move reclassify through one rebuild */
   obj.updateMatrixWorld(true);
   // overall box (selection highlight, proximity, physics shape sizing)
   obj.userData.box = new THREE.Box3().setFromObject(obj, true);
@@ -26820,7 +26864,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1187 · 2026-07-31';
+const BUILD_VERSION = 'build 1188 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29439,7 +29483,9 @@ function boltImpact(p, color){
 // True if a wall / static prop sits on the segment between two floor points (sampled at chest height).
 function segmentBlocked(ax, az, bx, bz, y){
   const steps = 14;
-  for(const c of colliders){
+  /* build 1188: a box the segment crosses must overlap the segment's own bbox (a crossed box contains a
+     sample point, and every sample lies on the segment) — so the grid query loses nothing */
+  for(const c of _cgQuery(Math.min(ax,bx), Math.max(ax,bx), Math.min(az,bz), Math.max(az,bz), _cgSeg)){
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
     for(const b of bs){
       // An enclosing volume (e.g. a whole arena model) has a box that contains BOTH endpoints — it can't be a
@@ -29500,7 +29546,7 @@ function updateEnemyShots(dt){
     // its bolt die on frame 1 against an invisible box — enemies in buildings visibly fired and never landed
     // anything. Build 1148 gave every collider a tight per-part `boxes` list; this consumer was never
     // updated. The overall box survives as the coarse reject, same shape as the enemy resolve.
-    if(!dead){ for(const c of colliders){ const b0=c.userData.box; if(!b0) continue;
+    if(!dead){ for(const c of _cgQuery(p.x, p.x, p.z, p.z, _cgBolt)){ const b0=c.userData.box; if(!b0) continue;
       if(p.x<b0.min.x||p.x>b0.max.x||p.y<b0.min.y||p.y>b0.max.y||p.z<b0.min.z||p.z>b0.max.z) continue;
       const bs=c.userData.boxes||[b0];
       for(const b of bs){ if(p.x>=b.min.x&&p.x<=b.max.x&&p.y>=b.min.y&&p.y<=b.max.y&&p.z>=b.min.z&&p.z<=b.max.z){ dead=true; break; } }
@@ -30346,7 +30392,8 @@ const _surfList = [];
 // them the ray cannot hit it. Colliders with no box info are kept (can't cull them).
 function _surfCull(x, z){
   const out=_surfList; out.length=0; const M=0.3;   // small margin for float-edge safety
-  for(let i=0;i<colliders.length;i++){ const c=colliders[i];
+  const _cand=_cgQuery(x-M, x+M, z-M, z+M, _cgSurf);   // build 1188
+  for(let i=0;i<_cand.length;i++){ const c=_cand[i];
     const bs = c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]));
     if(!bs){ out.push(c); continue; }
     // build 1148: reject against the OVERALL box first. Every part lies inside it, so this cannot change an
@@ -30387,7 +30434,7 @@ function surfaceTopAt(x, z, exclude, skipDynamic, ceilY, skipVehicles){
   // Gating on a true miss is important: otherwise this would flatten stepped geometry (stairs) and any
   // model where you stand on a lower part into its overall top, turning it into a wall.
   if(top === -Infinity){
-    for(const c of colliders){
+    for(const c of _cgQuery(x-0.01, x+0.01, z-0.01, z+0.01, _cgSurf)){   // build 1188 (reuses _cgSurf: the _surfCull result above is already consumed)
       if(c===exclude) continue;
       const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
       const src = c.userData.src;
@@ -30481,7 +30528,7 @@ function clearAt(x, z, feetY, surfHint){
   const surf = (surfHint!==undefined) ? surfHint : surfaceTopAt(x, z);
   const standY = (surf > -Infinity && surf <= feetY + STEP + 1e-4) ? Math.max(terrainHeightAt(x,z), surf) : feetY;
   const bandLo = standY + STEP, bandHi = standY + effPlayerHeight();
-  for(const c of colliders){
+  for(const c of _cgQuery(x-R-0.01, x+R+0.01, z-R-0.01, z+R+0.01, _cgClear)){   // build 1188
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
     { const b0=c.userData.box; if(b0 && (x < b0.min.x-R || x > b0.max.x+R || z < b0.min.z-R || z > b0.max.z+R)) continue; }   // build 1148: coarse reject — parts live inside the overall box
     for(const b of bs){
@@ -30514,7 +30561,7 @@ const CB_EPS = 0.01;   // build 1148: slack for the 1 mm skin a grid box carries
 // player who ends up embedded (spawned inside, shoved in) can always walk back out instead of freezing.
 function insideSolid(x, z, feetY){
   const bandLo = feetY + STEP, bandHi = feetY + effPlayerHeight();
-  for(const c of colliders){
+  for(const c of _cgQuery(x-CB_EPS, x+CB_EPS, z-CB_EPS, z+CB_EPS, _cgInside)){   // build 1188
     const r = c.rotation; if(r && (Math.abs(r.x)>0.05 || Math.abs(r.z)>0.05)) continue;
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
     // build 1148: coarse reject on the overall box. Every part lies inside it, so this cannot change an
@@ -30532,7 +30579,7 @@ function insideSolid(x, z, feetY){
 // the head can't pass through (Infinity if nothing overhead). Used for head-bump on jumps.
 function ceilingAt(x, z, feetY){
   let lowest = Infinity;
-  for(const c of colliders){
+  for(const c of _cgQuery(x-CB_EPS, x+CB_EPS, z-CB_EPS, z+CB_EPS, _cgCeil)){   // build 1188
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
     // build 1148: coarse reject on the overall box. Every part lies inside it, so this cannot change an
     // answer — with one caveat worth the epsilon: a grid box is emitted with a 1 mm skin (`ey`), so it can
@@ -32196,7 +32243,7 @@ function loop(){
       // That, not the walls, is what pinned enemies all over an imported level while the player walked it.
       // It also lets them step over kerbs and low thresholds, which is the same rule the player plays by.
       const eFeetY = en.mesh.position.y - 1.4 + STEP, eHeadY = en.mesh.position.y + 0.55;
-      for(const c of colliders){
+      for(const c of _cgQuery(en.mesh.position.x-eR-0.01, en.mesh.position.x+eR+0.01, en.mesh.position.z-eR-0.01, en.mesh.position.z+eR+0.01, _cgEnemy)){   // build 1188
         const b0 = c.userData.box;
         if(b0 && (en.mesh.position.x < b0.min.x-eR || en.mesh.position.x > b0.max.x+eR || en.mesh.position.z < b0.min.z-eR || en.mesh.position.z > b0.max.z+eR)) continue;   // coarse reject: nowhere near this model
         const bs = c.userData.boxes || (b0 ? [b0] : null); if(!bs) continue;
