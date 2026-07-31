@@ -7169,6 +7169,34 @@ function renderScene(scn, cam){
 let _postOn = true; try{ const v=localStorage.getItem('breach_postfx'); if(v==='off') _postOn=false; }catch(e){}
 let _postFail = false;
 let _postBloom = 0.65, _postMotion = 0.62, _postVig = 0.42, _postGrain = 0.05, _postSat = 1.08, _postCon = 1.05, _postThresh = 0.62;
+// build 1187: LUT colour grade. A strip LUT (width = N*N, height = N — the Unreal/GTA convention, green
+// increasing DOWN each tile, blue across tiles) applied in the composite where the frame is already
+// DISPLAY-REFERRED — which is what LUT strips are authored against, so no extra transfer math exists to
+// get wrong. Loaded RAW (no sRGB tag): the lookup maps display bytes to display bytes.
+let _postLutUrl='', _postLutAmt=1, _lutMap=null, _lutN=16, _lutLoadedUrl='';
+function _ensureLut(url){
+  url = String(url||'').trim();
+  if(url === _lutLoadedUrl) return;
+  _lutLoadedUrl = url;
+  if(!url){ if(_lutMap && _lutMap.dispose) _lutMap.dispose(); _lutMap=null; return; }
+  const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous');
+  let _ld=false; const _fin=()=>{ if(_ld) return; _ld=true; if(typeof _texPending!=='undefined') _texPending=Math.max(0,_texPending-1); };
+  if(typeof _texPending!=='undefined') _texPending++;
+  const take=(tex)=>{ _fin(); if(_lutLoadedUrl !== url){ if(tex.dispose) tex.dispose(); return; }   /* a newer url won the race */
+    const im = tex.image;
+    if(!im || im.width !== im.height*im.height || im.height < 4){
+      console.warn('LUT rejected: expected an N*N x N strip (e.g. 256x16), got', im&&im.width, 'x', im&&im.height);
+      if(tex.dispose) tex.dispose(); return; }
+    tex.flipY = false;                                   /* green runs DOWN each tile; keep the maths deterministic */
+    tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+    tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
+    if(_lutMap && _lutMap.dispose) _lutMap.dispose();
+    _lutMap = tex; _lutN = im.height; };
+  const pUrl = proxied(url);
+  loader.load(pUrl, take, undefined, ()=>{ if(_lutLoadedUrl !== url){ _fin(); return; }
+    if(pUrl !== url) loader.load(url, take, undefined, ()=>{ _fin(); console.warn('LUT load failed (CORS?):', url); });
+    else { _fin(); console.warn('LUT load failed:', url); } });
+}
 let _postRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
 let _matComp=null, _matAfter=null, _matCopy=null;
 // build 1180: AUTO-EXPOSURE. toneMappingExposure was a static authored value — walk from desert noon into
@@ -7380,11 +7408,13 @@ function ensurePost(){
   _matComp=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
     uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0}, uAOPow:{value:2.0}, uBloomNorm:{value:1/_BLOOM_MIPS},
       uAoTexel:{value:new THREE.Vector2(1,1)}, uFar:{value:400},
-      uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1} },
+      uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1},
+      tLut:{value:null}, uLutAmt:{value:0}, uLutN:{value:16} },
     vertexShader:vert, fragmentShader:[
       'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom; uniform sampler2D tAO; uniform sampler2D tGeo;',
       'uniform float uAO; uniform float uAOPow; uniform vec2 uAoTexel; uniform float uFar; uniform float uBloomNorm;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
+      'uniform sampler2D tLut; uniform float uLutAmt; uniform float uLutN;',
       // build 1126: BILATERAL UPSAMPLE. AO is computed at half resolution, and a plain bilinear tap
       // across a silhouette reads occlusion that belongs to the object and paints it onto whatever
       // is behind — it showed up as a blocky grey halo where a pillar met the sky. Weight the four
@@ -7429,6 +7459,17 @@ function ensurePost(){
       '  c=_out(clamp(c,0.0,1.0));',                              // -> display space
       '  c=(c-0.5)*uCon+0.5;',                                    // contrast
       '  float l=dot(c, vec3(0.299,0.587,0.114)); c=mix(vec3(l), c, uSat);',   // saturation
+      // build 1187: the LUT is the final GRADE (after contrast/saturation, before the LENS artifacts —
+      // vignette and grain sit on top of any grade, like the glass they model). Bilinear filtering gives
+      // the red/green interpolation inside a tile for free; blue lands between two tiles, so two taps mix.
+      '  if(uLutAmt > 0.001){',
+      '    vec3 cc = clamp(c, 0.0, 1.0); float n = uLutN;',
+      '    float b = cc.b * (n - 1.0); float b0 = floor(b); float bf = b - b0; float b1 = min(b0 + 1.0, n - 1.0);',
+      '    vec2 base = vec2( (cc.r * (n - 1.0) + 0.5) / (n * n), (cc.g * (n - 1.0) + 0.5) / n );',
+      '    vec3 l0 = texture2D(tLut, base + vec2(b0 / n, 0.0)).rgb;',
+      '    vec3 l1 = texture2D(tLut, base + vec2(b1 / n, 0.0)).rgb;',
+      '    c = mix(c, mix(l0, l1, bf), uLutAmt);',
+      '  }',
       '  float r=length(vUv-0.5); c *= 1.0 - smoothstep(0.42,0.78,r)*uVig;',   // vignette
       '  float n=fract(sin(dot(vUv*(uTime+1.0), vec2(12.9898,78.233)))*43758.5453); c += (n-0.5)*uGrain;',   // grain
       '  gl_FragColor=vec4(clamp(c,0.0,1.0), 1.0); }'
@@ -7711,6 +7752,7 @@ function _renderPostFX(scn, cam){
   cu.tAO.value = _aoWant ? _aoRT.texture : null; cu.uAO.value = _aoWant ? _ssaoAmt : 0;
   if(_aoWant){ cu.tGeo.value=_aoGeoRT.texture; cu.uAoTexel.value.set(1/hw,1/hh); cu.uFar.value=cam.far; }
   cu.uBloom.value=_postBloom; cu.uVig.value=_postVig; cu.uGrain.value=_postGrain; cu.uSat.value=_postSat; cu.uCon.value=_postCon; cu.uTime.value=(performance.now()*0.001)%1000;
+  cu.tLut.value=_lutMap; cu.uLutAmt.value = _lutMap ? _postLutAmt : 0; cu.uLutN.value=_lutN;   /* build 1187: no LUT loaded = exactly the old grade */
   // build 810: with motion blur ~0 (or shed by adaptive res at its lowest step), composite STRAIGHT TO SCREEN — the
   // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
   // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
@@ -16473,7 +16515,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, lut:'', lutAmt:1, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -16845,6 +16887,7 @@ function applyWorldCfg(){
     _postVig    = Math.max(0,   Math.min(1,    worldCfg.postVig    == null ? DEFAULT_WORLD.postVig    : +worldCfg.postVig));
     _postGrain  = Math.max(0,   Math.min(0.3,  worldCfg.postGrain  == null ? DEFAULT_WORLD.postGrain  : +worldCfg.postGrain));
     _postSat    = Math.max(0,   Math.min(2,    worldCfg.postSat    == null ? DEFAULT_WORLD.postSat    : +worldCfg.postSat));
+    _postLutUrl = String(worldCfg.lut || ''); _postLutAmt = Math.max(0, Math.min(1, worldCfg.lutAmt == null ? 1 : +worldCfg.lutAmt)); if(typeof _ensureLut==='function') _ensureLut(_postLutUrl);   /* build 1187 */
     _postCon    = Math.max(0.5, Math.min(2,    worldCfg.postCon    == null ? DEFAULT_WORLD.postCon    : +worldCfg.postCon));
     _postThresh = Math.max(0,   Math.min(1,    worldCfg.postThresh == null ? DEFAULT_WORLD.postThresh : +worldCfg.postThresh));
     // build 1126: ambient occlusion. Authorable because the right amount is a look decision — a
@@ -26777,7 +26820,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1186 · 2026-07-30';
+const BUILD_VERSION = 'build 1187 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36473,6 +36516,7 @@ function renderEditorFields(){
       if(typeof _postOn!=='undefined' && _postOn){
         slider(b,'Bloom','postBloom',0,2,0.05); slider(b,'Motion blur','postMotion',0,0.95,0.02); slider(b,'Vignette','postVig',0,1,0.02);
         slider(b,'Film grain','postGrain',0,0.3,0.01); slider(b,'Saturation','postSat',0,2,0.02); slider(b,'Contrast','postCon',0.5,2,0.02); slider(b,'Bloom threshold','postThresh',0,1,0.02);
+        texRow(b,'https://\u2026/grade-lut.png (256x16 strip)','lut'); slider(b,'LUT strength','lutAmt',0,1,0.05); hint(b,'Color grade LUT: a standard 256\u00d716 (or 1024\u00d732) strip \u2014 screenshot the game, drop the shot into any photo editor with a neutral LUT strip, grade them together, crop the strip back out, host it, paste the URL. The whole look of the level follows.','1px 0 4px');
         slider(b,'Ambient occlusion','ssao',0,1,0.05); slider(b,'AO radius','ssaoRadius',0.1,4,0.1);   // build 1126
         hint(b,'','0 0 4px').textContent='Motion blur = trail strength. Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }

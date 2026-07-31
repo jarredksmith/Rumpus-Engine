@@ -1683,7 +1683,39 @@ hold at the stock frame's log-average — worth knowing when comparing captures 
 
 Three pins moved (1119, 1127 — dome-follow and dome-exposure took the new forms; 1186's own uScale pin).
 
-## Open work (as of build 1186)
+## LUT colour grade (build 1187) — and a Phase-3 item that died on verification
+
+The roadmap item was "creator texture slots on primitives + LUT grade". The first half is DEAD ON
+VERIFICATION: primitives have had full texture slots since the 871 era — `applyPropTexture` (albedo),
+`texN`/`texR` PBR maps, per-prop tiling (`texRepeat`) and rotation (`texRot`), a web texture picker
+(`applyPropTexturePBR`), all serialised through `p.mat`. Same lesson as the raycast-BVH claim (1159):
+every critic claim is a hypothesis until the grep comes back.
+
+The LUT grade is real and shipped. A standard N*N × N strip (256×16 or 1024×32 — the Unreal/GTA
+convention, green DOWN each tile, blue across tiles) applies in the composite immediately after
+contrast/saturation and before vignette/grain — the frame is DISPLAY-REFERRED there (1117 moved the grade
+after the encode), which is exactly what LUT strips are authored against, so no transfer math exists to
+get wrong. Decisions that are each a bug if lost:
+- **Loaded RAW** — an sRGB tag would decode the texels and corrupt a display-to-display mapping. `flipY`
+  off so the green axis is deterministic; no mips (a mip of a LUT is a different grade); clamp wrapping;
+  bilinear does the in-tile r/g interpolation and two taps mix across the blue tiles.
+- **Half-texel insets** keep red=1 on the LAST texel centre of its own tile — `test-1187` drives the exact
+  formula against a JS identity strip (returns its input to 1/60) and pins the no-tile-bleed corners.
+- **Absent = amount 0** (`_lutMap ? _postLutAmt : 0`): no LUT, a failed load, or a rejected image is
+  EXACTLY the old grade, never a black lookup. Rejection is loud and validates `width === height²`.
+- The loader counts `_texPending` (the level loading gate), survives url races (a stale load that lost is
+  disposed, not applied), and clearing the url disposes. `worldCfg.lut`/`lutAmt` ride the whole-object
+  world serialisation for free; the UI is a `texRow` + strength slider beside the grade sliders, with a
+  hint describing the standard workflow (screenshot → grade with a neutral strip in any editor → crop →
+  host → paste).
+
+**FIFTH container rollback recovered during this build** — same signature (BUILD_VERSION regressed to 1182,
+`git log` at the old HEAD), caught by a scripted edit's own anchor assert (the bump expected 1186 and found
+1182 — and because the script writes only at the end, the mismatch aborted it atomically). All of 1183-1186
+were already pushed; recovery was one fetch + reset, and the 1187 re-apply was free. The capture snapshot
+(`scratchpad/head.html`) must be re-copied after any rollback recovery too.
+
+## Open work (as of build 1187)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
