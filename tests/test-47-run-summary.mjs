@@ -4,7 +4,7 @@ import { gameSource, extractFunction, done, assert, eq } from './harness.mjs';
 const src = gameSource();
 
 assert(/let runKills = 0;/.test(src), 'per-run kill counter exists');
-assert(/function killEnemy\(en, sx, sz\)\{[\s\S]{0,600}?\n  runKills\+\+;/.test(src), 'kills are counted (build 1027: after the logic-graph onkill hook; window widened for the 1221 payload)');
+assert(/function killEnemy\(en, sx, sz\)\{[\s\S]{0,700}?\n  if\(!_fr\) runKills\+\+;/.test(src), 'kills are counted (build 1027: after the logic-graph onkill hook; build 1226: hostile kills only — a friendly death is not a kill)');
 assert(/runKills=0;/.test(src), 'kills reset each run');
 assert(/const BEST_KEY='breach_best'/.test(src) && /localStorage\.setItem\(BEST_KEY/.test(src), 'best persists to localStorage');
 assert(/\$\{runSummaryHTML\(\)\}/.test(src), 'summary injected into the end screens');

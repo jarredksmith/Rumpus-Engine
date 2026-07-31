@@ -2,7 +2,7 @@ import { gameSource, assert, done } from './harness.mjs';
 const src = gameSource();
 // build 546: wave-framerate fixes — throttle the per-enemy raycasts that ran every frame, and drop the
 // per-step clearAt that scanned every collider 1-3x per enemy.
-assert(/if\(\(en\._losT==null \|\| now - en\._losT > \(en\._losIv\|\|110\)\) && \(typeof _losBudget==='undefined' \|\| _losBudget>0\)\)\{/.test(src), 'enemy LOS (segmentBlocked) is throttled ~9x/sec per enemy AND capped per frame by _losBudget (build 547)');
+assert(/if\(!en\.friendly && \(en\._losT==null \|\| now - en\._losT > \(en\._losIv\|\|110\)\) && \(typeof _losBudget==='undefined' \|\| _losBudget>0\)\)\{/.test(src), 'enemy LOS (segmentBlocked) is throttled ~9x/sec per enemy AND capped per frame by _losBudget (build 547)');   // build 1226: friendlies skip the raycast entirely — the throttle+budget intent is unchanged for hostiles
 assert(/const sees = !!en\._seesC;/.test(src), 'detection reads the cached LOS result');
 assert(/if\(en\._grT==null \|\| _enGMoved \|\| \(nowMs-en\._grT>\(en\._grIv\|\|100\) && \(typeof _groundBudget==='undefined' \|\| _groundBudget>0\)\)\)\{/.test(src), 'enemy ground raycast is throttled (time or cell-change) AND capped per frame by _groundBudget (build 547)');
 assert(/en\._groundY = \(typeof groundHeightAt==='function'\)/.test(src), 'ground height is cached on the enemy');

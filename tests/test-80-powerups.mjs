@@ -21,7 +21,7 @@ assert(/applyDamage\(\)/.test(ap) && /applySpeed\(\)/.test(ap) && /applyShield\(
 
 // sync
 assert(/const PUall = powerups\.map/.test(src) && /const PU = full \? \(powerups\.length \? PUall : undefined\)/.test(src), 'powerups serialized in snapshot (changed-only between keyframes since 1197)');
-assert(/return \{ t:'world', dl: full\?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:enemies\.length \};/.test(src), 'PU in world packet');
+assert(/return \{ t:'world', dl: full\?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:_hostileAlive\(\) \};/.test(src), 'PU in world packet');   // build 1226: en became the hostile count
 assert(/m=buildPowerupMesh\(pu\.k\); m\.position\.set\(pu\.p\[0\],0,pu\.p\[1\]\)/.test(src), 'client builds pad meshes');
 assert(/else if\(msg\.t==='power'\)\{ applyPowerupLocal\(msg\.k, msg\.item\); \}/.test(src), 'client applies a granted powerup');
 

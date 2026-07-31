@@ -46,7 +46,7 @@ const src = gameSource();
     'chests: full sub-list only when CHANGED between keyframes ([] when changed to empty, so the prune still runs); keyframes keep the old undefined-when-empty exactly');
   assert(/const D=_dd\.list\.length \? _dd\.list : undefined;/.test(sw),
     'a SLEEPING physics crate serializes nothing at all');
-  assert(/dl: full\?undefined:1/.test(sw) && /en:enemies\.length/.test(sw),
+  assert(/dl: full\?undefined:1/.test(sw) && /en:_hostileAlive\(\)/.test(sw),   // build 1226: the count excludes friendlies — same intent, the client HUD gets the true HOSTILE count
     'deltas are marked, and the true enemy count always rides (the HUD must not read a partial E)');
 }
 

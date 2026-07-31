@@ -9980,6 +9980,14 @@ let logicVars = {};                                                // runtime va
 // can never lose progress by failing, and you can never farm a level by replaying half of it.
 let persistVars = _sanitizePersist(savedLevel && savedLevel.persistVars);   // authored: the names that survive
 let persistSave = !!(savedLevel && savedLevel.persistSave);                 // authored: also survive closing the tab
+// build 1227: 1215's recorded other half. Variables persisted; the INVENTORY (the keys, quest items and
+// consumables an adventure game is made of) and the LAST CHECKPOINT (where the returning player resumes)
+// did not — so "close the tab, come back tomorrow" handed back the numbers but not the run. Both are
+// creator opt-ins riding the SAME blob under reserved keys (__inv / __cp); the variable loader only
+// accepts numeric values, so an old engine reading a new blob skips them silently, and vice versa.
+let persistInv = !!(savedLevel && savedLevel.persistInv);                   // authored: carry the inventory
+let persistCp  = !!(savedLevel && savedLevel.persistCp);                    // authored: resume at the last checkpoint
+let _persistInvVal = null, _persistCpVal = null;                            // what the blob held at load / what to write
 let campaignVars = {};                                                     // the carried values themselves
 const PERSIST_KEY = 'breach_persist_v1';
 function _sanitizePersist(a){
@@ -10002,18 +10010,54 @@ function _persistKey(ns){ ns = (ns!=null) ? ns : _persistNS(); return ns ? (PERS
 function _persistLoad(ns){   // the level opted into surviving a closed tab: read the saved values back. ns
   // is passed EXPLICITLY by the loaders because homepageCfg is not set yet when restoreLevel calls this.
   if(!persistSave) return;
-  try{ const j=JSON.parse(localStorage.getItem(_persistKey(ns))); if(j && typeof j==='object') for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; } }catch(e){}
+  try{ const j=JSON.parse(localStorage.getItem(_persistKey(ns)));
+    if(j && typeof j==='object'){
+      for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; }
+      _persistInvVal = (persistInv && Array.isArray(j.__inv)) ? j.__inv : null;   /* build 1227 */
+      _persistCpVal  = (persistCp && j.__cp && typeof j.__cp==='object' && isFinite(+j.__cp.x) && isFinite(+j.__cp.z))
+        ? { x:+j.__cp.x, y:(+j.__cp.y||0), z:+j.__cp.z, yaw:(+j.__cp.yaw||0) } : null;
+    } }catch(e){}
 }
-function _persistStore(){ if(!persistSave) return; try{ localStorage.setItem(_persistKey(), JSON.stringify(campaignVars)); }catch(e){} }
+function _persistStore(){ if(!persistSave) return; try{
+  const j = Object.assign({}, campaignVars);   // build 1227: reserved keys ride the same blob
+  if(persistInv && typeof inventory!=='undefined' && Array.isArray(inventory)){
+    const a=[]; for(const s of inventory){ if(s && s.id && (s.n|0)>0){ a.push([String(s.id).slice(0,40), Math.min(999, s.n|0)]); if(a.length>=40) break; } }
+    j.__inv = a;
+  }
+  if(persistCp && _persistCpVal) j.__cp = _persistCpVal;
+  localStorage.setItem(_persistKey(), JSON.stringify(j));
+}catch(e){} }
+// build 1227: deploy-time restore, called by startGame AFTER its wipes (logicStart runs before
+// `inventory.length=0`, so seeding there would be erased) and AFTER the pvp/else branch (which writes
+// player.pos). Solo only — inventory and a checkpoint belong to the local player, and handing a co-op
+// client a private resume position would desync the shared run. skipPos = a play-from-here test pose
+// (1224) outranks the saved checkpoint; the items still come back.
+function _persistResume(skipPos){
+  if(typeof NET!=='undefined' && NET.mode!=='off') return;
+  if(!persistSave) return;
+  if(persistInv && _persistInvVal && typeof inventory!=='undefined'){
+    for(const p of _persistInvVal){ if(!Array.isArray(p) || !p[0] || (p[1]|0)<=0) continue;
+      const id=String(p[0]).slice(0,40), n=Math.min(999, p[1]|0);
+      if(typeof invCatalog!=='undefined' && !invCatalog[id] && typeof defineItem==='function') defineItem({ id, name:id });
+      const s=inventory.find(x=>x.id===id); if(s) s.n+=n; else inventory.push({ id, n });   // silent: restoring 12 items must not play 12 pickup dings
+    }
+  }
+  if(!skipPos && persistCp && _persistCpVal && typeof player!=='undefined'){
+    _checkpoint = { x:_persistCpVal.x, y:_persistCpVal.y, z:_persistCpVal.z, yaw:_persistCpVal.yaw };
+    player.pos.set(_checkpoint.x, _checkpoint.y, _checkpoint.z); player.yaw=_checkpoint.yaw||0; player.vel.set(0,0,0);
+    if(typeof toast==='function') toast('Resumed at your checkpoint');
+  }
+}
 function _persistSeed(){   // a match begins: the carried values become live variables again
   for(const k of persistVars){ if(campaignVars[k]!=null) logicVars[k]=campaignVars[k]; }
 }
 function _persistCommit(){ // the level was CLEARED: carry the live values forward. A retry never reaches here.
-  if(!persistVars.length) return;
+  _persistCpVal = null;   // build 1227: a completed game starts its next run at the start, not mid-way through
+  if(!persistVars.length){ _persistStore(); return; }   // still write: the checkpoint clear (and inventory) must land even with no vars authored
   for(const k of persistVars) campaignVars[k]=+logicVars[k]||0;
   _persistStore();
 }
-function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(_persistKey()); }catch(e){} }
+function clearPersistent(){ campaignVars={}; _persistInvVal=null; _persistCpVal=null; try{ localStorage.removeItem(_persistKey()); }catch(e){} }   /* build 1227 */
 let _lgTimers = [];                                                // pending delay / interval / repeat continuations
 let _lgState = {};                                                 // per-node runtime (counter counts, once flags)
 let _lgBudget = 0, _lgWarned = false;
@@ -10678,6 +10722,14 @@ function _renderPersistUI(host){
   sv.title='Write them to this browser so the player can close the tab and come back to the same progress';
   sv.appendChild(scb); sv.appendChild(document.createTextNode('Also keep them between sessions'));
   wrap.appendChild(sv);
+  // build 1227: inventory + checkpoint ride the same saved blob; both need the sessions box on
+  { const mkP=(label, title, get, set)=>{
+      const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:6px;font-size:11px;color:'+(persistSave?'#cfeee2':'#5f7a72')+';cursor:pointer;margin:5px 0 0 18px;';
+      const c=document.createElement('input'); c.type='checkbox'; c.checked=get(); c.disabled=!persistSave; c.style.cssText='width:12px;height:12px;accent-color:var(--accent);';
+      c.onchange=()=>{ pushUndoSnapshot(); set(c.checked); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderLogicPanel(); };
+      l.title=title; l.appendChild(c); l.appendChild(document.createTextNode(label)); wrap.appendChild(l); };
+    mkP('Carry the inventory too', 'Items survive closing the tab: keys, quest items, consumables come back on the next visit (solo). Using or dropping an item saves too, so a spent potion stays spent.', ()=>!!persistInv, v=>{ persistInv=v; });
+    mkP('Resume at the last checkpoint', 'A returning player continues from the last checkpoint they reached instead of the level start (solo). Completing the game clears it, so the next run starts fresh.', ()=>!!persistCp, v=>{ persistCp=v; }); }
   { const cur=Object.keys(campaignVars);
     const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;margin-top:6px;';
     const st=document.createElement('span'); st.style.cssText='font-size:10px;color:#7fa79a;flex:1;';
@@ -16608,11 +16660,12 @@ function buildSpawnMarker(opts){
   const mark = { mode, radius:(opts.radius!=null?opts.radius:6), detect:(opts.detect!=null?opts.detect:14), face:(opts.face||0),
     route: (opts.route||[]).map(p=>Array.isArray(p)?{x:p[0],z:p[1]}:{x:p.x,z:p.z}),   // ordered patrol waypoints (world XZ)
     routeLoop: opts.loop!==false,                                                      // loop (cycle) vs ping-pong (reverse at ends)
-    type: (opts.type && ['grunt','runner','brute'].includes(opts.type)) ? opts.type : 'grunt',
+    type: (opts.type && ['grunt','runner','brute','gunner','sapper','shielded','charger','boss'].includes(opts.type)) ? opts.type : 'grunt',   /* build 1226: the editor has offered all 8 types since 635 but this list stopped at 3 — a saved gunner/sapper/shielded/charger/boss marker silently demoted to grunt on every reload. (ENEMY_TYPES itself is declared below the boot loader that runs this — TDZ — so the list stays a literal.) */
     y: Math.max(0, Math.min(SPAWN_MAX_Y, +opts.y||0)),                                  // build 1087: height ABOVE the terrain — rooftops, balconies, catwalks
-    wave: (opts.wave!=null) ? (opts.wave|0) : 0 };                                      // 0 = every wave; else only that wave (pre-built mode)
+    wave: (opts.wave!=null) ? (opts.wave|0) : 0,                                        // 0 = every wave; else only that wave (pre-built mode)
+    friendly: !!(opts.fr || opts.friendly) };                                           // build 1226: a WANDERING NPC — never aggros, never attacks, doesn't count as a hostile
   g.userData.mark = mark; g.userData.isSpawn = true;
-  const col = SPAWN_MODE_COLORS[mode];
+  const col = mark.friendly ? 0x59d98c : SPAWN_MODE_COLORS[mode];   /* build 1226: a friendly marker reads green at a glance */
   const post = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.7, 4), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.9, depthTest:false }));
   post.position.y = 0.85; post.rotation.y = Math.PI/4; post.renderOrder = 9000;
   const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.55, 8), new THREE.MeshBasicMaterial({ color:0xffffff, depthTest:false }));
@@ -16780,7 +16833,7 @@ function randomWaveDescriptors(waveNum, arena, rng){
 // Should a spawn marker appear on this wave? wave 0 = every wave (back-compat default); else exact match.
 function spawnAppearsOnWave(mark, waveNum){ const w0 = mark.wave||0; if(typeof gameCfg!=='undefined' && gameCfg.noRespawn){ const w=(w0===0?1:w0); return w===waveNum; } return w0===0 || w0===waveNum; }
 function _hasFutureAuthoredSpawns(curWaveNum){ for(const g of spawnMarkers){ const w0=g.userData.mark.wave||0; const w=(gameCfg.noRespawn && w0===0)?1:w0; if(w>curWaveNum) return true; } return false; }
-function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt' }; }
+function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt', friendly:!!m.friendly, mark:m }; }   /* build 1226: mark rides the (transient) descriptor so a living friendly's marker can be recognised and skipped */
 // Mode defaults preserve old levels: markers present -> pre-built (markers were wave 0 = every wave); else random.
 let gameCfg = {
   enemyMods: _sanitizeEnemyMods(savedLevel && savedLevel.game && savedLevel.game.enemyMods),   // build 1191
@@ -18355,7 +18408,7 @@ function buildEnemyVisual(body){
   const mc = enemyModelCfg(body.userData.enemyType);
   const useCapsule = ()=>{
     const ty = ENEMY_TYPES[body.userData.enemyType] || ENEMY_TYPES.grunt;
-    const mat = new THREE.MeshStandardMaterial({ color:0x4a1020, emissive:ty.tint, emissiveIntensity:.6, roughness:.6 });
+    const mat = new THREE.MeshStandardMaterial({ color:0x4a1020, emissive:(body.userData.friendly ? 0x59d98c : ty.tint), emissiveIntensity:.6, roughness:.6 });   /* build 1226: a friendly reads green, not threat-red (custom models keep their own look) */
     const cap = new THREE.Mesh(enemyGeo, mat); cap.castShadow = true; cap.scale.setScalar(ty.scale);
     const eye = new THREE.Mesh(new THREE.SphereGeometry(.18,8,8), new THREE.MeshBasicMaterial({color:0xffd166}));
     eye.position.set(0, 0.7, -0.55);   // slightly forward so you can read facing
@@ -18528,6 +18581,7 @@ function spawnEnemy(spawn){
   const typeKey = (spawn && spawn.type && ENEMY_TYPES[spawn.type]) ? spawn.type : 'grunt';
   const ty = ENEMY_TYPES[typeKey];
   mesh.userData.enemyType = typeKey;   // read by buildEnemyVisual for per-type scale + tint
+  if(spawn && spawn.friendly) mesh.userData.friendly = true;   // build 1226: capsule tints green
   buildEnemyVisual(mesh);
   scene.add(mesh);
   const _eff = (typeof _enemyEff==='function') ? _enemyEff(typeKey) : ty;   /* build 1191: the level's tuning, clamped at the loaders */
@@ -18551,6 +18605,10 @@ function spawnEnemy(spawn){
     route: (spawn && spawn.route && spawn.route.length) ? spawn.route.map(p=>({ x:(p.x!=null?p.x:p[0]), z:(p.z!=null?p.z:p[1]) })) : null,
     routeLoop: !(spawn && spawn.routeLoop===false), routeIdx:0, routeDir:1,
     aware:false, lostAt:0, wp:null, wpUntil:0 };
+  if(spawn && spawn.friendly){   // build 1226: a WANDERER — no combat subsystem is left armed, so no attack gate anywhere can misfire
+    e.friendly = true; e._mark = spawn.mark || null;
+    e.ranged = false; e.exploder = false; e.charger = false; e.cover = false;
+  }
   enemies.push(e);
 }
 // Decide where one enemy wants to move this frame, based on its behavior mode and whether it can see a
@@ -18560,7 +18618,7 @@ function spawnEnemy(spawn){
 // threat's position, even a Hold/Patrol enemy that never saw the player. This is what makes sniping from
 // cover risky — the target turns to look for you instead of obliviously taking hits.
 function alertEnemy(en, sx, sz){
-  if(!en || en.dead) return;
+  if(!en || en.dead || en.friendly) return;   /* build 1226: nothing aggros a friendly — gunfire, blasts and the logic 'alert' verb all route here */
   en.aware = true; en.lostAt = 0;
   en.lkp = { x:sx, z:sz };                 // last-known position = where the threat came from
   en._alertedT = performance.now();
@@ -18580,14 +18638,14 @@ function alertEnemiesNear(sx, sz, radius){
   }
 }
 function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = the target's height, so a pursuit ends on the STOREY the target stands on */
-  const mode = en.mode || 'hunt';
+  const mode = en.friendly ? (en.mode === 'hold' ? 'hold' : 'patrol') : (en.mode || 'hunt');   /* build 1226: a friendly WANDERS — a hunt-mode marker flagged friendly patrols its spot instead */
   // line-of-sight: can this enemy actually SEE the player right now? (same wall test the gun uses)
   const eY = (en.mesh.position.y!=null) ? en.mesh.position.y : 1.4;
   const pEyeY = (en._nearEyeY!=null) ? en._nearEyeY : 1.4;
   // build 546: segmentBlocked scans every collider — refresh LOS ~9x/sec per enemy and cache it (the bots do
   // the same), instead of raycasting every frame. Unthrottled, a wave of enemies was O(enemies x colliders)
   // per frame and a big part of the single-digit wave framerate.
-  if((en._losT==null || now - en._losT > (en._losIv||110)) && (typeof _losBudget==='undefined' || _losBudget>0)){
+  if(!en.friendly && (en._losT==null || now - en._losT > (en._losIv||110)) && (typeof _losBudget==='undefined' || _losBudget>0)){   /* build 1226: a friendly never raycasts a sightline — it has no use for one and the budget is shared */
     if(typeof _losBudget!=='undefined') _losBudget--;   // build 547: also capped per frame so a freshly-spawned wave can't raycast every enemy's sightline on the same frame
     en._losT = now; en._losIv = 100 + Math.random()*40;   // jitter the interval so the wave de-clusters after the budget first staggers it, instead of all coming due together again
     en._seesC = (Math.abs(pEyeY - eY) < 3.0) &&
@@ -18608,7 +18666,7 @@ function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = th
 
   // PATROL / HOLD: detection is now gated on BOTH range AND line-of-sight.
   const detect = en.detectR || 18;   // build 620: wider default sight so patrollers notice you a hall earlier
-  if(dist <= detect && sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }
+  if(dist <= detect && sees && !en.friendly){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }   /* build 1226 */
   else if(en.aware){
     // lost sight or range: remember where they were, chase the last spot, then give up after a grace period.
     // A recent gunfire/blast alert extends the window so a sniped enemy actually crosses the map to investigate.
@@ -21412,7 +21470,9 @@ function applyEnemyDamageToSelf(dmg, sx, sz){
 // solo death sends them back to the last checkpoint (or the level start) with full health instead of game over —
 // the progress system adventure/puzzle levels need. Wave shooters keep their game-over by leaving the toggle off.
 let _checkpoint = null;
-function setCheckpoint(){ _checkpoint = { x:player.pos.x, y:player.pos.y, z:player.pos.z, yaw:player.yaw }; if(typeof toast==='function') toast('Checkpoint reached'); if(typeof SFX!=='undefined' && SFX.power) SFX.power(); }
+function setCheckpoint(){ _checkpoint = { x:player.pos.x, y:player.pos.y, z:player.pos.z, yaw:player.yaw };
+  if(typeof persistCp!=='undefined' && persistCp && (typeof NET==='undefined' || NET.mode==='off')){ _persistCpVal = { x:_checkpoint.x, y:_checkpoint.y, z:_checkpoint.z, yaw:_checkpoint.yaw }; if(typeof _persistStore==='function') _persistStore(); }   /* build 1227: a checkpoint is a save point now */
+  if(typeof toast==='function') toast('Checkpoint reached'); if(typeof SFX!=='undefined' && SFX.power) SFX.power(); }
 function respawnAtCheckpoint(){
   player.hp = player.maxHp;
   if(typeof releaseHeld==='function') releaseHeld();
@@ -22250,7 +22310,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; persistInv = !!level.persistInv; persistCp = !!level.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace; build 1227: flags set BEFORE the load so the blob's __inv/__cp are picked up (and stale carried state from a previous level never leaks)
   modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
@@ -23635,7 +23695,7 @@ function serializeWorld(){
   // objective state (so clients see the survival timer / extraction beacon + hold, not just "WAVE n")
   const O = { o:objectiveActive(), s:+surviveLeft.toFixed(1), h:+extractHoldT.toFixed(2),
               ex:[+extractPos.x.toFixed(2), +extractPos.z.toFixed(2)], er:gameCfg.extractRadius||3.5, eh:gameCfg.extractHold||5, wn:gameCfg.winWaves||0, dd:_destroyTotal-_destroyRemain, dn:_destroyTotal, es:[+escortPos.x.toFixed(2), +escortPos.z.toFixed(2)], ep:_escortPct, en:_escortNear?1:0 };
-  return { t:'world', dl: full?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:enemies.length };   /* en: the HUD count must not read a partial E */
+  return { t:'world', dl: full?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:_hostileAlive() };   /* en: the HUD count must not read a partial E; build 1226: nor count a friendly */
 }
 function dynamicById(id){ for(const o of dynamicProps){ if(o.userData.phys && o.userData.phys.id===id) return o; } return null; }
 function broadcastWorld(){ const w=serializeWorld(); for(const id in NET.conns){ try{ NET.conns[id].send(w); }catch(e){} } }
@@ -25439,6 +25499,18 @@ let editorTopView = false;     // overhead straight-down camera for placement
 let editorFreeFly = true;      // free-fly camera: detach from the player, fly anywhere with WASD + mouse-look
 let _charPrevDist = 4.6, _charPrevInit = false;   // Player tab: third-person orbit distance + first-frame seed flag
 const flyPos = new THREE.Vector3();   // free-fly camera position (seeded from the player on enable)
+// build 1224: editor test-run overrides — set by the editor's play buttons, consumed EXACTLY ONCE by
+// startGame (a later Deploy from the main menu must never inherit a stale test pose), applied only in
+// solo (NET.mode==='off'), and never serialized: this is a test convenience, not level data.
+let _testStart = null;   // { pos:{x,y,z}, yaw, pitch, wave }
+function _edTestPose(){   // the pose the creator is LOOKING FROM, per editor camera mode
+  const th = (x,z)=> (typeof terrainHeightAt==='function') ? terrainHeightAt(x,z) : 0;
+  if(typeof editorTopView!=='undefined' && editorTopView)
+    return { pos:{ x:topPanX, y:th(topPanX,topPanZ)+EYE, z:topPanZ }, yaw:player.yaw, pitch:0 };   // top view: the pan point, on the ground
+  if(typeof editorFreeFly!=='undefined' && editorFreeFly)
+    return { pos:{ x:flyPos.x, y:flyPos.y, z:flyPos.z }, yaw:player.yaw, pitch:player.pitch };     // fly: the fly camera (look reuses player.yaw/pitch)
+  return { pos:{ x:player.pos.x, y:player.pos.y, z:player.pos.z }, yaw:player.yaw, pitch:player.pitch };   // walk: where the avatar stands
+}
 let flyInit = false;
 let editorHideEnemies = true;  // hide enemies while editing (default on)
 // Collider debug overlay: draw every per-mesh collision box (green = static props/walls, amber = dynamic)
@@ -27181,8 +27253,8 @@ let invOpen=false; let _invEl=null;
 function defineItem(def){ if(!def||!def.id) return null; invCatalog[def.id]=Object.assign({ name:def.id, desc:'', model:'', thumb:'', scale:1, type:'object', journal:'', useType:'none', useKey:'gold', useAmount:25, useConsume:true }, invCatalog[def.id]||{}, def); return invCatalog[def.id]; }
 function hasItem(id){ return inventory.some(s=>s.id===id && s.n>0); }
 function invCount(id){ const s=inventory.find(x=>x.id===id); return s?s.n:0; }
-function giveItem(id, n){ n=n||1; if(!id) return false; if(!invCatalog[id]) defineItem({ id, name:id }); const s=inventory.find(x=>x.id===id); if(s) s.n+=n; else inventory.push({ id, n }); if(typeof toast==='function') toast('Picked up: '+((invCatalog[id]&&invCatalog[id].name)||id)); if(typeof SFX!=='undefined'&&SFX.pickup) SFX.pickup(); if(invOpen) renderInventory(); return true; }   // build 751: item pickup uses the pickup sound
-function takeItem(id, n){ n=n||1; const s=inventory.find(x=>x.id===id); if(!s) return false; s.n-=n; if(s.n<=0) inventory=inventory.filter(x=>x!==s); if(invOpen) renderInventory(); return true; }
+function giveItem(id, n){ n=n||1; if(!id) return false; if(!invCatalog[id]) defineItem({ id, name:id }); const s=inventory.find(x=>x.id===id); if(s) s.n+=n; else inventory.push({ id, n }); if(typeof toast==='function') toast('Picked up: '+((invCatalog[id]&&invCatalog[id].name)||id)); if(typeof SFX!=='undefined'&&SFX.pickup) SFX.pickup(); if(invOpen) renderInventory(); if(typeof persistInv!=='undefined' && persistInv && typeof _persistStore==='function') _persistStore(); return true; }   // build 751: item pickup uses the pickup sound; build 1227: write-through when the inventory persists
+function takeItem(id, n){ n=n||1; const s=inventory.find(x=>x.id===id); if(!s) return false; s.n-=n; if(s.n<=0) inventory=inventory.filter(x=>x!==s); if(invOpen) renderInventory(); if(typeof persistInv!=='undefined' && persistInv && typeof _persistStore==='function') _persistStore(); return true; }   /* build 1227: consuming persists too — using the potion must not resurrect it on reload */
 // build 607: items that DO something. 'key' bridges into the existing lock system (set playerKeys[color], then a
 // matching locked prop opens with E); 'heal'/'ammo' are consumables. Default useConsume removes one on use.
 function useItem(id){
@@ -27664,7 +27736,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1223 · 2026-07-31';
+const BUILD_VERSION = 'build 1229 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28648,7 +28720,7 @@ function _tutEl(){
   if(!el){ el=document.createElement('div'); el.id='tutHint';
     el.innerHTML='<span id="tutStep"></span><span id="tutTxt"></span><button id="tutX" title="Dismiss the tutorial" aria-label="Dismiss the tutorial">\u2715</button>';
     document.body.appendChild(el);
-    el.querySelector('#tutX').onclick=(e)=>{ e.stopPropagation(); endTutorial(true); };
+    el.querySelector('#tutX').onclick=(e)=>{ e.stopPropagation(); if(typeof EDTUT!=='undefined' && EDTUT && el.dataset.owner==='ed') endEditorTutorial(true); else endTutorial(true); };   /* build 1229: the X dismisses whichever coach owns the pill right now */
   }
   return el;
 }
@@ -28673,6 +28745,7 @@ function _tutRender(){
   const stepTxt=(TUT.i+1)+'/'+TUT.steps.length, lbl=_tutLabel(st);
   if(sc.textContent!==stepTxt) sc.textContent=stepTxt;
   if(tx.dataset.lbl!==lbl){ tx.dataset.lbl=lbl; tx.innerHTML=lbl; }
+  el.dataset.owner='play';   /* build 1229: the editor coach shares this element */
   el.style.display='flex';
 }
 function updateTutorial(dt){
@@ -28693,6 +28766,67 @@ function updateTutorial(dt){
     TUT.i++; TUT.t=0; TUT.sx=player.pos.x; TUT.sz=player.pos.z; TUT.look=0; TUT.wep0=curWep; TUT.py=player.yaw; TUT.pp=player.pitch;
     if(TUT.i>=TUT.steps.length){ endTutorial(false); return; }
     _tutRender(); if(done && typeof SFX!=='undefined' && SFX.coin) SFX.coin();   // a little chirp for a step actually done
+  }
+}
+// ---- build 1229: the EDITOR gets the same do-to-advance coach the game got in 938. The panel
+// critic's finding: first-hour editor onboarding was a MANUAL (the field guide), not the
+// do-to-advance pill 938 already proved works. Four steps — fly, add, move, play — each completing
+// when the creator actually performs it. Deliberately NO auto-advance timeout, unlike play's 15s:
+// a creator reads at their own pace, nothing here blocks, and the X is the exit. Once per browser;
+// completing OR deploying ends it. It shares #tutHint with the play coach via dataset.owner, so
+// neither can clobber the other when a brand-new user triggers both in one session. ----
+const EDTUT_KEY='breach_edtut_done';
+let EDTUT=null;
+const EDTUT_STEPS=[
+  { id:'fly',  kb:'Welcome! Fly the camera \u2014 <b>W A S D</b> + drag to look (<b>Q</b>/<b>E</b> down/up)', touch:'Welcome! Fly \u2014 <b>joystick</b> moves, drag the view to look' },
+  { id:'add',  kb:'Add a shape \u2014 the <b>+</b> button (or <b>Ctrl+K</b> \u2192 \u201cAdd box\u201d)', touch:'Add a shape \u2014 tap the <b>+</b> button' },
+  { id:'move', kb:'It\u2019s selected \u2014 drag the <b>gizmo arrows</b> to move it (<b>1</b>/<b>2</b>/<b>3</b> = move/rotate/scale)', touch:'It\u2019s selected \u2014 drag the <b>gizmo arrows</b> to move it' },
+  { id:'play', kb:'Now test it \u2014 <b>\u25b6 Play level</b> in the panel (<b>Esc</b> brings you back)', touch:'Now test it \u2014 <b>\u25b6 Play level</b> in the panel' },
+];
+function startEditorTutorial(){
+  try{ if(localStorage.getItem(EDTUT_KEY)) return; }catch(e){}
+  if(EDTUT) return;
+  EDTUT={ i:0, moved:0, lx:null, lz:null, n0:(typeof propModels!=='undefined'?propModels.length:0), ref:null, rx:0, ry:0, rz:0 };
+  _edTutRender();
+}
+function endEditorTutorial(dismissed){
+  EDTUT=null; const el=document.getElementById('tutHint'); if(el && el.dataset.owner==='ed') el.style.display='none';
+  try{ localStorage.setItem(EDTUT_KEY,'1'); }catch(e){}
+  if(typeof flashToast==='function') flashToast(dismissed ? 'Tour dismissed \u2014 Help \u203a Field manual has everything.' : 'That\u2019s the whole loop \u2014 build, then \u25b6 to feel it. Help \u203a Field manual has the rest.');
+}
+function _edTutRender(){
+  if(!EDTUT || EDTUT.i>=EDTUT_STEPS.length) return; const el=_tutEl(), st=EDTUT_STEPS[EDTUT.i];
+  const sc=el.querySelector('#tutStep'), tx=el.querySelector('#tutTxt');
+  const stepTxt=(EDTUT.i+1)+'/'+EDTUT_STEPS.length, lbl=(typeof isTouch!=='undefined' && isTouch) ? st.touch : st.kb;
+  if(sc.textContent!==stepTxt) sc.textContent=stepTxt;
+  if(tx.dataset.lbl!==lbl){ tx.dataset.lbl=lbl; tx.innerHTML=lbl; }
+  el.dataset.owner='ed';
+  el.style.display='flex';
+}
+function updateEditorTutorial(dt){
+  if(!EDTUT) return;
+  if(!editorOpen){ const el=document.getElementById('tutHint'); if(el && el.dataset.owner==='ed') el.style.display='none'; return; }   // hidden while playing; only if this coach owns the pill
+  _edTutRender();
+  const st=EDTUT_STEPS[EDTUT.i];
+  let done=false;
+  if(st.id==='fly'){
+    const cx = editorTopView ? topPanX : (editorFreeFly ? flyPos.x : player.pos.x);
+    const cz = editorTopView ? topPanZ : (editorFreeFly ? flyPos.z : player.pos.z);
+    if(EDTUT.lx==null){ EDTUT.lx=cx; EDTUT.lz=cz; }
+    EDTUT.moved += Math.hypot(cx-EDTUT.lx, cz-EDTUT.lz); EDTUT.lx=cx; EDTUT.lz=cz;
+    done = EDTUT.moved > 6;   // accumulated, so mode switches and small strokes all count
+  }
+  else if(st.id==='add') done = (typeof propModels!=='undefined' && propModels.length > EDTUT.n0);
+  else if(st.id==='move'){
+    const pr=(typeof selProps!=='undefined' && selProps && selProps.length) ? selProps[0] : null;
+    if(pr && EDTUT.ref!==pr){ EDTUT.ref=pr; EDTUT.rx=pr.position.x; EDTUT.ry=pr.position.y; EDTUT.rz=pr.position.z; }   // baseline the CURRENT primary, re-baselining if they select something else
+    done = !!(EDTUT.ref && EDTUT.ref.position && Math.hypot(EDTUT.ref.position.x-EDTUT.rx, EDTUT.ref.position.y-EDTUT.ry, EDTUT.ref.position.z-EDTUT.rz) > 0.5);
+  }
+  // 'play' completes in startGame — deploying ends the tour as done, whatever step it was on
+  if(done){
+    EDTUT.i++; EDTUT.n0=(typeof propModels!=='undefined'?propModels.length:0); EDTUT.ref=null;
+    if(EDTUT.i>=EDTUT_STEPS.length){ endEditorTutorial(false); return; }
+    _edTutRender(); if(typeof SFX!=='undefined' && SFX.coin) SFX.coin();
   }
 }
 // ---------- Radial deploy menu: hold Tab to open a wheel of buildable props; aim a wedge + click (or
@@ -29804,18 +29938,21 @@ function enemyHurt(en, dmg, sx, sz){
 }
 function killEnemy(en, sx, sz){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ const _pv=_lgCtx; _lgCtx={ x:en.mesh.position.x, z:en.mesh.position.z, hp:0, hpf:0 }; try{ _lgFireEvents('onkill',''); } finally { _lgCtx=_pv; } }   // build 1027: 'On enemy killed' entries; build 1221: at the death position
-  runKills++;
+  const _fr = !!en.friendly;   // build 1226: killing a friendly is a DEATH (visuals, sound, ragdoll, the onkill event a creator can punish with) but never a REWARD — no kills, no juice, no coins, no score
+  if(!_fr) runKills++;
   spark(en.mesh.position, 0xff2d55); SFX.kill(en.type, en.mesh.position);   // build 752: per-enemy-type kill sound; build 1208: panned to the kill
+  if(!_fr){
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
   else if(NET.mode==='host' && _coopKillFor==null) registerLocalKill();   // co-op host's OWN kill -> callout (no slow-mo, gated inside); client kills are credited via {t:'frag'}
+  }
   // drop 1-2 coins worth scaling slightly with wave
-  const drops = Math.random()<0.35 ? 2 : 1;
+  const drops = _fr ? 0 : (Math.random()<0.35 ? 2 : 1);
   for(let i=0;i<drops;i++){
     const ox=(Math.random()-0.5)*1.5, oz=(Math.random()-0.5)*1.5;
     spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round((15 + Math.floor(wave*2)) * run.coinMul));
   }
-  if(run.lifesteal>0) player.hp = Math.min(player.maxHp, player.hp + run.lifesteal);   // vampiric rounds
-  if(en.type==='boss'){   // a downed boss is a payday + a moment
+  if(!_fr && run.lifesteal>0) player.hp = Math.min(player.maxHp, player.hp + run.lifesteal);   // vampiric rounds
+  if(!_fr && en.type==='boss'){   // a downed boss is a payday + a moment
     score += 500;
     for(let i=0;i<6;i++){ const ox=(Math.random()-0.5)*3, oz=(Math.random()-0.5)*3; spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round(60*run.coinMul)); }
     spark(en.mesh.position, 0xff7b00); flashToast('☠ BOSS DOWN');
@@ -29827,7 +29964,7 @@ function killEnemy(en, sx, sz){
   const _rag = (gameCfg.ragdoll && typeof spawnCorpse==='function') ? spawnCorpse(en.mesh, _rdx, 0, _rdz, 4.5+Math.random()*3.5) : false;
   if(!_rag){ if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } if(typeof _poseDeath==='function') _poseDeath(en.mesh); _fallbackDeath(en.mesh, _rdx, _rdz); }   // build 994: no ragdoll -> topple + sink + fade instead of vanishing on the spot
   enemies.splice(enemies.indexOf(en),1);
-  score += 100; updateHUD();
+  if(!_fr) score += 100; updateHUD();
   if(en.exploder && !en._detonated){ en._detonated=true; if(typeof explodeAt==='function') explodeAt(en.mesh.position.clone(), en.blastR||6, en.blastDmg||40, en.id); }   // build 628: a downed Sapper still goes off (kill it from range)
 }
 // build 628: a Sapper reaching you self-destructs — blast + falloff damage/launch to the player and a chain to
@@ -30240,7 +30377,7 @@ function updateHUD(){
   $('scoreVal').textContent = score;
   $('creditsVal').textContent = credits;
   $('waveNum').textContent = 'WAVE '+wave;
-  $('enemyCount').textContent = 'HOSTILES: '+(enemies.length+toSpawn);
+  $('enemyCount').textContent = 'HOSTILES: '+(_hostileAlive()+_hostilePending());   /* build 1226: friendlies are not hostiles */
 }
 // Boss health bar: aggregate HP of any living boss-type hostiles (host/solo — clients lack enemy HP).
 function updateBossBar(hide){
@@ -31282,13 +31419,22 @@ function objectiveTick(dt){   // host/solo per-frame; may trigger the win
     _raceTick(dt);   // build 831: lap line + checkpoint sweep + per-lap clock (wins at gameCfg.raceLaps)
   }
 }
+// build 1226: FRIENDLY spawns exist now, so "how many enemies" forked into two questions. Alive
+// hostiles gate the wave-clear (a level whose villagers outlive every wave must still advance) and
+// ride the net snapshot; pending hostiles subtract queued friendlies so the HUD never promises a
+// fight the queue doesn't hold.
+function _hostileAlive(){ let n = 0; if(typeof enemies !== 'undefined') for(const e of enemies) if(e && !e.friendly) n++; return n; }
+function _hostilePending(){ let n = (typeof toSpawn !== 'undefined' ? toSpawn : 0); if(typeof spawnQueue !== 'undefined' && Array.isArray(spawnQueue)) for(const d of spawnQueue) if(d && d.friendly) n--; return Math.max(0, n); }
 function startWave(){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onwave','');   // build 1027: 'On wave start' entries
   clearMovementInput();   // don't carry a held key / stuck stick into the new wave (auto-move bug)
   spawnQueue = [];
   if(noEnemyMode()){ toSpawn = 0; objectiveHUD(); updateHUD(); return; }   // build 685: puzzle mode never queues enemies
   if(gameCfg.mode === 'prebuilt'){
-    for(const g of spawnMarkers){ if(spawnAppearsOnWave(g.userData.mark, wave)) spawnQueue.push(descFromMarker(g)); }
+    for(const g of spawnMarkers){ if(!spawnAppearsOnWave(g.userData.mark, wave)) continue;
+      const _m = g.userData.mark;   // build 1226: a friendly marker defaults to wave 0 = every wave, but its NPC is never killed by play — without this guard every wave stacked another copy of the same villager
+      if(_m.friendly && enemies.some(e => e.friendly && e._mark === _m && e.hp > 0)) continue;
+      spawnQueue.push(descFromMarker(g)); }
     toSpawn = spawnQueue.length;
   } else {
     const _mf = (gameCfg.waves && gameCfg.waves[wave-1]);   // build 1179: an authored wave wins over the formula
@@ -32964,6 +33110,7 @@ function loop(){
   updateLights(dt);                      // build 699: fade signal-controlled scene lights on/off
   tickGrabHint(dt);                      // "[E] Grab" / carry prompt
   updateTutorial(dt);                    // build 938: first-run coach pill
+  updateEditorTutorial(dt);              // build 1229: editor coach — runs second, so in the editor it wins the shared pill
   tickContactSignals(dt);                // build 682: prop-on-prop contact / containment signals
   tickGoalBanner(dt);                    // build 692: objective banner fade
   updateControlPoint(dt); cpRender();   // KOTH zone capture/score + HUD
@@ -33014,7 +33161,7 @@ function loop(){
     else if(toSpawn>0){
       spawnTimer-=dt;
       if(spawnTimer<=0){ spawnEnemy(spawnQueue.length ? spawnQueue.shift() : null); toSpawn--; spawnTimer=0.6; updateHUD(); }
-    } else if(enemies.length===0){
+    } else if(_hostileAlive()===0){   /* build 1226: living friendlies must not hold the wave open forever */
       const _cleared = gameCfg.noRespawn && gameCfg.mode==='prebuilt' && !_hasFutureAuthoredSpawns(wave);   // single-pass: authored spawns exhausted -> field stays clear (no respawn, no empty-wave loop)
       if(objectiveActive()==='eliminate' && gameCfg.winWaves>0 && wave>=gameCfg.winWaves){ if(typeof gameWon==='function') gameWon(); }
       else if(_cleared){ if(objectiveActive()==='eliminate'){ if(typeof gameWon==='function') gameWon(); } }   // eliminate wins on clear; extraction/survival just hold the cleared field and finish via the objective
@@ -34775,7 +34922,7 @@ function duplicateSelectedSpawn(){
   const g = spawnMarkers[editorTargets.spawns.idx]; if(!g) return;
   pushUndoSnapshot();
   const m = g.userData.mark;
-  const ng = buildSpawnMarker({ t:[g.position.x + DUP_OFFSET, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face });
+  const ng = buildSpawnMarker({ t:[g.position.x + DUP_OFFSET, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, type:m.type, wave:m.wave, y:m.y, fr:m.friendly?1:0 });   /* build 1226: duplicate had been dropping type/wave/height since they were added */
   ng.visible = true;
   editorActive='spawns'; editorTargets.spawns.idx = spawnMarkers.length-1; selSpawns=[ng]; renderEditorFields();
 }
@@ -34903,6 +35050,81 @@ function ungroupSelectedProps(){
   if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
   if(typeof flashToast==='function') flashToast('Ungrouped');
 }
+// build 1225: ALIGN / DISTRIBUTE / ARRAY — the arrangement verbs every other editor's second toolbar
+// carries. One undo snapshot per gesture (1163's rule). Two semantics are load-bearing:
+// - GROUP MEMBERS MOVE AS ONE UNIT. A click selects the whole group, so a naive per-prop align would
+//   smash a group's internal arrangement flat onto the target line.
+// - Alignment lines up world-space BOUNDING EDGES, not origins. Two crates of different sizes
+//   "aligned min" share a face plane, which is what a builder means by align.
+function _selBoxOf(o){
+  const b = o && o.userData && o.userData.box;
+  if(b && b.min && b.max) return b;
+  const bb = new THREE.Box3(); try{ bb.setFromObject(o, true); }catch(e){ bb.min.copy(o.position); bb.max.copy(o.position); }
+  return bb;
+}
+function _arrUnits(list){   // partition into move-units: a group is one unit, an ungrouped prop its own
+  const seen = {}, units = [];
+  for(const o of list){ if(!o) continue; const gid = o.userData && o.userData.groupId;
+    if(!gid){ units.push([o]); continue; }
+    if(!seen[gid]){ seen[gid] = []; units.push(seen[gid]); } seen[gid].push(o); }
+  return units;
+}
+function _unitSpan(u, axis){   // [min,max] of the unit's combined world box on one axis
+  let mn = Infinity, mx = -Infinity;
+  for(const o of u){ const b = _selBoxOf(o); if(b.min[axis] < mn) mn = b.min[axis]; if(b.max[axis] > mx) mx = b.max[axis]; }
+  return [mn, mx];
+}
+function _arrTouch(o){ if(typeof refreshPropCollider === 'function') refreshPropCollider(o); if(typeof _homeSync === 'function') _homeSync(o); }
+function _arrDone(){ if(typeof syncPropStateFromObj === 'function') syncPropStateFromObj(); if(typeof updateGizmo === 'function') updateGizmo(); if(typeof updateFieldDisplays === 'function') updateFieldDisplays(); if(typeof updateSelectionHighlight === 'function') updateSelectionHighlight(); if(typeof _levelDirty !== 'undefined') _levelDirty = true; }
+function alignSelectedProps(axis, mode){   // axis 'x'|'y'|'z'; mode 'min'|'center'|'max'
+  const units = _arrUnits((typeof selProps !== 'undefined' && selProps) ? selProps.filter(Boolean) : []);
+  if(units.length < 2) return 0;
+  pushUndoSnapshot();
+  let mn = Infinity, mx = -Infinity;
+  for(const u of units){ const s = _unitSpan(u, axis); if(s[0] < mn) mn = s[0]; if(s[1] > mx) mx = s[1]; }
+  const t = mode === 'min' ? mn : mode === 'max' ? mx : (mn + mx) / 2;   // the selection's OWN edge/centre — nothing moves further than it must
+  for(const u of units){ const s = _unitSpan(u, axis);
+    const cur = mode === 'min' ? s[0] : mode === 'max' ? s[1] : (s[0] + s[1]) / 2;
+    const d = t - cur; if(!d) continue;
+    for(const o of u){ o.position[axis] += d; _arrTouch(o); } }
+  _arrDone();
+  if(typeof flashToast === 'function') flashToast('Aligned ' + units.length + ' on ' + axis.toUpperCase());
+  return units.length;
+}
+function distributeSelectedProps(axis){   // even CENTRE spacing; the two extreme units hold still
+  const units = _arrUnits((typeof selProps !== 'undefined' && selProps) ? selProps.filter(Boolean) : []);
+  if(units.length < 3) return 0;
+  pushUndoSnapshot();
+  const info = units.map(u => { const s = _unitSpan(u, axis); return { u, c: (s[0] + s[1]) / 2 }; }).sort((a, b) => a.c - b.c);
+  const c0 = info[0].c, c1 = info[info.length - 1].c, n = info.length;
+  for(let i = 1; i < n - 1; i++){ const d = c0 + (c1 - c0) * i / (n - 1) - info[i].c;
+    if(!d) continue; for(const o of info[i].u){ o.position[axis] += d; _arrTouch(o); } }
+  _arrDone();
+  if(typeof flashToast === 'function') flashToast('Distributed ' + n + ' evenly on ' + axis.toUpperCase());
+  return n;
+}
+function arraySelectedProps(count, dx, dy, dz){   // duplicate the selection N times along a step vector
+  const list = (typeof selProps !== 'undefined' && selProps && selProps.length) ? selProps.filter(Boolean) : [];
+  if(!list.length) return 0;
+  count = Math.max(1, Math.min(24, count | 0));
+  const per = list.length;
+  count = Math.min(count, Math.max(1, Math.floor(100 / per)));   // the paste cap's budget — never ~100+ props in one gesture
+  dx = +dx || 0; dy = +dy || 0; dz = +dz || 0;
+  if(!dx && !dy && !dz) return 0;   // a zero step stacks copies inside each other — refuse rather than z-fight
+  pushUndoSnapshot();
+  const pivot = _pfPivotOf(list);
+  const entries = list.map(o => _pfEntryOf(o, pivot));   // full config, identity stripped — the 1162 pair, so array inherits every field duplicate does
+  const wasGrouped = list.some(o => o.userData && o.userData.groupId);
+  for(let i = 1; i <= count; i++){
+    const gid = (per > 1 || wasGrouped) ? _newGroupId() : null;   // each copy is its OWN group, never chained to the source
+    const at = { x: +(pivot.x + dx * i).toFixed(3), y: +(pivot.y + dy * i).toFixed(3), z: +(pivot.z + dz * i).toFixed(3) };
+    for(const p of entries) _pfSpawnEntry(JSON.parse(JSON.stringify(p)), at, null, gid, null);
+  }
+  if(typeof _levelDirty !== 'undefined') _levelDirty = true;
+  if(typeof flashToast === 'function') flashToast('Arrayed ' + count + ' cop' + (count > 1 ? 'ies' : 'y') + ' of ' + per + ' prop' + (per > 1 ? 's' : ''));
+  return count;
+}
+let _arrAxisSel = 'x';   // the Arrange row's axis choice, kept across re-renders
 function duplicateSelectedProp(){
   // build 798: duplicate the WHOLE current selection (a grouped assembly copies as one unit with a fresh group id), not
   // just the primary. Falls back to the single primary when nothing else is selected.
@@ -34941,6 +35163,20 @@ function _pfEntryOf(o, pivot){
   e.t=[+(e.t[0]-pivot.x).toFixed(3), +(e.t[1]-pivot.y).toFixed(3), +(e.t[2]-pivot.z).toFixed(3),
        +(+e.t[3]).toFixed(3), +(+e.t[4]).toFixed(3), +(+e.t[5]).toFixed(3),
        +(+e.t[6]).toFixed(3), +(+e.t[7]).toFixed(3), +(+e.t[8]).toFixed(3)];
+  // build 1228: ATTACHED LIGHTS RIDE THE ENTRY. Build 997 parents a light to its prop by nid, so a
+  // finished lamppost is prop + light — but this pair (which duplicate, Alt-drag, the clipboard, array
+  // AND prefabs all route through) carried only the prop, so every copy of a lamppost was a dark pole.
+  // The light serializes via the same _lightOpts the level file uses, with its LOCAL transform kept and
+  // its identity (world t, host nid) stripped — the spawner re-binds it to the copy's fresh nid.
+  if(typeof lightModels!=='undefined' && o.userData && o.userData.nid!=null){
+    const nid=o.userData.nid, lts=[];
+    for(const g of lightModels){ const att=g && g.userData && g.userData.att; if(!att || att.nid!==nid) continue;
+      const lo=_lightOpts(g);   // when parented, _lightOpts reports the LIVE local p/q (997) — a light nudged after attach copies where it sits now
+      const lp=(lo.att && lo.att.p) || att.p || [0,0,0], lq=(lo.att && lo.att.q) || att.q || [0,0,0,1];
+      delete lo.t; lo.att={ p:lp.slice(0,3), q:lq.slice(0,4) };
+      lts.push(lo); if(lts.length>=8) break; }
+    if(lts.length) e.lts=lts;
+  }
   return e;
 }
 function _pfPivotOf(list){   // x/z centroid + LOWEST terrain-relative y: instances drop onto any ground
@@ -34984,6 +35220,19 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     if(p.j) jointApply(obj, p.j);
     if(p.veh) vehicleApply(obj, p.veh);
     if(p.trk) trackApply(obj, {w:1});
+    // build 1228: rebuild the entry's attached lights, bound to THIS copy's nid; 997's reconciler
+    // parents them on the next frame. EDITOR-TIME ONLY: buildLight changes the scene's light count,
+    // and the count must never change during play (636/977/1153/1155) — a prefab spawned mid-match by
+    // the logic spawnprop verb arrives lightless rather than freezing every material in the level.
+    if(Array.isArray(p.lts) && typeof buildLight==='function' && obj.userData && obj.userData.nid!=null
+       && (typeof gameOn==='undefined' || !gameOn || (typeof editorOpen!=='undefined' && editorOpen))){
+      for(const lo of p.lts.slice(0,8)){ if(!lo || typeof lo!=='object') continue;
+        const lp=(lo.att && lo.att.p) || [0,0,0], lq=(lo.att && lo.att.q) || [0,0,0,1];
+        buildLight(Object.assign({}, lo, {
+          t:[ t[0]+(+lp[0]||0), t[1]+(+lp[1]||0), t[2]+(+lp[2]||0) ],   // near enough for the one frame before the reconciler snaps the exact local transform
+          att:{ nid:obj.userData.nid, p:lp.slice(0,3), q:lq.slice(0,4) } }));
+      }
+    }
     if(pfMark) obj.userData.pf={ id:pfMark.id, inst:pfMark.inst, slot:pfMark.slot|0 };
     if(cb) cb(obj);
   }, undefined, { trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop')) }, p.mat || (p.tex ? {tex:p.tex} : null), undefined, undefined, p.animClip);
@@ -35294,7 +35543,7 @@ function serializeLevel(){
     lights:  lightModels.map(g=>_lightOpts(g)),
     turret:  { url: turretModelUrl, scale: turretModelScale, modelYaw: turretModelYaw, muz: { fwd:turretMuzzle.fwd, up:turretMuzzle.up, side:turretMuzzle.side } },
     turrets: turretModels.map(_turretOpts),
-    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave }; }),   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
+    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave, ...(m.friendly?{fr:1}:{}) }; }),   /* build 1226: absent when false, so old levels serialize byte-identically */   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
     pickupsOn: pickupsOn,
     pickups: pickupSpots.map(s=>({ x:+s.x, z:+s.z, kind:s.kind, ...(s.item!=null?{item:s.item}:{}), ...(s.y?{y:s.y}:{}), ...(s.rx?{rx:s.rx}:{}), ...(s.ry?{ry:s.ry}:{}), ...(s.rz?{rz:s.rz}:{}), ...(s.scale!=null&&s.scale!==1?{scale:s.scale}:{}), ...(s.interact?{interact:1}:{}) })),
     loot: lootSpots.map(s=>({ x:+s.x, y:+(s.y||0), z:+s.z, items:(s.items||[]).slice(), glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })),
@@ -35311,7 +35560,7 @@ function serializeLevel(){
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
     logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
-    persistVars: (persistVars.length ? persistVars.slice() : undefined), persistSave: (persistSave||undefined),   // build 1075
+    persistVars: (persistVars.length ? persistVars.slice() : undefined), persistSave: (persistSave||undefined), persistInv: (persistInv||undefined), persistCp: (persistCp||undefined),   // build 1075; build 1227: absent when off, so old levels serialize byte-identically
     modelRigs: (Object.keys(modelRigs).length ? Object.assign({}, modelRigs) : undefined),   // build 1080: skeletons grown on imported models, keyed by URL
     customAnims: ((typeof customAnims!=='undefined' && customAnims.length) ? _caSanitize(customAnims) : undefined),   // build 1040: creator-authored clips
     hudWidgets: ((typeof hudWidgets!=='undefined' && hudWidgets.length) ? _sanitizeHudWidgets(hudWidgets) : undefined),   // build 1058: custom HUD widgets
@@ -36058,7 +36307,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; persistInv = !!level.persistInv; persistCp = !!level.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace; build 1227: flags set BEFORE the load so the blob's __inv/__cp are picked up (and stale carried state from a previous level never leaks)
   modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
@@ -36589,6 +36838,7 @@ function buildEditorPanel(){
     + '<div id="edShell"><div class="edModes" id="edModes"></div><div id="edMain">'
     + '<div class="hint" id="edHint"></div>'
     + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;width:32px;min-width:32px;padding:6px 0">↶</button><button id="edRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" style="flex:0 0 auto;width:32px;min-width:32px;padding:6px 0">↷</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
+    + '<div class="row2" style="margin:0 0 8px"><button id="edPlayHere" title="Deploy and spawn at the editor camera (fly camera in fly mode, the avatar in walk mode, the pan point in top view) instead of the player start. A test convenience — never saved with the level, solo only.">▶ From camera</button><label style="flex:0 0 auto;display:flex;align-items:center;gap:4px;font-size:11px;color:#8fb2a8" title="Start the test run at this wave (1 = normal). Applies to both play buttons. Never saved with the level.">wave <input id="edPlayWave" type="number" min="1" max="50" step="1" value="1" style="width:44px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 4px;font-size:12px;"></label></div>'
     + '<div id="edSearchRow"><input id="edSearch" type="search" placeholder="Search settings\u2026" spellcheck="false" aria-label="Search settings"></div>'
     + '<div id="edSearchChips"></div>'
     + '<div class="tabs" id="edTabs"></div>'
@@ -36903,7 +37153,9 @@ function buildEditorPanel(){
   { const ub=p.querySelector('#edUndo'); if(ub) ub.onclick=()=>{ if(typeof performUndo==='function') performUndo(); }; }   // build 910: undo without a keyboard (touch authors had none)
   { const rb=p.querySelector('#edRedo'); if(rb) rb.onclick=()=>{ if(typeof performRedo==='function') performRedo(); }; }   // build 1129: and forward again
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
-  p.querySelector('#edPlay').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); startGame(); };           // test the live-built level immediately (no save/reload)
+  const _edTestWave = ()=>{ const el=p.querySelector('#edPlayWave'); return el ? Math.max(1, Math.min(50, (+el.value|0)||1)) : 1; };   // build 1224
+  p.querySelector('#edPlay').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); const _w=_edTestWave(); if(_w>1) _testStart={ wave:_w }; startGame(); };           // test the live-built level immediately (no save/reload)
+  p.querySelector('#edPlayHere').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); _testStart = _edTestPose(); _testStart.wave = _edTestWave(); startGame(); };   // build 1224: play from the editor camera
   p.querySelector('#edMenu').onclick = ()=>{ editorToMenu(); };        // back to the start overlay
   { const ac=p.querySelector('#edAutoSave'); if(ac){ ac.checked=_autoSaveOn; ac.onchange=()=>{ setAutoSaveOn(ac.checked); const st=p.querySelector('#edAutoStatus'); if(st) st.textContent=ac.checked?'Saves automatically as you work.':'Autosave off — remember to Save.'; }; } }
   { const wb=p.querySelector('#edWipe'); if(wb){ let armed=false, t=null; wb.onclick=()=>{
@@ -38674,6 +38926,32 @@ function renderEditorFields(){
         const gb=document.createElement('button'); gb.innerHTML=_icn('chain')+'Group'; gb.title='Bind the selected props into one group (Ctrl+G). Clicking any piece then selects the whole group, so move / rotate / scale affect them all.'; gb.disabled=(_selN<2); gb.style.opacity=(_selN<2?'0.5':'1'); gb.onclick=()=>{ if(typeof groupSelectedProps==='function') groupSelectedProps(); };
         const ub=document.createElement('button'); ub.innerHTML=_icn('scissors')+'Ungroup'; ub.title='Break the group on the selection (Ctrl+Shift+G).'; ub.disabled=!_grouped; ub.style.opacity=(_grouped?'1':'0.5'); ub.onclick=()=>{ if(typeof ungroupSelectedProps==='function') ungroupSelectedProps(); };
         grow.appendChild(gb); grow.appendChild(ub); picker.appendChild(grow);
+        // build 1225: Arrange — align / distribute on a chosen axis, and a linear array
+        { const _units = (typeof _arrUnits === 'function') ? _arrUnits((selProps || []).filter(Boolean)) : [];
+          const ah = document.createElement('div'); ah.className = 'hint'; ah.style.margin = '0 0 3px'; ah.innerHTML = '<b>Arrange</b>'; picker.appendChild(ah);
+          const _inCss = 'flex:0 0 auto;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 4px;font-size:12px;';
+          const ar = document.createElement('div'); ar.className = 'row2'; ar.style.marginBottom = '4px';
+          const ax = document.createElement('select'); ax.id = 'edArrAxis'; ax.style.cssText = _inCss + 'width:42px;'; ax.title = 'The axis Min / Center / Max / Spread act on';
+          for(const a of ['x', 'y', 'z']){ const op = document.createElement('option'); op.value = a; op.textContent = a.toUpperCase(); ax.appendChild(op); }
+          ax.value = (typeof _arrAxisSel !== 'undefined') ? _arrAxisSel : 'x'; ax.onchange = () => { _arrAxisSel = ax.value; };
+          const mk = (txt, title, dis, fn) => { const b = document.createElement('button'); b.textContent = txt; b.title = title; b.disabled = dis; b.style.opacity = dis ? '0.5' : '1'; b.onclick = fn; return b; };
+          ar.appendChild(ax);
+          ar.appendChild(mk('Min', 'Line up bounding edges on the LOW side of the axis. Groups move as one unit; boxes align by their edges, not their origins.', _units.length < 2, () => { alignSelectedProps(ax.value, 'min'); renderEditorFields(); }));
+          ar.appendChild(mk('Center', 'Line up bounding-box centres on the axis.', _units.length < 2, () => { alignSelectedProps(ax.value, 'center'); renderEditorFields(); }));
+          ar.appendChild(mk('Max', 'Line up bounding edges on the HIGH side of the axis.', _units.length < 2, () => { alignSelectedProps(ax.value, 'max'); renderEditorFields(); }));
+          ar.appendChild(mk('Spread', 'Space the selection evenly along the axis — the two outermost stay put, the rest slide to equal centre spacing. Needs 3+.', _units.length < 3, () => { distributeSelectedProps(ax.value); renderEditorFields(); }));
+          picker.appendChild(ar);
+          const ar2 = document.createElement('div'); ar2.className = 'row2'; ar2.style.marginBottom = '6px';
+          let _spanX = 2; if(_units.length){ let m0 = Infinity, m1 = -Infinity; for(const u of _units){ const s = _unitSpan(u, 'x'); if(s[0] < m0) m0 = s[0]; if(s[1] > m1) m1 = s[1]; } if(isFinite(m1 - m0) && m1 - m0 > 0.01) _spanX = +(m1 - m0).toFixed(2); }
+          const num = (id, val, w, title) => { const i = document.createElement('input'); i.type = 'number'; i.id = id; i.step = '0.5'; i.value = val; i.title = title; i.style.cssText = _inCss + 'width:' + w + 'px;'; return i; };
+          const nI = num('edArrN', 3, 34, 'How many copies (1-24; total props in one gesture capped at ~100)'); nI.min = '1'; nI.max = '24'; nI.step = '1';
+          const xI = num('edArrDx', _spanX, 46, 'Step on X per copy (prefilled with the selection\'s own width — copies land side by side)');
+          const yI = num('edArrDy', 0, 46, 'Step on Y per copy (climbing stairs, stacked shelves)');
+          const zI = num('edArrDz', 0, 46, 'Step on Z per copy');
+          ar2.appendChild(mk('⧉ Array', 'Duplicate the whole selection N times, stepped by (dx, dy, dz). Full config copies — signals, tags, materials, physics — each copy its own group. One Ctrl+Z removes the lot.', !_units.length, () => { arraySelectedProps(+nI.value, +xI.value, +yI.value, +zI.value); renderEditorFields(); }));
+          ar2.appendChild(nI); ar2.appendChild(xI); ar2.appendChild(yI); ar2.appendChild(zI);
+          picker.appendChild(ar2);
+        }
         if(_selN>1 || _grouped){ const gh=document.createElement('div'); gh.className='hint'; gh.style.margin='0 0 7px'; gh.textContent=_grouped?('Grouped — '+_selN+' pieces move together. Shift-click adds to the selection.'):(_selN+' selected. Group them so a click grabs all, then transform as one.'); picker.appendChild(gh); }
       }
       // behavior mode for the selected spawn
@@ -38691,6 +38969,15 @@ function renderEditorFields(){
             : g.userData.mark.mode==='patrol' ? 'Patrol: wanders inside its patrol radius, chases when a player enters Detect range, then leashes back.'
             : 'Hold: guards this post; engages only when a player enters Detect range, then returns.';
           picker.appendChild(mh);
+          // build 1226: FRIENDLY — a wandering NPC on the same nav/patrol stack, combat removed
+          { const fRow=document.createElement('label'); fRow.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:12px;margin:6px 0;cursor:pointer;';
+            const fCb=document.createElement('input'); fCb.type='checkbox'; fCb.checked=!!g.userData.mark.friendly;
+            fCb.onchange=()=>{ pushUndoSnapshot(); g.userData.mark.friendly=fCb.checked; if(g.userData.post&&g.userData.post.material&&g.userData.post.material.color) g.userData.post.material.color.setHex(fCb.checked?0x59d98c:(SPAWN_MODE_COLORS[g.userData.mark.mode]||0xff2d55)); renderEditorFields(); };
+            fRow.appendChild(fCb); fRow.appendChild(document.createTextNode('Friendly — wanders, never attacks or aggros'));
+            picker.appendChild(fRow);
+            if(g.userData.mark.friendly){ const fh=document.createElement('div'); fh.className='hint'; fh.style.margin='0 0 6px';
+              fh.textContent='A wandering NPC: patrols its area or route, ignores players and gunfire, doesn\u2019t count as a hostile, and killing it gives nothing (the On-kill logic event still fires, so you can punish it). Hunt behaves as Patrol while friendly.';
+              picker.appendChild(fh); } }
           // ---- Enemy type (archetype) ----
           const tlab=document.createElement('div'); tlab.className='hint'; tlab.style.margin='8px 0 3px'; tlab.innerHTML='<b>Enemy type</b>';
           picker.appendChild(tlab);
@@ -41952,6 +42239,7 @@ function _palItems(){
   const items=[];
   const A=(label,kw,run)=>items.push({ label, kw:(label+' '+kw).toLowerCase(), kind:'Action', run });
   A('Play level','test run deploy start', ()=>{ const b=document.getElementById('edPlay'); if(b) b.click(); });
+  A('Play from camera','test run here spawn from camera', ()=>{ const b=document.getElementById('edPlayHere'); if(b) b.click(); });
   A('Undo','revert ctrl+z back', ()=>{ if(typeof performUndo==='function') performUndo(); });
   A('Save level','store keep', ()=>{ const b=document.getElementById('edSave'); if(b) b.click(); else if(typeof saveLevel==='function'){ saveLevel(); flashToast('SAVED'); } });
   A('Copy share link','url send friend', ()=>{ const b=document.getElementById('edShare'); if(b) b.click(); });
@@ -42042,6 +42330,7 @@ function toggleEditor(){
     // every path that leaves the editor sets editorFreeFly=false, so re-opening it always landed back on
     // the player's walking gameplay camera. F (with nothing selected) and the View buttons still switch.
     editorFreeFly = true; editorTopView = false; flyInit = false;
+    if(typeof startEditorTutorial==='function') startEditorTutorial();   // build 1229: once per browser; a no-op ever after
     if(!editorEl) buildEditorPanel();
     editorEl.style.display = 'block';
     if(typeof stopMusic==='function') stopMusic();   // silence the level's music/ambience while editing
@@ -42169,6 +42458,9 @@ function _prewarmMatchModels(){
   urls.forEach(u=>{ try{ loadGLTFCached(u, ()=>{}, ()=>{}); }catch(e){} });
 }
 function startGame(){
+  // build 1224: consume the editor test-run override EXACTLY ONCE — solo only. Consuming even when the
+  // guard fails means a pose captured for a solo test can never leak into a later multiplayer deploy.
+  const _ts = (typeof _testStart!=='undefined' && _testStart && (typeof NET==='undefined' || NET.mode==='off')) ? _testStart : null; _testStart = null;
   if(mountedTurret){ mountedTurret=null; const _th=document.getElementById('turretHud'); if(_th) _th.style.display='none'; }   // never start a round still manning a turret
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
   if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); if(typeof _clearDust==='function') _clearDust(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/728/732/738: kill engine + HUD + skid + dust + restore crosshair on (re)deploy
@@ -42260,11 +42552,13 @@ function startGame(){
   gameOn=true; gameOver=false; shopOpen=false; if(typeof _vcamUserYaw!=='undefined') _vcamUserYaw=0;   // build 1100: each session starts at the authored angle
   if(typeof spawnPlacedLoot==='function') spawnPlacedLoot();
   if(typeof startTutorial==='function') startTutorial();   // build 938: first-run coach pill (solo, once per browser)
+  if(typeof EDTUT!=='undefined' && EDTUT) endEditorTutorial(false);   // build 1229: they deployed — the tour's whole point; done, not dismissed
   $('shop').classList.add('hidden');
   $('overlay').classList.add('hidden');
   $('hud').classList.remove('hidden');
   { const wp=$('wavePanel'); if(wp) wp.style.display=''; }
 
+  if(_ts && _ts.wave > 1 && !pvpMode()) wave = Math.min(50, _ts.wave|0);   // build 1224: start the test at the target wave (50 = the manifest cap); startWave() below queues it
   if(pvpMode()){
     // PvP (duel / free-for-all): no waves, all weapons, spawn spread out; score is tracked over the wire
     duelDead=false; duelRespawnTimer=0; duelInvuln=1.2; lastDamagedBy=null;
@@ -42284,13 +42578,21 @@ function startGame(){
   } else {
     startWave();
   }
+  // build 1224: play-from-here lands AFTER both branches above — the pvp branch also writes player.pos,
+  // and an override applied earlier would be silently discarded there. Clamped above the terrain so a
+  // top-view pose can never spawn underground; a fly pose high over the level simply falls in, which is
+  // the honest reading of "from the camera".
+  if(_ts && _ts.pos){ const _gy = terrainHeightAt(_ts.pos.x, _ts.pos.z);
+    player.pos.set(_ts.pos.x, Math.max(_ts.pos.y, _gy + 0.4), _ts.pos.z);
+    player.yaw = +_ts.yaw||0; player.pitch = +_ts.pitch||0; player.onGround = false; player.vel.set(0,0,0); }
+  if(typeof _persistResume==='function') _persistResume(!!(_ts && _ts.pos));   // build 1227: carried inventory + checkpoint return AFTER the wipes; a test pose outranks the checkpoint
   updateHUD(); updateBuffs(0);
   resetDynamicProps();        // dynamic objects return to their authored spots each deploy
   teardownInstancing(); buildInstancing();   // (re)collapse repeated static shapes for play
   if(typeof buildPhysWorld==='function') buildPhysWorld();   // build a FRESH physics world for this level every match — never inherit a stale one from a previous session (fixes the client free-fly when no assets were pending, so the loader/reveal never rebuilt it)
   if(typeof _lightWatchBaseline==='function') _lightWatchBaseline();   // build 1155: every pool is seated by now — this is the count play must hold to
   if(typeof maybeStartIntroCine==='function'){   // optional authored intro flythrough (no-op if disabled / no path)
-    const _introWillPlay = (typeof cineCfg!=='undefined' && cineCfg.on && typeof _ccHasData==='function' && _ccHasData(cineCfg));
+    const _introWillPlay = !_ts && (typeof cineCfg!=='undefined' && cineCfg.on && typeof _ccHasData==='function' && _ccHasData(cineCfg));   // build 1224: a test run (from-here / at-wave) skips the flythrough — the creator is iterating, not watching; the cine preview exists for framing shots
     if(_introWillPlay && !_levelLoaderActive){ showLevelLoader(); waitAssetsThenReveal(); }   // build 554: even with assets already cached, hold a cover so the live scene never flashes for a beat before the cinematic takes the camera; reveal() starts the cinematic, then drops the cover
     if(_levelLoaderActive) _cineIntroPending = true;   // defer: starting now would play the cutscene AUDIO behind the loading screen (the loop freezes the shot but the track is already running) and frame a half-loaded scene
     else _startIntroWhenSettled();   // no intro cutscene to cover for — just let late async loads settle (maybeStartIntroCine no-ops if disabled)

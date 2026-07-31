@@ -20,7 +20,7 @@ const start = extractFunction('startAutoSave');
 assert(/setInterval\([\s\S]*?autoSaveNow\(\)[\s\S]*?, 20000\)/.test(start), 'flushes every 20s while editing');
 assert(/_levelDirty = false; if\(typeof startAutoSave==='function'\) startAutoSave\(\);/.test(src), 'starts on editor open');
 assert(/autoSaveNow\('on close'\); if\(typeof stopAutoSave==='function'\) stopAutoSave\(\);/.test(src), 'flushes + stops on editor close');
-assert(/autoSaveNow\('before play'\); startGame\(\);/.test(src), 'flushes before Play');
+assert(/autoSaveNow\('before play'\);[^\n]*startGame\(\);/.test(src), 'flushes before Play');   // build 1224: the start-at-wave read sits between the flush and the deploy — flush still first, deploy still last
 assert(/addEventListener\('beforeunload', \(\)=>\{ try\{ if\(!_newLevelPending && _autoSaveOn && _levelDirty\) saveLevel\(\);/.test(src), 'flushes on tab close');
 assert(/visibilitychange[\s\S]*?document\.visibilityState==='hidden'\) autoSaveNow\(\)/.test(src), 'flushes when the tab is hidden');
 

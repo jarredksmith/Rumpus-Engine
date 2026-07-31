@@ -16,7 +16,7 @@ assert(/maybeStartIntroCine\(\); \}catch\(e\)\{\} \} hideLevelLoader\(\);/.test(
 
 // (3) startGame holds a cover when an intro will play even with no assets pending
 const sg = extractFunction('startGame');
-assert(/const _introWillPlay = \(typeof cineCfg!=='undefined' && cineCfg\.on && typeof _ccHasData==='function' && _ccHasData\(cineCfg\)\)/.test(sg), 'startGame detects whether an intro cinematic will play');
+assert(/const _introWillPlay = !_ts && \(typeof cineCfg!=='undefined' && cineCfg\.on && typeof _ccHasData==='function' && _ccHasData\(cineCfg\)\)/.test(sg), 'startGame detects whether an intro cinematic will play');   // build 1224: an editor test run (_ts) skips the flythrough; the detection itself is unchanged
 assert(/if\(_introWillPlay && !_levelLoaderActive\)\{ showLevelLoader\(\); waitAssetsThenReveal\(\); \}/.test(sg), 'an intro with no pending assets still raises a cover so gameplay never flashes first');
 assert(/if\(_levelLoaderActive\) _cineIntroPending = true;/.test(sg), 'with a cover up, the intro is deferred to reveal()');
 

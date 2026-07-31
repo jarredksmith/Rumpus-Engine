@@ -1519,6 +1519,161 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The editor teaches itself (build 1229)
+
+The panel critic's onboarding finding, closed with machinery the engine already proved: build 938's
+do-to-advance coach pill, editor edition. First time the editor opens (once per browser), a four-step
+pill walks the whole loop — fly the camera (completes on ~6 units of ACCUMULATED camera strokes, so
+mode switches and small moves all count), add a shape (prop count rises; the + auto-selects it, which
+is why there is no separate "select" step — it would self-complete), move it (the primary selection
+drifting 0.5 from a per-selection baseline; switching selection RE-BASELINES so clicking a distant prop
+cannot false-complete the step), and play it (completes only in `startGame` — deploying is the tour's
+whole point and ends it COMPLETE from any step).
+
+Two decisions differ from 938 deliberately:
+- **No auto-advance timeout.** Play's 15s exists so a coach never blocks combat; in the editor nothing
+  blocks, a creator reads at their own pace, and the X is the exit. `test-1229` pins the timeout's
+  ABSENCE.
+- **The pill element is shared with the play coach, owner-stamped.** A brand-new user triggers both
+  tours in one session; each render stamps `dataset.owner` ('play'/'ed'), the editor coach runs second
+  in the loop so it wins the pill inside the editor, hides it only when it owns it, and the X dismisses
+  whichever coach owns it right now. Without the stamp, whichever update ran last would clobber the
+  other's pill every frame.
+
+`test-1229` executes the real state machine through the full tour, the re-baselining, the
+dismissed-forever key, and the no-clobber property. No pins moved.
+
+## Attached lights ride duplication (build 1228)
+
+The editor panel's "a lamp+light composite can't be moved/prefabbed as a unit", verified to its real
+residue: build 997's nid-parenting already makes an attached light RIDE its prop (gizmo moves included),
+but the `_pfEntryOf`/`_pfSpawnEntry` pair — which duplicate, Alt-drag, the clipboard (1176), array
+(1225) and prefabs (1030) ALL route through — carried only the prop. Copy a finished lamppost and you
+got a dark pole; 1225's array made that sting ten poles at a time. One fix in the pair covers all five
+paths (1162's design paying off): the entry embeds each attached light via the same `_lightOpts` the
+level file uses — the LIVE local transform when parented (a light nudged after attach copies where it
+sits NOW), world position and host nid stripped — and the spawner rebuilds them bound to the copy's
+FRESH nid, one frame before 997's reconciler snaps the exact parenting.
+
+**Editor-time only, and that gate is the load-bearing line:** `buildLight` changes the scene's light
+count, which must never change during play (636/977/1153/1155). The logic graph's `spawnprop` verb runs
+`_pfSpawnEntry` MID-MATCH — so a runtime-spawned prefab arrives lightless (documented cost) rather than
+recompiling every material in the level on spawn. Hostile entries cap at 8 lights per prop on both the
+capture and spawn sides. `test-1228` executes the capture on a real THREE graph (live transform wins,
+strays excluded, identity stripped), the spawn (fresh-nid rebind, editor gate, caps), and pins that all
+five duplication paths route through the pair. No pins moved.
+
+## Persistent inventory + checkpoint (build 1227)
+
+1215's recorded other half, closing the feature panel's save-system item. Variables persisted; the
+INVENTORY (keys, quest items, consumables — what an adventure game is made of) and the LAST CHECKPOINT
+(where a returning player resumes) did not, so "close the tab, come back tomorrow" handed back the
+numbers but not the run. Two creator opt-ins (checkboxes indented under "Also keep them between
+sessions", disabled without it), riding the SAME namespaced blob under reserved keys `__inv`/`__cp` —
+the variable loader accepts only NUMERIC values, so an old engine reading a new blob skips them
+silently and a new engine reading an old blob finds nothing: two-way compatible by construction, no
+format version needed.
+
+The placement decisions are the build:
+- **`_persistResume` is called by `startGame` AFTER its wipes.** `logicStart` (where `_persistSeed`
+  runs) executes BEFORE `inventory.length=0`, so seeding items there would be erased — the resume call
+  sits after the pvp/else branch, beside 1224's pose override, and takes `skipPos` so a play-from-here
+  test pose outranks the saved checkpoint while the items still return.
+- **Write-through, not commit-only.** Checkpoints happen mid-run and players quit mid-run, so
+  `setCheckpoint` saves immediately (solo only), and `giveItem`/`takeItem` both write — a spent potion
+  must stay spent on reload (executed: an emptied inventory persists as EMPTY).
+- **`_persistCommit` (game cleared) clears the checkpoint but keeps the items** — the next run starts
+  at the start, holding what was earned. It now also stores even with no vars authored, or the
+  checkpoint clear would never land on a var-less level.
+- **Solo only.** A co-op client restoring a private inventory or teleporting to a private checkpoint
+  would desync the shared run; `_persistResume` returns for any NET mode but 'off'.
+- **Hostile blobs clamp**: 999 per stack, 40 stacks, ids truncated at 40 chars.
+
+`test-1227` executes the real store/load/resume/commit against a fake localStorage through the full
+round trip and every guard above. Three pins moved (1215's store shape, 1075's loader line ×2 and its
+harness scope — each keeps its intent). Restores are silent (no 12 pickup dings for 12 items) with one
+"Resumed at your checkpoint" toast.
+
+## Wandering NPCs, and the marker that demoted your boss to a grunt (build 1226)
+
+The feature panel's civic gap: every moving creature was hostile, so a town, a quest hub, a story level
+had nothing alive in it that wasn't trying to kill you. A spawn marker gains a **Friendly** checkbox
+(green marker post, green capsule) — the NPC rides the SAME nav/patrol/route/separation stack with zero
+new movement code, and the design is subtraction, done at every layer so no gate anywhere can misfire:
+- **The brain**: `enemyDesiredTarget` demotes a friendly's hunt to patrol, skips the LOS raycast
+  entirely (shared budget, and a friendly has no use for a sightline), and never sets `aware`.
+  `alertEnemy` — the single door gunfire, blasts and the logic 'alert' verb all route through — slides
+  off a friendly.
+- **The spawn** disarms `ranged/exploder/charger/cover` at the source.
+- **The accounting** forked into `_hostileAlive()` / `_hostilePending()` (queued friendlies subtracted):
+  the HUD, the net snapshot's `en`, and the WAVE-CLEAR gate all count hostiles — a level whose villagers
+  outlive every wave must still advance, and one populated only by villagers reads zero hostiles.
+- **Waves never stack duplicates**: a friendly marker defaults to wave 0 (= every wave) but its NPC is
+  never killed by play, so `startWave` skips a marker whose spawn is still alive (`e._mark === m`).
+- **Killing one is a death, not a score event**: visuals, sound, ragdoll and the On-kill logic event all
+  fire (a creator can wire "villager died → lose"), but kills/coins/score/lifesteal/boss-payday all gate
+  off. Explosions and car impacts still hurt them — physics is physics.
+
+**Two latent marker bugs fixed on the way, both real:** `buildSpawnMarker` validated `opts.type` against
+a pre-628 THREE-entry list while the editor has offered all 8 since — so every saved
+gunner/sapper/shielded/charger/boss marker silently DEMOTED TO GRUNT on reload (the list stays a literal
+because ENEMY_TYPES is declared below the boot loader that runs this — TDZ, and `typeof` doesn't guard a
+TDZ). And duplicate-marker had been dropping `type`/`wave`/`y` since those fields were added. `test-1226`
+executes the brain (friendly vs identical hostile control), alertEnemy, the accounting, and pins the
+rest. Seven pins moved (1197, 33, 47, 58, 80, 283, 415 — `en:` became the hostile count, killEnemy's
+rewards gained the friendly gate, the LOS/detect lines gained `!en.friendly`; every intent kept).
+Deferred, recorded: dialogue on a moving NPC (interact targets props, not enemies — its own build), and
+friendlies fleeing gunfire rather than ignoring it.
+
+## Align, distribute, array (build 1225)
+
+The editor-UX panel's arrangement gap: the engine had grouping, snapping, duplication and a clipboard,
+but no way to LINE THINGS UP — a row of fence posts was N drags and N squints. Three verbs in an
+"Arrange" row under Group/Ungroup in the props picker (axis select + Min/Center/Max/Spread, and
+⧉ Array with count + dx/dy/dz). Two semantics carry the correctness, both executed in `test-1225`:
+- **Group members move as ONE UNIT.** A click selects the whole group, so a naive per-prop align would
+  smash a group's internal arrangement flat onto the target line. `_arrUnits` partitions the selection
+  by gid; a unit's span is the union of its members' world boxes; the whole unit shifts by one delta.
+- **Alignment lines up world-space BOUNDING EDGES, not origins.** Two crates of different sizes
+  "aligned min" share a face plane, which is what a builder means. The target edge is the SELECTION'S
+  OWN min/centre/max, so nothing moves further than it must and align-to-the-leader falls out free.
+
+Distribute is even CENTRE spacing with the two outermost units anchored (the standard convention);
+needs 3+ units and refuses below that WITHOUT burning an undo snapshot — all three verbs are one
+snapshot per gesture (1163's rule), and every refusal happens before the snapshot. Array duplicates
+through the 1162 `_pfEntryOf`/`_pfSpawnEntry` pair, so copies carry full config (signals, tags,
+materials, physics) and inherit new entry fields automatically; each copy is its OWN group (never
+chained to the source), steps land at `pivot + step*i` (dy supported — stairs, shelves), a zero step
+refuses rather than z-fighting copies inside each other, and the gesture budget is 24 copies hard,
+~100 spawned props total (the paste cap's number). The dx field prefills with the selection's own
+width so the default array lands copies side by side. Moved props get `refreshPropCollider` +
+`_homeSync` (the gizmo drag's own bookkeeping); the axis choice persists across panel re-renders.
+
+## Play from here, start at wave (build 1224)
+
+The editor-UX panel's iteration-speed gap: a creator tuning wave 12 replayed waves 1-11 on every test
+run, and testing a rooftop meant walking there from the player start every time. The play row gains
+**"▶ From camera"** and a **wave** field (1..50); both write `_testStart`, which `startGame` consumes
+**exactly once** — nulled even when its solo guard fails, so a pose captured for a solo test can never
+leak into a later multiplayer deploy — and which never serialises: a test convenience, not level data.
+
+Ordering is the correctness, and both halves were forced by code already there:
+- **The wave override lands BEFORE `startWave()`** queues the first wave (clamped to the manifest cap,
+  pvp skipped — no waves there). The wave-12 HP ramp applies at spawn, which is the point: test what the
+  player will actually face.
+- **The pose override lands AFTER the pvp/else branch**, because the pvp branch also writes `player.pos`
+  and an earlier override would be silently discarded. The pose clamps above the terrain (a top-view
+  pose can never spawn underground) and arrives airborne with zero velocity — a fly pose high over the
+  level simply falls in, which is the honest reading of "from the camera".
+
+`_edTestPose()` captures per camera mode: fly = the fly camera with altitude and look (fly look reuses
+`player.yaw/pitch`); walk = the avatar; top view = the pan point standing ON the ground, pitch 0 — not
+hundreds of metres up at the top camera. A test run also skips the authored intro flythrough (`!_ts` in
+the `_introWillPlay` gate): the creator is iterating, not watching; the cine preview exists for framing.
+`test-1224` executes the pose capture across all three modes and pins the consume-once, the two
+orderings, the clamps, and that `serializeLevel` never mentions the override. Three pins moved (27, 330,
+422 — the play handler grew a wave read between autosave and deploy; each keeps its intent).
+
 ## A loaded HDRI now shows immediately (build 1223)
 
 Reported from play: *"when loading an HDRI, nothing visually shows until I make an adjustment on the HDRI
