@@ -10,7 +10,7 @@ assert(/if\(_postRT\) return true;/.test(ep) && /if\(!THREE\.WebGLRenderTarget\)
 assert(/_postRT=mkRT\(w,h\)/.test(ep) && /_bloomMips\.push\(mkRT\(mw,mh\)\)/.test(ep) && /_compRT=mkRT\(w,h\)/.test(ep) && /_afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\)/.test(ep), 'full-res scene/comp, half-res bloom, two afterimage buffers');
 assert(/let i=0, mw=hw, mh=hh; i<_BLOOM_MIPS/.test(ep), '...the pyramid starts at half resolution and halves per level');
 assert(/_matBloomDown=new THREE\.ShaderMaterial/.test(ep) && /_matBloomUp=new THREE\.ShaderMaterial/.test(ep) && /_matComp=new THREE\.ShaderMaterial/.test(ep) && /_matAfter=new THREE\.ShaderMaterial/.test(ep) && /_matCopy=new THREE\.ShaderMaterial/.test(ep), 'five passes: bloom down, bloom up, composite, afterimage, copy');
-assert(/max\(nw, od\)/.test(ep), 'motion blur keeps the brighter of new vs decayed-old (afterimage trails)');
+assert(/uMbRot \* v/.test(ep) && /texture2D\(tNew, vUv \+ d\*t\)/.test(ep), 'motion blur is a rotational REPROJECTION streak — build 1238 replaced the afterimage max(new, old*damp) trail with real per-pixel camera velocity');
 assert(/smoothstep\(0\.42,0\.78,r\)\*uVig/.test(ep), 'vignette darkens the edges');
 
 // --- the per-frame chain order ---
@@ -22,7 +22,7 @@ assert(rp.lastIndexOf('setRenderTarget(null)') > last, 'the present-to-screen pa
 // motion-blend + copy passes (two full-res fullscreen draws) are skipped entirely.
 assert(/const _mbOn = _postMotion>0\.01 && !\(_adaptOn && _prStepI>=_PR_STEPS\.length-1\);/.test(rp), 'motion chain is skipped when motion is ~0 or adaptive res is at its floor');
 assert(/if\(!_mbOn\)\{[\s\S]{0,140}?_postQuad\.material=_matComp; renderer\.setRenderTarget\(null\); renderer\.render\(_postScene,_postCam\);\s*\n?\s*return;\s*\n?\s*\}/.test(rp), 'no-motion path composites straight to the screen (saves 2 full-res passes)');
-assert(/const t=_afterA; _afterA=_afterB; _afterB=t;/.test(rp), 'accumulation buffers swap each frame');
+assert(!/const t=_afterA; _afterA=_afterB; _afterB=t;/.test(rp) && /cut \? 0 : _postMotion/.test(rp), 'no accumulation ping-pong any more — one reprojection pass per frame, zeroed on a camera cut (build 1238)');
 assert(/if\(_postRT\.width!==w \|\| _postRT\.height!==h \|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost\(\); ensurePost\(\); \}/.test(rp), 'targets rebuild on resolution change (and on the MSAA step, build 880)');
 
 // --- the fallback: renderScene tries post first, reverts on any throw, never re-tries after failure ---

@@ -7250,6 +7250,24 @@ function _ensureLut(url){
     else { _fin(); console.warn('LUT load failed:', url); } });
 }
 let _postRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
+// build 1238: last frame's camera orientation + timestamp for the reprojection blur.
+const _mbPrevQ = new THREE.Quaternion(); let _mbHaveQ = false, _mbLastT = 0;
+const _mbQ = new THREE.Quaternion(); const _mbM4 = new THREE.Matrix4();
+// Pure core, executed by test-1238: from (prevQ, curQ, dtMs) decide the frame's blur inputs.
+// - rot: prevR^T * curR as a mat3 (maps a current-frame view ray into last frame's view space)
+// - shutter: (1/60)/dt clamped [0.5, 2.5] — at 144Hz the per-frame delta is small, so the streak is
+//   scaled to a 60Hz-equivalent exposure; the authored look holds at any refresh rate (1161's rule)
+// - cut: an angular jump past ~20 deg in one frame is a TELEPORT/respawn/cinema cut, not motion —
+//   blur must vanish for that frame, not smear the whole screen once
+function _mbFrame(prevQ, curQ, dtMs, out){
+  const q = _mbQ.copy(prevQ).invert().multiply(curQ);
+  const ang = 2*Math.acos(Math.min(1, Math.abs(q.w)));
+  const cut = ang > 0.35;
+  const shutter = Math.max(0.5, Math.min(2.5, (1000/60)/Math.max(1, dtMs)));
+  _mbM4.makeRotationFromQuaternion(q);
+  out.setFromMatrix4(_mbM4);
+  return { cut, shutter, ang };
+}
 let _matComp=null, _matAfter=null, _matCopy=null;
 // build 1180: AUTO-EXPOSURE. toneMappingExposure was a static authored value — walk from desert noon into
 // a dark interior and nothing adapted (every competitor ships eye adaptation by default). The meter reads a
@@ -7539,12 +7557,31 @@ function ensurePost(){
       '  float n=fract(sin(dot(vUv*(uTime+1.0), vec2(12.9898,78.233)))*43758.5453); c += (n-0.5)*uGrain;',   // grain
       '  gl_FragColor=vec4(clamp(c,0.0,1.0), 1.0); }'
     ].join('\n') });
-  // temporal afterimage motion blur: keep the brighter of (new) and (old * damp) -> decaying trails on motion
+  // build 1238: REAL camera motion blur. The old pass was an afterimage — max(new, old*damp) — a
+  // decaying GHOST TRAIL that smeared everything equally (including a stationary weapon) and answered
+  // "did the camera move" with "did any pixel change". This is a rotational REPROJECTION blur: each
+  // pixel's view ray is rotated into LAST frame's camera orientation and reprojected, giving the true
+  // per-pixel screen velocity of the camera's rotation — the dominant motion term in an FPS, and the
+  // one that needs no depth buffer (rotation-induced screen velocity is depth-independent; the
+  // translation term would need per-pixel depth, which the MSAA target cannot carry — see the AO
+  // prepass notes — and is deliberately absent). Eight taps along the streak. Blends display-referred
+  // pixels, same as the afterimage did (1117: everything after the composite is fine there).
+  // Known honest gap: the viewmodel is camera-locked (true velocity ~0) yet lives in the frame, so a
+  // hard flick smears it with the world; the afterimage ghosted it identically, so this is no
+  // regression — the proper fix is a per-object velocity buffer, its own build.
   _matAfter=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tNew:{value:null}, tOld:{value:null}, uDamp:{value:_postMotion} },
+    uniforms:{ tNew:{value:null}, uMbRot:{value:new THREE.Matrix3()}, uTanF:{value:new THREE.Vector2(1,1)}, uAmt:{value:_postMotion}, uShutter:{value:1} },
     vertexShader:vert, fragmentShader:[
-      'varying vec2 vUv; uniform sampler2D tNew; uniform sampler2D tOld; uniform float uDamp;',
-      'void main(){ vec4 nw=texture2D(tNew,vUv); vec4 od=texture2D(tOld,vUv)*uDamp; gl_FragColor=max(nw, od); }'
+      'varying vec2 vUv; uniform sampler2D tNew; uniform mat3 uMbRot; uniform vec2 uTanF; uniform float uAmt; uniform float uShutter;',
+      'void main(){',
+      '  vec3 v = vec3((vUv*2.0-1.0)*uTanF, -1.0);',                       // this pixel's view ray (current frame)
+      '  vec3 vp = uMbRot * v;',                                           // the same world ray, in LAST frame\'s view
+      '  vec2 uvPrev = (vp.xy / max(0.05, -vp.z)) / uTanF * 0.5 + 0.5;',   // reprojected: where this ray sat on screen last frame
+      '  vec2 d = (vUv - uvPrev) * uAmt * uShutter;',                      // the streak: real velocity x authored strength x shutter
+      '  float L = length(d); if(L > 0.05) d *= 0.05/L;',                  // cap wild spikes (a cut guard also zeroes them CPU-side)
+      '  vec4 c = vec4(0.0);',
+      '  for(int i=0;i<8;i++){ float t = (float(i)+0.5)/8.0 - 0.5; c += texture2D(tNew, vUv + d*t); }',
+      '  gl_FragColor = c * 0.125; }'
     ].join('\n') });
   // build 1117: a plain blit. The composite now encodes unconditionally, so _compRT and the
   // afterimage buffers already hold display-referred pixels and this pass must NOT encode again.
@@ -7857,15 +7894,24 @@ function _renderPostFX(scn, cam){
     return;
   }
   _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
-  // 4) motion blur: blend with the previous frame -> _afterB
-  _matAfter.uniforms.tNew.value=_compRT.texture; _matAfter.uniforms.tOld.value=_afterA.texture; _matAfter.uniforms.uDamp.value=_postMotion;
-  _postQuad.material=_matAfter; renderer.setRenderTarget(_afterB); renderer.render(_postScene,_postCam);
+  // 4) build 1238: camera motion blur — reproject each pixel through last frame's orientation and
+  // streak along the real screen velocity. One pass, no accumulation buffers, no swap.
+  { const mu=_matAfter.uniforms;
+    const now=performance.now(); const dtMs=_mbLastT?Math.min(100, now-_mbLastT):16.7; _mbLastT=now;
+    let cut=true, shutter=1;
+    if(_mbHaveQ){ const r=_mbFrame(_mbPrevQ, cam.quaternion, dtMs, mu.uMbRot.value); cut=r.cut; shutter=r.shutter; }
+    _mbPrevQ.copy(cam.quaternion); _mbHaveQ=true;
+    const th=Math.tan(((cam.fov||70)*Math.PI/180)/2);
+    mu.uTanF.value.set(th*(cam.aspect||(w/h)), th);
+    mu.uAmt.value = cut ? 0 : _postMotion;   // a cut frame renders sharp — an 8-tap identity when d=0
+    mu.uShutter.value = shutter;
+    mu.tNew.value=_compRT.texture;
+  }
   // 5) present -> screen (through FXAA when the top rung is up)
-  if(_fx){ _matFXAA.uniforms.tColor.value=_afterB.texture; _matFXAA.uniforms.uTexel.value.set(1/w,1/h); _postQuad.material=_matFXAA; }
-  else { _matCopy.uniforms.tColor.value=_afterB.texture; _postQuad.material=_matCopy; }
-  renderer.setRenderTarget(null); renderer.render(_postScene,_postCam);
-  // 6) swap accumulation buffers (this frame's result becomes next frame's "old")
-  const t=_afterA; _afterA=_afterB; _afterB=t;
+  if(_fx){ _postQuad.material=_matAfter; renderer.setRenderTarget(_afterB); renderer.render(_postScene,_postCam);
+    _matFXAA.uniforms.tColor.value=_afterB.texture; _matFXAA.uniforms.uTexel.value.set(1/w,1/h); _postQuad.material=_matFXAA;
+    renderer.setRenderTarget(null); renderer.render(_postScene,_postCam); }
+  else { _postQuad.material=_matAfter; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam); }
 }
 function _fitViewport(){
   // build 892: size from the canvas's DISPLAYED box, not innerWidth/innerHeight — on phones the two
@@ -27852,7 +27898,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1237 · 2026-07-31';
+const BUILD_VERSION = 'build 1238 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38003,7 +38049,7 @@ function renderEditorFields(){
         slider(b,'Film grain','postGrain',0,0.3,0.01); slider(b,'Saturation','postSat',0,2,0.02); slider(b,'Contrast','postCon',0.5,2,0.02); slider(b,'Bloom threshold','postThresh',0,1,0.02);
         texRow(b,'https://\u2026/grade-lut.png (256x16 strip)','lut'); slider(b,'LUT strength','lutAmt',0,1,0.05); hint(b,'Color grade LUT: a standard 256\u00d716 (or 1024\u00d732) strip \u2014 screenshot the game, drop the shot into any photo editor with a neutral LUT strip, grade them together, crop the strip back out, host it, paste the URL. The whole look of the level follows.','1px 0 4px');
         slider(b,'Ambient occlusion','ssao',0,1,0.05); slider(b,'AO radius','ssaoRadius',0.1,4,0.1);   // build 1126
-        hint(b,'','0 0 4px').textContent='Motion blur = trail strength. Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
+        hint(b,'','0 0 4px').textContent='Motion blur = camera blur strength (real per-pixel smear when you turn; 0 = off). Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }
     { const b=subSec('Sky','sky',true);
       // build 1234: the procedural dome's own look. These fields have serialized with every level since
