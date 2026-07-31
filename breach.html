@@ -8499,6 +8499,27 @@ const SKY_DEF = { zenith:[0.18,0.30,0.54], horizon:[0.52,0.60,0.70], ground:[0.2
 // it throws ReferenceError for a `let` that has not been initialised yet, and _skyP runs at boot from
 // applyWorldCfg. Declaring this below _skyP turned the entire sky black on the first frame.
 let _skyDayDim = 1;
+// build 1234: SKY MOODS — reported from play as "no matter what, the sky is always bright". The
+// procedural dome has been fully parameterised since 1119 (zenith/horizon/ground colours, haze, sun
+// disc, its own exposure) but NO editor UI ever wrote those fields — only the arena generator's themes
+// did. And a dark dome alone cannot darken the SCENE: the sun keeps lighting it and auto-exposure
+// (1180) lifts a dark frame back up. So a mood is a COHERENT PACKAGE — dome colours + sun strength/
+// colour/elevation + fog colour + the auto-exposure strength — or "night" is just a black ceiling over
+// a sunny afternoon. Presets are starting points; every field remains individually editable below them.
+const SKY_MOODS = {
+  day:      { skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0,  sun:1.5,  sunColor:0xfff2dc, sunElev:34, fogColor:0x2e3b47, autoExp:0.7 },   // = DEFAULT_WORLD's sky, restated so Day always returns exactly stock
+  sunset:   { skyZenith:0x2c3f66, skyHorizon:0xff9a4d, skyGround:0x4a3a30, skyTurb:0.55, skySunSize:2.2, skySunGlow:1.5, skyExp:0.95, sun:1.05, sunColor:0xffb066, sunElev:8,  fogColor:0x3a2f33, autoExp:0.6 },
+  night:    { skyZenith:0x060a18, skyHorizon:0x12203a, skyGround:0x0a0d12, skyTurb:0.25, skySunSize:0.9, skySunGlow:0.35, skyExp:0.55, sun:0.28, sunColor:0xbfd4ff, sunElev:42, fogColor:0x0a1018, autoExp:0.15 },   // the dim cool "sun" IS the moonlight; autoExp held low or the eye undoes the dark
+  overcast: { skyZenith:0x8b98a4, skyHorizon:0xb9c2c9, skyGround:0x6f6d68, skyTurb:0.92, skySunSize:0.6, skySunGlow:0.15, skyExp:0.85, sun:0.7,  sunColor:0xe8ecef, sunElev:55, fogColor:0x39434b, autoExp:0.6 },
+  blood:    { skyZenith:0x1c0708, skyHorizon:0x8a1f14, skyGround:0x140a08, skyTurb:0.6,  skySunSize:2.6, skySunGlow:1.7, skyExp:0.8,  sun:0.55, sunColor:0xff5a3c, sunElev:16, fogColor:0x2a0d0a, autoExp:0.3 },
+};
+function applySkyMood(k){
+  const m = SKY_MOODS[k]; if(!m) return false;
+  Object.assign(worldCfg, m);
+  worldCfg.sky_hdri = '';   // choosing a procedural mood IS choosing the procedural sky — an active HDRI would silently cover it (the 1223 class of confusion)
+  if(typeof applyWorldCfg==='function') applyWorldCfg();
+  return true;
+}
 function _skyP(){
   const w = (typeof worldCfg!=='undefined') ? worldCfg : null;
   const hex = (h, d) => { if(h==null) return d.slice();
@@ -27800,7 +27821,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1233 · 2026-07-31';
+const BUILD_VERSION = 'build 1234 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37909,7 +37930,22 @@ function renderEditorFields(){
         hint(b,'','0 0 4px').textContent='Motion blur = trail strength. Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }
     { const b=subSec('Sky','sky',true);
-      hint(b,'Equirectangular panorama: <b>.hdr</b> (full HDR lighting) or .jpg/.png. Lights reflections too. Blank = flat color.','2px 0 4px');
+      // build 1234: the procedural dome's own look. These fields have serialized with every level since
+      // 1119; this is the first UI that writes them.
+      hint(b,'<b>Sky look</b> \u2014 the built-in sky. Presets set the whole mood (sky + sun + fog + auto-exposure) and are starting points \u2014 every control below stays yours.','2px 0 4px');
+      { const mr=document.createElement('div'); mr.style.cssText='display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 5px;';
+        for(const [k,lab] of [['day','\u2600 Day'],['sunset','\ud83c\udf05 Sunset'],['night','\ud83c\udf19 Night'],['overcast','\u2601 Overcast'],['blood','\ud83c\udf11 Blood moon']]){
+          const bn=document.createElement('button'); bn.textContent=lab; bn.style.cssText='flex:0 0 auto;padding:4px 10px;font-size:11px;';
+          bn.title='Sets sky colours, haze, sun strength/colour/height, fog colour and auto-exposure together \u2014 a dark sky alone cannot darken the scene while the sun and auto-exposure fight it. Clears any HDRI URL (an HDRI covers the built-in sky).';
+          bn.onclick=()=>{ pushUndoSnapshot(); applySkyMood(k); renderEditorFields(); };
+          mr.appendChild(bn); }
+        b.appendChild(mr); }
+      colorRow(b,'Sky top','skyZenith'); colorRow(b,'Horizon','skyHorizon'); colorRow(b,'Ground band','skyGround');
+      slider(b,'Sky brightness','skyExp',0.05,2,0.05);
+      slider(b,'Haze','skyTurb',0,1,0.05);
+      slider(b,'Sun size','skySunSize',0.3,4,0.1); slider(b,'Sun glow','skySunGlow',0,3,0.05);
+      hint(b,'Sky brightness dims the DOME and the light it casts. For a truly dark scene also lower <b>Sun</b> (Lighting) and <b>Auto-exposure</b> (Camera) \u2014 or use the Night preset, which sets all of it. The day/night cycle animates on top of whatever you author here.','0 0 6px');
+      hint(b,'<b>HDRI sky</b> \u2014 equirectangular panorama: <b>.hdr</b> (full HDR lighting) or .jpg/.png. Lights reflections too. Overrides the sky look above while set.','6px 0 4px');
       const phBtn=document.createElement('button'); phBtn.textContent='\ud83d\udd2d Browse Poly Haven HDRIs'; phBtn.style.cssText='width:100%;padding:6px;font-size:12px;margin:0 0 5px;'; phBtn.onclick=openHdriBrowser; b.appendChild(phBtn);
       texRow(b,'https://\u2026/sky.hdr or .jpg (equirectangular)','sky_hdri');
       const skyPresets=[['Cloudy','https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_puresky_1k.hdr'],['Clear Day','https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/mpumalanga_veld_puresky_1k.hdr'],['Sunset','https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/belfast_sunset_puresky_1k.hdr'],['None','']];   // build 951: Poly Haven pure-sky HDRs (real HDR lighting) replace the old JPG panoramas
