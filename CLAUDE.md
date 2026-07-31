@@ -1519,6 +1519,26 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Attached lights ride duplication (build 1228)
+
+The editor panel's "a lamp+light composite can't be moved/prefabbed as a unit", verified to its real
+residue: build 997's nid-parenting already makes an attached light RIDE its prop (gizmo moves included),
+but the `_pfEntryOf`/`_pfSpawnEntry` pair — which duplicate, Alt-drag, the clipboard (1176), array
+(1225) and prefabs (1030) ALL route through — carried only the prop. Copy a finished lamppost and you
+got a dark pole; 1225's array made that sting ten poles at a time. One fix in the pair covers all five
+paths (1162's design paying off): the entry embeds each attached light via the same `_lightOpts` the
+level file uses — the LIVE local transform when parented (a light nudged after attach copies where it
+sits NOW), world position and host nid stripped — and the spawner rebuilds them bound to the copy's
+FRESH nid, one frame before 997's reconciler snaps the exact parenting.
+
+**Editor-time only, and that gate is the load-bearing line:** `buildLight` changes the scene's light
+count, which must never change during play (636/977/1153/1155). The logic graph's `spawnprop` verb runs
+`_pfSpawnEntry` MID-MATCH — so a runtime-spawned prefab arrives lightless (documented cost) rather than
+recompiling every material in the level on spawn. Hostile entries cap at 8 lights per prop on both the
+capture and spawn sides. `test-1228` executes the capture on a real THREE graph (live transform wins,
+strays excluded, identity stripped), the spawn (fresh-nid rebind, editor gate, caps), and pins that all
+five duplication paths route through the pair. No pins moved.
+
 ## Persistent inventory + checkpoint (build 1227)
 
 1215's recorded other half, closing the feature panel's save-system item. Variables persisted; the

@@ -27736,7 +27736,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1227 · 2026-07-31';
+const BUILD_VERSION = 'build 1228 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35100,6 +35100,20 @@ function _pfEntryOf(o, pivot){
   e.t=[+(e.t[0]-pivot.x).toFixed(3), +(e.t[1]-pivot.y).toFixed(3), +(e.t[2]-pivot.z).toFixed(3),
        +(+e.t[3]).toFixed(3), +(+e.t[4]).toFixed(3), +(+e.t[5]).toFixed(3),
        +(+e.t[6]).toFixed(3), +(+e.t[7]).toFixed(3), +(+e.t[8]).toFixed(3)];
+  // build 1228: ATTACHED LIGHTS RIDE THE ENTRY. Build 997 parents a light to its prop by nid, so a
+  // finished lamppost is prop + light — but this pair (which duplicate, Alt-drag, the clipboard, array
+  // AND prefabs all route through) carried only the prop, so every copy of a lamppost was a dark pole.
+  // The light serializes via the same _lightOpts the level file uses, with its LOCAL transform kept and
+  // its identity (world t, host nid) stripped — the spawner re-binds it to the copy's fresh nid.
+  if(typeof lightModels!=='undefined' && o.userData && o.userData.nid!=null){
+    const nid=o.userData.nid, lts=[];
+    for(const g of lightModels){ const att=g && g.userData && g.userData.att; if(!att || att.nid!==nid) continue;
+      const lo=_lightOpts(g);   // when parented, _lightOpts reports the LIVE local p/q (997) — a light nudged after attach copies where it sits now
+      const lp=(lo.att && lo.att.p) || att.p || [0,0,0], lq=(lo.att && lo.att.q) || att.q || [0,0,0,1];
+      delete lo.t; lo.att={ p:lp.slice(0,3), q:lq.slice(0,4) };
+      lts.push(lo); if(lts.length>=8) break; }
+    if(lts.length) e.lts=lts;
+  }
   return e;
 }
 function _pfPivotOf(list){   // x/z centroid + LOWEST terrain-relative y: instances drop onto any ground
@@ -35143,6 +35157,19 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     if(p.j) jointApply(obj, p.j);
     if(p.veh) vehicleApply(obj, p.veh);
     if(p.trk) trackApply(obj, {w:1});
+    // build 1228: rebuild the entry's attached lights, bound to THIS copy's nid; 997's reconciler
+    // parents them on the next frame. EDITOR-TIME ONLY: buildLight changes the scene's light count,
+    // and the count must never change during play (636/977/1153/1155) — a prefab spawned mid-match by
+    // the logic spawnprop verb arrives lightless rather than freezing every material in the level.
+    if(Array.isArray(p.lts) && typeof buildLight==='function' && obj.userData && obj.userData.nid!=null
+       && (typeof gameOn==='undefined' || !gameOn || (typeof editorOpen!=='undefined' && editorOpen))){
+      for(const lo of p.lts.slice(0,8)){ if(!lo || typeof lo!=='object') continue;
+        const lp=(lo.att && lo.att.p) || [0,0,0], lq=(lo.att && lo.att.q) || [0,0,0,1];
+        buildLight(Object.assign({}, lo, {
+          t:[ t[0]+(+lp[0]||0), t[1]+(+lp[1]||0), t[2]+(+lp[2]||0) ],   // near enough for the one frame before the reconciler snaps the exact local transform
+          att:{ nid:obj.userData.nid, p:lp.slice(0,3), q:lq.slice(0,4) } }));
+      }
+    }
     if(pfMark) obj.userData.pf={ id:pfMark.id, inst:pfMark.inst, slot:pfMark.slot|0 };
     if(cb) cb(obj);
   }, undefined, { trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop')) }, p.mat || (p.tex ? {tex:p.tex} : null), undefined, undefined, p.animClip);
