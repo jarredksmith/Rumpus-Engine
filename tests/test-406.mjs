@@ -5,7 +5,7 @@ const src = gameSource();
 // around walls instead of beelining into them.
 assert(/if\(!NAV\.built\)\{ if\(!NAV\.building && typeof navBuildBegin==='function'\) navBuildBegin\(\); if\(typeof navBuildStep==='function'\) navBuildStep\(5\); \}/.test(src), 'enemy tick builds the nav grid in solo');
 assert(/_repathBudget = 3;   \/\/ cap A\* searches per tick/.test(src), 'enemy tick caps A* searches per frame');
-assert(/_botFollowPath\(en\._nav\|\|\(en\._nav=\{ pos:en\.mesh\.position \}\), td\.tx, td\.tz, dt\)/.test(src), 'chasing enemies follow an A* path to the target');
+assert(/_botFollowPath\(en\._nav\|\|\(en\._nav=\{ pos:en\.mesh\.position \}\), td\.tx, td\.tz, dt, td\.ty\)/.test(src), 'chasing enemies follow an A* path to the target (goal layer picked by the target\'s height since 1202)');
 assert(/let _mvx=dx\/d, _mvz=dz\/d;/.test(src), 'beeline direction is the fallback when no path');
 
 // executable: the shared path-follow returns null (caller beelines) until the grid is built

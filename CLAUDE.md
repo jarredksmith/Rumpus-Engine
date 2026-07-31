@@ -1519,6 +1519,16 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The pursuit remembers which storey (build 1202)
+
+Build 1200's recorded other half, closed: PvE enemies pathed to layer A because `enemyDesiredTarget`
+returned `{tx,tz}` with no height and `en.lkp` stored none — an enemy chasing a player on a roof pathed to
+the floor underneath them. The descriptor now carries `ty` through exactly the five chase/contact/search
+returns (counted by the test), `en.lkp` stores the height the target was SEEN at (the memory includes which
+storey), the caller feeds `near.pos.y`, and the follow-path call hands `td.ty` to 1200's goal-layer pick.
+Patrol/wander/hold returns stay height-less BY DESIGN — a post and a wander point are ground concepts and
+layer A is the right default there. Three pins moved (17, 283, 406), each keeping its intent.
+
 ## The match survives the host (build 1201)
 
 The multiplayer critic's remaining CRITICAL: the host vanishing mid-match reloaded every client's page 1.6

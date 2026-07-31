@@ -45,5 +45,5 @@ assert(/randomWaveDescriptors\(wave, ARENA/.test(sw), 'random mode auto-generate
 assert(/spawns:\s*spawnMarkers\.map/.test(src), 'serializeLevel persists authored spawns');
 assert(/spawns:\s*\{[\s\S]*?isSpawns:\s*true/.test(src), 'editorTargets has a spawns target');
 assert(/function buildSpawnMarker\(opts\)/.test(src), 'spawn marker builder exists');
-assert(/function enemyDesiredTarget\(en, px, pz, dist, now\)/.test(src), 'AI state machine factored out');
+assert(/function enemyDesiredTarget\(en, px, pz, dist, now, py\)/.test(src), 'AI state machine factored out (py since 1202: the pursuit carries the target\'s storey)');
 done('authored enemy spawns + Hunt/Patrol/Hold AI');

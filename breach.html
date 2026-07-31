@@ -18338,7 +18338,7 @@ function alertEnemiesNear(sx, sz, radius){
     if(dx*dx + dz*dz <= r2) alertEnemy(en, sx, sz);
   }
 }
-function enemyDesiredTarget(en, px, pz, dist, now){
+function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = the target's height, so a pursuit ends on the STOREY the target stands on */
   const mode = en.mode || 'hunt';
   // line-of-sight: can this enemy actually SEE the player right now? (same wall test the gun uses)
   const eY = (en.mesh.position.y!=null) ? en.mesh.position.y : 1.4;
@@ -18357,17 +18357,17 @@ function enemyDesiredTarget(en, px, pz, dist, now){
   // HUNT: relentless pursuer. Still chases anywhere, but only "sees" (and fires) with LOS; when sight breaks
   // it heads to the last spot it saw the player rather than x-raying through walls.
   if(mode === 'hunt'){
-    if(sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz }; return { tx:px, tz:pz, chase:true, see:true }; }
+    if(sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; return { tx:px, tz:pz, ty:py, chase:true, see:true }; }
     if(en.lkp){ if(!en.lostAt) en.lostAt = now;
       if(Math.hypot(en.mesh.position.x-en.lkp.x, en.mesh.position.z-en.lkp.z) < 1.4 && (now-en.lostAt) > 2500){ en.lkp=null; }   // reached last spot, gave up the trail
-      else return { tx:en.lkp.x, tz:en.lkp.z, chase:true, see:false };   // hunt the last-known position
+      else return { tx:en.lkp.x, tz:en.lkp.z, ty:en.lkp.y, chase:true, see:false };   // hunt the last-known position
     }
-    return { tx:px, tz:pz, chase:true, see:false };   // never saw it yet -> advance toward it (original hunt feel)
+    return { tx:px, tz:pz, ty:py, chase:true, see:false };   // never saw it yet -> advance toward it (original hunt feel)
   }
 
   // PATROL / HOLD: detection is now gated on BOTH range AND line-of-sight.
   const detect = en.detectR || 18;   // build 620: wider default sight so patrollers notice you a hall earlier
-  if(dist <= detect && sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz }; }
+  if(dist <= detect && sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }
   else if(en.aware){
     // lost sight or range: remember where they were, chase the last spot, then give up after a grace period.
     // A recent gunfire/blast alert extends the window so a sniped enemy actually crosses the map to investigate.
@@ -18376,8 +18376,8 @@ function enemyDesiredTarget(en, px, pz, dist, now){
     if(now - en.lostAt > giveUp) { en.aware = false; en._alertedT = 0; }   // give up and return to patrol/post
   }
   if(en.aware){
-    if(sees && dist <= detect*1.6){ en.lkp = { x:px, z:pz }; return { tx:px, tz:pz, chase:true, see:true }; }   // still in contact
-    if(en.lkp) return { tx:en.lkp.x, tz:en.lkp.z, chase:true, see:false };   // search toward last-known position
+    if(sees && dist <= detect*1.6){ en.lkp = { x:px, z:pz, y:py }; return { tx:px, tz:pz, ty:py, chase:true, see:true }; }   // still in contact
+    if(en.lkp) return { tx:en.lkp.x, tz:en.lkp.z, ty:en.lkp.y, chase:true, see:false };   // search toward last-known position
   }
   const hx = en.home ? en.home.x : en.mesh.position.x, hz = en.home ? en.home.z : en.mesh.position.z;
   if(mode === 'patrol'){
@@ -27368,7 +27368,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1201 · 2026-07-31';
+const BUILD_VERSION = 'build 1202 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32688,7 +32688,7 @@ function loop(){
       for(const pl of players){ const d=Math.hypot(pl.pos.x-en.mesh.position.x, pl.pos.z-en.mesh.position.z); if(d<nd){ nd=d; near=pl; } }
       en._near = near; en._dist = nd;
       en._nearEyeY = (near.eyeY!=null ? near.eyeY : (near.pos.y!=null ? near.pos.y : 1.4));
-      const td = enemyDesiredTarget(en, near.pos.x, near.pos.z, nd, nowMs);
+      const td = enemyDesiredTarget(en, near.pos.x, near.pos.z, nd, nowMs, near.pos.y);
       // build 1077: the moment this enemy goes from oblivious to alerted, exactly once per alert. The edge is
       // watched HERE rather than at the four places that can set `aware` (sight, gunfire, a blast, a rule), so
       // every one of them fires it and none of them fires it twice.
@@ -32787,7 +32787,7 @@ function loop(){
           // build 620: route ALL blocked movement through the nav grid — wandering/searching enemies too, not just
           // active chasers. A patrol enemy heading to a wander/last-known waypoint used to beeline and grind on the
           // corner; now it navigates the halls like a chaser, so it stops getting "confused" around walls/objects.
-          const _wp=_botFollowPath(en._nav||(en._nav={ pos:en.mesh.position }), td.tx, td.tz, dt);
+          const _wp=_botFollowPath(en._nav||(en._nav={ pos:en.mesh.position }), td.tx, td.tz, dt, td.ty);
           if(en._jmpCd>0) en._jmpCd-=dt;
           if(_wp){ const _pdx=_wp.x-en.mesh.position.x, _pdz=_wp.z-en.mesh.position.z, _pl=Math.hypot(_pdx,_pdz);
             if(_pl > 0.5){ _mvx=_pdx/_pl; _mvz=_pdz/_pl; }

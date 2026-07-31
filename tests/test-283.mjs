@@ -19,7 +19,7 @@ assert(en.lkp && en.lkp.x === 10, 'last-known position is recorded while visible
 const fn = extractFunction('enemyDesiredTarget');
 assert(/en\._seesC = \(Math\.abs\(pEyeY - eY\) < 3\.0\) &&/.test(fn), 'detection has a line-of-sight test (cached/throttled, build 546)');
 assert(/if\(dist <= detect && sees\)\{ en\.aware = true;/.test(fn), 'patrol/hold engage requires range AND sight');
-assert(/if\(en\.lkp\) return \{ tx:en\.lkp\.x, tz:en\.lkp\.z, chase:true, see:false \};/.test(fn), 'lost sight -> head to last-known position');
+assert(/if\(en\.lkp\) return \{ tx:en\.lkp\.x, tz:en\.lkp\.z, ty:en\.lkp\.y, chase:true, see:false \};/.test(fn), 'lost sight -> head to last-known position (with its height since 1202 — the memory includes WHICH storey)');
 
 // the per-frame caller faces the player only when seen, and passes eye height for the level check
 assert(/en\._chase = td\.chase; en\._see = !!td\.see;/.test(src), 'caller records whether the enemy sees the target');
