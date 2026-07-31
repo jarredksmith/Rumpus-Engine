@@ -2101,23 +2101,25 @@ The general lesson joins 1141's: **a control loop with any discontinuity in its 
 it.** The adaptive ladder needed hysteresis and majority windows; the exposure meter needed continuity.
 Two pins moved (1180's disable branch, 1182's harness gained the buffer).
 
-## Open work (as of build 1193)
+## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
-**The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:
-1188 collider grid, 1189 PvE cover/flank, 1190 weapon sheet, 1191 enemy tuning, 1192 model instancing,
-1193 effect zones):
-- **In-editor lighting bake for creator levels** — the rendering critic's #2 CRITICAL and the biggest
-  remaining item. Realistic scope: per-vertex sky/sun visibility over static geometry via the 1097 BVH
-  raycaster, run as a budgeted async job; NOT serialized (re-bake behind the level loader when
-  `world.baked`). A full texel lightmap needs UV2 unwrapping of arbitrary GLBs — out of scope.
-- **Two-layer nav** (2 walkable Ys per column, stair links, dirty patches) — multi-storey AI.
-- **Cutscene actor tracks** (poor-man's sequencer).
-- **Incremental Rapier edits + collider derivation in a worker.**
-- **Host migration from last snapshot; delta/relevancy snapshots.**
-- **Per-player variables** — DEFERRED with a reason: the logic runtime's pulses carry no actor identity;
-  threading one through every pulse source and the `wact` relay is its own multi-site build.
+Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
+died on verification. Phase 4's final stretch: 1188 collider grid, 1189 PvE cover/flank, 1190 weapon
+sheet, 1191 enemy tuning, 1192 model instancing, 1193 effect zones, 1194 incremental Rapier statics, 1195
+in-editor lighting bake, 1196 cutscene shot events (the logic graph is the sequencer — this is the "actor
+tracks" answer), 1197 delta/keyframe snapshots (relevancy filtering REJECTED with a reason), 1198/1199
+auto-exposure stability (soft knee; HDRI out of the AO G-buffer), 1200+1202 two-layer nav with dirty
+patches, 1201 host migration, 1203 collider derivation in a worker.
+
+Still open, each with its reason:
+- **Per-player variables** — DEFERRED: the logic runtime's pulses carry no actor identity; threading one
+  through every pulse source and the `wact` relay is its own multi-site build.
 - Verification kills already recorded (do not revisit): texture slots on primitives (871-era), bot
-  bullet tracers (1020), cell-hash enemy separation (arithmetic — not a hotspot).
+  bullet tracers (1020), cell-hash enemy separation (arithmetic — not a hotspot), relevancy snapshot
+  filtering (per-client serialization × N costs more than it saves at ≤60 entities).
+- **Browser verifications the harness cannot do** are accumulating for the user — see the release-blocker
+  list ("What only a human can verify") plus: AE on HDRI with AO up (1199), two-machine host-drop
+  migration (1201), a big-GLB import hitch before/after (1203), bots pathing onto a roof (1200/1202).
 
 Generator roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
