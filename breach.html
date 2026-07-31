@@ -7143,21 +7143,36 @@ function ensureDof(){
   });
   const vert = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
   // reconstruct view-space distance from the depth buffer, compute blur radius from |dist - focus|
+  // build 1241: the DoF stops being blocky. Reported from play: "super blocky and I can't ever get
+  // the settings to look right." Two shader faults, both structural: (1) the tap SPACING scaled with
+  // the blur — step = coc*6 texels, and coc carried uStrength (up to 4), so at strong blur 13 taps
+  // spread across up to ~140 texels: visibly REPEATED IMAGES, which is exactly "blocky". Spacing is
+  // now capped at 1.5 texels between taps — the blur radius saturates (~12 texels/pass, the two
+  // passes compound) instead of ever banding, so cranking Strength can no longer break the image.
+  // (2) every tap weighed by the CENTER's blur only, so sharp in-focus edges smeared into the blurred
+  // field behind them (the halo that made settings feel "never right") — each tap now weighs by its
+  // OWN focus (an in-focus neighbour mostly keeps its colour to itself). Plus a smoothstep CoC for a
+  // soft focus-to-blur transition instead of a linear ramp with a hard cutoff. Honest limits: one
+  // gaussian family for near and far fields (no true bokeh shape), and the saturated radius trades
+  // maximum blur for guaranteed smoothness.
   const frag = [
     'varying vec2 vUv;',
     'uniform sampler2D tColor; uniform sampler2D tDepth;',
     'uniform vec2 uTexel; uniform float uNear; uniform float uFar; uniform float uFocus; uniform float uRange; uniform float uStrength; uniform vec2 uDir;',
     _OETF_GLSL,
     'float viewZ(float d){ float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }',
+    'float cocAt(vec2 uv){ float dd = viewZ(texture2D(tDepth, uv).x); return smoothstep(0.0, 1.0, abs(dd - uFocus) / max(0.001, uRange)); }',
     'void main(){',
-    '  float d = texture2D(tDepth, vUv).x;',
-    '  float dist = viewZ(d);',
-    '  float coc = clamp(abs(dist - uFocus) / max(0.001, uRange), 0.0, 1.0) * uStrength;',  // 0 in focus, ->1 far from focus
-    '  if(coc < 0.01){ vec4 c0 = texture2D(tColor, vUv); gl_FragColor = vec4(_out(c0.rgb), c0.a); return; }',
-    '  vec2 step = uDir * uTexel * coc * 6.0;',
+    '  float cocN = cocAt(vUv);',
+    '  float radius = cocN * clamp(uStrength, 0.0, 4.0) * 6.0;',
+    '  if(radius < 0.35){ vec4 c0 = texture2D(tColor, vUv); gl_FragColor = vec4(_out(c0.rgb), c0.a); return; }',
+    '  float spacing = min(radius / 8.0, 1.5);',
+    '  vec2 stp = uDir * uTexel * spacing;',
     '  vec4 sum = vec4(0.0); float wsum = 0.0;',
-    '  for(int i=-6;i<=6;i++){ float fi=float(i); float w = exp(-fi*fi/18.0);',  // gaussian-ish 13-tap
-    '    sum += texture2D(tColor, vUv + step*fi) * w; wsum += w; }',
+    '  for(int i=-8;i<=8;i++){ float fi=float(i);',
+    '    vec2 uv2 = vUv + stp*fi;',
+    '    float w = exp(-fi*fi/32.0) * (0.25 + 0.75*cocAt(uv2));',
+    '    sum += texture2D(tColor, uv2) * w; wsum += w; }',
     '  vec4 r = sum / wsum; gl_FragColor = vec4(_out(r.rgb), r.a);',
     '}',
   ].join('\n');
@@ -27908,7 +27923,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1240 · 2026-07-31';
+const BUILD_VERSION = 'build 1241 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38049,7 +38064,7 @@ function renderEditorFields(){
       dofCb.onchange=()=>{ pushUndoSnapshot(); worldCfg.dof=dofCb.checked; applyWorldCfg(); renderEditorFields(); };
       const dofSp=document.createElement('span'); dofSp.innerHTML='<b>Depth of field</b> \u2014 blur by distance'; dofRow.appendChild(dofCb); dofRow.appendChild(dofSp); b.appendChild(dofRow);
       if(worldCfg.dof===true){ slider(b,'Focus distance','dofFocus',2,120,1); slider(b,'In-focus range','dofRange',1,80,1); slider(b,'Blur strength','dofStrength',0.1,4,0.1);
-        hint(b,'','0 0 4px').textContent='Focus distance = how far away stays sharp. In-focus range = depth kept sharp around it. Everything else blurs.'; }
+        hint(b,'','0 0 4px').textContent='Focus distance = how far away stays sharp (metres from the camera). In-focus range = depth kept sharp around it \u2014 small range + high strength = strongest look. The blur is smooth at every strength (it saturates rather than ever going blocky).'; }   /* build 1241 */
       // build 1095: filmic pipeline controls — ACES tone mapping + exposure, saved with the level
       const fmRow=document.createElement('label'); fmRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 4px;cursor:pointer;';
       const fmCb=document.createElement('input'); fmCb.type='checkbox'; fmCb.checked=(worldCfg.filmic!==0 && worldCfg.filmic!==false); fmCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';

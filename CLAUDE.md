@@ -1519,6 +1519,26 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The DoF stops being blocky (build 1241)
+
+Reported from play: *"super blocky and I can't ever quite get the settings to look right."* Two
+structural shader faults, not a tuning problem: **the tap spacing scaled with the blur** — `step =
+coc·6` texels with uStrength folded into coc (up to 4), so a strong blur spread 13 taps across as
+much as ~140 texels: visibly repeated images, which is exactly "blocky" — and **every tap was weighed
+by the centre pixel's blur alone**, so sharp in-focus edges smeared halos into the blurred field
+behind them (why no setting ever felt right). Now: spacing hard-capped at 1.5 texels between taps —
+the radius SATURATES (~12 texels/pass, the H and V passes compound) instead of ever banding, so no
+Strength setting can break the image; 17 taps; each tap weighed by its OWN CoC (`0.25 + 0.75·cocAt`)
+so in-focus neighbours mostly keep their colour to themselves; smoothstep CoC for a soft
+focus-to-blur transition. The 1115 encode-once invariant is untouched on both the early-out and blur
+paths. Honest limits: one gaussian family for near and far fields (no true bokeh shape), and maximum
+blur is traded for guaranteed smoothness.
+
+**Capture-verified** (raw ShaderMaterial — the mandatory-probe class): focus 4 m / range 3 /
+strength 3 on the stock frame drops far-field gradient energy **36.0%** vs DoF off while luminance
+holds within 1.8% — a silently-failed shader would have crashed the luminance control. Probe:
+`probe3.html` / `runprobe3.mjs` per the 1237 recipe with a `window.__dof` hook.
+
 ## Weapons can be renamed (build 1240)
 
 Asked from play: "add a sword/handheld weapon (axe, staff)… we have melee, so maybe the answer is
