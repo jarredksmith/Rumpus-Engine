@@ -1519,6 +1519,19 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Co-op kills stop landing flat (build 1220)
+
+The gameplay-feel panel's last MEDIUM, closing the panel entirely. `killEnemy` gates the 0.07 s hitstop on
+`NET.mode==='off'` and `registerLocalKill` gates the triple-kill slow-mo the same way, so a co-op kill
+produced marker + sound only — the crunch that sells a kill was missing in exactly the social mode.
+Slowing the sim online would desync every peer (legitimately unsafe), but a LOCAL cosmetic jolt is not:
+`registerLocalKill` now punches the camera (`shake = max(shake, n>=3 ? 0.15 : 0.06)`) in netplay only,
+bigger on a multi-kill. Solo is byte-unchanged — it keeps its real hitstop (fired in `killEnemy`) and
+slow-mo, so there is no double-crunch. Both host and client kills get it (the client via the `{t:'frag'}`
+credit path that calls `registerLocalKill`). `test-1220` executes all three modes proving solo has no shake
+and its hitstop/slow-mo intact, while co-op host and client jolt without ever touching the networked
+time-scale. **The gameplay-feel critic panel is now fully cleared** (1208–1213, 1219, 1220).
+
 ## The crosshair shows what the gun is doing (build 1219)
 
 The gameplay-feel panel's MEDIUM: build 1161 made movement and airtime cost accuracy, but `#crosshair` was

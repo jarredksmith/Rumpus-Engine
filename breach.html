@@ -27642,7 +27642,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1219 · 2026-07-31';
+const BUILD_VERSION = 'build 1220 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30270,6 +30270,12 @@ function registerLocalKill(){   // call when the LOCAL player gets a kill
   const now=performance.now(); _killTimes.push(now);
   while(_killTimes.length && now-_killTimes[0]>_MK_WIN) _killTimes.shift();
   const n=_killTimes.length;
+  // build 1220: co-op kills used to land FLAT — the 0.07s hitstop (killEnemy) and the triple-kill slow-mo
+  // below are BOTH solo-only, because slowing the sim in netplay would desync every peer. The crunch that
+  // sells a kill is exactly what the social mode lost. Slowing time is unsafe online, but a LOCAL cosmetic
+  // jolt is not: substitute a camera-shake punch on the killing client (bigger on a multi-kill). Solo is
+  // untouched — it keeps its real hitstop, so there is no double-crunch there.
+  if(NET.mode!=='off' && typeof shake!=='undefined') shake = Math.max(shake, n>=3 ? 0.15 : 0.06);
   if(n>=2){ showMultiKill(n); if(NET.mode==='off' && n>=3) hitStop=Math.max(hitStop, 0.2); }   // solo: dramatic slow-mo on triple+
 }
 // ---- Combat feel: floating damage numbers, enemy hit-flash, hitstop ----
