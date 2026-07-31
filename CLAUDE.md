@@ -1858,6 +1858,35 @@ the query list but left its Rapier body — an invisible physics wall that dynam
 Hide now removes the body; show restores it through the same idempotent door. Two pins moved (125, 495 —
 destroy-clears and the debounce tick; intents kept).
 
+## Baked ambient occlusion for creator levels (build 1195)
+
+The rendering critic's #2 CRITICAL, closed at its realistic scope. A hand-built interior was lit as if
+outdoors — the hemisphere fill, the environment probe and the bounce all arrive at full strength inside a
+windowless room, with only SSAO dissenting. Generated arenas have a real lightmap; creator levels
+(arbitrary GLBs — no UV2 to bake into) get the PER-VERTEX version: every static-prop vertex casts a
+14-ray golden-angle hemisphere, its colour becomes `0.35 + 0.65 × skyVisibility`, and
+`vertexColors = true` multiplies it in. Occluders split by COST: every OTHER collider tests as its
+overall box (a slab test over the 1188 grid's candidates — a primitive-built room's walls are separate
+props, so boxes ARE its geometry), while the vertex's OWN model — the roof that makes an interior an
+interior — tests real triangles through the 1097 BVH. A 0.15 ray near-clip keeps a vertex from being
+shadowed by its own wall's box; self's collider boxes are skipped outright (triangles, never its own fat
+box). All executed in `test-1195` against real three geometry.
+
+The job is frame-budgeted (6 ms/frame), gated on `_glbPending`, re-requested when the collider count
+changes (a late-loading GLB must not stay unbaked), and `worldCfg.baked` rides the whole-world
+serialization so a shared level re-bakes deterministically wherever it opens — the bake itself is NEVER
+serialized. Two invariants that are each a black-mesh bug if lost:
+- **Copies of one GLB share geometry** — the bake writes into a private marker-guarded clone.
+- **`vertexColors=true` on a shared material** demands a colour attribute on EVERY mesh using it (a
+  missing attribute samples 0,0,0): after the bake, any unbaked sharer (a dynamic copy of a static
+  model) gets an all-white attribute; and the primitive instancing batch STRIPS `vertexColors` from its
+  material clone, because its shared unit geometry has no attribute at all.
+
+Checkbox in the Lighting fold ("Baked ambient occlusion (per-vertex)"); off = clean unbake. Limitation
+stated in the hint: a plain box only darkens at its corners — per-vertex is only as good as the
+tessellation. NOT capture-verified; the browser pass is a windowless primitive room and a GLB interior,
+baked and unbaked. One pin moved (1188's consumer count — the bake is the grid's ninth consumer).
+
 ## Open work (as of build 1193)
 
 **The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:
