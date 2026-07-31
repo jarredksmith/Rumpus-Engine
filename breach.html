@@ -27898,7 +27898,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1238 · 2026-07-31';
+const BUILD_VERSION = 'build 1239 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31897,6 +31897,14 @@ const MANTLE_MIN = STEP + 0.05, MANTLE_MAX = 2.05, MANTLE_DUR = 0.42;
 // build 644: grabbing a ledge HANGS you (ledgeHang anim); from the hang you PULL UP (Space / hold forward, anim
 // ledgeUp) or DROP DOWN (Ctrl / back, anim ledgeDrop). _ledge holds the phase + the hang/top positions.
 const LEDGE_PULL_DUR = 0.5, LEDGE_DROP_DUR = 0.3, LEDGE_HANG_AUTO = 2.5;
+// build 1239: REPORTED FROM PLAY — "the ledge hang positions the chest/belly at the edge, torso/arms/
+// head way over the top, clinging to thin air." Build 966's hang height put the avatar's HEAD TOP
+// exactly at the lip (hy = lip + EYE - avatarHeight*1.02 -> head at lip by construction, whatever the
+// model's height). But a hang pose RAISES THE ARMS ~0.4 above the head — so the hands gripped air well
+// above the edge and half the body cleared the lip. The sink drops the whole hang so raised hands land
+// ON the lip and the eyes sit ~0.45 under it: in first person you look at the wall face with the edge
+// just above view centre (the standard hang framing), in third person the fingers curl over the edge.
+const LEDGE_HANG_SINK = 0.42;
 let _ledge = null;       // { ph:'hang'|'pull'|'drop', t, sx,sz,fy0, hy, tx,tz,ty }
 let _climbAnim = 0;      // current climbing anim slot for the 3rd-person body ('ledgeHang'/'ledgeUp'/'ledgeDrop'/'ladderUp'/'ladderDown'/'ladderIdle'), 0 = none
 // build 644: climbing -> small int code carried in the network snapshot so co-op peers see your climb animation.
@@ -33012,7 +33020,7 @@ function loop(){
       let _fd=0.55; for(let _d=0.08;_d<=0.9;_d+=0.03){ const _t2=surfaceTopAt(player.pos.x+forward.x*_d, player.pos.z+forward.z*_d); if(isFinite(_t2) && _t2>=_lt-0.08){ _fd=_d; break; } }
       const _gap=0.34, _hx=player.pos.x+forward.x*(_fd-_gap), _hz=player.pos.z+forward.z*(_fd-_gap);
       let _vh=1.7; try{ if(typeof _ownAvatar!=='undefined' && _ownAvatar && _ownAvatar.visible){ const _nw=performance.now(); if(_nw-_avHCacheT>1000){ _avHCacheT=_nw; const _bb=_avHBox.setFromObject(_ownAvatar); const _h2=_bb.max.y-_bb.min.y; _avHCache=(_h2>1.1 && _h2<3)?_h2:1.7; } _vh=_avHCache; } }catch(e){}   // build 1168: a full-subtree Box3 traversal ran every airborne-forward frame; the avatar's height changes ~never
-      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:player.yaw, fy0:player.pos.y, hy:_lt + EYE - _vh*1.02, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE };
+      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:player.yaw, fy0:player.pos.y, hy:_lt + EYE - _vh*1.02 - LEDGE_HANG_SINK, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE };
       player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
   }
   // build 1160: same pattern as the slide buffer (926). Grounded refreshes the coyote window; a press

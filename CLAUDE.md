@@ -1519,6 +1519,18 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The ledge hang sinks below the lip (build 1239)
+
+Reported from play: the hang "positions the chest/belly at the edge, torso/arms/head way over the
+top, clinging to thin air." Build 966's hang height puts the avatar's HEAD TOP exactly at the lip BY
+CONSTRUCTION (`hy = lip + EYE − vh·1.02` — the vh term cancels), whatever the model's height. Right
+for a body standing at a wall; wrong for a HANG, whose pose raises the arms ~0.4 above the head — so
+the hands gripped air above the edge and half the body cleared the lip. `LEDGE_HANG_SINK = 0.42`
+drops the whole hang: head top ~0.45 under the lip (raised hands land ON the edge), eyes ~0.45 under
+it (first person looks at the wall face with the edge just above view centre — the standard framing).
+The avatar-height sizing survives (a short model still hangs by its hands), the pull-up still ends
+standing on top. Browser-verify the third-person look once; the geometry is test-computed.
+
 ## Real camera motion blur (build 1238) — the rendering deferred-list opens
 
 Asked directly from play: "Did you implement actual motion blur yet or are we still faking it?" We
