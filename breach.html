@@ -27821,7 +27821,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1234 · 2026-07-31';
+const BUILD_VERSION = 'build 1235 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30047,7 +30047,10 @@ function killEnemy(en, sx, sz){
   if(sx!=null){ _rdx=en.mesh.position.x-sx; _rdz=en.mesh.position.z-sz; const _l=Math.hypot(_rdx,_rdz)||1; _rdx/=_l; _rdz/=_l; }
   else { const _a=Math.random()*6.2832; _rdx=Math.cos(_a); _rdz=Math.sin(_a); }
   const _rag = (gameCfg.ragdoll && typeof spawnCorpse==='function') ? spawnCorpse(en.mesh, _rdx, 0, _rdz, 4.5+Math.random()*3.5) : false;
-  if(!_rag){ if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } if(typeof _poseDeath==='function') _poseDeath(en.mesh); _fallbackDeath(en.mesh, _rdx, _rdz); }   // build 994: no ragdoll -> topple + sink + fade instead of vanishing on the spot
+  if(!_rag){
+    if(typeof _clipDeath==='function' && _clipDeath(en.mesh, sx, sz)){ /* build 1235: the model ships a death animation — it PLAYS (mixer kept), instead of being baked to its last frame and toppled a second time on top */ }
+    else { if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } if(typeof _poseDeath==='function') _poseDeath(en.mesh); _fallbackDeath(en.mesh, _rdx, _rdz); }   // build 994: no ragdoll -> topple + sink + fade instead of vanishing on the spot
+  }
   enemies.splice(enemies.indexOf(en),1);
   if(!_fr) score += 100; updateHUD();
   if(en.exploder && !en._detonated){ en._detonated=true; if(typeof explodeAt==='function') explodeAt(en.mesh.position.clone(), en.blastR||6, en.blastDmg||40, en.id); }   // build 628: a downed Sapper still goes off (kill it from range)
@@ -30071,13 +30074,43 @@ function detonateExploder(en){
 // topple, a hold, and a sink+fade on cloned materials (clones so shared model masters stay opaque).
 let _fadeCorpses=[];
 const FADE_CORPSE_MAX=24;
-function _removeFadeCorpse(c){ try{ scene.remove(c.mesh); (c.mats||[]).forEach(m=>{ try{ m.dispose(); }catch(e){} }); }catch(e){} }
+function _removeFadeCorpse(c){ try{ if(c.mixer){ const mi=mixers.indexOf(c.mixer); if(mi>=0) mixers.splice(mi,1); } scene.remove(c.mesh); (c.mats||[]).forEach(m=>{ try{ m.dispose(); }catch(e){} }); }catch(e){} }   /* build 1235: a clip corpse keeps its mixer alive until it leaves — release it on EVERY exit (natural end and the cap-shift alike) or every death leaks a mixer update forever */
+function _fcCloneMats(mesh){   // build 1235: own the materials so the corpse fade never dims a live enemy sharing them
+  const mats=[];
+  mesh.traverse(o=>{ if(o.isMesh && o.material){ const arr=Array.isArray(o.material)?o.material:[o.material]; const cl=arr.map(m=>{ const c=m.clone(); c.transparent=true; return c; }); o.material=Array.isArray(o.material)?cl:cl[0]; for(const c of cl) mats.push(c); } });
+  return mats;
+}
+// build 1235: REPORTED FROM PLAY (with a screenshot of a corpse standing on its head): "enemies go
+// stiff and bob up and get stuck in the floor on death. They aren't playing their death animation."
+// The machinery has existed all along — the die-clip taxonomy (die/death/dead/killed regex), LoopOnce +
+// clampWhenFinished, even directional variants the BOTS have played since 21719 — but killEnemy's
+// no-ragdoll branch spliced the mixer, BAKED the die clip's final frame in zero seconds (_poseDeath),
+// then stacked the generic 86-degree topple ON TOP. A model whose die clip already lies the body down
+// ended ~180 degrees over (head-down), and 1175's bbox measure — bind pose, since Box3.setFromObject
+// cannot see skinned deformation — solved a resting height for a pose the body wasn't in: the bob, the
+// buried corpse. A model that SHIPS a death animation now simply plays it: mixer kept alive, no
+// quaternion, no height solve — the clip owns the pose — then the linger, sink and fade. Models
+// WITHOUT a die clip keep 994/1175's topple byte-identically. The gate reads the die-family keys
+// DIRECTLY (acts.die/dieFront/dieBack): _stateActionKey walks the fallback chain, and die's fallback
+// is IDLE — asking it "is there a die clip?" answers yes for every model that can stand.
+function _clipDeath(mesh, sx, sz){
+  const v = mesh.userData && mesh.userData.visual, acts = v && v.userData && v.userData.stateActions;
+  if(!acts || !(acts.die || acts.dieFront || acts.dieBack) || !mesh.userData.mixer || typeof setEnemyAnimState!=='function') return false;
+  let st='die';
+  if(sx!=null && typeof _reactDir==='function'){ const d=_reactDir(sx-mesh.position.x, sz-mesh.position.z, mesh.rotation.y); st=(d==='Front')?'dieBack':(d==='Back')?'dieFront':'die'; }   // shot from the front falls backward — the bots' rule
+  try{ setEnemyAnimState(mesh, st); }catch(e){ return false; }
+  const key = (typeof _stateActionKey==='function') ? _stateActionKey(acts, st) : null;
+  const act = key && acts[key];
+  const dur = Math.max(0.3, Math.min(5, (act && act.getClip && act.getClip().duration) || 1.2));
+  _fadeCorpses.push({ mesh, mats:_fcCloneMats(mesh), t:0, y0:mesh.position.y, clip:true, dur, mixer:mesh.userData.mixer });
+  if(_fadeCorpses.length>FADE_CORPSE_MAX) _removeFadeCorpse(_fadeCorpses.shift());
+  return true;
+}
 function _fallbackDeath(mesh, dx, dz){
   try{
     const l=Math.hypot(dx,dz)||1;
     const ax=new THREE.Vector3(dz/l, 0, -dx/l);   // horizontal axis perpendicular to the hit -> the body tips AWAY from the shooter
-    const mats=[];
-    mesh.traverse(o=>{ if(o.isMesh && o.material){ const arr=Array.isArray(o.material)?o.material:[o.material]; const cl=arr.map(m=>{ const c=m.clone(); c.transparent=true; return c; }); o.material=Array.isArray(o.material)?cl:cl[0]; for(const c of cl) mats.push(c); } });
+    const mats=_fcCloneMats(mesh);
     // build 1175: the lie-down drop is MEASURED, not the old hardcoded 1.0. A capsule (radius 0.7) lying
     // down needs 0.7 — it was buried 0.3; a feet-origin GLB (the chub character) needs to RISE by half its
     // width, and dropping it 1.0 put the origin a metre underground: "falls over, goes halfway through the
@@ -30105,6 +30138,16 @@ const _fcQ = new THREE.Quaternion();
 function updateFadeCorpses(dt){
   const TOPPLE=0.45, HOLD=2.2, SINK=0.9;
   for(let i=_fadeCorpses.length-1;i>=0;i--){ const c=_fadeCorpses[i]; c.t+=dt;
+    if(c.clip){   // build 1235: the death CLIP owns the pose — no topple, no height solve; linger, then sink + fade
+      const HOLD2=1.6, SINKC=0.9;
+      if(c.t < c.dur + HOLD2){ /* the mixer (still registered) plays the clip; the body lingers clamped on its last frame */ }
+      else if(c.t < c.dur + HOLD2 + SINKC){
+        const k=(c.t - c.dur - HOLD2)/SINKC;
+        c.mesh.position.y = c.y0 - k*1.2;
+        for(const m of c.mats){ if(m.opacity>1-k) m.opacity=1-k; }
+      } else { _removeFadeCorpse(c); _fadeCorpses.splice(i,1); }
+      continue;
+    }
     if(c.t<TOPPLE){
       const k=c.t/TOPPLE, e=k*k*(3-2*k);   // smoothstep: slow tip, fast slam
       _fcQ.setFromAxisAngle(c.ax, e*1.5);

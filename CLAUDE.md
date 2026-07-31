@@ -1519,6 +1519,30 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## A death animation finally plays (build 1235)
+
+Reported from play with a screenshot of a corpse standing on its head: *"Enemies go stiff and bob up
+and get stuck in the floor on death. They aren't playing their death animation."* All three symptoms
+were one path: killEnemy's no-ragdoll branch spliced the mixer, had `_poseDeath` BAKE the die clip's
+final frame in zero seconds, then stacked 994's generic 86° topple ON TOP — a clip that already lies
+the body down ended ~180° over (the head-stand), and 1175's bbox solve measured the BIND pose
+(`Box3.setFromObject` cannot see skinned deformation), placing a resting height for a pose the body
+wasn't in: the bob, the burial. The machinery to do it right existed all along — the die-clip
+taxonomy (`/die|death|dead|killed|defeat/i`), LoopOnce + clampWhenFinished, directional variants the
+BOTS have played since 21719.
+
+`_clipDeath(mesh, sx, sz)`: a model that ships a die-family clip now PLAYS it — mixer kept alive, no
+quaternion, no height solve (the clip owns the pose), directional variant from the shot direction
+(shot from the front falls backward — the bots' rule) — then lingers clamped on its last frame, sinks
+and fades. Models WITHOUT a die clip keep 994/1175's topple byte-identically. Two traps in it, both
+pinned: **the gate reads `acts.die/dieFront/dieBack` DIRECTLY** — `_stateActionKey` walks the fallback
+chain and die's fallback is IDLE, so asking it "is there a die clip?" answers yes for any model that
+can stand; and **`_removeFadeCorpse` releases the mixer on EVERY exit** (natural end and the
+FADE_CORPSE_MAX cap-shift alike), or each death leaks a mixer update forever. `_fcCloneMats` is the
+factored material-clone both roads share (the fade must never dim a live enemy sharing materials).
+The ragdoll path still bakes the final frame deliberately — physics owns that motion. Three pins moved
+(779, 994×2 — the old road is now the else of the clip-first try; intents kept).
+
 ## The sky becomes authorable (build 1234)
 
 Reported from play: *"How can you change the sky color? No matter what it's always bright."* Two
