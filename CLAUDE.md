@@ -1519,6 +1519,52 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The match survives the host (build 1201)
+
+The multiplayer critic's remaining CRITICAL: the host vanishing mid-match reloaded every client's page 1.6
+seconds later. Now `netHostLost` migrates instead — only a lobby-phase loss (nothing worth saving) or a
+migration that itself times out (40 s) takes the old reload road, which lives on as `_migFail`.
+
+Four decisions carry the design:
+- **The election has no round to lose.** Every peer already holds the same roster from the snapshots, so
+  `_migRank(myId, playerIds)` computes the SAME deterministic order everywhere (sorted ids, the dead host's
+  id 0 excluded, iteration-order independent — tested). Rank 0 promotes immediately; rank r attempts to
+  JOIN the migrated room every 2.5 s and only CLAIMS it after r×4 s — so a dead rank (a bot's id in the
+  roster, a double-drop) delays the cascade, never deadlocks it. Losing the claim race returns
+  `unavailable-id`, which demotes the loser cleanly to client of whoever won. A lone survivor is rank 0:
+  a co-op partner closing their laptop promotes you instantly and the match simply continues.
+- **The migrated room lives at a DERIVED peer id** — `_migPid(code, gen)` = `breachfps-<code>-m<gen>` —
+  because the dead host's own id can stay reserved at the PeerJS broker long past our window; claiming a
+  fresh deterministic id beats racing a timeout we don't control. Every peer bumps `NET.migGen` once per
+  observed loss, so a second migration derives the same `-m2` everywhere. Cost, recorded: the room vanishes
+  from the lobby directory (no keepalive re-registration) and NEW joiners can't find the migrated session —
+  migration serves the players already in it.
+- **State comes from the last snapshot.** `_migAdoptMirrors` promotes the client mirrors to the
+  authoritative arrays: enemies respawn through the real `spawnEnemy` at their mirrored positions with the
+  type+hp that KEYFRAMES now carry (`o.ty`/`o.hp`, keyframes only — the delta key is unchanged, so 1197's
+  bandwidth win survives; the mirror remembers them, plus `_puKind` on powerup meshes), hp clamped to the
+  type's max, a pre-1201 mirror demoting to grunt rather than failing. Coins and powerups keep their
+  network ids (clients already hold meshes under them) and the id fountains advance past them. ALL
+  remote-player entries drop at promotion — rejoiners re-appear on their first state message; the dead host
+  and bots never do. Chests are already real objects on a client and simply stay.
+- **Rejoiners keep their identity.** The old id rides the connection METADATA (available before 'open', so
+  the welcome and every score/team lookup are right from the first byte); `_hostOnConnection` honours it
+  when free and the fountain never falls behind. The rejoin welcome is inert on arrival (`NET.joined`
+  guards a re-startGame) except an id rebind when the old id was taken, and skips the level serialization —
+  the rejoiner is already standing in the level. Scores (`NET.duelScore`), teams and KOTH state are client
+  mirrors already, so the promoted host inherits them by doing nothing.
+
+Two literals died on the way: the host is **not id 0** anymore — the snapshot's self-entry is
+`id:NET.myId`, the third-party relay check compares `msg.to !== NET.myId`, and the welcome keys the host's
+character by a new `hid` field. All three are 0 for an original host, so nothing moved for existing play.
+`_hostOnConnection` is one factored function attached by BOTH `hostStart` and `_migPromote` (counted in the
+test) — the 1158 lesson, applied before the drift instead of after.
+
+**Honest limits, recorded not hidden:** logic-graph variable state and PvP bots are host-local and do not
+migrate; the objective timers migrate at snapshot resolution (0.1 s). `test-1201` executes the election and
+the whole adoption path and pins every wiring point. NOT verifiable headless: a real two-machine
+drop-the-host session — that is a browser pass with two devices.
+
 ## The nav grid learns a second storey (build 1200)
 
 The critic roadmap's multi-storey AI item. The grid stored ONE walkable Y per column, so a cell under a roof

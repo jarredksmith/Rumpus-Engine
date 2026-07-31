@@ -11,7 +11,7 @@ const up = extractFunction('_unpackGrip');
 assert(/a\.length>=7[\s\S]*?\{ x:\+a\[0\], y:\+a\[1\], z:\+a\[2\], yaw:\+a\[3\], pitch:\+a\[4\], roll:\+a\[5\], scale:\+a\[6\] \}/.test(up), 'unpacks the array back into a grip');
 
 // sent on every state path
-assert(/\{ id:0, p:\[player\.pos\.x,player\.pos\.y,player\.pos\.z\], y:player\.yaw, pi:player\.pitch, w:curWep, g:_packGrip\(\)/.test(src), 'host snapshot sends the host grip (weapon key, build 520)');
+assert(/\{ id:NET\.myId, p:\[player\.pos\.x,player\.pos\.y,player\.pos\.z\], y:player\.yaw, pi:player\.pitch, w:curWep, g:_packGrip\(\)/.test(src), 'host snapshot sends the host grip (weapon key, build 520; id is NET.myId since 1201 — 0 for an original host, the kept id for a promoted one)');
 assert(/t:'st', p:\[player\.pos\.x,player\.pos\.y,player\.pos\.z\], y:player\.yaw, pi:player\.pitch, w:curWep, g:_packGrip\(\)/.test(src), 'client state sends its grip (weapon key, build 520)');
 assert(/g:\(rp\.grip\?\[rp\.grip\.x,rp\.grip\.y,rp\.grip\.z,rp\.grip\.yaw,rp\.grip\.pitch,rp\.grip\.roll,rp\.grip\.scale\]:null\)/.test(src), 'host re-broadcasts each peer grip');
 

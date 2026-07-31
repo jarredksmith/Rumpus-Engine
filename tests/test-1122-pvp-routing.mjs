@@ -48,7 +48,7 @@ const src = gameSource();
 // ---------------------------------------------------------------- the routing side
 {
   const h = extractFunction('handleClientMsg');
-  assert(/msg\.to != null && \+msg\.to !== 0 && \+msg\.to !== id/.test(h), 'the host forwards anything addressed to a third player');
+  assert(/msg\.to != null && \+msg\.to !== NET\.myId && \+msg\.to !== id/.test(h), 'the host forwards anything addressed to a third player (the host recognises itself by its REAL id since 1201, which is 0 for an original host)');
   assert(/Object\.assign\(\{\}, msg, \{ from: id \}\)/.test(h),
     '...rewriting `from` to the connection\'s own id, so a client cannot forge the attacker');
   assert(/delete fwd\.to;/.test(h), '...and stripping the routing field before delivery');

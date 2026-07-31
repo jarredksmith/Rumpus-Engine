@@ -20710,6 +20710,9 @@ const NET = {
   _hostSeen:0,         // build 578: client -> last time (ms) the host sent anything
   _liveT:0,            // throttle for the liveness check
   _lost:false,         // client: guards a one-time "host disconnected" teardown
+  migGen:0,            // build 1201: host-migration generation — the migrated room lives at '<code>-m<gen>'
+  _mig:false,          // build 1201: a migration is in flight (guards double-starts; cleared on promote/rejoin)
+  _maxPid:0,           // build 1201: highest player id ever seen in a snapshot (a promoted host's id fountain)
 };
 const NET_TIMEOUT_MS = 8000;   // build 578: peers send ~20x/sec in-game; 8s of total silence = a real drop, not lag
 // Pure: given a map of id -> last-seen timestamp, return ids that have gone silent past the timeout.
@@ -23168,9 +23171,109 @@ function dropClient(pid, why){
 function netHostLost(){
   if(NET._lost) return; NET._lost=true;
   if(typeof stopLobbyKeepalive==='function') stopLobbyKeepalive();
+  // build 1201: mid-match the session MIGRATES instead of dying — one surviving peer is promoted from its
+  // last snapshot and everyone else reconnects to it. Only a lobby-phase loss (nothing to save) or a
+  // migration that itself times out still takes the old road home.
+  if(gameOn && NET.roomCode && typeof netMigrateBegin==='function'){ netMigrateBegin(); return; }
+  _migFail();
+}
+function _migFail(){
   if(typeof netStatus==='function') netStatus('Host disconnected — returning to menu…');
   if(typeof toast==='function') toast('Host disconnected');
   setTimeout(()=>{ NET.mode='off'; NET.gameMode='coop'; try{ location.reload(); }catch(e){} }, 1600);
+}
+// ---------- build 1201: HOST MIGRATION — the match survives the host ----------
+// The election needs NO coordination round: every peer knows the same roster from the snapshots, so the
+// SAME deterministic rank order exists on every machine (bots can hold ranks — they simply never claim, and
+// the stagger walks past them). The migrated room lives at a DERIVED peer id ('<code>-m<gen>') because the
+// dead host's own id can stay reserved at the broker long past our window — claiming a fresh id is
+// deterministic where re-claiming the old one is a race against a timeout we don't control. Every peer
+// increments its generation once per observed host loss, so a second migration derives the same '-m2'
+// everywhere. State comes FROM THE LAST SNAPSHOT: the promoted peer adopts its own client mirrors as the
+// new authoritative world. Honest limits, recorded not hidden: logic-graph variable state and PvP bots are
+// host-local and do not survive; a level's chests/coins/powerups, enemies (type + hp ride keyframes for
+// exactly this), wave, scores and teams all do.
+function _migPid(code, gen){ return 'breachfps-'+code+'-m'+(gen|0); }
+function _migRank(myId, playerIds){
+  const ids=[+myId]; for(const v of (playerIds||[])){ const n=+v; if(n!==0 && n!==+myId) ids.push(n); }   // 0 is the dead host
+  ids.sort((a,b)=>a-b); return ids.indexOf(+myId);
+}
+function _migAdoptMirrors(){
+  // remote-player entries are dropped wholesale (rejoiners re-appear on their first state message; the dead
+  // host and any bots simply never do), and every client mirror is promoted to the real authoritative array.
+  for(const id in NET.players){ try{ removeRemotePlayer(+id); }catch(e){} }
+  NET.players={};
+  let adopted={ enemies:0, coins:0, powerups:0 };
+  for(const id in NET.enemyMeshes){ const em=NET.enemyMeshes[id]; const m=em.mesh;
+    try{
+      spawnEnemy({ x:m.position.x, z:m.position.z, type:(em.ty && typeof ENEMY_TYPES!=='undefined' && ENEMY_TYPES[em.ty]) ? em.ty : 'grunt' });
+      const ne=enemies[enemies.length-1];
+      if(ne && em.hp>0) ne.hp=Math.min(ne.maxHp, +em.hp);   // keyframes carry ty+hp for exactly this moment
+      adopted.enemies++;
+    }catch(e){}
+    scene.remove(m); if(m.userData && m.userData.mixer){ const mi=mixers.indexOf(m.userData.mixer); if(mi>=0) mixers.splice(mi,1); }
+  }
+  NET.enemyMeshes={};
+  for(const id in NET.coinMeshes){ const m=NET.coinMeshes[id];
+    coins.push({ id:+id, mesh:m, spin:Math.random()*6.28, life:25, value:1 });
+    if(+id>=nextCoinId) nextCoinId=+id+1; adopted.coins++; }
+  NET.coinMeshes={};
+  for(const id in NET.powerupMeshes){ const m=NET.powerupMeshes[id];
+    powerups.push({ id:+id, x:m.position.x, z:m.position.z, kind:(m.userData&&m.userData._puKind)||'health', interact:false, ready:m.visible, cd:0, mesh:m });
+    if(+id>=_puId) _puId=+id+1; adopted.powerups++; }
+  NET.powerupMeshes={};
+  NET.deadChests={};                                        // chests are already REAL objects on a client
+  NET.nextId=Math.max(NET.nextId, (NET._maxPid|0)+1, (+NET.myId|0)+1);
+  return adopted;
+}
+function _migPromote(rank){
+  if(NET.mode==='host') return;
+  try{ _migAdoptMirrors(); }catch(e){}
+  NET.mode='host'; NET.conn=null; NET.conns={}; NET._seen={}; NET._lost=false; NET.sentProps=new Map();
+  const pid=_migPid(NET.roomCode, NET.migGen);
+  try{ if(NET.peer) NET.peer.destroy(); }catch(e){}
+  NET.peer=new Peer(pid, _peerOpts());
+  NET.peer.on('open', ()=>{ NET._mig=false; netStatus('Host left — YOU are the new host'); if(typeof toast==='function') toast('You are the new host'); showRoomBadge(NET.roomCode); });
+  NET.peer.on('connection', _hostOnConnection);
+  NET.peer.on('error', e=>{
+    if(e && e.type==='unavailable-id'){                      // someone claimed the slot first: be their client
+      NET.mode='client'; try{ NET.peer.destroy(); }catch(_){}
+      setTimeout(()=>_migJoinLoop(rank||0), 400);
+    } else if(!NET._mig){ netStatus('Host error: '+(e&&e.type||e)); }
+  });
+}
+function _migJoinLoop(rank){
+  if(!NET._mig) return;
+  if(performance.now()>NET._migDeadline){ NET._mig=false; _migFail(); return; }
+  const hostPid=_migPid(NET.roomCode, NET.migGen);
+  const p=new Peer(_peerOpts());
+  let settled=false;
+  const fail=()=>{ if(settled) return; settled=true; try{ p.destroy(); }catch(e){}
+    if(performance.now() > NET._migStart + rank*4000) _migPromote(rank);   // my turn in the cascade: claim it
+    else setTimeout(()=>_migJoinLoop(rank), 2500); };
+  p.on('open', ()=>{
+    const conn=p.connect(hostPid, { reliable:true, metadata:{ rejoin:NET.myId, name:NET.name } });
+    conn.on('open', ()=>{ settled=true;
+      NET.peer=p; NET.conn=conn; NET.mode='client'; NET._lost=false; NET._mig=false; NET._hostSeen=performance.now();
+      conn.send({t:'name', n:NET.name, char:myCharCfg()});
+      netStatus('Migrated — rejoined the new host'); if(typeof toast==='function') toast('Rejoined — new host found'); });
+    conn.on('data', msg=>handleHostMsg(msg));
+    conn.on('close', ()=>{ if(!settled) fail(); else if(gameOn) netHostLost(); else netStatus('Disconnected from host'); });
+    conn.on('error', ()=>{ if(!settled) fail(); else if(gameOn) netHostLost(); });
+    setTimeout(()=>{ if(!settled) fail(); }, 4000);          // 'peer-unavailable' can be slow to arrive
+  });
+  p.on('error', ()=>fail());
+}
+function netMigrateBegin(){
+  if(NET._mig) return;
+  NET._mig=true; NET.migGen=(NET.migGen|0)+1; NET._migStart=performance.now(); NET._migDeadline=NET._migStart+40000;
+  const rank=_migRank(NET.myId, Object.keys(NET.players));
+  try{ if(NET.conn) NET.conn.close(); }catch(e){}
+  try{ if(NET.peer) NET.peer.destroy(); }catch(e){}
+  NET.peer=null; NET.conn=null;
+  netStatus('Host disconnected — migrating ('+(rank===0?'promoting you':'finding the new host')+')…');
+  if(typeof toast==='function') toast('Host lost — migrating…');
+  if(rank===0) _migPromote(0); else _migJoinLoop(rank);
 }
 // build 1164: BOUND THE MOVEMENT CLAIM. The host used to write whatever position a client reported,
 // verbatim — teleport/noclip/speedhack were one console line and propagated to every peer as truth. Full
@@ -23214,6 +23317,7 @@ function upsertEnemyMesh(e){
   }
   em.target.set(e.p[0], e.p[1], e.p[2]);
   em.hd=e.hd||0; em.hs=e.hs||0;
+  if(e.ty!=null){ em.ty=e.ty; em.hp=e.hp; }   /* build 1201: keyframe type+hp, adopted verbatim if this client is ever promoted */
 }
 function upsertCoinMesh(c){
   let m=NET.coinMeshes[c.id];
@@ -23252,7 +23356,7 @@ function _snapDelta(full, all, prev, keyOf){
   return { list, gone: gone.length ? gone : undefined };
 }
 function serializeWorld(){
-  const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving; build 1071: ac/aq = the action one-shot peers replay
+  const P=[{ id:NET.myId, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving; build 1071: ac/aq = the action one-shot peers replay
   for(const id in NET.players){ const rp=NET.players[id];
     P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1), cl:(rp.cl||0), c:(rp.car||undefined) }); }
   for(const b of bots){ if(b.dead && !b._dying) continue; P.push({ id:b.id, p:[b.pos.x,EYE,b.pos.z], y:b.yaw, pi:0, w:(b.wep||'rifle'), hp:(b.dead?0:b.hp), hd:b._netHitDir||0, hs:b._netHitSeq||0, n:b.name }); }   // build 502: keep dead-but-dying bots in the snapshot (+ hd/hs) so clients play the directional death, then they prune on respawn
@@ -23262,7 +23366,8 @@ function serializeWorld(){
   const _nConn = Object.keys(NET.conns).length;
   const full = (_snapN % 10 === 1) || _nConn !== _snapConnN;   /* keyframe cadence + a fresh join always starts from a keyframe */
   _snapConnN = _nConn;
-  const Eall=enemies.map(e=>({ id:e.id, p:[q2(e.mesh.position.x),q2(e.mesh.position.y),q2(e.mesh.position.z)], hd:e._netHitDir||0, hs:e._netHitSeq||0 }));
+  const Eall=enemies.map(e=>{ const o={ id:e.id, p:[q2(e.mesh.position.x),q2(e.mesh.position.y),q2(e.mesh.position.z)], hd:e._netHitDir||0, hs:e._netHitSeq||0 };
+    if(full){ o.ty=e.type; o.hp=q2(e.hp); } return o; });   /* build 1201: keyframes carry type+hp so a promoted host can rebuild the wave */
   const _ed=_snapDelta(full, Eall, _snapPrevE, e=>e.p[0]+'|'+e.p[1]+'|'+e.p[2]+'|'+e.hd+'|'+e.hs);
   const E=_ed.list, Ex=_ed.gone;
   const Call=coins.map(c=>({ id:c.id, p:[q2(c.mesh.position.x),q2(c.mesh.position.z)] }));
@@ -23440,7 +23545,8 @@ function applyWorld(msg){
   if(msg.wv!=null) wave=msg.wv;
   applyObjectiveSnapshot(msg.O, wave);
   const seen=new Set();
-  for(const pl of msg.P){ if(pl.id===NET.myId) continue; seen.add(pl.id);
+  for(const pl of msg.P){ if(pl.id>(NET._maxPid|0)) NET._maxPid=pl.id;   /* build 1201: a promoted host must hand out fresh ids */
+    if(pl.id===NET.myId) continue; seen.add(pl.id);
     const rp=ensureRemotePlayer(pl.id, pl.n);
     rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); rp.cl=pl.cl||0; rp.car=pl.c||null;
       if(pl.aq!=null && pl.aq!==rp._aq){ rp._aq=pl.aq; const _a=actionBinds[(pl.ac|0)-1];   // build 1071: a fresh action -> replay its slot for the clip's own length
@@ -23463,7 +23569,7 @@ function applyWorld(msg){
   if(NET.mode==='client' && (msg.PU !== undefined || !msg.dl)){   /* build 1197: omitted on a delta = unchanged */
     const PU = msg.PU || []; const ps=new Set();
     for(const pu of PU){ ps.add(pu.id); let m=NET.powerupMeshes[pu.id];
-      if(!m){ m=buildPowerupMesh(pu.k); m.position.set(pu.p[0],0,pu.p[1]); scene.add(m); NET.powerupMeshes[pu.id]=m; }
+      if(!m){ m=buildPowerupMesh(pu.k); m.position.set(pu.p[0],0,pu.p[1]); m.userData._puKind=pu.k; scene.add(m); NET.powerupMeshes[pu.id]=m; }   /* build 1201: the kind survives for migration */
       m.visible = !!pu.r; }
     for(const id in NET.powerupMeshes){ if(!ps.has(+id)){ scene.remove(NET.powerupMeshes[id]); delete NET.powerupMeshes[id]; } }
   }
@@ -23680,7 +23786,7 @@ function handleClientMsg(conn, msg){
   // sender (the connection's own id) rather than whatever the packet claimed, so a client cannot
   // attribute its damage to someone else. A `to` naming the host, or an unknown peer, falls through
   // and is handled here as normal.
-  if(msg && msg.to != null && +msg.to !== 0 && +msg.to !== id){
+  if(msg && msg.to != null && +msg.to !== NET.myId && +msg.to !== id){   /* build 1201: a promoted host is not id 0 */
     const dest = NET.conns[+msg.to];
     if(dest){ const fwd = Object.assign({}, msg, { from: id }); delete fwd.to;
       try{ dest.send(fwd); }catch(e){} return; }
@@ -23727,7 +23833,8 @@ function handleClientMsg(conn, msg){
 function handleHostMsg(msg){
   NET._hostSeen=performance.now();   // build 578: any message proves the host is alive
   if(msg.t==='welcome'){
-    if(NET.joined) return; NET.joined=true;
+    if(NET.joined){ if(msg.mig && msg.id!=null) NET.myId=msg.id; return; }   /* build 1201: a rejoin welcome is inert — except an id rebind when the old id was taken */
+    NET.joined=true;
     NET.myId=msg.id;
     netIdPrefix='c'+msg.id;   // props this client adds get unique 'c<id>-' ids
     if(msg.mode) NET.gameMode=msg.mode;
@@ -23737,7 +23844,7 @@ function handleHostMsg(msg){
     if(msg.level) NET.pendingLevel=msg.level;
     if(msg.sfTok){ try{ const t=_sfUnpack(msg.sfTok); if(t) sfSetSessionToken(t); }catch(e){} }   // borrow the host's Sketchfab token for this session so the level's models load
     if(msg.crosshair){ NET.crosshair = msg.crosshair; if(typeof applyCrosshair==='function') applyCrosshair(msg.crosshair); }   // use the host's authored crosshair
-    NET.charById = Object.assign({}, msg.chars||{}); if(msg.char) NET.charById[0]=msg.char;   // host + existing players' characters
+    NET.charById = Object.assign({}, msg.chars||{}); if(msg.char) NET.charById[msg.hid!=null?msg.hid:0]=msg.char;   // host + existing players' characters (build 1201: a migrated host is not id 0)
     if(msg.rules && typeof _applyMpRules==='function') _applyMpRules(msg.rules);   // build 1014: the host's match rules bind this client too
     if(msg.sounds) NET.pendingSounds=msg.sounds;
     if(msg.music!=null) NET.pendingMusic=msg.music;
@@ -23853,6 +23960,36 @@ function _applyMpRules(r){ try{
   MP_RULES.weps=(w && w.length)?w:null;
   MP_RULES.nades=Math.max(0, Math.min(6, parseInt(r.nades,10)||0));
 }catch(e){} }
+
+// build 1201: one connection handler for BOTH the original host and a migration-promoted one. A reconnecting
+// peer announces its OLD id in the connection METADATA (available before 'open', so the welcome and every
+// score/team lookup use the right id from the first byte) and keeps it if it is free — scores, teams and
+// prop-id prefixes survive the migration. A rejoiner also skips the level serialization: it is already
+// standing in the level, and its 'welcome' is inert on arrival (NET.joined guards it).
+function _hostOnConnection(conn){
+    const _rj=(conn.metadata && conn.metadata.rejoin!=null) ? +conn.metadata.rejoin : null;
+    conn._pid = (_rj!=null && _rj>=1 && !NET.conns[_rj]) ? _rj : NET.nextId++;
+    if(conn._pid >= NET.nextId) NET.nextId = conn._pid+1;
+    conn.on('open', ()=>{
+      NET.conns[conn._pid]=conn;
+      if(NET._seen) NET._seen[conn._pid]=performance.now();   // build 578: start the liveness clock for this client
+      if(pvpMode()) NET.duelScore[conn._pid] = NET.duelScore[conn._pid]||0;
+      if(teamMode()) assignTeam(conn._pid);
+      // hand the joiner the mode, the kill target, and the current level so their map matches
+      let level=null; if(_rj==null) try{ level = serializeLevel(); }catch(e){}
+      // If this level uses Sketchfab models and we have a token, lend it to the joiner so the models load even
+      // if they have no Sketchfab account of their own. Obfuscated (not encrypted) — they don't keep it.
+      let sfTok; try{ if(_levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
+      conn.send({t:'welcome', id:conn._pid, hid:NET.myId, mig:(_rj!=null?1:undefined), mode:NET.gameMode, killTarget:NET.killTarget, level, sfTok, crosshair:gameCfg.crosshair, sounds:audioSettings.sounds, music:audioSettings.musicUrl, teams:NET.teams, yourTeam:(teamMode()?NET.teams[conn._pid]:undefined), char:myCharCfg(), chars:Object.assign({}, NET.charById), rules:{ weps:MP_RULES.weps, nades:MP_RULES.nades }, phase:NET.phase});
+      netStatus(_rj!=null ? ('Player rejoined ('+Object.keys(NET.conns).length+' connected)') : ('Player joined ('+Object.keys(NET.conns).length+' connected)'));
+      if(pvpMode()) broadcastDuelScore();
+      if(teamMode()){ broadcastTeams(); applyTeamColors(); }
+      if(NET.phase==='lobby') refreshLobby();
+    });
+    conn.on('data', msg=>handleClientMsg(conn, msg));
+    conn.on('close', ()=>dropClient(conn._pid));
+    conn.on('error', ()=>dropClient(conn._pid));   // build 578: an errored connection is a dropped one — clean it up too
+}
 function hostStart(code, mode, killTarget){
   NET.mode='host'; NET.myId=0; NET.roomCode=code; NET.nextId=1;
   netIdPrefix='h'; seedPropSync();   // new props the host adds get 'h-' ids; existing props are already known to joiners via the welcome level
@@ -23864,29 +24001,9 @@ function hostStart(code, mode, killTarget){
   NET.duelScore = {0:0};
   NET.teams = {0:0}; NET.team = 0;   // host starts on RED in team modes
   NET.peer=new Peer('breachfps-'+code, _peerOpts());   // build 968: STUN+TURN — joins survive strict NATs
+  /* build 1201: the connection handler is a named function so a MIGRATED host attaches the identical one */
   NET.peer.on('open', ()=>{ netStatus((pvpMode()?('Hosting '+pvpLabel().toLowerCase()+' · '):'Hosting · ')+'room code: '+code+' · share it with friends'); showRoomBadge(code); enterLobby(); });
-  NET.peer.on('connection', conn=>{
-    conn._pid = NET.nextId++;
-    conn.on('open', ()=>{
-      NET.conns[conn._pid]=conn;
-      if(NET._seen) NET._seen[conn._pid]=performance.now();   // build 578: start the liveness clock for this client
-      if(pvpMode()) NET.duelScore[conn._pid] = NET.duelScore[conn._pid]||0;
-      if(teamMode()) assignTeam(conn._pid);
-      // hand the joiner the mode, the kill target, and the current level so their map matches
-      let level=null; try{ level = serializeLevel(); }catch(e){}
-      // If this level uses Sketchfab models and we have a token, lend it to the joiner so the models load even
-      // if they have no Sketchfab account of their own. Obfuscated (not encrypted) — they don't keep it.
-      let sfTok; try{ if(_levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
-      conn.send({t:'welcome', id:conn._pid, mode:NET.gameMode, killTarget:NET.killTarget, level, sfTok, crosshair:gameCfg.crosshair, sounds:audioSettings.sounds, music:audioSettings.musicUrl, teams:NET.teams, yourTeam:(teamMode()?NET.teams[conn._pid]:undefined), char:myCharCfg(), chars:Object.assign({}, NET.charById), rules:{ weps:MP_RULES.weps, nades:MP_RULES.nades }, phase:NET.phase});
-      netStatus('Player joined ('+Object.keys(NET.conns).length+' connected)');
-      if(pvpMode()) broadcastDuelScore();
-      if(teamMode()){ broadcastTeams(); applyTeamColors(); }
-      if(NET.phase==='lobby') refreshLobby();
-    });
-    conn.on('data', msg=>handleClientMsg(conn, msg));
-    conn.on('close', ()=>dropClient(conn._pid));
-    conn.on('error', ()=>dropClient(conn._pid));   // build 578: an errored connection is a dropped one — clean it up too
-  });
+  NET.peer.on('connection', _hostOnConnection);
   NET.peer.on('error', e=>{ netStatus('Host error: '+(e&&e.type||e)); });
 }
 function clientStart(code){
@@ -27251,7 +27368,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1200 · 2026-07-31';
+const BUILD_VERSION = 'build 1201 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
