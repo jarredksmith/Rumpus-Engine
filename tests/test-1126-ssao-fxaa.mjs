@@ -144,6 +144,6 @@ assert(/ssao:0\.9, ssaoRadius:0\.9,/.test(src), 'AO amount and radius are world 
 }
 assert(/slider\(b,'Ambient occlusion','ssao',0,1,0\.05\); slider\(b,'AO radius','ssaoRadius',0\.1,4,0\.1\);/.test(src),
   'both are exposed in the editor beside the other post settings');
-assert(/w\.ssao=0; return w; \}/.test(src), 'turning post-processing off turns AO off with it');
+assert(/w\.ssao=0; w\.postRays=0; return w; \}/.test(src), 'turning post-processing off turns AO off with it');   // build 1242: god rays join the zeroed set
 
 done('build 1126: depth-aware post — screen-space ambient occlusion, and FXAA where MSAA could not go');
