@@ -1519,6 +1519,40 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The ground query was reading the roof (build 1233)
+
+Reported from play: *"I added enemies onto a multistorey building and they would randomly clip through
+the floor and just disappear."* Probed and MEASURED before fixing (the house rule): an actor with feet
+on a storey-2 slab at y=3.2 asked the engine for its ground and got **0 — the terrain**.
+
+The mechanism: `groundHeightAt` asked `surfaceTopAt(x,z)` for the column's HIGHEST surface, which
+inside any roofed building is the ROOF or the slab overhead — never the floor underfoot. The
+step/ramp gates then rejected that too-high surface and the function answered terrain. The enemy
+frame loop HARD-SNAPS `y = groundY + 1.4`, so one wrong answer teleported an enemy through every slab
+to under the building — invisible, "disappeared". The player integrates gravity off the same function,
+so the player fell through roofed upper floors too, and even ground-floor actors stood SUNK to the
+terrain instead of on the slab. Roofs and open decks read correctly (the surface underfoot IS the
+topmost there) — which is why the generated arenas' open-air decks never showed it and the bug waited
+for the first creator to put enemies INSIDE a building. "Randomly" = wander under a slab and you fall;
+step onto the open deck and you don't.
+
+The fix is one function: surfaces above `feetY + RAMP_RISE` cannot be stepped or ramped onto BY
+DEFINITION of the gates below, so the query is **ceilinged** there (`surfaceTopAt`'s existing `ceilY`
+param — build 739's, never passed here) — and the ramp SLOPE PROBE's two neighbour samples carry the
+same ceiling, or an indoor ramp under a roof reads as a cliff. The bot path's shared `_candSurf` hint
+(fed to both `clearAt` and its ground resolve) takes the ceiling at its source. Player, bots, remote
+avatars and PvE enemies all ground through this one function, so all inherit the repair.
+
+Two honest notes: an overhang LOWER than `RAMP_RISE` (a sub-1.7 m mezzanine) still poisons its column
+(the highest in-window surface is the overhang, the gates reject it) — strictly better than before,
+when ANY overhead geometry poisoned it, and rare geometry; and mid-air far above a slab the window can
+still catch the roof and read terrain — harmless, because an integrating faller is not grounded there
+and by arrival the answer is the slab (both cases pinned in `test-1233` with their reasons). This
+likely also carried a chunk of the other two reports in the same play session: an enemy teleported
+under the building never dies and never stops pathing — accumulating invisible enemies are a frame-rate
+drain and read as "stuck/buggy" from above. Three pins moved (364×2, and 1233's own falling-window
+expectation corrected during writing); `test-1233` replays the report on real slab geometry.
+
 ## Verbs reach the event's player (build 1232)
 
 1231's recorded other half, closed the cheap way: no new message type. The world verbs' "The player"

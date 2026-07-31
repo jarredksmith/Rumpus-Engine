@@ -21925,7 +21925,7 @@ function updateBots(dt){
       const cx=Math.max(-lim,Math.min(lim, b.pos.x+mvx*step)), cz=Math.max(-lim,Math.min(lim, b.pos.z+mvz*step));
       // The arena walls + props are the only movement boundary; the spawn region never blocks motion, so a
       // bot can leave its spawn area and roam the whole map.
-      const _candSurf=(typeof surfaceTopAt==='function')?surfaceTopAt(cx,cz):undefined;
+      const _candSurf=(typeof surfaceTopAt==='function')?surfaceTopAt(cx,cz,undefined,undefined,b.pos.y+RAMP_RISE):undefined;   /* build 1233: a bot under a roof must read the floor underfoot, not the roof (see groundHeightAt) — this hint feeds BOTH clearAt and the ground resolve */
       const okFull=((typeof clearAt!=='function') || clearAt(cx,cz,b.pos.y,_candSurf));
       if(okFull){ b.pos.x=cx; b.pos.z=cz; _gSurf=_candSurf; }   // moved cleanly to (cx,cz) -> its surface is the standing surface; reuse it
       else {
@@ -27800,7 +27800,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1232 · 2026-07-31';
+const BUILD_VERSION = 'build 1233 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31644,12 +31644,25 @@ function propSurfaceAt(obj, x, z){
 }
 function groundHeightAt(x, z, feetY, surfHint){
   const g = terrainHeightAt(x, z);
-  const top = (surfHint!==undefined) ? surfHint : surfaceTopAt(x, z);
+  // build 1233: REPORTED FROM PLAY — enemies on a multistorey building "randomly clip through the
+  // floor and just disappear". The unceilinged surfaceTopAt returns the HIGHEST surface in the whole
+  // column, which inside any roofed building is the ROOF or the slab overhead — never the floor under
+  // the actor's feet. The ramp gate then rejects that too-high surface and this function answered
+  // TERRAIN: an enemy on storey 2 snapped through every slab to under the building (the "disappear"),
+  // the player fell through roofed upper floors, and even a ground-floor actor stood sunk to the
+  // terrain instead of on the slab. Probed and measured before fixing (scratchpad/probe-multistorey):
+  // feet on a storey-2 slab at 3.2 read ground 0. Surfaces above feetY + RAMP_RISE cannot be stepped
+  // or ramped onto BY DEFINITION of the gates below, so they are not candidates — ceiling the query
+  // there. Roofs and open decks are unchanged (the surface underfoot IS the topmost there), which is
+  // why generated arenas never showed this. Every actor inherits the repair: this one function grounds
+  // the player, the bots, remote avatars and the PvE enemies.
+  const _ceil = feetY + RAMP_RISE;
+  const top = (surfHint!==undefined) ? surfHint : surfaceTopAt(x, z, undefined, undefined, _ceil);
   if(top === -Infinity) return g;
   if(top <= feetY + STEP) return Math.max(g, top);            // flat ground (or terrain) or a low step
   // Above a step: follow it only if it's a walkable RAMP (a sloped surface), not a tall flat ledge or a wall.
   if(top <= feetY + RAMP_RISE){
-    const e = 0.4, hx = surfaceTopAt(x + e, z), hz = surfaceTopAt(x, z + e);
+    const e = 0.4, hx = surfaceTopAt(x + e, z, undefined, undefined, _ceil), hz = surfaceTopAt(x, z + e, undefined, undefined, _ceil);   // build 1233: the slope probe must not read a roof either, or an indoor ramp reads as a cliff
     const slope = Math.hypot((hx > -Infinity ? hx - top : 0), (hz > -Infinity ? hz - top : 0)) / e;
     if(slope > RAMP_SLOPE_MIN && slope < RAMP_SLOPE_MAX) return Math.max(g, top);   // walk up the ramp surface
   }
