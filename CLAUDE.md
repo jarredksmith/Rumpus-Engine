@@ -1519,6 +1519,52 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The DoF stops being blocky (build 1241)
+
+Reported from play: *"super blocky and I can't ever quite get the settings to look right."* Two
+structural shader faults, not a tuning problem: **the tap spacing scaled with the blur** — `step =
+coc·6` texels with uStrength folded into coc (up to 4), so a strong blur spread 13 taps across as
+much as ~140 texels: visibly repeated images, which is exactly "blocky" — and **every tap was weighed
+by the centre pixel's blur alone**, so sharp in-focus edges smeared halos into the blurred field
+behind them (why no setting ever felt right). Now: spacing hard-capped at 1.5 texels between taps —
+the radius SATURATES (~12 texels/pass, the H and V passes compound) instead of ever banding, so no
+Strength setting can break the image; 17 taps; each tap weighed by its OWN CoC (`0.25 + 0.75·cocAt`)
+so in-focus neighbours mostly keep their colour to themselves; smoothstep CoC for a soft
+focus-to-blur transition. The 1115 encode-once invariant is untouched on both the early-out and blur
+paths. Honest limits: one gaussian family for near and far fields (no true bokeh shape), and maximum
+blur is traded for guaranteed smoothness.
+
+**Capture-verified** (raw ShaderMaterial — the mandatory-probe class): focus 4 m / range 3 /
+strength 3 on the stock frame drops far-field gradient energy **36.0%** vs DoF off while luminance
+holds within 1.8% — a silently-failed shader would have crashed the luminance control. Probe:
+`probe3.html` / `runprobe3.mjs` per the 1237 recipe with a `window.__dof` hook.
+
+## Weapons can be renamed (build 1240)
+
+Asked from play: "add a sword/handheld weapon (axe, staff)… we have melee, so maybe the answer is
+just the ability to rename weapons." It is — every display surface already reads `WEAPONS[k].name`
+live (HUD, weapon wheel, kill feed, pickup labels, loadout picker, attachments header), so an
+authored name renames the weapon EVERYWHERE, including the logic pickup-spawner's label. 1190's exact
+pattern: `GUN_BASE_NAME` factory baseline captured at boot, `_wepApplyName` the one sanitizer (trim,
+24-char cap, blank restores factory, key fallback), `nm` serialized only-when-changed so untouched
+levels are byte-identical, BOTH loaders apply it with the no-entry branch restoring factory so a
+renamed Fists in level A never leaks into level B. UI: a Name field atop the Kit panel's per-weapon
+section (placeholder = the factory name, Default restores). Melee "sword" recipe: rename Fists,
+give it a model, tune dmg/reach in the stat sheet. Three pins moved (476, 530, 229 — the serializer
+gate + record shape grew nm; intents kept).
+
+## The ledge hang sinks below the lip (build 1239)
+
+Reported from play: the hang "positions the chest/belly at the edge, torso/arms/head way over the
+top, clinging to thin air." Build 966's hang height puts the avatar's HEAD TOP exactly at the lip BY
+CONSTRUCTION (`hy = lip + EYE − vh·1.02` — the vh term cancels), whatever the model's height. Right
+for a body standing at a wall; wrong for a HANG, whose pose raises the arms ~0.4 above the head — so
+the hands gripped air above the edge and half the body cleared the lip. `LEDGE_HANG_SINK = 0.42`
+drops the whole hang: head top ~0.45 under the lip (raised hands land ON the edge), eyes ~0.45 under
+it (first person looks at the wall face with the edge just above view centre — the standard framing).
+The avatar-height sizing survives (a short model still hangs by its hands), the pull-up still ends
+standing on top. Browser-verify the third-person look once; the geometry is test-computed.
+
 ## Real camera motion blur (build 1238) — the rendering deferred-list opens
 
 Asked directly from play: "Did you implement actual motion blur yet or are we still faking it?" We
