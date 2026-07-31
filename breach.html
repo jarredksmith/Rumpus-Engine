@@ -16608,11 +16608,12 @@ function buildSpawnMarker(opts){
   const mark = { mode, radius:(opts.radius!=null?opts.radius:6), detect:(opts.detect!=null?opts.detect:14), face:(opts.face||0),
     route: (opts.route||[]).map(p=>Array.isArray(p)?{x:p[0],z:p[1]}:{x:p.x,z:p.z}),   // ordered patrol waypoints (world XZ)
     routeLoop: opts.loop!==false,                                                      // loop (cycle) vs ping-pong (reverse at ends)
-    type: (opts.type && ['grunt','runner','brute'].includes(opts.type)) ? opts.type : 'grunt',
+    type: (opts.type && ['grunt','runner','brute','gunner','sapper','shielded','charger','boss'].includes(opts.type)) ? opts.type : 'grunt',   /* build 1226: the editor has offered all 8 types since 635 but this list stopped at 3 — a saved gunner/sapper/shielded/charger/boss marker silently demoted to grunt on every reload. (ENEMY_TYPES itself is declared below the boot loader that runs this — TDZ — so the list stays a literal.) */
     y: Math.max(0, Math.min(SPAWN_MAX_Y, +opts.y||0)),                                  // build 1087: height ABOVE the terrain — rooftops, balconies, catwalks
-    wave: (opts.wave!=null) ? (opts.wave|0) : 0 };                                      // 0 = every wave; else only that wave (pre-built mode)
+    wave: (opts.wave!=null) ? (opts.wave|0) : 0,                                        // 0 = every wave; else only that wave (pre-built mode)
+    friendly: !!(opts.fr || opts.friendly) };                                           // build 1226: a WANDERING NPC — never aggros, never attacks, doesn't count as a hostile
   g.userData.mark = mark; g.userData.isSpawn = true;
-  const col = SPAWN_MODE_COLORS[mode];
+  const col = mark.friendly ? 0x59d98c : SPAWN_MODE_COLORS[mode];   /* build 1226: a friendly marker reads green at a glance */
   const post = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.7, 4), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.9, depthTest:false }));
   post.position.y = 0.85; post.rotation.y = Math.PI/4; post.renderOrder = 9000;
   const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.55, 8), new THREE.MeshBasicMaterial({ color:0xffffff, depthTest:false }));
@@ -16780,7 +16781,7 @@ function randomWaveDescriptors(waveNum, arena, rng){
 // Should a spawn marker appear on this wave? wave 0 = every wave (back-compat default); else exact match.
 function spawnAppearsOnWave(mark, waveNum){ const w0 = mark.wave||0; if(typeof gameCfg!=='undefined' && gameCfg.noRespawn){ const w=(w0===0?1:w0); return w===waveNum; } return w0===0 || w0===waveNum; }
 function _hasFutureAuthoredSpawns(curWaveNum){ for(const g of spawnMarkers){ const w0=g.userData.mark.wave||0; const w=(gameCfg.noRespawn && w0===0)?1:w0; if(w>curWaveNum) return true; } return false; }
-function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt' }; }
+function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt', friendly:!!m.friendly, mark:m }; }   /* build 1226: mark rides the (transient) descriptor so a living friendly's marker can be recognised and skipped */
 // Mode defaults preserve old levels: markers present -> pre-built (markers were wave 0 = every wave); else random.
 let gameCfg = {
   enemyMods: _sanitizeEnemyMods(savedLevel && savedLevel.game && savedLevel.game.enemyMods),   // build 1191
@@ -18355,7 +18356,7 @@ function buildEnemyVisual(body){
   const mc = enemyModelCfg(body.userData.enemyType);
   const useCapsule = ()=>{
     const ty = ENEMY_TYPES[body.userData.enemyType] || ENEMY_TYPES.grunt;
-    const mat = new THREE.MeshStandardMaterial({ color:0x4a1020, emissive:ty.tint, emissiveIntensity:.6, roughness:.6 });
+    const mat = new THREE.MeshStandardMaterial({ color:0x4a1020, emissive:(body.userData.friendly ? 0x59d98c : ty.tint), emissiveIntensity:.6, roughness:.6 });   /* build 1226: a friendly reads green, not threat-red (custom models keep their own look) */
     const cap = new THREE.Mesh(enemyGeo, mat); cap.castShadow = true; cap.scale.setScalar(ty.scale);
     const eye = new THREE.Mesh(new THREE.SphereGeometry(.18,8,8), new THREE.MeshBasicMaterial({color:0xffd166}));
     eye.position.set(0, 0.7, -0.55);   // slightly forward so you can read facing
@@ -18528,6 +18529,7 @@ function spawnEnemy(spawn){
   const typeKey = (spawn && spawn.type && ENEMY_TYPES[spawn.type]) ? spawn.type : 'grunt';
   const ty = ENEMY_TYPES[typeKey];
   mesh.userData.enemyType = typeKey;   // read by buildEnemyVisual for per-type scale + tint
+  if(spawn && spawn.friendly) mesh.userData.friendly = true;   // build 1226: capsule tints green
   buildEnemyVisual(mesh);
   scene.add(mesh);
   const _eff = (typeof _enemyEff==='function') ? _enemyEff(typeKey) : ty;   /* build 1191: the level's tuning, clamped at the loaders */
@@ -18551,6 +18553,10 @@ function spawnEnemy(spawn){
     route: (spawn && spawn.route && spawn.route.length) ? spawn.route.map(p=>({ x:(p.x!=null?p.x:p[0]), z:(p.z!=null?p.z:p[1]) })) : null,
     routeLoop: !(spawn && spawn.routeLoop===false), routeIdx:0, routeDir:1,
     aware:false, lostAt:0, wp:null, wpUntil:0 };
+  if(spawn && spawn.friendly){   // build 1226: a WANDERER — no combat subsystem is left armed, so no attack gate anywhere can misfire
+    e.friendly = true; e._mark = spawn.mark || null;
+    e.ranged = false; e.exploder = false; e.charger = false; e.cover = false;
+  }
   enemies.push(e);
 }
 // Decide where one enemy wants to move this frame, based on its behavior mode and whether it can see a
@@ -18560,7 +18566,7 @@ function spawnEnemy(spawn){
 // threat's position, even a Hold/Patrol enemy that never saw the player. This is what makes sniping from
 // cover risky — the target turns to look for you instead of obliviously taking hits.
 function alertEnemy(en, sx, sz){
-  if(!en || en.dead) return;
+  if(!en || en.dead || en.friendly) return;   /* build 1226: nothing aggros a friendly — gunfire, blasts and the logic 'alert' verb all route here */
   en.aware = true; en.lostAt = 0;
   en.lkp = { x:sx, z:sz };                 // last-known position = where the threat came from
   en._alertedT = performance.now();
@@ -18580,14 +18586,14 @@ function alertEnemiesNear(sx, sz, radius){
   }
 }
 function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = the target's height, so a pursuit ends on the STOREY the target stands on */
-  const mode = en.mode || 'hunt';
+  const mode = en.friendly ? (en.mode === 'hold' ? 'hold' : 'patrol') : (en.mode || 'hunt');   /* build 1226: a friendly WANDERS — a hunt-mode marker flagged friendly patrols its spot instead */
   // line-of-sight: can this enemy actually SEE the player right now? (same wall test the gun uses)
   const eY = (en.mesh.position.y!=null) ? en.mesh.position.y : 1.4;
   const pEyeY = (en._nearEyeY!=null) ? en._nearEyeY : 1.4;
   // build 546: segmentBlocked scans every collider — refresh LOS ~9x/sec per enemy and cache it (the bots do
   // the same), instead of raycasting every frame. Unthrottled, a wave of enemies was O(enemies x colliders)
   // per frame and a big part of the single-digit wave framerate.
-  if((en._losT==null || now - en._losT > (en._losIv||110)) && (typeof _losBudget==='undefined' || _losBudget>0)){
+  if(!en.friendly && (en._losT==null || now - en._losT > (en._losIv||110)) && (typeof _losBudget==='undefined' || _losBudget>0)){   /* build 1226: a friendly never raycasts a sightline — it has no use for one and the budget is shared */
     if(typeof _losBudget!=='undefined') _losBudget--;   // build 547: also capped per frame so a freshly-spawned wave can't raycast every enemy's sightline on the same frame
     en._losT = now; en._losIv = 100 + Math.random()*40;   // jitter the interval so the wave de-clusters after the budget first staggers it, instead of all coming due together again
     en._seesC = (Math.abs(pEyeY - eY) < 3.0) &&
@@ -18608,7 +18614,7 @@ function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = th
 
   // PATROL / HOLD: detection is now gated on BOTH range AND line-of-sight.
   const detect = en.detectR || 18;   // build 620: wider default sight so patrollers notice you a hall earlier
-  if(dist <= detect && sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }
+  if(dist <= detect && sees && !en.friendly){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }   /* build 1226 */
   else if(en.aware){
     // lost sight or range: remember where they were, chase the last spot, then give up after a grace period.
     // A recent gunfire/blast alert extends the window so a sniped enemy actually crosses the map to investigate.
@@ -23635,7 +23641,7 @@ function serializeWorld(){
   // objective state (so clients see the survival timer / extraction beacon + hold, not just "WAVE n")
   const O = { o:objectiveActive(), s:+surviveLeft.toFixed(1), h:+extractHoldT.toFixed(2),
               ex:[+extractPos.x.toFixed(2), +extractPos.z.toFixed(2)], er:gameCfg.extractRadius||3.5, eh:gameCfg.extractHold||5, wn:gameCfg.winWaves||0, dd:_destroyTotal-_destroyRemain, dn:_destroyTotal, es:[+escortPos.x.toFixed(2), +escortPos.z.toFixed(2)], ep:_escortPct, en:_escortNear?1:0 };
-  return { t:'world', dl: full?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:enemies.length };   /* en: the HUD count must not read a partial E */
+  return { t:'world', dl: full?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:_hostileAlive() };   /* en: the HUD count must not read a partial E; build 1226: nor count a friendly */
 }
 function dynamicById(id){ for(const o of dynamicProps){ if(o.userData.phys && o.userData.phys.id===id) return o; } return null; }
 function broadcastWorld(){ const w=serializeWorld(); for(const id in NET.conns){ try{ NET.conns[id].send(w); }catch(e){} } }
@@ -27676,7 +27682,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1225 · 2026-07-31';
+const BUILD_VERSION = 'build 1226 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29816,18 +29822,21 @@ function enemyHurt(en, dmg, sx, sz){
 }
 function killEnemy(en, sx, sz){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ const _pv=_lgCtx; _lgCtx={ x:en.mesh.position.x, z:en.mesh.position.z, hp:0, hpf:0 }; try{ _lgFireEvents('onkill',''); } finally { _lgCtx=_pv; } }   // build 1027: 'On enemy killed' entries; build 1221: at the death position
-  runKills++;
+  const _fr = !!en.friendly;   // build 1226: killing a friendly is a DEATH (visuals, sound, ragdoll, the onkill event a creator can punish with) but never a REWARD — no kills, no juice, no coins, no score
+  if(!_fr) runKills++;
   spark(en.mesh.position, 0xff2d55); SFX.kill(en.type, en.mesh.position);   // build 752: per-enemy-type kill sound; build 1208: panned to the kill
+  if(!_fr){
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
   else if(NET.mode==='host' && _coopKillFor==null) registerLocalKill();   // co-op host's OWN kill -> callout (no slow-mo, gated inside); client kills are credited via {t:'frag'}
+  }
   // drop 1-2 coins worth scaling slightly with wave
-  const drops = Math.random()<0.35 ? 2 : 1;
+  const drops = _fr ? 0 : (Math.random()<0.35 ? 2 : 1);
   for(let i=0;i<drops;i++){
     const ox=(Math.random()-0.5)*1.5, oz=(Math.random()-0.5)*1.5;
     spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round((15 + Math.floor(wave*2)) * run.coinMul));
   }
-  if(run.lifesteal>0) player.hp = Math.min(player.maxHp, player.hp + run.lifesteal);   // vampiric rounds
-  if(en.type==='boss'){   // a downed boss is a payday + a moment
+  if(!_fr && run.lifesteal>0) player.hp = Math.min(player.maxHp, player.hp + run.lifesteal);   // vampiric rounds
+  if(!_fr && en.type==='boss'){   // a downed boss is a payday + a moment
     score += 500;
     for(let i=0;i<6;i++){ const ox=(Math.random()-0.5)*3, oz=(Math.random()-0.5)*3; spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round(60*run.coinMul)); }
     spark(en.mesh.position, 0xff7b00); flashToast('☠ BOSS DOWN');
@@ -29839,7 +29848,7 @@ function killEnemy(en, sx, sz){
   const _rag = (gameCfg.ragdoll && typeof spawnCorpse==='function') ? spawnCorpse(en.mesh, _rdx, 0, _rdz, 4.5+Math.random()*3.5) : false;
   if(!_rag){ if(en.mesh.userData.mixer){ const mi=mixers.indexOf(en.mesh.userData.mixer); if(mi>=0) mixers.splice(mi,1); } if(typeof _poseDeath==='function') _poseDeath(en.mesh); _fallbackDeath(en.mesh, _rdx, _rdz); }   // build 994: no ragdoll -> topple + sink + fade instead of vanishing on the spot
   enemies.splice(enemies.indexOf(en),1);
-  score += 100; updateHUD();
+  if(!_fr) score += 100; updateHUD();
   if(en.exploder && !en._detonated){ en._detonated=true; if(typeof explodeAt==='function') explodeAt(en.mesh.position.clone(), en.blastR||6, en.blastDmg||40, en.id); }   // build 628: a downed Sapper still goes off (kill it from range)
 }
 // build 628: a Sapper reaching you self-destructs — blast + falloff damage/launch to the player and a chain to
@@ -30252,7 +30261,7 @@ function updateHUD(){
   $('scoreVal').textContent = score;
   $('creditsVal').textContent = credits;
   $('waveNum').textContent = 'WAVE '+wave;
-  $('enemyCount').textContent = 'HOSTILES: '+(enemies.length+toSpawn);
+  $('enemyCount').textContent = 'HOSTILES: '+(_hostileAlive()+_hostilePending());   /* build 1226: friendlies are not hostiles */
 }
 // Boss health bar: aggregate HP of any living boss-type hostiles (host/solo — clients lack enemy HP).
 function updateBossBar(hide){
@@ -31294,13 +31303,22 @@ function objectiveTick(dt){   // host/solo per-frame; may trigger the win
     _raceTick(dt);   // build 831: lap line + checkpoint sweep + per-lap clock (wins at gameCfg.raceLaps)
   }
 }
+// build 1226: FRIENDLY spawns exist now, so "how many enemies" forked into two questions. Alive
+// hostiles gate the wave-clear (a level whose villagers outlive every wave must still advance) and
+// ride the net snapshot; pending hostiles subtract queued friendlies so the HUD never promises a
+// fight the queue doesn't hold.
+function _hostileAlive(){ let n = 0; if(typeof enemies !== 'undefined') for(const e of enemies) if(e && !e.friendly) n++; return n; }
+function _hostilePending(){ let n = (typeof toSpawn !== 'undefined' ? toSpawn : 0); if(typeof spawnQueue !== 'undefined' && Array.isArray(spawnQueue)) for(const d of spawnQueue) if(d && d.friendly) n--; return Math.max(0, n); }
 function startWave(){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onwave','');   // build 1027: 'On wave start' entries
   clearMovementInput();   // don't carry a held key / stuck stick into the new wave (auto-move bug)
   spawnQueue = [];
   if(noEnemyMode()){ toSpawn = 0; objectiveHUD(); updateHUD(); return; }   // build 685: puzzle mode never queues enemies
   if(gameCfg.mode === 'prebuilt'){
-    for(const g of spawnMarkers){ if(spawnAppearsOnWave(g.userData.mark, wave)) spawnQueue.push(descFromMarker(g)); }
+    for(const g of spawnMarkers){ if(!spawnAppearsOnWave(g.userData.mark, wave)) continue;
+      const _m = g.userData.mark;   // build 1226: a friendly marker defaults to wave 0 = every wave, but its NPC is never killed by play — without this guard every wave stacked another copy of the same villager
+      if(_m.friendly && enemies.some(e => e.friendly && e._mark === _m && e.hp > 0)) continue;
+      spawnQueue.push(descFromMarker(g)); }
     toSpawn = spawnQueue.length;
   } else {
     const _mf = (gameCfg.waves && gameCfg.waves[wave-1]);   // build 1179: an authored wave wins over the formula
@@ -33026,7 +33044,7 @@ function loop(){
     else if(toSpawn>0){
       spawnTimer-=dt;
       if(spawnTimer<=0){ spawnEnemy(spawnQueue.length ? spawnQueue.shift() : null); toSpawn--; spawnTimer=0.6; updateHUD(); }
-    } else if(enemies.length===0){
+    } else if(_hostileAlive()===0){   /* build 1226: living friendlies must not hold the wave open forever */
       const _cleared = gameCfg.noRespawn && gameCfg.mode==='prebuilt' && !_hasFutureAuthoredSpawns(wave);   // single-pass: authored spawns exhausted -> field stays clear (no respawn, no empty-wave loop)
       if(objectiveActive()==='eliminate' && gameCfg.winWaves>0 && wave>=gameCfg.winWaves){ if(typeof gameWon==='function') gameWon(); }
       else if(_cleared){ if(objectiveActive()==='eliminate'){ if(typeof gameWon==='function') gameWon(); } }   // eliminate wins on clear; extraction/survival just hold the cleared field and finish via the objective
@@ -34787,7 +34805,7 @@ function duplicateSelectedSpawn(){
   const g = spawnMarkers[editorTargets.spawns.idx]; if(!g) return;
   pushUndoSnapshot();
   const m = g.userData.mark;
-  const ng = buildSpawnMarker({ t:[g.position.x + DUP_OFFSET, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face });
+  const ng = buildSpawnMarker({ t:[g.position.x + DUP_OFFSET, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, type:m.type, wave:m.wave, y:m.y, fr:m.friendly?1:0 });   /* build 1226: duplicate had been dropping type/wave/height since they were added */
   ng.visible = true;
   editorActive='spawns'; editorTargets.spawns.idx = spawnMarkers.length-1; selSpawns=[ng]; renderEditorFields();
 }
@@ -35381,7 +35399,7 @@ function serializeLevel(){
     lights:  lightModels.map(g=>_lightOpts(g)),
     turret:  { url: turretModelUrl, scale: turretModelScale, modelYaw: turretModelYaw, muz: { fwd:turretMuzzle.fwd, up:turretMuzzle.up, side:turretMuzzle.side } },
     turrets: turretModels.map(_turretOpts),
-    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave }; }),   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
+    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave, ...(m.friendly?{fr:1}:{}) }; }),   /* build 1226: absent when false, so old levels serialize byte-identically */   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
     pickupsOn: pickupsOn,
     pickups: pickupSpots.map(s=>({ x:+s.x, z:+s.z, kind:s.kind, ...(s.item!=null?{item:s.item}:{}), ...(s.y?{y:s.y}:{}), ...(s.rx?{rx:s.rx}:{}), ...(s.ry?{ry:s.ry}:{}), ...(s.rz?{rz:s.rz}:{}), ...(s.scale!=null&&s.scale!==1?{scale:s.scale}:{}), ...(s.interact?{interact:1}:{}) })),
     loot: lootSpots.map(s=>({ x:+s.x, y:+(s.y||0), z:+s.z, items:(s.items||[]).slice(), glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })),
@@ -38807,6 +38825,15 @@ function renderEditorFields(){
             : g.userData.mark.mode==='patrol' ? 'Patrol: wanders inside its patrol radius, chases when a player enters Detect range, then leashes back.'
             : 'Hold: guards this post; engages only when a player enters Detect range, then returns.';
           picker.appendChild(mh);
+          // build 1226: FRIENDLY — a wandering NPC on the same nav/patrol stack, combat removed
+          { const fRow=document.createElement('label'); fRow.style.cssText='display:flex;align-items:center;gap:8px;color:#9fe6cf;font-size:12px;margin:6px 0;cursor:pointer;';
+            const fCb=document.createElement('input'); fCb.type='checkbox'; fCb.checked=!!g.userData.mark.friendly;
+            fCb.onchange=()=>{ pushUndoSnapshot(); g.userData.mark.friendly=fCb.checked; if(g.userData.post&&g.userData.post.material&&g.userData.post.material.color) g.userData.post.material.color.setHex(fCb.checked?0x59d98c:(SPAWN_MODE_COLORS[g.userData.mark.mode]||0xff2d55)); renderEditorFields(); };
+            fRow.appendChild(fCb); fRow.appendChild(document.createTextNode('Friendly — wanders, never attacks or aggros'));
+            picker.appendChild(fRow);
+            if(g.userData.mark.friendly){ const fh=document.createElement('div'); fh.className='hint'; fh.style.margin='0 0 6px';
+              fh.textContent='A wandering NPC: patrols its area or route, ignores players and gunfire, doesn\u2019t count as a hostile, and killing it gives nothing (the On-kill logic event still fires, so you can punish it). Hunt behaves as Patrol while friendly.';
+              picker.appendChild(fh); } }
           // ---- Enemy type (archetype) ----
           const tlab=document.createElement('div'); tlab.className='hint'; tlab.style.margin='8px 0 3px'; tlab.innerHTML='<b>Enemy type</b>';
           picker.appendChild(tlab);

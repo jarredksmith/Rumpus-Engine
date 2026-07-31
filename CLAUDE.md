@@ -1519,6 +1519,37 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Wandering NPCs, and the marker that demoted your boss to a grunt (build 1226)
+
+The feature panel's civic gap: every moving creature was hostile, so a town, a quest hub, a story level
+had nothing alive in it that wasn't trying to kill you. A spawn marker gains a **Friendly** checkbox
+(green marker post, green capsule) — the NPC rides the SAME nav/patrol/route/separation stack with zero
+new movement code, and the design is subtraction, done at every layer so no gate anywhere can misfire:
+- **The brain**: `enemyDesiredTarget` demotes a friendly's hunt to patrol, skips the LOS raycast
+  entirely (shared budget, and a friendly has no use for a sightline), and never sets `aware`.
+  `alertEnemy` — the single door gunfire, blasts and the logic 'alert' verb all route through — slides
+  off a friendly.
+- **The spawn** disarms `ranged/exploder/charger/cover` at the source.
+- **The accounting** forked into `_hostileAlive()` / `_hostilePending()` (queued friendlies subtracted):
+  the HUD, the net snapshot's `en`, and the WAVE-CLEAR gate all count hostiles — a level whose villagers
+  outlive every wave must still advance, and one populated only by villagers reads zero hostiles.
+- **Waves never stack duplicates**: a friendly marker defaults to wave 0 (= every wave) but its NPC is
+  never killed by play, so `startWave` skips a marker whose spawn is still alive (`e._mark === m`).
+- **Killing one is a death, not a score event**: visuals, sound, ragdoll and the On-kill logic event all
+  fire (a creator can wire "villager died → lose"), but kills/coins/score/lifesteal/boss-payday all gate
+  off. Explosions and car impacts still hurt them — physics is physics.
+
+**Two latent marker bugs fixed on the way, both real:** `buildSpawnMarker` validated `opts.type` against
+a pre-628 THREE-entry list while the editor has offered all 8 since — so every saved
+gunner/sapper/shielded/charger/boss marker silently DEMOTED TO GRUNT on reload (the list stays a literal
+because ENEMY_TYPES is declared below the boot loader that runs this — TDZ, and `typeof` doesn't guard a
+TDZ). And duplicate-marker had been dropping `type`/`wave`/`y` since those fields were added. `test-1226`
+executes the brain (friendly vs identical hostile control), alertEnemy, the accounting, and pins the
+rest. Seven pins moved (1197, 33, 47, 58, 80, 283, 415 — `en:` became the hostile count, killEnemy's
+rewards gained the friendly gate, the LOS/detect lines gained `!en.friendly`; every intent kept).
+Deferred, recorded: dialogue on a moving NPC (interact targets props, not enemies — its own build), and
+friendlies fleeing gunfire rather than ignoring it.
+
 ## Align, distribute, array (build 1225)
 
 The editor-UX panel's arrangement gap: the engine had grouping, snapping, duplication and a clipboard,
