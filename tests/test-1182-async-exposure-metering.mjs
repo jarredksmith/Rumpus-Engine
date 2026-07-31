@@ -40,7 +40,7 @@ const build = (gl, webgl2, cfg) => {
   const KEY = +src.match(/AE_KEY=([\d.]+)/)[1], DEAD = +src.match(/AE_DEAD=([\d.]+)/)[1], TAU = +src.match(/AE_TAU=([\d.]+)/)[1];
   return new Function('worldCfg', 'renderer', 'THREE', '_matCopy', '_postRT', '_postQuad', '_postScene', '_postCam', 'performance', 'AE_KEY', 'AE_DEAD', 'AE_CLAMP', 'AE_TAU',
     'let _aeRT=null,_aeFrame=0,_aeTargetMul=1,_expAuto=1,_expBase=1.25,_aeLastT=0,_aePBO=null,_aeFence=null;\n' +
-    'const _aeBuf=new Uint8Array(16*16*4);\n' +
+    'const _aeBuf=new Uint8Array(16*16*4); const _aeAvg3=[];\n' +   // build 1198: the meter gained the median buffer
     extractFunction('_aeMeter') +
     '\nreturn { step:_aeMeter, get:()=>({ target:_aeTargetMul, auto:_expAuto, fence:_aeFence, exposure:renderer.toneMappingExposure }) };'
   )(cfg, renderer, { WebGLRenderTarget: function () {}, LinearFilter: 0 },

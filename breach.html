@@ -7207,6 +7207,7 @@ let _matComp=null, _matAfter=null, _matCopy=null;
 // ±1.5 stops around THEIR exposure, a dead-zone stops it breathing on balanced frames, and worldCfg.autoExp
 // (0..1, a slider next to Exposure) scales the whole effect — 0 is exactly the old static behaviour.
 let _aeRT=null, _aeFrame=0, _aeTargetMul=1, _expAuto=1, _expBase=1.25, _aeLastT=0, _aePBO=null, _aeFence=null;
+const _aeAvg3=[];   /* build 1198: the last three metered averages — the median rejects one-frame outliers (a PMREM rebuild, a load blip) outright */
 const _aeBuf=new Uint8Array(16*16*4);
 // build 1182: the meter reads back ASYNCHRONOUSLY. readRenderTargetPixels is a full pipeline stall — the
 // CPU drains every queued GPU command before the copy returns, so metering at 12Hz was a visible 12Hz
@@ -7227,9 +7228,20 @@ function _aeMeter(){
         _gl.getBufferSubData(_gl.PIXEL_PACK_BUFFER,0,_aeBuf);
         _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,null);
         let _ls=0; for(let i=0;i<1024;i+=4){ const l=(0.2126*_aeBuf[i]+0.7152*_aeBuf[i+1]+0.0722*_aeBuf[i+2])/255; _ls+=Math.log(Math.max(0.001,l)); }
-        const _avg=Math.exp(_ls/256);
+        const _avg0=Math.exp(_ls/256);
+        // build 1198: reported from play — with a bright HDRI sky the frame FLASHED rhythmically. Two
+        // stabilisers, each aimed at a mechanism: (1) median-of-3 harvests, so a single anomalous frame
+        // (a PMREM rebuild, a texture upload blip) cannot yank the target at all; (2) the dead-zone was a
+        // DISCONTINUITY — inside it the target snapped to neutral, one step outside it re-applied the FULL
+        // measured correction (up to ±1.5 stops). A bright sky parks the average exactly at that boundary
+        // (the ACES shoulder makes a near-white sky insensitive to exposure, so the loop hunts across it),
+        // turning the snap into a square wave through the ease. The dead-zone is now a SOFT KNEE —
+        // |ev| shrinks by AE_DEAD, so the response is 0 AT the boundary and grows continuously past it:
+        // no discontinuity exists for the loop to oscillate across.
+        _aeAvg3.push(_avg0); if(_aeAvg3.length>3) _aeAvg3.shift();
+        const _avg = _aeAvg3.length===3 ? [..._aeAvg3].sort((a,b)=>a-b)[1] : _avg0;
         let _ev=Math.log2(AE_KEY/Math.max(0.001,_avg));
-        if(Math.abs(_ev)<AE_DEAD) _ev=0;                      /* dead-zone: no breathing on a balanced frame */
+        const _mag=Math.abs(_ev)-AE_DEAD; _ev = _mag>0 ? Math.sign(_ev)*_mag : 0;
         _ev=Math.max(-AE_CLAMP, Math.min(AE_CLAMP, _ev))*_aeS; /* creator authorship: bounded, scaled */
         _aeTargetMul=Math.pow(2,_ev);
       } else if(_st===_gl.WAIT_FAILED){ _gl.deleteSync(_aeFence); _aeFence=null; }
@@ -7250,7 +7262,7 @@ function _aeMeter(){
     const _aeNow=performance.now(); const _aeDt=Math.min(0.25, Math.max(0.001,(_aeNow-_aeLastT)/1000)); _aeLastT=_aeNow;
     _expAuto += (_aeTargetMul-_expAuto)*(1-Math.exp(-_aeDt/AE_TAU));
     renderer.toneMappingExposure=_expBase*_expAuto;
-  } else if(_expAuto!==1 || _aeFence){ _expAuto=1; _aeTargetMul=1; renderer.toneMappingExposure=_expBase;
+  } else if(_expAuto!==1 || _aeFence){ _expAuto=1; _aeTargetMul=1; _aeAvg3.length=0; renderer.toneMappingExposure=_expBase;
     if(_aeFence){ try{ renderer.getContext().deleteSync(_aeFence); }catch(e){} _aeFence=null; } }
 }
 const AE_KEY=0.42, AE_CLAMP=1.5, AE_DEAD=0.15, AE_TAU=0.9;
@@ -27156,7 +27168,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1197 · 2026-07-31';
+const BUILD_VERSION = 'build 1198 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

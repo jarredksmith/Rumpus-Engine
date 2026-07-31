@@ -1931,6 +1931,29 @@ fifth (the script found BUILD_VERSION at 1182, aborted atomically before writing
 already matched were all pre-1183 net code, so nothing mixed). Same one-command recovery; everything
 through 1196 was already pushed.
 
+## The auto-exposure flash (build 1198) — the dead-zone was a discontinuity
+
+Reported from play: **with an HDRI sky, auto-exposure "flashes like crazy."** Eliminated first: a fighting
+writer (the meter is the only `toneMappingExposure` writer — grepped) and broken feedback (r149
+backgrounds DO tone-map — pinned against the real build in `test-1198`). The oscillator was the METER'S
+OWN DEAD-ZONE: inside it the target snapped to neutral; one step outside it re-applied the FULL measured
+correction (up to ±1.5 stops). A bright HDRI parks the frame average exactly at that boundary — the ACES
+shoulder makes a near-white sky insensitive to exposure, so the loop hunts across it — turning the snap
+into a square wave through the 0.9s ease. Rhythmic flashing, from a one-line `if`.
+
+Two stabilisers, each aimed at a mechanism:
+- **The dead-zone is now a SOFT KNEE**: `|ev| -= AE_DEAD`, so the response is 0 AT the boundary and grows
+  continuously past it — no discontinuity exists for the loop to oscillate across. `test-1198` proves the
+  boundary response is ~0 where the old snap jumped a tenth, while a dark frame still reaches the full
+  clamp (the knee saturates against it).
+- **Median-of-3 harvests**: a single anomalous frame (a PMREM rebuild, a texture-upload blip) cannot move
+  the target AT ALL — driven through the real `_aeMeter` with a harvest counter — while a sustained
+  change still adapts from the second harvest. Disable clears the buffer.
+
+The general lesson joins 1141's: **a control loop with any discontinuity in its response curve will find
+it.** The adaptive ladder needed hysteresis and majority windows; the exposure meter needed continuity.
+Two pins moved (1180's disable branch, 1182's harness gained the buffer).
+
 ## Open work (as of build 1193)
 
 **The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:
