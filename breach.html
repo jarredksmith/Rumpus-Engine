@@ -19170,6 +19170,116 @@ function updateWaterfalls(dt){
 }
 // ---- Water gameplay polish (build 862): cars drag + spray, props float, falls push down, AI wades slow ----
 function _waterSlowFor(px,py,pz){ if(!waterZones.length) return 1; const w=_waterAt(px,py,pz); return (w && w.sub>0.3) ? 0.55 : 1; }   // enemies + bots wade at ~half pace
+// ---- build 1193: EFFECT ZONES — heal / hurt / slow / haste / low-gravity cylinder volumes. ----
+// The zone toolbox had one effect per tool (death kills, fire burns, water swims, pads launch); anything
+// else — a healing fountain, a tar pit, a speed lane, a moon-gravity court — was unauthorable. One tool
+// now carries five composable effects with an audience (players / enemies / both). Same shapes as every
+// zone: cylinder volume, editor-only cues, serialized list, migrate-on-load with clamps so a hostile
+// level file cannot ship a 1e9-dps "heal" zone. Damage reuses fire's exact tick/accumulator pattern and
+// the same PvP/PvE damage split; low gravity is the water pattern (undo part of THIS frame's gravity).
+const FX_KINDS = { heal:1, hurt:1, slow:1, haste:1, lowgrav:1 };
+const FX_COL = { heal:0x3bf58a, hurt:0xff5a4a, slow:0x8fb2ff, haste:0xffd166, lowgrav:0xc79fff };
+function _migrateFxZone(z){ z=z||{};
+  return { x:+z.x||0, z:+z.z||0, r:Math.max(1,Math.min(120,(z.r!=null?+z.r:6))), y:(z.y!=null?+z.y:0),
+    h:Math.max(0.5,Math.min(80,(z.h!=null?+z.h:3))), kind:FX_KINDS[z.kind]?z.kind:'heal',
+    amt:Math.max(0,Math.min(200,(z.amt!=null?+z.amt:10))), who:(z.who==='enemies'||z.who==='both')?z.who:'players' }; }
+let fxZones = (savedLevel && Array.isArray(savedLevel.fxZones)) ? savedLevel.fxZones.map(_migrateFxZone) : [];
+let selFxZone = -1, fxZoneFx = [];
+let _fxHurtAcc = 0, _fxHurtT = 0, _fxHealAcc = 0;
+function _fxZoneAt(px, py, pz, who){
+  let spd=1, grav=1, heal=0, hurt=0;
+  for(const z of fxZones){
+    if(who==='player' ? z.who==='enemies' : z.who==='players') continue;
+    const dx=px-z.x, dz=pz-z.z; if(dx*dx+dz*dz > z.r*z.r) continue;
+    if(!(py<=z.y+z.h && py>=z.y-1.0)) continue;
+    if(z.kind==='slow') spd=Math.min(spd, Math.max(0.15, 1-z.amt/100));
+    else if(z.kind==='haste') spd=Math.max(spd, 1+z.amt/100);
+    else if(z.kind==='lowgrav') grav=Math.min(grav, Math.max(0, 1-z.amt/100));
+    else if(z.kind==='heal') heal+=z.amt;
+    else hurt+=z.amt;
+  }
+  return { spd, grav, heal, hurt };
+}
+function _fxSpeedFor(px, py, pz, who){ if(!fxZones.length) return 1; return _fxZoneAt(px, py, pz, who||'enemy').spd; }
+function updateFxZones(dt){
+  const _eo=(typeof editorOpen!=='undefined' && editorOpen);
+  for(const g of fxZoneFx){ if(g) g.visible=_eo; }
+  if(!fxZones.length) return;
+  const live = gameOn && !_eo && !gameOver
+    && !(typeof _cineActive!=='undefined' && _cineActive)
+    && !(typeof _levelLoaderActive!=='undefined' && _levelLoaderActive)
+    && !(typeof paused!=='undefined' && paused);
+  if(!live){ _fxHurtAcc=0; _fxHurtT=0; _fxHealAcc=0; return; }
+  const m=_fxZoneAt(player.pos.x, player.pos.y-EYE, player.pos.z, 'player');
+  if(m.grav<1) player.vel.y += GRAV*dt*(1-m.grav);
+  if(m.heal>0 && player.hp>0){ _fxHealAcc+=m.heal*dt; if(_fxHealAcc>=1){ const h=Math.floor(_fxHealAcc); _fxHealAcc-=h; player.hp=Math.min(player.maxHp, player.hp+h); } }
+  if(m.hurt>0){ _fxHurtAcc+=m.hurt*dt; _fxHurtT+=dt;
+    if(_fxHurtT>=0.35){ const dmg=_fxHurtAcc; _fxHurtAcc=0; _fxHurtT=0;
+      if(dmg>0.01){ if(typeof pvpMode==='function' && pvpMode()){ if(!duelDead) applyPvpDamage(dmg, null); } else applyEnemyDamageToSelf(dmg); } } }
+  else { _fxHurtAcc=0; _fxHurtT=0; }
+  if(!(typeof isClient!=='undefined' && isClient) && typeof enemies!=='undefined'){   /* enemies are host-simulated */
+    for(const z of fxZones){
+      if(z.who==='players' || !(z.kind==='hurt' || z.kind==='heal')) continue;
+      const r2=z.r*z.r;
+      for(const en of enemies){ if(!en || en.hp<=0 || !en.mesh) continue; const ep=en.mesh.position;
+        const dx=ep.x-z.x, dz=ep.z-z.z; if(dx*dx+dz*dz>r2) continue; if(!(ep.y<=z.y+z.h && ep.y>=z.y-1.0)) continue;
+        if(z.kind==='hurt') enemyHurt(en, z.amt*dt, z.x, z.z);
+        else en.hp=Math.min(en.maxHp||en.hp, en.hp+z.amt*dt);
+      }
+    }
+  }
+}
+function refreshFxZoneMarkers(){
+  for(const g of fxZoneFx){ scene.remove(g); g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }
+  fxZoneFx.length=0;
+  for(let i=0;i<fxZones.length;i++){ const z=fxZones[i], col=FX_COL[z.kind]||0x9fd8ff, sel=(i===selFxZone);
+    const grp=new THREE.Group();
+    const ring=new THREE.Mesh(new THREE.RingGeometry(Math.max(0.3,z.r-0.3), z.r, 48), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:sel?0.85:0.5, side:THREE.DoubleSide, depthWrite:false }));
+    ring.rotation.x=-Math.PI/2; ring.position.y=z.y+0.06; grp.add(ring);
+    const wall=new THREE.Mesh(new THREE.CylinderGeometry(z.r, z.r, z.h, 36, 1, true), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:sel?0.16:0.08, side:THREE.DoubleSide, depthWrite:false }));
+    wall.position.y=z.y+z.h/2; grp.add(wall);
+    grp.position.set(z.x, 0, z.z); grp.visible=!!(typeof editorOpen!=='undefined' && editorOpen);
+    grp.userData.zoneIdx=i; scene.add(grp); fxZoneFx.push(grp);
+  }
+}
+function addFxZone(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)};
+  const by=(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity)?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0);
+  fxZones.push(_migrateFxZone({ x:_dp.x, z:_dp.z, y:+by.toFixed(2) }));
+  selFxZone=fxZones.length-1; refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); }
+function removeFxZone(i){ pushUndoSnapshot(); fxZones.splice(i,1); if(selFxZone>=fxZones.length) selFxZone=fxZones.length-1; refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); }
+function renderFxZonesPanel(){
+  const host=(editorEl && editorEl.querySelector('#edFxZones')); if(!host) return;
+  host.innerHTML='';
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px';
+  intro.innerHTML='<b>Effect zones</b> \u2014 one tool, five effects: <b>heal</b>, <b>hurt</b>, <b>slow</b>, <b>haste</b>, <b>low gravity</b>. Amount is hp/sec for heal &amp; hurt, percent for the rest. Pick who it touches. They carry to multiplayer.';
+  host.appendChild(intro);
+  const addB=document.createElement('button'); addB.textContent='+ Add effect zone (at me)'; addB.style.cssText='width:100%;margin-bottom:8px;';
+  addB.onclick=()=>addFxZone(); host.appendChild(addB);
+  if(!fxZones.length){ const n=document.createElement('div'); n.className='hint'; n.textContent='None yet. A healing fountain, a tar pit, a speed lane, a moon-gravity court \u2014 stand where you want one and click Add.'; host.appendChild(n); return; }
+  fxZones.forEach((z,i)=>{
+    const box=document.createElement('div'); box.style.cssText='border:1px solid rgba(159,216,255,0.3);border-radius:6px;padding:7px 9px;margin-bottom:6px;background:'+(i===selFxZone?'rgba(159,216,255,0.09)':'transparent')+';';
+    const top=document.createElement('div'); top.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;';
+    const tt=document.createElement('span'); tt.style.cssText='font-size:11px;color:#9fd8f5;'; tt.textContent=z.kind.toUpperCase()+' '+(i+1)+'  \u00b7  ('+(+z.x).toFixed(1)+', '+(+z.z).toFixed(1)+')';
+    const selB=document.createElement('button'); selB.textContent=(i===selFxZone?'selected':'select'); selB.style.cssText='font-size:10px;padding:2px 8px;'; selB.onclick=()=>{ selFxZone=i; refreshFxZoneMarkers(); renderFxZonesPanel(); };
+    const del=document.createElement('button'); del.textContent='\u2715'; del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeFxZone(i);
+    top.appendChild(tt); top.appendChild(selB); top.appendChild(del); box.appendChild(top);
+    const selRow=(lbl, opts, cur, on)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0;';
+      const s=document.createElement('span'); s.textContent=lbl; s.style.cssText='flex:0 0 60px;font-size:11px;color:#9fc0b8;';
+      const se=document.createElement('select'); se.style.cssText='flex:1;font-size:11px;background:#0c1418;color:#cfeee2;border:1px solid #2a3a42;border-radius:4px;';
+      for(const o of opts){ const op=document.createElement('option'); op.value=o; op.textContent=o; if(o===cur) op.selected=true; se.appendChild(op); }
+      se.onchange=()=>{ pushUndoSnapshot(); on(se.value); refreshFxZoneMarkers(); renderFxZonesPanel(); };
+      r.appendChild(s); r.appendChild(se); box.appendChild(r); };
+    selRow('Effect', Object.keys(FX_KINDS), z.kind, v=>{ z.kind=v; });
+    selRow('Affects', ['players','enemies','both'], z.who, v=>{ z.who=v; });
+    const numRow=(lbl, key, min, max, step)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0;';
+      const s=document.createElement('span'); s.textContent=lbl; s.style.cssText='flex:0 0 60px;font-size:11px;color:#9fc0b8;';
+      const ni=document.createElement('input'); ni.type='number'; ni.min=min; ni.max=max; ni.step=step; ni.value=z[key]; ni.style.cssText='flex:1;min-width:0;font-size:11px;';
+      ni.onchange=()=>{ pushUndoSnapshot(); z[key]=Math.max(min, Math.min(max, +ni.value||0)); ni.value=z[key]; refreshFxZoneMarkers(); };
+      r.appendChild(s); r.appendChild(ni); box.appendChild(r); };
+    numRow('Amount', 'amt', 0, 200, 1); numRow('Radius', 'r', 1, 120, 0.5); numRow('Base Y', 'y', -200, 500, 0.25); numRow('Height', 'h', 0.5, 80, 0.5);
+    host.appendChild(box);
+  });
+}
 function _carWaterFactor(sub){ return sub<=0.15 ? 1 : (sub<1.1 ? 0.45 : 0.18); }   // top-speed cap fraction by submersion: splash / shallow / deep
 function _carWaterStep(o, dt){
   if(!waterZones.length || !o || !o.userData || !o.userData.vehicle) return;
@@ -21231,7 +21341,7 @@ function updateBots(dt){
     if(b.grounded!==false){   // walk only with feet on a surface; while airborne, momentum carries it
       // stuck recovery: if we've been blocked a while, steer perpendicular for a moment to get around it
       if(b._stuckT>0.5){ if(!b._stuckSide) b._stuckSide=(Math.random()<0.5?1:-1); if(b._stuckT>1.8 && !b._sFlip){ b._sFlip=1; b._stuckSide*=-1; } const px=-mvz*b._stuckSide, pz=mvx*b._stuckSide; mvx=mvx*0.5+px*1.2; mvz=mvz*0.5+pz*1.2; const ml=Math.hypot(mvx,mvz)||1; mvx/=ml; mvz/=ml; }   // jammed -> follow the wall to ONE side; build 977: flip the side if it isn't working (concave corners)
-      const step=spd*dt*(typeof _waterSlowFor==='function' ? _waterSlowFor(b.pos.x, b.pos.y, b.pos.z) : 1);   // build 862: bots wade at half pace too
+      const step=spd*dt*(typeof _waterSlowFor==='function' ? _waterSlowFor(b.pos.x, b.pos.y, b.pos.z) : 1)*(typeof _fxSpeedFor==='function' ? _fxSpeedFor(b.pos.x, b.pos.y, b.pos.z) : 1);   // build 862: bots wade at half pace too; 1193: effect zones
       const cx=Math.max(-lim,Math.min(lim, b.pos.x+mvx*step)), cz=Math.max(-lim,Math.min(lim, b.pos.z+mvz*step));
       // The arena walls + props are the only movement boundary; the spawn region never blocks motion, so a
       // bot can leave its spawn area and roam the whole map.
@@ -21681,7 +21791,7 @@ function loadLevelFromNet(level){
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
   triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
@@ -26894,7 +27004,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1192 · 2026-07-31';
+const BUILD_VERSION = 'build 1193 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31565,7 +31675,7 @@ function loop(){
   }
   if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
@@ -31691,7 +31801,7 @@ function loop(){
   crouchT += ((crouching?1:0) - crouchT) * Math.min(1, dt*12);
   let speedBase = sprinting() ? SPEED*SPRINT : SPEED;
   if(crouching) speedBase = CROUCH_SPEED;          // crouch overrides sprint
-  const sp = speedBase * (buffs.speed>0?1.4:1) * moveScale * run.speedMul;
+  const sp = speedBase * (buffs.speed>0?1.4:1) * moveScale * run.speedMul * (typeof _fxSpeedFor==='function' ? _fxSpeedFor(player.pos.x, player.pos.y-EYE, player.pos.z, 'player') : 1);   /* build 1193: slow/haste zones */
   // build 1171: movement has MASS. `vel = wish*sp` teleported velocity to the input every frame — zero
   // start-up weight, dead-stop on key release EVEN MID-AIR (release W at the apex and the arc collapsed to a
   // vertical drop), instantaneous 180s at full speed. Velocity now CHASES the input target exponentially,
@@ -32201,7 +32311,7 @@ function loop(){
       const fp = en.mesh.userData.footprint || 0.9;
       en._reach = 1.5 + fp;                                // attack range scales with the body too (Phase 3)
       const stopAt = td.chase ? (fp + 0.9) : 0.5;          // patrol: stop on the waypoint; chase: body just shy of the player
-      const spd = (td.chase ? en.speed : en.speed*0.5) * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them
+      const spd = (td.chase ? en.speed : en.speed*0.5) * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1) * (typeof _fxSpeedFor==='function' ? _fxSpeedFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them; 1193: effect zones
       if(en.grounded!==false){   // a launched enemy is airborne: momentum carries it, AI walking is paused
       // build 635: Charger — while winding up or dashing it OWNS its movement (normal walking skipped via _charging).
       let _charging = false;
@@ -32981,6 +33091,7 @@ const SEC_SUB = {
   ladders:    'Climbable vertical volumes (W up / S down, jump to hop off).',
   firezones:  'Place fire & smoke emitters in the world.',
   waterzones: 'Lakes, ponds, puddles, streams & waterfalls — swim, wade, ride the current.',
+  fxzones: 'Heal, hurt, slow, haste & low-gravity volumes \u2014 pick the effect and who it touches.',
   impactfx:   'Sparks, marks & debris where YOUR shots land.',
   tracerfx:   'The streak your own gunfire leaves in the air.',
   decalfx:    'Bullet holes left where shots hit \u2014 size, lifetime & your own decal image.',
@@ -33011,8 +33122,8 @@ for(const _m of EDITOR_MODES) for(const _t of MODE_TARGETS[_m]) TARGET_MODE[_t]=
 let editorMode = 'build';
 try{ const _sm = localStorage.getItem('breach_editor_mode'); if(_sm && EDITOR_MODES.indexOf(_sm)>=0) editorMode = _sm; }catch(e){}
 // Which placeable-volume tool is showing inside the grouped 'Zones' section (build 649).
-const ZONE_TYPES = [['triggers','\u26a1','Trigger'],['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire'],['waterzones','\ud83d\udca7','Water']];
-const ZONE_HOST = { triggers:'edTriggers', audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones', waterzones:'edWaterZones' };
+const ZONE_TYPES = [['triggers','\u26a1','Trigger'],['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire'],['waterzones','\ud83d\udca7','Water'],['fxzones','\u2728','Effect']];
+const ZONE_HOST = { triggers:'edTriggers', audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones', waterzones:'edWaterZones', fxzones:'edFxZones' };
 let activeZoneType = 'audiozones';
 try{ const _z = localStorage.getItem('breach_editor_zone'); if(_z && ZONE_HOST[_z]) activeZoneType = _z; }catch(e){}
 // Show only the selected zone tool's host inside the grouped section.
@@ -34414,6 +34525,7 @@ function serializeLevel(){
     jumpPads: jumpPads.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), power:(+z.power||22) })),
     ladders: ladders.map(L=>({ x:+L.x, z:+L.z, r:(+L.r||1), y:(+L.y||0), h:(L.h!=null?+L.h:4), face:(+L.face||0) })),   // build 645
     waterZones: waterZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), color:(z.color!=null?+z.color:0x14586e), op:(z.op!=null?+z.op:0.72), wave:(z.wave!=null?+z.wave:1), flowDir:(+z.flowDir||0), flowSpd:(+z.flowSpd||0) })),
+    fxZones: fxZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:+z.y, h:+z.h, kind:z.kind, amt:+z.amt, who:z.who })),   // build 1193
     waterfalls: waterfalls.map(f=>({ x:+f.x, z:+f.z, y:+f.y, h:+f.h, w:+f.w, yaw:(+f.yaw||0), color:(f.color!=null?+f.color:0xbfe6f2), op:(f.op!=null?+f.op:0.55), spd:(f.spd!=null?+f.spd:1), splash:(f.splash!=null?+f.splash:1), pool:(f.pool!=null?+f.pool:1.15), snd:(f.snd||''), vol:(f.vol!=null?+f.vol:0.8) })),
     fireZones: fireZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3), dps:(+z.dps||0), den:(+z.den||1), psz:(+z.psz||1), hue:(z.hue!=null?+z.hue:30), turb:(z.turb!=null?+z.turb:1), wind:(+z.wind||0), spk:(z.spk!==false), sat:(z.sat!=null?+z.sat:1), smoke:(z.smoke===true?1:0), rx:(+z.rx||0), ry:(+z.ry||0), rz:(+z.rz||0), sx:(z.sx!=null?+z.sx:1), sy:(z.sy!=null?+z.sy:1), sz:(z.sz!=null?+z.sz:1) })),
     fx: Object.assign({}, fxCfg),
@@ -35162,7 +35274,7 @@ function restoreLevel(level){
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); }
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
   triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
@@ -35731,7 +35843,8 @@ function buildEditorPanel(){
         + '<div id="edJumpPads" class="zoneHost" data-zone="jumppads"></div>'
         + '<div id="edLadders" class="zoneHost" data-zone="ladders"></div>'
         + '<div id="edFireZones" class="zoneHost" data-zone="firezones"></div>'
-        + '<div id="edWaterZones" class="zoneHost" data-zone="waterzones"></div>')
+        + '<div id="edWaterZones" class="zoneHost" data-zone="waterzones"></div>'
+        + '<div id="edFxZones" class="zoneHost" data-zone="fxzones"></div>')
     + sec('Effects', 'wepfx',
           '<div id="edWepFxPicker"></div>'
         + '<div id="edImpactFx" class="wepfxHost" data-wepfx="impactfx"></div>'
@@ -35845,8 +35958,9 @@ function buildEditorPanel(){
         else if(type==='ladders'){ if(typeof addLadder==='function') addLadder(); }
         else if(type==='firezones'){ if(typeof addFireZone==='function') addFireZone(); }
         else if(type==='waterzones'){ if(typeof addWaterZone==='function') addWaterZone(); }
+        else if(type==='fxzones'){ if(typeof addFxZone==='function') addFxZone(); }
       };
-      const ZONE_ADD=[['audiozones','\ud83d\udd0a','Audio zone'],['deathzones','\u2620','Death zone'],['jumppads','\u2b06','Jump pad'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire zone'],['waterzones','\ud83d\udca7','Water zone']];
+      const ZONE_ADD=[['audiozones','\ud83d\udd0a','Audio zone'],['deathzones','\u2620','Death zone'],['jumppads','\u2b06','Jump pad'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire zone'],['waterzones','\ud83d\udca7','Water zone'],['fxzones','\u2728','Effect zone']];
       const ADD_ITEMS=[
         ['\u25a0 Box',      ()=>{ jump('build','props');   addSceneProp('box'); }],
         ['\u25cf Sphere',   ()=>{ jump('build','props');   addSceneProp('sphere'); }],
@@ -35898,6 +36012,7 @@ function buildEditorPanel(){
   if(typeof refreshLadderMarkers==='function') refreshLadderMarkers();   // build 645: show ladder markers while editing
   if(typeof renderFireZonesPanel==='function') renderFireZonesPanel();
   if(typeof renderWaterZonesPanel==='function') renderWaterZonesPanel();
+  if(typeof renderFxZonesPanel==='function') renderFxZonesPanel();
   if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072: trigger volumes
   if(typeof renderZonePicker==='function') renderZonePicker();        // build 649: the grouped Zones type picker
   if(typeof applyZoneVisibility==='function') applyZoneVisibility();   // ...and reveal only the active zone tool

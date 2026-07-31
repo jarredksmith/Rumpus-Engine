@@ -1825,7 +1825,23 @@ upgrade that changes the default fails a test instead of blinking props out at s
 raycast signature (an instanced hit reports the shared geometry with a correct world point) now applies
 to model batches too.
 
-## Open work (as of build 1192)
+## Effect zones (build 1193)
+
+The zone toolbox had one effect per tool — death kills, fire burns, water swims, pads launch; a healing
+fountain, a tar pit, a speed lane or a moon-gravity court was unauthorable. One new tool (`fxZones`,
+✨ Effect in the zones tab) carries five effects with an audience (players / enemies / both):
+- **Composition is strongest-wins for the multipliers** (haste `max`, slow/low-grav `min`) and **summing
+  for the rates** (heal/hurt hp/sec) — overlapping zones compose sanely instead of multiplying into
+  absurdity. Slow floors at 0.15× (bog, never freeze); every field clamps in `_migrateFxZone` so a
+  hostile file cannot ship a 1e9-amount zone.
+- **Speed rides the existing multiplier chains**: the player's target speed (through 1171's acceleration
+  model, so it has mass), and the bots'/enemies' water-slow sites. **Low gravity is the water-swim
+  pattern** (undo part of THIS frame's gravity). **Hurt is fire's exact tick/accumulator** with the same
+  PvP/PvE damage split; heal is whole-hp granular. Enemy effects run host-side only.
+- Serialized like every zone, migrated in both loaders, editor-only cylinder cues coloured per kind,
+  full panel (add-at-me, kind/audience dropdowns, amount/radius/Y/height).
+
+## Open work (as of build 1193)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
