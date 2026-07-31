@@ -57,7 +57,7 @@ const TAU  = +src.match(/AE_TAU=([\d.]+)/)[1];
   assert(/renderer\.toneMappingExposure = _expBase \* _expAuto;/.test(src),
     '...and what the renderer gets is base × the adaptive multiplier — authorship is multiplied around, never replaced');
   assert(/renderer\.toneMappingExposure=_expBase\*_expAuto;/.test(src), 'the frame loop applies the eased value');
-  assert(/\} else if\(_expAuto!==1 \|\| _aeFence\)\{ _expAuto=1; _aeTargetMul=1; renderer\.toneMappingExposure=_expBase;/.test(src),
+  assert(/\} else if\(_expAuto!==1 \|\| _aeFence\)\{ _expAuto=1; _aeTargetMul=1; _aeAvg3\.length=0; renderer\.toneMappingExposure=_expBase;/.test(src),
     'turning the slider to 0 snaps cleanly back to the static authored exposure (and since 1182, cleans up any in-flight read)');
   assert(/if\(!_aeFence && \(\+\+_aeFrame % 5\)===0\)/.test(src),
     'metering runs every 5th frame (~12Hz) — and since 1182, only when no read is already in flight');

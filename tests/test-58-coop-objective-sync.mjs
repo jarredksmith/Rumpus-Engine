@@ -7,7 +7,7 @@ const src = gameSource();
 const sw = extractFunction('serializeWorld');
 assert(/const O = \{ o:objectiveActive\(\)/.test(sw), 'snapshot builds an objective block O');
 assert(/ex:\[\+extractPos\.x\.toFixed\(2\), \+extractPos\.z\.toFixed\(2\)\]/.test(sw), 'O carries the beacon position');
-assert(/return \{ t:'world', P, E, C, D, K, PU, O, wv:wave \};/.test(sw), 'O is included in the world message');
+assert(/return \{ t:'world', dl: full\?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:enemies\.length \};/.test(sw), 'O is included in the world message (delta-framed since 1197)');
 
 // host: extraction hold counts any teammate, not just the host
 const ot = extractFunction('objectiveTick');
