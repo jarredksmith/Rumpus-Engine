@@ -10587,9 +10587,11 @@ function _pvApplyOne(o, act, at){
   if(act==='del'){ if(typeof shatterProp==='function') try{ shatterProp(o, null, null, 0); }catch(e){} return; }
   if(act==='hide'){ if(u._pvHidden) return; u._pvHidden=true; o.visible=false;
     if(u.phys){ u._pvWasDyn=true; try{ removeDynamicProp(o); }catch(e){} }
-    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; } return; }
+    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; }
+    if(u._physStatic && typeof physWorld!=='undefined' && physWorld){ try{ physWorld.removeRigidBody(u._physStatic); }catch(e){} u._physStatic=null; }   /* build 1194: no invisible physics wall */
+    return; }
   if(act==='show'){ if(!u._pvHidden){ o.visible=true; return; } u._pvHidden=false; o.visible=true;
-    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; }
+    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; if(typeof addStaticColliderFor==='function' && typeof physWorld!=='undefined' && physWorld && !u.phys) try{ addStaticColliderFor(o); }catch(e){} }   /* build 1194: show restores the physics body too */
     if(u._pvWasDyn){ u._pvWasDyn=false; try{ setPropDynamic(o, true); }catch(e){} } return; }
   if(act==='move' && at){
     const wasDyn=!!u.phys; if(wasDyn) try{ removeDynamicProp(o); }catch(e){}
@@ -27004,7 +27006,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1193 · 2026-07-31';
+const BUILD_VERSION = 'build 1194 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27581,6 +27583,11 @@ function trimeshDescFor(o){
 }
 function addStaticColliderFor(o){
   if(!physWorld || !o) return;
+  // build 1194: idempotent — a stamped collider is already in THIS world. The stamps (cleared in
+  // destroyPhysWorld) are what make INCREMENTAL adds possible: a late-loading GLB used to trigger a FULL
+  // world rebuild (terrain trimesh + every static + every dynamic + joints + the KCC), a multi-second
+  // stall repeated for every load burst; now only the missing statics are added to the live world.
+  if(o.userData && (o.userData._physStatic || o.userData._kbody)) return;
   if(o.userData && o.userData.vehicle){
     // build 755: remember the authored placement so re-entering the editor snaps the car back to where it was PLACED,
     // not wherever it was last driven (otherwise autosave would persist the driven spot and lose the layout). Capture
@@ -27622,13 +27629,14 @@ function addStaticColliderFor(o){
       .setRotation({ x:q.x, y:q.y, z:q.z, w:q.w }));
     physWorld.createCollider(
       colliderDescFor(info).setTranslation(info.off.x, info.off.y, info.off.z).setFriction(0.9).setRestitution(0.1), rb);
+    o.userData._physStatic = rb;
     return;
   }
   // non-primitive model: a trimesh of the real triangles so sloped/stepped surfaces (ramps, stairs) are
   // true physics geometry that dynamic props roll down — not a fat upright box they sit on top of.
   try{
     const tri = trimeshDescFor(o);
-    if(tri){ const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed()); physWorld.createCollider(tri.setFriction(0.9).setRestitution(0.1), rb); return; }
+    if(tri){ const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed()); physWorld.createCollider(tri.setFriction(0.9).setRestitution(0.1), rb); o.userData._physStatic = rb; return; }
   }catch(e){ console.warn('[RUMPUS] trimesh collider failed, falling back to box:', e && e.message); }
   // fallback: world-AABB cuboid (degenerate/empty geometry)
   if(!o.userData.box){ o.updateMatrixWorld(true); o.userData.box = new THREE.Box3().setFromObject(o, true); }
@@ -27636,6 +27644,7 @@ function addStaticColliderFor(o){
   if(_psize.x<1e-3 || _psize.y<1e-3 || _psize.z<1e-3) return;
   const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(_pcenter.x,_pcenter.y,_pcenter.z));
   physWorld.createCollider(RAPIER.ColliderDesc.cuboid(_psize.x/2, _psize.y/2, _psize.z/2).setFriction(0.9).setRestitution(0.1), rb);
+  o.userData._physStatic = rb;
 }
 // (Re)build the whole physics world from the current scene state.
 // Build a world-space triangle mesh from the displaced floor geometry so the physics floor matches the
@@ -27736,7 +27745,16 @@ function _schedulePhysRebuild(){
   _physRebuildT=setTimeout(function tick(){
     _physRebuildT=0;
     if(typeof _glbPending!=='undefined' && _glbPending>0){ _physRebuildT=setTimeout(tick, 300); return; }   // still loading models — wait for the burst to finish
-    try{ if(physWorld && (typeof editorOpen==='undefined' || !editorOpen)) buildPhysWorld(); }catch(e){}
+    // build 1194: INCREMENTAL. A late-loading GLB is a new STATIC — nothing about the terrain, the other
+    // statics, the dynamics or the joints changed, so rebuilding all of it (the multi-second trimesh
+    // stall, once per load burst) bought nothing. Add the missing statics to the live world; fall back to
+    // the full rebuild only if a DYNAMIC prop is missing its body (its joints may reference others).
+    try{ if(physWorld && (typeof editorOpen==='undefined' || !editorOpen)){
+      let _needFull=false;
+      for(const o of dynamicProps){ if(o && o.userData && o.userData.phys && !o.userData.phys.body){ _needFull=true; break; } }
+      if(_needFull) buildPhysWorld();
+      else { for(const c of colliders) addStaticColliderFor(c); }   /* stamped ones return immediately */
+    } }catch(e){}
   }, 350);
 }
 function destroyPhysWorld(){
@@ -27744,7 +27762,7 @@ function destroyPhysWorld(){
   if(typeof _clearCorpses==='function') _clearCorpses();     // build 779: ragdoll bodies belong to the world we're about to free
   if(physWorld){ try{ physWorld.free(); }catch(e){} physWorld = null; }
   for(const o of dynamicProps){ if(o.userData.phys) o.userData.phys.body = null; }
-  for(const o of colliders){ if(o.userData && o.userData._kbody) o.userData._kbody = null; }
+  for(const o of colliders){ if(o.userData){ if(o.userData._kbody) o.userData._kbody = null; if(o.userData._physStatic) o.userData._physStatic = null; } }   /* build 1194 */
   playerBody = playerCollider = playerCtrl = null;   // KCC bodies belonged to the freed world
   physAccum = 0;
 }

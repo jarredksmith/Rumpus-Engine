@@ -1841,6 +1841,23 @@ fountain, a tar pit, a speed lane or a moon-gravity court was unauthorable. One 
 - Serialized like every zone, migrated in both loaders, editor-only cylinder cues coloured per kind,
   full panel (add-at-me, kind/audience dropdowns, amount/radius/Y/height).
 
+## Incremental Rapier statics (build 1194)
+
+A GLB finishing its load after deploy triggered `buildPhysWorld()` — destroy the WHOLE world, rebuild the
+terrain trimesh, every static trimesh (the documented multi-second stall), every dynamic body, every
+joint and the character controller — once per load burst, for one new static prop. Statics are now
+STAMPED with their body (`_physStatic`; the kinematic branches already had `_kbody`),
+`addStaticColliderFor` is idempotent on the stamps (executed in `test-1194`: triple-add creates one
+body), and the debounced late-load tick walks the collider list adding only what is missing into the
+LIVE world. A dynamic prop missing its body still forces the full rebuild — its joints may reference
+other bodies — and `destroyPhysWorld` clears the stamps so a stale one can never make the next full
+build skip real work.
+
+**The stamp exposed and fixed a real 1170-era bug:** `hideprop` removed a static prop's collider from
+the query list but left its Rapier body — an invisible physics wall that dynamic props bounced off.
+Hide now removes the body; show restores it through the same idempotent door. Two pins moved (125, 495 —
+destroy-clears and the debounce tick; intents kept).
+
 ## Open work (as of build 1193)
 
 **The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:

@@ -12,7 +12,8 @@ assert(/if\(gltf && !obj\.userData\.phys && typeof _schedulePhysRebuild==='funct
   'a freshly LOADED model (not a primitive, not a dynamic prop) schedules a rebuild');
 const sr = extractFunction('_schedulePhysRebuild');
 assert(/_glbPending>0\)\{ _physRebuildT=setTimeout\(tick, 300\); return; \}/.test(sr), 'it waits for the GLB load burst (_glbPending) to finish before rebuilding');
-assert(/if\(physWorld && \(typeof editorOpen==='undefined' \|\| !editorOpen\)\) buildPhysWorld\(\);/.test(sr), 'then it rebuilds the world (only in play, only if a world exists)');
+assert(/if\(physWorld && \(typeof editorOpen==='undefined' \|\| !editorOpen\)\)\{/.test(sr) && /else \{ for\(const c of colliders\) addStaticColliderFor\(c\); \}/.test(sr),
+  'then it makes the late statics solid (only in play, only if a world exists) — INCREMENTALLY since 1194, with a full buildPhysWorld only when a dynamic prop is missing its body');
 assert(/if\(_physRebuildT\) clearTimeout\(_physRebuildT\);/.test(sr), 'debounced — a burst of model loads coalesces into one rebuild');
 
 // --- executable: the rebuild gate (only once loads settle, a world exists, and not editing) ---
