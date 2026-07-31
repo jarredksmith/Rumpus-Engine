@@ -1519,6 +1519,27 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The first-person camera has a body (build 1210)
+
+The gameplay-feel panel's HIGH: on foot the camera never reacted to the player's own body — build 730's
+speed-FOV lived only in the driving branch, jumping off a tower and landing produced nothing, and there was
+no strafe lean, so movement (despite 1171's acceleration) read as a camera on rails. Three additions, all in
+the existing loop:
+- **Landing impact.** The air→ground frame (where `_playerWasAir` is still true and `player.vel.y` still
+  holds the fall speed, before it is zeroed) kicks a spring-damped eye-dip (`_landDip`, stiff and
+  well-damped — a quick dip and settle, no wobble), a touch of shake, and `SFX.land` — a lowpassed thud
+  that grows with impact. Gated `!drivingCar` (the car owns its own landings).
+- **Sprint FOV.** `_sprintFov = f²·6·(1−adsBlend)` where f is ground speed over top speed, ADDED to the
+  ADS-blended `wantFov` so it survives aiming being zero and folds out completely while aiming.
+- **Strafe lean.** Lateral velocity (`vel · camera-right`) rolls `camera.rotation.z` via an eased,
+  clamped `_camLean`, killed while aiming so the sight stays true; folded into both the shake and no-shake
+  camera-roll writes.
+
+`test-1210` integrates the real dip spring (proves a visible dip, a clean settle to exactly 0, and no
+bounce), the quadratic sprint curve (full 6° at top speed, 0 while aiming), and the clamped lean (rolls
+away from lateral velocity, killed by ADS), plus the wiring. One 964 pin moved (wantFov gained the sprint
+term), intent kept. Numbers (dip stiffness 90/14, sprint 6°, lean 0.006 clamped 0.05) are the tuning levers.
+
 ## Enemies acknowledge bullets (build 1209)
 
 The gameplay-feel panel's CRITICAL #2: a non-lethal hit was a 0.12 s emissive flash and NOTHING else — a

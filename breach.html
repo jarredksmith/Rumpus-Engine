@@ -6544,6 +6544,7 @@ const SFX = {
   empty(){ tone({freq:180, type:'square', dur:0.04, vol:0.08}); },
   wave(){ tone({freq:300, type:'triangle', dur:0.15, vol:0.16, slideTo:450}); setTimeout(()=>tone({freq:450, type:'triangle', dur:0.2, vol:0.16, slideTo:600}),140); },
   jump(){ if(playSample(curSounds().jump)) return; tone({freq:280, type:'sine', dur:0.12, vol:0.1, slideTo:420}); },
+  land(impact){ const v=Math.max(0.04, Math.min(0.2, 0.06+impact*0.16)); noise({dur:0.1+impact*0.06, vol:v, filterFreq:260+impact*140, type:'lowpass'}); if(impact>0.5) tone({freq:120, type:'sine', dur:0.08, vol:v*0.5, slideTo:70}); },   // build 1210: a footfall thud, heavier the harder you land
   coin(){ if(playSample(curSounds().coin)) return; tone({freq:880, type:'square', dur:0.06, vol:0.1, slideTo:1320}); setTimeout(()=>tone({freq:1320, type:'square', dur:0.08, vol:0.1}),55); },
   buy(){ tone({freq:660, type:'triangle', dur:0.08, vol:0.16, slideTo:990}); setTimeout(()=>tone({freq:990, type:'triangle', dur:0.1, vol:0.16, slideTo:1320}),80); },
   deny(){ tone({freq:160, type:'sawtooth', dur:0.12, vol:0.14, slideTo:90}); },
@@ -24892,6 +24893,10 @@ function explodeAt(pos, R, dmg, byId){
 }
 // ---------- Camera shake ----------
 let shake = 0;                 // current trauma 0..1, decays each frame
+// build 1210: the first-person camera reacts to the player's OWN body — the two cheapest game-feel wins in
+// the genre and both absent (the speed-FOV of build 730 lived only in the driving branch). _landDip is a
+// spring the landing impulse kicks (dip then recover), _camLean an eased strafe roll.
+let _landDip = 0, _landDipV = 0, _camLean = 0;
 function addShake(amt){ shake = Math.min(1, shake + amt); }
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){
@@ -27534,7 +27539,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1209 · 2026-07-31';
+const BUILD_VERSION = 'build 1210 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28335,6 +28340,13 @@ function moveKCC(dt){
     if(_playerWasAir && !drivingCar && gameCfg.fallDamage && gameCfg.fallDamage.on && gameCfg.fallDamage.player && gameOn && (player.hp==null || player.hp>0)){   // build 719: no fall damage while driving (the car handles its own landings)
       const dmg = _fallDamageFor(-player.vel.y);   // vel.y is negative while falling
       if(dmg > 0.5) applyEnemyDamageToSelf(dmg);
+    }
+    if(_playerWasAir && !drivingCar){                      // build 1210: the air->ground frame — vel.y is still the fall speed
+      const _fall = Math.max(0, -player.vel.y);
+      if(_fall > 2.5){ const _imp = Math.min(1, _fall/22);
+        _landDipV -= 1.6 + _imp*7.0;                        // kick the eye-dip spring downward
+        shake = Math.max(shake, _imp*0.22);
+        if(typeof SFX!=='undefined' && SFX.land) SFX.land(_imp); }
     }
     player.onGround = true; if(player.vel.y < 0) player.vel.y = 0;
   }
@@ -32325,11 +32337,25 @@ function loop(){
   const adsTarget = (ads || padAds || touchAds || editorAimPreview) ? 1 : 0;
   adsBlend += (adsTarget - adsBlend) * Math.min(1, dt*14);
   if(Math.abs(adsBlend - adsTarget) < 0.002) adsBlend = adsTarget;
+  // build 1210: the landing-dip spring (stiff, well damped — a quick dip and settle, no wobble) and the
+  // strafe-lean target (roll away from your lateral velocity, killed while aiming so the sight stays true).
+  { const _dt=Math.min(0.05, dt);
+    _landDipV += (-_landDip*90 - _landDipV*14) * _dt; _landDip += _landDipV*_dt;
+    if(Math.abs(_landDip)<1e-4 && Math.abs(_landDipV)<1e-3){ _landDip=0; _landDipV=0; }
+    const _latV = (typeof player!=='undefined'&&player.vel) ? (player.vel.x*Math.cos(player.yaw) - player.vel.z*Math.sin(player.yaw)) : 0;
+    const _leanT = Math.max(-0.05, Math.min(0.05, -_latV*0.006)) * (1 - adsBlend);
+    _camLean += (_leanT - _camLean) * Math.min(1, dt*8); }
   _scopedNow = !!((ads || padAds || touchAds) && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen); if(_scopedNow && typeof cursorAimActive==='function' && cursorAimActive()) _scopedNow=false;   // build 874: no optic tunnel from a bird's-eye camera (build 1103: nor from chase-cursor) · build 913: touch AIM + controller LT scope too (the sniper never zoomed on mobile)
   _setScopeOverlay(_scopedNow);
   const hipFov = (worldCfg && worldCfg.fov) ? worldCfg.fov : BASE_FOV;
   const _zoomFov = Math.max(12, adsFovLive * (typeof _attZoomMul==='function' ? _attZoomMul(curWep) : 1));   // build 964: optics finally magnify — the loadout zoom was computed but never read
-  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend;
+  // build 1210: a sprint FOV push — the frame widens as you approach top speed, folded out while aiming.
+  let _sprintFov = 0;
+  if(typeof player!=='undefined' && player.vel && player.onGround && typeof SPEED!=='undefined'){
+    const _hsp = Math.hypot(player.vel.x, player.vel.z), _top = SPEED * (typeof SPRINT!=='undefined'?SPRINT:1.6);
+    const _f = _top>0 ? Math.min(1, _hsp/_top) : 0; _sprintFov = _f*_f * 6 * (1 - adsBlend);
+  }
+  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend + _sprintFov;
   if(Math.abs(camera.fov - wantFov) > 0.01){ camera.fov = wantFov; camera.updateProjectionMatrix(); }
   crosshairEl.style.opacity = _scopedNow ? '0' : (1 - adsBlend*0.85).toFixed(2);
 
@@ -32678,15 +32704,16 @@ function loop(){
     camera.position.copy(player.pos);
     camera.position.y += (worldCfg.eyeHeight - EYE);   // build 702: per-level camera height — shifts the view only; the collider + enemy aim stay at the true body
     if(crouchT > 0.001) camera.position.y -= crouchT * CROUCH_DIP;   // crouch lowers the view
+    camera.position.y += _landDip;   // build 1210: the landing dip (negative = down)
 
-    // camera shake (decays quickly) — offsets rotation so it reads as a jolt
+    // camera shake (decays quickly) — offsets rotation so it reads as a jolt; build 1210 folds in the strafe lean
     if(shake > 0.001){
       const s = shake * shake;          // ease — feels punchier
       camera.rotation.x += (Math.random()-0.5) * 0.08 * s;
       camera.rotation.y += (Math.random()-0.5) * 0.08 * s;
-      camera.rotation.z  = (Math.random()-0.5) * 0.06 * s;
+      camera.rotation.z  = _camLean + (Math.random()-0.5) * 0.06 * s;
       shake = Math.max(0, shake - dt*2.2);
-    } else { shake = 0; camera.rotation.z = 0; }
+    } else { shake = 0; camera.rotation.z = _camLean; }
     if(tpActive() && gameOn && !duelDead){ gun.visible=false; tpCameraPushback(dt); }   // third-person chase cam (first-person above is the default; build 894: damped follow, forced by Camera view: Third-person)
   }
   // build 874: per-level camera views. Placed AFTER the branch ladder so it wins over first/third-person

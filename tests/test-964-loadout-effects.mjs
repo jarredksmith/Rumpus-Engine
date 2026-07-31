@@ -26,7 +26,7 @@ eq(r.zoomMul, 0.6, 'zoom aggregates'); assert(r.suppressed===true, 'suppressed f
 // the dead wires are wired
 assert(/const _zoomFov = Math\.max\(12, adsFovLive \* \(typeof _attZoomMul==='function' \? _attZoomMul\(curWep\) : 1\)\);/.test(src),
   'the ADS fov blend finally reads the optic zoom');
-assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend;/.test(src), 'zoomed fov drives the camera');
+assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend \+ _sprintFov;/.test(src), 'zoomed fov drives the camera (plus the build 1210 sprint push, which is 0 while aiming)');
 assert(/WEAPONS\[k\]\.loud=base\.loud\*r\.loudMul;/.test(src), 'loudness mods write the per-weapon loud field');
 assert(/WEAPONS\[k\]\.suppressed=r\.suppressed;/.test(src), 'suppressed flag reaches the live weapon');
 assert(/alertEnemiesNear\(player\.pos\.x, player\.pos\.z, HEAR_RADIUS \* /.test(src), 'shoot() scales the hearing radius by loudness');
