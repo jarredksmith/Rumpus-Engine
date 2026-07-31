@@ -10072,13 +10072,27 @@ function _lgNode(id){ for(const n of logicGraph.nodes){ if(n.id===id) return n; 
 // Set variable, and the place field via '#here'. Set for the immediate pulse cascade only (a Delay node
 // schedules a later timer that runs with no context — the payload is a snapshot of the moment, not a handle).
 let _lgCtx = {};
+// build 1231: PER-PLAYER VARIABLES. A variable whose name ends in '@' is scoped to the player the
+// current event is ABOUT: 'coins@' inside a trigger tripped by player 3 reads and writes 'coins@3'.
+// Solo (and any pulse without a player) resolves to '@0' — the host — so a per-player graph authored
+// solo behaves identically when nobody else is connected. One function owns the mapping; every
+// read (_lgNum) and every write (setvar/addvar/math/read/toast) routes through it.
+function _lgVarKey(k){ return (k && k.charAt(k.length-1)==='@') ? (k + (_lgCtx.pid|0)) : k; }
+// build 1231: the player-side twin of _lgEnemyEvent — fires a NAMED event with a player context
+// (#pid, #team, #x, #z), set for the immediate cascade and unwound after (1221's rule: the payload
+// is a snapshot of the moment, not a live handle).
+function _lgPlayerEvent(name, ctx){
+  if(typeof NET!=='undefined' && NET.mode==='client') return;
+  if(typeof logicGraph==='undefined' || !logicGraph.nodes.length) return;
+  const _pv=_lgCtx; _lgCtx=ctx||{}; try{ _lgFireEvents('event', String(name||'').trim()); } finally { _lgCtx=_pv; }
+}
 function _lgNum(v){
   if(v==null) return 0;
   const t=String(v).trim(); if(t==='') return 0;
-  if(t.charAt(0)==='#'){ const c=_lgCtx[t.slice(1)]; if(typeof c==='number' && isFinite(c)) return c; return +(logicVars[t]||0); }   // build 1221: event-payload token (#x/#z/#hp/#hpf); falls through to a normal var like the repeat loop's #i
+  if(t.charAt(0)==='#'){ const c=_lgCtx[t.slice(1)]; if(typeof c==='number' && isFinite(c)) return c; return +(logicVars[t]||0); }   // build 1221: event-payload token (#x/#z/#hp/#hpf, 1231: #pid/#team); falls through to a normal var like the repeat loop's #i
   const n=parseFloat(t);
   if(!isNaN(n) && isFinite(n) && /^[-+]?[0-9.]/.test(t)) return n;
-  return +(logicVars[t]||0);
+  return +(logicVars[_lgVarKey(t)]||0);   // build 1231: 'coins@' reads the event's player
 }
 function _lgFollow(id, out){
   for(const w of logicGraph.wires){ if(w.a===id && w.o===out) _lgPulse(w.b, w.i); }
@@ -10120,15 +10134,15 @@ function _lgPulse(id, pin){
   const n=_lgNode(id); if(!n) return;
   const p=n.p||{}, st=_lgState[id] || (_lgState[id]={});
   switch(n.type){
-    case 'setvar': { const k=String(p.name||'').trim(); if(k){
+    case 'setvar': { const k=_lgVarKey(String(p.name||'').trim()); if(k){
         if(p.rand){ const lo=Math.round(_lgNum(p.min)), hi=Math.round(_lgNum(p.max)); logicVars[k]=lo+Math.floor(Math.random()*Math.max(1,hi-lo+1)); }   // random INTEGER in [min..max]
         else logicVars[k]=_lgNum(p.value);
       } _lgFollow(id,0); break; }
-    case 'addvar': { const k=String(p.name||'').trim(); if(k) logicVars[k]=(+logicVars[k]||0)+_lgNum(p.value); _lgFollow(id,0); break; }
+    case 'addvar': { const k=_lgVarKey(String(p.name||'').trim()); if(k) logicVars[k]=(+logicVars[k]||0)+_lgNum(p.value); _lgFollow(id,0); break; }
     // build 1169: MATH — variable = A op B. The one arithmetic surface the graph ever lacked; A and B are
     // literals or variable names (_lgNum resolves both, same as branch). Divide/modulo by zero yield 0, not
     // NaN, because one NaN silently poisons every later compare in the level.
-    case 'math': { const k=String(p.name||'').trim(); if(k){ const a=_lgNum(p.a), b=_lgNum(p.b), op=p.op||'+';
+    case 'math': { const k=_lgVarKey(String(p.name||'').trim()); if(k){ const a=_lgNum(p.a), b=_lgNum(p.b), op=p.op||'+';
         const v = op==='+' ? a+b : op==='-' ? a-b : op==='×' ? a*b : op==='÷' ? (b===0?0:a/b)
                 : op==='min' ? Math.min(a,b) : op==='max' ? Math.max(a,b) : (b===0?0:((a%b)+b)%b);
         logicVars[k] = isFinite(v) ? v : 0;
@@ -10136,7 +10150,7 @@ function _lgPulse(id, pin){
     // build 1169: READ GAME STAT — the graph's first world-state QUERY. Events give edges; this gives the
     // number behind them (host state — the graph already runs host-authoritative). Pulse-driven like every
     // state node: wire it off an interval to poll, or read at the moment of decision.
-    case 'read': { const k=String(p.name||'').trim(); if(k){ let v=0;
+    case 'read': { const k=_lgVarKey(String(p.name||'').trim()); if(k){ let v=0;
         const w=(typeof WEAPONS!=='undefined' && typeof curWep!=='undefined') ? WEAPONS[curWep] : null;
         switch(p.stat||'hp'){
           case 'hp':      v=(typeof player!=='undefined')?Math.round(player.hp||0):0; break;
@@ -10177,7 +10191,7 @@ function _lgPulse(id, pin){
         etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim(),
         stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }
       catch(e){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "'+_verb+'" action failed: '+((e&&e.message)||e)); } _lgFollow(id,0); break; }
-    case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));   // {score} interpolates live variables
+    case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_lgVarKey(k)]||0)*100)/100));   // {score} interpolates live variables; build 1231: {coins@} reads the event's player
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
     case 'lose': { try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} break; }   // the death-zone path: ends the run through the normal defeat flow
@@ -10408,7 +10422,7 @@ const LG_DEFS = {
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
   read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed']]},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -10429,7 +10443,7 @@ function _lgVarOptions(){   // build 1060: every variable name in play — from 
     if(n.type==='toast'||n.type==='do') addRefs(q.text);
   }
   if(typeof hudWidgets!=='undefined' && hudWidgets) for(const w of hudWidgets){ addName(w.value); addName(w.max); addName(w.when); addRefs(w.label); }
-  for(const t of ['#x','#z','#hp','#hpf']) set.add(t);   // build 1221: the event payload tokens, always offered so onkill/onhurt/onspot graphs discover them
+  for(const t of ['#x','#z','#hp','#hpf','#pid','#team']) set.add(t);   // build 1221: the event payload tokens, always offered so onkill/onhurt/onspot graphs discover them; build 1231: the player identity pair (triggers + onkill)
   return Array.from(set).sort();
 }
 function _lgTagOptions(){
@@ -10915,6 +10929,17 @@ function _wactSend(o){
   if(typeof NET==='undefined' || NET.mode!=='host') return;
   for(const cid in NET.conns){ try{ NET.conns[cid].send(Object.assign({ t:'wact' }, o)); }catch(e){} }
 }
+// build 1232: deliver a world verb to THE EVENT'S PLAYER alone (1231's other half). Returns TRUE when
+// it went to a REMOTE player over the existing wact channel — the caller is done; FALSE when the actor
+// is the local player (or solo), so the caller runs its own local branch — but never the team-wide
+// broadcast, because 'actor' means ONE player. The client applies the identical payload it always has;
+// no new message type, no new handler.
+function _wactToActor(o){
+  const pid = _lgCtx.pid|0;
+  if(typeof NET==='undefined' || NET.mode!=='host' || pid===(NET.myId|0)) return false;
+  try{ if(typeof sendToPlayer==='function') sendToPlayer(pid, Object.assign({ t:'wact' }, o)); }catch(e){}
+  return true;
+}
 // build 1074: the stats a rule can bend mid-match. Each is a MULTIPLIER of the value the LEVEL authored,
 // so x1 always puts it back EXACTLY — there is no hidden "original" to capture, lose or drift, and a match
 // restart re-derives from the same place. Only stats a rule actually touched are restored, so the perk
@@ -10943,11 +10968,16 @@ function _isWorldVerb(v){ return v==='spawn'||v==='pickup'||v==='damage'||v==='h
 // a commanded enemy behaves like an authored one from the next frame — no parallel "scripted" mode to diverge.
 const LG_CMDS = { hunt:'Hunt the player', patrol:'Patrol', hold:'Hold position', alert:'Alert them to', calm:'Lose the player', post:'Move their post to' };
 function _applyWorldAction(s){
-  const who=(s.who==='enemies'||s.who==='nearest')?s.who:'player';
+  const who=(s.who==='enemies'||s.who==='nearest'||s.who==='actor')?s.who:'player';   /* build 1232: 'actor' = the event's player (trigger tripper, killer) */
   const amt=Math.max(0, Math.min(99999, Math.round(+s.amt||0)));
   if(s.do==='give' || s.do==='take'){
     const id=String(s.item||'').trim(); if(!id) return;
     const n=Math.max(1, Math.min(99, Math.round(+s.n||1)));
+    if(s.who==='actor'){   // build 1232: the key goes to the player who EARNED it, not the whole team
+      if(!_wactToActor(s.do==='give' ? { gi:[id,n] } : { ti:[id,n] }))
+        try{ if(s.do==='give'){ if(typeof giveItem==='function') giveItem(id, n); } else if(typeof takeItem==='function') takeItem(id, n); }catch(e){}
+      return;
+    }
     try{ if(s.do==='give'){ if(typeof giveItem==='function') giveItem(id, n); } else if(typeof takeItem==='function') takeItem(id, n); }catch(e){}
     _wactSend(s.do==='give' ? { gi:[id,n] } : { ti:[id,n] });     // a co-op reward reaches the whole team
     return;
@@ -11016,6 +11046,7 @@ function _applyWorldAction(s){
   }
   if(s.do==='teleport'){
     const at=_lgPlaceAt(s.at); if(!at) return;
+    if(who==='actor'){ if(!_wactToActor({ tp:[at.x, at.y, at.z] })) _lgPlacePlayer(at); return; }   /* build 1232: only the player who tripped the event moves */
     if(who==='player'){ _lgPlacePlayer(at); _wactSend({ tp:[at.x, at.y, at.z] }); return; }
     for(const e of _lgEnemyTargets(who)){
       const fy=(typeof _spawnFloorAt==='function')?_spawnFloorAt(at.x, at.z):at.y;
@@ -11024,6 +11055,12 @@ function _applyWorldAction(s){
     return;
   }
   if(s.do==='damage' || s.do==='heal' || s.do==='kill'){
+    if(who==='actor'){   // build 1232: the event's player alone — no team-wide broadcast
+      if(s.do==='kill'){ if(!_wactToActor({ k:1 })) try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} }
+      else if(s.do==='heal'){ if(amt>0 && !_wactToActor({ h:amt })){ player.hp=Math.min(player.maxHp, player.hp+amt); if(typeof updateHUD==='function') updateHUD(); } }
+      else if(amt>0){ if(!_wactToActor({ d:amt })) try{ applyEnemyDamageToSelf(amt, null, null); }catch(e){} }
+      return;
+    }
     if(who==='player'){
       if(s.do==='kill'){ try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} _wactSend({ k:1 }); }
       else if(s.do==='heal'){ if(amt>0){ player.hp=Math.min(player.maxHp, player.hp+amt); if(typeof updateHUD==='function') updateHUD(); _wactSend({ h:amt }); } }
@@ -18937,6 +18974,21 @@ function _trigContains(z, x, y, zz){
   const baseY=(+z.y||0), h=Math.max(0.5,+z.h||4);
   return (y >= baseY-0.05 && y <= baseY+h);
 }
+// build 1231: one ACTOR's edge logic. The same shape as _trigStep, but tracked PER PLAYER: two
+// players in a zone are two enters and two exits, each firing with its own identity — where the old
+// union boolean meant the second player's entry was invisible and one player leaving while another
+// stayed produced no exit at all. The once-only flag stays ZONE-global (once means once, not once
+// per player), and a player DYING inside a zone reads as leaving it (their exit edge fires).
+function _trigStepActor(z, st, ast, inside, now){
+  let fire=0;
+  if(z.on==='enter'){ if(inside && !ast.inside) fire=1; }
+  else if(z.on==='exit'){ if(!inside && ast.inside) fire=1; }
+  else { if(inside){ if(!ast.next || now>=ast.next){ fire=1; ast.next=now + Math.max(0.1,+z.every||1)*1000; } } else ast.next=0; }
+  ast.inside=inside;
+  if(fire && z.once){ if(st.fired) fire=0; else st.fired=1; }
+  return fire;
+}
+const _trigActors = [];   // module scratch (1168): rebuilt each tick, never reallocated
 // One zone's edge logic for this frame. Pure: (zone, state, isInside, now) -> how many times to
 // fire. Keeps enter/exit/stay, once-only and the stay cadence testable without a running game.
 function _trigStep(z, st, inside, now){
@@ -18953,23 +19005,35 @@ function updateTriggerZones(dt){
   if(!gameOn || (typeof editorOpen!=='undefined' && editorOpen) || (typeof paused!=='undefined' && paused)) return;
   if(!triggerZones.length) return;
   const now=performance.now(), feetY=player.pos.y-EYE;
+  // build 1231: the actor list — the local player plus every connected player, each with identity.
+  // A dead player reads as OUTSIDE every zone, so dying on the hill fires the same exit edge as
+  // walking off it (which is what a KOTH graph needs to be true).
+  _trigActors.length=0;
+  _trigActors.push({ pid:(typeof NET!=='undefined'?(NET.myId|0):0), x:player.pos.x, y:feetY, z:player.pos.z, dead:false });
+  if(typeof NET!=='undefined' && NET.mode==='host'){
+    for(const id in NET.players){ const rp=NET.players[id]; if(!rp||!rp.posEye) continue;
+      _trigActors.push({ pid:+id, x:rp.posEye.x, y:rp.posEye.y-EYE, z:rp.posEye.z, dead:(rp.hp!=null && rp.hp<=0) }); }
+  }
   for(let i=0;i<triggerZones.length;i++){
     const z=triggerZones[i]; if(!z.ev) continue;
     const st=_trigState[i] || (_trigState[i]={ inside:false, fired:0, next:0 });
-    let inside=false;
+    if(!st.a) st.a={};
     if(z.who!=='enemy'){
-      if(_trigContains(z, player.pos.x, feetY, player.pos.z)) inside=true;
-      if(!inside && typeof NET!=='undefined' && NET.mode==='host'){    // co-op: any teammate counts as "the player"
-        for(const id in NET.players){ const rp=NET.players[id]; if(!rp||!rp.posEye) continue;
-          if(rp.hp!=null && rp.hp<=0) continue;
-          if(_trigContains(z, rp.posEye.x, rp.posEye.y-EYE, rp.posEye.z)){ inside=true; break; } }
+      for(const ac of _trigActors){
+        const ast=st.a[ac.pid] || (st.a[ac.pid]={ inside:false, next:0 });
+        const inz = !ac.dead && _trigContains(z, ac.x, ac.y, ac.z);
+        if(_trigStepActor(z, st, ast, inz, now))
+          _lgPlayerEvent(z.ev, { pid:ac.pid, team:(typeof NET!=='undefined' && NET.teams && NET.teams[ac.pid]!=null)?+NET.teams[ac.pid]:0, x:ac.x, z:ac.z });
       }
     }
-    if(!inside && z.who!=='player' && typeof enemies!=='undefined'){
+    // enemies keep the union edge with no identity — an enemy has no pid, and per-enemy edges would
+    // turn a 40-strong wave crossing a zone into 40 pulses a graph never asked for
+    if(z.who!=='player' && typeof enemies!=='undefined'){
+      let inside=false;
       for(const en of enemies){ if(!en.mesh) continue;
         if(_trigContains(z, en.mesh.position.x, en.mesh.position.y, en.mesh.position.z)){ inside=true; break; } }
+      if(_trigStep(z, st, inside, now) && typeof logicEvent==='function') logicEvent(z.ev);
     }
-    if(_trigStep(z, st, inside, now) && typeof logicEvent==='function') logicEvent(z.ev);
   }
 }
 function addTriggerZone(){
@@ -21861,7 +21925,7 @@ function updateBots(dt){
       const cx=Math.max(-lim,Math.min(lim, b.pos.x+mvx*step)), cz=Math.max(-lim,Math.min(lim, b.pos.z+mvz*step));
       // The arena walls + props are the only movement boundary; the spawn region never blocks motion, so a
       // bot can leave its spawn area and roam the whole map.
-      const _candSurf=(typeof surfaceTopAt==='function')?surfaceTopAt(cx,cz):undefined;
+      const _candSurf=(typeof surfaceTopAt==='function')?surfaceTopAt(cx,cz,undefined,undefined,b.pos.y+RAMP_RISE):undefined;   /* build 1233: a bot under a roof must read the floor underfoot, not the roof (see groundHeightAt) — this hint feeds BOTH clearAt and the ground resolve */
       const okFull=((typeof clearAt!=='function') || clearAt(cx,cz,b.pos.y,_candSurf));
       if(okFull){ b.pos.x=cx; b.pos.z=cz; _gSurf=_candSurf; }   // moved cleanly to (cx,cz) -> its surface is the standing surface; reuse it
       else {
@@ -27736,7 +27800,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1230 · 2026-07-31';
+const BUILD_VERSION = 'build 1233 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29937,7 +30001,7 @@ function enemyHurt(en, dmg, sx, sz){
   return false;
 }
 function killEnemy(en, sx, sz){
-  if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ const _pv=_lgCtx; _lgCtx={ x:en.mesh.position.x, z:en.mesh.position.z, hp:0, hpf:0 }; try{ _lgFireEvents('onkill',''); } finally { _lgCtx=_pv; } }   // build 1027: 'On enemy killed' entries; build 1221: at the death position
+  if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ const _kp=(typeof _coopKillFor!=='undefined' && _coopKillFor!=null) ? +_coopKillFor : ((typeof NET!=='undefined')?(NET.myId|0):0); const _pv=_lgCtx; _lgCtx={ x:en.mesh.position.x, z:en.mesh.position.z, hp:0, hpf:0, pid:_kp, team:(typeof NET!=='undefined' && NET.teams && NET.teams[_kp]!=null)?+NET.teams[_kp]:0 }; try{ _lgFireEvents('onkill',''); } finally { _lgCtx=_pv; } }   // build 1027: 'On enemy killed' entries; build 1221: at the death position; build 1231: with the KILLER's pid/team (a client's kill credits its player via _coopKillFor)
   const _fr = !!en.friendly;   // build 1226: killing a friendly is a DEATH (visuals, sound, ragdoll, the onkill event a creator can punish with) but never a REWARD — no kills, no juice, no coins, no score
   if(!_fr) runKills++;
   spark(en.mesh.position, 0xff2d55); SFX.kill(en.type, en.mesh.position);   // build 752: per-enemy-type kill sound; build 1208: panned to the kill
@@ -31580,12 +31644,25 @@ function propSurfaceAt(obj, x, z){
 }
 function groundHeightAt(x, z, feetY, surfHint){
   const g = terrainHeightAt(x, z);
-  const top = (surfHint!==undefined) ? surfHint : surfaceTopAt(x, z);
+  // build 1233: REPORTED FROM PLAY — enemies on a multistorey building "randomly clip through the
+  // floor and just disappear". The unceilinged surfaceTopAt returns the HIGHEST surface in the whole
+  // column, which inside any roofed building is the ROOF or the slab overhead — never the floor under
+  // the actor's feet. The ramp gate then rejects that too-high surface and this function answered
+  // TERRAIN: an enemy on storey 2 snapped through every slab to under the building (the "disappear"),
+  // the player fell through roofed upper floors, and even a ground-floor actor stood sunk to the
+  // terrain instead of on the slab. Probed and measured before fixing (scratchpad/probe-multistorey):
+  // feet on a storey-2 slab at 3.2 read ground 0. Surfaces above feetY + RAMP_RISE cannot be stepped
+  // or ramped onto BY DEFINITION of the gates below, so they are not candidates — ceiling the query
+  // there. Roofs and open decks are unchanged (the surface underfoot IS the topmost there), which is
+  // why generated arenas never showed this. Every actor inherits the repair: this one function grounds
+  // the player, the bots, remote avatars and the PvE enemies.
+  const _ceil = feetY + RAMP_RISE;
+  const top = (surfHint!==undefined) ? surfHint : surfaceTopAt(x, z, undefined, undefined, _ceil);
   if(top === -Infinity) return g;
   if(top <= feetY + STEP) return Math.max(g, top);            // flat ground (or terrain) or a low step
   // Above a step: follow it only if it's a walkable RAMP (a sloped surface), not a tall flat ledge or a wall.
   if(top <= feetY + RAMP_RISE){
-    const e = 0.4, hx = surfaceTopAt(x + e, z), hz = surfaceTopAt(x, z + e);
+    const e = 0.4, hx = surfaceTopAt(x + e, z, undefined, undefined, _ceil), hz = surfaceTopAt(x, z + e, undefined, undefined, _ceil);   // build 1233: the slope probe must not read a roof either, or an indoor ramp reads as a cliff
     const slope = Math.hypot((hx > -Infinity ? hx - top : 0), (hz > -Infinity ? hz - top : 0)) / e;
     if(slope > RAMP_SLOPE_MIN && slope < RAMP_SLOPE_MAX) return Math.max(g, top);   // walk up the ramp surface
   }

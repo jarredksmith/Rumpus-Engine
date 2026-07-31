@@ -7,11 +7,11 @@ const src = gameSource();
 
 const gh = extractFunction('groundHeightAt');
 assert(/function groundHeightAt\(x, z, feetY, surfHint\)/.test(gh), 'groundHeightAt accepts a precomputed surface');
-assert(/const top = \(surfHint!==undefined\) \? surfHint : surfaceTopAt\(x, z\);/.test(gh), 'uses the hint when given, else raycasts');
+assert(/const top = \(surfHint!==undefined\) \? surfHint : surfaceTopAt\(x, z, undefined, undefined, _ceil\);/.test(gh), 'uses the hint when given, else raycasts');   // build 1233: the raycast is ceilinged at feetY+RAMP_RISE so a roof overhead is not this column's ground
 
 const ub = extractFunction('updateBots');
 assert(/let _gSurf;/.test(ub), 'a per-bot shared-surface holder is declared');
-assert(/const _candSurf=\(typeof surfaceTopAt==='function'\)\?surfaceTopAt\(cx,cz\):undefined;/.test(ub), 'the candidate cell surface is computed once');
+assert(/const _candSurf=\(typeof surfaceTopAt==='function'\)\?surfaceTopAt\(cx,cz,undefined,undefined,b\.pos\.y\+RAMP_RISE\):undefined;/.test(ub), 'the candidate cell surface is computed once');   // build 1233: with the same ceiling — a bot under a roof reads the floor underfoot
 assert(/clearAt\(cx,cz,b\.pos\.y,_candSurf\)/.test(ub), 'the move-test reuses it (no internal re-raycast)');
 assert(/b\.pos\.x=cx; b\.pos\.z=cz; _gSurf=_candSurf;/.test(ub), 'a clean move adopts that surface as the standing surface');
 assert(/groundHeightAt\(b\.pos\.x,b\.pos\.z,b\.pos\.y,_gSurf\)/.test(ub), 'ground resolve reuses the shared surface');

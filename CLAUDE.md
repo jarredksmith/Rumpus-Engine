@@ -1519,6 +1519,85 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The ground query was reading the roof (build 1233)
+
+Reported from play: *"I added enemies onto a multistorey building and they would randomly clip through
+the floor and just disappear."* Probed and MEASURED before fixing (the house rule): an actor with feet
+on a storey-2 slab at y=3.2 asked the engine for its ground and got **0 — the terrain**.
+
+The mechanism: `groundHeightAt` asked `surfaceTopAt(x,z)` for the column's HIGHEST surface, which
+inside any roofed building is the ROOF or the slab overhead — never the floor underfoot. The
+step/ramp gates then rejected that too-high surface and the function answered terrain. The enemy
+frame loop HARD-SNAPS `y = groundY + 1.4`, so one wrong answer teleported an enemy through every slab
+to under the building — invisible, "disappeared". The player integrates gravity off the same function,
+so the player fell through roofed upper floors too, and even ground-floor actors stood SUNK to the
+terrain instead of on the slab. Roofs and open decks read correctly (the surface underfoot IS the
+topmost there) — which is why the generated arenas' open-air decks never showed it and the bug waited
+for the first creator to put enemies INSIDE a building. "Randomly" = wander under a slab and you fall;
+step onto the open deck and you don't.
+
+The fix is one function: surfaces above `feetY + RAMP_RISE` cannot be stepped or ramped onto BY
+DEFINITION of the gates below, so the query is **ceilinged** there (`surfaceTopAt`'s existing `ceilY`
+param — build 739's, never passed here) — and the ramp SLOPE PROBE's two neighbour samples carry the
+same ceiling, or an indoor ramp under a roof reads as a cliff. The bot path's shared `_candSurf` hint
+(fed to both `clearAt` and its ground resolve) takes the ceiling at its source. Player, bots, remote
+avatars and PvE enemies all ground through this one function, so all inherit the repair.
+
+Two honest notes: an overhang LOWER than `RAMP_RISE` (a sub-1.7 m mezzanine) still poisons its column
+(the highest in-window surface is the overhang, the gates reject it) — strictly better than before,
+when ANY overhead geometry poisoned it, and rare geometry; and mid-air far above a slab the window can
+still catch the roof and read terrain — harmless, because an integrating faller is not grounded there
+and by arrival the answer is the slab (both cases pinned in `test-1233` with their reasons). This
+likely also carried a chunk of the other two reports in the same play session: an enemy teleported
+under the building never dies and never stops pathing — accumulating invisible enemies are a frame-rate
+drain and read as "stuck/buggy" from above. Three pins moved (364×2, and 1233's own falling-window
+expectation corrected during writing); `test-1233` replays the report on real slab geometry.
+
+## Verbs reach the event's player (build 1232)
+
+1231's recorded other half, closed the cheap way: no new message type. The world verbs' "The player"
+is TEAM-WIDE by design (host applies locally + wact broadcast to every client) — so "teleport the
+player who stepped on the pad", "give the key to the one who earned it", "heal only the capturer"
+were inexpressible. The who dropdown gains **"The event's player"** ('actor'), give/take gain the who
+field, and `_wactToActor(o)` does the delivery: a REMOTE actor gets the IDENTICAL `{t:'wact', ...}`
+payload over `sendToPlayer` (the client applies what it always has), a local/solo actor falls through
+to the local branch — with the team-wide broadcast suppressed in both cases, because actor means ONE
+player. Solo's pid is 0 = the host, so an actor-graph authored solo just works. `test-1232` drives
+the REAL `_applyWorldAction` for heal/teleport/give/kill/damage in remote-actor and local-actor forms
+with team-wide controls proving the old verbs byte-identical. One pin moved (1073 — who's verb list
+gained give/take; intent kept). With 1231+1232, a KOTH/CTF-shaped mode is now authorable: per-actor
+trigger edges → `score@`/Math per player → actor-targeted rewards.
+
+## The graph learns WHO (build 1231) — per-player logic, first slice
+
+The multiplayer critic's root ceiling ("8 hardcoded modes a creator can't extend — needs per-player/team
+scoping"), opened where it was cheapest and most load-bearing. Three pieces, all riding 1221's context:
+
+- **Triggers fire per ACTOR.** `updateTriggerZones` tracked ONE anonymous union boolean over every
+  player, so the second player's entry was invisible and one player leaving while another stayed
+  produced NO exit at all — "who stepped on the pad" was structurally unaskable. Every zone now tracks
+  edges per player (`_trigStepActor`, per-actor state under the zone's `st.a`) and fires the event
+  through `_lgPlayerEvent` with `{pid, team, x, z}`. The once-flag stays ZONE-global (once means once,
+  not once per player); a DEAD player reads as outside, so dying on the hill fires the same exit edge
+  as walking off it (what a KOTH graph needs to be true); solo, one actor = the exact old semantics.
+  The ENEMY path deliberately keeps the identityless union — an enemy has no pid, and per-enemy edges
+  would turn a 40-strong wave crossing a zone into 40 pulses no graph asked for.
+- **Variables scope per player with a trailing `@`.** `_lgVarKey` maps `coins@` to `coins@<ctx pid>`;
+  every read (`_lgNum`) and every write (setvar/addvar/math/read, and `{coins@}` toast interpolation —
+  whose regex gained `@`) routes through the one function. No player in context resolves to `@0` (the
+  host), so a per-player graph authored solo behaves identically alone, and plain names are
+  byte-identical — no existing graph changes.
+- **onkill knows the KILLER.** The context gains `pid`/`team` from `_coopKillFor` (the existing co-op
+  credit: set during a client's `{t:'hit'}`), else the host — so "award the killer's `score@`" is one
+  Math node now. `#pid`/`#team` join the always-offered autocomplete tokens.
+
+`test-1231` executes the var scoping (per-player isolation, solo collapse, plain-name identity, `#i`
+fallthrough intact) and the per-actor edges (second entry visible, exit-while-another-stays, zone-global
+once, independent stay clocks). Eleven pins/harness scopes moved (1060×4 token count, 1072×2 the
+per-actor shape, 47's char window — the documented trap again — and `_lgVarKey` stubs into the
+1027/1058/1169/1221 scopes; every intent kept). **The recorded other half:** verbs that act ON the
+event's player (heal/give/teleport the actor) need a host→client effect message — its own build.
+
 ## The library learns what people play (build 1230)
 
 The feature panel's "no play-count/rating flywheel": the community library was a flat newest-first list
@@ -2725,8 +2804,10 @@ auto-exposure stability (soft knee; HDRI out of the AO G-buffer), 1200+1202 two-
 patches, 1201 host migration, 1203 collider derivation in a worker.
 
 Still open, each with its reason:
-- **Per-player variables** — DEFERRED: the logic runtime's pulses carry no actor identity; threading one
-  through every pulse source and the `wact` relay is its own multi-site build.
+- **Per-player variables** — FIRST SLICE SHIPPED (build 1231): trigger + onkill events carry pid/team,
+  `name@` variables scope per player. Remaining: actor-targeted verbs (heal/give/teleport the event's
+  player) need a host→client effect message; more event sources (interact, objective edges) can adopt
+  `_lgPlayerEvent` incrementally.
 - Verification kills already recorded (do not revisit): texture slots on primitives (871-era), bot
   bullet tracers (1020), cell-hash enemy separation (arithmetic — not a hotspot), relevancy snapshot
   filtering (per-client serialization × N costs more than it saves at ≤60 entities).

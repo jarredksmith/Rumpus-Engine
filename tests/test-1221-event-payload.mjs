@@ -13,6 +13,7 @@ const src = gameSource();
 {
   const api = new Function(
     'let _lgCtx = {}; let logicVars = { score: 7, "#i": 3 };\n' +
+    extractFunction('_lgVarKey') + '\n' +   // build 1231
     extractFunction('_lgNum') +
     '\nreturn { num:_lgNum, setCtx:(c)=>{ _lgCtx = c; }, setVar:(k,v)=>{ logicVars[k]=v; } };')();
 
@@ -64,10 +65,10 @@ const src = gameSource();
     'onhurt carries the enemy position + HP (the boss-phase hook)');
   assert(/_lgEnemyEvent\('onspot', \{ x:en\.mesh\.position\.x, z:en\.mesh\.position\.z, hp:en\.hp, hpf:/.test(src),
     'onspot carries it too (the alerted-position hook)');
-  assert(/_lgCtx=\{ x:en\.mesh\.position\.x, z:en\.mesh\.position\.z, hp:0, hpf:0 \}; try\{ _lgFireEvents\('onkill',''\); \} finally \{ _lgCtx=_pv; \}/.test(src),
-    'onkill sets the death position around its _lgFireEvents call and restores after (the drop-loot-where-it-died hook)');
-  assert(/for\(const t of \['#x','#z','#hp','#hpf'\]\) set\.add\(t\);/.test(src),
-    'the four payload tokens are offered in the variable autocomplete');
+  assert(/_lgCtx=\{ x:en\.mesh\.position\.x, z:en\.mesh\.position\.z, hp:0, hpf:0, pid:_kp,[^\n]*try\{ _lgFireEvents\('onkill',''\); \} finally \{ _lgCtx=_pv; \}/.test(src),
+    'onkill sets the death position around its _lgFireEvents call and restores after (the drop-loot-where-it-died hook)');   // build 1231: the ctx gained the killer's pid/team — same set-fire-restore shape
+  assert(/for\(const t of \['#x','#z','#hp','#hpf','#pid','#team'\]\) set\.add\(t\);/.test(src),
+    'the payload tokens are offered in the variable autocomplete');   // build 1231 added the player identity pair
   assert(/\{ v:'#here', l:'where the event fired \(onkill\/onhurt\/onspot\)' \}/.test(src),
     "'#here' is offered in the place autocomplete");
 }

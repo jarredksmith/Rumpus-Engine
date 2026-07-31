@@ -25,14 +25,14 @@ const env = (g, w) => mk(g, w);
     { value: 'score', max: 'scoreMax', when: '', label: '' },   // dedupes with the graph's 'score'
   ];
   const vars = env(graph, widgets);
-  eq(vars.join(','), '#hp,#hpf,#x,#z,combo,gameTimer,hp,score,scoreMax,started,wave',   // build 1221: the event-payload tokens are always offered
+  eq(vars.join(','), '#hp,#hpf,#pid,#team,#x,#z,combo,gameTimer,hp,score,scoreMax,started,wave',   // build 1221: the event-payload tokens are always offered; build 1231 added the player pair
     'names collect from both the graph and the widgets, sorted and de-duped');
   assert(!vars.includes('10') && !vars.includes('100'), 'numeric literals are never offered as variables');
   assert(!vars.includes('#i'), 'the repeat index #i is managed, not offered');
 }
-eq(env({ nodes: [] }, []).length, 4, 'an empty project still offers the 4 event-payload tokens (build 1221)');
-eq(env({ nodes: [{ type: 'setvar', p: { name: '' } }] }, []).length, 4, 'a blank name is ignored (only the 4 payload tokens remain)');
-eq(env(undefined, undefined).length, 4, 'missing graph/widgets are safe (the 4 payload tokens are unconditional)');
+eq(env({ nodes: [] }, []).length, 6, 'an empty project still offers the 6 event-payload tokens (build 1221 + 1231)');
+eq(env({ nodes: [{ type: 'setvar', p: { name: '' } }] }, []).length, 6, 'a blank name is ignored (only the payload tokens remain)');
+eq(env(undefined, undefined).length, 6, 'missing graph/widgets are safe (the payload tokens are unconditional)');
 
 // ---- the datalist is built and shared ----
 assert(/const vl=mk\('lgVarList'\);/.test(src), 'a shared lgVarList datalist is created');

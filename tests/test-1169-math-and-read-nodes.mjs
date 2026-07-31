@@ -18,7 +18,7 @@ const src = gameSource();
       'let _lgBudget=0, _lgWarned=false;\n' +
       'const _lgNode=(id)=>logicGraph.nodes.find(n=>n.id===id);\n' +
       'const _lgFollow=()=>{};\n' +
-      extractFunction('_lgNum') + '\n' + extractFunction('_lgPulse') + '\nreturn _lgPulse;'
+      extractFunction('_lgVarKey') + '\n' + extractFunction('_lgNum') + '\n' + extractFunction('_lgPulse') + '\nreturn _lgPulse;'   /* build 1231 */
     )(graph, logicVars, {}, [], { rifle: { mag: 17, reserve: 51 } }, 'rifle',
       { hp: 73.4, maxHp: 100 }, 990, 250, 4,
       [{ hp: 5 }, { hp: 0 }, null, { hp: 12 }], 5000, { now: () => 12000 });
