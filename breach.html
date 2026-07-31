@@ -27642,7 +27642,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1218 · 2026-07-31';
+const BUILD_VERSION = 'build 1219 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29626,12 +29626,10 @@ function shoot(){
   // running scales it up and being AIRBORNE adds a floor that even 0-spread weapons (rifle, sniper) pay —
   // a multiplier alone would leave sprint-jump-360 sniping pixel-accurate, because x1.8 of zero is zero.
   // Bots have paid a run-and-gun penalty since build 933; this is the player's copy of the same rule.
-  // ADS mitigates the penalty (x0.4 at full aim) but never erases it.
-  const _hspd = Math.hypot(player.vel.x, player.vel.z);
-  const _mob = Math.min(1, _hspd / 12);                                  // 12 = default run speed
-  const _penScale = (1 + 1.2*_mob) * (player.onGround ? 1 : 1.8);
-  const _penAdd = (0.012*_mob + (player.onGround ? 0 : 0.030)) * (1 - adsBlend*0.6);
-  const spread = w.spread * (1 - adsBlend*0.8) * _penScale + _penAdd;
+  // ADS mitigates the penalty (x0.4 at full aim) but never erases it. Build 1219: hoisted to _curSpread so
+  // the crosshair bloom reads the IDENTICAL number the shot uses — a penalty you can see is a penalty you
+  // can learn (before this, 1161's airborne floor felt like random misses).
+  const spread = _curSpread(w);   // build 1219: the exact same math the crosshair blooms from, shared so they can never disagree
   // build 885: true twin-stick ballistics. Build 874 cast pellets from the CAMERA through the cursor
   // with the weapon's screen-space spread — from a bird's-eye camera an enemy is a few pixels wide, so
   // hip spread threw most pellets clean past a dead-on cursor ("the gun doesn't hurt enemies"). Now the
@@ -29933,6 +29931,26 @@ function _clearCorpses(){ for(const c of _corpses) _removeCorpse(c); _corpses.le
 
 // ---------- HUD ----------
 const $ = id=>document.getElementById(id);
+// build 1219: the live weapon spread (radian-ish half-angle), computed from the current weapon + movement
+// + ADS state. shoot() and the crosshair bloom both call this, so the reticle can never lie about accuracy.
+function _curSpread(w){
+  w = w || (typeof WEAPONS!=='undefined' && WEAPONS[curWep]); if(!w) return 0;
+  const _ab = (typeof adsBlend==='number') ? adsBlend : 0;
+  const _hspd = Math.hypot(player.vel.x, player.vel.z);
+  const _mob = Math.min(1, _hspd / 12);                                  // 12 = default run speed
+  const _penScale = (1 + 1.2*_mob) * (player.onGround ? 1 : 1.8);
+  const _penAdd = (0.012*_mob + (player.onGround ? 0 : 0.030)) * (1 - _ab*0.6);
+  return (+w.spread||0) * (1 - _ab*0.8) * _penScale + _penAdd;
+}
+let _xhBloom = 0;   // eased crosshair gap bloom (px)
+// Grow the reticle's centre gap with the live spread, eased so it breathes rather than snaps. Scoped optics
+// hide the reticle entirely (opacity 0), so the bloom is invisible there and costs nothing to compute.
+function _updateCrosshairBloom(dt){
+  if(typeof crosshairEl==='undefined' || !crosshairEl) return;
+  const target = Math.min(18, _curSpread() * 90);   // 0.2 rad of spread -> the 18px cap; a jumping rifle (~0.042) -> ~3.8px
+  _xhBloom += (target - _xhBloom) * Math.min(1, (dt||0.016) * 12);
+  crosshairEl.style.setProperty('--xh-bloom', _xhBloom.toFixed(1) + 'px');
+}
 const crosshairEl = $('crosshair');
 // Build the crosshair from a config object. 'accent' color follows the player's theme; a hex is literal.
 const CROSSHAIR_DEFAULT = { style:'classic', size:24, thickness:2, gap:3, dot:true, color:'accent' };
@@ -29947,12 +29965,16 @@ function applyCrosshair(cfg){
   if(cfg.style==='none'){ el.innerHTML=''; return; }
   const arm = Math.max(0, size/2 - gap);
   const ln = 'position:absolute;background:'+col+';box-shadow:0 0 6px '+col+';';
+  // build 1219: each arm offsets outward by --xh-bloom (set per frame from the live spread), so the centre
+  // gap grows when you are moving/airborne and tightens when you stop or aim. b0 = the CSS var, negated for
+  // the top/left arms so all four move AWAY from centre.
+  const b0='var(--xh-bloom,0px)', bN='calc(-1 * var(--xh-bloom,0px))';
   let html='';
   if(cfg.style==='cross' || cfg.style==='classic' || cfg.style==='tee'){
-    if(cfg.style!=='tee') html += '<div style="'+ln+'left:50%;transform:translateX(-50%);width:'+th+'px;height:'+arm+'px;top:0"></div>';
-    html += '<div style="'+ln+'left:50%;transform:translateX(-50%);width:'+th+'px;height:'+arm+'px;bottom:0"></div>';
-    html += '<div style="'+ln+'top:50%;transform:translateY(-50%);height:'+th+'px;width:'+arm+'px;left:0"></div>';
-    html += '<div style="'+ln+'top:50%;transform:translateY(-50%);height:'+th+'px;width:'+arm+'px;right:0"></div>';
+    if(cfg.style!=='tee') html += '<div style="'+ln+'left:50%;transform:translateX(-50%) translateY('+bN+');width:'+th+'px;height:'+arm+'px;top:0"></div>';
+    html += '<div style="'+ln+'left:50%;transform:translateX(-50%) translateY('+b0+');width:'+th+'px;height:'+arm+'px;bottom:0"></div>';
+    html += '<div style="'+ln+'top:50%;transform:translateY(-50%) translateX('+bN+');height:'+th+'px;width:'+arm+'px;left:0"></div>';
+    html += '<div style="'+ln+'top:50%;transform:translateY(-50%) translateX('+b0+');height:'+th+'px;width:'+arm+'px;right:0"></div>';
   } else if(cfg.style==='circle'){
     html += '<div style="position:absolute;inset:0;border:'+th+'px solid '+col+';border-radius:50%;box-shadow:0 0 6px '+col+'"></div>';
   }
@@ -32468,6 +32490,7 @@ function loop(){
   const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend + _sprintFov;
   if(Math.abs(camera.fov - wantFov) > 0.01){ camera.fov = wantFov; camera.updateProjectionMatrix(); }
   crosshairEl.style.opacity = _scopedNow ? '0' : (1 - adsBlend*0.85).toFixed(2);
+  if(typeof _updateCrosshairBloom==='function') _updateCrosshairBloom(dt);   // build 1219: the reticle blooms with the live spread
 
   _updateViewAim();   // build 874: twin-stick cursor -> body yaw/pitch (no-op in first person)
 

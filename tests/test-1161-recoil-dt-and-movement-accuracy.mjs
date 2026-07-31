@@ -7,7 +7,7 @@
 //    bearing part: rifle and sniper have spread 0.0, and a multiplier of zero is zero.
 // 3. Spread sampled as (rand-.5, rand-.5) — a SQUARE in aim space, so a shotgun's corner pellets landed
 //    √2 wider than its edge pellets. Now angle + sqrt-radius: uniform over a disc, same max deviation.
-import { gameSource, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- 1. framerate-independent decay
@@ -25,11 +25,14 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- 2. movement costs accuracy
 {
-  assert(/const _hspd = Math\.hypot\(player\.vel\.x, player\.vel\.z\);/.test(src), 'horizontal speed is read at fire time');
-  assert(/const _penAdd = \(0\.012\*_mob \+ \(player\.onGround \? 0 : 0\.030\)\) \* \(1 - adsBlend\*0\.6\);/.test(src),
+  // build 1219: the math was hoisted to _curSpread (shared with the crosshair bloom); the shot reads it via _curSpread(w)
+  const cs = extractFunction('_curSpread');
+  assert(/const _hspd = Math\.hypot\(player\.vel\.x, player\.vel\.z\);/.test(cs), 'horizontal speed is read');
+  assert(/const _penAdd = \(0\.012\*_mob \+ \(player\.onGround \? 0 : 0\.030\)\) \* \(1 - _ab\*0\.6\);/.test(cs),
     'airborne adds a spread FLOOR that zero-spread weapons pay too — the anti sprint-jump-sniping term');
-  assert(/const spread = w\.spread \* \(1 - adsBlend\*0\.8\) \* _penScale \+ _penAdd;/.test(src),
+  assert(/return \(\+w\.spread\|\|0\) \* \(1 - _ab\*0\.8\) \* _penScale \+ _penAdd;/.test(cs),
     'base spread keeps its ADS tightening, scaled and floored by movement');
+  assert(/const spread = _curSpread\(w\);/.test(src), 'shoot() reads the SAME _curSpread the crosshair blooms from');
   // executable: replay the formula across the states that matter
   const S = (wspread, ads, hspd, grounded) => {
     const mob = Math.min(1, hspd / 12);

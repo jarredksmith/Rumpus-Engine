@@ -1519,6 +1519,20 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The crosshair shows what the gun is doing (build 1219)
+
+The gameplay-feel panel's MEDIUM: build 1161 made movement and airtime cost accuracy, but `#crosshair` was
+a static reticle whose only dynamic property was ADS opacity — so the player had no readout of "I am
+currently inaccurate", and 1161's airborne spread floor felt like random misses instead of a rule to
+stop-and-shoot around. The spread math is hoisted into `_curSpread(w)` — shared by `shoot()` and the
+crosshair, so the reticle can never disagree with the shot — and the four arms offset outward from a single
+CSS var `--xh-bloom`, eased each frame toward `min(18, _curSpread()*90)` px (breathes, never snaps, clamps
+so it never flies apart). A scoped optic already sets the reticle opacity to 0, so the bloom is invisible
+and free there. Standing-still values are byte-identical to 1161 (proven executable). `test-1219` drives
+`_curSpread` across the states and the easing/clamp, and pins that all four arms move away from centre and
+that `shoot()` reads the same function. One 1161 pin pair moved to the hoisted function, intent kept.
+**Needs a browser pass to feel** — jump and watch the reticle open, land and watch it close.
+
 ## The G-buffer prepass outlives the AO sample (build 1218)
 
 The rendering panel's HIGH: `_aoWant = _ssaoAmt>0.001 && _prStepI===0 && ...` gated BOTH the half-res
