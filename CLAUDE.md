@@ -1519,6 +1519,37 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Decals ride the surface they hit (build 1237)
+
+The floating-decals report survived 1236 ("still placing in mid-air — now when I shoot at the default
+capsules"), so this time it was PROBED instead of theorised: an instrumented copy of breach.html
+(spawnBulletDecal wrapped to log every world-decal recipient's full parent chain; an auto-runner that
+aims at the nearest enemy and fires 60 shots), driven headless under the preinstalled Chromium. The
+probe answered in one run: the decal recipients were REAL, VISIBLE meshes — and the first carried
+`userData._cgMobile`. **Decals were stamped in world space (`scene.add`), and moving props were
+catching them**: a hole stamped on an animated door, elevator or the stock level's own moving platform
+hung in mid-air the moment the surface moved on — reading as "bullets hitting an invisible wall" when
+the mover had already gone. 1236's ghost filter was right about its own class (undrawn surfaces) and
+irrelevant to this one.
+
+The fix: after the stamp, walk to the hit object's TOP-LEVEL root and `Object3D.attach` the decal —
+attach keeps the world pose, so a wall decal is byte-identical (static roots don't move), a mover's
+decal travels with it, and a deleted prop takes its holes along instead of leaving them floating. The
+root, not the hit mesh: a multi-mesh prop moves as one object, and an InstancedMesh hit reports the
+shared unit geometry (1139) whose root is the static batch — attach still lands world-true. Every
+removal site (expiry, the DECAL_MAX cap, the level-load wipe) detaches from WHATEVER parent the decal
+rides, so the pool can never leak a mesh into a prop. `test-1237` replays the sliding door on a real
+THREE graph; two 1021 pins moved (the stub scene now tracks parentage; intents kept).
+
+**The headless probe harness is rebuildable in minutes and worth rebuilding** (rollbacks wipe
+scratchpad): copy breach.html, inject a recorder + auto-runner inside the game script (full closure
+access — page-level JS can't reach GAME_START internals), serve it locally with `three.min.js`
+FETCHED VIA CURL and served from the same origin (headless Chromium bypasses the agent proxy, so CDN
+loads ERR_CONNECTION_RESET — Rapier may fail, the engine boots without physics), launch
+`/opt/pw-browsers/chromium-1194/chrome-linux/chrome` via Playwright with swiftshader, click
+`#startBtn`, poll `document.title` for the JSON payload. `waitUntil:'domcontentloaded'` — 'load'
+never fires with dead CDNs.
+
 ## Nothing invisible stops a bullet (build 1236)
 
 Reported from play with screenshots: *"some bullets hit an invisible wall and leave decals just

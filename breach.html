@@ -27580,7 +27580,20 @@ function spawnBulletDecal(point, faceNormal, obj){
   const sc = 0.12*decalCfg.size*(0.8+Math.random()*0.45);
   m.scale.set(sc, sc, 1); m.visible = true;
   scene.add(m);
-  if(decals.length >= DECAL_MAX){ const old = decals.shift(); scene.remove(old.mesh); _decalPool.push(old.mesh); }   // hard cap: the oldest hole recycles
+  // build 1237: RIDE THE SURFACE. Reported from play twice ("bullets hit an invisible wall and the
+  // decals just float") and probe-confirmed headless: decals were stamped in WORLD space, and the
+  // stock level's own moving platform (_cgMobile) was catching them — a hole stamped on an animated
+  // door, elevator or platform hung in mid-air the moment the surface moved on, reading as a wall
+  // that was never there. Object3D.attach keeps the world pose while reparenting, so a decal on a
+  // moving surface now travels with it, a decal on a wall behaves byte-identically (static roots
+  // don't move), and a deleted prop takes its holes with it instead of leaving them floating. The
+  // root, not the hit mesh: a multi-mesh prop moves as one object, and an InstancedMesh hit reports
+  // the shared unit geometry (1139) whose root is the static batch — attach still lands world-true.
+  if(obj){ let r=obj; let guard=0;
+    while(r && r.parent && r.parent!==scene && guard++<12) r=r.parent;
+    if(r && r!==m && r.parent===scene) try{ r.attach(m); }catch(e){}
+  }
+  if(decals.length >= DECAL_MAX){ const old = decals.shift(); if(old.mesh.parent) old.mesh.parent.remove(old.mesh); _decalPool.push(old.mesh); }   // hard cap: the oldest hole recycles; build 1237: from whatever parent it rides
   const life = DECAL_LIFE*decalCfg.life;
   decals.push({ mesh:m, life, max:life });
 }
@@ -27588,7 +27601,7 @@ function updateDecals(dt){
   if(!decals.length) return;
   for(let i=decals.length-1;i>=0;i--){
     const d = decals[i]; d.life -= dt;
-    if(d.life<=0){ scene.remove(d.mesh); _decalPool.push(d.mesh); decals.splice(i,1); continue; }
+    if(d.life<=0){ if(d.mesh.parent) d.mesh.parent.remove(d.mesh); _decalPool.push(d.mesh); decals.splice(i,1); continue; }   /* build 1237 */
     const f = d.life/d.max; if(f<0.25) d.mesh.material.opacity = 0.92*(f/0.25);   // fade only the tail — no per-frame material churn while fresh
   }
 }
@@ -27839,7 +27852,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1236 · 2026-07-31';
+const BUILD_VERSION = 'build 1237 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42706,7 +42719,7 @@ function startGame(){
   chests.slice().forEach(c=>scene.remove(c.mesh)); chests.length=0;
   grenades.slice().forEach(g=>scene.remove(g.mesh)); grenades.length=0;
   if(typeof enemyShots!=='undefined'){ enemyShots.slice().forEach(s=>scene.remove(s.mesh)); enemyShots.length=0; }
-  if(typeof decals!=='undefined'){ decals.slice().forEach(d=>{ scene.remove(d.mesh); _decalPool.push(d.mesh); }); decals.length=0; }
+  if(typeof decals!=='undefined'){ decals.slice().forEach(d=>{ if(d.mesh.parent) d.mesh.parent.remove(d.mesh); _decalPool.push(d.mesh); }); decals.length=0; }   /* build 1237: a decal may ride a prop now */
   if(typeof netReset==='function') netReset();   // clear stale remote avatars / mirrored enemies & coins
   if(typeof clearBots==='function') clearBots();
   heldProp=null; heldNidLocal=null; for(const k in _remoteHold) delete _remoteHold[k];

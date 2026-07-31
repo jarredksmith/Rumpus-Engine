@@ -22,7 +22,7 @@ const grad = { addColorStop(){} };
 const ctx2d = { createRadialGradient:()=>grad, fillRect(){}, beginPath(){}, arc(){}, fill(){}, set fillStyle(v){}, set globalCompositeOperation(v){} };
 const doc = { createElement:()=>({ width:0, height:0, getContext:()=>ctx2d }) };
 const removed = [];
-const scn = { add(){}, remove(m){ removed.push(m); } };
+const scn = { add(m){ if(m.parent && m.parent.remove) m.parent.remove(m); m.parent = scn; }, remove(m){ removed.push(m); m.parent = null; } };   // build 1237: removals now detach from WHATEVER parent the decal rides, so the stub must track parentage for the eviction pins to see them
 const cfg = { on:true, url:'', size:1, life:1 };
 const env = new Function('THREE', 'decalCfg', 'scene', 'document', mod +
   '\nreturn { decals, _decalPool, DECAL_MAX, DECAL_LIFE, spawnBulletDecal, updateDecals, _getDecalTex };')(THREE, cfg, scn, doc);
@@ -71,8 +71,8 @@ eq((src.match(/spawnBulletDecal\(hit\.point, hit\.face&&hit\.face\.normal, hit\.
 assert(/spawnBulletDecal\(end, _h\[0\]\.face&&_h\[0\]\.face\.normal, _h\[0\]\.object\);/.test(src),
   "joiners' and bots' relayed shots stamp too (the build-1020 impact ray)");
 assert(/updateDecals\(dt\);/.test(src), 'the fade/expiry tick runs in the main loop');
-assert(/decals\.slice\(\)\.forEach\(d=>\{ scene\.remove\(d\.mesh\); _decalPool\.push\(d\.mesh\); \}\); decals\.length=0;/.test(src),
-  'level-load hygiene: holes from the last match never bleed into the next');
+assert(/decals\.slice\(\)\.forEach\(d=>\{ if\(d\.mesh\.parent\) d\.mesh\.parent\.remove\(d\.mesh\); _decalPool\.push\(d\.mesh\); \}\); decals\.length=0;/.test(src),
+  'level-load hygiene: holes from the last match never bleed into the next');   // build 1237: detached from whatever parent they ride (a decal may sit on a prop now)
 
 // ---- rides the level + editor panel ----
 assert(/decal: Object\.assign\(\{\}, decalCfg\),/.test(src), 'serialized with the level');
