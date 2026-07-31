@@ -1519,6 +1519,29 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The arena arrives knowing its own gameplay (build 1204)
+
+The generator roadmap's "emit gameplay data with the GLB" item, second piece (1124's `spawns` was the
+first). `buildArena` now returns `game` beside `spawns`: **posts** — one patrol guard per ramp, standing at
+the FOOT with the ramp centreline (SCANS, foot-first/top-second) as a ping-pong route, emitted directly in
+`buildSpawnMarker`'s own opts shape so the engine consumes them with zero translation — and **pickups** —
+candidate spots the layout says are open (the two mid-lanes, the two flanks, then each ramp's TOP last, so
+the consumer's index-ordered kinds put the good guns on high ground). Never (0,0): every footprint puts a
+structure at the centre (1124's undercroft lesson). The in-editor worker carries `game` back beside
+`world`, and Place-in-level seeds both behind a default-on checkbox ("Seed gameplay: ramp guards + pickup
+spots"), inside the model-load callback, with NO `clearAt` validation on purpose — the generator authored
+these against its own geometry, and the big-GLB collider may still be deriving off-thread (1203) at that
+moment, when the interim collider is fail-solid and would reject every honest spot. `test-1204` executes
+the real generator (posts' routes must BE members of SCANS) and pins the wiring. The CLI prints a `GAME`
+manifest beside `SCANS`/`SPAWNS`.
+
+**SEVENTH container rollback, recovered mid-build — and this one carried news.** The bump assert fired
+(atomic abort, nothing written), but the tree was not merely stale: **PR #30 had been merged** (at build
+1198) and the container sat on the merged main, while origin's branch still held 1199-1203. Recovery per
+the merged-PR protocol: fetch the branch, rebase its unmerged commits onto origin/main (clean — the merge
+point is their ancestor), force-with-lease push, re-apply the aborted edits. The levelgen half of this
+build survived in the working tree across the rollback; only the breach.html half needed re-applying.
+
 ## The collider grid derives off-thread (build 1203)
 
 The perf critic's #5 other half. `buildModelGridBoxes` measured 110-137 ms on the main thread for a

@@ -27449,7 +27449,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1203 · 2026-07-31';
+const BUILD_VERSION = 'build 1204 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41414,7 +41414,7 @@ self.onmessage = async (e) => {
     const w = api.writeGLB('out.glb');
     const bytes = host.out;
     const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    postMessage({ ok:true, name:info.name, world:info.world||null, spawns:info.spawns||null, kb:Math.round(w.bytes/1024), tris:w.tris, glb:ab }, [ab]);
+    postMessage({ ok:true, name:info.name, world:info.world||null, spawns:info.spawns||null, game:info.game||null, kb:Math.round(w.bytes/1024), tris:w.tris, glb:ab }, [ab]);
   } catch(err){ postMessage({ ok:false, err:String(err && err.message || err) }); }
 };`;
 function _lgGenerate(opts, done){
@@ -41459,6 +41459,11 @@ function _lgOpenDialog(){
   const moodRow=H('<label style="display:flex;align-items:center;gap:7px;margin:7px 0 2px;cursor:pointer;"></label>');
   const moodCb=document.createElement('input'); moodCb.type='checkbox'; moodCb.checked=true; moodCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);';
   moodRow.appendChild(moodCb); moodRow.appendChild(Object.assign(document.createElement('span'),{ textContent:'Apply the arena’s lighting mood to this level' }));
+  /* build 1204: the generator emits gameplay data (guard posts on its ramps, pickup spots on its high
+     ground) in the engine's own authoring shapes — seeding is a creator choice, defaulting on. */
+  const gpRow=H('<label style="display:flex;gap:8px;align-items:center;margin:6px 0 2px;cursor:pointer;"></label>');
+  const gpCb=document.createElement('input'); gpCb.type='checkbox'; gpCb.checked=true; gpCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);';
+  gpRow.appendChild(gpCb); gpRow.appendChild(Object.assign(document.createElement('span'),{ textContent:'Seed gameplay: ramp guards + pickup spots' }));
   const status=H('<div class="hint" style="font-size:11px;min-height:16px;margin:6px 0 2px;"></div>');
   const actRow=H('<div style="display:flex;gap:6px;margin-top:6px;"></div>');
   const go=document.createElement('button'); go.textContent='Generate'; go.className='lgCTA'; go.style.cssText='flex:1;padding:8px;font-size:13px;';
@@ -41477,7 +41482,22 @@ function _lgOpenDialog(){
       actRow.querySelectorAll('.lgRes').forEach(b=>b.remove());
       const place=document.createElement('button'); place.className='lgRes lgCTA'; place.textContent='Place in level'; place.style.cssText='flex:1;padding:8px;font-size:12px;';
       place.onclick=()=>{ pushUndoSnapshot();
-        spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed, player spawn moved to BASE 1. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).'); }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
+        spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed, player spawn moved to BASE 1. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).');
+          /* build 1204: the arena arrives knowing its own gameplay. Posts are already in buildSpawnMarker's
+             shape (a patrol guard pacing each ramp); pickup spots are the generator's open-lane and
+             ramp-top candidates, kinds assigned by index so the HIGH GROUND (emitted last) earns the good
+             guns. No clearAt validation on purpose: the generator authored these against its own geometry,
+             and the big-GLB collider may still be deriving off-thread (build 1203) when this callback runs. */
+          if(gpCb.checked && r.game){ try{
+            if(Array.isArray(r.game.posts)) for(const ps of r.game.posts.slice(0,8)) buildSpawnMarker(ps);
+            if(Array.isArray(r.game.pickups)){
+              const _gpKinds=['health','ammo','rifle','shotgun','smg','damage','health','sniper','shield','launcher','speed','ammo'];
+              r.game.pickups.slice(0,12).forEach((sp2,i)=>{ pickupSpots.push({ x:+(+sp2[0]).toFixed(2), z:+(+sp2[1]).toFixed(2), kind:_gpKinds[i%_gpKinds.length] }); });
+              if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
+            }
+            if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(editorOpen);
+          }catch(e){} }
+        }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
         // build 1124: an arena is not a prop — it lands at the origin, which is where the level's
         // default player spawn already is, and every footprint the generator builds puts a structure
         // at its centre. Measured on KILN RUN: the central mass's underside sits at y 2.25, so the

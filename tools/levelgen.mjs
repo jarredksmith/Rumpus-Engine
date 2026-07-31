@@ -2875,8 +2875,26 @@ function buildArena(seed, theme, size, footprint) {
   // generated-arena screenshot was until this build. The two base rooms (z = ±(W-4), reserved by
   // the team-base pass and open to the sky) are where a match actually starts, so say so and let
   // the editor put the player there. Ordered: [0] is BASE 1, [1] is BASE 2.
+  // ---- build 1204: gameplay data rides with the GLB ----
+  // The generator knows things about its own layout that the engine can only guess at: which ramps exist
+  // (SCANS — foot first, top second, the CLI's long-standing convention), and which lanes are open field.
+  // So it emits, in the ENGINE'S OWN authoring shapes, ready to hand straight to buildSpawnMarker /
+  // pickupSpots:
+  //  - posts: one patrol guard per ramp, standing at the FOOT, route = the ramp centreline, ping-pong
+  //    (loop:false) — a guard that walks up and down the ramp it defends. Capped at 6.
+  //  - pickups: candidate spots the layout says are open — the two mid-lanes between base and centre,
+  //    the two flanks, and each ramp's TOP (high ground earns the good guns; the consumer assigns kinds
+  //    by index, so premium spots come last). NEVER (0,0): every footprint puts a structure there
+  //    (build 1124's undercroft lesson).
+  const GAME = {
+    posts: SCANS.slice(0, 6).map(sc => ({ t: [sc[0], sc[1]], mode: 'patrol',
+      route: [[sc[0], sc[1]], [sc[2], sc[3]]], loop: false, type: 'grunt', wave: 0 })),
+    pickups: [[0, +(W * 0.45).toFixed(1)], [0, -(W * 0.45).toFixed(1)],
+              [+(W - 7).toFixed(1), 0], [-(W - 7).toFixed(1), 0]]
+      .concat(SCANS.slice(0, 6).map(sc => [sc[2], sc[3]])),
+  };
   return { name: `${arenaName} (seed ${seed} · ${theme} · ${size}${footprint !== 'square' ? ' · ' + footprint : ''})`,
-    scans: SCANS, spawns: [[0, W - 4], [0, -(W - 4)]], light: MOOD.light, world: MOOD.world };
+    scans: SCANS, spawns: [[0, W - 4], [0, -(W - 4)]], game: GAME, light: MOOD.light, world: MOOD.world };
 }
 
 // -------------------------------------------------------------- baked lighting (AO) ----
@@ -3204,5 +3222,6 @@ const w = writeGLB(out);
 console.log(`${info.name} -> ${out}  (${(w.bytes / 1024).toFixed(0)} KB, ${w.tris} tris, ${MATS.length} materials, ${Object.keys(TEXS).length} texture sets, lightmap ${LM ? LM.A : 0}px / ${PATCHES.length} patches in ${aoMs} ms over ${SOLIDS.length} solids)`);
 if (info.scans) console.log('SCANS ' + JSON.stringify(info.scans));
 if (info.spawns) console.log('SPAWNS ' + JSON.stringify(info.spawns));
+if (info.game) console.log('GAME ' + JSON.stringify(info.game));
 if (info.world) console.log('WORLD ' + JSON.stringify(info.world));
 }
