@@ -10098,9 +10098,12 @@ function _lgPulse(id, pin){
       break; }
     case 'once': { if(pin==='reset'){ st.done=false; break; } if(st.done) break; st.done=true; _lgFollow(id,0); break; }
     case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
-    case 'do': { try{ _applySignalAction({ do:p.verb||'toggle', target:String(p.target||'').trim(), clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
+    case 'do': { const _verb=p.verb||'toggle', _tgt=String(p.target||'').trim();
+      if(_LG_TAG_VERBS.has(_verb) && _tgt && _tgt!=='this' && typeof _lgTagExists==='function' && !_lgTagExists(_tgt)) _noteLogicFailure('A "'+_verb+'" action targets the tag "'+_tgt+'", but no placed prop has that tag.');
+      try{ _applySignalAction({ do:_verb, target:_tgt, clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
         etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim(),
-        stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }catch(e){} _lgFollow(id,0); break; }
+        stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }
+      catch(e){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "'+_verb+'" action failed: '+((e&&e.message)||e)); } _lgFollow(id,0); break; }
     case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));   // {score} interpolates live variables
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
@@ -16086,6 +16089,24 @@ function _propRigCfg(url){
 // (restoreLevel / wipe), because stale entries about a previous level are their own kind of lie; a RETRY that
 // succeeds also clears its url, so a flaky network heals the report.
 const assetLoadFailures = new Map();   // src -> { msg, n }
+// build 1214: the logic graph was a black box that swallowed its own failures — a misspelled tag, a bad
+// clip name, a wrong place field all did NOTHING, with no console line and no report, so the only way a
+// creator could debug "why didn't my door open" was redeploy-replay-stare-guess. Failures are now recorded
+// (deduped, capped) exactly like asset failures (build 1167), and levelIssues() surfaces them the moment
+// the creator returns to the editor — "what happened last run". The graph runs only during play, so this
+// is a play-time log read at author-time, which is the whole point.
+const logicFailures = new Map();   // message -> { n }
+function _noteLogicFailure(msg){
+  const key = String(msg||'').slice(0, 160);
+  const e = logicFailures.get(key);
+  if(e){ e.n++; }
+  else if(logicFailures.size < 20) logicFailures.set(key, { n: 1 });
+  try{ if(typeof renderLevelIssues==='function' && typeof editorOpen!=='undefined' && editorOpen) renderLevelIssues(); }catch(e2){}
+}
+// build 1214: does any placed prop carry this tag? A tag-based do-verb aimed at a tag nothing answers is
+// the commonest logic mistake, and the runtime used to no-op it in silence.
+function _lgTagExists(tag){ if(typeof propModels==='undefined') return true; for(const o of propModels){ if(o && o.userData && o.userData.tag===tag) return true; } return false; }
+const _LG_TAG_VERBS = new Set(['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']);
 function _noteAssetFailure(src, err){
   const key = String(src||'').slice(0, 300);
   const e = assetLoadFailures.get(key);
@@ -16112,6 +16133,7 @@ function wipeScene(){ pushUndoSnapshot(); _wipeSceneCore(); }
 // build 879: the wipe body, callable without its own undo snapshot (the example loader pushes one first)
 function _wipeSceneCore(){
   if(typeof assetLoadFailures!=='undefined') assetLoadFailures.clear();   // build 1167: a fresh scene starts with a clean report
+  if(typeof logicFailures!=='undefined') logicFailures.clear();            // build 1214: and a clean logic log
   for(let i=propModels.length-1;i>=0;i--) removeProp(i);
   if(typeof removeLight==='function') for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
   if(typeof removeSpawnMarker==='function') for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
@@ -27573,7 +27595,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1213 · 2026-07-31';
+const BUILD_VERSION = 'build 1214 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35894,6 +35916,7 @@ function restoreLevel(level){
   if(!level) return;
   if(!_levelFormatCheck(level).ok) return;   // build 1165: refuse BEFORE the teardown — a refusal must cost nothing
   if(typeof assetLoadFailures!=='undefined') assetLoadFailures.clear();   // build 1167: stale failures about a previous level are their own kind of lie
+  if(typeof logicFailures!=='undefined') logicFailures.clear();            // build 1214: stale logic failures too
   // build 893: world (TERRAIN) first — prop y is stored relative to the terrain under it, so placement
   // must lift against THIS level's terrain, not whatever the previous level left behind.
   if(level.world){ worldCfg = _worldFrom(level.world); applyWorldCfg(); }
@@ -36923,6 +36946,8 @@ function levelIssues(){
     if(typeof assetLoadFailures!=='undefined') for(const [src, e] of assetLoadFailures){
       const short = src.length>46 ? '…'+src.slice(-45) : src;
       issues.push('A model failed to load ('+e.msg+')'+(e.n>1?' ×'+e.n:'')+': '+short); }
+    // build 1214: logic-graph failures from the last play session — the graph swallowed these before.
+    if(typeof logicFailures!=='undefined') for(const [msg, e] of logicFailures) issues.push('Logic (last run): '+msg+(e.n>1?' ×'+e.n:''));
     // build 1177: local: models exist only in THIS device's IndexedDB — anyone else loading the level gets
     // the missing-model report above. Sharing needs the server upload; say so before they publish.
     { let loc=0; for(const o of propModels){ if(o && o.userData && /^local:/i.test(String(o.userData.src||''))) loc++; }

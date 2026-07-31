@@ -1519,6 +1519,28 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The logic graph stops swallowing its failures (build 1214)
+
+The editor-UX panel's CRITICAL #1: the graph's only actuator wrapped `_applySignalAction` in
+`try{}catch(e){}`, so a misspelled tag, a bad clip, a wrong place field all did NOTHING — no console line,
+no toast, no Level Check entry. The highest-investment editor activity had the worst feedback loop: the
+only way to debug "why didn't my door open" was redeploy-replay-stare-guess. Now, mirroring the 1167 asset
+report: `_noteLogicFailure(msg)` records failures (deduped by message, capped at 20), the `do` node checks
+a tag-based verb's target with `_lgTagExists` and records "targets the tag X, but no placed prop has that
+tag" when nothing answers, the catch records a thrown verb, and `levelIssues()` surfaces them as "Logic
+(last run): …". The graph runs only during play and `levelIssues` renders in the editor, so this is a
+play-time log read at author-time — exactly the critic's "what happened last run", and it needs no
+live-while-playing inspector.
+
+The tag check covers only the target-bearing verbs (`_LG_TAG_VERBS`: toggle/open/close/anim/unlock +
+the four prop-lifecycle verbs) — NOT the placeless world verbs (spawn/teleport/win act on a place or the
+run, so a "missing tag" there would be a false alarm). The log clears on wipe and restore (stale failures
+about a previous level are their own lie) and refreshes the panel live if a failure lands while the editor
+is open. `test-1214` executes the recorder (dedup/count/cap), `_lgTagExists`, and the REAL do-node branch
+driven to prove it notes a missing tag (naming verb + tag) but not a resolved one nor a placeless verb. One
+1027 harness gained stubs for the new refs. The live pin-value / execution-trace inspector the critic also
+wanted is the larger follow-up; surfacing the silent failures was the load-bearing half.
+
 ## The difficulty curve keeps evolving (build 1213)
 
 The gameplay-feel panel's HIGH #6: `pickEnemyType` froze the mix from wave 5 on, and its outcome set never
