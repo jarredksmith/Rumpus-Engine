@@ -27,7 +27,7 @@ assert(/if\(typeof _bodyAimActive==='function' && _bodyAimActive\(\)\)\{   \/\/ 
 assert(/if\(typeof _bodyAimActive==='function' && _bodyAimActive\(\)\)\{\n    o\.set\(player\.pos\.x, player\.pos\.y-0\.2, player\.pos\.z\);/.test(src),
   'rockets use it');
 // _vAimPt is only maintained by the cursor solver — a tilted chase camera must not inherit it stale
-assert(/_vmTgt = _cHits\.length \? _cHits\[0\]\.point\.clone\(\) : \(cursorAimActive\(\) \? _vAimPt\.clone\(\) : raycaster\.ray\.at\(120, new THREE\.Vector3\(\)\)\);/.test(src),
+assert(/_vmTgt = _cH \? _cH\.point\.clone\(\) : \(cursorAimActive\(\) \? _vAimPt\.clone\(\) : raycaster\.ray\.at\(120, new THREE\.Vector3\(\)\)\);/.test(src),   // build 1236: ghost-filtered resolve (_cH) — same fallback chain
   'with nothing under the crosshair, the fallback target is far down the crosshair ray itself');
 
 // ---------------------------------------------------------------- executable: the height it was firing from

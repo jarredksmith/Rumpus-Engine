@@ -18439,6 +18439,24 @@ function swapEnemyModel(url, typeKey){ enemyModelCfg(typeKey||editorEnemyType).u
 // An invisible cylinder shots are raycast against. Skinned-mesh raycasting uses the BIND pose (geometry
 // collapses toward the feet/origin once animated), so we hit this proxy instead — consistent + tunable.
 const _ENEMY_PROXY_MAT = new THREE.MeshBasicMaterial(); _ENEMY_PROXY_MAT.visible = false;   // not drawn, still raycastable
+// build 1236: NOTHING INVISIBLE STOPS A BULLET — reported from play with screenshots: "some bullets
+// hit an invisible wall and leave decals just floating." Two ways an undrawn surface is raycastable:
+// a mesh whose MATERIAL is invisible (material.visible=false / opacity ~0 — how asset packs ship
+// collision volumes inside a GLB, and exactly the trick the enemy hit proxies use on purpose), and a
+// mesh whose ANCESTOR is invisible (the Raycaster honours a mesh's OWN visible:false but never its
+// ancestors' — 1139's documented trap; editor-helper children live under hidden groups). A pellet that
+// hits one leaves a floating decal on air. So combat rays skip any hit the renderer would not draw —
+// EXCEPT the explicit hit proxies, which are invisible-and-shootable by design. Mirrors 1152: nothing
+// that does not write depth belongs in a depth-derived buffer; nothing that is not drawn stops a shot.
+function _shotGhost(o, hit){
+  if(o.userData && o.userData.isHitProxy) return false;
+  let m = o.material;
+  if(Array.isArray(m)) m = m[(hit && hit.face && hit.face.materialIndex) || 0] || m[0];
+  if(m && (m.visible === false || (m.transparent && (+m.opacity || 0) <= 0.02))) return true;
+  let p = o; while(p){ if(p.visible === false) return true; p = p.parent; }
+  return false;
+}
+function _firstSolidHit(hits){ for(let i = 0; i < hits.length; i++){ if(!_shotGhost(hits[i].object, hits[i])) return hits[i]; } return null; }
 const HEADSHOT_MUL = 2;   // headshots deal 2x. The head zone is an invisible sphere above a shortened body proxy.
 function _mkHeadProxy(y, r){ const hd=new THREE.Mesh(new THREE.SphereGeometry(r,8,8), _ENEMY_PROXY_MAT); hd.position.set(0,y,0); hd.userData.isHitProxy=true; hd.userData.isHead=true; return hd; }
 function setEnemyHitProxy(body, r, h){
@@ -25251,7 +25269,7 @@ function updateRockets(dt){
     // (and sweeping prev->now also stops a fast rocket from tunnelling through a thin wall).
     if(!impact){ const dx=p.x-_rkPrev.x, dy=p.y-_rkPrev.y, dz=p.z-_rkPrev.z, L=Math.hypot(dx,dy,dz);
       if(L>1e-5 && colliders.length){ _rkDir.set(dx/L,dy/L,dz/L); _rkRay.set(_rkPrev,_rkDir); _rkRay.far=L+0.05;
-        const hits=_rkRay.intersectObjects(colliders, true); if(hits.length){ p.copy(hits[0].point); impact=true; } } }
+        const hits=_rkRay.intersectObjects(colliders, true); const _rH=(typeof _firstSolidHit==='function')?_firstSolidHit(hits):(hits[0]||null); if(_rH){ p.copy(_rH.point); impact=true; } } }   /* build 1236: a rocket must not detonate on an invisible collision volume mid-doorway */
     if(!impact){
       if(!pvpMode()){ for(const en of enemies){ if(en.mesh && en.mesh.position.distanceTo(p)<1.0){ impact=true; break; } } }
       else {
@@ -27821,7 +27839,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1235 · 2026-07-31';
+const BUILD_VERSION = 'build 1236 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29882,9 +29900,10 @@ function shoot(){
     _vmOrig = new THREE.Vector3(player.pos.x, player.pos.y-0.2, player.pos.z);
     raycaster.setFromCamera(_vAimTmpNdc.set(_vmA.x, _vmA.y), camera);
     const _cHits = raycaster.intersectObjects(rayTargets, true);
+    const _cH = _firstSolidHit(_cHits);   // build 1236: a ghost surface must not become the aim point either
     // nothing under the crosshair: aim far down the ray itself. (_vAimPt is only maintained by the
     // cursor solver, so a tilted chase camera would otherwise inherit a stale point — build 1109.)
-    _vmTgt = _cHits.length ? _cHits[0].point.clone() : (cursorAimActive() ? _vAimPt.clone() : raycaster.ray.at(120, new THREE.Vector3()));
+    _vmTgt = _cH ? _cH.point.clone() : (cursorAimActive() ? _vAimPt.clone() : raycaster.ray.at(120, new THREE.Vector3()));
     if(_vmTgt.distanceToSquared(_vmOrig) < 1) _vmTgt.copy(_vmOrig).addScaledVector(new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw)), 4);   // cursor on top of yourself: shoot where you face
   }
   // build 1102: flash + network from the REAL fire pose (see the note above)
@@ -29914,8 +29933,9 @@ function shoot(){
     } else raycaster.setFromCamera(new THREE.Vector2(sx, sy), camera);
     const hits = raycaster.intersectObjects(rayTargets, true);
     let endPoint = raycaster.ray.at(120, new THREE.Vector3());
-    if(hits.length){
-      const hit = hits[0];
+    const _sHit = _firstSolidHit(hits);   // build 1236: skip undrawn surfaces — the pellet flies on to the first thing the player can SEE
+    if(_sHit){
+      const hit = _sHit;
       endPoint = hit.point.clone();
       const isHead = !!(hit.object.userData && hit.object.userData.isHead);
       const hsMul = isHead ? HEADSHOT_MUL : 1;

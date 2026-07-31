@@ -9,7 +9,7 @@ const src = gameSource();
 const ur = extractFunction('updateRockets');
 assert(/_rkPrev\.copy\(rk\.mesh\.position\); rk\.mesh\.position\.addScaledVector\(rk\.vel, dt\)/.test(ur), 'rocket records its previous position before moving (for the sweep)');
 assert(/_rkDir\.set\(dx\/L,dy\/L,dz\/L\); _rkRay\.set\(_rkPrev,_rkDir\); _rkRay\.far=L\+0\.05;/.test(ur), 'a ray is swept over this frame of travel');
-assert(/const hits=_rkRay\.intersectObjects\(colliders, true\); if\(hits\.length\)\{ p\.copy\(hits\[0\]\.point\); impact=true; \}/.test(ur), 'detonates on the real mesh hit point, not a bounding box');
+assert(/const hits=_rkRay\.intersectObjects\(colliders, true\); const _rH=[^\n]*if\(_rH\)\{ p\.copy\(_rH\.point\); impact=true; \}/.test(ur), 'detonates on the real mesh hit point, not a bounding box');   // build 1236: the hit is ghost-filtered first — still a real mesh point, never a bbox
 assert(!/for\(const b of bs\)\{ if\(p\.x>=b\.min\.x&&p\.x<=b\.max\.x/.test(ur), 'the old point-in-grid-box detonation is gone');
 
 const ug = extractFunction('updateGrenades');
