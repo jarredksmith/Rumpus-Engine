@@ -101,8 +101,8 @@ const src = gameSource();
   assert(gate >= 0 && i > gate && i < bloom, 'the extra pass is inside the G-buffer prepass block, so it disappears when the prepass is shed');
   // build 1218: the gate SPLIT — the prepass (which the viewmodel + soft particles need) runs on the top 3
   // rungs; the AO SAMPLE stays on rung 0. Build 1135's "AO below MSAA" intent is preserved in _aoWant.
-  assert(/const _geoWant = _ssaoAmt > 0\.001 && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam\.isPerspectiveCamera;/.test(fn) &&
-    /const _aoWant = _geoWant && _prStepI === 0;/.test(fn),
+  assert(/const _geoWant = \(_ssaoAmt > 0\.001 \|\| _postSSR > 0\.001\) && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam\.isPerspectiveCamera;/.test(fn) &&
+    /const _aoWant = _geoWant && _ssaoAmt > 0\.001 && _prStepI === 0;/.test(fn),
     'the AO SAMPLE still gates on rung 0 (below MSAA), while its G-buffer is wider');
 }
 {

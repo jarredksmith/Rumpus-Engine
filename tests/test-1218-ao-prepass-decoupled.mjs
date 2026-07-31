@@ -30,9 +30,9 @@ const src = gameSource();
 // ---------------------------------------------------------------- the wiring: prepass vs sample split
 {
   const fn = extractFunction('_renderPostFX');
-  assert(/const _geoWant = _ssaoAmt > 0\.001 && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam\.isPerspectiveCamera;/.test(fn),
+  assert(/const _geoWant = \(_ssaoAmt > 0\.001 \|\| _postSSR > 0\.001\) && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam\.isPerspectiveCamera;/.test(fn),
     'the G-buffer prepass gate spans the top rungs');
-  assert(/const _aoWant = _geoWant && _prStepI === 0;/.test(fn),
+  assert(/const _aoWant = _geoWant && _ssaoAmt > 0\.001 && _prStepI === 0;/.test(fn),
     'the AO sample gate is a STRICT subset — rung 0 only');
   assert(/_SOFT_P\.value\.x = _geoWant \? 1 : 0;/.test(fn),
     'soft particles ride the prepass gate (the buffer they read), not the AO sample');

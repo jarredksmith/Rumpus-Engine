@@ -1519,6 +1519,38 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Screen-space reflections (build 1245)
+
+Glossy floors, marched from the buffer the engine already had: the AO G-buffer carries view normal
+(rgb) and linear view depth `-mvPosition.z` (a), which is everything a cheap SSR needs — so `_matSSR`
+costs no new prepass. Half-res, 24 exponential steps (~55 units reach), scene colour from
+`_postRT.texture` (LINEAR — the composite adds `sr.rgb * sr.a * uSSR` before its one encode, 1115's
+rule; sampling the MSAA target resolves it, same as bloom). Four decisions worth keeping:
+
+- **Floors only, by design.** The G-buffer has no per-pixel roughness, so a wall would mirror at full
+  strength with no material to say otherwise. `smoothstep(0.55, 0.85, dot(n, uUpView))` — uUpView is
+  world up in view space, read straight from column 1 of `matrixWorldInverse` (current, because the
+  scene render just updated it; no per-frame quaternion allocations).
+- **A sky pixel mid-march is stepped OVER (`continue`), not treated as a hit or a wall** — the
+  geometric `_empty` test from 1126. Break on sky and a reflection dies at every silhouette edge.
+- **The gates:** `_geoWant` gained `|| _postSSR > 0.001` so SSR keeps the PREPASS alive when AO is
+  authored off — and `_aoWant` therefore gained its own `_ssaoAmt` term, or SSR would have switched
+  the AO sample on. `_ssrWant` sheds on the first downshift like the AO sample. Both 1218 pins moved.
+- **Authored:** `worldCfg.ssr` (0..1, DEFAULT_WORLD 0.35, slider beside the AO pair, `_postOffWorld`
+  zeroes it). Composite binds `_bloomMips[1]` when the pass didn't run — 1242's bound-fallback rule.
+
+Captured headless (adaptive off via `breach_adaptres`, grain/motion/autoExp zeroed for determinism):
+control pair agrees to 0.26%; ssr 0→0.9 lifts the aimed-down floor +5.2% luminance and its unique
+colours 3,764 → 7,737 — reflections carry CONTENT, not a flat lift; the frame shows the crates'
+glossy copies under them. At the shipped 0.35: +2.9%, 6,051 — a subtle wet-floor sheen.
+
+**The capture harness note that cost an hour: the dead Rapier CDNs HANG in the sandbox** (no
+connection reset), so `__PHYSICS_READY` never settles and `GAME_START` never runs — the menu binds
+nothing and #startBtn clicks do nothing, with no error anywhere. The probe copy now stubs
+`window.__PHYSICS_READY = Promise.resolve(null)` outright. And the cheapest closure hook yet:
+inject `window.__probe = function(__f){ return eval(__f); }` at `function startGame(){` — eval runs
+in the game closure's scope at CALL time, so one hook reads and writes any internal from page JS.
+
 ## The mantle probe finally reaches the wall (build 1244)
 
 "Ledge still acts EXACTLY the same with build 1243" — and *exactly the same* after a verified fix
