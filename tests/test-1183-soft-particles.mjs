@@ -58,8 +58,8 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- the wiring
 {
-  assert(/_SOFT_P\.value\.x = _aoWant \? 1 : 0; _SOFT_P\.value\.z = w; _SOFT_P\.value\.w = h;/.test(src),
-    'the feed rides the SAME _aoWant gate that keeps the G-buffer fresh — AO off means hard edges, never stale depth');
+  assert(/_SOFT_P\.value\.x = _geoWant \? 1 : 0; _SOFT_P\.value\.z = w; _SOFT_P\.value\.w = h;/.test(src),
+    'the feed rides the G-buffer PREPASS gate (build 1218), which is wider than the AO sample — so soft particles survive the first adaptive downshift that sheds the AO kernel; AO/prepass off still means hard edges, never stale depth');
   assert(/if\(_aoGeoRT\) _SOFT_GEO\.value = _aoGeoRT\.texture;/.test(src), '...and the texture follows the RT across adaptive-res rebuilds');
   assert(/_SOFT_P\.value\.x = 0; {3}\/\* build 1183: no post chain = no fresh G-buffer = no soft fade \*\//.test(src),
     'the plain render path (post off) switches the fade OFF — otherwise sprites sample a frozen buffer');

@@ -7326,6 +7326,7 @@ let _bloomMips=[], _matBloomDown=null, _matBloomUp=null;
 // build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
 // resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
 let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
+const _AO_GEO_MAXSTEP = 2;   /* build 1218: the G-buffer prepass survives the top 3 quality rungs (100/85/72%) so soft particles/shorelines outlast the common downshift; the AO sample stays on rung 0 */
 // build 1183: SOFT PARTICLES. A flipbook quad slicing through world geometry drew a hard line across the
 // intersection — the classic billboard artifact. The AO G-buffer (build 1126) already holds the scene's
 // view distance at half res, swept clean of everything that doesn't write depth (1152/1158) — including
@@ -7726,10 +7727,17 @@ function _renderPostFX(scn, cam){
   // floor — while keeping 4x multisampling on their edges. That is the wrong trade: a slightly
   // jagged silhouette still reads as an object standing somewhere. AO now survives the MSAA shed
   // and goes only when the scaler starts trading RESOLUTION, at which point everything is soft anyway.
-  const _aoWant = _ssaoAmt > 0.001 && _prStepI === 0 && _aoGeoRT && cam && cam.isPerspectiveCamera;
-  _SOFT_P.value.x = _aoWant ? 1 : 0; _SOFT_P.value.z = w; _SOFT_P.value.w = h;   /* build 1183: soft particles ride the same gate */
+  // build 1218: the half-res G-buffer PREPASS and the AO SAMPLE were one gate, so the first adaptive
+  // downshift (85% res — a common mid-range steady state) shed SSAO, soft particles AND soft shorelines
+  // together, and the image most players actually see lost its grounding while still paying for bloom, fog
+  // and the grade. They are decoupled now: the prepass (which feeds the soft-particle/shoreline fade via
+  // the view distance in _aoGeoRT.a) runs across the top THREE rungs; only the expensive AO kernel+blur is
+  // shed, and only on the very first downshift. At the deepest rungs everything is soft anyway.
+  const _geoWant = _ssaoAmt > 0.001 && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam.isPerspectiveCamera;
+  const _aoWant = _geoWant && _prStepI === 0;   /* the AO SAMPLE stays on the top rung; the G-buffer it needs is wider */
+  _SOFT_P.value.x = _geoWant ? 1 : 0; _SOFT_P.value.z = w; _SOFT_P.value.w = h;   /* build 1183/1218: soft particles ride the PREPASS, not the AO sample */
   if(_aoGeoRT) _SOFT_GEO.value = _aoGeoRT.texture;
-  if(_aoWant){
+  if(_geoWant){
     // the prepass runs AFTER the scene pass so it cannot consume this frame's shadow-map refresh,
     // and with the sky dome and weather hidden — overrideMaterial would give the dome depthWrite
     // and it would fill the entire buffer at the far plane, and snow would pock it with occluders
@@ -7785,6 +7793,8 @@ function _renderPostFX(scn, cam){
     scn.background=_bgV;
     if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
     renderer.shadowMap.autoUpdate=_sa;
+  }
+  if(_aoWant){   /* build 1218: the AO SAMPLE (kernel + bilateral blur) — sheds on the first downshift while the prepass above keeps the soft-particle fade alive */
     const au=_matAO.uniforms;
     au.tGeo.value=_aoGeoRT.texture; au.uTexel.value.set(1/hw,1/hh);
     au.uFar.value=cam.far; au.uRadius.value=_ssaoRadius;
@@ -27632,7 +27642,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1217 · 2026-07-31';
+const BUILD_VERSION = 'build 1218 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

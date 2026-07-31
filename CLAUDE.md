@@ -1519,6 +1519,23 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The G-buffer prepass outlives the AO sample (build 1218)
+
+The rendering panel's HIGH: `_aoWant = _ssaoAmt>0.001 && _prStepI===0 && ...` gated BOTH the half-res
+G-buffer prepass and the expensive AO kernel+blur, and build 1183's soft-particle / 1184's soft-shoreline
+fade read the same flag — so the FIRST adaptive downshift (85% res, a common mid-range steady state) shed
+SSAO, soft particles AND soft shorelines together, and the image most players actually see lost its
+grounding while still paying for bloom, fog and the grade. The gate is split: `_geoWant` runs the prepass
+(which writes the view distance the soft-particle/shoreline fade reads from `_aoGeoRT.a`) across the top
+three rungs (`_AO_GEO_MAXSTEP = 2` → 100/85/72%); `_aoWant = _geoWant && _prStepI===0` keeps the AO SAMPLE
+on rung 0 only. So a downshift now sheds only the AO kernel; soft particles keep their fade. The prepass
+render moved into an `if(_geoWant)` block, the AO kernel into a later `if(_aoWant)`, and `_SOFT_P.value.x`
+keys on `_geoWant`. Build 1135's "AO rides the resolution step, below MSAA" intent is preserved in `_aoWant`.
+The critic's other half — a reduced-kernel AO on rung 1 instead of shedding it outright — is deferred because
+it needs a measured tuning pass this can't do headlessly. `test-1218` evaluates both gates across the rungs
+and pins the structural split; three pins moved (1126 passed untouched, 1140 + 1183 to the new gate names).
+**Needs a browser pass to confirm** — force a downshift and watch soft particles stay soft.
+
 ## Water reflects the live sky (build 1217)
 
 The rendering panel's finding, verified in code: `_waterSurfaceMat` set `uSky` to `0x9fc8d8` at CONSTRUCTION
