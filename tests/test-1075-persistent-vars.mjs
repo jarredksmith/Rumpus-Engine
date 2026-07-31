@@ -23,6 +23,7 @@ eq(san(Array.from({ length: 200 }, (_, i) => 'v' + i)).length, 40, 'the list is 
 // ---------------------------------------------------------------- seed / commit, and what a retry does
 const ENV = `
   let logicVars={}, campaignVars={}, persistVars=[], persistSave=false, store=null, homepageCfg;
+  let persistInv=false, persistCp=false, _persistInvVal=null, _persistCpVal=null, inventory=[];   // build 1227: the store carries these too; this test is about the VARS, so both stay opted out
   const localStorage={ getItem:()=>store, setItem:(k,v)=>{ store=v; }, removeItem:()=>{ store=null; } };
   const PERSIST_KEY='k';
 `;
@@ -120,7 +121,7 @@ assert(/if\(typeof _persistSeed==='function'\) _persistSeed\(\);/.test(extractFu
 assert(/campaignVars=\{\}; _campaignLoad\(0\);/.test(src), 'starting a campaign fresh drops whatever the last run carried');
 assert(/persistVars: \(persistVars\.length \? persistVars\.slice\(\) : undefined\), persistSave: \(persistSave\|\|undefined\),/.test(src),
   'the author\'s list serializes with the level');
-eq((src.match(/persistVars = _sanitizePersist\(level\.persistVars\); persistSave = !!level\.persistSave; _persistLoad\(_persistNSFrom\(level\.homepage\)\);/g) || []).length, 2,
+eq((src.match(/persistVars = _sanitizePersist\(level\.persistVars\); persistSave = !!level\.persistSave; persistInv = !!level\.persistInv; persistCp = !!level\.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad\(_persistNSFrom\(level\.homepage\)\);/g) || []).length, 2,   // build 1227: the inv/cp flags set on the same line, before the load
   'both level-load paths restore it (from the level\'s per-game namespace since 1215) — and a level that opts in re-seeds from the browser as it loads');
 assert(/let persistVars = _sanitizePersist\(savedLevel && savedLevel\.persistVars\);/.test(src), 'and it boots from the saved level');
 assert(/persistVars=\[\]; persistSave=false;/.test(src), 'a scene wipe clears it');

@@ -49,8 +49,8 @@ const api = new Function(
 {
   assert(/localStorage\.getItem\(_persistKey\(ns\)\)/.test(extractFunction('_persistLoad')),
     'load reads the namespaced key (ns passed explicitly by the loaders — homepageCfg is not set yet at restoreLevel time)');
-  assert(/localStorage\.setItem\(_persistKey\(\), JSON\.stringify\(campaignVars\)\)/.test(extractFunction('_persistStore')),
-    'store writes the namespaced key (live homepageCfg, correct at commit time)');
+  assert(/localStorage\.setItem\(_persistKey\(\), JSON\.stringify\(j\)\)/.test(extractFunction('_persistStore')),
+    'store writes the namespaced key (live homepageCfg, correct at commit time)');   // build 1227: the blob is campaignVars plus the reserved __inv/__cp keys — same key, same commit-time namespace
   assert(/localStorage\.removeItem\(_persistKey\(\)\)/.test(extractFunction('clearPersistent')),
     'clear removes only THIS game\'s save, not every game\'s');
   eq((src.match(/_persistLoad\(_persistNSFrom\(level\.homepage\)\)/g) || []).length, 2,

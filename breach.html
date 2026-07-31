@@ -9980,6 +9980,14 @@ let logicVars = {};                                                // runtime va
 // can never lose progress by failing, and you can never farm a level by replaying half of it.
 let persistVars = _sanitizePersist(savedLevel && savedLevel.persistVars);   // authored: the names that survive
 let persistSave = !!(savedLevel && savedLevel.persistSave);                 // authored: also survive closing the tab
+// build 1227: 1215's recorded other half. Variables persisted; the INVENTORY (the keys, quest items and
+// consumables an adventure game is made of) and the LAST CHECKPOINT (where the returning player resumes)
+// did not — so "close the tab, come back tomorrow" handed back the numbers but not the run. Both are
+// creator opt-ins riding the SAME blob under reserved keys (__inv / __cp); the variable loader only
+// accepts numeric values, so an old engine reading a new blob skips them silently, and vice versa.
+let persistInv = !!(savedLevel && savedLevel.persistInv);                   // authored: carry the inventory
+let persistCp  = !!(savedLevel && savedLevel.persistCp);                    // authored: resume at the last checkpoint
+let _persistInvVal = null, _persistCpVal = null;                            // what the blob held at load / what to write
 let campaignVars = {};                                                     // the carried values themselves
 const PERSIST_KEY = 'breach_persist_v1';
 function _sanitizePersist(a){
@@ -10002,18 +10010,54 @@ function _persistKey(ns){ ns = (ns!=null) ? ns : _persistNS(); return ns ? (PERS
 function _persistLoad(ns){   // the level opted into surviving a closed tab: read the saved values back. ns
   // is passed EXPLICITLY by the loaders because homepageCfg is not set yet when restoreLevel calls this.
   if(!persistSave) return;
-  try{ const j=JSON.parse(localStorage.getItem(_persistKey(ns))); if(j && typeof j==='object') for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; } }catch(e){}
+  try{ const j=JSON.parse(localStorage.getItem(_persistKey(ns)));
+    if(j && typeof j==='object'){
+      for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; }
+      _persistInvVal = (persistInv && Array.isArray(j.__inv)) ? j.__inv : null;   /* build 1227 */
+      _persistCpVal  = (persistCp && j.__cp && typeof j.__cp==='object' && isFinite(+j.__cp.x) && isFinite(+j.__cp.z))
+        ? { x:+j.__cp.x, y:(+j.__cp.y||0), z:+j.__cp.z, yaw:(+j.__cp.yaw||0) } : null;
+    } }catch(e){}
 }
-function _persistStore(){ if(!persistSave) return; try{ localStorage.setItem(_persistKey(), JSON.stringify(campaignVars)); }catch(e){} }
+function _persistStore(){ if(!persistSave) return; try{
+  const j = Object.assign({}, campaignVars);   // build 1227: reserved keys ride the same blob
+  if(persistInv && typeof inventory!=='undefined' && Array.isArray(inventory)){
+    const a=[]; for(const s of inventory){ if(s && s.id && (s.n|0)>0){ a.push([String(s.id).slice(0,40), Math.min(999, s.n|0)]); if(a.length>=40) break; } }
+    j.__inv = a;
+  }
+  if(persistCp && _persistCpVal) j.__cp = _persistCpVal;
+  localStorage.setItem(_persistKey(), JSON.stringify(j));
+}catch(e){} }
+// build 1227: deploy-time restore, called by startGame AFTER its wipes (logicStart runs before
+// `inventory.length=0`, so seeding there would be erased) and AFTER the pvp/else branch (which writes
+// player.pos). Solo only — inventory and a checkpoint belong to the local player, and handing a co-op
+// client a private resume position would desync the shared run. skipPos = a play-from-here test pose
+// (1224) outranks the saved checkpoint; the items still come back.
+function _persistResume(skipPos){
+  if(typeof NET!=='undefined' && NET.mode!=='off') return;
+  if(!persistSave) return;
+  if(persistInv && _persistInvVal && typeof inventory!=='undefined'){
+    for(const p of _persistInvVal){ if(!Array.isArray(p) || !p[0] || (p[1]|0)<=0) continue;
+      const id=String(p[0]).slice(0,40), n=Math.min(999, p[1]|0);
+      if(typeof invCatalog!=='undefined' && !invCatalog[id] && typeof defineItem==='function') defineItem({ id, name:id });
+      const s=inventory.find(x=>x.id===id); if(s) s.n+=n; else inventory.push({ id, n });   // silent: restoring 12 items must not play 12 pickup dings
+    }
+  }
+  if(!skipPos && persistCp && _persistCpVal && typeof player!=='undefined'){
+    _checkpoint = { x:_persistCpVal.x, y:_persistCpVal.y, z:_persistCpVal.z, yaw:_persistCpVal.yaw };
+    player.pos.set(_checkpoint.x, _checkpoint.y, _checkpoint.z); player.yaw=_checkpoint.yaw||0; player.vel.set(0,0,0);
+    if(typeof toast==='function') toast('Resumed at your checkpoint');
+  }
+}
 function _persistSeed(){   // a match begins: the carried values become live variables again
   for(const k of persistVars){ if(campaignVars[k]!=null) logicVars[k]=campaignVars[k]; }
 }
 function _persistCommit(){ // the level was CLEARED: carry the live values forward. A retry never reaches here.
-  if(!persistVars.length) return;
+  _persistCpVal = null;   // build 1227: a completed game starts its next run at the start, not mid-way through
+  if(!persistVars.length){ _persistStore(); return; }   // still write: the checkpoint clear (and inventory) must land even with no vars authored
   for(const k of persistVars) campaignVars[k]=+logicVars[k]||0;
   _persistStore();
 }
-function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(_persistKey()); }catch(e){} }
+function clearPersistent(){ campaignVars={}; _persistInvVal=null; _persistCpVal=null; try{ localStorage.removeItem(_persistKey()); }catch(e){} }   /* build 1227 */
 let _lgTimers = [];                                                // pending delay / interval / repeat continuations
 let _lgState = {};                                                 // per-node runtime (counter counts, once flags)
 let _lgBudget = 0, _lgWarned = false;
@@ -10678,6 +10722,14 @@ function _renderPersistUI(host){
   sv.title='Write them to this browser so the player can close the tab and come back to the same progress';
   sv.appendChild(scb); sv.appendChild(document.createTextNode('Also keep them between sessions'));
   wrap.appendChild(sv);
+  // build 1227: inventory + checkpoint ride the same saved blob; both need the sessions box on
+  { const mkP=(label, title, get, set)=>{
+      const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;gap:6px;font-size:11px;color:'+(persistSave?'#cfeee2':'#5f7a72')+';cursor:pointer;margin:5px 0 0 18px;';
+      const c=document.createElement('input'); c.type='checkbox'; c.checked=get(); c.disabled=!persistSave; c.style.cssText='width:12px;height:12px;accent-color:var(--accent);';
+      c.onchange=()=>{ pushUndoSnapshot(); set(c.checked); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderLogicPanel(); };
+      l.title=title; l.appendChild(c); l.appendChild(document.createTextNode(label)); wrap.appendChild(l); };
+    mkP('Carry the inventory too', 'Items survive closing the tab: keys, quest items, consumables come back on the next visit (solo). Using or dropping an item saves too, so a spent potion stays spent.', ()=>!!persistInv, v=>{ persistInv=v; });
+    mkP('Resume at the last checkpoint', 'A returning player continues from the last checkpoint they reached instead of the level start (solo). Completing the game clears it, so the next run starts fresh.', ()=>!!persistCp, v=>{ persistCp=v; }); }
   { const cur=Object.keys(campaignVars);
     const r=document.createElement('div'); r.style.cssText='display:flex;align-items:center;gap:8px;margin-top:6px;';
     const st=document.createElement('span'); st.style.cssText='font-size:10px;color:#7fa79a;flex:1;';
@@ -21418,7 +21470,9 @@ function applyEnemyDamageToSelf(dmg, sx, sz){
 // solo death sends them back to the last checkpoint (or the level start) with full health instead of game over —
 // the progress system adventure/puzzle levels need. Wave shooters keep their game-over by leaving the toggle off.
 let _checkpoint = null;
-function setCheckpoint(){ _checkpoint = { x:player.pos.x, y:player.pos.y, z:player.pos.z, yaw:player.yaw }; if(typeof toast==='function') toast('Checkpoint reached'); if(typeof SFX!=='undefined' && SFX.power) SFX.power(); }
+function setCheckpoint(){ _checkpoint = { x:player.pos.x, y:player.pos.y, z:player.pos.z, yaw:player.yaw };
+  if(typeof persistCp!=='undefined' && persistCp && (typeof NET==='undefined' || NET.mode==='off')){ _persistCpVal = { x:_checkpoint.x, y:_checkpoint.y, z:_checkpoint.z, yaw:_checkpoint.yaw }; if(typeof _persistStore==='function') _persistStore(); }   /* build 1227: a checkpoint is a save point now */
+  if(typeof toast==='function') toast('Checkpoint reached'); if(typeof SFX!=='undefined' && SFX.power) SFX.power(); }
 function respawnAtCheckpoint(){
   player.hp = player.maxHp;
   if(typeof releaseHeld==='function') releaseHeld();
@@ -22256,7 +22310,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; persistInv = !!level.persistInv; persistCp = !!level.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace; build 1227: flags set BEFORE the load so the blob's __inv/__cp are picked up (and stale carried state from a previous level never leaks)
   modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
@@ -27199,8 +27253,8 @@ let invOpen=false; let _invEl=null;
 function defineItem(def){ if(!def||!def.id) return null; invCatalog[def.id]=Object.assign({ name:def.id, desc:'', model:'', thumb:'', scale:1, type:'object', journal:'', useType:'none', useKey:'gold', useAmount:25, useConsume:true }, invCatalog[def.id]||{}, def); return invCatalog[def.id]; }
 function hasItem(id){ return inventory.some(s=>s.id===id && s.n>0); }
 function invCount(id){ const s=inventory.find(x=>x.id===id); return s?s.n:0; }
-function giveItem(id, n){ n=n||1; if(!id) return false; if(!invCatalog[id]) defineItem({ id, name:id }); const s=inventory.find(x=>x.id===id); if(s) s.n+=n; else inventory.push({ id, n }); if(typeof toast==='function') toast('Picked up: '+((invCatalog[id]&&invCatalog[id].name)||id)); if(typeof SFX!=='undefined'&&SFX.pickup) SFX.pickup(); if(invOpen) renderInventory(); return true; }   // build 751: item pickup uses the pickup sound
-function takeItem(id, n){ n=n||1; const s=inventory.find(x=>x.id===id); if(!s) return false; s.n-=n; if(s.n<=0) inventory=inventory.filter(x=>x!==s); if(invOpen) renderInventory(); return true; }
+function giveItem(id, n){ n=n||1; if(!id) return false; if(!invCatalog[id]) defineItem({ id, name:id }); const s=inventory.find(x=>x.id===id); if(s) s.n+=n; else inventory.push({ id, n }); if(typeof toast==='function') toast('Picked up: '+((invCatalog[id]&&invCatalog[id].name)||id)); if(typeof SFX!=='undefined'&&SFX.pickup) SFX.pickup(); if(invOpen) renderInventory(); if(typeof persistInv!=='undefined' && persistInv && typeof _persistStore==='function') _persistStore(); return true; }   // build 751: item pickup uses the pickup sound; build 1227: write-through when the inventory persists
+function takeItem(id, n){ n=n||1; const s=inventory.find(x=>x.id===id); if(!s) return false; s.n-=n; if(s.n<=0) inventory=inventory.filter(x=>x!==s); if(invOpen) renderInventory(); if(typeof persistInv!=='undefined' && persistInv && typeof _persistStore==='function') _persistStore(); return true; }   /* build 1227: consuming persists too — using the potion must not resurrect it on reload */
 // build 607: items that DO something. 'key' bridges into the existing lock system (set playerKeys[color], then a
 // matching locked prop opens with E); 'heal'/'ammo' are consumables. Default useConsume removes one on use.
 function useItem(id){
@@ -27682,7 +27736,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1226 · 2026-07-31';
+const BUILD_VERSION = 'build 1227 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35416,7 +35470,7 @@ function serializeLevel(){
     fx: Object.assign({}, fxCfg),
     deathFx: Object.assign({}, deathFxCfg),
     logic: (logicGraph.nodes.length ? _sanitizeLogic(logicGraph) : undefined),
-    persistVars: (persistVars.length ? persistVars.slice() : undefined), persistSave: (persistSave||undefined),   // build 1075
+    persistVars: (persistVars.length ? persistVars.slice() : undefined), persistSave: (persistSave||undefined), persistInv: (persistInv||undefined), persistCp: (persistCp||undefined),   // build 1075; build 1227: absent when off, so old levels serialize byte-identically
     modelRigs: (Object.keys(modelRigs).length ? Object.assign({}, modelRigs) : undefined),   // build 1080: skeletons grown on imported models, keyed by URL
     customAnims: ((typeof customAnims!=='undefined' && customAnims.length) ? _caSanitize(customAnims) : undefined),   // build 1040: creator-authored clips
     hudWidgets: ((typeof hudWidgets!=='undefined' && hudWidgets.length) ? _sanitizeHudWidgets(hudWidgets) : undefined),   // build 1058: custom HUD widgets
@@ -36163,7 +36217,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; persistInv = !!level.persistInv; persistCp = !!level.persistCp; _persistInvVal=null; _persistCpVal=null; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace; build 1227: flags set BEFORE the load so the blob's __inv/__cp are picked up (and stale carried state from a previous level never leaks)
   modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
@@ -42439,6 +42493,7 @@ function startGame(){
   if(_ts && _ts.pos){ const _gy = terrainHeightAt(_ts.pos.x, _ts.pos.z);
     player.pos.set(_ts.pos.x, Math.max(_ts.pos.y, _gy + 0.4), _ts.pos.z);
     player.yaw = +_ts.yaw||0; player.pitch = +_ts.pitch||0; player.onGround = false; player.vel.set(0,0,0); }
+  if(typeof _persistResume==='function') _persistResume(!!(_ts && _ts.pos));   // build 1227: carried inventory + checkpoint return AFTER the wipes; a test pose outranks the checkpoint
   updateHUD(); updateBuffs(0);
   resetDynamicProps();        // dynamic objects return to their authored spots each deploy
   teardownInstancing(); buildInstancing();   // (re)collapse repeated static shapes for play

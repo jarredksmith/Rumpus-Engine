@@ -1519,6 +1519,37 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Persistent inventory + checkpoint (build 1227)
+
+1215's recorded other half, closing the feature panel's save-system item. Variables persisted; the
+INVENTORY (keys, quest items, consumables — what an adventure game is made of) and the LAST CHECKPOINT
+(where a returning player resumes) did not, so "close the tab, come back tomorrow" handed back the
+numbers but not the run. Two creator opt-ins (checkboxes indented under "Also keep them between
+sessions", disabled without it), riding the SAME namespaced blob under reserved keys `__inv`/`__cp` —
+the variable loader accepts only NUMERIC values, so an old engine reading a new blob skips them
+silently and a new engine reading an old blob finds nothing: two-way compatible by construction, no
+format version needed.
+
+The placement decisions are the build:
+- **`_persistResume` is called by `startGame` AFTER its wipes.** `logicStart` (where `_persistSeed`
+  runs) executes BEFORE `inventory.length=0`, so seeding items there would be erased — the resume call
+  sits after the pvp/else branch, beside 1224's pose override, and takes `skipPos` so a play-from-here
+  test pose outranks the saved checkpoint while the items still return.
+- **Write-through, not commit-only.** Checkpoints happen mid-run and players quit mid-run, so
+  `setCheckpoint` saves immediately (solo only), and `giveItem`/`takeItem` both write — a spent potion
+  must stay spent on reload (executed: an emptied inventory persists as EMPTY).
+- **`_persistCommit` (game cleared) clears the checkpoint but keeps the items** — the next run starts
+  at the start, holding what was earned. It now also stores even with no vars authored, or the
+  checkpoint clear would never land on a var-less level.
+- **Solo only.** A co-op client restoring a private inventory or teleporting to a private checkpoint
+  would desync the shared run; `_persistResume` returns for any NET mode but 'off'.
+- **Hostile blobs clamp**: 999 per stack, 40 stacks, ids truncated at 40 chars.
+
+`test-1227` executes the real store/load/resume/commit against a fake localStorage through the full
+round trip and every guard above. Three pins moved (1215's store shape, 1075's loader line ×2 and its
+harness scope — each keeps its intent). Restores are silent (no 12 pickup dings for 12 items) with one
+"Resumed at your checkpoint" toast.
+
 ## Wandering NPCs, and the marker that demoted your boss to a grunt (build 1226)
 
 The feature panel's civic gap: every moving creature was hostile, so a town, a quest hub, a story level
