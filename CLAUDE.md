@@ -1519,6 +1519,26 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The sprint-FOV was the reported zoom-bounce stutter (build 1222)
+
+Reported from play the day after 1210 shipped: *"when walking or running, the scene/camera tries to zoom
+and bounces back very fast — a stutter or glitch every few seconds."* And it was exactly that. Build 1210's
+sprint push was gated on `player.onGround`, which **flickers FALSE for single frames mid-stride** — the
+SAME flicker builds 926 (slide) and 1160 (jump) had to buffer — so at full sprint the FOV snapped 6°
+out and back in one frame, unsmoothed, every time the ground test blinked. Two fixes, both structural:
+- **The gate is GONE.** Speed-FOV tracks SPEED; airborne horizontal speed is still speed (Apex/CoD keep
+  the push through a jump), and the landing dip remains the landing cue. The flickering condition no
+  longer exists in the expression at all, which is stronger than buffering it.
+- **The value is EASED** through persistent `_sprintFovCur` (`+= (target−cur)·min(1, dt·8)`, snapped at
+  the last 0.01 so a settled lens stops paying `updateProjectionMatrix`), so no single-frame condition of
+  ANY kind can ever step the lens again.
+
+The lesson, third time now: **any per-frame boolean that gates a continuous visual quantity is a glitch
+waiting for that boolean to flicker.** 926/1160 buffered the boolean; 1222's stronger form is to remove
+the boolean from the continuous path and ease the quantity. `test-1222` replays the exact glitch (an
+adversarial single-frame zero moves the eased lens < 0.9° where the old code snapped 6°) and pins the
+gate's absence. Two pins moved (1210, 964). The 1210 quadratic curve and ADS fold-out are unchanged.
+
 ## Logic events carry a payload now (build 1221)
 
 The editor/feature panel's ceiling on what the graph can author: `onkill`/`onhurt`/`onspot` fired BARE — no
