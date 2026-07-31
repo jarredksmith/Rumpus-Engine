@@ -1519,6 +1519,21 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Verbs reach the event's player (build 1232)
+
+1231's recorded other half, closed the cheap way: no new message type. The world verbs' "The player"
+is TEAM-WIDE by design (host applies locally + wact broadcast to every client) — so "teleport the
+player who stepped on the pad", "give the key to the one who earned it", "heal only the capturer"
+were inexpressible. The who dropdown gains **"The event's player"** ('actor'), give/take gain the who
+field, and `_wactToActor(o)` does the delivery: a REMOTE actor gets the IDENTICAL `{t:'wact', ...}`
+payload over `sendToPlayer` (the client applies what it always has), a local/solo actor falls through
+to the local branch — with the team-wide broadcast suppressed in both cases, because actor means ONE
+player. Solo's pid is 0 = the host, so an actor-graph authored solo just works. `test-1232` drives
+the REAL `_applyWorldAction` for heal/teleport/give/kill/damage in remote-actor and local-actor forms
+with team-wide controls proving the old verbs byte-identical. One pin moved (1073 — who's verb list
+gained give/take; intent kept). With 1231+1232, a KOTH/CTF-shaped mode is now authorable: per-actor
+trigger edges → `score@`/Math per player → actor-targeted rewards.
+
 ## The graph learns WHO (build 1231) — per-player logic, first slice
 
 The multiplayer critic's root ceiling ("8 hardcoded modes a creator can't extend — needs per-player/team

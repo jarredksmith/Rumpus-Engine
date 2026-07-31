@@ -222,7 +222,7 @@ assert(/\['spawn','Spawn enemies'\],\['pickup','Spawn pickup'\],\['damage','Dama
 eq((src.match(/\['spawn','Spawn enemies'\]/g) || []).length, 2, '...in BOTH the graph node and the prop-signal editor');
 assert(/\{k:'at',l:'at',w:84,ifv:\['verb',\['spawn','pickup','teleport','command','moveprop','spawnprop'\]\],listId:'lgPlaceList'\}/.test(src),   // build 1170: moveprop points somewhere too; build 1216: so does spawnprop
   'the place field appears for exactly the verbs that need one, and offers a dropdown of real places');
-assert(/\{k:'who',l:'',w:104,ifv:\['verb',\['damage','heal','kill','teleport'\]\]/.test(src), 'and the who field for exactly those');
+assert(/\{k:'who',l:'',w:104,ifv:\['verb',\['damage','heal','kill','teleport','give','take'\]\]/.test(src), 'and the who field for exactly those');   // build 1232: give/take joined — the actor option is how a key reaches the player who earned it
 assert(/\{k:'item',l:'item',w:76,ifv:\['verb','pickup'\],ifv2:\['pk','item'\]/.test(src),
   'the inventory-item field needs BOTH conditions — it only shows for an item pickup');
 
