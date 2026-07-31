@@ -1519,6 +1519,25 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## A loaded HDRI now shows immediately (build 1223)
+
+Reported from play: *"when loading an HDRI, nothing visually shows until I make an adjustment on the HDRI
+settings like sky rotation or reflection strength — then the sky shows up just fine."* The mechanism:
+`applySky()` is the ONLY place that hides the procedural dome when an HDRI is active (`on = skyMode==='sky'
+&& !hdri; _skyMesh.visible = on`), and the HDRI load-completion path (`_applyOrientedSky`) set
+`scene.background` + PMREM **without ever calling it** — so the dome, a mesh a metre from the camera, kept
+covering the freshly-set background until ANY settings change happened to run `applyWorldCfg → applySky`.
+That poke is exactly what "adjusting sky rotation" did.
+
+Both completion paths (success and the rotation-failed fallback) now call `applySky()` — the function whose
+stated job is "everything the sky drives, applied together so they can never disagree" — and so does the
+inverse branch: clearing the HDRI URL re-shows the dome NOW instead of on the next unrelated settings
+change (a latent bug found by symmetry, not by report). `test-1223` executes `_applyOrientedSky` against a
+dome-and-gate stub proving the dome is hidden by the time the success status fires, on the fallback too,
+and pins the clear-URL branch and applySky's single ownership. The general lesson joins 1143's: when one
+function is the declared owner of an agreement, every path that changes the underlying state must route
+through it — setting the state directly and skipping the owner is how the two halves drift.
+
 ## The sprint-FOV was the reported zoom-bounce stutter (build 1222)
 
 Reported from play the day after 1210 shipped: *"when walking or running, the scene/camera tries to zoom

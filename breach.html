@@ -17086,8 +17086,15 @@ function _applyOrientedSky(statusFn){
     _skyRotTex = (tex !== _skyOrigTex) ? tex : null;
     tex.mapping = THREE.EquirectangularReflectionMapping;
     scene.background = tex; _buildSkyPMREM(tex);
+    // build 1223: REPORTED FROM PLAY — "nothing visually shows until I adjust a sky setting, then it
+    // appears". applySky() is the ONLY place that hides the procedural dome when an HDRI is active, and
+    // this completion path never called it — so the dome (a mesh a metre from the camera) kept covering
+    // the freshly-set background until the next settings change happened to run applyWorldCfg -> applySky.
+    // Call the function whose stated job is "everything the sky drives, applied together so they can
+    // never disagree": it sees the live _skyHdriUrl, hides the dome, and the HDRI shows immediately.
+    if(typeof applySky==='function') try{ applySky(); }catch(_){ }
     if(statusFn) statusFn(isHdr ? 'HDR sky loaded \u2713' : 'Sky loaded \u2713');
-  }catch(e){ console.warn('Sky orient failed:', e && e.message); try{ scene.background = _skyOrigTex; _buildSkyPMREM(_skyOrigTex); }catch(_){ } if(statusFn) statusFn('Sky loaded (rotation skipped)'); }
+  }catch(e){ console.warn('Sky orient failed:', e && e.message); try{ scene.background = _skyOrigTex; _buildSkyPMREM(_skyOrigTex); if(typeof applySky==='function') applySky(); }catch(_){ } if(statusFn) statusFn('Sky loaded (rotation skipped)'); }
 }
 // Re-orient the already-loaded sky when only the rotation changed (debounced so live-dragging the slider
 // doesn't regenerate the lighting every frame).
@@ -17106,6 +17113,7 @@ function applySkyHdri(url){
     _ensureDefaultEnv(); scene.environment = _envDefaultRT ? _envDefaultRT.texture : null;   // build 1095: fall back to the procedural env, not to nothing
     if(_skyEnvRT){ _skyEnvRT.dispose && _skyEnvRT.dispose(); _skyEnvRT = null; }
     _skyOrigTex = null; _skyOrigKind = null; _skyRotTex = null;
+    if(typeof applySky==='function') try{ applySky(); }catch(_){ }   /* build 1223: the inverse bug — clearing the HDRI re-shows the dome NOW, not on the next unrelated settings change */
     return;
   }
   if(/\.exr(\?|#|$)/i.test(url)){
@@ -27656,7 +27664,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1222 · 2026-07-31';
+const BUILD_VERSION = 'build 1223 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
