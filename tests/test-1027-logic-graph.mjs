@@ -20,7 +20,7 @@ const fns = extractFunction('_sanitizeLogic', src) + '\n'
 function makeEnv(graph){
   const calls = { actions:[], toasts:[], won:0, lost:0 };
   // build 1214: _lgPulse's do-branch references these — the graph tests don't exercise them, so harmless stubs
-  const glue = 'let logicGraph=_sanitizeLogic(GRAPH); let logicVars={}; let _lgTimers=[]; let _lgState={}; let _lgBudget=0, _lgWarned=false;\n'
+  const glue = 'let logicGraph=_sanitizeLogic(GRAPH); let logicVars={}; let _lgCtx={}; let _lgTimers=[]; let _lgState={}; let _lgBudget=0, _lgWarned=false;\n'
     + 'const _LG_TAG_VERBS=new Set(["toggle","open","close","anim","unlock","showprop","hideprop","moveprop","delprop"]);\n'
     + 'function _lgTagExists(){ return true; } function _noteLogicFailure(){}\n';
   const env = new Function('GRAPH','NET','gameOn','editorOpen','_applySignalAction','flashToast','gameWon','applyEnemyDamageToSelf','toast','console',

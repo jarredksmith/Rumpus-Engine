@@ -25,7 +25,7 @@ const src = gameSource();
 // Four different things can make an enemy aware (seeing you, hearing gunfire, a blast, a rule). The edge is
 // watched in ONE place so every one of them fires the hook, and none of them fires it twice.
 const E = new Function(`
-  let fired=0, mode='off';
+  let fired=0, mode='off', _lgCtx={};
   const NET={ mode:'off' };
   const logicGraph={ nodes:[{ id:'n1', type:'onspot' }, { id:'n2', type:'onhurt' }] };
   function _lgFireEvents(kind){ fired++; }
@@ -58,14 +58,14 @@ const E = new Function(`
   eq(step.run(en, false), 1, 'losing you fires nothing');
   eq(step.run(en, true), 2, '...and noticing you again fires again');
 }
-assert(/if\(en\.aware && !en\._wasAware\)\{ en\._wasAware=1; _lgEnemyEvent\('onspot'\); \}/.test(src),
-  'that edge is watched in the update loop, after the AI has decided');
+assert(/if\(en\.aware && !en\._wasAware\)\{ en\._wasAware=1; _lgEnemyEvent\('onspot', \{ x:en\.mesh\.position\.x, z:en\.mesh\.position\.z, hp:en\.hp, hpf:en\.hp\/\(en\.maxHp\|\|en\.hp\|\|1\) \}\); \}/.test(src),
+  'that edge is watched in the update loop, after the AI has decided (with the enemy payload since 1221)');
 assert(/else if\(!en\.aware && en\._wasAware\) en\._wasAware=0;/.test(src), '...and re-arms when they give up');
 {
   const fn = extractFunction('enemyHurt', src);
-  assert(fn.indexOf('killEnemy') < fn.indexOf("_lgEnemyEvent('onhurt')"),
+  assert(fn.indexOf('killEnemy') < fn.indexOf("_lgEnemyEvent('onhurt'"),
     'a killing blow fires On-enemy-KILLED, not On-enemy-damaged — the two hooks never both fire for one hit');
-  assert(/if\(typeof _lgEnemyEvent==='function'\) _lgEnemyEvent\('onhurt'\);/.test(fn), 'a survived hit fires the damage hook');
+  assert(/if\(typeof _lgEnemyEvent==='function'\) _lgEnemyEvent\('onhurt', \{ x:en\.mesh\.position\.x, z:en\.mesh\.position\.z, hp:en\.hp, hpf:/.test(fn), 'a survived hit fires the damage hook (carrying the enemy position + HP since 1221)');
 }
 
 // ---------------------------------------------------------------- the Command verb

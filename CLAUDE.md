@@ -1519,6 +1519,26 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Logic events carry a payload now (build 1221)
+
+The editor/feature panel's ceiling on what the graph can author: `onkill`/`onhurt`/`onspot` fired BARE — no
+identity, no position, no HP — so "drop loot where the enemy died", "the boss at half health switches
+phase", "the turret nearest the intruder powers on" were all inexpressible. This is the same root the
+open-work list records for per-player variables ("the runtime's pulses carry no actor identity"), attacked
+for enemy events. A context object `_lgCtx` now rides the immediate pulse cascade, exposed as reserved
+`#`-tokens that `_lgNum` resolves — `#x`/`#z` (world position), `#hp`, `#hpf` (HP fraction 0..1) — readable
+by Branch, Math, Set variable, and the place field via `#here`. The token handler FALLS THROUGH to a normal
+variable when the context has no such key, so the repeat loop's existing `#i` still works (the one trap this
+build had to avoid, pinned). `_lgEnemyEvent(kind, ctx)` sets the context and unwinds it in a `finally` — a
+Delay node schedules a later timer that runs with no context, so the payload is a snapshot of the moment,
+not a live handle (recorded, not a bug). All three enemy events pass `{x, z, hp, hpf}`; `onkill` (which
+fires through `_lgFireEvents` in `killEnemy`) sets `_lgCtx` around its call. `#x/#z/#hp/#hpf` are always
+offered in the variable autocomplete and `#here` in the place autocomplete. `test-1221` executes `_lgNum`
+(tokens resolve, `#i` falls through), `_lgEnemyEvent` (sets AND unwinds), and `_lgPlaceAt` (`#here` → event
+position, null outside an event). Five pins moved (1027, 1060, 1077×2, 47 — the last a char-window widen,
+the exact "unanchored window scoped by a character count" trap CLAUDE.md warns about). Player/team event
+identity is the remaining piece of the same ceiling.
+
 ## Co-op kills stop landing flat (build 1220)
 
 The gameplay-feel panel's last MEDIUM, closing the panel entirely. `killEnemy` gates the 0.07 s hitstop on

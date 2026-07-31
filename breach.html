@@ -10020,9 +10020,18 @@ let _lgBudget = 0, _lgWarned = false;
 let _lgRunT = 0;   // build 1169: when this run's logic started (the Read-stat 'time' zero)
 function _lgNode(id){ for(const n of logicGraph.nodes){ if(n.id===id) return n; } return null; }
 // A value field accepts a NUMBER or a VARIABLE NAME — '5', '-2.5', 'score', '#i' all work.
+// build 1221: THE EVENT PAYLOAD. Logic events fired bare — onkill/onhurt/onspot carried no identity, no
+// position, no HP — so "drop loot where the enemy died", "the boss at half health switches phase", "the
+// turret nearest the intruder powers on" were all inexpressible: the hard ceiling on what the graph could
+// author. Enemy events now carry a context (_lgCtx) exposed as reserved #-tokens that _lgNum resolves —
+// #x/#z (world position), #hp (the enemy's HP), #hpf (its HP fraction 0..1) — readable by Branch, Math,
+// Set variable, and the place field via '#here'. Set for the immediate pulse cascade only (a Delay node
+// schedules a later timer that runs with no context — the payload is a snapshot of the moment, not a handle).
+let _lgCtx = {};
 function _lgNum(v){
   if(v==null) return 0;
   const t=String(v).trim(); if(t==='') return 0;
+  if(t.charAt(0)==='#'){ const c=_lgCtx[t.slice(1)]; if(typeof c==='number' && isFinite(c)) return c; return +(logicVars[t]||0); }   // build 1221: event-payload token (#x/#z/#hp/#hpf); falls through to a normal var like the repeat loop's #i
   const n=parseFloat(t);
   if(!isNaN(n) && isFinite(n) && /^[-+]?[0-9.]/.test(t)) return n;
   return +(logicVars[t]||0);
@@ -10032,10 +10041,10 @@ function _lgFollow(id, out){
 }
 // build 1077: the enemy hooks. Entry nodes, so they cost nothing until an author drops one on the board, and
 // they run on the authoritative side like every other event source.
-function _lgEnemyEvent(kind){
+function _lgEnemyEvent(kind, ctx){
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   if(typeof logicGraph==='undefined' || !logicGraph.nodes.length) return;
-  for(const n of logicGraph.nodes){ if(n.type===kind){ _lgFireEvents(kind, ''); return; } }   // nothing wired -> nothing to do
+  for(const n of logicGraph.nodes){ if(n.type===kind){ const _pv=_lgCtx; _lgCtx=ctx||{}; try{ _lgFireEvents(kind, ''); } finally { _lgCtx=_pv; } return; } }   // build 1221: the payload rides the cascade, then unwinds
 }
 function _lgFireEvents(kind, name){
   for(const n of logicGraph.nodes){
@@ -10376,6 +10385,7 @@ function _lgVarOptions(){   // build 1060: every variable name in play — from 
     if(n.type==='toast'||n.type==='do') addRefs(q.text);
   }
   if(typeof hudWidgets!=='undefined' && hudWidgets) for(const w of hudWidgets){ addName(w.value); addName(w.max); addName(w.when); addRefs(w.label); }
+  for(const t of ['#x','#z','#hp','#hpf']) set.add(t);   // build 1221: the event payload tokens, always offered so onkill/onhurt/onspot graphs discover them
   return Array.from(set).sort();
 }
 function _lgTagOptions(){
@@ -10436,7 +10446,7 @@ function _lgRefreshDatalists(){
 // something they can see and select in the viewport. Trigger volumes answer to their own event name, so the
 // zone that fires a rule can also be the spot it acts on ("On reachedVault -> Spawn 3 brutes at reachedVault").
 function _lgPlaceOptions(){
-  const out=[{ v:'me', l:'the player' }, { v:'start', l:'the level start' }];
+  const out=[{ v:'me', l:'the player' }, { v:'start', l:'the level start' }, { v:'#here', l:'where the event fired (onkill/onhurt/onspot)' }];
   const seen={};
   if(typeof propModels!=='undefined') for(const o of propModels){ const t=o&&o.userData&&o.userData.tag; if(t) seen[t]=(seen[t]||0)+1; }
   for(const t of Object.keys(seen).sort()) out.push({ v:t, l:seen[t]+(seen[t]===1?' prop':' props') });
@@ -10764,6 +10774,10 @@ function _applySignalAction(s, src){
 // results in the world snapshot, so a client applying them too would double-count.
 function _lgPlaceAt(tag){
   const raw=String(tag==null?'':tag).trim(), t=raw.toLowerCase();
+  if(t==='#here' || t==='here'){   // build 1221: the position the current event fired at (an enemy's death/hurt/spot spot)
+    if(typeof _lgCtx.x==='number' && typeof _lgCtx.z==='number'){ const ty=(typeof terrainHeightAt==='function')?terrainHeightAt(_lgCtx.x,_lgCtx.z):0; return { x:_lgCtx.x, y:ty, z:_lgCtx.z }; }
+    return null;   // '#here' outside an event with a position: do nothing rather than act at 0,0
+  }
   if(!raw || t==='me' || t==='player') return { x:player.pos.x, y:player.pos.y-EYE, z:player.pos.z };
   if(t==='start'){ const ty=(typeof terrainHeightAt==='function')?terrainHeightAt(playerSpawn.x, playerSpawn.z):0;
     return { x:playerSpawn.x, y:ty+(+playerSpawn.y||0), z:playerSpawn.z }; }
@@ -27642,7 +27656,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1220 · 2026-07-31';
+const BUILD_VERSION = 'build 1221 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29748,7 +29762,7 @@ function enemyHurt(en, dmg, sx, sz){
   if(!en || en.hp<=0) return false;
   en.hp -= dmg;
   if(en.hp<=0){ killEnemy(en, sx, sz); return true; }
-  if(typeof _lgEnemyEvent==='function') _lgEnemyEvent('onhurt');   // build 1077: it took the hit and lived — a boss phase, a retreat, an alarm
+  if(typeof _lgEnemyEvent==='function') _lgEnemyEvent('onhurt', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) });   // build 1077: it took the hit and lived — a boss phase, a retreat, an alarm; build 1221: with the enemy's position + HP
 
   const now=performance.now();
   // build 1209: enemies ACKNOWLEDGE bullets. Before this, a non-lethal hit was a 0.12s emissive flash and
@@ -29781,7 +29795,7 @@ function enemyHurt(en, dmg, sx, sz){
   return false;
 }
 function killEnemy(en, sx, sz){
-  if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onkill','');   // build 1027: 'On enemy killed' entries
+  if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ const _pv=_lgCtx; _lgCtx={ x:en.mesh.position.x, z:en.mesh.position.z, hp:0, hpf:0 }; try{ _lgFireEvents('onkill',''); } finally { _lgCtx=_pv; } }   // build 1027: 'On enemy killed' entries; build 1221: at the death position
   runKills++;
   spark(en.mesh.position, 0xff2d55); SFX.kill(en.type, en.mesh.position);   // build 752: per-enemy-type kill sound; build 1208: panned to the kill
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
@@ -33045,7 +33059,7 @@ function loop(){
       // build 1077: the moment this enemy goes from oblivious to alerted, exactly once per alert. The edge is
       // watched HERE rather than at the four places that can set `aware` (sight, gunfire, a blast, a rule), so
       // every one of them fires it and none of them fires it twice.
-      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot'); }
+      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) }); }
       else if(!en.aware && en._wasAware) en._wasAware=0;
       en._chase = td.chase; en._see = !!td.see;
       // face the player only when actually seen; while hunting a last-known spot, face where we're walking
