@@ -97,11 +97,13 @@ const src = gameSource();
   assert(/renderer\.clearDepth\(\);          \/\/ same rule as the colour pass/.test(fn),
     'depth is cleared for it here too, so the weapon is in front in the G-buffer as well');
   // it must sit INSIDE the AO gate, so it costs nothing when AO is off or the quality ladder dropped it
-  const gate = fn.indexOf('if(_aoWant){'), bloom = fn.indexOf('_matBloomDown');
-  assert(gate >= 0 && i > gate && i < bloom, 'the extra pass is inside the AO block, so it disappears with AO');
-  // ...and the gate itself is unchanged: AO survives the MSAA shed and goes when resolution starts to
-  assert(/const _aoWant = _ssaoAmt > 0\.001 && _prStepI === 0 && _aoGeoRT && cam && cam\.isPerspectiveCamera;/.test(fn),
-    'build 1135\'s AO gate is untouched');
+  const gate = fn.indexOf('if(_geoWant){'), bloom = fn.indexOf('_matBloomDown');   // build 1218: the viewmodel G-buffer pass lives in the PREPASS block now
+  assert(gate >= 0 && i > gate && i < bloom, 'the extra pass is inside the G-buffer prepass block, so it disappears when the prepass is shed');
+  // build 1218: the gate SPLIT — the prepass (which the viewmodel + soft particles need) runs on the top 3
+  // rungs; the AO SAMPLE stays on rung 0. Build 1135's "AO below MSAA" intent is preserved in _aoWant.
+  assert(/const _geoWant = _ssaoAmt > 0\.001 && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam\.isPerspectiveCamera;/.test(fn) &&
+    /const _aoWant = _geoWant && _prStepI === 0;/.test(fn),
+    'the AO SAMPLE still gates on rung 0 (below MSAA), while its G-buffer is wider');
 }
 {
   // The G-buffer packs a VIEW DISTANCE, and the AO shader rebuilds view rays from a tan-of-fov scale

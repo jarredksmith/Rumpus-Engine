@@ -26,7 +26,7 @@ assert(/if\(NET\._seen\) NET\._seen\[conn\._pid\]=performance\.now\(\)/.test(src
 
 // --- client side ---
 const hl = extractFunction('netHostLost');
-assert(/if\(NET\._lost\) return; NET\._lost=true;/.test(hl) && /location\.reload\(\)/.test(hl), 'host-lost teardown runs once and returns to menu');
+assert(/if\(NET\._lost\) return; NET\._lost=true;/.test(hl) && /location\.reload\(\)/.test(gameSource()), 'host-lost teardown runs once; the reload lives in _migFail since 1201 (the LOBBY-phase path — mid-match losses migrate instead)');
 assert(/NET\._hostSeen=performance\.now\(\)/.test(extractFunction('handleHostMsg')), 'any host message refreshes host liveness');
 assert(/if\(gameOn\) netHostLost\(\); else netStatus\('Disconnected from host'\)/.test(src), 'a host close mid-game returns to menu instead of freezing');
 

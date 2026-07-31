@@ -5,13 +5,13 @@ const src = gameSource();
 
 // connectivity rules
 const bl = extractFunction('navBuildLinks');
-assert(/NAV\.link = new Uint8Array\(N\);/.test(bl), 'a connectivity mask is built per cell');
-assert(/const dy=NAV\.y\[nidx\]-cy; if\(dy>NAV_UP \|\| dy<-NAV_DOWN\) continue;/.test(bl), 'links only when the height change is climbable up / droppable down');
-assert(/if\(d>=4 && \(!NAV\.walk\[navIdx\(ax,gz\)\] \|\| !NAV\.walk\[navIdx\(gx,az\)\]\)\) continue;/.test(bl), 'diagonals cannot cut a wall corner');
+assert(/NAV\.link = new Uint16Array\(2\*N\);/.test(bl), 'a connectivity mask is built per NODE (16 bits since build 1200: bit d = link, bit d+8 = the link lands on the target cell\'s layer B)');
+assert(/const dy=yAt\(q,nidx\)-cy; if\(dy>NAV_UP \|\| dy<-NAV_DOWN\) continue;/.test(bl), 'links only when the height change is climbable up / droppable down (checked per candidate LAYER since build 1200)');
+assert(/if\(d>=4 && \(!nearOk\(navIdx\(ax,gz\),cy\) \|\| !nearOk\(navIdx\(gx,az\),cy\)\)\) continue;/.test(bl), 'diagonals cannot cut a wall corner (nearOk = some layer of the orthogonal cell within the vertical window)');
 
 // A* structure
 const fp = extractFunction('navFindPath');
-assert(/if\(!NAV\.walk\[si\] \|\| !NAV\.walk\[gi\]\) return null;/.test(fp), 'rejects unwalkable endpoints');
+assert(/if\(!wAt\(si\) \|\| !wAt\(gi\)\) return null;/.test(fp), 'rejects unwalkable endpoints (wAt reads the right layer for the node id)');
 assert(/\(dx\+dz\+\(Math\.SQRT2-2\)\*Math\.min\(dx,dz\)\)\*cell/.test(fp), 'octile heuristic (admissible on an 8-grid)');
 assert(/seen\[ni\]!==gen \|\| ng<g\[ni\]/.test(fp), 'relaxes neighbours via a generation stamp (no per-call clears)');
 

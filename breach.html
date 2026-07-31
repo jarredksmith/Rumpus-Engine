@@ -6471,8 +6471,32 @@ let editorOpen = false;   // editor panel open — declared first so async boot 
 // ---------- Audio (procedural, no files — works fully offline) ----------
 let actx = null;
 function initAudio(){ if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended') actx.resume(); buildAudioBuses(); preloadCustomSounds(); }
-function tone({freq=440, type='sine', dur=0.1, vol=0.2, slideTo=null, attack=0.005}={}){
+// build 1208: POSITIONAL AUDIO. Every sound routed flat into sfxBus — enemy gunfire, a charger winding up
+// behind you, an explosion to your left all arrived dead-centre, so the ear did none of the threat
+// detection it does in every commercial FPS and the directional hit indicator carried the whole load.
+// _spatialOut(at) returns a StereoPanner (equal-power, so no centre volume dip) feeding sfxBus, panned by
+// the source's position along the CAMERA'S OWN right axis (from matrixWorld — so it tracks pitch, vehicles
+// and the play-camera views, not just yaw) and attenuated by distance; with no `at`, or on a browser
+// without createStereoPanner, it is sfxBus unchanged, so UI/self sounds and old browsers are byte-identical.
+const _SND_MAXDIST = 55;
+function _spatialOut(at){
+  const bus = sfxBus || (actx && actx.destination);
+  if(!at || !actx || !actx.createStereoPanner || typeof camera==='undefined' || !camera) return bus;
+  try{
+    const e = camera.matrixWorld.elements;
+    let dx = at.x - e[12], dy = at.y - e[13], dz = at.z - e[14];
+    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1e-4;
+    let g = 1 - dist/_SND_MAXDIST; if(g <= 0.02) return null; g = g*g;   // null = too far to bother; the caller skips
+    const pan = Math.max(-1, Math.min(1, (e[0]*dx + e[1]*dy + e[2]*dz) / dist));   // component along camera-right
+    const p = actx.createStereoPanner(); p.pan.value = pan;
+    const dg = actx.createGain(); dg.gain.value = g;
+    p.connect(dg).connect(bus);
+    return p;
+  }catch(err){ return bus; }
+}
+function tone({freq=440, type='sine', dur=0.1, vol=0.2, slideTo=null, attack=0.005, at=null}={}){
   if(!actx) return;
+  const out = _spatialOut(at); if(!out) return;
   const t = actx.currentTime;
   const osc = actx.createOscillator();
   const g = actx.createGain();
@@ -6481,11 +6505,12 @@ function tone({freq=440, type='sine', dur=0.1, vol=0.2, slideTo=null, attack=0.0
   g.gain.setValueAtTime(0, t);
   g.gain.linearRampToValueAtTime(vol, t+attack);
   g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
-  osc.connect(g).connect(sfxBus||actx.destination);
+  osc.connect(g).connect(out);
   osc.start(t); osc.stop(t+dur+0.02);
 }
-function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass'}={}){
+function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass', at=null}={}){
   if(!actx) return;
+  const out = _spatialOut(at); if(!out) return;
   const t = actx.currentTime;
   const n = Math.floor(actx.sampleRate*dur);
   const buf = actx.createBuffer(1, n, actx.sampleRate);
@@ -6494,35 +6519,55 @@ function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass'}={}){
   const src = actx.createBufferSource(); src.buffer = buf;
   const filt = actx.createBiquadFilter(); filt.type=type; filt.frequency.value=filterFreq;
   const g = actx.createGain(); g.gain.value = vol;
-  src.connect(filt).connect(g).connect(sfxBus||actx.destination);
+  src.connect(filt).connect(g).connect(out);
   src.start(t);
 }
+// build 1211: a gunshot is THREE layers, not one blip — (a) a sub-bass thump (the weight), (b) the tuned
+// body+crack pair the guns always had (byte-identical values, so nothing authored moved), (c) a delayed
+// lowpassed noise re-trigger as a pseudo-tail (the space). Per-weapon: the sniper and shotgun get the
+// longest tails and deepest subs, the SMG stays snappy. sub:[freq,dur,vol] tail:[dur,vol,cutoff,delayMs].
+const _SHOT_LAYERS = {
+  shotgun:{ sub:[52,0.11,0.20], body:{freq:150, type:'square', dur:0.15, vol:0.17, slideTo:55}, crack:{dur:0.17, vol:0.30, filterFreq:1400, type:'lowpass'}, tail:[0.30,0.12,900,120] },
+  smg:    { sub:[70,0.05,0.10], body:{freq:380, type:'square', dur:0.05, vol:0.10, slideTo:150}, crack:{dur:0.05, vol:0.15, filterFreq:3000, type:'highpass'}, tail:[0.12,0.05,1200,70] },
+  sniper: { sub:[45,0.12,0.22], body:{freq:95, type:'square', dur:0.22, vol:0.22, slideTo:38}, crack:{dur:0.26, vol:0.34, filterFreq:1000, type:'lowpass'}, tail:[0.42,0.14,700,150] },
+  rifle:  { sub:[60,0.07,0.13], body:{freq:320, type:'square', dur:0.08, vol:0.12, slideTo:120}, crack:{dur:0.07, vol:0.18, filterFreq:2200, type:'highpass'}, tail:[0.16,0.07,1100,90] },
+};
 const SFX = {
   shoot(){ if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;
-    if(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].suppressed){ tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass'}); return; }   // build 964: suppressed 'phut'
-    if(curWep==='shotgun'){ tone({freq:150, type:'square', dur:0.15, vol:0.17, slideTo:55}); noise({dur:0.17, vol:0.30, filterFreq:1400, type:'lowpass'}); }
-    else if(curWep==='smg'){ tone({freq:380, type:'square', dur:0.05, vol:0.10, slideTo:150}); noise({dur:0.05, vol:0.15, filterFreq:3000, type:'highpass'}); }
-    else if(curWep==='sniper'){ tone({freq:95, type:'square', dur:0.22, vol:0.22, slideTo:38}); noise({dur:0.26, vol:0.34, filterFreq:1000, type:'lowpass'}); }
-    else { tone({freq:320, type:'square', dur:0.08, vol:0.12, slideTo:120}); noise({dur:0.07, vol:0.18, filterFreq:2200, type:'highpass'}); } },
-  enemyShot(){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass'}); },
-  shootAt(pos){ if(!actx||!sfxBus) return; let g=1; try{ const dx=pos.x-player.pos.x, dy=pos.y-player.pos.y, dz=pos.z-player.pos.z; g=Math.max(0, 1-Math.sqrt(dx*dx+dy*dy+dz*dz)/45); g*=g; }catch(e){} if(g<=0.02) return; const t=actx.currentTime; const gain=actx.createGain(); gain.gain.value=g; gain.connect(sfxBus);
+    if(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].suppressed){ tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass'}); return; }   // build 964: suppressed 'phut' (deliberately tail-less — that is what a suppressor is for)
+    const L=_SHOT_LAYERS[curWep]||_SHOT_LAYERS.rifle;
+    tone({freq:L.sub[0], type:'sine', dur:L.sub[1], vol:L.sub[2], slideTo:Math.max(20, L.sub[0]*0.55), attack:0.002});
+    tone(L.body); noise(L.crack);
+    setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass'}), L.tail[3]); },
+  enemyShot(at){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105, at}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass', at}); },
+  shootAt(pos){ if(!actx||!sfxBus) return; const gain=_spatialOut(pos); if(!gain) return;   /* build 1208: shared panner replaces the hand-rolled distance-only gain — a shot to your side now reads to your side */
+    const t=actx.currentTime;
     const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
     const n=Math.floor(actx.sampleRate*0.07); const buf=actx.createBuffer(1,n,actx.sampleRate); const dd=buf.getChannelData(0); for(let i=0;i<n;i++) dd[i]=(Math.random()*2-1)*(1-i/n); const src=actx.createBufferSource(); src.buffer=buf; const filt=actx.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=2000; const ng=actx.createGain(); ng.gain.value=0.18; src.connect(filt).connect(ng).connect(gain); src.start(t); },
-  reload(){ const r=curSounds().reload; const u=(r&&typeof r==='object')?(r[curWep]||r._all):r; if(playSample(u)) return; tone({freq:200, type:'square', dur:0.06, vol:0.1}); setTimeout(()=>tone({freq:300, type:'square', dur:0.08, vol:0.1}),550); },
-  hit(){ if(playSample(curSounds().hit, {vary:0.06})) return; tone({freq:600, type:'sine', dur:0.05, vol:0.12, slideTo:900}); },
-  shatter(){ noise({dur:0.22, vol:0.22, filterFreq:3000, type:'highpass'}); tone({freq:220, type:'square', dur:0.12, vol:0.13, slideTo:70}); setTimeout(()=>noise({dur:0.12, vol:0.12, filterFreq:1600}),40); },
+  reload(){ const r=curSounds().reload; const u=(r&&typeof r==='object')?(r[curWep]||r._all):r; if(playSample(u)) return;
+    /* build 1211: the clicks track the REAL reload — the old pair was hardcoded 550ms apart, so the
+       pistol's audio finished late and the sniper's a second early. Start click, mag-out at ~45%,
+       mag-in just before the reload completes. */
+    const _rm=(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && +WEAPONS[curWep].reloadMs) || 900;
+    tone({freq:200, type:'square', dur:0.06, vol:0.1});
+    setTimeout(()=>tone({freq:160, type:'square', dur:0.05, vol:0.08, slideTo:120}), Math.round(_rm*0.45));
+    setTimeout(()=>tone({freq:300, type:'square', dur:0.08, vol:0.1}), Math.max(120, _rm-120)); },
+  hit(at){ if(playSample(curSounds().hit, {vary:0.06, at})) return; tone({freq:600, type:'sine', dur:0.05, vol:0.12, slideTo:900, at}); },
+  headshot(){ tone({freq:1400, type:'sine', dur:0.07, vol:0.13, slideTo:1950}); },   // build 1212: the distinct high 'dink' — the core skill-reward tick
+  shatter(at){ noise({dur:0.22, vol:0.22, filterFreq:3000, type:'highpass', at}); tone({freq:220, type:'square', dur:0.12, vol:0.13, slideTo:70, at}); setTimeout(()=>noise({dur:0.12, vol:0.12, filterFreq:1600, at}),40); },
   puff(){ noise({dur:0.18, vol:0.14, filterFreq:700, type:'lowpass'}); tone({freq:160, type:'sine', dur:0.1, vol:0.08, slideTo:90}); },
-  kill(type){ const ek=curSounds().enemyKill||{}; if(playSample((type&&ek[type])||curSounds().kill, {vary:0.05})) return; tone({freq:160, type:'sawtooth', dur:0.3, vol:0.16, slideTo:50}); noise({dur:0.25, vol:0.15, filterFreq:800}); },   // build 752: per-enemy-type kill clip + pitch wobble
+  kill(type, at){ const ek=curSounds().enemyKill||{}; if(playSample((type&&ek[type])||curSounds().kill, {vary:0.05, at})) return; tone({freq:160, type:'sawtooth', dur:0.3, vol:0.16, slideTo:50, at}); noise({dur:0.25, vol:0.15, filterFreq:800, at}); },   // build 752: per-enemy-type kill clip + pitch wobble
   hurt(){ if(playSample(curSounds().hurt, {vary:0.05})) return; tone({freq:140, type:'sawtooth', dur:0.2, vol:0.2, slideTo:70}); },
   pickup(){ if(playSample(curSounds().pickup)) return; tone({freq:520, type:'triangle', dur:0.1, vol:0.18, slideTo:780}); setTimeout(()=>tone({freq:780, type:'triangle', dur:0.12, vol:0.18, slideTo:1100}),90); },   // build 751: custom pickup clip, else the chime
   empty(){ tone({freq:180, type:'square', dur:0.04, vol:0.08}); },
   wave(){ tone({freq:300, type:'triangle', dur:0.15, vol:0.16, slideTo:450}); setTimeout(()=>tone({freq:450, type:'triangle', dur:0.2, vol:0.16, slideTo:600}),140); },
   jump(){ if(playSample(curSounds().jump)) return; tone({freq:280, type:'sine', dur:0.12, vol:0.1, slideTo:420}); },
+  land(impact){ const v=Math.max(0.04, Math.min(0.2, 0.06+impact*0.16)); noise({dur:0.1+impact*0.06, vol:v, filterFreq:260+impact*140, type:'lowpass'}); if(impact>0.5) tone({freq:120, type:'sine', dur:0.08, vol:v*0.5, slideTo:70}); },   // build 1210: a footfall thud, heavier the harder you land
   coin(){ if(playSample(curSounds().coin)) return; tone({freq:880, type:'square', dur:0.06, vol:0.1, slideTo:1320}); setTimeout(()=>tone({freq:1320, type:'square', dur:0.08, vol:0.1}),55); },
   buy(){ tone({freq:660, type:'triangle', dur:0.08, vol:0.16, slideTo:990}); setTimeout(()=>tone({freq:990, type:'triangle', dur:0.1, vol:0.16, slideTo:1320}),80); },
   deny(){ tone({freq:160, type:'sawtooth', dur:0.12, vol:0.14, slideTo:90}); },
   throw(){ tone({freq:220, type:'sine', dur:0.18, vol:0.12, slideTo:380}); },
-  explode(){ if(playSample(curSounds().explode)) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35}); noise({dur:0.45, vol:0.3, filterFreq:600}); },
+  explode(at){ if(playSample(curSounds().explode, {at})) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35, at}); noise({dur:0.45, vol:0.3, filterFreq:600, at}); },
   power(){ tone({freq:440, type:'triangle', dur:0.1, vol:0.16, slideTo:660}); setTimeout(()=>tone({freq:660, type:'triangle', dur:0.1, vol:0.16, slideTo:880}),90); setTimeout(()=>tone({freq:880, type:'triangle', dur:0.14, vol:0.16, slideTo:1320}),180); },
   swap(){ tone({freq:300, type:'square', dur:0.05, vol:0.08, slideTo:500}); },
   slide(){ if(!actx||!sfxBus) return; const t=actx.currentTime, dur=0.45;
@@ -6575,7 +6620,9 @@ function playSample(url, opts){
   try{ const src=actx.createBufferSource(); src.buffer=buf;
     const vary=(opts&&opts.vary)||0;
     if(vary>0) src.playbackRate.value = Math.max(0.5, 1 + (Math.random()*2-1)*vary);   // build 752: small pitch wobble so repeated hits/kills don't sound identical
-    src.connect(sfxBus); src.start(); return true; }catch(e){ return false; }
+    const out = _spatialOut(opts&&opts.at);   // build 1208: a positioned clip pans + attenuates like the synth
+    if(!out) return true;   // too far to be worth playing (the spatial gate said so) — count it as handled
+    src.connect(out); src.start(); return true; }catch(e){ return false; }
 }
 function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); if(s.enemyKill){ for(const k in s.enemyKill) loadSound(s.enemyKill[k]); } for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump']) loadSound(s[k]); }
 // build 750: preload every signal's custom clip (do:'sound') so a light switch / button plays on the first press, not the second.
@@ -6744,7 +6791,12 @@ function loadAudioSettings(){ try{ const j=JSON.parse(localStorage.getItem(AUDIO
 const audioSettings = loadAudioSettings();
 function saveAudioSettings(){ try{ localStorage.setItem(AUDIO_KEY, JSON.stringify(audioSettings)); }catch(e){} }
 function applyAudioSettings(){ if(!actx||!masterBus) return; const t=actx.currentTime; masterBus.gain.setTargetAtTime(audioSettings.muted?0:audioSettings.master, t, 0.02); const _editing=(typeof editorOpen!=='undefined' && editorOpen); musicBus.gain.setTargetAtTime(_editing?0:audioSettings.music, t, 0.02); sfxBus.gain.setTargetAtTime(audioSettings.sfx, t, 0.02); }   // music is forced silent while editing (no auto-play in the editor); SFX stays for preview buttons
-function buildAudioBuses(){ if(masterBus||!actx) return; masterBus=actx.createGain(); masterBus.connect(actx.destination); sfxBus=actx.createGain(); sfxBus.connect(masterBus); musicBus=actx.createGain(); musicBus.connect(masterBus); applyAudioSettings(); }
+function buildAudioBuses(){ if(masterBus||!actx) return; masterBus=actx.createGain(); masterBus.connect(actx.destination); sfxBus=actx.createGain();
+  /* build 1211: a gentle bus compressor — layered shots stack musically instead of clipping; every SFX
+     already routes through sfxBus so no call site changes. Fallback to the plain connect if unavailable. */
+  try{ const _cmp=actx.createDynamicsCompressor(); _cmp.threshold.value=-18; _cmp.knee.value=12; _cmp.ratio.value=4; _cmp.attack.value=0.003; _cmp.release.value=0.12; sfxBus.connect(_cmp); _cmp.connect(masterBus); }
+  catch(e){ sfxBus.connect(masterBus); }
+  musicBus=actx.createGain(); musicBus.connect(masterBus); applyAudioSettings(); }
 function toggleMute(){ audioSettings.muted=!audioSettings.muted; applyAudioSettings(); saveAudioSettings(); return audioSettings.muted; }
 
 // ---------- Adaptive music (procedural; intensity tracks the live threat) ----------
@@ -7274,6 +7326,7 @@ let _bloomMips=[], _matBloomDown=null, _matBloomUp=null;
 // build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
 // resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
 let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
+const _AO_GEO_MAXSTEP = 2;   /* build 1218: the G-buffer prepass survives the top 3 quality rungs (100/85/72%) so soft particles/shorelines outlast the common downshift; the AO sample stays on rung 0 */
 // build 1183: SOFT PARTICLES. A flipbook quad slicing through world geometry drew a hard line across the
 // intersection — the classic billboard artifact. The AO G-buffer (build 1126) already holds the scene's
 // view distance at half res, swept clean of everything that doesn't write depth (1152/1158) — including
@@ -7674,14 +7727,29 @@ function _renderPostFX(scn, cam){
   // floor — while keeping 4x multisampling on their edges. That is the wrong trade: a slightly
   // jagged silhouette still reads as an object standing somewhere. AO now survives the MSAA shed
   // and goes only when the scaler starts trading RESOLUTION, at which point everything is soft anyway.
-  const _aoWant = _ssaoAmt > 0.001 && _prStepI === 0 && _aoGeoRT && cam && cam.isPerspectiveCamera;
-  _SOFT_P.value.x = _aoWant ? 1 : 0; _SOFT_P.value.z = w; _SOFT_P.value.w = h;   /* build 1183: soft particles ride the same gate */
+  // build 1218: the half-res G-buffer PREPASS and the AO SAMPLE were one gate, so the first adaptive
+  // downshift (85% res — a common mid-range steady state) shed SSAO, soft particles AND soft shorelines
+  // together, and the image most players actually see lost its grounding while still paying for bloom, fog
+  // and the grade. They are decoupled now: the prepass (which feeds the soft-particle/shoreline fade via
+  // the view distance in _aoGeoRT.a) runs across the top THREE rungs; only the expensive AO kernel+blur is
+  // shed, and only on the very first downshift. At the deepest rungs everything is soft anyway.
+  const _geoWant = _ssaoAmt > 0.001 && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam.isPerspectiveCamera;
+  const _aoWant = _geoWant && _prStepI === 0;   /* the AO SAMPLE stays on the top rung; the G-buffer it needs is wider */
+  _SOFT_P.value.x = _geoWant ? 1 : 0; _SOFT_P.value.z = w; _SOFT_P.value.w = h;   /* build 1183/1218: soft particles ride the PREPASS, not the AO sample */
   if(_aoGeoRT) _SOFT_GEO.value = _aoGeoRT.texture;
-  if(_aoWant){
+  if(_geoWant){
     // the prepass runs AFTER the scene pass so it cannot consume this frame's shadow-map refresh,
     // and with the sky dome and weather hidden — overrideMaterial would give the dome depthWrite
     // and it would fill the entire buffer at the far plane, and snow would pock it with occluders
     const _pv=scn.overrideMaterial, _skyV=_skyMesh&&_skyMesh.visible, _wV=(typeof _weatherPts!=='undefined')&&_weatherPts&&_weatherPts.visible;
+    /* build 1199: scene.background is NOT a scene object — overrideMaterial never touches it and the
+       visibility sweep cannot see it, so an HDRI sky (a background TEXTURE; the procedural dome nulls
+       the background) rendered its tone-mapped colours into the G-buffer: garbage "normals" that pass
+       the geometric sky test and an alpha read as a surface ~1 unit away. SSAO then shaded the whole
+       sky from it — and because the background pass tone-maps with toneMappingExposure, every easing
+       step of auto-exposure REWROTE the garbage, so the sky's bogus AO churned with the eye: the
+       reported AE+AO flashing. Fifth arrival of the 1152 rule, by a door the sweep cannot cover. */
+    const _bgV=scn.background; scn.background=null;
     const _sa=renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate=false;
     if(_skyMesh) _skyMesh.visible=false; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=false;
     // build 1152: and EVERY transparent decoration, for the same reason and by a rule rather than by name.
@@ -7722,8 +7790,11 @@ function _renderPostFX(scn, cam){
       renderer.autoClear=_vac; vmScene.overrideMaterial=_vpv;
       for(const o of _vmHid) o.visible=true;
     }
+    scn.background=_bgV;
     if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
     renderer.shadowMap.autoUpdate=_sa;
+  }
+  if(_aoWant){   /* build 1218: the AO SAMPLE (kernel + bilateral blur) — sheds on the first downshift while the prepass above keeps the soft-particle fade alive */
     const au=_matAO.uniforms;
     au.tGeo.value=_aoGeoRT.texture; au.uTexel.value.set(1/hw,1/hh);
     au.uFar.value=cam.far; au.uRadius.value=_ssaoRadius;
@@ -8910,7 +8981,13 @@ const _BAKE_DIRS = (()=>{ const out=[], N=14, GA=Math.PI*(3-Math.sqrt(5));
   for(let i=0;i<N;i++){ const y=0.15+0.83*((i+0.5)/N), r=Math.sqrt(Math.max(0,1-y*y)), a=i*GA;
     out.push([Math.cos(a)*r, y, Math.sin(a)*r]); } return out; })();
 const BAKE_RANGE = 22, BAKE_FLOOR = 0.35, BAKE_MS = 6;
-let _bakeJob = null, _bakeWant = false, _bakeDoneN = -1; const _bakeMats = new Set();
+let _bakeJob = null, _bakeWant = false, _bakeDoneN = -1, _bakeDoneSig = -1; const _bakeMats = new Set();
+// build 1206: the count of colliders the bake would actually gather — a prop with src that is not a
+// mover. Gating the bake on this instead of raw colliders.length means hiding a wall, toggling a
+// dynamic crate, shattering a physics breakable, or animating an xa door (all already excluded from
+// _bakeCollect) no longer restarts a full level re-bake — the 6ms/frame perpetual tax a logic-blinked
+// mover used to cost. Cheap: one loop, no traverse, and only walked when the length actually changed.
+function _bakeSig(){ let n = 0; for(const c of colliders){ const u = c.userData; if(u && u.src && !(u.phys || u.vehicle || (u.xa && u.xa.on))) n++; } return n; }
 const _bkRay = new THREE.Raycaster(); _bkRay.far = BAKE_RANGE;
 const _bkO = new THREE.Vector3(), _bkD = new THREE.Vector3(), _bkP = new THREE.Vector3(), _bkN = new THREE.Vector3();
 const _bkT = new THREE.Vector3(), _bkB = new THREE.Vector3(), _bkNM = new THREE.Matrix3(), _bkCand = [];
@@ -8944,7 +9021,7 @@ function _bakeVisAt(px, py, pz, nx, ny, nz, self){
   return vis / _BAKE_DIRS.length;
 }
 function requestSceneBake(){ _bakeWant = true; _bakeJob = null; }
-function unbakeScene(){ _bakeWant = false; _bakeJob = null; _bakeDoneN = -1;
+function unbakeScene(){ _bakeWant = false; _bakeJob = null; _bakeDoneN = -1; _bakeDoneSig = -1;
   for(const m of _bakeMats){ try{ m.vertexColors = false; m.needsUpdate = true; }catch(e){} } _bakeMats.clear(); }
 function _bakeCollect(){
   const meshes = [];
@@ -8958,15 +9035,20 @@ function _bakeCollect(){
 function _bakeTick(){
   if(!(typeof worldCfg !== 'undefined' && worldCfg.baked)){ if(_bakeMats.size) unbakeScene(); return; }
   if(typeof _glbPending !== 'undefined' && _glbPending > 0) return;   /* bake what will actually be there */
-  if(!_bakeWant && _bakeDoneN === colliders.length) return;
+  if(!_bakeWant && !_bakeJob){
+    if(_bakeDoneN === colliders.length) return;                        /* nothing changed at all: O(1) */
+    const sig = _bakeSig();
+    if(sig === _bakeDoneSig){ _bakeDoneN = colliders.length; return; } /* the change missed the bake set (a mover, a dynamic prop, a wall): skip */
+    _bakeWant = true;                                                  /* a STATIC bake prop genuinely arrived or left */
+  }
   if(!_bakeJob){
-    if(!_bakeWant && _bakeDoneN !== colliders.length){ _bakeWant = true; }   /* a prop arrived or left since the last bake */
     const meshes = _bakeCollect();
     _bakeJob = { meshes, mi: 0, vi: 0 }; _bakeWant = false;
-    if(!meshes.length){ _bakeJob = null; _bakeDoneN = colliders.length; return; }
+    if(!meshes.length){ _bakeJob = null; _bakeDoneN = colliders.length; _bakeDoneSig = _bakeSig(); return; }
   }
   const t0 = performance.now(), J = _bakeJob;
-  while(performance.now() - t0 < BAKE_MS){
+  const budget = (typeof _prStepI !== 'undefined' && _prStepI > 0) ? 2 : BAKE_MS;   /* build 1206: yield to the resolution scaler — a background bake must never buy a visible downshift */
+  while(performance.now() - t0 < budget){
     if(J.mi >= J.meshes.length){
       // finished: the SHARED-MATERIAL INVARIANT. vertexColors=true on a material means every mesh using
       // it MUST carry a colour attribute — a mesh without one samples (0,0,0) and renders BLACK. Any
@@ -8976,7 +9058,7 @@ function _bakeTick(){
         const ms = Array.isArray(n.material) ? n.material : [n.material];
         if(ms.some(m => _bakeMats.has(m))){ const cnt = n.geometry.attributes.position.count;
           const w = new Float32Array(cnt * 3).fill(1); n.geometry.setAttribute('color', new THREE.BufferAttribute(w, 3)); } });
-      _bakeDoneN = colliders.length; _bakeJob = null; return;
+      _bakeDoneN = colliders.length; _bakeDoneSig = _bakeSig(); _bakeJob = null; return;
     }
     const it = J.meshes[J.mi], mesh = it.mesh;
     if(J.vi === 0){
@@ -8988,7 +9070,7 @@ function _bakeTick(){
     }
     const pos = mesh.geometry.attributes.position, nrm = mesh.geometry.attributes.normal, col = mesh.geometry.attributes.color;
     const n = pos.count;
-    while(J.vi < n && performance.now() - t0 < BAKE_MS){
+    while(J.vi < n && performance.now() - t0 < budget){
       const i = J.vi++;
       _bkP.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(mesh.matrixWorld);
       _bkN.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i)).applyMatrix3(_bkNM).normalize();
@@ -9908,11 +9990,21 @@ function _sanitizePersist(a){
     seen[t]=1; out.push(t); if(out.length>=40) break; }
   return out;
 }
-function _persistLoad(){   // the level opted into surviving a closed tab: read the saved values back
+// build 1215: the store is NAMESPACED per game. It used to be ONE global key (PERSIST_KEY), so two
+// published games that both persist a `coins` variable read and clobber each other's progress — a
+// trust-destroying bug for anyone playing more than one creator's game. The namespace is the published
+// /game/ slug (build 972) or, failing that, the slugified homepage title; a level with neither keeps the
+// BARE key, so every existing single-game save loads unchanged (that is the migration — no data is lost).
+function _persistSlugify(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,48); }
+function _persistNSFrom(hp){ if(hp){ if(hp.slug) return _persistSlugify(hp.slug); if(hp.title){ const t=_persistSlugify(hp.title); if(t) return t; } } return ''; }
+function _persistNS(){ try{ return (typeof homepageCfg!=='undefined') ? _persistNSFrom(homepageCfg) : ''; }catch(e){ return ''; } }
+function _persistKey(ns){ ns = (ns!=null) ? ns : _persistNS(); return ns ? (PERSIST_KEY+':'+ns) : PERSIST_KEY; }
+function _persistLoad(ns){   // the level opted into surviving a closed tab: read the saved values back. ns
+  // is passed EXPLICITLY by the loaders because homepageCfg is not set yet when restoreLevel calls this.
   if(!persistSave) return;
-  try{ const j=JSON.parse(localStorage.getItem(PERSIST_KEY)); if(j && typeof j==='object') for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; } }catch(e){}
+  try{ const j=JSON.parse(localStorage.getItem(_persistKey(ns))); if(j && typeof j==='object') for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; } }catch(e){}
 }
-function _persistStore(){ if(!persistSave) return; try{ localStorage.setItem(PERSIST_KEY, JSON.stringify(campaignVars)); }catch(e){} }
+function _persistStore(){ if(!persistSave) return; try{ localStorage.setItem(_persistKey(), JSON.stringify(campaignVars)); }catch(e){} }
 function _persistSeed(){   // a match begins: the carried values become live variables again
   for(const k of persistVars){ if(campaignVars[k]!=null) logicVars[k]=campaignVars[k]; }
 }
@@ -9921,16 +10013,25 @@ function _persistCommit(){ // the level was CLEARED: carry the live values forwa
   for(const k of persistVars) campaignVars[k]=+logicVars[k]||0;
   _persistStore();
 }
-function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(PERSIST_KEY); }catch(e){} }
+function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(_persistKey()); }catch(e){} }
 let _lgTimers = [];                                                // pending delay / interval / repeat continuations
 let _lgState = {};                                                 // per-node runtime (counter counts, once flags)
 let _lgBudget = 0, _lgWarned = false;
 let _lgRunT = 0;   // build 1169: when this run's logic started (the Read-stat 'time' zero)
 function _lgNode(id){ for(const n of logicGraph.nodes){ if(n.id===id) return n; } return null; }
 // A value field accepts a NUMBER or a VARIABLE NAME — '5', '-2.5', 'score', '#i' all work.
+// build 1221: THE EVENT PAYLOAD. Logic events fired bare — onkill/onhurt/onspot carried no identity, no
+// position, no HP — so "drop loot where the enemy died", "the boss at half health switches phase", "the
+// turret nearest the intruder powers on" were all inexpressible: the hard ceiling on what the graph could
+// author. Enemy events now carry a context (_lgCtx) exposed as reserved #-tokens that _lgNum resolves —
+// #x/#z (world position), #hp (the enemy's HP), #hpf (its HP fraction 0..1) — readable by Branch, Math,
+// Set variable, and the place field via '#here'. Set for the immediate pulse cascade only (a Delay node
+// schedules a later timer that runs with no context — the payload is a snapshot of the moment, not a handle).
+let _lgCtx = {};
 function _lgNum(v){
   if(v==null) return 0;
   const t=String(v).trim(); if(t==='') return 0;
+  if(t.charAt(0)==='#'){ const c=_lgCtx[t.slice(1)]; if(typeof c==='number' && isFinite(c)) return c; return +(logicVars[t]||0); }   // build 1221: event-payload token (#x/#z/#hp/#hpf); falls through to a normal var like the repeat loop's #i
   const n=parseFloat(t);
   if(!isNaN(n) && isFinite(n) && /^[-+]?[0-9.]/.test(t)) return n;
   return +(logicVars[t]||0);
@@ -9940,10 +10041,10 @@ function _lgFollow(id, out){
 }
 // build 1077: the enemy hooks. Entry nodes, so they cost nothing until an author drops one on the board, and
 // they run on the authoritative side like every other event source.
-function _lgEnemyEvent(kind){
+function _lgEnemyEvent(kind, ctx){
   if(typeof NET!=='undefined' && NET.mode==='client') return;
   if(typeof logicGraph==='undefined' || !logicGraph.nodes.length) return;
-  for(const n of logicGraph.nodes){ if(n.type===kind){ _lgFireEvents(kind, ''); return; } }   // nothing wired -> nothing to do
+  for(const n of logicGraph.nodes){ if(n.type===kind){ const _pv=_lgCtx; _lgCtx=ctx||{}; try{ _lgFireEvents(kind, ''); } finally { _lgCtx=_pv; } return; } }   // build 1221: the payload rides the cascade, then unwinds
 }
 function _lgFireEvents(kind, name){
   for(const n of logicGraph.nodes){
@@ -10026,9 +10127,12 @@ function _lgPulse(id, pin){
       break; }
     case 'once': { if(pin==='reset'){ st.done=false; break; } if(st.done) break; st.done=true; _lgFollow(id,0); break; }
     case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
-    case 'do': { try{ _applySignalAction({ do:p.verb||'toggle', target:String(p.target||'').trim(), clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
+    case 'do': { const _verb=p.verb||'toggle', _tgt=String(p.target||'').trim();
+      if(_LG_TAG_VERBS.has(_verb) && _tgt && _tgt!=='this' && typeof _lgTagExists==='function' && !_lgTagExists(_tgt)) _noteLogicFailure('A "'+_verb+'" action targets the tag "'+_tgt+'", but no placed prop has that tag.');
+      try{ _applySignalAction({ do:_verb, target:_tgt, clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
         etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim(),
-        stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }catch(e){} _lgFollow(id,0); break; }
+        stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }
+      catch(e){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "'+_verb+'" action failed: '+((e&&e.message)||e)); } _lgFollow(id,0); break; }
     case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));   // {score} interpolates live variables
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
@@ -10260,7 +10364,7 @@ const LG_DEFS = {
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
   read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed']]},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']]},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport']],sel:[['player','The player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -10281,6 +10385,7 @@ function _lgVarOptions(){   // build 1060: every variable name in play — from 
     if(n.type==='toast'||n.type==='do') addRefs(q.text);
   }
   if(typeof hudWidgets!=='undefined' && hudWidgets) for(const w of hudWidgets){ addName(w.value); addName(w.max); addName(w.when); addRefs(w.label); }
+  for(const t of ['#x','#z','#hp','#hpf']) set.add(t);   // build 1221: the event payload tokens, always offered so onkill/onhurt/onspot graphs discover them
   return Array.from(set).sort();
 }
 function _lgTagOptions(){
@@ -10332,6 +10437,8 @@ function _lgRefreshDatalists(){
   for(const nm of _lgVarOptions()){ const op=document.createElement('option'); op.value=nm; vl.appendChild(op); }
   const pl=mk('lgPlaceList');   // build 1073: every PLACE the world verbs can point at
   for(const o of _lgPlaceOptions()){ const op=document.createElement('option'); op.value=o.v; op.label=o.l; pl.appendChild(op); }
+  const pfl=mk('lgPrefabList');   // build 1216: prefab names, for the spawn-prefab verb
+  if(typeof prefabLib!=='undefined') for(const nm in prefabLib){ const op=document.createElement('option'); op.value=nm; const c=(prefabLib[nm]&&prefabLib[nm].props)?prefabLib[nm].props.length:0; op.label=c+(c===1?' prop':' props'); pfl.appendChild(op); }
   const il=mk('lgItemList');    // build 1073: inventory item ids, for a spawned collectible
   if(typeof invCatalog!=='undefined') for(const id of Object.keys(invCatalog)){ const op=document.createElement('option'); op.value=id; op.label=(invCatalog[id]&&invCatalog[id].name)||id; il.appendChild(op); }
 }
@@ -10339,7 +10446,7 @@ function _lgRefreshDatalists(){
 // something they can see and select in the viewport. Trigger volumes answer to their own event name, so the
 // zone that fires a rule can also be the spot it acts on ("On reachedVault -> Spawn 3 brutes at reachedVault").
 function _lgPlaceOptions(){
-  const out=[{ v:'me', l:'the player' }, { v:'start', l:'the level start' }];
+  const out=[{ v:'me', l:'the player' }, { v:'start', l:'the level start' }, { v:'#here', l:'where the event fired (onkill/onhurt/onspot)' }];
   const seen={};
   if(typeof propModels!=='undefined') for(const o of propModels){ const t=o&&o.userData&&o.userData.tag; if(t) seen[t]=(seen[t]||0)+1; }
   for(const t of Object.keys(seen).sort()) out.push({ v:t, l:seen[t]+(seen[t]===1?' prop':' props') });
@@ -10667,6 +10774,10 @@ function _applySignalAction(s, src){
 // results in the world snapshot, so a client applying them too would double-count.
 function _lgPlaceAt(tag){
   const raw=String(tag==null?'':tag).trim(), t=raw.toLowerCase();
+  if(t==='#here' || t==='here'){   // build 1221: the position the current event fired at (an enemy's death/hurt/spot spot)
+    if(typeof _lgCtx.x==='number' && typeof _lgCtx.z==='number'){ const ty=(typeof terrainHeightAt==='function')?terrainHeightAt(_lgCtx.x,_lgCtx.z):0; return { x:_lgCtx.x, y:ty, z:_lgCtx.z }; }
+    return null;   // '#here' outside an event with a position: do nothing rather than act at 0,0
+  }
   if(!raw || t==='me' || t==='player') return { x:player.pos.x, y:player.pos.y-EYE, z:player.pos.z };
   if(t==='start'){ const ty=(typeof terrainHeightAt==='function')?terrainHeightAt(playerSpawn.x, playerSpawn.z):0;
     return { x:playerSpawn.x, y:ty+(+playerSpawn.y||0), z:playerSpawn.z }; }
@@ -10707,14 +10818,17 @@ function _pvApplyOne(o, act, at){
   const u=o.userData;
   if(act==='del'){ if(typeof shatterProp==='function') try{ shatterProp(o, null, null, 0); }catch(e){} return; }
   if(act==='hide'){ if(u._pvHidden) return; u._pvHidden=true; o.visible=false;
+    if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: the grid re-samples where it stood */
     if(u.phys){ u._pvWasDyn=true; try{ removeDynamicProp(o); }catch(e){} }
     const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; }
     if(u._physStatic && typeof physWorld!=='undefined' && physWorld){ try{ physWorld.removeRigidBody(u._physStatic); }catch(e){} u._physStatic=null; }   /* build 1194: no invisible physics wall */
     return; }
   if(act==='show'){ if(!u._pvHidden){ o.visible=true; return; } u._pvHidden=false; o.visible=true;
+    if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: it blocks (or carries) bots again */
     if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; if(typeof addStaticColliderFor==='function' && typeof physWorld!=='undefined' && physWorld && !u.phys) try{ addStaticColliderFor(o); }catch(e){} }   /* build 1194: show restores the physics body too */
     if(u._pvWasDyn){ u._pvWasDyn=false; try{ setPropDynamic(o, true); }catch(e){} } return; }
   if(act==='move' && at){
+    if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: the OLD footprint opens up... */
     const wasDyn=!!u.phys; if(wasDyn) try{ removeDynamicProp(o); }catch(e){}
     const g0=(typeof terrainHeightAt==='function')?terrainHeightAt(o.position.x, o.position.z):0;
     const g1=(typeof terrainHeightAt==='function')?terrainHeightAt(at.x, at.z):0;
@@ -10722,7 +10836,23 @@ function _pvApplyOne(o, act, at){
     o.position.x=at.x; o.position.z=at.z; o.position.y=g1+dy;
     if(wasDyn) try{ setPropDynamic(o, true); }catch(e){}   // re-seats the body + recaptures physHome at the new spot
     else if(typeof refreshPropCollider==='function') try{ refreshPropCollider(o); }catch(e){}
+    if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: ...and the NEW one closes */
     return; }
+}
+// build 1216: spawn a prefab at a place, at RUNTIME. Host-only (updateLogic returns for clients), and the
+// prop reconciler already syncs any nid-bearing prop to peers, so no wact message is needed. A LIVE cap
+// (counting props still in the scene, so destroyed ones free budget) stops a spawnprop-on-an-interval from
+// filling the world — a missing spawn is a far better failure than a runaway. Spawned props are marked so
+// they never touch the saved LEVEL (a runtime verb must not edit the level — 1170's rule).
+const LG_SPAWN_CAP = 200;
+function _lgSpawnedCount(){ if(typeof propModels==='undefined') return 0; let n=0; for(const o of propModels){ if(o && o.userData && o.userData._lgSpawned) n++; } return n; }
+function _lgSpawnPrefab(name, at){
+  if(typeof NET!=='undefined' && NET.mode==='client') return;     // host authors the world
+  const def = (typeof prefabLib!=='undefined') ? prefabLib[name] : null;
+  if(!def || !def.props || !def.props.length){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "spawn prefab" action references the prefab "'+name+'", but no prefab by that name exists.'); return; }
+  if(_lgSpawnedCount() + def.props.length > LG_SPAWN_CAP){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('The spawn-prefab cap ('+LG_SPAWN_CAP+' live props) was reached — later spawns are skipped until some are destroyed.'); return; }
+  const inst=(typeof _pfNewInst==='function')?_pfNewInst():('i'+Math.floor(Math.random()*1e6)), gid=(typeof _newGroupId==='function')?_newGroupId():0;
+  def.props.forEach((p,slot)=>{ try{ _pfSpawnEntry(p, at, { id:name, inst, slot }, gid, (obj)=>{ obj.userData._lgSpawned=true; }); }catch(e){} });
 }
 function _lgPropVerb(act, tag, at){
   if(!tag || typeof propModels==='undefined') return;
@@ -10778,6 +10908,11 @@ function _applyWorldAction(s){
     _lgPropVerb(act, tg, at);
     _wactSend({ pv:[act, tg, at?[at.x, +at.y||0, at.z]:0] });      // clients mirror it instantly; the snapshot reconcile confirms
     return;
+  }
+  if(s.do==='spawnprop'){   // build 1216: the runtime creator finally CREATES a prop — 1170's deferred other half
+    const at=_lgPlaceAt(s.at); if(!at){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "spawn prefab" action points at the place "'+String(s.at||'').trim()+'", but nothing there answers.'); return; }
+    _lgSpawnPrefab(String(s.prefab||'').trim(), at);
+    return;   // NO _wactSend: the spawned props carry nids, so reconcileProps pAdds them to every client — the net-id story build 1170 deferred is already solved by the reconciler
   }
   if(s.do==='stat'){ const w=LG_STATS[s.stat]?s.stat:'speed', m=Math.max(0.05, Math.min(10, +s.mul||1));
     _lgApplyStat(w, m); _wactSend({ st:[w, m] }); return; }
@@ -11289,20 +11424,72 @@ const MGRID_FOOT_BYTES = 24 << 20;           // 24 MB cap for footprints (halved
 // widened to at least this, centred on what the triangles actually covered. Still 4x tighter than the
 // whole cell it replaced.
 const MGRID_MIN_THICK = 0.25;
+// build 1203: the derivation is SPLIT — _mgridGatherTris walks the scene (the only part that needs it),
+// _mgridCore is a pure function of a flat triangle array (shipped into a Worker via toString(), so the
+// worker runs the IDENTICAL source — one implementation, no drift for test-1113/1148/1159 to miss), and
+// buildModelGridBoxes composes them synchronously with the exact pre-1203 semantics. All the history that
+// used to sit inside the one function (1089's budgets, 1092's clipping, 1148's footprints) rides with the
+// piece it describes.
+function _mgridOpts(){
+  const coarse=(typeof IS_COARSE!=='undefined' && IS_COARSE);
+  return { cell:MGRID_CELL, slot:MGRID_SLOT, bits:coarse?(MGRID_BITS>>1):MGRID_BITS,
+           footBytes:coarse?(MGRID_FOOT_BYTES>>1):MGRID_FOOT_BYTES, minThick:MGRID_MIN_THICK };
+}
+function _mgridGatherTris(obj){
+  let total=0; const meshes=[];
+  obj.traverse(o=>{
+    if(!o.isMesh || o.visible===false || !o.geometry) return;
+    // build 1093: meshes named "nocollide*" (or under a group so named) are decoration — grass
+    // cards, foliage, light shafts. They never enter the collider grid.
+    for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)) return; }
+    const pos=o.geometry.attributes && o.geometry.attributes.position; if(!pos||!pos.count) return;
+    const idx=o.geometry.index, tc=idx?idx.count:pos.count;
+    total += Math.floor(tc/3); meshes.push(o);
+  });
+  if(total>2000000) return { tri:null, n:0, over:true };   // 1089's cap, unchanged: over-cap models fall back to per-mesh boxes
+  if(!total) return { tri:null, n:0, over:false };
+  const tri=new Float32Array(total*9); let w=0;
+  for(const o of meshes){
+    o.updateWorldMatrix(true,false);
+    const pos=o.geometry.attributes.position, idx=o.geometry.index, tc=idx?idx.count:pos.count;
+    for(let t=0;t+2<tc;t+=3){
+      const a=idx?idx.getX(t):t, b=idx?idx.getX(t+1):t+1, c=idx?idx.getX(t+2):t+2;
+      _mgA.fromBufferAttribute(pos,a).applyMatrix4(o.matrixWorld);
+      _mgB.fromBufferAttribute(pos,b).applyMatrix4(o.matrixWorld);
+      _mgC.fromBufferAttribute(pos,c).applyMatrix4(o.matrixWorld);
+      tri[w++]=_mgA.x; tri[w++]=_mgA.y; tri[w++]=_mgA.z;
+      tri[w++]=_mgB.x; tri[w++]=_mgB.y; tri[w++]=_mgB.z;
+      tri[w++]=_mgC.x; tri[w++]=_mgC.y; tri[w++]=_mgC.z;
+    }
+  }
+  return { tri, n:w/9, over:false };
+}
+function _mgridWrap(r){
+  const boxes=[];
+  for(let i=0;i<r.n;i++){ const o=i*6;
+    boxes.push(new THREE.Box3(new THREE.Vector3(r.boxes[o],r.boxes[o+1],r.boxes[o+2]), new THREE.Vector3(r.boxes[o+3],r.boxes[o+4],r.boxes[o+5]))); }
+  return boxes.length ? boxes : null;
+}
 function buildModelGridBoxes(obj, overall){
   if(!overall) return null;
-  const sx=overall.max.x-overall.min.x, sy=overall.max.y-overall.min.y, sz=overall.max.z-overall.min.z;
+  const g=_mgridGatherTris(obj);
+  if(g.over || !g.n) return null;
+  const r=_mgridCore(g.tri, g.n, [overall.min.x,overall.min.y,overall.min.z], [overall.max.x,overall.max.y,overall.max.z], _mgridOpts());
+  return r ? _mgridWrap(r) : null;
+}
+function _mgridCore(tri, n, bmin, bmax, opts){
+  const sx=bmax[0]-bmin[0], sy=bmax[1]-bmin[1], sz=bmax[2]-bmin[2];
   if(!(sx>0)||!(sz>0)||!(sy>0)||!isFinite(sx)||!isFinite(sz)||!isFinite(sy)) return null;
-  let nx=Math.max(1, Math.ceil(sx/MGRID_CELL));
-  let nz=Math.max(1, Math.ceil(sz/MGRID_CELL));
-  let K =Math.max(8, Math.round(sy/MGRID_SLOT));
+  let nx=Math.max(1, Math.ceil(sx/opts.cell));
+  let nz=Math.max(1, Math.ceil(sz/opts.cell));
+  let K =Math.max(8, Math.round(sy/opts.slot));
   // Too big for the budget? Shrink all three by the same factor, so the grid stays proportional instead of
   // going fine in one axis and useless in another.
-  { const budget=(typeof IS_COARSE!=='undefined' && IS_COARSE) ? (MGRID_BITS>>1) : MGRID_BITS;
+  { const budget=opts.bits;
     const total=nx*nz*K;
     if(total>budget){ const f=Math.cbrt(budget/total);
       nx=Math.max(1,Math.floor(nx*f)); nz=Math.max(1,Math.floor(nz*f)); K=Math.max(8,Math.floor(K*f)); } }
-  const cw=sx/nx, cd=sz/nz, ox=overall.min.x, oz=overall.min.z, oy=overall.min.y;
+  const cw=sx/nx, cd=sz/nz, ox=bmin[0], oz=bmin[2], oy=bmin[1];
   const sh=sy/K, N=nx*nz;
   const occ=new Uint32Array(((N*K)+31)>>5);                         // bitset: slot (gx*nz+gz)*K + sl
   const setSlot=(i)=>{ occ[i>>5] |= (1<<(i&31)); };
@@ -11311,100 +11498,80 @@ function buildModelGridBoxes(obj, overall){
   // a doorway; PER COLUMN still tightens a thin wall from a whole cell to its real thickness, which is
   // most of the "author to the collider" tax; NONE is the old whole-cell behaviour.
   let fx0=null, fx1=null, fz0=null, fz1=null, footPer=0;   // 0 none, 1 per column, 2 per slot
-  { const cap=(typeof IS_COARSE!=='undefined' && IS_COARSE) ? (MGRID_FOOT_BYTES>>1) : MGRID_FOOT_BYTES;
+  { const cap=opts.footBytes;
     const want = (n)=>{ fx0=new Uint8Array(n).fill(255); fz0=new Uint8Array(n).fill(255);
       fx1=new Uint8Array(n); fz1=new Uint8Array(n); };
     if(4*N*K <= cap){ want(N*K); footPer=2; }
     else if(4*N <= cap){ want(N); footPer=1; } }
   // index of the footprint cell for (column base, slot)
   const fi=(base, sl)=> footPer===2 ? (base+sl) : ((base/K)|0);
-  let tris=0, bail=false, work=0;
-  obj.traverse(o=>{
-    if(bail || !o.isMesh || o.visible===false || !o.geometry) return;
-    // build 1093: meshes named "nocollide*" (or under a group so named) are decoration — grass
-    // cards, foliage, light shafts. They never enter the collider grid.
-    for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)) return; }
-    const pos=o.geometry.attributes && o.geometry.attributes.position; if(!pos||!pos.count) return;
-    o.updateWorldMatrix(true,false);
-    const idx=o.geometry.index, tc=idx?idx.count:pos.count;
-    for(let t=0;t+2<tc;t+=3){
-      // build 1089: a level model legitimately has hundreds of thousands of triangles — the old 200k cap made
-      // the biggest models, the ones that need this most, silently fall back to per-mesh AABBs. What actually
-      // costs time is SLOTS WRITTEN (one huge floor triangle can touch the whole grid), so budget that
-      // instead and let the triangle count run.
-      if(++tris>2000000 || work>40000000){ bail=true; return; }
-      const a=idx?idx.getX(t):t, b=idx?idx.getX(t+1):t+1, c=idx?idx.getX(t+2):t+2;
-      _mgA.fromBufferAttribute(pos,a).applyMatrix4(o.matrixWorld);
-      _mgB.fromBufferAttribute(pos,b).applyMatrix4(o.matrixWorld);
-      _mgC.fromBufferAttribute(pos,c).applyMatrix4(o.matrixWorld);
-      const miX=Math.min(_mgA.x,_mgB.x,_mgC.x), maX=Math.max(_mgA.x,_mgB.x,_mgC.x);
-      const miZ=Math.min(_mgA.z,_mgB.z,_mgC.z), maZ=Math.max(_mgA.z,_mgB.z,_mgC.z);
-      const miY=Math.min(_mgA.y,_mgB.y,_mgC.y), maY=Math.max(_mgA.y,_mgB.y,_mgC.y);
-      const gx0=Math.max(0,Math.min(nx-1,Math.floor((miX-ox)/cw))), gx1=Math.max(0,Math.min(nx-1,Math.floor((maX-ox)/cw)));
-      const gz0=Math.max(0,Math.min(nz-1,Math.floor((miZ-oz)/cd))), gz1=Math.max(0,Math.min(nz-1,Math.floor((maZ-oz)/cd)));
-      const s0=Math.max(0,Math.min(K-1,Math.floor((miY-oy)/sh))), s1=Math.max(0,Math.min(K-1,Math.floor((maY-oy)/sh)));
-      // build 1092: a triangle used to stamp its FULL vertical extent into every column its XZ
-      // bounding box covers. Fine for small triangles (their box IS local), but a level authored
-      // from big clean faces got mangled: a ramp top filled every column under the slope from
-      // base to summit, and a ramp's triangular SIDE face stamped a summit-height wall along the
-      // ramp's entire length. The greedy merge then fused those columns into wall-shaped boxes —
-      // the player (who walks the real triangles) climbed fine; enemies (who resolve against
-      // these boxes) were shoved off. So: for a triangle spanning more than one column, clip it
-      // to each cell in 3D (Sutherland–Hodgman against the four cell planes, interpolating y)
-      // and stamp only the clipped fragment's true height range. Exact for any orientation, and
-      // cells inside the XZ bounding box that the triangle never actually touches now stay empty.
-      const multi = (gx1>gx0 || gz1>gz0);
-      for(let gx=gx0;gx<=gx1;gx++) for(let gz=gz0;gz<=gz1;gz++){
-        const base=(gx*nz+gz)*K;
-        let lo=miY, hi=maY;
-        // build 1148: the fragment's XZ extent, needed for the footprint. Declared HERE because the
-        // clipped polygon lives inside the `multi` branch below and reading it outside was a real bug —
-        // caught by test-1113, which runs this function for real rather than pinning it.
-        let fax0=miX, fax1=maX, faz0=miZ, faz1=maZ;
-        if(multi){
-          let poly=[[_mgA.x,_mgA.y,_mgA.z],[_mgB.x,_mgB.y,_mgB.z],[_mgC.x,_mgC.y,_mgC.z]];
-          const rx0=ox+gx*cw, rx1=rx0+cw, rz0=oz+gz*cd, rz1=rz0+cd;
-          for(let pass=0; pass<4 && poly.length; pass++){
-            const out=[];
-            for(let i=0;i<poly.length;i++){
-              const p0=poly[i], p1=poly[(i+1)%poly.length];
-              const f0 = pass===0? p0[0]-rx0 : pass===1? rx1-p0[0] : pass===2? p0[2]-rz0 : rz1-p0[2];
-              const f1 = pass===0? p1[0]-rx0 : pass===1? rx1-p1[0] : pass===2? p1[2]-rz0 : rz1-p1[2];
-              if(f0>=0) out.push(p0);
-              if((f0<0)!==(f1<0)){ const t=f0/(f0-f1); out.push([p0[0]+(p1[0]-p0[0])*t, p0[1]+(p1[1]-p0[1])*t, p0[2]+(p1[2]-p0[2])*t]); }
-            }
-            poly=out;
+  // build 1203: the triangles arrive as a flat world-space array (9 floats each) so this whole function is
+  // PURE — no scene graph, no THREE, no engine globals — and therefore shippable verbatim into a Worker via
+  // toString(). The gather (the only part that needs the scene) lives in _mgridGatherTris. Every budget,
+  // clip and stamp below is the pre-1203 code with the vertex reads renamed; test-1113/1148/1159 execute it
+  // on real geometry, so a transcription slip fails on exact doorway/thickness numbers, not on a pin.
+  let bail=false, work=0;
+  for(let t=0; t<n; t++){
+    if(work>40000000){ bail=true; break; }
+    const o9=t*9;
+    const ax=tri[o9], ay=tri[o9+1], az=tri[o9+2], bx=tri[o9+3], by=tri[o9+4], bz=tri[o9+5], cx=tri[o9+6], cy=tri[o9+7], cz=tri[o9+8];
+    const miX=Math.min(ax,bx,cx), maX=Math.max(ax,bx,cx);
+    const miZ=Math.min(az,bz,cz), maZ=Math.max(az,bz,cz);
+    const miY=Math.min(ay,by,cy), maY=Math.max(ay,by,cy);
+    const gx0=Math.max(0,Math.min(nx-1,Math.floor((miX-ox)/cw))), gx1=Math.max(0,Math.min(nx-1,Math.floor((maX-ox)/cw)));
+    const gz0=Math.max(0,Math.min(nz-1,Math.floor((miZ-oz)/cd))), gz1=Math.max(0,Math.min(nz-1,Math.floor((maZ-oz)/cd)));
+    const s0=Math.max(0,Math.min(K-1,Math.floor((miY-oy)/sh))), s1=Math.max(0,Math.min(K-1,Math.floor((maY-oy)/sh)));
+    // build 1092: a triangle spanning more than one column is CLIPPED to each cell (Sutherland-Hodgman
+    // against the four cell planes, interpolating y) and stamps only the fragment's true height range —
+    // see the history above _mgridGatherTris for why. Exact for any orientation.
+    const multi = (gx1>gx0 || gz1>gz0);
+    for(let gx=gx0;gx<=gx1;gx++) for(let gz=gz0;gz<=gz1;gz++){
+      const base=(gx*nz+gz)*K;
+      let lo=miY, hi=maY;
+      // build 1148: the fragment's XZ extent, needed for the footprint (declared here — reading the
+      // clipped polygon outside the `multi` branch was a real bug, caught by test-1113 executing this).
+      let fax0=miX, fax1=maX, faz0=miZ, faz1=maZ;
+      if(multi){
+        let poly=[[ax,ay,az],[bx,by,bz],[cx,cy,cz]];
+        const rx0=ox+gx*cw, rx1=rx0+cw, rz0=oz+gz*cd, rz1=rz0+cd;
+        for(let pass=0; pass<4 && poly.length; pass++){
+          const out=[];
+          for(let i=0;i<poly.length;i++){
+            const p0=poly[i], p1=poly[(i+1)%poly.length];
+            const f0 = pass===0? p0[0]-rx0 : pass===1? rx1-p0[0] : pass===2? p0[2]-rz0 : rz1-p0[2];
+            const f1 = pass===0? p1[0]-rx0 : pass===1? rx1-p1[0] : pass===2? p1[2]-rz0 : rz1-p1[2];
+            if(f0>=0) out.push(p0);
+            if((f0<0)!==(f1<0)){ const t2=f0/(f0-f1); out.push([p0[0]+(p1[0]-p0[0])*t2, p0[1]+(p1[1]-p0[1])*t2, p0[2]+(p1[2]-p0[2])*t2]); }
           }
-          work += 4;
-          if(!poly.length) continue;             // in the box, but the triangle never enters this cell
-          lo=Infinity; hi=-Infinity; fax0=Infinity; fax1=-Infinity; faz0=Infinity; faz1=-Infinity;
-          for(const v of poly){ if(v[1]<lo) lo=v[1]; if(v[1]>hi) hi=v[1];
-            if(v[0]<fax0) fax0=v[0]; if(v[0]>fax1) fax1=v[0];
-            if(v[2]<faz0) faz0=v[2]; if(v[2]>faz1) faz1=v[2]; }
+          poly=out;
         }
-        const cs0=Math.max(0,Math.min(K-1,Math.floor((lo-oy)/sh)));
-        const cs1=Math.max(cs0,Math.min(K-1,Math.floor((hi-oy)/sh)));
-        work += cs1-cs0+2;
-        if(footPer){
-          // build 1148: the fragment's real XZ extent inside THIS cell, as cell-relative bytes. For a
-          // clipped fragment that is the clipped polygon's own extent; for a triangle wholly inside one
-          // cell it is the triangle's bounding box. Computed once per cell, then only min/max per slot.
-          const rx0=ox+gx*cw, rz0=oz+gz*cd;
-          const q0=(v,r,w)=>{ const t=(v-r)/w; return t<=0?0:t>=1?255:Math.floor(t*255); };
-          const q1=(v,r,w)=>{ const t=(v-r)/w; return t<=0?0:t>=1?255:Math.ceil(t*255); };
-          const bx0b=q0(fax0,rx0,cw), bx1b=q1(fax1,rx0,cw), bz0b=q0(faz0,rz0,cd), bz1b=q1(faz1,rz0,cd);
-          const s0f=(footPer===2)?cs0:0, s1f=(footPer===2)?cs1:0;
-          for(let sl=s0f;sl<=s1f;sl++){
-            const i=(footPer===2)?(base+sl):((base/K)|0);
-            if(bx0b<fx0[i]) fx0[i]=bx0b; if(bx1b>fx1[i]) fx1[i]=bx1b;
-            if(bz0b<fz0[i]) fz0[i]=bz0b; if(bz1b>fz1[i]) fz1[i]=bz1b;
-          }
-        }
-        for(let sl=cs0;sl<=cs1;sl++) setSlot(base+sl);
+        work += 4;
+        if(!poly.length) continue;             // in the box, but the triangle never enters this cell
+        lo=Infinity; hi=-Infinity; fax0=Infinity; fax1=-Infinity; faz0=Infinity; faz1=-Infinity;
+        for(const v of poly){ if(v[1]<lo) lo=v[1]; if(v[1]>hi) hi=v[1];
+          if(v[0]<fax0) fax0=v[0]; if(v[0]>fax1) fax1=v[0];
+          if(v[2]<faz0) faz0=v[2]; if(v[2]>faz1) faz1=v[2]; }
       }
+      const cs0=Math.max(0,Math.min(K-1,Math.floor((lo-oy)/sh)));
+      const cs1=Math.max(cs0,Math.min(K-1,Math.floor((hi-oy)/sh)));
+      work += cs1-cs0+2;
+      if(footPer){
+        // build 1148: the fragment's real XZ extent inside THIS cell, as cell-relative bytes.
+        const rx0=ox+gx*cw, rz0=oz+gz*cd;
+        const q0=(v,r,w2)=>{ const t2=(v-r)/w2; return t2<=0?0:t2>=1?255:Math.floor(t2*255); };
+        const q1=(v,r,w2)=>{ const t2=(v-r)/w2; return t2<=0?0:t2>=1?255:Math.ceil(t2*255); };
+        const bx0b=q0(fax0,rx0,cw), bx1b=q1(fax1,rx0,cw), bz0b=q0(faz0,rz0,cd), bz1b=q1(faz1,rz0,cd);
+        const s0f=(footPer===2)?cs0:0, s1f=(footPer===2)?cs1:0;
+        for(let sl=s0f;sl<=s1f;sl++){
+          const i=(footPer===2)?(base+sl):((base/K)|0);
+          if(bx0b<fx0[i]) fx0[i]=bx0b; if(bx1b>fx1[i]) fx1[i]=bx1b;
+          if(bz0b<fz0[i]) fz0[i]=bz0b; if(bz1b>fz1[i]) fz1[i]=bz1b;
+        }
+      }
+      for(let sl=cs0;sl<=cs1;sl++) setSlot(base+sl);
     }
-  });
-  if(bail || !tris) return null;
+  }
+  if(bail || !n) return null;
   // Per column, the contiguous vertical runs of solid slots. A column under an archway holds a low threshold
   // run and a high crown run with an EMPTY gap between them, so a body passes through; a solid wall column is
   // one floor-to-top run; stair treads are single low runs you step up.
@@ -11412,8 +11579,8 @@ function buildModelGridBoxes(obj, overall){
   // build 1148: each run also carries the UNION of its slots' footprints, widened to MGRID_MIN_THICK and
   // quantised — so the key and the emitted box agree, and two columns whose footprints differ only below
   // the minimum thickness still merge.
-  const minBx=Math.min(255, Math.max(1, Math.ceil(MGRID_MIN_THICK/cw*255)));
-  const minBz=Math.min(255, Math.max(1, Math.ceil(MGRID_MIN_THICK/cd*255)));
+  const minBx=Math.min(255, Math.max(1, Math.ceil(opts.minThick/cw*255)));
+  const minBz=Math.min(255, Math.max(1, Math.ceil(opts.minThick/cd*255)));
   // Widening a too-thin footprint has to extend it toward the NEARER CELL EDGE, not around its centre.
   // A single plane records no information about which side of it the solid lies on, and a wall thinner
   // than a cell puts its two faces in DIFFERENT cells — so each cell sees one plane, and centring the
@@ -11505,7 +11672,7 @@ function buildModelGridBoxes(obj, overall){
   // tens of thousands of columns, and every consumer (the player's clearAt, insideSolid, the enemy resolve)
   // walks the box list per query — a raw per-column emit would trade one bug for a framerate one. Long walls
   // and wide floors are exactly the case greedy meshing collapses best.
-  const boxes=[], ey=1e-3, used=new Uint8Array(N);
+  const emit=[], ey=1e-3, used=new Uint8Array(N);
   // build 1148: merging along an axis is only LOSSLESS while the footprint spans the whole cell on that
   // axis. Two adjacent columns each holding a sliver at the same relative position are two thin walls with
   // a gap between them, and one merged box would bridge it — solid where the model is open, which is the
@@ -11533,10 +11700,33 @@ function buildModelGridBoxes(obj, overall){
       // whole span is exact.
       const bx0=cx0+(f[0]/255)*spanX-ey, bx1=cx0+(f[1]/255)*spanX+ey;
       const bz0=cz0+(f[2]/255)*spanZ-ey, bz1=cz0+(f[3]/255)*spanZ+ey;
-      boxes.push(new THREE.Box3(new THREE.Vector3(bx0, oy+(+p[0])*sh, bz0), new THREE.Vector3(bx1, oy+(+p[1])*sh, bz1)));
+      emit.push(bx0, oy+(+p[0])*sh, bz0, bx1, oy+(+p[1])*sh, bz1);
     }
   }
-  return boxes.length ? boxes : null;
+  return emit.length ? { boxes:new Float32Array(emit), n:emit.length/6 } : null;
+}
+// build 1203: THE WORKER. A big imported model's grid derivation measured 110-137 ms on the main thread
+// (build 1148's own numbers) — a guaranteed hitch on every level-sized GLB load, mid-session included
+// (co-op level sync, the local: drop path). The worker runs _mgridCore's OWN toString() from a Blob (the
+// levelgen worker's precedent), receives the gathered triangles by TRANSFER (zero copy), and answers with
+// the flat box array by transfer back. While the answer is in flight the prop keeps the per-mesh AABB
+// collider — the pre-grid, fail-SOLID behaviour: a building is briefly over-solid, never walk-through.
+// Small models (<= MGRID_SYNC_TRIS) stay synchronous: their derivation is cheaper than the round trip.
+const MGRID_SYNC_TRIS = 30000;
+let _mgridWorker=null, _mgridWorkerDead=false, _mgridJobs={}, _mgridJobN=0;
+function _mgridEnsureWorker(){
+  if(_mgridWorker || _mgridWorkerDead) return _mgridWorker;
+  try{
+    if(typeof Worker==='undefined' || typeof Blob==='undefined' || typeof URL==='undefined' || !URL.createObjectURL) throw new Error('no worker');
+    const blob=new Blob(['"use strict";const _mgridCore='+_mgridCore.toString()+';onmessage=function(ev){ var d=ev.data, r=null; try{ r=_mgridCore(d.tri,d.n,d.bmin,d.bmax,d.opts); }catch(e){} if(r) postMessage({id:d.id,boxes:r.boxes,n:r.n},[r.boxes.buffer]); else postMessage({id:d.id,boxes:null,n:0}); };'],{type:'text/javascript'});
+    _mgridWorker=new Worker(URL.createObjectURL(blob));
+    _mgridWorker.onmessage=(ev)=>{ const d=ev.data, cb=_mgridJobs[d.id]; delete _mgridJobs[d.id]; if(cb) cb(d.boxes ? { boxes:d.boxes, n:d.n } : null); };
+    _mgridWorker.onerror=()=>{   // a dead worker fails every pending job to null (per-mesh boxes stand) and future derivations go synchronous
+      _mgridWorkerDead=true; const jobs=_mgridJobs; _mgridJobs={};
+      try{ _mgridWorker.terminate(); }catch(e){} _mgridWorker=null;
+      for(const id in jobs){ try{ jobs[id](null); }catch(e){} } };
+  }catch(e){ _mgridWorkerDead=true; _mgridWorker=null; }
+  return _mgridWorker;
 }
 function refreshPropCollider(obj){
   if(obj && obj.userData && !obj.userData._cgMobile && typeof _cgDirty==='function') _cgDirty();   /* build 1188: a mover's per-frame refresh must NOT rebuild the grid; statics that move reclassify through one rebuild */
@@ -11559,8 +11749,34 @@ function refreshPropCollider(obj){
     if(isFinite(b.min.x) && isFinite(b.max.x)) boxes.push(b);
   });
   let finalBoxes = boxes.length ? boxes : [obj.userData.box];
-  if(isModelSrc(obj.userData.src)){ const grid = buildModelGridBoxes(obj, obj.userData.box); if(grid && grid.length) finalBoxes = grid; }
-  obj.userData.boxes = finalBoxes;   // imported models: per-column grid so concave shape (stairs/archway) is walkable
+  if(isModelSrc(obj.userData.src)){
+    // build 1203: big models derive OFF-THREAD. The token invalidates any in-flight answer the moment the
+    // prop is re-derived (moved, rescaled, re-imported) — a stale grid for the old transform must never land.
+    const tok=(obj.userData._mgridTok=(obj.userData._mgridTok|0)+1);
+    const g=_mgridGatherTris(obj);
+    if(!g.over && g.n){
+      const ov=obj.userData.box, bmin=[ov.min.x,ov.min.y,ov.min.z], bmax=[ov.max.x,ov.max.y,ov.max.z], opts=_mgridOpts();
+      const w=(g.n>MGRID_SYNC_TRIS) ? _mgridEnsureWorker() : null;
+      if(w){
+        const id=++_mgridJobN;
+        _mgridJobs[id]=(r)=>{
+          if(!r || !obj.userData || obj.userData._mgridTok!==tok) return;   // failed, or superseded
+          const grid=_mgridWrap(r); if(!grid) return;
+          obj.userData.boxes=grid;
+          if(!obj.userData._cgMobile && typeof _cgDirty==='function') _cgDirty();       // build 1188: the spatial grid re-learns it
+          if(typeof _navDirtyProp==='function') _navDirtyProp(obj);                     // build 1200: the nav grid re-samples it
+        };
+        try{ w.postMessage({ id, tri:g.tri, n:g.n, bmin, bmax, opts }, [g.tri.buffer]); }
+        catch(e){ delete _mgridJobs[id]; const g2=_mgridGatherTris(obj);                // the transfer may have consumed the buffer: re-gather
+          const r=(!g2.over && g2.n) ? _mgridCore(g2.tri, g2.n, bmin, bmax, opts) : null;
+          const grid=r && _mgridWrap(r); if(grid) finalBoxes=grid; }
+      } else {
+        const r=_mgridCore(g.tri, g.n, bmin, bmax, opts);
+        const grid=r && _mgridWrap(r); if(grid) finalBoxes=grid;
+      }
+    }
+  }
+  obj.userData.boxes = finalBoxes;   // imported models: per-column grid so concave shape (stairs/archway) is walkable — per-mesh AABBs (fail-solid) while a worker answer is in flight
   obj.userData.climbable = true;
 }
 // A built-in box primitive (used when src === 'box'): a 1×1×1 crate you scale via the transform.
@@ -15929,6 +16145,24 @@ function _propRigCfg(url){
 // (restoreLevel / wipe), because stale entries about a previous level are their own kind of lie; a RETRY that
 // succeeds also clears its url, so a flaky network heals the report.
 const assetLoadFailures = new Map();   // src -> { msg, n }
+// build 1214: the logic graph was a black box that swallowed its own failures — a misspelled tag, a bad
+// clip name, a wrong place field all did NOTHING, with no console line and no report, so the only way a
+// creator could debug "why didn't my door open" was redeploy-replay-stare-guess. Failures are now recorded
+// (deduped, capped) exactly like asset failures (build 1167), and levelIssues() surfaces them the moment
+// the creator returns to the editor — "what happened last run". The graph runs only during play, so this
+// is a play-time log read at author-time, which is the whole point.
+const logicFailures = new Map();   // message -> { n }
+function _noteLogicFailure(msg){
+  const key = String(msg||'').slice(0, 160);
+  const e = logicFailures.get(key);
+  if(e){ e.n++; }
+  else if(logicFailures.size < 20) logicFailures.set(key, { n: 1 });
+  try{ if(typeof renderLevelIssues==='function' && typeof editorOpen!=='undefined' && editorOpen) renderLevelIssues(); }catch(e2){}
+}
+// build 1214: does any placed prop carry this tag? A tag-based do-verb aimed at a tag nothing answers is
+// the commonest logic mistake, and the runtime used to no-op it in silence.
+function _lgTagExists(tag){ if(typeof propModels==='undefined') return true; for(const o of propModels){ if(o && o.userData && o.userData.tag===tag) return true; } return false; }
+const _LG_TAG_VERBS = new Set(['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']);
 function _noteAssetFailure(src, err){
   const key = String(src||'').slice(0, 300);
   const e = assetLoadFailures.get(key);
@@ -15955,6 +16189,7 @@ function wipeScene(){ pushUndoSnapshot(); _wipeSceneCore(); }
 // build 879: the wipe body, callable without its own undo snapshot (the example loader pushes one first)
 function _wipeSceneCore(){
   if(typeof assetLoadFailures!=='undefined') assetLoadFailures.clear();   // build 1167: a fresh scene starts with a clean report
+  if(typeof logicFailures!=='undefined') logicFailures.clear();            // build 1214: and a clean logic log
   for(let i=propModels.length-1;i>=0;i--) removeProp(i);
   if(typeof removeLight==='function') for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
   if(typeof removeSpawnMarker==='function') for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
@@ -16468,6 +16703,12 @@ function _enemyEff(k){ const b=ENEMY_BASE[k]||{ hp:10, dmg:5, speedMin:3, speedM
 // Weighted random type — later waves bias toward tougher + ranged hostiles, and mix in the odd Sapper.
 function pickEnemyType(waveNum, rng){
   rng = rng || Math.random; const r = rng();
+  // build 1213: the two most mechanically interesting enemies — the Shieldbearer (flank it) and the
+  // Charger (dodge its lunge) — used to be UNREACHABLE from random waves; they existed only in authored
+  // spawns/manifests, so random mode froze into the same five-type mix at wave 5 forever. Two new tiers
+  // fold them in so the composition keeps forcing weapon/positioning changes deep into a run.
+  if(waveNum>=12){ return r<0.24 ? 'grunt' : (r<0.42 ? 'runner' : (r<0.58 ? 'gunner' : (r<0.70 ? 'sapper' : (r<0.84 ? 'brute' : (r<0.92 ? 'shielded' : 'charger'))))); }
+  if(waveNum>=8){ return r<0.30 ? 'grunt' : (r<0.50 ? 'runner' : (r<0.66 ? 'gunner' : (r<0.80 ? 'sapper' : (r<0.92 ? 'brute' : 'shielded')))); }
   if(waveNum>=5){ return r<0.34 ? 'grunt' : (r<0.56 ? 'runner' : (r<0.74 ? 'gunner' : (r<0.88 ? 'sapper' : 'brute'))); }
   if(waveNum>=3){ return r<0.48 ? 'grunt' : (r<0.72 ? 'runner' : (r<0.86 ? 'gunner' : (r<0.95 ? 'sapper' : 'brute'))); }
   return r<0.74 ? 'grunt' : (r<0.92 ? 'runner' : (r<0.98 ? 'gunner' : 'brute'));
@@ -18282,7 +18523,12 @@ function spawnEnemy(spawn){
   buildEnemyVisual(mesh);
   scene.add(mesh);
   const _eff = (typeof _enemyEff==='function') ? _enemyEff(typeKey) : ty;   /* build 1191: the level's tuning, clamped at the loaders */
-  const e = { id: nextEnemyId++, mesh, hp:_eff.hp, maxHp:_eff.hp, speed: _eff.speedMin + Math.random()*(_eff.speedMax-_eff.speedMin), dmg:_eff.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
+  // build 1213: escalation was COUNT-ONLY (n = 3 + wave*2) — wave 20 was 43 grunts, a spam/ammo problem,
+  // not a pressure problem. A gentle flat HP ramp adds real pressure, capped at wave 25 (+100%). Random
+  // mode only: a prebuilt/manifest level owns its own difficulty, and the editor preview must stay honest.
+  const _wr = (typeof gameCfg!=='undefined' && gameCfg.mode==='random' && !(typeof editorOpen!=='undefined' && editorOpen)) ? (1 + 0.04*Math.min((typeof wave!=='undefined'?wave:1), 25)) : 1;
+  const _hp = Math.round(_eff.hp * _wr);
+  const e = { id: nextEnemyId++, mesh, hp:_hp, maxHp:_hp, speed: _eff.speedMin + Math.random()*(_eff.speedMax-_eff.speedMin), dmg:_eff.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
     ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
     exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
     strafe: !!ty.strafe,   // build 633: ranged enemy strafes while holding standoff
@@ -18325,7 +18571,7 @@ function alertEnemiesNear(sx, sz, radius){
     if(dx*dx + dz*dz <= r2) alertEnemy(en, sx, sz);
   }
 }
-function enemyDesiredTarget(en, px, pz, dist, now){
+function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = the target's height, so a pursuit ends on the STOREY the target stands on */
   const mode = en.mode || 'hunt';
   // line-of-sight: can this enemy actually SEE the player right now? (same wall test the gun uses)
   const eY = (en.mesh.position.y!=null) ? en.mesh.position.y : 1.4;
@@ -18344,17 +18590,17 @@ function enemyDesiredTarget(en, px, pz, dist, now){
   // HUNT: relentless pursuer. Still chases anywhere, but only "sees" (and fires) with LOS; when sight breaks
   // it heads to the last spot it saw the player rather than x-raying through walls.
   if(mode === 'hunt'){
-    if(sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz }; return { tx:px, tz:pz, chase:true, see:true }; }
+    if(sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; return { tx:px, tz:pz, ty:py, chase:true, see:true }; }
     if(en.lkp){ if(!en.lostAt) en.lostAt = now;
       if(Math.hypot(en.mesh.position.x-en.lkp.x, en.mesh.position.z-en.lkp.z) < 1.4 && (now-en.lostAt) > 2500){ en.lkp=null; }   // reached last spot, gave up the trail
-      else return { tx:en.lkp.x, tz:en.lkp.z, chase:true, see:false };   // hunt the last-known position
+      else return { tx:en.lkp.x, tz:en.lkp.z, ty:en.lkp.y, chase:true, see:false };   // hunt the last-known position
     }
-    return { tx:px, tz:pz, chase:true, see:false };   // never saw it yet -> advance toward it (original hunt feel)
+    return { tx:px, tz:pz, ty:py, chase:true, see:false };   // never saw it yet -> advance toward it (original hunt feel)
   }
 
   // PATROL / HOLD: detection is now gated on BOTH range AND line-of-sight.
   const detect = en.detectR || 18;   // build 620: wider default sight so patrollers notice you a hall earlier
-  if(dist <= detect && sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz }; }
+  if(dist <= detect && sees){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }
   else if(en.aware){
     // lost sight or range: remember where they were, chase the last spot, then give up after a grace period.
     // A recent gunfire/blast alert extends the window so a sniped enemy actually crosses the map to investigate.
@@ -18363,8 +18609,8 @@ function enemyDesiredTarget(en, px, pz, dist, now){
     if(now - en.lostAt > giveUp) { en.aware = false; en._alertedT = 0; }   // give up and return to patrol/post
   }
   if(en.aware){
-    if(sees && dist <= detect*1.6){ en.lkp = { x:px, z:pz }; return { tx:px, tz:pz, chase:true, see:true }; }   // still in contact
-    if(en.lkp) return { tx:en.lkp.x, tz:en.lkp.z, chase:true, see:false };   // search toward last-known position
+    if(sees && dist <= detect*1.6){ en.lkp = { x:px, z:pz, y:py }; return { tx:px, tz:pz, ty:py, chase:true, see:true }; }   // still in contact
+    if(en.lkp) return { tx:en.lkp.x, tz:en.lkp.z, ty:en.lkp.y, chase:true, see:false };   // search toward last-known position
   }
   const hx = en.home ? en.home.x : en.mesh.position.x, hz = en.home ? en.home.z : en.mesh.position.z;
   if(mode === 'patrol'){
@@ -18970,7 +19216,7 @@ function _waterSurfaceMat(z){
   return new THREE.ShaderMaterial({
     uniforms: {
       uDeep:   { value: new THREE.Color((z.color!=null?+z.color:0x14586e)>>>0) },
-      uSky:    { value: new THREE.Color(0x9fc8d8) },
+      uSky:    { value: new THREE.Color(0x9fc8d8) },   /* build 1217: a NOON-blue seed; updateWaterZones drives it from the live sky each frame */
       uOp:     { value: Math.max(0.1, Math.min(0.95, z.op!=null?+z.op:0.72)) },
       uTime:   { value: 0 },
       uWave:   { value: Math.max(0, Math.min(2.5, z.wave!=null?+z.wave:1)) },
@@ -19155,7 +19401,12 @@ function updateWaterZones(dt){
     if(g.userData.editorBits) for(const m of g.userData.editorBits) m.visible=_eo;
     const u=g.userData.surf && g.userData.surf.material.uniforms;
     if(u){ u.uTime.value=_waterTime; u.uLight.value=_waterLightF(); if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof moon!=='undefined'?moon.intensity:1))); }
-      u.uExpo.value=renderer.toneMappingExposure; u.uTM.value=(typeof worldCfg!=='undefined' && worldCfg.filmic!=null)?+worldCfg.filmic:1; }   /* build 1184: the water sees the same exposure (incl. auto) and filmic switch as the scene */
+      u.uExpo.value=renderer.toneMappingExposure; u.uTM.value=(typeof worldCfg!=='undefined' && worldCfg.filmic!=null)?+worldCfg.filmic:1;
+      // build 1217: the surface reflects the LIVE sky, not a hardcoded noon-blue. SCENE_FOG.color IS the
+      // sky at the horizon (applySky sets it from the same skyRadiance model, recomputed on the day cycle),
+      // so a lake goes warm at sunset, dark at night, and picks up an authored sky's hue — one Color copy
+      // per zone per frame, no new pass.
+      if(typeof SCENE_FOG!=='undefined' && SCENE_FOG.color) u.uSky.value.copy(SCENE_FOG.color); }   /* build 1184: the water sees the same exposure (incl. auto) and filmic switch as the scene */
   }
   // underwater tint: a fixed overlay while the EYE is below a surface (cheap, sells the dive)
   if(!_waterTintEl){
@@ -20697,6 +20948,9 @@ const NET = {
   _hostSeen:0,         // build 578: client -> last time (ms) the host sent anything
   _liveT:0,            // throttle for the liveness check
   _lost:false,         // client: guards a one-time "host disconnected" teardown
+  migGen:0,            // build 1201: host-migration generation — the migrated room lives at '<code>-m<gen>'
+  _mig:false,          // build 1201: a migration is in flight (guards double-starts; cleared on promote/rejoin)
+  _maxPid:0,           // build 1201: highest player id ever seen in a snapshot (a promoted host's id fountain)
 };
 const NET_TIMEOUT_MS = 8000;   // build 578: peers send ~20x/sec in-game; 8s of total silence = a real drop, not lag
 // Pure: given a map of id -> last-seen timestamp, return ids that have gone silent past the timeout.
@@ -20745,9 +20999,16 @@ function navWalkable(x,z){   // can a bot stand at this column? Authority = clea
   // standable even when the model's coarse collider box bulges above the actual surface. insideSolid has no
   // such escape, so those over-occupied boxes made it falsely reject every rock cell (the player walks there
   // via clearAt, so the nav grid must agree with clearAt — not with the raw boxes).
-  if(isFinite(standLo) && clearAt(x,z,standLo,lo)) return { ok:true, y:standLo };
-  // The low floor is blocked (a platform/ledge slab) or off-grid — fall back to the single highest surface.
   const gy=surfaceTopAt(x,z);
+  if(isFinite(standLo) && clearAt(x,z,standLo,lo)){
+    /* build 1200: SECOND LAYER — the same column's highest surface (a roof, an upper storey), kept only when
+       it is a genuinely distinct floor (NAV_LAYER_SEP of clearance above layer A) that a bot can stand on by
+       the SAME clearAt authority. One extra probe per cell, and only where the two surfaces differ. */
+    const topStand=(gy>-Infinity)?Math.max(gy,ty):ty;
+    if(isFinite(topStand) && topStand-standLo>NAV_LAYER_SEP && clearAt(x,z,topStand,gy)) return { ok:true, y:standLo, okB:true, yB:topStand };
+    return { ok:true, y:standLo };
+  }
+  // The low floor is blocked (a platform/ledge slab) or off-grid — fall back to the single highest surface.
   const standY=(gy>-Infinity)?Math.max(gy,ty):ty;
   if(!isFinite(standY)) return false;
   return { ok: clearAt(x,z,standY,gy), y: standY };
@@ -20762,33 +21023,48 @@ function navBuildAlloc(){
   NAV.nz = NAV.nx;
   const N = NAV.nx*NAV.nz;
   NAV.walk = new Uint8Array(N); NAV.y = new Float32Array(N);
+  NAV.walkB = new Uint8Array(N); NAV.yB = new Float32Array(N);   /* build 1200: the column's SECOND floor (roof / upper storey) */
 }
 function navSampleCell(gx,gz){   // walkability for ONE cell (the raycast-heavy part)
   const x = NAV.ox + (gx+0.5)*NAV.cell, z = NAV.oz + (gz+0.5)*NAV.cell;
   const w = navWalkable(x,z); const idx = navIdx(gx,gz);
   if(w && w.ok){ NAV.walk[idx]=1; NAV.y[idx]=w.y; } else { NAV.walk[idx]=0; NAV.y[idx]=(w&&isFinite(w.y))?w.y:0; }
+  if(NAV.walkB){ if(w && w.okB){ NAV.walkB[idx]=1; NAV.yB[idx]=w.yB; } else { NAV.walkB[idx]=0; NAV.yB[idx]=0; } }
 }
 function navSampleRow(gx){ for(let gz=0; gz<NAV.nz; gz++) navSampleCell(gx,gz); }   // (kept for the synchronous full build)
 function navBuildLinks(){
   // Climbable-up height = how high a bot can JUMP onto a ledge (apex rise * 0.85 for a reliable landing).
   NAV_UP = (typeof JUMP!=='undefined' && typeof GRAV!=='undefined' && GRAV>0) ? Math.max(0.6, (JUMP*JUMP/(2*GRAV))*0.85) : 2.4;
-  const N = NAV.nx*NAV.nz; NAV.link = new Uint8Array(N); const DIRS = navDirs();
-  for(let gx=0; gx<NAV.nx; gx++) for(let gz=0; gz<NAV.nz; gz++){
-    const idx=navIdx(gx,gz); if(!NAV.walk[idx]) continue; const cy=NAV.y[idx]; let mask=0;
+  // build 1200: TWO LAYERS. Node id = cellIdx + N*layer (layer 0 = the floor the grid always had; layer 1 =
+  // the column's distinct upper surface). A link mask is 16 bits: bit d = a link in direction d, bit d+8 =
+  // that link lands on the target cell's LAYER B. Stairs fall out of this with no special case: the
+  // stairwell's layer-0 floor rises cell by cell until the neighbouring cell's layer B (the storey floor)
+  // is within jump reach, and the per-direction target-layer bit carries the transition. Per direction the
+  // target layer is the one whose floor is vertically CLOSEST inside the [-NAV_DOWN, +NAV_UP] window.
+  const N = NAV.nx*NAV.nz; NAV.link = new Uint16Array(2*N); const DIRS = navDirs();
+  const wAt=(l,i)=> l ? NAV.walkB[i] : NAV.walk[i];
+  const yAt=(l,i)=> l ? NAV.yB[i] : NAV.y[i];
+  const nearOk=(i,cy)=>{ /* corner-cut guard: does ANY layer of this cell sit within the vertical window? */
+    if(NAV.walk[i] && (NAV.y[i]-cy)<=NAV_UP && (NAV.y[i]-cy)>=-NAV_DOWN) return true;
+    return !!(NAV.walkB[i] && (NAV.yB[i]-cy)<=NAV_UP && (NAV.yB[i]-cy)>=-NAV_DOWN); };
+  for(let l=0;l<2;l++) for(let gx=0; gx<NAV.nx; gx++) for(let gz=0; gz<NAV.nz; gz++){
+    const idx=navIdx(gx,gz); if(!wAt(l,idx)) continue; const cy=yAt(l,idx); let mask=0;
     for(let d=0; d<8; d++){ const ax=gx+DIRS[d][0], az=gz+DIRS[d][1];
-      if(ax<0||ax>=NAV.nx||az<0||az>=NAV.nz) continue; const nidx=navIdx(ax,az); if(!NAV.walk[nidx]) continue;
-      const dy=NAV.y[nidx]-cy; if(dy>NAV_UP || dy<-NAV_DOWN) continue;
-      if(d>=4 && (!NAV.walk[navIdx(ax,gz)] || !NAV.walk[navIdx(gx,az)])) continue;   // don't cut corners
-      mask |= (1<<d);
+      if(ax<0||ax>=NAV.nx||az<0||az>=NAV.nz) continue; const nidx=navIdx(ax,az);
+      let tl=-1, bdy=1e9;
+      for(let q=0;q<2;q++){ if(!wAt(q,nidx)) continue; const dy=yAt(q,nidx)-cy; if(dy>NAV_UP || dy<-NAV_DOWN) continue; const a=Math.abs(dy); if(a<bdy){ bdy=a; tl=q; } }
+      if(tl<0) continue;
+      if(d>=4 && (!nearOk(navIdx(ax,gz),cy) || !nearOk(navIdx(gx,az),cy))) continue;   // don't cut corners
+      mask |= (1<<d); if(tl===1) mask |= (1<<(d+8));
     }
-    NAV.link[idx]=mask;
+    NAV.link[idx+l*N]=mask;
   }
-  // Label connected components so navFindPath can reject unreachable goals in O(1).
-  NAV.comp = new Int32Array(N).fill(-1);
+  // Label connected components over BOTH layers so navFindPath can reject unreachable goals in O(1).
+  NAV.comp = new Int32Array(2*N).fill(-1);
   let cid=0;
-  for(let s=0;s<N;s++){ if(!NAV.walk[s] || NAV.comp[s]>=0) continue; NAV.comp[s]=cid; const q=[s]; let hd=0;
-    while(hd<q.length){ const cur=q[hd++], cx=(cur/NAV.nz)|0, cz=cur%NAV.nz, mask=NAV.link[cur];
-      for(let d=0;d<8;d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*NAV.nz+(cz+DIRS[d][1]); if(NAV.comp[ni]>=0) continue; NAV.comp[ni]=cid; q.push(ni); } }
+  for(let s=0;s<2*N;s++){ if(!wAt(s>=N?1:0, s%N) || NAV.comp[s]>=0) continue; NAV.comp[s]=cid; const q=[s]; let hd=0;
+    while(hd<q.length){ const cur=q[hd++], ci=cur%N, cx=(ci/NAV.nz)|0, cz=ci%NAV.nz, mask=NAV.link[cur];
+      for(let d=0;d<8;d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*NAV.nz+(cz+DIRS[d][1]) + (((mask>>(d+8))&1)?N:0); if(NAV.comp[ni]>=0) continue; NAV.comp[ni]=cid; q.push(ni); } }
     cid++; }
 }
 // Synchronous full build (used by the debug overlay, where a brief hitch is acceptable).
@@ -20816,19 +21092,22 @@ function buildNavOverlay(){
   _clearNavOverlay();
   if(!NAV.built) buildNavGrid();
   if(!NAV.walk) return;
-  let cnt=0; for(let q=0;q<NAV.walk.length;q++) if(NAV.walk[q]) cnt++;
+  let cnt=0; for(let q=0;q<NAV.walk.length;q++){ if(NAV.walk[q]) cnt++; if(NAV.walkB&&NAV.walkB[q]) cnt++; }
   if(!cnt){ if(typeof flashToast==='function') flashToast('Nav grid: 0 walkable cells'); return; }
   // Reachability from where the player stands (one connected component over the links).
   const px=(typeof player!=='undefined'&&player.pos)?player.pos.x:0, pz=(typeof player!=='undefined'&&player.pos)?player.pos.z:0;
-  const si=navNearestWalkable(px,pz);
-  const flood=(si>=0)?navFloodReachable(si):{ reach:new Uint8Array(NAV.walk.length), count:0, farthest:-1 };
+  const si=navNearestWalkable(px,pz,(typeof player!=='undefined'&&player.pos)?player.pos.y:null);
+  const flood=(si>=0)?navFloodReachable(si):{ reach:new Uint8Array(2*NAV.walk.length), count:0, farthest:-1 };
   const geo=new THREE.PlaneGeometry(NAV.cell*0.86, NAV.cell*0.86); geo.rotateX(-Math.PI/2);
   const mat=new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0.5, depthWrite:false, depthTest:false, side:THREE.DoubleSide });
   const inst=new THREE.InstancedMesh(geo, mat, cnt); inst.frustumCulled=false; inst.renderOrder=8;
-  const m=new THREE.Matrix4(); const cGreen=new THREE.Color(0x4dff8a), cBlue=new THREE.Color(0x1b3550); let k=0;
+  const m=new THREE.Matrix4(); const cGreen=new THREE.Color(0x4dff8a), cBlue=new THREE.Color(0x1b3550), cAmber=new THREE.Color(0xffb347); let k=0;
   for(let gx=0;gx<NAV.nx;gx++) for(let gz=0;gz<NAV.nz;gz++){ const idx=navIdx(gx,gz); if(!NAV.walk[idx]) continue;
     const x=NAV.ox+(gx+0.5)*NAV.cell, z=NAV.oz+(gz+0.5)*NAV.cell; const rch=flood.reach[idx]; m.makeTranslation(x, NAV.y[idx]+(rch?0.18:0.06), z); inst.setMatrixAt(k, m);
     inst.setColorAt(k, rch?cGreen:cBlue); k++; }   // green=reachable from you, blue=walkable but cut off
+  for(let gx=0;gx<NAV.nx;gx++) for(let gz=0;gz<NAV.nz;gz++){ const idx=navIdx(gx,gz); if(!(NAV.walkB&&NAV.walkB[idx])) continue;
+    const x=NAV.ox+(gx+0.5)*NAV.cell, z=NAV.oz+(gz+0.5)*NAV.cell; const rch=flood.reach[idx+NAV.walk.length]; m.makeTranslation(x, NAV.yB[idx]+(rch?0.18:0.06), z); inst.setMatrixAt(k, m);
+    inst.setColorAt(k, rch?cAmber:cBlue); k++; }   // amber = the UPPER layer (build 1200): a roof/storey a bot can reach shows amber
   inst.instanceMatrix.needsUpdate=true; if(inst.instanceColor) inst.instanceColor.needsUpdate=true; scene.add(inst); NAV.overlay=inst;
   // Demo path to the farthest REACHABLE cell, so it always resolves and shows A* routing around the rocks.
   let pathLen=0;
@@ -20846,85 +21125,129 @@ function buildNavOverlay(){
   if(typeof flashToast==='function') flashToast('Nav: '+cnt+' walkable, '+flood.count+' reachable from you, largest region '+largest+(pathLen?(', path '+pathLen):''));
 }
 function navOverlayToggle(){ NAV.show=!NAV.show; if(NAV.show){ NAV.built=false; buildNavOverlay(); } else _clearNavOverlay(); }
+// build 1200: DIRTY PATCHES — the grid finally notices the world changing. Prop verbs (show/hide/move/del)
+// and shattered props mark their footprint; a budgeted per-frame re-sample runs the SAME navWalkable over
+// just those cells, then ONE navBuildLinks() pass rebuilds links + components when the queue drains (a few
+// ms at the 160x160 cap — cheaper than incremental link surgery and impossible to get subtly wrong). Paths
+// self-heal on their own repath cadence (~0.5-1s), so no consumer needs notifying.
+function navDirtyRect(minX,minZ,maxX,maxZ){
+  if(!NAV.built || !NAV.walk) return;
+  if(!NAV.dirty) NAV.dirty=[];
+  const c0=navCellOf(minX-1,minZ-1), c1=navCellOf(maxX+1,maxZ+1);   // pad a cell so a footprint edge re-samples its neighbours
+  const x0=Math.max(0,Math.min(NAV.nx-1,c0.gx)), x1=Math.max(0,Math.min(NAV.nx-1,c1.gx));
+  const z0=Math.max(0,Math.min(NAV.nz-1,c0.gz)), z1=Math.max(0,Math.min(NAV.nz-1,c1.gz));
+  if(x1<x0 || z1<z0) return;
+  if(NAV.dirty.length>=64){ NAV.dirty.length=0; NAV.dirty.push({x0:0,x1:NAV.nx-1,z0:0,z1:NAV.nz-1,cx:0,cz:0}); return; }   // a storm of edits: one full re-sample beats bookkeeping
+  NAV.dirty.push({x0,x1,z0,z1,cx:x0,cz:z0});
+}
+function _navDirtyProp(o){
+  if(!o || !NAV.built) return;
+  try{ const b=new THREE.Box3().setFromObject(o); if(isFinite(b.min.x)) navDirtyRect(b.min.x,b.min.z,b.max.x,b.max.z); }catch(e){}
+}
+function navDirtyStep(maxMs){
+  if(!NAV.built || NAV.building || !NAV.dirty || !NAV.dirty.length) return;
+  const now=(typeof performance!=='undefined'&&performance.now)?(()=>performance.now()):(()=>Date.now());
+  const t0=now(); let n=0;
+  while(NAV.dirty.length){
+    const r=NAV.dirty[0];
+    while(r.cx<=r.x1){
+      navSampleCell(r.cx, r.cz);
+      if(++r.cz>r.z1){ r.cz=r.z0; r.cx++; }
+      if(((++n)&15)===0 && now()-t0>maxMs) return;   // budget hit: resume next frame; links wait for a fully drained queue
+    }
+    NAV.dirty.shift();
+  }
+  navBuildLinks();
+}
 let NAV_UP = 2.4; const NAV_DOWN = 8.0;            // climbable-UP (set from the bot's jump each build) / droppable-down between adjacent cells
+const NAV_LAYER_SEP = 2.2;                         // build 1200: clearance before a column's top counts as a SECOND floor (a bot needs headroom under it)
 function navDirs(){ return NAV._dirs || (NAV._dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]); }
 function navDirCost(){ return NAV._dc || (NAV._dc=[1,1,1,1,Math.SQRT2,Math.SQRT2,Math.SQRT2,Math.SQRT2]); }
-function navNearestWalkable(x,z){   // nearest walkable cell index to a world point (spiral out), or -1
+function navNearestWalkable(x,z,y){   // nearest walkable NODE to a world point (spiral out), or -1. build 1200:
+  // with a y, the LAYER whose floor is nearest that height wins — an actor standing upstairs paths on its own storey.
   if(!NAV.walk) return -1;
+  const N=NAV.nx*NAV.nz;
+  const pick=(i)=>{ const a=NAV.walk[i], b=NAV.walkB&&NAV.walkB[i];
+    if(a&&b&&y!=null) return (Math.abs(NAV.yB[i]-y)<Math.abs(NAV.y[i]-y)) ? i+N : i;
+    if(a) return i; if(b) return i+N; return -1; };
   const c=navCellOf(x,z); let bx=Math.max(0,Math.min(NAV.nx-1,c.gx)), bz=Math.max(0,Math.min(NAV.nz-1,c.gz));
-  if(NAV.walk[navIdx(bx,bz)]) return navIdx(bx,bz);
+  { const r0=pick(navIdx(bx,bz)); if(r0>=0) return r0; }
   for(let r=1; r<Math.max(NAV.nx,NAV.nz); r++){
     for(let dx=-r; dx<=r; dx++) for(let dz=-r; dz<=r; dz++){ if(Math.max(Math.abs(dx),Math.abs(dz))!==r) continue;
-      const gx=bx+dx, gz=bz+dz; if(gx<0||gx>=NAV.nx||gz<0||gz>=NAV.nz) continue; const i=navIdx(gx,gz); if(NAV.walk[i]) return i; }
+      const gx=bx+dx, gz=bz+dz; if(gx<0||gx>=NAV.nx||gz<0||gz>=NAV.nz) continue; const ri=pick(navIdx(gx,gz)); if(ri>=0) return ri; }
   }
   return -1;
 }
 // A* over the cell grid. Returns an array of cell indices (start..goal) or null. Octile heuristic; reuses
 // scratch arrays across calls via a generation stamp so it doesn't reallocate or clear each search.
 function navFindPath(si, gi){
-  if(!NAV.walk || si<0 || gi<0 || si>=NAV.walk.length || gi>=NAV.walk.length) return null;
-  if(!NAV.walk[si] || !NAV.walk[gi]) return null;
+  if(!NAV.walk) return null;
+  const NC=NAV.nx*NAV.nz, NT=2*NC, nz=NAV.nz, cell=NAV.cell;   // build 1200: node id = cellIdx + NC*layer
+  const wAt=(n)=> (n<NC) ? NAV.walk[n] : (NAV.walkB ? NAV.walkB[n-NC] : 0);
+  if(si<0 || gi<0 || si>=NT || gi>=NT) return null;
+  if(!wAt(si) || !wAt(gi)) return null;
   if(si===gi) return [si];
-  if(NAV.comp && NAV.comp[si]!==NAV.comp[gi]) return null;   // different connected regions -> unreachable, fail instantly instead of exploring the whole area
-  const N=NAV.walk.length, nz=NAV.nz, cell=NAV.cell;
-  if(!NAV._g || NAV._g.length!==N){ NAV._g=new Float32Array(N); NAV._from=new Int32Array(N); NAV._seen=new Int32Array(N); NAV._gen=0; }
+  if(NAV.comp && NAV.comp.length===NT && NAV.comp[si]!==NAV.comp[gi]) return null;   // different connected regions -> unreachable, fail instantly instead of exploring the whole area
+  if(!NAV._g || NAV._g.length!==NT){ NAV._g=new Float32Array(NT); NAV._from=new Int32Array(NT); NAV._seen=new Int32Array(NT); NAV._gen=0; }
   const g=NAV._g, from=NAV._from, seen=NAV._seen, gen=++NAV._gen;
-  const gX=Math.floor(gi/nz), gZ=gi%nz;
-  const h=(i)=>{ const dx=Math.abs(Math.floor(i/nz)-gX), dz=Math.abs(i%nz-gZ); return (dx+dz+(Math.SQRT2-2)*Math.min(dx,dz))*cell; };
+  const gX=Math.floor((gi%NC)/nz), gZ=(gi%NC)%nz;
+  const h=(i)=>{ const ci=i%NC; const dx=Math.abs(Math.floor(ci/nz)-gX), dz=Math.abs(ci%nz-gZ); return (dx+dz+(Math.SQRT2-2)*Math.min(dx,dz))*cell; };
   if(!NAV._hI){ NAV._hI=[]; NAV._hF=[]; }
   const hI=NAV._hI, hF=NAV._hF; hI.length=0; hF.length=0;   // reuse the heap across calls (no per-search allocation)
   const push=(i,f)=>{ hI.push(i); hF.push(f); let c=hI.length-1; while(c>0){ const p=(c-1)>>1; if(hF[p]<=hF[c]) break; const ti=hI[p];hI[p]=hI[c];hI[c]=ti; const tf=hF[p];hF[p]=hF[c];hF[c]=tf; c=p; } };
   const pop=()=>{ const ri=hI[0], n=hI.length-1; hI[0]=hI[n]; hF[0]=hF[n]; hI.pop(); hF.pop(); let c=0; const m=hI.length; while(true){ let l=2*c+1,r=2*c+2,s=c; if(l<m&&hF[l]<hF[s])s=l; if(r<m&&hF[r]<hF[s])s=r; if(s===c)break; const ti=hI[s];hI[s]=hI[c];hI[c]=ti; const tf=hF[s];hF[s]=hF[c];hF[c]=tf; c=s; } return ri; };
   const DIRS=navDirs(), DC=navDirCost();
   seen[si]=gen; g[si]=0; from[si]=-1; push(si, h(si));
-  let found=false, guard=0, maxG=N*6;
+  let found=false, guard=0, maxG=NT*6;
   while(hI.length && guard++<maxG){
     const cur=pop(); if(cur===gi){ found=true; break; }
-    const cx=Math.floor(cur/nz), cz=cur%nz, mask=NAV.link[cur];
-    for(let d=0; d<8; d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1]); const ng=g[cur]+DC[d]*cell;
+    const ci=cur%NC, cx=Math.floor(ci/nz), cz=ci%nz, mask=NAV.link[cur];
+    for(let d=0; d<8; d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1])+(((mask>>(d+8))&1)?NC:0); const ng=g[cur]+DC[d]*cell;
       if(seen[ni]!==gen || ng<g[ni]){ seen[ni]=gen; g[ni]=ng; from[ni]=cur; push(ni, ng+h(ni)); } }
   }
   if(!found) return null;
-  const path=[]; let c=gi, lim=N+2; while(c!==-1 && lim-->0){ path.push(c); c=from[c]; } path.reverse(); return path;
+  const path=[]; let c=gi, lim=NT+2; while(c!==-1 && lim-->0){ path.push(c); c=from[c]; } path.reverse(); return path;
 }
-function navFloodReachable(si){   // BFS over links from si: which cells are actually reachable + the farthest one
-  const N=NAV.walk.length, reach=new Uint8Array(N);
-  if(si<0 || si>=N || !NAV.walk[si]) return { reach, count:0, farthest:si, fardist:0 };
-  if(!NAV._fd || NAV._fd.length!==N) NAV._fd=new Float32Array(N);
+function navFloodReachable(si){   // BFS over links from si: which NODES (both layers) are reachable + the farthest one
+  const NC=NAV.nx*NAV.nz, NT=2*NC, reach=new Uint8Array(NT);
+  const wAt=(n)=> (n<NC) ? NAV.walk[n] : (NAV.walkB ? NAV.walkB[n-NC] : 0);
+  if(si<0 || si>=NT || !wAt(si)) return { reach, count:0, farthest:si, fardist:0 };
+  if(!NAV._fd || NAV._fd.length!==NT) NAV._fd=new Float32Array(NT);
   const dist=NAV._fd, DIRS=navDirs(), nz=NAV.nz;
   const q=[si]; reach[si]=1; dist[si]=0; let head=0, count=1, far=si, fardist=0;
-  while(head<q.length){ const cur=q[head++], cx=Math.floor(cur/nz), cz=cur%nz, mask=NAV.link[cur];
-    for(let d=0; d<8; d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1]);
+  while(head<q.length){ const cur=q[head++], ci=cur%NC, cx=Math.floor(ci/nz), cz=ci%nz, mask=NAV.link[cur];
+    for(let d=0; d<8; d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1])+(((mask>>(d+8))&1)?NC:0);
       if(reach[ni]) continue; reach[ni]=1; dist[ni]=dist[cur]+1; count++; q.push(ni); if(dist[ni]>fardist){ fardist=dist[ni]; far=ni; } } }
   return { reach, count, farthest:far, fardist };
 }
 function navLargestComponent(){   // size of the biggest connected walkable region anywhere (diagnostic)
-  if(!NAV.walk) return 0; const N=NAV.walk.length, seen=new Uint8Array(N), DIRS=navDirs(), nz=NAV.nz; let best=0;
-  for(let s=0;s<N;s++){ if(!NAV.walk[s]||seen[s]) continue; let cnt=0; const q=[s]; seen[s]=1; let h=0;
-    while(h<q.length){ const cur=q[h++]; cnt++; const cx=Math.floor(cur/nz), cz=cur%nz, mask=NAV.link[cur];
-      for(let d=0;d<8;d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1]); if(seen[ni]) continue; seen[ni]=1; q.push(ni); } }
+  if(!NAV.walk) return 0; const NC=NAV.nx*NAV.nz, NT=2*NC, seen=new Uint8Array(NT), DIRS=navDirs(), nz=NAV.nz; let best=0;
+  const wAt=(n)=> (n<NC) ? NAV.walk[n] : (NAV.walkB ? NAV.walkB[n-NC] : 0);
+  for(let s=0;s<NT;s++){ if(!wAt(s)||seen[s]) continue; let cnt=0; const q=[s]; seen[s]=1; let h=0;
+    while(h<q.length){ const cur=q[h++]; cnt++; const ci=cur%NC, cx=Math.floor(ci/nz), cz=ci%nz, mask=NAV.link[cur];
+      for(let d=0;d<8;d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1])+(((mask>>(d+8))&1)?NC:0); if(seen[ni]) continue; seen[ni]=1; q.push(ni); } }
     if(cnt>best) best=cnt; }
   return best;
 }
-function navCellCenter(i){ const gx=Math.floor(i/NAV.nz), gz=i%NAV.nz; return { x:NAV.ox+(gx+0.5)*NAV.cell, y:NAV.y[i], z:NAV.oz+(gz+0.5)*NAV.cell }; }
+function navCellCenter(i){ const NC=NAV.nx*NAV.nz, l=(i>=NC)?1:0, ci=l?i-NC:i; const gx=Math.floor(ci/NAV.nz), gz=ci%NAV.nz; return { x:NAV.ox+(gx+0.5)*NAV.cell, y:l?NAV.yB[ci]:NAV.y[ci], z:NAV.oz+(gz+0.5)*NAV.cell }; }
 function navFarthestFrom(si){   // walkable cell with the greatest grid distance from si (for the debug demo path)
-  if(si<0) return -1; const sx=Math.floor(si/NAV.nz), sz=si%NAV.nz; let best=-1, bd=-1;
+  if(si<0) return -1; const sc=si%(NAV.nx*NAV.nz), sx=Math.floor(sc/NAV.nz), sz=sc%NAV.nz; let best=-1, bd=-1;
   for(let i=0;i<NAV.walk.length;i++){ if(!NAV.walk[i]) continue; const dx=Math.floor(i/NAV.nz)-sx, dz=i%NAV.nz-sz; const d=dx*dx+dz*dz; if(d>bd){ bd=d; best=i; } }
   return best;
 }
 // ---- Bot path-following (Step 3): walk the A* route to a destination instead of beelining ----
-function _botRepath(b, destX, destZ){
-  const si=navNearestWalkable(b.pos.x, b.pos.z), gi=navNearestWalkable(destX, destZ);
+function _botRepath(b, destX, destZ, destY){
+  const si=navNearestWalkable(b.pos.x, b.pos.z, b.pos.y), gi=navNearestWalkable(destX, destZ, destY);
   b.path = (si>=0 && gi>=0 && si!==gi) ? navFindPath(si, gi) : null;
   b.pathI = (b.path && b.path.length>1) ? 1 : 0;   // cell 0 is where we already are; aim at the next one
   b.pathGoalX = destX; b.pathGoalZ = destZ; b.pathT = b.path ? (0.5 + Math.random()*0.4) : (1.0 + Math.random()*0.6);   // jittered cadence; back off when no route was found
 }
 // Returns the next waypoint to steer toward {x,z,y,jump}, or null if there's no usable path (caller beelines).
-function _botFollowPath(b, destX, destZ, dt){
+function _botFollowPath(b, destX, destZ, dt, destY){
   if(!NAV.built || !NAV.walk) return null;
   b.pathT = (b.pathT||0) - dt;
   const goalMoved = !b.path || Math.hypot((b.pathGoalX||0)-destX, (b.pathGoalZ||0)-destZ) > 3.0;
-  if(b.pathT<=0 || goalMoved){ if(_repathBudget>0){ _repathBudget--; _botRepath(b, destX, destZ); } else { b.pathT=0.08+Math.random()*0.06; } }   // respect the per-frame search budget
+  if(b.pathT<=0 || goalMoved){ if(_repathBudget>0){ _repathBudget--; _botRepath(b, destX, destZ, destY); } else { b.pathT=0.08+Math.random()*0.06; } }   // respect the per-frame search budget
   if(!b.path || b.path.length<2) return null;
   if(b.pathI>=b.path.length) b.pathI=b.path.length-1;
   let wp=navCellCenter(b.path[b.pathI]);
@@ -21353,6 +21676,7 @@ function updateBots(dt){
   _repathBudget = 3;   // at most 3 path searches this frame; the rest keep their current route until a slot frees
   _losBudget = 5; _groundBudget = 5;   // build 547: per-frame raycast caps (see decls). Bots are few, but their LOS can align on a frame and their ground raycast now uses a cache below; this keeps both flat.
   if(!NAV.built){ if(!NAV.building && typeof navBuildBegin==='function') navBuildBegin(); if(typeof navBuildStep==='function') navBuildStep(5); }   // build the nav grid incrementally (no match-start freeze); bots beeline until ready
+  else if(typeof navDirtyStep==='function') navDirtyStep(3);   // build 1200: fold moved/destroyed props back into the grid
   const D=botDiff(), koth = NET.gameMode==='cp', lim=ARENA-2, spd=SPEED*D.spd;
   for(const b of bots){
     if(b.dead){
@@ -21405,7 +21729,7 @@ function updateBots(dt){
     } else { b.aiState='engage'; }
 
     // ---- destination from state ----
-    let destX, destZ, wantFire = hasLOS;
+    let destX, destZ, destY, wantFire = hasLOS;
     if(koth && !cpOwnedBy(b.team)){ destX=CP_POS.x; destZ=CP_POS.z; wantFire=hasLOS; }
     else if(b.aiState==='retreat' && tgt){
       // build 1003: back off to COVER, not into open ground. Re-pick when the spot is reached,
@@ -21427,12 +21751,12 @@ function updateBots(dt){
       wantFire=false;   // can't see it; don't fire blind
     }
     else if(b.aiState==='search'){
-      if(tgt){ destX=tgt.pos.x; destZ=tgt.pos.z; }   // there's a live enemy somewhere -> go hunt it down (free-roam deathmatch, not idle wandering)
+      if(tgt){ destX=tgt.pos.x; destZ=tgt.pos.z; destY=tgt.pos.y; }   // there's a live enemy somewhere -> go hunt it down (free-roam deathmatch, not idle wandering)
       else { if(!b._wander || b.aiT<=0){ b._wander={ x:b.pos.x+(Math.random()*2-1)*16, z:b.pos.z+(Math.random()*2-1)*16 }; }   // truly no enemies left -> roam
         destX=Math.max(-lim,Math.min(lim,b._wander.x)); destZ=Math.max(-lim,Math.min(lim,b._wander.z)); }
       wantFire=false;   // moving toward where it last knows the enemy is; only fires once it actually has line-of-sight
     }
-    else if(tgt){ destX=tgt.pos.x; destZ=tgt.pos.z; }   // engage
+    else if(tgt){ destX=tgt.pos.x; destZ=tgt.pos.z; destY=tgt.pos.y; }   // engage
     else { const h=_botHome(); destX=h.x; destZ=h.z; }   // no target -> head to the play space (region center, not arena origin)
     // (The spawn region is a spawn-only filter, never a movement cage: a bot's destination is left alone so
     // it can pursue/roam anywhere on the map. The arena walls + props are the only boundary.)
@@ -21444,7 +21768,7 @@ function updateBots(dt){
       if(Math.random()<0.012) b.strafe*=-1;
     }
     else {
-      const wp = _botFollowPath(b, destX, destZ, dt);
+      const wp = _botFollowPath(b, destX, destZ, dt, destY);
       if(wp){ const pxd=wp.x-b.pos.x, pzd=wp.z-b.pos.z, pl=Math.hypot(pxd,pzd)||1; mvx=pxd/pl; mvz=pzd/pl;
         if(wp.jump && b.grounded!==false && (b._jumpCd||0)<=0){ b.vy=JUMP; b.grounded=false; b.evx=mvx*spd; b.evz=mvz*spd; b._jumpCarry=true; b._jumpCd=0.7; } }   // hop onto the ledge; cooldown stops a bot jackhammering a tall rock face
       else { mvx=dx/dist; mvz=dz/dist; }   // no nav path available -> beeline fallback
@@ -21918,7 +22242,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace
   modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
@@ -23075,6 +23399,7 @@ function dropClient(pid, why){
   removeRemotePlayer(pid);
   delete NET.conns[pid];
   if(NET._seen) delete NET._seen[pid];
+  try{ if(typeof _structAcc!=='undefined') delete _structAcc[pid]; if(typeof _dmgAcc!=='undefined') delete _dmgAcc[pid]; }catch(e){}   // build 1207: a leaver's rate buckets go with it
   try{ for(const nid in _remoteHold){ if(_remoteHold[nid] && _remoteHold[nid].by===pid) delete _remoteHold[nid]; } }catch(e){}   // build 843: a leaver's carried prop is released, not velocity-driven at a stale target forever
   try{ if(typeof _raceNet!=='undefined') delete _raceNet[pid]; }catch(e){}   // build 843: leavers drop out of the race standings
   if(NET.phase==='lobby' && typeof refreshLobby==='function') refreshLobby();
@@ -23085,9 +23410,109 @@ function dropClient(pid, why){
 function netHostLost(){
   if(NET._lost) return; NET._lost=true;
   if(typeof stopLobbyKeepalive==='function') stopLobbyKeepalive();
+  // build 1201: mid-match the session MIGRATES instead of dying — one surviving peer is promoted from its
+  // last snapshot and everyone else reconnects to it. Only a lobby-phase loss (nothing to save) or a
+  // migration that itself times out still takes the old road home.
+  if(gameOn && NET.roomCode && typeof netMigrateBegin==='function'){ netMigrateBegin(); return; }
+  _migFail();
+}
+function _migFail(){
   if(typeof netStatus==='function') netStatus('Host disconnected — returning to menu…');
   if(typeof toast==='function') toast('Host disconnected');
   setTimeout(()=>{ NET.mode='off'; NET.gameMode='coop'; try{ location.reload(); }catch(e){} }, 1600);
+}
+// ---------- build 1201: HOST MIGRATION — the match survives the host ----------
+// The election needs NO coordination round: every peer knows the same roster from the snapshots, so the
+// SAME deterministic rank order exists on every machine (bots can hold ranks — they simply never claim, and
+// the stagger walks past them). The migrated room lives at a DERIVED peer id ('<code>-m<gen>') because the
+// dead host's own id can stay reserved at the broker long past our window — claiming a fresh id is
+// deterministic where re-claiming the old one is a race against a timeout we don't control. Every peer
+// increments its generation once per observed host loss, so a second migration derives the same '-m2'
+// everywhere. State comes FROM THE LAST SNAPSHOT: the promoted peer adopts its own client mirrors as the
+// new authoritative world. Honest limits, recorded not hidden: logic-graph variable state and PvP bots are
+// host-local and do not survive; a level's chests/coins/powerups, enemies (type + hp ride keyframes for
+// exactly this), wave, scores and teams all do.
+function _migPid(code, gen){ return 'breachfps-'+code+'-m'+(gen|0); }
+function _migRank(myId, playerIds){
+  const ids=[+myId]; for(const v of (playerIds||[])){ const n=+v; if(n!==0 && n!==+myId) ids.push(n); }   // 0 is the dead host
+  ids.sort((a,b)=>a-b); return ids.indexOf(+myId);
+}
+function _migAdoptMirrors(){
+  // remote-player entries are dropped wholesale (rejoiners re-appear on their first state message; the dead
+  // host and any bots simply never do), and every client mirror is promoted to the real authoritative array.
+  for(const id in NET.players){ try{ removeRemotePlayer(+id); }catch(e){} }
+  NET.players={};
+  let adopted={ enemies:0, coins:0, powerups:0 };
+  for(const id in NET.enemyMeshes){ const em=NET.enemyMeshes[id]; const m=em.mesh;
+    try{
+      spawnEnemy({ x:m.position.x, z:m.position.z, type:(em.ty && typeof ENEMY_TYPES!=='undefined' && ENEMY_TYPES[em.ty]) ? em.ty : 'grunt' });
+      const ne=enemies[enemies.length-1];
+      if(ne && em.hp>0) ne.hp=Math.min(ne.maxHp, +em.hp);   // keyframes carry ty+hp for exactly this moment
+      adopted.enemies++;
+    }catch(e){}
+    scene.remove(m); if(m.userData && m.userData.mixer){ const mi=mixers.indexOf(m.userData.mixer); if(mi>=0) mixers.splice(mi,1); }
+  }
+  NET.enemyMeshes={};
+  for(const id in NET.coinMeshes){ const m=NET.coinMeshes[id];
+    coins.push({ id:+id, mesh:m, spin:Math.random()*6.28, life:25, value:1 });
+    if(+id>=nextCoinId) nextCoinId=+id+1; adopted.coins++; }
+  NET.coinMeshes={};
+  for(const id in NET.powerupMeshes){ const m=NET.powerupMeshes[id];
+    powerups.push({ id:+id, x:m.position.x, z:m.position.z, kind:(m.userData&&m.userData._puKind)||'health', interact:false, ready:m.visible, cd:0, mesh:m });
+    if(+id>=_puId) _puId=+id+1; adopted.powerups++; }
+  NET.powerupMeshes={};
+  NET.deadChests={};                                        // chests are already REAL objects on a client
+  NET.nextId=Math.max(NET.nextId, (NET._maxPid|0)+1, (+NET.myId|0)+1);
+  return adopted;
+}
+function _migPromote(rank){
+  if(NET.mode==='host') return;
+  try{ _migAdoptMirrors(); }catch(e){}
+  NET.mode='host'; NET.conn=null; NET.conns={}; NET._seen={}; NET._lost=false; NET.sentProps=new Map();
+  const pid=_migPid(NET.roomCode, NET.migGen);
+  try{ if(NET.peer) NET.peer.destroy(); }catch(e){}
+  NET.peer=new Peer(pid, _peerOpts());
+  NET.peer.on('open', ()=>{ NET._mig=false; netStatus('Host left — YOU are the new host'); if(typeof toast==='function') toast('You are the new host'); showRoomBadge(NET.roomCode); });
+  NET.peer.on('connection', _hostOnConnection);
+  NET.peer.on('error', e=>{
+    if(e && e.type==='unavailable-id'){                      // someone claimed the slot first: be their client
+      NET.mode='client'; try{ NET.peer.destroy(); }catch(_){}
+      setTimeout(()=>_migJoinLoop(rank||0), 400);
+    } else if(!NET._mig){ netStatus('Host error: '+(e&&e.type||e)); }
+  });
+}
+function _migJoinLoop(rank){
+  if(!NET._mig) return;
+  if(performance.now()>NET._migDeadline){ NET._mig=false; _migFail(); return; }
+  const hostPid=_migPid(NET.roomCode, NET.migGen);
+  const p=new Peer(_peerOpts());
+  let settled=false;
+  const fail=()=>{ if(settled) return; settled=true; try{ p.destroy(); }catch(e){}
+    if(performance.now() > NET._migStart + rank*4000) _migPromote(rank);   // my turn in the cascade: claim it
+    else setTimeout(()=>_migJoinLoop(rank), 2500); };
+  p.on('open', ()=>{
+    const conn=p.connect(hostPid, { reliable:true, metadata:{ rejoin:NET.myId, name:NET.name } });
+    conn.on('open', ()=>{ settled=true;
+      NET.peer=p; NET.conn=conn; NET.mode='client'; NET._lost=false; NET._mig=false; NET._hostSeen=performance.now();
+      conn.send({t:'name', n:NET.name, char:myCharCfg()});
+      netStatus('Migrated — rejoined the new host'); if(typeof toast==='function') toast('Rejoined — new host found'); });
+    conn.on('data', msg=>handleHostMsg(msg));
+    conn.on('close', ()=>{ if(!settled) fail(); else if(gameOn) netHostLost(); else netStatus('Disconnected from host'); });
+    conn.on('error', ()=>{ if(!settled) fail(); else if(gameOn) netHostLost(); });
+    setTimeout(()=>{ if(!settled) fail(); }, 4000);          // 'peer-unavailable' can be slow to arrive
+  });
+  p.on('error', ()=>fail());
+}
+function netMigrateBegin(){
+  if(NET._mig) return;
+  NET._mig=true; NET.migGen=(NET.migGen|0)+1; NET._migStart=performance.now(); NET._migDeadline=NET._migStart+40000;
+  const rank=_migRank(NET.myId, Object.keys(NET.players));
+  try{ if(NET.conn) NET.conn.close(); }catch(e){}
+  try{ if(NET.peer) NET.peer.destroy(); }catch(e){}
+  NET.peer=null; NET.conn=null;
+  netStatus('Host disconnected — migrating ('+(rank===0?'promoting you':'finding the new host')+')…');
+  if(typeof toast==='function') toast('Host lost — migrating…');
+  if(rank===0) _migPromote(0); else _migJoinLoop(rank);
 }
 // build 1164: BOUND THE MOVEMENT CLAIM. The host used to write whatever position a client reported,
 // verbatim — teleport/noclip/speedhack were one console line and propagated to every peer as truth. Full
@@ -23131,6 +23556,7 @@ function upsertEnemyMesh(e){
   }
   em.target.set(e.p[0], e.p[1], e.p[2]);
   em.hd=e.hd||0; em.hs=e.hs||0;
+  if(e.ty!=null){ em.ty=e.ty; em.hp=e.hp; }   /* build 1201: keyframe type+hp, adopted verbatim if this client is ever promoted */
 }
 function upsertCoinMesh(c){
   let m=NET.coinMeshes[c.id];
@@ -23169,7 +23595,7 @@ function _snapDelta(full, all, prev, keyOf){
   return { list, gone: gone.length ? gone : undefined };
 }
 function serializeWorld(){
-  const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving; build 1071: ac/aq = the action one-shot peers replay
+  const P=[{ id:NET.myId, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving; build 1071: ac/aq = the action one-shot peers replay
   for(const id in NET.players){ const rp=NET.players[id];
     P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1), cl:(rp.cl||0), c:(rp.car||undefined) }); }
   for(const b of bots){ if(b.dead && !b._dying) continue; P.push({ id:b.id, p:[b.pos.x,EYE,b.pos.z], y:b.yaw, pi:0, w:(b.wep||'rifle'), hp:(b.dead?0:b.hp), hd:b._netHitDir||0, hs:b._netHitSeq||0, n:b.name }); }   // build 502: keep dead-but-dying bots in the snapshot (+ hd/hs) so clients play the directional death, then they prune on respawn
@@ -23179,7 +23605,8 @@ function serializeWorld(){
   const _nConn = Object.keys(NET.conns).length;
   const full = (_snapN % 10 === 1) || _nConn !== _snapConnN;   /* keyframe cadence + a fresh join always starts from a keyframe */
   _snapConnN = _nConn;
-  const Eall=enemies.map(e=>({ id:e.id, p:[q2(e.mesh.position.x),q2(e.mesh.position.y),q2(e.mesh.position.z)], hd:e._netHitDir||0, hs:e._netHitSeq||0 }));
+  const Eall=enemies.map(e=>{ const o={ id:e.id, p:[q2(e.mesh.position.x),q2(e.mesh.position.y),q2(e.mesh.position.z)], hd:e._netHitDir||0, hs:e._netHitSeq||0 };
+    if(full){ o.ty=e.type; o.hp=q2(e.hp); } return o; });   /* build 1201: keyframes carry type+hp so a promoted host can rebuild the wave */
   const _ed=_snapDelta(full, Eall, _snapPrevE, e=>e.p[0]+'|'+e.p[1]+'|'+e.p[2]+'|'+e.hd+'|'+e.hs);
   const E=_ed.list, Ex=_ed.gone;
   const Call=coins.map(c=>({ id:c.id, p:[q2(c.mesh.position.x),q2(c.mesh.position.z)] }));
@@ -23357,7 +23784,8 @@ function applyWorld(msg){
   if(msg.wv!=null) wave=msg.wv;
   applyObjectiveSnapshot(msg.O, wave);
   const seen=new Set();
-  for(const pl of msg.P){ if(pl.id===NET.myId) continue; seen.add(pl.id);
+  for(const pl of msg.P){ if(pl.id>(NET._maxPid|0)) NET._maxPid=pl.id;   /* build 1201: a promoted host must hand out fresh ids */
+    if(pl.id===NET.myId) continue; seen.add(pl.id);
     const rp=ensureRemotePlayer(pl.id, pl.n);
     rp.posEye.set(pl.p[0],pl.p[1],pl.p[2]); rp.target.set(pl.p[0], pl.p[1]-EYE, pl.p[2]); rp.yaw=pl.y; rp.pitch=pl.pi||0; rp.hp=pl.hp; rp.wep=pl.w; if(pl.g) rp.grip=_unpackGrip(pl.g); rp.air=!!pl.j; rp.slide=!!pl.sl; rp.ads=!!pl.ad; rp.crouch=!!pl.cr; rp.hd=pl.hd||0; rp.hs=pl.hs||0; rp.mt=(pl.mt!=null?pl.mt:-1); rp.cl=pl.cl||0; rp.car=pl.c||null;
       if(pl.aq!=null && pl.aq!==rp._aq){ rp._aq=pl.aq; const _a=actionBinds[(pl.ac|0)-1];   // build 1071: a fresh action -> replay its slot for the clip's own length
@@ -23380,7 +23808,7 @@ function applyWorld(msg){
   if(NET.mode==='client' && (msg.PU !== undefined || !msg.dl)){   /* build 1197: omitted on a delta = unchanged */
     const PU = msg.PU || []; const ps=new Set();
     for(const pu of PU){ ps.add(pu.id); let m=NET.powerupMeshes[pu.id];
-      if(!m){ m=buildPowerupMesh(pu.k); m.position.set(pu.p[0],0,pu.p[1]); scene.add(m); NET.powerupMeshes[pu.id]=m; }
+      if(!m){ m=buildPowerupMesh(pu.k); m.position.set(pu.p[0],0,pu.p[1]); m.userData._puKind=pu.k; scene.add(m); NET.powerupMeshes[pu.id]=m; }   /* build 1201: the kind survives for migration */
       m.visible = !!pu.r; }
     for(const id in NET.powerupMeshes){ if(!ps.has(+id)){ scene.remove(NET.powerupMeshes[id]); delete NET.powerupMeshes[id]; } }
   }
@@ -23590,17 +24018,50 @@ function _netDmgBudget(id, kind, d){
   a[kind] += grant;
   return grant;
 }
+// build 1207: a leaky bucket for STRUCTURAL messages, mirroring the damage buckets (1164). pAdd spawns a
+// prop (and fetches its GLB), pMov/pDel edit the scene, chat renders — none were rate-limited, so a flood
+// injected thousands of props / forced every peer to fetch a hostile model / spammed chat. The token
+// refills at STRUCT_RATE per second per source and each structural message spends one; over budget, the
+// message is dropped (never applied, never relayed). Generous vs any real editor/chat cadence.
+const _structAcc = {}; const STRUCT_RATE = 20, STRUCT_BURST = 40;
+function _structAllow(id){
+  const now = performance.now();
+  let a = _structAcc[id]; if(!a){ a = _structAcc[id] = { t: now, n: 0 }; }
+  const el = (now - a.t) / 1000; a.t = now;
+  a.n = Math.max(0, a.n - el * STRUCT_RATE);
+  if(a.n >= STRUCT_BURST) return false;
+  a.n += 1; return true;
+}
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
+  if(msg && (msg.t==='pAdd'||msg.t==='pMov'||msg.t==='pDel'||msg.t==='chat') && !_structAllow(id)) return;   // build 1207: structural flood control
   // build 1122: forward anything addressed to a third player. `from` is rewritten to the VERIFIED
   // sender (the connection's own id) rather than whatever the packet claimed, so a client cannot
   // attribute its damage to someone else. A `to` naming the host, or an unknown peer, falls through
   // and is handled here as normal.
-  if(msg && msg.to != null && +msg.to !== 0 && +msg.to !== id){
+  //
+  // build 1205: BOUND THE RELAYED CLAIM. Builds 1130/1164 clamp damage aimed AT THE HOST — but a packet
+  // addressed to a third client was forwarded VERBATIM, so in any 3+ player FFA a cheat could send
+  // {t:'pvpHit', to:victim, d:1e9} and one-shot anyone, through walls, unrated: the marquee competitive
+  // mode had none of the protection the docs advertised. The host mediates now. A damage-bearing type
+  // is clamped through the SAME magnitude cap and per-source rate bucket a host-addressed hit gets
+  // (keyed to the VERIFIED sender, never the claim) before it is relayed; a bucket-exhausted or
+  // zero-magnitude claim is dropped, not forwarded. Non-damage types (fire/char/chat/nade/rocket
+  // visuals, race, hold) still forward verbatim — a whitelist would rot as new cosmetics arrive, so the
+  // rule is the inverse: only KNOWN damage types are mediated, everything else passes.
+  if(msg && msg.to != null && +msg.to !== NET.myId && +msg.to !== id){   /* build 1201: a promoted host is not id 0 */
     const dest = NET.conns[+msg.to];
-    if(dest){ const fwd = Object.assign({}, msg, { from: id }); delete fwd.to;
-      try{ dest.send(fwd); }catch(e){} return; }
+    if(dest){
+      if(msg.t==='pvpHit'){                                   // client-vs-client damage: clamp before relaying
+        const d = _netDmgBudget(id, 'pvp', _netDmg(msg.d));
+        if(!(d > 0)) return;                                  // over budget or non-positive: drop, never forward a raw claim
+        const fwd = Object.assign({}, msg, { from: id, d }); delete fwd.to;
+        try{ dest.send(fwd); }catch(e){} return;
+      }
+      const fwd = Object.assign({}, msg, { from: id }); delete fwd.to;
+      try{ dest.send(fwd); }catch(e){} return;
+    }
   }
   if(msg.t==='st'){ setRemoteState(id, msg); }
   else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmgBudget(id,'pve',_netDmg(msg.d)), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
@@ -23623,7 +24084,7 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='break'){   // host shattered a prop — show the debris locally (pDel removes the prop itself)
     const ctr=new THREE.Vector3(msg.ctr[0],msg.ctr[1],msg.ctr[2]); const sz=new THREE.Vector3(msg.sz[0],msg.sz[1],msg.sz[2]);
     if(msg.st==='puff'){ spark(ctr, msg.c||0xcfeee6); if(typeof SFX!=='undefined' && SFX.puff) SFX.puff(); }
-    else { if(typeof spawnFragmentsVisual==='function') spawnFragmentsVisual(ctr, sz, msg.c, msg.n||8, msg.sf, msg.sh); spark(ctr, msg.c||0xffd166); if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(); }
+    else { if(typeof spawnFragmentsVisual==='function') spawnFragmentsVisual(ctr, sz, msg.c, msg.n||8, msg.sf, msg.sh); spark(ctr, msg.c||0xffd166); if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(ctr); }
     if(msg.exp){ explodeAt(ctr.clone(), msg.br||7, 0, null); }   // explosive prop: blast visual (host already applied damage)
   }
   else if(msg.t==='buyChest'){ const ci=chests.findIndex(c=>c.id===msg.id); if(ci>=0){ scene.remove(chests[ci].mesh); chests.splice(ci,1); } }   // a client bought a crate -> remove it for everyone
@@ -23644,7 +24105,8 @@ function handleClientMsg(conn, msg){
 function handleHostMsg(msg){
   NET._hostSeen=performance.now();   // build 578: any message proves the host is alive
   if(msg.t==='welcome'){
-    if(NET.joined) return; NET.joined=true;
+    if(NET.joined){ if(msg.mig && msg.id!=null) NET.myId=msg.id; return; }   /* build 1201: a rejoin welcome is inert — except an id rebind when the old id was taken */
+    NET.joined=true;
     NET.myId=msg.id;
     netIdPrefix='c'+msg.id;   // props this client adds get unique 'c<id>-' ids
     if(msg.mode) NET.gameMode=msg.mode;
@@ -23654,7 +24116,7 @@ function handleHostMsg(msg){
     if(msg.level) NET.pendingLevel=msg.level;
     if(msg.sfTok){ try{ const t=_sfUnpack(msg.sfTok); if(t) sfSetSessionToken(t); }catch(e){} }   // borrow the host's Sketchfab token for this session so the level's models load
     if(msg.crosshair){ NET.crosshair = msg.crosshair; if(typeof applyCrosshair==='function') applyCrosshair(msg.crosshair); }   // use the host's authored crosshair
-    NET.charById = Object.assign({}, msg.chars||{}); if(msg.char) NET.charById[0]=msg.char;   // host + existing players' characters
+    NET.charById = Object.assign({}, msg.chars||{}); if(msg.char) NET.charById[msg.hid!=null?msg.hid:0]=msg.char;   // host + existing players' characters (build 1201: a migrated host is not id 0)
     if(msg.rules && typeof _applyMpRules==='function') _applyMpRules(msg.rules);   // build 1014: the host's match rules bind this client too
     if(msg.sounds) NET.pendingSounds=msg.sounds;
     if(msg.music!=null) NET.pendingMusic=msg.music;
@@ -23683,6 +24145,7 @@ function handleHostMsg(msg){
   else if(msg.t==='frag'){ registerLocalKill(); }   // co-op: the host confirmed our shot killed an enemy -> multi-kill tracking
   else if(msg.t==='actEv'){ if(typeof logicEvent==='function') logicEvent(String(msg.n||'').slice(0,60)); }   // build 1071: a client's action pulses the host's logic graph
   else if(msg.t==='hudv'){ if(msg.v && typeof msg.v==='object') for(const k in msg.v) logicVars[k]=+msg.v[k]||0; }   // build 1058: the host mirrors widget-watched logic variables
+  else if(msg.t==='full'){ NET._lost=true; if(typeof netStatus==='function') netStatus('That room is full ('+(msg.max||8)+' players).'); if(typeof toast==='function') toast('Room is full'); }   // build 1207: the host refused us at the cap
   else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200)); }   // chat from the host or relayed from another player
   else if(msg.t==='duelOver'){ showDuelResult(msg.w, msg.wt); }
   else if(msg.t==='race'){ _raceNet[msg.from]={ lap:msg.lap|0, f:+msg.f||0 }; }   // build 836: another racer's progress (standings)
@@ -23770,6 +24233,47 @@ function _applyMpRules(r){ try{
   MP_RULES.weps=(w && w.length)?w:null;
   MP_RULES.nades=Math.max(0, Math.min(6, parseInt(r.nades,10)||0));
 }catch(e){} }
+
+// build 1201: one connection handler for BOTH the original host and a migration-promoted one. A reconnecting
+// peer announces its OLD id in the connection METADATA (available before 'open', so the welcome and every
+// score/team lookup use the right id from the first byte) and keeps it if it is free — scores, teams and
+// prop-id prefixes survive the migration. A rejoiner also skips the level serialization: it is already
+// standing in the level, and its 'welcome' is inert on arrival (NET.joined guards it).
+// build 1207: the room has a CEILING. Before this, `on('connection')` accepted every peer unconditionally
+// — anyone who learned the room code (the lobby directory publishes them) could open unlimited connections,
+// each adding to the 20Hz snapshot fan-out and the host's CPU, or simply exhaust it. The cap is
+// mode-shaped (a duel is strictly 1v1) and counts EXISTING players so a rejoiner reclaiming its slot is
+// never refused; a fresh peer past the ceiling gets a clean 'full' close, not a silent hang.
+function _maxPlayersFor(){ return (NET.gameMode==='duel') ? 2 : 8; }
+function _hostOnConnection(conn){
+    const _rj=(conn.metadata && conn.metadata.rejoin!=null) ? +conn.metadata.rejoin : null;
+    const _rejoinFree = (_rj!=null && _rj>=1 && !NET.conns[_rj]);
+    if(!_rejoinFree && (Object.keys(NET.conns).length + 1) >= _maxPlayersFor()){   // +1 for the host itself
+      try{ conn.on('open', ()=>{ try{ conn.send({ t:'full', max:_maxPlayersFor() }); }catch(e){} setTimeout(()=>{ try{ conn.close(); }catch(e){} }, 250); }); }catch(e){}
+      return;
+    }
+    conn._pid = _rejoinFree ? _rj : NET.nextId++;
+    if(conn._pid >= NET.nextId) NET.nextId = conn._pid+1;
+    conn.on('open', ()=>{
+      NET.conns[conn._pid]=conn;
+      if(NET._seen) NET._seen[conn._pid]=performance.now();   // build 578: start the liveness clock for this client
+      if(pvpMode()) NET.duelScore[conn._pid] = NET.duelScore[conn._pid]||0;
+      if(teamMode()) assignTeam(conn._pid);
+      // hand the joiner the mode, the kill target, and the current level so their map matches
+      let level=null; if(_rj==null) try{ level = serializeLevel(); }catch(e){}
+      // If this level uses Sketchfab models and we have a token, lend it to the joiner so the models load even
+      // if they have no Sketchfab account of their own. Obfuscated (not encrypted) — they don't keep it.
+      let sfTok; try{ if(_levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
+      conn.send({t:'welcome', id:conn._pid, hid:NET.myId, mig:(_rj!=null?1:undefined), mode:NET.gameMode, killTarget:NET.killTarget, level, sfTok, crosshair:gameCfg.crosshair, sounds:audioSettings.sounds, music:audioSettings.musicUrl, teams:NET.teams, yourTeam:(teamMode()?NET.teams[conn._pid]:undefined), char:myCharCfg(), chars:Object.assign({}, NET.charById), rules:{ weps:MP_RULES.weps, nades:MP_RULES.nades }, phase:NET.phase});
+      netStatus(_rj!=null ? ('Player rejoined ('+Object.keys(NET.conns).length+' connected)') : ('Player joined ('+Object.keys(NET.conns).length+' connected)'));
+      if(pvpMode()) broadcastDuelScore();
+      if(teamMode()){ broadcastTeams(); applyTeamColors(); }
+      if(NET.phase==='lobby') refreshLobby();
+    });
+    conn.on('data', msg=>handleClientMsg(conn, msg));
+    conn.on('close', ()=>dropClient(conn._pid));
+    conn.on('error', ()=>dropClient(conn._pid));   // build 578: an errored connection is a dropped one — clean it up too
+}
 function hostStart(code, mode, killTarget){
   NET.mode='host'; NET.myId=0; NET.roomCode=code; NET.nextId=1;
   netIdPrefix='h'; seedPropSync();   // new props the host adds get 'h-' ids; existing props are already known to joiners via the welcome level
@@ -23781,29 +24285,9 @@ function hostStart(code, mode, killTarget){
   NET.duelScore = {0:0};
   NET.teams = {0:0}; NET.team = 0;   // host starts on RED in team modes
   NET.peer=new Peer('breachfps-'+code, _peerOpts());   // build 968: STUN+TURN — joins survive strict NATs
+  /* build 1201: the connection handler is a named function so a MIGRATED host attaches the identical one */
   NET.peer.on('open', ()=>{ netStatus((pvpMode()?('Hosting '+pvpLabel().toLowerCase()+' · '):'Hosting · ')+'room code: '+code+' · share it with friends'); showRoomBadge(code); enterLobby(); });
-  NET.peer.on('connection', conn=>{
-    conn._pid = NET.nextId++;
-    conn.on('open', ()=>{
-      NET.conns[conn._pid]=conn;
-      if(NET._seen) NET._seen[conn._pid]=performance.now();   // build 578: start the liveness clock for this client
-      if(pvpMode()) NET.duelScore[conn._pid] = NET.duelScore[conn._pid]||0;
-      if(teamMode()) assignTeam(conn._pid);
-      // hand the joiner the mode, the kill target, and the current level so their map matches
-      let level=null; try{ level = serializeLevel(); }catch(e){}
-      // If this level uses Sketchfab models and we have a token, lend it to the joiner so the models load even
-      // if they have no Sketchfab account of their own. Obfuscated (not encrypted) — they don't keep it.
-      let sfTok; try{ if(_levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
-      conn.send({t:'welcome', id:conn._pid, mode:NET.gameMode, killTarget:NET.killTarget, level, sfTok, crosshair:gameCfg.crosshair, sounds:audioSettings.sounds, music:audioSettings.musicUrl, teams:NET.teams, yourTeam:(teamMode()?NET.teams[conn._pid]:undefined), char:myCharCfg(), chars:Object.assign({}, NET.charById), rules:{ weps:MP_RULES.weps, nades:MP_RULES.nades }, phase:NET.phase});
-      netStatus('Player joined ('+Object.keys(NET.conns).length+' connected)');
-      if(pvpMode()) broadcastDuelScore();
-      if(teamMode()){ broadcastTeams(); applyTeamColors(); }
-      if(NET.phase==='lobby') refreshLobby();
-    });
-    conn.on('data', msg=>handleClientMsg(conn, msg));
-    conn.on('close', ()=>dropClient(conn._pid));
-    conn.on('error', ()=>dropClient(conn._pid));   // build 578: an errored connection is a dropped one — clean it up too
-  });
+  NET.peer.on('connection', _hostOnConnection);
   NET.peer.on('error', e=>{ netStatus('Host error: '+(e&&e.type||e)); });
 }
 function clientStart(code){
@@ -24500,7 +24984,7 @@ function _blastLightAt(pos, R){
 // breakable props are damaged too, so a shot propane can chain-detonate a cluster. Clients call it for
 // visuals only (NET.mode==='client' skips the damage; the host stays authoritative).
 function explodeAt(pos, R, dmg, byId){
-  if(typeof SFX!=='undefined' && SFX.explode) SFX.explode();
+  if(typeof SFX!=='undefined' && SFX.explode) SFX.explode(pos);
   addShake(Math.max(0, 1 - player.pos.distanceTo(pos)/22) * 0.9);
   const bl=_blastLightAt(pos, R);   // build 632: pooled light (no per-blast add/remove -> no shader recompile)
   const eScale=Math.max(0.4, R*0.18);
@@ -24526,6 +25010,10 @@ function explodeAt(pos, R, dmg, byId){
 }
 // ---------- Camera shake ----------
 let shake = 0;                 // current trauma 0..1, decays each frame
+// build 1210: the first-person camera reacts to the player's OWN body — the two cheapest game-feel wins in
+// the genre and both absent (the speed-FOV of build 730 lived only in the driving branch). _landDip is a
+// spring the landing impulse kicks (dip then recover), _camLean an eased strafe roll.
+let _landDip = 0, _landDipV = 0, _camLean = 0;
 function addShake(amt){ shake = Math.min(1, shake + amt); }
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){
@@ -25096,9 +25584,9 @@ function turretFire(){
       else if(NET.conn){ try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:dmg, dir:[dir.x,dir.y,dir.z], s:7, pt:[hit.point.x,hit.point.y,hit.point.z]}); }catch(e){} }
       spark(hit.point,0xffd166); showHitmarker(); }
     else if(clientMode){ let node=hit.object,id=null; while(node&&id==null){ if(node.userData&&node.userData.enemyId!=null) id=node.userData.enemyId; node=node.parent; }
-      if(id!=null){ if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:dmg}); }catch(e){} spark(hit.point,isHead?0xffd166:0xff6b6b); showHitmarker(isHead); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } }
+      if(id!=null){ if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:dmg}); }catch(e){} spark(hit.point,isHead?0xffd166:0xff6b6b); showHitmarker(isHead?'head':'hit'); if(isHead) SFX.headshot(); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } }
     else { let node=hit.object,en=null; while(node&&!en){ en=enemies.find(e=>e.mesh===node); node=node.parent; }
-      if(en){ alertEnemy(en,mountedTurret.position.x,mountedTurret.position.z); const k=enemyHurt(en,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,isHead?0xffd166:0xff6b6b); spawnDamageNumber(hit.point,dmg,k,isHead); flashEnemy(en); showHitmarker(k); SFX.hit(); }
+      if(en){ alertEnemy(en,mountedTurret.position.x,mountedTurret.position.z); const k=enemyHurt(en,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,isHead?0xffd166:0xff6b6b); spawnDamageNumber(hit.point,dmg,k,isHead); flashEnemy(en); showHitmarker(k?'kill':(isHead?'head':'hit')); SFX.hit(); if(isHead && !k) SFX.headshot(); }
       else { let bn=hit.object,bot=null; while(bn&&!bot){ bot=bots.find(b=>b.mesh===bn); bn=bn.parent; } if(bot&&!bot.dead){ botHurt(bot,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,0xff6b6b); showHitmarker(); SFX.hit(); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } } }
   }
   tracer(origin,endPoint); muzzleFlashAt(origin);
@@ -27168,7 +27656,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1198 · 2026-07-31';
+const BUILD_VERSION = 'build 1221 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27970,6 +28458,13 @@ function moveKCC(dt){
       const dmg = _fallDamageFor(-player.vel.y);   // vel.y is negative while falling
       if(dmg > 0.5) applyEnemyDamageToSelf(dmg);
     }
+    if(_playerWasAir && !drivingCar){                      // build 1210: the air->ground frame — vel.y is still the fall speed
+      const _fall = Math.max(0, -player.vel.y);
+      if(_fall > 2.5){ const _imp = Math.min(1, _fall/22);
+        _landDipV -= 1.6 + _imp*7.0;                        // kick the eye-dip spring downward
+        shake = Math.max(shake, _imp*0.22);
+        if(typeof SFX!=='undefined' && SFX.land) SFX.land(_imp); }
+    }
     player.onGround = true; if(player.vel.y < 0) player.vel.y = 0;
   }
   else player.onGround = false;
@@ -28683,6 +29178,7 @@ function shatterProp(obj, point, dir, power, byId){
   if(typeof NET==='undefined' || NET.mode!=='client'){ try{ fireSignals(obj, 'destroyed'); }catch(e){} }   // clients converge via the actions' own broadcasts
   obj.updateMatrixWorld(true);
   _shBox.setFromObject(obj, true); _shBox.getSize(_shSize); _shBox.getCenter(_shCtr);
+  if(typeof navDirtyRect==='function') navDirtyRect(_shBox.min.x,_shBox.min.z,_shBox.max.x,_shBox.max.z);   /* build 1200: a destroyed wall opens a route */
   if(point){ _shCtr.lerp(point, 0.35); }   // bias the burst toward the impact
   playFlipbook('smoke', _shCtr, Math.max(0.5, Math.max(_shSize.x,_shSize.y,_shSize.z)*0.35));   // dust/smoke puff
   const colorHex = propColorHex(obj);
@@ -28696,7 +29192,7 @@ function shatterProp(obj, point, dir, power, byId){
     const shape = (obj.userData.debrisShape==='cubes') ? 'cubes' : 'shards';
     spawnFragments(_shCtr, _shSize, colorHex, count, dir, power||6, sizeFrac, shape);
     spark(_shCtr, colorHex); spark(_shCtr, 0xffd166);
-    if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter();
+    if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(_shCtr);
     obj.userData._breakFx = { sf:sizeFrac, sh:shape };   // stash so the net message below carries them
   } else {
     // puff: no debris cloud — a quick particle burst + soft pop, then despawn
@@ -29144,12 +29640,10 @@ function shoot(){
   // running scales it up and being AIRBORNE adds a floor that even 0-spread weapons (rifle, sniper) pay —
   // a multiplier alone would leave sprint-jump-360 sniping pixel-accurate, because x1.8 of zero is zero.
   // Bots have paid a run-and-gun penalty since build 933; this is the player's copy of the same rule.
-  // ADS mitigates the penalty (x0.4 at full aim) but never erases it.
-  const _hspd = Math.hypot(player.vel.x, player.vel.z);
-  const _mob = Math.min(1, _hspd / 12);                                  // 12 = default run speed
-  const _penScale = (1 + 1.2*_mob) * (player.onGround ? 1 : 1.8);
-  const _penAdd = (0.012*_mob + (player.onGround ? 0 : 0.030)) * (1 - adsBlend*0.6);
-  const spread = w.spread * (1 - adsBlend*0.8) * _penScale + _penAdd;
+  // ADS mitigates the penalty (x0.4 at full aim) but never erases it. Build 1219: hoisted to _curSpread so
+  // the crosshair bloom reads the IDENTICAL number the shot uses — a penalty you can see is a penalty you
+  // can learn (before this, 1161's airborne floor felt like random misses).
+  const spread = _curSpread(w);   // build 1219: the exact same math the crosshair blooms from, shared so they can never disagree
   // build 885: true twin-stick ballistics. Build 874 cast pellets from the CAMERA through the cursor
   // with the weapon's screen-space spread — from a bird's-eye camera an enemy is a few pixels wide, so
   // hip spread threw most pellets clean past a dead-on cursor ("the gun doesn't hurt enemies"). Now the
@@ -29226,7 +29720,7 @@ function shoot(){
           if(botId!=null && NET.mode==='host'){ const b=botById(botId); if(b&&!b.dead){ if(botHurt(b, dmg, player.pos.x, player.pos.z)) registerDuelKill(NET.myId, botId); } }
           else if(pid!=null && pid>=BOT_ID_BASE && clientMode){ if(NET.conn) try{ NET.conn.send({t:'botHit', id:pid, d:dmg, from:NET.myId}); }catch(e){} }
           else sendToPlayer(pid, {t:'pvpHit', d:dmg, from:NET.myId});
-          spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead); SFX.hit(); if(isHead) SFX.hit(); }
+          spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead?'head':'hit'); SFX.hit(); if(isHead) SFX.headshot(); }
         } else { spark(hit.point, fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); }
       } else if(clientMode){
         // find the enemy id by walking up to the networked enemy mesh, then report it to the host
@@ -29234,7 +29728,7 @@ function shoot(){
         while(node && id==null){ if(node.userData && node.userData.enemyId!=null) id=node.userData.enemyId; node = node.parent; }
         if(id!=null){
           if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:w.dmg*dmgMul*hsMul}); }catch(e){}
-          spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead); SFX.hit(); if(isHead) SFX.hit(); }
+          spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead?'head':'hit'); SFX.hit(); if(isHead) SFX.headshot(); }
         } else { spark(hit.point, fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); }
       } else {
         // find enemy by walking up from the hit object (handles child meshes)
@@ -29251,7 +29745,7 @@ function shoot(){
           const _ek = enemyHurt(en, dealt, player.pos.x, player.pos.z);
           spawnDamageNumber(hit.point, dealt, _ek, isHead);
           flashEnemy(en);
-          if(p===0){ showHitmarker(_ek); SFX.hit(); }
+          if(p===0){ showHitmarker(_ek?'kill':(isHead?'head':'hit')); SFX.hit(); if(isHead && !_ek) SFX.headshot(); }
         } else {
           spark(hit.point, fxCfg.color);
           spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object);
@@ -29268,9 +29762,30 @@ function enemyHurt(en, dmg, sx, sz){
   if(!en || en.hp<=0) return false;
   en.hp -= dmg;
   if(en.hp<=0){ killEnemy(en, sx, sz); return true; }
-  if(typeof _lgEnemyEvent==='function') _lgEnemyEvent('onhurt');   // build 1077: it took the hit and lived — a boss phase, a retreat, an alarm
+  if(typeof _lgEnemyEvent==='function') _lgEnemyEvent('onhurt', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) });   // build 1077: it took the hit and lived — a boss phase, a retreat, an alarm; build 1221: with the enemy's position + HP
 
   const now=performance.now();
+  // build 1209: enemies ACKNOWLEDGE bullets. Before this, a non-lethal hit was a 0.12s emissive flash and
+  // nothing else — a Brute ate 30 rounds at unchanged speed and a wind-up could not be broken short of a
+  // kill, so shooting read as "my gun is weak" regardless of DPS. Three physical reactions, all
+  // host-side and all reusing machinery that already replicates:
+  //  - a FLINCH shove along the shot direction via the ev-integrator (the same evx/evz melee knockback
+  //    uses, decayed and netcode-safe), scaled by the fraction of max-HP the hit took, capped so a
+  //    minigun does not launch anyone;
+  //  - a brief SPEED SLOW (_slowT) that the movement block multiplies in — a hit costs a step of ground;
+  //  - a HEAVY hit (>= a quarter of max HP) INTERRUPTS a melee wind-up and a charger's lunge telegraph,
+  //    so a shotgun blast to a winding-up brute actually stops the swing.
+  const frac = dmg / (en.maxHp || dmg || 1);
+  if(sx!=null){
+    let kx=en.mesh.position.x-sx, kz=en.mesh.position.z-sz; const kl=Math.hypot(kx,kz)||1;
+    const mag=Math.min(2.5, frac*8);
+    en.evx=(en.evx||0)+kx/kl*mag; en.evz=(en.evz||0)+kz/kl*mag;
+  }
+  en._slowT=Math.max(en._slowT||0, 0.15);
+  if(frac>=0.25){                                         // a heavy hit breaks a commitment
+    if(en._windupT){ en._windupT=0; en.cooldown=Math.max(en.cooldown||0,0.5); }
+    if(en._lungeWind){ en._lungeWind=0; en._lungePending=false; en.cooldown=Math.max(en.cooldown||0,1.0); }
+  }
   if(sx!=null && now>(en._evtCd||0) && en.mesh && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
     const eyaw = en.mesh.rotation.y - (en.mesh.userData.faceOff||0);   // logical facing (strip the model's facing offset)
     const _dn=_reactDir(sx-en.mesh.position.x, sz-en.mesh.position.z, eyaw);
@@ -29280,9 +29795,9 @@ function enemyHurt(en, dmg, sx, sz){
   return false;
 }
 function killEnemy(en, sx, sz){
-  if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onkill','');   // build 1027: 'On enemy killed' entries
+  if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ const _pv=_lgCtx; _lgCtx={ x:en.mesh.position.x, z:en.mesh.position.z, hp:0, hpf:0 }; try{ _lgFireEvents('onkill',''); } finally { _lgCtx=_pv; } }   // build 1027: 'On enemy killed' entries; build 1221: at the death position
   runKills++;
-  spark(en.mesh.position, 0xff2d55); SFX.kill(en.type);   // build 752: per-enemy-type kill sound
+  spark(en.mesh.position, 0xff2d55); SFX.kill(en.type, en.mesh.position);   // build 752: per-enemy-type kill sound; build 1208: panned to the kill
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
   else if(NET.mode==='host' && _coopKillFor==null) registerLocalKill();   // co-op host's OWN kill -> callout (no slow-mo, gated inside); client kills are credited via {t:'frag'}
   // drop 1-2 coins worth scaling slightly with wave
@@ -29430,6 +29945,26 @@ function _clearCorpses(){ for(const c of _corpses) _removeCorpse(c); _corpses.le
 
 // ---------- HUD ----------
 const $ = id=>document.getElementById(id);
+// build 1219: the live weapon spread (radian-ish half-angle), computed from the current weapon + movement
+// + ADS state. shoot() and the crosshair bloom both call this, so the reticle can never lie about accuracy.
+function _curSpread(w){
+  w = w || (typeof WEAPONS!=='undefined' && WEAPONS[curWep]); if(!w) return 0;
+  const _ab = (typeof adsBlend==='number') ? adsBlend : 0;
+  const _hspd = Math.hypot(player.vel.x, player.vel.z);
+  const _mob = Math.min(1, _hspd / 12);                                  // 12 = default run speed
+  const _penScale = (1 + 1.2*_mob) * (player.onGround ? 1 : 1.8);
+  const _penAdd = (0.012*_mob + (player.onGround ? 0 : 0.030)) * (1 - _ab*0.6);
+  return (+w.spread||0) * (1 - _ab*0.8) * _penScale + _penAdd;
+}
+let _xhBloom = 0;   // eased crosshair gap bloom (px)
+// Grow the reticle's centre gap with the live spread, eased so it breathes rather than snaps. Scoped optics
+// hide the reticle entirely (opacity 0), so the bloom is invisible there and costs nothing to compute.
+function _updateCrosshairBloom(dt){
+  if(typeof crosshairEl==='undefined' || !crosshairEl) return;
+  const target = Math.min(18, _curSpread() * 90);   // 0.2 rad of spread -> the 18px cap; a jumping rifle (~0.042) -> ~3.8px
+  _xhBloom += (target - _xhBloom) * Math.min(1, (dt||0.016) * 12);
+  crosshairEl.style.setProperty('--xh-bloom', _xhBloom.toFixed(1) + 'px');
+}
 const crosshairEl = $('crosshair');
 // Build the crosshair from a config object. 'accent' color follows the player's theme; a hex is literal.
 const CROSSHAIR_DEFAULT = { style:'classic', size:24, thickness:2, gap:3, dot:true, color:'accent' };
@@ -29444,12 +29979,16 @@ function applyCrosshair(cfg){
   if(cfg.style==='none'){ el.innerHTML=''; return; }
   const arm = Math.max(0, size/2 - gap);
   const ln = 'position:absolute;background:'+col+';box-shadow:0 0 6px '+col+';';
+  // build 1219: each arm offsets outward by --xh-bloom (set per frame from the live spread), so the centre
+  // gap grows when you are moving/airborne and tightens when you stop or aim. b0 = the CSS var, negated for
+  // the top/left arms so all four move AWAY from centre.
+  const b0='var(--xh-bloom,0px)', bN='calc(-1 * var(--xh-bloom,0px))';
   let html='';
   if(cfg.style==='cross' || cfg.style==='classic' || cfg.style==='tee'){
-    if(cfg.style!=='tee') html += '<div style="'+ln+'left:50%;transform:translateX(-50%);width:'+th+'px;height:'+arm+'px;top:0"></div>';
-    html += '<div style="'+ln+'left:50%;transform:translateX(-50%);width:'+th+'px;height:'+arm+'px;bottom:0"></div>';
-    html += '<div style="'+ln+'top:50%;transform:translateY(-50%);height:'+th+'px;width:'+arm+'px;left:0"></div>';
-    html += '<div style="'+ln+'top:50%;transform:translateY(-50%);height:'+th+'px;width:'+arm+'px;right:0"></div>';
+    if(cfg.style!=='tee') html += '<div style="'+ln+'left:50%;transform:translateX(-50%) translateY('+bN+');width:'+th+'px;height:'+arm+'px;top:0"></div>';
+    html += '<div style="'+ln+'left:50%;transform:translateX(-50%) translateY('+b0+');width:'+th+'px;height:'+arm+'px;bottom:0"></div>';
+    html += '<div style="'+ln+'top:50%;transform:translateY(-50%) translateX('+bN+');height:'+th+'px;width:'+arm+'px;left:0"></div>';
+    html += '<div style="'+ln+'top:50%;transform:translateY(-50%) translateX('+b0+');height:'+th+'px;width:'+arm+'px;right:0"></div>';
   } else if(cfg.style==='circle'){
     html += '<div style="position:absolute;inset:0;border:'+th+'px solid '+col+';border-radius:50%;box-shadow:0 0 6px '+col+'"></div>';
   }
@@ -29703,12 +30242,19 @@ function updateBossBar(hide){
   if(max>0){ bar.classList.remove('hidden'); const f=$('bossBarFill'); if(f) f.style.width=(cur/max*100).toFixed(1)+'%'; }
   else bar.classList.add('hidden');
 }
-function showHitmarker(kill){
+// build 1212: THREE states, not two. The marker used to be white ✕ (hit) or red ✖ (kill) — and the duel
+// and co-op-client paths passed `isHead`, so a NON-LETHAL headshot rendered the red KILL marker: a false
+// kill-confirm in exactly the mode where you cannot see the target's HP. A headshot is now its own state
+// (yellow ✛, the CoD 'dink'), distinct from a kill and from a body hit. Legacy callers that pass a kill
+// BOOLEAN still work: truthy -> 'kill', falsy -> 'hit'.
+function showHitmarker(kind){
+  const k = (kind===true) ? 'kill' : (kind==='kill' || kind==='head' || kind==='hit') ? kind : 'hit';
   const hm = $('hitmarker');
-  hm.textContent = kill ? '✖' : '✕';
-  hm.style.color = kill ? '#ff4d6d' : '#fff';
-  hm.style.textShadow = kill ? '0 0 12px #ff4d6d' : '0 0 8px var(--accent)';
-  hm.style.transition='none'; hm.style.opacity='1'; hm.style.transform='translate(-50%,-50%) scale('+(kill?1.4:1)+')';
+  hm.textContent = k==='kill' ? '✖' : k==='head' ? '✛' : '✕';
+  hm.style.color = k==='kill' ? '#ff4d6d' : k==='head' ? '#ffd166' : '#fff';
+  hm.style.textShadow = k==='kill' ? '0 0 12px #ff4d6d' : k==='head' ? '0 0 12px #ffd166' : '0 0 8px var(--accent)';
+  const sc = k==='kill' ? 1.4 : k==='head' ? 1.2 : 1;
+  hm.style.transition='none'; hm.style.opacity='1'; hm.style.transform='translate(-50%,-50%) scale('+sc+')';
   requestAnimationFrame(()=>{ hm.style.transition='all .25s'; hm.style.opacity='0'; hm.style.transform='translate(-50%,-50%) scale(.6)'; });
 }
 // build 580: multi-kill callouts — kills in quick succession escalate (DOUBLE/TRIPLE/...) with a rising hype sound,
@@ -29738,6 +30284,12 @@ function registerLocalKill(){   // call when the LOCAL player gets a kill
   const now=performance.now(); _killTimes.push(now);
   while(_killTimes.length && now-_killTimes[0]>_MK_WIN) _killTimes.shift();
   const n=_killTimes.length;
+  // build 1220: co-op kills used to land FLAT — the 0.07s hitstop (killEnemy) and the triple-kill slow-mo
+  // below are BOTH solo-only, because slowing the sim in netplay would desync every peer. The crunch that
+  // sells a kill is exactly what the social mode lost. Slowing time is unsafe online, but a LOCAL cosmetic
+  // jolt is not: substitute a camera-shake punch on the killing client (bigger on a multi-kill). Solo is
+  // untouched — it keeps its real hitstop, so there is no double-crunch there.
+  if(NET.mode!=='off' && typeof shake!=='undefined') shake = Math.max(shake, n>=3 ? 0.15 : 0.06);
   if(n>=2){ showMultiKill(n); if(NET.mode==='off' && n>=3) hitStop=Math.max(hitStop, 0.2); }   // solo: dramatic slow-mo on triple+
 }
 // ---- Combat feel: floating damage numbers, enemy hit-flash, hitstop ----
@@ -29885,7 +30437,7 @@ function fireEnemyShot(en, target, spread){
   if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);   // muzzle flash at the enemy's gun (scaled by boltCfg)
   const vel = dir.multiplyScalar(en.projSpeed);
   enemyShots.push({ mesh, vel, dmg: en.dmg, born: performance.now(), life: 3500, from: from.clone() });
-  if(SFX && SFX.enemyShot) SFX.enemyShot();
+  if(SFX && SFX.enemyShot) SFX.enemyShot(from);
   // build 1020: co-op joiners never saw enemy gunfire at all — the bolts lived only on the host.
   // Relay each shot; clients fly a cosmetic copy (damage still arrives via {t:'hurt'}).
   if(NET.mode==='host'){ const m={ t:'eshot', o:[+from.x.toFixed(2),+from.y.toFixed(2),+from.z.toFixed(2)], v:[+vel.x.toFixed(2),+vel.y.toFixed(2),+vel.z.toFixed(2)] }; for(const cid in NET.conns){ try{ NET.conns[cid].send(m); }catch(e){} } }
@@ -29899,7 +30451,7 @@ function remoteEnemyShot(o, v){   // build 1020: a host-relayed enemy shot — c
   scene.add(mesh);
   if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);
   enemyShots.push({ mesh, vel, dmg:0, noDmg:true, born:performance.now(), life:3500, from:from.clone() });
-  if(SFX && SFX.enemyShot) SFX.enemyShot();
+  if(SFX && SFX.enemyShot) SFX.enemyShot(from);
 }
 function updateEnemyShots(dt){
   if(!enemyShots.length) return;
@@ -31937,13 +32489,28 @@ function loop(){
   const adsTarget = (ads || padAds || touchAds || editorAimPreview) ? 1 : 0;
   adsBlend += (adsTarget - adsBlend) * Math.min(1, dt*14);
   if(Math.abs(adsBlend - adsTarget) < 0.002) adsBlend = adsTarget;
+  // build 1210: the landing-dip spring (stiff, well damped — a quick dip and settle, no wobble) and the
+  // strafe-lean target (roll away from your lateral velocity, killed while aiming so the sight stays true).
+  { const _dt=Math.min(0.05, dt);
+    _landDipV += (-_landDip*90 - _landDipV*14) * _dt; _landDip += _landDipV*_dt;
+    if(Math.abs(_landDip)<1e-4 && Math.abs(_landDipV)<1e-3){ _landDip=0; _landDipV=0; }
+    const _latV = (typeof player!=='undefined'&&player.vel) ? (player.vel.x*Math.cos(player.yaw) - player.vel.z*Math.sin(player.yaw)) : 0;
+    const _leanT = Math.max(-0.05, Math.min(0.05, -_latV*0.006)) * (1 - adsBlend);
+    _camLean += (_leanT - _camLean) * Math.min(1, dt*8); }
   _scopedNow = !!((ads || padAds || touchAds) && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen); if(_scopedNow && typeof cursorAimActive==='function' && cursorAimActive()) _scopedNow=false;   // build 874: no optic tunnel from a bird's-eye camera (build 1103: nor from chase-cursor) · build 913: touch AIM + controller LT scope too (the sniper never zoomed on mobile)
   _setScopeOverlay(_scopedNow);
   const hipFov = (worldCfg && worldCfg.fov) ? worldCfg.fov : BASE_FOV;
   const _zoomFov = Math.max(12, adsFovLive * (typeof _attZoomMul==='function' ? _attZoomMul(curWep) : 1));   // build 964: optics finally magnify — the loadout zoom was computed but never read
-  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend;
+  // build 1210: a sprint FOV push — the frame widens as you approach top speed, folded out while aiming.
+  let _sprintFov = 0;
+  if(typeof player!=='undefined' && player.vel && player.onGround && typeof SPEED!=='undefined'){
+    const _hsp = Math.hypot(player.vel.x, player.vel.z), _top = SPEED * (typeof SPRINT!=='undefined'?SPRINT:1.6);
+    const _f = _top>0 ? Math.min(1, _hsp/_top) : 0; _sprintFov = _f*_f * 6 * (1 - adsBlend);
+  }
+  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend + _sprintFov;
   if(Math.abs(camera.fov - wantFov) > 0.01){ camera.fov = wantFov; camera.updateProjectionMatrix(); }
   crosshairEl.style.opacity = _scopedNow ? '0' : (1 - adsBlend*0.85).toFixed(2);
+  if(typeof _updateCrosshairBloom==='function') _updateCrosshairBloom(dt);   // build 1219: the reticle blooms with the live spread
 
   _updateViewAim();   // build 874: twin-stick cursor -> body yaw/pitch (no-op in first person)
 
@@ -32290,15 +32857,16 @@ function loop(){
     camera.position.copy(player.pos);
     camera.position.y += (worldCfg.eyeHeight - EYE);   // build 702: per-level camera height — shifts the view only; the collider + enemy aim stay at the true body
     if(crouchT > 0.001) camera.position.y -= crouchT * CROUCH_DIP;   // crouch lowers the view
+    camera.position.y += _landDip;   // build 1210: the landing dip (negative = down)
 
-    // camera shake (decays quickly) — offsets rotation so it reads as a jolt
+    // camera shake (decays quickly) — offsets rotation so it reads as a jolt; build 1210 folds in the strafe lean
     if(shake > 0.001){
       const s = shake * shake;          // ease — feels punchier
       camera.rotation.x += (Math.random()-0.5) * 0.08 * s;
       camera.rotation.y += (Math.random()-0.5) * 0.08 * s;
-      camera.rotation.z  = (Math.random()-0.5) * 0.06 * s;
+      camera.rotation.z  = _camLean + (Math.random()-0.5) * 0.06 * s;
       shake = Math.max(0, shake - dt*2.2);
-    } else { shake = 0; camera.rotation.z = 0; }
+    } else { shake = 0; camera.rotation.z = _camLean; }
     if(tpActive() && gameOn && !duelDead){ gun.visible=false; tpCameraPushback(dt); }   // third-person chase cam (first-person above is the default; build 894: damped follow, forced by Camera view: Third-person)
   }
   // build 874: per-level camera views. Placed AFTER the branch ladder so it wins over first/third-person
@@ -32473,6 +33041,7 @@ function loop(){
     // around walls/props instead of beelining into them. Build the grid incrementally (no spawn freeze;
     // enemies beeline until it's ready). Bots are PvP-only, so nothing else competes for this budget here.
     if(!NAV.built){ if(!NAV.building && typeof navBuildBegin==='function') navBuildBegin(); if(typeof navBuildStep==='function') navBuildStep(5); }
+    else if(typeof navDirtyStep==='function') navDirtyStep(3);   // build 1200: fold moved/destroyed props back into the grid
     _repathBudget = 3;   // cap A* searches per tick so a frame never stalls on many enemy repaths at once
     _losBudget = 5; _groundBudget = 5; _pathBudget = 5;   // build 547/553: per-frame LOS + ground + direct-path raycast caps. A wave spawns many enemies whose caches all come due on the same frame; these stop that frame from firing dozens of raycasts at once (the wave-framerate spike). Over-budget enemies reuse the cached value one more frame; the jittered intervals stagger them after ~1s.
     _airGroundBudget = 8;   // build 809: cell-moved / airborne refreshes were EXEMPT from _groundBudget — a blast launching a wave fired ~3 casts x every enemy on one frame. Now they draw from their own (larger) pool; over-budget movers reuse last frame's ground for one frame.
@@ -32486,11 +33055,11 @@ function loop(){
       for(const pl of players){ const d=Math.hypot(pl.pos.x-en.mesh.position.x, pl.pos.z-en.mesh.position.z); if(d<nd){ nd=d; near=pl; } }
       en._near = near; en._dist = nd;
       en._nearEyeY = (near.eyeY!=null ? near.eyeY : (near.pos.y!=null ? near.pos.y : 1.4));
-      const td = enemyDesiredTarget(en, near.pos.x, near.pos.z, nd, nowMs);
+      const td = enemyDesiredTarget(en, near.pos.x, near.pos.z, nd, nowMs, near.pos.y);
       // build 1077: the moment this enemy goes from oblivious to alerted, exactly once per alert. The edge is
       // watched HERE rather than at the four places that can set `aware` (sight, gunfire, a blast, a rule), so
       // every one of them fires it and none of them fires it twice.
-      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot'); }
+      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) }); }
       else if(!en.aware && en._wasAware) en._wasAware=0;
       en._chase = td.chase; en._see = !!td.see;
       // face the player only when actually seen; while hunting a last-known spot, face where we're walking
@@ -32503,7 +33072,8 @@ function loop(){
       const fp = en.mesh.userData.footprint || 0.9;
       en._reach = 1.5 + fp;                                // attack range scales with the body too (Phase 3)
       const stopAt = td.chase ? (fp + 0.9) : 0.5;          // patrol: stop on the waypoint; chase: body just shy of the player
-      const spd = (td.chase ? en.speed : en.speed*0.5) * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1) * (typeof _fxSpeedFor==='function' ? _fxSpeedFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them; 1193: effect zones
+      const _stag = ((en._slowT||0) > 0) ? 0.55 : 1;   // build 1209: a freshly-hit enemy loses a step
+      const spd = (td.chase ? en.speed : en.speed*0.5) * _stag * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1) * (typeof _fxSpeedFor==='function' ? _fxSpeedFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them; 1193: effect zones
       if(en.grounded!==false){   // a launched enemy is airborne: momentum carries it, AI walking is paused
       // build 635: Charger — while winding up or dashing it OWNS its movement (normal walking skipped via _charging).
       let _charging = false;
@@ -32544,19 +33114,19 @@ function loop(){
         if(en._aiCover && (en._aiCoverT||0) > 0){
           en._aiCoverT -= dt;
           const cvx = en._aiCover.x - en.mesh.position.x, cvz = en._aiCover.z - en.mesh.position.z, cvd = Math.hypot(cvx,cvz);
-          if(cvd > 1.0){ en._wantMove = true; en.mesh.position.x += cvx/cvd*en.speed*dt; en.mesh.position.z += cvz/cvd*en.speed*dt; }
+          if(cvd > 1.0){ en._wantMove = true; en.mesh.position.x += cvx/cvd*en.speed*_stag*dt; en.mesh.position.z += cvz/cvd*en.speed*_stag*dt; }
           if(en._aiCoverT <= 0) en._aiCover = null;
         }
         else if(!en._see){
           const _ba = Math.atan2(td.tz - en.mesh.position.z, td.tx - en.mesh.position.x) + en.flankSide*0.7;
           const _fx = td.tx + Math.cos(_ba)*5 - en.mesh.position.x, _fz = td.tz + Math.sin(_ba)*5 - en.mesh.position.z, _fd = Math.hypot(_fx,_fz)||1;
-          en._wantMove = true; en.mesh.position.x += _fx/_fd*en.speed*dt; en.mesh.position.z += _fz/_fd*en.speed*dt;
+          en._wantMove = true; en.mesh.position.x += _fx/_fd*en.speed*_stag*dt; en.mesh.position.z += _fz/_fd*en.speed*_stag*dt;
         }
         else {
         // hold a standoff range: close in if too far, back off if the player crowds it, else hold + shoot
         const toPx = near.pos.x - en.mesh.position.x, toPz = near.pos.z - en.mesh.position.z, pd = Math.hypot(toPx,toPz)||1;
-        if(pd > en.standoff + 1){ en._wantMove=true; en.mesh.position.x += toPx/pd*en.speed*dt; en.mesh.position.z += toPz/pd*en.speed*dt; }
-        else if(pd < en.standoff*0.6){ en._wantMove=true; en.mesh.position.x -= toPx/pd*en.speed*dt; en.mesh.position.z -= toPz/pd*en.speed*dt; }
+        if(pd > en.standoff + 1){ en._wantMove=true; en.mesh.position.x += toPx/pd*en.speed*_stag*dt; en.mesh.position.z += toPz/pd*en.speed*_stag*dt; }
+        else if(pd < en.standoff*0.6){ en._wantMove=true; en.mesh.position.x -= toPx/pd*en.speed*_stag*dt; en.mesh.position.z -= toPz/pd*en.speed*_stag*dt; }
         else if(en.strafe && en._see){   // build 633: at standoff -> STRAFE sideways (circle the player) instead of standing still. Flips direction on a timer or when it would walk into a wall.
           if(en._strafeDir==null || nowMs > (en._strafeFlip||0)){ en._strafeDir = (Math.random()<0.5?-1:1); en._strafeFlip = nowMs + 1100 + Math.random()*1500; }
           const sx = -toPz/pd*en._strafeDir, sz = toPx/pd*en._strafeDir;   // perpendicular to the player line
@@ -32585,7 +33155,7 @@ function loop(){
           // build 620: route ALL blocked movement through the nav grid — wandering/searching enemies too, not just
           // active chasers. A patrol enemy heading to a wander/last-known waypoint used to beeline and grind on the
           // corner; now it navigates the halls like a chaser, so it stops getting "confused" around walls/objects.
-          const _wp=_botFollowPath(en._nav||(en._nav={ pos:en.mesh.position }), td.tx, td.tz, dt);
+          const _wp=_botFollowPath(en._nav||(en._nav={ pos:en.mesh.position }), td.tx, td.tz, dt, td.ty);
           if(en._jmpCd>0) en._jmpCd-=dt;
           if(_wp){ const _pdx=_wp.x-en.mesh.position.x, _pdz=_wp.z-en.mesh.position.z, _pl=Math.hypot(_pdx,_pdz);
             if(_pl > 0.5){ _mvx=_pdx/_pl; _mvz=_pdz/_pl; }
@@ -32731,6 +33301,7 @@ function loop(){
         en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push;
       }
       // trap launch: horizontal momentum + a vertical pop that arcs under gravity and settles back to the hover height
+      if(en._slowT>0) en._slowT=Math.max(0, en._slowT-dt);   // build 1209: the stagger slow decays
       if(en.evx||en.evz){ en.mesh.position.x+=en.evx*dt; en.mesh.position.z+=en.evz*dt; const kd=Math.max(0,1-((en.grounded?6:0.6))*dt); en.evx*=kd; en.evz*=kd; if(Math.abs(en.evx)<0.05)en.evx=0; if(Math.abs(en.evz)<0.05)en.evz=0; }
       if((en.launchY||0)>0 || (en.vy||0)>0){ en.vy=(en.vy||0)-GRAV*dt; en.launchY=(en.launchY||0)+en.vy*dt; if(en.launchY<=0){ const _imp=-(en.vy||0); en.launchY=0; en.vy=0; en.grounded=true; if(gameCfg.fallDamage && gameCfg.fallDamage.on && gameCfg.fallDamage.ai && en.hp>0){ const dmg=_fallDamageFor(_imp); if(dmg>0.5){ enemyHurt(en, dmg, null, null); } } } else en.grounded=false; }
       else { en.launchY=0; en.vy=0; en.grounded=true; }
@@ -35435,6 +36006,7 @@ function restoreLevel(level){
   if(!level) return;
   if(!_levelFormatCheck(level).ok) return;   // build 1165: refuse BEFORE the teardown — a refusal must cost nothing
   if(typeof assetLoadFailures!=='undefined') assetLoadFailures.clear();   // build 1167: stale failures about a previous level are their own kind of lie
+  if(typeof logicFailures!=='undefined') logicFailures.clear();            // build 1214: stale logic failures too
   // build 893: world (TERRAIN) first — prop y is stored relative to the terrain under it, so placement
   // must lift against THIS level's terrain, not whatever the previous level left behind.
   if(level.world){ worldCfg = _worldFrom(level.world); applyWorldCfg(); }
@@ -35469,7 +36041,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace
   modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
@@ -36464,6 +37036,8 @@ function levelIssues(){
     if(typeof assetLoadFailures!=='undefined') for(const [src, e] of assetLoadFailures){
       const short = src.length>46 ? '…'+src.slice(-45) : src;
       issues.push('A model failed to load ('+e.msg+')'+(e.n>1?' ×'+e.n:'')+': '+short); }
+    // build 1214: logic-graph failures from the last play session — the graph swallowed these before.
+    if(typeof logicFailures!=='undefined') for(const [msg, e] of logicFailures) issues.push('Logic (last run): '+msg+(e.n>1?' ×'+e.n:''));
     // build 1177: local: models exist only in THIS device's IndexedDB — anyone else loading the level gets
     // the missing-model report above. Sharing needs the server upload; say so before they publish.
     { let loc=0; for(const o of propModels){ if(o && o.userData && /^local:/i.test(String(o.userData.src||''))) loc++; }
@@ -41131,7 +41705,7 @@ self.onmessage = async (e) => {
     const w = api.writeGLB('out.glb');
     const bytes = host.out;
     const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    postMessage({ ok:true, name:info.name, world:info.world||null, spawns:info.spawns||null, kb:Math.round(w.bytes/1024), tris:w.tris, glb:ab }, [ab]);
+    postMessage({ ok:true, name:info.name, world:info.world||null, spawns:info.spawns||null, game:info.game||null, kb:Math.round(w.bytes/1024), tris:w.tris, glb:ab }, [ab]);
   } catch(err){ postMessage({ ok:false, err:String(err && err.message || err) }); }
 };`;
 function _lgGenerate(opts, done){
@@ -41176,6 +41750,11 @@ function _lgOpenDialog(){
   const moodRow=H('<label style="display:flex;align-items:center;gap:7px;margin:7px 0 2px;cursor:pointer;"></label>');
   const moodCb=document.createElement('input'); moodCb.type='checkbox'; moodCb.checked=true; moodCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);';
   moodRow.appendChild(moodCb); moodRow.appendChild(Object.assign(document.createElement('span'),{ textContent:'Apply the arena’s lighting mood to this level' }));
+  /* build 1204: the generator emits gameplay data (guard posts on its ramps, pickup spots on its high
+     ground) in the engine's own authoring shapes — seeding is a creator choice, defaulting on. */
+  const gpRow=H('<label style="display:flex;gap:8px;align-items:center;margin:6px 0 2px;cursor:pointer;"></label>');
+  const gpCb=document.createElement('input'); gpCb.type='checkbox'; gpCb.checked=true; gpCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);';
+  gpRow.appendChild(gpCb); gpRow.appendChild(Object.assign(document.createElement('span'),{ textContent:'Seed gameplay: ramp guards + pickup spots' }));
   const status=H('<div class="hint" style="font-size:11px;min-height:16px;margin:6px 0 2px;"></div>');
   const actRow=H('<div style="display:flex;gap:6px;margin-top:6px;"></div>');
   const go=document.createElement('button'); go.textContent='Generate'; go.className='lgCTA'; go.style.cssText='flex:1;padding:8px;font-size:13px;';
@@ -41194,7 +41773,22 @@ function _lgOpenDialog(){
       actRow.querySelectorAll('.lgRes').forEach(b=>b.remove());
       const place=document.createElement('button'); place.className='lgRes lgCTA'; place.textContent='Place in level'; place.style.cssText='flex:1;padding:8px;font-size:12px;';
       place.onclick=()=>{ pushUndoSnapshot();
-        spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed, player spawn moved to BASE 1. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).'); }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
+        spawnProp(url, [0,0,0, 0,0,0, 1], ()=>{ if(typeof flashToast==='function') flashToast('Arena placed, player spawn moved to BASE 1. Generated models live in browser memory — use Download to keep the .glb (re-import or host it for a shareable level).');
+          /* build 1204: the arena arrives knowing its own gameplay. Posts are already in buildSpawnMarker's
+             shape (a patrol guard pacing each ramp); pickup spots are the generator's open-lane and
+             ramp-top candidates, kinds assigned by index so the HIGH GROUND (emitted last) earns the good
+             guns. No clearAt validation on purpose: the generator authored these against its own geometry,
+             and the big-GLB collider may still be deriving off-thread (build 1203) when this callback runs. */
+          if(gpCb.checked && r.game){ try{
+            if(Array.isArray(r.game.posts)) for(const ps of r.game.posts.slice(0,8)) buildSpawnMarker(ps);
+            if(Array.isArray(r.game.pickups)){
+              const _gpKinds=['health','ammo','rifle','shotgun','smg','damage','health','sniper','shield','launcher','speed','ammo'];
+              r.game.pickups.slice(0,12).forEach((sp2,i)=>{ pickupSpots.push({ x:+(+sp2[0]).toFixed(2), z:+(+sp2[1]).toFixed(2), kind:_gpKinds[i%_gpKinds.length] }); });
+              if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
+            }
+            if(typeof setSpawnMarkersVisible==='function') setSpawnMarkersVisible(editorOpen);
+          }catch(e){} }
+        }, null, 'loop', null, (err)=>{ status.textContent='Could not load the generated model: '+err; });
         // build 1124: an arena is not a prop — it lands at the origin, which is where the level's
         // default player spawn already is, and every footprint the generator builds puts a structure
         // at its centre. Measured on KILN RUN: the central mass's underside sits at y 2.25, so the

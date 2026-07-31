@@ -71,9 +71,13 @@ const DIRS = new Function('Math', 'return ' + src.match(/\(\(\)=>\{ const out=\[
     'the shared-material invariant: any unbaked mesh sharing a baked material gets an all-white attribute — a missing attribute renders BLACK');
   assert(/if\(typeof _glbPending !== 'undefined' && _glbPending > 0\) return;/.test(tick),
     'the bake waits out model loads — bake what will actually be there');
-  assert(/_bakeDoneN !== colliders\.length\)\{ _bakeWant = true; \}/.test(tick),
-    'a prop arriving or leaving after the bake re-requests it (the late-GLB black-mesh hazard)');
-  assert(/performance\.now\(\) - t0 < BAKE_MS/.test(tick), 'the job is frame-budgeted — never a synchronous stall');
+  assert(/const sig = _bakeSig\(\);/.test(tick) && /if\(sig === _bakeDoneSig\)\{ _bakeDoneN = colliders\.length; return; \}/.test(tick),
+    'a prop arriving or leaving after the bake re-requests it ONLY when the BAKE SET changed (build 1206: a mover/dynamic/wall toggle no longer restarts the bake — the late-GLB black-mesh hazard still triggers because a real bake prop changes the sig)');
+  assert(/function _bakeSig\(\)\{ let n = 0; for\(const c of colliders\)\{ const u = c\.userData; if\(u && u\.src && !\(u\.phys \|\| u\.vehicle \|\| \(u\.xa && u\.xa\.on\)\)\) n\+\+; \} return n; \}/.test(gameSource()),
+    'the signature counts exactly what _bakeCollect would gather — a static, non-mover prop with src');
+  assert(/const budget = \(typeof _prStepI !== 'undefined' && _prStepI > 0\) \? 2 : BAKE_MS;/.test(tick),
+    'build 1206: the per-frame budget drops to 2ms when the adaptive resolution scaler has engaged — a background bake must never buy a visible downshift');
+  assert(/performance\.now\(\) - t0 < budget/.test(tick), 'the job is frame-budgeted — never a synchronous stall');
   assert(/if\(u\.phys \|\| u\.vehicle \|\| \(u\.xa && u\.xa\.on\)\) continue;/.test(extractFunction('_bakeCollect')),
     'movers cannot hold a static bake and are skipped (they then ride the white-attribute invariant)');
   assert(/mat\.vertexColors = false;   \/\* build 1195/.test(src),

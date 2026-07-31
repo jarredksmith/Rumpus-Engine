@@ -220,7 +220,7 @@ assert(/etype:p\.etype\|\|'grunt', n:p\.n, pk:p\.pk\|\|'health', item:p\.item\|\
 assert(/\['spawn','Spawn enemies'\],\['pickup','Spawn pickup'\],\['damage','Damage'\],\['heal','Heal'\],\['kill','Kill'\],\['teleport','Teleport'\]/.test(src),
   'all six appear in the node\'s verb list, in plain English');
 eq((src.match(/\['spawn','Spawn enemies'\]/g) || []).length, 2, '...in BOTH the graph node and the prop-signal editor');
-assert(/\{k:'at',l:'at',w:84,ifv:\['verb',\['spawn','pickup','teleport','command','moveprop'\]\],listId:'lgPlaceList'\}/.test(src),   // build 1170: moveprop points somewhere too
+assert(/\{k:'at',l:'at',w:84,ifv:\['verb',\['spawn','pickup','teleport','command','moveprop','spawnprop'\]\],listId:'lgPlaceList'\}/.test(src),   // build 1170: moveprop points somewhere too; build 1216: so does spawnprop
   'the place field appears for exactly the verbs that need one, and offers a dropdown of real places');
 assert(/\{k:'who',l:'',w:104,ifv:\['verb',\['damage','heal','kill','teleport'\]\]/.test(src), 'and the who field for exactly those');
 assert(/\{k:'item',l:'item',w:76,ifv:\['verb','pickup'\],ifv2:\['pk','item'\]/.test(src),

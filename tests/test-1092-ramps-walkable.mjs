@@ -24,7 +24,7 @@ function gridConsts(){
 }
 
 const src = gameSource();
-const bg = extractFunction('buildModelGridBoxes');
+const bg = [extractFunction('_mgridGatherTris'), extractFunction('_mgridCore'), extractFunction('_mgridOpts'), extractFunction('_mgridWrap'), extractFunction('buildModelGridBoxes')].join('\n');   // build 1203 split the derivation; the concatenation still holds every internal this test pins
 
 // ---------------------------------------------------------------- the clipping rasteriser
 assert(/Sutherland/.test(bg), 'the rasteriser documents the per-cell clip');

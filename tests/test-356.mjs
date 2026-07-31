@@ -11,7 +11,7 @@ assert(navPos>0 && navPos < rebuildPos, 'NAV is declared before rebuildArena (no
 assert(/function rebuildArena\(\)\{\s*NAV\.built=false;/.test(src), 'rebuildArena invalidates the grid');
 
 // path-follow helpers
-assert(/function _botRepath\(b, destX, destZ\)/.test(src) && /function _botFollowPath\(b, destX, destZ, dt\)/.test(src), 'path helpers exist');
+assert(/function _botRepath\(b, destX, destZ, destY\)/.test(src) && /function _botFollowPath\(b, destX, destZ, dt, destY\)/.test(src), 'path helpers exist (with the optional goal height since build 1200)');
 const fp = extractFunction('_botFollowPath');
 assert(/const goalMoved = !b\.path \|\| Math\.hypot\(\(b\.pathGoalX\|\|0\)-destX, \(b\.pathGoalZ\|\|0\)-destZ\) > 3\.0;/.test(fp), 'repaths when the goal drifts >3m');
 assert(/while\(b\.pathI < b\.path\.length-1 && Math\.hypot\(wp\.x-b\.pos\.x, wp\.z-b\.pos\.z\) < NAV\.cell\*0\.9/.test(fp), 'advances past reached waypoints');
@@ -19,7 +19,7 @@ assert(/jump:\(wp\.y - b\.pos\.y\) > \(STEP\+0\.1\)/.test(fp), 'flags a jump whe
 
 // integration in updateBots: approach uses the path, falls back to beeline, jumps with forward carry
 const ub = extractFunction('updateBots');
-assert(/const wp = _botFollowPath\(b, destX, destZ, dt\);/.test(ub), 'approach steers toward the path waypoint');
+assert(/const wp = _botFollowPath\(b, destX, destZ, dt, destY\);/.test(ub), 'approach steers toward the path waypoint');
 // build 475: jump is gated by a cooldown and tags the carry as a path-hop so it's collision-checked
 assert(/if\(wp\.jump && b\.grounded!==false && \(b\._jumpCd\|\|0\)<=0\)\{ b\.vy=JUMP; b\.grounded=false; b\.evx=mvx\*spd; b\.evz=mvz\*spd; b\._jumpCarry=true; b\._jumpCd=0\.7; \}/.test(ub), 'jump sets vy + forward carry, tags it a path-hop, and arms a cooldown');
 assert(/if\(b\._jumpCarry && typeof clearAt==='function'\)\{/.test(ub), 'a path-hop carry is collision-checked (no tunnelling through rock)');

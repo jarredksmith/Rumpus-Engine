@@ -11,7 +11,7 @@ assert(/en\._netHitDir=\(_dn==='Front'\?0:_dn==='Back'\?1:_dn==='Left'\?2:3\); e
   'enemyHurt records the directional hit + bumps the sequence');
 
 // ---- the world snapshot carries hd/hs per enemy ----
-assert(/const Eall=enemies\.map\(e=>\(\{ id:e\.id, p:\[[^\]]+\], hd:e\._netHitDir\|\|0, hs:e\._netHitSeq\|\|0 \}\)\);/.test(src),
+assert(/const Eall=enemies\.map\(e=>\{ const o=\{ id:e\.id, p:\[[^\]]+\], hd:e\._netHitDir\|\|0, hs:e\._netHitSeq\|\|0 \};/.test(src),
   'each enemy in the snapshot carries hd/hs (a CHANGED hd/hs is part of 1197\'s delta key, so a hit always ships)');
 
 // ---- a client shooting an enemy now supplies its position (directional flinch) ----

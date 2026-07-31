@@ -26,7 +26,7 @@ assert(/_scopedNow\) return false;   \/\/ looking through the optic: no viewmode
 
 // feel: heavier kick, deep report, key slots, resets
 assert(/\(w\.scope\?2\.4:1\)/.test(src), 'scoped shot kicks harder');
-assert(/curWep==='sniper'/.test(src), 'sniper has its own shot sound');
+assert(/sniper: \{ sub:\[45/.test(src), 'sniper has its own shot sound (a _SHOT_LAYERS entry since 1211 — deepest sub, longest tail)');
 assert(/Digit4' && owned\[3\]/.test(src) && /Digit5' && owned\[4\]/.test(src), 'weapon slots 4+5 bound');
 assert(/_w\.mag=_w\.magSize; _w\.reserve=Math\.min\(_w\.reserve0!=null\?_w\.reserve0:_w\.reserve, _w\.reserveMax\);/.test(src), 'fresh-run ammo reset (per-sheet loop since 1190 — sniper resets 5/20 from its factory sheet, proven executable in test-1190)');
 assert(/let l=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\]\.filter/.test(src), 'duel loadout includes the sniper');

@@ -5,8 +5,8 @@ const src = gameSource();
 
 // hit marker has a kill variant
 const hm = extractFunction('showHitmarker');
-assert(/function showHitmarker\(kill\)/.test(hm), 'showHitmarker takes a kill flag');
-assert(/kill \? '#ff4d6d' : '#fff'/.test(hm), 'kill marker turns red');
+assert(/function showHitmarker\(kind\)/.test(hm), 'showHitmarker takes a kind (build 1212: hit/head/kill, with legacy booleans still accepted)');
+assert(/k==='kill' \? '#ff4d6d' : k==='head' \? '#ffd166' : '#fff'/.test(hm), 'kill marker turns red, headshot yellow (build 1212)');
 
 // floating damage numbers
 const sdn = extractFunction('spawnDamageNumber');
@@ -52,7 +52,7 @@ assert(/if\(hitStop > 0\)\{ hitStop -= rawDt; dt = rawDt \* 0\.12; \}/.test(loop
 // solo hit path feeds all three
 const sh = extractFunction('shoot');
 assert(/spawnDamageNumber\(hit\.point, dealt, _ek, isHead\)/.test(sh), 'damage number at the hit point');
-assert(/flashEnemy\(en\)/.test(sh) && /showHitmarker\(_ek\)/.test(sh), 'flash + kill-aware marker on hit');
+assert(/flashEnemy\(en\)/.test(sh) && /showHitmarker\(_ek\?'kill':\(isHead\?'head':'hit'\)\)/.test(sh), 'flash + kill/head/hit-aware marker on hit (build 1212)');
 
 // --- runnable: hitstop time-scale ---
 function step(hs, rawDt){ let dt=rawDt; if(hs>0){ hs-=rawDt; dt=rawDt*0.12; } return { hs, dt }; }

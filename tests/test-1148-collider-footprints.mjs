@@ -34,7 +34,7 @@ function mkGrid(bytes){
   const consts = bytes === undefined ? gridConsts
     : gridConsts.replace(/const MGRID_FOOT_BYTES = [^;]+;/, 'const MGRID_FOOT_BYTES = ' + bytes + ';');
   return new Function('THREE','_mgA','_mgB','_mgC','IS_COARSE',
-    consts + '\n' + extractFunction('buildModelGridBoxes') + '\nreturn buildModelGridBoxes;'
+    consts + '\n' + [extractFunction('_mgridGatherTris'), extractFunction('_mgridCore'), extractFunction('_mgridOpts'), extractFunction('_mgridWrap'), extractFunction('buildModelGridBoxes')].join('\n') + '\nreturn buildModelGridBoxes;'
   )({ Vector3:V3, Box3 }, new V3(), new V3(), new V3(), false);
 }
 const buildGrid = mkGrid();
@@ -130,15 +130,15 @@ function thicknessAt(boxes, x){
 
 // ---------------------------------------------------------------- the storage budget, and its fallbacks
 {
-  const fn = extractFunction('buildModelGridBoxes');
+  const fn = extractFunction('_mgridCore');   // build 1203: the internals live in the pure core now
   assert(/if\(4\*N\*K <= cap\)\{ want\(N\*K\); footPer=2; \}/.test(fn),
     'per-SLOT footprints when the budget affords them — four bytes per slot, one per edge');
   assert(/else if\(4\*N <= cap\)\{ want\(N\); footPer=1; \}/.test(fn),
     '...falling back to per-COLUMN, which still tightens a thin wall even though it opens no doorway');
   assert(/let fx0=null, fx1=null, fz0=null, fz1=null, footPer=0;/.test(fn),
     '...and to nothing at all, which is exactly the pre-1148 whole-cell behaviour rather than a broken grid');
-  assert(/\(typeof IS_COARSE!=='undefined' && IS_COARSE\) \? \(MGRID_FOOT_BYTES>>1\)/.test(fn),
-    'a phone gets half the budget, like MGRID_BITS beside it');
+  assert(/coarse\?\(MGRID_FOOT_BYTES>>1\):MGRID_FOOT_BYTES/.test(extractFunction('_mgridOpts')),
+    'a phone gets half the budget, like MGRID_BITS beside it (derived once in _mgridOpts since 1203)');
   // 24 MB is the figure the 331x148x366 skyscraper needs; the cap exists so it degrades instead of dying
   const cap = src.match(/const MGRID_FOOT_BYTES = ([^;]+);/)[1];
   assert(/24 << 20/.test(cap), 'the cap is stated in bytes, not in cells: ' + cap.trim());
@@ -158,7 +158,7 @@ function thicknessAt(boxes, x){
 
 // ---------------------------------------------------------------- the reasoning that cost three attempts
 {
-  const fn = extractFunction('buildModelGridBoxes');
+  const fn = extractFunction('_mgridCore');
   assert(/const PLANE_B = 2;/.test(fn),
     'a footprint no thicker than ~8 mm is a single SURFACE, not a thin measurement — the two cases widen differently');
   assert(/if\(hi - lo >= minB\) return \[lo, hi\];/.test(fn),

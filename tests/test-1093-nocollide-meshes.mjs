@@ -12,7 +12,7 @@ function gridConsts(){
 }
 
 const src = gameSource();
-const bg = extractFunction('buildModelGridBoxes');
+const bg = [extractFunction('_mgridGatherTris'), extractFunction('_mgridCore'), extractFunction('_mgridOpts'), extractFunction('_mgridWrap'), extractFunction('buildModelGridBoxes')].join('\n');   // build 1203 split the derivation; the concatenation still holds every internal this test pins
 
 // -------------------------------------------------- all three traverses carry the skip
 assert(/for\(let p=o; p; p=p\.parent\)\{ if\(p\.name && \/\^nocollide\/i\.test\(p\.name\)\) return; \}/.test(bg),

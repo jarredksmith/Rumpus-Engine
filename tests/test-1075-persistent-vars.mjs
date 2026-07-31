@@ -22,11 +22,13 @@ eq(san(Array.from({ length: 200 }, (_, i) => 'v' + i)).length, 40, 'the list is 
 
 // ---------------------------------------------------------------- seed / commit, and what a retry does
 const ENV = `
-  let logicVars={}, campaignVars={}, persistVars=[], persistSave=false, store=null;
+  let logicVars={}, campaignVars={}, persistVars=[], persistSave=false, store=null, homepageCfg;
   const localStorage={ getItem:()=>store, setItem:(k,v)=>{ store=v; }, removeItem:()=>{ store=null; } };
   const PERSIST_KEY='k';
 `;
 const E = new Function(ENV
+  + extractFunction('_persistSlugify', src) + '\n' + extractFunction('_persistNSFrom', src) + '\n'   // build 1215
+  + extractFunction('_persistNS', src) + '\n' + extractFunction('_persistKey', src) + '\n'
   + extractFunction('_persistSeed', src) + '\n' + extractFunction('_persistCommit', src) + '\n'
   + extractFunction('_persistStore', src) + '\n' + extractFunction('_persistLoad', src) + '\n'
   + extractFunction('clearPersistent', src)
@@ -118,8 +120,8 @@ assert(/if\(typeof _persistSeed==='function'\) _persistSeed\(\);/.test(extractFu
 assert(/campaignVars=\{\}; _campaignLoad\(0\);/.test(src), 'starting a campaign fresh drops whatever the last run carried');
 assert(/persistVars: \(persistVars\.length \? persistVars\.slice\(\) : undefined\), persistSave: \(persistSave\|\|undefined\),/.test(src),
   'the author\'s list serializes with the level');
-eq((src.match(/persistVars = _sanitizePersist\(level\.persistVars\); persistSave = !!level\.persistSave; _persistLoad\(\);/g) || []).length, 2,
-  'both level-load paths restore it — and a level that opts in re-seeds from the browser as it loads');
+eq((src.match(/persistVars = _sanitizePersist\(level\.persistVars\); persistSave = !!level\.persistSave; _persistLoad\(_persistNSFrom\(level\.homepage\)\);/g) || []).length, 2,
+  'both level-load paths restore it (from the level\'s per-game namespace since 1215) — and a level that opts in re-seeds from the browser as it loads');
 assert(/let persistVars = _sanitizePersist\(savedLevel && savedLevel\.persistVars\);/.test(src), 'and it boots from the saved level');
 assert(/persistVars=\[\]; persistSave=false;/.test(src), 'a scene wipe clears it');
 

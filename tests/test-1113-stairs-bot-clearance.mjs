@@ -56,7 +56,7 @@ const gridConsts = [/const MGRID_CELL = [^;]+;/, /const MGRID_BITS = [^;]+;/, /c
   .map(re=>{ const m=gameSource().match(re); assert(m, 'the grid constant ' + re + ' is declared in one place'); return m[0]; }).join('\n');
 assert(/const MGRID_CELL = 1\.0, MGRID_SLOT = 0\.35;/.test(gameSource()), 'cell and slot are declared together, so one match carries both');
 const buildGrid = new Function('THREE','_mgA','_mgB','_mgC','IS_COARSE',
-  `${gridConsts}\n${extractFunction('buildModelGridBoxes')}\nreturn buildModelGridBoxes;`
+  `${gridConsts}\n${[extractFunction('_mgridGatherTris'), extractFunction('_mgridCore'), extractFunction('_mgridOpts'), extractFunction('_mgridWrap'), extractFunction('buildModelGridBoxes')].join('\n')}\nreturn buildModelGridBoxes;`
 )({ Vector3: V3, Box3 }, new V3(), new V3(), new V3(), false);
 
 // every emitted triangle, in world space, read through the index buffer

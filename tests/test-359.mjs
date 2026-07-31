@@ -6,16 +6,16 @@ const src = gameSource();
 
 const fp = extractFunction('navFindPath');
 assert(/const hI=NAV\._hI, hF=NAV\._hF; hI\.length=0; hF\.length=0;/.test(fp), 'A* reuses one heap across calls (no per-search allocation)');
-assert(/if\(NAV\.comp && NAV\.comp\[si\]!==NAV\.comp\[gi\]\) return null;/.test(fp), 'cross-component goal fails O(1) instead of exhaustive search');
+assert(/if\(NAV\.comp && NAV\.comp\.length===NT && NAV\.comp\[si\]!==NAV\.comp\[gi\]\) return null;/.test(fp), 'cross-component goal fails O(1) instead of exhaustive search (with a staleness guard on the comp table size)');
 
 const bl = extractFunction('navBuildLinks');
-assert(/NAV\.comp = new Int32Array\(N\)\.fill\(-1\);/.test(bl), 'connected components labelled at build time');
+assert(/NAV\.comp = new Int32Array\(2\*N\)\.fill\(-1\);/.test(bl), 'connected components labelled at build time, over BOTH layers');
 assert(/NAV\.comp\[ni\]=cid; q\.push\(ni\);/.test(bl), 'component flood walks the link graph');
 
 const ub = extractFunction('updateBots');
 assert(/_repathBudget = 3;/.test(ub), 'per-frame A* budget is reset each tick');
 const fpath = extractFunction('_botFollowPath');
-assert(/if\(_repathBudget>0\)\{ _repathBudget--; _botRepath\(b, destX, destZ\); \} else \{ b\.pathT=0\.08/.test(fpath), 'repath only when the frame budget allows; otherwise keep the current route');
+assert(/if\(_repathBudget>0\)\{ _repathBudget--; _botRepath\(b, destX, destZ, destY\); \} else \{ b\.pathT=0\.08/.test(fpath), 'repath only when the frame budget allows; otherwise keep the current route');
 const rp = extractFunction('_botRepath');
 assert(/b\.pathT = b\.path \? \(0\.5 \+ Math\.random\(\)\*0\.4\) : \(1\.0 \+ Math\.random\(\)\*0\.6\)/.test(rp), 'back off the repath cadence when no route was found');
 

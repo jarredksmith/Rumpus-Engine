@@ -1519,6 +1519,545 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Logic events carry a payload now (build 1221)
+
+The editor/feature panel's ceiling on what the graph can author: `onkill`/`onhurt`/`onspot` fired BARE — no
+identity, no position, no HP — so "drop loot where the enemy died", "the boss at half health switches
+phase", "the turret nearest the intruder powers on" were all inexpressible. This is the same root the
+open-work list records for per-player variables ("the runtime's pulses carry no actor identity"), attacked
+for enemy events. A context object `_lgCtx` now rides the immediate pulse cascade, exposed as reserved
+`#`-tokens that `_lgNum` resolves — `#x`/`#z` (world position), `#hp`, `#hpf` (HP fraction 0..1) — readable
+by Branch, Math, Set variable, and the place field via `#here`. The token handler FALLS THROUGH to a normal
+variable when the context has no such key, so the repeat loop's existing `#i` still works (the one trap this
+build had to avoid, pinned). `_lgEnemyEvent(kind, ctx)` sets the context and unwinds it in a `finally` — a
+Delay node schedules a later timer that runs with no context, so the payload is a snapshot of the moment,
+not a live handle (recorded, not a bug). All three enemy events pass `{x, z, hp, hpf}`; `onkill` (which
+fires through `_lgFireEvents` in `killEnemy`) sets `_lgCtx` around its call. `#x/#z/#hp/#hpf` are always
+offered in the variable autocomplete and `#here` in the place autocomplete. `test-1221` executes `_lgNum`
+(tokens resolve, `#i` falls through), `_lgEnemyEvent` (sets AND unwinds), and `_lgPlaceAt` (`#here` → event
+position, null outside an event). Five pins moved (1027, 1060, 1077×2, 47 — the last a char-window widen,
+the exact "unanchored window scoped by a character count" trap CLAUDE.md warns about). Player/team event
+identity is the remaining piece of the same ceiling.
+
+## Co-op kills stop landing flat (build 1220)
+
+The gameplay-feel panel's last MEDIUM, closing the panel entirely. `killEnemy` gates the 0.07 s hitstop on
+`NET.mode==='off'` and `registerLocalKill` gates the triple-kill slow-mo the same way, so a co-op kill
+produced marker + sound only — the crunch that sells a kill was missing in exactly the social mode.
+Slowing the sim online would desync every peer (legitimately unsafe), but a LOCAL cosmetic jolt is not:
+`registerLocalKill` now punches the camera (`shake = max(shake, n>=3 ? 0.15 : 0.06)`) in netplay only,
+bigger on a multi-kill. Solo is byte-unchanged — it keeps its real hitstop (fired in `killEnemy`) and
+slow-mo, so there is no double-crunch. Both host and client kills get it (the client via the `{t:'frag'}`
+credit path that calls `registerLocalKill`). `test-1220` executes all three modes proving solo has no shake
+and its hitstop/slow-mo intact, while co-op host and client jolt without ever touching the networked
+time-scale. **The gameplay-feel critic panel is now fully cleared** (1208–1213, 1219, 1220).
+
+## The crosshair shows what the gun is doing (build 1219)
+
+The gameplay-feel panel's MEDIUM: build 1161 made movement and airtime cost accuracy, but `#crosshair` was
+a static reticle whose only dynamic property was ADS opacity — so the player had no readout of "I am
+currently inaccurate", and 1161's airborne spread floor felt like random misses instead of a rule to
+stop-and-shoot around. The spread math is hoisted into `_curSpread(w)` — shared by `shoot()` and the
+crosshair, so the reticle can never disagree with the shot — and the four arms offset outward from a single
+CSS var `--xh-bloom`, eased each frame toward `min(18, _curSpread()*90)` px (breathes, never snaps, clamps
+so it never flies apart). A scoped optic already sets the reticle opacity to 0, so the bloom is invisible
+and free there. Standing-still values are byte-identical to 1161 (proven executable). `test-1219` drives
+`_curSpread` across the states and the easing/clamp, and pins that all four arms move away from centre and
+that `shoot()` reads the same function. One 1161 pin pair moved to the hoisted function, intent kept.
+**Needs a browser pass to feel** — jump and watch the reticle open, land and watch it close.
+
+## The G-buffer prepass outlives the AO sample (build 1218)
+
+The rendering panel's HIGH: `_aoWant = _ssaoAmt>0.001 && _prStepI===0 && ...` gated BOTH the half-res
+G-buffer prepass and the expensive AO kernel+blur, and build 1183's soft-particle / 1184's soft-shoreline
+fade read the same flag — so the FIRST adaptive downshift (85% res, a common mid-range steady state) shed
+SSAO, soft particles AND soft shorelines together, and the image most players actually see lost its
+grounding while still paying for bloom, fog and the grade. The gate is split: `_geoWant` runs the prepass
+(which writes the view distance the soft-particle/shoreline fade reads from `_aoGeoRT.a`) across the top
+three rungs (`_AO_GEO_MAXSTEP = 2` → 100/85/72%); `_aoWant = _geoWant && _prStepI===0` keeps the AO SAMPLE
+on rung 0 only. So a downshift now sheds only the AO kernel; soft particles keep their fade. The prepass
+render moved into an `if(_geoWant)` block, the AO kernel into a later `if(_aoWant)`, and `_SOFT_P.value.x`
+keys on `_geoWant`. Build 1135's "AO rides the resolution step, below MSAA" intent is preserved in `_aoWant`.
+The critic's other half — a reduced-kernel AO on rung 1 instead of shedding it outright — is deferred because
+it needs a measured tuning pass this can't do headlessly. `test-1218` evaluates both gates across the rungs
+and pins the structural split; three pins moved (1126 passed untouched, 1140 + 1183 to the new gate names).
+**Needs a browser pass to confirm** — force a downshift and watch soft particles stay soft.
+
+## Water reflects the live sky (build 1217)
+
+The rendering panel's finding, verified in code: `_waterSurfaceMat` set `uSky` to `0x9fc8d8` at CONSTRUCTION
+and `updateWaterZones` wrote uTime/uLight/uSunDir/uSunCol but never uSky — so at sunset, at night, under an
+authored HDRI or a volcanic sky, a lake held a flat noon-blue sheen at grazing angles while everything
+around it changed colour. `SCENE_FOG.color` IS the sky at the horizon (`applySky` sets it from a ring of
+`skyRadiance` horizon samples of the same sky model, recomputed on the day-cycle cadence), so
+`updateWaterZones` now copies it into `uSky` every frame — one `Color` copy per zone, no new pass. A lake
+goes warm at dusk and dark at night. The constructor value is now just a seed. `test-1217` executes the
+copy semantics and pins that the write lives in the per-zone uniform block and that `SCENE_FOG.color` is the
+averaged horizon radiance. The richer per-direction env-cube reflection the critic also mentioned is the
+larger follow-up; this closes the "flat wrong colour" half. **Needs a browser pass to see** (the Node
+harness can't render water) — capture a lake at dusk.
+
+**NINTH container rollback, recovered mid-build**, same signature (tree + HEAD reverted to 1182, bump assert
+aborted atomically). Recovery `git fetch` + `reset --hard FETCH_HEAD`. Worth noting for the re-apply: the
+water uniform block had been split across two lines by build 1184, so the 1182-era anchor missed on the
+recovered 1216 tree — a reminder that a rollback restores an OLD file and the re-apply anchors must match
+the RECOVERED build, not the one the aborted edit was written against.
+
+## The logic graph can create a prop now (build 1216)
+
+The feature-surface panel's HIGH, and build 1170's explicitly-deferred other half: show/hide/move/destroy
+existed but nothing could CREATE — so a tycoon's "buy → building appears", a wave-defense buildable turret,
+a farming drop, a sandbox spawner toy were all inexpressible; every quantity was fixed at author time. The
+new `spawnprop <prefab> @place` verb spawns a prefab at a resolved place through the ready `_pfSpawnEntry`
+(the same spawner prefabs, duplicate and the clipboard already route through). Three things make it small:
+- **No new net code.** 1170 recorded the net-id story as the hard part; it isn't. The spawned props carry
+  nids (`finalizeProp` assigns them), so the existing prop reconciler (`reconcileProps`) pAdds them to every
+  client on its next tick — hence the handler sends NO `wact` message. Host-only, because `updateLogic`
+  returns for clients.
+- **A LIVE cap** (`LG_SPAWN_CAP` 200, counting props still in the scene so destroyed ones free budget) stops
+  a spawnprop-on-an-interval from filling the world; a refused spawn is reported through 1214's
+  `_noteLogicFailure`, as is a missing prefab or a place nothing answers.
+- **Spawned props are marked `_lgSpawned`** so they never touch the saved LEVEL — a runtime verb must not
+  edit the level (1170's rule).
+
+`test-1216` executes `_lgSpawnPrefab` (spawns all a prefab's props at the place under one group, marks them,
+reports a missing prefab, enforces the live cap AND frees it as props are destroyed, refuses on a client)
+and pins the verb/field/datalist/handler. Three place-field pins moved (1073, 1077, 1170) for the added
+`spawnprop`, intent kept.
+
+## Persistent saves stop clobbering each other (build 1215)
+
+The feature-surface panel's finding, verified in code: `_persistStore` wrote `campaignVars` into ONE global
+key (`breach_persist_v1`), so two published games that both persist a `coins` variable read and clobber
+each other's progress — a returning player finding someone else's `questStage` in their save is a
+trust-destroying bug waiting in the wild. The store is now namespaced: `_persistKey(ns)` appends the
+published `/game/` slug (build 972), or the slugified homepage title, to the base key; a level with neither
+keeps the BARE key, so every existing single-game save loads unchanged — that is the migration, no data
+lost. `_persistLoad(ns)` takes the namespace EXPLICITLY because `restoreLevel` calls it before `homepageCfg`
+is set, so both loaders pass `_persistNSFrom(level.homepage)`; `_persistStore`/`clearPersistent` read the
+live `homepageCfg`, which is correct by commit/clear time. `slugify` is length-capped so a hostile title
+can't mint a giant key. `test-1215` executes the precedence (slug > title > bare), proves two games land on
+different keys while the same game is stable, and pins the wiring; the 1075 harness gained the helpers and
+its loader-count pin moved. Inventory + last-checkpoint persistence (the critic's other half) is the larger
+follow-up; the namespacing was the correctness fix.
+
+**EIGHTH container rollback, recovered mid-build.** The bump assert fired (atomic abort — the persist edits
+were computed but never written) and the tree had reverted to build 1182 with HEAD there too. Origin's
+branch still held 1199–1214, so recovery was `git fetch` + `reset --hard FETCH_HEAD`, then re-apply the
+aborted edit from the scripted step (free). Same signature, same one-command recovery — the bump assert
+caught it before a single wrong byte landed.
+
+## The logic graph stops swallowing its failures (build 1214)
+
+The editor-UX panel's CRITICAL #1: the graph's only actuator wrapped `_applySignalAction` in
+`try{}catch(e){}`, so a misspelled tag, a bad clip, a wrong place field all did NOTHING — no console line,
+no toast, no Level Check entry. The highest-investment editor activity had the worst feedback loop: the
+only way to debug "why didn't my door open" was redeploy-replay-stare-guess. Now, mirroring the 1167 asset
+report: `_noteLogicFailure(msg)` records failures (deduped by message, capped at 20), the `do` node checks
+a tag-based verb's target with `_lgTagExists` and records "targets the tag X, but no placed prop has that
+tag" when nothing answers, the catch records a thrown verb, and `levelIssues()` surfaces them as "Logic
+(last run): …". The graph runs only during play and `levelIssues` renders in the editor, so this is a
+play-time log read at author-time — exactly the critic's "what happened last run", and it needs no
+live-while-playing inspector.
+
+The tag check covers only the target-bearing verbs (`_LG_TAG_VERBS`: toggle/open/close/anim/unlock +
+the four prop-lifecycle verbs) — NOT the placeless world verbs (spawn/teleport/win act on a place or the
+run, so a "missing tag" there would be a false alarm). The log clears on wipe and restore (stale failures
+about a previous level are their own lie) and refreshes the panel live if a failure lands while the editor
+is open. `test-1214` executes the recorder (dedup/count/cap), `_lgTagExists`, and the REAL do-node branch
+driven to prove it notes a missing tag (naming verb + tag) but not a resolved one nor a placeless verb. One
+1027 harness gained stubs for the new refs. The live pin-value / execution-trace inspector the critic also
+wanted is the larger follow-up; surfacing the silent failures was the load-bearing half.
+
+## The difficulty curve keeps evolving (build 1213)
+
+The gameplay-feel panel's HIGH #6: `pickEnemyType` froze the mix from wave 5 on, and its outcome set never
+included **shielded** or **charger** — the two most mechanically interesting enemies (flank / dodge
+counterplay), which existed only in authored spawns. Escalation was COUNT-ONLY (`n = 3 + wave*2`), so wave
+20 was 43 grunts — a spam/ammo problem, not a pressure problem. Two changes:
+- **Two new tiers.** Wave ≥ 8 folds in the Shieldbearer (~8%), wave ≥ 12 the Charger (~8%), with the base
+  roster rebalanced under them. Waves 1–5 are byte-unchanged (the 21 pins on wave 1 and wave 5 still pass).
+  A deep wave now carries a real fraction of both advanced types while grunts drop below a majority — the
+  mix keeps forcing weapon/positioning changes instead of asking the same question louder.
+- **A gentle HP ramp.** `_eff.hp × (1 + 0.04·min(wave,25))`, capped at +100% by wave 25, applied to both
+  `hp` and `maxHp` so damage numbers and kill credit stay consistent. **Random mode only** and off in the
+  editor: a prebuilt/manifest level owns its own difficulty, so the ramp is exactly 1× there.
+
+The milestone boss stays in `randomWaveDescriptors`, deliberately separate from `pickEnemyType`, so a
+manifest wave still never gets an automatic boss (the author owns composition — 1179's rule). `test-1213`
+executes `pickEnemyType` across the curve (wave 5 unchanged, 8 adds shielded, 12 adds charger, deep-wave
+distribution measured) and pins the random-mode gating and the cap. Two pins moved (1191, 21) for the
+`_hp` rename, intent kept.
+
+## The hitmarker stopped lying about headshots (build 1212)
+
+The gameplay-feel panel's HIGH #4: `showHitmarker` had two states — white ✕ (hit) and red ✖ (kill) — and
+the duel + co-op-client paths passed `isHead`, so a NON-LETHAL headshot rendered the red KILL marker: a
+false kill-confirm in exactly the mode where you cannot see the target's HP, and a false kill makes players
+disengage from a live target. Solo headshots meanwhile had no distinct feedback at all (the "layering" was
+`SFX.hit()` twice — +3 dB, not a distinct crack).
+
+Now three states — hit / **head** (yellow ✛, its own glyph AND colour, so it can never be confused with a
+kill) / kill — with legacy boolean callers still mapping (truthy → kill, falsy → hit). `SFX.headshot()` is
+a real high dink (1400→1950 Hz sine), replacing the double-hit hack everywhere. Six call sites updated: the
+three client-side headshot bugs (pvp client, enemy client, turret client) now render the head state; the
+host/solo/turret-host paths rank kill > head > hit and dink a non-lethal headshot. `test-1212` renders all
+three states against a fake DOM (proving the head marker is distinct in both glyph and colour and can never
+be the kill marker), checks legacy-boolean compatibility, and pins every call site plus the retired
+double-hit hack. Three pins moved (31, 81, and 31's second), intent kept.
+
+## Gunshots got weight, and reload audio tells the truth (build 1211)
+
+The gameplay-feel panel's CRITICAL #3, completing the audio pair with 1208. Every shot was one tone + one
+noise — no sub-bass transient, no tail, no compressor — so weapons were distinguishable but all sounded
+like the same toy at different pitches, and mag-dumping was N identical clipping-adjacent blips. Now:
+- **`_SHOT_LAYERS`** gives each weapon three layers: a sub-bass sine thump (45–70 Hz, fast attack — the
+  weight), the EXACT tuned body/crack pair the guns always had (byte-for-byte, pinned — the safe-change
+  rule), and a delayed lowpassed noise re-trigger as a pseudo-tail (the space answering). The sniper thumps
+  deepest and rings longest; the SMG stays snappy; the suppressed 'phut' is deliberately tail-less —
+  that is what a suppressor is for.
+- **A gentle `DynamicsCompressor` on `sfxBus`** (threshold −18, ratio 4, fast attack) so layered and
+  overlapping shots stack musically instead of clipping; every SFX already routes through the bus, so no
+  call site changed, and construction falls back to the plain connect if unavailable.
+- **Reload clicks track the real `reloadMs`** — start, mag-out at ~45%, mag-in at `reloadMs−120` — where
+  the old pair was hardcoded 550 ms apart, so the pistol's audio finished late and the sniper's a second
+  early. The 1172 reload-cancel token makes a cancelled reload's later clicks... still fire (the timeouts
+  are not tokenised) — a cosmetic stale click on cancel, noted as the known cost; tokenising the SFX
+  timeouts rides the next audio build if it bothers anyone in play.
+
+`test-1211` extracts and executes the layer table (authored values preserved, per-weapon shaping compared)
+and the real `reload()` under fake timers (sniper 1600 ms and pistol 700 ms schedules both land), and pins
+the compressor + fallback. Three pins moved (227, 44, 91), each keeping its intent through the table.
+
+## The first-person camera has a body (build 1210)
+
+The gameplay-feel panel's HIGH: on foot the camera never reacted to the player's own body — build 730's
+speed-FOV lived only in the driving branch, jumping off a tower and landing produced nothing, and there was
+no strafe lean, so movement (despite 1171's acceleration) read as a camera on rails. Three additions, all in
+the existing loop:
+- **Landing impact.** The air→ground frame (where `_playerWasAir` is still true and `player.vel.y` still
+  holds the fall speed, before it is zeroed) kicks a spring-damped eye-dip (`_landDip`, stiff and
+  well-damped — a quick dip and settle, no wobble), a touch of shake, and `SFX.land` — a lowpassed thud
+  that grows with impact. Gated `!drivingCar` (the car owns its own landings).
+- **Sprint FOV.** `_sprintFov = f²·6·(1−adsBlend)` where f is ground speed over top speed, ADDED to the
+  ADS-blended `wantFov` so it survives aiming being zero and folds out completely while aiming.
+- **Strafe lean.** Lateral velocity (`vel · camera-right`) rolls `camera.rotation.z` via an eased,
+  clamped `_camLean`, killed while aiming so the sight stays true; folded into both the shake and no-shake
+  camera-roll writes.
+
+`test-1210` integrates the real dip spring (proves a visible dip, a clean settle to exactly 0, and no
+bounce), the quadratic sprint curve (full 6° at top speed, 0 while aiming), and the clamped lean (rolls
+away from lateral velocity, killed by ADS), plus the wiring. One 964 pin moved (wantFov gained the sprint
+term), intent kept. Numbers (dip stiffness 90/14, sprint 6°, lean 0.006 clamped 0.05) are the tuning levers.
+
+## Enemies acknowledge bullets (build 1209)
+
+The gameplay-feel panel's CRITICAL #2: a non-lethal hit was a 0.12 s emissive flash and NOTHING else — a
+Brute ate 30 rounds at unchanged speed, and a melee wind-up or charger lunge telegraph could not be broken
+short of a kill, so shooting read as "my gun is weak" regardless of DPS. `enemyHurt` now applies three
+physical reactions, all host-side and all reusing machinery that already replicates:
+- a **flinch** shove along the shot direction via the `evx`/`evz` integrator (melee's own knockback, decayed
+  per frame and netcode-safe), scaled by the fraction of max-HP the hit took and capped at 2.5 so a minigun
+  does not launch anyone;
+- a brief **speed slow** (`_slowT`, 0.15 s) that the movement block multiplies in at 0.55× — the beeline/
+  patrol `spd` and every ranged cover/flank/standoff approach site — so a hit costs a step of ground;
+- a **heavy-hit interrupt**: a hit taking ≥ ¼ of max HP cancels a melee wind-up (`_windupT`) and a
+  charger's lunge telegraph (`_lungeWind`/`_lungePending`), so a shotgun blast to a winding-up brute
+  actually stops the swing, while a light hit leaves the commitment intact.
+
+This pairs directly with 1208: you now hear the hit land at the enemy's position AND see it react. The slow
+decays beside the knockback integrator in the per-enemy update. `test-1209` executes `enemyHurt` proving the
+directional shove, the HP-fraction scaling and clamp, the slow, and the heavy-vs-light interrupt threshold;
+a lethal hit still just kills. The dedicated hit-slow number (0.55) and the flinch cap are the levers if
+play tuning wants them softer.
+
+## The engine finally has ears (build 1208)
+
+The gameplay-feel panel's #1: there was NO positional audio anywhere — every sound routed flat into
+`sfxBus`, so enemy gunfire, an explosion to your left, a charger winding up behind you all arrived
+dead-centre, and the directional hit indicator carried threat-detection the ear should have done a second
+earlier. `_spatialOut(at)` returns a `StereoPanner` (equal-power, so no centre volume dip) feeding
+`sfxBus`, panned by the source's position along the CAMERA'S OWN right axis — read from `matrixWorld`, so
+it tracks pitch, vehicles and the top-down/side play-cameras, not just yaw — and attenuated by distance,
+returning `null` past ~55 m so the caller skips an inaudible node entirely. With no `at`, no `camera` yet,
+or a browser without `createStereoPanner`, it is `sfxBus` unchanged, so UI/self sounds and old browsers are
+byte-identical.
+
+`tone`/`noise`/`playSample` gained an `at` option that routes through it; the world-positioned SFX
+(`enemyShot`, `explode`, `shatter`, `kill`, `hit`, and the pre-existing distance-only `shootAt`, whose
+hand-rolled gain the shared panner replaces) forward a position, and the call sites pass one — the bolt
+origin at both enemy-fire sites, the blast centre, the enemy mesh, where a prop broke. UI/HUD sounds
+(coin, buy, wave, pickup, jump, deny) deliberately stay unpositioned — they are player-centric, not world
+events. `test-1208` executes `_spatialOut` against a fake WebAudio graph (hard-right/left/centre pans,
+distance attenuation, out-of-range null-skip, camera-basis tracking proven under a yawed camera, and all
+three graceful-fallback paths) and pins the threading. Five pins across four audio tests moved to the
+`at`-bearing signatures, intent kept, and the 53 runnable harness gained `_spatialOut` in its isolated
+scope. The three-layer weapon-body/tail/compressor work the same critic flagged is a separate build.
+
+## The room got a ceiling and a rate limit (build 1207)
+
+The fresh panel's multiplayer CRITICAL #2. `on('connection')` accepted every peer unconditionally, and
+pAdd/pMov/pDel/chat had no inbound rate cap — so anyone with the room code (the lobby directory publishes
+them) could open unlimited connections to exhaust the host's 20 Hz fan-out and CPU, or flood `pAdd` to
+inject thousands of props and force every peer to fetch a hostile GLB. Two guards, both mirroring the
+1164 damage-bucket pattern:
+
+- **A mode-shaped player ceiling.** `_maxPlayersFor()` is 2 for a duel (strictly 1v1), 8 otherwise.
+  `_hostOnConnection` refuses a fresh peer once `clients + 1 (host) >= cap` with a clean `{t:'full'}` send
+  then close — the client surfaces "room is full" instead of hanging on "connecting". A rejoiner reclaiming
+  a FREE id (`_rejoinFree`, factored out of the 1201 id-keep test) is admitted even at the ceiling, so
+  migration and reconnection are never blocked by the cap.
+- **A structural leaky bucket.** `_structAllow(id)` refills at `STRUCT_RATE` (20/s) per source with a
+  `STRUCT_BURST` (40) ceiling; pAdd/pMov/pDel/chat each spend one token and are DROPPED over budget before
+  they apply or relay. Per-source, so one flooder cannot starve an innocent client; generous against any
+  real editor or chat cadence. `dropClient` frees both the struct and damage buckets with the leaver.
+
+`test-1207` executes the real accept decision (8th player fills the room, 9th refused, duel caps at 2,
+free-slot rejoiner admitted past the ceiling) and the real bucket (a 200-message flood passes only the
+burst, sources independent, refills over a second). One 1201 pin moved for the `_rejoinFree` rename, intent
+kept. The deeper netcode items the panel raised — lag-compensated / geometry-validated hits, a real TURN,
+persistent identity — are larger and recorded, not built here.
+
+## The bake stopped restarting itself (build 1206)
+
+The fresh panel's performance CRITICAL. `_bakeTick` gated on `_bakeDoneN === colliders.length`, so ANY
+collider-count change re-queued the FULL vertex-AO bake — and `_bakeCollect` already EXCLUDES movers,
+dynamic props and no-src walls, so hiding a wall, toggling a crate, shattering a physics breakable, or
+animating an `xa` door (none of which the bake even looks at) each restarted a whole-level re-shade at
+6 ms/frame. A logic graph blinking an `xa` door on an interval made that perpetual, and sustained 6 ms is
+exactly what `_adaptResTick` reads as load — so the invisible job could buy a visible resolution downshift.
+
+The gate is now a SIGNATURE: `_bakeSig()` counts the colliders the bake would actually gather (src-bearing,
+non-mover). The O(1) fast path survives — an unchanged `colliders.length` still returns immediately — and
+only when the length changed does it walk the one cheap loop; if the signature is unchanged (a wall, a
+mover, a dynamic prop moved) it updates the cached length and returns without re-baking. Completion records
+both length and signature. A static bake prop genuinely leaving (a shattered non-physics breakable, a
+`hideprop`'d static) still re-bakes, correctly — that occlusion really changed. Separately, the job's
+per-frame budget drops from `BAKE_MS` (6) to 2 ms once `_prStepI > 0` (the resolution scaler has engaged),
+so even a legitimate re-bake yields to the scaler instead of fighting it. `test-1206` executes `_bakeSig`
+over a mixed set (wall/dynamic/vehicle/animating-door changes do NOT move it; a static-prop shatter does)
+and pins the gate; two 1195 pins moved with it, intent kept. The per-vertex dirty-rect re-bake the critic
+also suggested (re-shade only vertices within BAKE_RANGE of the changed box) is the larger follow-up — this
+build removes the perpetual-restart, which was the whole of the CRITICAL.
+
+## The relayed claim was unbounded (build 1205)
+
+A fresh six-critic panel (run against build 1204, the roadmap-complete tree) surfaced this as a verified
+CRITICAL, and it is a real security hole in the marquee competitive mode. Builds 1130/1164 clamp damage
+aimed AT THE HOST, but `handleClientMsg`'s build-1122 forward path relayed a packet addressed to a THIRD
+client VERBATIM — so in any 3+ player FFA a cheat sent `{t:'pvpHit', to:victim, d:1e9}` and one-shot
+anyone, through walls, unrated. The docs advertised protection the relay path never had.
+
+The host mediates now. A relayed `pvpHit` runs through the SAME magnitude cap (`_netDmg`) and per-SOURCE
+rate bucket (`_netDmgBudget`, keyed to the VERIFIED sender `conn._pid`, never the claim) a host-addressed
+hit gets, and an over-budget or non-positive claim is DROPPED rather than forwarded. The rule is the
+inverse of a whitelist: only KNOWN damage types are mediated (`pvpHit` today), everything else
+(fire/char/chat/nade/rocket visuals, race, hold) forwards verbatim — a whitelist would rot as new
+cosmetics arrive and silently block them. `test-1205` executes the real forward branch with the real clamp
+helpers: a 1e9 one-shot clamps to the cap, a 50-packet burst relays at most one window's PvP budget and
+drops the rest, cosmetic relays pass verbatim, host-addressed hits still handle locally.
+
+**The fresh panel's other findings are recorded for the roadmap, not yet built** (this build took the one
+security-CRITICAL first). Ranked highlights, all VERIFIED-IN-CODE unless noted:
+- *Rendering:* no SSR / parallax-corrected reflections (the 1186 probe is one spawn-point cubemap); the
+  default "motion blur" is a brightness-keep afterimage, not velocity blur; no specular/temporal AA for the
+  1139/1145 procedural normal maps; one adaptive downshift sheds SSAO + soft particles + soft shorelines
+  together; unshadowed sun-in-fog term; water reflects a hardcoded blue; CSM split is a hard cut at ~120 m.
+- *Gameplay feel:* NO positional audio anywhere (every sound is mono — the single largest feel gap); enemies
+  have no stagger/flinch/hit-slow; gunshots are single synth blips (no layers/tail/sub-bass, no compressor);
+  the hitmarker shows a false KILL marker on a non-lethal PvP headshot; no landing impact / sprint-FOV / lean
+  on the first-person camera; random difficulty plateaus at wave 5 and shielded/charger never spawn from it.
+- *Editor UX:* the logic graph is a black box (no live inspector, `do`-verb failures swallowed silently —
+  route them to `levelIssues()`); events carry no identity/position/payload (the per-actor ceiling, same root
+  as deferred per-player vars); no play-from-here / start-at-wave; props and lights are disjoint selections so
+  a lamp+light composite can't be moved/prefabbed as a unit; first-hour editor onboarding is a manual not the
+  do-to-advance pill 938 already proved; no align/distribute/array; terrain is a fixed 48×48 grid stretched
+  over any arena size.
+- *Performance:* the 1195 vertex-AO bake re-runs IN FULL on any `colliders.length` change — a logic-blinked
+  door restarts it forever at 6 ms/frame (CRITICAL); two unbounded texture caches (`_texInst`, `texCache`)
+  never evict or dispose across level swaps; enemy bolt trails allocate a Mesh+material clone per bolt per
+  frame (1168's class, uncleared); the reflection probe re-renders the scene ×6 + PMREM every 3 s under the
+  day cycle; `checkProximity` walks the full prop list ×5/frame; several always-on O(N) `loop()` scans.
+- *Feature surface:* multiplayer is 8 hardcoded modes a creator can't extend (needs per-player/team logic
+  scoping); no play-count/rating/comment flywheel (a `plays.php` sibling to `lobbies.php`); logic can't
+  CREATE a prop at runtime (spawn-prop-by-prefab, 1170's deferred half — `_pfSpawnEntry` is ready); saves
+  are one un-namespaced global bucket; every moving creature is hostile (no wandering NPC); day/night and
+  weather are invisible to the logic graph.
+- *Multiplayer/platform (beyond this build):* no connection cap or inbound rate limiting (one-line DoS +
+  `pAdd` scene injection); fully client-authoritative hits with no lag comp / geometry validation; free
+  shared-cred TURN is the only relay; no persistent identity / social graph; join-in-progress has no
+  ack/retry if the forced keyframe drops.
+
+## The arena arrives knowing its own gameplay (build 1204)
+
+The generator roadmap's "emit gameplay data with the GLB" item, second piece (1124's `spawns` was the
+first). `buildArena` now returns `game` beside `spawns`: **posts** — one patrol guard per ramp, standing at
+the FOOT with the ramp centreline (SCANS, foot-first/top-second) as a ping-pong route, emitted directly in
+`buildSpawnMarker`'s own opts shape so the engine consumes them with zero translation — and **pickups** —
+candidate spots the layout says are open (the two mid-lanes, the two flanks, then each ramp's TOP last, so
+the consumer's index-ordered kinds put the good guns on high ground). Never (0,0): every footprint puts a
+structure at the centre (1124's undercroft lesson). The in-editor worker carries `game` back beside
+`world`, and Place-in-level seeds both behind a default-on checkbox ("Seed gameplay: ramp guards + pickup
+spots"), inside the model-load callback, with NO `clearAt` validation on purpose — the generator authored
+these against its own geometry, and the big-GLB collider may still be deriving off-thread (1203) at that
+moment, when the interim collider is fail-solid and would reject every honest spot. `test-1204` executes
+the real generator (posts' routes must BE members of SCANS) and pins the wiring. The CLI prints a `GAME`
+manifest beside `SCANS`/`SPAWNS`.
+
+**SEVENTH container rollback, recovered mid-build — and this one carried news.** The bump assert fired
+(atomic abort, nothing written), but the tree was not merely stale: **PR #30 had been merged** (at build
+1198) and the container sat on the merged main, while origin's branch still held 1199-1203. Recovery per
+the merged-PR protocol: fetch the branch, rebase its unmerged commits onto origin/main (clean — the merge
+point is their ancestor), force-with-lease push, re-apply the aborted edits. The levelgen half of this
+build survived in the working tree across the rollback; only the breach.html half needed re-applying.
+
+## The collider grid derives off-thread (build 1203)
+
+The perf critic's #5 other half. `buildModelGridBoxes` measured 110-137 ms on the main thread for a
+level-sized GLB (1148's own numbers) — a guaranteed hitch on every big import, including MID-SESSION ones
+(co-op level sync, the `local:` drop path). The derivation is now three pieces, and the split is the whole
+design: `_mgridGatherTris` walks the scene (the only part that needs it; 1089's 2M-triangle cap intact),
+**`_mgridCore` is a PURE function of a flat triangle array** — no THREE, no `MGRID_*`, no `IS_COARSE`, no
+scratch vectors — and the worker runs `_mgridCore`'s own `toString()` from a Blob (the levelgen worker's
+precedent). One implementation serves both threads, so the algorithm tests (1092/1113/1148/1159), which
+EXECUTE the code on real geometry, keep guarding the exact source the worker runs; `test-1203` proves the
+purity directly by executing the core in an empty scope on 1148's doorway repro (door open, wall solid,
+lintel solid, deterministic, flat `Float32Array` output).
+
+The async path lives in `refreshPropCollider`: models over `MGRID_SYNC_TRIS` (30k triangles) post their
+gathered triangles to the worker by TRANSFER and get the boxes back by transfer; smaller models stay
+synchronous because their derivation is cheaper than the round trip. While the answer is in flight the prop
+keeps per-mesh AABBs — the pre-grid, fail-SOLID behaviour: a building is briefly over-solid, never
+walk-through. Delivery is token-guarded (`_mgridTok` bumps on every re-derivation, so an in-flight answer
+for the OLD transform can never land) and a landed grid re-teaches the spatial grid (`_cgDirty`, 1188) and
+the nav grid (`_navDirtyProp`, 1200). Physics needs nothing: the Rapier statics are trimeshes of the real
+triangles, not `userData.boxes`. Failure degrades, never opens: a dead worker fails every pending job to
+null (per-mesh boxes stand) and future derivations go synchronous; a failed `postMessage` RE-GATHERS before
+the sync fallback because the transfer may already have consumed the buffer.
+
+The old single function's history comments (1089 budgets, 1092 clipping, 1148 footprints, the widening
+that shipped wrong twice) ride with the piece they describe — the core's text is the pre-1203 code with the
+vertex reads renamed, moved by string surgery rather than retyped. Six test files moved with the split
+(06 passed untouched; 1089, 1092, 1093, 1113, 1148, 142, 1159 — harnesses now concatenate the split
+functions; every assertion kept its intent, and the executable ones kept their exact numbers).
+
+## The pursuit remembers which storey (build 1202)
+
+Build 1200's recorded other half, closed: PvE enemies pathed to layer A because `enemyDesiredTarget`
+returned `{tx,tz}` with no height and `en.lkp` stored none — an enemy chasing a player on a roof pathed to
+the floor underneath them. The descriptor now carries `ty` through exactly the five chase/contact/search
+returns (counted by the test), `en.lkp` stores the height the target was SEEN at (the memory includes which
+storey), the caller feeds `near.pos.y`, and the follow-path call hands `td.ty` to 1200's goal-layer pick.
+Patrol/wander/hold returns stay height-less BY DESIGN — a post and a wander point are ground concepts and
+layer A is the right default there. Three pins moved (17, 283, 406), each keeping its intent.
+
+## The match survives the host (build 1201)
+
+The multiplayer critic's remaining CRITICAL: the host vanishing mid-match reloaded every client's page 1.6
+seconds later. Now `netHostLost` migrates instead — only a lobby-phase loss (nothing worth saving) or a
+migration that itself times out (40 s) takes the old reload road, which lives on as `_migFail`.
+
+Four decisions carry the design:
+- **The election has no round to lose.** Every peer already holds the same roster from the snapshots, so
+  `_migRank(myId, playerIds)` computes the SAME deterministic order everywhere (sorted ids, the dead host's
+  id 0 excluded, iteration-order independent — tested). Rank 0 promotes immediately; rank r attempts to
+  JOIN the migrated room every 2.5 s and only CLAIMS it after r×4 s — so a dead rank (a bot's id in the
+  roster, a double-drop) delays the cascade, never deadlocks it. Losing the claim race returns
+  `unavailable-id`, which demotes the loser cleanly to client of whoever won. A lone survivor is rank 0:
+  a co-op partner closing their laptop promotes you instantly and the match simply continues.
+- **The migrated room lives at a DERIVED peer id** — `_migPid(code, gen)` = `breachfps-<code>-m<gen>` —
+  because the dead host's own id can stay reserved at the PeerJS broker long past our window; claiming a
+  fresh deterministic id beats racing a timeout we don't control. Every peer bumps `NET.migGen` once per
+  observed loss, so a second migration derives the same `-m2` everywhere. Cost, recorded: the room vanishes
+  from the lobby directory (no keepalive re-registration) and NEW joiners can't find the migrated session —
+  migration serves the players already in it.
+- **State comes from the last snapshot.** `_migAdoptMirrors` promotes the client mirrors to the
+  authoritative arrays: enemies respawn through the real `spawnEnemy` at their mirrored positions with the
+  type+hp that KEYFRAMES now carry (`o.ty`/`o.hp`, keyframes only — the delta key is unchanged, so 1197's
+  bandwidth win survives; the mirror remembers them, plus `_puKind` on powerup meshes), hp clamped to the
+  type's max, a pre-1201 mirror demoting to grunt rather than failing. Coins and powerups keep their
+  network ids (clients already hold meshes under them) and the id fountains advance past them. ALL
+  remote-player entries drop at promotion — rejoiners re-appear on their first state message; the dead host
+  and bots never do. Chests are already real objects on a client and simply stay.
+- **Rejoiners keep their identity.** The old id rides the connection METADATA (available before 'open', so
+  the welcome and every score/team lookup are right from the first byte); `_hostOnConnection` honours it
+  when free and the fountain never falls behind. The rejoin welcome is inert on arrival (`NET.joined`
+  guards a re-startGame) except an id rebind when the old id was taken, and skips the level serialization —
+  the rejoiner is already standing in the level. Scores (`NET.duelScore`), teams and KOTH state are client
+  mirrors already, so the promoted host inherits them by doing nothing.
+
+Two literals died on the way: the host is **not id 0** anymore — the snapshot's self-entry is
+`id:NET.myId`, the third-party relay check compares `msg.to !== NET.myId`, and the welcome keys the host's
+character by a new `hid` field. All three are 0 for an original host, so nothing moved for existing play.
+`_hostOnConnection` is one factored function attached by BOTH `hostStart` and `_migPromote` (counted in the
+test) — the 1158 lesson, applied before the drift instead of after.
+
+**Honest limits, recorded not hidden:** logic-graph variable state and PvP bots are host-local and do not
+migrate; the objective timers migrate at snapshot resolution (0.1 s). `test-1201` executes the election and
+the whole adoption path and pins every wiring point. NOT verifiable headless: a real two-machine
+drop-the-host session — that is a browser pass with two devices.
+
+## The nav grid learns a second storey (build 1200)
+
+The critic roadmap's multi-storey AI item. The grid stored ONE walkable Y per column, so a cell under a roof
+was the floor or the roof, never both — bots and enemies could not path onto any upper surface, ever. Now a
+column carries up to two floors: layer A is EXACTLY the floor the grid always chose (the safe-change rule —
+no existing behaviour moved), and layer B is the column's highest surface, kept only when it clears layer A
+by `NAV_LAYER_SEP` (2.2 m of headroom) and passes the SAME `clearAt` authority. Node id = `cellIdx +
+N*layer`, so every layer-A id is byte-identical to the old cell ids and `navCellCenter` decodes both. The
+link mask went `Uint8Array(N)` → `Uint16Array(2N)`: bit d = a link in direction d, bit d+8 = that link lands
+on the target cell's LAYER B, with the target layer chosen per direction as the one vertically closest
+inside the `[-NAV_DOWN, +NAV_UP]` window. **Stairs fall out with no special case** — a rising layer-A floor
+links into a neighbour's layer B the moment it is within jump reach, and the tie-break prefers layer A on an
+exact tie (a landing must be CLOSER to the storey than to the ground to route up, which is what a real
+landing is). A*, flood, components and the overlay all run over 2N nodes; the overlay draws layer B in amber.
+
+`navNearestWalkable(x,z,y)` grew the optional height: with a y, the layer whose floor is nearest wins, so an
+actor standing upstairs paths on its own storey. Starts pass the actor's y everywhere (`_botRepath` — bots
+AND the PvE enemies' `en._nav` adapter share it); goals carry a height only where one is in scope today,
+which is the bot AI (`destY = tgt.pos.y` — a bot will climb to a player camping a roof). **PvE enemies still
+path to layer A goals**: `enemyDesiredTarget` returns `{tx,tz}` with no height and `en.lkp` stores none, so
+threading the target's y through those descriptor sites is the recorded other half, not an oversight.
+
+DIRTY PATCHES close the second old hole: the grid was built at match start and never noticed the world
+changing, so a moved bridge or destroyed wall left paths routing through phantom geometry. Prop verbs
+(show/hide/move — move marks OLD and NEW footprints) and `shatterProp` (which the del verb rides, and which
+also fires for a shot barrel) mark their bbox via `navDirtyRect`; both AI frame loops run `navDirtyStep(3)`
+once the grid is built — a budgeted re-sample of just those cells through the same `navWalkable`, then ONE
+`navBuildLinks()` when the queue drains (a few ms at the 160×160 cap; incremental link surgery would be
+cheaper and subtly wrong). A queue past 64 rects collapses to one full re-sample. Paths self-heal on their
+own repath cadence (~0.5–1 s), so no consumer needs notifying.
+
+`test-1200` drives the REAL extracted functions over a mock two-storey world: two layers where earned (and
+NOT where not), a ground→roof path that climbs via the landing with every step inside the jump window, the
+return trip, a floor goal that never detours over the roof, storey selection by height, and the dirty-patch
+chain — shatter the stair, re-sample, and the roof goes unreachable in O(1) (comp reject) while the ground
+keeps pathing. Seven pins moved (282, 347, 352, 355, 356, 359, 473), each keeping its assertion's intent;
+473 is the build-619 roof test and still proves the roof does not hijack the floor — layer B is additive.
+
+## The sky that was flashing was never in the frame — it was in the G-buffer (build 1199)
+
+Reported from play, refining 1198's report: auto-exposure behaves until **ambient occlusion is turned up**,
+then the HDRI sky flickers badly. 1198's soft knee was real and stays — but the driver was AO. The 1152 rule
+("nothing that does not write depth belongs in a depth-derived buffer") arrived by a FIFTH door, and this one
+the sweep structurally cannot cover: **`scene.background` is not a scene object.** `overrideMaterial` never
+replaces it and `_aoHideNoDepth` traverses children, so an HDRI sky — a background TEXTURE (`scene.background
+= tex`; the procedural dome nulls the background instead, which is why only HDRI mode shows this) — rendered
+its tone-mapped colours straight into the half-res G-buffer. Those colours pass the geometric sky test
+(channel sum ≥ 0.63 reads as a packed normal) and carry an alpha SSAO reads as a surface about a unit from
+the camera, so the whole sky was shaded as a wall. And because the background pass tone-maps with
+`toneMappingExposure` (pinned against the real build in test-1198 and again in 1199), **every easing step of
+auto-exposure rewrote the garbage** — AE modulated it, AO made it visible, which is exactly "AE works until
+AO goes up". Fix: the prepass saves `scn.background`, nulls it for BOTH G-buffer renders (the viewmodel pass
+draws into the same buffer), and restores it before the AO resolve — beside the dome hide, so the two halves
+of "no sky of either kind in the G-buffer" live in one place. `test-1199` pins the ordering, the
+no-return-between-null-and-restore property, and both premises.
+
+The count is now five arrivals of one rule: 1126 the sky dome, 1128 the weather points, 1152 the flipbook
+sprites (rule stated), 1158 the viewmodel muzzle flash (rule applied to the second caller), 1199 the
+background (content the rule's sweep cannot see). If a sixth appears, ask what ELSE the renderer draws that
+is not a child of the scene.
+
 ## The meter was stalling the pipeline it was measuring (build 1182)
 
 Reported from play the day 1180 shipped: **any auto-exposure strength above 0 produced visible stutter on
@@ -1954,23 +2493,25 @@ The general lesson joins 1141's: **a control loop with any discontinuity in its 
 it.** The adaptive ladder needed hysteresis and majority windows; the exposure meter needed continuity.
 Two pins moved (1180's disable branch, 1182's harness gained the buffer).
 
-## Open work (as of build 1193)
+## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
-**The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:
-1188 collider grid, 1189 PvE cover/flank, 1190 weapon sheet, 1191 enemy tuning, 1192 model instancing,
-1193 effect zones):
-- **In-editor lighting bake for creator levels** — the rendering critic's #2 CRITICAL and the biggest
-  remaining item. Realistic scope: per-vertex sky/sun visibility over static geometry via the 1097 BVH
-  raycaster, run as a budgeted async job; NOT serialized (re-bake behind the level loader when
-  `world.baked`). A full texel lightmap needs UV2 unwrapping of arbitrary GLBs — out of scope.
-- **Two-layer nav** (2 walkable Ys per column, stair links, dirty patches) — multi-storey AI.
-- **Cutscene actor tracks** (poor-man's sequencer).
-- **Incremental Rapier edits + collider derivation in a worker.**
-- **Host migration from last snapshot; delta/relevancy snapshots.**
-- **Per-player variables** — DEFERRED with a reason: the logic runtime's pulses carry no actor identity;
-  threading one through every pulse source and the `wact` relay is its own multi-site build.
+Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
+died on verification. Phase 4's final stretch: 1188 collider grid, 1189 PvE cover/flank, 1190 weapon
+sheet, 1191 enemy tuning, 1192 model instancing, 1193 effect zones, 1194 incremental Rapier statics, 1195
+in-editor lighting bake, 1196 cutscene shot events (the logic graph is the sequencer — this is the "actor
+tracks" answer), 1197 delta/keyframe snapshots (relevancy filtering REJECTED with a reason), 1198/1199
+auto-exposure stability (soft knee; HDRI out of the AO G-buffer), 1200+1202 two-layer nav with dirty
+patches, 1201 host migration, 1203 collider derivation in a worker.
+
+Still open, each with its reason:
+- **Per-player variables** — DEFERRED: the logic runtime's pulses carry no actor identity; threading one
+  through every pulse source and the `wact` relay is its own multi-site build.
 - Verification kills already recorded (do not revisit): texture slots on primitives (871-era), bot
-  bullet tracers (1020), cell-hash enemy separation (arithmetic — not a hotspot).
+  bullet tracers (1020), cell-hash enemy separation (arithmetic — not a hotspot), relevancy snapshot
+  filtering (per-client serialization × N costs more than it saves at ≤60 entities).
+- **Browser verifications the harness cannot do** are accumulating for the user — see the release-blocker
+  list ("What only a human can verify") plus: AE on HDRI with AO up (1199), two-machine host-drop
+  migration (1201), a big-GLB import hitch before/after (1203), bots pathing onto a roof (1200/1202).
 
 Generator roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
