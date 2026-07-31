@@ -27979,7 +27979,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1242 · 2026-07-31';
+const BUILD_VERSION = 'build 1243 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31974,7 +31974,15 @@ function ceilingAt(x, z, feetY){
 // holding forward). MANTLE_MIN is taller than an auto-step (STEP=0.6) so only real ledges grab; MANTLE_MAX caps
 // the reach. mantleLedge() is a reusable, testable probe: given a point in front + your feet height it returns the
 // ledge-top Y you'd climb onto, or null (too low / too tall / can't stand up there).
-const MANTLE_MIN = STEP + 0.05, MANTLE_MAX = 2.05, MANTLE_DUR = 0.42;
+// build 1243: REPORTED FROM PLAY with screenshots — a knee-high box triggered a full HANG (the
+// character kneeling ON the box, hands gripping air: MANTLE_MIN was STEP+0.05 = 0.65, so anything
+// taller than an auto-step hung), while a perfect chest-plus box beside a taller one refused to grab
+// at all. A hang is for ledges ABOVE HEAD HEIGHT — below that you simply jump onto the box (the jump
+// apex clears ~2.8 m), so MANTLE_MIN rises to 1.55. The refusal was 1233's bug class alive in
+// mantleLedge: the UNCEILINGED surfaceTopAt read the ADJACENT TALLER box's top, rise came back over
+// MANTLE_MAX for the whole jump, and the grabbable ledge was invisible — both probes now ceiling at
+// the reach window.
+const MANTLE_MIN = 1.55, MANTLE_MAX = 2.05, MANTLE_DUR = 0.42;
 // build 644: grabbing a ledge HANGS you (ledgeHang anim); from the hang you PULL UP (Space / hold forward, anim
 // ledgeUp) or DROP DOWN (Ctrl / back, anim ledgeDrop). _ledge holds the phase + the hang/top positions.
 const LEDGE_PULL_DUR = 0.5, LEDGE_DROP_DUR = 0.3, LEDGE_HANG_AUTO = 2.5;
@@ -31994,7 +32002,7 @@ const _CLIMB_BY_CODE = ['',  'ledgeHang','ledgeUp','ledgeDrop','ladderUp','ladde
 function _climbCode(){ return _CLIMB_CODES[_climbAnim] || 0; }
 function mantleLedge(fx, fz, feetY){
   if(typeof surfaceTopAt!=='function') return null;
-  const top = surfaceTopAt(fx, fz);
+  const top = surfaceTopAt(fx, fz, undefined, undefined, feetY + MANTLE_MAX + 0.25);   /* build 1243: surfaces above the reach window are not this grab's ledge — an adjacent taller box must not mask the grabbable one (1233's rule) */
   if(top === -Infinity || !isFinite(top)) return null;
   const rise = top - feetY;
   if(rise < MANTLE_MIN || rise > MANTLE_MAX) return null;                            // too low (just step up) or too tall to grab
@@ -33098,10 +33106,12 @@ function loop(){
     if(_lt!=null){
       // build 966: anchor the hang to the WALL FACE (not wherever the grab happened), face it, and
       // size the drop to the ACTUAL avatar so the raised hands land on the lip.
-      let _fd=0.55; for(let _d=0.08;_d<=0.9;_d+=0.03){ const _t2=surfaceTopAt(player.pos.x+forward.x*_d, player.pos.z+forward.z*_d); if(isFinite(_t2) && _t2>=_lt-0.08){ _fd=_d; break; } }
+      let _fd=0.55; for(let _d=0.08;_d<=0.9;_d+=0.03){ const _t2=surfaceTopAt(player.pos.x+forward.x*_d, player.pos.z+forward.z*_d, undefined, undefined, _lt + 0.5); if(isFinite(_t2) && _t2>=_lt-0.08){ _fd=_d; break; } }   /* build 1243: same ceiling — the face scan must find THIS ledge's wall, not a taller neighbour's */
       const _gap=0.34, _hx=player.pos.x+forward.x*(_fd-_gap), _hz=player.pos.z+forward.z*(_fd-_gap);
       let _vh=1.7; try{ if(typeof _ownAvatar!=='undefined' && _ownAvatar && _ownAvatar.visible){ const _nw=performance.now(); if(_nw-_avHCacheT>1000){ _avHCacheT=_nw; const _bb=_avHBox.setFromObject(_ownAvatar); const _h2=_bb.max.y-_bb.min.y; _avHCache=(_h2>1.1 && _h2<3)?_h2:1.7; } _vh=_avHCache; } }catch(e){}   // build 1168: a full-subtree Box3 traversal ran every airborne-forward frame; the avatar's height changes ~never
-      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:player.yaw, fy0:player.pos.y, hy:_lt + EYE - _vh*1.02 - LEDGE_HANG_SINK, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE };
+      const _gy=(typeof groundHeightAt==='function')?groundHeightAt(player.pos.x, player.pos.z, player.pos.y-EYE):0;   /* build 1243 */
+      const _hy=Math.max(_lt + EYE - _vh*1.02 - LEDGE_HANG_SINK, _gy + EYE - 0.12);   // full-extension hang, but never feet-through-the-floor: on a ledge near the bottom of the window the body stands at the wall base, arms up to the lip
+      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:player.yaw, fy0:player.pos.y, hy:_hy, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE };
       player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
   }
   // build 1160: same pattern as the slide buffer (926). Grounded refreshes the coyote window; a press

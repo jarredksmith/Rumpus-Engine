@@ -25,9 +25,9 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- the wiring
 {
-  assert(/hy:_lt \+ EYE - _vh\*1\.02 - LEDGE_HANG_SINK,/.test(src),
-    'the hang height carries the sink (966\'s avatar-height sizing is kept — a short model still hangs by its hands, not its waist)');
-  const i0 = src.indexOf('const LEDGE_HANG_SINK'), i1 = src.indexOf('hy:_lt + EYE');
+  assert(/const _hy=Math\.max\(_lt \+ EYE - _vh\*1\.02 - LEDGE_HANG_SINK, _gy \+ EYE - 0\.12\);/.test(src),
+    'the hang height carries the sink (966\'s avatar-height sizing is kept — a short model still hangs by its hands, not its waist; 1243 added the ground clamp so low-window ledges cannot bury the feet)');
+  const i0 = src.indexOf('const LEDGE_HANG_SINK'), i1 = src.indexOf('const _hy=Math.max(_lt + EYE');
   assert(i0 > 0 && i0 < i1, 'the constant is declared above its reader (the TDZ rule this file has been burned by)');
 }
 
