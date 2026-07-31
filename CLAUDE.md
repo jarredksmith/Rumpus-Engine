@@ -1519,6 +1519,28 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Persistent saves stop clobbering each other (build 1215)
+
+The feature-surface panel's finding, verified in code: `_persistStore` wrote `campaignVars` into ONE global
+key (`breach_persist_v1`), so two published games that both persist a `coins` variable read and clobber
+each other's progress — a returning player finding someone else's `questStage` in their save is a
+trust-destroying bug waiting in the wild. The store is now namespaced: `_persistKey(ns)` appends the
+published `/game/` slug (build 972), or the slugified homepage title, to the base key; a level with neither
+keeps the BARE key, so every existing single-game save loads unchanged — that is the migration, no data
+lost. `_persistLoad(ns)` takes the namespace EXPLICITLY because `restoreLevel` calls it before `homepageCfg`
+is set, so both loaders pass `_persistNSFrom(level.homepage)`; `_persistStore`/`clearPersistent` read the
+live `homepageCfg`, which is correct by commit/clear time. `slugify` is length-capped so a hostile title
+can't mint a giant key. `test-1215` executes the precedence (slug > title > bare), proves two games land on
+different keys while the same game is stable, and pins the wiring; the 1075 harness gained the helpers and
+its loader-count pin moved. Inventory + last-checkpoint persistence (the critic's other half) is the larger
+follow-up; the namespacing was the correctness fix.
+
+**EIGHTH container rollback, recovered mid-build.** The bump assert fired (atomic abort — the persist edits
+were computed but never written) and the tree had reverted to build 1182 with HEAD there too. Origin's
+branch still held 1199–1214, so recovery was `git fetch` + `reset --hard FETCH_HEAD`, then re-apply the
+aborted edit from the scripted step (free). Same signature, same one-command recovery — the bump assert
+caught it before a single wrong byte landed.
+
 ## The logic graph stops swallowing its failures (build 1214)
 
 The editor-UX panel's CRITICAL #1: the graph's only actuator wrapped `_applySignalAction` in

@@ -9980,11 +9980,21 @@ function _sanitizePersist(a){
     seen[t]=1; out.push(t); if(out.length>=40) break; }
   return out;
 }
-function _persistLoad(){   // the level opted into surviving a closed tab: read the saved values back
+// build 1215: the store is NAMESPACED per game. It used to be ONE global key (PERSIST_KEY), so two
+// published games that both persist a `coins` variable read and clobber each other's progress — a
+// trust-destroying bug for anyone playing more than one creator's game. The namespace is the published
+// /game/ slug (build 972) or, failing that, the slugified homepage title; a level with neither keeps the
+// BARE key, so every existing single-game save loads unchanged (that is the migration — no data is lost).
+function _persistSlugify(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,48); }
+function _persistNSFrom(hp){ if(hp){ if(hp.slug) return _persistSlugify(hp.slug); if(hp.title){ const t=_persistSlugify(hp.title); if(t) return t; } } return ''; }
+function _persistNS(){ try{ return (typeof homepageCfg!=='undefined') ? _persistNSFrom(homepageCfg) : ''; }catch(e){ return ''; } }
+function _persistKey(ns){ ns = (ns!=null) ? ns : _persistNS(); return ns ? (PERSIST_KEY+':'+ns) : PERSIST_KEY; }
+function _persistLoad(ns){   // the level opted into surviving a closed tab: read the saved values back. ns
+  // is passed EXPLICITLY by the loaders because homepageCfg is not set yet when restoreLevel calls this.
   if(!persistSave) return;
-  try{ const j=JSON.parse(localStorage.getItem(PERSIST_KEY)); if(j && typeof j==='object') for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; } }catch(e){}
+  try{ const j=JSON.parse(localStorage.getItem(_persistKey(ns))); if(j && typeof j==='object') for(const k in j){ if(typeof j[k]==='number' && isFinite(j[k])) campaignVars[k]=j[k]; } }catch(e){}
 }
-function _persistStore(){ if(!persistSave) return; try{ localStorage.setItem(PERSIST_KEY, JSON.stringify(campaignVars)); }catch(e){} }
+function _persistStore(){ if(!persistSave) return; try{ localStorage.setItem(_persistKey(), JSON.stringify(campaignVars)); }catch(e){} }
 function _persistSeed(){   // a match begins: the carried values become live variables again
   for(const k of persistVars){ if(campaignVars[k]!=null) logicVars[k]=campaignVars[k]; }
 }
@@ -9993,7 +10003,7 @@ function _persistCommit(){ // the level was CLEARED: carry the live values forwa
   for(const k of persistVars) campaignVars[k]=+logicVars[k]||0;
   _persistStore();
 }
-function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(PERSIST_KEY); }catch(e){} }
+function clearPersistent(){ campaignVars={}; try{ localStorage.removeItem(_persistKey()); }catch(e){} }
 let _lgTimers = [];                                                // pending delay / interval / repeat continuations
 let _lgState = {};                                                 // per-node runtime (counter counts, once flags)
 let _lgBudget = 0, _lgWarned = false;
@@ -22181,7 +22191,7 @@ function loadLevelFromNet(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace
   modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
@@ -27595,7 +27605,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1214 · 2026-07-31';
+const BUILD_VERSION = 'build 1215 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35951,7 +35961,7 @@ function restoreLevel(level){
   deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
-  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
+  persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad(_persistNSFrom(level.homepage));   // build 1075; build 1215: per-game namespace
   modelRigs = _sanitizeModelRigs(level.modelRigs);   // build 1080 — must land BEFORE the props spawn, or they clone unrigged
   customAnims = _caSanitize(level.customAnims); _caRev++;   // build 1040: per-gltf custom-clip caches go stale with the level
   hudWidgets = _sanitizeHudWidgets(level.hudWidgets); _hwRev++; if(typeof updateHudWidgets==='function') try{ updateHudWidgets(); }catch(e){}   // build 1058
