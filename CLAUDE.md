@@ -1519,6 +1519,23 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The hitmarker stopped lying about headshots (build 1212)
+
+The gameplay-feel panel's HIGH #4: `showHitmarker` had two states — white ✕ (hit) and red ✖ (kill) — and
+the duel + co-op-client paths passed `isHead`, so a NON-LETHAL headshot rendered the red KILL marker: a
+false kill-confirm in exactly the mode where you cannot see the target's HP, and a false kill makes players
+disengage from a live target. Solo headshots meanwhile had no distinct feedback at all (the "layering" was
+`SFX.hit()` twice — +3 dB, not a distinct crack).
+
+Now three states — hit / **head** (yellow ✛, its own glyph AND colour, so it can never be confused with a
+kill) / kill — with legacy boolean callers still mapping (truthy → kill, falsy → hit). `SFX.headshot()` is
+a real high dink (1400→1950 Hz sine), replacing the double-hit hack everywhere. Six call sites updated: the
+three client-side headshot bugs (pvp client, enemy client, turret client) now render the head state; the
+host/solo/turret-host paths rank kill > head > hit and dink a non-lethal headshot. `test-1212` renders all
+three states against a fake DOM (proving the head marker is distinct in both glyph and colour and can never
+be the kill marker), checks legacy-boolean compatibility, and pins every call site plus the retired
+double-hit hack. Three pins moved (31, 81, and 31's second), intent kept.
+
 ## Gunshots got weight, and reload audio tells the truth (build 1211)
 
 The gameplay-feel panel's CRITICAL #3, completing the audio pair with 1208. Every shot was one tone + one

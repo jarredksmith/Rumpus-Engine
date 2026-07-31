@@ -6553,6 +6553,7 @@ const SFX = {
     setTimeout(()=>tone({freq:160, type:'square', dur:0.05, vol:0.08, slideTo:120}), Math.round(_rm*0.45));
     setTimeout(()=>tone({freq:300, type:'square', dur:0.08, vol:0.1}), Math.max(120, _rm-120)); },
   hit(at){ if(playSample(curSounds().hit, {vary:0.06, at})) return; tone({freq:600, type:'sine', dur:0.05, vol:0.12, slideTo:900, at}); },
+  headshot(){ tone({freq:1400, type:'sine', dur:0.07, vol:0.13, slideTo:1950}); },   // build 1212: the distinct high 'dink' — the core skill-reward tick
   shatter(at){ noise({dur:0.22, vol:0.22, filterFreq:3000, type:'highpass', at}); tone({freq:220, type:'square', dur:0.12, vol:0.13, slideTo:70, at}); setTimeout(()=>noise({dur:0.12, vol:0.12, filterFreq:1600, at}),40); },
   puff(){ noise({dur:0.18, vol:0.14, filterFreq:700, type:'lowpass'}); tone({freq:160, type:'sine', dur:0.1, vol:0.08, slideTo:90}); },
   kill(type, at){ const ek=curSounds().enemyKill||{}; if(playSample((type&&ek[type])||curSounds().kill, {vary:0.05, at})) return; tone({freq:160, type:'sawtooth', dur:0.3, vol:0.16, slideTo:50, at}); noise({dur:0.25, vol:0.15, filterFreq:800, at}); },   // build 752: per-enemy-type kill clip + pitch wobble
@@ -25489,9 +25490,9 @@ function turretFire(){
       else if(NET.conn){ try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:dmg, dir:[dir.x,dir.y,dir.z], s:7, pt:[hit.point.x,hit.point.y,hit.point.z]}); }catch(e){} }
       spark(hit.point,0xffd166); showHitmarker(); }
     else if(clientMode){ let node=hit.object,id=null; while(node&&id==null){ if(node.userData&&node.userData.enemyId!=null) id=node.userData.enemyId; node=node.parent; }
-      if(id!=null){ if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:dmg}); }catch(e){} spark(hit.point,isHead?0xffd166:0xff6b6b); showHitmarker(isHead); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } }
+      if(id!=null){ if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:dmg}); }catch(e){} spark(hit.point,isHead?0xffd166:0xff6b6b); showHitmarker(isHead?'head':'hit'); if(isHead) SFX.headshot(); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } }
     else { let node=hit.object,en=null; while(node&&!en){ en=enemies.find(e=>e.mesh===node); node=node.parent; }
-      if(en){ alertEnemy(en,mountedTurret.position.x,mountedTurret.position.z); const k=enemyHurt(en,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,isHead?0xffd166:0xff6b6b); spawnDamageNumber(hit.point,dmg,k,isHead); flashEnemy(en); showHitmarker(k); SFX.hit(); }
+      if(en){ alertEnemy(en,mountedTurret.position.x,mountedTurret.position.z); const k=enemyHurt(en,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,isHead?0xffd166:0xff6b6b); spawnDamageNumber(hit.point,dmg,k,isHead); flashEnemy(en); showHitmarker(k?'kill':(isHead?'head':'hit')); SFX.hit(); if(isHead && !k) SFX.headshot(); }
       else { let bn=hit.object,bot=null; while(bn&&!bot){ bot=bots.find(b=>b.mesh===bn); bn=bn.parent; } if(bot&&!bot.dead){ botHurt(bot,dmg,mountedTurret.position.x,mountedTurret.position.z); spark(hit.point,0xff6b6b); showHitmarker(); SFX.hit(); } else { spark(hit.point,fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); } } }
   }
   tracer(origin,endPoint); muzzleFlashAt(origin);
@@ -27561,7 +27562,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1211 · 2026-07-31';
+const BUILD_VERSION = 'build 1212 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29627,7 +29628,7 @@ function shoot(){
           if(botId!=null && NET.mode==='host'){ const b=botById(botId); if(b&&!b.dead){ if(botHurt(b, dmg, player.pos.x, player.pos.z)) registerDuelKill(NET.myId, botId); } }
           else if(pid!=null && pid>=BOT_ID_BASE && clientMode){ if(NET.conn) try{ NET.conn.send({t:'botHit', id:pid, d:dmg, from:NET.myId}); }catch(e){} }
           else sendToPlayer(pid, {t:'pvpHit', d:dmg, from:NET.myId});
-          spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead); SFX.hit(); if(isHead) SFX.hit(); }
+          spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead?'head':'hit'); SFX.hit(); if(isHead) SFX.headshot(); }
         } else { spark(hit.point, fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); }
       } else if(clientMode){
         // find the enemy id by walking up to the networked enemy mesh, then report it to the host
@@ -29635,7 +29636,7 @@ function shoot(){
         while(node && id==null){ if(node.userData && node.userData.enemyId!=null) id=node.userData.enemyId; node = node.parent; }
         if(id!=null){
           if(NET.conn) try{ NET.conn.send({t:'hit', e:id, d:w.dmg*dmgMul*hsMul}); }catch(e){}
-          spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead); SFX.hit(); if(isHead) SFX.hit(); }
+          spark(hit.point, isHead?0xffd166:0xff6b6b); if(p===0){ showHitmarker(isHead?'head':'hit'); SFX.hit(); if(isHead) SFX.headshot(); }
         } else { spark(hit.point, fxCfg.color); spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object); }
       } else {
         // find enemy by walking up from the hit object (handles child meshes)
@@ -29652,7 +29653,7 @@ function shoot(){
           const _ek = enemyHurt(en, dealt, player.pos.x, player.pos.z);
           spawnDamageNumber(hit.point, dealt, _ek, isHead);
           flashEnemy(en);
-          if(p===0){ showHitmarker(_ek); SFX.hit(); }
+          if(p===0){ showHitmarker(_ek?'kill':(isHead?'head':'hit')); SFX.hit(); if(isHead && !_ek) SFX.headshot(); }
         } else {
           spark(hit.point, fxCfg.color);
           spawnBulletDecal(hit.point, hit.face&&hit.face.normal, hit.object);
@@ -30125,12 +30126,19 @@ function updateBossBar(hide){
   if(max>0){ bar.classList.remove('hidden'); const f=$('bossBarFill'); if(f) f.style.width=(cur/max*100).toFixed(1)+'%'; }
   else bar.classList.add('hidden');
 }
-function showHitmarker(kill){
+// build 1212: THREE states, not two. The marker used to be white ✕ (hit) or red ✖ (kill) — and the duel
+// and co-op-client paths passed `isHead`, so a NON-LETHAL headshot rendered the red KILL marker: a false
+// kill-confirm in exactly the mode where you cannot see the target's HP. A headshot is now its own state
+// (yellow ✛, the CoD 'dink'), distinct from a kill and from a body hit. Legacy callers that pass a kill
+// BOOLEAN still work: truthy -> 'kill', falsy -> 'hit'.
+function showHitmarker(kind){
+  const k = (kind===true) ? 'kill' : (kind==='kill' || kind==='head' || kind==='hit') ? kind : 'hit';
   const hm = $('hitmarker');
-  hm.textContent = kill ? '✖' : '✕';
-  hm.style.color = kill ? '#ff4d6d' : '#fff';
-  hm.style.textShadow = kill ? '0 0 12px #ff4d6d' : '0 0 8px var(--accent)';
-  hm.style.transition='none'; hm.style.opacity='1'; hm.style.transform='translate(-50%,-50%) scale('+(kill?1.4:1)+')';
+  hm.textContent = k==='kill' ? '✖' : k==='head' ? '✛' : '✕';
+  hm.style.color = k==='kill' ? '#ff4d6d' : k==='head' ? '#ffd166' : '#fff';
+  hm.style.textShadow = k==='kill' ? '0 0 12px #ff4d6d' : k==='head' ? '0 0 12px #ffd166' : '0 0 8px var(--accent)';
+  const sc = k==='kill' ? 1.4 : k==='head' ? 1.2 : 1;
+  hm.style.transition='none'; hm.style.opacity='1'; hm.style.transform='translate(-50%,-50%) scale('+sc+')';
   requestAnimationFrame(()=>{ hm.style.transition='all .25s'; hm.style.opacity='0'; hm.style.transform='translate(-50%,-50%) scale(.6)'; });
 }
 // build 580: multi-kill callouts — kills in quick succession escalate (DOUBLE/TRIPLE/...) with a rising hype sound,
