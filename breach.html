@@ -27979,7 +27979,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1243 · 2026-07-31';
+const BUILD_VERSION = 'build 1244 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33101,8 +33101,14 @@ function loop(){
   // and you HANG. From the hang: Space (or keep holding forward) PULLS UP onto the top; Ctrl/back DROPS down.
   if(!_ledge && gameOn && !editorOpen && !mountedTurret && !sliding && !duelDead && !_levelLoaderActive && matchWarmup<=0 && (_jPressed || !player.onGround) && wish.dot(forward) > 0.5){
     const _fy = player.pos.y - EYE;
-    const _fx = player.pos.x + forward.x*0.55, _fz = player.pos.z + forward.z*0.55;
-    const _lt = mantleLedge(_fx, _fz, _fy);
+    // build 1244: PROBED HEADLESS — the single fixed probe 0.55 ahead of the player's CENTRE never
+    // reached the wall: the KCC holds the capsule (radius 0.8) at least that far off the face, so
+    // mantleLedge sampled the open ground at the player's feet and returned null on every frame of
+    // every jump. That is why 1239/1243's window and ceiling fixes changed nothing in play — the
+    // probe never landed on the box at all. Scan outward to arm's reach; first grabbable top wins.
+    let _lt = null, _pd = 0.55;
+    for(const _sd of [0.45, 0.7, 0.95, 1.2]){ _lt = mantleLedge(player.pos.x + forward.x*_sd, player.pos.z + forward.z*_sd, _fy); if(_lt != null){ _pd = _sd; break; } }
+    const _fx = player.pos.x + forward.x*_pd, _fz = player.pos.z + forward.z*_pd;
     if(_lt!=null){
       // build 966: anchor the hang to the WALL FACE (not wherever the grab happened), face it, and
       // size the drop to the ACTUAL avatar so the raised hands land on the lip.

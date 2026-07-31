@@ -1519,6 +1519,31 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The mantle probe finally reaches the wall (build 1244)
+
+"Ledge still acts EXACTLY the same with build 1243" — and *exactly the same* after a verified fix
+means the fixed code never ran. Probed IN THE LIVE GAME headless (probe5: real KCC mover, boxes
+spawned relative to the player's feet, synthesized W+Space input, a frame tap on the grab gate): the
+gate entered, the player was airborne at grab heights, and **mantleLedge returned NULL on every frame
+of every jump**. The single probe 0.55 ahead of the player's CENTRE never cleared the KCC capsule's
+0.8 standoff — it sampled the open ground at the player's own feet, so no ledge ever grabbed through
+this path, and 1239's pose fix plus 1243's window/ceiling fixes were all real fixes to code the
+probe distance kept unreachable. (What the user HAD been seeing — including the knee-high hang —
+came through this same gate only in the rare poses where momentum pressed the capsule deep enough;
+the fixes never changed those poses' inputs, hence "exactly the same".)
+
+The grab now SCANS outward to arm's reach — 0.45/0.7/0.95/1.2 — first grabbable top wins, and the
+hang/pull anchor derives from the distance that actually found the ledge. Re-probed live on this
+build: `hang → pull` chains recorded, the runner climbing 7.7 m of stock architecture with
+consecutive pull-ups. `test-1244` replays the standoff geometry (old probe 0.25 short → null; scan
+grabs at 0.95; far-from-wall still null) and pins the scan + anchor. One pin moved (493).
+
+**The lesson for the whole session: three builds tuned a mechanic whose PROBE never touched the
+target.** 1233's rule was "probe the scene before theorizing"; the sharper form is *probe the
+MECHANIC's own inputs in the live game* — a unit test with stubbed dependencies (clearAt=()=>true,
+geometry laid at the probe point) can pass forever while the live path dies one dependency earlier.
+The headless input-driven repro (probe5) found in one run what three tuning builds could not.
+
 ## The mantle grabs the right ledges (build 1243)
 
 The 1239 sink fixed the hang POSE; this fixes WHICH ledges hang, after a screenshot report showed
