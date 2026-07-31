@@ -1519,6 +1519,31 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Play from here, start at wave (build 1224)
+
+The editor-UX panel's iteration-speed gap: a creator tuning wave 12 replayed waves 1-11 on every test
+run, and testing a rooftop meant walking there from the player start every time. The play row gains
+**"▶ From camera"** and a **wave** field (1..50); both write `_testStart`, which `startGame` consumes
+**exactly once** — nulled even when its solo guard fails, so a pose captured for a solo test can never
+leak into a later multiplayer deploy — and which never serialises: a test convenience, not level data.
+
+Ordering is the correctness, and both halves were forced by code already there:
+- **The wave override lands BEFORE `startWave()`** queues the first wave (clamped to the manifest cap,
+  pvp skipped — no waves there). The wave-12 HP ramp applies at spawn, which is the point: test what the
+  player will actually face.
+- **The pose override lands AFTER the pvp/else branch**, because the pvp branch also writes `player.pos`
+  and an earlier override would be silently discarded. The pose clamps above the terrain (a top-view
+  pose can never spawn underground) and arrives airborne with zero velocity — a fly pose high over the
+  level simply falls in, which is the honest reading of "from the camera".
+
+`_edTestPose()` captures per camera mode: fly = the fly camera with altitude and look (fly look reuses
+`player.yaw/pitch`); walk = the avatar; top view = the pan point standing ON the ground, pitch 0 — not
+hundreds of metres up at the top camera. A test run also skips the authored intro flythrough (`!_ts` in
+the `_introWillPlay` gate): the creator is iterating, not watching; the cine preview exists for framing.
+`test-1224` executes the pose capture across all three modes and pins the consume-once, the two
+orderings, the clamps, and that `serializeLevel` never mentions the override. Three pins moved (27, 330,
+422 — the play handler grew a wave read between autosave and deploy; each keeps its intent).
+
 ## A loaded HDRI now shows immediately (build 1223)
 
 Reported from play: *"when loading an HDRI, nothing visually shows until I make an adjustment on the HDRI

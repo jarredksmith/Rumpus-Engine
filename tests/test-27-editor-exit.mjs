@@ -4,7 +4,7 @@ const src = gameSource();
 
 // the editor panel exposes both buttons, wired to the right actions
 assert(/id="edPlay"/.test(src) && /id="edMenu"/.test(src), 'editor has Play level + Main menu buttons');
-assert(/querySelector\('#edPlay'\)\.onclick = \(\)=>\{ if\(typeof autoSaveNow==='function'\) autoSaveNow\('before play'\); startGame\(\); \}/.test(src), 'Play level autosaves then deploys the live build');
+assert(/querySelector\('#edPlay'\)\.onclick = \(\)=>\{ if\(typeof autoSaveNow==='function'\) autoSaveNow\('before play'\);[^\n]*startGame\(\); \}/.test(src), 'Play level autosaves then deploys the live build');   // build 1224: the handler also reads the start-at-wave field between the two — same intent, autosave first, deploy last
 assert(/querySelector\('#edMenu'\)\.onclick = \(\)=>\{ editorToMenu\(\); \}/.test(src), 'Main menu returns to the start page');
 
 // editorToMenu leaves cleanly and shows the menu without auto-starting a wave

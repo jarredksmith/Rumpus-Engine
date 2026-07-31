@@ -25439,6 +25439,18 @@ let editorTopView = false;     // overhead straight-down camera for placement
 let editorFreeFly = true;      // free-fly camera: detach from the player, fly anywhere with WASD + mouse-look
 let _charPrevDist = 4.6, _charPrevInit = false;   // Player tab: third-person orbit distance + first-frame seed flag
 const flyPos = new THREE.Vector3();   // free-fly camera position (seeded from the player on enable)
+// build 1224: editor test-run overrides — set by the editor's play buttons, consumed EXACTLY ONCE by
+// startGame (a later Deploy from the main menu must never inherit a stale test pose), applied only in
+// solo (NET.mode==='off'), and never serialized: this is a test convenience, not level data.
+let _testStart = null;   // { pos:{x,y,z}, yaw, pitch, wave }
+function _edTestPose(){   // the pose the creator is LOOKING FROM, per editor camera mode
+  const th = (x,z)=> (typeof terrainHeightAt==='function') ? terrainHeightAt(x,z) : 0;
+  if(typeof editorTopView!=='undefined' && editorTopView)
+    return { pos:{ x:topPanX, y:th(topPanX,topPanZ)+EYE, z:topPanZ }, yaw:player.yaw, pitch:0 };   // top view: the pan point, on the ground
+  if(typeof editorFreeFly!=='undefined' && editorFreeFly)
+    return { pos:{ x:flyPos.x, y:flyPos.y, z:flyPos.z }, yaw:player.yaw, pitch:player.pitch };     // fly: the fly camera (look reuses player.yaw/pitch)
+  return { pos:{ x:player.pos.x, y:player.pos.y, z:player.pos.z }, yaw:player.yaw, pitch:player.pitch };   // walk: where the avatar stands
+}
 let flyInit = false;
 let editorHideEnemies = true;  // hide enemies while editing (default on)
 // Collider debug overlay: draw every per-mesh collision box (green = static props/walls, amber = dynamic)
@@ -27664,7 +27676,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1223 · 2026-07-31';
+const BUILD_VERSION = 'build 1224 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36589,6 +36601,7 @@ function buildEditorPanel(){
     + '<div id="edShell"><div class="edModes" id="edModes"></div><div id="edMain">'
     + '<div class="hint" id="edHint"></div>'
     + '<div class="row2" style="margin:0 0 8px"><button id="edPlay" style="background:var(--accent);color:#05070a;font-weight:700;border:none">▶ Play level</button><button id="edUndo" title="Undo (Ctrl+Z)" aria-label="Undo" style="flex:0 0 auto;width:32px;min-width:32px;padding:6px 0">↶</button><button id="edRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" style="flex:0 0 auto;width:32px;min-width:32px;padding:6px 0">↷</button><button id="edMenu" style="background:rgba(255,140,60,.14);color:#ffd9a8;font-weight:700;border:1px solid rgba(255,150,70,.55)">⌂ Main menu</button></div>'
+    + '<div class="row2" style="margin:0 0 8px"><button id="edPlayHere" title="Deploy and spawn at the editor camera (fly camera in fly mode, the avatar in walk mode, the pan point in top view) instead of the player start. A test convenience — never saved with the level, solo only.">▶ From camera</button><label style="flex:0 0 auto;display:flex;align-items:center;gap:4px;font-size:11px;color:#8fb2a8" title="Start the test run at this wave (1 = normal). Applies to both play buttons. Never saved with the level.">wave <input id="edPlayWave" type="number" min="1" max="50" step="1" value="1" style="width:44px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 4px;font-size:12px;"></label></div>'
     + '<div id="edSearchRow"><input id="edSearch" type="search" placeholder="Search settings\u2026" spellcheck="false" aria-label="Search settings"></div>'
     + '<div id="edSearchChips"></div>'
     + '<div class="tabs" id="edTabs"></div>'
@@ -36903,7 +36916,9 @@ function buildEditorPanel(){
   { const ub=p.querySelector('#edUndo'); if(ub) ub.onclick=()=>{ if(typeof performUndo==='function') performUndo(); }; }   // build 910: undo without a keyboard (touch authors had none)
   { const rb=p.querySelector('#edRedo'); if(rb) rb.onclick=()=>{ if(typeof performRedo==='function') performRedo(); }; }   // build 1129: and forward again
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
-  p.querySelector('#edPlay').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); startGame(); };           // test the live-built level immediately (no save/reload)
+  const _edTestWave = ()=>{ const el=p.querySelector('#edPlayWave'); return el ? Math.max(1, Math.min(50, (+el.value|0)||1)) : 1; };   // build 1224
+  p.querySelector('#edPlay').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); const _w=_edTestWave(); if(_w>1) _testStart={ wave:_w }; startGame(); };           // test the live-built level immediately (no save/reload)
+  p.querySelector('#edPlayHere').onclick = ()=>{ if(typeof autoSaveNow==='function') autoSaveNow('before play'); _testStart = _edTestPose(); _testStart.wave = _edTestWave(); startGame(); };   // build 1224: play from the editor camera
   p.querySelector('#edMenu').onclick = ()=>{ editorToMenu(); };        // back to the start overlay
   { const ac=p.querySelector('#edAutoSave'); if(ac){ ac.checked=_autoSaveOn; ac.onchange=()=>{ setAutoSaveOn(ac.checked); const st=p.querySelector('#edAutoStatus'); if(st) st.textContent=ac.checked?'Saves automatically as you work.':'Autosave off — remember to Save.'; }; } }
   { const wb=p.querySelector('#edWipe'); if(wb){ let armed=false, t=null; wb.onclick=()=>{
@@ -41952,6 +41967,7 @@ function _palItems(){
   const items=[];
   const A=(label,kw,run)=>items.push({ label, kw:(label+' '+kw).toLowerCase(), kind:'Action', run });
   A('Play level','test run deploy start', ()=>{ const b=document.getElementById('edPlay'); if(b) b.click(); });
+  A('Play from camera','test run here spawn from camera', ()=>{ const b=document.getElementById('edPlayHere'); if(b) b.click(); });
   A('Undo','revert ctrl+z back', ()=>{ if(typeof performUndo==='function') performUndo(); });
   A('Save level','store keep', ()=>{ const b=document.getElementById('edSave'); if(b) b.click(); else if(typeof saveLevel==='function'){ saveLevel(); flashToast('SAVED'); } });
   A('Copy share link','url send friend', ()=>{ const b=document.getElementById('edShare'); if(b) b.click(); });
@@ -42169,6 +42185,9 @@ function _prewarmMatchModels(){
   urls.forEach(u=>{ try{ loadGLTFCached(u, ()=>{}, ()=>{}); }catch(e){} });
 }
 function startGame(){
+  // build 1224: consume the editor test-run override EXACTLY ONCE — solo only. Consuming even when the
+  // guard fails means a pose captured for a solo test can never leak into a later multiplayer deploy.
+  const _ts = (typeof _testStart!=='undefined' && _testStart && (typeof NET==='undefined' || NET.mode==='off')) ? _testStart : null; _testStart = null;
   if(mountedTurret){ mountedTurret=null; const _th=document.getElementById('turretHud'); if(_th) _th.style.display='none'; }   // never start a round still manning a turret
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
   if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); if(typeof _clearDust==='function') _clearDust(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/728/732/738: kill engine + HUD + skid + dust + restore crosshair on (re)deploy
@@ -42265,6 +42284,7 @@ function startGame(){
   $('hud').classList.remove('hidden');
   { const wp=$('wavePanel'); if(wp) wp.style.display=''; }
 
+  if(_ts && _ts.wave > 1 && !pvpMode()) wave = Math.min(50, _ts.wave|0);   // build 1224: start the test at the target wave (50 = the manifest cap); startWave() below queues it
   if(pvpMode()){
     // PvP (duel / free-for-all): no waves, all weapons, spawn spread out; score is tracked over the wire
     duelDead=false; duelRespawnTimer=0; duelInvuln=1.2; lastDamagedBy=null;
@@ -42284,13 +42304,20 @@ function startGame(){
   } else {
     startWave();
   }
+  // build 1224: play-from-here lands AFTER both branches above — the pvp branch also writes player.pos,
+  // and an override applied earlier would be silently discarded there. Clamped above the terrain so a
+  // top-view pose can never spawn underground; a fly pose high over the level simply falls in, which is
+  // the honest reading of "from the camera".
+  if(_ts && _ts.pos){ const _gy = terrainHeightAt(_ts.pos.x, _ts.pos.z);
+    player.pos.set(_ts.pos.x, Math.max(_ts.pos.y, _gy + 0.4), _ts.pos.z);
+    player.yaw = +_ts.yaw||0; player.pitch = +_ts.pitch||0; player.onGround = false; player.vel.set(0,0,0); }
   updateHUD(); updateBuffs(0);
   resetDynamicProps();        // dynamic objects return to their authored spots each deploy
   teardownInstancing(); buildInstancing();   // (re)collapse repeated static shapes for play
   if(typeof buildPhysWorld==='function') buildPhysWorld();   // build a FRESH physics world for this level every match — never inherit a stale one from a previous session (fixes the client free-fly when no assets were pending, so the loader/reveal never rebuilt it)
   if(typeof _lightWatchBaseline==='function') _lightWatchBaseline();   // build 1155: every pool is seated by now — this is the count play must hold to
   if(typeof maybeStartIntroCine==='function'){   // optional authored intro flythrough (no-op if disabled / no path)
-    const _introWillPlay = (typeof cineCfg!=='undefined' && cineCfg.on && typeof _ccHasData==='function' && _ccHasData(cineCfg));
+    const _introWillPlay = !_ts && (typeof cineCfg!=='undefined' && cineCfg.on && typeof _ccHasData==='function' && _ccHasData(cineCfg));   // build 1224: a test run (from-here / at-wave) skips the flythrough — the creator is iterating, not watching; the cine preview exists for framing shots
     if(_introWillPlay && !_levelLoaderActive){ showLevelLoader(); waitAssetsThenReveal(); }   // build 554: even with assets already cached, hold a cover so the live scene never flashes for a beat before the cinematic takes the camera; reveal() starts the cinematic, then drops the cover
     if(_levelLoaderActive) _cineIntroPending = true;   // defer: starting now would play the cutscene AUDIO behind the loading screen (the loop freezes the shot but the track is already running) and frame a half-loaded scene
     else _startIntroWhenSettled();   // no intro cutscene to cover for — just let late async loads settle (maybeStartIntroCine no-ops if disabled)
