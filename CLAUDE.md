@@ -1843,7 +1843,23 @@ fountain, a tar pit, a speed lane or a moon-gravity court was unauthorable. One 
 
 ## Open work (as of build 1193)
 
-Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
+**The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:
+1188 collider grid, 1189 PvE cover/flank, 1190 weapon sheet, 1191 enemy tuning, 1192 model instancing,
+1193 effect zones):
+- **In-editor lighting bake for creator levels** — the rendering critic's #2 CRITICAL and the biggest
+  remaining item. Realistic scope: per-vertex sky/sun visibility over static geometry via the 1097 BVH
+  raycaster, run as a budgeted async job; NOT serialized (re-bake behind the level loader when
+  `world.baked`). A full texel lightmap needs UV2 unwrapping of arbitrary GLBs — out of scope.
+- **Two-layer nav** (2 walkable Ys per column, stair links, dirty patches) — multi-storey AI.
+- **Cutscene actor tracks** (poor-man's sequencer).
+- **Incremental Rapier edits + collider derivation in a worker.**
+- **Host migration from last snapshot; delta/relevancy snapshots.**
+- **Per-player variables** — DEFERRED with a reason: the logic runtime's pulses carry no actor identity;
+  threading one through every pulse source and the `wact` relay is its own multi-site build.
+- Verification kills already recorded (do not revisit): texture slots on primitives (871-era), bot
+  bullet tracers (1020), cell-hash enemy separation (arithmetic — not a hotspot).
+
+Generator roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
 1124: `info.spawns`).
 
