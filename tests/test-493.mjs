@@ -4,7 +4,7 @@ const src = gameSource();
 // onto it. mantleLedge(fx,fz,feetY) is the reusable probe; the movement loop runs the hang->pull-up.
 
 // --- tunables: a mantle-able ledge is TALLER than an auto-step but within reach ---
-assert(/const MANTLE_MIN = STEP \+ 0\.05, MANTLE_MAX = 2\.05, MANTLE_DUR = 0\.42;/.test(src), 'MANTLE_MIN = STEP+0.05 (taller than an auto-step, so plain steps do not trigger a climb)');
+assert(/const MANTLE_MIN = 1\.55, MANTLE_MAX = 2\.05, MANTLE_DUR = 0\.42;/.test(src), 'MANTLE_MIN well above an auto-step, so plain steps do not trigger a climb');   // build 1243: raised to head height — a hang means the ledge is genuinely over you (knee-high boxes just jump)
 const MIN = 0.6 + 0.05;   // STEP + 0.05
 
 // --- wiring in the movement loop (build 644: grab now HANGS, then pull-up or drop) ---

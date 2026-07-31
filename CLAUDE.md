@@ -1519,6 +1519,27 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The mantle grabs the right ledges (build 1243)
+
+The 1239 sink fixed the hang POSE; this fixes WHICH ledges hang, after a screenshot report showed
+both remaining faults at once: a knee-high box triggering a full hang (the character kneeling ON the
+box, hands gripping air) while a perfect chest-plus box beside a taller one refused to grab at all.
+Two mechanisms:
+- **`MANTLE_MIN` was `STEP + 0.05` = 0.65** — anything taller than an auto-step hung. A hang is for
+  ledges ABOVE HEAD HEIGHT; below that you simply jump onto the box (the jump apex clears ~2.8 m).
+  Now 1.55. With the ground clamp added to the hang height (`max(sunk formula, ground + EYE − 0.12)`),
+  a ledge near the bottom of the window stands the body at the wall base with arms up instead of
+  burying the feet — the sunk formula alone put feet ~0.5 under the floor on a 1.6 m ledge.
+- **1233's bug class was alive in `mantleLedge`**: the UNCEILINGED `surfaceTopAt` read an ADJACENT
+  TALLER box's top, so rise came back over `MANTLE_MAX` for the whole jump and the grabbable ledge
+  was invisible. Both probes (the grab test and 966's wall-face scan) now ceiling at the reach
+  window. `test-1243` drives the REAL mantleLedge over real boxes: a 2.4 m ledge grabs mid-jump
+  despite a 5 m box directly behind it, with the unceilinged read proven to see the masker.
+
+When 1233 fixed groundHeightAt it noted the fix pattern; this build is the audit it implied — grep
+for remaining unceilinged `surfaceTopAt` callers whenever a "reads the wrong surface" report arrives.
+Three pins moved (493, 966, 1239's own — window value, formula shape; intents kept).
+
 ## God rays (build 1242)
 
 The rendering list's next item: screen-space light shafts — a 24-tap radial march of the bloom

@@ -15,7 +15,7 @@ assert(/let _fd=0\.55; for\(let _d=0\.08;_d<=0\.9;_d\+=0\.03\)\{ const _t2=surfa
 assert(/const _gap=0\.34, _hx=player\.pos\.x\+forward\.x\*\(_fd-_gap\)/.test(src), 'the chest holds a fixed gap off the face');
 assert(/const _bb=_avHBox\.setFromObject\(_ownAvatar\); const _h2=_bb\.max\.y-_bb\.min\.y; _avHCache=\(_h2>1\.1 && _h2<3\)\?_h2:1\.7;/.test(src),
   'the drop is sized to the measured avatar, not a constant');   // build 1168: measured at most 1x/s into a cache, same 1.1..3 sanity band
-assert(/hy:_lt \+ EYE - _vh\*1\.02/.test(src), 'raised hands land on the lip');
+assert(/_lt \+ EYE - _vh\*1\.02 - LEDGE_HANG_SINK/.test(src), 'raised hands land on the lip');   // builds 1239/1243: the avatar-height sizing survives inside the sunk, ground-clamped hang height
 assert(/yaw:player\.yaw,/.test(src), 'the grab direction is remembered');
 
 // hang: eased onto the anchor; body faces the wall, not the camera
