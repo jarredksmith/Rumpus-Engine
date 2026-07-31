@@ -6809,6 +6809,77 @@ function stopMusic(){ if(_musicTimer){ clearInterval(_musicTimer); _musicTimer=n
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x070b10);
 const SCENE_FOG = new THREE.FogExp2(0x070b10, 0.018);
+// build 1181: HEIGHT FOG + SUN INSCATTER. The fog was a single global exp2 — one colour, no altitude
+// falloff, no awareness of the sun; the 1998 version of aerial perspective. Overriding three's OWN fog
+// chunks patches every built-in material in one place (a raw ShaderMaterial like the sky/water is untouched
+// by design — the dome is a final colour and the water gets its fog in its own rebuild).
+//
+// THE LOAD-BEARING TRICK: chunks cannot add per-material uniforms, but `UniformsLib.fog` CAN grow — and
+// UniformsUtils.clone deep-clones Vector/Color values while copying PLAIN OBJECTS BY REFERENCE. So the two
+// extra uniforms are plain {x,y,z} objects (WebGL upload reads .x/.y/.z, a Vector3 is not required), every
+// fogged material's clone shares these exact objects, and one CPU write per frame reaches all of them.
+// test-1181 verifies the by-reference behaviour against the REAL three build, because if an upgrade ever
+// deep-clones plain objects the whole system silently freezes at its boot values.
+const _fogSunDirU = { x:0, y:1, z:0 };                       // TOWARD the sun (world), fed from _sunDir() each frame
+const _fogParamsU = { x:0.04, y:0, z:0.5 };                  // x: height falloff /m · y: base Y · z: inscatter strength
+THREE.UniformsLib.fog.fogSunDirW = { value:_fogSunDirU };
+THREE.UniformsLib.fog.fogHeightP = { value:_fogParamsU };
+// ...but ShaderLib MERGED UniformsLib.fog at module load, so a late add to the lib alone reaches NOTHING:
+// initMaterial clones ShaderLib[shaderID].uniforms and seqWithValue silently drops any program uniform with
+// no value — both new uniforms would sit at GL zero forever (falloff 0 = plain exp2 fog, inscatter 0).
+// Verified against the real build in test-1181. So every already-merged fogged entry gets them too:
+for(const _slk in THREE.ShaderLib){ const _slu = THREE.ShaderLib[_slk].uniforms; if(_slu && _slu.fogColor){ _slu.fogSunDirW = { value:_fogSunDirU }; _slu.fogHeightP = { value:_fogParamsU }; } }
+// The sprite vertex shader has no `transformed` (no begin_vertex) — the shared fog_vertex below would fail
+// to compile there and every fogged Sprite (muzzle flash, explosions) would VANISH silently, the raw-shader
+// trap from build 1127. A sprite is small: its world ORIGIN is its fog position.
+THREE.ShaderLib.sprite.vertexShader = THREE.ShaderLib.sprite.vertexShader.replace('#include <fog_vertex>', [
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z;',
+  '  vFogWorldPos = ( modelMatrix * vec4( 0.0, 0.0, 0.0, 1.0 ) ).xyz;',
+  '#endif'].join('\n'));
+THREE.ShaderChunk.fog_pars_vertex = [
+  '#ifdef USE_FOG',
+  '  varying float vFogDepth;',
+  '  varying vec3 vFogWorldPos;',
+  '#endif'].join('\n');
+THREE.ShaderChunk.fog_vertex = [
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z;',
+  '  vec4 _fwp = vec4( transformed, 1.0 );',
+  '#ifdef USE_INSTANCING',
+  '  _fwp = instanceMatrix * _fwp;',                          // project_vertex folded this into mvPosition, not into `transformed`
+  '#endif',
+  '  vFogWorldPos = ( modelMatrix * _fwp ).xyz;',
+  '#endif'].join('\n');
+THREE.ShaderChunk.fog_pars_fragment = [
+  '#ifdef USE_FOG',
+  '  uniform vec3 fogColor;',
+  '  uniform vec3 fogSunDirW;',
+  '  uniform vec3 fogHeightP;',
+  '  varying float vFogDepth;',
+  '  varying vec3 vFogWorldPos;',
+  '  #ifdef FOG_EXP2',
+  '    uniform float fogDensity;',
+  '  #else',
+  '    uniform float fogNear;',
+  '    uniform float fogFar;',
+  '  #endif',
+  '#endif'].join('\n');
+THREE.ShaderChunk.fog_fragment = [
+  '#ifdef USE_FOG',
+  // exp-height falloff: fog thins with altitude above the base, so towers rise OUT of it and valleys pool
+  '  float _fogH = exp( - max( 0.0, ( vFogWorldPos.y - fogHeightP.y ) ) * fogHeightP.x );',
+  '  #ifdef FOG_EXP2',
+  '    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth * _fogH );',
+  '  #else',
+  '    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth ) * _fogH;',
+  '  #endif',
+  // sun inscatter: looking down-sun, the fog itself glows warm — cheap aerial perspective
+  '  vec3 _fogV = normalize( vFogWorldPos - cameraPosition );',
+  '  float _fogSun = pow( max( dot( _fogV, fogSunDirW ), 0.0 ), 8.0 ) * fogHeightP.z;',
+  '  vec3 _fogCol = mix( fogColor, fogColor * vec3( 1.30, 1.08, 0.75 ) + vec3( 0.22, 0.11, 0.02 ), _fogSun );',
+  '  gl_FragColor.rgb = mix( gl_FragColor.rgb, _fogCol, fogFactor );',
+  '#endif'].join('\n');
 scene.fog = SCENE_FOG;
 
 const camera = new THREE.PerspectiveCamera(78, innerWidth/innerHeight, 0.1, 400);
@@ -7074,6 +7145,9 @@ function _runDofTo(scn, cam, out){
 // file has taken the whole sky out twice by declaring a `let` under the function that reads it.
 let _vmDone = false;
 function renderScene(scn, cam){
+  // build 1181: feed the shared fog uniforms — one write reaches every fogged material (see the trick note)
+  if(typeof _sunDir==='function'){ const sd=_sunDir(); if(sd){ _fogSunDirU.x=-sd.x; _fogSunDirU.y=-sd.y; _fogSunDirU.z=-sd.z; } }   // _sunDir points sun→scene; inscatter wants TOWARD the sun
+  if(typeof worldCfg!=='undefined'){ _fogParamsU.x=(worldCfg.fogHeight!=null?+worldCfg.fogHeight:0.04); _fogParamsU.z=(worldCfg.fogSun!=null?+worldCfg.fogSun:0.5); }
   const _r=perfOn?_pnow():0;
   _vmDone = false;   // a new frame's worth of scene: whoever gets there first draws the weapon
   if(_postOn && !_postFail && typeof ensurePost==='function' && ensurePost()){
@@ -7081,6 +7155,7 @@ function renderScene(scn, cam){
     catch(e){ _postFail=true; _vmDone=false;   // build 1140: the weapon may have gone into the buffer we just threw away — let the plain path draw it
       try{ renderer.setRenderTarget(null); }catch(_e){} if(typeof console!=='undefined') console.warn('Post-FX disabled after an error:', e&&e.message); }
   }
+  _SOFT_P.value.x = 0;   /* build 1183: no post chain = no fresh G-buffer = no soft fade */
   if(!dofEnabled || !ensureDof()){ renderer.render(scn, cam); }
   else { _runDofTo(scn, cam, null); }
   if(perfOn)_prof.render+=_pnow()-_r;
@@ -7094,6 +7169,34 @@ function renderScene(scn, cam){
 let _postOn = true; try{ const v=localStorage.getItem('breach_postfx'); if(v==='off') _postOn=false; }catch(e){}
 let _postFail = false;
 let _postBloom = 0.65, _postMotion = 0.62, _postVig = 0.42, _postGrain = 0.05, _postSat = 1.08, _postCon = 1.05, _postThresh = 0.62;
+// build 1187: LUT colour grade. A strip LUT (width = N*N, height = N — the Unreal/GTA convention, green
+// increasing DOWN each tile, blue across tiles) applied in the composite where the frame is already
+// DISPLAY-REFERRED — which is what LUT strips are authored against, so no extra transfer math exists to
+// get wrong. Loaded RAW (no sRGB tag): the lookup maps display bytes to display bytes.
+let _postLutUrl='', _postLutAmt=1, _lutMap=null, _lutN=16, _lutLoadedUrl='';
+function _ensureLut(url){
+  url = String(url||'').trim();
+  if(url === _lutLoadedUrl) return;
+  _lutLoadedUrl = url;
+  if(!url){ if(_lutMap && _lutMap.dispose) _lutMap.dispose(); _lutMap=null; return; }
+  const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous');
+  let _ld=false; const _fin=()=>{ if(_ld) return; _ld=true; if(typeof _texPending!=='undefined') _texPending=Math.max(0,_texPending-1); };
+  if(typeof _texPending!=='undefined') _texPending++;
+  const take=(tex)=>{ _fin(); if(_lutLoadedUrl !== url){ if(tex.dispose) tex.dispose(); return; }   /* a newer url won the race */
+    const im = tex.image;
+    if(!im || im.width !== im.height*im.height || im.height < 4){
+      console.warn('LUT rejected: expected an N*N x N strip (e.g. 256x16), got', im&&im.width, 'x', im&&im.height);
+      if(tex.dispose) tex.dispose(); return; }
+    tex.flipY = false;                                   /* green runs DOWN each tile; keep the maths deterministic */
+    tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+    tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
+    if(_lutMap && _lutMap.dispose) _lutMap.dispose();
+    _lutMap = tex; _lutN = im.height; };
+  const pUrl = proxied(url);
+  loader.load(pUrl, take, undefined, ()=>{ if(_lutLoadedUrl !== url){ _fin(); return; }
+    if(pUrl !== url) loader.load(url, take, undefined, ()=>{ _fin(); console.warn('LUT load failed (CORS?):', url); });
+    else { _fin(); console.warn('LUT load failed:', url); } });
+}
 let _postRT=null, _compRT=null, _afterA=null, _afterB=null, _postScene=null, _postCam=null, _postQuad=null;
 let _matComp=null, _matAfter=null, _matCopy=null;
 // build 1180: AUTO-EXPOSURE. toneMappingExposure was a static authored value — walk from desert noon into
@@ -7103,8 +7206,53 @@ let _matComp=null, _matAfter=null, _matCopy=null;
 // authored exposure toward the target. Creators keep authorship three ways: the multiplier is clamped to
 // ±1.5 stops around THEIR exposure, a dead-zone stops it breathing on balanced frames, and worldCfg.autoExp
 // (0..1, a slider next to Exposure) scales the whole effect — 0 is exactly the old static behaviour.
-let _aeRT=null, _aeFrame=0, _aeTargetMul=1, _expAuto=1, _expBase=1.25, _aeLastT=0;
+let _aeRT=null, _aeFrame=0, _aeTargetMul=1, _expAuto=1, _expBase=1.25, _aeLastT=0, _aePBO=null, _aeFence=null;
 const _aeBuf=new Uint8Array(16*16*4);
+// build 1182: the meter reads back ASYNCHRONOUSLY. readRenderTargetPixels is a full pipeline stall — the
+// CPU drains every queued GPU command before the copy returns, so metering at 12Hz was a visible 12Hz
+// judder with NO fps drop (reported from play; strength 0 was smooth, which is what implicated the read).
+// WebGL2: readPixels into a PIXEL_PACK_BUFFER returns immediately, a fence marks completion, and the
+// harvest polls clientWaitSync with timeout 0 (never blocks), mapping the buffer only after the GPU has
+// signalled — the value arrives a few frames late, which a ~1s eased eye cannot show. One read in flight
+// at a time. WebGL1 has no PBO/fence: auto-exposure is quietly INERT there rather than stuttering.
+function _aeMeter(){
+  const _aeS=(typeof worldCfg!=='undefined' && worldCfg.autoExp!=null)?+worldCfg.autoExp:0;
+  if(_aeS>0.001 && renderer.capabilities.isWebGL2){
+    const _gl=renderer.getContext();
+    if(_aeFence){ try{                                        /* harvest: poll, never wait */
+      const _st=_gl.clientWaitSync(_aeFence,0,0);
+      if(_st===_gl.ALREADY_SIGNALED || _st===_gl.CONDITION_SATISFIED){
+        _gl.deleteSync(_aeFence); _aeFence=null;
+        _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,_aePBO);
+        _gl.getBufferSubData(_gl.PIXEL_PACK_BUFFER,0,_aeBuf);
+        _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,null);
+        let _ls=0; for(let i=0;i<1024;i+=4){ const l=(0.2126*_aeBuf[i]+0.7152*_aeBuf[i+1]+0.0722*_aeBuf[i+2])/255; _ls+=Math.log(Math.max(0.001,l)); }
+        const _avg=Math.exp(_ls/256);
+        let _ev=Math.log2(AE_KEY/Math.max(0.001,_avg));
+        if(Math.abs(_ev)<AE_DEAD) _ev=0;                      /* dead-zone: no breathing on a balanced frame */
+        _ev=Math.max(-AE_CLAMP, Math.min(AE_CLAMP, _ev))*_aeS; /* creator authorship: bounded, scaled */
+        _aeTargetMul=Math.pow(2,_ev);
+      } else if(_st===_gl.WAIT_FAILED){ _gl.deleteSync(_aeFence); _aeFence=null; }
+    }catch(e){ _aeFence=null; _aePBO=null; _aeTargetMul=1; } }
+    if(!_aeFence && (++_aeFrame % 5)===0){                    /* issue: only when nothing is in flight */
+      if(!_aeRT) _aeRT=new THREE.WebGLRenderTarget(16,16,{ minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, depthBuffer:false });
+      _matCopy.uniforms.tColor.value=_postRT.texture; const _aePm=_postQuad.material; _postQuad.material=_matCopy;
+      renderer.setRenderTarget(_aeRT); renderer.render(_postScene,_postCam); _postQuad.material=_aePm;
+      try{                                                    /* _aeRT is still bound, so readPixels targets it */
+        if(!_aePBO) _aePBO=_gl.createBuffer();
+        _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,_aePBO);
+        _gl.bufferData(_gl.PIXEL_PACK_BUFFER,1024,_gl.STREAM_READ);
+        _gl.readPixels(0,0,16,16,_gl.RGBA,_gl.UNSIGNED_BYTE,0);   /* offset into the PBO — returns immediately */
+        _gl.bindBuffer(_gl.PIXEL_PACK_BUFFER,null);               /* three's own readbacks must not inherit the binding */
+        _aeFence=_gl.fenceSync(_gl.SYNC_GPU_COMMANDS_COMPLETE,0);
+      }catch(e){ _aePBO=null; _aeTargetMul=1; }
+    }
+    const _aeNow=performance.now(); const _aeDt=Math.min(0.25, Math.max(0.001,(_aeNow-_aeLastT)/1000)); _aeLastT=_aeNow;
+    _expAuto += (_aeTargetMul-_expAuto)*(1-Math.exp(-_aeDt/AE_TAU));
+    renderer.toneMappingExposure=_expBase*_expAuto;
+  } else if(_expAuto!==1 || _aeFence){ _expAuto=1; _aeTargetMul=1; renderer.toneMappingExposure=_expBase;
+    if(_aeFence){ try{ renderer.getContext().deleteSync(_aeFence); }catch(e){} _aeFence=null; } }
+}
 const AE_KEY=0.42, AE_CLAMP=1.5, AE_DEAD=0.15, AE_TAU=0.9;
 // build 1128: bloom is a mip pyramid — _bloomMips[0] is half resolution and each level halves again.
 // Five levels reach a glow radius of ~16 half-res texels (a quarter of a 720p frame), which is the
@@ -7114,6 +7262,37 @@ let _bloomMips=[], _matBloomDown=null, _matBloomUp=null;
 // build 1126: screen-space ambient occlusion + FXAA. _aoRT holds the raw AO term at half
 // resolution, _aoRT2 the horizontally blurred one; the vertical blur lands back in _aoRT.
 let _aoGeoRT=null, _aoRT=null, _aoRT2=null, _matAOGeo=null, _matAO=null, _matAOBlur=null, _matFXAA=null;
+// build 1183: SOFT PARTICLES. A flipbook quad slicing through world geometry drew a hard line across the
+// intersection — the classic billboard artifact. The AO G-buffer (build 1126) already holds the scene's
+// view distance at half res, swept clean of everything that doesn't write depth (1152/1158) — including
+// these very sprites — so it is exactly the "world behind the particle" a soft fade needs. The fade reads
+// LAST frame's buffer (the prepass runs after the scene pass); one frame of lag on a fade band is
+// invisible. Gated on the same _aoWant that keeps the buffer fresh: AO off = hard edges, never stale data.
+const _SOFT_GEO = { value:null };                        /* _aoGeoRT.texture (view distance in .a) */
+const _SOFT_P = { value:{ x:0, y:0, z:1, w:1 } };        /* x: on/off · zw: the scene pass's viewport in px */
+function _softSprite(mat, band){
+  mat.userData.softBand = Math.max(0.05, band||0.5);
+  mat.onBeforeCompile = (shader)=>{
+    shader.uniforms.uSoftGeo = _SOFT_GEO;                /* BY REFERENCE — one write per frame reaches every soft sprite */
+    shader.uniforms.uSoftP = _SOFT_P;
+    shader.uniforms.uSoftInv = { value: 1/mat.userData.softBand };   /* per-material: the band scales with the sprite */
+    shader.vertexShader = 'varying float vSoftZ;\n' + shader.vertexShader.replace(
+      'gl_Position = projectionMatrix * mvPosition;',
+      'vSoftZ = - mvPosition.z;\n\tgl_Position = projectionMatrix * mvPosition;');
+    shader.fragmentShader = 'uniform sampler2D uSoftGeo; uniform vec4 uSoftP; uniform float uSoftInv; varying float vSoftZ;\n' + shader.fragmentShader.replace(
+      '#include <output_fragment>', [
+      'if( uSoftP.x > 0.5 ){',
+      '  vec4 _sg = texture2D( uSoftGeo, gl_FragCoord.xy / uSoftP.zw );',
+      /* a cleared texel is SKY: packed-normal channels sum >= 0.63 for any unit vector, ~0 when cleared
+         (build 1126's geometric test) — sky must mean "infinitely far", or sprites vanish against it */
+      '  float _sd = ( _sg.r + _sg.g + _sg.b ) < 0.3 ? 1e6 : _sg.a;',
+      '  diffuseColor.a *= clamp( ( _sd - vSoftZ ) * uSoftInv, 0.0, 1.0 );',
+      '}',
+      '#include <output_fragment>' ].join('\n'));
+  };
+  mat.customProgramCacheKey = ()=>'soft1';               /* every soft sprite shares ONE program (build 1145's lesson) */
+  return mat;
+}
 let _ssaoAmt = 0.9, _ssaoRadius = 0.9;   // driven by worldCfg.ssao / worldCfg.ssaoRadius
 // 12 points in a hemisphere around +z, clustered toward the origin (cubic falloff) so most samples
 // land where occlusion actually varies. Fixed, not random: the per-pixel rotation is what breaks
@@ -7229,11 +7408,13 @@ function ensurePost(){
   _matComp=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
     uniforms:{ tColor:{value:null}, tBloom:{value:null}, tAO:{value:null}, tGeo:{value:null}, uAO:{value:0}, uAOPow:{value:2.0}, uBloomNorm:{value:1/_BLOOM_MIPS},
       uAoTexel:{value:new THREE.Vector2(1,1)}, uFar:{value:400},
-      uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1} },
+      uBloom:{value:_postBloom}, uVig:{value:_postVig}, uGrain:{value:_postGrain}, uSat:{value:_postSat}, uCon:{value:_postCon}, uTime:{value:0}, uEncode:{value:1},
+      tLut:{value:null}, uLutAmt:{value:0}, uLutN:{value:16} },
     vertexShader:vert, fragmentShader:[
       'varying vec2 vUv; uniform sampler2D tColor; uniform sampler2D tBloom; uniform sampler2D tAO; uniform sampler2D tGeo;',
       'uniform float uAO; uniform float uAOPow; uniform vec2 uAoTexel; uniform float uFar; uniform float uBloomNorm;',
       'uniform float uBloom; uniform float uVig; uniform float uGrain; uniform float uSat; uniform float uCon; uniform float uTime;',
+      'uniform sampler2D tLut; uniform float uLutAmt; uniform float uLutN;',
       // build 1126: BILATERAL UPSAMPLE. AO is computed at half resolution, and a plain bilinear tap
       // across a silhouette reads occlusion that belongs to the object and paints it onto whatever
       // is behind — it showed up as a blocky grey halo where a pillar met the sky. Weight the four
@@ -7278,6 +7459,17 @@ function ensurePost(){
       '  c=_out(clamp(c,0.0,1.0));',                              // -> display space
       '  c=(c-0.5)*uCon+0.5;',                                    // contrast
       '  float l=dot(c, vec3(0.299,0.587,0.114)); c=mix(vec3(l), c, uSat);',   // saturation
+      // build 1187: the LUT is the final GRADE (after contrast/saturation, before the LENS artifacts —
+      // vignette and grain sit on top of any grade, like the glass they model). Bilinear filtering gives
+      // the red/green interpolation inside a tile for free; blue lands between two tiles, so two taps mix.
+      '  if(uLutAmt > 0.001){',
+      '    vec3 cc = clamp(c, 0.0, 1.0); float n = uLutN;',
+      '    float b = cc.b * (n - 1.0); float b0 = floor(b); float bf = b - b0; float b1 = min(b0 + 1.0, n - 1.0);',
+      '    vec2 base = vec2( (cc.r * (n - 1.0) + 0.5) / (n * n), (cc.g * (n - 1.0) + 0.5) / n );',
+      '    vec3 l0 = texture2D(tLut, base + vec2(b0 / n, 0.0)).rgb;',
+      '    vec3 l1 = texture2D(tLut, base + vec2(b1 / n, 0.0)).rgb;',
+      '    c = mix(c, mix(l0, l1, bf), uLutAmt);',
+      '  }',
       '  float r=length(vUv-0.5); c *= 1.0 - smoothstep(0.42,0.78,r)*uVig;',   // vignette
       '  float n=fract(sin(dot(vUv*(uTime+1.0), vec2(12.9898,78.233)))*43758.5453); c += (n-0.5)*uGrain;',   // grain
       '  gl_FragColor=vec4(clamp(c,0.0,1.0), 1.0); }'
@@ -7452,27 +7644,8 @@ function _renderPostFX(scn, cam){
   // build 1180: meter the frame, ease the exposure multiplier for the NEXT frame (materials consume
   // toneMappingExposure during the scene pass, so this frame is already drawn — a one-frame-lag feedback
   // loop, which is how every engine's eye adaptation works). The blit through _matCopy also RESOLVES a
-  // multisampled _postRT, so the 16x16 read is safe on both adaptive rungs.
-  { const _aeS=(typeof worldCfg!=='undefined' && worldCfg.autoExp!=null)?+worldCfg.autoExp:0;
-    if(_aeS>0.001){
-      if((++_aeFrame % 5)===0){
-        if(!_aeRT) _aeRT=new THREE.WebGLRenderTarget(16,16,{ minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, depthBuffer:false });
-        _matCopy.uniforms.tColor.value=_postRT.texture; const _aePm=_postQuad.material; _postQuad.material=_matCopy;
-        renderer.setRenderTarget(_aeRT); renderer.render(_postScene,_postCam); _postQuad.material=_aePm;
-        try{ renderer.readRenderTargetPixels(_aeRT,0,0,16,16,_aeBuf);
-          let _ls=0; for(let i=0;i<1024;i+=4){ const l=(0.2126*_aeBuf[i]+0.7152*_aeBuf[i+1]+0.0722*_aeBuf[i+2])/255; _ls+=Math.log(Math.max(0.001,l)); }
-          const _avg=Math.exp(_ls/256);
-          let _ev=Math.log2(AE_KEY/Math.max(0.001,_avg));
-          if(Math.abs(_ev)<AE_DEAD) _ev=0;                              // dead-zone: no breathing on a balanced frame
-          _ev=Math.max(-AE_CLAMP, Math.min(AE_CLAMP, _ev))*_aeS;        // creator authorship: bounded, scaled
-          _aeTargetMul=Math.pow(2,_ev);
-        }catch(e){ _aeTargetMul=1; }
-      }
-      const _aeNow=performance.now(); const _aeDt=Math.min(0.25, Math.max(0.001,(_aeNow-_aeLastT)/1000)); _aeLastT=_aeNow;
-      _expAuto += (_aeTargetMul-_expAuto)*(1-Math.exp(-_aeDt/AE_TAU));
-      renderer.toneMappingExposure=_expBase*_expAuto;
-    } else if(_expAuto!==1){ _expAuto=1; _aeTargetMul=1; renderer.toneMappingExposure=_expBase; }
-  }
+  // multisampled _postRT, so the 16x16 read is safe on both adaptive rungs. Async since build 1182.
+  _aeMeter();
   // 1a) build 1140: the weapon joins the frame. It used to be drawn to the CANVAS after renderScene had
   // finished, i.e. after bloom, the colour grade, the vignette, the grain and the motion blur — so the
   // one object on screen at all times, across 11% of it, was the only object outside the frame's look.
@@ -7490,6 +7663,8 @@ function _renderPostFX(scn, cam){
   // jagged silhouette still reads as an object standing somewhere. AO now survives the MSAA shed
   // and goes only when the scaler starts trading RESOLUTION, at which point everything is soft anyway.
   const _aoWant = _ssaoAmt > 0.001 && _prStepI === 0 && _aoGeoRT && cam && cam.isPerspectiveCamera;
+  _SOFT_P.value.x = _aoWant ? 1 : 0; _SOFT_P.value.z = w; _SOFT_P.value.w = h;   /* build 1183: soft particles ride the same gate */
+  if(_aoGeoRT) _SOFT_GEO.value = _aoGeoRT.texture;
   if(_aoWant){
     // the prepass runs AFTER the scene pass so it cannot consume this frame's shadow-map refresh,
     // and with the sky dome and weather hidden — overrideMaterial would give the dome depthWrite
@@ -7577,6 +7752,7 @@ function _renderPostFX(scn, cam){
   cu.tAO.value = _aoWant ? _aoRT.texture : null; cu.uAO.value = _aoWant ? _ssaoAmt : 0;
   if(_aoWant){ cu.tGeo.value=_aoGeoRT.texture; cu.uAoTexel.value.set(1/hw,1/hh); cu.uFar.value=cam.far; }
   cu.uBloom.value=_postBloom; cu.uVig.value=_postVig; cu.uGrain.value=_postGrain; cu.uSat.value=_postSat; cu.uCon.value=_postCon; cu.uTime.value=(performance.now()*0.001)%1000;
+  cu.tLut.value=_lutMap; cu.uLutAmt.value = _lutMap ? _postLutAmt : 0; cu.uLutN.value=_lutN;   /* build 1187: no LUT loaded = exactly the old grade */
   // build 810: with motion blur ~0 (or shed by adaptive res at its lowest step), composite STRAIGHT TO SCREEN — the
   // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
   // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
@@ -7716,6 +7892,9 @@ function _fitSunShadow(cam){
   const u = Math.round((fx*_fitAx.x + fz*_fitAx.z) / texel) * texel;
   const v = Math.round((fx*_fitAy.x + fz*_fitAy.z) / texel) * texel;
   fx = u*_fitAx.x + v*_fitAy.x; fz = u*_fitAx.z + v*_fitAy.z;
+  // build 1185: the far cascade mirrors the sun every frame (colour/intensity are written in
+  // applyWorldCfg AND per-frame by the day cycle — chasing every write site is how a mirror drifts).
+  if(moonFar){ moonFar.color.copy(moon.color); moonFar.intensity = moon.intensity; moonFar.visible = moon.visible; }
   const moved = Math.abs(fx - _fitFx) > texel*0.5 || Math.abs(fz - _fitFz) > texel*0.5;
   const sized = Math.abs(moon.shadow.camera.right - E) > 1e-3;
   if(!moved && !sized) return false;
@@ -7723,6 +7902,26 @@ function _fitSunShadow(cam){
   _sunTarget.position.set(fx, 0, fz); _sunTarget.updateMatrixWorld();
   if(sized){ const c = moon.shadow.camera; c.left = -E; c.right = E; c.top = E; c.bottom = -E; c.updateProjectionMatrix();
     moon.shadow.normalBias = _sunNormalBias(E, moon.shadow.mapSize.x); }
+  if(moonFar){
+    const F = Math.min(500, E*4);
+    // the same light-space snap, on the FAR map's own (4x coarser) texel grid — snapping this volume to
+    // the near grid would slide it a fraction of its own texel per step and crawl every distant edge
+    const fpx = moonFar.shadow.mapSize.x || 2048, ftex = (2 * F) / fpx;
+    const fu = Math.round(u/ftex)*ftex, fv = Math.round(v/ftex)*ftex;
+    _sunTargetFar.position.set(fu*_fitAx.x + fv*_fitAy.x, 0, fu*_fitAx.z + fv*_fitAy.z); _sunTargetFar.updateMatrixWorld();
+    // stand the light far enough back that the whole +/-F volume fits inside its depth range: the near
+    // sun orbits 90 out, so a +/-240 volume would spill ~110 units BEHIND a light left at that distance
+    const D = 90 + F;
+    _fitL2.copy(moon.position).sub(_sunTarget.position).normalize();
+    moonFar.position.copy(_sunTargetFar.position).addScaledVector(_fitL2, D);
+    const fc = moonFar.shadow.camera;
+    if(Math.abs(fc.right - F) > 1e-3 || Math.abs(fc.far - (D + F)) > 1e-3){
+      fc.left = -F; fc.right = F; fc.top = F; fc.bottom = -F; fc.near = 1; fc.far = D + F; fc.updateProjectionMatrix();
+      // the texel rule (1125) at the far map's own scale; the 0.6 cap is a NEAR-volume quantity, so the
+      // far cascade carries its own — 7.7 texels of a 240-extent map is ~1.8m, fine at the distances it serves
+      moonFar.shadow.normalBias = Math.min(2.2, Math.max(0.02, (2 * F / fpx) * SUN_NB_TEXELS));
+    }
+  }
   return true;   // the caller dirties the map: a moved volume must be re-rendered or it smears
 }
 // Kill shadow acne (the striped self-shadowing bands on flat faces): normalBias offsets the shadow
@@ -7732,6 +7931,52 @@ function _fitSunShadow(cam){
 moon.shadow.bias = -0.0004;
 moon.shadow.normalBias = _sunNormalBias(moon.shadow.camera.right, moon.shadow.mapSize.x);   // build 1095: was 1.2 — contact shadows were detaching (peter-panning) on generated levels. Build 1125: the 0.6 that replaced it is 7.7 texels of the +/-80 volume this line runs against, so say THAT and it survives the first _fitSunShadow
 scene.add(moon);
+// build 1185: TWO-CASCADE SUN SHADOWS. One volume was a trade with no right answer: tight = sharp
+// contacts but a hard cliff where shadows END (the rendering critic's #1 — "the world floats" past
+// shadowDist); wide = no cliff but mud everywhere. Now the same map budget is spent twice: the near
+// volume stays exactly build 1120's camera-following fit, and moonFar covers 4x that extent behind it.
+// moonFar is seated at BOOT (the light count must never change during play — builds 636/977/1153/1155),
+// desktop only: a phone keeps one cascade and one shadow pass, decided once before the first compile.
+const moonFar = IS_COARSE ? null : new THREE.DirectionalLight(0x9fd8ff, 0.9);
+const _sunTargetFar = new THREE.Object3D(); scene.add(_sunTargetFar);
+const _fitL2 = new THREE.Vector3();
+if(moonFar){
+  moonFar.castShadow = true;
+  moonFar.shadow.mapSize.set(2048, 2048);
+  moonFar.shadow.bias = -0.0004;
+  moonFar.target = _sunTargetFar;
+  scene.add(moonFar);
+}
+// The per-fragment cascade pick. Each fragment takes the sun from exactly ONE of the first two
+// directional lights: the near one wherever its shadow map actually covers (its projected coord, with a
+// margin — a derived split DISTANCE gets the screen corners wrong, the coord cannot), the far one
+// everywhere else. Guards, each load-bearing:
+//  - NUM_DIR_LIGHT_SHADOWS >= 2 keeps the gate out of every scene that isn't running the two cascades —
+//    the thumbnail/inspector rigs use two-directional-light setups whose rim light this must not touch.
+//  - USE_SHADOWMAP absent (an object with receiveShadow=false — the nocollide grass) cannot read the
+//    coord; it takes the NEAR sun unshadowed. Without that branch such objects get BOTH suns = 2x light.
+//  - csmSunP.y (shared plain object, 1181's trick) is the runtime switch: 0 on phones, where a creator's
+//    own two shadow-casting directional lights could otherwise trip the compiled gate.
+const _csmP = { x:0, y: moonFar?1:0, z:0 };
+THREE.ShaderChunk.lights_pars_begin = 'uniform vec3 csmSunP;\n' + THREE.ShaderChunk.lights_pars_begin;
+THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
+  'getDirectionalLightInfo( directionalLight, geometry, directLight );',
+  ['getDirectionalLightInfo( directionalLight, geometry, directLight );',
+   '#if NUM_DIR_LIGHT_SHADOWS >= 2',
+   'if ( csmSunP.y > 0.5 && UNROLLED_LOOP_INDEX < 2 ) {',
+   '#if defined( USE_SHADOWMAP )',
+   'vec2 _cs0 = vDirectionalShadowCoord[ 0 ].xy / vDirectionalShadowCoord[ 0 ].w;',
+   'bool _csN = _cs0.x > 0.02 && _cs0.x < 0.98 && _cs0.y > 0.02 && _cs0.y < 0.98;',
+   '#else',
+   'bool _csN = true;',
+   '#endif',
+   'if ( ( UNROLLED_LOOP_INDEX == 0 ) != _csN ) directLight.color = vec3( 0.0 );',
+   '}',
+   '#endif'].join('\n\t\t'));
+// ShaderLib merged UniformsLib.lights at module load (the 1181 lesson, same shape): the value must be
+// added to every already-merged lit entry or it sits at GL zero and the far cascade never lights anything.
+THREE.UniformsLib.lights.csmSunP = { value:_csmP };
+for(const _clk in THREE.ShaderLib){ const _clu = THREE.ShaderLib[_clk].uniforms; if(_clu && _clu.directionalLights){ _clu.csmSunP = { value:_csmP }; } }
 // Shadow-refresh bookkeeping lives HERE (not by the render loop) since build 855: applyWorldCfg runs at
 // boot and now calls _dirtyShadows when the sun moves — declaring these ~11k lines later was a TDZ crash.
 let _shadowDirtyFrames = 2;
@@ -8241,6 +8486,10 @@ const SKY_GLSL = [
   '}'
 ].join('\n');
 let _skyMesh = null, _skyMat = null, _skyDomeRT = null, _skyDomePMREM = null, _skyKey = '', _skyEnvAt = -1e9;
+// build 1186: the SCENE reflection probe's state — declared HERE because applySky reads _spRT per frame
+// and `typeof x` does NOT guard a temporal dead zone (build 1127 turned the sky black learning that).
+let _spCube=null, _spCube2=null, _spCam=null, _spCam2=null, _spScene2=null, _spInvMat=null, _spPM=null, _spRT=null;
+let _spAt=-1e9, _spSkyKey='', _spQueue=[], _spSkyScale=1;
 function _skyUniforms(){
   const P = _skyP(), S = _sunDir();
   return { uZen:{value:new THREE.Vector3(...P.zenith)}, uHor:{value:new THREE.Vector3(...P.horizon)},
@@ -8254,6 +8503,7 @@ function _skyUniforms(){
     uExpo:{value:(typeof renderer!=='undefined') ? renderer.toneMappingExposure : 1},
     uEncode:{value:0} };
 }
+const _skyCamPos = new THREE.Vector3();   // scratch for the dome-follow (no per-frame allocation — build 1168)
 function _ensureSky(){
   if(_skyMesh) return _skyMesh;
   _skyMat = new THREE.ShaderMaterial({ side:THREE.BackSide, depthWrite:false, fog:false,
@@ -8282,13 +8532,17 @@ function _ensureSky(){
   // simply walks out of it and the "sky" becomes a small cube in the distance. onBeforeRender gets
   // the camera actually being rendered, which means this works for the gameplay camera, the editor
   // camera and the cinematic preview without any of them knowing about it.
-  _skyMesh.onBeforeRender = function(r, sc, cam){ if(cam && cam.position){ _skyMesh.position.copy(cam.position); _skyMesh.updateMatrixWorld(); }
+  // build 1186: WORLD position, not .position — a CubeCamera's face cameras are CHILDREN of the rig, so
+  // their local .position is (0,0,0): the dome teleported to the world origin for every probe face and the
+  // scene probe rendered a BLACK sky, which then blackened the env-lit viewmodel. Found by reading the
+  // probe's own cube back (rawUp 11/255 where sky should be ~180) — the frame alone only showed the symptom.
+  _skyMesh.onBeforeRender = function(r, sc, cam){ if(cam && cam.getWorldPosition){ _skyMesh.position.copy(cam.getWorldPosition(_skyCamPos)); _skyMesh.updateMatrixWorld(); }
     // build 1127: the post chain renders into a LINEAR target and encodes at the end, so the dome
     // must not encode when it is on. With effects off the dome writes the canvas directly, and
     // outputEncoding does not reach a raw ShaderMaterial, so then it must.
     const u=_skyMat.uniforms;
     if(u.uEncode) u.uEncode.value = (typeof _postOn!=='undefined' && _postOn && !(typeof _postFail!=='undefined' && _postFail)) ? 0 : 1;
-    if(u.uExpo) u.uExpo.value = r.toneMappingExposure;
+    if(u.uExpo) u.uExpo.value = r.toneMappingExposure * ((typeof _spSkyScale!=='undefined') ? _spSkyScale : 1);   /* build 1186: during the probe render the SKY alone is scaled by worldCfg.sky — geometry radiance is already correct */
     if(u.uTM) u.uTM.value = (r.toneMapping === THREE.NoToneMapping) ? 0 : 1; };
   scene.add(_skyMesh);
   return _skyMesh;
@@ -8386,8 +8640,90 @@ function applySky(){
       h[0]+=c[0]/8; h[1]+=c[1]/8; h[2]+=c[2]/8; }
     SCENE_FOG.color.setRGB(Math.min(1,h[0]), Math.min(1,h[1]), Math.min(1,h[2]));
   }
-  const env = _skyEnv(); if(env && typeof scene!=='undefined') scene.environment = env;
+  const env = _spRT ? _spRT.texture : _skyEnv(); if(env && typeof scene!=='undefined') scene.environment = env;   // build 1186: the scene probe supersedes the sky-only probe while it exists
   return true;
+}
+
+// ---------- build 1186: the SCENE reflection probe ----------
+// scene.environment was the SKY alone, so a chrome sphere in a courtyard reflected bare sky through the
+// walls around it. The probe now renders the REAL scene from the spawn's eye into a small cube at deploy.
+// The catch is build 1136's law — the environment must be RAW RADIANCE — and the scene pass has ACES baked
+// into every material's program (switching renderer.toneMapping off to re-render clean would RECOMPILE
+// every shader: the 636/977/1153 freeze). So a second cube render puts the first through the EXACT ACES
+// inverse (matrices are the numeric inverses of _ACES_GLSL's pair; test-1186 re-derives them from the
+// forward pair in the source, so they cannot drift apart). Values ACES clipped past 1.0 are gone — the
+// probe's highlights saturate where the frame's did, which is the correct-by-construction compromise.
+// A CubeCamera does the face bookkeeping in BOTH passes — hand-built face bases are how probes ship
+// subtly rotated. worldCfg.sky scales the SKY'S contribution only, applied AT THE DOME during the cube
+// pass (_spSkyScale): the sky pixels then match the sky-only probe exactly, while geometry radiance —
+// already lit by the sun and the sky-scaled ambient — passes through at 1. Scaling the whole cube was
+// measured wrong twice over: geometry reflections dimmed 3x and the env-lit viewmodel's camera-facing
+// side crushed to 0,0,0. Residual, measured on the stock frame: whole -5 code values (the probe's lower
+// hemisphere is the level's REAL ground radiance, not the sky model's brighter painted band) and the
+// weapon reads blue-steel (95,101,94 -> 75,82,80 region mean) — its top rail now carries the sky and its
+// sides the ground, which is what reflecting the world means for the one metal object always on screen.
+function buildSceneProbe(){
+  try{
+    if(typeof IS_COARSE!=='undefined' && IS_COARSE) return false;                 /* phones keep the sky-only probe */
+    if(!THREE.PMREMGenerator || !THREE.WebGLCubeRenderTarget) return false;
+    if(typeof renderer==='undefined' || typeof scene==='undefined' || typeof playerSpawn==='undefined') return false;
+    if(!_spCube){
+      _spCube = new THREE.WebGLCubeRenderTarget(128, { type:THREE.HalfFloatType });
+      _spCam = new THREE.CubeCamera(0.25, 480, _spCube);
+      _spCube2 = new THREE.WebGLCubeRenderTarget(128, { type:THREE.HalfFloatType });
+      _spCam2 = new THREE.CubeCamera(0.1, 10, _spCube2);
+      _spScene2 = new THREE.Scene();
+      _spInvMat = new THREE.ShaderMaterial({ side:THREE.BackSide, depthWrite:false, fog:false,
+        uniforms:{ tCube:{ value:null }, uInvExpo:{ value:1 }, uInvOn:{ value:1 }, uScale:{ value:0.3 } },
+        vertexShader:'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+        fragmentShader:[
+          'varying vec3 vDir; uniform samplerCube tCube; uniform float uInvExpo; uniform float uInvOn; uniform float uScale;',
+          'vec3 _unfit(vec3 y){',                                                 /* per-channel inverse of the ACES rational fit */
+          '  vec3 A = 1.0 - 0.983729*y; vec3 B = 0.0245786 - 0.4329510*y; vec3 C = -(0.000090537 + 0.238081*y);',
+          '  return (-B + sqrt(max(vec3(0.0), B*B - 4.0*A*C))) / (2.0*A);',
+          '}',
+          'void main(){',
+          '  vec3 c = textureCube(tCube, normalize(vDir)).rgb;',
+          '  if(uInvOn > 0.5){',
+          '    c = clamp(c, 0.0, 0.999);',                                        /* keeps the quadratic away from its pole at ~1.0167 */
+          '    const mat3 outInv = mat3(vec3(0.643038,0.059269,0.005962), vec3(0.311187,0.931436,0.063929), vec3(0.045775,0.009295,0.930118));',
+          '    const mat3 inInv  = mat3(vec3(1.764741,-0.147028,-0.036337), vec3(-0.675778,1.160252,-0.162436), vec3(-0.088963,-0.013224,1.198773));',
+          '    c = inInv * _unfit(outInv * c);',
+          '    c = max(c, vec3(0.0)) / max(0.05, uInvExpo);',                     /* the scene pass multiplied by expo/0.6 before the fit */
+          '  }',
+          '  gl_FragColor = vec4(c * uScale, 1.0);',
+          '}'].join('\n') });
+      const bm = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), _spInvMat); bm.frustumCulled = false; _spScene2.add(bm);
+    }
+    const gy = (typeof terrainHeightAt==='function') ? terrainHeightAt(playerSpawn.x, playerSpawn.z) : 0;
+    _spCam.position.set(playerSpawn.x, gy + (playerSpawn.y||0) + 1.7, playerSpawn.z);
+    const prev = renderer.getRenderTarget();
+    _spSkyScale = Math.max(0.05, Math.min(2, (typeof worldCfg!=='undefined' && worldCfg.sky!=null) ? +worldCfg.sky : 0.55));
+    try{ _spCam.update(renderer, scene); } finally { _spSkyScale = 1; }             /* shadow maps already built; autoUpdate=false means no extra passes */
+    _spInvMat.uniforms.tCube.value = _spCube.texture;
+    _spInvMat.uniforms.uInvOn.value = (((typeof worldCfg!=='undefined' && worldCfg.filmic!=null) ? +worldCfg.filmic : 1) > 0.5) ? 1 : 0;
+    _spInvMat.uniforms.uInvExpo.value = Math.max(0.05, renderer.toneMappingExposure / 0.6);
+    _spInvMat.uniforms.uScale.value = 1;                                          /* the sky was scaled at the dome; scaling geometry too was measured wrong (see note above) */
+    _spCam2.update(renderer, _spScene2);
+    renderer.setRenderTarget(prev);
+    if(!_spPM){ _spPM = new THREE.PMREMGenerator(renderer); _spPM.compileCubemapShader(); }
+    const out = _spPM.fromCubemap(_spCube2.texture);
+    if(_spRT && _spRT.dispose) _spRT.dispose();
+    _spRT = out; _spSkyKey = _skyKey; _spAt = (typeof performance!=='undefined') ? performance.now() : 0;
+    if(typeof worldCfg!=='undefined' && worldCfg.skyMode==='sky' && !((typeof _skyHdriUrl!=='undefined') && _skyHdriUrl) && scene.environment)
+      scene.environment = _spRT.texture;                                          /* live now; applySky keeps it current — and an authored HDRI always outranks it */
+    return true;
+  }catch(e){ return false; }
+}
+// Two shots per deploy: one after the level settles, one after slow assets (models, textures) land. The
+// day cycle moves the sky continuously, so a changed sky key rebuilds at most every 3 seconds.
+function requestSceneProbe(){ const n = (typeof performance!=='undefined') ? performance.now() : 0; _spQueue = [n+1200, n+9000]; }
+function _spTick(){
+  if(typeof IS_COARSE!=='undefined' && IS_COARSE) return;
+  if(typeof worldCfg!=='undefined' && (worldCfg.skyMode!=='sky' || ((typeof _skyHdriUrl!=='undefined') && _skyHdriUrl))) return;
+  const n = (typeof performance!=='undefined') ? performance.now() : 0;
+  if(_spQueue.length && n >= _spQueue[0]){ _spQueue.shift(); buildSceneProbe(); return; }
+  if(_spRT && _skyKey !== _spSkyKey && n - _spAt > 3000) buildSceneProbe();
 }
 
 // ---------- build 875: floor material painting (splat map) ----------
@@ -8503,6 +8839,158 @@ function _gridWanted(){
 const wallMat = new THREE.MeshPhysicalMaterial({ color:0x1a242b, roughness:.8, metalness:.2 });
 applyProcSurface(wallMat, 140);   // build 1139: same, re-derived from the arena span in rebuildArena
 const colliders = [];
+// build 1188: THE COLLIDER GRID. Build 1148's tight collider tripled the box count (795 -> 2,291 on a
+// 3-storey block) and every hot query — the per-enemy obstacle resolve, per-bolt hit tests, segmentBlocked,
+// _surfCull under every bot, clearAt/ceilingAt/insideSolid — still walked the WHOLE collider list. An 8m
+// XZ hash over each collider's overall box turns those walks into a few cell lookups. Two invariants:
+//  - MOBILE colliders (a physics body, a running xa animation, a kinematic body, or no box yet) live in a
+//    side list consulted on EVERY query — their boxes move per frame, and re-hashing movers per frame
+//    would cost more than the walk ever did. Classification self-heals: a static prop that STARTS moving
+//    dirties the grid on its first refreshPropCollider (its stamp is still 'static'), and the rebuild
+//    reclassifies it; after that its per-frame refreshes are stamp-guarded and rebuild nothing.
+//  - The query returns a SUPERSET of what the linear walk's own coarse rejects kept, so the loop bodies
+//    are UNCHANGED — the grid replaces only where candidates come from, never what is done with them.
+const CG_CELL = 8, CG_HALF = 512;                 /* 8m cells over +/-4096m of world; outside clamps into edge cells (conservative) */
+const _cgMap = new Map(); const _cgDyn = [];
+let _cgLen = -1, _cgStale = true, _cgSeen = 0;
+function _cgDirty(){ _cgStale = true; }
+function _cgMobileNow(c){ const u = c.userData || {}; return !u.box || !!(u.phys && u.phys.body) || !!(u.xa && u.xa.on) || !!u._kbody; }
+function _cgKey(ix, iz){ return ((Math.max(-CG_HALF, Math.min(CG_HALF - 1, ix)) + CG_HALF) << 10) | (Math.max(-CG_HALF, Math.min(CG_HALF - 1, iz)) + CG_HALF); }
+function _cgRebuild(){
+  _cgMap.clear(); _cgDyn.length = 0; _cgLen = colliders.length; _cgStale = false;
+  for(const c of colliders){ const u = c.userData || (c.userData = {});
+    if(_cgMobileNow(c)){ u._cgMobile = true; _cgDyn.push(c); continue; }
+    u._cgMobile = false; const b = u.box;
+    const x0 = Math.floor((b.min.x - 0.01) / CG_CELL), x1 = Math.floor((b.max.x + 0.01) / CG_CELL);   /* 0.01: the 1mm grid-box skin (1148) */
+    const z0 = Math.floor((b.min.z - 0.01) / CG_CELL), z1 = Math.floor((b.max.z + 0.01) / CG_CELL);
+    for(let ix = x0; ix <= x1; ix++) for(let iz = z0; iz <= z1; iz++){
+      const k = _cgKey(ix, iz); let arr = _cgMap.get(k); if(!arr){ arr = []; _cgMap.set(k, arr); } arr.push(c);
+    }
+  }
+}
+function _cgQuery(minX, maxX, minZ, maxZ, out){
+  if(_cgStale || _cgLen !== colliders.length) _cgRebuild();   /* adds/removes change the length; box changes on statics set the stale flag */
+  out.length = 0; const s = ++_cgSeen;
+  const x0 = Math.floor(minX / CG_CELL), x1 = Math.floor(maxX / CG_CELL), z0 = Math.floor(minZ / CG_CELL), z1 = Math.floor(maxZ / CG_CELL);
+  for(let ix = x0; ix <= x1; ix++) for(let iz = z0; iz <= z1; iz++){
+    const arr = _cgMap.get(_cgKey(ix, iz)); if(!arr) continue;
+    for(let i = 0; i < arr.length; i++){ const c = arr[i], u = c.userData; if(u._cgSeen === s) continue; u._cgSeen = s; out.push(c); }
+  }
+  for(let i = 0; i < _cgDyn.length; i++) out.push(_cgDyn[i]);
+  return out;
+}
+/* one scratch per consumer — clearAt calls surfaceTopAt (which queries through _surfCull) BEFORE its own
+   query, and a shared array would be clobbered mid-use the day someone reorders that (build 1168's rule) */
+const _cgSurf = [], _cgClear = [], _cgInside = [], _cgCeil = [], _cgSeg = [], _cgBolt = [], _cgEnemy = [];
+// ---------- build 1195: BAKED AMBIENT OCCLUSION — per-vertex sky visibility for creator levels ----------
+// The rendering critic's #2 CRITICAL: a hand-built interior was lit as if outdoors — the hemisphere fill,
+// the environment probe and the bounce all arrive at full strength inside a windowless room, with only
+// SSAO's contact term dissenting. Generated arenas fixed this with a real lightmap bake; creator levels
+// (arbitrary GLBs — no UV2 to bake into) get the per-vertex version: each vertex casts a fixed hemisphere
+// of rays and its colour becomes 0.35 + 0.65*skyVisibility, which vertexColors=true multiplies into the
+// material. Occluders are split by COST: every OTHER collider tests as its overall box (a slab test
+// through the 1188 grid's candidates), while the vertex's OWN model — the roof and walls that make an
+// interior an interior — tests real triangles through the 1097 BVH raycaster. A primitive-built room's
+// walls are separate props, so the box tests ARE its geometry; a GLB building self-occludes exactly.
+// Runs as a frame-budgeted job (editor or play — late-loading models re-request it), never serialized:
+// worldCfg.baked rides the level and the bake re-runs deterministically wherever the level opens.
+const _BAKE_DIRS = (()=>{ const out=[], N=14, GA=Math.PI*(3-Math.sqrt(5));
+  for(let i=0;i<N;i++){ const y=0.15+0.83*((i+0.5)/N), r=Math.sqrt(Math.max(0,1-y*y)), a=i*GA;
+    out.push([Math.cos(a)*r, y, Math.sin(a)*r]); } return out; })();
+const BAKE_RANGE = 22, BAKE_FLOOR = 0.35, BAKE_MS = 6;
+let _bakeJob = null, _bakeWant = false, _bakeDoneN = -1; const _bakeMats = new Set();
+const _bkRay = new THREE.Raycaster(); _bkRay.far = BAKE_RANGE;
+const _bkO = new THREE.Vector3(), _bkD = new THREE.Vector3(), _bkP = new THREE.Vector3(), _bkN = new THREE.Vector3();
+const _bkT = new THREE.Vector3(), _bkB = new THREE.Vector3(), _bkNM = new THREE.Matrix3(), _bkCand = [];
+function _bakeRayBox(ox, oy, oz, dx, dy, dz, b, maxT){
+  let t0 = 0.15, t1 = maxT;   /* 0.15 near-clip: a vertex sits ON its surface; its neighbour boxes must not self-shadow it */
+  for(const [o, d, lo, hi] of [[ox, dx, b.min.x, b.max.x], [oy, dy, b.min.y, b.max.y], [oz, dz, b.min.z, b.max.z]]){
+    if(Math.abs(d) < 1e-9){ if(o < lo || o > hi) return false; continue; }
+    let a = (lo - o) / d, c = (hi - o) / d; if(a > c){ const t = a; a = c; c = t; }
+    if(a > t0) t0 = a; if(c < t1) t1 = c; if(t0 > t1) return false;
+  }
+  return true;
+}
+function _bakeVisAt(px, py, pz, nx, ny, nz, self){
+  _bkN.set(nx, ny, nz);
+  _bkT.set(1, 0, 0); if(Math.abs(_bkN.x) > 0.8) _bkT.set(0, 0, 1);
+  _bkT.crossVectors(_bkT, _bkN).normalize(); _bkB.crossVectors(_bkN, _bkT);
+  _bkO.set(px + nx*0.12, py + ny*0.12, pz + nz*0.12);
+  _cgQuery(px - BAKE_RANGE, px + BAKE_RANGE, pz - BAKE_RANGE, pz + BAKE_RANGE, _bkCand);
+  let vis = 0;
+  for(const dir of _BAKE_DIRS){
+    _bkD.set(_bkT.x*dir[0] + _bkN.x*dir[1] + _bkB.x*dir[2],
+             _bkT.y*dir[0] + _bkN.y*dir[1] + _bkB.y*dir[2],
+             _bkT.z*dir[0] + _bkN.z*dir[1] + _bkB.z*dir[2]);
+    let hit = false;
+    for(const c of _bkCand){ if(c === self) continue; const b = c.userData && c.userData.box; if(!b) continue;
+      if(_bakeRayBox(_bkO.x, _bkO.y, _bkO.z, _bkD.x, _bkD.y, _bkD.z, b, BAKE_RANGE)){ hit = true; break; } }
+    if(!hit && self){ _bkRay.set(_bkO, _bkD);
+      const hs = _bkRay.intersectObject(self, true); if(hs && hs.length) hit = true; }
+    if(!hit) vis++;
+  }
+  return vis / _BAKE_DIRS.length;
+}
+function requestSceneBake(){ _bakeWant = true; _bakeJob = null; }
+function unbakeScene(){ _bakeWant = false; _bakeJob = null; _bakeDoneN = -1;
+  for(const m of _bakeMats){ try{ m.vertexColors = false; m.needsUpdate = true; }catch(e){} } _bakeMats.clear(); }
+function _bakeCollect(){
+  const meshes = [];
+  for(const c of colliders){ const u = c.userData;
+    if(!u || !u.src) continue;                                   /* arena walls / kit pieces stay out */
+    if(u.phys || u.vehicle || (u.xa && u.xa.on)) continue;       /* movers cannot hold a static bake */
+    c.traverse(n => { if(n.isMesh && !n.isSkinnedMesh && n.visible && n.geometry && n.geometry.attributes && n.geometry.attributes.position && n.geometry.attributes.normal) meshes.push({ mesh: n, root: c }); });
+  }
+  return meshes;
+}
+function _bakeTick(){
+  if(!(typeof worldCfg !== 'undefined' && worldCfg.baked)){ if(_bakeMats.size) unbakeScene(); return; }
+  if(typeof _glbPending !== 'undefined' && _glbPending > 0) return;   /* bake what will actually be there */
+  if(!_bakeWant && _bakeDoneN === colliders.length) return;
+  if(!_bakeJob){
+    if(!_bakeWant && _bakeDoneN !== colliders.length){ _bakeWant = true; }   /* a prop arrived or left since the last bake */
+    const meshes = _bakeCollect();
+    _bakeJob = { meshes, mi: 0, vi: 0 }; _bakeWant = false;
+    if(!meshes.length){ _bakeJob = null; _bakeDoneN = colliders.length; return; }
+  }
+  const t0 = performance.now(), J = _bakeJob;
+  while(performance.now() - t0 < BAKE_MS){
+    if(J.mi >= J.meshes.length){
+      // finished: the SHARED-MATERIAL INVARIANT. vertexColors=true on a material means every mesh using
+      // it MUST carry a colour attribute — a mesh without one samples (0,0,0) and renders BLACK. Any
+      // unbaked mesh sharing a baked material (a dynamic copy of a static GLB) gets an all-white
+      // attribute on its (possibly shared — harmless, white is identity) geometry.
+      scene.traverse(n => { if(!n.isMesh || !n.geometry || !n.geometry.attributes || n.geometry.attributes.color) return;
+        const ms = Array.isArray(n.material) ? n.material : [n.material];
+        if(ms.some(m => _bakeMats.has(m))){ const cnt = n.geometry.attributes.position.count;
+          const w = new Float32Array(cnt * 3).fill(1); n.geometry.setAttribute('color', new THREE.BufferAttribute(w, 3)); } });
+      _bakeDoneN = colliders.length; _bakeJob = null; return;
+    }
+    const it = J.meshes[J.mi], mesh = it.mesh;
+    if(J.vi === 0){
+      if(!mesh.geometry.userData._bakeOwn){                      /* copies of one GLB SHARE geometry — bake into a private clone */
+        mesh.geometry = mesh.geometry.clone(); mesh.geometry.userData._bakeOwn = true; }
+      if(!mesh.geometry.attributes.color || mesh.geometry.attributes.color.count !== mesh.geometry.attributes.position.count)
+        mesh.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(mesh.geometry.attributes.position.count * 3).fill(1), 3));
+      mesh.updateMatrixWorld(true); _bkNM.getNormalMatrix(mesh.matrixWorld);
+    }
+    const pos = mesh.geometry.attributes.position, nrm = mesh.geometry.attributes.normal, col = mesh.geometry.attributes.color;
+    const n = pos.count;
+    while(J.vi < n && performance.now() - t0 < BAKE_MS){
+      const i = J.vi++;
+      _bkP.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(mesh.matrixWorld);
+      _bkN.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i)).applyMatrix3(_bkNM).normalize();
+      const v = BAKE_FLOOR + (1 - BAKE_FLOOR) * _bakeVisAt(_bkP.x, _bkP.y, _bkP.z, _bkN.x, _bkN.y, _bkN.z, it.root);
+      col.setXYZ(i, v, v, v);
+    }
+    if(J.vi >= n){
+      col.needsUpdate = true;
+      const ms = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for(const m of ms){ if(m){ m.vertexColors = true; m.needsUpdate = true; _bakeMats.add(m); } }
+      J.mi++; J.vi = 0;
+    }
+  }
+}
 const H = 8;
 const arenaWalls = [];   // the 4 boundary walls (rebuilt on resize); other colliders (props) are untouched
 function wall(w,h,d,x,y,z){
@@ -8616,7 +9104,7 @@ function rebuildArena(){
   try { if(typeof worldCfg !== 'undefined' && worldCfg){ const _wv = worldCfg.wallsVisible !== false; for(const w of arenaWalls) w.visible = _wv; } } catch(e){}
 }
 // Build/refresh a wall's collision box from its current geometry + transform (walls are axis-aligned boxes).
-function refreshWallCollider(m){
+function refreshWallCollider(m){ if(typeof _cgDirty==='function') _cgDirty();
   m.updateMatrixWorld(true);
   const b = new THREE.Box3().setFromObject(m);
   m.userData.box = b; m.userData.boxes = [b]; m.userData.climbable = false; m.userData.src = 'wall';
@@ -10208,9 +10696,11 @@ function _pvApplyOne(o, act, at){
   if(act==='del'){ if(typeof shatterProp==='function') try{ shatterProp(o, null, null, 0); }catch(e){} return; }
   if(act==='hide'){ if(u._pvHidden) return; u._pvHidden=true; o.visible=false;
     if(u.phys){ u._pvWasDyn=true; try{ removeDynamicProp(o); }catch(e){} }
-    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; } return; }
+    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; }
+    if(u._physStatic && typeof physWorld!=='undefined' && physWorld){ try{ physWorld.removeRigidBody(u._physStatic); }catch(e){} u._physStatic=null; }   /* build 1194: no invisible physics wall */
+    return; }
   if(act==='show'){ if(!u._pvHidden){ o.visible=true; return; } u._pvHidden=false; o.visible=true;
-    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; }
+    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; if(typeof addStaticColliderFor==='function' && typeof physWorld!=='undefined' && physWorld && !u.phys) try{ addStaticColliderFor(o); }catch(e){} }   /* build 1194: show restores the physics body too */
     if(u._pvWasDyn){ u._pvWasDyn=false; try{ setPropDynamic(o, true); }catch(e){} } return; }
   if(act==='move' && at){
     const wasDyn=!!u.phys; if(wasDyn) try{ removeDynamicProp(o); }catch(e){}
@@ -11037,6 +11527,7 @@ function buildModelGridBoxes(obj, overall){
   return boxes.length ? boxes : null;
 }
 function refreshPropCollider(obj){
+  if(obj && obj.userData && !obj.userData._cgMobile && typeof _cgDirty==='function') _cgDirty();   /* build 1188: a mover's per-frame refresh must NOT rebuild the grid; statics that move reclassify through one rebuild */
   obj.updateMatrixWorld(true);
   // overall box (selection highlight, proximity, physics shape sizing)
   obj.userData.box = new THREE.Box3().setFromObject(obj, true);
@@ -15933,7 +16424,7 @@ const ENEMY_TYPES = {
   grunt:  { name:'Grunt',  hp:30, speedMin:6,   speedMax:9,  scale:1.0, tint:0xff2d55, dmg:9 },
   runner: { name:'Runner', hp:16, speedMin:11,  speedMax:13, scale:0.8, tint:0xffd166, dmg:6 },
   brute:  { name:'Brute',  hp:90, speedMin:3.5, speedMax:5,  scale:1.5, tint:0x9b6cff, dmg:18 },
-  gunner: { name:'Gunner', hp:24, speedMin:4,   speedMax:6,  scale:1.0, tint:0x4dd2ff, dmg:4, ranged:true, standoff:11, fireCd:1.6, projSpeed:38, burst:4, burstGap:0.09, strafe:true },   // build 633: gunners strafe sideways while holding standoff (harder to hit, more alive)
+  gunner: { name:'Gunner', hp:24, speedMin:4,   speedMax:6,  scale:1.0, tint:0x4dd2ff, dmg:4, ranged:true, standoff:11, fireCd:1.6, projSpeed:38, burst:4, burstGap:0.09, strafe:true, cover:true },   // build 1189: breaks for cover when chunked   // build 633: gunners strafe sideways while holding standoff (harder to hit, more alive)
   boss:   { name:'BOSS',   hp:900,speedMin:2.8, speedMax:4.2,scale:2.6, tint:0xff7b00, dmg:28, ranged:true, standoff:14, fireCd:1.1, projSpeed:26 },
   // build 628: Sapper — a fast, fragile rusher that doesn't swing; it DETONATES (blast + falloff) when it reaches
   // you OR when killed. Kill it from range or it takes a chunk out of you (and launches you). dmg:0 = no melee.
@@ -15946,6 +16437,22 @@ const ENEMY_TYPES = {
   charger: { name:'Charger', hp:75, speedMin:4.5, speedMax:6, scale:1.3, tint:0xff8c1a, dmg:20, charger:true, lungeRange:16, lungeSpeed:30, lungeDur:0.45, lungeWind:520 },
 };
 const ENEMY_TYPE_KEYS = ['grunt','runner','brute','gunner','sapper','shielded','charger','boss'];
+// build 1191: per-level ENEMY TUNING — hp / damage / speed per type, the weapon stat sheet's exact
+// pattern (1190): a factory baseline captured at boot, only-changed values serialized, one clamped
+// sanitizer every loader routes through so a hostile level file cannot ship a 0-hp boss army at 30x
+// speed. Speed is a MULTIPLIER (min and max scale together, so a type's gait variance survives tuning).
+const ENEMY_BASE = {}; for(const _ek of ENEMY_TYPE_KEYS){ const _t=ENEMY_TYPES[_ek]; if(_t) ENEMY_BASE[_ek]={ hp:_t.hp, dmg:_t.dmg, speedMin:_t.speedMin, speedMax:_t.speedMax }; }
+function _sanitizeEnemyMods(o){ if(!o || typeof o!=='object') return null; const out={}; let any=false;
+  for(const k of ENEMY_TYPE_KEYS){ const m=o[k]; if(!m || typeof m!=='object') continue; const e={};
+    if(m.hp!=null  && isFinite(+m.hp))  e.hp  = Math.max(1, Math.min(99999, +m.hp));
+    if(m.dmg!=null && isFinite(+m.dmg)) e.dmg = Math.max(0, Math.min(999, +m.dmg));
+    if(m.spd!=null && isFinite(+m.spd)) e.spd = Math.max(0.25, Math.min(3, +m.spd));
+    if(e.hp!=null || e.dmg!=null || e.spd!=null){ out[k]=e; any=true; } }
+  return any ? out : null; }
+function _enemyEff(k){ const b=ENEMY_BASE[k]||{ hp:10, dmg:5, speedMin:3, speedMax:5 };
+  const m=(typeof gameCfg!=='undefined' && gameCfg.enemyMods && gameCfg.enemyMods[k]) || null;
+  const s=(m && m.spd) || 1;
+  return { hp:(m&&m.hp!=null)?m.hp:b.hp, dmg:(m&&m.dmg!=null)?m.dmg:b.dmg, speedMin:b.speedMin*s, speedMax:b.speedMax*s }; }
 // Weighted random type — later waves bias toward tougher + ranged hostiles, and mix in the odd Sapper.
 function pickEnemyType(waveNum, rng){
   rng = rng || Math.random; const r = rng();
@@ -16023,6 +16530,7 @@ function _hasFutureAuthoredSpawns(curWaveNum){ for(const g of spawnMarkers){ con
 function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt' }; }
 // Mode defaults preserve old levels: markers present -> pre-built (markers were wave 0 = every wave); else random.
 let gameCfg = {
+  enemyMods: _sanitizeEnemyMods(savedLevel && savedLevel.game && savedLevel.game.enemyMods),   // build 1191
   mode: (savedLevel && savedLevel.game && savedLevel.game.mode) || (spawnMarkers.length ? 'prebuilt' : 'random'),
   winWaves: (savedLevel && savedLevel.game && savedLevel.game.winWaves!=null) ? savedLevel.game.winWaves : 0,   // 0 = endless
   upgrades: (savedLevel && savedLevel.game && savedLevel.game.upgrades!=null) ? !!savedLevel.game.upgrades : true,   // solo between-wave card picks
@@ -16179,7 +16687,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -16551,6 +17059,8 @@ function applyWorldCfg(){
     _postVig    = Math.max(0,   Math.min(1,    worldCfg.postVig    == null ? DEFAULT_WORLD.postVig    : +worldCfg.postVig));
     _postGrain  = Math.max(0,   Math.min(0.3,  worldCfg.postGrain  == null ? DEFAULT_WORLD.postGrain  : +worldCfg.postGrain));
     _postSat    = Math.max(0,   Math.min(2,    worldCfg.postSat    == null ? DEFAULT_WORLD.postSat    : +worldCfg.postSat));
+    _postLutUrl = String(worldCfg.lut || ''); _postLutAmt = Math.max(0, Math.min(1, worldCfg.lutAmt == null ? 1 : +worldCfg.lutAmt)); if(typeof _ensureLut==='function') _ensureLut(_postLutUrl);   /* build 1187 */
+    worldCfg.baked = !!worldCfg.baked; if(worldCfg.baked && typeof requestSceneBake==='function') requestSceneBake();   /* build 1195: the tick unbakes when the flag is off */
     _postCon    = Math.max(0.5, Math.min(2,    worldCfg.postCon    == null ? DEFAULT_WORLD.postCon    : +worldCfg.postCon));
     _postThresh = Math.max(0,   Math.min(1,    worldCfg.postThresh == null ? DEFAULT_WORLD.postThresh : +worldCfg.postThresh));
     // build 1126: ambient occlusion. Authorable because the right amount is a look decision — a
@@ -17314,9 +17824,20 @@ const WEAPONS = {
 // build 623: the factory damage of each weapon, captured before any saved override is applied, so the editor can
 // show/reset to default and serialize ONLY a damage that was actually changed (keeps old levels on the defaults).
 const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k].dmg;
+// build 1190: the FULL stat sheet is authorable per level, same pattern as damage (623) — a factory
+// baseline captured before any override, only CHANGED values serialized, every loader resetting to base
+// when a level carries nothing. One clamped helper applies them, so a hostile level file cannot set a
+// 0ms fire rate or 10,000 pellets no matter which loader it arrives through.
+const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets'];
+const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[1,24] };
+const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k]; GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets }; _w.reserve0=_w.reserve; }
+function _wepApplyStats(k, st){ const w=WEAPONS[k], b=GUN_BASE[k]; if(!w||!b) return;
+  for(const s of GUN_STAT_KEYS){ let v = (st && st[s]!=null) ? +st[s] : b[s];
+    const L=GUN_STAT_LIM[s]; if(!isFinite(v)) v=b[s]; v=Math.max(L[0], Math.min(L[1], v));
+    w[s]=v; } }
 // Restore per-weapon model + framing saved to localStorage (serialized under "weapons"). Without this the
 // hardcoded model:''/view:null above would wipe gun edits on every reload.
-if(savedLevel && savedLevel.weapons){ for(const k in WEAPONS){ const wd = savedLevel.weapons[k]; if(wd){ WEAPONS[k].model = wd.model || ''; WEAPONS[k].view = wd.view || null; if(wd.dmg!=null) WEAPONS[k].dmg = +wd.dmg; if(wd.clips) WEAPONS[k].clips = Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; } } }
+if(savedLevel && savedLevel.weapons){ for(const k in WEAPONS){ const wd = savedLevel.weapons[k]; if(wd){ WEAPONS[k].model = wd.model || ''; WEAPONS[k].view = wd.view || null; if(wd.dmg!=null) WEAPONS[k].dmg = +wd.dmg; if(wd.clips) WEAPONS[k].clips = Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); } } }   // build 1190: st = the stat sheet
 let owned = ['rifle'];           // weapons the player has
 let curWep = 'rifle';            // current weapon key
 loadGunModel();                  // load the starting weapon's viewmodel (now that WEAPONS/curWep exist)
@@ -17748,10 +18269,12 @@ function spawnEnemy(spawn){
   mesh.userData.enemyType = typeKey;   // read by buildEnemyVisual for per-type scale + tint
   buildEnemyVisual(mesh);
   scene.add(mesh);
-  const e = { id: nextEnemyId++, mesh, hp:ty.hp, maxHp:ty.hp, speed: ty.speedMin + Math.random()*(ty.speedMax-ty.speedMin), dmg:ty.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
+  const _eff = (typeof _enemyEff==='function') ? _enemyEff(typeKey) : ty;   /* build 1191: the level's tuning, clamped at the loaders */
+  const e = { id: nextEnemyId++, mesh, hp:_eff.hp, maxHp:_eff.hp, speed: _eff.speedMin + Math.random()*(_eff.speedMax-_eff.speedMin), dmg:_eff.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
     ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
     exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
     strafe: !!ty.strafe,   // build 633: ranged enemy strafes while holding standoff
+    cover: !!ty.cover, bravery: ty.cover ? (0.30 + Math.random()*0.15) : 0, flankSide: Math.random()<0.5?1:-1,   // build 1189: the bot brain's cover-break + flank, per type
     shielded: !!ty.shielded,   // build 634: soaks frontal damage, must be flanked
     charger: !!ty.charger, lungeRange: ty.lungeRange||16, lungeSpeed: ty.lungeSpeed||30, lungeDur: ty.lungeDur||0.45, lungeWind: ty.lungeWind||520,   // build 635: Charger lunge
 
@@ -18383,11 +18906,32 @@ function _waterLightF(){
   const b=(typeof bounceLight!=='undefined')?bounceLight.intensity:0;
   return Math.max(0.04, Math.min(1.6, s*0.75 + k*0.65 + a*0.5 + b*0.25));
 }
-const _WATER_VSH = 'varying vec3 vWP;\nvoid main(){ vec4 wp = modelMatrix * vec4(position,1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }';
+// build 1184: the water family joins the colour pipeline. These were the last raw ShaderMaterials writing
+// straight gl_FragColor with no ACES, no exposure and no fog — so water ignored the filmic response, the
+// creator's exposure, build 1180's auto-exposure AND build 1181's height fog. Each now applies _ACES_GLSL
+// (uTM/uExpo, the dome's exact pair — uTM 0 is byte-identical to the old shader) and ends in the engine's
+// own fog_fragment chunk via material.fog=true (three refreshes fogColor/fogDensity per frame for any
+// material with fog:true, and the chunk's extra uniforms ride the same shared plain objects as 1181).
+function _waterFogUniforms(){ return {
+  fogColor:{ value:new THREE.Color(0x2e3b47) }, fogDensity:{ value:0.006 }, fogNear:{ value:1 }, fogFar:{ value:1000 },
+  fogSunDirW:{ value:_fogSunDirU }, fogHeightP:{ value:_fogParamsU },   /* shared by reference — one write reaches these too */
+  uTM:{ value:1 }, uExpo:{ value:1.25 } }; }
+const _WATER_VSH = [
+  'varying vec3 vWP; varying float vVZ;',
+  '#include <fog_pars_vertex>',
+  'void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vWP = wp.xyz; vec4 mvPosition = viewMatrix * wp; vVZ = - mvPosition.z; gl_Position = projectionMatrix * mvPosition;',
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z; vFogWorldPos = wp.xyz;',   /* the shared fog_vertex needs `transformed`; write the varyings directly */
+  '#endif',
+  '}'
+].join('\n');
 const _WATER_FSH = [
+  _ACES_GLSL,
+  '#include <fog_pars_fragment>',
   'uniform vec3 uDeep; uniform vec3 uSky; uniform float uOp; uniform float uTime; uniform float uWave; uniform vec2 uFlow; uniform float uLight;',
   'uniform vec3 uSunDir; uniform vec3 uSunCol;',
-  'varying vec3 vWP;',
+  'uniform sampler2D uSoftGeo; uniform vec4 uSoftP;',
+  'varying vec3 vWP; varying float vVZ;',
   'void main(){',
   '  vec2 p = vWP.xz * 0.55 - uFlow * uTime;',
   // two crossed sine waves + a diagonal chop; grad is their analytic slope -> a cheap rippling normal
@@ -18398,7 +18942,16 @@ const _WATER_FSH = [
   '  float fres = pow(1.0 - abs(dot(n, V)), 3.0);',                       // abs: sane from underwater too
   '  float spec = pow(max(dot(reflect(-uSunDir, n), V), 0.0), 90.0);',
   '  vec3 col = mix(uDeep, uSky, fres*0.75)*uLight + uSunCol * spec * 0.9;',   // build 868: the body dims/brightens with the scene; the glint tracks the sun on its own
-  '  gl_FragColor = vec4(col, clamp(uOp + fres*0.18 + spec*0.35, 0.0, 0.97));',
+  '  float a = clamp(uOp + fres*0.18 + spec*0.35, 0.0, 0.97);',
+  // build 1184: soft SHORELINE — where the ground sits just behind the surface along the view ray, the
+  // disc's hard rim fades out (1183's G-buffer read; vVZ is view-Z, the same quantity the buffer stores).
+  '  if( uSoftP.x > 0.5 ){',
+  '    vec4 _sg = texture2D( uSoftGeo, gl_FragCoord.xy / uSoftP.zw );',
+  '    float _sd = ( _sg.r + _sg.g + _sg.b ) < 0.3 ? 1e6 : _sg.a;',
+  '    a *= clamp( ( _sd - vVZ ) * 1.4, 0.0, 1.0 );',
+  '  }',
+  '  gl_FragColor = vec4(_aces(col), a);',
+  '#include <fog_fragment>',
   '}'
 ].join('\n');
 function _waterSurfaceMat(z){
@@ -18413,9 +18966,11 @@ function _waterSurfaceMat(z){
       uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.2) },
       uSunCol: { value: new THREE.Color(0xffffff) },
       uLight:  { value: 1 },
+      uSoftGeo: _SOFT_GEO, uSoftP: _SOFT_P,   /* build 1184: the soft-shore read shares 1183's wrappers outright */
+      ..._waterFogUniforms(),
     },
     vertexShader: _WATER_VSH, fragmentShader: _WATER_FSH,
-    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true,
   });
 }
 function buildWaterZoneGroup(z, sel){
@@ -18587,7 +19142,8 @@ function updateWaterZones(dt){
     if(!g) continue; g.visible=showing;
     if(g.userData.editorBits) for(const m of g.userData.editorBits) m.visible=_eo;
     const u=g.userData.surf && g.userData.surf.material.uniforms;
-    if(u){ u.uTime.value=_waterTime; u.uLight.value=_waterLightF(); if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof moon!=='undefined'?moon.intensity:1))); } }
+    if(u){ u.uTime.value=_waterTime; u.uLight.value=_waterLightF(); if(sd){ u.uSunDir.value.copy(sd).normalize(); u.uSunCol.value.copy(moon.color).multiplyScalar(Math.min(1.5, (typeof moon!=='undefined'?moon.intensity:1))); }
+      u.uExpo.value=renderer.toneMappingExposure; u.uTM.value=(typeof worldCfg!=='undefined' && worldCfg.filmic!=null)?+worldCfg.filmic:1; }   /* build 1184: the water sees the same exposure (incl. auto) and filmic switch as the scene */
   }
   // underwater tint: a fixed overlay while the EYE is below a surface (cheap, sells the dive)
   if(!_waterTintEl){
@@ -18609,6 +19165,8 @@ let waterfallFx = []; const _fallRT = [];
 function _fallGainFor(d, audR, vol){ return Math.max(0, Math.min(1, (vol==null?0.8:+vol)) * (1 - d/Math.max(1, audR))); }
 function _fallAudR(f){ return Math.max(14, (+f.w||6)*2 + (+f.h||8)*1.2); }   // bigger falls are audible further
 const _FALL_FSH = [
+  _ACES_GLSL,
+  '#include <fog_pars_fragment>',
   'uniform vec3 uCol; uniform float uOp; uniform float uTime; uniform float uSpd; uniform float uLight;',
   'varying vec2 vUv;',
   'void main(){',
@@ -18628,10 +19186,13 @@ const _FALL_FSH = [
   '  float foam = smoothstep(0.42,0.0,vUv.y);',
   '  vec3 col = mix(uCol, vec3(1.0), clamp(0.2*streaks + 0.6*foam + lip, 0.0, 1.0));',
   '  float a = uOp * edge * head * (0.35+0.65*streaks) * (0.55+0.45*gaps) * (0.9+0.45*foam);',
-  '  gl_FragColor = vec4(col*uLight, clamp(a, 0.0, 0.95));',   // build 868: falls dim at night too
+  '  gl_FragColor = vec4(_aces(col*uLight), clamp(a, 0.0, 0.95));',   // build 868: falls dim at night too; 1184: through the same response as the scene
+  '#include <fog_fragment>',
   '}'
 ].join('\n');
 const _FOAM_FSH = [
+  _ACES_GLSL,
+  '#include <fog_pars_fragment>',
   'uniform float uTime; uniform float uOp; uniform float uLight;',
   'varying vec2 vUv;',
   'void main(){',
@@ -18639,21 +19200,30 @@ const _FOAM_FSH = [
   '  vec2 c = vUv*2.0-1.0; float r = length(c); float ang = atan(c.y, c.x);',
   '  float churn = 0.55 + 0.25*sin(r*16.0 - uTime*5.0) + 0.2*sin(ang*7.0 + uTime*2.3 + r*9.0);',
   '  float a = uOp * churn * smoothstep(1.0,0.15,r) * (0.6+0.4*smoothstep(0.0,0.35,r));',
-  '  gl_FragColor = vec4(vec3(uLight), clamp(a,0.0,0.9));',
+  '  gl_FragColor = vec4(_aces(vec3(uLight)), clamp(a,0.0,0.9));',
+  '#include <fog_fragment>',
   '}'
 ].join('\n');
-const _FALL_VSH = 'varying vec2 vUv;\nvoid main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }';
+const _FALL_VSH = [
+  'varying vec2 vUv;',
+  '#include <fog_pars_vertex>',
+  'void main(){ vUv = uv; vec4 wp = modelMatrix * vec4(position,1.0); vec4 mvPosition = viewMatrix * wp; gl_Position = projectionMatrix * mvPosition;',
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z; vFogWorldPos = wp.xyz;',
+  '#endif',
+  '}'
+].join('\n');
 function buildWaterfallGroup(f){
   const grp=new THREE.Group(); const w=Math.max(0.5,+f.w||6), h=Math.max(1,+f.h||8);
   const mkSheet=(spdMul, opMul, zOff)=>{
-    const m=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,(f.op!=null?+f.op:0.55)))*opMul }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1))*spdMul }, uLight:{ value:1 } }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+    const m=new THREE.ShaderMaterial({ uniforms:{ uCol:{ value:new THREE.Color((f.color!=null?+f.color:0xbfe6f2)>>>0) }, uOp:{ value:Math.max(0.1,Math.min(0.95,(f.op!=null?+f.op:0.55)))*opMul }, uTime:{ value:0 }, uSpd:{ value:Math.max(0.1,Math.min(4,f.spd!=null?+f.spd:1))*spdMul }, uLight:{ value:1 }, ..._waterFogUniforms() }, vertexShader:_FALL_VSH, fragmentShader:_FALL_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide, fog:true });
     const s=new THREE.Mesh(new THREE.PlaneGeometry(w,h), m);
     s.position.set(0, (+f.y||0)-h/2, zOff); s.renderOrder=2; grp.add(s); return m;
   };
   // build 865: TWO layers — a back sheet running slightly slower/dimmer gives the fall visual depth
   grp.userData.sheetMat=mkSheet(1, 1, 0);
   grp.userData.sheetMat2=mkSheet(0.82, 0.55, -0.35);
-  const foamMat=new THREE.ShaderMaterial({ uniforms:{ uTime:{ value:0 }, uOp:{ value:Math.max(0,Math.min(1.7,0.5*(f.splash!=null?+f.splash:1))) }, uLight:{ value:1 } }, vertexShader:_FALL_VSH, fragmentShader:_FOAM_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide });
+  const foamMat=new THREE.ShaderMaterial({ uniforms:{ uTime:{ value:0 }, uOp:{ value:Math.max(0,Math.min(1.7,0.5*(f.splash!=null?+f.splash:1))) }, uLight:{ value:1 }, ..._waterFogUniforms() }, vertexShader:_FALL_VSH, fragmentShader:_FOAM_FSH, transparent:true, depthWrite:false, side:THREE.DoubleSide, fog:true });
   const pool=Math.max(0.2, Math.min(2.5, f.pool!=null?+f.pool:1.15));   // build 865: author-controlled pool width (x sheet width)
   const foam=new THREE.Mesh(new THREE.CircleGeometry(w*0.5, 36), foamMat);
   foam.scale.set(pool, pool*0.62, 1);   // elliptical: wider along the sheet than out from it (local Y becomes depth after the rotate)
@@ -18688,10 +19258,12 @@ function updateWaterfalls(dt){
   if(!waterfalls.length) return;
   const showing=((typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver)) || (typeof editorOpen!=='undefined'&&editorOpen);
   const _lf=_waterLightF();
+  const _lExpo=renderer.toneMappingExposure, _lTM=(typeof worldCfg!=='undefined' && worldCfg.filmic!=null)?+worldCfg.filmic:1;
+  const _wfTone=(m)=>{ if(m && m.uniforms && m.uniforms.uExpo){ m.uniforms.uExpo.value=_lExpo; m.uniforms.uTM.value=_lTM; } };
   for(const g of waterfallFx){ if(!g) continue; g.visible=showing;
-    if(g.userData.sheetMat){  g.userData.sheetMat.uniforms.uTime.value=_waterTime;  g.userData.sheetMat.uniforms.uLight.value=_lf; }
-    if(g.userData.sheetMat2){ g.userData.sheetMat2.uniforms.uTime.value=_waterTime; g.userData.sheetMat2.uniforms.uLight.value=_lf; }
-    if(g.userData.foamMat){   g.userData.foamMat.uniforms.uTime.value=_waterTime;   g.userData.foamMat.uniforms.uLight.value=_lf; } }
+    if(g.userData.sheetMat){  g.userData.sheetMat.uniforms.uTime.value=_waterTime;  g.userData.sheetMat.uniforms.uLight.value=_lf; _wfTone(g.userData.sheetMat); }
+    if(g.userData.sheetMat2){ g.userData.sheetMat2.uniforms.uTime.value=_waterTime; g.userData.sheetMat2.uniforms.uLight.value=_lf; _wfTone(g.userData.sheetMat2); }
+    if(g.userData.foamMat){   g.userData.foamMat.uniforms.uTime.value=_waterTime;   g.userData.foamMat.uniforms.uLight.value=_lf; _wfTone(g.userData.foamMat); } }
   const live=(typeof gameOn!=='undefined'&&gameOn) && !(typeof gameOver!=='undefined'&&gameOver) && !(typeof editorOpen!=='undefined'&&editorOpen)
     && !(typeof paused!=='undefined'&&paused) && !(typeof _cineActive!=='undefined'&&_cineActive);
   for(let i=0;i<waterfalls.length;i++){
@@ -18710,6 +19282,116 @@ function updateWaterfalls(dt){
 }
 // ---- Water gameplay polish (build 862): cars drag + spray, props float, falls push down, AI wades slow ----
 function _waterSlowFor(px,py,pz){ if(!waterZones.length) return 1; const w=_waterAt(px,py,pz); return (w && w.sub>0.3) ? 0.55 : 1; }   // enemies + bots wade at ~half pace
+// ---- build 1193: EFFECT ZONES — heal / hurt / slow / haste / low-gravity cylinder volumes. ----
+// The zone toolbox had one effect per tool (death kills, fire burns, water swims, pads launch); anything
+// else — a healing fountain, a tar pit, a speed lane, a moon-gravity court — was unauthorable. One tool
+// now carries five composable effects with an audience (players / enemies / both). Same shapes as every
+// zone: cylinder volume, editor-only cues, serialized list, migrate-on-load with clamps so a hostile
+// level file cannot ship a 1e9-dps "heal" zone. Damage reuses fire's exact tick/accumulator pattern and
+// the same PvP/PvE damage split; low gravity is the water pattern (undo part of THIS frame's gravity).
+const FX_KINDS = { heal:1, hurt:1, slow:1, haste:1, lowgrav:1 };
+const FX_COL = { heal:0x3bf58a, hurt:0xff5a4a, slow:0x8fb2ff, haste:0xffd166, lowgrav:0xc79fff };
+function _migrateFxZone(z){ z=z||{};
+  return { x:+z.x||0, z:+z.z||0, r:Math.max(1,Math.min(120,(z.r!=null?+z.r:6))), y:(z.y!=null?+z.y:0),
+    h:Math.max(0.5,Math.min(80,(z.h!=null?+z.h:3))), kind:FX_KINDS[z.kind]?z.kind:'heal',
+    amt:Math.max(0,Math.min(200,(z.amt!=null?+z.amt:10))), who:(z.who==='enemies'||z.who==='both')?z.who:'players' }; }
+let fxZones = (savedLevel && Array.isArray(savedLevel.fxZones)) ? savedLevel.fxZones.map(_migrateFxZone) : [];
+let selFxZone = -1, fxZoneFx = [];
+let _fxHurtAcc = 0, _fxHurtT = 0, _fxHealAcc = 0;
+function _fxZoneAt(px, py, pz, who){
+  let spd=1, grav=1, heal=0, hurt=0;
+  for(const z of fxZones){
+    if(who==='player' ? z.who==='enemies' : z.who==='players') continue;
+    const dx=px-z.x, dz=pz-z.z; if(dx*dx+dz*dz > z.r*z.r) continue;
+    if(!(py<=z.y+z.h && py>=z.y-1.0)) continue;
+    if(z.kind==='slow') spd=Math.min(spd, Math.max(0.15, 1-z.amt/100));
+    else if(z.kind==='haste') spd=Math.max(spd, 1+z.amt/100);
+    else if(z.kind==='lowgrav') grav=Math.min(grav, Math.max(0, 1-z.amt/100));
+    else if(z.kind==='heal') heal+=z.amt;
+    else hurt+=z.amt;
+  }
+  return { spd, grav, heal, hurt };
+}
+function _fxSpeedFor(px, py, pz, who){ if(!fxZones.length) return 1; return _fxZoneAt(px, py, pz, who||'enemy').spd; }
+function updateFxZones(dt){
+  const _eo=(typeof editorOpen!=='undefined' && editorOpen);
+  for(const g of fxZoneFx){ if(g) g.visible=_eo; }
+  if(!fxZones.length) return;
+  const live = gameOn && !_eo && !gameOver
+    && !(typeof _cineActive!=='undefined' && _cineActive)
+    && !(typeof _levelLoaderActive!=='undefined' && _levelLoaderActive)
+    && !(typeof paused!=='undefined' && paused);
+  if(!live){ _fxHurtAcc=0; _fxHurtT=0; _fxHealAcc=0; return; }
+  const m=_fxZoneAt(player.pos.x, player.pos.y-EYE, player.pos.z, 'player');
+  if(m.grav<1) player.vel.y += GRAV*dt*(1-m.grav);
+  if(m.heal>0 && player.hp>0){ _fxHealAcc+=m.heal*dt; if(_fxHealAcc>=1){ const h=Math.floor(_fxHealAcc); _fxHealAcc-=h; player.hp=Math.min(player.maxHp, player.hp+h); } }
+  if(m.hurt>0){ _fxHurtAcc+=m.hurt*dt; _fxHurtT+=dt;
+    if(_fxHurtT>=0.35){ const dmg=_fxHurtAcc; _fxHurtAcc=0; _fxHurtT=0;
+      if(dmg>0.01){ if(typeof pvpMode==='function' && pvpMode()){ if(!duelDead) applyPvpDamage(dmg, null); } else applyEnemyDamageToSelf(dmg); } } }
+  else { _fxHurtAcc=0; _fxHurtT=0; }
+  if(!(typeof isClient!=='undefined' && isClient) && typeof enemies!=='undefined'){   /* enemies are host-simulated */
+    for(const z of fxZones){
+      if(z.who==='players' || !(z.kind==='hurt' || z.kind==='heal')) continue;
+      const r2=z.r*z.r;
+      for(const en of enemies){ if(!en || en.hp<=0 || !en.mesh) continue; const ep=en.mesh.position;
+        const dx=ep.x-z.x, dz=ep.z-z.z; if(dx*dx+dz*dz>r2) continue; if(!(ep.y<=z.y+z.h && ep.y>=z.y-1.0)) continue;
+        if(z.kind==='hurt') enemyHurt(en, z.amt*dt, z.x, z.z);
+        else en.hp=Math.min(en.maxHp||en.hp, en.hp+z.amt*dt);
+      }
+    }
+  }
+}
+function refreshFxZoneMarkers(){
+  for(const g of fxZoneFx){ scene.remove(g); g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }
+  fxZoneFx.length=0;
+  for(let i=0;i<fxZones.length;i++){ const z=fxZones[i], col=FX_COL[z.kind]||0x9fd8ff, sel=(i===selFxZone);
+    const grp=new THREE.Group();
+    const ring=new THREE.Mesh(new THREE.RingGeometry(Math.max(0.3,z.r-0.3), z.r, 48), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:sel?0.85:0.5, side:THREE.DoubleSide, depthWrite:false }));
+    ring.rotation.x=-Math.PI/2; ring.position.y=z.y+0.06; grp.add(ring);
+    const wall=new THREE.Mesh(new THREE.CylinderGeometry(z.r, z.r, z.h, 36, 1, true), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:sel?0.16:0.08, side:THREE.DoubleSide, depthWrite:false }));
+    wall.position.y=z.y+z.h/2; grp.add(wall);
+    grp.position.set(z.x, 0, z.z); grp.visible=!!(typeof editorOpen!=='undefined' && editorOpen);
+    grp.userData.zoneIdx=i; scene.add(grp); fxZoneFx.push(grp);
+  }
+}
+function addFxZone(){ pushUndoSnapshot(); const _dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:+player.pos.x.toFixed(2),z:+player.pos.z.toFixed(2)};
+  const by=(typeof surfaceTopAt==='function'&&surfaceTopAt(_dp.x,_dp.z)>-Infinity)?surfaceTopAt(_dp.x,_dp.z):(typeof terrainHeightAt==='function'?terrainHeightAt(_dp.x,_dp.z):0);
+  fxZones.push(_migrateFxZone({ x:_dp.x, z:_dp.z, y:+by.toFixed(2) }));
+  selFxZone=fxZones.length-1; refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); }
+function removeFxZone(i){ pushUndoSnapshot(); fxZones.splice(i,1); if(selFxZone>=fxZones.length) selFxZone=fxZones.length-1; refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); }
+function renderFxZonesPanel(){
+  const host=(editorEl && editorEl.querySelector('#edFxZones')); if(!host) return;
+  host.innerHTML='';
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px';
+  intro.innerHTML='<b>Effect zones</b> \u2014 one tool, five effects: <b>heal</b>, <b>hurt</b>, <b>slow</b>, <b>haste</b>, <b>low gravity</b>. Amount is hp/sec for heal &amp; hurt, percent for the rest. Pick who it touches. They carry to multiplayer.';
+  host.appendChild(intro);
+  const addB=document.createElement('button'); addB.textContent='+ Add effect zone (at me)'; addB.style.cssText='width:100%;margin-bottom:8px;';
+  addB.onclick=()=>addFxZone(); host.appendChild(addB);
+  if(!fxZones.length){ const n=document.createElement('div'); n.className='hint'; n.textContent='None yet. A healing fountain, a tar pit, a speed lane, a moon-gravity court \u2014 stand where you want one and click Add.'; host.appendChild(n); return; }
+  fxZones.forEach((z,i)=>{
+    const box=document.createElement('div'); box.style.cssText='border:1px solid rgba(159,216,255,0.3);border-radius:6px;padding:7px 9px;margin-bottom:6px;background:'+(i===selFxZone?'rgba(159,216,255,0.09)':'transparent')+';';
+    const top=document.createElement('div'); top.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;';
+    const tt=document.createElement('span'); tt.style.cssText='font-size:11px;color:#9fd8f5;'; tt.textContent=z.kind.toUpperCase()+' '+(i+1)+'  \u00b7  ('+(+z.x).toFixed(1)+', '+(+z.z).toFixed(1)+')';
+    const selB=document.createElement('button'); selB.textContent=(i===selFxZone?'selected':'select'); selB.style.cssText='font-size:10px;padding:2px 8px;'; selB.onclick=()=>{ selFxZone=i; refreshFxZoneMarkers(); renderFxZonesPanel(); };
+    const del=document.createElement('button'); del.textContent='\u2715'; del.style.cssText='font-size:10px;padding:2px 8px;'; del.onclick=()=>removeFxZone(i);
+    top.appendChild(tt); top.appendChild(selB); top.appendChild(del); box.appendChild(top);
+    const selRow=(lbl, opts, cur, on)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0;';
+      const s=document.createElement('span'); s.textContent=lbl; s.style.cssText='flex:0 0 60px;font-size:11px;color:#9fc0b8;';
+      const se=document.createElement('select'); se.style.cssText='flex:1;font-size:11px;background:#0c1418;color:#cfeee2;border:1px solid #2a3a42;border-radius:4px;';
+      for(const o of opts){ const op=document.createElement('option'); op.value=o; op.textContent=o; if(o===cur) op.selected=true; se.appendChild(op); }
+      se.onchange=()=>{ pushUndoSnapshot(); on(se.value); refreshFxZoneMarkers(); renderFxZonesPanel(); };
+      r.appendChild(s); r.appendChild(se); box.appendChild(r); };
+    selRow('Effect', Object.keys(FX_KINDS), z.kind, v=>{ z.kind=v; });
+    selRow('Affects', ['players','enemies','both'], z.who, v=>{ z.who=v; });
+    const numRow=(lbl, key, min, max, step)=>{ const r=document.createElement('div'); r.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0;';
+      const s=document.createElement('span'); s.textContent=lbl; s.style.cssText='flex:0 0 60px;font-size:11px;color:#9fc0b8;';
+      const ni=document.createElement('input'); ni.type='number'; ni.min=min; ni.max=max; ni.step=step; ni.value=z[key]; ni.style.cssText='flex:1;min-width:0;font-size:11px;';
+      ni.onchange=()=>{ pushUndoSnapshot(); z[key]=Math.max(min, Math.min(max, +ni.value||0)); ni.value=z[key]; refreshFxZoneMarkers(); };
+      r.appendChild(s); r.appendChild(ni); box.appendChild(r); };
+    numRow('Amount', 'amt', 0, 200, 1); numRow('Radius', 'r', 1, 120, 0.5); numRow('Base Y', 'y', -200, 500, 0.25); numRow('Height', 'h', 0.5, 80, 0.5);
+    host.appendChild(box);
+  });
+}
 function _carWaterFactor(sub){ return sub<=0.15 ? 1 : (sub<1.1 ? 0.45 : 0.18); }   // top-speed cap fraction by submersion: splash / shallow / deep
 function _carWaterStep(o, dt){
   if(!waterZones.length || !o || !o.userData || !o.userData.vehicle) return;
@@ -20771,7 +21453,7 @@ function updateBots(dt){
     if(b.grounded!==false){   // walk only with feet on a surface; while airborne, momentum carries it
       // stuck recovery: if we've been blocked a while, steer perpendicular for a moment to get around it
       if(b._stuckT>0.5){ if(!b._stuckSide) b._stuckSide=(Math.random()<0.5?1:-1); if(b._stuckT>1.8 && !b._sFlip){ b._sFlip=1; b._stuckSide*=-1; } const px=-mvz*b._stuckSide, pz=mvx*b._stuckSide; mvx=mvx*0.5+px*1.2; mvz=mvz*0.5+pz*1.2; const ml=Math.hypot(mvx,mvz)||1; mvx/=ml; mvz/=ml; }   // jammed -> follow the wall to ONE side; build 977: flip the side if it isn't working (concave corners)
-      const step=spd*dt*(typeof _waterSlowFor==='function' ? _waterSlowFor(b.pos.x, b.pos.y, b.pos.z) : 1);   // build 862: bots wade at half pace too
+      const step=spd*dt*(typeof _waterSlowFor==='function' ? _waterSlowFor(b.pos.x, b.pos.y, b.pos.z) : 1)*(typeof _fxSpeedFor==='function' ? _fxSpeedFor(b.pos.x, b.pos.y, b.pos.z) : 1);   // build 862: bots wade at half pace too; 1193: effect zones
       const cx=Math.max(-lim,Math.min(lim, b.pos.x+mvx*step)), cz=Math.max(-lim,Math.min(lim, b.pos.z+mvz*step));
       // The arena walls + props are the only movement boundary; the spawn region never blocks motion, so a
       // bot can leave its spawn area and roam the whole map.
@@ -21216,12 +21898,12 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim;   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
   triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
@@ -21238,7 +21920,7 @@ function loadLevelFromNet(level){
   charRoster = Array.isArray(level.roster) ? level.roster.map(_sanitizeCharCfg) : []; if(typeof renderCharRosterPanel==='function') renderCharRosterPanel();
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; refreshPlayerSpawnMarker(); }
-  if(level.weapons){ for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; if(wd.clips) WEAPONS[k].clips=Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; } } }
+  if(level.weapons){ for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; if(wd.clips) WEAPONS[k].clips=Object.assign(_wepClipBlank(k), wd.clips); WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); } else { _wepApplyStats(k, null); } } }   // build 1190: a joiner plays the host's tuning, and a weapon with no entry plays factory
   if(level.grenade){ const G=level.grenade; if(G.model!=null) GRENADE.model=G.model||''; if(G.scale!=null) GRENADE.scale=G.scale; if(G.radius!=null) GRENADE.radius=G.radius; if(G.damage!=null) GRENADE.damage=G.damage; if(G.fuse!=null) GRENADE.fuse=G.fuse; if(G.throwForce!=null) GRENADE.throwForce=G.throwForce; loadGrenadeModel(); if(editorTargets.grenade.sync) editorTargets.grenade.sync(); }
   if(level.enemies || level.enemy){   // adopt the host's per-type enemy models so clients render the same hostiles
     applyEnemyModelData(level.enemies, level.enemy);
@@ -23520,8 +24202,8 @@ function spawnNetGrenade(o, v, by, auth){
 // Frame order is left-to-right, top-to-bottom. Adjust cols/rows/frames to match whatever sheet you drop in.
 const VFX_BASE = 'vfx/';   // relative to breach.html on your host
 const VFX = {
-  explosion: { url:VFX_BASE+'explosion.png', cols:5, rows:5, frames:25, dur:0.75, size:6,  blend:'add',    grow:1.15, fade:false },
-  smoke:     { url:VFX_BASE+'smoke.png',     cols:8, rows:8, frames:64, dur:1.8,  size:5,  blend:'normal', grow:2.4,  fade:true  },
+  explosion: { url:VFX_BASE+'explosion.png', cols:5, rows:5, frames:25, dur:0.75, size:6,  blend:'add',    grow:1.15, fade:false, soft:true },
+  smoke:     { url:VFX_BASE+'smoke.png',     cols:8, rows:8, frames:64, dur:1.8,  size:5,  blend:'normal', grow:2.4,  fade:true,  soft:true, lit:true },
   fire:      { url:VFX_BASE+'fire.png',      cols:6, rows:6, frames:36, dur:0.9,  size:3,  blend:'add',    grow:1.1,  fade:true  },
   muzzle:    { url:VFX_BASE+'muzzle.png',    cols:4, rows:4, frames:16, dur:0.10, size:1.1,blend:'add',    grow:1.0,  fade:false },
 };
@@ -23645,6 +24327,7 @@ function warmFlipbookShaders(){
     parent.add(sp); made.push(sp);
   };
   drop(scene, THREE.AdditiveBlending, true); drop(scene, THREE.NormalBlending, true);   // world explosions/smoke
+  { const _sm=made[made.length-1]; if(typeof _softSprite==='function') _softSprite(_sm.material, 1); }   // build 1183: the SOFT variant is its own program — warm it too
   if(typeof vmScene!=='undefined') drop(vmScene, THREE.AdditiveBlending, true);          // viewmodel muzzle flash
   // build 636: also warm the debris PBR shader (both shading variants) so the FIRST shatter doesn't compile a
   // MeshStandardMaterial mid-combat
@@ -23666,6 +24349,12 @@ function playFlipbook(kind, pos, scale, parent, durMul){
   if(parent){ mat.depthTest=true; }   // viewmodel space: let the gun occlude the flash (sits behind the barrel, not pasted on top)
   const sp = new THREE.Sprite(mat);
   const base = (cfg.size||1) * (scale||1);
+  /* build 1183: big volumetric quads fade where they slice geometry (band scales with the sprite).
+     Muzzle stays hard — it lives centimetres from a gun, where any fade just dims the flash. */
+  if(cfg.soft && !parent) _softSprite(mat, base*0.3);
+  /* build 1183: smoke is scene-LIT at spawn — an unlit white sheet glows at night. Luminance only,
+     floored so it never goes black; the day factor is 1 whenever the day cycle is off. */
+  if(cfg.lit){ const _dl = 0.30 + 0.70*((typeof _dayActive!=='undefined' && _dayActive) ? _dayF : 1); mat.color.setScalar(_dl); }
   sp.scale.setScalar(base); sp.position.copy(pos); sp.renderOrder = 9000;
   const fb = { sp, tex, cfg, t:0, base, dur: cfg.dur * (durMul||1), ox:0, oy:1 - 1/cfg.rows };
   // Several flipbooks share one texture, so each sets ITS frame offset right before its own draw call.
@@ -26427,7 +27116,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1180 · 2026-07-30';
+const BUILD_VERSION = 'build 1196 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -27004,6 +27693,11 @@ function trimeshDescFor(o){
 }
 function addStaticColliderFor(o){
   if(!physWorld || !o) return;
+  // build 1194: idempotent — a stamped collider is already in THIS world. The stamps (cleared in
+  // destroyPhysWorld) are what make INCREMENTAL adds possible: a late-loading GLB used to trigger a FULL
+  // world rebuild (terrain trimesh + every static + every dynamic + joints + the KCC), a multi-second
+  // stall repeated for every load burst; now only the missing statics are added to the live world.
+  if(o.userData && (o.userData._physStatic || o.userData._kbody)) return;
   if(o.userData && o.userData.vehicle){
     // build 755: remember the authored placement so re-entering the editor snaps the car back to where it was PLACED,
     // not wherever it was last driven (otherwise autosave would persist the driven spot and lose the layout). Capture
@@ -27045,13 +27739,14 @@ function addStaticColliderFor(o){
       .setRotation({ x:q.x, y:q.y, z:q.z, w:q.w }));
     physWorld.createCollider(
       colliderDescFor(info).setTranslation(info.off.x, info.off.y, info.off.z).setFriction(0.9).setRestitution(0.1), rb);
+    o.userData._physStatic = rb;
     return;
   }
   // non-primitive model: a trimesh of the real triangles so sloped/stepped surfaces (ramps, stairs) are
   // true physics geometry that dynamic props roll down — not a fat upright box they sit on top of.
   try{
     const tri = trimeshDescFor(o);
-    if(tri){ const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed()); physWorld.createCollider(tri.setFriction(0.9).setRestitution(0.1), rb); return; }
+    if(tri){ const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed()); physWorld.createCollider(tri.setFriction(0.9).setRestitution(0.1), rb); o.userData._physStatic = rb; return; }
   }catch(e){ console.warn('[RUMPUS] trimesh collider failed, falling back to box:', e && e.message); }
   // fallback: world-AABB cuboid (degenerate/empty geometry)
   if(!o.userData.box){ o.updateMatrixWorld(true); o.userData.box = new THREE.Box3().setFromObject(o, true); }
@@ -27059,6 +27754,7 @@ function addStaticColliderFor(o){
   if(_psize.x<1e-3 || _psize.y<1e-3 || _psize.z<1e-3) return;
   const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(_pcenter.x,_pcenter.y,_pcenter.z));
   physWorld.createCollider(RAPIER.ColliderDesc.cuboid(_psize.x/2, _psize.y/2, _psize.z/2).setFriction(0.9).setRestitution(0.1), rb);
+  o.userData._physStatic = rb;
 }
 // (Re)build the whole physics world from the current scene state.
 // Build a world-space triangle mesh from the displaced floor geometry so the physics floor matches the
@@ -27159,7 +27855,16 @@ function _schedulePhysRebuild(){
   _physRebuildT=setTimeout(function tick(){
     _physRebuildT=0;
     if(typeof _glbPending!=='undefined' && _glbPending>0){ _physRebuildT=setTimeout(tick, 300); return; }   // still loading models — wait for the burst to finish
-    try{ if(physWorld && (typeof editorOpen==='undefined' || !editorOpen)) buildPhysWorld(); }catch(e){}
+    // build 1194: INCREMENTAL. A late-loading GLB is a new STATIC — nothing about the terrain, the other
+    // statics, the dynamics or the joints changed, so rebuilding all of it (the multi-second trimesh
+    // stall, once per load burst) bought nothing. Add the missing statics to the live world; fall back to
+    // the full rebuild only if a DYNAMIC prop is missing its body (its joints may reference others).
+    try{ if(physWorld && (typeof editorOpen==='undefined' || !editorOpen)){
+      let _needFull=false;
+      for(const o of dynamicProps){ if(o && o.userData && o.userData.phys && !o.userData.phys.body){ _needFull=true; break; } }
+      if(_needFull) buildPhysWorld();
+      else { for(const c of colliders) addStaticColliderFor(c); }   /* stamped ones return immediately */
+    } }catch(e){}
   }, 350);
 }
 function destroyPhysWorld(){
@@ -27167,7 +27872,7 @@ function destroyPhysWorld(){
   if(typeof _clearCorpses==='function') _clearCorpses();     // build 779: ragdoll bodies belong to the world we're about to free
   if(physWorld){ try{ physWorld.free(); }catch(e){} physWorld = null; }
   for(const o of dynamicProps){ if(o.userData.phys) o.userData.phys.body = null; }
-  for(const o of colliders){ if(o.userData && o.userData._kbody) o.userData._kbody = null; }
+  for(const o of colliders){ if(o.userData){ if(o.userData._kbody) o.userData._kbody = null; if(o.userData._physStatic) o.userData._physStatic = null; } }   /* build 1194 */
   playerBody = playerCollider = playerCtrl = null;   // KCC bodies belonged to the freed world
   physAccum = 0;
 }
@@ -28188,6 +28893,26 @@ function _instKey(o){
   return o.userData.src + '|' + col + '|' + (+sh.r).toFixed(3) + '|' + (+sh.m).toFixed(3)
        + '|' + (o.userData.op != null ? (+o.userData.op).toFixed(3) : '1') + '|' + rep;
 }
+// build 1192: IMPORTED MODELS instance too. Fifty copies of a tree were fifty full draw hierarchies;
+// they are now one InstancedMesh per (geometry, material) part of a shared template. Eligibility is
+// DECORATION-GRADE only: anything the game must touch individually at runtime — physics, vehicles,
+// running animations, tags (the prop verbs), interact/dialogue/NPC, signals, locks, adopted lights —
+// stays an individual mesh, mirroring instanceEligible's contract for primitives. Skinned or lit
+// subtrees disqualify at batch time. (r149's InstancedMesh constructor sets frustumCulled=false, so a
+// batch spread across the map is never wrongly culled — verified against the real build in test-1192.)
+function modelInstanceEligible(o){
+  const u = o && o.userData; if(!u) return false;
+  if(!(typeof isModelSrc==='function' && isModelSrc(u.src))) return false;
+  if(u.phys || u.vehicle || (u.xa && u.xa.on) || u.tex) return false;
+  if(u.tag || u.interact || u.dialogue || u.npcName || (u.signals && u.signals.length) || u.lockId) return false;
+  if(u.modelLights && u.modelLights.length) return false;
+  return true;
+}
+function _instKeyModel(o){
+  const sh = o.userData.shine || null;
+  return 'M|' + o.userData.src + '|' + (sh ? (+sh.r).toFixed(3) + '|' + (+sh.m).toFixed(3) : 'f')
+       + '|' + (o.userData.op != null ? (+o.userData.op).toFixed(3) : '1');
+}
 function buildInstancing(){
   if(instancingActive || editorOpen) return;
   const groups = {};   // key shape|colour|rough|metal|opacity|grain -> [props]
@@ -28204,6 +28929,7 @@ function buildInstancing(){
     // procedural detail set all carry into the batch — whatever the material happens to hold.
     const src0 = (list[0].isMesh && list[0].material) ? list[0].material : null;
     const mat = src0 ? src0.clone() : new THREE.MeshStandardMaterial({ color:PRIM_DEFAULT_COLOR, roughness:PRIM_DEFAULT_ROUGH, metalness:PRIM_DEFAULT_METAL, envMapIntensity:_envInten(PRIM_DEFAULT_METAL) });
+    mat.vertexColors = false;   /* build 1195: the batch's shared UNIT geometry has no colour attribute — a baked member's vertexColors=true would render the whole batch black */
     if(src0 && src0.userData) mat.userData = Object.assign({}, src0.userData);   // clone() shallow-copies userData by reference in r149
     const im = new THREE.InstancedMesh(instanceGeoFor(shape), mat, list.length);
     im.castShadow = true; im.receiveShadow = true;
@@ -28212,11 +28938,41 @@ function buildInstancing(){
     im.instanceMatrix.needsUpdate = true;
     scene.add(im); instanceMeshes.push(im);
   }
+  // build 1192: the model pass. Same lifecycle, same lists, same teardown — a batch is one InstancedMesh
+  // per (geometry, material) part of the group's FIRST member, each instance's matrix being
+  // memberWorld x (templateWorld^-1 x partWorld), so per-member position/rotation/scale all ride the root.
+  // Batch meshes SHARE the template's geometry and materials (the template goes back to the editor on
+  // teardown), so they are flagged and never disposed with the batch.
+  {
+    const mGroups = {};
+    for(const o of propModels){ if(!modelInstanceEligible(o)) continue; const k=_instKeyModel(o); (mGroups[k]||(mGroups[k]=[])).push(o); }
+    const _m = new THREE.Matrix4();
+    for(const k in mGroups){
+      const list = mGroups[k];
+      if(list.length < 3) continue;                       /* a model batch costs one draw PER PART — worth it from three copies */
+      const tpl = list[0]; tpl.updateMatrixWorld(true);
+      const inv = new THREE.Matrix4().copy(tpl.matrixWorld).invert();
+      const parts = []; let bad = false;
+      tpl.traverse(n=>{ if(bad) return;
+        if(n.isSkinnedMesh || n.isLight){ bad = true; return; }   /* skinning can't instance; a lamp's light can't either */
+        if(n.isMesh && n.visible){ parts.push({ geo:n.geometry, mat:n.material, rel:new THREE.Matrix4().copy(inv).multiply(n.matrixWorld), cast:n.castShadow, recv:n.receiveShadow }); } });
+      if(bad || !parts.length || parts.length > 24) continue;     /* a 100-part model is not a batching win */
+      for(const part of parts){
+        const im = new THREE.InstancedMesh(part.geo, part.mat, list.length);
+        im.castShadow = part.cast; im.receiveShadow = part.recv;
+        im.userData._sharedMat = true;
+        list.forEach((o, i)=>{ o.updateMatrixWorld(true); _m.copy(o.matrixWorld).multiply(part.rel); im.setMatrixAt(i, _m); });
+        im.instanceMatrix.needsUpdate = true;
+        scene.add(im); instanceMeshes.push(im);
+      }
+      for(const o of list){ scene.remove(o); instancedProps.push(o); }
+    }
+  }
   instancingActive = true;
 }
 function teardownInstancing(){
   if(!instancingActive) return;
-  for(const im of instanceMeshes){ scene.remove(im); im.geometry && im.material && im.material.dispose && im.material.dispose(); }
+  for(const im of instanceMeshes){ scene.remove(im); if(!im.userData._sharedMat && im.geometry && im.material && im.material.dispose) im.material.dispose(); }   /* build 1192: model batches share the template's live materials */
   instanceMeshes = [];
   for(const o of instancedProps){ if(propModels.indexOf(o)>=0) scene.add(o); }   // restore for editing
   instancedProps = [];
@@ -29046,7 +29802,9 @@ function boltImpact(p, color){
 // True if a wall / static prop sits on the segment between two floor points (sampled at chest height).
 function segmentBlocked(ax, az, bx, bz, y){
   const steps = 14;
-  for(const c of colliders){
+  /* build 1188: a box the segment crosses must overlap the segment's own bbox (a crossed box contains a
+     sample point, and every sample lies on the segment) — so the grid query loses nothing */
+  for(const c of _cgQuery(Math.min(ax,bx), Math.max(ax,bx), Math.min(az,bz), Math.max(az,bz), _cgSeg)){
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
     for(const b of bs){
       // An enclosing volume (e.g. a whole arena model) has a box that contains BOTH endpoints — it can't be a
@@ -29107,7 +29865,7 @@ function updateEnemyShots(dt){
     // its bolt die on frame 1 against an invisible box — enemies in buildings visibly fired and never landed
     // anything. Build 1148 gave every collider a tight per-part `boxes` list; this consumer was never
     // updated. The overall box survives as the coarse reject, same shape as the enemy resolve.
-    if(!dead){ for(const c of colliders){ const b0=c.userData.box; if(!b0) continue;
+    if(!dead){ for(const c of _cgQuery(p.x, p.x, p.z, p.z, _cgBolt)){ const b0=c.userData.box; if(!b0) continue;
       if(p.x<b0.min.x||p.x>b0.max.x||p.y<b0.min.y||p.y>b0.max.y||p.z<b0.min.z||p.z>b0.max.z) continue;
       const bs=c.userData.boxes||[b0];
       for(const b of bs){ if(p.x>=b.min.x&&p.x<=b.max.x&&p.y>=b.min.y&&p.y<=b.max.y&&p.z>=b.min.z&&p.z<=b.max.z){ dead=true; break; } }
@@ -29953,7 +30711,8 @@ const _surfList = [];
 // them the ray cannot hit it. Colliders with no box info are kept (can't cull them).
 function _surfCull(x, z){
   const out=_surfList; out.length=0; const M=0.3;   // small margin for float-edge safety
-  for(let i=0;i<colliders.length;i++){ const c=colliders[i];
+  const _cand=_cgQuery(x-M, x+M, z-M, z+M, _cgSurf);   // build 1188
+  for(let i=0;i<_cand.length;i++){ const c=_cand[i];
     const bs = c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]));
     if(!bs){ out.push(c); continue; }
     // build 1148: reject against the OVERALL box first. Every part lies inside it, so this cannot change an
@@ -29994,7 +30753,7 @@ function surfaceTopAt(x, z, exclude, skipDynamic, ceilY, skipVehicles){
   // Gating on a true miss is important: otherwise this would flatten stepped geometry (stairs) and any
   // model where you stand on a lower part into its overall top, turning it into a wall.
   if(top === -Infinity){
-    for(const c of colliders){
+    for(const c of _cgQuery(x-0.01, x+0.01, z-0.01, z+0.01, _cgSurf)){   // build 1188 (reuses _cgSurf: the _surfCull result above is already consumed)
       if(c===exclude) continue;
       const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
       const src = c.userData.src;
@@ -30088,7 +30847,7 @@ function clearAt(x, z, feetY, surfHint){
   const surf = (surfHint!==undefined) ? surfHint : surfaceTopAt(x, z);
   const standY = (surf > -Infinity && surf <= feetY + STEP + 1e-4) ? Math.max(terrainHeightAt(x,z), surf) : feetY;
   const bandLo = standY + STEP, bandHi = standY + effPlayerHeight();
-  for(const c of colliders){
+  for(const c of _cgQuery(x-R-0.01, x+R+0.01, z-R-0.01, z+R+0.01, _cgClear)){   // build 1188
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
     { const b0=c.userData.box; if(b0 && (x < b0.min.x-R || x > b0.max.x+R || z < b0.min.z-R || z > b0.max.z+R)) continue; }   // build 1148: coarse reject — parts live inside the overall box
     for(const b of bs){
@@ -30121,7 +30880,7 @@ const CB_EPS = 0.01;   // build 1148: slack for the 1 mm skin a grid box carries
 // player who ends up embedded (spawned inside, shoved in) can always walk back out instead of freezing.
 function insideSolid(x, z, feetY){
   const bandLo = feetY + STEP, bandHi = feetY + effPlayerHeight();
-  for(const c of colliders){
+  for(const c of _cgQuery(x-CB_EPS, x+CB_EPS, z-CB_EPS, z+CB_EPS, _cgInside)){   // build 1188
     const r = c.rotation; if(r && (Math.abs(r.x)>0.05 || Math.abs(r.z)>0.05)) continue;
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
     // build 1148: coarse reject on the overall box. Every part lies inside it, so this cannot change an
@@ -30139,7 +30898,7 @@ function insideSolid(x, z, feetY){
 // the head can't pass through (Infinity if nothing overhead). Used for head-bump on jumps.
 function ceilingAt(x, z, feetY){
   let lowest = Infinity;
-  for(const c of colliders){
+  for(const c of _cgQuery(x-CB_EPS, x+CB_EPS, z-CB_EPS, z+CB_EPS, _cgCeil)){   // build 1188
     const bs = (c.userData && (c.userData.boxes || (c.userData.box && [c.userData.box]))); if(!bs) continue;
     // build 1148: coarse reject on the overall box. Every part lies inside it, so this cannot change an
     // answer — with one caveat worth the epsilon: a grid box is emitted with a 1 mm skin (`ey`), so it can
@@ -30242,13 +31001,13 @@ function updatePerfHud(){
 // start ('spawn') or its travel direction ('path'), letterboxed with the HUD hidden. Any input skips it.
 // Disabled / no path => deploy behaves exactly as before. Editor 'Preview' reuses the same engine.
 let cineCfg = { on:false, path:[], lensFrom:35, lensTo:35, focusOn:false, focusFrom:8, focusTo:8, dur:6, look:'spawn', audio:'', shots2:[] };
-function _resShot(s){ return { path:Array.isArray(s.path)?s.path.map(q=> q.length>=6 ? [+q[0]||0,+q[1]||0,+q[2]||0,+q[3]||0,+q[4]||0,+q[5]||0] : [+q[0]||0,+q[1]||0,+q[2]||0]):[], lensFrom:+s.lensFrom||35, lensTo:+s.lensTo||+s.lensFrom||35, focusOn:!!s.focusOn, focusFrom:+s.focusFrom||8, focusTo:+s.focusTo||+s.focusFrom||8, dur:+s.dur||6, look:(s.look==='path')?'path':'spawn', interp:(s.interp==='smooth')?'smooth':'linear', dofRange:+s.dofRange||14, dofStrength:(s.dofStrength!=null?+s.dofStrength:1.4), dofStrengthTo:(s.dofStrengthTo!=null?+s.dofStrengthTo:(s.dofStrength!=null?+s.dofStrength:1.4)), roll:+s.roll||0, rollTo:(s.rollTo!=null?+s.rollTo:(+s.roll||0)), ease:(['linear','in','out','inout'].indexOf(s.ease)>=0?s.ease:'inout'), holdStart:Math.max(0,+s.holdStart||0), holdEnd:Math.max(0,+s.holdEnd||0) }; }
+function _resShot(s){ return { path:Array.isArray(s.path)?s.path.map(q=> q.length>=6 ? [+q[0]||0,+q[1]||0,+q[2]||0,+q[3]||0,+q[4]||0,+q[5]||0] : [+q[0]||0,+q[1]||0,+q[2]||0]):[], lensFrom:+s.lensFrom||35, lensTo:+s.lensTo||+s.lensFrom||35, focusOn:!!s.focusOn, focusFrom:+s.focusFrom||8, focusTo:+s.focusTo||+s.focusFrom||8, dur:+s.dur||6, look:(s.look==='path')?'path':'spawn', interp:(s.interp==='smooth')?'smooth':'linear', dofRange:+s.dofRange||14, dofStrength:(s.dofStrength!=null?+s.dofStrength:1.4), dofStrengthTo:(s.dofStrengthTo!=null?+s.dofStrengthTo:(s.dofStrength!=null?+s.dofStrength:1.4)), roll:+s.roll||0, rollTo:(s.rollTo!=null?+s.rollTo:(+s.roll||0)), ease:(['linear','in','out','inout'].indexOf(s.ease)>=0?s.ease:'inout'), holdStart:Math.max(0,+s.holdStart||0), holdEnd:Math.max(0,+s.holdEnd||0), ev:(typeof s.ev==='string'?s.ev.slice(0,60):'') }; }
 function _applyCine(lc){
-  if(lc){ cineCfg.on=!!lc.on; cineCfg.path=Array.isArray(lc.path)?lc.path.map(q=> q.length>=6 ? [+q[0]||0,+q[1]||0,+q[2]||0,+q[3]||0,+q[4]||0,+q[5]||0] : [+q[0]||0,+q[1]||0,+q[2]||0]):[]; cineCfg.lensFrom=+lc.lensFrom||+lc.lens||35; cineCfg.lensTo=+lc.lensTo||+lc.lens||cineCfg.lensFrom; cineCfg.focusOn=!!lc.focusOn; cineCfg.focusFrom=+lc.focusFrom||8; cineCfg.focusTo=+lc.focusTo||cineCfg.focusFrom; cineCfg.dur=+lc.dur||6; cineCfg.look=(lc.look==='path')?'path':'spawn'; cineCfg.interp=(lc.interp==='smooth')?'smooth':'linear'; cineCfg.dofRange=+lc.dofRange||14; cineCfg.dofStrength=(lc.dofStrength!=null?+lc.dofStrength:1.4); cineCfg.dofStrengthTo=(lc.dofStrengthTo!=null?+lc.dofStrengthTo:cineCfg.dofStrength); cineCfg.roll=+lc.roll||0; cineCfg.rollTo=(lc.rollTo!=null?+lc.rollTo:cineCfg.roll); cineCfg.ease=(['linear','in','out','inout'].indexOf(lc.ease)>=0?lc.ease:'inout'); cineCfg.holdStart=Math.max(0,+lc.holdStart||0); cineCfg.holdEnd=Math.max(0,+lc.holdEnd||0); cineCfg.audio=(typeof lc.audio==='string')?lc.audio:'';
+  if(lc){ cineCfg.on=!!lc.on; cineCfg.path=Array.isArray(lc.path)?lc.path.map(q=> q.length>=6 ? [+q[0]||0,+q[1]||0,+q[2]||0,+q[3]||0,+q[4]||0,+q[5]||0] : [+q[0]||0,+q[1]||0,+q[2]||0]):[]; cineCfg.lensFrom=+lc.lensFrom||+lc.lens||35; cineCfg.lensTo=+lc.lensTo||+lc.lens||cineCfg.lensFrom; cineCfg.focusOn=!!lc.focusOn; cineCfg.focusFrom=+lc.focusFrom||8; cineCfg.focusTo=+lc.focusTo||cineCfg.focusFrom; cineCfg.dur=+lc.dur||6; cineCfg.look=(lc.look==='path')?'path':'spawn'; cineCfg.interp=(lc.interp==='smooth')?'smooth':'linear'; cineCfg.dofRange=+lc.dofRange||14; cineCfg.dofStrength=(lc.dofStrength!=null?+lc.dofStrength:1.4); cineCfg.dofStrengthTo=(lc.dofStrengthTo!=null?+lc.dofStrengthTo:cineCfg.dofStrength); cineCfg.roll=+lc.roll||0; cineCfg.rollTo=(lc.rollTo!=null?+lc.rollTo:cineCfg.roll); cineCfg.ease=(['linear','in','out','inout'].indexOf(lc.ease)>=0?lc.ease:'inout'); cineCfg.holdStart=Math.max(0,+lc.holdStart||0); cineCfg.holdEnd=Math.max(0,+lc.holdEnd||0); cineCfg.audio=(typeof lc.audio==='string')?lc.audio:''; cineCfg.ev=(typeof lc.ev==='string')?lc.ev.slice(0,60):'';
     cineCfg.shots2 = Array.isArray(lc.shots2) ? lc.shots2.map(_resShot) : [];
     cineCfg.name = (typeof lc.name==='string' && lc.name) ? lc.name : 'Intro';
     cineCfg.others = Array.isArray(lc.others) ? lc.others.map(o=>{ const c=_resShot(o); c.name=(typeof o.name==='string'&&o.name)?o.name:'Cutscene'; c.audio=(typeof o.audio==='string')?o.audio:''; c.shots2=Array.isArray(o.shots2)?o.shots2.map(_resShot):[]; return c; }) : []; }
-  else { cineCfg.on=false; cineCfg.path=[]; cineCfg.lensFrom=35; cineCfg.lensTo=35; cineCfg.focusOn=false; cineCfg.focusFrom=8; cineCfg.focusTo=8; cineCfg.dur=6; cineCfg.look='spawn'; cineCfg.interp='linear'; cineCfg.dofRange=14; cineCfg.dofStrength=1.4; cineCfg.dofStrengthTo=1.4; cineCfg.roll=0; cineCfg.rollTo=0; cineCfg.ease='inout'; cineCfg.holdStart=0; cineCfg.holdEnd=0; cineCfg.audio=''; cineCfg.shots2=[]; cineCfg.name='Intro'; cineCfg.others=[]; }
+  else { cineCfg.on=false; cineCfg.path=[]; cineCfg.lensFrom=35; cineCfg.lensTo=35; cineCfg.focusOn=false; cineCfg.focusFrom=8; cineCfg.focusTo=8; cineCfg.dur=6; cineCfg.look='spawn'; cineCfg.interp='linear'; cineCfg.dofRange=14; cineCfg.dofStrength=1.4; cineCfg.dofStrengthTo=1.4; cineCfg.roll=0; cineCfg.rollTo=0; cineCfg.ease='inout'; cineCfg.holdStart=0; cineCfg.holdEnd=0; cineCfg.audio=''; cineCfg.ev=''; cineCfg.shots2=[]; cineCfg.name='Intro'; cineCfg.others=[]; }
 }
 _applyCine(savedLevel && savedLevel.cine);   // restore a saved cinematic on page reload (boot path doesn't go through restoreLevel)
 // Multi-shot cutscenes (build 350): cineCfg's flat fields ARE shot 1; extra shots live in cineCfg.shots2.
@@ -30262,9 +31021,9 @@ function _curCutscene(){ const a=allCutscenes(); if(_cineCSel>=a.length) _cineCS
 function cutsceneByName(n){ const a=allCutscenes(); if(!n) return a[0]; for(const c of a){ if((c===cineCfg ? (c.name||'Intro') : c.name)===n) return c; } return null; }
 function cineShotsOf(cc){ if(!Array.isArray(cc.shots2)) cc.shots2=[]; return [cc, ...cc.shots2]; }
 function _ccHasData(cc){ return !!(cc && cineShotsOf(cc).some(s=>s.path && s.path.length>=1)); }
-function _newCutscene(){ const n=allCutscenes().length+1; return { name:'Cutscene '+n, path:[], lensFrom:35, lensTo:35, focusOn:false, focusFrom:8, focusTo:8, dur:6, look:'spawn', interp:'linear', dofRange:14, dofStrength:1.4, dofStrengthTo:1.4, roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, audio:'', shots2:[] }; }
+function _newCutscene(){ const n=allCutscenes().length+1; return { name:'Cutscene '+n, path:[], lensFrom:35, lensTo:35, focusOn:false, focusFrom:8, focusTo:8, dur:6, look:'spawn', interp:'linear', dofRange:14, dofStrength:1.4, dofStrengthTo:1.4, roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, ev:'', audio:'', shots2:[] }; }
 function cineAllShots(){ return cineShotsOf(_curCutscene()); }   // shots of the EDITOR-selected cutscene
-function _newCineShot(){ return { path:[], lensFrom:35, lensTo:35, focusOn:false, focusFrom:8, focusTo:8, dur:6, look:'spawn', interp:'linear', dofRange:14, dofStrength:1.4, dofStrengthTo:1.4, roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0 }; }
+function _newCineShot(){ return { path:[], lensFrom:35, lensTo:35, focusOn:false, focusFrom:8, focusTo:8, dur:6, look:'spawn', interp:'linear', dofRange:14, dofStrength:1.4, dofStrengthTo:1.4, roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, ev:'' }; }
 let _cineActive=false, _cineT=0, _cineData=null, _cineReturn=null, _cineEditorPreview=false, _cinePreviewGroup=null, _cineIntroPending=false, _cineShots=null, _cineShotIdx=0;   // intro deferred until the level loader reveals
 let _interActive=false, _interTimer=null, _interKeyGo=null;   // campaign transition card (declared here so the render loop's freeze-check precedes it without a TDZ)
 let _cineAvatar=null;   // the local player's body, shown during a cutscene AND while authoring one in the editor
@@ -30348,7 +31107,7 @@ function _cineSmoothPoly(path, perSeg){ const n=path.length; if(n<3) return path
 function _cineSamplePoly(shot){ const path=(shot&&shot.path)||[]; return (shot && shot.interp==='smooth' && path.length>=3) ? _cineSmoothPoly(path,16) : path.map(q=>[q[0],q[1],q[2]]); }
 function _normCineShot(s){
   const path=s.path.map(q=>q.slice());
-  const out={ path, lensFrom:+s.lensFrom||35, lensTo:+s.lensTo||(+s.lensFrom||35), focusOn:!!s.focusOn, focusFrom:+s.focusFrom||8, focusTo:+s.focusTo||(+s.focusFrom||8), dur:Math.max(0.2,+s.dur||6), look:(s.look==='path'?'path':'spawn'), interp:(s.interp==='smooth'?'smooth':'linear'), dofRange:+s.dofRange||14, dofStrength:(s.dofStrength!=null?+s.dofStrength:1.4), dofStrengthTo:(s.dofStrengthTo!=null?+s.dofStrengthTo:(s.dofStrength!=null?+s.dofStrength:1.4)), roll:+s.roll||0, rollTo:(s.rollTo!=null?+s.rollTo:(+s.roll||0)), ease:(['linear','in','out','inout'].indexOf(s.ease)>=0?s.ease:'inout'), holdStart:Math.max(0,+s.holdStart||0), holdEnd:Math.max(0,+s.holdEnd||0) };
+  const out={ path, lensFrom:+s.lensFrom||35, lensTo:+s.lensTo||(+s.lensFrom||35), focusOn:!!s.focusOn, focusFrom:+s.focusFrom||8, focusTo:+s.focusTo||(+s.focusFrom||8), dur:Math.max(0.2,+s.dur||6), look:(s.look==='path'?'path':'spawn'), interp:(s.interp==='smooth'?'smooth':'linear'), dofRange:+s.dofRange||14, dofStrength:(s.dofStrength!=null?+s.dofStrength:1.4), dofStrengthTo:(s.dofStrengthTo!=null?+s.dofStrengthTo:(s.dofStrength!=null?+s.dofStrength:1.4)), roll:+s.roll||0, rollTo:(s.rollTo!=null?+s.rollTo:(+s.roll||0)), ease:(['linear','in','out','inout'].indexOf(s.ease)>=0?s.ease:'inout'), holdStart:Math.max(0,+s.holdStart||0), holdEnd:Math.max(0,+s.holdEnd||0), ev:(typeof s.ev==='string'?s.ev:'') };
   out._poly = (typeof _cineSamplePoly==='function') ? _cineSamplePoly(out) : out.path.map(q=>[q[0],q[1],q[2]]);   // the polyline the camera actually rides (curve when smooth)
   if(path.some(q=>q.length>=6)){   // per-waypoint look targets (build 353): interpolate camera aim between them
     const sy=terrainHeightAt(playerSpawn.x,playerSpawn.z)+EYE;
@@ -30359,6 +31118,16 @@ function _normCineShot(s){
       return [playerSpawn.x, sy, playerSpawn.z]; });   // ... or the spawn aim
   }
   return out; }
+// build 1196: CUTSCENE ACTOR TRACKS, the composable way. Each shot can fire a named logic EVENT the
+// moment it starts — the graph's 'event' nodes then do the acting with verbs the engine already has:
+// moveprop walks a tagged actor to its mark, xa clips play, dialogue opens, enemies spawn, doors swing.
+// One field buys the whole sequencer instead of a parallel keyframe system. Host-authoritative like
+// every graph pulse, and deliberately NOT fired from the editor's preview — a preview must not spawn
+// the ambush it is framing.
+function _cineFireShotEv(sd){
+  if(!sd || !sd.ev || _cineEditorPreview) return;
+  if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ try{ logicEvent(sd.ev); }catch(e){} }
+}
 function startCinematic(data, editorPreview){
   if(!data) return false;
   const raw = Array.isArray(data.shots) ? data.shots : [data];   // legacy single-shot callers still work
@@ -30373,6 +31142,7 @@ function startCinematic(data, editorPreview){
   if(typeof gizmo!=='undefined' && gizmo) gizmo.visible=false;
   if(typeof selBox!=='undefined' && selBox) selBox.visible=false;
   document.body.classList.add('cine'); _cineShowBars(true);
+  _cineFireShotEv(_cineData);   /* build 1196: the first shot's event */
   _showCineAvatar();
   _startCineAudio();
   // build 554: frame the opening shot and paint it ONCE right now, so whatever was covering the scene (the
@@ -30419,7 +31189,7 @@ function updateCinematic(dt){
     if(d.dofRange!=null) dofRange = d.dofRange;   // the shot owns its in-focus band + blur, independent of world DoF
     if(d.dofStrength!=null){ const sTo=(d.dofStrengthTo!=null?d.dofStrengthTo:d.dofStrength); dofStrength = d.dofStrength + (sTo - d.dofStrength)*te; } }
   if(_cineT>=_total){
-    if(_cineShots && _cineShotIdx < _cineShots.length-1){ _cineShotIdx++; _cineData=_cineShots[_cineShotIdx]; _cineT=0; }   // hard cut: next frame snaps to the new shot's first point/lens
+    if(_cineShots && _cineShotIdx < _cineShots.length-1){ _cineShotIdx++; _cineData=_cineShots[_cineShotIdx]; _cineT=0; _cineFireShotEv(_cineData); }   // hard cut: next frame snaps to the new shot's first point/lens (build 1196: + its event)
     else endCinematic();
   }
 }
@@ -31043,8 +31813,9 @@ function loop(){
     if(!_shDirty && !_shSlow && typeof dynamicProps!=='undefined'){ for(const o of dynamicProps){ const b=o&&o.userData&&o.userData.phys&&o.userData.phys.body; if(b && typeof b.isSleeping==='function' && !b.isSleeping()){ _shSlow=true; break; } } }   // an awake (moving) physics prop
     if(_shDirty || (_shSlow && _shadowTick===0)) _dirtyShadows(1);
   }
+  if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
@@ -31170,7 +31941,7 @@ function loop(){
   crouchT += ((crouching?1:0) - crouchT) * Math.min(1, dt*12);
   let speedBase = sprinting() ? SPEED*SPRINT : SPEED;
   if(crouching) speedBase = CROUCH_SPEED;          // crouch overrides sprint
-  const sp = speedBase * (buffs.speed>0?1.4:1) * moveScale * run.speedMul;
+  const sp = speedBase * (buffs.speed>0?1.4:1) * moveScale * run.speedMul * (typeof _fxSpeedFor==='function' ? _fxSpeedFor(player.pos.x, player.pos.y-EYE, player.pos.z, 'player') : 1);   /* build 1193: slow/haste zones */
   // build 1171: movement has MASS. `vel = wish*sp` teleported velocity to the input every frame — zero
   // start-up weight, dead-stop on key release EVEN MID-AIR (release W at the apex and the arc collapsed to a
   // vertical drop), instantaneous 180s at full speed. Velocity now CHASES the input target exponentially,
@@ -31680,7 +32451,7 @@ function loop(){
       const fp = en.mesh.userData.footprint || 0.9;
       en._reach = 1.5 + fp;                                // attack range scales with the body too (Phase 3)
       const stopAt = td.chase ? (fp + 0.9) : 0.5;          // patrol: stop on the waypoint; chase: body just shy of the player
-      const spd = (td.chase ? en.speed : en.speed*0.5) * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them
+      const spd = (td.chase ? en.speed : en.speed*0.5) * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1) * (typeof _fxSpeedFor==='function' ? _fxSpeedFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them; 1193: effect zones
       if(en.grounded!==false){   // a launched enemy is airborne: momentum carries it, AI walking is paused
       // build 635: Charger — while winding up or dashing it OWNS its movement (normal walking skipped via _charging).
       let _charging = false;
@@ -31703,6 +32474,33 @@ function loop(){
       }
       if(_charging){ /* the lunge owns movement this frame */ }
       else if(en.ranged && td.chase){
+        // build 1189: the bot brain's two best moves, ported to ranged PvE. (1) COVER BREAK: a hit that
+        // drops the enemy under its bravery fraction sends it to real cover — _botFindCover, the bots' own
+        // finder, works VERBATIM because it only reads .pos — for a ~2.5s beat, then it re-engages; a 9s
+        // cooldown keeps the wave coming instead of turtling, and firing already needs _see, so cover
+        // going up silences it with no extra gate. (2) FLANK: with the player unseen it approaches the
+        // last-known spot from a side angle (the bots' exact 0.7 rad / 5m shape), not straight down the
+        // sightline it just lost. Melee types are untouched — closing is their whole design.
+        if(en.cover && !editorOpen && typeof _botFindCover==='function'){
+          if(en._lastHp==null) en._lastHp = en.hp;
+          if(en.hp < en._lastHp && en.hp/(en.maxHp||1) < en.bravery && nowMs > (en._aiCoverCd||0)){
+            const cv = _botFindCover({ pos:{ x:en.mesh.position.x, y:en.mesh.position.y-1.4, z:en.mesh.position.z } }, { pos:near.pos });
+            if(cv){ en._aiCover = cv; en._aiCoverT = 2.2 + Math.random()*1.2; en._aiCoverCd = nowMs + 9000; }
+          }
+          en._lastHp = en.hp;
+        }
+        if(en._aiCover && (en._aiCoverT||0) > 0){
+          en._aiCoverT -= dt;
+          const cvx = en._aiCover.x - en.mesh.position.x, cvz = en._aiCover.z - en.mesh.position.z, cvd = Math.hypot(cvx,cvz);
+          if(cvd > 1.0){ en._wantMove = true; en.mesh.position.x += cvx/cvd*en.speed*dt; en.mesh.position.z += cvz/cvd*en.speed*dt; }
+          if(en._aiCoverT <= 0) en._aiCover = null;
+        }
+        else if(!en._see){
+          const _ba = Math.atan2(td.tz - en.mesh.position.z, td.tx - en.mesh.position.x) + en.flankSide*0.7;
+          const _fx = td.tx + Math.cos(_ba)*5 - en.mesh.position.x, _fz = td.tz + Math.sin(_ba)*5 - en.mesh.position.z, _fd = Math.hypot(_fx,_fz)||1;
+          en._wantMove = true; en.mesh.position.x += _fx/_fd*en.speed*dt; en.mesh.position.z += _fz/_fd*en.speed*dt;
+        }
+        else {
         // hold a standoff range: close in if too far, back off if the player crowds it, else hold + shoot
         const toPx = near.pos.x - en.mesh.position.x, toPz = near.pos.z - en.mesh.position.z, pd = Math.hypot(toPx,toPz)||1;
         if(pd > en.standoff + 1){ en._wantMove=true; en.mesh.position.x += toPx/pd*en.speed*dt; en.mesh.position.z += toPz/pd*en.speed*dt; }
@@ -31713,6 +32511,7 @@ function loop(){
           const nx = en.mesh.position.x + sx*en.speed*0.62*dt, nz = en.mesh.position.z + sz*en.speed*0.62*dt;
           if(typeof insideSolid!=='function' || !insideSolid(nx, nz, (en._groundY!=null?en._groundY:0)+0.4)){ en._wantMove=true; en.mesh.position.x = nx; en.mesh.position.z = nz; }
           else { en._strafeFlip = 0; }   // wall ahead -> reverse next frame
+        }
         }
       } else if(d > stopAt){
         // beeline straight at the target — the pre-531 behavior that always produces motion in the open.
@@ -31802,7 +32601,7 @@ function loop(){
       // That, not the walls, is what pinned enemies all over an imported level while the player walked it.
       // It also lets them step over kerbs and low thresholds, which is the same rule the player plays by.
       const eFeetY = en.mesh.position.y - 1.4 + STEP, eHeadY = en.mesh.position.y + 0.55;
-      for(const c of colliders){
+      for(const c of _cgQuery(en.mesh.position.x-eR-0.01, en.mesh.position.x+eR+0.01, en.mesh.position.z-eR-0.01, en.mesh.position.z+eR+0.01, _cgEnemy)){   // build 1188
         const b0 = c.userData.box;
         if(b0 && (en.mesh.position.x < b0.min.x-eR || en.mesh.position.x > b0.max.x+eR || en.mesh.position.z < b0.min.z-eR || en.mesh.position.z > b0.max.z+eR)) continue;   // coarse reject: nowhere near this model
         const bs = c.userData.boxes || (b0 ? [b0] : null); if(!bs) continue;
@@ -32432,6 +33231,7 @@ const SEC_SUB = {
   ladders:    'Climbable vertical volumes (W up / S down, jump to hop off).',
   firezones:  'Place fire & smoke emitters in the world.',
   waterzones: 'Lakes, ponds, puddles, streams & waterfalls — swim, wade, ride the current.',
+  fxzones: 'Heal, hurt, slow, haste & low-gravity volumes \u2014 pick the effect and who it touches.',
   impactfx:   'Sparks, marks & debris where YOUR shots land.',
   tracerfx:   'The streak your own gunfire leaves in the air.',
   decalfx:    'Bullet holes left where shots hit \u2014 size, lifetime & your own decal image.',
@@ -32462,8 +33262,8 @@ for(const _m of EDITOR_MODES) for(const _t of MODE_TARGETS[_m]) TARGET_MODE[_t]=
 let editorMode = 'build';
 try{ const _sm = localStorage.getItem('breach_editor_mode'); if(_sm && EDITOR_MODES.indexOf(_sm)>=0) editorMode = _sm; }catch(e){}
 // Which placeable-volume tool is showing inside the grouped 'Zones' section (build 649).
-const ZONE_TYPES = [['triggers','\u26a1','Trigger'],['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire'],['waterzones','\ud83d\udca7','Water']];
-const ZONE_HOST = { triggers:'edTriggers', audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones', waterzones:'edWaterZones' };
+const ZONE_TYPES = [['triggers','\u26a1','Trigger'],['audiozones','\ud83d\udd0a','Audio'],['deathzones','\u2620','Death'],['jumppads','\u2b06','Jump'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire'],['waterzones','\ud83d\udca7','Water'],['fxzones','\u2728','Effect']];
+const ZONE_HOST = { triggers:'edTriggers', audiozones:'edAudioZones', deathzones:'edDeathZones', jumppads:'edJumpPads', ladders:'edLadders', firezones:'edFireZones', waterzones:'edWaterZones', fxzones:'edFxZones' };
 let activeZoneType = 'audiozones';
 try{ const _z = localStorage.getItem('breach_editor_zone'); if(_z && ZONE_HOST[_z]) activeZoneType = _z; }catch(e){}
 // Show only the selected zone tool's host inside the grouped section.
@@ -33832,7 +34632,7 @@ function serializeLevel(){
   return {
     v: LEVEL_FORMAT_V,   // build 1165: the version is now READ on load (see _levelFormatCheck) — bump it when the schema changes shape, and set minV only when an old client's partial read would be load-bearing wrong
     gun:     { url: gunModelUrl,     state: Object.assign({}, editorTargets.gun.state) },
-    weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); if(w.model || w.view || w.clips || dmgChg || w.noMuzzle) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined }; return acc; }, {}),   // build 623: per-weapon damage; build 684: muzzle-flash toggle
+    weapons: Object.keys(WEAPONS).reduce((acc,k)=>{ const w=WEAPONS[k]; const dmgChg = (w.dmg!=null && w.dmg!==GUN_BASE_DMG[k]); let st; for(const s of GUN_STAT_KEYS){ if(w[s]!=null && GUN_BASE[k] && w[s]!==GUN_BASE[k][s]){ (st=st||{})[s]=w[s]; } } if(w.model || w.view || w.clips || dmgChg || w.noMuzzle || st) acc[k]={ model:w.model||'', view:w.view||null, clips:w.clips||null, dmg: dmgChg ? w.dmg : undefined, noMuzzle: w.noMuzzle ? true : undefined, st }; return acc; }, {}),   // build 623: per-weapon damage; build 684: muzzle-flash toggle; build 1190: the full stat sheet (only changed values)
     aim:     { state: Object.assign({}, editorTargets.aim.state) },
     aimWep:  JSON.parse(JSON.stringify(aimByWep)),
     mountWep: (typeof mountByWep!=='undefined') ? JSON.parse(JSON.stringify(mountByWep)) : {},
@@ -33865,6 +34665,7 @@ function serializeLevel(){
     jumpPads: jumpPads.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), power:(+z.power||22) })),
     ladders: ladders.map(L=>({ x:+L.x, z:+L.z, r:(+L.r||1), y:(+L.y||0), h:(L.h!=null?+L.h:4), face:(+L.face||0) })),   // build 645
     waterZones: waterZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:2), color:(z.color!=null?+z.color:0x14586e), op:(z.op!=null?+z.op:0.72), wave:(z.wave!=null?+z.wave:1), flowDir:(+z.flowDir||0), flowSpd:(+z.flowSpd||0) })),
+    fxZones: fxZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:+z.y, h:+z.h, kind:z.kind, amt:+z.amt, who:z.who })),   // build 1193
     waterfalls: waterfalls.map(f=>({ x:+f.x, z:+f.z, y:+f.y, h:+f.h, w:+f.w, yaw:(+f.yaw||0), color:(f.color!=null?+f.color:0xbfe6f2), op:(f.op!=null?+f.op:0.55), spd:(f.spd!=null?+f.spd:1), splash:(f.splash!=null?+f.splash:1), pool:(f.pool!=null?+f.pool:1.15), snd:(f.snd||''), vol:(f.vol!=null?+f.vol:0.8) })),
     fireZones: fireZones.map(z=>({ x:+z.x, z:+z.z, r:+z.r, y:(+z.y||0), h:(z.h!=null?+z.h:3), dps:(+z.dps||0), den:(+z.den||1), psz:(+z.psz||1), hue:(z.hue!=null?+z.hue:30), turb:(z.turb!=null?+z.turb:1), wind:(+z.wind||0), spk:(z.spk!==false), sat:(z.sat!=null?+z.sat:1), smoke:(z.smoke===true?1:0), rx:(+z.rx||0), ry:(+z.ry||0), rz:(+z.rz||0), sx:(z.sx!=null?+z.sx:1), sy:(z.sy!=null?+z.sy:1), sz:(z.sz!=null?+z.sz:1) })),
     fx: Object.assign({}, fxCfg),
@@ -33882,14 +34683,14 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', autoRig:c.autoRig||undefined, ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
     extract: extractSpot ? { x: +extractSpot.x.toFixed(3), z: +extractSpot.z.toFixed(3) } : null,
     grenade: { model: GRENADE.model, scale: GRENADE.scale, radius: GRENADE.radius, damage: GRENADE.damage, fuse: GRENADE.fuse, throwForce: GRENADE.throwForce },
     audio:   { musicUrl: (audioSettings.musicUrl||''), sounds: _sanitizeSounds(audioSettings.sounds) },   // music track + custom SFX travel with the level (volumes/mute stay per-device)
-    cine:    { on: cineCfg.on, path: cineCfg.path.map(q=>q.slice()), lensFrom: cineCfg.lensFrom, lensTo: cineCfg.lensTo, focusOn: cineCfg.focusOn, focusFrom: cineCfg.focusFrom, focusTo: cineCfg.focusTo, dur: cineCfg.dur, look: cineCfg.look, interp: cineCfg.interp, dofRange: cineCfg.dofRange, dofStrength: cineCfg.dofStrength, dofStrengthTo: cineCfg.dofStrengthTo, roll: cineCfg.roll, rollTo: cineCfg.rollTo, ease: cineCfg.ease, holdStart: cineCfg.holdStart, holdEnd: cineCfg.holdEnd, audio: cineCfg.audio||'' , shots2: (cineCfg.shots2||[]).map(s=>({ path:(s.path||[]).map(q=>q.slice()), lensFrom:s.lensFrom, lensTo:s.lensTo, focusOn:s.focusOn, focusFrom:s.focusFrom, focusTo:s.focusTo, dur:s.dur, look:s.look, interp:s.interp, dofRange:s.dofRange, dofStrength:s.dofStrength, dofStrengthTo:s.dofStrengthTo, roll:s.roll, rollTo:s.rollTo, ease:s.ease, holdStart:s.holdStart, holdEnd:s.holdEnd })), name: cineCfg.name||'Intro', others: (cineCfg.others||[]).map(o=>({ name:o.name, audio:o.audio||'', path:(o.path||[]).map(q=>q.slice()), lensFrom:o.lensFrom, lensTo:o.lensTo, focusOn:o.focusOn, focusFrom:o.focusFrom, focusTo:o.focusTo, dur:o.dur, look:o.look, interp:o.interp, dofRange:o.dofRange, dofStrength:o.dofStrength, dofStrengthTo:o.dofStrengthTo, roll:o.roll, rollTo:o.rollTo, ease:o.ease, holdStart:o.holdStart, holdEnd:o.holdEnd, shots2:(o.shots2||[]).map(s=>({ path:(s.path||[]).map(q=>q.slice()), lensFrom:s.lensFrom, lensTo:s.lensTo, focusOn:s.focusOn, focusFrom:s.focusFrom, focusTo:s.focusTo, dur:s.dur, look:s.look, interp:s.interp, dofRange:s.dofRange, dofStrength:s.dofStrength, dofStrengthTo:s.dofStrengthTo, roll:s.roll, rollTo:s.rollTo, ease:s.ease, holdStart:s.holdStart, holdEnd:s.holdEnd })) })) },
+    cine:    { on: cineCfg.on, path: cineCfg.path.map(q=>q.slice()), lensFrom: cineCfg.lensFrom, lensTo: cineCfg.lensTo, focusOn: cineCfg.focusOn, focusFrom: cineCfg.focusFrom, focusTo: cineCfg.focusTo, dur: cineCfg.dur, look: cineCfg.look, interp: cineCfg.interp, dofRange: cineCfg.dofRange, dofStrength: cineCfg.dofStrength, dofStrengthTo: cineCfg.dofStrengthTo, roll: cineCfg.roll, rollTo: cineCfg.rollTo, ease: cineCfg.ease, holdStart: cineCfg.holdStart, holdEnd: cineCfg.holdEnd, ev: cineCfg.ev||undefined, audio: cineCfg.audio||'' , shots2: (cineCfg.shots2||[]).map(s=>({ path:(s.path||[]).map(q=>q.slice()), lensFrom:s.lensFrom, lensTo:s.lensTo, focusOn:s.focusOn, focusFrom:s.focusFrom, focusTo:s.focusTo, dur:s.dur, look:s.look, interp:s.interp, dofRange:s.dofRange, dofStrength:s.dofStrength, dofStrengthTo:s.dofStrengthTo, roll:s.roll, rollTo:s.rollTo, ease:s.ease, holdStart:s.holdStart, holdEnd:s.holdEnd, ev:s.ev||undefined })), name: cineCfg.name||'Intro', others: (cineCfg.others||[]).map(o=>({ name:o.name, audio:o.audio||'', path:(o.path||[]).map(q=>q.slice()), lensFrom:o.lensFrom, lensTo:o.lensTo, focusOn:o.focusOn, focusFrom:o.focusFrom, focusTo:o.focusTo, dur:o.dur, look:o.look, interp:o.interp, dofRange:o.dofRange, dofStrength:o.dofStrength, dofStrengthTo:o.dofStrengthTo, roll:o.roll, rollTo:o.rollTo, ease:o.ease, holdStart:o.holdStart, holdEnd:o.holdEnd, ev:o.ev||undefined, shots2:(o.shots2||[]).map(s=>({ path:(s.path||[]).map(q=>q.slice()), lensFrom:s.lensFrom, lensTo:s.lensTo, focusOn:s.focusOn, focusFrom:s.focusFrom, focusTo:s.focusTo, dur:s.dur, look:s.look, interp:s.interp, dofRange:s.dofRange, dofStrength:s.dofStrength, dofStrengthTo:s.dofStrengthTo, roll:s.roll, rollTo:s.rollTo, ease:s.ease, holdStart:s.holdStart, holdEnd:s.holdEnd, ev:s.ev||undefined })) })) },
   };
 }
 // ---- Autosave: persist as you work so a browser close never loses progress ----
@@ -34605,7 +35406,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim;   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -34613,7 +35414,7 @@ function restoreLevel(level){
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); }
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
   triggerZones = Array.isArray(level.triggers) ? level.triggers.map(_migrateTrigger) : []; selTrigger=-1; _trigState.length=0; if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072
-  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  deathZones = Array.isArray(level.deathZones) ? level.deathZones.map(z=>_migrateDeathZone(z)) : []; if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); jumpPads = Array.isArray(level.jumpPads) ? level.jumpPads.map(z=>_migrateJumpPad(z)) : []; if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); ladders = Array.isArray(level.ladders) ? level.ladders.map(_migrateLadder) : []; if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); fireZones = Array.isArray(level.fireZones) ? level.fireZones.map(z=>_migrateFireZone(z)) : []; if(typeof refreshFireZones==='function') refreshFireZones(); waterZones = Array.isArray(level.waterZones) ? level.waterZones.map(_migrateWaterZone) : []; if(typeof refreshWaterZones==='function') refreshWaterZones(); fxZones = Array.isArray(level.fxZones) ? level.fxZones.map(_migrateFxZone) : []; selFxZone=-1; if(typeof refreshFxZoneMarkers==='function') refreshFxZoneMarkers(); if(typeof renderFxZonesPanel==='function') renderFxZonesPanel(); waterfalls = Array.isArray(level.waterfalls) ? level.waterfalls.map(_migrateWaterfall) : []; if(typeof refreshWaterfalls==='function') refreshWaterfalls(); if(typeof stopAudioZones==='function') stopAudioZones(); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
   fxCfg = _sanitizeFx(level.fx); deathFxCfg = _sanitizeDeathFx(level.deathFx); if(typeof renderImpactFxPanel==='function') renderImpactFxPanel();
   logicGraph = _sanitizeLogic(level.logic); if(typeof renderLogicPanel==='function') renderLogicPanel();
   persistVars = _sanitizePersist(level.persistVars); persistSave = !!level.persistSave; _persistLoad();   // build 1075
@@ -34634,7 +35435,7 @@ function restoreLevel(level){
   if(level.gun){ if(level.gun.url && level.gun.url!==gunModelUrl) swapGunModel(level.gun.url); Object.assign(editorTargets.gun.state, level.gun.state||{}); editorTargets.gun.apply(); }
   // per-weapon models + framing
   if(level.weapons && typeof level.weapons==='object'){
-    for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; WEAPONS[k].clips = wd.clips ? Object.assign(_wepClipBlank(k), wd.clips) : undefined; WEAPONS[k].noMuzzle = !!wd.noMuzzle; } else { WEAPONS[k].model=''; WEAPONS[k].view=null; WEAPONS[k].dmg=GUN_BASE_DMG[k]; WEAPONS[k].clips=undefined; WEAPONS[k].noMuzzle=false; } }
+    for(const k in WEAPONS){ const wd=level.weapons[k]; if(wd){ WEAPONS[k].model=wd.model||''; WEAPONS[k].view=wd.view||null; WEAPONS[k].dmg = (wd.dmg!=null) ? +wd.dmg : GUN_BASE_DMG[k]; WEAPONS[k].clips = wd.clips ? Object.assign(_wepClipBlank(k), wd.clips) : undefined; WEAPONS[k].noMuzzle = !!wd.noMuzzle; _wepApplyStats(k, wd.st); } else { WEAPONS[k].model=''; WEAPONS[k].view=null; WEAPONS[k].dmg=GUN_BASE_DMG[k]; WEAPONS[k].clips=undefined; WEAPONS[k].noMuzzle=false; _wepApplyStats(k, null); } }
     // drop cached models so they reload with their (possibly new) urls
     for(const k in gunModelByWep){ if(gunModelByWep[k]){ gun.remove(gunModelByWep[k]); gunModelByWep[k]=null; } _gunLoading[k]=false; }
     if(editorTargets.gun.syncFromWeapon) editorTargets.gun.syncFromWeapon();
@@ -35182,7 +35983,8 @@ function buildEditorPanel(){
         + '<div id="edJumpPads" class="zoneHost" data-zone="jumppads"></div>'
         + '<div id="edLadders" class="zoneHost" data-zone="ladders"></div>'
         + '<div id="edFireZones" class="zoneHost" data-zone="firezones"></div>'
-        + '<div id="edWaterZones" class="zoneHost" data-zone="waterzones"></div>')
+        + '<div id="edWaterZones" class="zoneHost" data-zone="waterzones"></div>'
+        + '<div id="edFxZones" class="zoneHost" data-zone="fxzones"></div>')
     + sec('Effects', 'wepfx',
           '<div id="edWepFxPicker"></div>'
         + '<div id="edImpactFx" class="wepfxHost" data-wepfx="impactfx"></div>'
@@ -35296,8 +36098,9 @@ function buildEditorPanel(){
         else if(type==='ladders'){ if(typeof addLadder==='function') addLadder(); }
         else if(type==='firezones'){ if(typeof addFireZone==='function') addFireZone(); }
         else if(type==='waterzones'){ if(typeof addWaterZone==='function') addWaterZone(); }
+        else if(type==='fxzones'){ if(typeof addFxZone==='function') addFxZone(); }
       };
-      const ZONE_ADD=[['audiozones','\ud83d\udd0a','Audio zone'],['deathzones','\u2620','Death zone'],['jumppads','\u2b06','Jump pad'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire zone'],['waterzones','\ud83d\udca7','Water zone']];
+      const ZONE_ADD=[['audiozones','\ud83d\udd0a','Audio zone'],['deathzones','\u2620','Death zone'],['jumppads','\u2b06','Jump pad'],['ladders','\ud83e\ude9c','Ladder'],['firezones','\ud83d\udd25','Fire zone'],['waterzones','\ud83d\udca7','Water zone'],['fxzones','\u2728','Effect zone']];
       const ADD_ITEMS=[
         ['\u25a0 Box',      ()=>{ jump('build','props');   addSceneProp('box'); }],
         ['\u25cf Sphere',   ()=>{ jump('build','props');   addSceneProp('sphere'); }],
@@ -35349,6 +36152,7 @@ function buildEditorPanel(){
   if(typeof refreshLadderMarkers==='function') refreshLadderMarkers();   // build 645: show ladder markers while editing
   if(typeof renderFireZonesPanel==='function') renderFireZonesPanel();
   if(typeof renderWaterZonesPanel==='function') renderWaterZonesPanel();
+  if(typeof renderFxZonesPanel==='function') renderFxZonesPanel();
   if(typeof renderTriggersPanel==='function') renderTriggersPanel();   // build 1072: trigger volumes
   if(typeof renderZonePicker==='function') renderZonePicker();        // build 649: the grouped Zones type picker
   if(typeof applyZoneVisibility==='function') applyZoneVisibility();   // ...and reveal only the active zone tool
@@ -36068,6 +36872,12 @@ function renderEditorFields(){
     { const b=subSec('Lighting','light',true);
       slider(b,'Sun (directional)','sun',0,4,0.05); slider(b,'Sky (ambient fill)','sky',0,3,0.05);
       slider(b,'Bounce (sun off the ground)','bounce',0,2,0.05); slider(b,'Brightness lift','ambient',0,2,0.05);
+      { const bl=document.createElement('label'); bl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0 2px;cursor:pointer;';
+        const bc=document.createElement('input'); bc.type='checkbox'; bc.checked=!!worldCfg.baked; bc.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+        bc.onchange=()=>{ pushUndoSnapshot(); worldCfg.baked=bc.checked; if(bc.checked){ if(typeof requestSceneBake==='function') requestSceneBake(); } else if(typeof unbakeScene==='function') unbakeScene(); };
+        const bs=document.createElement('span'); bs.textContent='Baked ambient occlusion (per-vertex)';
+        bl.appendChild(bc); bl.appendChild(bs); b.appendChild(bl);
+        hint(b,'Casts sky-visibility rays from every vertex of your static props \u2014 interiors and alcoves darken like they should. Runs in the background (a few seconds), saved as a flag so the level re-bakes wherever it opens. High-poly props bake best; a plain box only darkens at its corners.','1px 0 4px'); }
       hint(b,'','1px 0 4px').textContent='Bounce is one bounce of the sun off this level\u2019s own floor and walls \u2014 it fills shadows with the colour of the ground rather than more sky, and fades out with the sun at night. Turn it down for a hard, airless look; up for an open courtyard. Brightness lift is a flat white raise on everything, shadows included.';
       slider(b,'Sun direction °','sunAzim',0,360,1); slider(b,'Sun height °','sunElev',5,89,1);   // build 855: rotate the sun — shadows follow live
       hint(b,'','1px 0 4px').textContent='Direction spins the sun around the map (match it to your HDRI sky’s sun); Height is the angle above the horizon — low = long dramatic shadows, high = short noon shadows.';
@@ -36095,7 +36905,7 @@ function renderEditorFields(){
       colorRow(b,'Sky light color','skyColor');   // build 584: the hemisphere fill's hue (set near-neutral to remove any color cast)
       hint(b,'','2px 0 0').textContent='Sky light color tints the ambient fill from above. The default leans cool/teal; pick a neutral grey to remove the green cast.'; }
     { const b=subSec('Camera \u0026 view','cam',true);
-      slider(b,'Field of view','fov',50,110,1); slider(b,'View distance','viewDist',60,2000,10); slider(b,'Fog density','fogDensity',0,0.08,0.001); colorRow(b,'Fog color','fogColor');
+      slider(b,'Field of view','fov',50,110,1); slider(b,'View distance','viewDist',60,2000,10); slider(b,'Fog density','fogDensity',0,0.08,0.001); colorRow(b,'Fog color','fogColor'); slider(b,'Fog height falloff','fogHeight',0,0.2,0.005); slider(b,'Fog sun glow','fogSun',0,1,0.05); hint(b,'Height falloff thins fog with altitude (towers rise out of it, valleys pool). Sun glow warms the fog when you look toward the sun \u2014 cheap aerial perspective.','1px 0 4px');
       const gridRow=document.createElement('label'); gridRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:6px 0;cursor:pointer;';
       const gridCb=document.createElement('input'); gridCb.type='checkbox'; gridCb.checked=(worldCfg.grid!==false); gridCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
       gridCb.onchange=()=>{ pushUndoSnapshot(); worldCfg.grid=gridCb.checked; applyWorldCfg(); };
@@ -36122,6 +36932,7 @@ function renderEditorFields(){
       if(typeof _postOn!=='undefined' && _postOn){
         slider(b,'Bloom','postBloom',0,2,0.05); slider(b,'Motion blur','postMotion',0,0.95,0.02); slider(b,'Vignette','postVig',0,1,0.02);
         slider(b,'Film grain','postGrain',0,0.3,0.01); slider(b,'Saturation','postSat',0,2,0.02); slider(b,'Contrast','postCon',0.5,2,0.02); slider(b,'Bloom threshold','postThresh',0,1,0.02);
+        texRow(b,'https://\u2026/grade-lut.png (256x16 strip)','lut'); slider(b,'LUT strength','lutAmt',0,1,0.05); hint(b,'Color grade LUT: a standard 256\u00d716 (or 1024\u00d732) strip \u2014 screenshot the game, drop the shot into any photo editor with a neutral LUT strip, grade them together, crop the strip back out, host it, paste the URL. The whole look of the level follows.','1px 0 4px');
         slider(b,'Ambient occlusion','ssao',0,1,0.05); slider(b,'AO radius','ssaoRadius',0.1,4,0.1);   // build 1126
         hint(b,'','0 0 4px').textContent='Motion blur = trail strength. Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }
@@ -36314,6 +37125,12 @@ function renderEditorFields(){
       crow('Hold start', (CS.holdStart||0), 0, 10, 0.25, 's', v=>{ CS.holdStart=v; });
       crow('Hold end', (CS.holdEnd||0), 0, 10, 0.25, 's', v=>{ CS.holdEnd=v; });
       hint(b,'<b>Hold</b> freezes the framing before the move starts (establish) and after it ends (settle). Total shot time = hold start + duration + hold end.','0 0 4px');
+      { const r=document.createElement('label'); r.style.cssText='display:flex;align-items:center;gap:8px;font-size:11px;color:#9fe6cf;margin:4px 0;';
+        const sp=document.createElement('span'); sp.textContent='On start, fire event'; sp.style.minWidth='110px';
+        const ti=document.createElement('input'); ti.type='text'; ti.placeholder='(none)'; ti.value=CS.ev||''; ti.style.cssText='flex:1;min-width:0;font-size:11px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;';
+        ti.onchange=()=>{ pushUndoSnapshot(); CS.ev=ti.value.trim().slice(0,60); };
+        r.appendChild(sp); r.appendChild(ti); b.appendChild(r);
+        hint(b,'Build 1196: the shot pulses the logic graph\u2019s matching <b>event</b> node the moment it starts \u2014 walk an actor to its mark with <i>moveprop</i>, play an animation, open dialogue, spawn the ambush. Chain shots for a directed sequence. (Not fired from the editor preview.)','0 0 4px'); }
       crow('Dutch start', (CS.roll||0), -60, 60, 1, '\u00b0', v=>{ CS.roll=v; });
       crow('Dutch end', (CS.rollTo!=null?CS.rollTo:(CS.roll||0)), -60, 60, 1, '\u00b0', v=>{ CS.rollTo=v; });
       hint(b,'<b>Dutch / roll</b> tilts the horizon about the view axis. Equal start/end holds the tilt; different values roll the camera across the shot. Preview to see it.','0 0 4px');
@@ -36839,6 +37656,32 @@ function renderEditorFields(){
       const wst=document.createElement('div'); wst.className='hint'; wst.style.margin='2px 0 0';
       const n0=(gameCfg.waves||[]).length; wst.textContent=n0?('Authored: waves 1\u2013'+n0+' \u00b7 formula takes over from wave '+(n0+1)):'No manifest \u2014 formula waves.';
       bWav.appendChild(wst);
+    }
+    { // build 1191: per-type enemy tuning — blank = factory; saved with the level
+      const eh=document.createElement('div'); eh.className='hint'; eh.style.margin='10px 0 3px';
+      eh.innerHTML='<b>Enemy tuning</b> \u2014 hp / damage / speed\u00d7 per type (blank = factory)';
+      bWav.appendChild(eh);
+      const _emGet=(k,f)=>{ const m=gameCfg.enemyMods&&gameCfg.enemyMods[k]; return (m&&m[f]!=null)?m[f]:''; };
+      const _emSet=(k,f,v)=>{ pushUndoSnapshot(); const o=Object.assign({}, gameCfg.enemyMods||{}); const e=Object.assign({}, o[k]||{});
+        if(v===''||!isFinite(+v)) delete e[f]; else e[f]=+v;
+        if(Object.keys(e).length) o[k]=e; else delete o[k];
+        gameCfg.enemyMods=_sanitizeEnemyMods(o); };
+      const hdr=document.createElement('div'); hdr.style.cssText='display:flex;gap:4px;font-size:10px;color:#6f8f88;margin:0 0 2px;';
+      for(const t of ['type','hp','dmg','spd\u00d7']){ const c=document.createElement('span'); c.textContent=t; c.style.cssText=(t==='type')?'flex:0 0 74px;':'flex:1;text-align:center;'; hdr.appendChild(c); }
+      bWav.appendChild(hdr);
+      for(const ek of ENEMY_TYPE_KEYS){
+        const row=document.createElement('div'); row.style.cssText='display:flex;gap:4px;margin:1px 0;align-items:center;';
+        const nm=document.createElement('span'); nm.textContent=(ENEMY_TYPES[ek]&&ENEMY_TYPES[ek].name)||ek; nm.style.cssText='flex:0 0 74px;font-size:11px;color:#9fc0b8;';
+        row.appendChild(nm);
+        for(const [f, ph] of [['hp', String(ENEMY_BASE[ek]?ENEMY_BASE[ek].hp:'')], ['dmg', String(ENEMY_BASE[ek]?ENEMY_BASE[ek].dmg:'')], ['spd', '1']]){
+          const ip=document.createElement('input'); ip.type='number'; ip.placeholder=ph; ip.value=_emGet(ek,f);
+          ip.step=(f==='spd')?'0.05':'1'; ip.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
+          ip.onchange=()=>{ _emSet(ek,f,ip.value); ip.value=_emGet(ek,f); };
+          row.appendChild(ip);
+        }
+        bWav.appendChild(row);
+      }
+      hint(bWav, 'Applies at spawn \u2014 already-spawned enemies keep their stats. Speed multiplies the type\u2019s min AND max, so its gait variety survives.', '2px 0 0');
     }
     const ugLab=document.createElement('label'); ugLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 2px;cursor:pointer;';
     const ugCb=document.createElement('input'); ugCb.type='checkbox'; ugCb.checked=(gameCfg.upgrades!==false); ugCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
@@ -38030,6 +38873,23 @@ function renderEditorFields(){
       const dreset=document.createElement('button'); dreset.textContent='Default ('+GUN_BASE_DMG[curWep]+')'; dreset.style.cssText='flex:0 0 auto;font-size:10px;padding:3px 8px;';
       dreset.onclick=()=>{ pushUndoSnapshot(); WEAPONS[curWep].dmg=GUN_BASE_DMG[curWep]; dinp.value=GUN_BASE_DMG[curWep]; };
       drow.appendChild(dinp); drow.appendChild(dreset); urlHost.appendChild(drow);
+      // build 1190: the FULL stat sheet — fire rate, magazine, ammo, spread, reload, pellets — per level.
+      if(!WEAPONS[curWep].melee){
+        const sh2=document.createElement('div'); sh2.className='hint'; sh2.style.margin='10px 0 2px';
+        sh2.innerHTML='<b>Stats</b> \u2014 '+wnD+' (saved with the level; blank levels play factory)';
+        urlHost.appendChild(sh2);
+        const DEFS=[ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1] ];
+        for(const [sk, lbl, stp] of DEFS){
+          const r=document.createElement('div'); r.className='row2'; r.style.margin='2px 0';
+          const lb=document.createElement('span'); lb.textContent=lbl; lb.style.cssText='flex:0 0 108px;font-size:11px;color:#9fc0b8;';
+          const ni=document.createElement('input'); ni.type='number'; ni.step=String(stp); ni.style.cssText='flex:1;min-width:0;font-size:12px;';
+          ni.value=WEAPONS[curWep][sk];
+          ni.onchange=()=>{ pushUndoSnapshot(); const st={}; st[sk]=+ni.value; const keep={}; for(const s2 of GUN_STAT_KEYS) keep[s2]=(s2===sk)?+ni.value:WEAPONS[curWep][s2]; _wepApplyStats(curWep, keep); ni.value=WEAPONS[curWep][sk]; };
+          const rs=document.createElement('button'); rs.textContent='\u21ba '+GUN_BASE[curWep][sk]; rs.title='Reset to factory'; rs.style.cssText='flex:0 0 auto;font-size:10px;padding:3px 7px;';
+          rs.onclick=()=>{ pushUndoSnapshot(); const keep={}; for(const s2 of GUN_STAT_KEYS) keep[s2]=(s2===sk)?GUN_BASE[curWep][sk]:WEAPONS[curWep][s2]; _wepApplyStats(curWep, keep); ni.value=WEAPONS[curWep][sk]; };
+          r.appendChild(lb); r.appendChild(ni); r.appendChild(rs); urlHost.appendChild(r);
+        }
+      }
     }
     if(tgt===editorTargets.gun){   // per-weapon shoot sound (moved here from the old Sounds tab)
       if(!audioSettings.sounds) audioSettings.sounds=_emptySounds(); if(!audioSettings.sounds.shoot) audioSettings.sounds.shoot={};
@@ -40654,6 +41514,7 @@ function startGame(){
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _wakeLockTry==='function') setTimeout(_wakeLockTry, 0);   // build 908: keep the phone awake during play (gameOn is set below; next tick reads it true)
   if(typeof _prewarmMatchModels==='function') _prewarmMatchModels();   // kick off known players' character GLBs BEFORE the gate so the loader waits for them
+  if(typeof requestSceneProbe==='function') requestSceneProbe();   // build 1186: reflections of THIS level, captured once it settles
   if(_levelAssetsPending()){ showLevelLoader(); waitAssetsThenReveal(); }   // hold a loading screen so assets (models, sky, textures) don't pop in mid-game
   clearMovementInput();   // start fresh: no input held over from a previous round/death
   mapWaypoint=null;   // drop any waypoint left over from a previous mission (e.g. a solo marker bleeding into a multiplayer round)
@@ -40676,10 +41537,9 @@ function startGame(){
   flashlightOn=false; if(_flashlight){ _flashlight.intensity=0; }   // flashlight off at the start of a run (stays visible at 0 — see ensureFlashlight)
   if(gameCfg.flashlight && typeof ensureFlashlight==='function') ensureFlashlight();   // build 977: pre-warm — the spotlight joins the scene during level start, so shaders compile once here, not on the first L press
   if(typeof logicStart==='function') logicStart();   // build 1027: fresh variables/timers, then the graph's 'On start' chains fire
-  WEAPONS.rifle.mag=30; WEAPONS.rifle.reserve=90;
-  WEAPONS.smg.mag=40; WEAPONS.smg.reserve=120;
-  WEAPONS.shotgun.mag=6; WEAPONS.shotgun.reserve=24;
-  WEAPONS.sniper.mag=5; WEAPONS.sniper.reserve=20;
+  // build 1190: every gun resets from its (possibly authored) stat sheet. The old four hardcoded lines
+  // also silently never reset the PISTOL or the LAUNCHER — spent ammo carried across runs since 976.
+  for(const _wk in WEAPONS){ const _w=WEAPONS[_wk]; if(_w.magSize>0){ _w.mag=_w.magSize; _w.reserve=Math.min(_w.reserve0!=null?_w.reserve0:_w.reserve, _w.reserveMax); } }
   reloading=false; score=0; wave=1; credits=0; grenadeCount=0; runKills=0; playerKeys={}; if(typeof renderKeyChips==='function') renderKeyChips();
   for(const o of propModels){ if(o && o.userData){ delete o.userData._sigCount; delete o.userData._sigSrc; delete o.userData._sigEvt; delete o.userData.unlocked; } }   // fresh run: counters back to zero, locked props re-lock (the hint always promised per-deploy)
   if(typeof initSceneLights==='function') initSceneLights();   // build 699: "start off" lights begin dark until a signal lights them

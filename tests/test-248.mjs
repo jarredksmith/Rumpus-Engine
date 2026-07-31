@@ -10,7 +10,7 @@ near(s1.dur, 2, 1e-9); near(s2.lensFrom, 80, 1e-9);
 assert(/const raw = Array\.isArray\(data\.shots\) \? data\.shots : \[data\];/.test(extractFunction('startCinematic')), 'legacy single-shot callers still accepted');
 assert(/_cineShots = raw\.filter\(s=>s && s\.path && s\.path\.length\)\.map\(_normCineShot\);/.test(extractFunction('startCinematic')), 'empty shots are dropped before play');
 const uc = extractFunction('updateCinematic');
-assert(/if\(_cineShots && _cineShotIdx < _cineShots\.length-1\)\{ _cineShotIdx\+\+; _cineData=_cineShots\[_cineShotIdx\]; _cineT=0; \}/.test(uc), 'shot end hard-cuts to the next shot');
+assert(/if\(_cineShots && _cineShotIdx < _cineShots\.length-1\)\{ _cineShotIdx\+\+; _cineData=_cineShots\[_cineShotIdx\]; _cineT=0; _cineFireShotEv\(_cineData\); \}/.test(uc), 'shot end hard-cuts to the next shot (and since 1196 fires its event)');
 assert(uc.indexOf('else endCinematic();') > uc.indexOf('_cineShotIdx++'), 'sequence ends only after the last shot');
 
 // --- duration cap raised per shot ---

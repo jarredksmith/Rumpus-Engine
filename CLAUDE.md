@@ -1493,9 +1493,435 @@ Three pins moved with it, all preserving their intent rather than their literal:
 still a capped SLIDE, and 3.5 is still the floor for a standing huddle), and builds' 16 and 67 "footprint is
 auto, decoupled from the collider radius" — still true, from a different constant.
 
-## Open work (as of build 1180)
+## The fog learns altitude and where the sun is (build 1181)
 
-Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
+Fog was one global `FogExp2` — a single colour at every height, blind to the sun. Overriding three's OWN
+fog chunks (`fog_pars_vertex/fog_vertex/fog_pars_fragment/fog_fragment`) patches every built-in material in
+one place: an exp height falloff (`fogHeight`, towers rise out of the fog, valleys pool — applied to the
+OPTICAL DEPTH under exp2, so both fog models keep it) and a warm inscatter lobe looking down-sun (`fogSun`,
+pow-8, colour `fogColor*[1.30,1.08,0.75]+[0.22,0.11,0.02]`). Raw ShaderMaterials (sky, water) untouched by
+design. `renderScene` feeds `_sunDir()` NEGATED (it points sun→scene; inscatter wants toward the sun).
+
+**The uniform plumbing was a silent no-op as first written, and the real three build said so before any
+capture could.** The plan — "extend `UniformsLib.fog` with PLAIN-OBJECT values; `UniformsUtils.clone`
+copies plain objects by reference, so every material's per-material clone shares them, one CPU write per
+frame" — is true about clone (verified: Vector3 deep-clones, plain object rides by reference), but
+**ShaderLib merged `UniformsLib.fog` at module load**, so a late add to the lib reaches NOTHING:
+`initMaterial` clones `ShaderLib[id].uniforms` and `seqWithValue` silently DROPS any program uniform with
+no value — both uniforms would sit at GL zero forever, which is exactly "falloff 0 + inscatter 0", a
+perfectly plausible-looking frame. So the engine also walks `ShaderLib` and adds both uniforms to every
+entry whose uniforms carry `fogColor`. The same pre-test run caught a second silent kill: **the sprite
+vertex shader has no `transformed`** (no `begin_vertex`), so the shared `fog_vertex` would fail to compile
+there and every fogged Sprite — the muzzle flash — would VANISH, build 1127's raw-shader trap. Sprites get
+their fog include string-replaced to fog at their world ORIGIN. Instanced meshes apply `instanceMatrix`
+inside the chunk (`project_vertex` folds it into `mvPosition`, never into `transformed`) or every batched
+prop would fog at the batch origin. `test-1181` drives ALL of this against the real three build — the clone
+semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
+(optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
+
+## The meter was stalling the pipeline it was measuring (build 1182)
+
+Reported from play the day 1180 shipped: **any auto-exposure strength above 0 produced visible stutter on
+all visuals, with no fps drop.** That signature — time lost with the frame counter unmoved — is a pipeline
+STALL, not a load: `readRenderTargetPixels` is synchronous, so every 5th frame the CPU drained the entire
+queued GPU frame before copying 1 KB. A 12Hz judder the fps counter cannot see, because the time went to
+waiting, not working. (Strength 0 was smooth, which is what implicated the readback: the blit is a 16×16
+draw and the easing is arithmetic — the sync read was the only candidate left.)
+
+The metering now lives in `_aeMeter()` and reads back asynchronously: `readPixels` into a
+`PIXEL_PACK_BUFFER` (returns immediately), `fenceSync` behind it, and a harvest that polls
+`clientWaitSync(fence, 0, **0**)` — timeout zero, so the poll can never become the very block it replaces.
+The pixels arrive a few frames late, which a ~1s eased eye cannot show. Four details that are each a bug
+if lost:
+- **One read in flight at a time** (`!_aeFence && (++_aeFrame % 5)===0`) — issuing over a pending read
+  would need a PBO ring for nothing; the cadence just skips a beat.
+- **`PIXEL_PACK_BUFFER` is unbound immediately** — three's own `readRenderTargetPixels` (cine preview,
+  thumbnails, captures) would otherwise write into our PBO instead of its client array.
+- **WebGL1 has no PBO/fence: the meter is gated on `capabilities.isWebGL2` and auto-exposure goes quietly
+  INERT there** — a missing feature beats reintroducing the stutter on the devices least able to hide it.
+- **Strength 0 mid-flight deletes the pending fence**; `WAIT_FAILED` and a thrown call (context loss) drop
+  the GL objects and fall back to neutral, and the next 5th frame re-issues.
+
+`test-1182` drives the real extracted `_aeMeter` with a stub GL through all of it — including a renderer
+stub whose `readRenderTargetPixels` THROWS, so the sync path cannot quietly come back — and pins that every
+`clientWaitSync` in it passes timeout 0. Worth generalising: the engine's other readbacks (cine preview
+window, level thumbnails) are user-initiated one-offs where a stall is invisible; anything that reads the
+GPU back **every frame or on a cadence** must use this pattern.
+
+## Soft particles, and smoke that knows what time it is (build 1183)
+
+A flipbook quad slicing through world geometry drew a hard line across the intersection — the classic
+billboard artifact, on the biggest sprites in the game (explosions grow to ~4m). The AO G-buffer (1126)
+already holds the scene's view distance at half res, swept clean of everything that doesn't write depth
+(1152/1158) — **including these very sprites** — so it is exactly the "world behind the particle" a soft
+fade needs, for free. `_softSprite(mat, band)` patches `SpriteMaterial` via `onBeforeCompile` (a patched
+built-in, per 1145 — never a raw ShaderMaterial), fading `diffuseColor.a` over a band that scales with the
+sprite (30% of its size). Uniforms are shared BY REFERENCE (1181's trick — but assigned into
+`shader.uniforms` directly in `onBeforeCompile`, which does not have 1181's ShaderLib-merge problem).
+
+The details that are each a bug if lost:
+- **A cleared G-buffer texel is SKY and must read as INFINITELY FAR** (`(r+g+b) < 0.3 ? 1e6 : a` — 1126's
+  geometric test). Without it, every sprite fades out against the sky.
+- **The fade reads LAST frame's buffer** (the prepass runs after the scene pass). One frame of lag on a
+  fade band is invisible; sampling this frame's buffer is impossible anyway.
+- **Gated on the same `_aoWant` that keeps the buffer fresh**, fed beside it; the plain render path (post
+  off) writes the gate OFF, or sprites would sample a frozen buffer. AO off = hard edges, never stale data.
+- **Muzzle is deliberately HARD, and viewmodel sprites are never softened** — a flash lives centimetres
+  from a gun; the geometry behind it is at nearly its own depth, so a soft fade only dims every shot.
+- **`customProgramCacheKey` is a constant and `warmFlipbookShaders` compiles the soft variant at load** —
+  the first explosion must not compile a new program mid-combat (the 622/1153 freeze, by a new door).
+- **Both `replace()` anchors are pinned against the REAL three build** in `test-1183` — a renamed chunk
+  makes a string-replace a silent no-op, which is how 1181 nearly shipped nothing.
+
+Scene-lit smoke: the smoke sheet is unlit white, so it GLOWED at night. `lit:true` scales the material
+colour by `0.30 + 0.70*dayF` at spawn — luminance only, floored so it never goes black, exactly 1 when the
+day cycle is off (so no existing level changes by a single code value unless it uses the cycle).
+
+## The water joins the colour pipeline (build 1184)
+
+The water surface, the waterfall sheets and the plunge foam were the last raw ShaderMaterials writing
+straight `gl_FragColor` — no ACES, no exposure, no fog. So water ignored the filmic response, the creator's
+exposure, 1180's auto-exposure and 1181's height fog: a lake at dusk sat at its own private brightness
+inside a fogged, graded frame. Each now applies the SHARED `_ACES_GLSL` (the dome's `uTM`/`uExpo` pair —
+`uTM 0` returns the input untouched, so filmic-off is byte-identical to the old shader) and ends in the
+engine's own `fog_fragment` chunk, tone-map before fog, three's own order.
+
+The mechanism worth keeping: **`material.fog = true` on a ShaderMaterial makes three refresh
+`fogColor`/`fogDensity` per frame — but it writes into uniforms the material must already HAVE, and throws
+on one that doesn't.** `_waterFogUniforms()` supplies the set once for all four materials: fog colour +
+density with real initial values, plus `fogSunDirW`/`fogHeightP` riding 1181's shared plain objects by
+reference (one CPU write reaches the water too), plus `uTM`/`uExpo`. The vertex shaders write
+`vFogDepth`/`vFogWorldPos` directly under `#ifdef USE_FOG` — the shared `fog_vertex` chunk needs
+`transformed`, which these shaders don't have (the sprite lesson from 1181, applied preemptively).
+
+The surface also gains a soft SHORELINE: 1183's G-buffer read (sharing the same `_SOFT_GEO`/`_SOFT_P`
+uniform wrappers outright), fading the disc's rim over ~0.7 m where the ground sits just behind the
+surface along the view ray. `vVZ` is view-Z — the same quantity the buffer stores; a euclidean distance
+would tilt the band with view angle. Same freshness gate: AO off = the old hard rim, never stale depth.
+
+Exposure is read LIVE (`renderer.toneMappingExposure` = base × auto), so the water breathes with 1180's
+eye adaptation instead of ignoring it. Two pins moved (868 — sheets/foam still dim with `uLight`, now
+inside `_aces(...)`; 858 — a `{0,1600}` window widened to 2400, anchor unchanged). NOT capture-verified:
+water needs a browser pass — the zone panel, a waterfall, dusk with the day cycle, and the shoreline with
+AO on and off.
+
+## Two-cascade sun shadows (build 1185)
+
+The rendering critic's #1 CRITICAL, and the oldest visible defect in the engine: one shadow volume was a
+trade with no right answer — tight (build 1120's fit) gives sharp contacts and a HARD CLIFF where shadows
+end ("the world floats" past `shadowDist`); wide gives no cliff and mud everywhere. Now the near volume
+stays exactly 1120's camera-following fit and **`moonFar`** — a second directional light, seated at BOOT
+because the light count must never change during play (636/977/1153/1155), desktop only — covers **4×**
+that extent behind it. Each fragment takes the sun from exactly ONE cascade.
+
+The pick is by COVERAGE, not by a split distance: a chunk patch after `getDirectionalLightInfo` reads the
+near map's own projected coord (`vDirectionalShadowCoord[0]`, 2% margin) — a derived split distance gets
+the screen corners wrong (they leave the near volume laterally before they leave it in depth); the coord
+cannot be wrong about what the map covers. Three guards, each load-bearing:
+- **`#if NUM_DIR_LIGHT_SHADOWS >= 2`** keeps the gate out of every scene that isn't running the cascades —
+  the thumbnail/inspector rigs are two-directional-light setups whose rim light this must not touch.
+- **`USE_SHADOWMAP` absent** (an object with `receiveShadow=false` — the nocollide grass) cannot read the
+  coord; it takes the NEAR sun unshadowed. Without that branch such objects receive BOTH suns = 2× light.
+- **`csmSunP.y`** (shared plain object; the value walked into every merged lit `ShaderLib` entry — 1181's
+  lesson, reproven in `test-1185`) is the runtime switch: 0 on phones, where a creator's own two
+  shadow-casting directionals could otherwise trip the compiled gate.
+
+The far fit lives inside `_fitSunShadow`: snapped to its OWN 4×-coarser texel grid (snapping to the near
+grid would slide it a fraction of its own texel per step — `test-1185` proves whole-texel movement along
+the fit's own axes); the light stands `D = 90 + F` back so the whole ±F volume fits its depth range (a
+light left on the 90 orbit would spill ~110 units behind itself at F=240); `normalBias` is 1125's texel
+rule at the far map's own scale with its own cap (the near 0.6 cap is a near-volume quantity — clamping
+the far bias to it would acne every distant surface). Colour/intensity/visibility mirror `moon` every call
+BEFORE the early return, because the day cycle writes them per frame. Sun→scene direction is measured
+target-relative (`moon.position - _sunTarget.position`) — `normalize(moon.position)` is only the light
+direction when the target sits at the origin, which 1120's own snap axes still assume (pre-existing,
+harmless for a grid, left alone).
+
+Costs and residue, stated plainly: every shadow refresh now renders two maps (desktop only); the cliff
+still exists at 4× `shadowDist` (240 m default) — SSAO and distance carry past that; the cascade seam can
+show a resolution step. NOT capture-verified — the browser pass should walk a big generated arena and look
+for the seam, distant acne, and grass brightness (the 2×-light guard). One harness moved (1120 — its
+scope gained the null `moonFar`, so it now drives the phone path; 1185 drives the far cascade).
+
+## The scene reflection probe, and the capture that was measuring build 1156 (build 1186)
+
+`scene.environment` was the SKY alone — a chrome sphere in a courtyard reflected bare sky through the
+walls around it. The probe now renders the REAL scene from the spawn's eye into a 128 cube at deploy (two
+shots: +1.2s and +9s, for slow assets), inverts the ACES that is baked into every material's program
+(switching `renderer.toneMapping` off to render clean would RECOMPILE every shader — the 636/977/1153
+freeze), PMREMs the result, and supersedes the sky-only probe in `applySky`. The inverse matrices are the
+numeric inverses of `_ACESin`/`_ACESout`; `test-1186` re-derives them from the forward pair in the source
+(1151's pattern) and round-trips the full fit to 1e-3. Values ACES clipped past ~1.0 are unrecoverable —
+probe highlights saturate where the frame's did. Phones keep the sky-only probe; an authored HDRI outranks
+everything; the day cycle rebuilds at most every 3s.
+
+**First: every capture this stretch had been measuring build 1156.** `drive.mjs` serves
+`scratchpad/head.html` — a SNAPSHOT — and the byte-identical frame means that "verified" builds 1181-1185
+were the snapshot agreeing with itself. Build 1124 said know where the camera is; 1151 said know what
+surface you are measuring; the completion is **know what BUILD you are measuring** — stamp it or diff it.
+`head.html` must be refreshed from the repo before any capture run.
+
+The real captures then found two shipped bugs in this very build:
+- **The dome followed `cam.position` — a CubeCamera's face cameras are CHILDREN, local position (0,0,0).**
+  So the dome teleported to the world origin for every probe face and the probe rendered a BLACK sky.
+  Found by reading the probe's own cube back (sky face 11/255 where ~180 belongs) — the frame alone only
+  showed the symptom: the env-lit viewmodel crushed to 0,0,0 (the weapon's fill IS the environment —
+  `_drawViewmodel` mirrors `scene.environment` into `vmScene`). Fixed with `getWorldPosition` into a
+  scratch vector; every camera the engine will ever render through now carries the dome correctly.
+- **Scaling the whole probe by `worldCfg.sky` was wrong, measured twice over.** Geometry radiance already
+  contains the sun and the sky-scaled ambient — scaling it again dimmed every reflection 3× (weapon region
+  70,74,67 vs 95,101,94; whole frame −8). The scale now applies to the SKY ALONE, at the dome, during the
+  cube pass (`_spSkyScale`, restored in a `finally`): sky pixels match the old probe exactly, geometry
+  passes at 1.
+
+Measured residue, stated plainly: whole frame 134,146,150 → 129,141,147 (−3.7%) because the probe's lower
+hemisphere is the level's REAL ground radiance rather than the sky model's brighter painted band — a
+physically honest shift; and the weapon reads blue-steel (region 95,101,94 → 75,82,80): its top rail
+carries the sky, its sides the ground, which is what reflecting the world means for the one metal object
+always on screen. Auto-exposure separately measured +22 code values on this frame (its dead-zone does not
+hold at the stock frame's log-average — worth knowing when comparing captures across 1180).
+
+Three pins moved (1119, 1127 — dome-follow and dome-exposure took the new forms; 1186's own uScale pin).
+
+## LUT colour grade (build 1187) — and a Phase-3 item that died on verification
+
+The roadmap item was "creator texture slots on primitives + LUT grade". The first half is DEAD ON
+VERIFICATION: primitives have had full texture slots since the 871 era — `applyPropTexture` (albedo),
+`texN`/`texR` PBR maps, per-prop tiling (`texRepeat`) and rotation (`texRot`), a web texture picker
+(`applyPropTexturePBR`), all serialised through `p.mat`. Same lesson as the raycast-BVH claim (1159):
+every critic claim is a hypothesis until the grep comes back.
+
+The LUT grade is real and shipped. A standard N*N × N strip (256×16 or 1024×32 — the Unreal/GTA
+convention, green DOWN each tile, blue across tiles) applies in the composite immediately after
+contrast/saturation and before vignette/grain — the frame is DISPLAY-REFERRED there (1117 moved the grade
+after the encode), which is exactly what LUT strips are authored against, so no transfer math exists to
+get wrong. Decisions that are each a bug if lost:
+- **Loaded RAW** — an sRGB tag would decode the texels and corrupt a display-to-display mapping. `flipY`
+  off so the green axis is deterministic; no mips (a mip of a LUT is a different grade); clamp wrapping;
+  bilinear does the in-tile r/g interpolation and two taps mix across the blue tiles.
+- **Half-texel insets** keep red=1 on the LAST texel centre of its own tile — `test-1187` drives the exact
+  formula against a JS identity strip (returns its input to 1/60) and pins the no-tile-bleed corners.
+- **Absent = amount 0** (`_lutMap ? _postLutAmt : 0`): no LUT, a failed load, or a rejected image is
+  EXACTLY the old grade, never a black lookup. Rejection is loud and validates `width === height²`.
+- The loader counts `_texPending` (the level loading gate), survives url races (a stale load that lost is
+  disposed, not applied), and clearing the url disposes. `worldCfg.lut`/`lutAmt` ride the whole-object
+  world serialisation for free; the UI is a `texRow` + strength slider beside the grade sliders, with a
+  hint describing the standard workflow (screenshot → grade with a neutral strip in any editor → crop →
+  host → paste).
+
+**FIFTH container rollback recovered during this build** — same signature (BUILD_VERSION regressed to 1182,
+`git log` at the old HEAD), caught by a scripted edit's own anchor assert (the bump expected 1186 and found
+1182 — and because the script writes only at the end, the mismatch aborted it atomically). All of 1183-1186
+were already pushed; recovery was one fetch + reset, and the 1187 re-apply was free. The capture snapshot
+(`scratchpad/head.html`) must be re-copied after any rollback recovery too.
+
+## The collider grid (build 1188) — PHASE 4 OPENS
+
+Build 1148's tight collider tripled the box count (795 → 2,291 on a 3-storey block) and every hot query
+still walked the WHOLE collider list: the per-enemy obstacle resolve, per-bolt hit tests, `segmentBlocked`
+(AI line-of-sight), `_surfCull` under every bot, `clearAt`/`ceilingAt`/`insideSolid`. An 8m XZ hash over
+each collider's overall box (`_cgQuery`) turns those walks into a few cell lookups. Eight consumers
+converted — with **byte-identical loop bodies**: the grid replaces only where candidates come from, never
+what is done with them, and `test-1188` proves the superset property (300 random queries, zero misses vs
+the linear walk) rather than trusting the hash.
+
+The design decisions that carry the correctness:
+- **Movers are never hashed.** A physics body, a running xa animation, a kinematic body, or a collider
+  with no box yet lives in a side list appended to EVERY query — their boxes change per frame, and
+  re-hashing movers per frame would cost more than the walk ever did.
+- **Classification self-heals through the stale flag.** A static prop that starts moving dirties the grid
+  on its first `refreshPropCollider` (its stamp still says static), one rebuild reclassifies it, and after
+  that its per-frame refreshes are stamp-guarded and rebuild nothing. Adds/removes are caught by a length
+  check, so no push/splice site needs to know the grid exists; the one same-length swap site (the power
+  station) calls `refreshPropCollider` and is caught by the flag.
+- **One scratch array per consumer.** `clearAt` calls `surfaceTopAt` (through `_surfCull`) before its own
+  query; a shared scratch would be clobbered the day that order matters (1168's rule).
+- **A query rect must cover the consumer's own coarse-reject margin** (`clearAt` ±R, the enemy resolve
+  ±eR, `_surfCull` ±0.3, point tests ±CB_EPS) — that is what makes the superset exact. `segmentBlocked`
+  queries the segment's bbox: a crossed box contains a sample point, and every sample lies on the segment.
+- Outside ±4096 the key clamps into edge cells — conservative, never wrong.
+
+Three harnesses moved (32, 303 — pass-through `_cgQuery` injected, the 1122 precedent: those tests are
+about the blocking logic, not candidate sourcing; 32's cover pin now names the grid).
+
+## Ranged enemies use the level (build 1189)
+
+PvP bots have hunted, flanked and broken for cover since 1003-1006; PvE gunners held a standoff ring and
+strafed — competent, but they never USED the level. The port takes the bot brain's two best moves:
+- **Cover break.** A hit that drops a gunner under its bravery fraction (0.30-0.45, rolled per individual
+  so a squad doesn't break in unison) sends it to real cover for a ~2.5s beat, then it re-engages; a 9s
+  cooldown stops it turtling. **Cover is a BEAT, not a state** — PvE enemies don't heal, so a health-gated
+  state (the bots' shape) would turtle forever; the trigger is EDGE-based (hp dropped this frame), which
+  `test-1189` replays. `_botFindCover` is reused VERBATIM through a `{pos:{x,y,z}}` shim — it only reads
+  `.pos`, proven by driving it with enemy-shaped input. Firing already requires `_see`, so cover going up
+  silences the gun with no extra gate. No cover found (open field) = the trigger simply never fires.
+- **Flank.** With the player unseen, the gunner approaches the last-known spot from a side angle — the
+  bots' exact 0.7-radian / 5-metre shape, pinned as shared between both AIs. This also removes a quiet
+  wallhack: the old block steered toward the player's LIVE position even when unseen.
+
+The gunner opts in (`cover:true`); the BOSS deliberately does not (a boss doesn't cower); melee types are
+untouched — closing is their whole design. The original standoff/strafe body survives byte-identical as
+the seen-and-healthy branch. The roadmap item's "+ trace bot bullets" half is deferred to its own build.
+
+## The weapon stat sheet (build 1190) — and two roadmap halves that died on verification
+
+Verification kills first, recorded so they stay dead:
+- **"Trace bot bullets"** — `remoteFire` has drawn the tracer, impact spark, decal, muzzle flash and
+  positional audio for every bot shot since build 1020.
+- **"Cell-hash the enemy separation"** — the pass is O(N²) but waves cap at ~40-60, so it is ~1,800 pairs
+  of a half-dozen float ops per frame. Arithmetic, not a hotspot; the collider walks 1188 removed were the
+  real cost.
+
+The real gap: damage has been per-level since 623, but fire rate, magazine, start/max ammo, spread,
+reload and pellets were engine constants — "every level plays the same seven guns". They now follow
+damage's exact pattern: `GUN_BASE` (the factory baseline, captured from the live table at boot), only
+CHANGED values serialized (an `st` object per weapon, diffed against base), all three loaders (boot, net,
+restore) applying through **one clamped helper** (`_wepApplyStats`) so a hostile level file cannot set a
+0ms fire rate or 10,000 pellets through any door — clamps proven executable in `test-1190`. Weapons a
+level does not mention reset to factory (net + restore), so tuning never leaks between levels. The editor
+exposes the sheet under the gun's damage row (guns only — fists have no magazine), writing through the
+same helper, each field with a reset-to-factory button.
+
+**Found and fixed on the way: `startGame`'s ammo reset was four hardcoded lines covering four of seven
+guns** — the pistol and launcher carried spent ammo across runs since build 976. The reset is now a loop
+over every gun's (possibly authored) sheet; `test-1190` executes it and proves the four old guns get
+byte-identical values at factory settings while the pistol finally resets too. Four pins moved (227, 229,
+476, 530 — the reducer gained `st`, the reset became the loop; each keeps its assertion's intent).
+
+## Per-level enemy tuning (build 1191)
+
+The wave manifest (1179) authors COMPOSITION; the stat sheet (1190) authors the guns; the enemies
+themselves were engine constants. Each type's hp, damage and speed are now level-authorable through the
+1190 pattern: `ENEMY_BASE` captured at boot, `gameCfg.enemyMods` carrying only-changed values, ONE clamped
+sanitizer (`_sanitizeEnemyMods`) on every path in AND out — boot, both loaders, and the SERIALIZER, so
+nothing out-of-range ever enters a share code (hp floor 1, dmg cap 999, speed 0.25-3×). Speed is a
+MULTIPLIER of the type's min and max together, so gait variance survives tuning. Application is at SPAWN
+TIME via `_enemyEff(typeKey)` in the one factory, so formula waves, manifests and placed spawns all
+inherit it with zero extra plumbing. The editor grid lives in the waves fold beside the manifests; each
+field's placeholder is its factory value, so blank visibly means factory. Three pins moved (21, 33, 62 —
+the factory line and the game-serializer window; intents kept). "Factions" (enemies fighting each other)
+is deliberately NOT this build — it needs a targeting rework, its own build.
+
+## Imported models instance (build 1192)
+
+Primitives have batched since before 1139; every imported GLB copy still walked its whole subtree per
+frame — fifty trees were fifty draw hierarchies. Eligible model props now collapse into one
+`InstancedMesh` per (geometry, material) part of the group's first member, matrices
+`memberWorld × (templateWorld⁻¹ × partWorld)` so per-member position/rotation/scale all ride the root —
+the multiply order is EXECUTED against the real three build in `test-1192` for a rotated+scaled member,
+because a transposed order produces plausible frames that are wrong only for rotated copies.
+
+Eligibility is decoration-grade ONLY, mirroring `instanceEligible`'s contract: physics, vehicles, running
+animations, tags (the prop verbs), interact/dialogue/NPC, signals, locks, and adopted model lights all
+disqualify (ten conditions, each executed in the test); a skinned or lit subtree disqualifies at batch
+time, as does a >24-part model (one draw per part — a hundred-part model is not a batching win). Model
+batches need ≥3 copies. They SHARE the template's live geometry/materials (the template returns to the
+editor on teardown), so batch teardown is flagged not to dispose them. Same lists, same lifecycle, same
+teardown as the primitive path.
+
+Verified rather than assumed: **r149's `InstancedMesh` constructor ships `frustumCulled=false`** — a batch
+spread across the map is never wrongly culled and no engine code was needed; the fact is pinned so an
+upgrade that changes the default fails a test instead of blinking props out at screen edges. 1139's
+raycast signature (an instanced hit reports the shared geometry with a correct world point) now applies
+to model batches too.
+
+## Effect zones (build 1193)
+
+The zone toolbox had one effect per tool — death kills, fire burns, water swims, pads launch; a healing
+fountain, a tar pit, a speed lane or a moon-gravity court was unauthorable. One new tool (`fxZones`,
+✨ Effect in the zones tab) carries five effects with an audience (players / enemies / both):
+- **Composition is strongest-wins for the multipliers** (haste `max`, slow/low-grav `min`) and **summing
+  for the rates** (heal/hurt hp/sec) — overlapping zones compose sanely instead of multiplying into
+  absurdity. Slow floors at 0.15× (bog, never freeze); every field clamps in `_migrateFxZone` so a
+  hostile file cannot ship a 1e9-amount zone.
+- **Speed rides the existing multiplier chains**: the player's target speed (through 1171's acceleration
+  model, so it has mass), and the bots'/enemies' water-slow sites. **Low gravity is the water-swim
+  pattern** (undo part of THIS frame's gravity). **Hurt is fire's exact tick/accumulator** with the same
+  PvP/PvE damage split; heal is whole-hp granular. Enemy effects run host-side only.
+- Serialized like every zone, migrated in both loaders, editor-only cylinder cues coloured per kind,
+  full panel (add-at-me, kind/audience dropdowns, amount/radius/Y/height).
+
+## Incremental Rapier statics (build 1194)
+
+A GLB finishing its load after deploy triggered `buildPhysWorld()` — destroy the WHOLE world, rebuild the
+terrain trimesh, every static trimesh (the documented multi-second stall), every dynamic body, every
+joint and the character controller — once per load burst, for one new static prop. Statics are now
+STAMPED with their body (`_physStatic`; the kinematic branches already had `_kbody`),
+`addStaticColliderFor` is idempotent on the stamps (executed in `test-1194`: triple-add creates one
+body), and the debounced late-load tick walks the collider list adding only what is missing into the
+LIVE world. A dynamic prop missing its body still forces the full rebuild — its joints may reference
+other bodies — and `destroyPhysWorld` clears the stamps so a stale one can never make the next full
+build skip real work.
+
+**The stamp exposed and fixed a real 1170-era bug:** `hideprop` removed a static prop's collider from
+the query list but left its Rapier body — an invisible physics wall that dynamic props bounced off.
+Hide now removes the body; show restores it through the same idempotent door. Two pins moved (125, 495 —
+destroy-clears and the debounce tick; intents kept).
+
+## Baked ambient occlusion for creator levels (build 1195)
+
+The rendering critic's #2 CRITICAL, closed at its realistic scope. A hand-built interior was lit as if
+outdoors — the hemisphere fill, the environment probe and the bounce all arrive at full strength inside a
+windowless room, with only SSAO dissenting. Generated arenas have a real lightmap; creator levels
+(arbitrary GLBs — no UV2 to bake into) get the PER-VERTEX version: every static-prop vertex casts a
+14-ray golden-angle hemisphere, its colour becomes `0.35 + 0.65 × skyVisibility`, and
+`vertexColors = true` multiplies it in. Occluders split by COST: every OTHER collider tests as its
+overall box (a slab test over the 1188 grid's candidates — a primitive-built room's walls are separate
+props, so boxes ARE its geometry), while the vertex's OWN model — the roof that makes an interior an
+interior — tests real triangles through the 1097 BVH. A 0.15 ray near-clip keeps a vertex from being
+shadowed by its own wall's box; self's collider boxes are skipped outright (triangles, never its own fat
+box). All executed in `test-1195` against real three geometry.
+
+The job is frame-budgeted (6 ms/frame), gated on `_glbPending`, re-requested when the collider count
+changes (a late-loading GLB must not stay unbaked), and `worldCfg.baked` rides the whole-world
+serialization so a shared level re-bakes deterministically wherever it opens — the bake itself is NEVER
+serialized. Two invariants that are each a black-mesh bug if lost:
+- **Copies of one GLB share geometry** — the bake writes into a private marker-guarded clone.
+- **`vertexColors=true` on a shared material** demands a colour attribute on EVERY mesh using it (a
+  missing attribute samples 0,0,0): after the bake, any unbaked sharer (a dynamic copy of a static
+  model) gets an all-white attribute; and the primitive instancing batch STRIPS `vertexColors` from its
+  material clone, because its shared unit geometry has no attribute at all.
+
+Checkbox in the Lighting fold ("Baked ambient occlusion (per-vertex)"); off = clean unbake. Limitation
+stated in the hint: a plain box only darkens at its corners — per-vertex is only as good as the
+tessellation. NOT capture-verified; the browser pass is a windowless primitive room and a GLB interior,
+baked and unbaked. One pin moved (1188's consumer count — the bake is the grid's ninth consumer).
+
+## Cutscene shot events (build 1196) — the sequencer is the logic graph
+
+The features critic wanted actor tracks. Instead of a parallel keyframe system, every cinematic shot
+gains ONE field: `ev` — a named logic event fired the moment the shot starts (the first shot fires from
+`startCinematic`, every later one on its hard cut). The graph's `event` nodes then do the acting with
+verbs the engine already has: `moveprop` walks a tagged actor to its mark, xa clips play, dialogue opens,
+the ambush spawns. Chained shots ARE the directed sequence; one field buys the whole sequencer.
+
+Details that are each a bug if lost: **the editor's preview never fires** (framing a shot must not spawn
+the ambush it frames) and **a client never fires** (the graph runs host-authoritative; results arrive in
+the snapshot) — both executed in `test-1196`. The field is threaded through all six shot chokepoints
+(`_resShot` with a 60-char hostile-file cap, `_normCineShot`, `_newCineShot`, `_newCutscene`, the
+primary-cutscene loader/reset, and every serializer map), written as `undefined` when blank so old
+levels stay byte-identical. Eleven pins across six cine tests moved with the field lists (178, 226, 248,
+462, 463, 464) — each keeps its assertion's intent.
+
+## Open work (as of build 1193)
+
+**The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:
+1188 collider grid, 1189 PvE cover/flank, 1190 weapon sheet, 1191 enemy tuning, 1192 model instancing,
+1193 effect zones):
+- **In-editor lighting bake for creator levels** — the rendering critic's #2 CRITICAL and the biggest
+  remaining item. Realistic scope: per-vertex sky/sun visibility over static geometry via the 1097 BVH
+  raycaster, run as a budgeted async job; NOT serialized (re-bake behind the level loader when
+  `world.baked`). A full texel lightmap needs UV2 unwrapping of arbitrary GLBs — out of scope.
+- **Two-layer nav** (2 walkable Ys per column, stair links, dirty patches) — multi-storey AI.
+- **Cutscene actor tracks** (poor-man's sequencer).
+- **Incremental Rapier edits + collider derivation in a worker.**
+- **Host migration from last snapshot; delta/relevancy snapshots.**
+- **Per-player variables** — DEFERRED with a reason: the logic runtime's pulses carry no actor identity;
+  threading one through every pulse source and the `wact` relay is its own multi-site build.
+- Verification kills already recorded (do not revisit): texture slots on primitives (871-era), bot
+  bullet tracers (1020), cell-hash enemy separation (arithmetic — not a hotspot).
+
+Generator roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,
 1124: `info.spawns`).
 

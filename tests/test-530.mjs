@@ -23,7 +23,7 @@ assert(/<b>Muzzle flash<\/b>/.test(panel), 'a Muzzle flash checkbox exists on th
 assert(/mfCb\.checked=!WEAPONS\[curWep\]\.noMuzzle/.test(panel) && /WEAPONS\[curWep\]\.noMuzzle = !mfCb\.checked;/.test(panel), 'the checkbox drives noMuzzle (checked = flash on)');
 
 // --- persistence: serialized + restored in all load paths ---
-assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle\)/.test(src), 'a flash-off weapon creates a weapons record');
+assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle \|\| st\)/.test(src), 'a flash-off weapon creates a weapons record');
 assert(/noMuzzle: w\.noMuzzle \? true : undefined/.test(src), 'noMuzzle serialized');
 assert((src.match(/WEAPONS\[k\]\.noMuzzle = !!wd\.noMuzzle;/g)||[]).length===3, 'noMuzzle restored in all three load paths');
 

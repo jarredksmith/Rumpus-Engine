@@ -30,14 +30,14 @@ assert(/if\(_cineT>=_total\)\{/.test(uc), 'shot advances on total (incl. holds),
 const H="holdStart:Math.max(0,+s.holdStart||0), holdEnd:Math.max(0,+s.holdEnd||0)";
 assert(extractFunction('_resShot').includes(H), '_resShot clamps holds >= 0');
 assert(extractFunction('_normCineShot').includes(H), '_normCineShot carries holds');
-assert(/ease:'inout', holdStart:0, holdEnd:0 \}; \}/.test(extractFunction('_newCineShot')), '_newCineShot seeds holds');
-assert(/ease:'inout', holdStart:0, holdEnd:0, audio:''/.test(extractFunction('_newCutscene')), '_newCutscene seeds holds');
+assert(/ease:'inout', holdStart:0, holdEnd:0, ev:'' \}; \}/.test(extractFunction('_newCineShot')), '_newCineShot seeds holds');
+assert(/ease:'inout', holdStart:0, holdEnd:0, ev:'', audio:''/.test(extractFunction('_newCutscene')), '_newCutscene seeds holds');
 const ac=extractFunction('_applyCine');
 assert(/cineCfg\.holdStart=Math\.max\(0,\+lc\.holdStart\|\|0\); cineCfg\.holdEnd=Math\.max\(0,\+lc\.holdEnd\|\|0\)/.test(ac), '_applyCine restores holds');
 assert(/cineCfg\.holdStart=0; cineCfg\.holdEnd=0;/.test(ac), '_applyCine defaults holds');
-assert(/ease:s\.ease, holdStart:s\.holdStart, holdEnd:s\.holdEnd \}/.test(src), 'serialized shots carry holds');
-assert(/ease: cineCfg\.ease, holdStart: cineCfg\.holdStart, holdEnd: cineCfg\.holdEnd, audio/.test(src), 'serialized intro carries holds');
-assert(/ease:o\.ease, holdStart:o\.holdStart, holdEnd:o\.holdEnd, shots2:/.test(src), 'serialized cutscenes carry holds');
+assert(/ease:s\.ease, holdStart:s\.holdStart, holdEnd:s\.holdEnd, ev:s\.ev\|\|undefined \}/.test(src), 'serialized shots carry holds');
+assert(/ease: cineCfg\.ease, holdStart: cineCfg\.holdStart, holdEnd: cineCfg\.holdEnd, ev: cineCfg\.ev\|\|undefined, audio/.test(src), 'serialized intro carries holds');
+assert(/ease:o\.ease, holdStart:o\.holdStart, holdEnd:o\.holdEnd, ev:o\.ev\|\|undefined, shots2:/.test(src), 'serialized cutscenes carry holds');
 // editor
 assert(/crow\('Hold start', \(CS\.holdStart\|\|0\), 0, 10, 0\.25, 's', v=>\{ CS\.holdStart=v; \}\)/.test(src), 'editor has a Hold start slider');
 assert(/crow\('Hold end', \(CS\.holdEnd\|\|0\), 0, 10, 0\.25, 's', v=>\{ CS\.holdEnd=v; \}\)/.test(src), 'editor has a Hold end slider');

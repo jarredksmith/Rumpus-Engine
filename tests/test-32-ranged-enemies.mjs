@@ -26,14 +26,14 @@ assert(/if\(en\.ranged\)\{[\s\S]*en\.shootCd<=0[\s\S]*segmentBlocked\(en\.mesh\.
 // projectiles: travel, damage a player, blocked by cover, cleared on start, ticked in loop
 const ues = extractFunction('updateEnemyShots');
 assert(/if\(pl\.hurt && !s\.noDmg\) pl\.hurt\(s\.dmg, s\.from/.test(ues), 'a hit routes damage to the player (build 1020: unless the bolt is a cosmetic relay copy — the host already sent {t:\'hurt\'})');
-assert(/for\(const c of colliders\)\{[\s\S]*dead=true/.test(ues), 'cover stops the projectile');
+assert(/for\(const c of _cgQuery\(p\.x, p\.x, p\.z, p\.z, _cgBolt\)\)\{[\s\S]*dead=true/.test(ues), 'cover stops the projectile (candidates from the collider grid since 1188)');
 assert(/updateEnemyShots\(dt\);/.test(src), 'projectiles tick each frame');
 assert(/enemyShots\.slice\(\)\.forEach\(s=>scene\.remove\(s\.mesh\)\); enemyShots\.length=0;/.test(src), 'projectiles cleared on game start');
 assert(/for\(const key of ENEMY_TYPE_KEYS\) trow\.appendChild\(tk\(key\)\)/.test(src), 'editor type selector offers every type (incl. Gunner + Boss)');
 
 // --- runnable: line-of-sight blocking ---
 const box = (x0,z0,x1,z1)=>({ userData:{ box:{ min:{x:x0,y:0,z:z0}, max:{x:x1,y:3,z:z1} } } });
-const mk = cols => new Function('colliders', '"use strict"; '+extractFunction('segmentBlocked')+'; return segmentBlocked;')(cols);
+const mk = cols => new Function('colliders', '"use strict"; const _cgSeg=[]; const _cgQuery=(a,b,c2,d,out)=>colliders; '+extractFunction('segmentBlocked')+'; return segmentBlocked;')(cols);   // build 1188: pass-through grid — this test is about the BLOCKING logic, not candidate sourcing
 let blocked = mk([ box(4,-1,6,1) ]);                 // wall sitting between the two endpoints
 assert(blocked(0,0, 10,0, 1.4) === true, 'a wall on the line blocks LOS');
 let clear = mk([ box(4,5,6,7) ]);                    // wall off to the side

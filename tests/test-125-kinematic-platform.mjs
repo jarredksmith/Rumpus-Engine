@@ -15,7 +15,7 @@ assert(/kb\.setNextKinematicTranslation\(\{ x:o\.position\.x/.test(up) && /kb\.s
 assert(up.indexOf('setNextKinematicTranslation') < up.indexOf('physWorld.step()'), 'pose set before stepping');
 
 // handles cleared on teardown
-assert(/for\(const o of colliders\)\{ if\(o\.userData && o\.userData\._kbody\) o\.userData\._kbody = null; \}/.test(extractFunction('destroyPhysWorld')), 'kinematic handles dropped on destroy');
+assert(/for\(const o of colliders\)\{ if\(o\.userData\)\{ if\(o\.userData\._kbody\) o\.userData\._kbody = null; if\(o\.userData\._physStatic\) o\.userData\._physStatic = null; \} \}/.test(extractFunction('destroyPhysWorld')), 'kinematic handles dropped on destroy (and the 1194 static stamps with them)');
 
 // launch power knob
 assert(/launchPower:1,/.test(src), 'DEFAULT_WORLD has launchPower');

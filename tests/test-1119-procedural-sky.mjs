@@ -76,8 +76,8 @@ assert(/function skyRadiance\(dx, dy, dz, P, S\)/.test(src), '...and as a JS twi
   assert(/gl_Position = p\.xyww/.test(es), '...and is pinned to the far plane, so it can never clip geometry');
   assert(/frustumCulled = false/.test(es), '...and is never culled');
   // the bug this caught in testing: a 2-unit box left at the origin is not a sky once you walk away
-  assert(/onBeforeRender/.test(es) && /position\.copy\(cam\.position\)/.test(es),
-    'the dome follows whichever camera is rendering — otherwise the player walks out of it');
+  assert(/onBeforeRender/.test(es) && /position\.copy\(cam\.getWorldPosition\(_skyCamPos\)\)/.test(es),
+    'the dome follows whichever camera is rendering — WORLD position since 1186: a CubeCamera\'s face cameras are children whose local .position is (0,0,0)');
 }
 
 // ---------------------------------------------------------------- the sky drives the lighting

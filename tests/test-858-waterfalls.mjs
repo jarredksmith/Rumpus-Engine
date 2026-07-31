@@ -16,7 +16,7 @@ eq(audFn({ w:6, h:8 }), Math.max(14, 6*2+8*1.2), 'audible radius scales with siz
 assert(audFn({ w:30, h:40 }) > audFn({ w:6, h:8 }), 'bigger falls carry further');
 
 // ---- the sheet + foam are the cheap kind ----
-const sheet = src.match(/const _FALL_FSH = \[[\s\S]{0,1600}?\]\.join/)[0];
+const sheet = src.match(/const _FALL_FSH = \[[\s\S]{0,2400}?\]\.join/)[0];   // window widened for 1184's ACES+fog lines
 assert(/uTime\*uSpd/.test(sheet) && /smoothstep\(0\.0,0\.10,vUv\.x\)/.test(sheet), 'scrolling sheet with soft edges');   // build 865 reshaped the shader
 assert(/smoothstep\(0\.42,0\.0,vUv\.y\)/.test(sheet), 'whiter/mistier toward the plunge');
 assert(!/WebGLRenderTarget/.test(extractFunction('buildWaterfallGroup')), 'no render targets');

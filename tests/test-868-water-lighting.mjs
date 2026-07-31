@@ -18,8 +18,8 @@ eq(mk(4, 3, 2), 1.6, 'caps at 1.6 — maxed sliders don\'t nuke it white');
 
 // the uniform reaches all three shaders and is applied to the BODY, not the glint
 assert(/mix\(uDeep, uSky, fres\*0\.75\)\*uLight \+ uSunCol \* spec \* 0\.9/.test(src), 'water body dims; the sun glint rides uSunCol separately');
-assert(/vec4\(col\*uLight, clamp\(a, 0\.0, 0\.95\)\)/.test(src), 'waterfall sheets dim');
-assert(/vec4\(vec3\(uLight\), clamp\(a,0\.0,0\.9\)\)/.test(src), 'foam dims');
+assert(/vec4\(_aces\(col\*uLight\), clamp\(a, 0\.0, 0\.95\)\)/.test(src), 'waterfall sheets dim (through the shared ACES since 1184)');
+assert(/vec4\(_aces\(vec3\(uLight\)\), clamp\(a,0\.0,0\.9\)\)/.test(src), 'foam dims (through the shared ACES since 1184)');
 // per-frame updates
 assert(/u\.uLight\.value=_waterLightF\(\)/.test(src), 'water surfaces update each frame');
 eq((src.match(/uniforms\.uLight\.value=_lf/g)||[]).length, 3, 'both sheets + foam update each frame');
