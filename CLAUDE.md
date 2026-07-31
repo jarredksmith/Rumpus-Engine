@@ -1519,6 +1519,51 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Per-object motion blur (build 1246)
+
+Build 1238's notes named their own gap: rotation reprojection answers only "how did the CAMERA
+turn" — a camera-locked viewmodel smeared with the world on every flick, a moving enemy never
+streaked at all, and camera TRANSLATION (strafing past a wall) blurred nothing. The named fix was a
+velocity buffer; this is it. Every mesh's world matrix is STASHED per frame; a half-res pass renders
+the scene with `_matVel`, whose per-draw `uPrevM` is that mesh's last-frame matrix — set in
+`onBeforeRender` + `uniformsNeedUpdate`, the mechanism three ships for exactly this — against the
+camera's last-frame view-projection. The blur pass streaks along the buffer's true per-pixel
+velocity and keeps 1238's rotation path VERBATIM as the fallback for unwritten pixels (the sky) and
+for every rung below the top one, where the pass is shed. No new world field: `postMotion` simply
+means more on the top rung.
+
+Decisions that are each a bug if lost:
+- **The hook is material-guarded and stale-guarded.** `onBeforeRender` fires on EVERY pass that
+  draws the mesh (main, shadows, AO, velocity) — the first line returns unless the material is
+  `_matVel`. And a stash older than exactly last frame (`_pvmF === _frameNo-1`) is IGNORED in favour
+  of the current matrix: re-enabling the pass after a shed must not streak off week-old history.
+  The camera VP has the same stamp (`_velVPF`). Meshes with their OWN hook (sky dome, flipbooks) are
+  left untouched — they are swept from the pass anyway.
+- **Encoded velocity, byte-target safe.** `rg = v*4+0.5` (±0.125 UV, ~1px quantisation on the
+  UnsignedByte fallback, exact on half-float); the clear is `setClearColor(0x808080, 0)` so an
+  unwritten pixel decodes to ZERO motion and fails the `a > 0.5` written-test — 1126's
+  near-zero-alpha trap, dodged by construction. Clear colour saved and restored around the pass.
+- **Skinning uses the CURRENT pose for both ends** (limbs inherit the body's velocity — the rigid
+  approximation every shipping velocity buffer makes); **instancing applies `instanceMatrix`
+  manually** (1181: `modelViewMatrix` never carries it), exact because batches are static.
+- **The viewmodel renders its own velocities against static vmCam** — only the weapon's bob remains,
+  so the weapon holds while the world streaks. Same hygiene envelope as the AO prepass (shadow
+  refresh frozen, sky/weather/background out, `_aoHideNoDepth` on BOTH scenes — test-1158's call
+  count moved 2 → 4, the rule satisfied twice more).
+
+Measured headless with per-mode static references (single spinning frames are content-confounded —
+the 1238 lesson): during a hard per-frame spin the weapon's sight-block retains **60.7%** of its
+static p99 edge sharpness on the velocity path vs **30.1%** on the forced rotation fallback — 2× —
+while the world's blur is mode-identical (ratio 1.005). The residual softening is the half-res
+buffer's bilinear boundary mixing weapon and world velocity at the silhouette — the standard
+gather-blur edge artifact, accepted.
+
+**The capture's own trap, worth keeping: a wall-clock-driven spin measures NOTHING on a slow
+renderer.** SwiftShader frames are long, so `setInterval` yaw accumulated past 1238's 0.35 rad/frame
+CUT threshold and the cut guard zeroed blur in BOTH runs — a perfect null with every uniform
+confirming "on". Drive test motion per-FRAME (`requestAnimationFrame`), and tap `uAmt` to prove the
+cut guard is not what you are measuring.
+
 ## Screen-space reflections (build 1245)
 
 Glossy floors, marched from the buffer the engine already had: the AO G-buffer carries view normal
