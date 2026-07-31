@@ -7,7 +7,7 @@ assert(/let cineCfg = \{ on:false,[^}]*audio:'', shots2:\[\] \}/.test(src), 'cin
 const ac = extractFunction('_applyCine');
 assert(/cineCfg\.audio=\(typeof lc\.audio==='string'\)\?lc\.audio:''/.test(ac), 'audio restored from a saved cinematic');
 assert(/cineCfg\.audio=''/.test(ac), 'audio cleared when there is no cinematic');
-assert(/look: cineCfg\.look, interp: cineCfg\.interp, dofRange: cineCfg\.dofRange, dofStrength: cineCfg\.dofStrength, dofStrengthTo: cineCfg\.dofStrengthTo, roll: cineCfg\.roll, rollTo: cineCfg\.rollTo, ease: cineCfg\.ease, holdStart: cineCfg\.holdStart, holdEnd: cineCfg\.holdEnd, audio: cineCfg\.audio\|\|''/.test(src), 'audio serialized with the level');
+assert(/look: cineCfg\.look, interp: cineCfg\.interp, dofRange: cineCfg\.dofRange, dofStrength: cineCfg\.dofStrength, dofStrengthTo: cineCfg\.dofStrengthTo, roll: cineCfg\.roll, rollTo: cineCfg\.rollTo, ease: cineCfg\.ease, holdStart: cineCfg\.holdStart, holdEnd: cineCfg\.holdEnd, ev: cineCfg\.ev\|\|undefined, audio: cineCfg\.audio\|\|''/.test(src), 'audio serialized with the level');
 
 // play/stop helpers
 const start = extractFunction('_startCineAudio');

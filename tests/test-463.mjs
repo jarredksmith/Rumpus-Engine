@@ -19,15 +19,15 @@ assert(/let t = _cineT<=_hs \? 0 : \(_cineT>=_hs\+d\.dur \? 1 : \(_cineT-_hs\)\/
 const EE = "(['linear','in','out','inout'].indexOf(s.ease)>=0?s.ease:'inout')";
 assert(extractFunction('_resShot').includes('ease:'+EE), '_resShot resolves ease (default inout)');
 assert(extractFunction('_normCineShot').includes('ease:'+EE), '_normCineShot carries ease');
-assert(/roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0 \}; \}/.test(extractFunction('_newCineShot')), '_newCineShot seeds ease inout');
-assert(/roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, audio:''/.test(extractFunction('_newCutscene')), '_newCutscene seeds ease inout');
+assert(/roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, ev:'' \}; \}/.test(extractFunction('_newCineShot')), '_newCineShot seeds ease inout');
+assert(/roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, ev:'', audio:''/.test(extractFunction('_newCutscene')), '_newCutscene seeds ease inout');
 const ac=extractFunction('_applyCine');
 assert(/cineCfg\.ease=\(\['linear','in','out','inout'\]\.indexOf\(lc\.ease\)>=0\?lc\.ease:'inout'\)/.test(ac), '_applyCine restores ease');
 assert(/cineCfg\.ease='inout';/.test(ac), '_applyCine defaults ease');
 // serialize
-assert(/roll:s\.roll, rollTo:s\.rollTo, ease:s\.ease, holdStart:s\.holdStart, holdEnd:s\.holdEnd \}/.test(src), 'serialized shots carry ease');
-assert(/roll: cineCfg\.roll, rollTo: cineCfg\.rollTo, ease: cineCfg\.ease, holdStart: cineCfg\.holdStart, holdEnd: cineCfg\.holdEnd, audio/.test(src), 'serialized intro carries ease');
-assert(/roll:o\.roll, rollTo:o\.rollTo, ease:o\.ease, holdStart:o\.holdStart, holdEnd:o\.holdEnd, shots2:/.test(src), 'serialized cutscenes carry ease');
+assert(/roll:s\.roll, rollTo:s\.rollTo, ease:s\.ease, holdStart:s\.holdStart, holdEnd:s\.holdEnd, ev:s\.ev\|\|undefined \}/.test(src), 'serialized shots carry ease');
+assert(/roll: cineCfg\.roll, rollTo: cineCfg\.rollTo, ease: cineCfg\.ease, holdStart: cineCfg\.holdStart, holdEnd: cineCfg\.holdEnd, ev: cineCfg\.ev\|\|undefined, audio/.test(src), 'serialized intro carries ease');
+assert(/roll:o\.roll, rollTo:o\.rollTo, ease:o\.ease, holdStart:o\.holdStart, holdEnd:o\.holdEnd, ev:o\.ev\|\|undefined, shots2:/.test(src), 'serialized cutscenes carry ease');
 // editor
 assert(/\['inout','Smooth \(ease in \+ out\)'\],\['linear','Constant speed'\],\['in','Ease in \(accelerate\)'\],\['out','Ease out \(decelerate\)'\]/.test(src), 'editor offers all four motion curves');
 assert(/sel\.onchange=\(\)=>\{ CS\.ease=sel\.value; \}/.test(src), 'Motion dropdown writes CS.ease');

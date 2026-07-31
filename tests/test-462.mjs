@@ -3,8 +3,8 @@ const src = gameSource();
 // build 608: per-shot dutch/roll — a keyframed camera tilt about the view axis (roll -> rollTo across the shot).
 
 // defaults seeded everywhere a shot is born / normalized / resolved
-assert(/roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0 \}; \}/.test(extractFunction('_newCineShot')), '_newCineShot seeds roll/rollTo');
-assert(/dofStrengthTo:1\.4, roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, audio:'', shots2:\[\]/.test(extractFunction('_newCutscene')), '_newCutscene seeds roll/rollTo');
+assert(/roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, ev:'' \}; \}/.test(extractFunction('_newCineShot')), '_newCineShot seeds roll/rollTo');
+assert(/dofStrengthTo:1\.4, roll:0, rollTo:0, ease:'inout', holdStart:0, holdEnd:0, ev:'', audio:'', shots2:\[\]/.test(extractFunction('_newCutscene')), '_newCutscene seeds roll/rollTo');
 assert(/roll:\+s\.roll\|\|0, rollTo:\(s\.rollTo!=null\?\+s\.rollTo:\(\+s\.roll\|\|0\)\)/.test(extractFunction('_resShot')), '_resShot resolves roll/rollTo');
 assert(/roll:\+s\.roll\|\|0, rollTo:\(s\.rollTo!=null\?\+s\.rollTo:\(\+s\.roll\|\|0\)\)/.test(extractFunction('_normCineShot')), '_normCineShot carries roll/rollTo');
 // applyCine restore + default
@@ -27,7 +27,7 @@ assert(/crow\('Dutch start', \(CS\.roll\|\|0\), -60, 60, 1, '\\u00b0', v=>\{ CS\
 assert(/crow\('Dutch end', \(CS\.rollTo!=null\?CS\.rollTo:\(CS\.roll\|\|0\)\), -60, 60, 1, '\\u00b0', v=>\{ CS\.rollTo=v; \}\)/.test(src), 'editor has a Dutch end slider');
 
 // serializer carries it on every shot shape (flat + others flat + both shots2 lists)
-assert(/dofStrengthTo:s\.dofStrengthTo, roll:s\.roll, rollTo:s\.rollTo, ease:s\.ease, holdStart:s\.holdStart, holdEnd:s\.holdEnd \}/.test(src), 'serialized shots carry roll/rollTo');
-assert(/dofStrengthTo:o\.dofStrengthTo, roll:o\.roll, rollTo:o\.rollTo, ease:o\.ease, holdStart:o\.holdStart, holdEnd:o\.holdEnd, shots2:/.test(src), 'serialized cutscenes carry roll/rollTo');
+assert(/dofStrengthTo:s\.dofStrengthTo, roll:s\.roll, rollTo:s\.rollTo, ease:s\.ease, holdStart:s\.holdStart, holdEnd:s\.holdEnd, ev:s\.ev\|\|undefined \}/.test(src), 'serialized shots carry roll/rollTo');
+assert(/dofStrengthTo:o\.dofStrengthTo, roll:o\.roll, rollTo:o\.rollTo, ease:o\.ease, holdStart:o\.holdStart, holdEnd:o\.holdEnd, ev:o\.ev\|\|undefined, shots2:/.test(src), 'serialized cutscenes carry roll/rollTo');
 
 done('cinematic dutch/roll: keyframed tilt, full plumbing + editor + serialize (build 608)');

@@ -11,7 +11,7 @@ const hide = extractFunction('_hideCineAvatar');
 assert(/mixers\.splice\(mi,1\)/.test(hide), 'cine avatar mixer not removed on hide');
 assert(/_cineAvatar\.visible=false/.test(hide), 'cine avatar not hidden after the shot');
 // wired into start/end/update
-assert(/_cineShowBars\(true\);\s*\n\s*_showCineAvatar\(\);/.test(src), '_showCineAvatar not called on start');
+assert(/_cineShowBars\(true\);\s*\n\s*_cineFireShotEv\(_cineData\);[^\n]*\n\s*_showCineAvatar\(\);/.test(src), '_showCineAvatar still called on start (after 1196 fires the first shot event)');
 assert(/document\.body\.classList\.remove\('cine'\);\s*\n\s*_hideCineAvatar\(\);/.test(src), '_hideCineAvatar not called on end');
 assert(/if\(_cineAvatar && _cineAvatar\.userData\.mixer\) _cineAvatar\.userData\.mixer\.update\(dt\);/.test(src), 'avatar idle mixer not advanced during the shot');
 // look target now terrain-aware (both sites), no bare absolute-EYE spawn target remains

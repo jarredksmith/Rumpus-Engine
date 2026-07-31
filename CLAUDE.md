@@ -1887,6 +1887,22 @@ stated in the hint: a plain box only darkens at its corners — per-vertex is on
 tessellation. NOT capture-verified; the browser pass is a windowless primitive room and a GLB interior,
 baked and unbaked. One pin moved (1188's consumer count — the bake is the grid's ninth consumer).
 
+## Cutscene shot events (build 1196) — the sequencer is the logic graph
+
+The features critic wanted actor tracks. Instead of a parallel keyframe system, every cinematic shot
+gains ONE field: `ev` — a named logic event fired the moment the shot starts (the first shot fires from
+`startCinematic`, every later one on its hard cut). The graph's `event` nodes then do the acting with
+verbs the engine already has: `moveprop` walks a tagged actor to its mark, xa clips play, dialogue opens,
+the ambush spawns. Chained shots ARE the directed sequence; one field buys the whole sequencer.
+
+Details that are each a bug if lost: **the editor's preview never fires** (framing a shot must not spawn
+the ambush it frames) and **a client never fires** (the graph runs host-authoritative; results arrive in
+the snapshot) — both executed in `test-1196`. The field is threaded through all six shot chokepoints
+(`_resShot` with a 60-char hostile-file cap, `_normCineShot`, `_newCineShot`, `_newCutscene`, the
+primary-cutscene loader/reset, and every serializer map), written as `undefined` when blank so old
+levels stay byte-identical. Eleven pins across six cine tests moved with the field lists (178, 226, 248,
+462, 463, 464) — each keeps its assertion's intent.
+
 ## Open work (as of build 1193)
 
 **The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:
