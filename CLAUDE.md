@@ -1763,7 +1763,32 @@ The gunner opts in (`cover:true`); the BOSS deliberately does not (a boss doesn'
 untouched — closing is their whole design. The original standoff/strafe body survives byte-identical as
 the seen-and-healthy branch. The roadmap item's "+ trace bot bullets" half is deferred to its own build.
 
-## Open work (as of build 1189)
+## The weapon stat sheet (build 1190) — and two roadmap halves that died on verification
+
+Verification kills first, recorded so they stay dead:
+- **"Trace bot bullets"** — `remoteFire` has drawn the tracer, impact spark, decal, muzzle flash and
+  positional audio for every bot shot since build 1020.
+- **"Cell-hash the enemy separation"** — the pass is O(N²) but waves cap at ~40-60, so it is ~1,800 pairs
+  of a half-dozen float ops per frame. Arithmetic, not a hotspot; the collider walks 1188 removed were the
+  real cost.
+
+The real gap: damage has been per-level since 623, but fire rate, magazine, start/max ammo, spread,
+reload and pellets were engine constants — "every level plays the same seven guns". They now follow
+damage's exact pattern: `GUN_BASE` (the factory baseline, captured from the live table at boot), only
+CHANGED values serialized (an `st` object per weapon, diffed against base), all three loaders (boot, net,
+restore) applying through **one clamped helper** (`_wepApplyStats`) so a hostile level file cannot set a
+0ms fire rate or 10,000 pellets through any door — clamps proven executable in `test-1190`. Weapons a
+level does not mention reset to factory (net + restore), so tuning never leaks between levels. The editor
+exposes the sheet under the gun's damage row (guns only — fists have no magazine), writing through the
+same helper, each field with a reset-to-factory button.
+
+**Found and fixed on the way: `startGame`'s ammo reset was four hardcoded lines covering four of seven
+guns** — the pistol and launcher carried spent ammo across runs since build 976. The reset is now a loop
+over every gun's (possibly authored) sheet; `test-1190` executes it and proves the four old guns get
+byte-identical values at factory settings while the pistol finally resets too. Four pins moved (227, 229,
+476, 530 — the reducer gained `st`, the reset became the loop; each keeps its assertion's intent).
+
+## Open work (as of build 1190)
 
 Roadmap: footprints + texture budget (done, 1110) → interiors (done, 1111) → multi-storey
 (done, 1113) → more themes/materials (done, 1114) → emit gameplay data with the GLB (started,

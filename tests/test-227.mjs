@@ -28,6 +28,6 @@ assert(/_scopedNow\) return false;   \/\/ looking through the optic: no viewmode
 assert(/\(w\.scope\?2\.4:1\)/.test(src), 'scoped shot kicks harder');
 assert(/curWep==='sniper'/.test(src), 'sniper has its own shot sound');
 assert(/Digit4' && owned\[3\]/.test(src) && /Digit5' && owned\[4\]/.test(src), 'weapon slots 4+5 bound');
-assert(/WEAPONS\.sniper\.mag=5; WEAPONS\.sniper\.reserve=20;/.test(src), 'fresh-run ammo reset');
+assert(/_w\.mag=_w\.magSize; _w\.reserve=Math\.min\(_w\.reserve0!=null\?_w\.reserve0:_w\.reserve, _w\.reserveMax\);/.test(src), 'fresh-run ammo reset (per-sheet loop since 1190 — sniper resets 5/20 from its factory sheet, proven executable in test-1190)');
 assert(/let l=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\]\.filter/.test(src), 'duel loadout includes the sniper');
 done();

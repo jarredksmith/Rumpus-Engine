@@ -25,7 +25,7 @@ assert(/triggerGunAnim\('shoot'\); meleeAttack\(w\)/.test(src), 'melee swing tri
 assert(/reloading = true; const tok = \+\+_reloadTok; SFX\.reload\(\); triggerGunAnim\('reload'\)/.test(src), 'reload triggers the clip');   // build 1172: reload gained its cancel token on the same line
 
 // persistence: serialized + restored on all three weapons paths
-assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle\) acc\[k\]=\{ model:w\.model\|\|'', view:w\.view\|\|null, clips:w\.clips\|\|null, dmg: dmgChg \? w\.dmg : undefined, noMuzzle: w\.noMuzzle \? true : undefined \}/.test(src), 'clips (and changed damage + muzzle toggle) serialized');
+assert(/if\(w\.model \|\| w\.view \|\| w\.clips \|\| dmgChg \|\| w\.noMuzzle \|\| st\) acc\[k\]=\{ model:w\.model\|\|'', view:w\.view\|\|null, clips:w\.clips\|\|null, dmg: dmgChg \? w\.dmg : undefined, noMuzzle: w\.noMuzzle \? true : undefined, st \}/.test(src), 'clips (and changed damage + muzzle toggle + the 1190 stat sheet) serialized');
 assert((src.match(/Object\.assign\(_wepClipBlank\(k\), wd\.clips\)/g)||[]).length>=3, 'clips restored at boot + net-load + restoreLevel (fists-aware defaults)');
 
 // editor picker
