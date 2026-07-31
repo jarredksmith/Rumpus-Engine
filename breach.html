@@ -7682,6 +7682,14 @@ function _renderPostFX(scn, cam){
     // and with the sky dome and weather hidden — overrideMaterial would give the dome depthWrite
     // and it would fill the entire buffer at the far plane, and snow would pock it with occluders
     const _pv=scn.overrideMaterial, _skyV=_skyMesh&&_skyMesh.visible, _wV=(typeof _weatherPts!=='undefined')&&_weatherPts&&_weatherPts.visible;
+    /* build 1199: scene.background is NOT a scene object — overrideMaterial never touches it and the
+       visibility sweep cannot see it, so an HDRI sky (a background TEXTURE; the procedural dome nulls
+       the background) rendered its tone-mapped colours into the G-buffer: garbage "normals" that pass
+       the geometric sky test and an alpha read as a surface ~1 unit away. SSAO then shaded the whole
+       sky from it — and because the background pass tone-maps with toneMappingExposure, every easing
+       step of auto-exposure REWROTE the garbage, so the sky's bogus AO churned with the eye: the
+       reported AE+AO flashing. Fifth arrival of the 1152 rule, by a door the sweep cannot cover. */
+    const _bgV=scn.background; scn.background=null;
     const _sa=renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate=false;
     if(_skyMesh) _skyMesh.visible=false; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=false;
     // build 1152: and EVERY transparent decoration, for the same reason and by a rule rather than by name.
@@ -7722,6 +7730,7 @@ function _renderPostFX(scn, cam){
       renderer.autoClear=_vac; vmScene.overrideMaterial=_vpv;
       for(const o of _vmHid) o.visible=true;
     }
+    scn.background=_bgV;
     if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
     renderer.shadowMap.autoUpdate=_sa;
     const au=_matAO.uniforms;
@@ -27168,7 +27177,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1198 · 2026-07-31';
+const BUILD_VERSION = 'build 1199 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

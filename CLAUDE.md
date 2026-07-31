@@ -1519,6 +1519,29 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The sky that was flashing was never in the frame — it was in the G-buffer (build 1199)
+
+Reported from play, refining 1198's report: auto-exposure behaves until **ambient occlusion is turned up**,
+then the HDRI sky flickers badly. 1198's soft knee was real and stays — but the driver was AO. The 1152 rule
+("nothing that does not write depth belongs in a depth-derived buffer") arrived by a FIFTH door, and this one
+the sweep structurally cannot cover: **`scene.background` is not a scene object.** `overrideMaterial` never
+replaces it and `_aoHideNoDepth` traverses children, so an HDRI sky — a background TEXTURE (`scene.background
+= tex`; the procedural dome nulls the background instead, which is why only HDRI mode shows this) — rendered
+its tone-mapped colours straight into the half-res G-buffer. Those colours pass the geometric sky test
+(channel sum ≥ 0.63 reads as a packed normal) and carry an alpha SSAO reads as a surface about a unit from
+the camera, so the whole sky was shaded as a wall. And because the background pass tone-maps with
+`toneMappingExposure` (pinned against the real build in test-1198 and again in 1199), **every easing step of
+auto-exposure rewrote the garbage** — AE modulated it, AO made it visible, which is exactly "AE works until
+AO goes up". Fix: the prepass saves `scn.background`, nulls it for BOTH G-buffer renders (the viewmodel pass
+draws into the same buffer), and restores it before the AO resolve — beside the dome hide, so the two halves
+of "no sky of either kind in the G-buffer" live in one place. `test-1199` pins the ordering, the
+no-return-between-null-and-restore property, and both premises.
+
+The count is now five arrivals of one rule: 1126 the sky dome, 1128 the weather points, 1152 the flipbook
+sprites (rule stated), 1158 the viewmodel muzzle flash (rule applied to the second caller), 1199 the
+background (content the rule's sweep cannot see). If a sixth appears, ask what ELSE the renderer draws that
+is not a child of the scene.
+
 ## The meter was stalling the pipeline it was measuring (build 1182)
 
 Reported from play the day 1180 shipped: **any auto-exposure strength above 0 produced visible stutter on
