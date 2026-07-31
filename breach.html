@@ -10716,14 +10716,17 @@ function _pvApplyOne(o, act, at){
   const u=o.userData;
   if(act==='del'){ if(typeof shatterProp==='function') try{ shatterProp(o, null, null, 0); }catch(e){} return; }
   if(act==='hide'){ if(u._pvHidden) return; u._pvHidden=true; o.visible=false;
+    if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: the grid re-samples where it stood */
     if(u.phys){ u._pvWasDyn=true; try{ removeDynamicProp(o); }catch(e){} }
     const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; }
     if(u._physStatic && typeof physWorld!=='undefined' && physWorld){ try{ physWorld.removeRigidBody(u._physStatic); }catch(e){} u._physStatic=null; }   /* build 1194: no invisible physics wall */
     return; }
   if(act==='show'){ if(!u._pvHidden){ o.visible=true; return; } u._pvHidden=false; o.visible=true;
+    if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: it blocks (or carries) bots again */
     if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; if(typeof addStaticColliderFor==='function' && typeof physWorld!=='undefined' && physWorld && !u.phys) try{ addStaticColliderFor(o); }catch(e){} }   /* build 1194: show restores the physics body too */
     if(u._pvWasDyn){ u._pvWasDyn=false; try{ setPropDynamic(o, true); }catch(e){} } return; }
   if(act==='move' && at){
+    if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: the OLD footprint opens up... */
     const wasDyn=!!u.phys; if(wasDyn) try{ removeDynamicProp(o); }catch(e){}
     const g0=(typeof terrainHeightAt==='function')?terrainHeightAt(o.position.x, o.position.z):0;
     const g1=(typeof terrainHeightAt==='function')?terrainHeightAt(at.x, at.z):0;
@@ -10731,6 +10734,7 @@ function _pvApplyOne(o, act, at){
     o.position.x=at.x; o.position.z=at.z; o.position.y=g1+dy;
     if(wasDyn) try{ setPropDynamic(o, true); }catch(e){}   // re-seats the body + recaptures physHome at the new spot
     else if(typeof refreshPropCollider==='function') try{ refreshPropCollider(o); }catch(e){}
+    if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: ...and the NEW one closes */
     return; }
 }
 function _lgPropVerb(act, tag, at){
@@ -20754,9 +20758,16 @@ function navWalkable(x,z){   // can a bot stand at this column? Authority = clea
   // standable even when the model's coarse collider box bulges above the actual surface. insideSolid has no
   // such escape, so those over-occupied boxes made it falsely reject every rock cell (the player walks there
   // via clearAt, so the nav grid must agree with clearAt — not with the raw boxes).
-  if(isFinite(standLo) && clearAt(x,z,standLo,lo)) return { ok:true, y:standLo };
-  // The low floor is blocked (a platform/ledge slab) or off-grid — fall back to the single highest surface.
   const gy=surfaceTopAt(x,z);
+  if(isFinite(standLo) && clearAt(x,z,standLo,lo)){
+    /* build 1200: SECOND LAYER — the same column's highest surface (a roof, an upper storey), kept only when
+       it is a genuinely distinct floor (NAV_LAYER_SEP of clearance above layer A) that a bot can stand on by
+       the SAME clearAt authority. One extra probe per cell, and only where the two surfaces differ. */
+    const topStand=(gy>-Infinity)?Math.max(gy,ty):ty;
+    if(isFinite(topStand) && topStand-standLo>NAV_LAYER_SEP && clearAt(x,z,topStand,gy)) return { ok:true, y:standLo, okB:true, yB:topStand };
+    return { ok:true, y:standLo };
+  }
+  // The low floor is blocked (a platform/ledge slab) or off-grid — fall back to the single highest surface.
   const standY=(gy>-Infinity)?Math.max(gy,ty):ty;
   if(!isFinite(standY)) return false;
   return { ok: clearAt(x,z,standY,gy), y: standY };
@@ -20771,33 +20782,48 @@ function navBuildAlloc(){
   NAV.nz = NAV.nx;
   const N = NAV.nx*NAV.nz;
   NAV.walk = new Uint8Array(N); NAV.y = new Float32Array(N);
+  NAV.walkB = new Uint8Array(N); NAV.yB = new Float32Array(N);   /* build 1200: the column's SECOND floor (roof / upper storey) */
 }
 function navSampleCell(gx,gz){   // walkability for ONE cell (the raycast-heavy part)
   const x = NAV.ox + (gx+0.5)*NAV.cell, z = NAV.oz + (gz+0.5)*NAV.cell;
   const w = navWalkable(x,z); const idx = navIdx(gx,gz);
   if(w && w.ok){ NAV.walk[idx]=1; NAV.y[idx]=w.y; } else { NAV.walk[idx]=0; NAV.y[idx]=(w&&isFinite(w.y))?w.y:0; }
+  if(NAV.walkB){ if(w && w.okB){ NAV.walkB[idx]=1; NAV.yB[idx]=w.yB; } else { NAV.walkB[idx]=0; NAV.yB[idx]=0; } }
 }
 function navSampleRow(gx){ for(let gz=0; gz<NAV.nz; gz++) navSampleCell(gx,gz); }   // (kept for the synchronous full build)
 function navBuildLinks(){
   // Climbable-up height = how high a bot can JUMP onto a ledge (apex rise * 0.85 for a reliable landing).
   NAV_UP = (typeof JUMP!=='undefined' && typeof GRAV!=='undefined' && GRAV>0) ? Math.max(0.6, (JUMP*JUMP/(2*GRAV))*0.85) : 2.4;
-  const N = NAV.nx*NAV.nz; NAV.link = new Uint8Array(N); const DIRS = navDirs();
-  for(let gx=0; gx<NAV.nx; gx++) for(let gz=0; gz<NAV.nz; gz++){
-    const idx=navIdx(gx,gz); if(!NAV.walk[idx]) continue; const cy=NAV.y[idx]; let mask=0;
+  // build 1200: TWO LAYERS. Node id = cellIdx + N*layer (layer 0 = the floor the grid always had; layer 1 =
+  // the column's distinct upper surface). A link mask is 16 bits: bit d = a link in direction d, bit d+8 =
+  // that link lands on the target cell's LAYER B. Stairs fall out of this with no special case: the
+  // stairwell's layer-0 floor rises cell by cell until the neighbouring cell's layer B (the storey floor)
+  // is within jump reach, and the per-direction target-layer bit carries the transition. Per direction the
+  // target layer is the one whose floor is vertically CLOSEST inside the [-NAV_DOWN, +NAV_UP] window.
+  const N = NAV.nx*NAV.nz; NAV.link = new Uint16Array(2*N); const DIRS = navDirs();
+  const wAt=(l,i)=> l ? NAV.walkB[i] : NAV.walk[i];
+  const yAt=(l,i)=> l ? NAV.yB[i] : NAV.y[i];
+  const nearOk=(i,cy)=>{ /* corner-cut guard: does ANY layer of this cell sit within the vertical window? */
+    if(NAV.walk[i] && (NAV.y[i]-cy)<=NAV_UP && (NAV.y[i]-cy)>=-NAV_DOWN) return true;
+    return !!(NAV.walkB[i] && (NAV.yB[i]-cy)<=NAV_UP && (NAV.yB[i]-cy)>=-NAV_DOWN); };
+  for(let l=0;l<2;l++) for(let gx=0; gx<NAV.nx; gx++) for(let gz=0; gz<NAV.nz; gz++){
+    const idx=navIdx(gx,gz); if(!wAt(l,idx)) continue; const cy=yAt(l,idx); let mask=0;
     for(let d=0; d<8; d++){ const ax=gx+DIRS[d][0], az=gz+DIRS[d][1];
-      if(ax<0||ax>=NAV.nx||az<0||az>=NAV.nz) continue; const nidx=navIdx(ax,az); if(!NAV.walk[nidx]) continue;
-      const dy=NAV.y[nidx]-cy; if(dy>NAV_UP || dy<-NAV_DOWN) continue;
-      if(d>=4 && (!NAV.walk[navIdx(ax,gz)] || !NAV.walk[navIdx(gx,az)])) continue;   // don't cut corners
-      mask |= (1<<d);
+      if(ax<0||ax>=NAV.nx||az<0||az>=NAV.nz) continue; const nidx=navIdx(ax,az);
+      let tl=-1, bdy=1e9;
+      for(let q=0;q<2;q++){ if(!wAt(q,nidx)) continue; const dy=yAt(q,nidx)-cy; if(dy>NAV_UP || dy<-NAV_DOWN) continue; const a=Math.abs(dy); if(a<bdy){ bdy=a; tl=q; } }
+      if(tl<0) continue;
+      if(d>=4 && (!nearOk(navIdx(ax,gz),cy) || !nearOk(navIdx(gx,az),cy))) continue;   // don't cut corners
+      mask |= (1<<d); if(tl===1) mask |= (1<<(d+8));
     }
-    NAV.link[idx]=mask;
+    NAV.link[idx+l*N]=mask;
   }
-  // Label connected components so navFindPath can reject unreachable goals in O(1).
-  NAV.comp = new Int32Array(N).fill(-1);
+  // Label connected components over BOTH layers so navFindPath can reject unreachable goals in O(1).
+  NAV.comp = new Int32Array(2*N).fill(-1);
   let cid=0;
-  for(let s=0;s<N;s++){ if(!NAV.walk[s] || NAV.comp[s]>=0) continue; NAV.comp[s]=cid; const q=[s]; let hd=0;
-    while(hd<q.length){ const cur=q[hd++], cx=(cur/NAV.nz)|0, cz=cur%NAV.nz, mask=NAV.link[cur];
-      for(let d=0;d<8;d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*NAV.nz+(cz+DIRS[d][1]); if(NAV.comp[ni]>=0) continue; NAV.comp[ni]=cid; q.push(ni); } }
+  for(let s=0;s<2*N;s++){ if(!wAt(s>=N?1:0, s%N) || NAV.comp[s]>=0) continue; NAV.comp[s]=cid; const q=[s]; let hd=0;
+    while(hd<q.length){ const cur=q[hd++], ci=cur%N, cx=(ci/NAV.nz)|0, cz=ci%NAV.nz, mask=NAV.link[cur];
+      for(let d=0;d<8;d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*NAV.nz+(cz+DIRS[d][1]) + (((mask>>(d+8))&1)?N:0); if(NAV.comp[ni]>=0) continue; NAV.comp[ni]=cid; q.push(ni); } }
     cid++; }
 }
 // Synchronous full build (used by the debug overlay, where a brief hitch is acceptable).
@@ -20825,19 +20851,22 @@ function buildNavOverlay(){
   _clearNavOverlay();
   if(!NAV.built) buildNavGrid();
   if(!NAV.walk) return;
-  let cnt=0; for(let q=0;q<NAV.walk.length;q++) if(NAV.walk[q]) cnt++;
+  let cnt=0; for(let q=0;q<NAV.walk.length;q++){ if(NAV.walk[q]) cnt++; if(NAV.walkB&&NAV.walkB[q]) cnt++; }
   if(!cnt){ if(typeof flashToast==='function') flashToast('Nav grid: 0 walkable cells'); return; }
   // Reachability from where the player stands (one connected component over the links).
   const px=(typeof player!=='undefined'&&player.pos)?player.pos.x:0, pz=(typeof player!=='undefined'&&player.pos)?player.pos.z:0;
-  const si=navNearestWalkable(px,pz);
-  const flood=(si>=0)?navFloodReachable(si):{ reach:new Uint8Array(NAV.walk.length), count:0, farthest:-1 };
+  const si=navNearestWalkable(px,pz,(typeof player!=='undefined'&&player.pos)?player.pos.y:null);
+  const flood=(si>=0)?navFloodReachable(si):{ reach:new Uint8Array(2*NAV.walk.length), count:0, farthest:-1 };
   const geo=new THREE.PlaneGeometry(NAV.cell*0.86, NAV.cell*0.86); geo.rotateX(-Math.PI/2);
   const mat=new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0.5, depthWrite:false, depthTest:false, side:THREE.DoubleSide });
   const inst=new THREE.InstancedMesh(geo, mat, cnt); inst.frustumCulled=false; inst.renderOrder=8;
-  const m=new THREE.Matrix4(); const cGreen=new THREE.Color(0x4dff8a), cBlue=new THREE.Color(0x1b3550); let k=0;
+  const m=new THREE.Matrix4(); const cGreen=new THREE.Color(0x4dff8a), cBlue=new THREE.Color(0x1b3550), cAmber=new THREE.Color(0xffb347); let k=0;
   for(let gx=0;gx<NAV.nx;gx++) for(let gz=0;gz<NAV.nz;gz++){ const idx=navIdx(gx,gz); if(!NAV.walk[idx]) continue;
     const x=NAV.ox+(gx+0.5)*NAV.cell, z=NAV.oz+(gz+0.5)*NAV.cell; const rch=flood.reach[idx]; m.makeTranslation(x, NAV.y[idx]+(rch?0.18:0.06), z); inst.setMatrixAt(k, m);
     inst.setColorAt(k, rch?cGreen:cBlue); k++; }   // green=reachable from you, blue=walkable but cut off
+  for(let gx=0;gx<NAV.nx;gx++) for(let gz=0;gz<NAV.nz;gz++){ const idx=navIdx(gx,gz); if(!(NAV.walkB&&NAV.walkB[idx])) continue;
+    const x=NAV.ox+(gx+0.5)*NAV.cell, z=NAV.oz+(gz+0.5)*NAV.cell; const rch=flood.reach[idx+NAV.walk.length]; m.makeTranslation(x, NAV.yB[idx]+(rch?0.18:0.06), z); inst.setMatrixAt(k, m);
+    inst.setColorAt(k, rch?cAmber:cBlue); k++; }   // amber = the UPPER layer (build 1200): a roof/storey a bot can reach shows amber
   inst.instanceMatrix.needsUpdate=true; if(inst.instanceColor) inst.instanceColor.needsUpdate=true; scene.add(inst); NAV.overlay=inst;
   // Demo path to the farthest REACHABLE cell, so it always resolves and shows A* routing around the rocks.
   let pathLen=0;
@@ -20855,85 +20884,129 @@ function buildNavOverlay(){
   if(typeof flashToast==='function') flashToast('Nav: '+cnt+' walkable, '+flood.count+' reachable from you, largest region '+largest+(pathLen?(', path '+pathLen):''));
 }
 function navOverlayToggle(){ NAV.show=!NAV.show; if(NAV.show){ NAV.built=false; buildNavOverlay(); } else _clearNavOverlay(); }
+// build 1200: DIRTY PATCHES — the grid finally notices the world changing. Prop verbs (show/hide/move/del)
+// and shattered props mark their footprint; a budgeted per-frame re-sample runs the SAME navWalkable over
+// just those cells, then ONE navBuildLinks() pass rebuilds links + components when the queue drains (a few
+// ms at the 160x160 cap — cheaper than incremental link surgery and impossible to get subtly wrong). Paths
+// self-heal on their own repath cadence (~0.5-1s), so no consumer needs notifying.
+function navDirtyRect(minX,minZ,maxX,maxZ){
+  if(!NAV.built || !NAV.walk) return;
+  if(!NAV.dirty) NAV.dirty=[];
+  const c0=navCellOf(minX-1,minZ-1), c1=navCellOf(maxX+1,maxZ+1);   // pad a cell so a footprint edge re-samples its neighbours
+  const x0=Math.max(0,Math.min(NAV.nx-1,c0.gx)), x1=Math.max(0,Math.min(NAV.nx-1,c1.gx));
+  const z0=Math.max(0,Math.min(NAV.nz-1,c0.gz)), z1=Math.max(0,Math.min(NAV.nz-1,c1.gz));
+  if(x1<x0 || z1<z0) return;
+  if(NAV.dirty.length>=64){ NAV.dirty.length=0; NAV.dirty.push({x0:0,x1:NAV.nx-1,z0:0,z1:NAV.nz-1,cx:0,cz:0}); return; }   // a storm of edits: one full re-sample beats bookkeeping
+  NAV.dirty.push({x0,x1,z0,z1,cx:x0,cz:z0});
+}
+function _navDirtyProp(o){
+  if(!o || !NAV.built) return;
+  try{ const b=new THREE.Box3().setFromObject(o); if(isFinite(b.min.x)) navDirtyRect(b.min.x,b.min.z,b.max.x,b.max.z); }catch(e){}
+}
+function navDirtyStep(maxMs){
+  if(!NAV.built || NAV.building || !NAV.dirty || !NAV.dirty.length) return;
+  const now=(typeof performance!=='undefined'&&performance.now)?(()=>performance.now()):(()=>Date.now());
+  const t0=now(); let n=0;
+  while(NAV.dirty.length){
+    const r=NAV.dirty[0];
+    while(r.cx<=r.x1){
+      navSampleCell(r.cx, r.cz);
+      if(++r.cz>r.z1){ r.cz=r.z0; r.cx++; }
+      if(((++n)&15)===0 && now()-t0>maxMs) return;   // budget hit: resume next frame; links wait for a fully drained queue
+    }
+    NAV.dirty.shift();
+  }
+  navBuildLinks();
+}
 let NAV_UP = 2.4; const NAV_DOWN = 8.0;            // climbable-UP (set from the bot's jump each build) / droppable-down between adjacent cells
+const NAV_LAYER_SEP = 2.2;                         // build 1200: clearance before a column's top counts as a SECOND floor (a bot needs headroom under it)
 function navDirs(){ return NAV._dirs || (NAV._dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]); }
 function navDirCost(){ return NAV._dc || (NAV._dc=[1,1,1,1,Math.SQRT2,Math.SQRT2,Math.SQRT2,Math.SQRT2]); }
-function navNearestWalkable(x,z){   // nearest walkable cell index to a world point (spiral out), or -1
+function navNearestWalkable(x,z,y){   // nearest walkable NODE to a world point (spiral out), or -1. build 1200:
+  // with a y, the LAYER whose floor is nearest that height wins — an actor standing upstairs paths on its own storey.
   if(!NAV.walk) return -1;
+  const N=NAV.nx*NAV.nz;
+  const pick=(i)=>{ const a=NAV.walk[i], b=NAV.walkB&&NAV.walkB[i];
+    if(a&&b&&y!=null) return (Math.abs(NAV.yB[i]-y)<Math.abs(NAV.y[i]-y)) ? i+N : i;
+    if(a) return i; if(b) return i+N; return -1; };
   const c=navCellOf(x,z); let bx=Math.max(0,Math.min(NAV.nx-1,c.gx)), bz=Math.max(0,Math.min(NAV.nz-1,c.gz));
-  if(NAV.walk[navIdx(bx,bz)]) return navIdx(bx,bz);
+  { const r0=pick(navIdx(bx,bz)); if(r0>=0) return r0; }
   for(let r=1; r<Math.max(NAV.nx,NAV.nz); r++){
     for(let dx=-r; dx<=r; dx++) for(let dz=-r; dz<=r; dz++){ if(Math.max(Math.abs(dx),Math.abs(dz))!==r) continue;
-      const gx=bx+dx, gz=bz+dz; if(gx<0||gx>=NAV.nx||gz<0||gz>=NAV.nz) continue; const i=navIdx(gx,gz); if(NAV.walk[i]) return i; }
+      const gx=bx+dx, gz=bz+dz; if(gx<0||gx>=NAV.nx||gz<0||gz>=NAV.nz) continue; const ri=pick(navIdx(gx,gz)); if(ri>=0) return ri; }
   }
   return -1;
 }
 // A* over the cell grid. Returns an array of cell indices (start..goal) or null. Octile heuristic; reuses
 // scratch arrays across calls via a generation stamp so it doesn't reallocate or clear each search.
 function navFindPath(si, gi){
-  if(!NAV.walk || si<0 || gi<0 || si>=NAV.walk.length || gi>=NAV.walk.length) return null;
-  if(!NAV.walk[si] || !NAV.walk[gi]) return null;
+  if(!NAV.walk) return null;
+  const NC=NAV.nx*NAV.nz, NT=2*NC, nz=NAV.nz, cell=NAV.cell;   // build 1200: node id = cellIdx + NC*layer
+  const wAt=(n)=> (n<NC) ? NAV.walk[n] : (NAV.walkB ? NAV.walkB[n-NC] : 0);
+  if(si<0 || gi<0 || si>=NT || gi>=NT) return null;
+  if(!wAt(si) || !wAt(gi)) return null;
   if(si===gi) return [si];
-  if(NAV.comp && NAV.comp[si]!==NAV.comp[gi]) return null;   // different connected regions -> unreachable, fail instantly instead of exploring the whole area
-  const N=NAV.walk.length, nz=NAV.nz, cell=NAV.cell;
-  if(!NAV._g || NAV._g.length!==N){ NAV._g=new Float32Array(N); NAV._from=new Int32Array(N); NAV._seen=new Int32Array(N); NAV._gen=0; }
+  if(NAV.comp && NAV.comp.length===NT && NAV.comp[si]!==NAV.comp[gi]) return null;   // different connected regions -> unreachable, fail instantly instead of exploring the whole area
+  if(!NAV._g || NAV._g.length!==NT){ NAV._g=new Float32Array(NT); NAV._from=new Int32Array(NT); NAV._seen=new Int32Array(NT); NAV._gen=0; }
   const g=NAV._g, from=NAV._from, seen=NAV._seen, gen=++NAV._gen;
-  const gX=Math.floor(gi/nz), gZ=gi%nz;
-  const h=(i)=>{ const dx=Math.abs(Math.floor(i/nz)-gX), dz=Math.abs(i%nz-gZ); return (dx+dz+(Math.SQRT2-2)*Math.min(dx,dz))*cell; };
+  const gX=Math.floor((gi%NC)/nz), gZ=(gi%NC)%nz;
+  const h=(i)=>{ const ci=i%NC; const dx=Math.abs(Math.floor(ci/nz)-gX), dz=Math.abs(ci%nz-gZ); return (dx+dz+(Math.SQRT2-2)*Math.min(dx,dz))*cell; };
   if(!NAV._hI){ NAV._hI=[]; NAV._hF=[]; }
   const hI=NAV._hI, hF=NAV._hF; hI.length=0; hF.length=0;   // reuse the heap across calls (no per-search allocation)
   const push=(i,f)=>{ hI.push(i); hF.push(f); let c=hI.length-1; while(c>0){ const p=(c-1)>>1; if(hF[p]<=hF[c]) break; const ti=hI[p];hI[p]=hI[c];hI[c]=ti; const tf=hF[p];hF[p]=hF[c];hF[c]=tf; c=p; } };
   const pop=()=>{ const ri=hI[0], n=hI.length-1; hI[0]=hI[n]; hF[0]=hF[n]; hI.pop(); hF.pop(); let c=0; const m=hI.length; while(true){ let l=2*c+1,r=2*c+2,s=c; if(l<m&&hF[l]<hF[s])s=l; if(r<m&&hF[r]<hF[s])s=r; if(s===c)break; const ti=hI[s];hI[s]=hI[c];hI[c]=ti; const tf=hF[s];hF[s]=hF[c];hF[c]=tf; c=s; } return ri; };
   const DIRS=navDirs(), DC=navDirCost();
   seen[si]=gen; g[si]=0; from[si]=-1; push(si, h(si));
-  let found=false, guard=0, maxG=N*6;
+  let found=false, guard=0, maxG=NT*6;
   while(hI.length && guard++<maxG){
     const cur=pop(); if(cur===gi){ found=true; break; }
-    const cx=Math.floor(cur/nz), cz=cur%nz, mask=NAV.link[cur];
-    for(let d=0; d<8; d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1]); const ng=g[cur]+DC[d]*cell;
+    const ci=cur%NC, cx=Math.floor(ci/nz), cz=ci%nz, mask=NAV.link[cur];
+    for(let d=0; d<8; d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1])+(((mask>>(d+8))&1)?NC:0); const ng=g[cur]+DC[d]*cell;
       if(seen[ni]!==gen || ng<g[ni]){ seen[ni]=gen; g[ni]=ng; from[ni]=cur; push(ni, ng+h(ni)); } }
   }
   if(!found) return null;
-  const path=[]; let c=gi, lim=N+2; while(c!==-1 && lim-->0){ path.push(c); c=from[c]; } path.reverse(); return path;
+  const path=[]; let c=gi, lim=NT+2; while(c!==-1 && lim-->0){ path.push(c); c=from[c]; } path.reverse(); return path;
 }
-function navFloodReachable(si){   // BFS over links from si: which cells are actually reachable + the farthest one
-  const N=NAV.walk.length, reach=new Uint8Array(N);
-  if(si<0 || si>=N || !NAV.walk[si]) return { reach, count:0, farthest:si, fardist:0 };
-  if(!NAV._fd || NAV._fd.length!==N) NAV._fd=new Float32Array(N);
+function navFloodReachable(si){   // BFS over links from si: which NODES (both layers) are reachable + the farthest one
+  const NC=NAV.nx*NAV.nz, NT=2*NC, reach=new Uint8Array(NT);
+  const wAt=(n)=> (n<NC) ? NAV.walk[n] : (NAV.walkB ? NAV.walkB[n-NC] : 0);
+  if(si<0 || si>=NT || !wAt(si)) return { reach, count:0, farthest:si, fardist:0 };
+  if(!NAV._fd || NAV._fd.length!==NT) NAV._fd=new Float32Array(NT);
   const dist=NAV._fd, DIRS=navDirs(), nz=NAV.nz;
   const q=[si]; reach[si]=1; dist[si]=0; let head=0, count=1, far=si, fardist=0;
-  while(head<q.length){ const cur=q[head++], cx=Math.floor(cur/nz), cz=cur%nz, mask=NAV.link[cur];
-    for(let d=0; d<8; d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1]);
+  while(head<q.length){ const cur=q[head++], ci=cur%NC, cx=Math.floor(ci/nz), cz=ci%nz, mask=NAV.link[cur];
+    for(let d=0; d<8; d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1])+(((mask>>(d+8))&1)?NC:0);
       if(reach[ni]) continue; reach[ni]=1; dist[ni]=dist[cur]+1; count++; q.push(ni); if(dist[ni]>fardist){ fardist=dist[ni]; far=ni; } } }
   return { reach, count, farthest:far, fardist };
 }
 function navLargestComponent(){   // size of the biggest connected walkable region anywhere (diagnostic)
-  if(!NAV.walk) return 0; const N=NAV.walk.length, seen=new Uint8Array(N), DIRS=navDirs(), nz=NAV.nz; let best=0;
-  for(let s=0;s<N;s++){ if(!NAV.walk[s]||seen[s]) continue; let cnt=0; const q=[s]; seen[s]=1; let h=0;
-    while(h<q.length){ const cur=q[h++]; cnt++; const cx=Math.floor(cur/nz), cz=cur%nz, mask=NAV.link[cur];
-      for(let d=0;d<8;d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1]); if(seen[ni]) continue; seen[ni]=1; q.push(ni); } }
+  if(!NAV.walk) return 0; const NC=NAV.nx*NAV.nz, NT=2*NC, seen=new Uint8Array(NT), DIRS=navDirs(), nz=NAV.nz; let best=0;
+  const wAt=(n)=> (n<NC) ? NAV.walk[n] : (NAV.walkB ? NAV.walkB[n-NC] : 0);
+  for(let s=0;s<NT;s++){ if(!wAt(s)||seen[s]) continue; let cnt=0; const q=[s]; seen[s]=1; let h=0;
+    while(h<q.length){ const cur=q[h++]; cnt++; const ci=cur%NC, cx=Math.floor(ci/nz), cz=ci%nz, mask=NAV.link[cur];
+      for(let d=0;d<8;d++){ if(!(mask&(1<<d))) continue; const ni=(cx+DIRS[d][0])*nz+(cz+DIRS[d][1])+(((mask>>(d+8))&1)?NC:0); if(seen[ni]) continue; seen[ni]=1; q.push(ni); } }
     if(cnt>best) best=cnt; }
   return best;
 }
-function navCellCenter(i){ const gx=Math.floor(i/NAV.nz), gz=i%NAV.nz; return { x:NAV.ox+(gx+0.5)*NAV.cell, y:NAV.y[i], z:NAV.oz+(gz+0.5)*NAV.cell }; }
+function navCellCenter(i){ const NC=NAV.nx*NAV.nz, l=(i>=NC)?1:0, ci=l?i-NC:i; const gx=Math.floor(ci/NAV.nz), gz=ci%NAV.nz; return { x:NAV.ox+(gx+0.5)*NAV.cell, y:l?NAV.yB[ci]:NAV.y[ci], z:NAV.oz+(gz+0.5)*NAV.cell }; }
 function navFarthestFrom(si){   // walkable cell with the greatest grid distance from si (for the debug demo path)
-  if(si<0) return -1; const sx=Math.floor(si/NAV.nz), sz=si%NAV.nz; let best=-1, bd=-1;
+  if(si<0) return -1; const sc=si%(NAV.nx*NAV.nz), sx=Math.floor(sc/NAV.nz), sz=sc%NAV.nz; let best=-1, bd=-1;
   for(let i=0;i<NAV.walk.length;i++){ if(!NAV.walk[i]) continue; const dx=Math.floor(i/NAV.nz)-sx, dz=i%NAV.nz-sz; const d=dx*dx+dz*dz; if(d>bd){ bd=d; best=i; } }
   return best;
 }
 // ---- Bot path-following (Step 3): walk the A* route to a destination instead of beelining ----
-function _botRepath(b, destX, destZ){
-  const si=navNearestWalkable(b.pos.x, b.pos.z), gi=navNearestWalkable(destX, destZ);
+function _botRepath(b, destX, destZ, destY){
+  const si=navNearestWalkable(b.pos.x, b.pos.z, b.pos.y), gi=navNearestWalkable(destX, destZ, destY);
   b.path = (si>=0 && gi>=0 && si!==gi) ? navFindPath(si, gi) : null;
   b.pathI = (b.path && b.path.length>1) ? 1 : 0;   // cell 0 is where we already are; aim at the next one
   b.pathGoalX = destX; b.pathGoalZ = destZ; b.pathT = b.path ? (0.5 + Math.random()*0.4) : (1.0 + Math.random()*0.6);   // jittered cadence; back off when no route was found
 }
 // Returns the next waypoint to steer toward {x,z,y,jump}, or null if there's no usable path (caller beelines).
-function _botFollowPath(b, destX, destZ, dt){
+function _botFollowPath(b, destX, destZ, dt, destY){
   if(!NAV.built || !NAV.walk) return null;
   b.pathT = (b.pathT||0) - dt;
   const goalMoved = !b.path || Math.hypot((b.pathGoalX||0)-destX, (b.pathGoalZ||0)-destZ) > 3.0;
-  if(b.pathT<=0 || goalMoved){ if(_repathBudget>0){ _repathBudget--; _botRepath(b, destX, destZ); } else { b.pathT=0.08+Math.random()*0.06; } }   // respect the per-frame search budget
+  if(b.pathT<=0 || goalMoved){ if(_repathBudget>0){ _repathBudget--; _botRepath(b, destX, destZ, destY); } else { b.pathT=0.08+Math.random()*0.06; } }   // respect the per-frame search budget
   if(!b.path || b.path.length<2) return null;
   if(b.pathI>=b.path.length) b.pathI=b.path.length-1;
   let wp=navCellCenter(b.path[b.pathI]);
@@ -21362,6 +21435,7 @@ function updateBots(dt){
   _repathBudget = 3;   // at most 3 path searches this frame; the rest keep their current route until a slot frees
   _losBudget = 5; _groundBudget = 5;   // build 547: per-frame raycast caps (see decls). Bots are few, but their LOS can align on a frame and their ground raycast now uses a cache below; this keeps both flat.
   if(!NAV.built){ if(!NAV.building && typeof navBuildBegin==='function') navBuildBegin(); if(typeof navBuildStep==='function') navBuildStep(5); }   // build the nav grid incrementally (no match-start freeze); bots beeline until ready
+  else if(typeof navDirtyStep==='function') navDirtyStep(3);   // build 1200: fold moved/destroyed props back into the grid
   const D=botDiff(), koth = NET.gameMode==='cp', lim=ARENA-2, spd=SPEED*D.spd;
   for(const b of bots){
     if(b.dead){
@@ -21414,7 +21488,7 @@ function updateBots(dt){
     } else { b.aiState='engage'; }
 
     // ---- destination from state ----
-    let destX, destZ, wantFire = hasLOS;
+    let destX, destZ, destY, wantFire = hasLOS;
     if(koth && !cpOwnedBy(b.team)){ destX=CP_POS.x; destZ=CP_POS.z; wantFire=hasLOS; }
     else if(b.aiState==='retreat' && tgt){
       // build 1003: back off to COVER, not into open ground. Re-pick when the spot is reached,
@@ -21436,12 +21510,12 @@ function updateBots(dt){
       wantFire=false;   // can't see it; don't fire blind
     }
     else if(b.aiState==='search'){
-      if(tgt){ destX=tgt.pos.x; destZ=tgt.pos.z; }   // there's a live enemy somewhere -> go hunt it down (free-roam deathmatch, not idle wandering)
+      if(tgt){ destX=tgt.pos.x; destZ=tgt.pos.z; destY=tgt.pos.y; }   // there's a live enemy somewhere -> go hunt it down (free-roam deathmatch, not idle wandering)
       else { if(!b._wander || b.aiT<=0){ b._wander={ x:b.pos.x+(Math.random()*2-1)*16, z:b.pos.z+(Math.random()*2-1)*16 }; }   // truly no enemies left -> roam
         destX=Math.max(-lim,Math.min(lim,b._wander.x)); destZ=Math.max(-lim,Math.min(lim,b._wander.z)); }
       wantFire=false;   // moving toward where it last knows the enemy is; only fires once it actually has line-of-sight
     }
-    else if(tgt){ destX=tgt.pos.x; destZ=tgt.pos.z; }   // engage
+    else if(tgt){ destX=tgt.pos.x; destZ=tgt.pos.z; destY=tgt.pos.y; }   // engage
     else { const h=_botHome(); destX=h.x; destZ=h.z; }   // no target -> head to the play space (region center, not arena origin)
     // (The spawn region is a spawn-only filter, never a movement cage: a bot's destination is left alone so
     // it can pursue/roam anywhere on the map. The arena walls + props are the only boundary.)
@@ -21453,7 +21527,7 @@ function updateBots(dt){
       if(Math.random()<0.012) b.strafe*=-1;
     }
     else {
-      const wp = _botFollowPath(b, destX, destZ, dt);
+      const wp = _botFollowPath(b, destX, destZ, dt, destY);
       if(wp){ const pxd=wp.x-b.pos.x, pzd=wp.z-b.pos.z, pl=Math.hypot(pxd,pzd)||1; mvx=pxd/pl; mvz=pzd/pl;
         if(wp.jump && b.grounded!==false && (b._jumpCd||0)<=0){ b.vy=JUMP; b.grounded=false; b.evx=mvx*spd; b.evz=mvz*spd; b._jumpCarry=true; b._jumpCd=0.7; } }   // hop onto the ledge; cooldown stops a bot jackhammering a tall rock face
       else { mvx=dx/dist; mvz=dz/dist; }   // no nav path available -> beeline fallback
@@ -27177,7 +27251,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1199 · 2026-07-31';
+const BUILD_VERSION = 'build 1200 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28692,6 +28766,7 @@ function shatterProp(obj, point, dir, power, byId){
   if(typeof NET==='undefined' || NET.mode!=='client'){ try{ fireSignals(obj, 'destroyed'); }catch(e){} }   // clients converge via the actions' own broadcasts
   obj.updateMatrixWorld(true);
   _shBox.setFromObject(obj, true); _shBox.getSize(_shSize); _shBox.getCenter(_shCtr);
+  if(typeof navDirtyRect==='function') navDirtyRect(_shBox.min.x,_shBox.min.z,_shBox.max.x,_shBox.max.z);   /* build 1200: a destroyed wall opens a route */
   if(point){ _shCtr.lerp(point, 0.35); }   // bias the burst toward the impact
   playFlipbook('smoke', _shCtr, Math.max(0.5, Math.max(_shSize.x,_shSize.y,_shSize.z)*0.35));   // dust/smoke puff
   const colorHex = propColorHex(obj);
@@ -32482,6 +32557,7 @@ function loop(){
     // around walls/props instead of beelining into them. Build the grid incrementally (no spawn freeze;
     // enemies beeline until it's ready). Bots are PvP-only, so nothing else competes for this budget here.
     if(!NAV.built){ if(!NAV.building && typeof navBuildBegin==='function') navBuildBegin(); if(typeof navBuildStep==='function') navBuildStep(5); }
+    else if(typeof navDirtyStep==='function') navDirtyStep(3);   // build 1200: fold moved/destroyed props back into the grid
     _repathBudget = 3;   // cap A* searches per tick so a frame never stalls on many enemy repaths at once
     _losBudget = 5; _groundBudget = 5; _pathBudget = 5;   // build 547/553: per-frame LOS + ground + direct-path raycast caps. A wave spawns many enemies whose caches all come due on the same frame; these stop that frame from firing dozens of raycasts at once (the wave-framerate spike). Over-budget enemies reuse the cached value one more frame; the jittered intervals stagger them after ~1s.
     _airGroundBudget = 8;   // build 809: cell-moved / airborne refreshes were EXEMPT from _groundBudget — a blast launching a wave fired ~3 casts x every enemy on one frame. Now they draw from their own (larger) pool; over-budget movers reuse last frame's ground for one frame.

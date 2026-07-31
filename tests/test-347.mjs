@@ -11,7 +11,7 @@ assert(/for\(const o of bots\)\{[\s\S]*?const d=Math\.hypot/.test(acq), 'other b
 
 const ub = extractFunction('updateBots');
 // 'search' now seeks the target instead of random-wandering
-assert(/else if\(b\.aiState==='search'\)\{\s*if\(tgt\)\{ destX=tgt\.pos\.x; destZ=tgt\.pos\.z; \}/.test(ub), "search state heads toward the live target");
+assert(/else if\(b\.aiState==='search'\)\{\s*if\(tgt\)\{ destX=tgt\.pos\.x; destZ=tgt\.pos\.z; destY=tgt\.pos\.y; \}/.test(ub), "search state heads toward the live target (carrying its height since build 1200)");
 assert(/else \{ if\(!b\._wander \|\| b\.aiT<=0\)/.test(ub), 'random roam only kicks in when there is NO target left');
 // lkpFresh is NaN-guarded and reset on spawn
 assert(/b\.lkpFresh=Math\.max\(0, \(b\.lkpFresh\|\|0\)-dt\)/.test(ub), 'last-known-position freshness is NaN-guarded');

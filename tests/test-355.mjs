@@ -6,7 +6,7 @@ const src = gameSource();
 
 assert(/function navLargestComponent\(\)/.test(src), 'largest-component diagnostic exists');
 const lc = extractFunction('navLargestComponent');
-assert(/if\(!NAV\.walk\[s\]\|\|seen\[s\]\) continue;/.test(lc), 'floods each unvisited walkable cell once');
+assert(/if\(!wAt\(s\)\|\|seen\[s\]\) continue;/.test(lc), 'floods each unvisited walkable NODE once (both layers since build 1200)');
 assert(/if\(cnt>best\) best=cnt;/.test(lc), 'tracks the biggest region');
 assert(/flashToast\('Nav: '\+cnt\+' walkable, '\+flood\.count\+' reachable from you, largest region '\+largest/.test(src), 'toast reports walkable / reachable / largest');
 

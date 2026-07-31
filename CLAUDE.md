@@ -1519,6 +1519,44 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The nav grid learns a second storey (build 1200)
+
+The critic roadmap's multi-storey AI item. The grid stored ONE walkable Y per column, so a cell under a roof
+was the floor or the roof, never both — bots and enemies could not path onto any upper surface, ever. Now a
+column carries up to two floors: layer A is EXACTLY the floor the grid always chose (the safe-change rule —
+no existing behaviour moved), and layer B is the column's highest surface, kept only when it clears layer A
+by `NAV_LAYER_SEP` (2.2 m of headroom) and passes the SAME `clearAt` authority. Node id = `cellIdx +
+N*layer`, so every layer-A id is byte-identical to the old cell ids and `navCellCenter` decodes both. The
+link mask went `Uint8Array(N)` → `Uint16Array(2N)`: bit d = a link in direction d, bit d+8 = that link lands
+on the target cell's LAYER B, with the target layer chosen per direction as the one vertically closest
+inside the `[-NAV_DOWN, +NAV_UP]` window. **Stairs fall out with no special case** — a rising layer-A floor
+links into a neighbour's layer B the moment it is within jump reach, and the tie-break prefers layer A on an
+exact tie (a landing must be CLOSER to the storey than to the ground to route up, which is what a real
+landing is). A*, flood, components and the overlay all run over 2N nodes; the overlay draws layer B in amber.
+
+`navNearestWalkable(x,z,y)` grew the optional height: with a y, the layer whose floor is nearest wins, so an
+actor standing upstairs paths on its own storey. Starts pass the actor's y everywhere (`_botRepath` — bots
+AND the PvE enemies' `en._nav` adapter share it); goals carry a height only where one is in scope today,
+which is the bot AI (`destY = tgt.pos.y` — a bot will climb to a player camping a roof). **PvE enemies still
+path to layer A goals**: `enemyDesiredTarget` returns `{tx,tz}` with no height and `en.lkp` stores none, so
+threading the target's y through those descriptor sites is the recorded other half, not an oversight.
+
+DIRTY PATCHES close the second old hole: the grid was built at match start and never noticed the world
+changing, so a moved bridge or destroyed wall left paths routing through phantom geometry. Prop verbs
+(show/hide/move — move marks OLD and NEW footprints) and `shatterProp` (which the del verb rides, and which
+also fires for a shot barrel) mark their bbox via `navDirtyRect`; both AI frame loops run `navDirtyStep(3)`
+once the grid is built — a budgeted re-sample of just those cells through the same `navWalkable`, then ONE
+`navBuildLinks()` when the queue drains (a few ms at the 160×160 cap; incremental link surgery would be
+cheaper and subtly wrong). A queue past 64 rects collapses to one full re-sample. Paths self-heal on their
+own repath cadence (~0.5–1 s), so no consumer needs notifying.
+
+`test-1200` drives the REAL extracted functions over a mock two-storey world: two layers where earned (and
+NOT where not), a ground→roof path that climbs via the landing with every step inside the jump window, the
+return trip, a floor goal that never detours over the roof, storey selection by height, and the dirty-patch
+chain — shatter the stair, re-sample, and the roof goes unreachable in O(1) (comp reject) while the ground
+keeps pathing. Seven pins moved (282, 347, 352, 355, 356, 359, 473), each keeping its assertion's intent;
+473 is the build-619 roof test and still proves the roof does not hijack the floor — layer B is additive.
+
 ## The sky that was flashing was never in the frame — it was in the G-buffer (build 1199)
 
 Reported from play, refining 1198's report: auto-exposure behaves until **ambient occlusion is turned up**,

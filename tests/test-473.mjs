@@ -16,6 +16,7 @@ assert(/\+ 2\.5;/.test(nwSrc), 'ceiling is the player head height (+2.5)');
 // ---- executable: run navWalkable against mocked geometry ----
 function makeNav(o){
   const deps = `
+    const NAV_LAYER_SEP = 2.2;
     const player = { pos:{ y:${o.playerY!=null?o.playerY:0} } };
     function terrainHeightAt(x,z){ return ${o.terrain||0}; }
     function surfaceTopAt(x,z){ return ${o.surfTop}; }
