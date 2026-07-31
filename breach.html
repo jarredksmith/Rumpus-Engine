@@ -27534,7 +27534,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1208 · 2026-07-31';
+const BUILD_VERSION = 'build 1209 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29638,6 +29638,27 @@ function enemyHurt(en, dmg, sx, sz){
   if(typeof _lgEnemyEvent==='function') _lgEnemyEvent('onhurt');   // build 1077: it took the hit and lived — a boss phase, a retreat, an alarm
 
   const now=performance.now();
+  // build 1209: enemies ACKNOWLEDGE bullets. Before this, a non-lethal hit was a 0.12s emissive flash and
+  // nothing else — a Brute ate 30 rounds at unchanged speed and a wind-up could not be broken short of a
+  // kill, so shooting read as "my gun is weak" regardless of DPS. Three physical reactions, all
+  // host-side and all reusing machinery that already replicates:
+  //  - a FLINCH shove along the shot direction via the ev-integrator (the same evx/evz melee knockback
+  //    uses, decayed and netcode-safe), scaled by the fraction of max-HP the hit took, capped so a
+  //    minigun does not launch anyone;
+  //  - a brief SPEED SLOW (_slowT) that the movement block multiplies in — a hit costs a step of ground;
+  //  - a HEAVY hit (>= a quarter of max HP) INTERRUPTS a melee wind-up and a charger's lunge telegraph,
+  //    so a shotgun blast to a winding-up brute actually stops the swing.
+  const frac = dmg / (en.maxHp || dmg || 1);
+  if(sx!=null){
+    let kx=en.mesh.position.x-sx, kz=en.mesh.position.z-sz; const kl=Math.hypot(kx,kz)||1;
+    const mag=Math.min(2.5, frac*8);
+    en.evx=(en.evx||0)+kx/kl*mag; en.evz=(en.evz||0)+kz/kl*mag;
+  }
+  en._slowT=Math.max(en._slowT||0, 0.15);
+  if(frac>=0.25){                                         // a heavy hit breaks a commitment
+    if(en._windupT){ en._windupT=0; en.cooldown=Math.max(en.cooldown||0,0.5); }
+    if(en._lungeWind){ en._lungeWind=0; en._lungePending=false; en.cooldown=Math.max(en.cooldown||0,1.0); }
+  }
   if(sx!=null && now>(en._evtCd||0) && en.mesh && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
     const eyaw = en.mesh.rotation.y - (en.mesh.userData.faceOff||0);   // logical facing (strip the model's facing offset)
     const _dn=_reactDir(sx-en.mesh.position.x, sz-en.mesh.position.z, eyaw);
@@ -32871,7 +32892,8 @@ function loop(){
       const fp = en.mesh.userData.footprint || 0.9;
       en._reach = 1.5 + fp;                                // attack range scales with the body too (Phase 3)
       const stopAt = td.chase ? (fp + 0.9) : 0.5;          // patrol: stop on the waypoint; chase: body just shy of the player
-      const spd = (td.chase ? en.speed : en.speed*0.5) * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1) * (typeof _fxSpeedFor==='function' ? _fxSpeedFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them; 1193: effect zones
+      const _stag = ((en._slowT||0) > 0) ? 0.55 : 1;   // build 1209: a freshly-hit enemy loses a step
+      const spd = (td.chase ? en.speed : en.speed*0.5) * _stag * (typeof _waterSlowFor==='function' ? _waterSlowFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1) * (typeof _fxSpeedFor==='function' ? _fxSpeedFor(en.mesh.position.x, en.mesh.position.y, en.mesh.position.z) : 1);      // patrol/return at half pace; build 862: wading slows them; 1193: effect zones
       if(en.grounded!==false){   // a launched enemy is airborne: momentum carries it, AI walking is paused
       // build 635: Charger — while winding up or dashing it OWNS its movement (normal walking skipped via _charging).
       let _charging = false;
@@ -32912,19 +32934,19 @@ function loop(){
         if(en._aiCover && (en._aiCoverT||0) > 0){
           en._aiCoverT -= dt;
           const cvx = en._aiCover.x - en.mesh.position.x, cvz = en._aiCover.z - en.mesh.position.z, cvd = Math.hypot(cvx,cvz);
-          if(cvd > 1.0){ en._wantMove = true; en.mesh.position.x += cvx/cvd*en.speed*dt; en.mesh.position.z += cvz/cvd*en.speed*dt; }
+          if(cvd > 1.0){ en._wantMove = true; en.mesh.position.x += cvx/cvd*en.speed*_stag*dt; en.mesh.position.z += cvz/cvd*en.speed*_stag*dt; }
           if(en._aiCoverT <= 0) en._aiCover = null;
         }
         else if(!en._see){
           const _ba = Math.atan2(td.tz - en.mesh.position.z, td.tx - en.mesh.position.x) + en.flankSide*0.7;
           const _fx = td.tx + Math.cos(_ba)*5 - en.mesh.position.x, _fz = td.tz + Math.sin(_ba)*5 - en.mesh.position.z, _fd = Math.hypot(_fx,_fz)||1;
-          en._wantMove = true; en.mesh.position.x += _fx/_fd*en.speed*dt; en.mesh.position.z += _fz/_fd*en.speed*dt;
+          en._wantMove = true; en.mesh.position.x += _fx/_fd*en.speed*_stag*dt; en.mesh.position.z += _fz/_fd*en.speed*_stag*dt;
         }
         else {
         // hold a standoff range: close in if too far, back off if the player crowds it, else hold + shoot
         const toPx = near.pos.x - en.mesh.position.x, toPz = near.pos.z - en.mesh.position.z, pd = Math.hypot(toPx,toPz)||1;
-        if(pd > en.standoff + 1){ en._wantMove=true; en.mesh.position.x += toPx/pd*en.speed*dt; en.mesh.position.z += toPz/pd*en.speed*dt; }
-        else if(pd < en.standoff*0.6){ en._wantMove=true; en.mesh.position.x -= toPx/pd*en.speed*dt; en.mesh.position.z -= toPz/pd*en.speed*dt; }
+        if(pd > en.standoff + 1){ en._wantMove=true; en.mesh.position.x += toPx/pd*en.speed*_stag*dt; en.mesh.position.z += toPz/pd*en.speed*_stag*dt; }
+        else if(pd < en.standoff*0.6){ en._wantMove=true; en.mesh.position.x -= toPx/pd*en.speed*_stag*dt; en.mesh.position.z -= toPz/pd*en.speed*_stag*dt; }
         else if(en.strafe && en._see){   // build 633: at standoff -> STRAFE sideways (circle the player) instead of standing still. Flips direction on a timer or when it would walk into a wall.
           if(en._strafeDir==null || nowMs > (en._strafeFlip||0)){ en._strafeDir = (Math.random()<0.5?-1:1); en._strafeFlip = nowMs + 1100 + Math.random()*1500; }
           const sx = -toPz/pd*en._strafeDir, sz = toPx/pd*en._strafeDir;   // perpendicular to the player line
@@ -33099,6 +33121,7 @@ function loop(){
         en.mesh.position.x += dx/d*push; en.mesh.position.z += dz/d*push;
       }
       // trap launch: horizontal momentum + a vertical pop that arcs under gravity and settles back to the hover height
+      if(en._slowT>0) en._slowT=Math.max(0, en._slowT-dt);   // build 1209: the stagger slow decays
       if(en.evx||en.evz){ en.mesh.position.x+=en.evx*dt; en.mesh.position.z+=en.evz*dt; const kd=Math.max(0,1-((en.grounded?6:0.6))*dt); en.evx*=kd; en.evz*=kd; if(Math.abs(en.evx)<0.05)en.evx=0; if(Math.abs(en.evz)<0.05)en.evz=0; }
       if((en.launchY||0)>0 || (en.vy||0)>0){ en.vy=(en.vy||0)-GRAV*dt; en.launchY=(en.launchY||0)+en.vy*dt; if(en.launchY<=0){ const _imp=-(en.vy||0); en.launchY=0; en.vy=0; en.grounded=true; if(gameCfg.fallDamage && gameCfg.fallDamage.on && gameCfg.fallDamage.ai && en.hp>0){ const dmg=_fallDamageFor(_imp); if(dmg>0.5){ enemyHurt(en, dmg, null, null); } } } else en.grounded=false; }
       else { en.launchY=0; en.vy=0; en.grounded=true; }

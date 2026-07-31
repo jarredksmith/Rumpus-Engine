@@ -1519,6 +1519,27 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Enemies acknowledge bullets (build 1209)
+
+The gameplay-feel panel's CRITICAL #2: a non-lethal hit was a 0.12 s emissive flash and NOTHING else — a
+Brute ate 30 rounds at unchanged speed, and a melee wind-up or charger lunge telegraph could not be broken
+short of a kill, so shooting read as "my gun is weak" regardless of DPS. `enemyHurt` now applies three
+physical reactions, all host-side and all reusing machinery that already replicates:
+- a **flinch** shove along the shot direction via the `evx`/`evz` integrator (melee's own knockback, decayed
+  per frame and netcode-safe), scaled by the fraction of max-HP the hit took and capped at 2.5 so a minigun
+  does not launch anyone;
+- a brief **speed slow** (`_slowT`, 0.15 s) that the movement block multiplies in at 0.55× — the beeline/
+  patrol `spd` and every ranged cover/flank/standoff approach site — so a hit costs a step of ground;
+- a **heavy-hit interrupt**: a hit taking ≥ ¼ of max HP cancels a melee wind-up (`_windupT`) and a
+  charger's lunge telegraph (`_lungeWind`/`_lungePending`), so a shotgun blast to a winding-up brute
+  actually stops the swing, while a light hit leaves the commitment intact.
+
+This pairs directly with 1208: you now hear the hit land at the enemy's position AND see it react. The slow
+decays beside the knockback integrator in the per-enemy update. `test-1209` executes `enemyHurt` proving the
+directional shove, the HP-fraction scaling and clamp, the slow, and the heavy-vs-light interrupt threshold;
+a lethal hit still just kills. The dedicated hit-slow number (0.55) and the flinch cap are the levers if
+play tuning wants them softer.
+
 ## The engine finally has ears (build 1208)
 
 The gameplay-feel panel's #1: there was NO positional audio anywhere — every sound routed flat into
