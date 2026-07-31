@@ -16625,6 +16625,12 @@ function _enemyEff(k){ const b=ENEMY_BASE[k]||{ hp:10, dmg:5, speedMin:3, speedM
 // Weighted random type — later waves bias toward tougher + ranged hostiles, and mix in the odd Sapper.
 function pickEnemyType(waveNum, rng){
   rng = rng || Math.random; const r = rng();
+  // build 1213: the two most mechanically interesting enemies — the Shieldbearer (flank it) and the
+  // Charger (dodge its lunge) — used to be UNREACHABLE from random waves; they existed only in authored
+  // spawns/manifests, so random mode froze into the same five-type mix at wave 5 forever. Two new tiers
+  // fold them in so the composition keeps forcing weapon/positioning changes deep into a run.
+  if(waveNum>=12){ return r<0.24 ? 'grunt' : (r<0.42 ? 'runner' : (r<0.58 ? 'gunner' : (r<0.70 ? 'sapper' : (r<0.84 ? 'brute' : (r<0.92 ? 'shielded' : 'charger'))))); }
+  if(waveNum>=8){ return r<0.30 ? 'grunt' : (r<0.50 ? 'runner' : (r<0.66 ? 'gunner' : (r<0.80 ? 'sapper' : (r<0.92 ? 'brute' : 'shielded')))); }
   if(waveNum>=5){ return r<0.34 ? 'grunt' : (r<0.56 ? 'runner' : (r<0.74 ? 'gunner' : (r<0.88 ? 'sapper' : 'brute'))); }
   if(waveNum>=3){ return r<0.48 ? 'grunt' : (r<0.72 ? 'runner' : (r<0.86 ? 'gunner' : (r<0.95 ? 'sapper' : 'brute'))); }
   return r<0.74 ? 'grunt' : (r<0.92 ? 'runner' : (r<0.98 ? 'gunner' : 'brute'));
@@ -18439,7 +18445,12 @@ function spawnEnemy(spawn){
   buildEnemyVisual(mesh);
   scene.add(mesh);
   const _eff = (typeof _enemyEff==='function') ? _enemyEff(typeKey) : ty;   /* build 1191: the level's tuning, clamped at the loaders */
-  const e = { id: nextEnemyId++, mesh, hp:_eff.hp, maxHp:_eff.hp, speed: _eff.speedMin + Math.random()*(_eff.speedMax-_eff.speedMin), dmg:_eff.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
+  // build 1213: escalation was COUNT-ONLY (n = 3 + wave*2) — wave 20 was 43 grunts, a spam/ammo problem,
+  // not a pressure problem. A gentle flat HP ramp adds real pressure, capped at wave 25 (+100%). Random
+  // mode only: a prebuilt/manifest level owns its own difficulty, and the editor preview must stay honest.
+  const _wr = (typeof gameCfg!=='undefined' && gameCfg.mode==='random' && !(typeof editorOpen!=='undefined' && editorOpen)) ? (1 + 0.04*Math.min((typeof wave!=='undefined'?wave:1), 25)) : 1;
+  const _hp = Math.round(_eff.hp * _wr);
+  const e = { id: nextEnemyId++, mesh, hp:_hp, maxHp:_hp, speed: _eff.speedMin + Math.random()*(_eff.speedMax-_eff.speedMin), dmg:_eff.dmg, type:typeKey, vy:0, evx:0, evz:0, grounded:true, launchY:0, lastHit:0, cooldown:0,
     ranged: !!ty.ranged, standoff: ty.standoff||11, fireCd: ty.fireCd||1.5, projSpeed: ty.projSpeed||24, burst: ty.burst||1, burstGap: ty.burstGap||0.09, shootCd: 0.4 + Math.random()*0.8,
     exploder: !!ty.exploder, blastR: ty.blastR||6, blastDmg: ty.blastDmg||40,   // build 628: Sapper detonation
     strafe: !!ty.strafe,   // build 633: ranged enemy strafes while holding standoff
@@ -27562,7 +27573,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1212 · 2026-07-31';
+const BUILD_VERSION = 'build 1213 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

@@ -44,5 +44,5 @@ assert(/randomWaveDescriptors\(wave, ARENA/.test(sw), 'random mode generates a s
 assert(/gameCfg\.winWaves>0 && wave>=gameCfg\.winWaves\)\{ if\(typeof gameWon/.test(src), 'win triggers after the final wave');
 assert(/function gameWon\(\)/.test(src) && /MISSION COMPLETE/.test(src), 'victory screen exists');
 assert(/game:\s*\{ mode: gameCfg\.mode, winWaves: gameCfg\.winWaves/.test(src), 'game config is serialized');
-assert(/hp:_eff\.hp, maxHp:_eff\.hp,.*dmg:_eff\.dmg, type:typeKey/.test(src) && /_enemyEff\(typeKey\) : ty;/.test(src), 'spawned enemy uses archetype stats (through the per-level tuning layer since 1191 — factory values when a level authors none)');
+assert(/hp:_hp, maxHp:_hp,.*dmg:_eff\.dmg, type:typeKey/.test(src) && /_enemyEff\(typeKey\) : ty;/.test(src) && /const _hp = Math\.round\(_eff\.hp \* _wr\);/.test(src), 'spawned enemy uses archetype stats (through the per-level tuning layer since 1191, and the build-1213 random-mode wave HP ramp — 1x in authored modes)');
 done('wave modes + enemy archetypes + win condition');

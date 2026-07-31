@@ -47,8 +47,9 @@ const KEYS = ['grunt', 'runner', 'brute', 'gunner', 'sapper', 'shielded', 'charg
   assert(/const ENEMY_BASE = \{\}; for\(const _ek of ENEMY_TYPE_KEYS\)\{ const _t=ENEMY_TYPES\[_ek\]; if\(_t\) ENEMY_BASE\[_ek\]=\{ hp:_t\.hp, dmg:_t\.dmg, speedMin:_t\.speedMin, speedMax:_t\.speedMax \}; \}/.test(src),
     'the baseline is captured from the live type table at boot');
   assert(/const _eff = \(typeof _enemyEff==='function'\) \? _enemyEff\(typeKey\) : ty;/.test(src) &&
-    /hp:_eff\.hp, maxHp:_eff\.hp, speed: _eff\.speedMin \+ Math\.random\(\)\*\(_eff\.speedMax-_eff\.speedMin\), dmg:_eff\.dmg,/.test(src),
-    'the factory spawns from effective stats — formula waves, manifests and placed spawns all inherit with zero plumbing');
+    /const _hp = Math\.round\(_eff\.hp \* _wr\);/.test(src) &&
+    /hp:_hp, maxHp:_hp, speed: _eff\.speedMin \+ Math\.random\(\)\*\(_eff\.speedMax-_eff\.speedMin\), dmg:_eff\.dmg,/.test(src),
+    'the factory spawns from effective stats — formula waves, manifests and placed spawns all inherit with zero plumbing (hp passes through the build-1213 random-mode wave ramp, which is 1x in every authored mode)');
   assert(/enemyMods: _sanitizeEnemyMods\(savedLevel && savedLevel\.game && savedLevel\.game\.enemyMods\)/.test(src),
     'the boot path sanitizes');
   eq((src.match(/gameCfg\.enemyMods = _sanitizeEnemyMods\(level\.game\.enemyMods\);/g) || []).length, 2,

@@ -1519,6 +1519,26 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The difficulty curve keeps evolving (build 1213)
+
+The gameplay-feel panel's HIGH #6: `pickEnemyType` froze the mix from wave 5 on, and its outcome set never
+included **shielded** or **charger** — the two most mechanically interesting enemies (flank / dodge
+counterplay), which existed only in authored spawns. Escalation was COUNT-ONLY (`n = 3 + wave*2`), so wave
+20 was 43 grunts — a spam/ammo problem, not a pressure problem. Two changes:
+- **Two new tiers.** Wave ≥ 8 folds in the Shieldbearer (~8%), wave ≥ 12 the Charger (~8%), with the base
+  roster rebalanced under them. Waves 1–5 are byte-unchanged (the 21 pins on wave 1 and wave 5 still pass).
+  A deep wave now carries a real fraction of both advanced types while grunts drop below a majority — the
+  mix keeps forcing weapon/positioning changes instead of asking the same question louder.
+- **A gentle HP ramp.** `_eff.hp × (1 + 0.04·min(wave,25))`, capped at +100% by wave 25, applied to both
+  `hp` and `maxHp` so damage numbers and kill credit stay consistent. **Random mode only** and off in the
+  editor: a prebuilt/manifest level owns its own difficulty, so the ramp is exactly 1× there.
+
+The milestone boss stays in `randomWaveDescriptors`, deliberately separate from `pickEnemyType`, so a
+manifest wave still never gets an automatic boss (the author owns composition — 1179's rule). `test-1213`
+executes `pickEnemyType` across the curve (wave 5 unchanged, 8 adds shielded, 12 adds charger, deep-wave
+distribution measured) and pins the random-mode gating and the cap. Two pins moved (1191, 21) for the
+`_hp` rename, intent kept.
+
 ## The hitmarker stopped lying about headshots (build 1212)
 
 The gameplay-feel panel's HIGH #4: `showHitmarker` had two states — white ✕ (hit) and red ✖ (kill) — and
