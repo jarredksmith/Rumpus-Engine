@@ -1519,6 +1519,35 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## God rays (build 1242)
+
+The rendering list's next item: screen-space light shafts — a 24-tap radial march of the bloom
+pyramid's own quarter-res bright field (`_bloomMips[1]`, no extra bright pass) toward the sun's
+projected screen position, added LINEAR in the composite before the one encode, tinted by the
+authored sun colour. CPU side: the sun's screen position from `_sunDir()`, a facing ramp (a sun
+behind the camera casts nothing), an edge fade so shafts dim as the sun leaves the frame instead of
+popping, and the bottom adaptive rung sheds the pass. Authored as `worldCfg.postRays` (0..1,
+DEFAULT_WORLD 0.45, slider in the post section, `_postOffWorld` zeroes it).
+
+**Three capture rounds shaped it, and two would have shipped wrong without measuring:**
+- Round 1 was a clean NULL — the debug tap showed the adaptive ladder sitting on SwiftShader's bottom
+  rung: the shed-gate had turned the pass off. The gate working looked exactly like the shader
+  failing; the probe distinguished them in one run.
+- Round 2 measured a **+45% GLOBAL VEIL on far corners**: an open daytime sky clears the bloom
+  threshold almost everywhere, so marching an unrestricted bright field gives every pixel light from
+  every direction. Fix in the shader: each tap weighted by a sun-centred, aspect-corrected disc
+  (`sw²`, normalised by the UNWEIGHTED sum so off-sun pixels darken to zero instead of renormalising
+  the veil back in), decay tightened 0.94 → 0.90.
+- Round 3 confirmed: **sun-side band +9.6%, opposite band +0.8%** — directional shafts, not a wash.
+  (A first directionality metric compared bands on the wrong side of the frame — the aim-offset sign
+  put the sun right, not left; recompute geometry before concluding.)
+
+Two pins moved (1126, 880). Process note: this build's commit initially went out ON A BROKEN COMMAND
+CHAIN — a failed `cd` skipped the test run, the full suite AND this entry, while the unchained
+commit+push lines still fired. The suite was green when run immediately after (982/982) and this
+entry landed in a follow-up commit, but the lesson stands: never let commit/push sit UNCHAINED after
+verification steps in one shell command — one `&&` chain end to end, or separate tool calls.
+
 ## The DoF stops being blocky (build 1241)
 
 Reported from play: *"super blocky and I can't ever quite get the settings to look right."* Two
