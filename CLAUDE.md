@@ -1903,6 +1903,34 @@ primary-cutscene loader/reset, and every serializer map), written as `undefined`
 levels stay byte-identical. Eleven pins across six cine tests moved with the field lists (178, 226, 248,
 462, 463, 464) — each keeps its assertion's intent.
 
+## Delta + keyframe snapshots (build 1197)
+
+The world broadcast was the FULL state 20×/sec in raw-float JSON — every resting coin, sleeping crate and
+idle chest re-serialized with 17-digit positions — and the appliers prune by ABSENCE, so nothing could
+ever be omitted. Now every 10th snapshot is a FULL keyframe with the old semantics exactly, **and so is
+the first snapshot after the connection count changes** — a joiner must never apply deltas against a
+baseline it never saw. Between keyframes:
+- **Enemies and dynamic props are per-entity deltas** (`_snapDelta`, executed in `test-1197` through
+  keyframe/rest/tombstone/new-entity cases). A changed `hd`/`hs` is part of the delta key, so a HIT always
+  ships. Deaths arrive as explicit tombstones (`Ex`) — absence is no longer meaningful on a delta, and a
+  kill never lingers to the next keyframe. A SLEEPING physics crate serializes nothing.
+- **Coins/chests/powerups are changed-only FULL sub-lists** (small lists; per-entry deltas buy nothing) —
+  `[]` when changed TO empty so the prune still runs; omitted on a delta means unchanged, while on a
+  keyframe omitted still means empty (the old prune, preserved).
+- **Everything quantizes** to cm (positions) / mrad (angles) — the single biggest JSON cut, beyond visual
+  resolution for interpolated avatars.
+- The HUD enemy count rides as `en` — it must not read a partial `E`.
+
+**Relevancy filtering was considered and REJECTED with a reason, not forgotten:** per-client serialization
+multiplies host work N-fold at these entity counts (≤60), where one shared snapshot is cheaper — the bytes
+were in repetition and precision, not distance. Three pins moved (389, 58, 80 — the E map became `Eall`,
+the return gained the delta framing; intents kept).
+
+**SIXTH container rollback recovered during this build** — caught by the bump assert exactly like the
+fifth (the script found BUILD_VERSION at 1182, aborted atomically before writing, and the anchors it had
+already matched were all pre-1183 net code, so nothing mixed). Same one-command recovery; everything
+through 1196 was already pushed.
+
 ## Open work (as of build 1193)
 
 **The critic-panel roadmap, remaining items** (Phases 1-3 complete; Phase 4 in progress — done so far:

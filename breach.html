@@ -23139,22 +23139,56 @@ function _packCar(){
 }
 function _packGrip(){ const wk=(typeof curWep!=='undefined'?curWep:'rifle'); const g=activeCharGrip(wk)||tpGunGrip(wk); return [ +(+g.x).toFixed(3), +(+g.y).toFixed(3), +(+g.z).toFixed(3), +(+g.yaw).toFixed(3), +(+g.pitch).toFixed(3), +(+g.roll).toFixed(3), +((g.scale==null?1:+g.scale)).toFixed(3) ]; }
 function _unpackGrip(a){ return (a && a.length>=7) ? { x:+a[0], y:+a[1], z:+a[2], yaw:+a[3], pitch:+a[4], roll:+a[5], scale:+a[6] } : null; }
+// build 1197: DELTA + KEYFRAME SNAPSHOTS. The world broadcast was the FULL state 20x/sec in raw-float
+// JSON — every resting coin, sleeping crate and idle chest re-serialized with 17-digit positions, and the
+// appliers prune by absence, so nothing could ever be omitted. Now every 10th snapshot (and the first one
+// any new connection sees — the conn-count check makes joins self-healing) is a FULL keyframe with the old
+// semantics exactly; the nine between carry only what CHANGED: per-entity deltas for enemies and dynamic
+// props (with tombstones for deaths — absence is no longer meaningful between keyframes), changed-only
+// sub-lists for coins/chests/powerups, and everything quantized to cm (positions) / mrad (angles), which
+// alone cuts the JSON to a fraction. The appliers upsert on a delta and prune only on a keyframe.
+let _snapN = 0, _snapConnN = -1; const _snapPrevE = new Map(), _snapPrevD = new Map();
+let _snapPrevC = '', _snapPrevK = '', _snapPrevPU = '';
+function _snapDelta(full, all, prev, keyOf){
+  if(full){ prev.clear(); for(const e of all) prev.set(e.id, keyOf(e)); return { list: all, gone: undefined }; }
+  const list = [], ids = new Set();
+  for(const e of all){ ids.add(e.id); const k = keyOf(e); if(prev.get(e.id) !== k){ prev.set(e.id, k); list.push(e); } }
+  const gone = []; for(const id of prev.keys()){ if(!ids.has(id)){ gone.push(id); prev.delete(id); } }
+  return { list, gone: gone.length ? gone : undefined };
+}
 function serializeWorld(){
   const P=[{ id:0, p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name||'Host', mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }];   // build 644: cl = climbing anim code; c (build 895) = the car I'm driving; build 1071: ac/aq = the action one-shot peers replay
   for(const id in NET.players){ const rp=NET.players[id];
     P.push({ id:+id, p:[rp.posEye.x,rp.posEye.y,rp.posEye.z], y:rp.yaw, pi:rp.pitch||0, w:rp.wep, g:(rp.grip?[rp.grip.x,rp.grip.y,rp.grip.z,rp.grip.yaw,rp.grip.pitch,rp.grip.roll,rp.grip.scale]:null), hp:rp.hp, j:rp.air?1:0, sl:rp.slide?1:0, ad:rp.ads?1:0, cr:rp.crouch?1:0, hd:rp.hd||0, hs:rp.hs||0, n:rp.name, mt:(rp.mt!=null?rp.mt:-1), cl:(rp.cl||0), c:(rp.car||undefined) }); }
   for(const b of bots){ if(b.dead && !b._dying) continue; P.push({ id:b.id, p:[b.pos.x,EYE,b.pos.z], y:b.yaw, pi:0, w:(b.wep||'rifle'), hp:(b.dead?0:b.hp), hd:b._netHitDir||0, hs:b._netHitSeq||0, n:b.name }); }   // build 502: keep dead-but-dying bots in the snapshot (+ hd/hs) so clients play the directional death, then they prune on respawn
-  const E=enemies.map(e=>({ id:e.id, p:[e.mesh.position.x,e.mesh.position.y,e.mesh.position.z], hd:e._netHitDir||0, hs:e._netHitSeq||0 }));
-  const C=coins.map(c=>({ id:c.id, p:[c.mesh.position.x,c.mesh.position.z] }));
-  // dynamic physics props (position + orientation) so clients see them roll
-  const D = dynamicProps.length ? dynamicProps.filter(o=>o.userData.nid).map(o=>({ id:o.userData.nid, p:[o.position.x,o.position.y,o.position.z], q:[o.quaternion.x,o.quaternion.y,o.quaternion.z,o.quaternion.w] })) : undefined;
-  // loot crates (id, position, item ids) so clients see + can open the same crates
-  const K = chests.length ? chests.map(ch=>({ id:ch.id, p:[ch.pos.x,ch.pos.z], it:ch.items.map(i=>i.id), gc:(ch.glowColor!=null?ch.glowColor:undefined), gi:(ch.glowI!=null?ch.glowI:undefined), gy:(ch.yOff||undefined) })) : undefined;
-  const PU = powerups.length ? powerups.map(p=>({ id:p.id, p:[p.x,p.z], k:p.kind, r:p.ready?1:0 })) : undefined;
+  const q2=v=>+(+v).toFixed(2), q3=v=>+(+v).toFixed(3);
+  for(const pp of P){ pp.p=[q2(pp.p[0]),q2(pp.p[1]),q2(pp.p[2])]; pp.y=q3(pp.y||0); pp.pi=q3(pp.pi||0); }   /* cm/mrad is beyond visual resolution for an interpolated avatar */
+  _snapN++;
+  const _nConn = Object.keys(NET.conns).length;
+  const full = (_snapN % 10 === 1) || _nConn !== _snapConnN;   /* keyframe cadence + a fresh join always starts from a keyframe */
+  _snapConnN = _nConn;
+  const Eall=enemies.map(e=>({ id:e.id, p:[q2(e.mesh.position.x),q2(e.mesh.position.y),q2(e.mesh.position.z)], hd:e._netHitDir||0, hs:e._netHitSeq||0 }));
+  const _ed=_snapDelta(full, Eall, _snapPrevE, e=>e.p[0]+'|'+e.p[1]+'|'+e.p[2]+'|'+e.hd+'|'+e.hs);
+  const E=_ed.list, Ex=_ed.gone;
+  const Call=coins.map(c=>({ id:c.id, p:[q2(c.mesh.position.x),q2(c.mesh.position.z)] }));
+  const _cs=JSON.stringify(Call); const C=(full || _cs!==_snapPrevC) ? Call : undefined; _snapPrevC=_cs;
+  // dynamic physics props (position + orientation) so clients see them roll — per-entry delta: a SLEEPING
+  // crate serializes nothing (removals need no tombstone; the prop-removal path owns those meshes)
+  const Dall = dynamicProps.filter(o=>o.userData.nid).map(o=>({ id:o.userData.nid, p:[q2(o.position.x),q2(o.position.y),q2(o.position.z)], q:[q3(o.quaternion.x),q3(o.quaternion.y),q3(o.quaternion.z),q3(o.quaternion.w)] }));
+  const _dd=_snapDelta(full, Dall, _snapPrevD, d=>d.p[0]+'|'+d.p[1]+'|'+d.p[2]+'|'+d.q[0]+'|'+d.q[1]+'|'+d.q[2]+'|'+d.q[3]);
+  const D=_dd.list.length ? _dd.list : undefined;
+  // loot crates (id, position, item ids) so clients see + can open the same crates. Changed-only as a
+  // FULL sub-list (small; per-chest deltas buy nothing) — [] when it changed TO empty, so the prune runs
+  const Kall = chests.map(ch=>({ id:ch.id, p:[q2(ch.pos.x),q2(ch.pos.z)], it:ch.items.map(i=>i.id), gc:(ch.glowColor!=null?ch.glowColor:undefined), gi:(ch.glowI!=null?ch.glowI:undefined), gy:(ch.yOff||undefined) }));
+  const _ks=JSON.stringify(Kall);
+  const K = full ? (chests.length ? Kall : undefined) : (_ks!==_snapPrevK ? Kall : undefined); _snapPrevK=_ks;
+  const PUall = powerups.map(p=>({ id:p.id, p:[q2(p.x),q2(p.z)], k:p.kind, r:p.ready?1:0 }));
+  const _ps=JSON.stringify(PUall);
+  const PU = full ? (powerups.length ? PUall : undefined) : (_ps!==_snapPrevPU ? PUall : undefined); _snapPrevPU=_ps;
   // objective state (so clients see the survival timer / extraction beacon + hold, not just "WAVE n")
   const O = { o:objectiveActive(), s:+surviveLeft.toFixed(1), h:+extractHoldT.toFixed(2),
               ex:[+extractPos.x.toFixed(2), +extractPos.z.toFixed(2)], er:gameCfg.extractRadius||3.5, eh:gameCfg.extractHold||5, wn:gameCfg.winWaves||0, dd:_destroyTotal-_destroyRemain, dn:_destroyTotal, es:[+escortPos.x.toFixed(2), +escortPos.z.toFixed(2)], ep:_escortPct, en:_escortNear?1:0 };
-  return { t:'world', P, E, C, D, K, PU, O, wv:wave };
+  return { t:'world', dl: full?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:enemies.length };   /* en: the HUD count must not read a partial E */
 }
 function dynamicById(id){ for(const o of dynamicProps){ if(o.userData.phys && o.userData.phys.id===id) return o; } return null; }
 function broadcastWorld(){ const w=serializeWorld(); for(const id in NET.conns){ try{ NET.conns[id].send(w); }catch(e){} } }
@@ -23320,12 +23354,18 @@ function applyWorld(msg){
   for(const id in NET.players){ if(!seen.has(+id)) removeRemotePlayer(+id); }
   const es=new Set();
   for(const e of msg.E){ es.add(e.id); upsertEnemyMesh(e); }
-  for(const id in NET.enemyMeshes){ if(!es.has(+id)){ { const m=NET.enemyMeshes[id].mesh; scene.remove(m); if(m.userData.mixer){ const mi=mixers.indexOf(m.userData.mixer); if(mi>=0) mixers.splice(mi,1); } } delete NET.enemyMeshes[id]; } }
+  // build 1197: on a KEYFRAME absence means gone (the old semantics); on a DELTA absence means unchanged,
+  // and deaths arrive as explicit tombstones so a kill never lingers to the next keyframe
+  const _rmEnemy=(id)=>{ const em=NET.enemyMeshes[id]; if(!em) return; const m=em.mesh; scene.remove(m); if(m.userData.mixer){ const mi=mixers.indexOf(m.userData.mixer); if(mi>=0) mixers.splice(mi,1); } delete NET.enemyMeshes[id]; };
+  if(!msg.dl){ for(const id in NET.enemyMeshes){ if(!es.has(+id)) _rmEnemy(id); } }
+  else if(msg.Ex){ for(const id of msg.Ex) _rmEnemy(id); }
+  if(msg.C){
   const cs=new Set();
   for(const c of msg.C){ cs.add(c.id); upsertCoinMesh(c); }
   for(const id in NET.coinMeshes){ if(!cs.has(+id)){ scene.remove(NET.coinMeshes[id]); delete NET.coinMeshes[id]; } }
-  const ec=document.getElementById('enemyCount'); if(ec) ec.textContent='HOSTILES: '+msg.E.length;
-  if(NET.mode==='client'){
+  }
+  const ec=document.getElementById('enemyCount'); if(ec) ec.textContent='HOSTILES: '+(msg.en!=null?msg.en:msg.E.length);
+  if(NET.mode==='client' && (msg.PU !== undefined || !msg.dl)){   /* build 1197: omitted on a delta = unchanged */
     const PU = msg.PU || []; const ps=new Set();
     for(const pu of PU){ ps.add(pu.id); let m=NET.powerupMeshes[pu.id];
       if(!m){ m=buildPowerupMesh(pu.k); m.position.set(pu.p[0],0,pu.p[1]); scene.add(m); NET.powerupMeshes[pu.id]=m; }
@@ -23335,7 +23375,7 @@ function applyWorld(msg){
   // dynamic physics props: clients place them where the host says (set targets for smoothing)
   if(msg.D){ for(const d of msg.D){ const o=propByNid(d.id); if(o){ o.userData._netTarget = d.p; o.quaternion.set(d.q[0],d.q[1],d.q[2],d.q[3]); } } }
   // loot crates: clients mirror the host's crate list (so proximity + opening + buying all work)
-  if(NET.mode==='client'){
+  if(NET.mode==='client' && (msg.K !== undefined || !msg.dl)){   /* build 1197: omitted on a delta = unchanged */
     const K = msg.K || [];
     const ks = new Set();
     for(const k of K){
@@ -27116,7 +27156,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1196 · 2026-07-31';
+const BUILD_VERSION = 'build 1197 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
