@@ -178,7 +178,7 @@ assert(/\{k:'ewho',l:'',w:100,ifv:\['verb','command'\],sel:\[\['enemies','All en
   'the node asks WHICH enemies — and does not offer "the player", which would mean nothing here');
 assert(/\{k:'cmd',l:'',w:120,ifv:\['verb','command'\],sel:\[\['hunt','Hunt the player'\],\['patrol','Patrol'\],\['hold','Hold position'\],\['alert','Alert them to'\],\['calm','Lose the player'\],\['post','Move their post to'\]\]\}/.test(src),
   '...and all six commands in plain English');
-assert(/ifv:\['verb',\['spawn','pickup','teleport','command','moveprop'\]\],listId:'lgPlaceList'/.test(src),   // build 1170
+assert(/ifv:\['verb',\['spawn','pickup','teleport','command','moveprop','spawnprop'\]\],listId:'lgPlaceList'/.test(src),   // build 1170; build 1216: + spawnprop
   'it shares the place field with the other verbs that point somewhere');
 assert(/ewho:p\.ewho\|\|'enemies', cmd:p\.cmd\|\|'hunt'/.test(src), 'the Do-action node passes them through');
 {

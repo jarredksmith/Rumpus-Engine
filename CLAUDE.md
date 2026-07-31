@@ -1519,6 +1519,28 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The logic graph can create a prop now (build 1216)
+
+The feature-surface panel's HIGH, and build 1170's explicitly-deferred other half: show/hide/move/destroy
+existed but nothing could CREATE — so a tycoon's "buy → building appears", a wave-defense buildable turret,
+a farming drop, a sandbox spawner toy were all inexpressible; every quantity was fixed at author time. The
+new `spawnprop <prefab> @place` verb spawns a prefab at a resolved place through the ready `_pfSpawnEntry`
+(the same spawner prefabs, duplicate and the clipboard already route through). Three things make it small:
+- **No new net code.** 1170 recorded the net-id story as the hard part; it isn't. The spawned props carry
+  nids (`finalizeProp` assigns them), so the existing prop reconciler (`reconcileProps`) pAdds them to every
+  client on its next tick — hence the handler sends NO `wact` message. Host-only, because `updateLogic`
+  returns for clients.
+- **A LIVE cap** (`LG_SPAWN_CAP` 200, counting props still in the scene so destroyed ones free budget) stops
+  a spawnprop-on-an-interval from filling the world; a refused spawn is reported through 1214's
+  `_noteLogicFailure`, as is a missing prefab or a place nothing answers.
+- **Spawned props are marked `_lgSpawned`** so they never touch the saved LEVEL — a runtime verb must not
+  edit the level (1170's rule).
+
+`test-1216` executes `_lgSpawnPrefab` (spawns all a prefab's props at the place under one group, marks them,
+reports a missing prefab, enforces the live cap AND frees it as props are destroyed, refuses on a client)
+and pins the verb/field/datalist/handler. Three place-field pins moved (1073, 1077, 1170) for the added
+`spawnprop`, intent kept.
+
 ## Persistent saves stop clobbering each other (build 1215)
 
 The feature-surface panel's finding, verified in code: `_persistStore` wrote `campaignVars` into ONE global
