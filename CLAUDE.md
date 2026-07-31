@@ -1519,6 +1519,28 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The bake stopped restarting itself (build 1206)
+
+The fresh panel's performance CRITICAL. `_bakeTick` gated on `_bakeDoneN === colliders.length`, so ANY
+collider-count change re-queued the FULL vertex-AO bake — and `_bakeCollect` already EXCLUDES movers,
+dynamic props and no-src walls, so hiding a wall, toggling a crate, shattering a physics breakable, or
+animating an `xa` door (none of which the bake even looks at) each restarted a whole-level re-shade at
+6 ms/frame. A logic graph blinking an `xa` door on an interval made that perpetual, and sustained 6 ms is
+exactly what `_adaptResTick` reads as load — so the invisible job could buy a visible resolution downshift.
+
+The gate is now a SIGNATURE: `_bakeSig()` counts the colliders the bake would actually gather (src-bearing,
+non-mover). The O(1) fast path survives — an unchanged `colliders.length` still returns immediately — and
+only when the length changed does it walk the one cheap loop; if the signature is unchanged (a wall, a
+mover, a dynamic prop moved) it updates the cached length and returns without re-baking. Completion records
+both length and signature. A static bake prop genuinely leaving (a shattered non-physics breakable, a
+`hideprop`'d static) still re-bakes, correctly — that occlusion really changed. Separately, the job's
+per-frame budget drops from `BAKE_MS` (6) to 2 ms once `_prStepI > 0` (the resolution scaler has engaged),
+so even a legitimate re-bake yields to the scaler instead of fighting it. `test-1206` executes `_bakeSig`
+over a mixed set (wall/dynamic/vehicle/animating-door changes do NOT move it; a static-prop shatter does)
+and pins the gate; two 1195 pins moved with it, intent kept. The per-vertex dirty-rect re-bake the critic
+also suggested (re-shade only vertices within BAKE_RANGE of the changed box) is the larger follow-up — this
+build removes the perpetual-restart, which was the whole of the CRITICAL.
+
 ## The relayed claim was unbounded (build 1205)
 
 A fresh six-critic panel (run against build 1204, the roadmap-complete tree) surfaced this as a verified

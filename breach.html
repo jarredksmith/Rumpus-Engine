@@ -8919,7 +8919,13 @@ const _BAKE_DIRS = (()=>{ const out=[], N=14, GA=Math.PI*(3-Math.sqrt(5));
   for(let i=0;i<N;i++){ const y=0.15+0.83*((i+0.5)/N), r=Math.sqrt(Math.max(0,1-y*y)), a=i*GA;
     out.push([Math.cos(a)*r, y, Math.sin(a)*r]); } return out; })();
 const BAKE_RANGE = 22, BAKE_FLOOR = 0.35, BAKE_MS = 6;
-let _bakeJob = null, _bakeWant = false, _bakeDoneN = -1; const _bakeMats = new Set();
+let _bakeJob = null, _bakeWant = false, _bakeDoneN = -1, _bakeDoneSig = -1; const _bakeMats = new Set();
+// build 1206: the count of colliders the bake would actually gather — a prop with src that is not a
+// mover. Gating the bake on this instead of raw colliders.length means hiding a wall, toggling a
+// dynamic crate, shattering a physics breakable, or animating an xa door (all already excluded from
+// _bakeCollect) no longer restarts a full level re-bake — the 6ms/frame perpetual tax a logic-blinked
+// mover used to cost. Cheap: one loop, no traverse, and only walked when the length actually changed.
+function _bakeSig(){ let n = 0; for(const c of colliders){ const u = c.userData; if(u && u.src && !(u.phys || u.vehicle || (u.xa && u.xa.on))) n++; } return n; }
 const _bkRay = new THREE.Raycaster(); _bkRay.far = BAKE_RANGE;
 const _bkO = new THREE.Vector3(), _bkD = new THREE.Vector3(), _bkP = new THREE.Vector3(), _bkN = new THREE.Vector3();
 const _bkT = new THREE.Vector3(), _bkB = new THREE.Vector3(), _bkNM = new THREE.Matrix3(), _bkCand = [];
@@ -8953,7 +8959,7 @@ function _bakeVisAt(px, py, pz, nx, ny, nz, self){
   return vis / _BAKE_DIRS.length;
 }
 function requestSceneBake(){ _bakeWant = true; _bakeJob = null; }
-function unbakeScene(){ _bakeWant = false; _bakeJob = null; _bakeDoneN = -1;
+function unbakeScene(){ _bakeWant = false; _bakeJob = null; _bakeDoneN = -1; _bakeDoneSig = -1;
   for(const m of _bakeMats){ try{ m.vertexColors = false; m.needsUpdate = true; }catch(e){} } _bakeMats.clear(); }
 function _bakeCollect(){
   const meshes = [];
@@ -8967,15 +8973,20 @@ function _bakeCollect(){
 function _bakeTick(){
   if(!(typeof worldCfg !== 'undefined' && worldCfg.baked)){ if(_bakeMats.size) unbakeScene(); return; }
   if(typeof _glbPending !== 'undefined' && _glbPending > 0) return;   /* bake what will actually be there */
-  if(!_bakeWant && _bakeDoneN === colliders.length) return;
+  if(!_bakeWant && !_bakeJob){
+    if(_bakeDoneN === colliders.length) return;                        /* nothing changed at all: O(1) */
+    const sig = _bakeSig();
+    if(sig === _bakeDoneSig){ _bakeDoneN = colliders.length; return; } /* the change missed the bake set (a mover, a dynamic prop, a wall): skip */
+    _bakeWant = true;                                                  /* a STATIC bake prop genuinely arrived or left */
+  }
   if(!_bakeJob){
-    if(!_bakeWant && _bakeDoneN !== colliders.length){ _bakeWant = true; }   /* a prop arrived or left since the last bake */
     const meshes = _bakeCollect();
     _bakeJob = { meshes, mi: 0, vi: 0 }; _bakeWant = false;
-    if(!meshes.length){ _bakeJob = null; _bakeDoneN = colliders.length; return; }
+    if(!meshes.length){ _bakeJob = null; _bakeDoneN = colliders.length; _bakeDoneSig = _bakeSig(); return; }
   }
   const t0 = performance.now(), J = _bakeJob;
-  while(performance.now() - t0 < BAKE_MS){
+  const budget = (typeof _prStepI !== 'undefined' && _prStepI > 0) ? 2 : BAKE_MS;   /* build 1206: yield to the resolution scaler — a background bake must never buy a visible downshift */
+  while(performance.now() - t0 < budget){
     if(J.mi >= J.meshes.length){
       // finished: the SHARED-MATERIAL INVARIANT. vertexColors=true on a material means every mesh using
       // it MUST carry a colour attribute — a mesh without one samples (0,0,0) and renders BLACK. Any
@@ -8985,7 +8996,7 @@ function _bakeTick(){
         const ms = Array.isArray(n.material) ? n.material : [n.material];
         if(ms.some(m => _bakeMats.has(m))){ const cnt = n.geometry.attributes.position.count;
           const w = new Float32Array(cnt * 3).fill(1); n.geometry.setAttribute('color', new THREE.BufferAttribute(w, 3)); } });
-      _bakeDoneN = colliders.length; _bakeJob = null; return;
+      _bakeDoneN = colliders.length; _bakeDoneSig = _bakeSig(); _bakeJob = null; return;
     }
     const it = J.meshes[J.mi], mesh = it.mesh;
     if(J.vi === 0){
@@ -8997,7 +9008,7 @@ function _bakeTick(){
     }
     const pos = mesh.geometry.attributes.position, nrm = mesh.geometry.attributes.normal, col = mesh.geometry.attributes.color;
     const n = pos.count;
-    while(J.vi < n && performance.now() - t0 < BAKE_MS){
+    while(J.vi < n && performance.now() - t0 < budget){
       const i = J.vi++;
       _bkP.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(mesh.matrixWorld);
       _bkN.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i)).applyMatrix3(_bkNM).normalize();
@@ -27467,7 +27478,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1205 · 2026-07-31';
+const BUILD_VERSION = 'build 1206 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
