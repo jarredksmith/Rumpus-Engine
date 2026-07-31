@@ -51,9 +51,9 @@ const src = gameSource();
 {
   assert(/postThresh:0\.62, postRays:0\.45, lut:''/.test(src), 'postRays ships in DEFAULT_WORLD at 0.45');
   assert(/_postRays   = Math\.max\(0,   Math\.min\(1,    worldCfg\.postRays/.test(src), 'clamped 0..1 by the world sanitizer');
-  assert(/w\.ssao=0; w\.postRays=0; return w; \}/.test(src), '_postOffWorld zeroes it — the 1140 lesson (a first-time scene starts clean, and "the mood never reached the engine" stays impossible)');
+  assert(/w\.ssao=0; w\.postRays=0; w\.ssr=0; return w; \}/.test(src), '_postOffWorld zeroes it — the 1140 lesson (a first-time scene starts clean, and "the mood never reached the engine" stays impossible)');
   assert(/slider\(b,'God rays','postRays',0,1,0\.05\);/.test(src), 'the World panel slider exists');
-  assert(/_raysRT=mkRT\(Math\.max\(1,hw>>1\), Math\.max\(1,hh>>1\)\);/.test(src) && /_aoRT2,_raysRT\]\.concat/.test(src) && /_aoRT2=_raysRT=null;/.test(src),
+  assert(/_raysRT=mkRT\(Math\.max\(1,hw>>1\), Math\.max\(1,hh>>1\)\);/.test(src) && /_aoRT2,_raysRT,_ssrRT\]\.concat/.test(src) && /_aoRT2=_raysRT=_ssrRT=null;/.test(src),
     'the quarter-res target allocates with the post targets and disposes with them (880\'s rung-change hygiene)');
 }
 
