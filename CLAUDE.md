@@ -1519,6 +1519,30 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Align, distribute, array (build 1225)
+
+The editor-UX panel's arrangement gap: the engine had grouping, snapping, duplication and a clipboard,
+but no way to LINE THINGS UP — a row of fence posts was N drags and N squints. Three verbs in an
+"Arrange" row under Group/Ungroup in the props picker (axis select + Min/Center/Max/Spread, and
+⧉ Array with count + dx/dy/dz). Two semantics carry the correctness, both executed in `test-1225`:
+- **Group members move as ONE UNIT.** A click selects the whole group, so a naive per-prop align would
+  smash a group's internal arrangement flat onto the target line. `_arrUnits` partitions the selection
+  by gid; a unit's span is the union of its members' world boxes; the whole unit shifts by one delta.
+- **Alignment lines up world-space BOUNDING EDGES, not origins.** Two crates of different sizes
+  "aligned min" share a face plane, which is what a builder means. The target edge is the SELECTION'S
+  OWN min/centre/max, so nothing moves further than it must and align-to-the-leader falls out free.
+
+Distribute is even CENTRE spacing with the two outermost units anchored (the standard convention);
+needs 3+ units and refuses below that WITHOUT burning an undo snapshot — all three verbs are one
+snapshot per gesture (1163's rule), and every refusal happens before the snapshot. Array duplicates
+through the 1162 `_pfEntryOf`/`_pfSpawnEntry` pair, so copies carry full config (signals, tags,
+materials, physics) and inherit new entry fields automatically; each copy is its OWN group (never
+chained to the source), steps land at `pivot + step*i` (dy supported — stairs, shelves), a zero step
+refuses rather than z-fighting copies inside each other, and the gesture budget is 24 copies hard,
+~100 spawned props total (the paste cap's number). The dx field prefills with the selection's own
+width so the default array lands copies side by side. Moved props get `refreshPropCollider` +
+`_homeSync` (the gizmo drag's own bookkeeping); the axis choice persists across panel re-renders.
+
 ## Play from here, start at wave (build 1224)
 
 The editor-UX panel's iteration-speed gap: a creator tuning wave 12 replayed waves 1-11 on every test

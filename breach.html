@@ -27676,7 +27676,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1224 · 2026-07-31';
+const BUILD_VERSION = 'build 1225 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34915,6 +34915,81 @@ function ungroupSelectedProps(){
   if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
   if(typeof flashToast==='function') flashToast('Ungrouped');
 }
+// build 1225: ALIGN / DISTRIBUTE / ARRAY — the arrangement verbs every other editor's second toolbar
+// carries. One undo snapshot per gesture (1163's rule). Two semantics are load-bearing:
+// - GROUP MEMBERS MOVE AS ONE UNIT. A click selects the whole group, so a naive per-prop align would
+//   smash a group's internal arrangement flat onto the target line.
+// - Alignment lines up world-space BOUNDING EDGES, not origins. Two crates of different sizes
+//   "aligned min" share a face plane, which is what a builder means by align.
+function _selBoxOf(o){
+  const b = o && o.userData && o.userData.box;
+  if(b && b.min && b.max) return b;
+  const bb = new THREE.Box3(); try{ bb.setFromObject(o, true); }catch(e){ bb.min.copy(o.position); bb.max.copy(o.position); }
+  return bb;
+}
+function _arrUnits(list){   // partition into move-units: a group is one unit, an ungrouped prop its own
+  const seen = {}, units = [];
+  for(const o of list){ if(!o) continue; const gid = o.userData && o.userData.groupId;
+    if(!gid){ units.push([o]); continue; }
+    if(!seen[gid]){ seen[gid] = []; units.push(seen[gid]); } seen[gid].push(o); }
+  return units;
+}
+function _unitSpan(u, axis){   // [min,max] of the unit's combined world box on one axis
+  let mn = Infinity, mx = -Infinity;
+  for(const o of u){ const b = _selBoxOf(o); if(b.min[axis] < mn) mn = b.min[axis]; if(b.max[axis] > mx) mx = b.max[axis]; }
+  return [mn, mx];
+}
+function _arrTouch(o){ if(typeof refreshPropCollider === 'function') refreshPropCollider(o); if(typeof _homeSync === 'function') _homeSync(o); }
+function _arrDone(){ if(typeof syncPropStateFromObj === 'function') syncPropStateFromObj(); if(typeof updateGizmo === 'function') updateGizmo(); if(typeof updateFieldDisplays === 'function') updateFieldDisplays(); if(typeof updateSelectionHighlight === 'function') updateSelectionHighlight(); if(typeof _levelDirty !== 'undefined') _levelDirty = true; }
+function alignSelectedProps(axis, mode){   // axis 'x'|'y'|'z'; mode 'min'|'center'|'max'
+  const units = _arrUnits((typeof selProps !== 'undefined' && selProps) ? selProps.filter(Boolean) : []);
+  if(units.length < 2) return 0;
+  pushUndoSnapshot();
+  let mn = Infinity, mx = -Infinity;
+  for(const u of units){ const s = _unitSpan(u, axis); if(s[0] < mn) mn = s[0]; if(s[1] > mx) mx = s[1]; }
+  const t = mode === 'min' ? mn : mode === 'max' ? mx : (mn + mx) / 2;   // the selection's OWN edge/centre — nothing moves further than it must
+  for(const u of units){ const s = _unitSpan(u, axis);
+    const cur = mode === 'min' ? s[0] : mode === 'max' ? s[1] : (s[0] + s[1]) / 2;
+    const d = t - cur; if(!d) continue;
+    for(const o of u){ o.position[axis] += d; _arrTouch(o); } }
+  _arrDone();
+  if(typeof flashToast === 'function') flashToast('Aligned ' + units.length + ' on ' + axis.toUpperCase());
+  return units.length;
+}
+function distributeSelectedProps(axis){   // even CENTRE spacing; the two extreme units hold still
+  const units = _arrUnits((typeof selProps !== 'undefined' && selProps) ? selProps.filter(Boolean) : []);
+  if(units.length < 3) return 0;
+  pushUndoSnapshot();
+  const info = units.map(u => { const s = _unitSpan(u, axis); return { u, c: (s[0] + s[1]) / 2 }; }).sort((a, b) => a.c - b.c);
+  const c0 = info[0].c, c1 = info[info.length - 1].c, n = info.length;
+  for(let i = 1; i < n - 1; i++){ const d = c0 + (c1 - c0) * i / (n - 1) - info[i].c;
+    if(!d) continue; for(const o of info[i].u){ o.position[axis] += d; _arrTouch(o); } }
+  _arrDone();
+  if(typeof flashToast === 'function') flashToast('Distributed ' + n + ' evenly on ' + axis.toUpperCase());
+  return n;
+}
+function arraySelectedProps(count, dx, dy, dz){   // duplicate the selection N times along a step vector
+  const list = (typeof selProps !== 'undefined' && selProps && selProps.length) ? selProps.filter(Boolean) : [];
+  if(!list.length) return 0;
+  count = Math.max(1, Math.min(24, count | 0));
+  const per = list.length;
+  count = Math.min(count, Math.max(1, Math.floor(100 / per)));   // the paste cap's budget — never ~100+ props in one gesture
+  dx = +dx || 0; dy = +dy || 0; dz = +dz || 0;
+  if(!dx && !dy && !dz) return 0;   // a zero step stacks copies inside each other — refuse rather than z-fight
+  pushUndoSnapshot();
+  const pivot = _pfPivotOf(list);
+  const entries = list.map(o => _pfEntryOf(o, pivot));   // full config, identity stripped — the 1162 pair, so array inherits every field duplicate does
+  const wasGrouped = list.some(o => o.userData && o.userData.groupId);
+  for(let i = 1; i <= count; i++){
+    const gid = (per > 1 || wasGrouped) ? _newGroupId() : null;   // each copy is its OWN group, never chained to the source
+    const at = { x: +(pivot.x + dx * i).toFixed(3), y: +(pivot.y + dy * i).toFixed(3), z: +(pivot.z + dz * i).toFixed(3) };
+    for(const p of entries) _pfSpawnEntry(JSON.parse(JSON.stringify(p)), at, null, gid, null);
+  }
+  if(typeof _levelDirty !== 'undefined') _levelDirty = true;
+  if(typeof flashToast === 'function') flashToast('Arrayed ' + count + ' cop' + (count > 1 ? 'ies' : 'y') + ' of ' + per + ' prop' + (per > 1 ? 's' : ''));
+  return count;
+}
+let _arrAxisSel = 'x';   // the Arrange row's axis choice, kept across re-renders
 function duplicateSelectedProp(){
   // build 798: duplicate the WHOLE current selection (a grouped assembly copies as one unit with a fresh group id), not
   // just the primary. Falls back to the single primary when nothing else is selected.
@@ -38689,6 +38764,32 @@ function renderEditorFields(){
         const gb=document.createElement('button'); gb.innerHTML=_icn('chain')+'Group'; gb.title='Bind the selected props into one group (Ctrl+G). Clicking any piece then selects the whole group, so move / rotate / scale affect them all.'; gb.disabled=(_selN<2); gb.style.opacity=(_selN<2?'0.5':'1'); gb.onclick=()=>{ if(typeof groupSelectedProps==='function') groupSelectedProps(); };
         const ub=document.createElement('button'); ub.innerHTML=_icn('scissors')+'Ungroup'; ub.title='Break the group on the selection (Ctrl+Shift+G).'; ub.disabled=!_grouped; ub.style.opacity=(_grouped?'1':'0.5'); ub.onclick=()=>{ if(typeof ungroupSelectedProps==='function') ungroupSelectedProps(); };
         grow.appendChild(gb); grow.appendChild(ub); picker.appendChild(grow);
+        // build 1225: Arrange — align / distribute on a chosen axis, and a linear array
+        { const _units = (typeof _arrUnits === 'function') ? _arrUnits((selProps || []).filter(Boolean)) : [];
+          const ah = document.createElement('div'); ah.className = 'hint'; ah.style.margin = '0 0 3px'; ah.innerHTML = '<b>Arrange</b>'; picker.appendChild(ah);
+          const _inCss = 'flex:0 0 auto;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 4px;font-size:12px;';
+          const ar = document.createElement('div'); ar.className = 'row2'; ar.style.marginBottom = '4px';
+          const ax = document.createElement('select'); ax.id = 'edArrAxis'; ax.style.cssText = _inCss + 'width:42px;'; ax.title = 'The axis Min / Center / Max / Spread act on';
+          for(const a of ['x', 'y', 'z']){ const op = document.createElement('option'); op.value = a; op.textContent = a.toUpperCase(); ax.appendChild(op); }
+          ax.value = (typeof _arrAxisSel !== 'undefined') ? _arrAxisSel : 'x'; ax.onchange = () => { _arrAxisSel = ax.value; };
+          const mk = (txt, title, dis, fn) => { const b = document.createElement('button'); b.textContent = txt; b.title = title; b.disabled = dis; b.style.opacity = dis ? '0.5' : '1'; b.onclick = fn; return b; };
+          ar.appendChild(ax);
+          ar.appendChild(mk('Min', 'Line up bounding edges on the LOW side of the axis. Groups move as one unit; boxes align by their edges, not their origins.', _units.length < 2, () => { alignSelectedProps(ax.value, 'min'); renderEditorFields(); }));
+          ar.appendChild(mk('Center', 'Line up bounding-box centres on the axis.', _units.length < 2, () => { alignSelectedProps(ax.value, 'center'); renderEditorFields(); }));
+          ar.appendChild(mk('Max', 'Line up bounding edges on the HIGH side of the axis.', _units.length < 2, () => { alignSelectedProps(ax.value, 'max'); renderEditorFields(); }));
+          ar.appendChild(mk('Spread', 'Space the selection evenly along the axis — the two outermost stay put, the rest slide to equal centre spacing. Needs 3+.', _units.length < 3, () => { distributeSelectedProps(ax.value); renderEditorFields(); }));
+          picker.appendChild(ar);
+          const ar2 = document.createElement('div'); ar2.className = 'row2'; ar2.style.marginBottom = '6px';
+          let _spanX = 2; if(_units.length){ let m0 = Infinity, m1 = -Infinity; for(const u of _units){ const s = _unitSpan(u, 'x'); if(s[0] < m0) m0 = s[0]; if(s[1] > m1) m1 = s[1]; } if(isFinite(m1 - m0) && m1 - m0 > 0.01) _spanX = +(m1 - m0).toFixed(2); }
+          const num = (id, val, w, title) => { const i = document.createElement('input'); i.type = 'number'; i.id = id; i.step = '0.5'; i.value = val; i.title = title; i.style.cssText = _inCss + 'width:' + w + 'px;'; return i; };
+          const nI = num('edArrN', 3, 34, 'How many copies (1-24; total props in one gesture capped at ~100)'); nI.min = '1'; nI.max = '24'; nI.step = '1';
+          const xI = num('edArrDx', _spanX, 46, 'Step on X per copy (prefilled with the selection\'s own width — copies land side by side)');
+          const yI = num('edArrDy', 0, 46, 'Step on Y per copy (climbing stairs, stacked shelves)');
+          const zI = num('edArrDz', 0, 46, 'Step on Z per copy');
+          ar2.appendChild(mk('⧉ Array', 'Duplicate the whole selection N times, stepped by (dx, dy, dz). Full config copies — signals, tags, materials, physics — each copy its own group. One Ctrl+Z removes the lot.', !_units.length, () => { arraySelectedProps(+nI.value, +xI.value, +yI.value, +zI.value); renderEditorFields(); }));
+          ar2.appendChild(nI); ar2.appendChild(xI); ar2.appendChild(yI); ar2.appendChild(zI);
+          picker.appendChild(ar2);
+        }
         if(_selN>1 || _grouped){ const gh=document.createElement('div'); gh.className='hint'; gh.style.margin='0 0 7px'; gh.textContent=_grouped?('Grouped — '+_selN+' pieces move together. Shift-click adds to the selection.'):(_selN+' selected. Group them so a click grabs all, then transform as one.'); picker.appendChild(gh); }
       }
       // behavior mode for the selected spawn
