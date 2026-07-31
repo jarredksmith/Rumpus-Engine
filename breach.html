@@ -27736,7 +27736,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1228 · 2026-07-31';
+const BUILD_VERSION = 'build 1229 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -28720,7 +28720,7 @@ function _tutEl(){
   if(!el){ el=document.createElement('div'); el.id='tutHint';
     el.innerHTML='<span id="tutStep"></span><span id="tutTxt"></span><button id="tutX" title="Dismiss the tutorial" aria-label="Dismiss the tutorial">\u2715</button>';
     document.body.appendChild(el);
-    el.querySelector('#tutX').onclick=(e)=>{ e.stopPropagation(); endTutorial(true); };
+    el.querySelector('#tutX').onclick=(e)=>{ e.stopPropagation(); if(typeof EDTUT!=='undefined' && EDTUT && el.dataset.owner==='ed') endEditorTutorial(true); else endTutorial(true); };   /* build 1229: the X dismisses whichever coach owns the pill right now */
   }
   return el;
 }
@@ -28745,6 +28745,7 @@ function _tutRender(){
   const stepTxt=(TUT.i+1)+'/'+TUT.steps.length, lbl=_tutLabel(st);
   if(sc.textContent!==stepTxt) sc.textContent=stepTxt;
   if(tx.dataset.lbl!==lbl){ tx.dataset.lbl=lbl; tx.innerHTML=lbl; }
+  el.dataset.owner='play';   /* build 1229: the editor coach shares this element */
   el.style.display='flex';
 }
 function updateTutorial(dt){
@@ -28765,6 +28766,67 @@ function updateTutorial(dt){
     TUT.i++; TUT.t=0; TUT.sx=player.pos.x; TUT.sz=player.pos.z; TUT.look=0; TUT.wep0=curWep; TUT.py=player.yaw; TUT.pp=player.pitch;
     if(TUT.i>=TUT.steps.length){ endTutorial(false); return; }
     _tutRender(); if(done && typeof SFX!=='undefined' && SFX.coin) SFX.coin();   // a little chirp for a step actually done
+  }
+}
+// ---- build 1229: the EDITOR gets the same do-to-advance coach the game got in 938. The panel
+// critic's finding: first-hour editor onboarding was a MANUAL (the field guide), not the
+// do-to-advance pill 938 already proved works. Four steps — fly, add, move, play — each completing
+// when the creator actually performs it. Deliberately NO auto-advance timeout, unlike play's 15s:
+// a creator reads at their own pace, nothing here blocks, and the X is the exit. Once per browser;
+// completing OR deploying ends it. It shares #tutHint with the play coach via dataset.owner, so
+// neither can clobber the other when a brand-new user triggers both in one session. ----
+const EDTUT_KEY='breach_edtut_done';
+let EDTUT=null;
+const EDTUT_STEPS=[
+  { id:'fly',  kb:'Welcome! Fly the camera \u2014 <b>W A S D</b> + drag to look (<b>Q</b>/<b>E</b> down/up)', touch:'Welcome! Fly \u2014 <b>joystick</b> moves, drag the view to look' },
+  { id:'add',  kb:'Add a shape \u2014 the <b>+</b> button (or <b>Ctrl+K</b> \u2192 \u201cAdd box\u201d)', touch:'Add a shape \u2014 tap the <b>+</b> button' },
+  { id:'move', kb:'It\u2019s selected \u2014 drag the <b>gizmo arrows</b> to move it (<b>1</b>/<b>2</b>/<b>3</b> = move/rotate/scale)', touch:'It\u2019s selected \u2014 drag the <b>gizmo arrows</b> to move it' },
+  { id:'play', kb:'Now test it \u2014 <b>\u25b6 Play level</b> in the panel (<b>Esc</b> brings you back)', touch:'Now test it \u2014 <b>\u25b6 Play level</b> in the panel' },
+];
+function startEditorTutorial(){
+  try{ if(localStorage.getItem(EDTUT_KEY)) return; }catch(e){}
+  if(EDTUT) return;
+  EDTUT={ i:0, moved:0, lx:null, lz:null, n0:(typeof propModels!=='undefined'?propModels.length:0), ref:null, rx:0, ry:0, rz:0 };
+  _edTutRender();
+}
+function endEditorTutorial(dismissed){
+  EDTUT=null; const el=document.getElementById('tutHint'); if(el && el.dataset.owner==='ed') el.style.display='none';
+  try{ localStorage.setItem(EDTUT_KEY,'1'); }catch(e){}
+  if(typeof flashToast==='function') flashToast(dismissed ? 'Tour dismissed \u2014 Help \u203a Field manual has everything.' : 'That\u2019s the whole loop \u2014 build, then \u25b6 to feel it. Help \u203a Field manual has the rest.');
+}
+function _edTutRender(){
+  if(!EDTUT || EDTUT.i>=EDTUT_STEPS.length) return; const el=_tutEl(), st=EDTUT_STEPS[EDTUT.i];
+  const sc=el.querySelector('#tutStep'), tx=el.querySelector('#tutTxt');
+  const stepTxt=(EDTUT.i+1)+'/'+EDTUT_STEPS.length, lbl=(typeof isTouch!=='undefined' && isTouch) ? st.touch : st.kb;
+  if(sc.textContent!==stepTxt) sc.textContent=stepTxt;
+  if(tx.dataset.lbl!==lbl){ tx.dataset.lbl=lbl; tx.innerHTML=lbl; }
+  el.dataset.owner='ed';
+  el.style.display='flex';
+}
+function updateEditorTutorial(dt){
+  if(!EDTUT) return;
+  if(!editorOpen){ const el=document.getElementById('tutHint'); if(el && el.dataset.owner==='ed') el.style.display='none'; return; }   // hidden while playing; only if this coach owns the pill
+  _edTutRender();
+  const st=EDTUT_STEPS[EDTUT.i];
+  let done=false;
+  if(st.id==='fly'){
+    const cx = editorTopView ? topPanX : (editorFreeFly ? flyPos.x : player.pos.x);
+    const cz = editorTopView ? topPanZ : (editorFreeFly ? flyPos.z : player.pos.z);
+    if(EDTUT.lx==null){ EDTUT.lx=cx; EDTUT.lz=cz; }
+    EDTUT.moved += Math.hypot(cx-EDTUT.lx, cz-EDTUT.lz); EDTUT.lx=cx; EDTUT.lz=cz;
+    done = EDTUT.moved > 6;   // accumulated, so mode switches and small strokes all count
+  }
+  else if(st.id==='add') done = (typeof propModels!=='undefined' && propModels.length > EDTUT.n0);
+  else if(st.id==='move'){
+    const pr=(typeof selProps!=='undefined' && selProps && selProps.length) ? selProps[0] : null;
+    if(pr && EDTUT.ref!==pr){ EDTUT.ref=pr; EDTUT.rx=pr.position.x; EDTUT.ry=pr.position.y; EDTUT.rz=pr.position.z; }   // baseline the CURRENT primary, re-baselining if they select something else
+    done = !!(EDTUT.ref && EDTUT.ref.position && Math.hypot(EDTUT.ref.position.x-EDTUT.rx, EDTUT.ref.position.y-EDTUT.ry, EDTUT.ref.position.z-EDTUT.rz) > 0.5);
+  }
+  // 'play' completes in startGame — deploying ends the tour as done, whatever step it was on
+  if(done){
+    EDTUT.i++; EDTUT.n0=(typeof propModels!=='undefined'?propModels.length:0); EDTUT.ref=null;
+    if(EDTUT.i>=EDTUT_STEPS.length){ endEditorTutorial(false); return; }
+    _edTutRender(); if(typeof SFX!=='undefined' && SFX.coin) SFX.coin();
   }
 }
 // ---------- Radial deploy menu: hold Tab to open a wheel of buildable props; aim a wedge + click (or
@@ -33048,6 +33110,7 @@ function loop(){
   updateLights(dt);                      // build 699: fade signal-controlled scene lights on/off
   tickGrabHint(dt);                      // "[E] Grab" / carry prompt
   updateTutorial(dt);                    // build 938: first-run coach pill
+  updateEditorTutorial(dt);              // build 1229: editor coach — runs second, so in the editor it wins the shared pill
   tickContactSignals(dt);                // build 682: prop-on-prop contact / containment signals
   tickGoalBanner(dt);                    // build 692: objective banner fade
   updateControlPoint(dt); cpRender();   // KOTH zone capture/score + HUD
@@ -42267,6 +42330,7 @@ function toggleEditor(){
     // every path that leaves the editor sets editorFreeFly=false, so re-opening it always landed back on
     // the player's walking gameplay camera. F (with nothing selected) and the View buttons still switch.
     editorFreeFly = true; editorTopView = false; flyInit = false;
+    if(typeof startEditorTutorial==='function') startEditorTutorial();   // build 1229: once per browser; a no-op ever after
     if(!editorEl) buildEditorPanel();
     editorEl.style.display = 'block';
     if(typeof stopMusic==='function') stopMusic();   // silence the level's music/ambience while editing
@@ -42488,6 +42552,7 @@ function startGame(){
   gameOn=true; gameOver=false; shopOpen=false; if(typeof _vcamUserYaw!=='undefined') _vcamUserYaw=0;   // build 1100: each session starts at the authored angle
   if(typeof spawnPlacedLoot==='function') spawnPlacedLoot();
   if(typeof startTutorial==='function') startTutorial();   // build 938: first-run coach pill (solo, once per browser)
+  if(typeof EDTUT!=='undefined' && EDTUT) endEditorTutorial(false);   // build 1229: they deployed — the tour's whole point; done, not dismissed
   $('shop').classList.add('hidden');
   $('overlay').classList.add('hidden');
   $('hud').classList.remove('hidden');

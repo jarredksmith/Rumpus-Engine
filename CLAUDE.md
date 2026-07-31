@@ -1519,6 +1519,30 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The editor teaches itself (build 1229)
+
+The panel critic's onboarding finding, closed with machinery the engine already proved: build 938's
+do-to-advance coach pill, editor edition. First time the editor opens (once per browser), a four-step
+pill walks the whole loop — fly the camera (completes on ~6 units of ACCUMULATED camera strokes, so
+mode switches and small moves all count), add a shape (prop count rises; the + auto-selects it, which
+is why there is no separate "select" step — it would self-complete), move it (the primary selection
+drifting 0.5 from a per-selection baseline; switching selection RE-BASELINES so clicking a distant prop
+cannot false-complete the step), and play it (completes only in `startGame` — deploying is the tour's
+whole point and ends it COMPLETE from any step).
+
+Two decisions differ from 938 deliberately:
+- **No auto-advance timeout.** Play's 15s exists so a coach never blocks combat; in the editor nothing
+  blocks, a creator reads at their own pace, and the X is the exit. `test-1229` pins the timeout's
+  ABSENCE.
+- **The pill element is shared with the play coach, owner-stamped.** A brand-new user triggers both
+  tours in one session; each render stamps `dataset.owner` ('play'/'ed'), the editor coach runs second
+  in the loop so it wins the pill inside the editor, hides it only when it owns it, and the X dismisses
+  whichever coach owns it right now. Without the stamp, whichever update ran last would clobber the
+  other's pill every frame.
+
+`test-1229` executes the real state machine through the full tour, the re-baselining, the
+dismissed-forever key, and the no-clobber property. No pins moved.
+
 ## Attached lights ride duplication (build 1228)
 
 The editor panel's "a lamp+light composite can't be moved/prefabbed as a unit", verified to its real
