@@ -1519,6 +1519,38 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Real camera motion blur (build 1238) — the rendering deferred-list opens
+
+Asked directly from play: "Did you implement actual motion blur yet or are we still faking it?" We
+were faking it: `_matAfter` was `max(new, old*damp)` — a decaying AFTERIMAGE that ghost-trailed
+everything equally and answered "did the camera move" with "did any pixel change". It is now a
+**rotational reprojection blur**: each pixel's view ray is rotated into LAST frame's camera
+orientation (`uMbRot = prevR^T * curR`) and reprojected, giving the true per-pixel screen velocity of
+the camera's rotation — the dominant motion term in an FPS, and the one that is depth-independent
+(the translation term needs per-pixel depth, which the MSAA target cannot carry — the AO-prepass
+constraint — and is deliberately absent). Eight taps along the streak, 5%-of-screen cap, guarded
+divide. The accumulation ping-pong and buffer swap are GONE (one pass instead of two + swap);
+`postMotion` keeps its slider but now means blur strength, and 0 still skips everything.
+
+Three correctness pieces in `_mbFrame` (a pure, tested core):
+- **The cut guard**: >0.35 rad in one frame is a teleport/respawn/cinematic cut, not motion — that
+  frame renders SHARP instead of smearing the whole screen once.
+- **The shutter**: per-frame delta × `(1/60)/dt` clamped [0.5, 2.5] — at 144Hz the streak scales up
+  to a 60Hz-equivalent exposure so the authored look holds at any refresh rate (1161's rule), and a
+  hitch frame floors instead of exploding.
+- **Known honest gap**: the viewmodel is camera-locked (true velocity ~0) yet lives in the frame, so
+  a hard flick smears it with the world. The afterimage ghosted it identically — no regression — and
+  the proper fix is a per-object velocity buffer, its own build.
+
+**Capture-verified before shipping** (this is a raw ShaderMaterial — the twice-shipped silent-compile
+class — so the harness run was mandatory): metric = horizontal/vertical gradient anisotropy of the
+frame, 6 shots per condition, because raw gradient comparisons across a spinning camera are content
+noise (the first metric produced a nonsense −18.7% and was thrown away — no control pair, the
+documented trap). Spinning with blur on: anisotropy **−13.4%** vs the identical spin with blur off —
+the directional smear is real. Still frames: **0.3%** delta on/off — the shader compiled and is inert
+at zero delta. Probe: `mkprobe.py`/`runprobe2.mjs` pattern per build 1237's recipe. Three pins moved
+(437×2 — the afterimage/swap pins became reprojection/no-ping-pong pins; intents kept).
+
 ## Decals ride the surface they hit (build 1237)
 
 The floating-decals report survived 1236 ("still placing in mid-air — now when I shoot at the default
