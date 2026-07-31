@@ -40,7 +40,7 @@ eq(san(new Array(40).fill({ kind: 'text' })).length, 24, 'hard cap at 24 widgets
 }
 
 // ---- the timer format and live interpolation, executed ----
-const glue = extractFunction('_lgNum', src) + '\n' + extractFunction('_hwFmtTimer', src) + '\n' + extractFunction('_hwText', src);
+const glue = extractFunction('_lgVarKey', src) + '\n' + extractFunction('_lgNum', src) + '\n' + extractFunction('_hwFmtTimer', src) + '\n' + extractFunction('_hwText', src);   // build 1231: _lgNum scopes names through _lgVarKey
 const env = new Function('logicVars', glue + '\nreturn { fmt:_hwFmtTimer, text:_hwText };');
 {
   const e = env({ score: 12.345, time: 65, kills: 3 });

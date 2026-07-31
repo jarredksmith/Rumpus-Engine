@@ -10,6 +10,7 @@ const src = gameSource();
 // ---- executable: the whole interpreter, with stubbed world hooks ----
 const fns = extractFunction('_sanitizeLogic', src) + '\n'
   + extractFunction('_lgNode', src) + '\n'
+  + extractFunction('_lgVarKey', src) + '\n'   // build 1231: _lgNum + the writer nodes scope names through it
   + extractFunction('_lgNum', src) + '\n'
   + extractFunction('_lgFollow', src) + '\n'
   + extractFunction('_lgFireEvents', src) + '\n'

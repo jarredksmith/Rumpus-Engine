@@ -1519,6 +1519,36 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The graph learns WHO (build 1231) — per-player logic, first slice
+
+The multiplayer critic's root ceiling ("8 hardcoded modes a creator can't extend — needs per-player/team
+scoping"), opened where it was cheapest and most load-bearing. Three pieces, all riding 1221's context:
+
+- **Triggers fire per ACTOR.** `updateTriggerZones` tracked ONE anonymous union boolean over every
+  player, so the second player's entry was invisible and one player leaving while another stayed
+  produced NO exit at all — "who stepped on the pad" was structurally unaskable. Every zone now tracks
+  edges per player (`_trigStepActor`, per-actor state under the zone's `st.a`) and fires the event
+  through `_lgPlayerEvent` with `{pid, team, x, z}`. The once-flag stays ZONE-global (once means once,
+  not once per player); a DEAD player reads as outside, so dying on the hill fires the same exit edge
+  as walking off it (what a KOTH graph needs to be true); solo, one actor = the exact old semantics.
+  The ENEMY path deliberately keeps the identityless union — an enemy has no pid, and per-enemy edges
+  would turn a 40-strong wave crossing a zone into 40 pulses no graph asked for.
+- **Variables scope per player with a trailing `@`.** `_lgVarKey` maps `coins@` to `coins@<ctx pid>`;
+  every read (`_lgNum`) and every write (setvar/addvar/math/read, and `{coins@}` toast interpolation —
+  whose regex gained `@`) routes through the one function. No player in context resolves to `@0` (the
+  host), so a per-player graph authored solo behaves identically alone, and plain names are
+  byte-identical — no existing graph changes.
+- **onkill knows the KILLER.** The context gains `pid`/`team` from `_coopKillFor` (the existing co-op
+  credit: set during a client's `{t:'hit'}`), else the host — so "award the killer's `score@`" is one
+  Math node now. `#pid`/`#team` join the always-offered autocomplete tokens.
+
+`test-1231` executes the var scoping (per-player isolation, solo collapse, plain-name identity, `#i`
+fallthrough intact) and the per-actor edges (second entry visible, exit-while-another-stays, zone-global
+once, independent stay clocks). Eleven pins/harness scopes moved (1060×4 token count, 1072×2 the
+per-actor shape, 47's char window — the documented trap again — and `_lgVarKey` stubs into the
+1027/1058/1169/1221 scopes; every intent kept). **The recorded other half:** verbs that act ON the
+event's player (heal/give/teleport the actor) need a host→client effect message — its own build.
+
 ## The library learns what people play (build 1230)
 
 The feature panel's "no play-count/rating flywheel": the community library was a flat newest-first list
@@ -2725,8 +2755,10 @@ auto-exposure stability (soft knee; HDRI out of the AO G-buffer), 1200+1202 two-
 patches, 1201 host migration, 1203 collider derivation in a worker.
 
 Still open, each with its reason:
-- **Per-player variables** — DEFERRED: the logic runtime's pulses carry no actor identity; threading one
-  through every pulse source and the `wact` relay is its own multi-site build.
+- **Per-player variables** — FIRST SLICE SHIPPED (build 1231): trigger + onkill events carry pid/team,
+  `name@` variables scope per player. Remaining: actor-targeted verbs (heal/give/teleport the event's
+  player) need a host→client effect message; more event sources (interact, objective edges) can adopt
+  `_lgPlayerEvent` incrementally.
 - Verification kills already recorded (do not revisit): texture slots on primitives (871-era), bot
   bullet tracers (1020), cell-hash enemy separation (arithmetic — not a hotspot), relevancy snapshot
   filtering (per-client serialization × N costs more than it saves at ≤60 entities).

@@ -99,8 +99,8 @@ eq(mig(null).r, 6, 'junk in gives a sane default zone, never a crash');
   assert(/const z=triggerZones\[i\]; if\(!z\.ev\) continue;/.test(fn), 'a trigger with no event name is skipped entirely');
   assert(/if\(z\.who!=='enemy'\)\{/.test(fn) && /for\(const id in NET\.players\)/.test(fn),
     'in co-op ANY teammate counts as "the player" (a door opens for whoever reaches it)');
-  assert(/if\(rp\.hp!=null && rp\.hp<=0\) continue;/.test(fn), '...but a downed teammate does not hold a trigger open');
-  assert(/if\(!inside && z\.who!=='player' && typeof enemies!=='undefined'\)/.test(fn), 'enemy/any zones test the enemies too');
+  assert(/dead:\(rp\.hp!=null && rp\.hp<=0\)/.test(fn) && /const inz = !ac\.dead && _trigContains/.test(fn), '...but a downed teammate does not hold a trigger open');   // build 1231: per-actor — a dead player reads as OUTSIDE (and now fires their exit edge)
+  assert(/if\(z\.who!=='player' && typeof enemies!=='undefined'\)/.test(fn), 'enemy/any zones test the enemies too');   // build 1231: the enemy union runs beside the per-actor player edges instead of after them
   assert(/if\(_trigStep\(z, st, inside, now\) && typeof logicEvent==='function'\) logicEvent\(z\.ev\);/.test(fn),
     'and the whole thing ends in one logic pulse — the trigger itself does no gameplay');
 }
