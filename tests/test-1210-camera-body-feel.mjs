@@ -52,8 +52,12 @@ const src = gameSource();
   assert(/_landDipV -= 1\.6 \+ _imp\*7\.0;/.test(src) && /if\(typeof SFX!=='undefined' && SFX\.land\) SFX\.land\(_imp\);/.test(src),
     'a real landing kicks the dip spring, and plays a thud scaled by impact');
   assert(/shake = Math\.max\(shake, _imp\*0\.22\);/.test(src), '...with a touch of impact shake');
-  assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend \+ _sprintFov;/.test(src),
-    'the sprint push is added to the ADS-blended FOV, not multiplied — it survives aiming being zero');
+  assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend \+ _sprintFovCur;/.test(src),
+    'the sprint push is added to the ADS-blended FOV, not multiplied — and since 1222 it is the EASED value, so no single-frame condition can step the lens');
+  assert(/_sprintFovCur \+= \(_sprintTarget - _sprintFovCur\) \* Math\.min\(1, dt\*8\);/.test(src),
+    'the push eases toward its target (build 1222: the onGround flicker used to snap it 6 degrees in one frame — the reported stutter)');
+  assert(!/player\.vel && player\.onGround && typeof SPEED/.test(src),
+    'the onGround gate is GONE — speed-FOV tracks speed, and the flickering ground test can never reach the lens');
   assert(/camera\.position\.y \+= _landDip;/.test(src), 'the dip lowers the first-person eye');
   assert(/camera\.rotation\.z  = _camLean \+ \(Math\.random\(\)-0\.5\) \* 0\.06 \* s;/.test(src) && /\} else \{ shake = 0; camera\.rotation\.z = _camLean; \}/.test(src),
     'the lean drives camera roll whether or not shake is active');

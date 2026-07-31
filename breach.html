@@ -17086,8 +17086,15 @@ function _applyOrientedSky(statusFn){
     _skyRotTex = (tex !== _skyOrigTex) ? tex : null;
     tex.mapping = THREE.EquirectangularReflectionMapping;
     scene.background = tex; _buildSkyPMREM(tex);
+    // build 1223: REPORTED FROM PLAY — "nothing visually shows until I adjust a sky setting, then it
+    // appears". applySky() is the ONLY place that hides the procedural dome when an HDRI is active, and
+    // this completion path never called it — so the dome (a mesh a metre from the camera) kept covering
+    // the freshly-set background until the next settings change happened to run applyWorldCfg -> applySky.
+    // Call the function whose stated job is "everything the sky drives, applied together so they can
+    // never disagree": it sees the live _skyHdriUrl, hides the dome, and the HDRI shows immediately.
+    if(typeof applySky==='function') try{ applySky(); }catch(_){ }
     if(statusFn) statusFn(isHdr ? 'HDR sky loaded \u2713' : 'Sky loaded \u2713');
-  }catch(e){ console.warn('Sky orient failed:', e && e.message); try{ scene.background = _skyOrigTex; _buildSkyPMREM(_skyOrigTex); }catch(_){ } if(statusFn) statusFn('Sky loaded (rotation skipped)'); }
+  }catch(e){ console.warn('Sky orient failed:', e && e.message); try{ scene.background = _skyOrigTex; _buildSkyPMREM(_skyOrigTex); if(typeof applySky==='function') applySky(); }catch(_){ } if(statusFn) statusFn('Sky loaded (rotation skipped)'); }
 }
 // Re-orient the already-loaded sky when only the rotation changed (debounced so live-dragging the slider
 // doesn't regenerate the lighting every frame).
@@ -17106,6 +17113,7 @@ function applySkyHdri(url){
     _ensureDefaultEnv(); scene.environment = _envDefaultRT ? _envDefaultRT.texture : null;   // build 1095: fall back to the procedural env, not to nothing
     if(_skyEnvRT){ _skyEnvRT.dispose && _skyEnvRT.dispose(); _skyEnvRT = null; }
     _skyOrigTex = null; _skyOrigKind = null; _skyRotTex = null;
+    if(typeof applySky==='function') try{ applySky(); }catch(_){ }   /* build 1223: the inverse bug — clearing the HDRI re-shows the dome NOW, not on the next unrelated settings change */
     return;
   }
   if(/\.exr(\?|#|$)/i.test(url)){
@@ -25013,7 +25021,7 @@ let shake = 0;                 // current trauma 0..1, decays each frame
 // build 1210: the first-person camera reacts to the player's OWN body — the two cheapest game-feel wins in
 // the genre and both absent (the speed-FOV of build 730 lived only in the driving branch). _landDip is a
 // spring the landing impulse kicks (dip then recover), _camLean an eased strafe roll.
-let _landDip = 0, _landDipV = 0, _camLean = 0;
+let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0;
 function addShake(amt){ shake = Math.min(1, shake + amt); }
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){
@@ -27656,7 +27664,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1221 · 2026-07-31';
+const BUILD_VERSION = 'build 1223 · 2026-07-31';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32502,12 +32510,21 @@ function loop(){
   const hipFov = (worldCfg && worldCfg.fov) ? worldCfg.fov : BASE_FOV;
   const _zoomFov = Math.max(12, adsFovLive * (typeof _attZoomMul==='function' ? _attZoomMul(curWep) : 1));   // build 964: optics finally magnify — the loadout zoom was computed but never read
   // build 1210: a sprint FOV push — the frame widens as you approach top speed, folded out while aiming.
-  let _sprintFov = 0;
-  if(typeof player!=='undefined' && player.vel && player.onGround && typeof SPEED!=='undefined'){
+  // build 1222: REPORTED FROM PLAY as "the scene zooms and bounces back, a stutter every few seconds while
+  // running" — and it was exactly that. The push was gated on player.onGround, which flickers FALSE for
+  // single frames mid-stride (the same flicker builds 926 and 1160 had to buffer for slide and jump), so
+  // the FOV snapped 6 degrees out and back in one frame, unsmoothed, every time the ground test blinked.
+  // Two fixes, both structural: the gate is GONE (speed-FOV should track SPEED — airborne horizontal speed
+  // is still speed, and the landing dip remains the landing cue), and the value is EASED through a
+  // persistent _sprintFovCur so no single-frame condition of any kind can ever step the lens again.
+  let _sprintTarget = 0;
+  if(typeof player!=='undefined' && player.vel && typeof SPEED!=='undefined'){
     const _hsp = Math.hypot(player.vel.x, player.vel.z), _top = SPEED * (typeof SPRINT!=='undefined'?SPRINT:1.6);
-    const _f = _top>0 ? Math.min(1, _hsp/_top) : 0; _sprintFov = _f*_f * 6 * (1 - adsBlend);
+    const _f = _top>0 ? Math.min(1, _hsp/_top) : 0; _sprintTarget = _f*_f * 6 * (1 - adsBlend);
   }
-  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend + _sprintFov;
+  _sprintFovCur += (_sprintTarget - _sprintFovCur) * Math.min(1, dt*8);
+  if(Math.abs(_sprintFovCur - _sprintTarget) < 0.01) _sprintFovCur = _sprintTarget;
+  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend + _sprintFovCur;
   if(Math.abs(camera.fov - wantFov) > 0.01){ camera.fov = wantFov; camera.updateProjectionMatrix(); }
   crosshairEl.style.opacity = _scopedNow ? '0' : (1 - adsBlend*0.85).toFixed(2);
   if(typeof _updateCrosshairBloom==='function') _updateCrosshairBloom(dt);   // build 1219: the reticle blooms with the live spread
