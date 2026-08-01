@@ -17535,6 +17535,8 @@ let gameCfg = {
   unarmed: !!(savedLevel && savedLevel.game && savedLevel.game.unarmed),        // start with fists only (no guns)
   startWeapon: (savedLevel && savedLevel.game && typeof savedLevel.game.startWeapon==='string') ? savedLevel.game.startWeapon : 'rifle',   // build 976: the primary you spawn with (armed levels)
   allowPickup: (savedLevel && savedLevel.game && savedLevel.game.allowPickup!=null) ? !!savedLevel.game.allowPickup : true,   // can still pick up weapons found in the level
+  pvp: (function(){ const v=String((savedLevel&&savedLevel.game&&savedLevel.game.pvp)||'').trim(); return ['duel','ffa','tdm','cp'].indexOf(v)>=0 ? v : ''; })(),   /* build 1265 */
+  pvpTarget: Math.max(0, Math.min(999, Math.round(+((savedLevel&&savedLevel.game&&savedLevel.game.pvpTarget)||0)))),
   flashlight: !!(savedLevel && savedLevel.game && savedLevel.game.flashlight),  // a toggleable held flashlight (press L)
   flashCfg: _sanitizeFlash(savedLevel && savedLevel.game && savedLevel.game.flash),   // build 677: tunable beam (brightness/cone/softness/range/colour)
   goalText: (savedLevel && savedLevel.game && typeof savedLevel.game.goalText==='string') ? savedLevel.game.goalText.slice(0,160) : '',   // build 692: a goal/objective line shown to the player (and updatable via signals)
@@ -18720,6 +18722,10 @@ const gunModelByWep = {};   // weapon key -> loaded Object3D (cached)
 const _gunLoading = {};      // weapon key -> true while a model load is in flight (prevents duplicate viewmodels)
 // Resolve a weapon's effective model URL: its own override, else the shared default gun url.
 function wepModelUrl(key){ const w=WEAPONS[key]; return (w && w.model) ? w.model : gunModelUrl; }
+// build 1266: the ONE rule for "this weapon shows no gun at all". Both the first-person viewmodel and the
+// third-person hand ask it, so a punching character can never end up holding a rifle and the two views can
+// never disagree about what the player is carrying. A creator's own model for the slot always wins (674).
+function _wepShowsFists(key){ const w=WEAPONS[key]; return !(w && w.model) && (key==='hands' || !!(w && w.fists)); }
 // Default per-weapon transform (falls back to the shared GUN_* framing when a weapon has no saved view).
 function wepView(key){ const w=WEAPONS[key]; return (w && w.view) ? w.view
   : { px:GUN_OFFSET.x, py:GUN_OFFSET.y, pz:GUN_OFFSET.z, rx:GUN_ROT.x*DEG, ry:GUN_ROT.y*DEG, rz:GUN_ROT.z*DEG, s:GUN_SCALE, mzx:GUN_OFFSET.x, mzy:GUN_OFFSET.y+0.04, mzz:GUN_OFFSET.z-1.02 }; }
@@ -18735,7 +18741,7 @@ function applyWepView(model, key){
 function showWeaponModel(key){
   // build 672: a fists weapon shows the procedural hands viewmodel — UNLESS the creator imported a custom model
   // for that slot (build 674 fix), in which case it loads like any other weapon viewmodel.
-  const isFists = !(WEAPONS[key] && WEAPONS[key].model) && (key==='hands' || (WEAPONS[key] && WEAPONS[key].fists));
+  const isFists = _wepShowsFists(key);   /* build 1266: shared with the third-person hand */
   if(typeof _setFistsVisible==='function') _setFistsVisible(isFists);
   if(isFists){ for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible=false; } if(gunPlaceholder) gunPlaceholder.visible=false; gunModel=null; sight=null; if(_attStateReady && typeof rebuildAttMounts==='function') rebuildAttMounts(key); return; }
   for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible = (k===key); }
@@ -22416,6 +22422,31 @@ function playerDied(){
 }
 
 // ---- PvP deathmatch (1v1 duel + free-for-all share one engine) ----
+// ---------- build 1265: THE LEVEL GETS A SAY IN THE MATCH ----------
+// The audit's gameplay CRITICAL: the competitive loop is engine-owned. The four PvP modes are a fixed
+// enum and the score target is typed into the LOBBY, so a creator could build a map but never a
+// GAME — "this arena is first-to-5 team deathmatch" was unsayable, and every host had to be told the
+// rules out of band. This does not open the enum (new modes are a real build); it lets the level
+// state which of the shipped ones it is FOR, and what it is played to, so hosting it does the right
+// thing by default.
+//
+// A DEFAULT, not a lock: the host's lobby choice still wins if they touch it. That way a level can
+// carry its intent without taking the room away from the people in it — and a co-op level dropped
+// into a PvP lobby is the host's call, not an error the engine should refuse.
+const PVP_MODES = ['duel','ffa','tdm','cp'];
+function _lvlPvp(){
+  const g=(typeof gameCfg!=='undefined' && gameCfg) ? gameCfg : {};
+  const m=String(g.pvp||'').trim();
+  return { mode: (PVP_MODES.indexOf(m)>=0) ? m : '', target: Math.max(0, Math.min(999, Math.round(+g.pvpTarget||0))) };
+}
+// What a host should start with: the level's own answer unless the lobby was given one.
+function _resolveMatch(lobbyMode, lobbyTarget){
+  const L=_lvlPvp();
+  const mode = lobbyMode || L.mode || 'coop';
+  let target = (lobbyTarget!=null && lobbyTarget>0) ? lobbyTarget : 0;
+  if(!target && L.target > 0 && (L.mode===mode || (!L.mode && mode!=='coop'))) target = L.target;
+  return { mode, target };
+}
 function pvpMode(){ return NET.gameMode==='duel' || NET.gameMode==='ffa' || NET.gameMode==='tdm' || NET.gameMode==='cp'; }
 function teamMode(){ return NET.gameMode==='tdm' || NET.gameMode==='cp'; }
 function pvpLabel(){ return NET.gameMode==='ffa' ? 'FREE-FOR-ALL' : (NET.gameMode==='tdm' ? 'TEAM DEATHMATCH' : (NET.gameMode==='cp' ? 'KING OF THE HILL' : 'DUEL')); }
@@ -23575,8 +23606,14 @@ function _applyGunGripToHand(gun, bone, weaponKey, gripOverride){
 function attachAvatarGun(g, weaponKey, gripOverride){
   if(!g) return;
   g.userData.gripOverride = gripOverride || null;   // remote players carry their OWN synced grip; local uses tpGunGrip
-  const w = WEAPONS[weaponKey]; let url = (w && w.model) ? w.model : '';
-  if(!url){ for(const k of Object.keys(WEAPONS)){ if(WEAPONS[k] && WEAPONS[k].model){ url=WEAPONS[k].model; break; } } }   // this weapon has no model -> borrow any set model so the hands aren't empty
+  // build 1266: resolve through wepModelUrl — the SAME function the first-person viewmodel uses — so the
+  // character's hand holds exactly what the player sees down the sights. This used to read WEAPONS[key].model
+  // directly and fall back only to ANOTHER weapon's custom model; every shipped weapon has model:'', so with
+  // the stock loadout the url resolved to '' and the hand stayed EMPTY — in third-person play, on remote
+  // players and bots, and in the editor's "Held gun grip (third-person)" panel, whose sliders therefore had
+  // nothing to position. (The old borrow was also wrong in the other direction: once a creator set a model on
+  // any one weapon, FISTS borrowed it and the character punched while holding a rifle.)
+  let url = _wepShowsFists(weaponKey) ? '' : (wepModelUrl(weaponKey) || '');
   // clear a previous gun if the weapon changed or there's no model
   if(g.userData.gunKey === weaponKey && g.userData.gun){   // already the right gun model
     // weapon unchanged, but the grip may have (remote player retuned theirs) — re-apply without reloading
@@ -23588,9 +23625,12 @@ function attachAvatarGun(g, weaponKey, gripOverride){
   if(g.userData.gun){ if(g.userData.gun.parent) g.userData.gun.parent.remove(g.userData.gun); g.userData.gun=null; g.userData.gunBone=null; }
   g.userData.gunKey = weaponKey;
   if(!url){ return; }   // no model for this weapon -> bare hands (fine)
-  g.userData._gunLoadUrl = url;
+  if(g.userData._gunLoading === url) return;   // build 1266: a load for this exact url is already in flight for this avatar.
+  g.userData._gunLoading = url;                //   attachAvatarGun runs EVERY FRAME, and without this each one
+  g.userData._gunLoadUrl = url;                //   queues another callback that clones a whole skinned model.
   loadGLTFCached(url,
     (gltf)=>{
+      g.userData._gunLoading = null;
       if(g.userData._gunLoadUrl !== url || g.userData.gunKey !== weaponKey) return;   // weapon changed mid-load
       if(g.userData.gun){ if(g.userData.gun.parent) g.userData.gun.parent.remove(g.userData.gun); g.userData.gun=null; }
       const gun = THREE.cloneSkinned(gltf.scene);
@@ -23602,7 +23642,7 @@ function attachAvatarGun(g, weaponKey, gripOverride){
       else { g.add(gun); g.userData.gunBone=null; _applyGunGrip(gun, weaponKey, g.userData.gripOverride); }                        // no usable bone -> fixed body grip
       g.userData.gun = gun;
     },
-    (err)=>{ console.warn('TP gun model load failed:', err && err.message); }
+    (err)=>{ g.userData._gunLoading = null; console.warn('TP gun model load failed:', err && err.message); }
   );
 }
 // Re-apply the grip offset live to every avatar currently holding a gun (used while tuning the sliders).
@@ -25273,7 +25313,9 @@ function _hostOnConnection(conn){
 function hostStart(code, mode, killTarget){
   NET.mode='host'; NET.myId=0; NET.roomCode=code; NET.nextId=1;
   netIdPrefix='h'; seedPropSync();   // new props the host adds get 'h-' ids; existing props are already known to joiners via the welcome level
-  NET.gameMode = mode || 'coop';
+  { const _m=(typeof _resolveMatch==='function') ? _resolveMatch(mode, killTarget) : { mode:mode||'coop', target:killTarget };
+    NET.gameMode = _m.mode;                                  /* build 1265: the level's stated mode, when the lobby did not pick one */
+    if(_m.target>0) killTarget = _m.target; }
   { const bi=document.getElementById('mpBots'); let bn=parseInt(bi&&bi.value,10); NET.botCount=(NET.gameMode==='duel')?0:((bn>=0&&bn<=7)?bn:0); }
   { const di=document.getElementById('mpBotDiff'); if(di && BOT_DIFF[di.value]){ NET.botDiff=di.value; try{ localStorage.setItem('breach_botdiff', di.value); }catch(e){} } }   // duel is always 1v1, no bots
   if(pvpMode()){ const _r=_readMpRules(); MP_RULES.weps=_r.weps; MP_RULES.nades=_r.nades; try{ localStorage.setItem('breach_mp_rules', JSON.stringify(_r)); }catch(e){} }   // build 1014: lock in the host's match rules
@@ -28677,7 +28719,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1264 · 2026-08-01';
+const BUILD_VERSION = 'build 1266 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36614,7 +36656,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', autoRig:c.autoRig||undefined, ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -39817,6 +39859,26 @@ function renderEditorFields(){
       hint(bWav,'','0 0 6px').textContent = gameCfg.noRespawn
         ? 'Each spawn fires once on its wave (0 = wave 1); after the last authored wave is cleared the field stays empty. Eliminate wins on the final clear; extraction/survival finish via their own goal.'
         : 'Cleared waves auto-advance and respawn (markers set to 0 = every wave keep coming back). Turn this on to fight the placed enemies once and then leave the field clear.';
+    }
+    // build 1265: the level's own multiplayer intent — a DEFAULT the host's lobby choice still beats
+    {
+      const mpHead=document.createElement('div'); mpHead.className='hint'; mpHead.style.margin='10px 0 3px';
+      mpHead.innerHTML='<b>Multiplayer intent</b> \u2014 what this level is FOR';
+      bWav.appendChild(mpHead);
+      const mpRow=document.createElement('div'); mpRow.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:2px 0;';
+      const mpSel=document.createElement('select'); mpSel.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 5px;font-size:12px;';
+      for(const [v,l] of [['','Host chooses (default)'],['ffa','Free-for-all'],['tdm','Team deathmatch'],['cp','King of the hill'],['duel','Duel (1v1)']]){
+        const o=document.createElement('option'); o.value=v; o.textContent=l; if((gameCfg.pvp||'')===v) o.selected=true; mpSel.appendChild(o); }
+      mpSel.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); gameCfg.pvp=mpSel.value; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
+      mpRow.appendChild(mpSel);
+      const mtSp=document.createElement('span'); mtSp.textContent='score to win'; mtSp.style.cssText='font-size:11px;color:#9fbdb2;';
+      const mtN=document.createElement('input'); mtN.type='number'; mtN.min='0'; mtN.max='999'; mtN.step='1'; mtN.value=gameCfg.pvpTarget||0;
+      mtN.style.cssText='width:62px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:12px;';
+      mtN.onchange=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); gameCfg.pvpTarget=Math.max(0,Math.min(999,parseInt(mtN.value,10)||0)); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
+      mpRow.appendChild(mtSp); mpRow.appendChild(mtN); bWav.appendChild(mpRow);
+      hint(bWav,'','2px 0 6px').textContent = (gameCfg.pvp||gameCfg.pvpTarget>0)
+        ? ('Hosting this level starts '+({ffa:'a free-for-all',tdm:'a team deathmatch',cp:'king of the hill',duel:'a duel'}[gameCfg.pvp]||'the host\u2019s chosen mode')+(gameCfg.pvpTarget>0?(' to '+gameCfg.pvpTarget):'')+'. The host can still change it in the lobby \u2014 this is what the level asks for, not a lock. 0 = use the lobby\u2019s own number.')
+        : 'Leave this alone for a co-op or solo level. Set it and hosting the level picks the mode and score for you, so \u201cfirst to 5, team deathmatch\u201d travels with the map instead of being explained in chat.';
     }
     const wwLab=document.createElement('label'); wwLab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0;';
     const wwSp=document.createElement('span'); wwSp.textContent='Win after N waves'; wwSp.style.minWidth='118px';

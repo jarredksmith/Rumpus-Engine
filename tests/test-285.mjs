@@ -5,7 +5,10 @@ const src = gameSource();
 
 // --- attach/swap mechanism ---
 const aag = extractFunction('attachAvatarGun');
-assert(/const w = WEAPONS\[weaponKey\]; let url = \(w && w\.model\) \? w\.model : '';/.test(aag) && /this weapon has no model -> borrow any set model/.test(aag), 'gun model comes from the weapon config, with a fallback to any set model (build 392)');
+// build 1266: same intent — the held model comes from the weapon config with a fallback so the hands are
+// never empty — but resolved through the SAME function as the first-person viewmodel rather than restated.
+assert(/let url = _wepShowsFists\(weaponKey\) \? '' : \(wepModelUrl\(weaponKey\) \|\| ''\);/.test(aag),
+  'gun model comes from the weapon config, with a fallback so the hands are never empty (build 392, via wepModelUrl since 1266)');
 assert(/if\(g\.userData\.gunKey === weaponKey && g\.userData\.gun\)\{/.test(aag), 'no reload when the weapon has not changed');
 assert(/if\(g\.userData\.gun\.parent\) g\.userData\.gun\.parent\.remove\(g\.userData\.gun\); g\.userData\.gun=null/.test(aag), 'swapping removes the previous gun from its parent (bone or group)');
 assert(/if\(!url\)\{ return; \}/.test(aag), 'a weapon with no model = bare hands (no crash)');

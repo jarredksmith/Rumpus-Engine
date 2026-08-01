@@ -28,7 +28,14 @@ const gth = extractFunction('_applyGunGripToHand');
 assert(/bone\.matrixWorld\.decompose\(/.test(gth) && /if\(avg>1e-4\) s\/=avg;/.test(gth), 'undoes the bone world scale so the gun is not distorted');
 
 // --- no-model weapon borrows a set model instead of empty hands ---
-assert(/for\(const k of Object\.keys\(WEAPONS\)\)\{ if\(WEAPONS\[k\] && WEAPONS\[k\]\.model\)\{ url=WEAPONS\[k\]\.model; break; \} \}/.test(aag), 'a weapon with no model borrows any set model (fixes the disappearing-on-switch)');
+// build 1266: the borrow-another-weapon's-model fallback is GONE — it left the hand empty whenever NO
+// weapon had a custom model (i.e. the entire stock loadout) and put a rifle in a punching character's hand
+// once any weapon had one. The intent it served — a weapon with no model still shows a gun rather than
+// vanishing — is now served by wepModelUrl falling back to the engine's own gun, the same as first person.
+assert(/let url = _wepShowsFists\(weaponKey\) \? '' : \(wepModelUrl\(weaponKey\) \|\| ''\);/.test(aag),
+  'a weapon with no model of its own still shows a gun (fixes the disappearing-on-switch)');
+assert(/function wepModelUrl\(key\)\{ const w=WEAPONS\[key\]; return \(w && w\.model\) \? w\.model : gunModelUrl; \}/.test(src),
+  '...because that resolver falls back to the engine gun rather than to another weapon');
 
 // --- body rebuild drops the gun ref so it re-attaches to the new skeleton ---
 const bav = extractFunction('buildAvatarVisual');
