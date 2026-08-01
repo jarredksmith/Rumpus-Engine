@@ -1519,6 +1519,33 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The graph gets force (build 1258)
+
+The audit's gameplay gap #5: the graph could query the world and command enemies but had no way to
+apply an IMPULSE — so a ball could be teleported to a goal and never kicked toward one, and a physics
+puzzle could reset a crate but never nudge it. `moveprop` is a teleport; **`pushprop`** is a shove.
+Four decisions:
+
+- **Direction comes from the place field every other verb already uses.** Props are pushed AWAY from
+  it: "away from `me`" clears a path, "away from `#here`" is a blast at the event's own spot, a tag
+  is a fixed launcher. No place = straight up, which is the useful default. The direction is
+  NORMALISED, so distance never changes the shove — 3 m and 300 m from the origin get the same push.
+- **Strength is a VELOCITY CHANGE, not a raw impulse.** The impulse is multiplied by each prop's own
+  mass, so "20" moves a crate and a barrel identically. Raw impulse would make every push a guessing
+  game about the weight slider, which is the opposite of authorable.
+- **An upward component rides along (0.4×)** so pushed props tumble and read as struck rather than
+  sliding like ice.
+- **No network message, deliberately.** The graph is host-authoritative and dynamic props already
+  stream their motion to clients in the D snapshot, so the result arrives by the channel that carries
+  every other physics event. The prop STATE verbs need `_wactSend` precisely because show/hide/move/
+  destroy are *not* physics and the snapshot does not carry them — `test-1258` pins the absence so a
+  future edit does not "helpfully" add one.
+
+Guards that matter: the body is WOKEN first (a settled Rapier body swallows an impulse), a prop
+sitting exactly on the origin gets a random horizontal direction instead of NaN, static and shattered
+props are skipped, a blank tag pushes nothing rather than everything, and the amount clamps 0–100.
+Four pins moved (1033, 1073, 1077, 1170) — all verb-list literals, intent unchanged.
+
 ## The light census, and a deploy cap (build 1257)
 
 The audit's #1 PERFORMANCE ceiling, and it is structural rather than a bug — which is why it needed
