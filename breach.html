@@ -10498,6 +10498,24 @@ function _sanitizeLogic(g){
 }
 let logicGraph = _sanitizeLogic(savedLevel && savedLevel.logic);   // authored; serialized with the level
 let logicVars = {};                                                // runtime variable store (reset every match)
+// build 1269: ORDERED LISTS — their own store, on purpose. Every consumer of logicVars coerces with
+// `+logicVars[k]||0` (the HUD widget mirror, the `hudv` net message, campaign persistence), so a value that
+// is not a number would silently become 0 there and travel over the wire as one. Keeping sequences in a
+// separate store means logicVars stays exactly what all of that already assumes: numbers.
+//
+// A list is a sequence of NUMBERS, which is the whole vocabulary the graph already speaks. That is enough
+// for the things a creator actually cannot build today: a deck to deal from, the order buttons were pressed
+// in, a combination to check against. The way a value LEAVES a list is into a variable — so the existing
+// mirroring, HUD binding and persistence apply unchanged and nothing new crosses the wire.
+let logicLists = {};
+const LGL_MAX = 64, LGL_LEN = 256;   // hostile-input bounds: a level file may not allocate without limit
+function _lgList(name){
+  // build 1231's per-player convention applies here as much as to variables: `hand@` is THIS player's
+  // hand, which is the difference between a card game and a card demo.
+  const k = _lgVarKey(String(name||'').trim()); if(!k) return null;
+  if(!logicLists[k]){ if(Object.keys(logicLists).length >= LGL_MAX) return null; logicLists[k] = []; }
+  return logicLists[k];
+}
 // ---------- build 1075: PERSISTENT VARIABLES ----------
 // Until now every variable died at match start, so nothing could be carried: no running coin total across a
 // campaign, no "you already talked to her", no unlocked shortcut. The author names the variables that should
@@ -10643,7 +10661,7 @@ function logicEvent(name){   // the bridge IN: prop signals (do:'emit') and 'emi
   _lgFireEvents('event', String(name||'').trim());
 }
 function logicStart(){       // a match begins: fresh state, seed the repeating timers, fire 'start'
-  logicVars={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;
+  logicVars={}; logicLists={}; _lgTimers=[]; _lgState={}; _lgBudget=0; _lgWarned=false;   /* build 1269 */
   if(typeof _persistSeed==='function') _persistSeed();       // build 1075: carried values come back before anything runs
   if(typeof _trigState!=='undefined') _trigState.length=0;   // build 1072: trigger volumes re-arm with the match (once-only fires again on a retry)
   if(typeof _lgResetStats==='function') _lgResetStats();     // build 1074: a bent stat springs back to what the level authored
@@ -10674,6 +10692,36 @@ function _lgPulse(id, pin){
                 : op==='min' ? Math.min(a,b) : op==='max' ? Math.max(a,b) : (b===0?0:((a%b)+b)%b);
         logicVars[k] = isFinite(v) ? v : 0;
       } _lgFollow(id,0); break; }
+    // build 1269: LIST — the graph's first ORDERED collection. Everything before it held one number per
+    // name, so "deal a card", "did they press the switches in this order" and "shuffle the deck" were
+    // unsayable: a 52-card deck was 52 nodes and a 4-step combination could not be compared at all.
+    // Pulse-driven like every state node, and host-side like all of them.
+    case 'list': {
+      const L = _lgList(p.name); const op = p.op || 'push';
+      const dst = _lgVarKey(String(p.var||'').trim());   /* build 1231: `card@` is the event player's */
+      const put = (v)=>{ if(dst) logicVars[dst] = isFinite(v) ? v : 0; };   // never NaN: one would poison every later compare
+      if(L){
+        const val = _lgNum(p.value);
+        if(op==='push'){ if(L.length < LGL_LEN) L.push(val); }
+        else if(op==='fill'){ const n=Math.max(0, Math.min(LGL_LEN, Math.round(val))); L.length=0; for(let i=1;i<=n;i++) L.push(i); }   // a deck in one node
+        else if(op==='clear'){ L.length=0; }
+        else if(op==='shuffle'){ for(let i=L.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=L[i]; L[i]=L[j]; L[j]=t; } }   // Fisher-Yates: every order equally likely
+        else if(op==='draw'){ put(L.length ? L.shift() : 0); }
+        else if(op==='drawrand'){ if(L.length){ const j=Math.floor(Math.random()*L.length); put(L.splice(j,1)[0]); } else put(0); }
+        else if(op==='remove'){ const j=L.indexOf(val); if(j>=0) L.splice(j,1); }
+        else if(op==='len'){ put(L.length); }
+        else if(op==='has'){ put(L.indexOf(val)>=0 ? 1 : 0); }
+        else if(op==='at'){ const j=Math.round(_lgNum(p.idx)); put((j>=0 && j<L.length) ? L[j] : 0); }
+        else if(op==='matches'){
+          // THE PUZZLE QUESTION: is this list the same sequence as that one? Order matters, which is what
+          // separates a combination lock from a bag of tokens.
+          const O = logicLists[_lgVarKey(String(p.other||'').trim())];
+          let same = !!O && O.length===L.length;
+          if(same) for(let i=0;i<L.length;i++){ if(L[i]!==O[i]){ same=false; break; } }
+          put(same ? 1 : 0);
+        }
+      } else put(0);   // an unnamed list, or past the cap: report empty rather than throwing mid-graph
+      _lgFollow(id,0); break; }
     // build 1169: READ GAME STAT — the graph's first world-state QUERY. Events give edges; this gives the
     // number behind them (host state — the graph already runs host-authoritative). Pulse-driven like every
     // state node: wire it off an interval to poll, or read at the moment of decision.
@@ -11043,6 +11091,7 @@ const LG_DEFS = {
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
+  list:     { t:'List',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'list',w:62,listId:'lgListList'},{k:'op',l:'',w:96,sel:[['push','Add value'],['fill','Fill 1..N'],['draw','Draw first \u2192'],['drawrand','Draw random \u2192'],['shuffle','Shuffle'],['remove','Remove value'],['clear','Clear'],['len','Length \u2192'],['has','Contains? \u2192'],['at','Value at \u2192'],['matches','Same order as? \u2192']]},{k:'value',l:'value',w:50,listId:'lgVarList',ifv:['op',['push','fill','remove','has']]},{k:'idx',l:'index',w:44,listId:'lgVarList',ifv:['op','at']},{k:'other',l:'other list',w:66,listId:'lgListList',ifv:['op','matches']},{k:'var',l:'\u2192 var',w:60,listId:'lgVarList',ifv:['op',['draw','drawrand','len','has','at','matches']]}] },
   read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
   do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
@@ -11116,6 +11165,8 @@ function _lgRefreshDatalists(){
   for(const u of _lgSoundOptions()){ const op=document.createElement('option'); op.value=u; sl.appendChild(op); }
   const vl=mk('lgVarList');   // build 1060: variable names, shared by the logic nodes and the HUD widget fields
   for(const nm of _lgVarOptions()){ const op=document.createElement('option'); op.value=nm; vl.appendChild(op); }
+  const ll=mk('lgListList');   // build 1269: list names, so a deck is named once and picked thereafter
+  for(const nm of _lgListOptions()){ const op=document.createElement('option'); op.value=nm; ll.appendChild(op); }
   const pl=mk('lgPlaceList');   // build 1073: every PLACE the world verbs can point at
   for(const o of _lgPlaceOptions()){ const op=document.createElement('option'); op.value=o.v; op.label=o.l; pl.appendChild(op); }
   const pfl=mk('lgPrefabList');   // build 1216: prefab names, for the spawn-prefab verb
@@ -11126,6 +11177,16 @@ function _lgRefreshDatalists(){
 // build 1073: a "place" is a TAG — the same naming system props already use — so the author points at
 // something they can see and select in the viewport. Trigger volumes answer to their own event name, so the
 // zone that fires a rule can also be the spot it acts on ("On reachedVault -> Spawn 3 brutes at reachedVault").
+// build 1269: every list name the graph mentions. Read off the authored nodes rather than the runtime
+// store, because at edit time nothing has run yet and logicLists is empty — the same reason _lgVarOptions
+// reads the graph.
+function _lgListOptions(){
+  const seen={};
+  if(typeof logicGraph!=='undefined' && logicGraph && logicGraph.nodes)
+    for(const n of logicGraph.nodes){ if(!n || n.t!=='list' || !n.p) continue;
+      for(const k of ['name','other']){ const v=String(n.p[k]||'').trim(); if(v) seen[v]=1; } }
+  return Object.keys(seen).sort();
+}
 function _lgPlaceOptions(){
   const out=[{ v:'me', l:'the player' }, { v:'start', l:'the level start' }, { v:'#here', l:'where the event fired (onkill/onhurt/onspot)' }];
   const seen={};
@@ -11210,7 +11271,7 @@ function _lgRenderNode(n){
         const op=document.createElement('option'); op.value=ov; op.textContent=ot; if(cur===ov) op.selected=true; inp.appendChild(op); }
       inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); _lgRender(); }; }
     else if(pm.chk){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!n.p[pm.k]; inp.style.cssText='width:12px;height:12px;accent-color:var(--accent);'; inp.onchange=()=>{ if(inp.checked) n.p[pm.k]=1; else delete n.p[pm.k]; _lgDirty(); _lgRender(); }; }
-    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList') _lgRefreshDatalists(); }; }
+    else { inp=document.createElement('input'); inp.type='text'; inp.value=n.p[pm.k]!=null?n.p[pm.k]:''; inp.style.cssText='width:'+(pm.w||60)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:10px;'; if(pm.listId) inp.setAttribute('list', pm.listId); inp.onchange=()=>{ n.p[pm.k]=inp.value; _lgDirty(); if(pm.listId==='lgEvtList' || pm.listId==='lgVarList' || pm.listId==='lgListList') _lgRefreshDatalists(); }; }
     if(inp.tagName==='SELECT') inp.style.cssText='background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 3px;font-size:10px;max-width:'+(pm.w||100)+'px;';
     inp.onpointerdown=(e)=>e.stopPropagation();
     wrap.appendChild(inp); body.appendChild(wrap);
@@ -28807,7 +28868,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1268 · 2026-08-01';
+const BUILD_VERSION = 'build 1269 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

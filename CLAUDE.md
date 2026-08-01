@@ -3747,6 +3747,43 @@ The hysteresis (1.4×) stops a prop at the boundary flickering, and the budget (
 cursor) makes a 2,000-prop level a fixed slice rather than a spike. `lodPx` is **not** zeroed by
 `_postOffWorld` — culling is a cost control, not a look.
 
+## The logic graph learns ordered collections (build 1269)
+
+The last gap named in the card/puzzle design pass (1259 closed read-inventory, 1260 closed HUD art). Every
+value the graph could hold was ONE NUMBER per name, so "deal a card", "did they press the switches in this
+order" and "shuffle the deck" were unsayable — a 52-card deck was 52 nodes and a 4-step combination could
+not be compared at all.
+
+One node in STATE, matching the Math node's shape (1169): `List`, with `push / fill 1..N / draw / draw
+random / shuffle / remove / clear / length / contains / value at / same order as`. Four decisions:
+
+- **Its own store, not `logicVars`.** Every consumer of that store coerces with `+logicVars[k]||0` — the HUD
+  widget mirror, the `hudv` net message, campaign persistence — so a value that is not a number would
+  silently become 0 there and travel over the wire as one. `logicLists` keeps `logicVars` exactly what all
+  of that already assumes.
+- **A value LEAVES a list into a variable.** That is the whole boundary: the existing mirroring, HUD binding
+  and persistence apply unchanged and nothing new crosses the wire. Lists are host-side state, like the rest
+  of the graph.
+- **`fill 1..N` exists because otherwise this is unusable.** A deck in one node is the difference between a
+  feature and a demo.
+- **`same order as` is the puzzle question.** Order-sensitive comparison is what separates a combination
+  lock from a bag of tokens, and it is the one thing no combination of the other ops can express.
+
+**The test rig caught a real inconsistency before it shipped:** every other state node routes its
+destination through `_lgVarKey` (build 1231's per-player `name@` convention) and the first draft wrote
+`logicVars[dst]` raw. List NAMES now route through it too — so `hand@` is THIS player's hand, which is the
+difference between a card game and a card demo, and is exactly where per-player state matters most.
+
+Bounded on both axes (64 lists, 256 entries) because a level file is untrusted input, `put()` never writes
+NaN (one would poison every later compare — 1169's lesson), and an unnamed or over-cap list reports empty
+rather than throwing mid-graph. Three pins moved (1028's palette↔runtime parity list, and 1033/1060's
+datalist-refresh line).
+
+**FIFTH container rollback, recovered mid-build** — the tree reverted to build 1182 (`b246158`) and the
+`BUILD_VERSION` anchor simply failed, which is the cheapest possible way to find out. `git log` first,
+then `git fetch` + `reset --hard FETCH_HEAD`, then re-run the scripted edit: free again, for the fifth time.
+Writing every build as a re-runnable script is what makes this a 30-second interruption instead of a rebuild.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
