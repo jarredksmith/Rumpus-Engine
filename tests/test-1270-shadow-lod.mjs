@@ -19,18 +19,20 @@ const src = gameSource();
 // sample includes a cascade fit that tracks the live camera and sun — expected drift, not a leak.
 
 const LOD_SHADOW_MUL = +extractConst('LOD_SHADOW_MUL');
+const LOD_NEAR_KEEP = +extractConst('LOD_NEAR_KEEP');   // build 1273's near floor
 const LOD_HYST = +extractConst('LOD_HYST');
 const LOD_BUDGET = +extractConst('LOD_BUDGET');
 assert(LOD_SHADOW_MUL > 1, 'a prop stops casting BEFORE it stops drawing, never after');
 
 function rig(props, opts = {}) {
   const body = [
-    'const LOD_HYST = ' + LOD_HYST + ', LOD_BUDGET = ' + LOD_BUDGET + ', LOD_SHADOW_MUL = ' + LOD_SHADOW_MUL + ';',
+    'const LOD_HYST = ' + LOD_HYST + ', LOD_BUDGET = ' + LOD_BUDGET + ', LOD_SHADOW_MUL = ' + LOD_SHADOW_MUL + ', LOD_NEAR_KEEP = ' + LOD_NEAR_KEEP + ';',
     'let _lodCursor = 0, _lodAnyCulled = false, dirtied = 0;',
     'let editorOpen = false;',
     'function _dirtyShadows(){ dirtied++; }',
     extractFunction('_lodPxNow'), extractFunction('_lodEligible'),
-    extractFunction('_lodSetCasting'), extractFunction('_lodRestoreAll'), extractFunction('_lodTick'),
+    extractFunction('_lodSetCasting'), extractFunction('_lodRemeasure'),
+    extractFunction('_lodRestoreAll'), extractFunction('_lodTick'),
     'return { tick:_lodTick, restore:_lodRestoreAll, dirtied:()=>dirtied, reset:()=>{ dirtied=0; },',
     '  setEditor:(v)=>{ editorOpen=v; } };',
   ].join('\n');
@@ -153,7 +155,7 @@ const mesh = (g) => g.children[0];
 }
 
 // --- wiring ------------------------------------------------------------------------------------------
-assert(/stop casting a shadow at 4\\u00d7 this size/.test(src),
+assert(/stop casting a shadow at 4\\u00d7 that size/.test(src),
   'the setting hint tells the truth about both rungs, not just culling');
 
 done('build 1270: the shadow rung — a prop stops casting well before it stops drawing (measured: 33% fewer draw calls with ZERO props hidden), the authored castShadow is remembered rather than assumed so a never-casting mesh never starts, hysteresis covers the new rung, and the static shadow map is finally told when what-casts changes — the refresh build 1267 owed');

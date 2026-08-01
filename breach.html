@@ -9904,6 +9904,13 @@ const LOD_HYST = 1.4;        // re-show at 1.4x the hide threshold, so a prop ho
 // not a shape anybody can read. Every engine ships this (Unreal's per-object shadow cull distance, Unity's
 // shadow distance); it is the cheap middle rung of an LOD ladder and needs no simplified geometry.
 const LOD_SHADOW_MUL = 4;    // below lodPx * this, a prop still DRAWS but no longer CASTS
+// build 1273: NOTHING IS EVER CULLED WITHIN THIS RANGE, whatever its screen size. Reported from play
+// against 1267: "large models I've imported literally don't appear until the player gets right up on
+// them. Then they disappear as soon as the player has barely moved away." A near floor makes that
+// symptom impossible to reach by construction, independently of whether the screen-size maths is right
+// for a given asset — which is the point, because a measurement that is wrong for ONE asset should not
+// be able to delete it.
+const LOD_NEAR_KEEP = 40;
 const LOD_BUDGET = 128;      // props examined per frame; the cursor rolls, so a 2,000-prop level costs a fixed slice
 let _lodCursor = 0, _lodAnyCulled = false;
 function _lodPxNow(){ const v = (typeof worldCfg!=='undefined' && worldCfg) ? +worldCfg.lodPx : 0; return (v>0 && isFinite(v)) ? Math.min(16, v) : 0; }
@@ -9948,13 +9955,30 @@ function _lodRestoreAll(){
   _lodAnyCulled = false;
   if(typeof _dirtyShadows==='function') _dirtyShadows();   // build 1270: the map is STATIC — see below
 }
+// Re-measure a prop's radius from the live scene graph. The cached one is used for the CHEAP direction
+// (deciding something is big enough to keep); this is called before anything is actually removed, so a
+// stale or wrong radius can only ever cost one Box3 — never a missing building.
+function _lodRemeasure(o){
+  const bb = new THREE.Box3().setFromObject(o);
+  if(bb.isEmpty()) return 0;
+  const sz = bb.getSize(new THREE.Vector3());
+  const r = sz.length() / 2;
+  if(r > 0) o.userData._lodR = r;
+  return r;
+}
 function _lodTick(){
   const px = _lodPxNow();
   // Never while AUTHORING: a prop that vanishes because it is small on screen is indistinguishable from a
   // prop you failed to place. The editor shows the level, the game shows the frame.
   if(!px || (typeof editorOpen!=='undefined' && editorOpen) || typeof propModels==='undefined'){ _lodRestoreAll(); return; }
   const n = propModels.length; if(!n) return;
-  const k = (renderer.domElement.height * 0.5) / Math.tan(camera.fov * Math.PI / 360);   // world radius -> pixels
+  // build 1273: CSS pixels, not the DRAWING BUFFER. `domElement.height` is the backing store, which build
+  // 1141's adaptive resolution ladder shrinks under load — so the worse a device was performing, the more
+  // of the level it deleted, and how much depended on which rung the ladder happened to be on. Measured on
+  // this machine mid-session: buffer 518 against a 720 CSS height, pixel ratio 0.72, so every cull distance
+  // was 32% shorter than the number the creator typed. The creator's threshold is in the pixels they SEE.
+  const _vh = renderer.domElement.clientHeight || renderer.domElement.height || 720;
+  const k = (_vh * 0.5) / Math.tan(camera.fov * Math.PI / 360);   // world radius -> CSS pixels
   const cam = camera.position, lim = Math.min(n, LOD_BUDGET);
   let _lodDirty = false;
   for(let i = 0; i < lim; i++){
@@ -9966,14 +9990,19 @@ function _lodTick(){
     const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
     const sp = (d > 0.01) ? (o.userData._lodR / d) * k : 1e9;
     const u = o.userData;
+    // build 1273: inside the near floor a prop is ALWAYS drawn and always casts, whatever its screen size.
+    const near = d < LOD_NEAR_KEEP;
     // rung 2 — drawn or not: below px it is not worth a draw call at all
-    if(u._lodCull){ if(sp > px * LOD_HYST){ u._lodCull = false; o.visible = true; _lodDirty = true; } }
-    else if(sp < px && o.visible){ u._lodCull = true; o.visible = false; _lodAnyCulled = true; _lodDirty = true; }
+    if(u._lodCull){ if(near || sp > px * LOD_HYST){ u._lodCull = false; o.visible = true; _lodDirty = true; } }
+    else if(!near && sp < px && o.visible && _lodRemeasure(o) / d * k < px){
+      // measured AGAIN, live, before removing it — see _lodRemeasure
+      u._lodCull = true; o.visible = false; _lodAnyCulled = true; _lodDirty = true;
+    }
     // rung 1 — casting or not. Checked even while culled, so a prop that comes back does so with the right
     // caster state rather than one rung behind.
     const spx = px * LOD_SHADOW_MUL;
-    if(u._lodNoShadow){ if(sp > spx * LOD_HYST){ u._lodNoShadow = false; _lodSetCasting(o, true); _lodDirty = true; } }
-    else if(sp < spx){ u._lodNoShadow = true; _lodSetCasting(o, false); _lodAnyCulled = true; _lodDirty = true; }
+    if(u._lodNoShadow){ if(near || sp > spx * LOD_HYST){ u._lodNoShadow = false; _lodSetCasting(o, true); _lodDirty = true; } }
+    else if(!near && sp < spx){ u._lodNoShadow = true; _lodSetCasting(o, false); _lodAnyCulled = true; _lodDirty = true; }
   }
   // THE REFRESH 1267 OWED AND DID NOT PAY. `renderer.shadowMap.autoUpdate` is false (build 1093's static
   // shadow map): the map is only redrawn when _dirtyShadows() asks. So hiding a prop does NOT remove its
@@ -17963,7 +17992,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:2, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -29044,7 +29073,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1272 · 2026-08-01';
+const BUILD_VERSION = 'build 1273 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39472,8 +39501,8 @@ function renderEditorFields(){
         texRow(b,'https://\u2026/grade-lut.png (256x16 strip)','lut'); slider(b,'LUT strength','lutAmt',0,1,0.05); hint(b,'Color grade LUT: a standard 256\u00d716 (or 1024\u00d732) strip \u2014 screenshot the game, drop the shot into any photo editor with a neutral LUT strip, grade them together, crop the strip back out, host it, paste the URL. The whole look of the level follows.','1px 0 4px');
         slider(b,'Ambient occlusion','ssao',0,1,0.05); slider(b,'AO radius','ssaoRadius',0.1,4,0.1);   // build 1126
         slider(b,'Reflections','ssr',0,1,0.05);   /* build 1245: screen-space floor reflections; 0 = off */
-        slider(b,'Cull below (px)','lodPx',0,16,1);   /* build 1267 */
-        hint(b,'','2px 0 6px').textContent='Props smaller than this on screen stop being drawn, and stop casting a shadow at 4\u00d7 this size (a shadow that small is not a shape you can read). 0 turns it off; 2 is about the size of a full stop and removes nothing you could see. Raise it on a heavy level to trade a little pop-in for draw calls. Never applies while the editor is open, lights are never hidden, and a culled prop still blocks bullets.';
+        slider(b,'Cull below (px)','lodPx',0,16,1);   /* build 1267 \u00b7 1273: default 0 = OFF */
+        hint(b,'','2px 0 6px').textContent='OFF by default (0). Set it above 0 and props smaller than this many screen pixels stop being drawn, and stop casting a shadow at 4\u00d7 that size \u2014 a way to buy back draw calls on a level with hundreds of props. Try 1 or 2 first and look around before going higher. Nothing within '+LOD_NEAR_KEEP+'m is ever affected however small it looks, it never applies while the editor is open, props carrying a light are never hidden, and a hidden prop still blocks bullets.';
         hint(b,'','0 0 4px').textContent='Motion blur = camera blur strength (real per-pixel smear when you turn; 0 = off). Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }
     { const b=subSec('Sky','sky',true);

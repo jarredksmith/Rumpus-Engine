@@ -3886,6 +3886,45 @@ Seven pins moved (520, 523, 62, and four in 976). Two of them — 520/523's "a m
 still shows a model" — are the rare case where a pin's ASSERTION was deliberately inverted rather than
 re-expressed: that behaviour was the defect.
 
+## Culling ships OFF, because I could not explain the report (build 1273)
+
+Reported from play against 1267: *"I've placed some props and they don't appear now unless I'm right in
+front of them... large models I've imported literally don't appear until the player gets right up on them.
+Then they disappear as soon as the player has barely moved away."*
+
+**I could not reproduce it.** Probed with a real imported GLB placed through the actual `spawnProp` path:
+bbox 79 × 8.5 × 79, cached `_lodR` **56.02** matching a live re-measure to three decimals, and **not culled
+at any distance out to 120 m** (px 137 at 120 m). So the screen-size maths is right for that asset and the
+mechanism behind the report is still unidentified.
+
+That is precisely why this build does not try to out-argue it. **A performance feature that removes a
+creator's content by default, and that I cannot fully explain, does not get to stay on by default.**
+`lodPx` now defaults to **0**. The feature is unchanged and still does everything 1267 and 1270 measured
+when a creator turns it on; what changed is who decides.
+
+Three things make it safe to turn on, two of which are real defects found while looking:
+
+- **`LOD_NEAR_KEEP = 40`.** Nothing inside 40 m is ever culled or stops casting, whatever its screen size.
+  This makes the reported symptom unreachable *by construction*, independently of whether the screen-size
+  maths is right for a given asset — which is the point: a measurement that is wrong for ONE asset must not
+  be able to delete it. The floor also beats the hysteresis band, so walking up to something restores it at
+  once.
+- **CSS pixels, not the drawing buffer — a real bug.** `domElement.height` is the backing store, which build
+  1141's adaptive resolution ladder shrinks under load. Measured live mid-session: **buffer 518 against a
+  720 CSS height, pixel ratio 0.72**, so every cull distance was 32% shorter than the number the creator
+  typed — and *how much* shorter depended on which rung the ladder happened to be on. The worse a device
+  performed, the more of the level it deleted. The creator's threshold is in the pixels they SEE.
+- **Re-measure before removing — the asymmetry that matters.** The cached radius is now used only for the
+  cheap direction (deciding something is big enough to KEEP). Before anything is actually hidden, the radius
+  is measured again from the live scene graph. A wrong cache can then only ever cost one `Box3` — never a
+  missing building — and the re-measure repairs the cache in passing. `test-1273` proves it by lying to the
+  cache by four orders of magnitude and showing the prop still cannot be hidden.
+
+**The general rule this is an instance of:** when a report and a measurement disagree, and the feature's
+failure mode is *deleting the user's work*, the measurement does not get the benefit of the doubt. Ship the
+safe default, make the symptom structurally impossible, and leave the door open. Four pins moved (1267's
+default, 1270's hint text, and both LOD rigs, which needed the new constant and helper).
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
