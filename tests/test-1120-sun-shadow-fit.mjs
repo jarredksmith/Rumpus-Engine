@@ -8,7 +8,7 @@
 // a 2.7x sharpening AND no size limit. The catch is shimmer — a volume that slides by a fraction of
 // a texel each frame makes every shadow edge crawl — so the focus is snapped to the shadow map's own
 // texel grid, measured along the LIGHT's axes rather than the world's.
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // build 1135: 60, not 30. Build 1120 chose 30 for texel sharpness (2.9 cm), but worldCfg.arena
@@ -43,7 +43,7 @@ assert(/const _sunTarget = new THREE\.Object3D\(\); scene\.add\(_sunTarget\); mo
     const fn = new Function('THREE', 'moon', '_sunTarget', 'worldCfg', 'Math',
       'const _fitF=new THREE.Vector3(), _fitAx=new THREE.Vector3(), _fitAy=new THREE.Vector3(), _fitL=new THREE.Vector3(), _fitL2=new THREE.Vector3();' +
       'const moonFar=null, _sunTargetFar=null;' +   // build 1185: this harness drives the single-cascade (phone) path; test-1185 drives the far cascade
-      'let _fitFx=1e9,_fitFz=1e9;' + nb[0] + extractFunction('_fitSunShadow') + '; return _fitSunShadow;'
+      'let _fitFx=1e9,_fitFz=1e9;' + 'const SHADOW_REFIT_TEXELS=' + extractConst('SHADOW_REFIT_TEXELS') + ';' + nb[0] + extractFunction('_fitSunShadow') + '; return _fitSunShadow;'
     )({ Vector3: V3 }, moon, _sunTarget, { shadowDist }, Math);
     return { fn, moon, _sunTarget };
   };

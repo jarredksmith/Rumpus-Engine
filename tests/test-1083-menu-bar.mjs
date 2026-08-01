@@ -135,7 +135,7 @@ assert(nl.indexOf('location.replace') < nl.indexOf('location.reload'), 'reload i
 const asn = extractFunction('autoSaveNow');
 assert(/if\(_newLevelPending\) return;/.test(asn), 'autoSaveNow refuses to run once New is confirmed');
 assert(asn.indexOf('_newLevelPending') < asn.indexOf('_autoSaveOn'), '...before any other check');
-assert(/beforeunload[\s\S]{0,80}!_newLevelPending && _autoSaveOn && _levelDirty/.test(src),
+assert(/beforeunload[\s\S]{0,100}!_newLevelPending && !_foreignLevel && _autoSaveOn && _levelDirty/.test(src),
   'and the tab-close flush honours it too');
 assert(/let _newLevelPending = false;/.test(src), '_newLevelPending is declared');
 

@@ -21,7 +21,7 @@ assert(/setInterval\([\s\S]*?autoSaveNow\(\)[\s\S]*?, 20000\)/.test(start), 'flu
 assert(/_levelDirty = false; if\(typeof startAutoSave==='function'\) startAutoSave\(\);/.test(src), 'starts on editor open');
 assert(/autoSaveNow\('on close'\); if\(typeof stopAutoSave==='function'\) stopAutoSave\(\);/.test(src), 'flushes + stops on editor close');
 assert(/autoSaveNow\('before play'\);[^\n]*startGame\(\);/.test(src), 'flushes before Play');   // build 1224: the start-at-wave read sits between the flush and the deploy — flush still first, deploy still last
-assert(/addEventListener\('beforeunload', \(\)=>\{ try\{ if\(!_newLevelPending && _autoSaveOn && _levelDirty\) saveLevel\(\);/.test(src), 'flushes on tab close');
+assert(/addEventListener\('beforeunload', \(\)=>\{ try\{ if\(!_newLevelPending && !_foreignLevel && _autoSaveOn && _levelDirty\) saveLevel\(\);/.test(src), 'flushes on tab close (build 1254: unless the level is a foreign one — closing the tab must not commit it)');
 assert(/visibilitychange[\s\S]*?document\.visibilityState==='hidden'\) autoSaveNow\(\)/.test(src), 'flushes when the tab is hidden');
 
 // toggle persists + UI

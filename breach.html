@@ -8322,6 +8322,16 @@ let _fitFx = 1e9, _fitFz = 1e9;
 // the depth range — near 1, far 260 — did not change in 1120, so it stays as tuned.)
 const SUN_NB_TEXELS = 7.7;
 const _sunNormalBias = (extent, px) => Math.min(0.6, Math.max(0.02, (2 * extent / (px || 2048)) * SUN_NB_TEXELS));
+const SHADOW_REFIT_TEXELS = 8;   /* build 1261: how far the snapped focus must drift before both cascades redraw.
+  Chosen from a measured sweep (test-1261 reproduces it), refit rate vs volume slack at shadowDist 60:
+      texels   walk 0.10   run 0.16   car 0.60   slack
+        0.5       100%       100%       100%      3cm     <- the old rule: every moving frame, forever
+          4        34%        50%       100%     23cm
+          8        19%        31%       100%     47cm     <- here: 3-5x fewer redraws on foot
+         12        13%        20%        50%     70cm
+  Slack scales with the texel, which scales with shadowDist, so it is always ~0.4% of the volume — the
+  trailing edge sits 0.45*E (27 m at the default) behind the eye, so half a metre is nothing. A fast
+  vehicle still refits every frame, which is correct: it is covering ground that genuinely needs it. */
 function _fitSunShadow(cam){
   if(!cam || !cam.isCamera) return false;
   const E = Math.max(8, Math.min(400, +((typeof worldCfg!=='undefined' && worldCfg.shadowDist) || 30)));
@@ -8345,7 +8355,22 @@ function _fitSunShadow(cam){
   // build 1185: the far cascade mirrors the sun every frame (colour/intensity are written in
   // applyWorldCfg AND per-frame by the day cycle — chasing every write site is how a mirror drifts).
   if(moonFar){ moonFar.color.copy(moon.color); moonFar.intensity = moon.intensity; moonFar.visible = moon.visible; }
-  const moved = Math.abs(fx - _fitFx) > texel*0.5 || Math.abs(fz - _fitFz) > texel*0.5;
+  // build 1261: A DEADBAND, because "static shadows" were re-rendering on almost every moving frame.
+  // The focus is already snapped to the texel grid above, so ANY change is at least a full texel and
+  // the old `> texel*0.5` test was true whenever the snap moved at all — and walking moves the focus
+  // ~10 cm/frame against a ~2.9 cm texel (shadowDist 30, 2048 map), i.e. three texels per frame. So
+  // `renderer.shadowMap.autoUpdate=false` bought nothing while the player was moving: both cascades
+  // redrew the whole caster set, every frame, forever.
+  //
+  // Waiting for N texels is nearly free, because a shadow map does not depend on the camera at all —
+  // it is rendered from the LIGHT. A stale fit does not lag the shadows; it only leaves the covered
+  // REGION a few centimetres behind where it would ideally sit (4 texels ~ 12 cm against a 60 m
+  // volume aimed 0.55*E ahead of the eye). And the test is a DISTANCE, so it is self-limiting: a car
+  // crosses the deadband sooner than a walker and refits proportionally more often, with no
+  // speed-dependent staleness. Lower quality rungs wait longer still — the machines that most need
+  // the draw calls back are the ones least able to see the difference.
+  const _rfT = texel * SHADOW_REFIT_TEXELS * ((typeof _prStepI!=='undefined' && _prStepI>0) ? 2 : 1);
+  const moved = Math.abs(fx - _fitFx) > _rfT || Math.abs(fz - _fitFz) > _rfT;
   const sized = Math.abs(moon.shadow.camera.right - E) > 1e-3;
   if(!moved && !sized) return false;
   _fitFx = fx; _fitFz = fz;
@@ -8511,6 +8536,54 @@ const emitterLights = [];   // { light, baseIntensity }
 function registerEmitterLight(light){ light.castShadow = false; emitterLights.push({ light, baseIntensity: light.intensity }); }
 function unregisterEmitterLight(light){ const i = emitterLights.findIndex(e=>e.light===light); if(i>=0) emitterLights.splice(i,1); }
 const _lp = new THREE.Vector3();
+// ---------- build 1257: THE LIGHT CENSUS ----------
+// The audit's #1 performance ceiling, and it is structural rather than a bug. `updateLightBudget`
+// fades an emitter's INTENSITY past the nearest 16 (8 on phones) — but by the engine's own hard rule
+// (636/977/1153/1155) the light must stay in the scene, because removing it would change the light
+// COUNT and recompile every material mid-match. three r149's forward renderer has no clustering, so
+// it compiles `NUM_POINT_LIGHTS = every light present` and EVERY FRAGMENT OF EVERY MATERIAL loops
+// over all of them, dimmed or not. A creator who ticks "light emitter" on thirty props therefore
+// pays a 30+ light loop per pixel forever, on the devices least able to afford it — with nothing in
+// the product ever saying so. `_hitchLightWatch` (1155) only notices a CHANGE in the count, never
+// its absolute size.
+//
+// Two answers, both cheap. The census makes the cost VISIBLE (Level Check, and the perf HUD where a
+// creator is already looking at draws and triangles). The deploy cap makes it BOUNDED: emitter
+// lights are registered as props load, and a match's light count is frozen at deploy anyway, so
+// refusing the surplus THERE costs nothing at runtime and cannot cause a mid-match recompile. Past
+// the cap a prop keeps its glow (the emissive material is free) and loses only its cast light —
+// which is exactly what the distance budget was already doing to it, minus the per-pixel bill.
+const LIGHT_SOFT_CAP = 40;   // a warning past here; measured guidance, not a limit
+function _lightCensus(){
+  const c = { point:0, spot:0, dir:0, hemi:0, shadow:0, emitters:(typeof emitterLights!=='undefined')?emitterLights.length:0, total:0 };
+  try{ scene.traverseVisible(o=>{
+    if(!o || !o.isLight) return;
+    c.total++;
+    if(o.isPointLight) c.point++; else if(o.isSpotLight) c.spot++;
+    else if(o.isDirectionalLight) c.dir++; else if(o.isHemisphereLight) c.hemi++;
+    if(o.castShadow) c.shadow++;
+  }); }catch(e){}
+  return c;
+}
+// The per-pixel cost is the FORWARD-LIT set: point + spot. Directional and hemisphere lights are a
+// fixed handful and are not what a creator's content grows.
+function _lightLoad(c){ return (c.point|0) + (c.spot|0); }
+function _emitterCap(){ return (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 24 : 48; }
+let _emitterRefused = 0;
+// Deploy freezes the count: anything registered past the cap is dropped from the graph rather than
+// hidden (hiding a light still leaves it counted — build 977's trap) and reported once.
+function enforceEmitterCap(){
+  if(typeof emitterLights==='undefined') return 0;
+  const cap=_emitterCap(); let n=0;
+  while(emitterLights.length > cap){
+    const e = emitterLights.pop(); n++;
+    try{ const L=e && e.light; if(L){ L.intensity=0; if(L.parent) L.parent.remove(L); } }catch(err){}
+  }
+  if(n){ _emitterRefused = n;
+    if(typeof console!=='undefined') console.warn('[RUMPUS] '+n+' emissive prop light'+(n>1?'s':'')+' past the '+cap+'-light budget were dropped (the props keep their glow).');
+  }
+  return n;
+}
 function updateLightBudget(){
   const N = emitterLights.length, MAXL = _maxActiveLights();
   if(N <= MAXL){
@@ -10550,6 +10623,22 @@ function _lgPulse(id, pin){
           case 'wave':    v=(typeof wave!=='undefined')?(wave|0):0; break;
           case 'enemies': { v=0; if(typeof enemies!=='undefined') for(const e of enemies){ if(e && e.hp>0) v++; } break; }
           case 'time':    v=Math.round((performance.now()-_lgRunT)/1000); break;
+          // build 1259: THE INVENTORY, finally readable by the graph. Dialogue could branch on what
+          // you carry (`[if item:redKey >= 1]`) since build 1076; the graph never could — so "the
+          // player is holding two fire cards" was expressible to an NPC and invisible to the rules.
+          // That is the wall under card/collection puzzles: cards, runes, ingredients and quest items
+          // are all inventory, and a puzzle is a CONDITION on what you hold. `give`/`take` were
+          // already verbs, so the graph could change the inventory it could not read.
+          case 'item':    { const _id=String(p.item||'').trim();
+                            if(typeof _noteLogicFailure==='function'){
+                              if(!_id) _noteLogicFailure('A "Read game stat" node reads an item count but names no item, so it always reads 0.');
+                              else if(typeof invCatalog!=='undefined' && !invCatalog[_id]) _noteLogicFailure('A "Read game stat" node reads the item "'+_id+'", but no item by that id is defined — it will always read 0.');
+                            }
+                            v=(_id && typeof invCount==='function') ? (invCount(_id)|0) : 0; break; }
+          // ...and the shape most collection puzzles actually want: how many DISTINCT kinds are held
+          // ("one of each of the four runes"), which counting a single id cannot express.
+          case 'itemkinds': { v=0; if(typeof inventory!=='undefined' && Array.isArray(inventory))
+                              for(const s of inventory){ if(s && s.n>0) v++; } break; }
         }
         logicVars[k]=v;
       } _lgFollow(id,0); break; }
@@ -10618,6 +10707,23 @@ function updateLogic(dt){
 // mirrors just the watched variables to clients ({t:'hudv'}), so every player's widgets agree.
 // Widgets are plain data (sanitized, textContent-only — imported levels can't inject markup).
 const HW_ANCHORS=['tl','tc','tr','ml','mr','bl','bc','br'];
+// build 1260: HUD ART. Widgets could show numbers and take a click (1255) but never show a PICTURE,
+// so every authored interface was engine-coloured text on the engine's own plate — no card faces, no
+// portraits, no panel frames, no title art. `img` gives every widget a picture: on the `image` kind it
+// IS the widget, on every other kind it is the BACKGROUND, so a button becomes a card face and a bar
+// sits in a frame. One field, two roles, decided by the kind.
+//
+// The url goes into CSS, and level data is untrusted, so it is validated rather than escaped: an
+// http(s) or data:image url with no quote, paren, backslash or whitespace can neither break out of
+// url("...") nor smuggle a scheme. (Unlike a WebGL texture this needs no CORS header, so any hosted
+// image works — worth saying in the editor hint, because the texture fields next door do need one.)
+function _hwSafeUrl(u){
+  u = String(u == null ? '' : u).trim();
+  if(!u) return '';
+  if(/[\u0022\u0027()\\\s<>]/.test(u)) return '';   /* the quotes are \u escapes on purpose: a literal quote inside a regex derails extractFunction's string tracker, and this function is unit-tested */
+  if(!/^https?:\/\//i.test(u) && !/^data:image\//i.test(u)) return '';
+  return u.slice(0, 400);
+}
 function _sanitizeHudWidgets(a){
   if(!Array.isArray(a)) return [];
   const out=[];
@@ -10625,11 +10731,16 @@ function _sanitizeHudWidgets(a){
     if(!w || typeof w!=='object') continue;
     out.push({
       id:(typeof w.id==='string' && w.id) ? w.id.slice(0,12) : ('hw_'+Math.random().toString(36).slice(2,8)),
-      kind:(w.kind==='timer'||w.kind==='bar')?w.kind:'text',
+      kind:(w.kind==='timer'||w.kind==='bar'||w.kind==='button'||w.kind==='image')?w.kind:'text',   /* build 1255 · 1260 */
       label:String(w.label==null?'':w.label).slice(0,80),
       value:String(w.value==null?'':w.value).slice(0,24).trim(),
       max:String(w.max==null?'':w.max).slice(0,24).trim(),
       when:String(w.when==null?'':w.when).slice(0,24).trim(),
+      event:String(w.event==null?'':w.event).slice(0,60).trim(),   /* build 1255: the logic event a BUTTON fires */
+      img:_hwSafeUrl(w.img),                                        /* build 1260: art — the widget on 'image', the backdrop on every other kind */
+      iw:Math.max(8,Math.min(1600,Math.round(+w.iw||160))),         /* image box, in pixels */
+      ih:Math.max(8,Math.min(1200,Math.round(+w.ih||100))),
+      alpha:Math.max(0.05,Math.min(1,(w.alpha==null?1:+w.alpha)||1)),
       anchor:HW_ANCHORS.indexOf(w.anchor)>=0?w.anchor:'tc',
       dx:Math.max(-2000,Math.min(2000,Math.round(+w.dx||0))),
       dy:Math.max(-2000,Math.min(2000,Math.round(+w.dy||0))),
@@ -10642,6 +10753,7 @@ function _sanitizeHudWidgets(a){
   return out;
 }
 let hudWidgets = _sanitizeHudWidgets(savedLevel && savedLevel.hudWidgets);   // authored; serialized with the level
+const _hwCd = {}; let _hwCursorFree = false;   /* build 1255: per-button cooldown + whether a button is holding the pointer free */
 // ---------- ACTION BINDINGS (build 1071) ----------
 // Seven authored animation slots (parry, dodge, block, holster, knockdown, getup, idleToCombat)
 // were pickable in the editor but nothing in the engine ever played them — a creator could assign
@@ -10728,6 +10840,39 @@ function _hwText(w){
   if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (interp(w.label)+' '+t) : t; }
   return interp(w.label);
 }
+// build 1255: THE HUD BECOMES AN INTERFACE. Widgets could show numbers and never take a click, so
+// no creator could author a shop, a quest log, an upgrade menu or a tycoon panel — the audit's #1
+// gameplay gap. A `button` widget fires a NAMED LOGIC EVENT, which is the whole feature: the graph
+// already owns money, inventory, spawning and win conditions, so "buy the turret" is a button plus
+// the nodes a creator can already write. Three things make it work rather than merely exist:
+//   * It reuses build 1071's `actEv` message for clients — the host already clamps and routes it, so
+//     multiplayer buttons cost NO new message type and inherit the existing validation.
+//   * A visible button RELEASES THE POINTER, exactly as openInventory does (17919/27965) — a menu you
+//     cannot click is not a menu — and re-locks when the last one hides. Touch devices never lock.
+//   * A per-widget 150 ms cooldown, because a held mouse button must not flood the graph's budget.
+function _hwFire(w){
+  if(typeof gameOn==='undefined' || !gameOn) return;
+  if(typeof paused!=='undefined' && paused) return;
+  if(typeof editorOpen!=='undefined' && editorOpen) return;
+  const ev=String(w.event||'').trim(); if(!ev) return;
+  const now=(typeof performance!=='undefined')?performance.now():Date.now();
+  if(now < (_hwCd[w.id]||0)) return;
+  _hwCd[w.id]=now+150;
+  if(typeof NET!=='undefined' && NET.mode==='client'){
+    if(NET.conn){ try{ NET.conn.send({ t:'actEv', n:ev.slice(0,60) }); }catch(e){} }   // build 1071's path, host-validated
+  } else if(typeof logicEvent==='function') logicEvent(ev);
+  if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
+}
+// A button on screen means a menu is up: free the mouse so it can be clicked, and give it back after.
+function _hwSyncCursor(anyBtn){
+  if(typeof isTouch!=='undefined' && isTouch) return;
+  if(anyBtn === _hwCursorFree) return;
+  _hwCursorFree = anyBtn;
+  if(anyBtn){ if(typeof safeExitPointerLock==='function') safeExitPointerLock(); }
+  else if(typeof gameOn!=='undefined' && gameOn && !(typeof paused!=='undefined' && paused)
+          && !(typeof invOpen!=='undefined' && invOpen) && !(typeof editorOpen!=='undefined' && editorOpen)
+          && typeof tryPointerLock==='function') tryPointerLock();
+}
 function _hwRebuild(){
   const hud=document.getElementById('hud'); if(!hud) return;
   if(!_hwHost || !_hwHost.parentNode){
@@ -10737,12 +10882,32 @@ function _hwRebuild(){
   }
   _hwHost.innerHTML=''; _hwEls=[];
   for(const w of hudWidgets){
-    const el=document.createElement('div');
+    const isBtn = (w.kind==='button');   /* build 1255 */
+    const el=document.createElement(isBtn?'button':'div');
     const P=_HW_POS[w.anchor]||_HW_POS.tc;
     el.style.cssText='position:absolute;'+P[0]+'transform:'+P[1]+'translate('+w.dx+'px,'+w.dy+'px);'
       +'font-size:'+w.size+'px;line-height:1.25;letter-spacing:.04em;white-space:pre;font-family:inherit;'
       +'color:'+(w.color||'var(--accent, #9fe6cf)')+';text-shadow:0 1px 3px rgba(0,0,0,.6);'
       +(w.bg?('background:rgba(4,10,12,.45);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:'+Math.round(w.size*0.3)+'px '+Math.round(w.size*0.55)+'px;'):'');
+    if(isBtn){   /* build 1255: the one widget that takes input — the host is pointer-events:none, so say so here */
+      el.type='button';
+      el.style.pointerEvents='auto'; el.style.cursor='pointer'; el.style.font='inherit'; el.style.fontSize=w.size+'px';
+      if(!w.bg){ el.style.background='rgba(4,10,12,.55)'; el.style.border='1px solid rgba(255,255,255,.16)'; el.style.borderRadius='8px'; el.style.padding=Math.round(w.size*0.34)+'px '+Math.round(w.size*0.7)+'px'; }
+      else { el.style.borderColor='rgba(var(--accent-rgb),0.45)'; }
+      el.onmouseenter=()=>{ el.style.filter='brightness(1.35)'; };
+      el.onmouseleave=()=>{ el.style.filter=''; };
+      el.onclick=(ev)=>{ ev.preventDefault(); ev.stopPropagation(); _hwFire(w); };
+    }
+    if(w.kind==='image'){   /* build 1260: the art IS the widget — an authored box, so nothing reflows when the image lands */
+      el.style.width=w.iw+'px'; el.style.height=w.ih+'px';
+      el.style.display='flex'; el.style.alignItems='center'; el.style.justifyContent='center';
+    }
+    if(w.img){
+      el.style.backgroundImage='url("'+w.img+'")';   // already validated by _hwSafeUrl at sanitize time
+      el.style.backgroundSize='100% 100%'; el.style.backgroundRepeat='no-repeat';
+      if(!w.bg && w.kind!=='button'){ el.style.border='0'; el.style.padding='0'; }   // art supplies its own frame
+    }
+    if(w.alpha < 1) el.style.opacity=String(w.alpha);   /* fades the label with it — set 1 for a crisp caption over art */
     const lb=document.createElement('div'); lb.className='hwLb'; el.appendChild(lb);
     let fill=null;
     if(w.kind==='bar'){
@@ -10764,12 +10929,14 @@ function _hwRebuild(){
   _hwBuiltRev=_hwRev;
 }
 function updateHudWidgets(){
-  if(!hudWidgets.length){ if(_hwHost){ _hwHost.remove(); _hwHost=null; _hwBuiltRev=-1; } return; }
+  if(!hudWidgets.length){ if(_hwHost){ _hwHost.remove(); _hwHost=null; _hwBuiltRev=-1; } _hwSyncCursor(false); return; }   /* build 1255: no widgets = no button holding the cursor */
   if(_hwBuiltRev!==_hwRev || !_hwHost || !_hwHost.parentNode) _hwRebuild();
   if(!_hwHost) return;
+  let _btnVis=false;   /* build 1255 */
   for(const e of _hwEls){
     const w=e.w;
     const vis=!w.when || (+logicVars[w.when]||0)!==0;
+    if(vis && w.kind==='button') _btnVis=true;
     if(vis!==e.vis){ e.vis=vis; e.el.style.display=vis?'':'none'; }
     if(!vis) continue;
     const t=_hwText(w);
@@ -10780,6 +10947,7 @@ function updateHudWidgets(){
       if(Math.abs(pct-e.pct)>0.4){ e.pct=pct; e.fill.style.width=pct.toFixed(1)+'%'; }
     }
   }
+  _hwSyncCursor(_btnVis && (typeof gameOn!=='undefined' && gameOn) && !(typeof paused!=='undefined' && paused) && !(typeof editorOpen!=='undefined' && editorOpen));
   if(typeof NET!=='undefined' && NET.mode==='host' && _hwVars.length){
     const v={}; for(const k of _hwVars) v[k]=+logicVars[k]||0;
     const js=JSON.stringify(v); const now=(typeof performance!=='undefined')?performance.now():Date.now();
@@ -10809,8 +10977,8 @@ const LG_DEFS = {
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
-  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed']]},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
-  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
+  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
+  do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
@@ -10849,6 +11017,7 @@ function _lgEventOptions(){
   for(const n of logicGraph.nodes){ if((n.type==='event' || n.type==='emit') && n.p && n.p.name) set.add(String(n.p.name).trim()); }
   if(typeof triggerZones!=='undefined') for(const z of triggerZones){ if(z && z.ev) set.add(String(z.ev).trim()); }   // build 1072
   if(typeof actionBinds!=='undefined') for(const a of actionBinds){ if(a && a.event) set.add(String(a.event).trim()); }   // build 1071
+  if(typeof hudWidgets!=='undefined') for(const w of hudWidgets){ if(w && w.kind==='button' && w.event) set.add(String(w.event).trim()); }   // build 1255: name a button's event, and On-event offers it
   return Array.from(set).filter(Boolean).sort();
 }
 // build 1034: every animation clip name any placed prop's model carries (the loaders stash
@@ -11377,6 +11546,46 @@ function _applyWorldAction(s){
     if(s.do==='moveprop' && !at) return;                           // a place that does not exist: do nothing
     _lgPropVerb(act, tg, at);
     _wactSend({ pv:[act, tg, at?[at.x, +at.y||0, at.z]:0] });      // clients mirror it instantly; the snapshot reconcile confirms
+    return;
+  }
+  // build 1258: PUSH. The graph could query the world and command enemies, but had no way to apply
+  // FORCE — so a ball could be teleported to a goal and never kicked toward one, and a physics puzzle
+  // could reset a crate but never nudge it. `moveprop` is a teleport; this is a shove.
+  //
+  // Direction comes from the SAME place field every other verb uses: props are pushed AWAY from it
+  // ("away from me" clears a path; "away from #here" is a blast at the event's own spot). With no
+  // place, the push is straight up — the useful default for a launcher or a jolt.
+  //
+  // Strength is a VELOCITY CHANGE, not a raw impulse: the impulse is scaled by each prop's mass, so
+  // "strength 20" moves a crate and a barrel the same way. Raw impulse would make every push a
+  // guessing game about the weight slider, which is the opposite of authorable. An upward component
+  // rides along (0.4x) so pushed props tumble and read as struck rather than sliding like ice.
+  //
+  // NO NETWORK MESSAGE: the graph is host-authoritative and dynamic props already stream their motion
+  // to clients in the D snapshot, so the result arrives by the channel that carries every other
+  // physics event. (The prop STATE verbs need `_wactSend` precisely because show/hide/move/destroy
+  // are not physics and the snapshot does not carry them.)
+  if(s.do==='pushprop'){
+    const tg=String(s.target||'').trim(); if(!tg || typeof propModels==='undefined') return;
+    const at=_lgPlaceAt(s.at);   // optional: absent = push straight up
+    const amt=Math.max(0, Math.min(100, _lgNum(s.amt==null||s.amt==='' ? 20 : s.amt)));
+    if(amt<=0) return;
+    for(const o of propModels){
+      if(!o || !o.userData || o.userData.tag!==tg || o.userData._shattered) continue;
+      const body=o.userData.phys && o.userData.phys.body; if(!body) continue;   // static props have nothing to push
+      let dx=0, dz=0;
+      if(at){
+        dx=o.position.x-at.x; dz=o.position.z-at.z;
+        const d=Math.hypot(dx,dz);
+        if(d>1e-3){ dx/=d; dz/=d; }
+        else { const a=Math.random()*Math.PI*2; dx=Math.cos(a); dz=Math.sin(a); }   // dead centre: any direction beats NaN
+      }
+      const m=(typeof body.mass==='function' ? (+body.mass()||1) : (+o.userData.mass||1)) || 1;
+      try{
+        body.wakeUp && body.wakeUp();   // a settled body ignores an impulse until it is awake
+        body.applyImpulse({ x:dx*amt*m, y:amt*0.4*m, z:dz*amt*m }, true);
+      }catch(e){}
+    }
     return;
   }
   if(s.do==='spawnprop'){   // build 1216: the runtime creator finally CREATES a prop — 1170's deferred other half
@@ -16069,10 +16278,12 @@ async function _renderLevelAudit(host){
 // for models that don't use it), register it on every loader, and — if the CDN can't be reached — let
 // the loader skip the texture so the geometry still loads untextured instead of vanishing.
 let _ktx2Loader=null, _ktx2Promise=null, _meshoptDecoder=null, _meshoptPromise=null;
+let _dracoLoader=null, _dracoPromise=null;   /* build 1256 */
 function _mkGLTFLoader(mgr){
   const l = mgr ? new THREE.GLTFLoader(mgr) : new THREE.GLTFLoader();
   try{ if(_ktx2Loader) l.setKTX2Loader(_ktx2Loader); }catch(e){}
   try{ if(_meshoptDecoder) l.setMeshoptDecoder(_meshoptDecoder); }catch(e){}   // build 918: meshopt-compressed geometry (EXT_meshopt_compression)
+  try{ if(_dracoLoader) l.setDRACOLoader(_dracoLoader); }catch(e){}            // build 1256: Draco-compressed geometry (KHR_draco_mesh_compression)
   return l;
 }
 function _ensureMeshopt(){
@@ -16091,6 +16302,35 @@ function _ensureMeshopt(){
     return null;
   })();
   return _meshoptPromise;
+}
+// build 1256: DRACO. The inlined GLTFLoader has supported KHR_draco_mesh_compression all along —
+// it throws 'THREE.GLTFLoader: No DRACOLoader instance provided.' — but nothing ever gave it one, so
+// a Draco-compressed .glb became a capsule and an entry in the asset-failure report. Sketchfab and
+// most "optimize my glTF" pipelines emit Draco by default, so this was a silent wall between a
+// creator and a large slice of the free-model web. Loaded on demand like KTX2 (917) and meshopt
+// (918): nobody pays the decoder's download until a model actually needs it.
+//
+// DRACOLoader imports `three`, so it needs a CDN that rewrites bare specifiers (esm.sh) — the same
+// constraint KTX2Loader has. The decoder itself (wasm + js worker) is a plain fetch from jsdelivr.
+// `preload()` warms the worker so the first Draco model does not pay the round trip mid-load, and
+// the decoder is deliberately NOT disposed: it is shared by every subsequent model.
+function _ensureDraco(){
+  if(_dracoPromise) return _dracoPromise;
+  _dracoPromise = (async ()=>{
+    try{
+      const mod = await import('https://esm.sh/three@0.149.0/examples/jsm/loaders/DRACOLoader.js');
+      const D = mod.DRACOLoader || (mod.default && mod.default.DRACOLoader);
+      if(D){
+        const l = new D().setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.149.0/examples/jsm/libs/draco/');
+        try{ l.setDecoderConfig({ type:'js' }); }catch(e){}   // the js decoder works everywhere; wasm is picked automatically when available
+        try{ l.preload(); }catch(e){}
+        _dracoLoader = l; return l;
+      }
+    }catch(e){ console.warn('[RUMPUS] Draco decoder unavailable:', e && e.message); }
+    try{ window.__DRACO_UNAVAILABLE = true; }catch(e){}   // no decoder -> the model reports its failure instead of retrying forever
+    return null;
+  })();
+  return _dracoPromise;
 }
 function _ensureKTX2(){
   if(_ktx2Promise) return _ktx2Promise;
@@ -16159,12 +16399,13 @@ function loadGLTFCached(url, cb, errcb){
   const _release=()=>{ _glbActive=Math.max(0,_glbActive-1); _glbPump(); };
   const _cxl=()=>{ delete _glbCancel[url]; _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(new Error('cancelled')); }catch(_){} } };   // build 945
   const _cb=(g)=>{ if(_glbCancel[url]){ _cxl(); return; } _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} try{ _modelBytes[url]=_estimateGLTFBytes(g); }catch(e){} for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
-  let _tries=0, _ktx2Retried=false, _meshoptRetried=false;
+  let _tries=0, _ktx2Retried=false, _meshoptRetried=false, _dracoRetried=false;
   const _ec=(e)=>{
     const _m=(e&&e.message)||'';
     if(_glbCancel[url] || (e && e.name==='AbortError') || /cancelled/i.test(_m)){ _cxl(); return; }   // build 945: a cancel is final — never retried
     if(/setKTX2Loader/.test(_m) && !_ktx2Retried){ _ktx2Retried=true; _release(); _ensureKTX2().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 917: KTX2/Basis textures — pull the transcoder in, then retry the load
     if(/setMeshoptDecoder/.test(_m) && !_meshoptRetried){ _meshoptRetried=true; _release(); _ensureMeshopt().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 918: meshopt-compressed geometry — pull the decoder in, then retry
+    if(/DRACOLoader/.test(_m) && !_dracoRetried){ _dracoRetried=true; _release(); _ensureDraco().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 1256: Draco-compressed geometry — pull the decoder in, then retry (GLTFLoader names the missing loader in its own error)
     if(++_tries<=2){ _release(); setTimeout(()=>{ _glbQueue.push(start); _glbPump(); }, 500*_tries + Math.random()*400); return; }   // retry transient failures (429 rate-limit) with backoff
     _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(e); }catch(_){} }
   };
@@ -16644,8 +16885,12 @@ function _noteLogicFailure(msg){
 // build 1214: does any placed prop carry this tag? A tag-based do-verb aimed at a tag nothing answers is
 // the commonest logic mistake, and the runtime used to no-op it in silence.
 function _lgTagExists(tag){ if(typeof propModels==='undefined') return true; for(const o of propModels){ if(o && o.userData && o.userData.tag===tag) return true; } return false; }
-const _LG_TAG_VERBS = new Set(['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']);
+const _LG_TAG_VERBS = new Set(['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','pushprop']);
 function _noteAssetFailure(src, err){
+  // build 1256: name the one failure a creator cannot otherwise diagnose — the decoder CDN is
+  // unreachable, so a Draco model cannot be read no matter how many times it is retried.
+  try{ if(/DRACOLoader/.test((err&&err.message)||'') && window.__DRACO_UNAVAILABLE)
+    err = new Error('This model is Draco-compressed and the decoder could not be downloaded (offline, or the CDN is blocked). Re-export it without Draco compression, or try again online.'); }catch(e){}
   const key = String(src||'').slice(0, 300);
   const e = assetLoadFailures.get(key);
   if(e){ e.n++; }
@@ -16715,7 +16960,7 @@ function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
   const _tRel = !!(savedLevel && savedLevel.tRel);
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -18162,7 +18407,7 @@ renderer.domElement.addEventListener('drop', (e)=>{
   if(typeof _importLocalModel==='function') _importLocalModel(f, null);
 });
 document.addEventListener('pointerlockchange', ()=>{ const was=locked; locked = document.pointerLockElement === renderer.domElement; if(locked && !was){ lookFresh = true; _lastLookDX=0; _lastLookDY=0; if(paused) resumeGame(); }
-  if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat)
+  if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !(typeof _hwCursorFree!=='undefined' && _hwCursorFree)) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat, or when build 1255's HUD buttons freed the cursor on purpose — LIVE-PROBED: without this, making a button clickable was itself what paused the game and covered it with the pause menu)
 // Ctrl+W (crouch + forward) is the browser's close-tab shortcut and can't be cancelled from a keydown.
 // While actively playing (pointer locked), ask the browser to confirm before unloading so an accidental
 // Ctrl+W shows a "Leave site?" prompt the player can cancel instead of silently losing the session.
@@ -18373,6 +18618,32 @@ function toggleFlashlight(){
   const fc = gameCfg.flashCfg || (gameCfg.flashCfg=_sanitizeFlash(null));
   _flashlight.intensity = flashlightOn ? fc.intensity : 0;
   if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
+}
+
+// build 1251: reported from play — in third person the flashlight lit the scene FROM BEHIND the
+// player, because the light is parented to the CAMERA (right in first person, where the camera is
+// the eye; wrong in any chase view, where the camera hangs metres behind the avatar). The light now
+// re-homes per frame: camera-parented with the original 977 offsets in first person, scene-parented
+// at the player's CHEST aiming along their facing in third person — the beam starts in their hands,
+// the avatar stands behind the source and casts no self-glare, and a top-down twin-stick's beam
+// sweeps with the cursor because yaw already faces it. Re-parenting moves the SAME always-visible
+// light within the graph — the light count never changes (build 977's rule), and position/target
+// are plain uniforms, free to move every frame. The parent checks make the steady state zero-work.
+function updateFlashlight(){
+  if(!_flashlight) return;
+  const tp = (typeof tpActive==='function' && tpActive()) || (typeof activeViewMode==='function' && activeViewMode()!=='fps');
+  if(!tp || typeof player==='undefined'){
+    if(_flashlight.parent!==camera){
+      camera.add(_flashlight); camera.add(_flashlight.target);
+      _flashlight.position.set(0.18,-0.12,0.1); _flashlight.target.position.set(0,0,-1);   // the 977 first-person offsets, exactly
+    }
+    return;
+  }
+  if(_flashlight.parent!==scene){ scene.add(_flashlight); scene.add(_flashlight.target); }
+  const cp=Math.cos(player.pitch||0), fx=-Math.sin(player.yaw||0)*cp, fy=Math.sin(player.pitch||0), fz=-Math.cos(player.yaw||0)*cp;
+  const cy=player.pos.y-0.35;   // chest (player.pos.y is the eye)
+  _flashlight.position.set(player.pos.x+fx*0.4, cy+fy*0.4, player.pos.z+fz*0.4);
+  _flashlight.target.position.set(player.pos.x+fx*24, cy+fy*24, player.pos.z+fz*24);
 }
 const _muzNdc = new THREE.Vector2();
 // A neutral fallback environment so metallic gun materials reflect *something* even on levels with no sky.
@@ -19664,6 +19935,46 @@ const FX_PRESETS = {
   fx_firefly: { label:'Fireflies', n:22, mode:'blink', life:[3.0,5.5], up:[0,0],      out:0.0,  grav:0,     size:[0.07,0.11],  endS:1.0,  colA:[0.65,1.0,0.25],  colB:[0.85,1.0,0.40],  alpha:1.0,  add:true,  region:[1.6,0.9,1.6],   sway:0.90, blink:1.7, mk:0xb6ff5e },
   fx_fountain:{ label:'Fountain',  n:90, mode:'jet',   life:[0.9,1.4], up:[3.4,4.6],  out:0.55, grav:-9.0,  size:[0.05,0.10],  endS:1.3,  colA:[0.55,0.75,0.90], colB:[0.80,0.92,1.00], alpha:0.55, add:false, region:[0.10,0.02,0.10], sway:0,    mk:0x7fc4ff },
 };
+// build 1252: PER-EMITTER CONTROLS (asked for from play the day 1250 shipped). Overrides live in
+// userData.fx.cfg — multipliers over the preset, never replacements, so a preset retune reaches
+// every emitter that has not overridden that knob. Serialized as `fxc` through propEntry (the ONE
+// serializer saves, prefabs, duplicate, clipboard and net pAdd all route through — 1162's lesson),
+// applied at all four loader sites. The editor writes cfg and calls _fxReset; the next tick rebuilds
+// the runtime, which is also how Amount can change the particle COUNT with no special path.
+function _fxCfgSan(c){
+  c=(c&&typeof c==='object')?c:{};
+  const num=(v,d,lo,hi)=>{ v=+v; return isFinite(v)?Math.max(lo,Math.min(hi,v)):d; };
+  const o={ amt:num(c.amt,1,0.25,3), spd:num(c.spd,1,0.25,3), size:num(c.size,1,0.4,3), spread:num(c.spread,1,0.4,4), hgt:num(c.hgt,1,0.4,4), alpha:num(c.alpha,1,0.1,2.5), sat:num(c.sat,1,0,2) };
+  if(c.col!=null && isFinite(+c.col)) o.col=(+c.col)&0xffffff;
+  return o;
+}
+function _fxEff(kind, cfg){
+  const P=FX_PRESETS[kind]||FX_PRESETS.fx_ember;
+  if(!cfg) return P;   // untouched emitter = the preset object itself, no per-frame derivation cost
+  const c=_fxCfgSan(cfg), E=Object.assign({}, P);
+  const grounded=(P.mode==='rise'||P.mode==='jet');
+  E.n=Math.max(4, Math.min(240, Math.round(P.n*c.amt)));
+  E.up=[P.up[0]*c.spd*(grounded&&P.mode==='rise'?c.hgt:1), P.up[1]*c.spd*(grounded&&P.mode==='rise'?c.hgt:1)];
+  E.out=P.out*c.spd;
+  // a JET's height is v^2/g: Speed scales v AND g by spd^2 so the arc keeps its shape at a faster
+  // tempo; Height divides g so the same launch arcs higher. A RISE climbs higher by rising faster.
+  E.grav=P.mode==='jet' ? P.grav*c.spd*c.spd/c.hgt : P.grav;
+  E.region=[P.region[0]*c.spread, P.region[1]*(grounded?1:c.hgt), P.region[2]*c.spread];
+  E.size=[P.size[0]*c.size, P.size[1]*c.size];
+  E.alpha=P.alpha*c.alpha;
+  let A=P.colA, B=P.colB;
+  if(c.col!=null){ const r=((c.col>>16)&255)/255, g=((c.col>>8)&255)/255, b=(c.col&255)/255;
+    A=[r,g,b]; B=[Math.min(1,r*1.3+0.06), Math.min(1,g*1.3+0.06), Math.min(1,b*1.3+0.06)]; }   // the tint REPLACES the ramp: pick red, get red — never orange x blue = black
+  if(c.sat!==1){ const sf=(v)=>{ const l=0.299*v[0]+0.587*v[1]+0.114*v[2];
+    return [Math.max(0,l+(v[0]-l)*c.sat), Math.max(0,l+(v[1]-l)*c.sat), Math.max(0,l+(v[2]-l)*c.sat)]; }; A=sf(A); B=sf(B); }
+  E.colA=A; E.colB=B;
+  return E;
+}
+function _fxReset(o){
+  const rt=o&&o.userData&&o.userData._fxRT; if(!rt) return;
+  try{ if(rt.pts&&rt.pts.parent) rt.pts.parent.remove(rt.pts); rt.geo.dispose(); }catch(e){}
+  o.userData._fxRT=null;   // updateEmitters rebuilds from the new cfg on the next tick
+}
 function buildFxEmitter(kind){
   const P = FX_PRESETS[kind] || FX_PRESETS.fx_ember;
   const g = new THREE.Group();
@@ -19688,7 +19999,7 @@ function _fxSeed(p, P){
   p.bright=0.7+0.6*Math.random();
 }
 function _fxBuildRT(o){
-  const P=FX_PRESETS[o.userData.fx.kind] || FX_PRESETS.fx_ember, n=P.n;
+  const P=_fxEff(o.userData.fx.kind, o.userData.fx.cfg), n=P.n;   /* build 1252: preset x overrides */
   const geo=new THREE.BufferGeometry();
   const pos=new Float32Array(n*3), col=new Float32Array(n*3), size=new Float32Array(n), alp=new Float32Array(n);
   geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
@@ -22888,7 +23199,7 @@ function loadLevelFromNet(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -25503,7 +25814,7 @@ function loadVfxTexture(kind){
     undefined,
     ()=>{ console.warn('[VFX] no '+kind+' sheet at '+cfg.url+' — using the built-in procedural one'); });   // keep the procedural sheet
 }
-function preloadVfx(){ for(const k in VFX) loadVfxTexture(k); _ensureBlastLights(); _ensureMuzzleLights(); if(typeof _ensureChestLights==='function') _ensureChestLights(); warmFlipbookShaders(); }   // build 1153: the loot-box beam pool is seated here too, so the count is final before warmFlipbookShaders compiles against it   // build 636: seat the pooled lights + warm all combat shaders at LOAD (behind the loading screen), so the first explosion can't trigger a multi-second recompile freeze
+function preloadVfx(){ for(const k in VFX) loadVfxTexture(k); _ensureBlastLights(); _ensureMuzzleLights(); if(typeof _ensureChestLights==='function') _ensureChestLights(); if(typeof enforceEmitterCap==='function') enforceEmitterCap(); warmFlipbookShaders(); }   /* build 1257: the surplus is refused BEFORE the shaders compile against the count */   // build 1153: the loot-box beam pool is seated here too, so the count is final before warmFlipbookShaders compiles against it   // build 636: seat the pooled lights + warm all combat shaders at LOAD (behind the loading screen), so the first explosion can't trigger a multi-second recompile freeze
 // build 622: the first rocket/explosion used to FREEZE the frame. The texture was pre-uploaded, but the Sprite
 // shader PROGRAM that draws a flipbook is only compiled/linked by the GPU the first time such a sprite is
 // actually rendered — and the load-time renderer.compile() pass runs before any flipbook sprite exists in the
@@ -28349,7 +28660,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1250 · 2026-08-01';
+const BUILD_VERSION = 'build 1261 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32440,7 +32751,7 @@ function updatePerfHud(){
   el.innerHTML = 'FPS '+fps.toFixed(0)+'  ('+totMs.toFixed(1)+' ms)<br>'
     + 'render '+r.toFixed(1)+'  phys '+p.toFixed(1)+'  net '+n.toFixed(1)+'<br>'
     + 'minimap '+mi.toFixed(1)+'  other '+other.toFixed(1)+' ms<br>'
-    + 'draws '+_perfCalls+'   tris '+(_perfTris/1000).toFixed(0)+'k   geom '+mem.geometries+'   tex '+mem.textures+'<br>'
+    + 'draws '+_perfCalls+'   tris '+(_perfTris/1000).toFixed(0)+'k   geom '+mem.geometries+'   tex '+mem.textures+'   lights '+((typeof _lightCensus==='function')?_lightLoad(_lightCensus()):'?')+'<br>'   /* build 1257: the per-pixel light loop, beside the draws it costs as much as */
     + 'enemies '+enemies.length+'   mixers '+mixers.length+(dofEnabled?'   <span style="color:#ffd166">DoF ON</span>':'');
 }
 // ---------- Cinematic intro camera: author a fly-through in the editor, play it on deploy ----------
@@ -33262,7 +33573,7 @@ function loop(){
   }
   if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
@@ -35912,7 +36223,7 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40);
     if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(sg=>{ const x={ when:sg.w, do:sg.d, target:sg.t }; if(sg.c) x.clip=sg.c; if(sg.n) x.cs=sg.n; if(sg.f) x.from=sg.f; if(sg.ci) x.contain=true; if(sg.tx) x.text=sg.tx; if(sg.ni) x.needItem=sg.ni; if(sg.nc) x.needConsume=true; if(sg.cn) x.consume=true; if(sg.so) x.sound=sg.so; return x; });
     if(p.snd>1) obj.userData.sigNeed=+p.snd;
-    if(p.att) obj.userData.attribution=p.att;
+    if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); }
     if(p.xa) xaApply(obj, p.xa);
     if(p.j) jointApply(obj, p.j);
     if(p.veh) vehicleApply(obj, p.veh);
@@ -36196,6 +36507,7 @@ function propEntry(o){
   const m=propMaterialDesc(o); if(m) e.mat=m;
   if(o.userData.lockId){ e.lk=o.userData.lockId; if(o.userData.lockConsume) e.lkc=1; }
   if(o.userData.tag) e.tg=o.userData.tag;
+  if(o.userData.fx && o.userData.fx.cfg) e.fxc=_fxCfgSan(o.userData.fx.cfg);   /* build 1252: emitter overrides ride every path propEntry serves */
   if(o.userData.groupId) e.gid=o.userData.groupId;   // build 798: prop group link
   if(Array.isArray(o.userData.dialogue) && o.userData.dialogue.length) e.dlg=o.userData.dialogue.slice(0,120).map(s=>String(s).slice(0,200));   // build 695 / 1076: NPC dialogue script
   if(o.userData.npcName) e.npc=String(o.userData.npcName).slice(0,40);
@@ -36289,9 +36601,31 @@ function _autoSaveStatus(txt){ try{ const el = editorEl && editorEl.querySelecto
 // autosave timer and the beforeunload handler would happily write the old level straight back — so this
 // flag stops every save path the moment New is confirmed.
 let _newLevelPending = false;
+// build 1254: THE REMIX TRAP, closed. The gallery invites "open in editor to remix", share links load
+// straight over the working level, and there is ONE save slot — so before this build, opening someone
+// else's level and touching anything meant the 20s autosave overwrote your only save with THEIR level.
+// A level that arrived from outside (share link, ?game= URL, gallery, import, example project) is now
+// FOREIGN: every automatic save path stands down until you explicitly Save — which adopts it as yours.
+// And if a foreign load replaces UNSAVED work (the one state the save slot does not hold), the work is
+// stashed to a one-deep rescue slot first, restorable from the Save tab.
+let _foreignLevel = false;
+const RESCUE_KEY = 'breach_level_rescue_v1';
+let _edRescueRefresh = null;   // the Save panel registers its row refresher here
+function markForeignLevel(what){
+  try{
+    if(_levelDirty && typeof serializeLevel==='function'){
+      localStorage.setItem(RESCUE_KEY, JSON.stringify({ t: Date.now(), level: serializeLevel() }));
+      if(typeof flashToast==='function') flashToast('Your unsaved work was backed up \u2014 Save tab \u2192 Restore backup');
+    }
+  }catch(e){}
+  _foreignLevel = true;
+  _autoSaveStatus('Viewing ' + (what || 'a shared level') + ' \u2014 autosave paused until you Save it as yours');
+  if(typeof _edRescueRefresh === 'function'){ try{ _edRescueRefresh(); }catch(e){} }
+}
 function autoSaveNow(reason){   // save if there are unsaved edits; quiet no-op otherwise
   if(_newLevelPending) return;
   if(!_autoSaveOn || !_levelDirty) return;
+  if(_foreignLevel) return;   // build 1254: never silently overwrite YOUR save with someone else's level
   if(typeof pvpMode==='function' && pvpMode()) return;   // never autosave mid-match
   const ok = saveLevel();
   if(ok){ _levelDirty=false; const t=new Date(); const hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0'); _autoSaveStatus('Autosaved '+hh+':'+mm+(reason?(' · '+reason):'')); }
@@ -36300,7 +36634,7 @@ function autoSaveNow(reason){   // save if there are unsaved edits; quiet no-op 
 function startAutoSave(){ stopAutoSave(); if(!_autoSaveOn) return; _autoSaveTimer = setInterval(()=>{ if(typeof editorOpen!=='undefined' && editorOpen) autoSaveNow(); }, 20000); }   // every 20s while editing
 function stopAutoSave(){ if(_autoSaveTimer){ clearInterval(_autoSaveTimer); _autoSaveTimer=null; } }
 // final safety net: flush unsaved edits if the tab is closed/hidden
-try{ window.addEventListener('beforeunload', ()=>{ try{ if(!_newLevelPending && _autoSaveOn && _levelDirty) saveLevel(); }catch(e){} }); }catch(e){}
+try{ window.addEventListener('beforeunload', ()=>{ try{ if(!_newLevelPending && !_foreignLevel && _autoSaveOn && _levelDirty) saveLevel(); }catch(e){} }); }catch(e){}   /* build 1254: closing the tab must not commit a foreign level either */
 try{ document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') autoSaveNow(); }); }catch(e){}
 function saveLevel(){
   let str; try{ str = JSON.stringify(serializeLevel()); }catch(e){ return false; }
@@ -36606,16 +36940,51 @@ function renderHudPanel(){
     hudWidgets.forEach((w,i)=>{
       const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:6px 7px;margin:5px 0;display:flex;flex-direction:column;gap:4px;';
       const l1=document.createElement('div'); l1.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
-      l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
+      l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar'],['button','Button'],['image','Image']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
       const lab=inp(w.label, w.kind==='timer'?'label (before the M:SS)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
       const del=document.createElement('button'); del.textContent='\u2715'; del.title='Remove widget'; del.style.cssText='padding:1px 7px;font-size:11px;flex:0 0 auto;'; del.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudWidgets.splice(i,1); commitW(); renderHudPanel(); };
       l1.appendChild(del); card.appendChild(l1);
+      if(w.kind==='button'){   /* build 1255 */
+        const lb=document.createElement('div'); lb.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+        lb.appendChild(document.createTextNode('fires event'));
+        lb.appendChild(inp(w.event,'e.g. buyTurret',120, v=>{ w.event=v.trim().slice(0,60); }, 'lgEvtList'));
+        card.appendChild(lb);
+        const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:1px 0 0;font-size:10.5px;';
+        h.textContent='Catch it in the Logic graph with On event \u2014 the graph already owns credits, inventory and spawning, so a shop is this button plus the nodes you can already write. While any button is on screen the mouse is freed so players can click it; use "show when" to open and close the menu.';
+        card.appendChild(h);
+      }
       if(w.kind==='timer' || w.kind==='bar'){
         const l2=document.createElement('div'); l2.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
         l2.appendChild(document.createTextNode(w.kind==='timer'?'seconds variable':'value variable'));
         l2.appendChild(inp(w.value,'e.g. time',80, v=>{ w.value=v.trim().slice(0,24); }, 'lgVarList'));
         if(w.kind==='bar'){ l2.appendChild(document.createTextNode('max')); l2.appendChild(inp(w.max,'100 or a variable',90, v=>{ w.max=v.trim().slice(0,24); }, 'lgVarList')); }
         card.appendChild(l2);
+      }
+      { /* build 1260: art on any widget — the picture on an Image, the backdrop on everything else */
+        const li=document.createElement('div'); li.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+        li.appendChild(document.createTextNode(w.kind==='image'?'image url':'background image'));
+        const iu=inp(w.img,'https://… .png',150, v=>{ w.img=_hwSafeUrl(v); }); iu.style.flex='1'; li.appendChild(iu);
+        if(typeof _uploadRow==='function'){ /* the level's own image host, when one is configured */ }
+        card.appendChild(li);
+        if(w.kind==='image'){
+          const ls=document.createElement('div'); ls.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+          ls.appendChild(document.createTextNode('size'));
+          ls.appendChild(numI(w.iw,58,v=>{ w.iw=Math.max(8,Math.min(1600,Math.round(v)||160)); }));
+          ls.appendChild(document.createTextNode('\u00d7'));
+          ls.appendChild(numI(w.ih,58,v=>{ w.ih=Math.max(8,Math.min(1200,Math.round(v)||100)); }));
+          ls.appendChild(document.createTextNode('px'));
+          card.appendChild(ls);
+        }
+        const lo=document.createElement('div'); lo.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+        lo.appendChild(document.createTextNode('opacity'));
+        const oi=document.createElement('input'); oi.type='range'; oi.min='0.05'; oi.max='1'; oi.step='0.05'; oi.value=String(w.alpha==null?1:w.alpha); oi.style.flex='1';
+        const ov=document.createElement('span'); ov.style.cssText='min-width:30px;text-align:right;opacity:.8'; ov.textContent=(+oi.value).toFixed(2);
+        oi.addEventListener('mousedown', ()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); });
+        oi.oninput=()=>{ w.alpha=+oi.value; ov.textContent=(+oi.value).toFixed(2); commitW(); };
+        lo.appendChild(oi); lo.appendChild(ov); card.appendChild(lo);
+        const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:1px 0 0;font-size:10.5px;';
+        h.textContent='Any hosted image works \u2014 no CORS header needed (unlike the texture fields). Use it for card faces on buttons, portraits, panel frames, or a full title backdrop. "show when" hides and shows it from a logic variable, so an interface can open and close.';
+        card.appendChild(h);
       }
       const l3=document.createElement('div'); l3.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
       l3.appendChild(selI([['tl','Top left'],['tc','Top centre'],['tr','Top right'],['ml','Mid left'],['mr','Mid right'],['bl','Bottom left'],['bc','Bottom centre'],['br','Bottom right']], w.anchor, v=>{ w.anchor=v; }));
@@ -36645,6 +37014,8 @@ function renderHudPanel(){
     mkAdd('+ Text', { kind:'text', label:'SCORE {score}', anchor:'tc' });
     mkAdd('+ Timer', { kind:'timer', label:'', value:'time', anchor:'tc', size:26 });
     mkAdd('+ Bar', { kind:'bar', label:'', value:'progress', max:'100', anchor:'tc' });
+    mkAdd('+ Button', { kind:'button', label:'BUY TURRET \u2014 50', event:'buyTurret', anchor:'bc', dy:-90, when:'shopOpen' });   /* build 1255 */
+    mkAdd('+ Image', { kind:'image', label:'', anchor:'mr', iw:160, ih:100 });   /* build 1260 */
     wrap.appendChild(addRow);
   }
   grp('Colours');
@@ -36984,7 +37355,7 @@ function restoreLevel(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -37596,7 +37967,8 @@ function buildEditorPanel(){
       + '<div class="row2"><button id="edSave">'+_icn('save')+'Save</button><button id="edShare">'+_icn('link')+'Share link</button></div>'
       + '<label style="display:flex;align-items:center;gap:7px;margin:8px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer"><input type="checkbox" id="edAutoSave" style="width:15px;height:15px;accent-color:var(--accent)"><b>Autosave</b> while editing</label>'
       + '<div class="hint" id="edAutoStatus" style="font-size:10px;opacity:0.75;margin:0 0 6px">Saves automatically as you work.</div>'
-      + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .json</button><button id="edImport">'+_icn('upload')+'Import .json</button></div>'
+      + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .rumpus</button><button id="edImport">'+_icn('upload')+'Import level</button></div>'
+      + '<div id="edRescueRow" style="display:none;margin-top:6px"><button id="edRescue">\u21a9 Restore backup</button><div class="hint" id="edRescueNote" style="margin-top:2px"></div></div>'
       + '<input type="file" id="edImportFile" accept=".rumpus,.breach,.json,application/json" style="display:none">'
       + '<div class="row2" style="margin-top:6px"><button id="edClear">Clear save</button><button id="edReset">Reset target</button></div>'
       + '<div class="row2" style="margin-top:10px"><button id="edWipe" style="width:100%;border-color:#7a2630;color:#ff9b93">'+_icn('trash')+'Delete all objects (fresh scene)</button></div>'
@@ -37862,7 +38234,8 @@ function buildEditorPanel(){
     }; } }
   p.querySelector('#edSave').onclick = ()=>{
     const note = editorEl.querySelector('#edCopied');
-    note.textContent = saveLevel() ? 'Level saved — it will auto-load next time ✓' : 'Save failed (storage blocked here)';
+    const _ok = saveLevel(); if(_ok) _foreignLevel = false;   // build 1254: an explicit Save adopts a shared/imported level as yours — autosave resumes
+    note.textContent = _ok ? 'Level saved — it will auto-load next time ✓' : 'Save failed (storage blocked here)';
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 2800);
   };
   p.querySelector('#edShare').onclick = async ()=>{
@@ -37900,6 +38273,22 @@ function buildEditorPanel(){
   };
   const importFile = p.querySelector('#edImportFile');
   p.querySelector('#edImport').onclick = ()=>{ importFile.value=''; importFile.click(); };
+  // build 1254: the rescue slot — unsaved work a shared/imported level replaced, one click from back
+  (function(){
+    const row=p.querySelector('#edRescueRow'), btn=p.querySelector('#edRescue'), noteEl=p.querySelector('#edRescueNote');
+    if(!row || !btn) return;
+    const refresh=()=>{ let j=null; try{ j=JSON.parse(localStorage.getItem(RESCUE_KEY)||'null'); }catch(e){}
+      if(j && j.level){ row.style.display=''; try{ noteEl.textContent='Unsaved work from '+new Date(j.t||0).toLocaleString()+', backed up when another level replaced it.'; }catch(e){} }
+      else row.style.display='none'; };
+    refresh(); _edRescueRefresh = refresh;
+    btn.onclick=()=>{ let j=null; try{ j=JSON.parse(localStorage.getItem(RESCUE_KEY)||'null'); }catch(e){}
+      if(!j || !j.level){ refresh(); return; }
+      if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+      try{ restoreLevel(j.level); }catch(e){ if(typeof flashToast==='function') flashToast('Backup could not be restored'); return; }
+      _foreignLevel=false; _levelDirty=true;   // it is YOURS and unsaved again — Save commits it
+      try{ localStorage.removeItem(RESCUE_KEY); }catch(e){} refresh();
+      if(typeof flashToast==='function') flashToast('Backup restored \u2014 Save to keep it'); };
+  })();
   importFile.onchange = ()=>{
     const note = editorEl.querySelector('#edCopied');
     const file = importFile.files && importFile.files[0]; if(!file) return;
@@ -37908,6 +38297,7 @@ function buildEditorPanel(){
       let level; try { level = JSON.parse(reader.result); } catch(e){ note.textContent='Import failed: not valid level JSON'; clearTimeout(note._t); note._t=setTimeout(()=>note.textContent='',3200); return; }
       if(!level || typeof level!=='object' || (!level.props && !level.world)){ note.textContent='Import failed: unrecognized file'; clearTimeout(note._t); note._t=setTimeout(()=>note.textContent='',3200); return; }
       if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();   // so Ctrl+Z undoes the import
+      if(typeof markForeignLevel==='function') markForeignLevel('an imported level');   // build 1254: even your own file adopts via one explicit Save
       restoreLevel(level);
       note.textContent = 'Level imported ✓ (Save to keep it)';
       clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 3200);
@@ -37997,6 +38387,18 @@ function edFold(host, id, title, openDefault, subtitle){
 function levelIssues(){
   const issues=[];
   try{
+    // build 1257: the perf census. Not a mistake to fix — a cost to SEE. three r149 loops every
+    // point/spot light in every fragment of every material, so this number is the one a creator
+    // most needs and could least discover.
+    if(typeof _lightCensus==='function'){
+      const c=_lightCensus(), load=_lightLoad(c);
+      if(load > LIGHT_SOFT_CAP)
+        issues.push('Heavy lighting: '+load+' point/spot lights in the scene. Every one is looped over for every pixel (there is no clustering), so this is the biggest single cost on low-end machines — turn "Light emitter" off on decorative props, or give one bright light a longer range instead of several small ones.');
+      if(typeof _emitterRefused!=='undefined' && _emitterRefused>0)
+        issues.push(_emitterRefused+' emissive prop light'+(_emitterRefused>1?'s were':' was')+' past the engine budget and dropped at deploy — those props still glow, they just do not cast light.');
+      if(c.shadow > 4)
+        issues.push(c.shadow+' lights cast shadows. Each one is an extra render of the level every time it moves — keep it to a few key lights.');
+    }
     // build 1167: failed asset loads lead the list — "my prop vanished" is the #1 support thread and the
     // answer was sitting in the console. The url's tail is shown because Poly Pizza urls only differ there.
     if(typeof assetLoadFailures!=='undefined') for(const [src, e] of assetLoadFailures){
@@ -41053,6 +41455,41 @@ function renderEditorFields(){
           icb.onchange=()=>{ pushUndoSnapshot(); if(icb.checked) tagObj.userData.interact=true; else delete tagObj.userData.interact; if(typeof _levelDirty!=='undefined') _levelDirty=true; };
           iw.appendChild(icb); iw.appendChild(document.createTextNode('Interactable (E)'));
           row.appendChild(spn); row.appendChild(tin); row.appendChild(iw); th.appendChild(row);
+          // build 1252: per-emitter effect controls — multipliers over the preset, Reset returns to it
+          if(tagObj.userData.fx && typeof FX_PRESETS!=='undefined'){
+            const cfg=()=> tagObj.userData.fx.cfg || (tagObj.userData.fx.cfg={});
+            const fxHead=document.createElement('div'); fxHead.className='hint'; fxHead.style.margin='4px 0 3px';
+            fxHead.innerHTML='<b>Effect \u2014 '+((FX_PRESETS[tagObj.userData.fx.kind]||{}).label||'Emitter')+'</b>';
+            th.appendChild(fxHead);
+            const fxSlide=(label,key,lo,hi,dflt,title)=>{
+              const r=document.createElement('div'); r.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0;';
+              const s=document.createElement('span'); s.textContent=label; if(title) s.title=title; s.style.cssText='min-width:62px;font-size:11px;color:#9fe6cf;';
+              const i=document.createElement('input'); i.type='range'; i.min=lo; i.max=hi; i.step=0.05; i.value=(cfg()[key]!=null?cfg()[key]:dflt); i.style.flex='1';
+              const v=document.createElement('span'); v.style.cssText='min-width:30px;text-align:right;font-size:11px;opacity:.8'; v.textContent=(+i.value).toFixed(2);
+              i.addEventListener('mousedown', ()=>pushUndoSnapshot());
+              i.oninput=()=>{ cfg()[key]=+i.value; v.textContent=(+i.value).toFixed(2); if(typeof _fxReset==='function') _fxReset(tagObj); if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+              r.appendChild(s); r.appendChild(i); r.appendChild(v); th.appendChild(r);
+            };
+            fxSlide('Amount','amt',0.25,3,1,'Particle count, \u00d7 the preset');
+            fxSlide('Speed','spd',0.25,3,1,'How fast particles move (a fountain keeps its arc shape)');
+            fxSlide('Size','size',0.4,3,1,'Particle size');
+            fxSlide('Spread','spread',0.4,4,1,'How wide the effect reaches');
+            fxSlide('Height','hgt',0.4,4,1,'How high it rises / how tall the region is');
+            fxSlide('Opacity','alpha',0.1,2.5,1,'Density / brightness of each particle');
+            fxSlide('Saturation','sat',0,2,1,'0 = greyscale, 1 = the preset, 2 = vivid');
+            const cr=document.createElement('div'); cr.style.cssText='display:flex;gap:6px;align-items:center;margin:3px 0 6px;';
+            const cs=document.createElement('span'); cs.textContent='Color'; cs.title='Tints the whole effect; Reset returns to the preset'; cs.style.cssText='min-width:62px;font-size:11px;color:#9fe6cf;';
+            const ci=document.createElement('input'); ci.type='color';
+            const _c0=(cfg().col!=null)?cfg().col:((FX_PRESETS[tagObj.userData.fx.kind]||{}).mk||0xffffff);
+            ci.value='#'+('000000'+(_c0>>>0).toString(16)).slice(-6);
+            ci.style.cssText='width:42px;height:22px;padding:0;border:1px solid #2a3a42;border-radius:4px;background:#05080b;cursor:pointer;';
+            ci.addEventListener('mousedown', ()=>pushUndoSnapshot());
+            ci.oninput=()=>{ cfg().col=parseInt(ci.value.slice(1),16); if(typeof _fxReset==='function') _fxReset(tagObj); if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+            const rst=document.createElement('button'); rst.textContent='Reset'; rst.className='secBtn'; rst.style.cssText='font-size:11px;padding:2px 8px;';
+            rst.onclick=()=>{ pushUndoSnapshot(); delete tagObj.userData.fx.cfg; if(typeof _fxReset==='function') _fxReset(tagObj); if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
+            cr.appendChild(cs); cr.appendChild(ci); cr.appendChild(rst); th.appendChild(cr);
+          }
+
         }
       } }
     if(typeof renderPrefabsPanel==='function') renderPrefabsPanel();   // build 1034: prefab visibility + Update/Detach buttons follow the live selection
@@ -44435,7 +44872,7 @@ const HELP_TOPICS = [
   +'· <b>Challenge a friend</b> (end screen) — share the level + your score to beat.<br>'
   +'· <b>Campaign</b> — chain several levels into a sequence with carry-over loadout.<br><br>'
   +'Multiplayer: <b>Host</b> from the home menu, share the room code; joiners get the level automatically.<br><br>'
-  +'<b>Community levels</b> (home menu) is the player-built gallery — browse, play, or open any entry in the editor to remix it. Publish yours with Save tab → <b>Submit to community library</b>: it copies the level JSON and opens the submission form (GitHub account needed); approved levels appear in everyone\'s gallery, credited to you.' },
+  +'<b>Community levels</b> (home menu) is the player-built gallery — browse, play, or open any entry in the editor to remix it. Publish yours with Save tab → <b>Publish to community</b> — no account needed; approved levels appear in everyone\'s gallery, credited to you. Want a link RIGHT NOW? The Save tab\'s <b>Title screen</b> section has <b>Publish game page</b>: an instant /game/ URL with your game\'s own title screen — no review, update it any time.' },
 ];
 let _helpSel='play';
 function renderHelp(){
@@ -45007,6 +45444,7 @@ async function _commLoad(entry, toEditor){
   if(!level || typeof level!=='object' || (!level.props && !level.world)){ if(typeof flashToast==='function') flashToast('That file does not look like a Rumpus Engine level'); return; }
   closeModal('communityModal');
   if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();   // Ctrl+Z restores what you had
+  if(typeof markForeignLevel==='function') markForeignLevel('"'+(entry.name||file)+'"');   // build 1254: a gallery level never autosaves over yours
   if(toEditor){
     if(!editorOpen){ if(!gameOn && typeof enterEditor==='function') enterEditor(); else if(typeof toggleEditor==='function') toggleEditor(); }
     setTimeout(()=>{ try{ restoreLevel(level); if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" opened in the editor'); }catch(e){ console.warn('community level failed to load', e); } }, 200);
@@ -45023,6 +45461,7 @@ function _helpLoadExample(kind){
 }
 function _helpBuildExample(kind){
   pushUndoSnapshot();
+  if(typeof markForeignLevel==='function') markForeignLevel('an example project');   // build 1254: loading a tutorial must not autosave over your level
   // build 879: a FULL fresh canvas. Examples used to clear only props, so zones, pickups, terrain,
   // paint, turrets and even the camera view bled from whatever was loaded before ("it loads elements
   // from the previous loaded levels"). One undo still restores everything.
@@ -45222,7 +45661,7 @@ if(savedLevel && savedLevel.player) applyPlayerLevel(savedLevel.player);   // se
   if(code){
     try{
       const lvl = await decodeLevel(code);
-      if(lvl && typeof restoreLevel==='function'){ restoreLevel(lvl);
+      if(lvl && typeof restoreLevel==='function'){ if(typeof markForeignLevel==='function') markForeignLevel('a shared level'); restoreLevel(lvl);
         if(homepageCfg.on) _syncGameHome();   // build 971: the creator's title screen fronts the menu
         else flashToast(challenge ? ('Challenge loaded \u2014 beat '+(challenge.s||0)+' pts. Press Deploy') : 'Shared level loaded \u2014 press Deploy'); }
     }catch(e){ console.warn('Could not load shared level from URL:', e && e.message); flashToast('Shared level link looks invalid'); }
@@ -45235,7 +45674,7 @@ if(savedLevel && savedLevel.player) applyPlayerLevel(savedLevel.player);   // se
         const r=await fetch(_commBase()+dir+slug+'.json', { cache:'no-cache' }); if(!r.ok) continue;
         const lvl=await r.json();
         if(lvl && typeof lvl==='object' && (lvl.props||lvl.world) && typeof restoreLevel==='function'){
-          restoreLevel(lvl); loaded=true;
+          if(typeof markForeignLevel==='function') markForeignLevel('"'+slug+'"'); restoreLevel(lvl); loaded=true;
           if(homepageCfg.on) _syncGameHome(); else flashToast('"'+slug+'" loaded \u2014 press Deploy');
         }
         break;

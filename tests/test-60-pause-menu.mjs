@@ -18,6 +18,6 @@ const ex = extractFunction('exitToMenu');
 assert(/NET\.mode!=='off'\)\{ location\.reload\(\)/.test(ex), 'exit reloads in a live net session');
 assert(/showMainMenu\(\);/.test(ex), 'solo exit returns to the main menu');
 // loop integration
-assert(/if\(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen\) openPause\(\)/.test(src), 'losing the lock mid-play opens pause (unless chatting)');
+assert(/if\(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !\(typeof _hwCursorFree!=='undefined' && _hwCursorFree\)\) openPause\(\)/.test(src), 'losing the lock mid-play opens pause (unless chatting, or a HUD button deliberately freed the cursor — build 1255)');
 assert(/\(paused && NET\.mode==='off'\) \|\| \(mapOpen && NET\.mode==='off'\) \|\| \(invOpen && NET\.mode==='off'\)\) && !\(duelDead && pvpMode\(\)\)\) \{ pollGamepad/.test(src), 'solo play freezes while paused');
 done('pause menu + exit to main menu');

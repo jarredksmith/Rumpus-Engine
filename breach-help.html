@@ -70,7 +70,7 @@
 <body>
 <div class="layout">
 <nav id="nav">
-  <div class="brand">BRE<span>A</span>CH</div>
+  <div class="brand">RUMPUS <span>ENGINE</span></div>
   <div class="sub">Field manual</div>
   <a class="play" href="breach.html">▶ Play RUMPUS ENGINE</a>
   <button id="menuBtn">☰ Contents</button>
@@ -197,7 +197,7 @@ The panel on the right is organized into <b>eight tabs</b>; the last tab you use
 <tr><td>Gameplay</td><td>Objective &amp; rules, pickups, loot, inventory items, the in-game build menu, cutscenes</td></tr>
 <tr><td>Weapons</td><td>Per-weapon models, damage, sounds; impact &amp; tracer effects</td></tr>
 <tr><td>HUD</td><td>Theme colours, fonts, panel style, which HUD elements show, per-element layout, crosshair</td></tr>
-<tr><td>Save</td><td>Save/load, share links, export/import <code>.breach</code> files, campaigns</td></tr>
+<tr><td>Save</td><td>Save/load, share links, export/import <code>.rumpus</code> files, campaigns</td></tr>
 </table></div>
 <p>Most sections start collapsed — click a header to expand it. The <b>?</b> button on the editor toolbar opens this manual.
 Everything you do in the editor is undoable with <kbd>Ctrl</kbd>+<kbd>Z</kbd>, and the level autosaves in your browser while you edit (toggle on the Save tab).</p>
@@ -760,7 +760,7 @@ refills your current weapon for its listed price.</p>
 <ul>
   <li><b>💾 Save</b> / <b>Clear save</b> — browser save slot; <b>Autosave while editing</b> keeps it fresh.</li>
   <li><b>🔗 Copy share link</b> — the whole level compressed into a URL. See <a href="#sharing">Saving &amp; sharing</a>.</li>
-  <li><b>⬇ Export / ⬆ Import</b> — the level as a <code>.breach</code> file you can back up, edit or send (plain JSON inside; old <code>.json</code> exports still import).</li>
+  <li><b>⬇ Export / ⬆ Import</b> — the level as a <code>.rumpus</code> file you can back up, edit or send (plain JSON inside; old <code>.breach</code> and <code>.json</code> exports still import).</li>
   <li><b>🗑 Delete all objects</b> — fresh scene (undoable).</li>
   <li><b>Issues panel</b> — live validation that catches the classic mistakes before a playtest does:
   locks with no matching key pad (and orphaned keys), pickup spots placed while pickups are off, audio zones
@@ -1215,7 +1215,7 @@ unlocks and keys, objective progress, race standings, chat, and the host's custo
 <h2><span class="tag">Systems</span>Saving &amp; sharing</h2>
 <ul>
   <li><b>Browser save</b> — one save slot plus autosave while editing.</li>
-  <li><b>.breach export/import</b> — the level (or a whole campaign) as a file. Everything serializes: props, track, vehicle tuning, rules, cutscenes, HUD, and the asset-credit list. The file is plain JSON inside, and old <code>.json</code> exports import forever.</li>
+  <li><b>.rumpus export/import</b> — the level (or a whole campaign) as a file. Everything serializes: props, track, vehicle tuning, rules, cutscenes, HUD, and the asset-credit list. The file is plain JSON inside, and old <code>.json</code> exports import forever.</li>
   <li><b>Share link</b> — the entire level compressed into a URL. Anyone who opens it plays it instantly. Models re-download from Poly Pizza / Sketchfab on the recipient's machine (Sketchfab models need the recipient's own free token).</li>
   <li><b>Challenge links</b> — from the end screen, share the level <i>plus your score to beat</i>.</li>
   <li><b>Campaigns</b> — chain levels with carry-over loadout and inventory; share as one file.</li>
@@ -1280,5 +1280,64 @@ Free model &amp; sound sources: Poly Pizza, Sketchfab, Poly Haven, Freesound —
   if(nav) nav.addEventListener('click', function(e){ if(e.target.classList && e.target.classList.contains('lnk')) nav.classList.remove('open'); });
 })();
 </script>
+
+<section id="whats-new">
+<h2>What&rsquo;s new (builds 1090&ndash;1253)</h2>
+<p>The manual above covers the fundamentals; everything below shipped after it was written. Grouped by what you were probably trying to do. A complete control-by-control reference lives in <code>docs/REFERENCE.md</code> in the project repository.</p>
+
+<h3>Editing faster</h3>
+<ul>
+<li><b>Snapping</b> &mdash; the gizmo snaps moves to a grid (0.5&nbsp;m), rotates to 15&deg;, scales to 0.25 by default. Hold <b>Ctrl</b> during a drag to invert (snap off &rarr; free nudge; snap on &rarr; grab the lattice). Step fields live in the Handles section; 0 disables that channel.</li>
+<li><b>World / Local axes</b> &mdash; a toggle beside the gizmo modes. Local rotates the handles to the object&rsquo;s own rotation, so a turned wall slides along its own length.</li>
+<li><b>Copy &amp; paste</b> &mdash; <b>Ctrl+C / Ctrl+V</b> copies the selection with its FULL configuration (signals, tags, materials, physics, vehicle tuning) and pastes at the drop point &mdash; it works across levels and even across browser tabs.</li>
+<li><b>Align / Distribute / Array</b> &mdash; the Arrange row lines up bounding edges (Min / Center / Max), spreads centres evenly, and the <b>&#x29C9; Array</b> tool steps duplicates along X/Y/Z &mdash; fences, colonnades, stair rails in one gesture.</li>
+<li><b>In this level</b> &mdash; a scene asset browser: a tile per imported model, most-used first, with instance counts. Click to add another copy; the &#x25C9; overlay selects every copy at once and frames it.</li>
+<li><b>Play from camera</b> &mdash; the second play button deploys you AT the editor camera (and a wave picker starts the test at any wave). Test the top of the tower without walking there.</li>
+<li><b>Undo keeps your selection</b>, hide/lock are undoable, and duplicates keep every configured field.</li>
+</ul>
+
+<h3>Your own assets</h3>
+<ul>
+<li><b>Drag a .glb onto the viewport</b> &mdash; your own model imports instantly (stored in this browser, up to 64&nbsp;MB). It&rsquo;s honest about sharing: the level check warns that device-local models need the server upload before the level travels.</li>
+<li><b>Failed loads are visible</b> &mdash; a model URL that 404s now leads the Level Check panel with the failing URL, instead of a silent hole in the scene.</li>
+<li><b>Asset credits</b> &mdash; every session&rsquo;s pause menu carries a credits screen merging model attributions automatically; the Level Check flags Sketchfab models with no recorded attribution.</li>
+</ul>
+
+<h3>Looking better</h3>
+<ul>
+<li><b>Sky moods</b> &mdash; one-click Day / Sunset / Night / Overcast / Blood-moon presets that set the whole mood (sky, sun, fog, exposure) as a starting point.</li>
+<li><b>Auto exposure</b> &mdash; the camera&rsquo;s eye adapts walking from noon into an interior (World &rarr; Camera; 0 = the old fixed exposure).</li>
+<li><b>Height fog + sun glow</b> &mdash; fog thins with altitude and warms toward the sun.</li>
+<li><b>God rays</b>, <b>screen-space floor reflections</b>, <b>real motion blur</b> (per-object &mdash; your weapon stays sharp when you flick), <b>filmic bokeh depth of field</b> with an <b>Auto focus</b> option that racks the lens to whatever the crosshair rests on.</li>
+<li><b>Ambient particle emitters</b> &mdash; under Add a shape &rarr; <b>Effects</b>: Embers, Dust, Smoke, Steam, Fireflies, Fountain. Place, move, scale and tag them like any prop (logic hide/show switches them at runtime), and tune Amount / Speed / Size / Spread / Height / Opacity / Saturation / Color per emitter.</li>
+</ul>
+
+<h3>Deeper game rules</h3>
+<ul>
+<li><b>Wave manifests</b> &mdash; author waves as text, one line per wave: <code>3x grunt, 2x runner @gate</code>. <code>@tag</code> clusters the squad on a tagged prop; <code>-</code> is a breather; blank lines fall back to the auto formula.</li>
+<li><b>Logic: Math and Read game stat nodes</b> &mdash; <code>coins = coins &times; 2</code> finally works, and the graph can read HP, ammo, score, credits, wave, enemies alive and time.</li>
+<li><b>Per-player logic</b> &mdash; variables ending in <code>@</code> are per-player, events carry <code>#pid</code>/<code>#team</code>/<code>#x</code>/<code>#z</code>, and verbs can target <i>the event&rsquo;s player</i> alone.</li>
+<li><b>Runtime prop verbs</b> &mdash; Show / Hide / Move / Destroy props by tag, and <b>Spawn prefab</b> places a saved prefab mid-game.</li>
+<li><b>Friendly NPCs</b> &mdash; a spawn-marker checkbox makes a wanderer that never aggros and never counts as hostile.</li>
+<li><b>Progress that persists</b> &mdash; ticked variables survive between campaign levels and (optionally) between sessions, with inventory and checkpoint resume for solo adventures.</li>
+</ul>
+
+<h3>Feel &amp; combat</h3>
+<ul>
+<li><b>Movement has momentum</b> &mdash; acceleration, braking, and air control replace instant velocity; jump has a coyote window and a press buffer; the ledge mantle reliably grabs 1.55&ndash;2.05&nbsp;m ledges.</li>
+<li><b>Reloads are cancellable</b> &mdash; switching weapons cancels a reload (per-weapon draw times), and the <b>shotgun loads shell by shell</b>: fire mid-reload with whatever&rsquo;s in the tube.</li>
+<li><b>Rename any weapon</b> per level (Weapons &rarr; Name) &mdash; a sword is a renamed Fists with a model; the full stat sheet (fire rate, mag, spread, reload, pellets) is editable per level.</li>
+<li><b>Third-person flashlight</b> now beams from the character&rsquo;s hands, not the chase camera.</li>
+</ul>
+
+<h3>Multiplayer &amp; sharing</h3>
+<ul>
+<li><b>Chat has a filter and /mute</b> &mdash; stranger links collapse to [link], profanity is masked, and <code>/mute Name</code> hides a player locally.</li>
+<li><b>Live lobby directory</b> &mdash; open lobbies appear in the games list with a room code.</li>
+<li><b>Play counts &amp; likes</b> &mdash; the community gallery ranks by Most played and takes a &#x1F44D; per level.</li>
+<li><b>Instant game pages</b> &mdash; Save &rarr; Title screen &rarr; <b>Publish game page</b>: a <code>/game/</code> URL with your own title screen, no review, no account, update-in-place. (The reviewed community library remains the discoverable gallery &mdash; also no account needed.)</li>
+<li><b>Exports are <code>.rumpus</code> files</b> &mdash; old <code>.breach</code> and <code>.json</code> files import forever.</li>
+</ul>
+</section>
 </body>
 </html>

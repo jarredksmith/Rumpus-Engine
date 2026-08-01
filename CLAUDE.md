@@ -1519,6 +1519,321 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## "Static" shadows were redrawing every moving frame (build 1261)
+
+The audit's #3 performance finding, reproduced exactly: `renderer.shadowMap.autoUpdate=false` (7024)
+bought nothing while the player was moving. `_fitSunShadow` snaps the focus to the shadow map's texel
+grid, so ANY change is at least a full texel — which made the old `> texel*0.5` test true whenever
+the snap moved at all. Measured by driving the real function over a 600-frame walk: **both cascades
+redrew the entire caster set on 100% of moving frames.** The tiered mover-dirtying (33316) only ever
+paid off standing still, which in an FPS is rare.
+
+The fix is a DEADBAND, not a frame throttle, and the distinction is the whole design. A shadow map is
+rendered from the LIGHT, so a stale fit does not lag the shadows at all — it only leaves the covered
+REGION slightly behind where it would ideally sit. And because the test is a DISTANCE, it is
+self-limiting: a car crosses it sooner than a walker and refits proportionally more often, so
+staleness never grows with speed. A frame-count throttle would have had exactly the opposite property.
+
+`SHADOW_REFIT_TEXELS = 8`, chosen from a measured sweep rather than picked (the sweep is in the
+source comment and `test-1261` reproduces it):
+
+```
+texels   walk 0.10   run 0.16   car 0.60   slack@E60
+  0.5       100%       100%       100%        3cm     <- the old rule
+    4        34%        50%       100%       23cm
+    8        19%        31%       100%       47cm     <- shipped: 3-5x fewer redraws on foot
+   12        13%        20%        50%       70cm
+```
+
+Slack scales with the texel, which scales with `shadowDist`, so it is always ~0.4% of the volume at
+any setting — and the volume's trailing edge already sits 0.45*E (27 m at the default) behind the eye.
+Lower quality rungs double the deadband: the machines that most need the draw calls back are the ones
+least able to see the difference. Build 1120's texel snap is untouched — it is precisely what makes a
+deadband safe, since without it the map would slide sub-texel every frame anyway.
+
+**My first guess was wrong and the measurement said so.** I picked 4 texels expecting a 2.5x cut;
+it measured 2.0x at a run, and the staleness bound I asserted (20 cm) was also wrong (23 cm). The
+sweep then showed 8 was the honest choice. Two pins moved (1120, 1185) — both rigs execute
+`_fitSunShadow` in isolation and it gained a constant, now supplied via `extractConst` so they test
+the shipped value rather than a copy.
+
+## HUD art (build 1260)
+
+Widgets could show numbers (1058) and take a click (1255) but never show a PICTURE, so every
+authored interface was engine-coloured text on the engine's own plate — no card faces, no portraits,
+no panel frames, no title art. This is the audit's "HUD/UI authoring is variables-only" gap and the
+second half of the card-game unlock. `img` is **one field with two roles, decided by the kind**: on
+the new `image` kind it IS the widget, on every other kind it is the BACKGROUND — so a button becomes
+a card face and a bar sits inside a frame. Plus `iw`/`ih` (an AUTHORED box, so nothing reflows when
+the picture lands) and `alpha`.
+
+**The url goes into CSS and level data is untrusted, so it is VALIDATED, not escaped.** `_hwSafeUrl`
+requires an `http(s)` or `data:image` scheme and rejects any quote, paren, backslash, angle bracket or
+whitespace — nothing can break out of `url("...")` or smuggle a scheme, and validation happens once at
+SANITIZE time so the render path interpolates a string that is already known good. `test-1260` drives
+it with eight injection shapes beside the legitimate ones. Worth knowing: a CSS image needs no CORS
+header, unlike the texture fields next door — the editor hint says so, because the analogy would
+otherwise mislead.
+
+Two harness notes, both cost a cycle:
+- **A literal quote inside a regex derails `extractFunction`.** `_hwSafeUrl`'s character class is
+  written with `\u0022`/`\u0027` on purpose: with real quotes, extraction ran away by 125,000
+  characters and two unrelated harnesses died with `savedLevel is not defined`. The file already
+  favours `\uXXXX` escapes (307 of them) — this is why.
+- **A probe that builds its own source with nested template interpolation will mangle it.** The first
+  live run reported the art missing; the engine was fine and the probe had turned the url into the
+  literal `${u}`. Building the probe string in Node and passing it as one argument fixed it. Verified
+  after: a 220x140 image widget renders, and a card-face button fires the graph on a real mouse click
+  ("PLAYED 1" counting up).
+
+Three pins moved (1058, 1255 twice) — all rig plumbing for the sanitizer's new dependency, intent
+unchanged.
+
+## The graph reads the inventory (build 1259)
+
+Dialogue could branch on what the player carries (`[if item:redKey >= 1]`) since build 1076; the
+LOGIC GRAPH never could — `read` knew hp/ammo/score/credits/wave/enemies/time and nothing about the
+inventory. So "the player is holding two fire cards" was expressible to an NPC and invisible to the
+rules, while `give`/`take` had been verbs for builds — the graph could CHANGE the inventory it could
+not READ. That asymmetry is the wall under every card, rune, ingredient and collection puzzle,
+because such a puzzle IS a condition on what you hold.
+
+Two stats, because they answer different questions and neither can express the other:
+- **How many of an item** — `invCount(id)`, deliberately the same accessor dialogue conditions use,
+  so the two surfaces can never disagree about what "holding" means. The item field carries
+  `lgItemList`, so it offers the level's real ids.
+- **Different items held** — non-empty stacks. "One of each of the four runes" cannot be written as
+  a count of any single id.
+
+An id that names no defined item reads 0 forever, which looks EXACTLY like "the player has none of
+it" — the hardest class of bug to see. So a read with a blank or undefined id reports through
+`_noteLogicFailure` (deduped, so a polled read reports once, not every pulse) and surfaces in Level
+Check, the same courtesy tag verbs have had since 1214. The validation lives in the `read` case
+rather than beside the tag checker, which has no node in scope.
+
+**Design note, since this build exists to unlock card/puzzle mechanics.** Verified while scoping it:
+an inventory item can already carry a **model, a tag and its own signals**, and `useType:'place'`
+spawns it into the player's hands to drop — so a PHYSICAL card puzzle (cards as objects, plinths as
+prop signals with `On object placed` + tag filter + contain + consume, `needs N` for combinations)
+was fully authorable before this build. What was missing was the graph's ability to reason about a
+HAND. With 1255's HUD button as the play surface and 1258's push as a world effect, the native design
+for this engine is **cards as world verbs** — play a card, the room changes — rather than a 2D card
+game the engine has no UI for. Remaining gaps for a true deck game: no image on a HUD widget (a hand
+can only be text buttons) and no ordered collection type (draw works via Set-variable's random
+min/max; shuffle/discard past ~6 cards is awkward).
+
+## The graph gets force (build 1258)
+
+The audit's gameplay gap #5: the graph could query the world and command enemies but had no way to
+apply an IMPULSE — so a ball could be teleported to a goal and never kicked toward one, and a physics
+puzzle could reset a crate but never nudge it. `moveprop` is a teleport; **`pushprop`** is a shove.
+Four decisions:
+
+- **Direction comes from the place field every other verb already uses.** Props are pushed AWAY from
+  it: "away from `me`" clears a path, "away from `#here`" is a blast at the event's own spot, a tag
+  is a fixed launcher. No place = straight up, which is the useful default. The direction is
+  NORMALISED, so distance never changes the shove — 3 m and 300 m from the origin get the same push.
+- **Strength is a VELOCITY CHANGE, not a raw impulse.** The impulse is multiplied by each prop's own
+  mass, so "20" moves a crate and a barrel identically. Raw impulse would make every push a guessing
+  game about the weight slider, which is the opposite of authorable.
+- **An upward component rides along (0.4×)** so pushed props tumble and read as struck rather than
+  sliding like ice.
+- **No network message, deliberately.** The graph is host-authoritative and dynamic props already
+  stream their motion to clients in the D snapshot, so the result arrives by the channel that carries
+  every other physics event. The prop STATE verbs need `_wactSend` precisely because show/hide/move/
+  destroy are *not* physics and the snapshot does not carry them — `test-1258` pins the absence so a
+  future edit does not "helpfully" add one.
+
+Guards that matter: the body is WOKEN first (a settled Rapier body swallows an impulse), a prop
+sitting exactly on the origin gets a random horizontal direction instead of NaN, static and shattered
+props are skipped, a blank tag pushes nothing rather than everything, and the amount clamps 0–100.
+Four pins moved (1033, 1073, 1077, 1170) — all verb-list literals, intent unchanged.
+
+## The light census, and a deploy cap (build 1257)
+
+The audit's #1 PERFORMANCE ceiling, and it is structural rather than a bug — which is why it needed
+naming rather than fixing. `updateLightBudget` (811) fades an emitter's INTENSITY past the nearest
+16 (8 on phones), but by this engine's own hard rule (636/977/1153/1155) the light must STAY IN THE
+SCENE, because removing it changes the light count and recompiles every material mid-match. r149's
+forward renderer has no clustering: it compiles `NUM_POINT_LIGHTS = every light present` and every
+fragment of every material loops over all of them, dimmed or not. So a creator who ticks "Light
+emitter" on thirty props pays a 30-light loop per pixel forever, on the devices least able to afford
+it — and nothing in the product ever said so. `_hitchLightWatch` (1155) only notices a CHANGE in the
+count, never its absolute size.
+
+Two answers, both cheap, because the expensive one (clustered/deferred lighting) is a renderer
+rewrite:
+- **Visible.** `_lightCensus()` counts by type over the visible graph; `_lightLoad()` is
+  point + spot — deliberately NOT the directional/hemisphere pair, which is fixed at a handful and is
+  not what content grows. Level Check warns past `LIGHT_SOFT_CAP` (40) and, unusually for that panel,
+  says *why* it costs and what to do; shadow-casting lights get their own line (each is an extra
+  render of the level whenever it moves). The perf HUD shows `lights N` beside draws and triangles.
+- **Bounded.** `enforceEmitterCap()` runs at DEPLOY inside `preloadVfx`, beside the pools that are
+  seated there and **before `warmFlipbookShaders` compiles against the count** — so the surplus is
+  refused at the one moment a count change is already expected and free. 48 lights, 24 on phones.
+  A refused light is REMOVED FROM THE GRAPH, not hidden (hiding still counts — 977's trap), the prop
+  keeps its emissive glow (that is free), and the count is reported in Level Check rather than
+  silently swallowed.
+
+`test-1257` executes both: the census over a stub scene (types, totals, shadow casters, throw-safe
+degradation) and the cap on both budgets — including that it is a complete no-op below the cap, so
+ordinary levels are byte-identical.
+
+## Draco models load (build 1256)
+
+The inlined GLTFLoader has supported `KHR_draco_mesh_compression` since it was vendored — it throws
+`'THREE.GLTFLoader: No DRACOLoader instance provided.'` — but nothing ever gave it one, so a
+Draco-compressed .glb became a capsule plus a line in the asset-failure report. Sketchfab and most
+"optimize my glTF" pipelines emit Draco by default, so this was a silent wall between a creator and
+a large slice of the free-model web. Wired as the **third instance of builds 917/918's pattern**:
+the failed load names the missing decoder, `_ensureDraco()` pulls it in on demand (memoised — one
+download per session, shared by every later model, never disposed), and the load is re-queued. Nobody
+pays the decoder's download until a model needs it. DRACOLoader imports `three`, so it comes from
+esm.sh (the KTX2 constraint); the wasm/js decoder is a plain jsdelivr fetch, `preload()`-warmed so
+the first Draco model does not pay the round trip mid-load. When the decoder genuinely cannot be
+fetched, `_noteAssetFailure` rewrites the error into something a creator can act on ("re-export it
+without Draco compression") instead of leaving an unexplained capsule.
+
+**The audit was wrong about this one, and checking cost nothing.** The rendering critic reported the
+decoder "already exists in the optimizer/repack path (15803–15818) — it just never reaches the game's
+loader," which would have made this a two-line wiring job. Reading those lines: they are the meshopt
+SIMPLIFIER (`S.simplify`), and `new DRACOLoader` appears nowhere in the file outside the vendored
+library. The fix was the same size either way, but the note is the point — the panel's own rule
+("every claim is a hypothesis until verified") applies to the panel.
+
+**The load-bearing test is against the LIBRARY TEXT, not an assumption.** The retry fires on a regex
+over GLTFLoader's error message; if an upgrade rewords it, the retry silently never fires and Draco
+models quietly become capsules again with nothing failing. So `test-1256` extracts all three decoder
+messages from the vendored source and drives the real error router with them — which immediately
+caught that the three differ in SHAPE: KTX2 and meshopt name their **setter**
+(`setKTX2Loader must be called…`), Draco names the **loader** (`No DRACOLoader instance provided.`).
+The first draft of the test invented a symmetric KTX2 message and failed; the engine was right and
+the test was wrong.
+
+## The HUD becomes an interface (build 1255)
+
+The audit's #1 gameplay gap: `_sanitizeHudWidgets` permitted `text | timer | bar`, display-only —
+so no creator could author a shop, a quest log, an upgrade menu or a tycoon panel, and the only
+purchase UI in the engine was the hardcoded loot-chest cache. A **`button`** widget fires a NAMED
+LOGIC EVENT, and that is the whole feature: the graph already owns credits, inventory, spawning and
+win conditions, so "buy the turret" is one button plus nodes a creator can already write. Three
+things make it work rather than merely exist:
+
+- **It reuses build 1071's `actEv` message for clients** — the host already clamps and routes it, so
+  multiplayer buttons cost no new message type, no new handler, and inherit the existing validation.
+- **A real `<button>` element** (focus and Enter/Space come free) that opts into `pointerEvents:auto`
+  against the widget host's `pointer-events:none`, with the click stopped so it never reaches the
+  world behind it.
+- **A visible button releases the pointer**, exactly as `openInventory` does, and re-locks when the
+  last one hides — a menu you cannot click is not a menu. `show when` gates the whole menu open and
+  closed. Plus a 150 ms per-widget cooldown so a held mouse cannot flood the pulse budget.
+
+A button's event name also joins `_lgEventOptions`, so the graph's **On event** dropdown offers what
+you just authored.
+
+**The live probe earned its keep, and the finding is the lesson.** `test-1255` passed with every
+stub — and the button was INERT in the real game. `document.elementFromPoint` at the button's own
+centre reported a **pause-menu label**, and the gates read `paused:true`. Releasing the pointer trips
+the unlock handler's `openPause()`, so **making the button clickable was itself what made the game
+reject the click** (it failed `_hwFire`'s own `paused` gate *and* was covered by the menu). The fix
+is the mechanism the inventory already used: `_hwCursorFree` joins the handler's "a UI is
+legitimately open" whitelist beside `chatOpen`/`mapOpen`/`invOpen`, and the flag is raised BEFORE the
+release so the async `pointerlockchange` sees it. Three pins moved (192, 376, 60). Re-probed live:
+two real mouse clicks → 100 credits, with the `{gold}` readout following. **Build 1244's rule, third
+sighting: a unit test with stubbed dependencies proves the maths, never the mechanism — probe the
+live path.**
+
+## The remix trap is closed (build 1254)
+
+The audit's #1 editor data-loss finding, replayed and killed. The gallery invites "open in editor to
+remix", share links load straight over the working level, and there is ONE save slot — so opening
+someone else's level and touching anything meant the 20-second autosave overwrote your only save
+with THEIR level, silently, with an undo stack that dies with the tab. Now a level that arrives from
+outside is **FOREIGN** (`markForeignLevel`): five entry points marked — `#lvl=` share links, `?game=`
+URLs, the community gallery (Play AND Open in editor), file import (even your own backup — one Save
+adopts it), and help-modal example projects. While foreign, EVERY automatic save path stands down:
+the 20s timer, visibilitychange, before-play and on-close flushes all funnel through `autoSaveNow`'s
+new gate, and the `beforeunload` direct-save gained its own `!_foreignLevel` term (two pins moved —
+330 and 1083 — both keeping their flush-on-close intent). The autosave status line says what is
+happening and why. An explicit **Save adopts** the level (`_ok && (_foreignLevel=false)` on the
+button; Ctrl+S clicks the same button), and autosave resumes exactly.
+
+The second half: a foreign load over UNSAVED work — the one state the save slot does not hold —
+stashes the current level to a one-deep **rescue slot** (`breach_level_rescue_v1`, timestamped)
+before it is replaced, with a toast naming where it went. The Save tab grows a **Restore backup**
+row (hidden when the slot is empty, refreshed live via `_edRescueRefresh`): restoring pushes an undo
+snapshot, loads the stash, marks it yours-and-unsaved so one Save commits it, and clears the slot.
+
+`test-1254` executes the real `markForeignLevel` + `autoSaveNow` through the trap replay (dirty +
+gallery + three autosave ticks → zero saves, stash intact), the clean-load case (no stash needed),
+adoption, and native behaviour (byte-identical when nothing foreign happened) — and pins all five
+entry points. Test-harness lesson recorded: returning `{ ...r }` from a rig SNAPSHOTS getters and
+drops setters — assign extra keys onto the object instead.
+
+## The audit, the reference, and the docs tell the truth (build 1253)
+
+A nine-agent audit ran against build 1252 — six harsh critics (rendering, editor UX, gameplay
+systems, multiplayer/platform, performance, content pipeline), each benchmarking against
+Unreal/Unity/Godot/Roblox with the 1159 rule (every claim verified in source, citations required),
+plus three inventory agents that catalogued every real control from the UI-builder code. Deliverables
+now IN THE REPO (scratchpad gets wiped by rollbacks): **docs/AUDIT.md** (merged verdict + six full
+reports + a consolidated quick-win list) and **docs/REFERENCE.md** (every setting/widget with ranges,
+defaults and behavior — World & Scene, Objects/Tools/Editor incl. the full shortcut table, Game
+Systems/Logic/Sharing incl. the complete node/verb tables and the wave-manifest grammar).
+
+The merged verdict, one line per dimension: fair competitor on friction/rendering/systems-density;
+the six ceilings are LOD/occlusion (rendering scale), no scripting escape hatch + one save slot
+(editor), engine-owned PvP + no clickable UI + no world-state persistence (gameplay), no
+identity/reporting + free third-party network infra (platform), unbounded light counts + a
+too-high quality floor (performance), and docs frozen ~160 builds back (content).
+
+Build 1253 fixes the audit's Gap 3 — the docs' three live factual errors: the in-game help claimed
+"GitHub account needed" to publish (false since build 958) and never mentioned the instant /game/
+publish (the least findable best feature — now surfaced in the same topic); the export button said
+"Export .json" while writing `.rumpus` files the manual called `.breach` (three names, one file —
+now "Export .rumpus" / "Import level"); breach-help.html still rendered the BREACH wordmark 300
+builds after the rename (now RUMPUS ENGINE) and its `.breach` claims are corrected with the compat
+promise kept explicit. A **What's-new section (builds 1090–1253)** was appended to the manual
+covering every undocumented creator feature by task (editing faster / your own assets / looking
+better / deeper rules / feel & combat / multiplayer & sharing). One pin moved (816 — the icon
+assertion carried the old label). `test-1253` guards all of it, including that the false account
+claim can never return.
+
+## Per-emitter effect controls (build 1252)
+
+Asked for from play the day 1250 shipped: Amount, Speed, Size, Spread, Height, Opacity, Saturation
+and Color, per emitter, in an **Effect** section under the Tag row whenever the selected prop is an
+fx_*. Overrides are MULTIPLIERS over the preset (never replacements — a preset retune still reaches
+every emitter that hasn't overridden that knob), stored in `userData.fx.cfg`, serialized as `fxc`
+through `propEntry` — the ONE serializer that saves, prefabs, duplicate, clipboard and net pAdd all
+route through (1162's lesson, applied for once in advance) — and applied at all FOUR loader sites.
+The editor writes cfg and calls `_fxReset` (tear down the Points + geometry; next tick rebuilds),
+which is also how Amount changes the particle COUNT with no special path. Semantics worth keeping:
+`_fxEff` returns the PRESET OBJECT ITSELF when no cfg exists (zero cost for untouched emitters);
+Height means rise-rate for grounded plumes, region height for drifting volumes, and 1/gravity for
+the fountain (same launch, higher arc), while Speed scales a jet's v AND g together so v²/g holds
+and the arc keeps its exact shape at a faster tempo; the Color tint REPLACES the preset ramp (pick
+red, get red — multiplying orange by blue gives black); Saturation lerps about luminance. Sliders
+push undo on grab; Reset deletes cfg so the entry serializes nothing. `test-1252` executes the
+sanitizer and derivation knob by knob; live-probed: an ember emitter with `{col:0x3388ff, amt:2}`
+renders 128 particles reading 7,684 cool / 0 warm pixels against 1250's 1,022-warm baseline, and
+`propEntry` round-trips the cfg.
+
+## The third-person flashlight beams from the player (build 1251)
+
+Reported from play: in third person the flashlight lit the scene FROM BEHIND the player. The light
+has been parented to the CAMERA since build 672 — exactly right in first person, where the camera is
+the eye, and wrong in every chase view, where the camera hangs metres behind the avatar.
+`updateFlashlight()` re-homes it per frame: camera-parented at the original 977 offsets in first
+person; scene-parented at the player's CHEST (pos.y − 0.35; pos.y is the eye), 0.4 m along their
+facing, throwing 24 m, in any third-person view — so the beam starts in their hands, the avatar
+stands behind the source, and a top-down twin-stick's beam sweeps with the cursor because yaw
+already faces it. Re-parenting moves the SAME always-visible light within the graph — the light
+count never changes (977's rule; the function is pinned to never create a light or touch
+`.visible`) — and the parent guards make the steady state zero-work. Live-probed per 1244's rule
+(unit stubs are not the mechanic): light 0.40 m from the player vs 4.58 m from the chase camera,
+beam −23.5 m forward, and the FPS restore lands the exact `(0.18, −0.12, 0.1)` attachment.
+
 ## Ambient particle emitters (build 1250)
 
 The engine had fire, weather, impact FX and flipbooks — all BAKED systems — and no way for a creator
