@@ -7,7 +7,7 @@ assert(/<div id="chatBox"><div id="chatLog"><\/div><input id="chatInput"/.test(h
 assert(/if\(e\.code===BINDS\.chat && NET\.mode!=='off' && gameOn/.test(src) && /chat:'KeyT'/.test(src), 'T keybind (rebindable) wired + gated to multiplayer + play');
 
 // pause guard: releasing the lock for chat must NOT open the pause menu
-assert(/&& !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen\) openPause\(\);/.test(src), 'pointerlock pause not guarded by chatOpen');
+assert(/&& !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !\(typeof _hwCursorFree!=='undefined' && _hwCursorFree\)\) openPause\(\);/.test(src), 'pointerlock pause not guarded by chatOpen');
 
 // send routing: host broadcasts to all conns; client sends to the host; always shows locally
 const send = extractFunction('sendChat');

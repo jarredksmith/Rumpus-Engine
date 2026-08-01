@@ -19,7 +19,7 @@ assert(/if\(mapOpen\)\{[\s\S]*?if\(e\.code===BINDS\.map \|\| e\.code==='Escape'\
 
 // ---- live-play gating: no fire while the map is up; releasing the lock for the map doesn't open pause ----
 assert(/if\(shopOpen \|\| editorOpen \|\| paused \|\| mapOpen \|\| duelDead \|\| invOpen\) return;/.test(src), 'firing is blocked while the map is open');
-assert(/&& !paused && !chatOpen && !mapOpen && !invOpen\) openPause\(\)/.test(src), 'exiting pointer-lock for the map does not pop the pause menu');
+assert(/&& !paused && !chatOpen && !mapOpen && !invOpen && !\(typeof _hwCursorFree!=='undefined' && _hwCursorFree\)\) openPause\(\)/.test(src), 'exiting pointer-lock for the map does not pop the pause menu');
 
 // ---- loop: solo freezes (and still paints the map); multiplayer keeps the world live ----
 assert(/\|\| \(mapOpen && NET\.mode==='off'\) \|\| \(invOpen && NET\.mode==='off'\)\) && !\(duelDead/.test(src), 'solo freeze includes the map');

@@ -1519,6 +1519,39 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The HUD becomes an interface (build 1255)
+
+The audit's #1 gameplay gap: `_sanitizeHudWidgets` permitted `text | timer | bar`, display-only —
+so no creator could author a shop, a quest log, an upgrade menu or a tycoon panel, and the only
+purchase UI in the engine was the hardcoded loot-chest cache. A **`button`** widget fires a NAMED
+LOGIC EVENT, and that is the whole feature: the graph already owns credits, inventory, spawning and
+win conditions, so "buy the turret" is one button plus nodes a creator can already write. Three
+things make it work rather than merely exist:
+
+- **It reuses build 1071's `actEv` message for clients** — the host already clamps and routes it, so
+  multiplayer buttons cost no new message type, no new handler, and inherit the existing validation.
+- **A real `<button>` element** (focus and Enter/Space come free) that opts into `pointerEvents:auto`
+  against the widget host's `pointer-events:none`, with the click stopped so it never reaches the
+  world behind it.
+- **A visible button releases the pointer**, exactly as `openInventory` does, and re-locks when the
+  last one hides — a menu you cannot click is not a menu. `show when` gates the whole menu open and
+  closed. Plus a 150 ms per-widget cooldown so a held mouse cannot flood the pulse budget.
+
+A button's event name also joins `_lgEventOptions`, so the graph's **On event** dropdown offers what
+you just authored.
+
+**The live probe earned its keep, and the finding is the lesson.** `test-1255` passed with every
+stub — and the button was INERT in the real game. `document.elementFromPoint` at the button's own
+centre reported a **pause-menu label**, and the gates read `paused:true`. Releasing the pointer trips
+the unlock handler's `openPause()`, so **making the button clickable was itself what made the game
+reject the click** (it failed `_hwFire`'s own `paused` gate *and* was covered by the menu). The fix
+is the mechanism the inventory already used: `_hwCursorFree` joins the handler's "a UI is
+legitimately open" whitelist beside `chatOpen`/`mapOpen`/`invOpen`, and the flag is raised BEFORE the
+release so the async `pointerlockchange` sees it. Three pins moved (192, 376, 60). Re-probed live:
+two real mouse clicks → 100 credits, with the `{gold}` readout following. **Build 1244's rule, third
+sighting: a unit test with stubbed dependencies proves the maths, never the mechanism — probe the
+live path.**
+
 ## The remix trap is closed (build 1254)
 
 The audit's #1 editor data-loss finding, replayed and killed. The gallery invites "open in editor to

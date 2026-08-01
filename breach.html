@@ -10625,11 +10625,12 @@ function _sanitizeHudWidgets(a){
     if(!w || typeof w!=='object') continue;
     out.push({
       id:(typeof w.id==='string' && w.id) ? w.id.slice(0,12) : ('hw_'+Math.random().toString(36).slice(2,8)),
-      kind:(w.kind==='timer'||w.kind==='bar')?w.kind:'text',
+      kind:(w.kind==='timer'||w.kind==='bar'||w.kind==='button')?w.kind:'text',   /* build 1255 */
       label:String(w.label==null?'':w.label).slice(0,80),
       value:String(w.value==null?'':w.value).slice(0,24).trim(),
       max:String(w.max==null?'':w.max).slice(0,24).trim(),
       when:String(w.when==null?'':w.when).slice(0,24).trim(),
+      event:String(w.event==null?'':w.event).slice(0,60).trim(),   /* build 1255: the logic event a BUTTON fires */
       anchor:HW_ANCHORS.indexOf(w.anchor)>=0?w.anchor:'tc',
       dx:Math.max(-2000,Math.min(2000,Math.round(+w.dx||0))),
       dy:Math.max(-2000,Math.min(2000,Math.round(+w.dy||0))),
@@ -10642,6 +10643,7 @@ function _sanitizeHudWidgets(a){
   return out;
 }
 let hudWidgets = _sanitizeHudWidgets(savedLevel && savedLevel.hudWidgets);   // authored; serialized with the level
+const _hwCd = {}; let _hwCursorFree = false;   /* build 1255: per-button cooldown + whether a button is holding the pointer free */
 // ---------- ACTION BINDINGS (build 1071) ----------
 // Seven authored animation slots (parry, dodge, block, holster, knockdown, getup, idleToCombat)
 // were pickable in the editor but nothing in the engine ever played them — a creator could assign
@@ -10728,6 +10730,39 @@ function _hwText(w){
   if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (interp(w.label)+' '+t) : t; }
   return interp(w.label);
 }
+// build 1255: THE HUD BECOMES AN INTERFACE. Widgets could show numbers and never take a click, so
+// no creator could author a shop, a quest log, an upgrade menu or a tycoon panel — the audit's #1
+// gameplay gap. A `button` widget fires a NAMED LOGIC EVENT, which is the whole feature: the graph
+// already owns money, inventory, spawning and win conditions, so "buy the turret" is a button plus
+// the nodes a creator can already write. Three things make it work rather than merely exist:
+//   * It reuses build 1071's `actEv` message for clients — the host already clamps and routes it, so
+//     multiplayer buttons cost NO new message type and inherit the existing validation.
+//   * A visible button RELEASES THE POINTER, exactly as openInventory does (17919/27965) — a menu you
+//     cannot click is not a menu — and re-locks when the last one hides. Touch devices never lock.
+//   * A per-widget 150 ms cooldown, because a held mouse button must not flood the graph's budget.
+function _hwFire(w){
+  if(typeof gameOn==='undefined' || !gameOn) return;
+  if(typeof paused!=='undefined' && paused) return;
+  if(typeof editorOpen!=='undefined' && editorOpen) return;
+  const ev=String(w.event||'').trim(); if(!ev) return;
+  const now=(typeof performance!=='undefined')?performance.now():Date.now();
+  if(now < (_hwCd[w.id]||0)) return;
+  _hwCd[w.id]=now+150;
+  if(typeof NET!=='undefined' && NET.mode==='client'){
+    if(NET.conn){ try{ NET.conn.send({ t:'actEv', n:ev.slice(0,60) }); }catch(e){} }   // build 1071's path, host-validated
+  } else if(typeof logicEvent==='function') logicEvent(ev);
+  if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
+}
+// A button on screen means a menu is up: free the mouse so it can be clicked, and give it back after.
+function _hwSyncCursor(anyBtn){
+  if(typeof isTouch!=='undefined' && isTouch) return;
+  if(anyBtn === _hwCursorFree) return;
+  _hwCursorFree = anyBtn;
+  if(anyBtn){ if(typeof safeExitPointerLock==='function') safeExitPointerLock(); }
+  else if(typeof gameOn!=='undefined' && gameOn && !(typeof paused!=='undefined' && paused)
+          && !(typeof invOpen!=='undefined' && invOpen) && !(typeof editorOpen!=='undefined' && editorOpen)
+          && typeof tryPointerLock==='function') tryPointerLock();
+}
 function _hwRebuild(){
   const hud=document.getElementById('hud'); if(!hud) return;
   if(!_hwHost || !_hwHost.parentNode){
@@ -10737,12 +10772,22 @@ function _hwRebuild(){
   }
   _hwHost.innerHTML=''; _hwEls=[];
   for(const w of hudWidgets){
-    const el=document.createElement('div');
+    const isBtn = (w.kind==='button');   /* build 1255 */
+    const el=document.createElement(isBtn?'button':'div');
     const P=_HW_POS[w.anchor]||_HW_POS.tc;
     el.style.cssText='position:absolute;'+P[0]+'transform:'+P[1]+'translate('+w.dx+'px,'+w.dy+'px);'
       +'font-size:'+w.size+'px;line-height:1.25;letter-spacing:.04em;white-space:pre;font-family:inherit;'
       +'color:'+(w.color||'var(--accent, #9fe6cf)')+';text-shadow:0 1px 3px rgba(0,0,0,.6);'
       +(w.bg?('background:rgba(4,10,12,.45);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:'+Math.round(w.size*0.3)+'px '+Math.round(w.size*0.55)+'px;'):'');
+    if(isBtn){   /* build 1255: the one widget that takes input — the host is pointer-events:none, so say so here */
+      el.type='button';
+      el.style.pointerEvents='auto'; el.style.cursor='pointer'; el.style.font='inherit'; el.style.fontSize=w.size+'px';
+      if(!w.bg){ el.style.background='rgba(4,10,12,.55)'; el.style.border='1px solid rgba(255,255,255,.16)'; el.style.borderRadius='8px'; el.style.padding=Math.round(w.size*0.34)+'px '+Math.round(w.size*0.7)+'px'; }
+      else { el.style.borderColor='rgba(var(--accent-rgb),0.45)'; }
+      el.onmouseenter=()=>{ el.style.filter='brightness(1.35)'; };
+      el.onmouseleave=()=>{ el.style.filter=''; };
+      el.onclick=(ev)=>{ ev.preventDefault(); ev.stopPropagation(); _hwFire(w); };
+    }
     const lb=document.createElement('div'); lb.className='hwLb'; el.appendChild(lb);
     let fill=null;
     if(w.kind==='bar'){
@@ -10764,12 +10809,14 @@ function _hwRebuild(){
   _hwBuiltRev=_hwRev;
 }
 function updateHudWidgets(){
-  if(!hudWidgets.length){ if(_hwHost){ _hwHost.remove(); _hwHost=null; _hwBuiltRev=-1; } return; }
+  if(!hudWidgets.length){ if(_hwHost){ _hwHost.remove(); _hwHost=null; _hwBuiltRev=-1; } _hwSyncCursor(false); return; }   /* build 1255: no widgets = no button holding the cursor */
   if(_hwBuiltRev!==_hwRev || !_hwHost || !_hwHost.parentNode) _hwRebuild();
   if(!_hwHost) return;
+  let _btnVis=false;   /* build 1255 */
   for(const e of _hwEls){
     const w=e.w;
     const vis=!w.when || (+logicVars[w.when]||0)!==0;
+    if(vis && w.kind==='button') _btnVis=true;
     if(vis!==e.vis){ e.vis=vis; e.el.style.display=vis?'':'none'; }
     if(!vis) continue;
     const t=_hwText(w);
@@ -10780,6 +10827,7 @@ function updateHudWidgets(){
       if(Math.abs(pct-e.pct)>0.4){ e.pct=pct; e.fill.style.width=pct.toFixed(1)+'%'; }
     }
   }
+  _hwSyncCursor(_btnVis && (typeof gameOn!=='undefined' && gameOn) && !(typeof paused!=='undefined' && paused) && !(typeof editorOpen!=='undefined' && editorOpen));
   if(typeof NET!=='undefined' && NET.mode==='host' && _hwVars.length){
     const v={}; for(const k of _hwVars) v[k]=+logicVars[k]||0;
     const js=JSON.stringify(v); const now=(typeof performance!=='undefined')?performance.now():Date.now();
@@ -10849,6 +10897,7 @@ function _lgEventOptions(){
   for(const n of logicGraph.nodes){ if((n.type==='event' || n.type==='emit') && n.p && n.p.name) set.add(String(n.p.name).trim()); }
   if(typeof triggerZones!=='undefined') for(const z of triggerZones){ if(z && z.ev) set.add(String(z.ev).trim()); }   // build 1072
   if(typeof actionBinds!=='undefined') for(const a of actionBinds){ if(a && a.event) set.add(String(a.event).trim()); }   // build 1071
+  if(typeof hudWidgets!=='undefined') for(const w of hudWidgets){ if(w && w.kind==='button' && w.event) set.add(String(w.event).trim()); }   // build 1255: name a button's event, and On-event offers it
   return Array.from(set).filter(Boolean).sort();
 }
 // build 1034: every animation clip name any placed prop's model carries (the loaders stash
@@ -18162,7 +18211,7 @@ renderer.domElement.addEventListener('drop', (e)=>{
   if(typeof _importLocalModel==='function') _importLocalModel(f, null);
 });
 document.addEventListener('pointerlockchange', ()=>{ const was=locked; locked = document.pointerLockElement === renderer.domElement; if(locked && !was){ lookFresh = true; _lastLookDX=0; _lastLookDY=0; if(paused) resumeGame(); }
-  if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat)
+  if(!locked && was && !isTouch && gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused && !chatOpen && !mapOpen && !invOpen && !(typeof _hwCursorFree!=='undefined' && _hwCursorFree)) openPause(); });   // Esc releases the lock -> show the pause menu (but not when opening chat, or when build 1255's HUD buttons freed the cursor on purpose — LIVE-PROBED: without this, making a button clickable was itself what paused the game and covered it with the pause menu)
 // Ctrl+W (crouch + forward) is the browser's close-tab shortcut and can't be cancelled from a keydown.
 // While actively playing (pointer locked), ask the browser to confirm before unloading so an accidental
 // Ctrl+W shows a "Leave site?" prompt the player can cancel instead of silently losing the session.
@@ -28415,7 +28464,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1254 · 2026-08-01';
+const BUILD_VERSION = 'build 1255 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36695,10 +36744,19 @@ function renderHudPanel(){
     hudWidgets.forEach((w,i)=>{
       const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:6px 7px;margin:5px 0;display:flex;flex-direction:column;gap:4px;';
       const l1=document.createElement('div'); l1.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
-      l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
+      l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar'],['button','Button']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
       const lab=inp(w.label, w.kind==='timer'?'label (before the M:SS)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
       const del=document.createElement('button'); del.textContent='\u2715'; del.title='Remove widget'; del.style.cssText='padding:1px 7px;font-size:11px;flex:0 0 auto;'; del.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudWidgets.splice(i,1); commitW(); renderHudPanel(); };
       l1.appendChild(del); card.appendChild(l1);
+      if(w.kind==='button'){   /* build 1255 */
+        const lb=document.createElement('div'); lb.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+        lb.appendChild(document.createTextNode('fires event'));
+        lb.appendChild(inp(w.event,'e.g. buyTurret',120, v=>{ w.event=v.trim().slice(0,60); }, 'lgEvtList'));
+        card.appendChild(lb);
+        const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:1px 0 0;font-size:10.5px;';
+        h.textContent='Catch it in the Logic graph with On event \u2014 the graph already owns credits, inventory and spawning, so a shop is this button plus the nodes you can already write. While any button is on screen the mouse is freed so players can click it; use "show when" to open and close the menu.';
+        card.appendChild(h);
+      }
       if(w.kind==='timer' || w.kind==='bar'){
         const l2=document.createElement('div'); l2.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
         l2.appendChild(document.createTextNode(w.kind==='timer'?'seconds variable':'value variable'));
@@ -36734,6 +36792,7 @@ function renderHudPanel(){
     mkAdd('+ Text', { kind:'text', label:'SCORE {score}', anchor:'tc' });
     mkAdd('+ Timer', { kind:'timer', label:'', value:'time', anchor:'tc', size:26 });
     mkAdd('+ Bar', { kind:'bar', label:'', value:'progress', max:'100', anchor:'tc' });
+    mkAdd('+ Button', { kind:'button', label:'BUY TURRET \u2014 50', event:'buyTurret', anchor:'bc', dy:-90, when:'shopOpen' });   /* build 1255 */
     wrap.appendChild(addRow);
   }
   grp('Colours');
