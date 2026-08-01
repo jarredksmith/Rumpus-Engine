@@ -3598,6 +3598,30 @@ The general lesson joins 1141's: **a control loop with any discontinuity in its 
 it.** The adaptive ladder needed hysteresis and majority windows; the exposure meter needed continuity.
 Two pins moved (1180's disable branch, 1182's harness gained the buffer).
 
+## The level gets a say in the match (build 1265)
+
+The audit's gameplay CRITICAL: the competitive loop is entirely engine-owned. The four PvP modes are a fixed
+enum and the score target is typed into the LOBBY, so a creator could build an arena but never a GAME — "this
+map is first-to-5 team deathmatch" was unsayable, and every host had to be told the rules out of band.
+
+This does **not** open the enum (a new mode is a real build, not a field). It lets a level state which of the
+shipped modes it is FOR and what it is played to. `gameCfg.pvp` / `gameCfg.pvpTarget` serialize with the rest
+of the game block, and `_resolveMatch(lobbyMode, lobbyTarget)` is the one place a host asks what to start.
+
+Three decisions worth keeping:
+- **A DEFAULT, never a lock.** The lobby's choice always wins if the host touched it. A level can carry its
+  intent without taking the room away from the people in it — and a co-op level dropped into a PvP lobby is
+  the host's call, not an error the engine should refuse.
+- **The target is scoped to the mode it was authored for.** "First to 5" means something different in a duel
+  than in king-of-the-hill, so a TDM target is NOT applied to a free-for-all the host picked instead. A target
+  with no stated mode applies to whatever PvP mode is played — but never to co-op, which has no score to win.
+- **Silence is unchanged.** A level that says nothing hosts as co-op exactly as before, and both fields
+  serialize as `undefined` when unset, so a co-op level's JSON does not grow two dead keys.
+
+Clamped on the way in AND the way out (a level file is untrusted input): an unknown mode is discarded rather
+than passed through to `NET.gameMode`, and the target is rounded and bounded to 0..999 — a NaN target is a
+match that can never end. Two serializer pins moved (21, 33), both keeping their intent.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
