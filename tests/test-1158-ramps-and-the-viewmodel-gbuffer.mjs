@@ -34,9 +34,11 @@ const CAP_R = K('ENEMY_CAP_R');
 {
   const post = extractFunction('_renderPostFX');
   const calls = (post.match(/_aoHideNoDepth\(/g) || []).length;
-  eq(calls, 2, 'BOTH renders into the G-buffer sweep first: the world scene and the viewmodel scene');
+  eq(calls, 4, 'EVERY render into a G-buffer sweeps first: world + viewmodel for AO (1152/1158), world + viewmodel for velocity (1246)');
   assert(/_aoHideNoDepth\(scn, _aoHid\);/.test(post), '...the world scene');
   assert(/_aoHideNoDepth\(vmScene, _vmHid\);/.test(post), '...and the viewmodel scene, which is where the muzzle flash lives');
+  assert(/_aoHideNoDepth\(scn, _vHid\);/.test(post) && /_aoHideNoDepth\(vmScene, _vmH\);/.test(post),
+    'the 1246 velocity pass obeys the same rule for both of its renders');
   // and each restores what it hid
   assert(/for\(const o of _aoHid\) o\.visible=true;/.test(post), 'the world sweep is restored');
   assert(/for\(const o of _vmHid\) o\.visible=true;/.test(post), 'and so is the viewmodel sweep');

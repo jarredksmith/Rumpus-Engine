@@ -7121,6 +7121,40 @@ function _postRTType(){
 // blur cheaply. Toggled by worldCfg.dof; when off, we render straight to the screen (zero cost).
 let dofEnabled = false, dofFocus = 18, dofRange = 14, dofStrength = 1.4;
 let _dofRT = null, _dofRT2 = null, _dofScene = null, _dofCam = null, _dofMatH = null, _dofMatV = null, _dofQuad = null;
+// build 1248: AUTO FOCUS. The other half of the play report behind 1241/1247 ("can't ever quite get
+// the settings to look right") was never the blur — it was that Focus distance is a NUMBER IN METRES
+// aimed by hand at a moving game. Opt-in per level (worldCfg.dofAuto): a ghost-filtered ray from the
+// camera every 3rd frame finds what the crosshair rests on, and dofFocus EASES toward it (tau ~0.17s
+// — a rack, never a snap). Deliberate gates: a cutscene's focusOn rack owns the lens (updateCinematic
+// writes dofFocus directly, and _cineReturn restores it), and the editor shows the authored value so
+// the sliders mean what they say while dragging. A sky miss racks out to the far field. The authored
+// dofFocus is untouched in worldCfg — turning auto off returns exactly the saved look.
+let _dofAutoD = 18, _dofAutoN = 0;
+const _dofRay = new THREE.Raycaster(); const _dofFwd = new THREE.Vector3(); const _dofTgts = [];
+function _dofAutoTick(dt){
+  if(!dofEnabled || typeof worldCfg==='undefined' || worldCfg.dofAuto !== true) return;
+  if(typeof _cineActive!=='undefined' && _cineActive) return;
+  if(typeof editorOpen!=='undefined' && editorOpen) return;
+  _dofAutoN++;
+  if(_dofAutoN % 3 === 1){
+    try{
+      camera.getWorldDirection(_dofFwd);
+      _dofRay.set(camera.position, _dofFwd); _dofRay.far = 300;
+      _dofTgts.length = 0;   // reused module array — no per-frame allocation (1168)
+      if(typeof colliders!=='undefined') for(const o of colliders){ if(o && o.isObject3D) _dofTgts.push(o); }
+      if(typeof dynamicProps!=='undefined') for(const o of dynamicProps){ if(o && o.isObject3D) _dofTgts.push(o); }
+      if(typeof floor!=='undefined' && floor && floor.isObject3D) _dofTgts.push(floor);
+      if(typeof enemies!=='undefined') for(const e of enemies){ if(e && e.mesh && e.hp > 0) _dofTgts.push(e.mesh); }
+      if(typeof NET!=='undefined' && NET.enemyMeshes) for(const k in NET.enemyMeshes){ const o=NET.enemyMeshes[k]; if(o && o.mesh) _dofTgts.push(o.mesh); }
+      const hits = _dofRay.intersectObjects(_dofTgts, true);
+      const h = (typeof _firstSolidHit==='function') ? _firstSolidHit(hits) : (hits[0] || null);   // 1236: a ghost surface must not pull focus either
+      _dofAutoD = h ? Math.max(2, Math.min(300, h.distance)) : 200;
+    }catch(e){}
+  }
+  const k = Math.min(1, (dt || 0.016) * 6);
+  dofFocus += (_dofAutoD - dofFocus) * k;
+}
+
 function _dofSize(){ return [Math.max(2, Math.floor(_vpW * renderer.getPixelRatio())), Math.max(2, Math.floor(_vpH * renderer.getPixelRatio()))]; }   // build 892: track the canvas box, not the window
 function ensureDof(){
   if(_dofScene) return true;
@@ -7155,29 +7189,60 @@ function ensureDof(){
   // soft focus-to-blur transition instead of a linear ramp with a hard cutoff. Honest limits: one
   // gaussian family for near and far fields (no true bokeh shape), and the saturated radius trades
   // maximum blur for guaranteed smoothness.
-  const frag = [
+  // build 1247: REAL BOKEH. 1241 fixed the banding but left the blur one gaussian family, and its
+  // notes named the limit: no true bokeh shape — a defocused highlight faded into MIST instead of
+  // blooming into a disc. The first pass is now a 32-tap golden-angle (Vogel) DISC gather: uniform
+  // disc coverage (r = sqrt(i/N), theta = i*2.39996), which is what an aperture actually integrates,
+  // and each tap carries a HIGHLIGHT weight (1 + 5*max(0, lum-0.7), computed in linear before the
+  // encode) so a bright point dominates every disc it falls inside — highlights spread into bright
+  // circles instead of dimming away. 1241's two rules are kept: every tap still weighs by its OWN
+  // CoC (an in-focus neighbour keeps its colour to itself — the halo fix), and the radius is capped
+  // (14 texels) so undersampling cannot band. The second pass is no longer a V gaussian — a disc
+  // needs no separable pair — but a small 3x3 tent whose spread scales with the local CoC: it fills
+  // the Vogel pattern's residual grain in defocused areas and leaves sharp pixels untouched.
+  const dofShared = [
     'varying vec2 vUv;',
     'uniform sampler2D tColor; uniform sampler2D tDepth;',
     'uniform vec2 uTexel; uniform float uNear; uniform float uFar; uniform float uFocus; uniform float uRange; uniform float uStrength; uniform vec2 uDir;',
     _OETF_GLSL,
     'float viewZ(float d){ float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }',
     'float cocAt(vec2 uv){ float dd = viewZ(texture2D(tDepth, uv).x); return smoothstep(0.0, 1.0, abs(dd - uFocus) / max(0.001, uRange)); }',
+  ].join('\n');
+  const fragDisc = [
+    dofShared,
     'void main(){',
     '  float cocN = cocAt(vUv);',
-    '  float radius = cocN * clamp(uStrength, 0.0, 4.0) * 6.0;',
-    '  if(radius < 0.35){ vec4 c0 = texture2D(tColor, vUv); gl_FragColor = vec4(_out(c0.rgb), c0.a); return; }',
-    '  float spacing = min(radius / 8.0, 1.5);',
-    '  vec2 stp = uDir * uTexel * spacing;',
+    '  float radius = min(cocN * clamp(uStrength, 0.0, 4.0) * 6.0, 14.0);',
+    '  if(radius < 0.35){ gl_FragColor = texture2D(tColor, vUv); return; }',
     '  vec4 sum = vec4(0.0); float wsum = 0.0;',
-    '  for(int i=-8;i<=8;i++){ float fi=float(i);',
-    '    vec2 uv2 = vUv + stp*fi;',
-    '    float w = exp(-fi*fi/32.0) * (0.25 + 0.75*cocAt(uv2));',
+    '  for(int i=0;i<32;i++){ float fi=float(i);',
+    '    float rr = sqrt((fi + 0.5) / 32.0) * radius;',
+    '    float th = fi * 2.39996323;',
+    '    vec2 uv2 = vUv + vec2(cos(th), sin(th)) * rr * uTexel;',
+    '    vec4 c = texture2D(tColor, uv2);',
+    '    float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));',
+    '    float w = (1.0 + 5.0*max(0.0, lum - 0.7)) * (0.25 + 0.75*cocAt(uv2));',
+    '    sum += c * w; wsum += w; }',
+    '  gl_FragColor = sum / wsum;',
+    '}',
+  ].join('\n');
+  const fragFill = [
+    dofShared,
+    'void main(){',
+    '  float cocN = cocAt(vUv);',
+    '  float radius = min(cocN * clamp(uStrength, 0.0, 4.0) * 6.0, 14.0);',
+    '  if(radius < 0.35){ vec4 c0 = texture2D(tColor, vUv); gl_FragColor = vec4(_out(c0.rgb), c0.a); return; }',
+    '  float spacing = min(radius * 0.18, 1.4);',
+    '  vec4 sum = vec4(0.0); float wsum = 0.0;',
+    '  for(int i=-1;i<=1;i++) for(int j=-1;j<=1;j++){',
+    '    vec2 uv2 = vUv + vec2(float(i), float(j)) * spacing * uTexel;',
+    '    float w = ((i==0 && j==0) ? 2.0 : 1.0) * (0.25 + 0.75*cocAt(uv2));',
     '    sum += texture2D(tColor, uv2) * w; wsum += w; }',
     '  vec4 r = sum / wsum; gl_FragColor = vec4(_out(r.rgb), r.a);',
     '}',
   ].join('\n');
-  _dofMatH = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:frag, depthTest:false, depthWrite:false });
-  _dofMatV = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:frag, depthTest:false, depthWrite:false });
+  _dofMatH = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:fragDisc, depthTest:false, depthWrite:false });
+  _dofMatV = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:fragFill, depthTest:false, depthWrite:false });
   _dofMatV.uniforms.uDir.value.set(0,1);
   _dofScene = new THREE.Scene();
   _dofCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
@@ -7288,6 +7353,39 @@ function _mbFrame(prevQ, curQ, dtMs, out){
   out.setFromMatrix4(_mbM4);
   return { cut, shutter, ang };
 }
+
+// build 1246: PER-OBJECT motion blur. 1238's reprojection answers only "how did the CAMERA turn" —
+// its own notes call out the honest gap (a camera-locked viewmodel smeared with the world; a moving
+// enemy never streaked at all) and name the fix: a per-object velocity buffer. This is that buffer.
+// Each frame every mesh's world matrix is STASHED; the velocity pass renders the scene with an
+// override material whose per-draw uniform is that mesh's LAST-frame matrix (set in onBeforeRender +
+// uniformsNeedUpdate — the mechanism three ships for exactly this), against the camera's last-frame
+// view-projection. The blur pass then streaks along the buffer's true per-pixel velocity — camera
+// rotation AND translation AND object motion — and falls back to 1238's rotation reprojection for
+// pixels nothing wrote (the sky) and for the rungs where the pass is shed. The viewmodel renders its
+// own near-zero velocities into the buffer (vmCam is static), so a hard flick finally leaves the
+// weapon sharp while the world streaks past it — 1238's one named regression-in-waiting, closed.
+let _velRT=null, _matVel=null;
+const _velPrevVP=new THREE.Matrix4(); let _velVPF=-10;   // stamped with the _frameNo that stashed it
+let _velStampF=-10;      // what a VALID prev-matrix stash is stamped with, read by the hook per draw
+const _velCC=new THREE.Color();
+// the per-draw hook: material-guarded (it fires on EVERY pass that draws the mesh), stale-guarded
+// (a stash older than last frame means the pass was shed — a re-enable must not streak off history)
+function _velObjHook(r, s, c, g, material){
+  if(material !== _matVel) return;
+  const ud=this.userData;
+  _matVel.uniforms.uPrevM.value.copy((ud._pvm && ud._pvmF === _velStampF) ? ud._pvm : this.matrixWorld);
+  _matVel.uniformsNeedUpdate = true;
+}
+const _velProtoHook = THREE.Object3D.prototype.onBeforeRender;
+function _velStashOne(o){
+  if(!o.isMesh) return;
+  if(o.onBeforeRender !== _velProtoHook && o.onBeforeRender !== _velObjHook) return;   // sky dome / flipbooks keep their own hooks (and are swept from the pass anyway)
+  o.onBeforeRender = _velObjHook;
+  let m=o.userData._pvm; if(!m) m=o.userData._pvm=new THREE.Matrix4();
+  m.copy(o.matrixWorld); o.userData._pvmF = _frameNo;
+}
+function _velStash(root){ root.traverse(_velStashOne); }
 let _matComp=null, _matAfter=null, _matCopy=null;
 // build 1180: AUTO-EXPOSURE. toneMappingExposure was a static authored value — walk from desert noon into
 // a dark interior and nothing adapted (every competitor ships eye adaptation by default). The meter reads a
@@ -7427,6 +7525,7 @@ function ensurePost(){
   _bloomMips=[]; for(let i=0, mw=hw, mh=hh; i<_BLOOM_MIPS; i++){ _bloomMips.push(mkRT(mw,mh)); mw=Math.max(1,mw>>1); mh=Math.max(1,mh>>1); }
   _raysRT=mkRT(Math.max(1,hw>>1), Math.max(1,hh>>1));   /* build 1242: quarter-res light shafts */
   _ssrRT=mkRT(hw,hh);   /* build 1245: half-res reflections — matches the G-buffer it ray-marches */
+  _velRT=mkRT(hw,hh);   /* build 1246: half-res velocity buffer (encoded, byte-target safe) */
   // build 1126: the AO buffers. _aoGeoRT is a half-resolution G-BUFFER — view normal in rgb, view
   // distance in a — written by a second, material-free pass over the scene.
   //
@@ -7671,15 +7770,61 @@ function ensurePost(){
   // Known honest gap: the viewmodel is camera-locked (true velocity ~0) yet lives in the frame, so a
   // hard flick smears it with the world; the afterimage ghosted it identically, so this is no
   // regression — the proper fix is a per-object velocity buffer, its own build.
-  _matAfter=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
-    uniforms:{ tNew:{value:null}, uMbRot:{value:new THREE.Matrix3()}, uTanF:{value:new THREE.Vector2(1,1)}, uAmt:{value:_postMotion}, uShutter:{value:1} },
-    vertexShader:vert, fragmentShader:[
-      'varying vec2 vUv; uniform sampler2D tNew; uniform mat3 uMbRot; uniform vec2 uTanF; uniform float uAmt; uniform float uShutter;',
+  // build 1246: the velocity material. Object motion = current clip pos minus (last frame's VP x
+  // last frame's model matrix) x the SAME local position. Skinning uses the CURRENT pose for both
+  // ends (limbs inherit the body's velocity — the rigid approximation every shipping velocity buffer
+  // makes); instancing applies instanceMatrix manually (1181's lesson: modelViewMatrix never carries
+  // it) with the batch's matrix for prev, which is exact because batches are static. Velocity is
+  // encoded rg = v*4+0.5 (±0.125 UV, ~1px quantisation on a byte target, exact on half-float);
+  // alpha 1 marks a WRITTEN pixel — the clear is rg 0.5 / alpha 0, so unwritten pixels decode to
+  // zero motion and fail the written test rather than streaking (1126's near-zero-alpha trap).
+  _matVel=new THREE.ShaderMaterial({
+    uniforms:{ uPrevVP:{value:new THREE.Matrix4()}, uPrevM:{value:new THREE.Matrix4()} },
+    vertexShader:[
+      '#include <common>',
+      '#include <skinning_pars_vertex>',
+      'uniform mat4 uPrevVP; uniform mat4 uPrevM;',
+      'varying vec4 vClipN; varying vec4 vClipP;',
       'void main(){',
-      '  vec3 v = vec3((vUv*2.0-1.0)*uTanF, -1.0);',                       // this pixel's view ray (current frame)
-      '  vec3 vp = uMbRot * v;',                                           // the same world ray, in LAST frame\'s view
-      '  vec2 uvPrev = (vp.xy / max(0.05, -vp.z)) / uTanF * 0.5 + 0.5;',   // reprojected: where this ray sat on screen last frame
-      '  vec2 d = (vUv - uvPrev) * uAmt * uShutter;',                      // the streak: real velocity x authored strength x shutter
+      '  #include <skinbase_vertex>',
+      '  #include <begin_vertex>',
+      '  #include <skinning_vertex>',
+      '  vec4 lp = vec4(transformed, 1.0);',
+      '  #ifdef USE_INSTANCING',
+      '  lp = instanceMatrix * lp;',
+      '  #endif',
+      '  vClipN = projectionMatrix * modelViewMatrix * lp;',
+      '  vClipP = uPrevVP * uPrevM * lp;',
+      '  gl_Position = vClipN;',
+      '}'
+    ].join('\n'),
+    fragmentShader:[
+      'varying vec4 vClipN; varying vec4 vClipP;',
+      'void main(){',
+      '  vec2 a = vClipN.xy / vClipN.w;',
+      '  float wp = (abs(vClipP.w) < 1e-4) ? 1e-4 : vClipP.w;',   // a prev pos AT the camera plane must not divide by zero
+      '  vec2 b = vClipP.xy / wp;',
+      '  vec2 v = clamp((a - b) * 0.5, -0.124, 0.124);',          // NDC -> UV delta, held inside the encoding range
+      '  gl_FragColor = vec4(v * 4.0 + 0.5, 0.0, 1.0);',
+      '}'
+    ].join('\n') });
+  _matAfter=new THREE.ShaderMaterial({ depthTest:false, depthWrite:false,
+    uniforms:{ tNew:{value:null}, tVel:{value:null}, uVelOn:{value:0}, uMbRot:{value:new THREE.Matrix3()}, uTanF:{value:new THREE.Vector2(1,1)}, uAmt:{value:_postMotion}, uShutter:{value:1} },
+    vertexShader:vert, fragmentShader:[
+      'varying vec2 vUv; uniform sampler2D tNew; uniform sampler2D tVel; uniform float uVelOn; uniform mat3 uMbRot; uniform vec2 uTanF; uniform float uAmt; uniform float uShutter;',
+      'void main(){',
+      '  vec2 d;',
+      '  vec4 vv = texture2D(tVel, vUv);',
+      // build 1246: a WRITTEN velocity pixel is the truth — camera rotation + translation + the
+      // object's own motion. Unwritten pixels (the sky) and shed rungs keep 1238's rotation path.
+      '  if(uVelOn > 0.5 && vv.a > 0.5){',
+      '    d = (vv.rg - 0.5) * 0.25 * uAmt * uShutter;',                   // decode /4, then the same authored scaling
+      '  } else {',
+      '    vec3 v = vec3((vUv*2.0-1.0)*uTanF, -1.0);',                     // this pixel's view ray (current frame)
+      '    vec3 vp = uMbRot * v;',                                         // the same world ray, in LAST frame\'s view
+      '    vec2 uvPrev = (vp.xy / max(0.05, -vp.z)) / uTanF * 0.5 + 0.5;', // reprojected: where this ray sat on screen last frame
+      '    d = (vUv - uvPrev) * uAmt * uShutter;',
+      '  }',
       '  float L = length(d); if(L > 0.05) d *= 0.05/L;',                  // cap wild spikes (a cut guard also zeroes them CPU-side)
       '  vec4 c = vec4(0.0);',
       '  for(int i=0;i<8;i++){ float t = (float(i)+0.5)/8.0 - 0.5; c += texture2D(tNew, vUv + d*t); }',
@@ -7808,9 +7953,9 @@ function ensurePost(){
   return true;
 }
 function disposePost(){
-  for(const rt of [_postRT,_compRT,_afterA,_afterB,_aoGeoRT,_aoRT,_aoRT2,_raysRT,_ssrRT].concat(_bloomMips)){ if(rt && rt.dispose) rt.dispose(); }
+  for(const rt of [_postRT,_compRT,_afterA,_afterB,_aoGeoRT,_aoRT,_aoRT2,_raysRT,_ssrRT,_velRT].concat(_bloomMips)){ if(rt && rt.dispose) rt.dispose(); }
   _bloomMips=[];
-  _postRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=_raysRT=_ssrRT=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
+  _postRT=_compRT=_afterA=_afterB=_aoGeoRT=_aoRT=_aoRT2=_raysRT=_ssrRT=_velRT=null;   // build 880: keep _postScene + materials — recompiling five shaders on every adaptive step WAS the hitch
 }
 function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next render
 // build 1158: the AO prepass renders with `scene.overrideMaterial`, which replaces `transparent` and
@@ -7958,6 +8103,43 @@ function _renderPostFX(scn, cam){
     const _ie=cam.matrixWorldInverse.elements; su.uUpView.value.set(_ie[4], _ie[5], _ie[6]);
     _postQuad.material=_matSSR; renderer.setRenderTarget(_ssrRT); renderer.render(_postScene,_postCam);
   }
+  // 1d) build 1246: the velocity buffer — top rung only; lower rungs keep 1238's rotation blur.
+  // Same envelope as the AO prepass: shadow refresh frozen, sky/weather/background out, the no-depth
+  // sweep on BOTH scenes (1158's rule), and the viewmodel drawn with its own near-zero velocities.
+  const _velWant = _postMotion > 0.01 && _prStepI === 0 && _velRT && _matVel && cam && cam.isPerspectiveCamera;
+  if(_velWant){
+    const vu=_matVel.uniforms;
+    if(_velVPF === _frameNo - 1) vu.uPrevVP.value.copy(_velPrevVP);
+    else vu.uPrevVP.value.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);   // first frame after a gap: zero camera term, never a stale streak
+    _velStampF = _frameNo - 1;
+    const _pv=scn.overrideMaterial, _skyV=_skyMesh&&_skyMesh.visible, _wV=(typeof _weatherPts!=='undefined')&&_weatherPts&&_weatherPts.visible;
+    const _bgV=scn.background; scn.background=null;
+    const _sa=renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate=false;
+    if(_skyMesh) _skyMesh.visible=false; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=false;
+    const _vHid=[]; _aoHideNoDepth(scn, _vHid);
+    renderer.getClearColor(_velCC); const _ca=renderer.getClearAlpha();
+    renderer.setClearColor(0x808080, 0);   // rg 0.5 = zero velocity, alpha 0 = nothing drawn
+    scn.overrideMaterial=_matVel;
+    renderer.setRenderTarget(_velRT); renderer.render(scn, cam);
+    scn.overrideMaterial=_pv;
+    for(const o of _vHid) o.visible=true;
+    if(_vmHere){
+      vu.uPrevVP.value.multiplyMatrices(vmCam.projectionMatrix, vmCam.matrixWorldInverse);   // vmCam is static: only the weapon's own bob remains — the flick stays sharp
+      const _vmH=[]; _aoHideNoDepth(vmScene, _vmH);
+      const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matVel;
+      const _vac=renderer.autoClear; renderer.autoClear=false;
+      renderer.clearDepth();
+      renderer.render(vmScene, vmCam);
+      renderer.autoClear=_vac; vmScene.overrideMaterial=_vpv;
+      for(const o of _vmH) o.visible=true;
+    }
+    renderer.setClearColor(_velCC, _ca);
+    scn.background=_bgV;
+    if(_skyMesh) _skyMesh.visible=_skyV; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=_wV;
+    renderer.shadowMap.autoUpdate=_sa;
+    _velStash(scn); if(_vmHere) _velStash(vmScene);   // stash THIS frame's matrices + camera for the next
+    _velPrevVP.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); _velVPF=_frameNo;
+  }
   // 2) bloom: threshold + downsample the pyramid, then tent-upsample back up, adding as we go
   {
     const du=_matBloomDown.uniforms;
@@ -8044,6 +8226,7 @@ function _renderPostFX(scn, cam){
     mu.uAmt.value = cut ? 0 : _postMotion;   // a cut frame renders sharp — an 8-tap identity when d=0
     mu.uShutter.value = shutter;
     mu.tNew.value=_compRT.texture;
+    mu.tVel.value = _velWant ? _velRT.texture : _compRT.texture; mu.uVelOn.value = _velWant ? 1 : 0;   /* build 1246: bound-fallback rule (1242) */
   }
   // 5) present -> screen (through FXAA when the top rung is up)
   if(_fx){ _postQuad.material=_matAfter; renderer.setRenderTarget(_afterB); renderer.render(_postScene,_postCam);
@@ -17235,7 +17418,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -17609,6 +17792,7 @@ function applyWorldCfg(){
     dofFocus    = Math.max(2,   Math.min(300, worldCfg.dofFocus    == null ? DEFAULT_WORLD.dofFocus    : +worldCfg.dofFocus));
     dofRange    = Math.max(1,   Math.min(200, worldCfg.dofRange    == null ? DEFAULT_WORLD.dofRange    : +worldCfg.dofRange));
     dofStrength = Math.max(0.1, Math.min(4,   worldCfg.dofStrength == null ? DEFAULT_WORLD.dofStrength : +worldCfg.dofStrength));
+    worldCfg.dofAuto = worldCfg.dofAuto === true; if(typeof _dofAutoD!=='undefined') _dofAutoD = dofFocus;   /* build 1248 */
     // build 582: post-processing look (saved per level; master on/off is the global pause-menu toggle)
     _postBloom  = Math.max(0,   Math.min(2,    worldCfg.postBloom  == null ? DEFAULT_WORLD.postBloom  : +worldCfg.postBloom));
     _postMotion = Math.max(0,   Math.min(0.95, worldCfg.postMotion == null ? DEFAULT_WORLD.postMotion : +worldCfg.postMotion));
@@ -18373,7 +18557,7 @@ const WEAPONS = {
   rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0 },
   pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85 },   // build 976: single-shot semi-auto sidearm
   smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7 },
-  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
+  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, shellReload:true, shellIntroMs:260, shellMs:420, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
   sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
   launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
   crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
@@ -18574,10 +18758,31 @@ function showWeaponToast(){
 // still current, so a cancelled reload leaves the mag exactly as it was (no rounds appear, none vanish) and
 // a re-reload later starts a fresh token/need pair. The cost of cancelling is honest — two draw times.
 let _reloadTok = 0;
+// build 1249: SHELL-BY-SHELL reload for the shotgun — the item 1172 deferred as its own build.
+// Tube-fed grammar since Doom's SSG: shells load ONE at a time on a chain of timeouts riding the
+// SAME token 1172 introduced, so switching still cancels cleanly — and firing mid-reload cancels the
+// REST of the chain and shoots with what's loaded (see shoot()). Every shell that landed before the
+// cancel is kept: the mag/reserve move one shell at a time, so there is never a half-applied state
+// to unwind. The trade is honest both ways: a full 6-shell reload is ~2.9s against the old flat
+// 1.3s, but you are never locked out of the fight while it runs. Each shell clicks (SFX) and dips
+// the gun (the reload anim retriggers), and the HUD counts the mag UP shell by shell — the flat
+// path's '--' placeholder would hide exactly the feedback this exists to give.
+function _shellNext(w, tok, delayMs){
+  setTimeout(()=>{
+    if(tok !== _reloadTok || !reloading) return;   // cancelled (switch or fire): keep every shell already loaded
+    if(w.mag >= w.magSize || w.reserve <= 0){ reloading = false; updateHUD(); return; }
+    w.mag++; w.reserve--;
+    SFX.reload(); triggerGunAnim('reload');
+    if(w.mag >= w.magSize || w.reserve <= 0) reloading = false;
+    else _shellNext(w, tok, w.shellMs || 420);
+    updateHUD();
+  }, delayMs);
+}
 function reload(){
   const w = W();
   if(reloading || w.mag===w.magSize || w.reserve<=0) return;
   reloading = true; const tok = ++_reloadTok; SFX.reload(); triggerGunAnim('reload');
+  if(w.shellReload){ _shellNext(w, tok, w.shellIntroMs || 260); updateHUD(); return; }   // build 1249: pump open, then a shell at a time
   const need = w.magSize - w.mag;
   setTimeout(()=>{
     if(tok !== _reloadTok || !reloading) return;   // switch-cancelled: the mag stays as it was
@@ -28048,7 +28253,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1245 · 2026-07-31';
+const BUILD_VERSION = 'build 1249 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30040,6 +30245,7 @@ function shoot(){
   if(invOpen) return;         // inventory open: clicks belong to the UI, not the trigger
   const w = W();
   const now = performance.now();
+  if(reloading && w.shellReload && w.mag > 0){ reloading = false; _reloadTok++; updateHUD(); }   // build 1249: a shell-loader FIRES mid-reload with what's in the tube — the remaining chain dies on the token
   if(now - lastShot < w.fireRate * run.fireMul || reloading) return;
   if(now < _drawUntil) return;                 // build 965: still drawing — the gun is coming up
   if(_rlP > 0.35) return;                      // build 965: still recovering from the reload dip
@@ -30728,7 +30934,7 @@ function updateHUD(){
   $('hp').textContent = Math.max(0,Math.ceil(player.hp));
   $('hpFill').style.width = Math.max(0,player.hp/player.maxHp*100)+'%';
   $('wepName').textContent = w.name;
-  $('ammo').textContent = w.melee ? '∞' : (reloading ? '--' : w.mag);
+  $('ammo').textContent = w.melee ? '∞' : ((reloading && !w.shellReload) ? '--' : w.mag);   /* build 1249: a shell reload SHOWS the count climbing */
   $('reserve').textContent = w.melee ? 'MELEE' : w.reserve;
   $('nades').textContent = grenadeCount;
   $('scoreVal').textContent = score;
@@ -32959,7 +33165,7 @@ function loop(){
   }
   if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
@@ -38205,7 +38411,11 @@ function renderEditorFields(){
       dofCb.onchange=()=>{ pushUndoSnapshot(); worldCfg.dof=dofCb.checked; applyWorldCfg(); renderEditorFields(); };
       const dofSp=document.createElement('span'); dofSp.innerHTML='<b>Depth of field</b> \u2014 blur by distance'; dofRow.appendChild(dofCb); dofRow.appendChild(dofSp); b.appendChild(dofRow);
       if(worldCfg.dof===true){ slider(b,'Focus distance','dofFocus',2,120,1); slider(b,'In-focus range','dofRange',1,80,1); slider(b,'Blur strength','dofStrength',0.1,4,0.1);
-        hint(b,'','0 0 4px').textContent='Focus distance = how far away stays sharp (metres from the camera). In-focus range = depth kept sharp around it \u2014 small range + high strength = strongest look. The blur is smooth at every strength (it saturates rather than ever going blocky).'; }   /* build 1241 */
+        const afRow=document.createElement('label'); afRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:4px 0 4px;cursor:pointer;';
+        const afCb=document.createElement('input'); afCb.type='checkbox'; afCb.checked=(worldCfg.dofAuto===true); afCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';
+        afCb.onchange=()=>{ pushUndoSnapshot(); worldCfg.dofAuto=afCb.checked; applyWorldCfg(); };
+        const afSp=document.createElement('span'); afSp.textContent='Auto focus \u2014 follow the crosshair'; afRow.appendChild(afCb); afRow.appendChild(afSp); b.appendChild(afRow);   /* build 1248 */
+        hint(b,'','0 0 4px').textContent='Focus distance = how far away stays sharp (metres from the camera). In-focus range = depth kept sharp around it \u2014 small range + high strength = strongest look. The blur is smooth at every strength (it saturates rather than ever going blocky). Auto focus racks the lens to whatever the crosshair rests on; cutscene shots keep their own focus, and Focus distance is what you get with auto off.'; }   /* build 1241 */
       // build 1095: filmic pipeline controls — ACES tone mapping + exposure, saved with the level
       const fmRow=document.createElement('label'); fmRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:8px 0 4px;cursor:pointer;';
       const fmCb=document.createElement('input'); fmCb.type='checkbox'; fmCb.checked=(worldCfg.filmic!==0 && worldCfg.filmic!==false); fmCb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;';

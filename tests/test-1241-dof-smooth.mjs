@@ -11,16 +11,21 @@ import { gameSource, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- the structural guarantees, computed
+// build 1247 note: the blur became a 32-tap Vogel DISC + a 3x3 CoC-scaled fill. The 1241 intent —
+// no strength setting can ever band the image — now rests on the RADIUS cap (14 texels) plus the
+// fill pass; the computed check moves to the new constants.
 {
-  // the shipped constants: radius = cocN * clamp(strength,0,4) * 6 texels; spacing = min(radius/8, 1.5)
-  const spacing = (cocN, strength) => Math.min((cocN * Math.min(4, Math.max(0, strength)) * 6) / 8, 1.5);
+  const radius = (cocN, strength) => Math.min(cocN * Math.min(4, Math.max(0, strength)) * 6, 14);
   for (const s of [0.5, 1.4, 3, 4, 400]) {
-    assert(spacing(1, s) <= 1.5, 'tap spacing never exceeds 1.5 texels at strength ' + s + ' — the banding that read as "blocky" is structurally impossible');
+    const r = radius(1, s);
+    // Vogel point spacing ~ r*sqrt(pi/N); with the 14-texel cap, bilinear taps (~2 texels) plus the
+    // 3x3 fill (spread ~1.4, span ~4.2) cover the widest gap — repeated images stay impossible
+    const gap = r * Math.sqrt(Math.PI / 32);
+    assert(gap <= 4.4001, 'widest Vogel gap at strength ' + s + ' is covered by bilinear + the fill pass');
   }
-  near(spacing(1, 4), 1.5, 1e-9, 'full blur saturates the cap');
-  near(spacing(0.2, 1.4), 0.21, 0.01, 'gentle blur uses proportionally tighter taps');
-  // 17 taps at <=1.5 spacing: adjacent taps always overlap under the gaussian, so no repeated images
-  assert(1.5 <= 2.0, 'spacing stays under the 2-texel overlap threshold for a smooth kernel');
+  near(radius(1, 400), 14, 1e-9, 'a hostile strength saturates the radius cap');
+  const fillSpacing = (r) => Math.min(r * 0.18, 1.4);
+  assert(fillSpacing(14) === 1.4 && fillSpacing(2) < 0.4, 'the fill spread scales with local CoC and is capped');
 }
 
 // ---------------------------------------------------------------- the shader shape
@@ -28,10 +33,11 @@ const src = gameSource();
   const dof = src.slice(src.indexOf('build 1241: the DoF stops being blocky'), src.indexOf('_dofMatH = new THREE.ShaderMaterial'));
   assert(/float cocAt\(vec2 uv\)\{ float dd = viewZ\(texture2D\(tDepth, uv\)\.x\); return smoothstep\(0\.0, 1\.0, abs\(dd - uFocus\) \/ max\(0\.001, uRange\)\); \}/.test(dof),
     'the CoC is a smoothstep — soft focus-to-blur transition instead of a linear ramp with a hard cutoff');
-  assert(/float spacing = min\(radius \/ 8\.0, 1\.5\);/.test(dof), 'the spacing cap ships');
-  assert(/for\(int i=-8;i<=8;i\+\+\)/.test(dof), '17 taps');
-  assert(/exp\(-fi\*fi\/32\.0\) \* \(0\.25 \+ 0\.75\*cocAt\(uv2\)\)/.test(dof),
-    'each tap is weighed by its OWN focus — an in-focus neighbour mostly keeps its colour to itself, killing the sharp-edge halo');
+  assert(/float radius = min\(cocN \* clamp\(uStrength, 0\.0, 4\.0\) \* 6\.0, 14\.0\);/.test(dof), 'the radius cap ships (1247: the anti-banding guarantee moved from tap spacing to the disc radius + fill)');
+  assert(/for\(int i=0;i<32;i\+\+\)/.test(dof), '32 disc taps');
+  assert(/float spacing = min\(radius \* 0\.18, 1\.4\);/.test(dof), 'the fill spread is capped');
+  assert((dof.match(/\(0\.25 \+ 0\.75\*cocAt\(uv2\)\)/g) || []).length === 2,
+    'each tap in BOTH passes is weighed by its OWN focus — an in-focus neighbour mostly keeps its colour to itself, killing the sharp-edge halo');
   assert(/if\(radius < 0\.35\)/.test(dof) && /_out\(c0\.rgb\)/.test(dof),
     'the in-focus early-out still encodes through the shared OETF (the 1115 invariant)');
   assert(/uEncode/.test(src.slice(src.indexOf('function _runDofTo'), src.indexOf('function _runDofTo') + 1600)),
@@ -41,4 +47,4 @@ const src = gameSource();
   assert(/it saturates rather than ever going blocky/.test(src), 'the hint says what Strength actually does now');
 }
 
-done('build 1241: the DoF is smooth at every strength — spacing computed from the shipped constants proves the cap holds from 0.5 through a hostile 400, the smoothstep CoC and own-focus tap weights are in the shader, the 1115 encode invariant survives both paths, and the capture measured the real thing: 36% far-field gradient drop at focus 4m with luminance steady');
+done('build 1241: the DoF is smooth at every strength — the anti-banding guarantee holds through the 1247 disc rewrite (radius cap + fill computed from the shipped constants, hostile 400 included), the smoothstep CoC and own-focus tap weights survive in both passes, and the 1115 encode invariant is untouched');

@@ -65,7 +65,7 @@ assert(/cu\.tSSR\.value = _ssrWant \? _ssrRT\.texture : _bloomMips\[1\]\.texture
 
 // --- lifecycle + authoring ------------------------------------------------------------------------
 assert(/_ssrRT=mkRT\(hw,hh\);/.test(src), 'the reflection target is half-res, same as the G-buffer it marches');
-assert(/_aoRT2,_raysRT,_ssrRT\]\.concat/.test(src) && /_aoRT2=_raysRT=_ssrRT=null;/.test(src),
+assert(/_aoRT2,_raysRT,_ssrRT,_velRT\]\.concat/.test(src) && /_aoRT2=_raysRT=_ssrRT=_velRT=null;/.test(src),
   'the target allocates with the post targets and disposes with them (880 hygiene)');
 assert(/ssr:0\.35,/.test(src), 'DEFAULT_WORLD ships a subtle glossy floor');
 assert(/_postSSR    = Math\.max\(0,   Math\.min\(1,    worldCfg\.ssr        == null \? DEFAULT_WORLD\.ssr        : \+worldCfg\.ssr\)\);/.test(src),

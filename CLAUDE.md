@@ -1519,6 +1519,115 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Shell-by-shell reload (build 1249)
+
+The item 1172 deferred as its own build. The shotgun now loads shells ONE at a time (intro 260 ms —
+the pump opens — then 420 ms per shell) on a chain of timeouts riding 1172's cancel token, so
+switching still cancels cleanly, and **firing mid-reload cancels the rest of the chain and shoots
+with what's in the tube** — the interrupt sits in `shoot()` BEFORE the `reloading` gate (it could
+never fire after it) and requires `mag > 0`, so an empty tube still waits for its first shell. The
+mag and reserve move one shell at a time, so a cancel never has a half-applied state to unwind:
+every landed shell is kept, none vanish. The trade is stated honestly: a full 6-shell reload is
+~2.9 s against the old flat 1.3 s, but a 2-shell top-off is under 1.2 s and you are never locked out
+of the fight. The HUD counts the mag UP per shell — the flat path's `--` placeholder would hide
+exactly the feedback shell loading exists to give (that line is now gated on `!w.shellReload`).
+Each shell clicks (SFX.reload) and re-dips the gun (the reload anim retriggers). Flat-reload
+weapons are byte-identical to 1172. `test-1249` runs the REAL `reload()`/`_shellNext()` under fake
+timers: the full chain (one pending timer at a time, no orphans), the fire-cancel (scheduled timer
+fires but the token makes it a no-op), reserve exhaustion, a partial top-off, both start guards,
+and the flat fallback.
+
+## Auto focus (build 1248)
+
+The other half of the DoF play report ("can't ever quite get the settings to look right") was never
+the blur — 1241 and 1247 fixed that — it was that **Focus distance is a number in metres aimed by
+hand at a moving game**. `worldCfg.dofAuto` (opt-in, DEFAULT_WORLD false so no saved level changes
+look): every 3rd frame a ray from the camera finds what the crosshair rests on — through
+`_firstSolidHit`, because 1236's rule applies to focus too: an invisible surface must not pull the
+lens — and `dofFocus` EASES toward it (`k = dt·6`, tau ~0.17 s: a rack, never a snap). A sky miss
+racks out to 200 m. Living enemies join the target list (an aimed-at enemy holds focus); corpses do
+not. Four gates, each deliberate: auto off, DoF off, **cutscene active** (updateCinematic's focusOn
+rack writes dofFocus directly and `_cineReturn` restores it — the film language belongs to the shot),
+and **editor open** (the sliders must mean what they say while dragging). Sanitize seeds the ease at
+the authored focus so toggling never racks from a stale target, and the authored `worldCfg.dofFocus`
+is never written — auto off returns exactly the saved look. `test-1248` executes the REAL tick in a
+stubbed scope: convergence, the exact ease constant, the 3-frame throttle, the miss, both clamps,
+the ghost filter, all four gates, and the corpse rule. No capture needed — this build is pure JS,
+the class the Node harness fully covers.
+
+## Real bokeh (build 1247)
+
+Build 1241's notes named their own limit — "one gaussian family for near and far fields (no true
+bokeh shape)" — and the play report behind it ("can't ever quite get the settings to look right")
+was only half-fixed: the banding went, but a defocused highlight still faded into MIST. The blur's
+first pass is now a 32-tap golden-angle (Vogel) DISC gather — `r = sqrt(i/N)`, `θ = i·2.39996` —
+which is the uniform aperture integral a real lens performs, with a HIGHLIGHT weight per tap
+(`1 + 5·max(0, lum−0.7)`, computed in linear before any encode) so a bright point dominates every
+disc it falls inside: highlights bloom into bright circles. The second pass is no longer a V
+gaussian (a disc needs no separable pair) but a 3×3 tent whose spread scales with the local CoC —
+it fills the Vogel pattern's residual grain in defocused areas and cannot touch sharp pixels.
+
+1241's guarantees survive, restated where they now live: every tap in BOTH passes still weighs by
+its OWN CoC (the halo fix), the anti-banding guarantee moved from tap spacing to a hard 14-texel
+radius cap (worst Vogel gap ≈ r·√(π/32) — covered by bilinear + the fill; test-1241's computed
+section moved with it), and the 1115 encode invariant lives in the fill pass, the only one that
+presents. The disc pass passes LINEAR through untouched — including its early-out, where the old
+`_out()` was already an identity (uEncode is 0 on a non-presenting pass).
+
+Measured on a defocused emissive (focus 2 m, strength 3.5, the pink pickup blob): profile FLATNESS —
+area ≥70% of peak over area ≥25% of peak, the plateau-vs-peak discriminator — went 0.087 → 0.110
+(+27%), base control pair agreeing to 1%. And a correction worth keeping: the first metric (bright-
+pixel count) moved OPPOSITE the prediction (−11%) and was the metric's fault, not the shader's — a
+flat disc spreads moderately-bright horizon light evenly where a gaussian centre-weights it, so
+"more bright pixels" was never what a disc promises. What a disc promises is the plateau, and the
+plateau is what measured. The cine preview window's own mini-DoF (`_renderPvDof`, build 614) still
+uses its old kernel — a preview approximation, listed as open work.
+
+## Per-object motion blur (build 1246)
+
+Build 1238's notes named their own gap: rotation reprojection answers only "how did the CAMERA
+turn" — a camera-locked viewmodel smeared with the world on every flick, a moving enemy never
+streaked at all, and camera TRANSLATION (strafing past a wall) blurred nothing. The named fix was a
+velocity buffer; this is it. Every mesh's world matrix is STASHED per frame; a half-res pass renders
+the scene with `_matVel`, whose per-draw `uPrevM` is that mesh's last-frame matrix — set in
+`onBeforeRender` + `uniformsNeedUpdate`, the mechanism three ships for exactly this — against the
+camera's last-frame view-projection. The blur pass streaks along the buffer's true per-pixel
+velocity and keeps 1238's rotation path VERBATIM as the fallback for unwritten pixels (the sky) and
+for every rung below the top one, where the pass is shed. No new world field: `postMotion` simply
+means more on the top rung.
+
+Decisions that are each a bug if lost:
+- **The hook is material-guarded and stale-guarded.** `onBeforeRender` fires on EVERY pass that
+  draws the mesh (main, shadows, AO, velocity) — the first line returns unless the material is
+  `_matVel`. And a stash older than exactly last frame (`_pvmF === _frameNo-1`) is IGNORED in favour
+  of the current matrix: re-enabling the pass after a shed must not streak off week-old history.
+  The camera VP has the same stamp (`_velVPF`). Meshes with their OWN hook (sky dome, flipbooks) are
+  left untouched — they are swept from the pass anyway.
+- **Encoded velocity, byte-target safe.** `rg = v*4+0.5` (±0.125 UV, ~1px quantisation on the
+  UnsignedByte fallback, exact on half-float); the clear is `setClearColor(0x808080, 0)` so an
+  unwritten pixel decodes to ZERO motion and fails the `a > 0.5` written-test — 1126's
+  near-zero-alpha trap, dodged by construction. Clear colour saved and restored around the pass.
+- **Skinning uses the CURRENT pose for both ends** (limbs inherit the body's velocity — the rigid
+  approximation every shipping velocity buffer makes); **instancing applies `instanceMatrix`
+  manually** (1181: `modelViewMatrix` never carries it), exact because batches are static.
+- **The viewmodel renders its own velocities against static vmCam** — only the weapon's bob remains,
+  so the weapon holds while the world streaks. Same hygiene envelope as the AO prepass (shadow
+  refresh frozen, sky/weather/background out, `_aoHideNoDepth` on BOTH scenes — test-1158's call
+  count moved 2 → 4, the rule satisfied twice more).
+
+Measured headless with per-mode static references (single spinning frames are content-confounded —
+the 1238 lesson): during a hard per-frame spin the weapon's sight-block retains **60.7%** of its
+static p99 edge sharpness on the velocity path vs **30.1%** on the forced rotation fallback — 2× —
+while the world's blur is mode-identical (ratio 1.005). The residual softening is the half-res
+buffer's bilinear boundary mixing weapon and world velocity at the silhouette — the standard
+gather-blur edge artifact, accepted.
+
+**The capture's own trap, worth keeping: a wall-clock-driven spin measures NOTHING on a slow
+renderer.** SwiftShader frames are long, so `setInterval` yaw accumulated past 1238's 0.35 rad/frame
+CUT threshold and the cut guard zeroed blur in BOTH runs — a perfect null with every uniform
+confirming "on". Drive test motion per-FRAME (`requestAnimationFrame`), and tap `uAmt` to prove the
+cut guard is not what you are measuring.
+
 ## Screen-space reflections (build 1245)
 
 Glossy floors, marched from the buffer the engine already had: the AO G-buffer carries view normal
