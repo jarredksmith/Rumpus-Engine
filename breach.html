@@ -28415,7 +28415,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1253 · 2026-08-01';
+const BUILD_VERSION = 'build 1254 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36356,9 +36356,31 @@ function _autoSaveStatus(txt){ try{ const el = editorEl && editorEl.querySelecto
 // autosave timer and the beforeunload handler would happily write the old level straight back — so this
 // flag stops every save path the moment New is confirmed.
 let _newLevelPending = false;
+// build 1254: THE REMIX TRAP, closed. The gallery invites "open in editor to remix", share links load
+// straight over the working level, and there is ONE save slot — so before this build, opening someone
+// else's level and touching anything meant the 20s autosave overwrote your only save with THEIR level.
+// A level that arrived from outside (share link, ?game= URL, gallery, import, example project) is now
+// FOREIGN: every automatic save path stands down until you explicitly Save — which adopts it as yours.
+// And if a foreign load replaces UNSAVED work (the one state the save slot does not hold), the work is
+// stashed to a one-deep rescue slot first, restorable from the Save tab.
+let _foreignLevel = false;
+const RESCUE_KEY = 'breach_level_rescue_v1';
+let _edRescueRefresh = null;   // the Save panel registers its row refresher here
+function markForeignLevel(what){
+  try{
+    if(_levelDirty && typeof serializeLevel==='function'){
+      localStorage.setItem(RESCUE_KEY, JSON.stringify({ t: Date.now(), level: serializeLevel() }));
+      if(typeof flashToast==='function') flashToast('Your unsaved work was backed up \u2014 Save tab \u2192 Restore backup');
+    }
+  }catch(e){}
+  _foreignLevel = true;
+  _autoSaveStatus('Viewing ' + (what || 'a shared level') + ' \u2014 autosave paused until you Save it as yours');
+  if(typeof _edRescueRefresh === 'function'){ try{ _edRescueRefresh(); }catch(e){} }
+}
 function autoSaveNow(reason){   // save if there are unsaved edits; quiet no-op otherwise
   if(_newLevelPending) return;
   if(!_autoSaveOn || !_levelDirty) return;
+  if(_foreignLevel) return;   // build 1254: never silently overwrite YOUR save with someone else's level
   if(typeof pvpMode==='function' && pvpMode()) return;   // never autosave mid-match
   const ok = saveLevel();
   if(ok){ _levelDirty=false; const t=new Date(); const hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0'); _autoSaveStatus('Autosaved '+hh+':'+mm+(reason?(' · '+reason):'')); }
@@ -36367,7 +36389,7 @@ function autoSaveNow(reason){   // save if there are unsaved edits; quiet no-op 
 function startAutoSave(){ stopAutoSave(); if(!_autoSaveOn) return; _autoSaveTimer = setInterval(()=>{ if(typeof editorOpen!=='undefined' && editorOpen) autoSaveNow(); }, 20000); }   // every 20s while editing
 function stopAutoSave(){ if(_autoSaveTimer){ clearInterval(_autoSaveTimer); _autoSaveTimer=null; } }
 // final safety net: flush unsaved edits if the tab is closed/hidden
-try{ window.addEventListener('beforeunload', ()=>{ try{ if(!_newLevelPending && _autoSaveOn && _levelDirty) saveLevel(); }catch(e){} }); }catch(e){}
+try{ window.addEventListener('beforeunload', ()=>{ try{ if(!_newLevelPending && !_foreignLevel && _autoSaveOn && _levelDirty) saveLevel(); }catch(e){} }); }catch(e){}   /* build 1254: closing the tab must not commit a foreign level either */
 try{ document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') autoSaveNow(); }); }catch(e){}
 function saveLevel(){
   let str; try{ str = JSON.stringify(serializeLevel()); }catch(e){ return false; }
@@ -37664,6 +37686,7 @@ function buildEditorPanel(){
       + '<label style="display:flex;align-items:center;gap:7px;margin:8px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer"><input type="checkbox" id="edAutoSave" style="width:15px;height:15px;accent-color:var(--accent)"><b>Autosave</b> while editing</label>'
       + '<div class="hint" id="edAutoStatus" style="font-size:10px;opacity:0.75;margin:0 0 6px">Saves automatically as you work.</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .rumpus</button><button id="edImport">'+_icn('upload')+'Import level</button></div>'
+      + '<div id="edRescueRow" style="display:none;margin-top:6px"><button id="edRescue">\u21a9 Restore backup</button><div class="hint" id="edRescueNote" style="margin-top:2px"></div></div>'
       + '<input type="file" id="edImportFile" accept=".rumpus,.breach,.json,application/json" style="display:none">'
       + '<div class="row2" style="margin-top:6px"><button id="edClear">Clear save</button><button id="edReset">Reset target</button></div>'
       + '<div class="row2" style="margin-top:10px"><button id="edWipe" style="width:100%;border-color:#7a2630;color:#ff9b93">'+_icn('trash')+'Delete all objects (fresh scene)</button></div>'
@@ -37929,7 +37952,8 @@ function buildEditorPanel(){
     }; } }
   p.querySelector('#edSave').onclick = ()=>{
     const note = editorEl.querySelector('#edCopied');
-    note.textContent = saveLevel() ? 'Level saved — it will auto-load next time ✓' : 'Save failed (storage blocked here)';
+    const _ok = saveLevel(); if(_ok) _foreignLevel = false;   // build 1254: an explicit Save adopts a shared/imported level as yours — autosave resumes
+    note.textContent = _ok ? 'Level saved — it will auto-load next time ✓' : 'Save failed (storage blocked here)';
     clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 2800);
   };
   p.querySelector('#edShare').onclick = async ()=>{
@@ -37967,6 +37991,22 @@ function buildEditorPanel(){
   };
   const importFile = p.querySelector('#edImportFile');
   p.querySelector('#edImport').onclick = ()=>{ importFile.value=''; importFile.click(); };
+  // build 1254: the rescue slot — unsaved work a shared/imported level replaced, one click from back
+  (function(){
+    const row=p.querySelector('#edRescueRow'), btn=p.querySelector('#edRescue'), noteEl=p.querySelector('#edRescueNote');
+    if(!row || !btn) return;
+    const refresh=()=>{ let j=null; try{ j=JSON.parse(localStorage.getItem(RESCUE_KEY)||'null'); }catch(e){}
+      if(j && j.level){ row.style.display=''; try{ noteEl.textContent='Unsaved work from '+new Date(j.t||0).toLocaleString()+', backed up when another level replaced it.'; }catch(e){} }
+      else row.style.display='none'; };
+    refresh(); _edRescueRefresh = refresh;
+    btn.onclick=()=>{ let j=null; try{ j=JSON.parse(localStorage.getItem(RESCUE_KEY)||'null'); }catch(e){}
+      if(!j || !j.level){ refresh(); return; }
+      if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+      try{ restoreLevel(j.level); }catch(e){ if(typeof flashToast==='function') flashToast('Backup could not be restored'); return; }
+      _foreignLevel=false; _levelDirty=true;   // it is YOURS and unsaved again — Save commits it
+      try{ localStorage.removeItem(RESCUE_KEY); }catch(e){} refresh();
+      if(typeof flashToast==='function') flashToast('Backup restored \u2014 Save to keep it'); };
+  })();
   importFile.onchange = ()=>{
     const note = editorEl.querySelector('#edCopied');
     const file = importFile.files && importFile.files[0]; if(!file) return;
@@ -37975,6 +38015,7 @@ function buildEditorPanel(){
       let level; try { level = JSON.parse(reader.result); } catch(e){ note.textContent='Import failed: not valid level JSON'; clearTimeout(note._t); note._t=setTimeout(()=>note.textContent='',3200); return; }
       if(!level || typeof level!=='object' || (!level.props && !level.world)){ note.textContent='Import failed: unrecognized file'; clearTimeout(note._t); note._t=setTimeout(()=>note.textContent='',3200); return; }
       if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();   // so Ctrl+Z undoes the import
+      if(typeof markForeignLevel==='function') markForeignLevel('an imported level');   // build 1254: even your own file adopts via one explicit Save
       restoreLevel(level);
       note.textContent = 'Level imported ✓ (Save to keep it)';
       clearTimeout(note._t); note._t = setTimeout(()=>{ note.textContent=''; }, 3200);
@@ -45109,6 +45150,7 @@ async function _commLoad(entry, toEditor){
   if(!level || typeof level!=='object' || (!level.props && !level.world)){ if(typeof flashToast==='function') flashToast('That file does not look like a Rumpus Engine level'); return; }
   closeModal('communityModal');
   if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();   // Ctrl+Z restores what you had
+  if(typeof markForeignLevel==='function') markForeignLevel('"'+(entry.name||file)+'"');   // build 1254: a gallery level never autosaves over yours
   if(toEditor){
     if(!editorOpen){ if(!gameOn && typeof enterEditor==='function') enterEditor(); else if(typeof toggleEditor==='function') toggleEditor(); }
     setTimeout(()=>{ try{ restoreLevel(level); if(typeof flashToast==='function') flashToast('"'+(entry.name||file)+'" opened in the editor'); }catch(e){ console.warn('community level failed to load', e); } }, 200);
@@ -45125,6 +45167,7 @@ function _helpLoadExample(kind){
 }
 function _helpBuildExample(kind){
   pushUndoSnapshot();
+  if(typeof markForeignLevel==='function') markForeignLevel('an example project');   // build 1254: loading a tutorial must not autosave over your level
   // build 879: a FULL fresh canvas. Examples used to clear only props, so zones, pickups, terrain,
   // paint, turrets and even the camera view bled from whatever was loaded before ("it loads elements
   // from the previous loaded levels"). One undo still restores everything.
@@ -45324,7 +45367,7 @@ if(savedLevel && savedLevel.player) applyPlayerLevel(savedLevel.player);   // se
   if(code){
     try{
       const lvl = await decodeLevel(code);
-      if(lvl && typeof restoreLevel==='function'){ restoreLevel(lvl);
+      if(lvl && typeof restoreLevel==='function'){ if(typeof markForeignLevel==='function') markForeignLevel('a shared level'); restoreLevel(lvl);
         if(homepageCfg.on) _syncGameHome();   // build 971: the creator's title screen fronts the menu
         else flashToast(challenge ? ('Challenge loaded \u2014 beat '+(challenge.s||0)+' pts. Press Deploy') : 'Shared level loaded \u2014 press Deploy'); }
     }catch(e){ console.warn('Could not load shared level from URL:', e && e.message); flashToast('Shared level link looks invalid'); }
@@ -45337,7 +45380,7 @@ if(savedLevel && savedLevel.player) applyPlayerLevel(savedLevel.player);   // se
         const r=await fetch(_commBase()+dir+slug+'.json', { cache:'no-cache' }); if(!r.ok) continue;
         const lvl=await r.json();
         if(lvl && typeof lvl==='object' && (lvl.props||lvl.world) && typeof restoreLevel==='function'){
-          restoreLevel(lvl); loaded=true;
+          if(typeof markForeignLevel==='function') markForeignLevel('"'+slug+'"'); restoreLevel(lvl); loaded=true;
           if(homepageCfg.on) _syncGameHome(); else flashToast('"'+slug+'" loaded \u2014 press Deploy');
         }
         break;

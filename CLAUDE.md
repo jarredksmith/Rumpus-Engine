@@ -1519,6 +1519,33 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The remix trap is closed (build 1254)
+
+The audit's #1 editor data-loss finding, replayed and killed. The gallery invites "open in editor to
+remix", share links load straight over the working level, and there is ONE save slot — so opening
+someone else's level and touching anything meant the 20-second autosave overwrote your only save
+with THEIR level, silently, with an undo stack that dies with the tab. Now a level that arrives from
+outside is **FOREIGN** (`markForeignLevel`): five entry points marked — `#lvl=` share links, `?game=`
+URLs, the community gallery (Play AND Open in editor), file import (even your own backup — one Save
+adopts it), and help-modal example projects. While foreign, EVERY automatic save path stands down:
+the 20s timer, visibilitychange, before-play and on-close flushes all funnel through `autoSaveNow`'s
+new gate, and the `beforeunload` direct-save gained its own `!_foreignLevel` term (two pins moved —
+330 and 1083 — both keeping their flush-on-close intent). The autosave status line says what is
+happening and why. An explicit **Save adopts** the level (`_ok && (_foreignLevel=false)` on the
+button; Ctrl+S clicks the same button), and autosave resumes exactly.
+
+The second half: a foreign load over UNSAVED work — the one state the save slot does not hold —
+stashes the current level to a one-deep **rescue slot** (`breach_level_rescue_v1`, timestamped)
+before it is replaced, with a toast naming where it went. The Save tab grows a **Restore backup**
+row (hidden when the slot is empty, refreshed live via `_edRescueRefresh`): restoring pushes an undo
+snapshot, loads the stash, marks it yours-and-unsaved so one Save commits it, and clears the slot.
+
+`test-1254` executes the real `markForeignLevel` + `autoSaveNow` through the trap replay (dirty +
+gallery + three autosave ticks → zero saves, stash intact), the clean-load case (no stash needed),
+adoption, and native behaviour (byte-identical when nothing foreign happened) — and pins all five
+entry points. Test-harness lesson recorded: returning `{ ...r }` from a rig SNAPSHOTS getters and
+drops setters — assign extra keys onto the object instead.
+
 ## The audit, the reference, and the docs tell the truth (build 1253)
 
 A nine-agent audit ran against build 1252 — six harsh critics (rendering, editor UX, gameplay
