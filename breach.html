@@ -9931,6 +9931,13 @@ function _lodEligible(o){
     const sz = bb.getSize(new THREE.Vector3());
     u._lodR = sz.length() / 2;
     if(!(u._lodR > 0)) return false;
+    // build 1274: and WHERE that geometry actually is. A GLB's contents need not sit at its own origin —
+    // a model exported from a scene carries its world position baked in, and this engine's own probe
+    // constructed an ordinary case with the geometry 300 m from the prop's origin. Measuring the distance
+    // to the ORIGIN then asks "how far am I from a point in empty space", which is the wrong question and
+    // reads as a prop that appears and disappears nowhere near itself.
+    const _c = bb.getCenter(new THREE.Vector3());
+    u._lodCx = _c.x - o.position.x; u._lodCy = _c.y - o.position.y; u._lodCz = _c.z - o.position.z;
   }
   u._lodNo = bad;
   return !bad;
@@ -9944,6 +9951,25 @@ function _lodSetCasting(o, on){
     if(c.userData._lodCS === undefined) c.userData._lodCS = !!c.castShadow;   // captured once, from the authored state
     c.castShadow = on ? c.userData._lodCS : false;
   });
+}
+// build 1274: what the culler is actually doing, for the Level Check panel. Build 1273 shipped this
+// feature OFF because a play report ("large imported models don't appear until you're right on top of
+// them") could not be reproduced against a real GLB — the maths measured correctly and the mechanism is
+// still unidentified. The lesson from that is not to guess harder next time: it is that a subsystem which
+// can DELETE THINGS FROM THE SCREEN must be able to say what it removed and why, so the next report is one
+// number rather than another round of hypotheses. The smallest radius is the tell — a big model reading a
+// tiny radius is the whole class of bug this could not rule out.
+function lodReport(){
+  if(typeof propModels==='undefined') return null;
+  let culled=0, noShadow=0, eligible=0, minR=Infinity, minName='';
+  for(const o of propModels){
+    const u=o&&o.userData; if(!u) continue;
+    if(u._lodNo===false){ eligible++;
+      if(u._lodR>0 && u._lodR<minR){ minR=u._lodR; minName=String(u.src||'shape').split('/').pop().slice(-22); } }
+    if(u._lodCull) culled++;
+    if(u._lodNoShadow) noShadow++;
+  }
+  return { px:_lodPxNow(), culled, noShadow, eligible, minR:(minR===Infinity?0:minR), minName };
 }
 function _lodRestoreAll(){
   if(!_lodAnyCulled) return;
@@ -9963,7 +9989,11 @@ function _lodRemeasure(o){
   if(bb.isEmpty()) return 0;
   const sz = bb.getSize(new THREE.Vector3());
   const r = sz.length() / 2;
-  if(r > 0) o.userData._lodR = r;
+  if(r > 0){
+    o.userData._lodR = r;
+    const c = bb.getCenter(new THREE.Vector3());   // build 1274: the centre is re-measured with it
+    o.userData._lodCx = c.x - o.position.x; o.userData._lodCy = c.y - o.position.y; o.userData._lodCz = c.z - o.position.z;
+  }
   return r;
 }
 function _lodTick(){
@@ -9986,10 +10016,14 @@ function _lodTick(){
     if(!o || !o.userData || o.userData._shattered) continue;
     if(o.userData._pvHidden) continue;                      // the logic graph owns this one's visibility (1170)
     if(!_lodEligible(o)) continue;
-    const dx = o.position.x - cam.x, dy = o.position.y - cam.y, dz = o.position.z - cam.z;
+    const u0 = o.userData;
+    // build 1274: to the geometry's centre, not the prop's origin
+    const dx = (o.position.x + (u0._lodCx||0)) - cam.x,
+          dy = (o.position.y + (u0._lodCy||0)) - cam.y,
+          dz = (o.position.z + (u0._lodCz||0)) - cam.z;
     const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
-    const sp = (d > 0.01) ? (o.userData._lodR / d) * k : 1e9;
-    const u = o.userData;
+    const sp = (d > 0.01) ? (u0._lodR / d) * k : 1e9;
+    const u = u0;
     // build 1273: inside the near floor a prop is ALWAYS drawn and always casts, whatever its screen size.
     const near = d < LOD_NEAR_KEEP;
     // rung 2 — drawn or not: below px it is not worth a draw call at all
@@ -29073,7 +29107,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1273 · 2026-08-01';
+const BUILD_VERSION = 'build 1274 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38966,6 +39000,20 @@ function levelIssues(){
         issues.push(_emitterRefused+' emissive prop light'+(_emitterRefused>1?'s were':' was')+' past the engine budget and dropped at deploy — those props still glow, they just do not cast light.');
       if(c.shadow > 4)
         issues.push(c.shadow+' lights cast shadows. Each one is an extra render of the level every time it moves — keep it to a few key lights.');
+    }
+    // build 1274: culling is opt-in (1273); when it IS on, say what it is removing. A subsystem that can
+    // DELETE THINGS FROM THE SCREEN must be able to account for itself — build 1273 shipped this feature
+    // off because a play report could not be reproduced, and the lesson from that is not to guess harder
+    // next time but to make the next report one number instead of another round of hypotheses. The
+    // smallest measured radius is the tell: a large model reading a tiny radius is the whole class of bug
+    // that could not be ruled out.
+    if(typeof lodReport==='function'){
+      const r=lodReport();
+      if(r && r.px>0 && (r.culled>0 || r.noShadow>0))
+        issues.push('Culling is on (below '+r.px+'px): '+r.culled+' prop'+(r.culled===1?'':'s')+' hidden and '
+          +r.noShadow+' not casting shadows, of '+r.eligible+' eligible. Smallest measured prop radius is '
+          +r.minR.toFixed(2)+'m'+(r.minName?(' \u2014 '+r.minName):'')
+          +'. If something large is disappearing, set Cull below (px) back to 0; that radius is the number to report.');
     }
     // build 1167: failed asset loads lead the list — "my prop vanished" is the #1 support thread and the
     // answer was sitting in the console. The url's tail is shown because Poly Pizza urls only differ there.

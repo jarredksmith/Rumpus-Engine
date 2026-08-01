@@ -3925,6 +3925,37 @@ failure mode is *deleting the user's work*, the measurement does not get the ben
 safe default, make the symptom structurally impossible, and leave the door open. Four pins moved (1267's
 default, 1270's hint text, and both LOD rigs, which needed the new constant and helper).
 
+## Cull from the geometry, and make the culler answerable (build 1274)
+
+Two follow-ups to 1273's unreproducible report, after three more hypotheses were tested and none reproduced
+it. Worth recording what was ELIMINATED, since the next person will otherwise re-test them:
+
+| hypothesis | result |
+|---|---|
+| a real imported GLB measures a wrong radius | **no** — bbox 79×8.5×79, cached `_lodR` 56.02 matching a live re-measure to 3 dp, never culled to 120 m |
+| geometry offset far from the prop's origin makes it vanish | **not at size** — a 40-unit model with a 300 m offset still reads 50 px at its origin distance |
+| a rigged model measures a collapsed bbox | **no** — `Box3.setFromObject` on a real `SkinnedMesh` returns the REST pose (20×20×20 for 20×20×20 geometry). It does not follow the animated pose, which is a mild inaccuracy, but it is the right order of magnitude |
+
+**1. The distance is now measured to the geometry's CENTRE, not the prop's origin.** The offset hypothesis
+did not reproduce the report, but it is a real inaccuracy and the probe constructed an ordinary case — a
+building whose geometry is 20 m from the camera while its origin is 320 m away. Measuring to the origin asks
+"how far am I from a point in empty space". The centre is cached as an OFFSET from the origin beside the
+radius, so the per-frame path stays allocation-free, and it is re-measured wherever the radius is. The
+`LOD_NEAR_KEEP` floor uses it too, or the floor would protect the wrong point in space.
+
+**2. `lodReport()` — the culler accounts for itself**, in the Level Check panel a creator already opens when
+something looks wrong: the threshold in force, how many props are hidden, how many stopped casting, how many
+are even eligible, and **the smallest measured prop radius with its source name**. That last one is the tell:
+a large model reading a tiny radius is precisely the class of bug that could not be ruled out, and it turns
+the next report into one number. It says nothing at all when culling is off or idle — an opt-in feature must
+not nag.
+
+**The general lesson, and it is the one worth keeping from this whole sequence:** when a report cannot be
+reproduced, the fix is not to guess harder. It is (a) ship the safe default, (b) make the reported symptom
+structurally impossible, and (c) *make the subsystem able to answer the question next time*. Builds 1273 and
+1274 are those three steps. A subsystem that can delete things from the screen has to be able to say what it
+removed and why.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
