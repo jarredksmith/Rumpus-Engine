@@ -1519,6 +1519,39 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The graph reads the inventory (build 1259)
+
+Dialogue could branch on what the player carries (`[if item:redKey >= 1]`) since build 1076; the
+LOGIC GRAPH never could — `read` knew hp/ammo/score/credits/wave/enemies/time and nothing about the
+inventory. So "the player is holding two fire cards" was expressible to an NPC and invisible to the
+rules, while `give`/`take` had been verbs for builds — the graph could CHANGE the inventory it could
+not READ. That asymmetry is the wall under every card, rune, ingredient and collection puzzle,
+because such a puzzle IS a condition on what you hold.
+
+Two stats, because they answer different questions and neither can express the other:
+- **How many of an item** — `invCount(id)`, deliberately the same accessor dialogue conditions use,
+  so the two surfaces can never disagree about what "holding" means. The item field carries
+  `lgItemList`, so it offers the level's real ids.
+- **Different items held** — non-empty stacks. "One of each of the four runes" cannot be written as
+  a count of any single id.
+
+An id that names no defined item reads 0 forever, which looks EXACTLY like "the player has none of
+it" — the hardest class of bug to see. So a read with a blank or undefined id reports through
+`_noteLogicFailure` (deduped, so a polled read reports once, not every pulse) and surfaces in Level
+Check, the same courtesy tag verbs have had since 1214. The validation lives in the `read` case
+rather than beside the tag checker, which has no node in scope.
+
+**Design note, since this build exists to unlock card/puzzle mechanics.** Verified while scoping it:
+an inventory item can already carry a **model, a tag and its own signals**, and `useType:'place'`
+spawns it into the player's hands to drop — so a PHYSICAL card puzzle (cards as objects, plinths as
+prop signals with `On object placed` + tag filter + contain + consume, `needs N` for combinations)
+was fully authorable before this build. What was missing was the graph's ability to reason about a
+HAND. With 1255's HUD button as the play surface and 1258's push as a world effect, the native design
+for this engine is **cards as world verbs** — play a card, the room changes — rather than a 2D card
+game the engine has no UI for. Remaining gaps for a true deck game: no image on a HUD widget (a hand
+can only be text buttons) and no ordered collection type (draw works via Set-variable's random
+min/max; shuffle/discard past ~6 cards is awkward).
+
 ## The graph gets force (build 1258)
 
 The audit's gameplay gap #5: the graph could query the world and command enemies but had no way to

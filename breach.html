@@ -10598,6 +10598,22 @@ function _lgPulse(id, pin){
           case 'wave':    v=(typeof wave!=='undefined')?(wave|0):0; break;
           case 'enemies': { v=0; if(typeof enemies!=='undefined') for(const e of enemies){ if(e && e.hp>0) v++; } break; }
           case 'time':    v=Math.round((performance.now()-_lgRunT)/1000); break;
+          // build 1259: THE INVENTORY, finally readable by the graph. Dialogue could branch on what
+          // you carry (`[if item:redKey >= 1]`) since build 1076; the graph never could — so "the
+          // player is holding two fire cards" was expressible to an NPC and invisible to the rules.
+          // That is the wall under card/collection puzzles: cards, runes, ingredients and quest items
+          // are all inventory, and a puzzle is a CONDITION on what you hold. `give`/`take` were
+          // already verbs, so the graph could change the inventory it could not read.
+          case 'item':    { const _id=String(p.item||'').trim();
+                            if(typeof _noteLogicFailure==='function'){
+                              if(!_id) _noteLogicFailure('A "Read game stat" node reads an item count but names no item, so it always reads 0.');
+                              else if(typeof invCatalog!=='undefined' && !invCatalog[_id]) _noteLogicFailure('A "Read game stat" node reads the item "'+_id+'", but no item by that id is defined — it will always read 0.');
+                            }
+                            v=(_id && typeof invCount==='function') ? (invCount(_id)|0) : 0; break; }
+          // ...and the shape most collection puzzles actually want: how many DISTINCT kinds are held
+          // ("one of each of the four runes"), which counting a single id cannot express.
+          case 'itemkinds': { v=0; if(typeof inventory!=='undefined' && Array.isArray(inventory))
+                              for(const s of inventory){ if(s && s.n>0) v++; } break; }
         }
         logicVars[k]=v;
       } _lgFollow(id,0); break; }
@@ -10905,7 +10921,7 @@ const LG_DEFS = {
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
-  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed']]},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
+  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
   do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
@@ -28588,7 +28604,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1258 · 2026-08-01';
+const BUILD_VERSION = 'build 1259 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
