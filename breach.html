@@ -18557,7 +18557,7 @@ const WEAPONS = {
   rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0 },
   pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85 },   // build 976: single-shot semi-auto sidearm
   smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7 },
-  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
+  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, shellReload:true, shellIntroMs:260, shellMs:420, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
   sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
   launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
   crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
@@ -18758,10 +18758,31 @@ function showWeaponToast(){
 // still current, so a cancelled reload leaves the mag exactly as it was (no rounds appear, none vanish) and
 // a re-reload later starts a fresh token/need pair. The cost of cancelling is honest — two draw times.
 let _reloadTok = 0;
+// build 1249: SHELL-BY-SHELL reload for the shotgun — the item 1172 deferred as its own build.
+// Tube-fed grammar since Doom's SSG: shells load ONE at a time on a chain of timeouts riding the
+// SAME token 1172 introduced, so switching still cancels cleanly — and firing mid-reload cancels the
+// REST of the chain and shoots with what's loaded (see shoot()). Every shell that landed before the
+// cancel is kept: the mag/reserve move one shell at a time, so there is never a half-applied state
+// to unwind. The trade is honest both ways: a full 6-shell reload is ~2.9s against the old flat
+// 1.3s, but you are never locked out of the fight while it runs. Each shell clicks (SFX) and dips
+// the gun (the reload anim retriggers), and the HUD counts the mag UP shell by shell — the flat
+// path's '--' placeholder would hide exactly the feedback this exists to give.
+function _shellNext(w, tok, delayMs){
+  setTimeout(()=>{
+    if(tok !== _reloadTok || !reloading) return;   // cancelled (switch or fire): keep every shell already loaded
+    if(w.mag >= w.magSize || w.reserve <= 0){ reloading = false; updateHUD(); return; }
+    w.mag++; w.reserve--;
+    SFX.reload(); triggerGunAnim('reload');
+    if(w.mag >= w.magSize || w.reserve <= 0) reloading = false;
+    else _shellNext(w, tok, w.shellMs || 420);
+    updateHUD();
+  }, delayMs);
+}
 function reload(){
   const w = W();
   if(reloading || w.mag===w.magSize || w.reserve<=0) return;
   reloading = true; const tok = ++_reloadTok; SFX.reload(); triggerGunAnim('reload');
+  if(w.shellReload){ _shellNext(w, tok, w.shellIntroMs || 260); updateHUD(); return; }   // build 1249: pump open, then a shell at a time
   const need = w.magSize - w.mag;
   setTimeout(()=>{
     if(tok !== _reloadTok || !reloading) return;   // switch-cancelled: the mag stays as it was
@@ -28232,7 +28253,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1248 · 2026-08-01';
+const BUILD_VERSION = 'build 1249 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30224,6 +30245,7 @@ function shoot(){
   if(invOpen) return;         // inventory open: clicks belong to the UI, not the trigger
   const w = W();
   const now = performance.now();
+  if(reloading && w.shellReload && w.mag > 0){ reloading = false; _reloadTok++; updateHUD(); }   // build 1249: a shell-loader FIRES mid-reload with what's in the tube — the remaining chain dies on the token
   if(now - lastShot < w.fireRate * run.fireMul || reloading) return;
   if(now < _drawUntil) return;                 // build 965: still drawing — the gun is coming up
   if(_rlP > 0.35) return;                      // build 965: still recovering from the reload dip
@@ -30912,7 +30934,7 @@ function updateHUD(){
   $('hp').textContent = Math.max(0,Math.ceil(player.hp));
   $('hpFill').style.width = Math.max(0,player.hp/player.maxHp*100)+'%';
   $('wepName').textContent = w.name;
-  $('ammo').textContent = w.melee ? '∞' : (reloading ? '--' : w.mag);
+  $('ammo').textContent = w.melee ? '∞' : ((reloading && !w.shellReload) ? '--' : w.mag);   /* build 1249: a shell reload SHOWS the count climbing */
   $('reserve').textContent = w.melee ? 'MELEE' : w.reserve;
   $('nades').textContent = grenadeCount;
   $('scoreVal').textContent = score;

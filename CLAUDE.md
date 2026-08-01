@@ -1519,6 +1519,24 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Shell-by-shell reload (build 1249)
+
+The item 1172 deferred as its own build. The shotgun now loads shells ONE at a time (intro 260 ms —
+the pump opens — then 420 ms per shell) on a chain of timeouts riding 1172's cancel token, so
+switching still cancels cleanly, and **firing mid-reload cancels the rest of the chain and shoots
+with what's in the tube** — the interrupt sits in `shoot()` BEFORE the `reloading` gate (it could
+never fire after it) and requires `mag > 0`, so an empty tube still waits for its first shell. The
+mag and reserve move one shell at a time, so a cancel never has a half-applied state to unwind:
+every landed shell is kept, none vanish. The trade is stated honestly: a full 6-shell reload is
+~2.9 s against the old flat 1.3 s, but a 2-shell top-off is under 1.2 s and you are never locked out
+of the fight. The HUD counts the mag UP per shell — the flat path's `--` placeholder would hide
+exactly the feedback shell loading exists to give (that line is now gated on `!w.shellReload`).
+Each shell clicks (SFX.reload) and re-dips the gun (the reload anim retriggers). Flat-reload
+weapons are byte-identical to 1172. `test-1249` runs the REAL `reload()`/`_shellNext()` under fake
+timers: the full chain (one pending timer at a time, no orphans), the fire-cancel (scheduled timer
+fires but the token makes it a no-op), reserve exhaustion, a partial top-off, both start guards,
+and the flat fallback.
+
 ## Auto focus (build 1248)
 
 The other half of the DoF play report ("can't ever quite get the settings to look right") was never
