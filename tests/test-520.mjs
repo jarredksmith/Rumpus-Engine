@@ -12,7 +12,7 @@ assert(/allowPickup: \(savedLevel && savedLevel\.game && savedLevel\.game\.allow
 assert(/flashlight: !!\(savedLevel && savedLevel\.game && savedLevel\.game\.flashlight\)/.test(src), 'gameCfg.flashlight defaults off');
 
 // --- the unarmed loadout: start on fists, no guns; otherwise the usual rifle ---
-assert(/if\(gameCfg\.unarmed\)\{ owned = \['hands'\]; curWep='hands'; \} else \{ const _sw=\(gameCfg\.startWeapon && WEAPONS\[gameCfg\.startWeapon\] && !WEAPONS\[gameCfg\.startWeapon\]\.melee\) \? gameCfg\.startWeapon : 'rifle'; owned = \[_sw\]; curWep=_sw; \}/.test(src), 'startGame picks the fists/starting-weapon loadout');
+assert(/if\(gameCfg\.unarmed\)\{ owned = \['hands'\]; curWep='hands'; \} else \{ const _sw=_canStartWith\(gameCfg\.startWeapon\) \? gameCfg\.startWeapon : 'rifle'; owned = \[_sw\]; curWep=_sw; \}/.test(src), 'startGame picks the fists/starting-weapon loadout');
 
 // --- a strict unarmed level (no pickups) refuses guns ---
 const gw = extractFunction('giveWeapon');
@@ -29,6 +29,7 @@ assert(/const isFists = _wepShowsFists\(key\);/.test(sw), 'showWeaponModel swaps
     hands:   { fists:true, model:'' },
     handsMod:{ fists:true, model:'x.glb' },
     crowbar: { melee:true, model:'' },
+    crowbarM:{ melee:true, model:'crowbar.glb' },
     rifle:   { model:'' },
     rifleMod:{ model:'r.glb' },
   });
@@ -36,7 +37,11 @@ assert(/const isFists = _wepShowsFists\(key\);/.test(sw), 'showWeaponModel swaps
   assert(showsFists('handsMod') === false, 'a creator’s imported model for the fists slot wins (build 675)');
   assert(showsFists('rifle') === false, 'a gun with no model of its own is still a gun, not fists');
   assert(showsFists('rifleMod') === false, '...and so is one with a model');
-  assert(showsFists('crowbar') === false, 'a melee weapon that is not FISTS still shows a model (unchanged)');
+  // build 1272 CHANGED this deliberately: a melee weapon with no model of its own is swung
+  // bare-handed rather than putting the engine's rifle in the player's hands. What is unchanged is
+  // the rule that a creator's own model always wins.
+  assert(showsFists('crowbar') === true, 'a melee weapon with no model shows hands, not a rifle (build 1272)');
+  assert(showsFists('crowbarM') === false, '...and a creator\u2019s own melee model still wins (build 674)');
   assert(showsFists('nosuch') === false, 'an unknown key never throws');
 }
 assert(/if\(isFists\)\{[\s\S]*?gunModel=null; sight=null;[\s\S]*?return; \}/.test(sw), 'fists hide every gun model');

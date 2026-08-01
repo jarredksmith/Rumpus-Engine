@@ -3832,6 +3832,60 @@ work something else was silently relying on*; this one is *a perf change may not
 silently needs*. Both are the same question — what did the thing you changed used to do for someone else? —
 and the shadow map has now answered it twice.
 
+## Safe expressions — the escape hatch, in the only form this engine can ship (build 1271)
+
+The audit's editor CRITICAL was "no scripting escape hatch": the graph is expressive but anything the nodes
+cannot say is unsayable, and every competitor lets you drop to code. `(hp / maxhp) * 100` took three Math
+nodes and two throwaway variables; `score + wave * 10 + bonus` took four.
+
+**It cannot be `eval` or `new Function`, and that is the whole design.** Levels travel as share codes,
+`.rumpus` files and URLs, and a player opens someone else's level by clicking a link — so compiling creator
+text as JavaScript would be remote code execution in that player's browser, against their saves, their
+settings and their session. There are **zero** uses of `eval`/`new Function` in this engine and that is not
+an accident; `test-1271` asserts it engine-wide so this build cannot be what changes it.
+
+So it is a hand-written tokenizer and Pratt parser producing a closure tree. Precedence, right-associative
+`^`, unary minus, comparisons and `&&`/`||` returning 1/0 (so they feed Branch and the HUD unchanged), and a
+fixed function table (`abs floor ceil round sqrt sign min max clamp lerp rand`). **The safety is
+STRUCTURAL:** there is no property access, no indexing, no assignment and no way to name anything outside the
+table — not because a filter rejects them, but because the grammar cannot express them. 35 hostile inputs
+(`document.cookie`, `a.constructor("return 1")()`, `x = 1`, backtick literals, `?.`, `??`, `typeof`,
+`delete`) are refused at COMPILE time.
+
+Never NaN or Infinity (1169's rule — one poisoned value corrupts every compare downstream): `1/0`, `5%0`,
+`0/0` and an overflowing power all resolve to 0. Bounded at 240 chars, depth 24, and a 200-entry compile
+cache that also remembers REJECTIONS, so a hostile level cannot force a re-parse every pulse.
+
+**One hardening the test rig forced.** `constructor` and `__proto__` are legal identifiers, so they compile —
+to a *variable read*. `logicVars` is a plain object, so that read returned `Object.prototype.constructor`,
+and it was safe only because `+Function` is NaN and `||0` swallowed it. Luck, not design. The getter now
+tests `hasOwnProperty`, so an unset name reads 0 because it is unset — and a creator who legitimately names a
+variable `constructor` gets their own value.
+
+## A melee weapon can be the starting weapon (build 1272)
+
+Reported from play: *"there's no option under gameplay to set the melee weapon as the starting weapon."*
+Correct, and it was a gap BETWEEN two features rather than a bug in either. Build 976 added `startWeapon` as
+"the PRIMARY you spawn with" and filtered `!melee` out of the list; fists got their own **Start unarmed**
+checkbox, which also carries the stricter no-guns-at-all rule. The CROWBAR belonged to neither — melee, so
+excluded from the dropdown; not fists, so the checkbox did not give it. The standard survival-horror opener
+(start with a melee weapon, find a gun) was unauthorable.
+
+The filter is now "not the FISTS slot" rather than "not melee", named once as `_canStartWith` and asked by
+all six sites — the dropdown, its current-value guard, both loaders, the serializer and the deploy. **Six
+copies of a condition is how the crowbar got lost in the first place**, which is 1266's lesson again.
+
+**And the consequence is fixed in the same build rather than left as a surprise.** A melee weapon with no
+model of its own fell through `wepModelUrl`'s fallback and put the ENGINE'S GUN in the player's hands while
+they swung it. Invisible before this build (nobody could start with a crowbar) and immediately visible
+after, so `_wepShowsFists` now covers every melee weapon, not just the fists slot — and because build 1266
+shares that predicate with the third-person hand, the body agrees with the viewmodel. A creator's own model
+still wins (674), which is the intended path for an actual crowbar mesh, and the panel hint says so.
+
+Seven pins moved (520, 523, 62, and four in 976). Two of them — 520/523's "a melee weapon that is not FISTS
+still shows a model" — are the rare case where a pin's ASSERTION was deliberately inverted rather than
+re-expressed: that behaviour was the defect.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

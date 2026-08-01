@@ -10666,6 +10666,127 @@ function _lgPlayerEvent(name, ctx){
   if(typeof logicGraph==='undefined' || !logicGraph.nodes.length) return;
   const _pv=_lgCtx; _lgCtx=ctx||{}; try{ _lgFireEvents('event', String(name||'').trim()); } finally { _lgCtx=_pv; }
 }
+// ---------- build 1271: EXPRESSIONS — the escape hatch, in the only form this engine can ship ----------
+// The audit's editor CRITICAL was "no scripting escape hatch": the graph is expressive but anything the
+// nodes cannot say is unsayable, and every competitor lets you drop to code. `(hp / maxhp) * 100` took
+// three Math nodes and two throwaway variables; `score + wave * 10 + bonus` took four.
+//
+// It CANNOT be `new Function` or `eval`. Levels travel as share codes, .rumpus files and URLs, and a player
+// opens someone else's level by clicking a link — so compiling creator text as JavaScript would be remote
+// code execution in that player's browser, with their saves, their settings and their session on the other
+// side of it. There are ZERO uses of eval/new Function in this engine and that is not an accident. So this
+// is a hand-written tokenizer and Pratt parser producing a closure tree: the only things it can reach are
+// numbers, the variable store, and a fixed function table. There is no property access, no indexing, no
+// assignment and no way to name anything the table does not contain — not because those are filtered out,
+// but because the grammar cannot express them.
+const LGX_MAXLEN = 240, LGX_MAXDEPTH = 24, LGX_CACHE_MAX = 200;
+const LGX_FUNCS = {
+  abs:[1,(a)=>Math.abs(a)], floor:[1,(a)=>Math.floor(a)], ceil:[1,(a)=>Math.ceil(a)],
+  round:[1,(a)=>Math.round(a)], sqrt:[1,(a)=>Math.sqrt(Math.max(0,a))], sign:[1,(a)=>Math.sign(a)],
+  min:[2,(a,b)=>Math.min(a,b)], max:[2,(a,b)=>Math.max(a,b)],
+  clamp:[3,(a,lo,hi)=>Math.min(Math.max(a,lo),hi)], lerp:[3,(a,b,t)=>a+(b-a)*t],
+  rand:[2,(lo,hi)=>lo+Math.random()*(hi-lo)],
+};
+const _lgxCache = new Map();
+function _lgxTokens(s){
+  const out=[]; let i=0;
+  while(i<s.length){
+    const c=s[i];
+    if(c===' '||c==='\t'){ i++; continue; }
+    if(c>='0'&&c<='9' || (c==='.'&&s[i+1]>='0'&&s[i+1]<='9')){
+      let j=i+1; while(j<s.length && ((s[j]>='0'&&s[j]<='9')||s[j]==='.')) j++;
+      const n=parseFloat(s.slice(i,j)); if(!isFinite(n)) return null;
+      out.push({t:'n',v:n}); i=j; continue;
+    }
+    // an identifier may end in '@' — build 1231's per-player variable convention, and nothing else
+    if(/[A-Za-z_#]/.test(c)){
+      let j=i+1; while(j<s.length && /[A-Za-z0-9_#]/.test(s[j])) j++;
+      if(s[j]==='@') j++;
+      out.push({t:'id',v:s.slice(i,j)}); i=j; continue;
+    }
+    const two=s.substr(i,2);
+    if(two==='=='||two==='!='||two==='<='||two==='>='||two==='&&'||two==='||'){ out.push({t:'op',v:two}); i+=2; continue; }
+    if('+-*/%^()<>,'.indexOf(c)>=0){ out.push({t:'op',v:c}); i++; continue; }
+    return null;                       // anything else is not part of the language at all
+  }
+  return out;
+}
+const _LGX_BIN = {
+  '||':[1,(a,b)=>(a!==0||b!==0)?1:0], '&&':[2,(a,b)=>(a!==0&&b!==0)?1:0],
+  '==':[3,(a,b)=>a===b?1:0], '!=':[3,(a,b)=>a!==b?1:0],
+  '<':[4,(a,b)=>a<b?1:0], '<=':[4,(a,b)=>a<=b?1:0], '>':[4,(a,b)=>a>b?1:0], '>=':[4,(a,b)=>a>=b?1:0],
+  '+':[5,(a,b)=>a+b], '-':[5,(a,b)=>a-b],
+  '*':[6,(a,b)=>a*b], '/':[6,(a,b)=>b===0?0:a/b], '%':[6,(a,b)=>b===0?0:((a%b)+b)%b],
+  '^':[7,(a,b)=>Math.pow(a,b)],
+};
+// Compile to a closure tree. Returns null on ANY malformed input — a broken expression must read as 0 and
+// leave the graph running, never throw mid-pulse and kill the rest of the level's logic.
+function _lgxCompile(srcText){
+  const s=String(srcText||'').trim();
+  if(!s || s.length>LGX_MAXLEN) return null;
+  if(_lgxCache.has(s)) return _lgxCache.get(s);
+  const tk=_lgxTokens(s);
+  let fn=null;
+  if(tk && tk.length){
+    let pos=0, depth=0;
+    const peek=()=>tk[pos], eat=()=>tk[pos++];
+    const isOp=(v)=>{ const t=peek(); return t && t.t==='op' && t.v===v; };
+    function parseExpr(minPrec){
+      if(++depth>LGX_MAXDEPTH) throw 0;
+      let left=parseUnary();
+      for(;;){
+        const t=peek(); if(!t || t.t!=='op') break;
+        const b=_LGX_BIN[t.v]; if(!b || b[0]<minPrec) break;
+        eat();
+        const right=parseExpr(t.v==='^' ? b[0] : b[0]+1);   // ^ is right-associative
+        const f=b[1], l=left, r=right;
+        left=(g)=>f(l(g), r(g));
+      }
+      depth--; return left;
+    }
+    function parseUnary(){
+      if(isOp('-')){ eat(); const v=parseUnary(); return (g)=>-v(g); }
+      if(isOp('+')){ eat(); return parseUnary(); }
+      return parsePrimary();
+    }
+    function parsePrimary(){
+      const t=eat(); if(!t) throw 0;
+      if(t.t==='n'){ const v=t.v; return ()=>v; }
+      if(t.t==='op' && t.v==='('){ const e=parseExpr(1); if(!isOp(')')) throw 0; eat(); return e; }
+      if(t.t==='id'){
+        if(isOp('(')){
+          const def=LGX_FUNCS[t.v]; if(!def) throw 0;          // an unknown name is never callable
+          eat(); const args=[];
+          if(!isOp(')')){ for(;;){ args.push(parseExpr(1)); if(isOp(',')){ eat(); continue; } break; } }
+          if(!isOp(')')) throw 0; eat();
+          if(args.length!==def[0]) throw 0;                     // wrong arity is a compile error, not a NaN
+          const f=def[1];
+          if(args.length===1){ const a=args[0]; return (g)=>f(a(g)); }
+          if(args.length===2){ const a=args[0], b=args[1]; return (g)=>f(a(g), b(g)); }
+          const a=args[0], b=args[1], c=args[2]; return (g)=>f(a(g), b(g), c(g));
+        }
+        const nm=t.v; return (g)=>g(nm);                        // a bare name is ALWAYS a variable read
+      }
+      throw 0;
+    }
+    try{ const e=parseExpr(1); if(pos===tk.length) fn=e; }catch(err){ fn=null; }
+  }
+  if(_lgxCache.size >= LGX_CACHE_MAX) _lgxCache.clear();        // bounded: a hostile level cannot grow it
+  _lgxCache.set(s, fn);
+  return fn;
+}
+// Evaluate against the live variable store. Never returns NaN or Infinity — build 1169's rule: one poisoned
+// value silently corrupts every compare downstream of it.
+function _lgxEval(srcText){
+  const fn=_lgxCompile(srcText); if(!fn) return 0;
+  // OWN properties only. `logicVars` is a plain object, so a bare `constructor` or `__proto__` in an
+  // expression would otherwise read Object.prototype's — safe today only because those coerce to NaN and
+  // then to 0, which is luck rather than design. hasOwnProperty makes it structural: a name the creator
+  // never set reads 0 because it is unset, full stop.
+  const get=(nm)=>{ const k=_lgVarKey(nm); return Object.prototype.hasOwnProperty.call(logicVars,k) ? (+logicVars[k]||0) : 0; };
+  let v; try{ v=fn(get); }catch(e){ return 0; }
+  return isFinite(v) ? v : 0;
+}
 function _lgNum(v){
   if(v==null) return 0;
   const t=String(v).trim(); if(t==='') return 0;
@@ -10727,6 +10848,10 @@ function _lgPulse(id, pin){
                 : op==='min' ? Math.min(a,b) : op==='max' ? Math.max(a,b) : (b===0?0:((a%b)+b)%b);
         logicVars[k] = isFinite(v) ? v : 0;
       } _lgFollow(id,0); break; }
+    // build 1271: EXPRESSION — one node for arithmetic that used to be three or four, and the escape
+    // hatch the audit asked for in the only form a shared-level engine can safely ship.
+    case 'expr': { const k=_lgVarKey(String(p.name||'').trim()); if(k) logicVars[k]=_lgxEval(p.expr);
+      _lgFollow(id,0); break; }
     // build 1269: LIST — the graph's first ORDERED collection. Everything before it held one number per
     // name, so "deal a card", "did they press the switches in this order" and "shuffle the deck" were
     // unsayable: a 52-card deck was 52 nodes and a 4-step combination could not be compared at all.
@@ -11126,6 +11251,7 @@ const LG_DEFS = {
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
+  expr:     { t:'Expression',      cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'expr',l:'',w:210}] },
   list:     { t:'List',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'list',w:62,listId:'lgListList'},{k:'op',l:'',w:96,sel:[['push','Add value'],['fill','Fill 1..N'],['draw','Draw first \u2192'],['drawrand','Draw random \u2192'],['shuffle','Shuffle'],['remove','Remove value'],['clear','Clear'],['len','Length \u2192'],['has','Contains? \u2192'],['at','Value at \u2192'],['matches','Same order as? \u2192']]},{k:'value',l:'value',w:50,listId:'lgVarList',ifv:['op',['push','fill','remove','has']]},{k:'idx',l:'index',w:44,listId:'lgVarList',ifv:['op','at']},{k:'other',l:'other list',w:66,listId:'lgListList',ifv:['op','matches']},{k:'var',l:'\u2192 var',w:60,listId:'lgVarList',ifv:['op',['draw','drawrand','len','has','at','matches']]}] },
   read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
   do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
@@ -18887,7 +19013,22 @@ function wepModelUrl(key){ const w=WEAPONS[key]; return (w && w.model) ? w.model
 // build 1266: the ONE rule for "this weapon shows no gun at all". Both the first-person viewmodel and the
 // third-person hand ask it, so a punching character can never end up holding a rifle and the two views can
 // never disagree about what the player is carrying. A creator's own model for the slot always wins (674).
-function _wepShowsFists(key){ const w=WEAPONS[key]; return !(w && w.model) && (key==='hands' || !!(w && w.fists)); }
+// build 1272: a melee weapon with no model of its own shows the procedural HANDS, not a rifle. Before
+// this, `crowbar` fell through to wepModelUrl's fallback and the player held the engine's gun while
+// swinging — visibly wrong in first person and, since build 1266 shares this predicate, on the
+// third-person body too. A creator's imported model still wins (build 674), which is the intended path
+// for an actual crowbar mesh.
+function _wepShowsFists(key){ const w=WEAPONS[key]; return !(w && w.model) && (key==='hands' || !!(w && w.melee)); }
+// Reported from play: "there's no option under gameplay to set the melee weapon as the starting weapon."
+// Correct — build 976 added startWeapon as "the PRIMARY you spawn with" and filtered `!melee` out of the
+// list, while fists got their own "Start unarmed" checkbox (which also carries the stricter
+// no-guns-at-all rule). The CROWBAR fell between the two features and could not be chosen at all, so the
+// standard survival-horror opener — you start with a melee weapon and find a gun — was unauthorable.
+//
+// So the filter is no longer "not melee" but "not the FISTS slot", which the checkbox owns. Named once
+// here and asked by all six sites (the dropdown, its current-value guard, both loaders, the serializer
+// and the deploy), because six copies of a condition is how the crowbar got lost in the first place.
+function _canStartWith(k){ const w=WEAPONS[k]; return !!w && k!=='hands' && !w.fists; }
 // Default per-weapon transform (falls back to the shared GUN_* framing when a weapon has no saved view).
 function wepView(key){ const w=WEAPONS[key]; return (w && w.view) ? w.view
   : { px:GUN_OFFSET.x, py:GUN_OFFSET.y, pz:GUN_OFFSET.z, rx:GUN_ROT.x*DEG, ry:GUN_ROT.y*DEG, rz:GUN_ROT.z*DEG, s:GUN_SCALE, mzx:GUN_OFFSET.x, mzy:GUN_OFFSET.y+0.04, mzz:GUN_OFFSET.z-1.02 }; }
@@ -23445,7 +23586,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && _canStartWith(level.game.startWeapon)) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -28903,7 +29044,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1270 · 2026-08-01';
+const BUILD_VERSION = 'build 1272 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36839,7 +36980,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', autoRig:c.autoRig||undefined, ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -37715,7 +37856,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && _canStartWith(level.game.startWeapon)) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -40205,12 +40346,12 @@ function renderEditorFields(){
       hint(bPly, '<b>Starts with</b> — the weapon players spawn holding', '12px 0 4px');
       const swRow=document.createElement('div'); swRow.style.cssText='display:flex;align-items:center;gap:8px;margin:2px 0 2px;';
       const swSel=document.createElement('select'); swSel.style.cssText='flex:1;font-size:12px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 6px;';
-      const _guns=Object.keys(WEAPONS).filter(k=>WEAPONS[k] && !WEAPONS[k].melee);
-      const _cur=(WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle';
+      const _guns=Object.keys(WEAPONS).filter(_canStartWith);   /* build 1272: melee included; the fists slot is the checkbox below */
+      const _cur=_canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle';
       for(const k of _guns){ const o=document.createElement('option'); o.value=k; o.textContent=WEAPONS[k].name; if(k===_cur) o.selected=true; swSel.appendChild(o); }
       swSel.onchange=()=>{ pushUndoSnapshot(); gameCfg.startWeapon=swSel.value; _levelDirty=true; };
       swRow.appendChild(swSel); bPly.appendChild(swRow);
-      hint(bPly, '', '0 0 6px').textContent='Players can still find and pick up other weapons placed in the level.';
+      hint(bPly, '', '0 0 6px').textContent='Players can still find and pick up other weapons placed in the level. A melee weapon works here too \u2014 start with the crowbar and let them find a gun. Give it a model on the Weapons tab, or it is swung bare-handed.';
     }
     hint(bPly, '<b>Hands / unarmed</b>', '12px 0 4px');
     const _chk=(label, checked, on)=>{ const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;'; cb.onchange=()=>{ pushUndoSnapshot(); on(cb.checked); }; const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); bPly.appendChild(lab); return cb; };
@@ -44081,7 +44222,7 @@ function startGame(){
   player.hp=100; player.maxHp=100; run = { ...RUN0 }; _checkpoint=null; if(typeof closeDialogue==='function') closeDialogue(); if(typeof closeUpgradePicker==='function') closeUpgradePicker(); player.pos.set(playerSpawn.x, terrainHeightAt(playerSpawn.x, playerSpawn.z)+(playerSpawn.y||0)+EYE, playerSpawn.z); player.vel.set(0,0,0);
   player.yaw=playerSpawn.yaw; player.pitch=0; player.onGround=(playerSpawn.y||0)<=0;
   // reset weapons — build 672: an "unarmed" level starts you on fists, no guns
-  if(gameCfg.unarmed){ owned = ['hands']; curWep='hands'; } else { const _sw=(gameCfg.startWeapon && WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle'; owned = [_sw]; curWep=_sw; }   // build 976: per-level starting weapon
+  if(gameCfg.unarmed){ owned = ['hands']; curWep='hands'; } else { const _sw=_canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle'; owned = [_sw]; curWep=_sw; }   // build 976: per-level starting weapon
   if(typeof showWeaponModel==='function') showWeaponModel(curWep);   // show fists / gun for the chosen loadout
   flashlightOn=false; if(_flashlight){ _flashlight.intensity=0; }   // flashlight off at the start of a run (stays visible at 0 — see ensureFlashlight)
   if(gameCfg.flashlight && typeof ensureFlashlight==='function') ensureFlashlight();   // build 977: pre-warm — the spotlight joins the scene during level start, so shaders compile once here, not on the first L press
