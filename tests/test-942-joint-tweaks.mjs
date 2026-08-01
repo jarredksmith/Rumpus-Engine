@@ -31,7 +31,15 @@ assert(/_applyJointFix\(_ownAvatar, _myJointFix\(\)\); _aimAvatarGun\(_ownAvatar
   'own third-person body: tweaks ride under the aim + hold IK');
 assert(/_applyJointFix\(rp\.mesh\); _aimAvatarGun\(rp\.mesh, rp\.yaw\|\|0, rp\.pitch\|\|0\);/.test(src),
   'remote players get their broadcast tweaks');
-assert(/_applyJointFix\(previewAvatar, _myJointFix\(\)\);   \/\/ build 942/.test(src), 'the Player-tab preview is WYSIWYG');
+// build 1268: the call moved out of the orbit-camera branch into _edPlayerPreviewTick, so it now runs in
+// EVERY editor camera mode instead of only the one the editor does not open in. Pin the property, not the
+// line: WYSIWYG means the preview is posed whenever the Player tab is up.
+{
+  const _tick = extractFunction('_edPlayerPreviewTick');
+  assert(/_applyJointFix\(previewAvatar, _myJointFix\(\)\)/.test(_tick), 'the Player-tab preview is WYSIWYG');
+  assert(/editorActive!=='player'/.test(_tick) && !/editorFreeFly/.test(_tick),
+    '...on the Player tab in any camera mode');
+}
 
 // persistence tour (the same 8 stops as animLib/ikHold)
 assert(/jointFix:_sanitizeJointFix\(c\.jointFix\), autoRig:_sanitizeAutoRig\(c\.autoRig\), clips:/.test(extractFunction('_sanitizeCharCfg', src)), 'sanitized (build 1025: + auto-rig markers)');
