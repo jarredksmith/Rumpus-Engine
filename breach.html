@@ -9899,6 +9899,11 @@ const mixers = [];
 // be. This is for the dense imported level the audit was talking about, and it costs nothing when it finds
 // nothing to do.
 const LOD_HYST = 1.4;        // re-show at 1.4x the hide threshold, so a prop hovering at the boundary cannot flicker
+// build 1270: THE RUNG ABOVE CULLING. A prop stops CASTING A SHADOW well before it stops being drawn: the
+// shadow map is a whole extra scene pass per cascade, and a shadow cast by something a few pixels across is
+// not a shape anybody can read. Every engine ships this (Unreal's per-object shadow cull distance, Unity's
+// shadow distance); it is the cheap middle rung of an LOD ladder and needs no simplified geometry.
+const LOD_SHADOW_MUL = 4;    // below lodPx * this, a prop still DRAWS but no longer CASTS
 const LOD_BUDGET = 128;      // props examined per frame; the cursor rolls, so a 2,000-prop level costs a fixed slice
 let _lodCursor = 0, _lodAnyCulled = false;
 function _lodPxNow(){ const v = (typeof worldCfg!=='undefined' && worldCfg) ? +worldCfg.lodPx : 0; return (v>0 && isFinite(v)) ? Math.min(16, v) : 0; }
@@ -9923,10 +9928,25 @@ function _lodEligible(o){
   u._lodNo = bad;
   return !bad;
 }
+// The authored castShadow must be REMEMBERED, not assumed. Plenty of meshes legitimately do not cast —
+// levelgen's `nocollide` grass (build 1096) is the standing example — and blanket-restoring true would
+// make a field of grass start casting the moment the player walked near it.
+function _lodSetCasting(o, on){
+  o.traverse(c=>{
+    if(!c.isMesh) return;
+    if(c.userData._lodCS === undefined) c.userData._lodCS = !!c.castShadow;   // captured once, from the authored state
+    c.castShadow = on ? c.userData._lodCS : false;
+  });
+}
 function _lodRestoreAll(){
   if(!_lodAnyCulled) return;
-  for(const o of propModels){ if(o && o.userData && o.userData._lodCull){ o.userData._lodCull = false; if(!o.userData._pvHidden) o.visible = true; } }
+  for(const o of propModels){
+    if(!o || !o.userData) continue;
+    if(o.userData._lodCull){ o.userData._lodCull = false; if(!o.userData._pvHidden) o.visible = true; }
+    if(o.userData._lodNoShadow){ o.userData._lodNoShadow = false; _lodSetCasting(o, true); }
+  }
   _lodAnyCulled = false;
+  if(typeof _dirtyShadows==='function') _dirtyShadows();   // build 1270: the map is STATIC — see below
 }
 function _lodTick(){
   const px = _lodPxNow();
@@ -9936,6 +9956,7 @@ function _lodTick(){
   const n = propModels.length; if(!n) return;
   const k = (renderer.domElement.height * 0.5) / Math.tan(camera.fov * Math.PI / 360);   // world radius -> pixels
   const cam = camera.position, lim = Math.min(n, LOD_BUDGET);
+  let _lodDirty = false;
   for(let i = 0; i < lim; i++){
     const o = propModels[(_lodCursor + i) % n];
     if(!o || !o.userData || o.userData._shattered) continue;
@@ -9945,9 +9966,23 @@ function _lodTick(){
     const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
     const sp = (d > 0.01) ? (o.userData._lodR / d) * k : 1e9;
     const u = o.userData;
-    if(u._lodCull){ if(sp > px * LOD_HYST){ u._lodCull = false; o.visible = true; } }
-    else if(sp < px && o.visible){ u._lodCull = true; o.visible = false; _lodAnyCulled = true; }
+    // rung 2 — drawn or not: below px it is not worth a draw call at all
+    if(u._lodCull){ if(sp > px * LOD_HYST){ u._lodCull = false; o.visible = true; _lodDirty = true; } }
+    else if(sp < px && o.visible){ u._lodCull = true; o.visible = false; _lodAnyCulled = true; _lodDirty = true; }
+    // rung 1 — casting or not. Checked even while culled, so a prop that comes back does so with the right
+    // caster state rather than one rung behind.
+    const spx = px * LOD_SHADOW_MUL;
+    if(u._lodNoShadow){ if(sp > spx * LOD_HYST){ u._lodNoShadow = false; _lodSetCasting(o, true); _lodDirty = true; } }
+    else if(sp < spx){ u._lodNoShadow = true; _lodSetCasting(o, false); _lodAnyCulled = true; _lodDirty = true; }
   }
+  // THE REFRESH 1267 OWED AND DID NOT PAY. `renderer.shadowMap.autoUpdate` is false (build 1093's static
+  // shadow map): the map is only redrawn when _dirtyShadows() asks. So hiding a prop does NOT remove its
+  // shadow, and un-hiding one does not bring it back — the ground keeps the shadow of something that is no
+  // longer drawn until some unrelated event happens to request a refresh. Anything that changes WHAT CASTS
+  // must say so, which is build 1263's lesson arriving from the other direction: a perf change is not
+  // allowed to remove work something else was silently relying on, and it is not allowed to skip work
+  // something else silently needs either.
+  if(_lodDirty && typeof _dirtyShadows==='function') _dirtyShadows();
   _lodCursor = (_lodCursor + lim) % n;
 }
 // Animation LOD: update each mixer at a rate that falls off with distance from the camera. Near models animate
@@ -28868,7 +28903,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1269 · 2026-08-01';
+const BUILD_VERSION = 'build 1270 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39297,7 +39332,7 @@ function renderEditorFields(){
         slider(b,'Ambient occlusion','ssao',0,1,0.05); slider(b,'AO radius','ssaoRadius',0.1,4,0.1);   // build 1126
         slider(b,'Reflections','ssr',0,1,0.05);   /* build 1245: screen-space floor reflections; 0 = off */
         slider(b,'Cull below (px)','lodPx',0,16,1);   /* build 1267 */
-        hint(b,'','2px 0 6px').textContent='Props smaller than this on screen stop being drawn. 0 turns it off; 2 is about the size of a full stop and removes nothing you could see. Raise it on a heavy level to trade a little pop-in for draw calls. Never applies while the editor is open, lights are never hidden, and a culled prop still blocks bullets.';
+        hint(b,'','2px 0 6px').textContent='Props smaller than this on screen stop being drawn, and stop casting a shadow at 4\u00d7 this size (a shadow that small is not a shape you can read). 0 turns it off; 2 is about the size of a full stop and removes nothing you could see. Raise it on a heavy level to trade a little pop-in for draw calls. Never applies while the editor is open, lights are never hidden, and a culled prop still blocks bullets.';
         hint(b,'','0 0 4px').textContent='Motion blur = camera blur strength (real per-pixel smear when you turn; 0 = off). Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }
     { const b=subSec('Sky','sky',true);

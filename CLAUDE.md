@@ -3784,6 +3784,54 @@ datalist-refresh line).
 then `git fetch` + `reset --hard FETCH_HEAD`, then re-run the scripted edit: free again, for the fifth time.
 Writing every build as a re-runnable script is what makes this a 30-second interruption instead of a rebuild.
 
+## The rung above culling, and the refresh 1267 owed (build 1270)
+
+A prop stops CASTING a shadow well before it stops being DRAWN. The shadow map is a whole extra scene pass
+per cascade, and a shadow cast by something a few pixels across is not a shape anybody can read — so
+`LOD_SHADOW_MUL = 4` gives the ladder its cheap middle rung, and unlike a real geometry LOD it needs no
+simplified meshes and no simplifier.
+
+Measured on 400 props seeded INSIDE the shadow volume. That detail is the finding: **build 1267's field was
+at 300 m, never in a cascade at all**, so the same measurement there would have shown nothing and I would
+have concluded there was nothing to get.
+
+```
+lodPx     calls     tris   culled   not-casting   meshes casting
+    0     1,334   20,428        0             0             460
+    1       894   15,184        0           262             198   <- the rung ALONE
+    2       558   11,152       81           368              92   <- shipped default
+    4       314    8,224      262           398              62
+    0     1,362   20,800        0             0             460   <- control
+```
+**The `lodPx 1` row is the honest isolation: NOTHING was hidden and draw calls still fell 33%.** At the
+shipped default the ladder cuts 58%, and most of that is the shadow rung rather than the culling — 368 props
+stopped casting while only 81 stopped drawing. The control returns to within 2% rather than exactly (1267's
+returned byte-identical) because forcing the shadow map to rebuild each sample includes a cascade fit that
+tracks the live camera and sun. Expected drift, not a leak.
+
+**The authored `castShadow` is REMEMBERED, not assumed.** Plenty of meshes legitimately never cast —
+levelgen's `nocollide` grass (1096) is the standing example — and a blanket restore to `true` would start a
+whole field of grass casting the moment the player walked near it. `_lodSetCasting` captures each mesh's own
+value once into `userData._lodCS` and restores THAT. Verified live: a mesh authored `castShadow:false` reads
+false at every distance, near and far.
+
+### The defect 1267 shipped, found by building the next rung on top of it
+
+`renderer.shadowMap.autoUpdate` is **false** (build 1093's static shadow map): the map is only redrawn when
+`_dirtyShadows()` asks. So build 1267 hiding a prop did **not** remove its shadow — the ground kept the
+shadow of something that was no longer drawn until some unrelated event happened to request a refresh, and
+an un-culled prop came back without one. In practice `_shDirty` fires whenever the player moves, so it would
+usually self-correct; standing still while the rolling cursor crossed a prop's threshold is where it shows.
+
+Both rungs now set `_lodDirty` and the tick requests a refresh once, at the end, only when something
+actually changed — so a settled scene still pays nothing. Verified live: `autoUpdate false`, and one
+state-changing tick leaves `_shadowDirtyFrames` at 2.
+
+**This is build 1263's lesson arriving from the other side.** That one was *a perf change may not remove
+work something else was silently relying on*; this one is *a perf change may not skip work something else
+silently needs*. Both are the same question — what did the thing you changed used to do for someone else? —
+and the shadow map has now answered it twice.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

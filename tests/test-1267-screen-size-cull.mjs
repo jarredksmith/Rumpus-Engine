@@ -38,15 +38,17 @@ const src = gameSource();
 // ---------------------------------------------------------------- the tick, executed
 const LOD_HYST = +extractConst('LOD_HYST');
 const LOD_BUDGET = +extractConst('LOD_BUDGET');
+const LOD_SHADOW_MUL = +extractConst('LOD_SHADOW_MUL');   // build 1270 added the caster rung to the same tick
 eq(LOD_HYST > 1, true, 'the hysteresis re-show threshold is above the hide threshold');
 
 function rig(props, opts = {}) {
   const body = [
-    'const LOD_HYST = ' + LOD_HYST + ', LOD_BUDGET = ' + LOD_BUDGET + ';',
+    'const LOD_HYST = ' + LOD_HYST + ', LOD_BUDGET = ' + LOD_BUDGET + ', LOD_SHADOW_MUL = ' + LOD_SHADOW_MUL + ';',
+    'function _dirtyShadows(){}',
     'let _lodCursor = 0, _lodAnyCulled = false;',
     'let editorOpen = ' + (opts.editorOpen ? 'true' : 'false') + ';',
     extractFunction('_lodPxNow'), extractFunction('_lodEligible'),
-    extractFunction('_lodRestoreAll'), extractFunction('_lodTick'),
+    extractFunction('_lodSetCasting'), extractFunction('_lodRestoreAll'), extractFunction('_lodTick'),
     'return { tick:_lodTick, restore:_lodRestoreAll, px:_lodPxNow, elig:_lodEligible,',
     '  any:()=>_lodAnyCulled, setEditor:(v)=>{ editorOpen=v; } };',
   ].join('\n');
