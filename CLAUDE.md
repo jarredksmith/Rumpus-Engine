@@ -3747,6 +3747,91 @@ The hysteresis (1.4×) stops a prop at the boundary flickering, and the budget (
 cursor) makes a 2,000-prop level a fixed slice rather than a spike. `lodPx` is **not** zeroed by
 `_postOffWorld` — culling is a cost control, not a look.
 
+## The logic graph learns ordered collections (build 1269)
+
+The last gap named in the card/puzzle design pass (1259 closed read-inventory, 1260 closed HUD art). Every
+value the graph could hold was ONE NUMBER per name, so "deal a card", "did they press the switches in this
+order" and "shuffle the deck" were unsayable — a 52-card deck was 52 nodes and a 4-step combination could
+not be compared at all.
+
+One node in STATE, matching the Math node's shape (1169): `List`, with `push / fill 1..N / draw / draw
+random / shuffle / remove / clear / length / contains / value at / same order as`. Four decisions:
+
+- **Its own store, not `logicVars`.** Every consumer of that store coerces with `+logicVars[k]||0` — the HUD
+  widget mirror, the `hudv` net message, campaign persistence — so a value that is not a number would
+  silently become 0 there and travel over the wire as one. `logicLists` keeps `logicVars` exactly what all
+  of that already assumes.
+- **A value LEAVES a list into a variable.** That is the whole boundary: the existing mirroring, HUD binding
+  and persistence apply unchanged and nothing new crosses the wire. Lists are host-side state, like the rest
+  of the graph.
+- **`fill 1..N` exists because otherwise this is unusable.** A deck in one node is the difference between a
+  feature and a demo.
+- **`same order as` is the puzzle question.** Order-sensitive comparison is what separates a combination
+  lock from a bag of tokens, and it is the one thing no combination of the other ops can express.
+
+**The test rig caught a real inconsistency before it shipped:** every other state node routes its
+destination through `_lgVarKey` (build 1231's per-player `name@` convention) and the first draft wrote
+`logicVars[dst]` raw. List NAMES now route through it too — so `hand@` is THIS player's hand, which is the
+difference between a card game and a card demo, and is exactly where per-player state matters most.
+
+Bounded on both axes (64 lists, 256 entries) because a level file is untrusted input, `put()` never writes
+NaN (one would poison every later compare — 1169's lesson), and an unnamed or over-cap list reports empty
+rather than throwing mid-graph. Three pins moved (1028's palette↔runtime parity list, and 1033/1060's
+datalist-refresh line).
+
+**FIFTH container rollback, recovered mid-build** — the tree reverted to build 1182 (`b246158`) and the
+`BUILD_VERSION` anchor simply failed, which is the cheapest possible way to find out. `git log` first,
+then `git fetch` + `reset --hard FETCH_HEAD`, then re-run the scripted edit: free again, for the fifth time.
+Writing every build as a re-runnable script is what makes this a 30-second interruption instead of a rebuild.
+
+## The rung above culling, and the refresh 1267 owed (build 1270)
+
+A prop stops CASTING a shadow well before it stops being DRAWN. The shadow map is a whole extra scene pass
+per cascade, and a shadow cast by something a few pixels across is not a shape anybody can read — so
+`LOD_SHADOW_MUL = 4` gives the ladder its cheap middle rung, and unlike a real geometry LOD it needs no
+simplified meshes and no simplifier.
+
+Measured on 400 props seeded INSIDE the shadow volume. That detail is the finding: **build 1267's field was
+at 300 m, never in a cascade at all**, so the same measurement there would have shown nothing and I would
+have concluded there was nothing to get.
+
+```
+lodPx     calls     tris   culled   not-casting   meshes casting
+    0     1,334   20,428        0             0             460
+    1       894   15,184        0           262             198   <- the rung ALONE
+    2       558   11,152       81           368              92   <- shipped default
+    4       314    8,224      262           398              62
+    0     1,362   20,800        0             0             460   <- control
+```
+**The `lodPx 1` row is the honest isolation: NOTHING was hidden and draw calls still fell 33%.** At the
+shipped default the ladder cuts 58%, and most of that is the shadow rung rather than the culling — 368 props
+stopped casting while only 81 stopped drawing. The control returns to within 2% rather than exactly (1267's
+returned byte-identical) because forcing the shadow map to rebuild each sample includes a cascade fit that
+tracks the live camera and sun. Expected drift, not a leak.
+
+**The authored `castShadow` is REMEMBERED, not assumed.** Plenty of meshes legitimately never cast —
+levelgen's `nocollide` grass (1096) is the standing example — and a blanket restore to `true` would start a
+whole field of grass casting the moment the player walked near it. `_lodSetCasting` captures each mesh's own
+value once into `userData._lodCS` and restores THAT. Verified live: a mesh authored `castShadow:false` reads
+false at every distance, near and far.
+
+### The defect 1267 shipped, found by building the next rung on top of it
+
+`renderer.shadowMap.autoUpdate` is **false** (build 1093's static shadow map): the map is only redrawn when
+`_dirtyShadows()` asks. So build 1267 hiding a prop did **not** remove its shadow — the ground kept the
+shadow of something that was no longer drawn until some unrelated event happened to request a refresh, and
+an un-culled prop came back without one. In practice `_shDirty` fires whenever the player moves, so it would
+usually self-correct; standing still while the rolling cursor crossed a prop's threshold is where it shows.
+
+Both rungs now set `_lodDirty` and the tick requests a refresh once, at the end, only when something
+actually changed — so a settled scene still pays nothing. Verified live: `autoUpdate false`, and one
+state-changing tick leaves `_shadowDirtyFrames` at 2.
+
+**This is build 1263's lesson arriving from the other side.** That one was *a perf change may not remove
+work something else was silently relying on*; this one is *a perf change may not skip work something else
+silently needs*. Both are the same question — what did the thing you changed used to do for someone else? —
+and the shadow map has now answered it twice.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

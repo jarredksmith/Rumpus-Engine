@@ -8,7 +8,7 @@ const src = gameSource();
 
 // ---- every runtime node type has an editor definition, and vice versa ----
 const defs = new Function('return ' + extractConst('LG_DEFS', src) + ';')();
-const runtimeTypes = ['start','event','interval','onkill','onwave','onspot','onhurt','branch','counter','delay','repeat','random','once','setvar','addvar','math','read','do','toast','emit','win','lose'];   // build 1169: math + read (both have _lgPulse cases — the parity this test exists to hold)
+const runtimeTypes = ['start','event','interval','onkill','onwave','onspot','onhurt','branch','counter','delay','repeat','random','once','setvar','addvar','math','read','list','do','toast','emit','win','lose'];   // build 1169: math + read; build 1269: list (each has a _lgPulse case — the parity this test exists to hold)
 for(const t of runtimeTypes) assert(defs[t], 'palette covers runtime type: '+t);
 eq(Object.keys(defs).length, runtimeTypes.length, 'no orphan editor types the runtime would ignore');
 // pin the pieces the interpreter dispatches on

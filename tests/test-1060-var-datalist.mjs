@@ -46,7 +46,7 @@ assert(/branch:.*\{k:'a',l:'A',w:56,listId:'lgVarList'\}.*\{k:'b',l:'B',w:56,lis
   'Branch’s A and B both use it');
 
 // ---- typing a name anywhere refreshes the list live ----
-assert(/if\(pm\.listId==='lgEvtList' \|\| pm\.listId==='lgVarList'\) _lgRefreshDatalists\(\);/.test(src),
+assert(/if\(pm\.listId==='lgEvtList' \|\| pm\.listId==='lgVarList' \|\| pm\.listId==='lgListList'\) _lgRefreshDatalists\(\);/.test(src),
   'editing a variable field in a node re-scans so the name appears in the others immediately');
 
 // ---- the HUD widget editor shares the same dropdown, both directions ----
