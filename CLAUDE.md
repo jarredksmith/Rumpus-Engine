@@ -1519,6 +1519,24 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Auto focus (build 1248)
+
+The other half of the DoF play report ("can't ever quite get the settings to look right") was never
+the blur — 1241 and 1247 fixed that — it was that **Focus distance is a number in metres aimed by
+hand at a moving game**. `worldCfg.dofAuto` (opt-in, DEFAULT_WORLD false so no saved level changes
+look): every 3rd frame a ray from the camera finds what the crosshair rests on — through
+`_firstSolidHit`, because 1236's rule applies to focus too: an invisible surface must not pull the
+lens — and `dofFocus` EASES toward it (`k = dt·6`, tau ~0.17 s: a rack, never a snap). A sky miss
+racks out to 200 m. Living enemies join the target list (an aimed-at enemy holds focus); corpses do
+not. Four gates, each deliberate: auto off, DoF off, **cutscene active** (updateCinematic's focusOn
+rack writes dofFocus directly and `_cineReturn` restores it — the film language belongs to the shot),
+and **editor open** (the sliders must mean what they say while dragging). Sanitize seeds the ease at
+the authored focus so toggling never racks from a stale target, and the authored `worldCfg.dofFocus`
+is never written — auto off returns exactly the saved look. `test-1248` executes the REAL tick in a
+stubbed scope: convergence, the exact ease constant, the 3-frame throttle, the miss, both clamps,
+the ghost filter, all four gates, and the corpse rule. No capture needed — this build is pure JS,
+the class the Node harness fully covers.
+
 ## Real bokeh (build 1247)
 
 Build 1241's notes named their own limit — "one gaussian family for near and far fields (no true
