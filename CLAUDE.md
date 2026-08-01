@@ -3956,6 +3956,40 @@ structurally impossible, and (c) *make the subsystem able to answer the question
 1274 are those three steps. A subsystem that can delete things from the screen has to be able to say what it
 removed and why.
 
+## The marquee learns lights (build 1275)
+
+The top-view marquee swept only `propModels` — and every marquee ended with `selLights = []`, so
+box-selecting anything silently threw a light selection away. Laying out a row of lamps is exactly the job
+the marquee exists for and it was the one thing it could not do.
+
+The editor's selection is ONE TYPE AT A TIME (`activeSel()` returns `selProps` or `selLights` depending on
+`editorActive`), and a genuinely mixed selection means reworking the gizmo, the group ops and the inspector —
+a real build, not a side effect of this one. So the marquee picks the type the box actually CAUGHT: it keeps
+the type you are already working in when the box contains any of them, and switches when the box contains
+only the other. Both flows a creator would try therefore work, and neither acts on something invisible.
+Locked and hidden lights dodge it exactly as props do (1036), and shift still adds.
+
+## A trigger zone can watch for a prop (build 1276)
+
+Build 1170 gave props a runtime lifecycle (show/hide/move/destroy) and 1258 let the graph shove them, but
+nothing could **detect** one. "The ball is in the goal", "the crate is on the pressure plate", "the key
+landed in the slot" were all unaskable — which is most of what a sports or physics-puzzle level is made of.
+
+`who` gains `prop`, with an optional tag (blank = any prop). Props take the ENEMY's union edge for the same
+reason enemies have it: a prop has no pid, and a per-prop edge would turn a pile of debris rolling through a
+zone into a pulse each. A prop that is invisible, destroyed, or hidden by the graph does not count — hidden
+means not in play.
+
+**The trap this build nearly shipped, and it is worth the space.** Both existing branches tested the audience
+by EXCLUSION — `if(z.who!=='enemy')` and `if(z.who!=='player')`. That is correct for a three-value enum and
+silently wrong the instant a fourth arrives: a `prop` zone matches neither exclusion, so it would have fired
+for players AND enemies as well as props. **Adding a value to an enum tested by exclusion enables every
+branch that did not name the new value.** The three audiences are now stated positively, and `test-1276`
+executes all four columns — including that `any` did NOT silently gain props.
+
+Serialization needed no new code: `triggers` round-trips through `_migrateTrigger`, so sanitizing the tag
+there covers both directions at once. That is the shape to copy for any future zone field.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

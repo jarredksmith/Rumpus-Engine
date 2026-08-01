@@ -18849,14 +18849,45 @@ function _marqueeFinish(e){
   editorDragMoved = true;   // a real drag -> suppress the click-select that follows on mouseup
   const r = renderer.domElement.getBoundingClientRect();
   const x0=Math.min(_marqueeX0,e.clientX), x1=Math.max(_marqueeX0,e.clientX), y0=Math.min(_marqueeY0,e.clientY), y1=Math.max(_marqueeY0,e.clientY);
-  const cam = activeCam(); const hits=[];
-  for(const p of propModels){ if(!p || (p.userData && (p.userData.edLock || p.userData.edHide))) continue; _marqueeV.setFromMatrixPosition(p.matrixWorld); _marqueeV.project(cam);   // build 1036: locked/hidden props dodge the marquee
-    const sx = r.left + (_marqueeV.x*0.5+0.5)*r.width, sy = r.top + (-_marqueeV.y*0.5+0.5)*r.height;
-    if(_marqueeV.z < 1 && sx>=x0 && sx<=x1 && sy>=y0 && sy<=y1) hits.push(p);
+  const cam = activeCam();
+  // build 1275: sweep LIGHTS as well as props. Laying out a row of lamps in top view is exactly the job
+  // the marquee exists for, and it was the one thing it could not do — worse, every marquee ended with
+  // `selLights = []`, so box-selecting anything silently threw a light selection away.
+  //
+  // The editor's selection is ONE TYPE AT A TIME (`activeSel()` returns selProps or selLights depending on
+  // editorActive), and a genuinely mixed selection would mean reworking the gizmo, the group ops and the
+  // inspector. So the marquee picks the type the box actually CAUGHT: it keeps the type you are already
+  // working in when the box contains any of them, and switches when the box contains only the other. Both
+  // flows a creator would try therefore work, and neither surprises them by acting on something invisible.
+  const _sweep = (list) => {
+    const out=[];
+    for(const p of (list||[])){
+      if(!p || (p.userData && (p.userData.edLock || p.userData.edHide))) continue;   // build 1036: locked/hidden dodge the marquee
+      _marqueeV.setFromMatrixPosition(p.matrixWorld); _marqueeV.project(cam);
+      const sx = r.left + (_marqueeV.x*0.5+0.5)*r.width, sy = r.top + (-_marqueeV.y*0.5+0.5)*r.height;
+      if(_marqueeV.z < 1 && sx>=x0 && sx<=x1 && sy>=y0 && sy<=y1) out.push(p);
+    }
+    return out;
+  };
+  const propHits = _sweep(propModels);
+  const lightHits = _sweep(typeof lightModels!=='undefined' ? lightModels : null);
+  // which list this marquee is about
+  const wantLights = (editorActive==='lights') ? (lightHits.length>0 || propHits.length===0)
+                                               : (lightHits.length>0 && propHits.length===0);
+  if(wantLights){
+    if(e.shiftKey){ for(const g of lightHits) if(selLights.indexOf(g)<0) selLights.push(g); }
+    else selLights = lightHits.slice();
+    editorActive='lights';
+    if(selLights.length) editorTargets.lights.idx = lightModels.indexOf(selLights[selLights.length-1]);
+    if(typeof syncModeToActive==='function') syncModeToActive();
+    if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    return;
   }
+  const hits = propHits;
   const _mem = (typeof _groupMembers==='function') ? (o)=>_groupMembers(o).filter(m=>!(m && m.userData && m.userData.edLock)) : (o)=>[o];   // build 798: a box that catches any group member grabs the whole group (1038: minus locked members)
   if(e.shiftKey){ for(const o of hits) for(const m of _mem(o)) if(selProps.indexOf(m)<0) selProps.push(m); }   // add to the current selection
-  else { const set=[]; for(const o of hits) for(const m of _mem(o)) if(set.indexOf(m)<0) set.push(m); selProps = set; selLights = []; }   // fresh selection (empty box clears)
+  else { const set=[]; for(const o of hits) for(const m of _mem(o)) if(set.indexOf(m)<0) set.push(m); selProps = set; selLights = []; }   // fresh selection (empty box clears; a PROP marquee drops the light selection because only one type can be active)
   editorActive='props';
   if(selProps.length) editorTargets.props.idx = propModels.indexOf(selProps[selProps.length-1]);
   if(typeof syncModeToActive==='function') syncModeToActive();
@@ -20057,7 +20088,11 @@ function setAudioZoneMarkersVisible(v){ for(const g of audioZoneMarkers) g.visib
 // a hardcoded behaviour (death, audio, jump, ladder, fire, water); this one does nothing by
 // itself and hands the moment to the graph, which is where the author's game actually lives.
 // Authoritative side only (host/solo) — the graph is, so the trigger must be.
-const TRIG_WHO = ['player','enemy','any'];
+// build 1276: 'prop' — a zone can watch for a PROP, not just a body. Build 1170 gave props a runtime
+// lifecycle (show/hide/move/push) and 1258 let the graph shove them, but nothing could DETECT one: "the
+// ball is in the goal", "the crate is on the pressure plate" and "the key landed in the slot" were all
+// unaskable, which is most of what a sports or physics-puzzle level is made of.
+const TRIG_WHO = ['player','enemy','any','prop'];
 const TRIG_ON  = ['enter','exit','stay'];
 function _migrateTrigger(z){
   z=z||{};
@@ -20065,6 +20100,7 @@ function _migrateTrigger(z){
     y:+z.y||0, h:Math.max(0.5, Math.min(200, z.h!=null?+z.h:4)),
     on:(TRIG_ON.indexOf(z.on)>=0?z.on:'enter'),
     who:(TRIG_WHO.indexOf(z.who)>=0?z.who:'player'),
+    ptag:String(z.ptag==null?'':z.ptag).trim().slice(0,40),   /* build 1276: which prop tag to watch; blank = any prop */
     ev:String(z.ev==null?'':z.ev).trim().slice(0,60),
     once:!!z.once,
     every:Math.max(0.1, Math.min(60, +z.every||1)) };   // 'stay' cadence, seconds
@@ -20146,7 +20182,15 @@ function updateTriggerZones(dt){
     const z=triggerZones[i]; if(!z.ev) continue;
     const st=_trigState[i] || (_trigState[i]={ inside:false, fired:0, next:0 });
     if(!st.a) st.a={};
-    if(z.who!=='enemy'){
+    // build 1276: state the three audiences POSITIVELY. Both branches below used to test `who` with
+    // `!==`, which is correct for a three-value enum and silently wrong the moment a fourth arrives: a
+    // 'prop' zone would have fired for players AND enemies as well. Adding a value to an enum tested by
+    // exclusion enables every branch that did not name the new value — the same shape as build 1272's
+    // six copies of one condition.
+    const _wPlayer = (z.who==='player' || z.who==='any');
+    const _wEnemy  = (z.who==='enemy'  || z.who==='any');
+    const _wProp   = (z.who==='prop');
+    if(_wPlayer){
       for(const ac of _trigActors){
         const ast=st.a[ac.pid] || (st.a[ac.pid]={ inside:false, next:0 });
         const inz = !ac.dead && _trigContains(z, ac.x, ac.y, ac.z);
@@ -20156,10 +20200,24 @@ function updateTriggerZones(dt){
     }
     // enemies keep the union edge with no identity — an enemy has no pid, and per-enemy edges would
     // turn a 40-strong wave crossing a zone into 40 pulses a graph never asked for
-    if(z.who!=='player' && typeof enemies!=='undefined'){
+    if(_wEnemy && typeof enemies!=='undefined'){
       let inside=false;
       for(const en of enemies){ if(!en.mesh) continue;
         if(_trigContains(z, en.mesh.position.x, en.mesh.position.y, en.mesh.position.z)){ inside=true; break; } }
+      if(_trigStep(z, st, inside, now) && typeof logicEvent==='function') logicEvent(z.ev);
+    }
+    // build 1276: props take the enemy's UNION edge for the same reason — a prop has no pid, and a
+    // per-prop edge would turn a pile of debris rolling through a zone into a pulse each. A blank tag
+    // means any prop, which is the "did ANYTHING land in here" question.
+    if(_wProp && typeof propModels!=='undefined'){
+      const tag=z.ptag||'';
+      let inside=false;
+      for(const o of propModels){
+        if(!o || !o.visible) continue;                                  // hidden by the graph (1170) or culled — not in play
+        const u=o.userData; if(u && (u._shattered || u._pvHidden)) continue;
+        if(tag && !(u && u.tag===tag)) continue;
+        if(_trigContains(z, o.position.x, o.position.y, o.position.z)){ inside=true; break; }
+      }
       if(_trigStep(z, st, inside, now) && typeof logicEvent==='function') logicEvent(z.ev);
     }
   }
@@ -29107,7 +29165,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1274 · 2026-08-01';
+const BUILD_VERSION = 'build 1276 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37724,7 +37782,18 @@ function renderTriggersPanel(){
         b.onclick=()=>{ pushUndoSnapshot(); on(o[0]); touch(); renderTriggersPanel(); }; wrap.appendChild(b); });
       row(label, wrap); };
     seg('when', [['enter','Enters'],['exit','Leaves'],['stay','Stays in']], z.on, v=>{ z.on=v; });
-    seg('who', [['player','Player'],['enemy','Enemy'],['any','Anything']], z.who, v=>{ z.who=v; });
+    seg('who', [['player','Player'],['enemy','Enemy'],['any','Anything'],['prop','A prop']], z.who, v=>{ z.who=v; });
+    if(z.who==='prop'){   /* build 1276 */
+      const ti=document.createElement('input'); ti.type='text'; ti.value=z.ptag||''; ti.placeholder='any prop';
+      ti.setAttribute('list','lgTagList');
+      ti.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
+      ti.onchange=()=>{ pushUndoSnapshot(); z.ptag=String(ti.value||'').trim().slice(0,40); touch(); renderTriggersPanel(); };
+      row('prop tag', ti);
+      const h=document.createElement('div'); h.className='hint'; h.style.cssText='font-size:10px;opacity:0.75;margin:2px 0 0;';
+      h.textContent=z.ptag ? ('Fires when a prop tagged \u201c'+z.ptag+'\u201d is inside \u2014 a ball in a goal, a crate on a plate. One edge for the whole zone, however many arrive.')
+                           : 'Blank = ANY prop. Tag a prop on the World tab to watch just that one.';
+      box.appendChild(h);
+    }
     const mkN=(label,key,min,max,step,after)=>{
       const inp=document.createElement('input'); inp.type='number'; inp.min=min; inp.max=max; inp.step=step; inp.value=z[key];
       inp.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';

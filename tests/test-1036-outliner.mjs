@@ -87,7 +87,11 @@ assert(/for\(const p of propModels\)\{ if\(p && !\(p\.userData && \(p\.userData\
   'locked/hidden props are not click targets');
 assert(/if\(g\.userData\.marker && g\.visible && !g\.userData\.edLock\) targets\.push\(g\.userData\.marker\);/.test(src), 'locked/hidden lights are not click targets');
 assert(/for\(const g of spawnMarkers\)\{ if\(g\.visible && !g\.userData\.edLock\) targets\.push\(g\); \}/.test(src), 'locked spawns are not click targets');
-assert(/if\(!p \|\| \(p\.userData && \(p\.userData\.edLock \|\| p\.userData\.edHide\)\)\) continue; _marqueeV/.test(src), 'the marquee skips them too');
+// build 1275: the sweep became a helper so it can cover lights as well as props — same rule, one copy
+assert(/if\(!p \|\| \(p\.userData && \(p\.userData\.edLock \|\| p\.userData\.edHide\)\)\) continue;   \/\/ build 1036/.test(src),
+  'the marquee skips them too');
+assert(/const propHits = _sweep\(propModels\);/.test(src) && /const lightHits = _sweep\(/.test(src),
+  '...and the same guarded sweep now covers lights, so they cannot drift apart');
 
 // ---- editing-only visibility: everything plays visible ----
 assert(/function _outOnEditorClose\(\)\{/.test(src) && /if\(o && o\.userData && o\.userData\.edHide\) o\.visible=true;/.test(extractFunction('_outOnEditorClose', src)),
