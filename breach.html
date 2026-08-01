@@ -10682,6 +10682,23 @@ function updateLogic(dt){
 // mirrors just the watched variables to clients ({t:'hudv'}), so every player's widgets agree.
 // Widgets are plain data (sanitized, textContent-only — imported levels can't inject markup).
 const HW_ANCHORS=['tl','tc','tr','ml','mr','bl','bc','br'];
+// build 1260: HUD ART. Widgets could show numbers and take a click (1255) but never show a PICTURE,
+// so every authored interface was engine-coloured text on the engine's own plate — no card faces, no
+// portraits, no panel frames, no title art. `img` gives every widget a picture: on the `image` kind it
+// IS the widget, on every other kind it is the BACKGROUND, so a button becomes a card face and a bar
+// sits in a frame. One field, two roles, decided by the kind.
+//
+// The url goes into CSS, and level data is untrusted, so it is validated rather than escaped: an
+// http(s) or data:image url with no quote, paren, backslash or whitespace can neither break out of
+// url("...") nor smuggle a scheme. (Unlike a WebGL texture this needs no CORS header, so any hosted
+// image works — worth saying in the editor hint, because the texture fields next door do need one.)
+function _hwSafeUrl(u){
+  u = String(u == null ? '' : u).trim();
+  if(!u) return '';
+  if(/[\u0022\u0027()\\\s<>]/.test(u)) return '';   /* the quotes are \u escapes on purpose: a literal quote inside a regex derails extractFunction's string tracker, and this function is unit-tested */
+  if(!/^https?:\/\//i.test(u) && !/^data:image\//i.test(u)) return '';
+  return u.slice(0, 400);
+}
 function _sanitizeHudWidgets(a){
   if(!Array.isArray(a)) return [];
   const out=[];
@@ -10689,12 +10706,16 @@ function _sanitizeHudWidgets(a){
     if(!w || typeof w!=='object') continue;
     out.push({
       id:(typeof w.id==='string' && w.id) ? w.id.slice(0,12) : ('hw_'+Math.random().toString(36).slice(2,8)),
-      kind:(w.kind==='timer'||w.kind==='bar'||w.kind==='button')?w.kind:'text',   /* build 1255 */
+      kind:(w.kind==='timer'||w.kind==='bar'||w.kind==='button'||w.kind==='image')?w.kind:'text',   /* build 1255 · 1260 */
       label:String(w.label==null?'':w.label).slice(0,80),
       value:String(w.value==null?'':w.value).slice(0,24).trim(),
       max:String(w.max==null?'':w.max).slice(0,24).trim(),
       when:String(w.when==null?'':w.when).slice(0,24).trim(),
       event:String(w.event==null?'':w.event).slice(0,60).trim(),   /* build 1255: the logic event a BUTTON fires */
+      img:_hwSafeUrl(w.img),                                        /* build 1260: art — the widget on 'image', the backdrop on every other kind */
+      iw:Math.max(8,Math.min(1600,Math.round(+w.iw||160))),         /* image box, in pixels */
+      ih:Math.max(8,Math.min(1200,Math.round(+w.ih||100))),
+      alpha:Math.max(0.05,Math.min(1,(w.alpha==null?1:+w.alpha)||1)),
       anchor:HW_ANCHORS.indexOf(w.anchor)>=0?w.anchor:'tc',
       dx:Math.max(-2000,Math.min(2000,Math.round(+w.dx||0))),
       dy:Math.max(-2000,Math.min(2000,Math.round(+w.dy||0))),
@@ -10852,6 +10873,16 @@ function _hwRebuild(){
       el.onmouseleave=()=>{ el.style.filter=''; };
       el.onclick=(ev)=>{ ev.preventDefault(); ev.stopPropagation(); _hwFire(w); };
     }
+    if(w.kind==='image'){   /* build 1260: the art IS the widget — an authored box, so nothing reflows when the image lands */
+      el.style.width=w.iw+'px'; el.style.height=w.ih+'px';
+      el.style.display='flex'; el.style.alignItems='center'; el.style.justifyContent='center';
+    }
+    if(w.img){
+      el.style.backgroundImage='url("'+w.img+'")';   // already validated by _hwSafeUrl at sanitize time
+      el.style.backgroundSize='100% 100%'; el.style.backgroundRepeat='no-repeat';
+      if(!w.bg && w.kind!=='button'){ el.style.border='0'; el.style.padding='0'; }   // art supplies its own frame
+    }
+    if(w.alpha < 1) el.style.opacity=String(w.alpha);   /* fades the label with it — set 1 for a crisp caption over art */
     const lb=document.createElement('div'); lb.className='hwLb'; el.appendChild(lb);
     let fill=null;
     if(w.kind==='bar'){
@@ -28604,7 +28635,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1259 · 2026-08-01';
+const BUILD_VERSION = 'build 1260 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36884,7 +36915,7 @@ function renderHudPanel(){
     hudWidgets.forEach((w,i)=>{
       const card=document.createElement('div'); card.style.cssText='border:1px solid rgba(var(--accent-rgb),0.18);border-radius:6px;padding:6px 7px;margin:5px 0;display:flex;flex-direction:column;gap:4px;';
       const l1=document.createElement('div'); l1.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
-      l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar'],['button','Button']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
+      l1.appendChild(selI([['text','Text'],['timer','Timer'],['bar','Bar'],['button','Button'],['image','Image']], w.kind, v=>{ w.kind=v; renderHudPanel(); }));
       const lab=inp(w.label, w.kind==='timer'?'label (before the M:SS)':'label \u2014 {var} shows live', 150, v=>{ w.label=v.slice(0,80); }); lab.style.flex='1'; l1.appendChild(lab);
       const del=document.createElement('button'); del.textContent='\u2715'; del.title='Remove widget'; del.style.cssText='padding:1px 7px;font-size:11px;flex:0 0 auto;'; del.onclick=()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); hudWidgets.splice(i,1); commitW(); renderHudPanel(); };
       l1.appendChild(del); card.appendChild(l1);
@@ -36903,6 +36934,32 @@ function renderHudPanel(){
         l2.appendChild(inp(w.value,'e.g. time',80, v=>{ w.value=v.trim().slice(0,24); }, 'lgVarList'));
         if(w.kind==='bar'){ l2.appendChild(document.createTextNode('max')); l2.appendChild(inp(w.max,'100 or a variable',90, v=>{ w.max=v.trim().slice(0,24); }, 'lgVarList')); }
         card.appendChild(l2);
+      }
+      { /* build 1260: art on any widget — the picture on an Image, the backdrop on everything else */
+        const li=document.createElement('div'); li.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+        li.appendChild(document.createTextNode(w.kind==='image'?'image url':'background image'));
+        const iu=inp(w.img,'https://… .png',150, v=>{ w.img=_hwSafeUrl(v); }); iu.style.flex='1'; li.appendChild(iu);
+        if(typeof _uploadRow==='function'){ /* the level's own image host, when one is configured */ }
+        card.appendChild(li);
+        if(w.kind==='image'){
+          const ls=document.createElement('div'); ls.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+          ls.appendChild(document.createTextNode('size'));
+          ls.appendChild(numI(w.iw,58,v=>{ w.iw=Math.max(8,Math.min(1600,Math.round(v)||160)); }));
+          ls.appendChild(document.createTextNode('\u00d7'));
+          ls.appendChild(numI(w.ih,58,v=>{ w.ih=Math.max(8,Math.min(1200,Math.round(v)||100)); }));
+          ls.appendChild(document.createTextNode('px'));
+          card.appendChild(ls);
+        }
+        const lo=document.createElement('div'); lo.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
+        lo.appendChild(document.createTextNode('opacity'));
+        const oi=document.createElement('input'); oi.type='range'; oi.min='0.05'; oi.max='1'; oi.step='0.05'; oi.value=String(w.alpha==null?1:w.alpha); oi.style.flex='1';
+        const ov=document.createElement('span'); ov.style.cssText='min-width:30px;text-align:right;opacity:.8'; ov.textContent=(+oi.value).toFixed(2);
+        oi.addEventListener('mousedown', ()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot(); });
+        oi.oninput=()=>{ w.alpha=+oi.value; ov.textContent=(+oi.value).toFixed(2); commitW(); };
+        lo.appendChild(oi); lo.appendChild(ov); card.appendChild(lo);
+        const h=document.createElement('div'); h.className='hint'; h.style.cssText='margin:1px 0 0;font-size:10.5px;';
+        h.textContent='Any hosted image works \u2014 no CORS header needed (unlike the texture fields). Use it for card faces on buttons, portraits, panel frames, or a full title backdrop. "show when" hides and shows it from a logic variable, so an interface can open and close.';
+        card.appendChild(h);
       }
       const l3=document.createElement('div'); l3.style.cssText='display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:#9fbdb2;';
       l3.appendChild(selI([['tl','Top left'],['tc','Top centre'],['tr','Top right'],['ml','Mid left'],['mr','Mid right'],['bl','Bottom left'],['bc','Bottom centre'],['br','Bottom right']], w.anchor, v=>{ w.anchor=v; }));
@@ -36933,6 +36990,7 @@ function renderHudPanel(){
     mkAdd('+ Timer', { kind:'timer', label:'', value:'time', anchor:'tc', size:26 });
     mkAdd('+ Bar', { kind:'bar', label:'', value:'progress', max:'100', anchor:'tc' });
     mkAdd('+ Button', { kind:'button', label:'BUY TURRET \u2014 50', event:'buyTurret', anchor:'bc', dy:-90, when:'shopOpen' });   /* build 1255 */
+    mkAdd('+ Image', { kind:'image', label:'', anchor:'mr', iw:160, ih:100 });   /* build 1260 */
     wrap.appendChild(addRow);
   }
   grp('Colours');

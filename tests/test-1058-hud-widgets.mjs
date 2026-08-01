@@ -11,7 +11,9 @@ const src = gameSource();
 
 // ---- the sanitizer: imported levels stay inert data ----
 const san = new Function(
-  "const HW_ANCHORS=['tl','tc','tr','ml','mr','bl','bc','br'];\n" + extractFunction('_sanitizeHudWidgets', src)
+  "const HW_ANCHORS=['tl','tc','tr','ml','mr','bl','bc','br'];\n"
+  + extractFunction('_hwSafeUrl', src) + '\n'   // build 1260: the sanitizer validates image urls through it
+  + extractFunction('_sanitizeHudWidgets', src)
   + '\nreturn _sanitizeHudWidgets;')();
 eq(san(null).length, 0, 'junk input yields no widgets');
 eq(san([null, 'x', 7]).length, 0, 'non-object entries are dropped');

@@ -6,7 +6,7 @@ const src = gameSource();
 // real _hwFire and _hwSyncCursor in a stubbed scope, plus the sanitizer.
 
 // --- the sanitizer -----------------------------------------------------------------------------------
-const san = new Function('HW_ANCHORS', extractFunction('_sanitizeHudWidgets') + '; return _sanitizeHudWidgets;')(['tl','tc','tr','ml','mr','bl','bc','br']);
+const san = new Function('HW_ANCHORS', extractFunction('_hwSafeUrl') + extractFunction('_sanitizeHudWidgets') + '; return _sanitizeHudWidgets;')(['tl','tc','tr','ml','mr','bl','bc','br']);
 {
   const [b] = san([{ kind:'button', label:'BUY', event:' buyTurret ', when:'shopOpen' }]);
   eq(b.kind, 'button', 'the button kind survives');
@@ -117,7 +117,7 @@ assert(/_hwSyncCursor\(_btnVis && \(typeof gameOn!=='undefined' && gameOn\)/.tes
 assert(/if\(!hudWidgets\.length\)\{[\s\S]{0,120}?_hwSyncCursor\(false\); return; \}/.test(src), 'a level with no widgets releases the claim too');
 assert(/if\(typeof hudWidgets!=='undefined'\) for\(const w of hudWidgets\)\{ if\(w && w\.kind==='button' && w\.event\) set\.add/.test(src),
   'a button’s event name joins the graph’s known events — On event autocompletes what you just authored');
-assert(/\['button','Button'\]\], w\.kind/.test(src), 'the editor offers the kind');
+assert(/\['button','Button'\],\['image','Image'\]\], w\.kind/.test(src), 'the editor offers the kind (build 1260 added Image beside it)');
 assert(/lb\.appendChild\(inp\(w\.event,'e\.g\. buyTurret',120, v=>\{ w\.event=v\.trim\(\)\.slice\(0,60\); \}, 'lgEvtList'\)\);/.test(src),
   'with an event field that autocompletes from the graph');
 assert(/mkAdd\('\+ Button', \{ kind:'button'/.test(src), 'and a + Button that lands a working shop-style example');

@@ -1519,6 +1519,38 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## HUD art (build 1260)
+
+Widgets could show numbers (1058) and take a click (1255) but never show a PICTURE, so every
+authored interface was engine-coloured text on the engine's own plate — no card faces, no portraits,
+no panel frames, no title art. This is the audit's "HUD/UI authoring is variables-only" gap and the
+second half of the card-game unlock. `img` is **one field with two roles, decided by the kind**: on
+the new `image` kind it IS the widget, on every other kind it is the BACKGROUND — so a button becomes
+a card face and a bar sits inside a frame. Plus `iw`/`ih` (an AUTHORED box, so nothing reflows when
+the picture lands) and `alpha`.
+
+**The url goes into CSS and level data is untrusted, so it is VALIDATED, not escaped.** `_hwSafeUrl`
+requires an `http(s)` or `data:image` scheme and rejects any quote, paren, backslash, angle bracket or
+whitespace — nothing can break out of `url("...")` or smuggle a scheme, and validation happens once at
+SANITIZE time so the render path interpolates a string that is already known good. `test-1260` drives
+it with eight injection shapes beside the legitimate ones. Worth knowing: a CSS image needs no CORS
+header, unlike the texture fields next door — the editor hint says so, because the analogy would
+otherwise mislead.
+
+Two harness notes, both cost a cycle:
+- **A literal quote inside a regex derails `extractFunction`.** `_hwSafeUrl`'s character class is
+  written with `\u0022`/`\u0027` on purpose: with real quotes, extraction ran away by 125,000
+  characters and two unrelated harnesses died with `savedLevel is not defined`. The file already
+  favours `\uXXXX` escapes (307 of them) — this is why.
+- **A probe that builds its own source with nested template interpolation will mangle it.** The first
+  live run reported the art missing; the engine was fine and the probe had turned the url into the
+  literal `${u}`. Building the probe string in Node and passing it as one argument fixed it. Verified
+  after: a 220x140 image widget renders, and a card-face button fires the graph on a real mouse click
+  ("PLAYED 1" counting up).
+
+Three pins moved (1058, 1255 twice) — all rig plumbing for the sanitizer's new dependency, intent
+unchanged.
+
 ## The graph reads the inventory (build 1259)
 
 Dialogue could branch on what the player carries (`[if item:redKey >= 1]`) since build 1076; the
