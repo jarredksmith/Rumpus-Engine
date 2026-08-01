@@ -8511,6 +8511,54 @@ const emitterLights = [];   // { light, baseIntensity }
 function registerEmitterLight(light){ light.castShadow = false; emitterLights.push({ light, baseIntensity: light.intensity }); }
 function unregisterEmitterLight(light){ const i = emitterLights.findIndex(e=>e.light===light); if(i>=0) emitterLights.splice(i,1); }
 const _lp = new THREE.Vector3();
+// ---------- build 1257: THE LIGHT CENSUS ----------
+// The audit's #1 performance ceiling, and it is structural rather than a bug. `updateLightBudget`
+// fades an emitter's INTENSITY past the nearest 16 (8 on phones) — but by the engine's own hard rule
+// (636/977/1153/1155) the light must stay in the scene, because removing it would change the light
+// COUNT and recompile every material mid-match. three r149's forward renderer has no clustering, so
+// it compiles `NUM_POINT_LIGHTS = every light present` and EVERY FRAGMENT OF EVERY MATERIAL loops
+// over all of them, dimmed or not. A creator who ticks "light emitter" on thirty props therefore
+// pays a 30+ light loop per pixel forever, on the devices least able to afford it — with nothing in
+// the product ever saying so. `_hitchLightWatch` (1155) only notices a CHANGE in the count, never
+// its absolute size.
+//
+// Two answers, both cheap. The census makes the cost VISIBLE (Level Check, and the perf HUD where a
+// creator is already looking at draws and triangles). The deploy cap makes it BOUNDED: emitter
+// lights are registered as props load, and a match's light count is frozen at deploy anyway, so
+// refusing the surplus THERE costs nothing at runtime and cannot cause a mid-match recompile. Past
+// the cap a prop keeps its glow (the emissive material is free) and loses only its cast light —
+// which is exactly what the distance budget was already doing to it, minus the per-pixel bill.
+const LIGHT_SOFT_CAP = 40;   // a warning past here; measured guidance, not a limit
+function _lightCensus(){
+  const c = { point:0, spot:0, dir:0, hemi:0, shadow:0, emitters:(typeof emitterLights!=='undefined')?emitterLights.length:0, total:0 };
+  try{ scene.traverseVisible(o=>{
+    if(!o || !o.isLight) return;
+    c.total++;
+    if(o.isPointLight) c.point++; else if(o.isSpotLight) c.spot++;
+    else if(o.isDirectionalLight) c.dir++; else if(o.isHemisphereLight) c.hemi++;
+    if(o.castShadow) c.shadow++;
+  }); }catch(e){}
+  return c;
+}
+// The per-pixel cost is the FORWARD-LIT set: point + spot. Directional and hemisphere lights are a
+// fixed handful and are not what a creator's content grows.
+function _lightLoad(c){ return (c.point|0) + (c.spot|0); }
+function _emitterCap(){ return (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 24 : 48; }
+let _emitterRefused = 0;
+// Deploy freezes the count: anything registered past the cap is dropped from the graph rather than
+// hidden (hiding a light still leaves it counted — build 977's trap) and reported once.
+function enforceEmitterCap(){
+  if(typeof emitterLights==='undefined') return 0;
+  const cap=_emitterCap(); let n=0;
+  while(emitterLights.length > cap){
+    const e = emitterLights.pop(); n++;
+    try{ const L=e && e.light; if(L){ L.intensity=0; if(L.parent) L.parent.remove(L); } }catch(err){}
+  }
+  if(n){ _emitterRefused = n;
+    if(typeof console!=='undefined') console.warn('[RUMPUS] '+n+' emissive prop light'+(n>1?'s':'')+' past the '+cap+'-light budget were dropped (the props keep their glow).');
+  }
+  return n;
+}
 function updateLightBudget(){
   const N = emitterLights.length, MAXL = _maxActiveLights();
   if(N <= MAXL){
@@ -25654,7 +25702,7 @@ function loadVfxTexture(kind){
     undefined,
     ()=>{ console.warn('[VFX] no '+kind+' sheet at '+cfg.url+' — using the built-in procedural one'); });   // keep the procedural sheet
 }
-function preloadVfx(){ for(const k in VFX) loadVfxTexture(k); _ensureBlastLights(); _ensureMuzzleLights(); if(typeof _ensureChestLights==='function') _ensureChestLights(); warmFlipbookShaders(); }   // build 1153: the loot-box beam pool is seated here too, so the count is final before warmFlipbookShaders compiles against it   // build 636: seat the pooled lights + warm all combat shaders at LOAD (behind the loading screen), so the first explosion can't trigger a multi-second recompile freeze
+function preloadVfx(){ for(const k in VFX) loadVfxTexture(k); _ensureBlastLights(); _ensureMuzzleLights(); if(typeof _ensureChestLights==='function') _ensureChestLights(); if(typeof enforceEmitterCap==='function') enforceEmitterCap(); warmFlipbookShaders(); }   /* build 1257: the surplus is refused BEFORE the shaders compile against the count */   // build 1153: the loot-box beam pool is seated here too, so the count is final before warmFlipbookShaders compiles against it   // build 636: seat the pooled lights + warm all combat shaders at LOAD (behind the loading screen), so the first explosion can't trigger a multi-second recompile freeze
 // build 622: the first rocket/explosion used to FREEZE the frame. The texture was pre-uploaded, but the Sprite
 // shader PROGRAM that draws a flipbook is only compiled/linked by the GPU the first time such a sprite is
 // actually rendered — and the load-time renderer.compile() pass runs before any flipbook sprite exists in the
@@ -28500,7 +28548,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1256 · 2026-08-01';
+const BUILD_VERSION = 'build 1257 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -32591,7 +32639,7 @@ function updatePerfHud(){
   el.innerHTML = 'FPS '+fps.toFixed(0)+'  ('+totMs.toFixed(1)+' ms)<br>'
     + 'render '+r.toFixed(1)+'  phys '+p.toFixed(1)+'  net '+n.toFixed(1)+'<br>'
     + 'minimap '+mi.toFixed(1)+'  other '+other.toFixed(1)+' ms<br>'
-    + 'draws '+_perfCalls+'   tris '+(_perfTris/1000).toFixed(0)+'k   geom '+mem.geometries+'   tex '+mem.textures+'<br>'
+    + 'draws '+_perfCalls+'   tris '+(_perfTris/1000).toFixed(0)+'k   geom '+mem.geometries+'   tex '+mem.textures+'   lights '+((typeof _lightCensus==='function')?_lightLoad(_lightCensus()):'?')+'<br>'   /* build 1257: the per-pixel light loop, beside the draws it costs as much as */
     + 'enemies '+enemies.length+'   mixers '+mixers.length+(dofEnabled?'   <span style="color:#ffd166">DoF ON</span>':'');
 }
 // ---------- Cinematic intro camera: author a fly-through in the editor, play it on deploy ----------
@@ -38200,6 +38248,18 @@ function edFold(host, id, title, openDefault, subtitle){
 function levelIssues(){
   const issues=[];
   try{
+    // build 1257: the perf census. Not a mistake to fix — a cost to SEE. three r149 loops every
+    // point/spot light in every fragment of every material, so this number is the one a creator
+    // most needs and could least discover.
+    if(typeof _lightCensus==='function'){
+      const c=_lightCensus(), load=_lightLoad(c);
+      if(load > LIGHT_SOFT_CAP)
+        issues.push('Heavy lighting: '+load+' point/spot lights in the scene. Every one is looped over for every pixel (there is no clustering), so this is the biggest single cost on low-end machines — turn "Light emitter" off on decorative props, or give one bright light a longer range instead of several small ones.');
+      if(typeof _emitterRefused!=='undefined' && _emitterRefused>0)
+        issues.push(_emitterRefused+' emissive prop light'+(_emitterRefused>1?'s were':' was')+' past the engine budget and dropped at deploy — those props still glow, they just do not cast light.');
+      if(c.shadow > 4)
+        issues.push(c.shadow+' lights cast shadows. Each one is an extra render of the level every time it moves — keep it to a few key lights.');
+    }
     // build 1167: failed asset loads lead the list — "my prop vanished" is the #1 support thread and the
     // answer was sitting in the console. The url's tail is shown because Poly Pizza urls only differ there.
     if(typeof assetLoadFailures!=='undefined') for(const [src, e] of assetLoadFailures){

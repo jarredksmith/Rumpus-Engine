@@ -1519,6 +1519,36 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The light census, and a deploy cap (build 1257)
+
+The audit's #1 PERFORMANCE ceiling, and it is structural rather than a bug — which is why it needed
+naming rather than fixing. `updateLightBudget` (811) fades an emitter's INTENSITY past the nearest
+16 (8 on phones), but by this engine's own hard rule (636/977/1153/1155) the light must STAY IN THE
+SCENE, because removing it changes the light count and recompiles every material mid-match. r149's
+forward renderer has no clustering: it compiles `NUM_POINT_LIGHTS = every light present` and every
+fragment of every material loops over all of them, dimmed or not. So a creator who ticks "Light
+emitter" on thirty props pays a 30-light loop per pixel forever, on the devices least able to afford
+it — and nothing in the product ever said so. `_hitchLightWatch` (1155) only notices a CHANGE in the
+count, never its absolute size.
+
+Two answers, both cheap, because the expensive one (clustered/deferred lighting) is a renderer
+rewrite:
+- **Visible.** `_lightCensus()` counts by type over the visible graph; `_lightLoad()` is
+  point + spot — deliberately NOT the directional/hemisphere pair, which is fixed at a handful and is
+  not what content grows. Level Check warns past `LIGHT_SOFT_CAP` (40) and, unusually for that panel,
+  says *why* it costs and what to do; shadow-casting lights get their own line (each is an extra
+  render of the level whenever it moves). The perf HUD shows `lights N` beside draws and triangles.
+- **Bounded.** `enforceEmitterCap()` runs at DEPLOY inside `preloadVfx`, beside the pools that are
+  seated there and **before `warmFlipbookShaders` compiles against the count** — so the surplus is
+  refused at the one moment a count change is already expected and free. 48 lights, 24 on phones.
+  A refused light is REMOVED FROM THE GRAPH, not hidden (hiding still counts — 977's trap), the prop
+  keeps its emissive glow (that is free), and the count is reported in Level Check rather than
+  silently swallowed.
+
+`test-1257` executes both: the census over a stub scene (types, totals, shadow casters, throw-safe
+degradation) and the cap on both budgets — including that it is a complete no-op below the cap, so
+ordinary levels are byte-identical.
+
 ## Draco models load (build 1256)
 
 The inlined GLTFLoader has supported `KHR_draco_mesh_compression` since it was vendored — it throws
