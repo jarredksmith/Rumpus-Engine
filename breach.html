@@ -8322,6 +8322,16 @@ let _fitFx = 1e9, _fitFz = 1e9;
 // the depth range — near 1, far 260 — did not change in 1120, so it stays as tuned.)
 const SUN_NB_TEXELS = 7.7;
 const _sunNormalBias = (extent, px) => Math.min(0.6, Math.max(0.02, (2 * extent / (px || 2048)) * SUN_NB_TEXELS));
+const SHADOW_REFIT_TEXELS = 8;   /* build 1261: how far the snapped focus must drift before both cascades redraw.
+  Chosen from a measured sweep (test-1261 reproduces it), refit rate vs volume slack at shadowDist 60:
+      texels   walk 0.10   run 0.16   car 0.60   slack
+        0.5       100%       100%       100%      3cm     <- the old rule: every moving frame, forever
+          4        34%        50%       100%     23cm
+          8        19%        31%       100%     47cm     <- here: 3-5x fewer redraws on foot
+         12        13%        20%        50%     70cm
+  Slack scales with the texel, which scales with shadowDist, so it is always ~0.4% of the volume — the
+  trailing edge sits 0.45*E (27 m at the default) behind the eye, so half a metre is nothing. A fast
+  vehicle still refits every frame, which is correct: it is covering ground that genuinely needs it. */
 function _fitSunShadow(cam){
   if(!cam || !cam.isCamera) return false;
   const E = Math.max(8, Math.min(400, +((typeof worldCfg!=='undefined' && worldCfg.shadowDist) || 30)));
@@ -8345,7 +8355,22 @@ function _fitSunShadow(cam){
   // build 1185: the far cascade mirrors the sun every frame (colour/intensity are written in
   // applyWorldCfg AND per-frame by the day cycle — chasing every write site is how a mirror drifts).
   if(moonFar){ moonFar.color.copy(moon.color); moonFar.intensity = moon.intensity; moonFar.visible = moon.visible; }
-  const moved = Math.abs(fx - _fitFx) > texel*0.5 || Math.abs(fz - _fitFz) > texel*0.5;
+  // build 1261: A DEADBAND, because "static shadows" were re-rendering on almost every moving frame.
+  // The focus is already snapped to the texel grid above, so ANY change is at least a full texel and
+  // the old `> texel*0.5` test was true whenever the snap moved at all — and walking moves the focus
+  // ~10 cm/frame against a ~2.9 cm texel (shadowDist 30, 2048 map), i.e. three texels per frame. So
+  // `renderer.shadowMap.autoUpdate=false` bought nothing while the player was moving: both cascades
+  // redrew the whole caster set, every frame, forever.
+  //
+  // Waiting for N texels is nearly free, because a shadow map does not depend on the camera at all —
+  // it is rendered from the LIGHT. A stale fit does not lag the shadows; it only leaves the covered
+  // REGION a few centimetres behind where it would ideally sit (4 texels ~ 12 cm against a 60 m
+  // volume aimed 0.55*E ahead of the eye). And the test is a DISTANCE, so it is self-limiting: a car
+  // crosses the deadband sooner than a walker and refits proportionally more often, with no
+  // speed-dependent staleness. Lower quality rungs wait longer still — the machines that most need
+  // the draw calls back are the ones least able to see the difference.
+  const _rfT = texel * SHADOW_REFIT_TEXELS * ((typeof _prStepI!=='undefined' && _prStepI>0) ? 2 : 1);
+  const moved = Math.abs(fx - _fitFx) > _rfT || Math.abs(fz - _fitFz) > _rfT;
   const sized = Math.abs(moon.shadow.camera.right - E) > 1e-3;
   if(!moved && !sized) return false;
   _fitFx = fx; _fitFz = fz;
@@ -28635,7 +28660,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1260 · 2026-08-01';
+const BUILD_VERSION = 'build 1261 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

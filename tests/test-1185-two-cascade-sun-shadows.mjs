@@ -6,7 +6,7 @@
 // second sun (moonFar, seated at BOOT — the light count must never change during play) covers 4x that
 // extent. A chunk patch makes each fragment take the sun from exactly ONE cascade: the near one wherever
 // its map's projected coord actually covers, the far one everywhere else.
-import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, near, done } from './harness.mjs';
 import * as THREE from 'three';
 const src = gameSource();
 
@@ -41,7 +41,7 @@ const build = (coarse, shadowDist) => {
     src.match(/const _sunNormalBias = \(extent, px\) => [^\n]+;/)[0] + '\n' +
     'const _fitF = new THREE.Vector3(), _fitAx = new THREE.Vector3(), _fitAy = new THREE.Vector3(), _fitL = new THREE.Vector3(), _fitL2 = new THREE.Vector3();\n' +
     'let _fitFx = 1e9, _fitFz = 1e9;\n' +
-    extractFunction('_fitSunShadow') + '\nreturn _fitSunShadow;'
+    'const SHADOW_REFIT_TEXELS=' + extractConst('SHADOW_REFIT_TEXELS') + ';\n' + extractFunction('_fitSunShadow') + '\nreturn _fitSunShadow;'
   )(THREE, moon, moonFar, _sunTarget, _sunTargetFar, worldCfg);
   return { fit, moon, moonFar, _sunTarget, _sunTargetFar };
 };

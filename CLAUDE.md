@@ -1519,6 +1519,44 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## "Static" shadows were redrawing every moving frame (build 1261)
+
+The audit's #3 performance finding, reproduced exactly: `renderer.shadowMap.autoUpdate=false` (7024)
+bought nothing while the player was moving. `_fitSunShadow` snaps the focus to the shadow map's texel
+grid, so ANY change is at least a full texel — which made the old `> texel*0.5` test true whenever
+the snap moved at all. Measured by driving the real function over a 600-frame walk: **both cascades
+redrew the entire caster set on 100% of moving frames.** The tiered mover-dirtying (33316) only ever
+paid off standing still, which in an FPS is rare.
+
+The fix is a DEADBAND, not a frame throttle, and the distinction is the whole design. A shadow map is
+rendered from the LIGHT, so a stale fit does not lag the shadows at all — it only leaves the covered
+REGION slightly behind where it would ideally sit. And because the test is a DISTANCE, it is
+self-limiting: a car crosses it sooner than a walker and refits proportionally more often, so
+staleness never grows with speed. A frame-count throttle would have had exactly the opposite property.
+
+`SHADOW_REFIT_TEXELS = 8`, chosen from a measured sweep rather than picked (the sweep is in the
+source comment and `test-1261` reproduces it):
+
+```
+texels   walk 0.10   run 0.16   car 0.60   slack@E60
+  0.5       100%       100%       100%        3cm     <- the old rule
+    4        34%        50%       100%       23cm
+    8        19%        31%       100%       47cm     <- shipped: 3-5x fewer redraws on foot
+   12        13%        20%        50%       70cm
+```
+
+Slack scales with the texel, which scales with `shadowDist`, so it is always ~0.4% of the volume at
+any setting — and the volume's trailing edge already sits 0.45*E (27 m at the default) behind the eye.
+Lower quality rungs double the deadband: the machines that most need the draw calls back are the ones
+least able to see the difference. Build 1120's texel snap is untouched — it is precisely what makes a
+deadband safe, since without it the map would slide sub-texel every frame anyway.
+
+**My first guess was wrong and the measurement said so.** I picked 4 texels expecting a 2.5x cut;
+it measured 2.0x at a run, and the staleness bound I asserted (20 cm) was also wrong (23 cm). The
+sweep then showed 8 was the honest choice. Two pins moved (1120, 1185) — both rigs execute
+`_fitSunShadow` in isolation and it gained a constant, now supplied via `extractConst` so they test
+the shipped value rather than a copy.
+
 ## HUD art (build 1260)
 
 Widgets could show numbers (1058) and take a click (1255) but never show a PICTURE, so every
