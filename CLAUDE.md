@@ -1519,6 +1519,34 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Real bokeh (build 1247)
+
+Build 1241's notes named their own limit — "one gaussian family for near and far fields (no true
+bokeh shape)" — and the play report behind it ("can't ever quite get the settings to look right")
+was only half-fixed: the banding went, but a defocused highlight still faded into MIST. The blur's
+first pass is now a 32-tap golden-angle (Vogel) DISC gather — `r = sqrt(i/N)`, `θ = i·2.39996` —
+which is the uniform aperture integral a real lens performs, with a HIGHLIGHT weight per tap
+(`1 + 5·max(0, lum−0.7)`, computed in linear before any encode) so a bright point dominates every
+disc it falls inside: highlights bloom into bright circles. The second pass is no longer a V
+gaussian (a disc needs no separable pair) but a 3×3 tent whose spread scales with the local CoC —
+it fills the Vogel pattern's residual grain in defocused areas and cannot touch sharp pixels.
+
+1241's guarantees survive, restated where they now live: every tap in BOTH passes still weighs by
+its OWN CoC (the halo fix), the anti-banding guarantee moved from tap spacing to a hard 14-texel
+radius cap (worst Vogel gap ≈ r·√(π/32) — covered by bilinear + the fill; test-1241's computed
+section moved with it), and the 1115 encode invariant lives in the fill pass, the only one that
+presents. The disc pass passes LINEAR through untouched — including its early-out, where the old
+`_out()` was already an identity (uEncode is 0 on a non-presenting pass).
+
+Measured on a defocused emissive (focus 2 m, strength 3.5, the pink pickup blob): profile FLATNESS —
+area ≥70% of peak over area ≥25% of peak, the plateau-vs-peak discriminator — went 0.087 → 0.110
+(+27%), base control pair agreeing to 1%. And a correction worth keeping: the first metric (bright-
+pixel count) moved OPPOSITE the prediction (−11%) and was the metric's fault, not the shader's — a
+flat disc spreads moderately-bright horizon light evenly where a gaussian centre-weights it, so
+"more bright pixels" was never what a disc promises. What a disc promises is the plateau, and the
+plateau is what measured. The cine preview window's own mini-DoF (`_renderPvDof`, build 614) still
+uses its old kernel — a preview approximation, listed as open work.
+
 ## Per-object motion blur (build 1246)
 
 Build 1238's notes named their own gap: rotation reprojection answers only "how did the CAMERA

@@ -7155,29 +7155,60 @@ function ensureDof(){
   // soft focus-to-blur transition instead of a linear ramp with a hard cutoff. Honest limits: one
   // gaussian family for near and far fields (no true bokeh shape), and the saturated radius trades
   // maximum blur for guaranteed smoothness.
-  const frag = [
+  // build 1247: REAL BOKEH. 1241 fixed the banding but left the blur one gaussian family, and its
+  // notes named the limit: no true bokeh shape — a defocused highlight faded into MIST instead of
+  // blooming into a disc. The first pass is now a 32-tap golden-angle (Vogel) DISC gather: uniform
+  // disc coverage (r = sqrt(i/N), theta = i*2.39996), which is what an aperture actually integrates,
+  // and each tap carries a HIGHLIGHT weight (1 + 5*max(0, lum-0.7), computed in linear before the
+  // encode) so a bright point dominates every disc it falls inside — highlights spread into bright
+  // circles instead of dimming away. 1241's two rules are kept: every tap still weighs by its OWN
+  // CoC (an in-focus neighbour keeps its colour to itself — the halo fix), and the radius is capped
+  // (14 texels) so undersampling cannot band. The second pass is no longer a V gaussian — a disc
+  // needs no separable pair — but a small 3x3 tent whose spread scales with the local CoC: it fills
+  // the Vogel pattern's residual grain in defocused areas and leaves sharp pixels untouched.
+  const dofShared = [
     'varying vec2 vUv;',
     'uniform sampler2D tColor; uniform sampler2D tDepth;',
     'uniform vec2 uTexel; uniform float uNear; uniform float uFar; uniform float uFocus; uniform float uRange; uniform float uStrength; uniform vec2 uDir;',
     _OETF_GLSL,
     'float viewZ(float d){ float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }',
     'float cocAt(vec2 uv){ float dd = viewZ(texture2D(tDepth, uv).x); return smoothstep(0.0, 1.0, abs(dd - uFocus) / max(0.001, uRange)); }',
+  ].join('\n');
+  const fragDisc = [
+    dofShared,
     'void main(){',
     '  float cocN = cocAt(vUv);',
-    '  float radius = cocN * clamp(uStrength, 0.0, 4.0) * 6.0;',
-    '  if(radius < 0.35){ vec4 c0 = texture2D(tColor, vUv); gl_FragColor = vec4(_out(c0.rgb), c0.a); return; }',
-    '  float spacing = min(radius / 8.0, 1.5);',
-    '  vec2 stp = uDir * uTexel * spacing;',
+    '  float radius = min(cocN * clamp(uStrength, 0.0, 4.0) * 6.0, 14.0);',
+    '  if(radius < 0.35){ gl_FragColor = texture2D(tColor, vUv); return; }',
     '  vec4 sum = vec4(0.0); float wsum = 0.0;',
-    '  for(int i=-8;i<=8;i++){ float fi=float(i);',
-    '    vec2 uv2 = vUv + stp*fi;',
-    '    float w = exp(-fi*fi/32.0) * (0.25 + 0.75*cocAt(uv2));',
+    '  for(int i=0;i<32;i++){ float fi=float(i);',
+    '    float rr = sqrt((fi + 0.5) / 32.0) * radius;',
+    '    float th = fi * 2.39996323;',
+    '    vec2 uv2 = vUv + vec2(cos(th), sin(th)) * rr * uTexel;',
+    '    vec4 c = texture2D(tColor, uv2);',
+    '    float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));',
+    '    float w = (1.0 + 5.0*max(0.0, lum - 0.7)) * (0.25 + 0.75*cocAt(uv2));',
+    '    sum += c * w; wsum += w; }',
+    '  gl_FragColor = sum / wsum;',
+    '}',
+  ].join('\n');
+  const fragFill = [
+    dofShared,
+    'void main(){',
+    '  float cocN = cocAt(vUv);',
+    '  float radius = min(cocN * clamp(uStrength, 0.0, 4.0) * 6.0, 14.0);',
+    '  if(radius < 0.35){ vec4 c0 = texture2D(tColor, vUv); gl_FragColor = vec4(_out(c0.rgb), c0.a); return; }',
+    '  float spacing = min(radius * 0.18, 1.4);',
+    '  vec4 sum = vec4(0.0); float wsum = 0.0;',
+    '  for(int i=-1;i<=1;i++) for(int j=-1;j<=1;j++){',
+    '    vec2 uv2 = vUv + vec2(float(i), float(j)) * spacing * uTexel;',
+    '    float w = ((i==0 && j==0) ? 2.0 : 1.0) * (0.25 + 0.75*cocAt(uv2));',
     '    sum += texture2D(tColor, uv2) * w; wsum += w; }',
     '  vec4 r = sum / wsum; gl_FragColor = vec4(_out(r.rgb), r.a);',
     '}',
   ].join('\n');
-  _dofMatH = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:frag, depthTest:false, depthWrite:false });
-  _dofMatV = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:frag, depthTest:false, depthWrite:false });
+  _dofMatH = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:fragDisc, depthTest:false, depthWrite:false });
+  _dofMatV = new THREE.ShaderMaterial({ uniforms:uniformsCommon(), vertexShader:vert, fragmentShader:fragFill, depthTest:false, depthWrite:false });
   _dofMatV.uniforms.uDir.value.set(0,1);
   _dofScene = new THREE.Scene();
   _dofCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
@@ -28166,7 +28197,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1246 · 2026-07-31';
+const BUILD_VERSION = 'build 1247 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
