@@ -3622,6 +3622,49 @@ Clamped on the way in AND the way out (a level file is untrusted input): an unkn
 than passed through to `NET.gameMode`, and the target is rounded and bounded to 0..999 — a NaN target is a
 match that can never end. Two serializer pins moved (21, 33), both keeping their intent.
 
+## The two views disagreed about what you were holding (build 1266)
+
+Reported from play, twice: *"I can't see the weapon in the Held gun grip (third-person) section. It shows up
+in the weapons tab, but not when trying to set the position in the player tab."* Build 1264 fixed a different
+panel (the viewmodel's own visibility) and this was still broken, which is 1158's pattern again — a fix that
+was complete for the half it was tested against.
+
+**The two views resolved their weapon model by different rules.** The first-person viewmodel asks
+`wepModelUrl(key)`, which falls back to the engine's own shipped gun. `attachAvatarGun` read
+`WEAPONS[key].model` directly and fell back only to **another weapon's** custom model — and every shipped
+weapon carries `model:''`, so on the stock loadout the resolved url was `''` and `if(!url){ return; }` left
+the hand empty. Not only in the editor panel: in third-person play, and on every remote player and bot. The
+grip sliders had nothing to position, which is exactly what "I can't see the weapon" meant.
+
+Probed live with the editor open on the Player tab, any external `.glb` served from a stub, **and the
+viewmodel as the control** — it loaded over the same route, so this was never the network:
+
+```
+                     WEAPONS.rifle.model   viewmodelUrl        vmLoaded    HAS_GUN   gunLoadUrl
+before                        ""           ...58bb.glb         ["rifle"]    false      null
+after                         ""           ...58bb.glb         ["rifle"]    true      ...58bb.glb
+```
+After: `visible true`, NDC `(0.04, 0.06)` — on screen. (The probe's screenshot shows the walk camera, not the
+Player-tab orbit: setting `editorOpen` alone does not engage that branch. The geometry is the evidence.)
+
+Three things worth keeping:
+- **The borrow was wrong in BOTH directions.** Empty whenever no weapon had a custom model — the entire stock
+  loadout — and once a creator set one on any weapon, FISTS borrowed it and the character punched while
+  holding a rifle. Both disappear with the resolver.
+- **`_wepShowsFists(key)` is now one named predicate asked by both views**, rather than the same condition
+  written out in each. Naming a rule in one place and applying it in one place is not the same as a rule
+  (1152/1158); this is the cheap version of that lesson applied before it bites.
+- **The load path became the COMMON path, so it needed a guard it never had.** `attachAvatarGun` runs every
+  frame per avatar, and before the callback lands each frame re-issued `loadGLTFCached` and would clone a
+  whole skinned model on completion. `_gunLoading` holds one request in flight per avatar and clears on both
+  success and failure — a bad url must not wedge that hand empty for the rest of the match. It clears
+  *before* the weapon-changed guard, so switching to a weapon that resolves the same url still re-attaches
+  from cache.
+
+Four pins moved (285, 286, 520, 523), each keeping its intent: 286's "a weapon with no model still shows a
+gun rather than vanishing" is now served by `wepModelUrl`'s fallback instead of the borrow, and 520/523's
+fists gate became an EXECUTED check of the shared predicate rather than a literal.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

@@ -6,8 +6,24 @@ const src = gameSource();
 
 const sw = extractFunction('showWeaponModel');
 // the procedural-fists gate now requires the absence of a custom model
-assert(/const isFists = !\(WEAPONS\[key\] && WEAPONS\[key\]\.model\) && \(key==='hands' \|\| \(WEAPONS\[key\] && WEAPONS\[key\]\.fists\)\);/.test(sw),
-  'isFists is false when the weapon has an imported model');
+// build 1266: the gate is now the shared _wepShowsFists — the same predicate the third-person hand asks,
+// so the two views can never disagree about whether the player is holding a gun. Executed, not just pinned.
+assert(/const isFists = _wepShowsFists\(key\);/.test(sw), 'isFists is false when the weapon has an imported model');
+{
+  const showsFists = new Function('WEAPONS', extractFunction('_wepShowsFists') + '; return _wepShowsFists;')({
+    hands:   { fists:true, model:'' },
+    handsMod:{ fists:true, model:'x.glb' },
+    crowbar: { melee:true, model:'' },
+    rifle:   { model:'' },
+    rifleMod:{ model:'r.glb' },
+  });
+  assert(showsFists('hands') === true, 'bare fists show the procedural hands');
+  assert(showsFists('handsMod') === false, 'a creator’s imported model for the fists slot wins (build 675)');
+  assert(showsFists('rifle') === false, 'a gun with no model of its own is still a gun, not fists');
+  assert(showsFists('rifleMod') === false, '...and so is one with a model');
+  assert(showsFists('crowbar') === false, 'a melee weapon that is not FISTS still shows a model (unchanged)');
+  assert(showsFists('nosuch') === false, 'an unknown key never throws');
+}
 // when not fists, the function falls through to the cached/loading viewmodel path (no early return)
 assert(/if\(isFists\)\{[\s\S]*?return; \}\s*\n\s*for\(const k in gunModelByWep\)\{ if\(gunModelByWep\[k\]\) gunModelByWep\[k\]\.visible = \(k===key\); \}/.test(sw),
   'a fists weapon with a model continues into the normal model path');

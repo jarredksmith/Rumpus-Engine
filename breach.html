@@ -18722,6 +18722,10 @@ const gunModelByWep = {};   // weapon key -> loaded Object3D (cached)
 const _gunLoading = {};      // weapon key -> true while a model load is in flight (prevents duplicate viewmodels)
 // Resolve a weapon's effective model URL: its own override, else the shared default gun url.
 function wepModelUrl(key){ const w=WEAPONS[key]; return (w && w.model) ? w.model : gunModelUrl; }
+// build 1266: the ONE rule for "this weapon shows no gun at all". Both the first-person viewmodel and the
+// third-person hand ask it, so a punching character can never end up holding a rifle and the two views can
+// never disagree about what the player is carrying. A creator's own model for the slot always wins (674).
+function _wepShowsFists(key){ const w=WEAPONS[key]; return !(w && w.model) && (key==='hands' || !!(w && w.fists)); }
 // Default per-weapon transform (falls back to the shared GUN_* framing when a weapon has no saved view).
 function wepView(key){ const w=WEAPONS[key]; return (w && w.view) ? w.view
   : { px:GUN_OFFSET.x, py:GUN_OFFSET.y, pz:GUN_OFFSET.z, rx:GUN_ROT.x*DEG, ry:GUN_ROT.y*DEG, rz:GUN_ROT.z*DEG, s:GUN_SCALE, mzx:GUN_OFFSET.x, mzy:GUN_OFFSET.y+0.04, mzz:GUN_OFFSET.z-1.02 }; }
@@ -18737,7 +18741,7 @@ function applyWepView(model, key){
 function showWeaponModel(key){
   // build 672: a fists weapon shows the procedural hands viewmodel — UNLESS the creator imported a custom model
   // for that slot (build 674 fix), in which case it loads like any other weapon viewmodel.
-  const isFists = !(WEAPONS[key] && WEAPONS[key].model) && (key==='hands' || (WEAPONS[key] && WEAPONS[key].fists));
+  const isFists = _wepShowsFists(key);   /* build 1266: shared with the third-person hand */
   if(typeof _setFistsVisible==='function') _setFistsVisible(isFists);
   if(isFists){ for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible=false; } if(gunPlaceholder) gunPlaceholder.visible=false; gunModel=null; sight=null; if(_attStateReady && typeof rebuildAttMounts==='function') rebuildAttMounts(key); return; }
   for(const k in gunModelByWep){ if(gunModelByWep[k]) gunModelByWep[k].visible = (k===key); }
@@ -23602,8 +23606,14 @@ function _applyGunGripToHand(gun, bone, weaponKey, gripOverride){
 function attachAvatarGun(g, weaponKey, gripOverride){
   if(!g) return;
   g.userData.gripOverride = gripOverride || null;   // remote players carry their OWN synced grip; local uses tpGunGrip
-  const w = WEAPONS[weaponKey]; let url = (w && w.model) ? w.model : '';
-  if(!url){ for(const k of Object.keys(WEAPONS)){ if(WEAPONS[k] && WEAPONS[k].model){ url=WEAPONS[k].model; break; } } }   // this weapon has no model -> borrow any set model so the hands aren't empty
+  // build 1266: resolve through wepModelUrl — the SAME function the first-person viewmodel uses — so the
+  // character's hand holds exactly what the player sees down the sights. This used to read WEAPONS[key].model
+  // directly and fall back only to ANOTHER weapon's custom model; every shipped weapon has model:'', so with
+  // the stock loadout the url resolved to '' and the hand stayed EMPTY — in third-person play, on remote
+  // players and bots, and in the editor's "Held gun grip (third-person)" panel, whose sliders therefore had
+  // nothing to position. (The old borrow was also wrong in the other direction: once a creator set a model on
+  // any one weapon, FISTS borrowed it and the character punched while holding a rifle.)
+  let url = _wepShowsFists(weaponKey) ? '' : (wepModelUrl(weaponKey) || '');
   // clear a previous gun if the weapon changed or there's no model
   if(g.userData.gunKey === weaponKey && g.userData.gun){   // already the right gun model
     // weapon unchanged, but the grip may have (remote player retuned theirs) — re-apply without reloading
@@ -23615,9 +23625,12 @@ function attachAvatarGun(g, weaponKey, gripOverride){
   if(g.userData.gun){ if(g.userData.gun.parent) g.userData.gun.parent.remove(g.userData.gun); g.userData.gun=null; g.userData.gunBone=null; }
   g.userData.gunKey = weaponKey;
   if(!url){ return; }   // no model for this weapon -> bare hands (fine)
-  g.userData._gunLoadUrl = url;
+  if(g.userData._gunLoading === url) return;   // build 1266: a load for this exact url is already in flight for this avatar.
+  g.userData._gunLoading = url;                //   attachAvatarGun runs EVERY FRAME, and without this each one
+  g.userData._gunLoadUrl = url;                //   queues another callback that clones a whole skinned model.
   loadGLTFCached(url,
     (gltf)=>{
+      g.userData._gunLoading = null;
       if(g.userData._gunLoadUrl !== url || g.userData.gunKey !== weaponKey) return;   // weapon changed mid-load
       if(g.userData.gun){ if(g.userData.gun.parent) g.userData.gun.parent.remove(g.userData.gun); g.userData.gun=null; }
       const gun = THREE.cloneSkinned(gltf.scene);
@@ -23629,7 +23642,7 @@ function attachAvatarGun(g, weaponKey, gripOverride){
       else { g.add(gun); g.userData.gunBone=null; _applyGunGrip(gun, weaponKey, g.userData.gripOverride); }                        // no usable bone -> fixed body grip
       g.userData.gun = gun;
     },
-    (err)=>{ console.warn('TP gun model load failed:', err && err.message); }
+    (err)=>{ g.userData._gunLoading = null; console.warn('TP gun model load failed:', err && err.message); }
   );
 }
 // Re-apply the grip offset live to every avatar currently holding a gun (used while tuning the sliders).
@@ -28706,7 +28719,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1265 · 2026-08-01';
+const BUILD_VERSION = 'build 1266 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
