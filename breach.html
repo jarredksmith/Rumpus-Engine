@@ -16118,10 +16118,12 @@ async function _renderLevelAudit(host){
 // for models that don't use it), register it on every loader, and — if the CDN can't be reached — let
 // the loader skip the texture so the geometry still loads untextured instead of vanishing.
 let _ktx2Loader=null, _ktx2Promise=null, _meshoptDecoder=null, _meshoptPromise=null;
+let _dracoLoader=null, _dracoPromise=null;   /* build 1256 */
 function _mkGLTFLoader(mgr){
   const l = mgr ? new THREE.GLTFLoader(mgr) : new THREE.GLTFLoader();
   try{ if(_ktx2Loader) l.setKTX2Loader(_ktx2Loader); }catch(e){}
   try{ if(_meshoptDecoder) l.setMeshoptDecoder(_meshoptDecoder); }catch(e){}   // build 918: meshopt-compressed geometry (EXT_meshopt_compression)
+  try{ if(_dracoLoader) l.setDRACOLoader(_dracoLoader); }catch(e){}            // build 1256: Draco-compressed geometry (KHR_draco_mesh_compression)
   return l;
 }
 function _ensureMeshopt(){
@@ -16140,6 +16142,35 @@ function _ensureMeshopt(){
     return null;
   })();
   return _meshoptPromise;
+}
+// build 1256: DRACO. The inlined GLTFLoader has supported KHR_draco_mesh_compression all along —
+// it throws 'THREE.GLTFLoader: No DRACOLoader instance provided.' — but nothing ever gave it one, so
+// a Draco-compressed .glb became a capsule and an entry in the asset-failure report. Sketchfab and
+// most "optimize my glTF" pipelines emit Draco by default, so this was a silent wall between a
+// creator and a large slice of the free-model web. Loaded on demand like KTX2 (917) and meshopt
+// (918): nobody pays the decoder's download until a model actually needs it.
+//
+// DRACOLoader imports `three`, so it needs a CDN that rewrites bare specifiers (esm.sh) — the same
+// constraint KTX2Loader has. The decoder itself (wasm + js worker) is a plain fetch from jsdelivr.
+// `preload()` warms the worker so the first Draco model does not pay the round trip mid-load, and
+// the decoder is deliberately NOT disposed: it is shared by every subsequent model.
+function _ensureDraco(){
+  if(_dracoPromise) return _dracoPromise;
+  _dracoPromise = (async ()=>{
+    try{
+      const mod = await import('https://esm.sh/three@0.149.0/examples/jsm/loaders/DRACOLoader.js');
+      const D = mod.DRACOLoader || (mod.default && mod.default.DRACOLoader);
+      if(D){
+        const l = new D().setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.149.0/examples/jsm/libs/draco/');
+        try{ l.setDecoderConfig({ type:'js' }); }catch(e){}   // the js decoder works everywhere; wasm is picked automatically when available
+        try{ l.preload(); }catch(e){}
+        _dracoLoader = l; return l;
+      }
+    }catch(e){ console.warn('[RUMPUS] Draco decoder unavailable:', e && e.message); }
+    try{ window.__DRACO_UNAVAILABLE = true; }catch(e){}   // no decoder -> the model reports its failure instead of retrying forever
+    return null;
+  })();
+  return _dracoPromise;
 }
 function _ensureKTX2(){
   if(_ktx2Promise) return _ktx2Promise;
@@ -16208,12 +16239,13 @@ function loadGLTFCached(url, cb, errcb){
   const _release=()=>{ _glbActive=Math.max(0,_glbActive-1); _glbPump(); };
   const _cxl=()=>{ delete _glbCancel[url]; _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(new Error('cancelled')); }catch(_){} } };   // build 945
   const _cb=(g)=>{ if(_glbCancel[url]){ _cxl(); return; } _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} try{ _modelBytes[url]=_estimateGLTFBytes(g); }catch(e){} for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
-  let _tries=0, _ktx2Retried=false, _meshoptRetried=false;
+  let _tries=0, _ktx2Retried=false, _meshoptRetried=false, _dracoRetried=false;
   const _ec=(e)=>{
     const _m=(e&&e.message)||'';
     if(_glbCancel[url] || (e && e.name==='AbortError') || /cancelled/i.test(_m)){ _cxl(); return; }   // build 945: a cancel is final — never retried
     if(/setKTX2Loader/.test(_m) && !_ktx2Retried){ _ktx2Retried=true; _release(); _ensureKTX2().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 917: KTX2/Basis textures — pull the transcoder in, then retry the load
     if(/setMeshoptDecoder/.test(_m) && !_meshoptRetried){ _meshoptRetried=true; _release(); _ensureMeshopt().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 918: meshopt-compressed geometry — pull the decoder in, then retry
+    if(/DRACOLoader/.test(_m) && !_dracoRetried){ _dracoRetried=true; _release(); _ensureDraco().then(()=>{ _glbQueue.push(start); _glbPump(); }); return; }   // build 1256: Draco-compressed geometry — pull the decoder in, then retry (GLTFLoader names the missing loader in its own error)
     if(++_tries<=2){ _release(); setTimeout(()=>{ _glbQueue.push(start); _glbPump(); }, 500*_tries + Math.random()*400); return; }   // retry transient failures (429 rate-limit) with backoff
     _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(e); }catch(_){} }
   };
@@ -16695,6 +16727,10 @@ function _noteLogicFailure(msg){
 function _lgTagExists(tag){ if(typeof propModels==='undefined') return true; for(const o of propModels){ if(o && o.userData && o.userData.tag===tag) return true; } return false; }
 const _LG_TAG_VERBS = new Set(['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop']);
 function _noteAssetFailure(src, err){
+  // build 1256: name the one failure a creator cannot otherwise diagnose — the decoder CDN is
+  // unreachable, so a Draco model cannot be read no matter how many times it is retried.
+  try{ if(/DRACOLoader/.test((err&&err.message)||'') && window.__DRACO_UNAVAILABLE)
+    err = new Error('This model is Draco-compressed and the decoder could not be downloaded (offline, or the CDN is blocked). Re-export it without Draco compression, or try again online.'); }catch(e){}
   const key = String(src||'').slice(0, 300);
   const e = assetLoadFailures.get(key);
   if(e){ e.n++; }
@@ -28464,7 +28500,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1255 · 2026-08-01';
+const BUILD_VERSION = 'build 1256 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

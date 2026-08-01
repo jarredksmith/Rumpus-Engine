@@ -1519,6 +1519,37 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Draco models load (build 1256)
+
+The inlined GLTFLoader has supported `KHR_draco_mesh_compression` since it was vendored — it throws
+`'THREE.GLTFLoader: No DRACOLoader instance provided.'` — but nothing ever gave it one, so a
+Draco-compressed .glb became a capsule plus a line in the asset-failure report. Sketchfab and most
+"optimize my glTF" pipelines emit Draco by default, so this was a silent wall between a creator and
+a large slice of the free-model web. Wired as the **third instance of builds 917/918's pattern**:
+the failed load names the missing decoder, `_ensureDraco()` pulls it in on demand (memoised — one
+download per session, shared by every later model, never disposed), and the load is re-queued. Nobody
+pays the decoder's download until a model needs it. DRACOLoader imports `three`, so it comes from
+esm.sh (the KTX2 constraint); the wasm/js decoder is a plain jsdelivr fetch, `preload()`-warmed so
+the first Draco model does not pay the round trip mid-load. When the decoder genuinely cannot be
+fetched, `_noteAssetFailure` rewrites the error into something a creator can act on ("re-export it
+without Draco compression") instead of leaving an unexplained capsule.
+
+**The audit was wrong about this one, and checking cost nothing.** The rendering critic reported the
+decoder "already exists in the optimizer/repack path (15803–15818) — it just never reaches the game's
+loader," which would have made this a two-line wiring job. Reading those lines: they are the meshopt
+SIMPLIFIER (`S.simplify`), and `new DRACOLoader` appears nowhere in the file outside the vendored
+library. The fix was the same size either way, but the note is the point — the panel's own rule
+("every claim is a hypothesis until verified") applies to the panel.
+
+**The load-bearing test is against the LIBRARY TEXT, not an assumption.** The retry fires on a regex
+over GLTFLoader's error message; if an upgrade rewords it, the retry silently never fires and Draco
+models quietly become capsules again with nothing failing. So `test-1256` extracts all three decoder
+messages from the vendored source and drives the real error router with them — which immediately
+caught that the three differ in SHAPE: KTX2 and meshopt name their **setter**
+(`setKTX2Loader must be called…`), Draco names the **loader** (`No DRACOLoader instance provided.`).
+The first draft of the test invented a symmetric KTX2 message and failed; the engine was right and
+the test was wrong.
+
 ## The HUD becomes an interface (build 1255)
 
 The audit's #1 gameplay gap: `_sanitizeHudWidgets` permitted `text | timer | bar`, display-only —
