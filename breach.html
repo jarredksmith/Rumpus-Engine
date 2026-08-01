@@ -9884,6 +9884,72 @@ const propModels = [];   // live prop Object3Ds (parallel to the editor's prop l
 // glTF files can carry baked animations (idle loops, spinning parts, etc.). For each loaded
 // model we build an AnimationMixer and play its clips; the loop ticks every mixer each frame.
 const mixers = [];
+// ---------- build 1267: SCREEN-SIZE PROP CULLING ----------
+// The audit's rendering-scale ceiling: the engine had ANIMATION lod (below) and no geometric one. Every prop
+// drew at full cost at any distance and nothing was ever culled by size, so a level's draw cost was flat in
+// the camera — the one thing that makes a big creator level unplayable while a small one is fine.
+//
+// The measure is SCREEN SIZE, not distance, which is what every engine's bottom LOD rung actually is (Unreal's
+// cull-distance volumes, Unity's LOD bias). A distance threshold has to be authored per object or it hides a
+// cathedral and keeps a pebble; `radius / distance` needs no authoring at all, because it asks the only
+// question that matters — is this thing big enough on screen to be worth drawing.
+//
+// Honest scope, stated because the stock level cannot show it: measured on the shipped scene, 59 props /
+// 4,858 triangles / 107 draw calls, with ZERO props under 8 px. Nothing there is culled and nothing should
+// be. This is for the dense imported level the audit was talking about, and it costs nothing when it finds
+// nothing to do.
+const LOD_HYST = 1.4;        // re-show at 1.4x the hide threshold, so a prop hovering at the boundary cannot flicker
+const LOD_BUDGET = 128;      // props examined per frame; the cursor rolls, so a 2,000-prop level costs a fixed slice
+let _lodCursor = 0, _lodAnyCulled = false;
+function _lodPxNow(){ const v = (typeof worldCfg!=='undefined' && worldCfg) ? +worldCfg.lodPx : 0; return (v>0 && isFinite(v)) ? Math.min(16, v) : 0; }
+// Eligibility is decided ONCE per prop and cached, because two of the three tests are a full subtree walk.
+function _lodEligible(o){
+  const u = o.userData;
+  if(u._lodNo !== undefined) return !u._lodNo;
+  let bad = false;
+  // A LIGHT MUST NEVER BE HIDDEN. Hiding one changes the scene's light count, which invalidates every lit
+  // material's program and recompiles the lot mid-frame — the freeze builds 636 / 977 / 1153 / 1155 each
+  // shipped once. Measured on the stock level: SEVEN of its 59 props carry a light, so this is the common
+  // case here, not an edge one.
+  o.traverse(c=>{ if(c.isLight) bad = true; });
+  if(u.fx) bad = true;                       // build 1250 emitters: frustumCulled=false by design, and already tiny
+  if(!bad){
+    const bb = new THREE.Box3().setFromObject(o);
+    if(bb.isEmpty()) return false;           // a GLB still loading has no bounds yet — DO NOT cache, ask again next pass
+    const sz = bb.getSize(new THREE.Vector3());
+    u._lodR = sz.length() / 2;
+    if(!(u._lodR > 0)) return false;
+  }
+  u._lodNo = bad;
+  return !bad;
+}
+function _lodRestoreAll(){
+  if(!_lodAnyCulled) return;
+  for(const o of propModels){ if(o && o.userData && o.userData._lodCull){ o.userData._lodCull = false; if(!o.userData._pvHidden) o.visible = true; } }
+  _lodAnyCulled = false;
+}
+function _lodTick(){
+  const px = _lodPxNow();
+  // Never while AUTHORING: a prop that vanishes because it is small on screen is indistinguishable from a
+  // prop you failed to place. The editor shows the level, the game shows the frame.
+  if(!px || (typeof editorOpen!=='undefined' && editorOpen) || typeof propModels==='undefined'){ _lodRestoreAll(); return; }
+  const n = propModels.length; if(!n) return;
+  const k = (renderer.domElement.height * 0.5) / Math.tan(camera.fov * Math.PI / 360);   // world radius -> pixels
+  const cam = camera.position, lim = Math.min(n, LOD_BUDGET);
+  for(let i = 0; i < lim; i++){
+    const o = propModels[(_lodCursor + i) % n];
+    if(!o || !o.userData || o.userData._shattered) continue;
+    if(o.userData._pvHidden) continue;                      // the logic graph owns this one's visibility (1170)
+    if(!_lodEligible(o)) continue;
+    const dx = o.position.x - cam.x, dy = o.position.y - cam.y, dz = o.position.z - cam.z;
+    const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    const sp = (d > 0.01) ? (o.userData._lodR / d) * k : 1e9;
+    const u = o.userData;
+    if(u._lodCull){ if(sp > px * LOD_HYST){ u._lodCull = false; o.visible = true; } }
+    else if(sp < px && o.visible){ u._lodCull = true; o.visible = false; _lodAnyCulled = true; }
+  }
+  _lodCursor = (_lodCursor + lim) % n;
+}
 // Animation LOD: update each mixer at a rate that falls off with distance from the camera. Near models animate
 // every frame; mid-range every other frame; far ones every 4th — accumulating the skipped time so motion stays
 // time-correct, just lower-resolution. Models with no resolvable position (UI/gun/terminal) always update.
@@ -17675,11 +17741,11 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:2, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
-function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.postVig=0; w.postGrain=0; w.postSat=1; w.postCon=1; w.ssao=0; w.postRays=0; w.ssr=0; return w; }
+function _postOffWorld(w){ if(!w) return w; w.postBloom=0; w.postMotion=0; w.postVig=0; w.postGrain=0; w.postSat=1; w.postCon=1; w.ssao=0; w.postRays=0; w.ssr=0; return w; }   /* NB: lodPx is NOT zeroed — culling is a cost control, not a look */
 // build 1115: which colour pipeline a level was AUTHORED against. Everything saved before the sRGB
 // encode landed was tuned by eye against an image that displayed ~2.2 gamma too dark, so creators
 // compensated with sun/exposure that now read too hot. Such a level carries no colorV — and it must
@@ -19154,7 +19220,11 @@ function _shotGhost(o, hit){
   let m = o.material;
   if(Array.isArray(m)) m = m[(hit && hit.face && hit.face.materialIndex) || 0] || m[0];
   if(m && (m.visible === false || (m.transparent && (+m.opacity || 0) <= 0.02))) return true;
-  let p = o; while(p){ if(p.visible === false) return true; p = p.parent; }
+  // build 1267: a prop hidden by SCREEN-SIZE CULLING is not a ghost — it is a solid the renderer merely
+  // skipped drawing, and it must keep stopping bullets. (r149's Raycaster ignores `visible` entirely, its
+  // own AND its ancestors' — verified against the real build in test-1267 — so the hit still arrives here;
+  // without this clause 1236's ancestor walk would classify it away and shots would pass through it.)
+  let p = o; while(p){ if(p.visible === false && !(p.userData && p.userData._lodCull)) return true; p = p.parent; }
   return false;
 }
 function _firstSolidHit(hits){ for(let i = 0; i < hits.length; i++){ if(!_shotGhost(hits[i].object, hits[i])) return hits[i]; } return null; }
@@ -19258,6 +19328,24 @@ function ensurePlayerPreview(on){
     if(previewAvatar.userData.mixer){ const mi=mixers.indexOf(previewAvatar.userData.mixer); if(mi>=0) mixers.splice(mi,1); }
     scene.remove(previewAvatar); previewAvatar=null;
   }
+}
+// build 1268: KEEP THE PREVIEW AVATAR POSED AS AUTHORED — in every editor camera mode.
+// These three calls used to live inside the Player tab's ORBIT CAMERA branch, which is the third arm of a
+// chain whose second arm is `else if(editorOpen && editorFreeFly)` — and opening the editor sets
+// editorFreeFly = true every time. So on the default camera the branch never ran: the held gun was never
+// attached, the joint tweaks (942) never applied and the two-handed hold (937) never previewed. Reported
+// from play as "I can't see where the held gun grip is changing until I play the live game", which is
+// exactly right — the grip sliders wrote a value with nothing on screen to show it.
+//
+// Posing a preview is not a camera concern, so it no longer sits in a camera branch. It runs whenever the
+// editor is on the Player tab, and the camera chain below decides only where you are looking from.
+function _edPlayerPreviewTick(){
+  if(typeof editorOpen==='undefined' || !editorOpen) return;
+  if(typeof editorActive==='undefined' || editorActive!=='player') return;
+  if(typeof previewAvatar==='undefined' || !previewAvatar) return;
+  if(typeof attachAvatarGun==='function') attachAvatarGun(previewAvatar, (typeof curWep!=='undefined'?curWep:'rifle'));   // the held gun, so the grip sliders have something to move
+  if(typeof _applyJointFix==='function') _applyJointFix(previewAvatar, _myJointFix());        // build 942: joint tweaks are WYSIWYG
+  if(typeof _weaponHoldIK==='function') _weaponHoldIK(previewAvatar, previewAvatar.rotation.y||0, 0);   // build 937: the same two-handed hold play uses
 }
 function clearPreviewEnemy(){
   if(previewEnemy){ if(previewEnemy.userData.mixer){ const mi=mixers.indexOf(previewEnemy.userData.mixer); if(mi>=0) mixers.splice(mi,1); } scene.remove(previewEnemy); previewEnemy=null; }
@@ -28719,7 +28807,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1266 · 2026-08-01';
+const BUILD_VERSION = 'build 1268 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33648,7 +33736,7 @@ function loop(){
   }
   if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _lodTick==='function') _lodTick(); if(typeof _edPlayerPreviewTick==='function') _edPlayerPreviewTick(); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only
@@ -34080,9 +34168,7 @@ function loop(){
     camera.rotation.x = player.pitch;
     camera.rotation.z = 0;
   } else if(editorOpen && editorActive==='player' && previewAvatar){
-    if(typeof attachAvatarGun==='function') attachAvatarGun(previewAvatar, (typeof curWep!=='undefined'?curWep:'rifle'));   // show the held gun so the grip sliders can be tuned live
-    if(typeof _applyJointFix==='function') _applyJointFix(previewAvatar, _myJointFix());   // build 942: joint tweaks are WYSIWYG in the preview
-    if(typeof _weaponHoldIK==='function') _weaponHoldIK(previewAvatar, previewAvatar.rotation.y||0, 0);   // build 937: preview the SAME two-handed hold play applies
+    /* build 1268: the posing moved to _edPlayerPreviewTick so it also runs in fly and top view */
     // Player tab default: a live third-person view of the preview avatar, framed with the SAME pivot/offset
     // the in-game chase cam uses, so what you tune here is exactly what you get in play. Drag to orbit, wheel to zoom.
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
@@ -35315,6 +35401,7 @@ function setEditorMode(mode, fromSelection){
       if(editorActive==='grenade' && editorTargets.grenade.sync) editorTargets.grenade.sync();
     }
   }
+  if(mode==='player' && !fromSelection){ editorFreeFly=false; editorTopView=false; }   /* build 1268 */
   applyEditorMode();
   renderEditorFields();
 }
@@ -39148,6 +39235,8 @@ function renderEditorFields(){
         texRow(b,'https://\u2026/grade-lut.png (256x16 strip)','lut'); slider(b,'LUT strength','lutAmt',0,1,0.05); hint(b,'Color grade LUT: a standard 256\u00d716 (or 1024\u00d732) strip \u2014 screenshot the game, drop the shot into any photo editor with a neutral LUT strip, grade them together, crop the strip back out, host it, paste the URL. The whole look of the level follows.','1px 0 4px');
         slider(b,'Ambient occlusion','ssao',0,1,0.05); slider(b,'AO radius','ssaoRadius',0.1,4,0.1);   // build 1126
         slider(b,'Reflections','ssr',0,1,0.05);   /* build 1245: screen-space floor reflections; 0 = off */
+        slider(b,'Cull below (px)','lodPx',0,16,1);   /* build 1267 */
+        hint(b,'','2px 0 6px').textContent='Props smaller than this on screen stop being drawn. 0 turns it off; 2 is about the size of a full stop and removes nothing you could see. Raise it on a heavy level to trade a little pop-in for draw calls. Never applies while the editor is open, lights are never hidden, and a culled prop still blocks bullets.';
         hint(b,'','0 0 4px').textContent='Motion blur = camera blur strength (real per-pixel smear when you turn; 0 = off). Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }
     { const b=subSec('Sky','sky',true);

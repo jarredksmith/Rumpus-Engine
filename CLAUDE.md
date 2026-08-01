@@ -3665,6 +3665,88 @@ Four pins moved (285, 286, 520, 523), each keeping its intent: 286's "a weapon w
 gun rather than vanishing" is now served by `wepModelUrl`'s fallback instead of the borrow, and 520/523's
 fists gate became an EXECUTED check of the shared predicate rather than a literal.
 
+## The preview was posed inside a camera branch (build 1268)
+
+Reported from play, third round: *"I can't visually see where the held gun grip (third-person) is changing
+until I play the live game. I need to make those adjustments live, in the editor."*
+
+**Build 1266 fixed a real bug and was feeding a call site that never ran.** `attachAvatarGun(previewAvatar,
+...)` lived inside the Player tab's ORBIT CAMERA branch — the third arm of a chain whose second arm is
+`else if(editorOpen && editorFreeFly)` — and opening the editor sets `editorFreeFly = true` **every time**.
+So on the camera the editor actually opens with, that branch never executed: no held gun, no joint tweaks
+(942), no two-handed hold preview (937). The grip sliders wrote values with nothing on screen to show them.
+
+Posing a preview is not a camera concern, so it no longer sits in a camera branch. `_edPlayerPreviewTick()`
+runs from the frame loop **before** the camera chain and names no camera mode at all; the chain decides only
+where you are looking from. And entering the Player area now drops into the orbit preview — that camera
+exists for nothing else, and everything the tab authors is judged by eye against it — one-shot on the mode
+change so `F` still flies, and never on a scene-click, which must not move the creator's viewpoint.
+
+Probed through the REAL editor path (`toggleEditor`, then `setEditorMode('player')`), which is the part that
+mattered:
+```
+editor : editorOpen true, mode "build", active "props", fly TRUE      <- the cause, in one field
+tab    : active "player", fly false                                   <- lands on the orbit camera
+report : HAS_GUN true, gunVisible true, gunOnScreen true, NDC (0.04, 0.06), cam (0, 1.7, 10.5)
+grip   : x/y 0.28,1.15 -> 0.75,1.25 via refreshAvatarGunGrips         <- the sliders move it LIVE
+fly    : gun cleared + editorFreeFly=true -> re-attached within 4 s   <- posing survives every mode
+```
+
+**The lesson is 1264's, one level deeper: a probe that never enters the real path proves the mechanism, not
+the feature.** My 1266 probe set `editorOpen=true` directly instead of going through `setEditorMode`, so it
+landed in a camera mode no creator ever sees, reported `HAS_GUN true`, and I shipped. The screenshot from
+that run even said so — its HUD read `WALK` — and I dismissed it as a rig artifact rather than the signal it
+was. **When a probe's own framing disagrees with the feature's, the framing is the finding.** One pin moved
+(942), re-expressed as the WYSIWYG property rather than a line with three spaces in it.
+
+## Screen-size prop culling (build 1267)
+
+The audit's rendering-scale ceiling. The engine had ANIMATION lod and no geometric one: every prop drew at
+full cost at any distance and nothing was ever culled by size, so a level's draw cost was flat in the camera
+— the one thing that makes a big creator level unplayable while a small one is fine.
+
+The measure is SCREEN SIZE (`radius / distance`), not distance, which is what every engine's bottom LOD rung
+actually is. A distance threshold has to be authored per object or it hides a cathedral and keeps a pebble;
+screen size needs no authoring, because it asks the only question that matters.
+
+Measured live on a seeded 600-prop field spread to 300 m, rendering the real scene, **with a control pair**:
+
+```
+lodPx      calls    tris    culled   visible lights
+    0        304   4,624         0        35
+    2        106   2,248       494        35     <- the shipped default
+    4         67   1,780       564        35
+    8         52   1,600       590        35
+    0        304   4,624         0        35     <- control returns exactly
+```
+So it buys DRAW CALLS first (−65% at the default) and triangles second — the right shape, since the props
+small enough to cull are by definition the cheap ones per triangle.
+
+**And on the stock level it correctly does nothing**: 59 props / 4,858 tris / 107 calls, with ZERO props
+under 8 px. Worth stating plainly rather than implying a win everywhere — this is for the dense imported
+level the audit was talking about, and it costs nothing when it finds nothing to do.
+
+Three invariants make it safe, and each is a shipped bug without it:
+- **A prop carrying a LIGHT is never hidden.** Hiding one changes the scene's light count and recompiles
+  every lit material mid-frame — the freeze of builds 636 / 977 / 1153 / 1155. Measured: **seven of the
+  stock level's 59 props carry a light**, so this is the common case here, not an edge one. The light count
+  is byte-identical at every threshold above.
+- **The editor never culls.** A prop that vanishes for being small is indistinguishable from one you failed
+  to place. Opening the editor restores everything.
+- **A culled prop still stops bullets.** Build 1236 made any invisible ancestor a ghost that stops no shot —
+  correct for a collision volume inside a GLB, catastrophic for a prop the renderer merely skipped drawing.
+  `_shotGhost` now exempts `_lodCull`, and 1236's real ghosts are untouched.
+
+**A correction to build 1139, verified against the real build:** that entry recorded *"Raycaster ignores a
+mesh's own `visible:false` but NOT its ancestors'."* r149 ignores **both** — the hit arrives regardless,
+which is exactly why the `_shotGhost` exemption is able to work. 1236's code was right either way (it walks
+the chain itself); only the note was wrong. `test-1267` pins the fact against three, because if a future
+version honoured `visible` a culled prop would stop being hit at all and no exemption could save it.
+
+The hysteresis (1.4×) stops a prop at the boundary flickering, and the budget (128 props/frame, rolling
+cursor) makes a 2,000-prop level a fixed slice rather than a spike. `lodPx` is **not** zeroed by
+`_postOffWorld` — culling is a cost control, not a look.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
