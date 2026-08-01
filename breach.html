@@ -18374,6 +18374,32 @@ function toggleFlashlight(){
   _flashlight.intensity = flashlightOn ? fc.intensity : 0;
   if(typeof SFX!=='undefined' && SFX.swap) SFX.swap();
 }
+
+// build 1251: reported from play — in third person the flashlight lit the scene FROM BEHIND the
+// player, because the light is parented to the CAMERA (right in first person, where the camera is
+// the eye; wrong in any chase view, where the camera hangs metres behind the avatar). The light now
+// re-homes per frame: camera-parented with the original 977 offsets in first person, scene-parented
+// at the player's CHEST aiming along their facing in third person — the beam starts in their hands,
+// the avatar stands behind the source and casts no self-glare, and a top-down twin-stick's beam
+// sweeps with the cursor because yaw already faces it. Re-parenting moves the SAME always-visible
+// light within the graph — the light count never changes (build 977's rule), and position/target
+// are plain uniforms, free to move every frame. The parent checks make the steady state zero-work.
+function updateFlashlight(){
+  if(!_flashlight) return;
+  const tp = (typeof tpActive==='function' && tpActive()) || (typeof activeViewMode==='function' && activeViewMode()!=='fps');
+  if(!tp || typeof player==='undefined'){
+    if(_flashlight.parent!==camera){
+      camera.add(_flashlight); camera.add(_flashlight.target);
+      _flashlight.position.set(0.18,-0.12,0.1); _flashlight.target.position.set(0,0,-1);   // the 977 first-person offsets, exactly
+    }
+    return;
+  }
+  if(_flashlight.parent!==scene){ scene.add(_flashlight); scene.add(_flashlight.target); }
+  const cp=Math.cos(player.pitch||0), fx=-Math.sin(player.yaw||0)*cp, fy=Math.sin(player.pitch||0), fz=-Math.cos(player.yaw||0)*cp;
+  const cy=player.pos.y-0.35;   // chest (player.pos.y is the eye)
+  _flashlight.position.set(player.pos.x+fx*0.4, cy+fy*0.4, player.pos.z+fz*0.4);
+  _flashlight.target.position.set(player.pos.x+fx*24, cy+fy*24, player.pos.z+fz*24);
+}
 const _muzNdc = new THREE.Vector2();
 // A neutral fallback environment so metallic gun materials reflect *something* even on levels with no sky.
 let _vmEnvFallback = null, _vmEnvTried = false;
@@ -28349,7 +28375,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1250 · 2026-08-01';
+const BUILD_VERSION = 'build 1251 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33262,7 +33288,7 @@ function loop(){
   }
   if(typeof _spTick==='function') _spTick();   // build 1186: scene reflection probe (deploy shots + day-cycle refresh)
   if(typeof updateAudioZones==='function') updateAudioZones();   // ambient audio zones: proximity-based volume (silent unless in live play)
-  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
+  if(typeof updateDeathZones==='function') updateDeathZones(); if(typeof updateJumpPads==='function') updateJumpPads(dt); if(typeof updateFireZones==='function') updateFireZones(dt); if(typeof updateWaterZones==='function') updateWaterZones(dt); if(typeof updateFxZones==='function') updateFxZones(dt); if(typeof updateEmitters==='function') updateEmitters(dt); if(typeof _bakeTick==='function') _bakeTick(); if(typeof updateWaterfalls==='function') updateWaterfalls(dt); if(typeof updateDayNight==='function') updateDayNight(dt); if(typeof updateWeather==='function') updateWeather(dt); if(typeof updateFlashlight==='function') updateFlashlight(); if(typeof _dofAutoTick==='function') _dofAutoTick(dt); if(typeof updateBurningProps==='function') updateBurningProps(dt);   // lethal zones (lava / pits / out-of-bounds)
   if(_brushRingGrp && _brushRingGrp.visible && (!editorOpen || !terrainBrush.on)) _brushRingGrp.visible=false;   // build 877: the brush cursor never rides into play
   if(_pathPreviewGroup && !editorOpen){ scene.remove(_pathPreviewGroup); try{ _pathPreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _pathPreviewGroup=null; }   // editor waypoint markers never linger into play
   if(_cinePreviewGroup && !editorOpen){ scene.remove(_cinePreviewGroup); try{ _cinePreviewGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.dispose)o.material.dispose(); }); }catch(e){} _cinePreviewGroup=null; }   // cine path preview is editor-only

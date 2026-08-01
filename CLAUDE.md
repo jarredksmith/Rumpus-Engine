@@ -1519,6 +1519,21 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The third-person flashlight beams from the player (build 1251)
+
+Reported from play: in third person the flashlight lit the scene FROM BEHIND the player. The light
+has been parented to the CAMERA since build 672 — exactly right in first person, where the camera is
+the eye, and wrong in every chase view, where the camera hangs metres behind the avatar.
+`updateFlashlight()` re-homes it per frame: camera-parented at the original 977 offsets in first
+person; scene-parented at the player's CHEST (pos.y − 0.35; pos.y is the eye), 0.4 m along their
+facing, throwing 24 m, in any third-person view — so the beam starts in their hands, the avatar
+stands behind the source, and a top-down twin-stick's beam sweeps with the cursor because yaw
+already faces it. Re-parenting moves the SAME always-visible light within the graph — the light
+count never changes (977's rule; the function is pinned to never create a light or touch
+`.visible`) — and the parent guards make the steady state zero-work. Live-probed per 1244's rule
+(unit stubs are not the mechanic): light 0.40 m from the player vs 4.58 m from the chase camera,
+beam −23.5 m forward, and the FPS restore lands the exact `(0.18, −0.12, 0.1)` attachment.
+
 ## Ambient particle emitters (build 1250)
 
 The engine had fire, weather, impact FX and flipbooks — all BAKED systems — and no way for a creator
