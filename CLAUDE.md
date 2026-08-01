@@ -1519,6 +1519,35 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The audit, the reference, and the docs tell the truth (build 1253)
+
+A nine-agent audit ran against build 1252 — six harsh critics (rendering, editor UX, gameplay
+systems, multiplayer/platform, performance, content pipeline), each benchmarking against
+Unreal/Unity/Godot/Roblox with the 1159 rule (every claim verified in source, citations required),
+plus three inventory agents that catalogued every real control from the UI-builder code. Deliverables
+now IN THE REPO (scratchpad gets wiped by rollbacks): **docs/AUDIT.md** (merged verdict + six full
+reports + a consolidated quick-win list) and **docs/REFERENCE.md** (every setting/widget with ranges,
+defaults and behavior — World & Scene, Objects/Tools/Editor incl. the full shortcut table, Game
+Systems/Logic/Sharing incl. the complete node/verb tables and the wave-manifest grammar).
+
+The merged verdict, one line per dimension: fair competitor on friction/rendering/systems-density;
+the six ceilings are LOD/occlusion (rendering scale), no scripting escape hatch + one save slot
+(editor), engine-owned PvP + no clickable UI + no world-state persistence (gameplay), no
+identity/reporting + free third-party network infra (platform), unbounded light counts + a
+too-high quality floor (performance), and docs frozen ~160 builds back (content).
+
+Build 1253 fixes the audit's Gap 3 — the docs' three live factual errors: the in-game help claimed
+"GitHub account needed" to publish (false since build 958) and never mentioned the instant /game/
+publish (the least findable best feature — now surfaced in the same topic); the export button said
+"Export .json" while writing `.rumpus` files the manual called `.breach` (three names, one file —
+now "Export .rumpus" / "Import level"); breach-help.html still rendered the BREACH wordmark 300
+builds after the rename (now RUMPUS ENGINE) and its `.breach` claims are corrected with the compat
+promise kept explicit. A **What's-new section (builds 1090–1253)** was appended to the manual
+covering every undocumented creator feature by task (editing faster / your own assets / looking
+better / deeper rules / feel & combat / multiplayer & sharing). One pin moved (816 — the icon
+assertion carried the old label). `test-1253` guards all of it, including that the false account
+claim can never return.
+
 ## Per-emitter effect controls (build 1252)
 
 Asked for from play the day 1250 shipped: Amount, Speed, Size, Spread, Height, Opacity, Saturation
