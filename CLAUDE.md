@@ -1519,6 +1519,33 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The weapon came back to the editor (build 1264)
+
+Reported from play: *"I can't see any weapons in the editor. When adjusting position for FPS, aim,
+third-person weapon adjustment, it's impossible because no weapon is visible."* Build 1137 answered a
+critic — the rifle covered a measured 11% of the AUTHORING viewport — with a blanket
+`if(editorOpen) return false` in `_vmWanted`. Right about building, wrong about the three panels whose
+entire job is posing the weapon: view framing, the ADS pose and the throw pose are all authored BY
+EYE, against a weapon the author could no longer see. **A blanket rule was cheaper to write than the
+distinction, and the distinction is what a creator needs.** The viewmodel now returns for exactly
+`gun` / `aim` / `grenade` and stays hidden for every other kind of authoring, which preserves 1137's
+real intent rather than reverting it. A non-first-person authoring camera still gets no viewmodel —
+except on `aim`, which is precisely the pose a creator tunes when the level ships in another view.
+
+**Two lists had to agree, and only one of them was wrong.** The editor camera has set
+`gun.visible = (editorActive==='gun' || editorActive==='aim')` since build 151 — the engine already
+knew which targets wanted the weapon. 1137 then stopped the PASS from running, so the mesh was
+visible inside a pass that never drew: a visible object and an empty screen. Both lists now name the
+same three targets, and `test-1264` asserts they agree, because either one alone is a silent no-op.
+
+**Live-probed per target** (`vmWanted` / `gun.visible`): gun ✓✓, aim ✓✓, grenade ✓✓, props ✗✗,
+lights ✗✗. Two pins moved (1137, 151).
+
+**And I fell into my own build-1260 trap again in the probe** — nested template interpolation set
+`editorActive` to the literal string `${tt}`, so the first run reported every target false and would
+have sent me hunting a second bug that did not exist. Build the probe's source in Node and pass it as
+one argument; it is now written down twice.
+
 ## The characters were never on the mover list (build 1263)
 
 Reported from play within minutes of 1261 shipping: *"the character is running nicely, and the shadow
