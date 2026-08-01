@@ -1519,6 +1519,26 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Per-emitter effect controls (build 1252)
+
+Asked for from play the day 1250 shipped: Amount, Speed, Size, Spread, Height, Opacity, Saturation
+and Color, per emitter, in an **Effect** section under the Tag row whenever the selected prop is an
+fx_*. Overrides are MULTIPLIERS over the preset (never replacements — a preset retune still reaches
+every emitter that hasn't overridden that knob), stored in `userData.fx.cfg`, serialized as `fxc`
+through `propEntry` — the ONE serializer that saves, prefabs, duplicate, clipboard and net pAdd all
+route through (1162's lesson, applied for once in advance) — and applied at all FOUR loader sites.
+The editor writes cfg and calls `_fxReset` (tear down the Points + geometry; next tick rebuilds),
+which is also how Amount changes the particle COUNT with no special path. Semantics worth keeping:
+`_fxEff` returns the PRESET OBJECT ITSELF when no cfg exists (zero cost for untouched emitters);
+Height means rise-rate for grounded plumes, region height for drifting volumes, and 1/gravity for
+the fountain (same launch, higher arc), while Speed scales a jet's v AND g together so v²/g holds
+and the arc keeps its exact shape at a faster tempo; the Color tint REPLACES the preset ramp (pick
+red, get red — multiplying orange by blue gives black); Saturation lerps about luminance. Sliders
+push undo on grab; Reset deletes cfg so the entry serializes nothing. `test-1252` executes the
+sanitizer and derivation knob by knob; live-probed: an ember emitter with `{col:0x3388ff, amt:2}`
+renders 128 particles reading 7,684 cool / 0 warm pixels against 1250's 1,022-warm baseline, and
+`propEntry` round-trips the cfg.
+
 ## The third-person flashlight beams from the player (build 1251)
 
 Reported from play: in third person the flashlight lit the scene FROM BEHIND the player. The light
