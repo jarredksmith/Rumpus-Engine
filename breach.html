@@ -16577,6 +16577,10 @@ function _levelDB(){
   return _lvlDBp;
 }
 function _levelDBPut(str){ return _levelDB().then(db=>{ if(!db) return false; return new Promise(r=>{ try{ const tx=db.transaction(_LVLDB_STORE,'readwrite'); tx.objectStore(_LVLDB_STORE).put(str,_LVLDB_KEY); tx.oncomplete=()=>r(true); tx.onerror=()=>r(false); }catch(e){ r(false); } }); }).catch(()=>false); }
+/* build 1262: the same store, arbitrary keys — the library's payloads live beside the durable copy */
+function _levelDBPutKey(k, str){ return _levelDB().then(db=>{ if(!db) return false; return new Promise(r=>{ try{ const tx=db.transaction(_LVLDB_STORE,'readwrite'); tx.objectStore(_LVLDB_STORE).put(str,k); tx.oncomplete=()=>r(true); tx.onerror=()=>r(false); }catch(e){ r(false); } }); }).catch(()=>false); }
+function _levelDBGetKey(k){ return _levelDB().then(db=>{ if(!db) return null; return new Promise(r=>{ try{ const tx=db.transaction(_LVLDB_STORE,'readonly'); const rq=tx.objectStore(_LVLDB_STORE).get(k); rq.onsuccess=()=>r(rq.result||null); rq.onerror=()=>r(null); }catch(e){ r(null); } }); }).catch(()=>null); }
+function _levelDBDelKey(k){ return _levelDB().then(db=>{ if(!db) return false; return new Promise(r=>{ try{ const tx=db.transaction(_LVLDB_STORE,'readwrite'); tx.objectStore(_LVLDB_STORE).delete(k); tx.oncomplete=()=>r(true); tx.onerror=()=>r(false); }catch(e){ r(false); } }); }).catch(()=>false); }
 function _levelDBGet(){ return _levelDB().then(db=>{ if(!db) return null; return new Promise(r=>{ try{ const tx=db.transaction(_LVLDB_STORE,'readonly'); const rq=tx.objectStore(_LVLDB_STORE).get(_LVLDB_KEY); rq.onsuccess=()=>r(rq.result||null); rq.onerror=()=>r(null); }catch(e){ r(null); } }); }).catch(()=>null); }
 function _modelDB(){
   if(_modelDBp) return _modelDBp;
@@ -28660,7 +28664,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1261 · 2026-08-01';
+const BUILD_VERSION = 'build 1263 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33565,7 +33569,23 @@ function loop(){
     //   FAST (player-focus, live refresh): the driven car, coasting cars, a platform/door mid-travel.
     //   TRANSIENT (peripheral, every 3rd frame): ragdoll corpses, awake physics props still settling.
     _shadowTick=(_shadowTick+1)%3;
+    // build 1263: THE CHARACTERS. Reported from play the moment 1261 shipped — "the character runs
+    // nicely and the shadow is super janky" in third person. Builds 807/808 listed cars, animated
+    // props, corpses and settling physics as movers, and never the PLAYER or the ENEMIES: their
+    // shadows were kept current only as a SIDE EFFECT of _fitSunShadow returning true on almost
+    // every moving frame, which called _dirtyShadows(1). Build 1261's deadband removed that side
+    // effect and, with it, an unstated dependency — the character's shadow dropped to the refit rate
+    // (~1 frame in 3-5) while the character itself moved at 60. A perf change is allowed to remove
+    // work; it is not allowed to remove work something else was silently relying on.
+    //
+    // So the movers are now named honestly. A moving player and a living enemy are skinned meshes
+    // whose pose changes every frame, so they belong in the FAST tier beside a driven car. The static
+    // optimization keeps exactly the case it was written for: a quiet scene nobody is moving in.
     let _shDirty = !!drivingCar || (typeof _coastingCars!=='undefined' && _coastingCars.length>0);
+    if(!_shDirty && typeof player!=='undefined' && player && player.vel)
+      _shDirty = (Math.abs(player.vel.x)+Math.abs(player.vel.y)+Math.abs(player.vel.z)) > 0.05;
+    if(!_shDirty && typeof enemies!=='undefined') for(const e of enemies){ if(e && e.hp>0){ _shDirty=true; break; } }
+    if(!_shDirty && typeof NET!=='undefined' && NET.mode!=='off' && NET.players) for(const k in NET.players){ _shDirty=true; break; }
     if(!_shDirty){ for(const o of propModels){ const a=o&&o.userData&&o.userData.xa; if(a&&a.on&&a.ph>0&&a.ph<1){ _shDirty=true; break; } } }   // a platform/door mid-travel
     let _shSlow = !_shDirty && (typeof _corpses!=='undefined' && _corpses.length>0);
     if(!_shDirty && !_shSlow && typeof dynamicProps!=='undefined'){ for(const o of dynamicProps){ const b=o&&o.userData&&o.userData.phys&&o.userData.phys.body; if(b && typeof b.isSleeping==='function' && !b.isSleeping()){ _shSlow=true; break; } } }   // an awake (moving) physics prop
@@ -36601,6 +36621,7 @@ function _autoSaveStatus(txt){ try{ const el = editorEl && editorEl.querySelecto
 // autosave timer and the beforeunload handler would happily write the old level straight back — so this
 // flag stops every save path the moment New is confirmed.
 let _newLevelPending = false;
+function _libStopTracking(){ if(typeof _libCurrent!=='undefined') _libCurrent=null; }   /* build 1262: New / a foreign load leaves the library entry alone */
 // build 1254: THE REMIX TRAP, closed. The gallery invites "open in editor to remix", share links load
 // straight over the working level, and there is ONE save slot — so before this build, opening someone
 // else's level and touching anything meant the 20s autosave overwrote your only save with THEIR level.
@@ -36611,7 +36632,9 @@ let _newLevelPending = false;
 let _foreignLevel = false;
 const RESCUE_KEY = 'breach_level_rescue_v1';
 let _edRescueRefresh = null;   // the Save panel registers its row refresher here
+let _edLibraryRefresh = null;  // build 1262: ...and the library list its own
 function markForeignLevel(what){
+  if(typeof _libStopTracking==='function') _libStopTracking();   /* build 1262: a shared level is not the library entry you had open */
   try{
     if(_levelDirty && typeof serializeLevel==='function'){
       localStorage.setItem(RESCUE_KEY, JSON.stringify({ t: Date.now(), level: serializeLevel() }));
@@ -36639,8 +36662,98 @@ try{ document.addEventListener('visibilitychange', ()=>{ if(document.visibilityS
 function saveLevel(){
   let str; try{ str = JSON.stringify(serializeLevel()); }catch(e){ return false; }
   if(typeof _levelDBPut==='function') _levelDBPut(str);   // durable copy (large quota, survives localStorage eviction)
+  if(_libCurrent && typeof libCommit==='function'){ try{ libCommit(); }catch(e){} }   // build 1262: ...and back into the library entry being worked on
   try{ localStorage.setItem(SAVE_KEY, str); return localStorage.getItem(SAVE_KEY)===str; }   // verify it actually persisted (not silently dropped by quota)
   catch(e){ return (typeof _levelDB==='function'); }      // localStorage full -> still saved to IndexedDB
+}
+// ---------- build 1262: THE LEVEL LIBRARY ----------
+// The audit's last editor CRITICAL: there was exactly ONE local save (`breach_level_v1`), so a
+// creator could hold one level at a time and every other engine on the comparison list ships a
+// project list. Build 1254 stopped a foreign level from EATING that slot; this removes the slot as
+// a ceiling.
+//
+// Two stores, deliberately: the NAMES live in localStorage (a tiny index, so the list renders
+// synchronously with no async flicker) and the PAYLOADS live in the IndexedDB store the durable
+// copy already uses — a plain key-value store, so `lvl:<id>` needs no schema bump, and levels are
+// far too big to keep several of in localStorage's ~5 MB.
+//
+// The active slot is UNCHANGED. It is still what auto-loads, still what autosave writes, still what
+// 1254 guards. A library entry is a named COPY that the active slot tracks while it is open:
+// `_libCurrent` is the entry you are working in, so Save writes both and the list shows what you
+// would expect. Clearing it (New level, or opening something foreign) means Save goes back to
+// touching only the active slot — the pre-1262 behaviour, which is the right default.
+const LVLIB_KEY='breach_levels_v1', LVLIB_MAX=40;
+let _libCurrent=null;   // the library entry the active slot is tracking, or null
+function _libIndex(){ try{ const j=JSON.parse(localStorage.getItem(LVLIB_KEY)||'[]'); return Array.isArray(j)?j.filter(e=>e&&e.id):[]; }catch(e){ return []; } }
+function _libWriteIndex(list){ try{ localStorage.setItem(LVLIB_KEY, JSON.stringify(list.slice(0,LVLIB_MAX))); return true; }catch(e){ return false; } }
+function _libName(n, list){
+  n=String(n||'').trim().slice(0,48) || 'Untitled level';
+  const taken=new Set((list||_libIndex()).map(e=>String(e.name||'').toLowerCase()));
+  if(!taken.has(n.toLowerCase())) return n;
+  for(let i=2;i<200;i++){ const c=n+' '+i; if(!taken.has(c.toLowerCase())) return c; }   // never silently overwrite a namesake
+  return n+' '+Date.now();
+}
+function _libPut(id, str){
+  if(typeof _levelDB==='function') _levelDBPutKey('lvl:'+id, str);
+  try{ localStorage.setItem('breach_lvl_'+id, str); }catch(e){}   // best-effort mirror; IndexedDB is the real home
+}
+function _libGet(id){
+  return (typeof _levelDBGetKey==='function' ? _levelDBGetKey('lvl:'+id) : Promise.resolve(null))
+    .then(v=>{ if(v) return v; try{ return localStorage.getItem('breach_lvl_'+id); }catch(e){ return null; } });
+}
+function _libDrop(id){
+  if(typeof _levelDBDelKey==='function') _levelDBDelKey('lvl:'+id);
+  try{ localStorage.removeItem('breach_lvl_'+id); }catch(e){}
+}
+// Save the CURRENT level into the library under a name, and start tracking it.
+function libSaveAs(name){
+  let str; try{ str=JSON.stringify(serializeLevel()); }catch(e){ return null; }
+  const list=_libIndex();
+  if(list.length>=LVLIB_MAX) return { err:'The library holds '+LVLIB_MAX+' levels. Delete one first.' };
+  const id='L'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  const e={ id, name:_libName(name, list), t:Date.now() };
+  list.unshift(e);
+  if(!_libWriteIndex(list)) return { err:'Could not write the library index (storage full).' };
+  _libPut(id, str); _libCurrent=id;
+  if(typeof _foreignLevel!=='undefined') _foreignLevel=false;   // it is yours now, by name
+  if(typeof _levelDirty!=='undefined') _levelDirty=false;
+  return e;
+}
+// Write the working level back into the entry it came from (Save, and autosave, while tracking one).
+function libCommit(){
+  if(!_libCurrent) return false;
+  let str; try{ str=JSON.stringify(serializeLevel()); }catch(e){ return false; }
+  const list=_libIndex(); const e=list.find(x=>x.id===_libCurrent);
+  if(!e){ _libCurrent=null; return false; }   // deleted from another tab: stop tracking rather than resurrect it
+  e.t=Date.now(); _libWriteIndex(list); _libPut(_libCurrent, str);
+  return true;
+}
+function libOpen(id, cb){
+  _libGet(id).then(str=>{
+    let lvl=null; try{ lvl=JSON.parse(str||'null'); }catch(e){}
+    if(!lvl || typeof lvl!=='object'){ if(typeof flashToast==='function') flashToast('That level could not be read'); if(cb) cb(false); return; }
+    if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+    if(typeof markForeignLevel==='function'){ const e=_libIndex().find(x=>x.id===id); markForeignLevel('"'+((e&&e.name)||'a level')+'"'); }
+    try{ restoreLevel(lvl); }catch(err){ if(typeof flashToast==='function') flashToast('That level failed to load'); if(cb) cb(false); return; }
+    // it came from YOUR library, so it is not foreign — but 1254's rescue of unsaved work still ran
+    _libCurrent=id; if(typeof _foreignLevel!=='undefined') _foreignLevel=false;
+    if(typeof _levelDirty!=='undefined') _levelDirty=false;
+    if(typeof saveLevel==='function') saveLevel();   // the active slot follows, so a reload lands here
+    if(cb) cb(true);
+  });
+}
+function libRename(id, name){ const list=_libIndex(); const e=list.find(x=>x.id===id); if(!e) return false;
+  e.name=_libName(name, list.filter(x=>x.id!==id)); _libWriteIndex(list); return true; }
+function libDelete(id){ const list=_libIndex().filter(x=>x.id!==id); _libWriteIndex(list); _libDrop(id);
+  if(_libCurrent===id) _libCurrent=null; return true; }
+function libDuplicate(id){ const list=_libIndex(); const e=list.find(x=>x.id===id); if(!e) return;
+  _libGet(id).then(str=>{ if(!str) return; const l2=_libIndex();
+    if(l2.length>=LVLIB_MAX){ if(typeof flashToast==='function') flashToast('The library is full ('+LVLIB_MAX+')'); return; }
+    const nid='L'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    l2.unshift({ id:nid, name:_libName(e.name+' copy', l2), t:Date.now() });
+    _libWriteIndex(l2); _libPut(nid, str);
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    if(typeof flashToast==='function') flashToast('Duplicated'); });
 }
 function clearSave(){ try { localStorage.removeItem(SAVE_KEY); }catch(e){} try{ if(typeof _levelDBPut==='function') _levelDBPut(''); }catch(e){} return true; }
 // ---------- Single-player campaign: an ordered list of levels; each level's win condition loads the next ----------
@@ -37968,6 +38081,7 @@ function buildEditorPanel(){
       + '<label style="display:flex;align-items:center;gap:7px;margin:8px 0 2px;color:#9fe6cf;font-size:12px;cursor:pointer"><input type="checkbox" id="edAutoSave" style="width:15px;height:15px;accent-color:var(--accent)"><b>Autosave</b> while editing</label>'
       + '<div class="hint" id="edAutoStatus" style="font-size:10px;opacity:0.75;margin:0 0 6px">Saves automatically as you work.</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edExport">'+_icn('download')+'Export .rumpus</button><button id="edImport">'+_icn('upload')+'Import level</button></div>'
+      + '<div id="edLibrary" style="margin-top:8px"></div>'
       + '<div id="edRescueRow" style="display:none;margin-top:6px"><button id="edRescue">\u21a9 Restore backup</button><div class="hint" id="edRescueNote" style="margin-top:2px"></div></div>'
       + '<input type="file" id="edImportFile" accept=".rumpus,.breach,.json,application/json" style="display:none">'
       + '<div class="row2" style="margin-top:6px"><button id="edClear">Clear save</button><button id="edReset">Reset target</button></div>'
@@ -38273,6 +38387,52 @@ function buildEditorPanel(){
   };
   const importFile = p.querySelector('#edImportFile');
   p.querySelector('#edImport').onclick = ()=>{ importFile.value=''; importFile.click(); };
+  // build 1262: the level library — a real project list, so one save slot is no longer the ceiling
+  (function(){
+    const host=p.querySelector('#edLibrary'); if(!host) return;
+    const draw=()=>{
+      host.innerHTML='';
+      const list=(typeof _libIndex==='function')?_libIndex():[];
+      const head=document.createElement('div'); head.className='hint'; head.style.margin='0 0 3px';
+      head.innerHTML='<b>My levels</b> \u2014 keep as many as you like; Save writes back to the one you have open.';
+      host.appendChild(head);
+      const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;margin:0 0 5px;';
+      const nm=document.createElement('input'); nm.type='text'; nm.placeholder='name this level';
+      nm.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+      const sv=document.createElement('button'); sv.textContent='Save as new'; sv.style.cssText='flex:0 0 auto;font-size:11px;';
+      sv.onclick=()=>{ const r=(typeof libSaveAs==='function')?libSaveAs(nm.value):null;
+        if(!r){ if(typeof flashToast==='function') flashToast('Could not save'); return; }
+        if(r.err){ if(typeof flashToast==='function') flashToast(r.err); return; }
+        nm.value=''; if(typeof flashToast==='function') flashToast('Saved as \u201c'+r.name+'\u201d'); draw(); };
+      row.appendChild(nm); row.appendChild(sv); host.appendChild(row);
+      if(!list.length){ const e=document.createElement('div'); e.className='hint'; e.style.opacity='.75';
+        e.textContent='Nothing saved yet. Name the level above and press Save as new \u2014 then you can keep several and switch between them.'; host.appendChild(e); return; }
+      for(const it of list){
+        const r2=document.createElement('div');
+        const mine=(typeof _libCurrent!=='undefined' && _libCurrent===it.id);
+        r2.style.cssText='display:flex;gap:5px;align-items:center;padding:3px 5px;border-radius:5px;margin:2px 0;font-size:12px;'
+          +(mine?'background:rgba(var(--accent-rgb),0.14);border:1px solid rgba(var(--accent-rgb),0.35);':'border:1px solid rgba(255,255,255,.06);');
+        const nmS=document.createElement('span'); nmS.textContent=it.name; nmS.title=new Date(it.t||0).toLocaleString();
+        nmS.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cfeee2;';
+        if(mine){ const b=document.createElement('b'); b.textContent=' \u2022 open'; b.style.cssText='color:var(--accent);font-size:10px;'; nmS.appendChild(b); }
+        const mk=(txt,title,fn)=>{ const b=document.createElement('button'); b.textContent=txt; b.title=title;
+          b.style.cssText='flex:0 0 auto;padding:1px 6px;font-size:11px;'; b.onclick=fn; return b; };
+        r2.appendChild(nmS);
+        r2.appendChild(mk('Open','Load this level into the editor',()=>{
+          if(typeof libOpen==='function') libOpen(it.id, (ok)=>{ if(ok && typeof flashToast==='function') flashToast('\u201c'+it.name+'\u201d opened'); draw(); }); }));
+        r2.appendChild(mk('\u29c9','Duplicate',()=>{ if(typeof libDuplicate==='function') libDuplicate(it.id); setTimeout(draw,120); }));
+        /* build 815's rule: the engine's own themed dialogs, never a native prompt/confirm */
+        r2.appendChild(mk('\u270e','Rename',()=>{ if(typeof uiPromptForm!=='function') return;
+          uiPromptForm('Rename level', [{ label:'Name', value:it.name, max:48 }], (vals)=>{
+            if(!vals || vals[0]==null) return; if(typeof libRename==='function') libRename(it.id, vals[0]); draw(); }); }));
+        r2.appendChild(mk('\u2715','Delete',()=>{ if(typeof uiConfirm!=='function') return;
+          uiConfirm('Delete \u201c'+it.name+'\u201d? This cannot be undone.', ()=>{
+            if(typeof libDelete==='function') libDelete(it.id); draw(); }, 'Delete'); }));
+        host.appendChild(r2);
+      }
+    };
+    draw(); _edLibraryRefresh=draw;
+  })();
   // build 1254: the rescue slot — unsaved work a shared/imported level replaced, one click from back
   (function(){
     const row=p.querySelector('#edRescueRow'), btn=p.querySelector('#edRescue'), noteEl=p.querySelector('#edRescueNote');

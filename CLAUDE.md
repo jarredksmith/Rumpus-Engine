@@ -1519,6 +1519,34 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## The characters were never on the mover list (build 1263)
+
+Reported from play within minutes of 1261 shipping: *"the character is running nicely, and the shadow
+is super janky"* in third person. A regression I caused, and the mechanism is worth more than the fix.
+
+`renderer.shadowMap.autoUpdate=false` means the map only re-renders when something calls
+`_dirtyShadows`. Builds 807/808 built that mover list carefully — driven cars, coasting cars,
+animated props mid-travel in the FAST tier; corpses and settling physics props every third frame —
+and **never listed the player or the enemies.** Their shadows were current anyway, because
+`_fitSunShadow` returned true on almost every moving frame and the loop calls `_dirtyShadows(1)` when
+it does. The camera-fit was doing the caster refresh as a SIDE EFFECT, and nothing said so.
+
+Build 1261 cut the refit to 19–31% of moving frames — correctly, for the volume — and the character's
+shadow fell to that rate while the character itself moved at 60fps. In first person you barely see
+your own shadow; in third person it is the thing you are looking at.
+
+The movers are now named honestly: a moving player (velocity sum over 0.05), any living enemy, and
+any remote player in a session. All three are skinned meshes whose pose changes every frame, so they
+belong in the FAST tier beside a driven car. A still player in a quiet scene still costs nothing,
+which is the case the static optimization was actually written for.
+
+**The rule, which is the real output of this pair of builds: a perf change is allowed to remove work;
+it is not allowed to remove work something else was silently relying on.** 1261 measured the thing it
+changed (refit rate) and never asked what else consumed it. The measurement was right and the
+conclusion was too broad — and the honest accounting is that 1261's win now applies to quiet scenes
+rather than to active gameplay, where the map must refresh every frame regardless, because that is
+what a dynamic shadow costs. The deadband stays: it was always right about the VOLUME.
+
 ## "Static" shadows were redrawing every moving frame (build 1261)
 
 The audit's #3 performance finding, reproduced exactly: `renderer.shadowMap.autoUpdate=false` (7024)
@@ -1529,8 +1557,10 @@ redrew the entire caster set on 100% of moving frames.** The tiered mover-dirtyi
 paid off standing still, which in an FPS is rare.
 
 The fix is a DEADBAND, not a frame throttle, and the distinction is the whole design. A shadow map is
-rendered from the LIGHT, so a stale fit does not lag the shadows at all — it only leaves the covered
-REGION slightly behind where it would ideally sit. And because the test is a DISTANCE, it is
+rendered from the LIGHT, so a stale fit does not lag the shadows of STATIC geometry at all — it only
+leaves the covered REGION slightly behind where it would ideally sit. **That sentence was published
+one clause too broad and build 1263 pays for it: the refit was also, silently, the thing refreshing
+the map for MOVING CASTERS. See "The characters were never on the mover list".** And because the test is a DISTANCE, it is
 self-limiting: a car crosses it sooner than a walker and refits proportionally more often, so
 staleness never grows with speed. A frame-count throttle would have had exactly the opposite property.
 
