@@ -1519,6 +1519,41 @@ prop would fog at the batch origin. `test-1181` drives ALL of this against the r
 semantics, the late-add-reaches-nothing fact, the sprite/begin_vertex facts — plus the executed maths
 (optical-depth ratio equals the height term exactly; the mix saturates, so assert on depth, not the mix).
 
+## Ambient particle emitters (build 1250)
+
+The engine had fire, weather, impact FX and flipbooks — all BAKED systems — and no way for a creator
+to place dust motes, embers, steam, fireflies, a smoke column or a fountain. Every competitor ships
+particles as a core authoring primitive. Six presets ship as **PROPS** (`fx_ember/dust/smoke/steam/
+firefly/fountain` in `PRIMITIVE_BUILDERS`), which buys the entire editor by composition: gizmo
+move/rotate/scale (scale IS the effect's size — point sizes multiply by it by hand, since
+`gl_PointSize` ignores the transform), duplication, clipboard, prefabs, tags, serialization and net
+sync with ZERO serializer changes — and the logic graph's `showprop`/`hideprop` verbs switch an
+effect at runtime for free. An "Effects" row sits under Add a shape.
+
+Load-bearing decisions:
+- **The fire system's SHARED materials are reused** (`_getFireMat` additive / `_getFireMatSmoke`
+  normal, per-particle size/colour/alpha attributes) — no new shader to silently fail (the twice-
+  burned class), and the AO/velocity G-buffer sweeps already treat them correctly. Removal disposes
+  the per-emitter GEOMETRY only, never the shared material.
+- **No lights** (the 636/977/1153/1155 rule) and **no collision, via three surgical exemptions**:
+  `refreshPropCollider` keeps the overall box for selection but empties `boxes`; emitters never join
+  the `colliders` list (so no shot raycasts, no enemy avoidance — the 1236 ghost-wall class,
+  prevented rather than filtered); `addStaticColliderFor` returns early (no Rapier body).
+- **Particles simulate in LOCAL space** from closed-form parametrics (base + vel·t + ½g·t², sway
+  sines) — a tilted fountain tilts, a carried emitter's plume rides along, and no per-particle
+  position state exists to drift. Staggered ages, a single-hump sin^0.8 envelope (nothing pops in or
+  out), dt clamped at 0.1 so a hitch cannot launch the field. The jet mode respawns on falling back
+  to its pool.
+- The wireframe selection marker is editor-only (`updateEmitters` owns its visibility per frame).
+
+Verified two ways: `test-1250` executes the real seed/envelope/step (bounds over 200 seeds per
+preset, respawn invariant, the jet splash floor, scale doubling point sizes) and pins the three
+exemptions; captured headless with a control pair — embers 246 → 1,022 warm pixels (4.2x), the
+fountain's spray visible arcing, and the in-page probe reporting `boxes:[0,0]`,
+`inColliders:[false,false]`. One capture-harness lesson: the dead-CDN environment can raise the
+level loader LATE (pending model loads), so a probe screenshot must wait on `!_levelLoaderActive`
+or it photographs the cover.
+
 ## Shell-by-shell reload (build 1249)
 
 The item 1172 deferred as its own build. The shotgun now loads shells ONE at a time (intro 260 ms —
