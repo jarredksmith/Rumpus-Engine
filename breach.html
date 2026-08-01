@@ -18670,7 +18670,20 @@ function _vmWanted(){
   // build 1137: never in the editor. The rifle was drawn across the lower-right of the AUTHORING
   // viewport — measured by a critic at 11% of it — hiding whatever the author was placing there, and
   // it is not a tool affordance by any reading. gun.visible stays untouched so play is unaffected.
-  if(typeof editorOpen!=='undefined' && editorOpen) return false;
+  //
+  // build 1264, reported from play: "I can't see any weapons in the editor... adjusting position for
+  // FPS, aim, third-person weapon adjustment is impossible." 1137 was right about BUILDING and wrong
+  // about the panels whose entire job is posing the weapon — view framing, the ADS pose and the muzzle
+  // point are all authored by eye, against a weapon that had been hidden from the author. A blanket
+  // rule was cheaper to write than the distinction, and the distinction is what a creator needs: the
+  // viewmodel returns for exactly the targets that TUNE it (`gun` = model/framing, `aim` = the ADS
+  // pose, `grenade` = the throw pose) and stays hidden for every other kind of authoring, which is
+  // 1137's real intent preserved rather than reverted.
+  if(typeof editorOpen!=='undefined' && editorOpen){
+    const _t=(typeof editorActive!=='undefined')?editorActive:'';
+    if(_t!=='gun' && _t!=='aim' && _t!=='grenade') return false;
+    if(typeof activeViewMode==='function' && activeViewMode()!=='fps' && _t!=='aim') return false;   // a top-down/side authoring camera has no first-person weapon to pose
+  }
   if(typeof _scopedNow!=='undefined' && _scopedNow) return false;   // looking through the optic: no viewmodel
   return true;
 }
@@ -28664,7 +28677,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1263 · 2026-08-01';
+const BUILD_VERSION = 'build 1264 · 2026-08-01';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34003,7 +34016,7 @@ function loop(){
   } else if(editorOpen && editorFreeFly){
     if(scene.fog !== SCENE_FOG) scene.fog = SCENE_FOG;
     if(editorBrightLight.intensity !== 0) editorBrightLight.intensity = 0;
-    gun.visible = (editorActive==='gun' || editorActive==='aim');   // keep the viewmodel visible while editing it (esp. mobile free-fly)
+    gun.visible = (editorActive==='gun' || editorActive==='aim' || editorActive==='grenade');   // keep the viewmodel visible while editing it (esp. mobile free-fly) · build 1264: the same three targets _vmWanted draws for, or the mesh is visible and the PASS never runs
     if(!flyInit){ flyPos.copy(player.pos); flyInit = true; }   // seed from where the player stands
     // WASD moves along the view direction; Space/E rise, Q/Ctrl fall; Shift sprints — all in world space
     const spd = (keys['ShiftLeft']||keys['ShiftRight']?60:26) * dt;
