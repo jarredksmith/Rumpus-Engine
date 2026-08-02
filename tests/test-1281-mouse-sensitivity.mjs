@@ -51,7 +51,8 @@ const sensNow = () => {
   near(fn({ ...env, mouseAimMatch: true }, false), 0.0022, 1e-12, 'and hip fire is unaffected either way');
 }
 { // one derivation, so the two mouse consumers cannot drift apart
-  eq((src.match(/_mouseSensNow\(/g) || []).length, 3, 'defined once and asked twice — the look handler and the aim path');
+  eq((src.match(/_mouseSensNow\(/g) || []).length, 4,
+    'defined once and asked three times — the look handler, the aim path, and build 1312’s two-finger editor look, which reads the SAME setting rather than inventing a touch sensitivity');
   assert(!/movementX \* HIP_SENS/.test(src), 'no consumer multiplies the raw constant any more');
   assert(/const _s = _mouseSensNow\(false\);/.test(src), 'the pointer-lock look path asks it');
   assert(/const sens = _mouseSensNow\(ads\);/.test(src), '...and so does the aim path, with the ADS state');

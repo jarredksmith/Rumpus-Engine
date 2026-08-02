@@ -55,10 +55,12 @@ const src = gameSource();
   eq((src.match(/SFX\.meleeWind\(/g) || []).length, 1, 'the melee tell has exactly one call site');
   eq((src.match(/SFX\.lungeWind\(/g) || []).length, 1, '...and so does the lunge tell');
 }
-{ // footsteps are DEFERRED with the reason recorded, not half-shipped as dead code
-  assert(/DEFERRED, deliberately: a footfall for a closing enemy/.test(src),
-    'the deferred footstep cue records why it is not here');
-  assert(!/enemyStep\(/.test(src), '...and no unused sound was left behind');
+{ // footsteps were DEFERRED here and DELIVERED in build 1315 — the deferral's worry shaped the design
+  assert(/Build 1283 DEFERRED the footfall/.test(src),
+    'the deferral is still recorded, now with what became of it');
+  assert(/DELIVERED in build 1315, and the deferral's worry is what shaped it/.test(src),
+    '...and the density worry is named as the thing that produced 1315’s range gate, budget and near-field exemption');
+  assert(/enemyStep\(at, heavy\)/.test(src), 'the sound exists now, and takes a position');
 }
 
 // ---------------------------------------------------------------- build 1284: the antialiasing gate

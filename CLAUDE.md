@@ -967,6 +967,199 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Enemies make noise when they move and when they notice you (build 1315 — gameplay audit F3)
+
+> Cataloguing all 85 `SFX.*` call sites: enemies produce sound in exactly three places. No approach/footstep,
+> no aggro/spot vocal, no sapper fuse. `SFX.step()` takes no `at` argument at all, so it can only ever be the
+> PLAYER's own footsteps. **A brute closing from behind you is inaudible in a genre where audio does most of
+> the threat detection.** This is also the cheapest large feel win available.
+
+Build 1283 closed the two telegraphs and explicitly DEFERRED the footfall — *"a per-enemy step is
+CONTINUOUS rather than event-driven; its value is entirely in the density, and 40 enemies in a wave is a mud
+of overlapping noise if that is wrong."* That worry is what shaped this build: the density is **bounded**
+rather than left to the wave size.
+
+- **Distance-accumulated, not on a timer.** A step falls where the foot falls at any speed, and a staggered
+  (build 1209) or wading enemy slows for free — no second tuning knob. Measured from the same
+  previous-position pair the stuck detector uses, so an enemy grinding on a corner does not tap-dance:
+  400 frames of scraping is **zero** footsteps.
+- **Three limits.** A 30 m range gate (well inside the panner's own 55 m — a footstep you can hear across
+  the arena is a hum); a per-tick budget of 3 beyond 12 m; and **no rationing inside 12 m**, because the
+  enemy behind you is precisely the one that must not be cut. A sort would be fairer and costs an array
+  every frame; the near-field exemption gets the same outcome for two comparisons.
+- **Darker and quieter than the player's own step** (420/260 Hz against the player's 520), so the two stay
+  tellable apart when both are running. `SFX.step()` is deliberately untouched and still has no `at`.
+- **The sapper gets a fuse.** It is FASTER than you, so by the time its footsteps read as close it is
+  already on you; the fuse ticks the whole approach and quickens from 0.5 s to 0.14 s as it closes.
+- **The aggro vocal rides the EXISTING `aware` rising edge** — the one build 1214 put there for the logic
+  graph's `onspot`, with the comment explaining that four things can set `aware` and watching it in one
+  place means every one fires it and none fires it twice. That argument is exactly as true for a sound.
+
+Verified live (`tools/probe/enemy-audio.mjs` — a real enemy spawned and walked at the player by the real AI,
+every `tone`/`noise` recorded): a grunt at speed 8 walked 7 m in 5 s → 3 footsteps + a spot vocal; a brute
+→ 1 footstep at 260 Hz; a sapper → footsteps + fuse ticks; **a grunt 75 m away → zero sounds.**
+
+### The probe caught a TDZ that the boot test passed straight through
+
+The constants were first declared beside the two functions that use them, 17,000 lines below the enemy
+tick that resets the budget. The first frame threw `Cannot access 'ENEMY_STEP_BUDGET' before
+initialization` — the temporal dead zone, which builds 838 and 1127 both recorded.
+
+**`test-202-boot` PASSED**, because the throw happens inside the frame loop rather than during evaluation.
+The live probe found it on its first run. **A boot test that executes the source is not a substitute for
+running a frame.**
+
+Also worth knowing, established while debugging it: `_enStep`, `_enemyFootstep`, `_sapperFuse` and
+`updateEnemies` are **inside the enemy-AI closure**, not module scope — a probe can reach `shatterProp` and
+the module-level constants but not those. Unit-level behaviour for anything in there belongs in a Node
+harness with `extractFunction`; the probe drives it end to end instead.
+
+Two pins moved (1077 — the edge line no longer ends at the event; 1283 — its "footsteps are deferred"
+assertion became "deferred here, delivered in 1315", which is the more useful thing to pin).
+
+## A custom prop sound REPLACES the engine's (build 1314)
+
+Reported from play, three things in one message: *"There seems to be a default coded sound for when pressing
+the fire button and impact on props, especially for melee. It plays the default AND the custom sound at the
+same time. Can we remove the default sounds if there is a custom sound loaded? Also need the option to search
+freesounds for prop impact noises. I'd also like a slot per-prop for a custom explosion or breaking sound."*
+
+**The doubling is two systems that did not know about each other.** Build 1305 gave the PROP its own impact
+clip; the generic `SFX.hit()` at the end of every swing and after every pellet has fired since long before
+that. A creator who authors a wood-crate sound is *saying what the crate sounds like* — layering the
+engine's 600 Hz sine on top is the engine talking over them.
+
+- **The latch is a TIMESTAMP, not a return value** threaded through six call sites, because the host and a
+  co-op client reach the sound by different routes (the host through `damageProp`, the client through its own
+  prediction) and both land within a frame of the generic one. 80 ms is one frame at any rate the game runs
+  and far shorter than two deliberate hits.
+- **Set only on a play that actually happened.** `playSample` returns false until a buffer decodes; latching
+  on the attempt would silence the fallback for the one hit that needed it.
+- **Exactly the two prop paths are guarded.** Enemy, player, bot and turret hits are untouched. So is the
+  **hitmarker** — that is information, not decoration, and the report was about the sound.
+
+**A break slot, and ONE slot for break and explosion**, because for an explosive prop they are the same
+event; two slots would mean authoring it twice and choosing which wins. It replaces `SFX.shatter`/`SFX.puff`
+the same way, needs no debounce (a prop is destroyed once), and is warmed at deploy alongside the impact clip
+— *especially* the break clip, since it gets exactly one chance to be right.
+
+**Freesound is where the field is.** The browser already took a `{label, set}` direct target (used by audio
+zones, signals, cutscenes, per-weapon shoot), so both slots open it seeded with the query a creator came to
+run. The picked url applies to the **whole selection**, exactly as typing one does — a picker that acts on
+one prop while the field beside it acts on thirty is a trap.
+
+Measured live (`tools/probe/prop-sound-dedupe.mjs`, recording every sound start on both the sample and synth
+paths): melee at a prop, 1 sound with a custom clip and 1 without; shooting a prop, the same; breaking, the
+engine's 220 Hz synth without a break clip and the custom clip **alone** with one.
+
+Four pins moved (1305 ×3 — the row became a builder called twice, so its label is an argument and its
+userData key a variable).
+
+## Motion accessibility (build 1313 — gameplay audit F9)
+
+> Greped `colorblind`, `reduceMotion`, `prefers-reduced`, `a11y` → one CSS media query for UI animation,
+> nothing that touches camera shake, the damage flash, motion blur or hitstop. **A player who gets motion
+> sick from `addShake`/`postMotion` has no recourse inside the game.**
+
+Every one of those was a hardcoded constant or a LEVEL setting the creator owns — so a player who cannot
+tolerate camera shake could not turn it down in someone else's level, on any platform, at all.
+
+Five per-device sliders in the pause menu (**Motion & comfort**): camera shake, camera sway, motion blur,
+damage flash, kill slow-mo. Three decisions:
+
+- **Per device, not per level.** This is a property of the person, not the content. It must survive
+  switching levels and apply to levels other people made — which is the whole point, since a creator cannot
+  be relied on to have thought about it.
+- **A multiplier at the point of use, never a write to the level's values.** `worldCfg.postMotion` stays
+  exactly what the creator authored; the preference scales it on the way to the shader. Writing it would
+  save the player's accessibility setting into someone else's file.
+- **Seeded from the OS.** A player who has told their system "reduce motion" has said it once; asking again
+  is the accessibility failure one level up. `prefers-reduced-motion: reduce` seeds a calm baseline on first
+  run, and an explicit choice always wins after that — including the choice to turn it all back up.
+
+**Defaults are 1 across the board**, so nothing moves for a player who never opens the panel: at 100% the
+flash alpha is the same 0.55, the freeze is the same `rawDt*0.12`, `addShake` is the identity.
+
+**The damage flash is dimmed, not removed.** At zero it still writes alpha 0.12 — a player who has turned
+motion down still needs to know they are being hit. The slider dims the pulse; it does not delete the
+feedback.
+
+Two places the scaling had to go where it isn't obvious:
+- **`addShake` is the chokepoint** — blasts, hits, kills, car impacts and the melee thump all route through
+  it, so one scale covers them and the next one somebody adds. But two sites write `shake` directly (a car
+  slam, a multi-kill punch); those are scaled too, because *a chokepoint you can go around is not one.*
+- **Sway scales the TARGETS, not the springs.** The dip still settles and the lean still eases on their
+  tuned curves; they just have less to travel. Scaling the spring rates would change the *feel* rather than
+  the amount, which is not what the setting says.
+
+Measured live at every site (`tools/probe/a11y-motion.mjs`): shake 0.40/0.20/0.10/0.00 at 100/50/25/0%;
+flash alpha 0.55/0.333/0.12; a 0.62 authored blur reaching the shader as 0.62/0.31/0.00 with `worldCfg`
+untouched; hitstop dt 0.00192/0.00896/0.016 (at 0 the clock never slows, and the countdown still runs so
+nothing waiting on it can hang).
+
+**The probe found a defect in the loader itself:** `loadA11y()` only ever ADDED constraints — a second call
+with nothing stored and no OS preference left whatever the last call had written. It now starts from the
+defaults every time. That only showed up because the probe called it twice.
+
+Six pins moved (1210, 1220, 1238, 1246, 31, 437), each keeping its assertion's intent — and 1246's gained a
+case, since a player who turns blur off must skip the whole velocity pass in a level that authored it on.
+
+## The editor viewport answers to two fingers (build 1312 — editor audit 4.6)
+
+> Top view pan is `mousedown` button 1/2 and zoom is `wheel` → **top view is unreachable on a phone**, and
+> with it the marquee, which is top-view only. A touch creator has no multi-select at all beyond the
+> outliner. No pinch-zoom anywhere in the viewport.
+
+Verified at the lines: the pan handler returns unless `e.button` is the MIDDLE or RIGHT button, and the zoom
+lives on `wheel`. A touchscreen has neither — so a phone creator could press Top, arrive fitted to the whole
+arena, and never get closer or move sideways. **The view existed and was useless.**
+
+```
+TOP VIEW      two fingers drag -> pan          pinch -> zoom
+PERSPECTIVE   two fingers drag -> look         pinch -> dolly along the view
+```
+
+**One finger is deliberately untouched.** Tap-select, gizmo drags, the marquee and the look-drag all run off
+the existing pointer path; the handler ignores anything that is not exactly two touches and never calls
+`preventDefault` on one. That is what makes the change additive rather than a rewrite of the input layer.
+
+Every number is borrowed rather than invented, so the two inputs cannot disagree about the same view: the
+pan reuses the mouse pan's own `(2*topZoom)/innerHeight`, the zoom clamps are byte-identical to the wheel's,
+the look reads build 1281's sensitivity setting, and the pitch clamps at the same ±1.5.
+
+**The dolly is logarithmic, not `1 - 1/scale`.** The ratio form is asymmetric — pinching out and back in by
+the same amount leaves the camera somewhere new, which reads as drift and is the sort of thing nobody
+reports; they just stop trusting the gesture. `log(scale) * 9` returns to exactly where it started (measured
+live: −6.238 / +6.238 m).
+
+Measured with real `TouchEvent`s at the real canvas (`tools/probe/editor-touch.mjs`): a 100 px two-finger
+drag panned 111.11 world units with the zoom unchanged; a ×2 pinch took zoom 200 → 100 with the pan
+unchanged; a held pinch hit floor 6 and ceiling 110, exactly the wheel's clamps; two-finger drag in
+perspective moved yaw/pitch and left the fly position alone; **one finger changed nothing, and neither did
+anything with the editor closed.**
+
+### The suite caught a regression I was one commit from shipping
+
+I also hid the on-screen touch sticks while editing, reading the audit's *"taps on the stick half do
+nothing"* as the overlay swallowing half the canvas. Build 165's own test failed with `touch UI shows in the
+editor` — and the assertion one line below it says why:
+
+```js
+if(isTouch){ if(touchMoveZ) flyPos.addScaledVector(fwd, -touchMoveZ*spd*1.5);
+```
+
+**The joystick is how a touch creator flies the editor camera.** Hiding it would have taken away their only
+way to *move*, in exchange for making the left half tappable. Reverted. The stick half not selecting is a
+trade-off that was made deliberately in build 165, not a defect — so **this build does not close that third
+bullet**, and the entry should not be read as though it does.
+
+Two things worth carrying: a decade-old-looking assertion with a terse message can be load-bearing, and the
+line under it is usually the reason. And when an audit finding and a passing test disagree, **read the test's
+neighbours before believing the audit.**
+
+One pin moved (1281 — `_mouseSensNow` is now asked three times, because the touch look reads the creator's
+own sensitivity rather than inventing a second one).
+
 ## A swing is an arc, not a laser (build 1311)
 
 Reported from play: *"unless the character is directly facing the object with the cross-hair dead middle of

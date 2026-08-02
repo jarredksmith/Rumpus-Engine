@@ -1416,6 +1416,19 @@
       <label class="paLbl"><input type="checkbox" id="msAimMatchCb"> Zoom-matched aim sensitivity</label>
       <div id="msSensHint" style="font-size:11px;opacity:.7;margin:2px 0 0">1.00 = the engine default. Aiming is slower than the hip by design; tick the box to make it match the zoom instead.</div>
     </div>
+    <!-- build 1313 (gameplay audit F9): motion accessibility. Per DEVICE, so it follows the player into
+         levels other people made — which is the whole point, since a creator cannot be relied on to have
+         thought about it. -->
+    <div class="pauseAudio" id="pauseA11y">
+      <div style="font-size:11px;letter-spacing:1.5px;opacity:.75;margin:0 0 4px">MOTION &amp; COMFORT</div>
+      <label class="paLbl">Camera shake<input type="range" id="a11yShake" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yShakeV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Camera sway<input type="range" id="a11ySway" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11ySwayV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Motion blur<input type="range" id="a11yBlur" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yBlurV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Damage flash<input type="range" id="a11yFlash" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yFlashV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Slow-mo on kills<input type="range" id="a11yHitstop" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yHitstopV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <div class="row2" style="margin-top:5px"><button id="a11yReduce" class="pBtnGhost">Reduce all motion</button><button id="a11yRestore" class="pBtnGhost">Restore defaults</button></div>
+      <div id="a11yHint" style="font-size:11px;opacity:.7;margin:4px 0 0">These are yours, not the level's \u2014 they follow you into every level, including ones other people made. Being hit always stays visible, however low the flash goes.</div>
+    </div>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
     <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <button id="pauseExit" class="pBtnExit">⌂ Exit to main menu</button>
@@ -6560,11 +6573,12 @@ const SFX = {
   meleeSwing(at){ noise({dur:0.13, vol:0.11, filterFreq:1200, type:'bandpass', at}); tone({freq:220, type:'square', dur:0.06, vol:0.05, slideTo:80, at}); },
   // a hurt grunt, so shooting something in the dark tells you that you connected AND where it is
   enemyHurt(at){ tone({freq:260, type:'sawtooth', dur:0.09, vol:0.065, slideTo:170, at}); },
-  // DEFERRED, deliberately: a footfall for a closing enemy is the other half of "a brute behind you is
-  // inaudible", but a per-enemy step is CONTINUOUS rather than event-driven — its value is entirely in the
-  // density, and 40 enemies in a wave is a mud of overlapping noise if that is wrong. The four cues above
-  // are discrete events that cannot spam. Tuning a step rate needs a live listen, which the headless
-  // harness cannot give, so it is its own build with a browser pass rather than a guess bolted on here.
+  // Build 1283 DEFERRED the footfall: "a per-enemy step is CONTINUOUS rather than event-driven — its value
+  // is entirely in the density, and 40 enemies in a wave is a mud of overlapping noise if that is wrong."
+  // DELIVERED in build 1315, and the deferral's worry is what shaped it: the density is bounded by a range
+  // gate, a per-tick budget and a near-field exemption rather than left to the wave size. The step rate
+  // still wants a live listen — the headless harness can prove three sound and thirty do not, but not that
+  // it feels right — so ENEMY_STEP_M is the first thing to try if a wave reads as mud.
   shootAt(pos){ if(!actx||!sfxBus) return; const gain=_spatialOut(pos); if(!gain) return;   /* build 1208: shared panner replaces the hand-rolled distance-only gain — a shot to your side now reads to your side */
     const t=actx.currentTime;
     const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
@@ -6604,6 +6618,22 @@ const SFX = {
     const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.2,t+0.05); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
     src.connect(filt).connect(g).connect(sfxBus); src.start(t); },
   step(){ noise({dur:0.06, vol:0.07, filterFreq:520, type:'lowpass'}); },
+  /* ---- build 1315 (gameplay audit F3): ENEMIES MAKE NOISE WHEN THEY MOVE AND WHEN THEY NOTICE YOU ----
+     The audit, cataloguing all 85 SFX call sites: "enemies produce sound in exactly three places — a
+     ranged projectile and death. No approach/footstep, no aggro/spot vocal, no sapper fuse. SFX.step()
+     takes no `at` argument at all, so it can only ever be the PLAYER's own footsteps. A brute closing from
+     behind you is inaudible in a genre where audio does most of the threat detection."
+     Build 1283 closed the two telegraphs; the approach was still silent. These are positional (build
+     1208's panner), and deliberately DARKER and quieter than the player's own step so the two are
+     tellable apart when both are running. */
+  enemyStep(at, heavy){ heavy
+    ? noise({dur:0.09, vol:0.085, filterFreq:260, type:'lowpass', at})
+    : noise({dur:0.055, vol:0.05, filterFreq:420, type:'lowpass', at}); },
+  /* the moment it notices you — the one cue that lets a player react BEFORE the shooting starts */
+  enemySpot(at, heavy){ tone({freq: heavy?90:170, type:'sawtooth', dur:0.22, vol:0.10, slideTo: heavy?150:300, at});
+    noise({dur:0.12, vol:0.07, filterFreq:900, type:'bandpass', at}); },
+  /* a rushing exploder is the one enemy whose approach you MUST hear; it ticks while it closes */
+  sapperFuse(at){ tone({freq:1500, type:'square', dur:0.045, vol:0.055, slideTo:1900, at}); },
   heartbeat(){ tone({freq:60, type:'sine', dur:0.16, vol:0.22, slideTo:42}); setTimeout(()=>tone({freq:54, type:'sine', dur:0.18, vol:0.15, slideTo:40}),175); },
 };
 
@@ -6659,6 +6689,20 @@ const PROP_SND_GAP = 55;      // ms before the SAME prop may sound again
 const PROP_SND_BURST = 4;     // starts allowed across DIFFERENT props inside one window
 const PROP_SND_WINDOW = 60;
 let _propSndT = 0, _propSndN = 0;
+// build 1314: REPORTED FROM PLAY — "there's a default coded sound for the fire button and impact on props,
+// especially melee. It plays the default AND the custom sound at the same time."
+//
+// Correct, and it is two independent systems arriving at the same instant: build 1305 gave the PROP its own
+// impact clip, while the generic `SFX.hit()` at the end of the swing and after every pellet has fired since
+// long before that. Neither knew about the other. A creator who authors a wood-crate sound is SAYING what
+// the crate sounds like; layering the engine's 600 Hz sine on top is the engine talking over them.
+//
+// The latch is a TIMESTAMP rather than a return value threaded through six call sites, because the host and
+// a co-op client reach the sound by different routes (the host through damageProp, the client through its
+// own prediction) and both land within a frame of the generic one. 80 ms is comfortably one frame at any
+// rate the game runs and far shorter than any two deliberate hits.
+let _propSndAt = -1e9;
+function _propSndFresh(){ return performance.now() - _propSndAt < 80; }
 function playPropHitSound(obj, pt){
   if(!obj || !obj.userData || !obj.userData.hitSnd) return false;
   if(obj.userData.breakable===false) return false;   // it takes no damage, so nothing landed on it
@@ -6676,11 +6720,20 @@ function playPropHitSound(obj, pt){
   obj.userData._hitSndT = now;
   /* the radius damage above passes no contact point, so the prop's own position is the fallback — a
      positioned clip pans and attenuates (build 1208), and `null` would put it flat in both ears. */
-  return playSample(obj.userData.hitSnd, { at: pt || obj.position, vary: 0.08 });
+  const ok = playSample(obj.userData.hitSnd, { at: pt || obj.position, vary: 0.08 });
+  if(ok) _propSndAt = now;   /* build 1314: the generic SFX.hit stands down for this hit */
+  return ok;
+}
+// build 1314: ...and the same for the moment it BREAKS. Requested alongside the above: "a slot per-prop for
+// a custom explosion or breaking sound." ONE slot serves both, because for an explosive prop the break IS
+// the explosion — two slots would mean authoring the same event twice and choosing which one wins.
+function playPropBreakSound(obj, at){
+  const u = obj && obj.userData; if(!u || !u.breakSnd) return false;
+  return playSample(u.breakSnd, { at: at || (obj.position || null), vary: 0.05 });
 }
 // build 1305: warm every prop's impact clip at deploy. playSample RETURNS FALSE when the buffer has not
 // decoded yet, so without this the first axe swing at every crate in the level is silent.
-function preloadPropHitSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const u=o&&o.userData&&o.userData.hitSnd; if(u) loadSound(u); } }
+function preloadPropHitSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const u=o&&o.userData; if(!u) continue; if(u.hitSnd) loadSound(u.hitSnd); if(u.breakSnd) loadSound(u.breakSnd); } }   /* build 1314: the break clip too — it fires exactly once per prop, so a cold first play would be silent for the one hit that matters most */
 // build 750: preload every signal's custom clip (do:'sound') so a light switch / button plays on the first press, not the second.
 function preloadSignalSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const sigs=o&&o.userData&&o.userData.signals; if(!sigs) continue; for(const s of sigs){ if(s.do==='sound' && s.sound) loadSound(s.sound); } } }
 
@@ -8240,7 +8293,10 @@ function _renderPostFX(scn, cam){
   // 1d) build 1246: the velocity buffer — top rung only; lower rungs keep 1238's rotation blur.
   // Same envelope as the AO prepass: shadow refresh frozen, sky/weather/background out, the no-depth
   // sweep on BOTH scenes (1158's rule), and the viewmodel drawn with its own near-zero velocities.
-  const _velWant = _postMotion > 0.01 && _prStepI === 0 && _velRT && _matVel && cam && cam.isPerspectiveCamera;
+  /* build 1313: the player's motion-blur preference SCALES the creator's authored value on the way to the
+     shader. worldCfg.postMotion is untouched, so the level still saves exactly what its author set. */
+  const _postMotionP = _postMotion * ((typeof a11y!=='undefined') ? a11y.blur : 1);
+  const _velWant = _postMotionP > 0.01 && _prStepI === 0 && _velRT && _matVel && cam && cam.isPerspectiveCamera;
   if(_velWant){
     const vu=_matVel.uniforms;
     if(_velVPF === _frameNo - 1) vu.uPrevVP.value.copy(_velPrevVP);
@@ -8330,7 +8386,7 @@ function _renderPostFX(scn, cam){
   // build 810: with motion blur ~0 (or shed by adaptive res at its lowest step), composite STRAIGHT TO SCREEN — the
   // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
   // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
-  const _mbOn = _postMotion>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);
+  const _mbOn = (_postMotion * ((typeof a11y!=='undefined') ? a11y.blur : 1))>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);   /* build 1313 */
   // build 1117: the composite always encodes — it is the last stage that sees linear light either
   // way, and the grade after it has to run in display space. Everything downstream is a blit or a
   // temporal blend, both of which are fine on display-referred pixels.
@@ -18265,6 +18321,16 @@ const ENEMY_TYPES = {
   charger: { name:'Charger', hp:75, speedMin:4.5, speedMax:6, scale:1.3, tint:0xff8c1a, dmg:20, charger:true, lungeRange:16, lungeSpeed:30, lungeDur:0.45, lungeWind:520 },
 };
 const ENEMY_TYPE_KEYS = ['grunt','runner','brute','gunner','sapper','shielded','charger','boss'];
+// build 1315: the enemy-audio tuning lives HERE, beside the type table, and NOT beside the two functions
+// that use it 17,000 lines below. It was declared down there first and the reset line in the enemy tick
+// threw `Cannot access 'ENEMY_STEP_BUDGET' before initialization` on the first frame — a temporal dead
+// zone, the trap builds 838 and 1127 both recorded. Worth knowing HOW it was caught: `test-202-boot`
+// PASSED, because the throw happens inside the frame loop rather than during evaluation. A live probe
+// found it on its first run. A boot test that executes the source is not a substitute for running a frame.
+const ENEMY_STEP_M = 1.9, ENEMY_STEP_RANGE = 30, ENEMY_STEP_NEAR = 12, ENEMY_STEP_BUDGET = 3;
+const ENEMY_HEAVY = { brute:1, boss:1, shielded:1 };
+const SAPPER_FUSE_FAR = 0.5, SAPPER_FUSE_NEAR = 0.14;
+let _enStepBudget = 0;
 // build 1191: per-level ENEMY TUNING — hp / damage / speed per type, the weapon stat sheet's exact
 // pattern (1190): a factory baseline captured at boot, only-changed values serialized, one clamped
 // sanitizer every loader routes through so a hostile level file cannot ship a 0-hp boss army at 30x
@@ -19420,6 +19486,69 @@ function _marqueeFinish(e){
 }
 // middle / right drag pans in top view (left-drag is the marquee now); suppress the context menu while editing in top view
 renderer.domElement.addEventListener('mousedown', e=>{ if(!editorOpen || (e.button!==1 && e.button!==2)) return; if(editorTopView){ editorDragPan=true; editorDragMoved=false; e.preventDefault(); } });
+// ---- build 1312 (editor audit 4.6): TWO-FINGER CAMERA IN THE EDITOR VIEWPORT --------------------------
+// The audit: "Top view pan is mousedown button 1/2 and zoom is `wheel` -> TOP VIEW IS UNREACHABLE ON A
+// PHONE, and with it the marquee, which is top-view only. A touch creator has no multi-select at all beyond
+// the outliner. No pinch-zoom anywhere in the viewport."
+//
+// Verified: the pan handler one line above returns unless `e.button` is the MIDDLE or RIGHT button, and the
+// zoom lives on `wheel`. A touchscreen has neither. So a phone creator could press the Top button, arrive
+// fitted to the whole arena, and then never get closer or move sideways — the view existed and was useless.
+//
+// ONE FINGER IS UNTOUCHED. Tap-to-select, gizmo drags, the marquee and the look-drag all run off the
+// existing pointer path and must keep working exactly as they do; this handler ignores anything that is not
+// a two-finger gesture and never calls preventDefault on one. That is what keeps the change additive.
+//
+// The gesture is the one every 3D app on a tablet uses, which is worth more here than any cleverness:
+//   TOP VIEW      two fingers drag -> pan          pinch -> zoom about the arena
+//   PERSPECTIVE   two fingers drag -> look         pinch -> dolly along the view
+// Pinch is scale-relative (a ratio, not pixels), so it behaves the same on a phone and a tablet.
+let _edTouch = null;   // { d, cx, cy } from the previous move, or null when no two-finger gesture is live
+function _edTouchGeom(t){
+  const a=t[0], b=t[1];
+  return { d: Math.hypot(b.clientX-a.clientX, b.clientY-a.clientY),
+           cx: (a.clientX+b.clientX)/2, cy: (a.clientY+b.clientY)/2 };
+}
+renderer.domElement.addEventListener('touchstart', e=>{
+  if(!editorOpen || e.touches.length!==2){ _edTouch=null; return; }
+  _edTouch = _edTouchGeom(e.touches); editorDragMoved = true;   /* a two-finger gesture is never a tap-select */
+  e.preventDefault();
+}, { passive:false });
+renderer.domElement.addEventListener('touchmove', e=>{
+  if(!editorOpen || e.touches.length!==2 || !_edTouch) return;
+  const g = _edTouchGeom(e.touches);
+  const dx = g.cx - _edTouch.cx, dy = g.cy - _edTouch.cy;
+  /* the pinch ratio, guarded: two fingers landing at the same point would divide by ~0 */
+  const scale = (_edTouch.d > 8 && g.d > 8) ? (g.d / _edTouch.d) : 1;
+  if(editorTopView){
+    const wpp = (2*topZoom)/innerHeight;                       // world units per pixel, the same figure the mouse pan uses
+    topPanX -= dx * wpp; topPanZ -= dy * wpp;
+    if(scale!==1) topZoom = Math.max(6, Math.min(Math.max(110, ARENA*1.3), topZoom / scale));   // pinch OUT zooms in, like every map
+  } else {
+    const _s = (typeof _mouseSensNow==='function') ? _mouseSensNow(false) : 0.0022;
+    player.yaw -= dx * _s; player.pitch -= dy * _s;
+    player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+    /* dolly along the view. In free-fly that is the fly position; otherwise it is the same third-person
+       preview distance the wheel drives, so the gesture means the same thing the mouse does in each mode. */
+    if(scale!==1){
+      if(editorFreeFly && typeof flyPos!=='undefined'){
+        /* log, not a ratio difference, so pinching in and out by the same amount travels the same
+           distance — (1 - 1/scale) is asymmetric and a creator feels that immediately as drift. */
+        const _step = Math.log(scale) * 9;   // ~6 m per doubling, either way
+        flyPos.x += -Math.sin(player.yaw)*Math.cos(player.pitch)*_step;
+        flyPos.y +=  Math.sin(player.pitch)*_step;
+        flyPos.z += -Math.cos(player.yaw)*Math.cos(player.pitch)*_step;
+      } else if(typeof _charPrevDist!=='undefined'){
+        _charPrevDist = Math.max(1.8, Math.min(12, _charPrevDist / scale));
+      }
+    }
+  }
+  _edTouch = g;
+  e.preventDefault();
+}, { passive:false });
+const _edTouchEnd = (e)=>{ if(!e.touches || e.touches.length<2) _edTouch=null; };
+renderer.domElement.addEventListener('touchend', _edTouchEnd, { passive:true });
+renderer.domElement.addEventListener('touchcancel', _edTouchEnd, { passive:true });
 renderer.domElement.addEventListener('contextmenu', e=>{ if(editorOpen && editorTopView) e.preventDefault(); });
 
 // ---------- Weapon (viewmodel) ----------
@@ -27213,7 +27342,9 @@ let shake = 0;                 // current trauma 0..1, decays each frame
 // the genre and both absent (the speed-FOV of build 730 lived only in the driving branch). _landDip is a
 // spring the landing impulse kicks (dip then recover), _camLean an eased strafe roll.
 let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0;
-function addShake(amt){ shake = Math.min(1, shake + amt); }
+/* build 1313: EVERY shake in the engine goes through here — blasts, hits, kills, car impacts, the melee
+   thump — so scaling it at this one point covers all of them, and a future one for free. */
+function addShake(amt){ shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1)); }
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){
     const g = grenades[i];
@@ -29880,7 +30011,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1311 · 2026-08-02';
+const BUILD_VERSION = 'build 1315 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30064,6 +30195,47 @@ const HIP_SENS = 0.0022, ADS_SENS = 0.0012;  // slower look while aiming for pre
 // of the mouse, not of the level) beside the pad and touch prefs.
 let mouseSens = 1;
 try{ const _ms = parseFloat(localStorage.getItem('breach_mouse_sens')); if(isFinite(_ms)) mouseSens = Math.max(MOUSE_SENS_MIN, Math.min(MOUSE_SENS_MAX, _ms)); }catch(e){}
+// ---- build 1313 (gameplay audit F9): MOTION ACCESSIBILITY ---------------------------------------------
+// The audit: "Greped `colorblind`, `reduceMotion`, `prefers-reduced`, `a11y` -> one CSS media query for UI
+// animation, nothing that touches camera shake, the damage flash, motion blur or hitstop. A PLAYER WHO GETS
+// MOTION SICK FROM addShake/postMotion HAS NO RECOURSE INSIDE THE GAME."
+//
+// Verified: every one of those is either a hardcoded constant or a LEVEL setting the creator owns. A player
+// who cannot tolerate camera shake could not turn it down in someone else's level, on any platform, at all.
+//
+// Three decisions:
+//  * PER DEVICE, NOT PER LEVEL. This is a property of the person, not the content. It has to survive
+//    switching levels and has to apply to levels other people made — which is the whole point, since a
+//    creator cannot be relied on to have thought about it.
+//  * A MULTIPLIER AT THE POINT OF USE, never a write to the level's own values. `worldCfg.postMotion` stays
+//    exactly what the creator authored; the player's preference scales it on the way to the shader. Editing
+//    the level would save the player's accessibility setting into someone else's file.
+//  * SEEDED FROM THE OPERATING SYSTEM. A player who has already told their OS "reduce motion" has said it
+//    once; asking again is the accessibility failure one level up. `prefers-reduced-motion: reduce` sets the
+//    defaults to a calm baseline on first run, and an explicit choice always wins after that.
+const A11Y_KEY = 'breach_a11y';
+const A11Y_DEFAULT = { shake:1, flash:1, blur:1, sway:1, hitstop:1 };
+let a11y = Object.assign({}, A11Y_DEFAULT);
+function _a11yOsReduced(){ try{ return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){ return false; } }
+function loadA11y(){
+  /* build 1313: start from the defaults EVERY time. Without this the function only ever ADDS constraints —
+     a second call with no stored value and no OS preference left whatever the last call had written, which
+     is a real trap the moment anything reloads settings (a profile switch, a reset button, a test). Caught
+     by this build's own probe, which called it twice. */
+  a11y = Object.assign({}, A11Y_DEFAULT);
+  let saved = null;
+  try{ saved = JSON.parse(localStorage.getItem(A11Y_KEY) || 'null'); }catch(e){}
+  if(saved && typeof saved === 'object'){
+    for(const k in A11Y_DEFAULT) a11y[k] = Math.max(0, Math.min(1, saved[k] == null ? A11Y_DEFAULT[k] : +saved[k] || 0));
+    return;
+  }
+  /* no stored choice: take the OS at its word rather than making them find this panel */
+  if(_a11yOsReduced()) a11y = { shake:0, flash:0.35, blur:0, sway:0, hitstop:0 };
+}
+function saveA11y(){ try{ localStorage.setItem(A11Y_KEY, JSON.stringify(a11y)); }catch(e){} }
+function a11yReduceAll(){ a11y = { shake:0, flash:0.35, blur:0, sway:0, hitstop:0 }; saveA11y(); }
+function a11yRestoreAll(){ a11y = Object.assign({}, A11Y_DEFAULT); saveA11y(); }
+loadA11y();
 function saveMouseSens(){ try{ localStorage.setItem('breach_mouse_sens', String(mouseSens)); }catch(e){} }
 // ZOOM-MATCHED AIM. The audit measured the shipped ratio: ADS_SENS/HIP_SENS = 0.545 against a 2.34x zoom,
 // so turning the mouse the same distance swept ~28% more world while aimed than while hip-firing — the
@@ -30723,8 +30895,8 @@ function moveKCC(dt){
     if(_playerWasAir && !drivingCar){                      // build 1210: the air->ground frame — vel.y is still the fall speed
       const _fall = Math.max(0, -player.vel.y);
       if(_fall > 2.5){ const _imp = Math.min(1, _fall/22);
-        _landDipV -= 1.6 + _imp*7.0;                        // kick the eye-dip spring downward
-        shake = Math.max(shake, _imp*0.22);
+        _landDipV -= (1.6 + _imp*7.0) * ((typeof a11y!=='undefined')?a11y.sway:1);   // kick the eye-dip spring downward (build 1313: scaled at the impulse, so the spring's tuned curve is untouched)
+        shake = Math.max(shake, _imp*0.22*((typeof a11y!=='undefined')?a11y.shake:1));   /* build 1313 */
         if(typeof SFX!=='undefined' && SFX.land) SFX.land(_imp); }
     }
     player.onGround = true; if(player.vel.y < 0) player.vel.y = 0;
@@ -30767,6 +30939,7 @@ function applyPropDynState(obj, p){
   if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
   if(p.mass!=null) obj.userData.mass = p.mass;
   if(p.hsn) obj.userData.hitSnd = String(p.hsn).slice(0,300);   // build 1305
+  if(p.bsn) obj.userData.breakSnd = String(p.bsn).slice(0,300);   // build 1314
   if(p.par){ obj.userData.parNid = String(p.par).slice(0,64); if(typeof _pntMark==='function') _pntMark(); }   // build 1309: resolved lazily — props load async, so the parent may not exist yet
   if(p.brk===false){ obj.userData.breakable = false; }
   else { obj.userData.breakable = true; if(p.obj) obj.userData.objective=true; if(p.hp!=null){ obj.userData.maxHp = p.hp; obj.userData.hp = p.hp; } obj.userData.breakStyle = (p.bst==='puff') ? 'puff' : 'shatter';
@@ -31518,12 +31691,12 @@ function shatterProp(obj, point, dir, power, byId){
     const shape = (obj.userData.debrisShape==='cubes') ? 'cubes' : 'shards';
     spawnFragments(_shCtr, _shSize, colorHex, count, dir, power||6, sizeFrac, shape);
     spark(_shCtr, colorHex); spark(_shCtr, 0xffd166);
-    if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(_shCtr);
+    if(!playPropBreakSound(obj, _shCtr) && typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(_shCtr);   /* build 1314 */
     obj.userData._breakFx = { sf:sizeFrac, sh:shape };   // stash so the net message below carries them
   } else {
     // puff: no debris cloud — a quick particle burst + soft pop, then despawn
     spark(_shCtr, colorHex); spark(_shCtr, 0xcfeee6);
-    if(typeof SFX!=='undefined' && SFX.puff) SFX.puff();
+    if(!playPropBreakSound(obj, _shCtr) && typeof SFX!=='undefined' && SFX.puff) SFX.puff();   /* build 1314 */
   }
   if(obj.userData.explosive){ explodeAt(_shCtr.clone(), obj.userData.blastRadius||7, obj.userData.blastDmg||70, byId); }   // propane/gas-can blast
   // network it so co-op peers see the same break (host authoritative)
@@ -32001,7 +32174,8 @@ function _meleeStrike(wep, RANGE, DMG){
     }
   }
   addShake(0.05);
-  if(hit && SFX.hit) SFX.hit();
+  /* build 1314: the prop's own impact clip replaces the generic one rather than layering under it. */
+  if(hit && SFX.hit && !_propSndFresh()) SFX.hit();
 }
 function shoot(){
   if(matchWarmup>0) return;   // no firing during the pre-match generating/countdown
@@ -32131,7 +32305,7 @@ function shoot(){
           const broke = damageProp(dprop, w.dmg*dmgMul, hp, dir, power, NET.myId);
           if(!broke) pushDynamic(dprop, dir, power, hp);
         }
-        spark(hit.point, 0xffd166); if(p===0){ showHitmarker(); SFX.hit(); }
+        spark(hit.point, 0xffd166); if(p===0){ showHitmarker(); if(!_propSndFresh()) SFX.hit(); }   /* build 1314 */
         tracer(muzzleWorld, endPoint);
         continue;   // a dynamic prop absorbs the pellet
       }
@@ -32764,7 +32938,7 @@ function registerLocalKill(){   // call when the LOCAL player gets a kill
   // sells a kill is exactly what the social mode lost. Slowing time is unsafe online, but a LOCAL cosmetic
   // jolt is not: substitute a camera-shake punch on the killing client (bigger on a multi-kill). Solo is
   // untouched — it keeps its real hitstop, so there is no double-crunch there.
-  if(NET.mode!=='off' && typeof shake!=='undefined') shake = Math.max(shake, n>=3 ? 0.15 : 0.06);
+  if(NET.mode!=='off' && typeof shake!=='undefined') shake = Math.max(shake, (n>=3 ? 0.15 : 0.06)*((typeof a11y!=='undefined')?a11y.shake:1));   /* build 1313 */
   if(n>=2){ showMultiKill(n); if(NET.mode==='off' && n>=3) hitStop=Math.max(hitStop, 0.2); }   // solo: dramatic slow-mo on triple+
 }
 // ---- Combat feel: floating damage numbers, enemy hit-flash, hitstop ----
@@ -32988,7 +33162,12 @@ function updateHurtDir(dt){
 }
 function flashDamage(){
   const d = $('damage');
-  d.style.boxShadow='inset 0 0 200px rgba(255,40,70,.55)';
+  /* build 1313: scaled, never removed. Being hit MUST stay legible — a player who has turned motion down
+     still needs to know they are taking damage, so the floor is a visible 0.12 rather than nothing. The
+     slider dims the full-screen pulse; it does not delete the feedback. */
+  const _a = (typeof a11y!=='undefined') ? a11y.flash : 1;
+  const _amt = (_a <= 0) ? 0.12 : (0.12 + 0.43*_a);
+  d.style.boxShadow='inset 0 0 200px rgba(255,40,70,'+_amt.toFixed(3)+')';
   setTimeout(()=>{ d.style.boxShadow='inset 0 0 200px rgba(255,40,70,0)'; },120);
 }
 
@@ -34969,7 +35148,10 @@ function loop(){
   if(_cineAvatar && _cineAvatar.visible && !editorOpen && !_cineActive){ _hideCineAvatar(); }   // editor authoring body never lingers into play
   { const v = gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused;   // show ❚❚ only during live play
     if(v!==_pbShow){ _pbShow=v; const pb=document.getElementById('pauseBtn'); if(pb) pb.style.display = v?'flex':'none'; } }
-  if(hitStop > 0){ hitStop -= rawDt; dt = rawDt * 0.12; }   // impact freeze: slow the sim briefly (real-time countdown)
+  /* build 1313: the impact freeze eases toward normal speed as the player turns it down — at 0 the clock
+     never slows at all, which is what "no sudden time distortion" has to mean. The countdown still runs, so
+     nothing that waits on hitStop can hang. */
+  if(hitStop > 0){ hitStop -= rawDt; const _hs=(typeof a11y!=='undefined')?a11y.hitstop:1; if(_hs>0) dt = rawDt * (0.12 + 0.88*(1-_hs)); }   // impact freeze: slow the sim briefly (real-time countdown)
   if(typeof updateLaser==='function') updateLaser();   // build 585: laser sight dot/beam (hides itself when inactive)
   if(_infAmmo){ for(const k in WEAPONS){ const w=WEAPONS[k]; if(w && w.reserveMax!=null && w.reserve<w.reserveMax) w.reserve=w.reserveMax; } }   // build 589: unlimited ammo (testing)
   // build 661: kill the cinematic camera-preview window the instant we leave editing. The branches below own
@@ -34999,6 +35181,12 @@ function loop(){
     }
   }
   touchLookDX = 0; touchLookDY = 0;
+  /* build 1312 TRIED to hide these while editing, reading the audit's "taps on the stick half do nothing"
+     as the sticks swallowing half the canvas. THE SUITE CAUGHT IT: build 165's own test asserts the touch
+     UI shows in the editor, and one line below it asserts why — `if(isTouch){ if(touchMoveZ)
+     flyPos.addScaledVector(...) }`. THE JOYSTICK IS HOW A TOUCH CREATOR FLIES THE EDITOR CAMERA. Hiding it
+     would have taken away their only way to MOVE, in exchange for making the left half tappable. The stick
+     half not selecting is a trade-off that was already made deliberately, not a defect. */
   if(isTouch){ const tu=document.getElementById('touchUI'); if(tu){ const d=(gameOn && !shopOpen && !choosingUpgrade)?'block':'none'; if(tu.style.display!==d) tu.style.display=d; } }
   document.body.classList.toggle('editing', !!editorOpen);   // build 615: editor-state class for all platforms (hides the integrity HUD so it can't sit over the camera preview)
   updateColliderViz(dt);   // debug overlay of collision boxes (toggle in editor)
@@ -35034,11 +35222,14 @@ function loop(){
   if(Math.abs(adsBlend - adsTarget) < 0.002) adsBlend = adsTarget;
   // build 1210: the landing-dip spring (stiff, well damped — a quick dip and settle, no wobble) and the
   // strafe-lean target (roll away from your lateral velocity, killed while aiming so the sight stays true).
-  { const _dt=Math.min(0.05, dt);
+  /* build 1313: `sway` scales the TARGETS, not the springs — the dip still settles and the lean still eases
+     on their tuned curves, they just have less to travel. Scaling the spring rates instead would change the
+     FEEL rather than the amount, which is not what the setting says. */
+  { const _dt=Math.min(0.05, dt), _sw=(typeof a11y!=='undefined')?a11y.sway:1;
     _landDipV += (-_landDip*90 - _landDipV*14) * _dt; _landDip += _landDipV*_dt;
     if(Math.abs(_landDip)<1e-4 && Math.abs(_landDipV)<1e-3){ _landDip=0; _landDipV=0; }
     const _latV = (typeof player!=='undefined'&&player.vel) ? (player.vel.x*Math.cos(player.yaw) - player.vel.z*Math.sin(player.yaw)) : 0;
-    const _leanT = Math.max(-0.05, Math.min(0.05, -_latV*0.006)) * (1 - adsBlend);
+    const _leanT = Math.max(-0.05, Math.min(0.05, -_latV*0.006)) * (1 - adsBlend) * _sw;
     _camLean += (_leanT - _camLean) * Math.min(1, dt*8); }
   _scopedNow = !!((ads || padAds || touchAds) && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen); if(_scopedNow && typeof cursorAimActive==='function' && cursorAimActive()) _scopedNow=false;   // build 874: no optic tunnel from a bird's-eye camera (build 1103: nor from chase-cursor) · build 913: touch AIM + controller LT scope too (the sniper never zoomed on mobile)
   _setScopeOverlay(_scopedNow);
@@ -35632,6 +35823,11 @@ function loop(){
     else if(typeof navDirtyStep==='function') navDirtyStep(3);   // build 1200: fold moved/destroyed props back into the grid
     _repathBudget = 3;   // cap A* searches per tick so a frame never stalls on many enemy repaths at once
     _losBudget = 5; _groundBudget = 5; _pathBudget = 5;   // build 547/553: per-frame LOS + ground + direct-path raycast caps. A wave spawns many enemies whose caches all come due on the same frame; these stop that frame from firing dozens of raycasts at once (the wave-framerate spike). Over-budget enemies reuse the cached value one more frame; the jittered intervals stagger them after ~1s.
+    /* build 1315: the footstep budget for this tick, and the ordering that makes it fair — nearest first,
+       so a thirty-enemy wave spends its three steps on the ones close enough to matter. Sorting a live
+       array would reorder every other system's iteration, so the DISTANCE is stamped and the step pass
+       reads it; nothing else sees a different order. */
+    _enStepBudget = ENEMY_STEP_BUDGET;
     _airGroundBudget = 8;   // build 809: cell-moved / airborne refreshes were EXEMPT from _groundBudget — a blast launching a wave fired ~3 casts x every enemy on one frame. Now they draw from their own (larger) pool; over-budget movers reuse last frame's ground for one frame.
 // ---- build 1308 (gameplay audit F8): ENEMIES MOVE WITH MASS ------------------------------------------
 // Every enemy translation was direct position integration — `position.x += dir*speed*dt` at five sites — so
@@ -35656,6 +35852,48 @@ function loop(){
 // here: the exact form costs one `Math.exp` per moving enemy per frame and makes the velocity curve
 // identical at any refresh rate. It is also self-clamping, so a dt spike still degrades to the old instant
 // speed rather than overshooting.
+// ---- build 1315 (gameplay audit F3): the footstep cadence ---------------------------------------------
+// DISTANCE-ACCUMULATED, not on a timer: a step then falls where the foot falls at any speed, and a slowed
+// (build 1209) or wading enemy automatically steps slower without a second tuning knob.
+//
+// Three limits, because a wave is thirty enemies and every one of them walks:
+//  * a RANGE gate well inside the panner's own 55 m — a footstep you can hear from across the arena is
+//    not a footstep, it is a hum;
+//  * a per-tick BUDGET beyond a CLOSE radius, so a horde arriving together cannot start twenty buffers on
+//    one frame (build 1305 learned the same lesson from a shotgun) — while the enemy actually near you is
+//    never rationed, which is the entire point of the feature. A sort would be fairer still and costs an
+//    array every frame; a near-field exemption gets the same outcome for two comparisons, because the
+//    enemy whose footstep matters is by definition the close one.
+function _enemyFootstep(en, moved){
+  if(!en || !en.mesh || en.dead) return false;
+  en._stepAcc = (en._stepAcc || 0) + moved;
+  if(en._stepAcc < ENEMY_STEP_M) return false;
+  en._stepAcc = 0;
+  if(typeof camera==='undefined' || !camera) return false;
+  const p = en.mesh.position;
+  const dx = p.x - camera.position.x, dy = p.y - camera.position.y, dz = p.z - camera.position.z;
+  const d2 = dx*dx + dy*dy + dz*dz;
+  if(d2 > ENEMY_STEP_RANGE*ENEMY_STEP_RANGE) return false;
+  if(d2 > ENEMY_STEP_NEAR*ENEMY_STEP_NEAR){ if(_enStepBudget <= 0) return false; _enStepBudget--; }
+  if(typeof SFX!=='undefined' && SFX.enemyStep) SFX.enemyStep(p, !!ENEMY_HEAVY[en.type]);
+  return true;
+}
+// build 1315: a rushing exploder is the one enemy whose approach you MUST hear, and a footstep is not
+// enough — it is FASTER than you, so by the time its steps read as close it is already on you. The fuse
+// ticks the whole time it is closing, and quickens as it gets near, which is the tell that makes a sapper
+// dodgeable rather than a random death.
+function _sapperFuse(en, dt){
+  if(!en || en.dead || en.type!=='sapper' || !en._chase || typeof camera==='undefined' || !camera) return false;
+  const p = en.mesh.position;
+  const d = Math.hypot(p.x-camera.position.x, p.y-camera.position.y, p.z-camera.position.z);
+  if(d > ENEMY_STEP_RANGE) return false;
+  const k = Math.max(0, Math.min(1, d/18));
+  en._fuseT = (en._fuseT || 0) - dt;
+  if(en._fuseT > 0) return false;
+  en._fuseT = SAPPER_FUSE_NEAR + (SAPPER_FUSE_FAR - SAPPER_FUSE_NEAR)*k;
+  if(typeof SFX!=='undefined' && SFX.sapperFuse) SFX.sapperFuse(p);
+  return true;
+}
 const _enStepOut = { x:0, z:0 };
 function _enStep(en, tvx, tvz, dt){
   const k = 1 - Math.exp(-((tvx || tvz) ? EN_ACCEL_K : EN_BRAKE_K) * dt);
@@ -35679,7 +35917,11 @@ function _enStep(en, tvx, tvz, dt){
       // build 1077: the moment this enemy goes from oblivious to alerted, exactly once per alert. The edge is
       // watched HERE rather than at the four places that can set `aware` (sight, gunfire, a blast, a rule), so
       // every one of them fires it and none of them fires it twice.
-      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) }); }
+      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) });
+        /* build 1315: the aggro vocal rides the SAME rising edge, for the same reason the comment above
+           gives — four things can set `aware`, and watching it here means every one of them sounds it and
+           none of them sounds it twice. */
+        if(typeof SFX!=='undefined' && SFX.enemySpot) SFX.enemySpot(en.mesh.position, !!ENEMY_HEAVY[en.type]); }
       else if(!en.aware && en._wasAware) en._wasAware=0;
       en._chase = td.chase; en._see = !!td.see;
       // face the player only when actually seen; while hunting a last-known spot, face where we're walking
@@ -36016,6 +36258,14 @@ function _enStep(en, tvx, tvz, dt){
         const _mv = Math.hypot(en.mesh.position.x - (en._spx!=null?en._spx:en.mesh.position.x), en.mesh.position.z - (en._spz!=null?en._spz:en.mesh.position.z));
         if(_mv < (en.speed||3)*dt*0.3){ en._stuckT=(en._stuckT||0)+dt; } else { en._stuckT=0; en._stuckSide=0; en._sFlip1=0; en._sFlip2=0; }
       } else { en._stuckT=0; en._stuckSide=0; en._sFlip1=0; en._sFlip2=0; }
+      /* build 1315: a footstep every ENEMY_STEP_M of real travel. Measured from the SAME previous-position
+         pair the stuck detector uses, so a shoved or wall-sliding enemy accrues only the ground it actually
+         covered — an enemy grinding on a corner does not tap-dance. */
+      if(en.grounded!==false && !en.dead){
+        const _sd = Math.hypot(en.mesh.position.x - (en._spx!=null?en._spx:en.mesh.position.x), en.mesh.position.z - (en._spz!=null?en._spz:en.mesh.position.z));
+        if(_sd > 1e-4) _enemyFootstep(en, _sd);
+      }
+      _sapperFuse(en, dt);   /* build 1315: and the exploder ticks while it closes, at any height */
       en._spx = en.mesh.position.x; en._spz = en.mesh.position.z;
       // drive the animation state machine: attack window > running (chasing) > walking (patrol) > idle
       if(en.mesh.userData.hasModel && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
@@ -37992,6 +38242,7 @@ function propEntry(o){
        serializing its health, break style, objective flag and explosive settings. Caught by this build's
        round-trip probe, not by 1305's, which only checked the field it had just added. */
     if(o.userData.hitSnd) e.hsn = String(o.userData.hitSnd).slice(0,300);   // build 1305: this prop's own impact sound
+    if(o.userData.breakSnd) e.bsn = String(o.userData.breakSnd).slice(0,300);   // build 1314: ...and the one it makes breaking
     if(o.userData.breakable===false) e.brk=false;   // breakable defaults true; only store when off
     else { if(o.userData.maxHp!=null) e.hp=o.userData.maxHp; if(o.userData.breakStyle==='puff') e.bst='puff'; if(o.userData.objective) e.obj=1;
       if(o.userData.fragCount!=null) e.fc=o.userData.fragCount;
@@ -42685,14 +42936,36 @@ function renderEditorFields(){
             const bnote=document.createElement('div'); bnote.className='hint'; bnote.style.marginTop='3px'; bnote.textContent='Shatter = physics debris. Puff = quick burst + vanish (cheaper). Higher HP = more shots to break. Health refills on Deploy.';
             pdBody.appendChild(bnote);
             /* build 1305: the prop's own impact sound. GROUP-WIDE by build 1299's rule — a level has thirty
-               wooden crates and one wood sound, and marking the set is the whole point of the field. */
+               wooden crates and one wood sound, and marking the set is the whole point of the field.
+               build 1314: a second slot for the BREAK, and a Freesound search on each — "I'd also like a
+               slot per-prop for a custom explosion or breaking sound", and asking a creator to go and find
+               a wood-impact url elsewhere is most of the reason the first slot would sit empty. */
             _selBanner(pdBody, _selTargets().length, true);
-            pdBody.appendChild(_sndRow('Impact sound \u2014 played on every hit',
-              ()=>sel.userData.hitSnd||'',
-              (u)=>{ const v=String(u||'').trim().slice(0,300); _selApply(o=>{ if(v) o.userData.hitSnd=v; else delete o.userData.hitSnd; }); },
-              ()=>{}));   /* _selApply already snapshots and marks dirty; there is no device setting to save */
-            const hsn=document.createElement('div'); hsn.className='hint'; hsn.style.marginTop='2px'; hsn.innerHTML='Wood, metal, glass \u2014 whatever this prop is made of. Plays wherever the hit landed (it pans and fades with distance), on shots, swings and explosions alike. Unlike the Sounds tab, this one is <b>saved with the level</b>, so everyone who plays it hears it.';
-            pdBody.appendChild(hsn);
+            const _propSndSlot = (label, key, hintHtml, fsLabel, fsQuery)=>{
+              pdBody.appendChild(_sndRow(label,
+                ()=>sel.userData[key]||'',
+                (u)=>{ const v=String(u||'').trim().slice(0,300); _selApply(o=>{ if(v) o.userData[key]=v; else delete o.userData[key]; }); },
+                ()=>{}));   /* _selApply already snapshots and marks dirty; there is no device setting to save */
+              const h=document.createElement('div'); h.className='hint'; h.style.marginTop='2px'; h.innerHTML=hintHtml; pdBody.appendChild(h);
+              const fsBtn=document.createElement('button'); fsBtn.textContent='Search Freesound'; fsBtn.style.cssText='margin:4px 0 2px;font-size:11px;padding:3px 8px;';
+              let fsBox=null;
+              fsBtn.onclick=()=>{
+                if(fsBox){ fsBox.remove(); fsBox=null; fsBtn.textContent='Search Freesound'; return; }
+                if(!fsLastQuery) fsLastQuery=fsQuery;   /* seed the box with the search a creator came here to run */
+                /* the picked url applies to the WHOLE selection, exactly as typing one does — otherwise the
+                   two ways of filling the same field would disagree about what they act on. */
+                fsBox=renderFreesoundBrowser(pdBody, ()=>renderEditorFields(), { label:fsLabel,
+                  set:v=>{ const u=String(v||'').trim().slice(0,300); _selApply(o=>{ if(u) o.userData[key]=u; else delete o.userData[key]; }); if(u && typeof loadSound==='function') loadSound(u); } });
+                pdBody.appendChild(fsBox); fsBtn.textContent='Hide Freesound';
+              };
+              pdBody.appendChild(fsBtn);
+            };
+            _propSndSlot('Impact sound \u2014 played on every hit', 'hitSnd',
+              'Wood, metal, glass \u2014 whatever this prop is made of. Plays wherever the hit landed (it pans and fades with distance), on shots, swings and explosions alike. Unlike the Sounds tab, this one is <b>saved with the level</b>, so everyone who plays it hears it. <b>It replaces the engine\u2019s default hit sound</b> rather than layering over it.',
+              'Prop impact', 'wood impact hit');
+            _propSndSlot('Break / explosion sound \u2014 played once, when it goes', 'breakSnd',
+              'The moment this prop is destroyed. One slot covers both: for an explosive prop, the break <i>is</i> the explosion. Replaces the engine\u2019s shatter/puff sound for this prop.',
+              'Prop break', 'wood crate break smash');
             // ---- Debris controls (count / size / shape) — only meaningful for the shatter style ----
             if(sel.userData.breakStyle!=='puff'){
               sel.updateMatrixWorld(true);
@@ -46719,6 +46992,19 @@ function bindPauseMenu(){
         mr.oninput=()=>{ const v=parseFloat(mr.value); mouseSens=Math.max(MOUSE_SENS_MIN,Math.min(MOUSE_SENS_MAX,isFinite(v)?v:1)); _show(); saveMouseSens(); }; }
       const mc=document.getElementById('msAimMatchCb');
       if(mc){ mc.checked=!!mouseAimMatch; mc.onchange=()=>{ mouseAimMatch=!!mc.checked; saveMouseAimMatch(); }; } }
+    /* build 1313: motion & comfort. One loop over the keys rather than five copies of the same six lines —
+       adding a sixth effect is then one entry here and one <input> above it. */
+    { const A11Y_ROWS = [['shake','a11yShake'],['sway','a11ySway'],['blur','a11yBlur'],['flash','a11yFlash'],['hitstop','a11yHitstop']];
+      const _a11ySync=()=>{ for(const [key,id] of A11Y_ROWS){
+        const r=document.getElementById(id), v=document.getElementById(id+'V');
+        if(r) r.value=String(Math.round(a11y[key]*100));
+        if(v) v.textContent=Math.round(a11y[key]*100)+'%'; } };
+      for(const [key,id] of A11Y_ROWS){ const r=document.getElementById(id);
+        if(r) r.oninput=()=>{ a11y[key]=Math.max(0, Math.min(1, (+r.value||0)/100)); saveA11y();
+          const v=document.getElementById(id+'V'); if(v) v.textContent=Math.round(a11y[key]*100)+'%'; }; }
+      const rd=document.getElementById('a11yReduce'); if(rd) rd.onclick=()=>{ a11yReduceAll(); _a11ySync(); if(typeof toast==='function') toast('Motion reduced'); };
+      const rs=document.getElementById('a11yRestore'); if(rs) rs.onclick=()=>{ a11yRestoreAll(); _a11ySync(); if(typeof toast==='function') toast('Motion settings restored'); };
+      _a11ySync(); }
     const ar=document.getElementById('padAdsRng'); if(ar){ ar.value=String(padPrefs.ads); ar.oninput=()=>{ padPrefs.ads=Math.max(0.2,Math.min(1.5,parseFloat(ar.value)||0.7)); savePadPrefs(); }; }
     const dr=document.getElementById('padDeadRng'); if(dr){ dr.value=String(padPrefs.dead); dr.oninput=()=>{ padPrefs.dead=Math.max(0.05,Math.min(0.4,parseFloat(dr.value)||0.18)); savePadPrefs(); }; }
     const iv=document.getElementById('padInvCb'); if(iv){ iv.checked=!!padPrefs.invertY; iv.onchange=()=>{ padPrefs.invertY=iv.checked; savePadPrefs(); }; } }
