@@ -29406,7 +29406,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1290 · 2026-08-02';
+const BUILD_VERSION = 'build 1291 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38381,31 +38381,118 @@ function _reselectByNids(nids){
   const first=apply();
   if(first < nids.length) setTimeout(apply, 350);   // late async spawns: pick up what landed since
 }
-function performUndo(){
-  if(!editorUndo.length) return false;
-  const snap = editorUndo.pop();
+// ---- build 1291: undo a MOVE without reloading the level ----------------------------------------
+// Every Ctrl+Z ran restoreLevel — teardown and respawn of every prop, light, zone and marker, with each
+// imported model re-fetched or re-cloned and re-materialised. Nudging a crate and undoing it therefore cost
+// the same as loading the level, on a step the editor's core rhythm (tweak, undo, tweak again) repeats
+// constantly, and build 1163 already had to bolt a by-nid reselect onto the far side because the rebuild
+// threw the selection away. It is also the single most common edit there is: gizmo drags and the numeric
+// transform fields are most of level editing.
+//
+// Measured live, in the real editor on the stock 56-prop scene, undoing a single nudge. Two figures, and
+// both are worth stating because only the second is what the creator feels:
+//   the step this replaces   restoreLevel 74.33 ms  ->  _applyUndoMoves 0.44 ms   (169x)
+//   the whole Ctrl+Z         108.5 ms               ->  24.4 ms                   (4.4x)
+// The gap between them is the rest of the gesture, which this build does NOT touch: `serializeLevel()`
+// (unavoidable — the state being left is what makes the redo possible) and `renderEditorFields()`. Those
+// are now the floor, and they were already being paid on the old path. That scene has NO imported models —
+// the reload side is far worse with them (every GLB re-fetched or re-cloned and re-materialised) and this
+// side does not change at all.
+//
+// Verified end to end through the real performUndo/performRedo, by OBJECT IDENTITY: after undoing a move,
+// `propByNid(nid)` is the same JS object it was before, the selection array still holds it, and redo puts
+// it back — while undoing a TAG edit returns a different object, which is the reload correctly running.
+//
+// The fast path is deliberately narrow, and its narrowness is what makes it safe: it applies ONLY when the
+// two states differ in NOTHING except prop transforms. Anything else — an add, a delete, a material, a
+// signal, a world setting, a model swap, a reordering — falls through to the full reload unchanged. So this
+// cannot introduce a class of "undo didn't fully undo" bug: either the diff is exactly a set of transforms,
+// or the old path runs.
+//
+// Three details are load-bearing:
+//  - The comparison strips `t` from each prop and compares the REST byte-for-byte, then compares the whole
+//    level with `props` stripped. Both sides come from the same `serializeLevel`, so key order matches and
+//    a string compare is a true deep compare. Doing it the other way round — enumerating "the fields that
+//    are allowed to differ" — is the version that goes wrong when a field is added later.
+//  - An entry with no `nid` disqualifies the whole diff. Identity is what lets us apply to the right
+//    object; without it the index would be the only link, and a silent mismatch here writes a transform
+//    onto the wrong prop.
+//  - EVERY object is resolved BEFORE any of them is moved, and the apply is wrapped so a throw mid-way
+//    falls back to the reload — which rebuilds from the snapshot anyway, so a partial apply cannot survive.
+function _undoMoveDiff(cur, tgt){
+  try{
+    if(!cur || !tgt) return null;
+    const A=cur.props, B=tgt.props;
+    if(!Array.isArray(A) || !Array.isArray(B) || A.length!==B.length) return null;
+    const moves=[];
+    for(let i=0;i<A.length;i++){
+      const a=A[i], b=B[i];
+      if(!a || !b) return null;
+      if(!a.nid || a.nid!==b.nid) return null;                       /* identity, or we could move the wrong prop */
+      if(a.src!==b.src) return null;                                 /* a different model is a different mesh */
+      const ta=a.t, tb=b.t;
+      if(!Array.isArray(ta) || !Array.isArray(tb) || ta.length!==9 || tb.length!==9) return null;
+      if(JSON.stringify(Object.assign({}, a, {t:0})) !== JSON.stringify(Object.assign({}, b, {t:0}))) return null;
+      for(let k=0;k<9;k++){ if(ta[k]!==tb[k]){ moves.push({ nid:b.nid, t:tb }); break; } }
+    }
+    if(JSON.stringify(Object.assign({}, cur, {props:0})) !== JSON.stringify(Object.assign({}, tgt, {props:0}))) return null;
+    return moves;
+  }catch(e){ return null; }
+}
+// The write is the gizmo drag's own sequence (position/rotation/scale, retile the procedural grain to the
+// new span, refresh the collider, resync a dynamic prop's authored home) — deliberately the same three
+// calls build 713/1139 established there, so a transform arrived at by undo is identical to one dragged.
+function _applyUndoMoves(moves){
+  if(!moves) return false;
+  const objs=[];
+  for(const m of moves){ const o=(typeof propByNid==='function')?propByNid(m.nid):null; if(!o) return false; objs.push(o); }
+  for(let i=0;i<moves.length;i++){
+    const o=objs[i], t=moves[i].t;
+    const over=(typeof _maxTerrainOver==='function')?_maxTerrainOver(t[0], t[2], o.userData.footR||0):0;   /* build 893: y is stored terrain-relative */
+    o.position.set(t[0], t[1]+over, t[2]);
+    o.rotation.set(t[3], t[4], t[5]);
+    o.scale.set(t[6], t[7], t[8]);
+    if(typeof retileProcSurface==='function' && typeof _propProcSpan==='function') retileProcSurface(o, _propProcSpan(o));
+    if(typeof refreshPropCollider==='function') refreshPropCollider(o);
+    if(typeof _homeSync==='function') _homeSync(o);
+  }
+  return true;
+}
+// The selection is NEVER touched on this path, so build 1163's by-nid reselect (and its 350 ms second pass
+// for async model spawns) simply does not run — there is nothing to recover from.
+function _edFastRefresh(){
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof updateGizmo==='function') updateGizmo();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+}
+function _historyStep(snap, pushTo){
   let level; try { level = JSON.parse(snap); } catch(e){ return false; }
   let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
-  const selN = _selNids();   // build 1163: reselect the same props (by nid) after the rebuild
-  editorUndoActive = true;
-  try { restoreLevel(level); } finally { editorUndoActive = false; }
-  if(cur != null){ editorRedo.push(cur); if(editorRedo.length > 60) editorRedo.shift(); }
-  _reselectByNids(selN);
+  let fast = false;
+  if(cur != null){
+    let c=null; try{ c=JSON.parse(cur); }catch(e){}
+    const mv = _undoMoveDiff(c, level);
+    if(mv){ editorUndoActive = true; try { fast = _applyUndoMoves(mv); } catch(e){ fast = false; } finally { editorUndoActive = false; } }
+  }
+  if(fast) _edFastRefresh();
+  else {
+    const selN = _selNids();   // build 1163: reselect the same props (by nid) after the rebuild
+    editorUndoActive = true;   // the restore must not push a snapshot of its own
+    try { restoreLevel(level); } finally { editorUndoActive = false; }
+    _reselectByNids(selN);
+  }
+  if(cur != null){ pushTo.push(cur); if(pushTo.length > 60) pushTo.shift(); }
   if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
   return true;
 }
+function performUndo(){
+  if(!editorUndo.length) return false;
+  return _historyStep(editorUndo.pop(), editorRedo);
+}
 function performRedo(){
   if(!editorRedo.length) return false;
-  const snap = editorRedo.pop();
-  let level; try { level = JSON.parse(snap); } catch(e){ return false; }
-  let cur = null; try { cur = JSON.stringify(serializeLevel()); } catch(e){}
-  const selN = _selNids();   // build 1163: same courtesy on the way forward
-  editorUndoActive = true;   // the restore must not push a snapshot of its own
-  try { restoreLevel(level); } finally { editorUndoActive = false; }
-  if(cur != null){ editorUndo.push(cur); if(editorUndo.length > 60) editorUndo.shift(); }
-  _reselectByNids(selN);
-  if(typeof _edSyncHistoryBtns==='function') _edSyncHistoryBtns();
-  return true;
+  return _historyStep(editorRedo.pop(), editorUndo);
 }
 // Grey the buttons out when there is nothing to go back or forward to — a control that looks live and
 // does nothing is worse than one that says so.

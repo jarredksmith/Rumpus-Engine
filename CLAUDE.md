@@ -4368,6 +4368,51 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## Undo stopped reloading the level (build 1291)
+
+Every Ctrl+Z ran `restoreLevel` — a full teardown and respawn of every prop, light, zone and marker, with
+each imported model re-fetched or re-cloned and re-materialised. So nudging a crate and undoing it cost the
+same as **loading the level**, on the step the editor's core rhythm (tweak, undo, tweak again) repeats
+constantly. Build 1163 had already had to bolt a by-nid reselect onto the far side because the rebuild threw
+the selection away — the shape of a workaround for a step that should not have been happening.
+
+Measured live in the real editor, stock 56-prop scene, undoing one nudge. **Two figures, and only the second
+is what a creator feels:**
+```
+the step replaced   restoreLevel 74.33 ms  ->  _applyUndoMoves 0.44 ms   169x
+the whole Ctrl+Z    108.5 ms               ->  24.4 ms                   4.4x
+```
+The gap is `serializeLevel()` (unavoidable — the state being left is what makes the redo possible) and
+`renderEditorFields()`. Those are the floor now, they were already being paid, and naming them is where the
+next build looks. That scene has no imported models; the reload side is far worse with them and this side
+does not change at all.
+
+**The fast path is deliberately narrow, and the narrowness is the safety.** It applies only when the two
+states differ in NOTHING except prop transforms — an add, a delete, a reorder, a material, a signal, a world
+setting, a model swap all fall through to the old reload, unchanged. So this cannot introduce a class of
+"undo didn't fully undo": either the diff is exactly a set of transforms, or the old path runs.
+
+Three details are load-bearing:
+- **The comparison is by EXCLUSION.** It strips `t` from each prop and compares the rest whole, then strips
+  `props` and compares the level whole. The other direction — enumerating the fields allowed to differ — is
+  the version that silently goes wrong the first time somebody adds a prop field. `test-1291` proves an
+  unknown future key REFUSES rather than being ignored. Both sides come from the same `serializeLevel`, so
+  key order matches and a string compare is a true deep compare; that assumption is written down.
+- **An entry with no `nid` disqualifies the whole diff.** Identity is what links a transform to an object;
+  without it the index is the only link and a silent mismatch writes a transform onto the wrong prop.
+- **Every object is resolved before any is moved**, and the apply is wrapped so a throw falls back to the
+  reload — which rebuilds from the snapshot anyway, so a partial apply cannot survive.
+
+The write is the gizmo drag's own sequence (position/rotation/scale → `retileProcSurface` → `refreshPropCollider`
+→ `_homeSync`), so a transform arrived at by undo is identical to one dragged. `performUndo` and `performRedo`
+are now **one** `_historyStep` in opposite directions, which is why 1129's and 1163's pins each moved from two
+assertions to one — stronger, not weaker: the two directions can no longer drift apart.
+
+**Verified end to end by OBJECT IDENTITY**, which is the cheap way to prove a reload did not happen: after
+undoing a move, `propByNid(nid)` returns the SAME JS object and `selProps` still holds it; redo puts it back;
+and undoing a TAG edit returns a *different* object — the reload correctly running. Rotation and scale
+round-trip too.
+
 ## The ledge grab probes where the character is GOING (build 1290)
 
 Found while reading 1289, verified with the same rig, and it is a whole game mode: the grab gate was
