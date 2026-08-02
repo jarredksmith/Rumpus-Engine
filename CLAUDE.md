@@ -4368,6 +4368,56 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The bloom threshold was measuring the wrong thing (build 1292)
+
+The bloom prefilter thresholds the luminance of `_postRT`, which holds the scene **after** three has applied
+`toneMappingExposure` and the ACES fit. Build 1180 then made that exposure MOVE at runtime by up to 1.5
+stops. So the fixed threshold was never selecting highlights — it was selecting *whatever the eye had
+currently adapted to*, and the fraction of the frame that blooms breathed with the adaptation.
+
+Measured live, ONE pose, one level, exposure the only variable:
+```
+exposure           1.00    1.25    1.60    1.90
+threshold used    0.5442  0.6200  0.6954  0.7415
+% blooming, OLD    0.02%   5.49%  20.23%  43.13%     <- fixed 0.62
+% blooming, NEW    5.53%   5.49%   5.44%   5.43%     <- derived
+```
+**A 2000x swing becomes flat to a tenth of a percentage point**, and at the authored exposure the derived
+value is *exactly* the authored number — so no level is retuned and nothing needs migrating.
+
+The fix states the threshold in the space where it means something — SCENE luminance, before exposure — and
+re-derives the comparison value each frame: `uThresh = F( Finv(postThresh) * expNow / expBase )`. `F` is
+r149's own `RRTAndODTFit`, and `test-1292` checks every one of its five constants against the real
+`ShaderChunk`, so a three upgrade that retunes the curve fails loudly instead of silently detuning every
+adapted frame. The full ACES path also applies colour matrices; those are near luminance-preserving (each
+row sums to ~1, exact for neutrals, a few percent off on saturated colour), which is well inside what a
+luminance threshold needs.
+
+**I got this wrong first, and the way it was wrong is the point.** Three camera poses on the stock level
+showed 22%, 37% and 39% of the frame blooming, and I read that as "the threshold is too low — raise the
+default". Those three poses confounded exposure with what was in shot. The one-pose sweep above disproves
+it: at the authored 1.25 the shipped 0.62 is **correct**, giving a 5.5% highlight budget. Nothing needed
+retuning; something needed to carry the threshold along when the exposure it was tuned against started
+moving. *Three cameras is not a control. One variable is.*
+
+**Two other hypotheses died on the way here, both worth recording so they are not re-run:**
+- *"Make the post chain HDR."* The rendering audit's structural claim — ACES applies inside every material,
+  so bloom cannot tell a 3x lamp from a 1000x sun — is true of the code. Measured in scene-linear on real
+  frames, the content has no such range: max radiance 2.66 with **0.02% of pixels above 1.0**, and raising
+  the sun 5.3x moved the max to 1.04. There is no HDR there to preserve.
+- *"Invert the tone curve in the bloom prefilter so selection happens in linear."* `Finv` is **monotonic**,
+  so the set of pixels above the threshold is IDENTICAL either way. Checked before building it; it would
+  have been hours for a byte-identical frame. The weights shift slightly (a 7x relative weighting becomes
+  6x), which is not the difference between a wash and a highlight.
+
+**The instrument failed twice first, and only the control caught it.** Reading `_postRT` directly returns
+all zeros — it is MULTISAMPLED (build 1182 already had to blit through `_matCopy` for exactly this reason).
+Rendering into an own target instead *also* returned all zeros, **control included**, because a HalfFloat
+target read into a `Float32Array` yields nothing here; `FloatType` reads back. Without a known clear colour
+read through the identical path, "0% of the frame blooms" would have been published as a measured fact —
+which is build 1152's lesson arriving for the seventh time. `tools/probe/` now carries the rig and that
+list, in the repo, because it had been rebuilt from memory three times in one session.
+
 ## Undo stopped reloading the level (build 1291)
 
 Every Ctrl+Z ran `restoreLevel` — a full teardown and respawn of every prop, light, zone and marker, with
