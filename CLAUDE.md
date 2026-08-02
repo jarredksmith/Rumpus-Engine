@@ -967,6 +967,80 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A swing is an arc, not a laser (build 1311)
+
+Reported from play: *"unless the character is directly facing the object with the cross-hair dead middle of
+the prop, it doesn't deal damage. With a sword, if the player isn't dead on, even if it visually looks like
+a strike landed, it doesn't count."*
+
+**The asymmetry was twenty lines apart inside one function.** The ENEMY test is a cone — `cone()`, a ~69.5°
+half-angle that has governed melee since it existed. Build 1295 gave the PROP test the player's origin and
+the cursor-corrected direction (which fixed third person and co-op) but left it a **single ray through
+screen centre**. So one swing hits an enemy standing anywhere in the arc and misses a crate the blade
+visibly sweeps through.
+
+Measured on the real swing against a real crate 2 m ahead (`tools/probe/melee-arc.mjs` — real
+`_meleeStrike`, damage read off the prop):
+
+```
+yaw off-centre     0    5   10   15   20   25   30   40   50   60   75   90
+before            HIT  HIT  HIT  HIT   -    -    -    -    -    -    -    -
+after             HIT  HIT  HIT  HIT  HIT  HIT  HIT  HIT  HIT  HIT   -    -
+
+pitch (chop down)  0   10   20   30   45   60
+before            HIT  HIT  HIT   -    -    -
+after             HIT  HIT  HIT  HIT  HIT  HIT
+```
+
+**15° → 60°.** And the two things that must not change are both still misses after: a crate 6 m away
+(outside the reach) and a crate 2 m BEHIND the player — the arc is an arc, not a sphere.
+
+Three decisions:
+
+- **The test is against the prop's COLLIDER BOX, not its origin.** This matters more for a prop than for an
+  enemy: a prop's origin can sit at its foot, at a corner, or metres away down the length of an imported
+  wall, so an origin-based cone would miss a wall you are standing against. The closest point on the box is
+  what the blade would actually meet.
+- **A dead-on ray still wins.** It is tried first and gives the exact contact point, which the spark (1305)
+  and the impact sound use; the arc is the fallback. Precision where it exists, coverage everywhere else.
+- **No line-of-sight gate, deliberately.** Build 539 established that "at melee range the sightline is moot"
+  for the enemy cone, and a prop test that disagreed with the enemy test is the defect being fixed.
+
+`MELEE_ARC_DOT` is named **once** and read by both tests, so they can no longer drift — build 1143's lesson,
+which is the same reason this bug was invisible: the enemy cone and the prop test were never written as one
+thing. Two pins moved (135, 1295).
+
+## The editor tells you what it can do (build 1310 — editor audit 4.7)
+
+> The Edit menu is Undo / Redo / Delete-all. Absent from *every* menu, palette and panel: Copy, Paste,
+> Duplicate, Group/Ungroup, Array, Align, Snap toggle, Select-all (which does not exist — no `Ctrl+A`),
+> Local/World space. The `Ctrl+K` palette covers actions and settings but not objects and not Redo.
+
+**A shortcut nobody can discover is, for most creators, the same as not having the feature.** Every command
+the audit named already existed and had a key; none had a way to be found. Select-all did not exist at all.
+
+- **`Ctrl+A` selects every prop** — new capability, not just a new menu row. It skips **locked and hidden**
+  props for exactly the reason the marquee does (build 1036): locked exists so a sweeping gesture cannot
+  pick something up, and a select-all that ignores it is the most destructive gesture in the editor. It also
+  skips runtime props (not level content; the next Deploy deletes them). It **says how many it skipped**, or
+  "select all" silently means "select most".
+- **`Esc` clears the selection** — and claims the key ONLY when there is a selection, so dialogs, the
+  animation editor and the big map (all of which handle Escape above this line and return) keep it.
+- The **Edit menu** carries twelve labelled commands with their shortcuts shown, which is how anyone learns
+  a shortcut in the first place.
+- The **palette** gained every object command, Redo, and nine generated Align entries — with the shortcuts
+  themselves as search terms, so typing the half-remembered `ctrl+g` finds Group.
+
+**The first draft listed `Esc` in the menu before Esc did anything.** That is the exact defect build 1306
+fixed in the animation tab — the UI must not lie about the engine — so the key was implemented rather than
+the label dropped. Worth stating because the temptation in a discoverability build is to describe what you
+wish were true.
+
+Measured in the live editor (`tools/probe/editor-commands.mjs`): the real `Ctrl+A` selected 59 of 64 props
+with the locked and hidden ones provably absent; `Esc` cleared it and left the editor open; **`Ctrl+A` inside
+a focused text field selected the 9 characters of text and zero props**; the Edit menu read back twelve
+labelled commands; every object command in the palette ran and restored its toggle.
+
 ## Props can ride other props (build 1309 — editor audit 4.5)
 
 > Zero greps for `parentTo|attachTo|userData.parent|parentNid`. Groups are a shared `groupId`; folders are

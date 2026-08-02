@@ -67,8 +67,8 @@ const block = melee.slice(melee.indexOf('if(dynamicProps.length){'));
 
 // ---------------------------------------------------------------- it costs nothing per swing
 {
-  assert(/const _meleeRc = new THREE\.Raycaster\(\), _meleeOrig = new THREE\.Vector3\(\), _meleeDir = new THREE\.Vector3\(\);/.test(src),
-    'the raycaster and its two vectors are module scope (build 1168)');
+  assert(/const _meleeRc = new THREE\.Raycaster\(\), _meleeOrig = new THREE\.Vector3\(\), _meleeDir = new THREE\.Vector3\(\), _meleePt = new THREE\.Vector3\(\);/.test(src),
+    'the raycaster and its vectors are module scope (build 1168; 1311 added the arc test\'s closest-point scratch)');
   assert(!/new THREE\.Raycaster\(\)/.test(block), '...never allocated inside the swing');
   // ITS OWN raycaster, because `far` is a persistent property and the shared one is read everywhere
   assert(/Its own, because `far` has to be the swing's reach and the\n\/\/ shared `raycaster` is read by a dozen other systems/.test(src),
