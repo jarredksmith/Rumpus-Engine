@@ -1,7 +1,7 @@
 // The six global hosts are hidden by the editor MODE (applyEditorMode sets display on .edSection), not by
 // a tab. So the path that must bring them back is setEditorMode — which calls applyEditorMode and THEN
 // renderEditorFields, in that order. Verify against the real function.
-import { withGame } from './tools/probe/driver.mjs';
+import { withGame } from './driver.mjs';
 await withGame(async (P, page) => {
   await P("toggleEditor(); 1;");
   await page.waitForTimeout(3000);

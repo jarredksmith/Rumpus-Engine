@@ -1,5 +1,5 @@
 // The editor's most-repeated action is the play/edit round trip. Time it, and time what it is made of.
-import { withGame } from './tools/probe/driver.mjs';
+import { withGame } from './driver.mjs';
 
 await withGame(async (P, page) => {
   console.log('props', await P('propModels.length'));

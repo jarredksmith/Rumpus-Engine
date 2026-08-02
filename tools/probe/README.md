@@ -5,16 +5,29 @@ game under headless Chromium and let a script read or drive anything inside it �
 "measure it, don't argue about it" finding in `CLAUDE.md` was actually settled.
 
 ```
-node tools/probe/mkprobe.mjs          # -> probe-out/probe.html + three.min.js
-node your-probe.mjs                   # imports tools/probe/driver.mjs
+node tools/probe/mkprobe.mjs              # -> probe-out/ (gitignored: a 3.5 MB copy of the game)
+node tools/probe/bloom-threshold.mjs      # any probe in this folder
 ```
 
 ```js
-import { withGame } from './tools/probe/driver.mjs';
+import { withGame } from './driver.mjs';
 await withGame(async (P) => {
   console.log(await P('player.pos.toArray()'));
 });
 ```
+
+`probe-out/` is BUILD OUTPUT and is gitignored. It holds a rewritten copy of `breach.html` carrying an
+`eval` trampoline, which has no business in a repo whose root is the published site — it was committed
+once by accident and removed in build 1293's follow-up.
+
+## The probes kept here
+
+| file | what it measures |
+|---|---|
+| `scene-range.mjs` | scene-linear radiance histogram — how much dynamic range a frame really carries |
+| `bloom-threshold.mjs` | what fraction of the frame blooms, swept across exposure (build 1292) |
+| `editor-panel.mjs` | panel DOM nodes and render cost per editor mode (build 1293) |
+| `editor-timing.mjs` | the play/edit round trip, and what it is made of |
 
 `P(code)` evaluates `code` inside the game closure. Return plain data — the result is structured-cloned,
 so a `THREE.Object3D` either serialises to megabytes or throws.

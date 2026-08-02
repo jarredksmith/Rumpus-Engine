@@ -1,6 +1,6 @@
 // Boot the probe build under headless Chromium + SwiftShader and hand you an eval-into-the-closure function.
 //
-//   import { withGame } from './tools/probe/driver.mjs';
+//   import { withGame } from './driver.mjs';
 //   await withGame(async (P, page) => { console.log(await P('player.pos.toArray()')); });
 //
 // P(code) evaluates `code` INSIDE the game closure and returns the result (structured-cloned, so return

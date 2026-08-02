@@ -2,7 +2,7 @@
 // The rendering audit's headline claim is that ACES applies inside every material, so the post chain sees
 // already-tone-mapped values and bloom cannot tell a 3x lamp from a 1000x sun. That is true of the CODE.
 // Whether it MATTERS depends on whether the content has the range — so measure before rebuilding anything.
-import { withGame } from './tools/probe/driver.mjs';
+import { withGame } from './driver.mjs';
 
 const HIST = `(function(){
   const W=320,H=180;
