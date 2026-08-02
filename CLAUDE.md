@@ -4368,6 +4368,34 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## A bot holding a sword shot bullets (build 1297)
+
+Checked immediately after 1296, because that build made a configuration reachable that might be broken
+downstream — and it was, and it had been for a long time. A PvP bot's engagement range came from the
+DIFFICULTY table (`D.range`) and its shot from `remoteFire`, which spawns a tracer and a hit for every peer.
+Its stand-off came from `prefRange`, 6-15 m — a rifle's answer. So a bot with a crowbar stood at rifle range
+landing **invisible shots** while holding a blunt object, and never closed.
+
+This predates 1296: the bot weapon pick ends `|| 'crowbar'`, so a host who allows nothing else already got
+melee bots. 1296 made it one checkbox away in every level, which is why it was worth finding now.
+
+Now `prefRange` is the weapon's own reach × 0.7, the attack gate is the reach, and the melee branch spawns
+no projectile — just the attack pose, which **build 1294 resolves to `attack@<weapon>`**, so the creator's
+own swing clip plays with no extra plumbing. Three builds composing without any of them knowing about the
+others is the payoff for keeping each one's mechanism generic.
+
+**Damage deliberately stays on the difficulty table.** A bot's damage has never come from its weapon — a
+sniper bot and a pistol bot hit for the same — and making melee the one exception would be a stealth
+rebalance of every existing match. Only the RANGE and the DELIVERY changed.
+
+**The test found a real hole in my first draft, and it is the interesting part.** `prefRange` had a floor of
+1.2 m and `GUN_STAT_LIM.reach` a floor of 0.5, so a creator could author a 0.5 m weapon whose bots close to
+1.2 m — *outside their own reach* — and swing forever. Two independent constants that had to satisfy an
+inequality nobody had written down. They are now declared together as `BOT_MELEE_REACH_MIN = 1.2` and
+`BOT_MELEE_MIN = 1.0`, with the inequality stated where they live, and `test-1297` sweeps the ENTIRE
+authorable range rather than three hand-picked values to prove `max(1.0, 0.7r) < r` for every r. The
+original three-value spot check passed; the sweep is what caught it.
+
 ## Melee is a per-weapon stat, so any slot can be a sword (build 1296)
 
 Following the same report as 1294/1295: a creator wants *a pistol, a sword, an axe and a rifle*. Build 1240

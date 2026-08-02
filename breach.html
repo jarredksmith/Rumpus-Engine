@@ -19541,9 +19541,17 @@ const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k]
 // which is what that build was for. `melee` rides as 0/1 so it needs no separate boolean path; every reader
 // already asks `if(w.melee)` / `!!w.melee`.
 const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach'];
+// build 1297: the shortest reach a melee weapon may be authored to, and the closest a bot will stand while
+// swinging one. They are stated together because the ONLY thing that matters is the inequality between
+// them: a bot holds `max(BOT_MELEE_MIN, reach*0.7)` and hits inside `reach`, so if the floor on reach ever
+// dropped below the floor on the stand-off distance, a creator could author a weapon whose bots physically
+// cannot land a hit — they would close to the stand-off, be outside their own reach, and swing forever.
+// With 1.2 and 1.0, `max(1.0, 0.7r) < r` holds for every authorable r. (1.2 m is a knife; nothing shipped
+// is under 2.3, so no existing weapon moves.)
+const BOT_MELEE_REACH_MIN = 1.2, BOT_MELEE_MIN = 1.0;
 // build 1296: pellets floors at 0, not 1. A melee weapon fires none, and the old floor rewrote the crowbar's
 // authored 0 into a 1 the moment any stat was applied — the same spurious-diff fault as magSize below.
-const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[0.5,12] };
+const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12] };
 // The live values are NORMALISED here, beside the baseline that is captured from them: `melee` starts as
 // `true`/undefined and `reach` is absent on every gun, and the serializer emits a stat whenever it differs
 // from its baseline — so leaving `true` beside a baseline of `1` would write a spurious melee override into
@@ -23266,6 +23274,12 @@ function spawnBots(n){
       wep: (function(){ const _w=['rifle','rifle','smg','shotgun','pistol'].filter(k=>WEAPONS[k] && _allowedWep(k)); return _w.length?_w[(Math.random()*_w.length)|0]:(['pistol','rifle','smg','shotgun','sniper','launcher'].find(k=>WEAPONS[k]&&_allowedWep(k))||'crowbar'); })(),   // build 1012: the gun it visibly holds (rifle-weighted)
       // personality: aggression (push vs hold), bravery (low hp before retreat), preferred engage distance
       aggr:0.4+Math.random()*0.6, bravery:0.18+Math.random()*0.22, prefRange:6+Math.random()*9 });
+    // build 1297: a bot holding a MELEE weapon has to close. `prefRange` is the distance the engage state
+    // holds while it strafes, and 6-15 m is a rifle's answer — a bot with a sword stood there swinging at
+    // nothing. This has been reachable since the crowbar existed (a melee-only match falls through to it),
+    // and build 1296 made any slot melee, so it is now one checkbox away in every level.
+    { const _nb=bots[bots.length-1], _bw=WEAPONS[_nb.wep];
+      if(_bw && _bw.melee) _nb.prefRange = Math.max(BOT_MELEE_MIN, (_bw.reach||3.4)*0.7); }   /* inside its own reach, so it presses rather than hovering on the edge */
     if(teamMode()) NET.teams[id]=team;
     NET.duelScore[id]=0;
   }
@@ -23640,17 +23654,31 @@ function updateBots(dt){
     if(tgt && wantFire && b.fireCd<=0 && !(b._reactT>0)){   // build 1003: no shot inside the human reaction beat after acquiring
       const ty=(tgt.pos.y!=null?Math.min(1.5,tgt.pos.y):1.4);
       const fdist=Math.hypot(tgt.pos.x-b.pos.x, ty-1.4, tgt.pos.z-b.pos.z);
-      if(fdist<D.range && hasLOS){   // reuse the cached LOS instead of a second raycast per shot
-        b.fireCd=D.cdMin+Math.random()*D.cdRand;
-        const aim=_bv2.set(tgt.pos.x-b.pos.x, ty-1.4, tgt.pos.z-b.pos.z).normalize();
-        // build 1003: settle-in accuracy — wide right after acquiring, tightening with unbroken
-        // time-on-target; the bot's own movement this frame loosens it (run-and-gun penalty).
-        const _moved=Math.hypot(b.pos.x-ox, b.pos.z-oz);
-        const _esp=D.spread*(0.5 + 1.8*(b._aimErr==null?0.4:b._aimErr)) + (_moved>0.02 ? D.spread*0.5 : 0);
-        aim.x+=(Math.random()*2-1)*_esp; aim.y+=(Math.random()*2-1)*_esp*0.75; aim.z+=(Math.random()*2-1)*_esp; aim.normalize();
-        const o=[b.pos.x,1.4,b.pos.z], d=[aim.x,aim.y,aim.z];
-        remoteFire(b.id, o, d); b._fireAnimT=performance.now()+480; for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'fire', from:b.id, o, d}); }catch(e){} }
-        if(Math.random()<D.hit) _botDamage(b, tgt, D.dmgMin+Math.random()*D.dmgRand);
+      // build 1297: a melee bot SWINGS. Its range is the weapon's reach, not the difficulty table's, and it
+      // fires no bullet — `remoteFire` spawns a tracer and a hit for every peer, so a sword bot was landing
+      // invisible shots from 20 m. DAMAGE stays on the difficulty table, deliberately: a bot's damage has
+      // never come from its weapon (a sniper bot and a pistol bot hit for the same), and making melee the
+      // one exception would be a stealth rebalance of every match.
+      const _bw = WEAPONS[b.wep], _bMelee = !!(_bw && _bw.melee);
+      const _bRange = _bMelee ? Math.max(1, (_bw.reach || 3.4)) : D.range;
+      if(fdist<_bRange && hasLOS){   // reuse the cached LOS instead of a second raycast per shot
+        b.fireCd = _bMelee ? Math.max(0.25, (_bw.fireRate||500)/1000) : (D.cdMin+Math.random()*D.cdRand);
+        if(_bMelee){
+          /* the attack pose only — build 1294 resolves it to `attack@<weapon>`, so a creator's own swing
+             clip plays here with no extra plumbing. No tracer, no `fire` packet: there is no projectile. */
+          b._fireAnimT=performance.now()+480;
+          if(Math.random()<D.hit) _botDamage(b, tgt, D.dmgMin+Math.random()*D.dmgRand);
+        } else {
+          const aim=_bv2.set(tgt.pos.x-b.pos.x, ty-1.4, tgt.pos.z-b.pos.z).normalize();
+          // build 1003: settle-in accuracy — wide right after acquiring, tightening with unbroken
+          // time-on-target; the bot's own movement this frame loosens it (run-and-gun penalty).
+          const _moved=Math.hypot(b.pos.x-ox, b.pos.z-oz);
+          const _esp=D.spread*(0.5 + 1.8*(b._aimErr==null?0.4:b._aimErr)) + (_moved>0.02 ? D.spread*0.5 : 0);
+          aim.x+=(Math.random()*2-1)*_esp; aim.y+=(Math.random()*2-1)*_esp*0.75; aim.z+=(Math.random()*2-1)*_esp; aim.normalize();
+          const o=[b.pos.x,1.4,b.pos.z], d=[aim.x,aim.y,aim.z];
+          remoteFire(b.id, o, d); b._fireAnimT=performance.now()+480; for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'fire', from:b.id, o, d}); }catch(e){} }
+          if(Math.random()<D.hit) _botDamage(b, tgt, D.dmgMin+Math.random()*D.dmgRand);
+        }
       }
     }
     // ---- build 1006: grenades. The AAA move: the target ducks behind cover (contact just broke,
@@ -29535,7 +29563,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1296 · 2026-08-02';
+const BUILD_VERSION = 'build 1297 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

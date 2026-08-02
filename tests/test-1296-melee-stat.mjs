@@ -16,7 +16,11 @@ const src = gameSource();
 //   RIFLE            melee 0             12   (still a gun, still the bullet path)
 
 const KEYS = new Function('return ' + extractConst('GUN_STAT_KEYS', src) + ';')();
-const LIM = new Function('return ' + extractConst('GUN_STAT_LIM', src) + ';')();
+// build 1297 replaced the reach floor with a named constant, so the clamp table no longer evaluates on its
+// own — which is the point: the floor on `reach` and the floor on a bot's stand-off have to be readable as
+// a pair. Feed it the same constants the engine does, from the source, rather than hardcoding them here.
+const LIM = new Function('BOT_MELEE_REACH_MIN', 'return ' + extractConst('GUN_STAT_LIM', src) + ';')(
+  +src.match(/BOT_MELEE_REACH_MIN = ([0-9.]+)/)[1]);
 
 // ---------------------------------------------------------------- the two new stats
 {
@@ -26,7 +30,7 @@ const LIM = new Function('return ' + extractConst('GUN_STAT_LIM', src) + ';')();
   for (const k of ['fireRate', 'magSize', 'reserve0', 'reserveMax', 'spread', 'reloadMs', 'pellets'])
     assert(KEYS.includes(k), '1190’s ' + k + ' is untouched');
   eq(LIM.melee.join(','), '0,1', 'melee rides as 0/1 — no separate boolean path, and every reader already asks `if(w.melee)`');
-  eq(LIM.reach[0], 0.5, 'reach cannot be zero, which would be a weapon that hits nothing');
+  eq(LIM.reach[0], 1.2, 'the shortest authorable reach is BOT_MELEE_REACH_MIN — build 1297 ties it to the closest a bot will stand, so no authorable weapon leaves its bots swinging outside their own reach');
   eq(LIM.reach[1], 12, '...nor absurd');
   for (const k of KEYS) assert(Array.isArray(LIM[k]) && LIM[k].length === 2, k + ' has a clamp');
 }
@@ -78,7 +82,7 @@ const FACTORY = {
   eq(W.smg.reach, 12, '...and reach to the ceiling');
   fn('smg', { melee: -3, reach: 0.01 });
   eq(W.smg.melee, 0, '...and to off');
-  eq(W.smg.reach, 0.5, '...and the floor');
+  eq(W.smg.reach, 1.2, '...and the floor (build 1297 raised it from 0.5, so a bot can always reach what it closes to)');
   fn('smg', { melee: NaN, reach: NaN });
   eq(W.smg.melee, 0, 'NaN falls back to the baseline rather than poisoning the weapon');
   eq(W.smg.reach, 3.4);

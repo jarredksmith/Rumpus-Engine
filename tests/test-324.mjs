@@ -16,7 +16,7 @@ assert(!/!clearAt\(x,z/.test(los) && !/insideSolid\(/.test(los), 'no per-sample 
 const ub = extractFunction('updateBots');
 assert(/if\(b\._losT<=0 && _losBudget>0\)\{ _losBudget--; b\._los = !!\(tgt && _botLOS\(b\.pos\.x,b\.pos\.z, tgt\.pos\.x,tgt\.pos\.z, b\.pos\.y\)\); b\._losT=0\.1\+Math\.random\(\)\*0\.05; \}/.test(ub), 'LOS cached ~10x/s per bot AND capped per frame by _losBudget (build 547)');
 assert(/const hasLOS = b\._los && !!tgt;/.test(ub), 'perception reads the cached LOS');
-assert(/if\(fdist<D\.range && hasLOS\)\{/.test(ub), 'fire gate reuses the cached LOS (one raycast, not two)');
+assert(/if\(fdist<_bRange && hasLOS\)\{/.test(ub), 'fire gate reuses the cached LOS (one raycast, not two)');   // build 1297: _bRange is D.range for a gun, the weapon's reach for a melee weapon
 assert((src.match(/_botLOS\(b\.pos\.x,b\.pos\.z, tgt\.pos\.x,tgt\.pos\.z, b\.pos\.y\)/g)||[]).length===1, 'only ONE _botLOS call site now (the cached perception)');
 
 // movement is NOT region-gated (unchanged from 449)
