@@ -16,7 +16,7 @@ assert(/_ownAvatar\)\{ _ownAvatarKey=''; if\(typeof ensureOwnAvatar==='function'
 
 // the local state pick drives setEnemyAnimState on the own avatar (which applies hold from animCfg)
 assert(/const a=ensureOwnAvatar\(\);/.test(src), 'live body comes from ensureOwnAvatar');
-assert(/setEnemyAnimState\(a, st\);/.test(src), 'live body state is set each frame');
+assert(/setEnemyAnimState\(a, st, _restart\);/.test(src), 'live body state is set each frame');   /* build 1307 */
 
 // and setEnemyAnimState reads hold from the avatar config (the path that now actually receives updates)
 const sa = extractFunction('setEnemyAnimState');

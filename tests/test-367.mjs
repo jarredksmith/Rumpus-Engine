@@ -6,7 +6,7 @@ const src = gameSource();
 // but above firing/locomotion so reactions read immediately.
 
 // ---- the one-shot override + triggers ----
-assert(/function playOwnAnim\(slot, dur\)\{ _ownEvt = \{ slot, until: performance\.now\(\) \+ \(dur\|\|300\) \}; \}/.test(src), 'playOwnAnim sets a timed slot override');
+assert(/function playOwnAnim\(slot, dur\)\{ _ownEvt = \{ slot, until: performance\.now\(\) \+ \(dur\|\|300\), n: \+\+_ownEvtSeq \}; \}/.test(src), 'playOwnAnim sets a timed slot override');   /* build 1307: ...carrying a serial, so a second swing inside the first swing's window is a new EVENT rather than the same state */
 const sw = extractFunction('switchWeapon');
 assert(/playOwnAnim\(_wepAnimSlot\('equip', key\), 320\)/.test(sw), 'weapon swap -> equip');   // build 1294: per weapon, using the weapon being drawn — the plain 'equip' clip is still what an unmapped variant resolves to
 const me = extractFunction('meleeAttack');
@@ -19,13 +19,13 @@ assert(/playOwnAnim\('hit'\+dir, 240\)/.test(hd), 'taking damage -> directional 
 // ---- picker priority + fidget ----
 const uoa = extractFunction('updateOwnAvatar');
 assert(/if\(dead\) st=_lastDieVariant\|\|'die';/.test(uoa), 'death uses the directional variant');
-assert(/else if\(evtLive\) st=_ownEvt\.slot;/.test(uoa), 'one-shot events win over firing/locomotion (below death)');
+assert(/else if\(evtLive\)\{ st=_ownEvt\.slot;/.test(uoa), 'one-shot events win over firing/locomotion (below death)');   /* build 1307 opened the branch to consume the event edge */
 // order: death -> event -> attack -> reload -> slide -> air -> aim -> crouch -> loco
 const iDead=uoa.indexOf('if(dead) st='), iEvt=uoa.indexOf('else if(evtLive)'), iAtk=uoa.indexOf('performance.now()-lastShot < 250'), iLoco=uoa.indexOf('_locoSlot(mvx,mvz,player.yaw,tier,cur)');
 assert(iDead<iEvt && iEvt<iAtk && iAtk<iLoco, 'priority chain ordered death > event > attack > locomotion');
 assert(/st='idleFidget'/.test(uoa) && /_ownFidgetUntil/.test(uoa), 'long idle plays a fidget');
 // spawn clears the action state so a corpse pose / stale event never carries into the next life
-assert(/_ownEvt=null; _lastDieVariant='die';/.test(src), 'respawn resets the action overrides');
+assert(/_ownEvt=null; _ownEvtFired=-1; _ownFireSeen=-1; _lastDieVariant='die';/.test(src), 'respawn resets the action overrides');   /* build 1307: including the event serials, or a fresh run swallows its first swing */
 
 // ---- executable: directional hit quadrant + death mapping (same construction as hurtDir) ----
 function hitDir(sx,sz,yaw){

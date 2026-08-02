@@ -14,8 +14,8 @@ assert(/if\(_hold\)\{ next\.loop = THREE\.LoopOnce; next\.clampWhenFinished = tr
 // the early-return on same-state keeps a held clip frozen (it does not re-trigger every frame). build 1306
 // made that return conditional — a HELD state still returns first and unconditionally, which is this
 // assertion's intent; what changed is that a state which is NOT held and has stopped running is re-armed.
-assert(/const _same = \(v\.userData\.animState === key\);\n  if\(_same\)\{\n    if\(_hold\) return;/.test(sa),
-  'same-state re-selection is a no-op for a HELD clip, so a held pose stays clamped');
+assert(/const _same = \(v\.userData\.animState === key\);\n  if\(_same && !restart\)\{\n    if\(_hold\) return;/.test(sa),
+  'same-state re-selection is a no-op for a HELD clip, so a held pose stays clamped');   /* build 1307: unless the caller says a NEW event arrived — a second swing must replay */
 
 // config carries clipHold, persisted + serialized
 assert(/clipHold:\{\}/.test(src), 'playerModelCfg seeds clipHold');

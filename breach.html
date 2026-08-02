@@ -10628,7 +10628,9 @@ function _animLive(a){
   return true;
 }
 const ANIM_LIVE_GRACE = 260;   // ms — comfortably past the 180 ms crossfade, so a fade-in is never mistaken for a stall
-function setEnemyAnimState(body, state){
+// `restart` (build 1307) says THIS IS A NEW EVENT, not the continuing report of a state. See the block
+// below the fallback resolve for why an animation system needs both words.
+function setEnemyAnimState(body, state, restart){
   const v = body.userData.visual; if(!v) return;
   const acts = v.userData.stateActions; if(!acts) return;
   _ensureClipAction(v, state);   // build 1079: 'clip:<name>' builds its action on first use
@@ -10676,8 +10678,24 @@ function setEnemyAnimState(body, state){
   // `_hold` returns before the liveness test — a corpse must stay down. And a state entered moments ago is
   // mid-crossfade with its weight ramping from zero, which reads exactly like a stall; `ANIM_LIVE_GRACE`
   // is what keeps a fade-in from re-arming itself every frame.
+  // ---- build 1307: A STATE IS LEVEL-TRIGGERED. AN EVENT IS EDGE-TRIGGERED. ------------------------------
+  // REPORTED, third time: "I can replicate it by rapidly hitting the left mouse button. It still deals
+  // damage, but doesn't play the animation. If I click, wait a second, and click again, it doesn't freeze."
+  // That sentence is the whole diagnosis, and it is neither of the two things I fixed before.
+  //
+  // A swing is an EVENT: `meleeAttack` calls `playOwnAnim('meleeHeavy', <the clip's own length>)`, which the
+  // state machine reports as a state for as long as the clip lasts. The crowbar swings every 500 ms and its
+  // clip is typically ~1 s, so a second swing arrives while the first is STILL being reported — the
+  // requested name never changes, `animState === key` short-circuits, and the clip is never replayed. What
+  // you see is one swing that finishes (or clamps, if the creator ticked Hold) and then nothing, while
+  // every click keeps landing damage. Leave a gap and the event expires, the state drops back to idle, and
+  // the next click is a real transition — which is exactly the "click, wait a second, click" that works.
+  //
+  // The same hole is under every repeated one-shot: grenade spam, fast weapon swaps (`equip`), and back-to-
+  // back hit reactions. So the fix is not "special-case the swing": the CALLER now says whether this is a
+  // new event, and a new event replays its clip even when the resolved slot name has not changed.
   const _same = (v.userData.animState === key);
-  if(_same){
+  if(_same && !restart){
     if(_hold) return;
     const _held = performance.now() - (v.userData.animAt || 0);
     if(_held < ANIM_LIVE_GRACE || _animLive(next)) return;
@@ -23991,7 +24009,7 @@ function duelDie(){
 function duelRespawn(){
   duelDead = false; duelInvuln = 1.2;
   const sp = randomSpawn();
-  player.hp = player.maxHp; _ownEvt=null; _lastDieVariant='die'; _ownIdleT=0; _ownFidgetAt=0; _ownFidgetUntil=0; _ownPrevYaw=null; _ownPrevCrouch=false; player.pos.set(sp.x, (sp.y!=null?sp.y:terrainHeightAt(sp.x, sp.z))+EYE, sp.z); player.vel.set(0,0,0);
+  player.hp = player.maxHp; _ownEvt=null; _ownEvtFired=-1; _ownFireSeen=-1; _lastDieVariant='die';   /* build 1307: a respawn must not inherit an event serial */ _ownIdleT=0; _ownFidgetAt=0; _ownFidgetUntil=0; _ownPrevYaw=null; _ownPrevCrouch=false; player.pos.set(sp.x, (sp.y!=null?sp.y:terrainHeightAt(sp.x, sp.z))+EYE, sp.z); player.vel.set(0,0,0);
   player.yaw = sp.yaw; player.pitch = 0;
   refillAllWeapons(); buffs.shield=0; if(typeof MP_RULES!=='undefined') grenadeCount=MP_RULES.nades;   // build 1014: grenades refill to the host-set count each life
   const ov=document.getElementById('overlay'); if(ov) ov.classList.add('hidden');
@@ -24872,7 +24890,11 @@ let _ownAvatar=null, _ownAvatarKey='', _tpCaster=null, _ownPrevX=0, _ownPrevZ=0,
 // / _ownPrevCrouch are last-frame values for turn-step + crouch-toggle edge detection. playOwnAnim is hoisted
 // so earlier triggers can call it.
 let _ownEvt=null, _ownIdleT=0, _ownFidgetAt=0, _ownFidgetUntil=0, _lastDieVariant='die', _ownPrevYaw=null, _ownPrevCrouch=false;
-function playOwnAnim(slot, dur){ _ownEvt = { slot, until: performance.now() + (dur||300) }; }
+/* build 1307: every one-shot the local avatar plays — a swing, a throw, an equip, a hit reaction, a custom
+   action — arrives through here, so ONE serial makes all of them edge-triggered. Without it a repeated
+   event whose window outlives its interval is reported as an unchanged state and never replays. */
+let _ownEvtSeq = 0, _ownEvtFired = -1, _ownFireSeen = -1;
+function playOwnAnim(slot, dur){ _ownEvt = { slot, until: performance.now() + (dur||300), n: ++_ownEvtSeq }; }
 // build 1062: the one-shot window for a slot, sized to the OWN avatar's actual clip so the swing
 // plays all the way through instead of being cut to a fixed guess. Only a genuine melee/attack
 // clip extends it — a model without one resolves down the fallback chain to idle, which must NOT
@@ -24980,12 +25002,13 @@ function updateOwnAvatar(dt){
     if(!dead && !sliding && !(slideCD>0.35)){ if(crouching && !_ownPrevCrouch) playOwnAnim('standToCrouch', 300); else if(!crouching && _ownPrevCrouch) playOwnAnim('crouchToStand', 300); }   // crouch toggle edge -> transition stab, then settle into crouch/stand. build 925: a slide forces crouching=true, and this stab (an event, which outranks states) was eating the whole slide window — no stabs during or right after a slide
     _ownPrevCrouch = crouching;
     const air = _airborneSlot(a.userData._air || (a.userData._air={}), player.onGround, player.vel.y, dt||0.016);
-    let st;
+    let st, _restart = false;   /* build 1307: true on the frame a NEW event arrives, so its clip replays */
     const evtLive = _ownEvt && performance.now()<_ownEvt.until;
     if(dead) st=_lastDieVariant||'die';                         // directional death from the killing hit
     else if(_climbAnim) st=_climbAnim;                          // build 644: ledge hang / pull-up / drop (and ladder climb in 645)
-    else if(evtLive) st=_ownEvt.slot;                           // one-shot: throw / melee / equip / hit-react
-    else if(performance.now()-lastShot < 250){ const _ff = crouching ? 'crouch' : (typeof sprinting==='function'&&sprinting()) ? 'sprint' : (_ownSpeed>0.11?'run':'walk'); st = _wepAnimSlot((_ownSpeed>=0.012 ? (_fireSlot(_ff)||'attack') : 'attack'), curWep); }   // firing: combined move+fire when moving, else the standing attack pose. build 1294: for the weapon in hand
+    else if(evtLive){ st=_ownEvt.slot;                          // one-shot: throw / melee / equip / hit-react
+      if(_ownEvt.n !== _ownEvtFired){ _ownEvtFired = _ownEvt.n; _restart = true; } }   /* a SECOND swing inside the first swing's window is a new event, not the same state */
+    else if(performance.now()-lastShot < 250){ const _ff = crouching ? 'crouch' : (typeof sprinting==='function'&&sprinting()) ? 'sprint' : (_ownSpeed>0.11?'run':'walk'); st = _wepAnimSlot((_ownSpeed>=0.012 ? (_fireSlot(_ff)||'attack') : 'attack'), curWep); if(lastShot !== _ownFireSeen){ _ownFireSeen = lastShot; _restart = true; } }   // firing: combined move+fire when moving, else the standing attack pose. build 1294: for the weapon in hand. build 1307: every shot is its own event — a second round inside the 250 ms window must re-fire the pose, not be swallowed as "already attacking"
     else if(reloading) st='reload';                             // reloading the mag
     else if(sliding && player.onGround) st='slide';             // sprint-slide
     else if(air) st=air;                                        // jumpStart / jump / fall / jumpLand / hardLand
@@ -25005,7 +25028,7 @@ function updateOwnAvatar(dt){
         else { if(_ownFidgetUntil){ _ownFidgetUntil=0; _ownIdleT=0; _ownFidgetAt=0; } st='idle'; }
       } else { _ownIdleT=0; _ownFidgetAt=0; _ownFidgetUntil=0; st=_locoSlot(mvx,mvz,player.yaw,tier,cur); }   // forward/back/strafe by movement vs facing (cur = hysteresis)
     }
-    setEnemyAnimState(a, st);
+    setEnemyAnimState(a, st, _restart);
   }
   _ownPrevX=player.pos.x; _ownPrevZ=player.pos.z; _ownPrevYaw=player.yaw;
 }
@@ -29739,7 +29762,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1306 · 2026-08-02';
+const BUILD_VERSION = 'build 1307 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
