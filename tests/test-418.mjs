@@ -34,7 +34,12 @@ assert((src.match(/creditAsset\(_fsAtt\)/g)||[]).length === 2, 'both Freesound a
 
 // --- the buttons open the populated screen ---
 assert(/function openCredits\(\)\{ renderCreditsScreen\(\); openModal\('creditsModal'\); \}/.test(src), 'openCredits renders fresh then shows the modal');
-assert(/crb\.onclick=openCredits/.test(src) && /pc\.onclick=openCredits/.test(src), 'both Credits buttons are wired to open the screen');
+// build 1277: the pause button's handler used to be assigned twice — build 1166's SAFE showCreditsModal
+// first, then this older openCredits overwriting it, so the safe renderer was dead code. Both pause
+// buttons (they had a duplicate id, too) now open the safe one; the home-menu button is unchanged.
+assert(/crb\.onclick=openCredits/.test(src), 'the home-menu Credits button opens the screen');
+assert(/for\(const _cid of \['pauseCredits','pauseCredits2'\]\)/.test(src) && /showCreditsModal\(\)/.test(src),
+  'both Credits buttons are wired to open the screen');
 
 // --- output safety: author-supplied strings are escaped before linkifying ---
 const lk = extractFunction('_creditLinkify');

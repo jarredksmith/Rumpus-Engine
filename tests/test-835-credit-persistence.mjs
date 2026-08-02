@@ -23,7 +23,9 @@ assert(/Google Fonts \(Rajdhani, Orbitron, JetBrains Mono \+ the HUD faces\)/.te
 // --- the credits screen still renders all three sections + per-level assets ---
 assert(/ENGINE &amp; LIBRARIES/.test(src) && /ASSET SOURCES/.test(src) && /ASSETS IN THIS LEVEL/.test(src), 'credits screen sections intact');
 assert(/const crb=document\.getElementById\('creditsBtn'\); if\(crb\) crb\.onclick=openCredits;/.test(src), 'credits reachable from the home menu');
-assert(/const pc=document\.getElementById\('pauseCredits'\); if\(pc\) pc\.onclick=openCredits;/.test(src), 'credits reachable from the pause menu');
+// build 1277: same reachability, through build 1166's safe renderer rather than the raw-HTML one
+assert(/for\(const _cid of \['pauseCredits','pauseCredits2'\]\)/.test(src) && /showCreditsModal/.test(src),
+  'credits reachable from the pause menu');
 
 // --- executable: register -> serialize-shape -> reload round trip using the real functions ---
 {

@@ -3990,6 +3990,60 @@ executes all four columns — including that `any` did NOT silently gain props.
 Serialization needed no new code: `triggers` round-trips through `_migrateTrigger`, so sanitizing the tag
 there covers both directions at once. That is the shape to copy for any future zone field.
 
+## The build-1276 audit, and its three client-side CRITICALs (build 1277)
+
+Eight domain critics were run against the committed 1276 tree, each required to verify claims in source
+before asserting them and to score 1-10. Reports are in `scratchpad-audit/`. **Every headline claim was
+re-verified by hand before being acted on**, and all of the ones below held.
+
+### Six of the 27 logic verbs had never worked
+
+`showprop / hideprop / moveprop / delprop / pushprop / spawnprop` were implemented in `_applyWorldAction`
+and offered in the Do node's dropdown — but `_applyWorldAction` has exactly ONE call site, and the verb list
+gating it named none of them. Every prop verb fell through to the tag loop, which handles only
+toggle/open/close/anim/unlock, and did nothing. **Builds 1170, 1216 and 1258 each shipped capability no level
+could reach**: nothing could destroy, hide, show, move, shove or spawn a prop at runtime. `spawnprop` was
+dead twice over — the Do node also dropped `prefab` from the object it forwarded.
+
+**The tests are why it survived, and that is the lesson.** They asserted the HANDLER's source and the
+DROPDOWN's source and never that a node reaches the handler — build 1158's "wrong half" pattern, in test
+form. `test-1277` walks the node→dispatcher→handler PATH by execution, and checks the inverse too (a tag
+verb must still NOT reach the world handler). Pin both ends of a wire and you have proven nothing about the
+wire.
+
+`_isWorldVerb` deliberately still excludes them: it means "takes no target tag", and a prop verb does take
+one.
+
+### Level text could reach the DOM as markup
+
+`_creditEsc` escaped `& < >` but **not `"`**, and `_creditLinkify` drops its match inside `href="$1"` — so a
+single quote in an attribution closed the attribute and opened an event handler. The payoff was the publish
+key, the Sketchfab token, an Anthropic key, and the `breach_comm_api`/`breach_ice` endpoint overrides, which
+make a backdoor persistent. Escaping quotes costs nothing in a text node (`&quot;` renders as `"`), so one
+function stays correct in both contexts rather than the caller having to know which it is in. Weapon names
+and key names — both level-authored — were also reaching `innerHTML` raw.
+
+**And build 1166's SAFE credits renderer was dead code.** `bindPauseMenu` assigned the safe handler, then an
+older line six below re-assigned the same element back to the vulnerable path. It was invisible because
+**two buttons carried `id="pauseCredits"`**, so `getElementById` only ever reached the first and nobody
+noticed the second was inert. One handler now, both buttons wired.
+
+### A GitHub Action was a command injection into the published site
+
+Fixed in its own commit ahead of the rest: `publish-level.yml` interpolated an attacker-controlled level
+name into shell and into a `github-script` template literal. A `${{ }}` expression is pasted into the script
+TEXT before the shell sees it, so `$(...)` or a backtick in a submitted level name ran as a command in a job
+holding `contents: write` — against the branch Pages serves. Name, file and reason now travel through `env:`
+and are read as `"$LEVEL_NAME"` / `process.env.LEVEL_NAME`.
+
+### Scores, and what the audit retracted
+
+rendering 7 · editor 7 · gameplay 7 · performance 7 · features 6 · multiplayer 5 · platform 5.
+
+Two previously-recorded CRITICALs died on verification this round, which is the rule working in both
+directions: **KTX2, meshopt and Draco are all wired** (the last audit's "deliberately unwired" was false),
+as the phantom-BVH claim was false before it. Five pins moved (1074, 1077, 238, 418, 835).
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

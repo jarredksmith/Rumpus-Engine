@@ -150,8 +150,14 @@ assert(!/_lgSetMusic[\s\S]{0,400}audioSettings\.musicUrl=/.test(src),
 }
 
 // ---------------------------------------------------------------- wiring
-assert(/if\(s\.do==='spawn'\|\|s\.do==='pickup'\|\|s\.do==='damage'\|\|s\.do==='heal'\|\|s\.do==='kill'\|\|s\.do==='teleport'\|\|s\.do==='give'\|\|s\.do==='take'\|\|s\.do==='stat'\|\|s\.do==='music'\|\|s\.do==='command'\)\{/.test(extractFunction('_applySignalAction', src)),
-  'every world verb routes out of the shared dispatcher, so prop signals get them too');
+// build 1277: the list grew by the six PROP verbs, which had been implemented and offered but never
+// routed. The assertion is unchanged in intent — every world verb leaves through this one dispatcher.
+{
+  const _disp = extractFunction('_applySignalAction', src);
+  for (const v of ['spawn','pickup','damage','heal','kill','teleport','give','take','stat','music','command'])
+    assert(_disp.includes("s.do==='" + v + "'"),
+      'every world verb routes out of the shared dispatcher, so prop signals get them too (' + v + ')');
+}
 eq((src.match(/\['give','Give item'\],\['take','Take item'\],\['stat','Set player stat'\],\['music','Play music'\]/g) || []).length, 2,
   'the four new verbs appear in BOTH the graph node and the prop-signal editor');
 assert(/\{k:'item',l:'item',w:88,ifv:\['verb',\['give','take'\]\],listId:'lgItemList'\}/.test(src), 'give/take offer the item dropdown');

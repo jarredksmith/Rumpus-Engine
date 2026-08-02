@@ -1412,7 +1412,7 @@
       <label class="paLbl"><input type="checkbox" id="padInvCb"> Invert look Y (controller)</label>
     </div>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
-    <button id="pauseCredits" class="pBtnGhost">Credits &amp; licenses</button>
+    <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <button id="pauseExit" class="pBtnExit">⌂ Exit to main menu</button>
   </div>
 </div>
@@ -11001,7 +11001,8 @@ function _lgPulse(id, pin){
     case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
     case 'do': { const _verb=p.verb||'toggle', _tgt=String(p.target||'').trim();
       if(_LG_TAG_VERBS.has(_verb) && _tgt && _tgt!=='this' && typeof _lgTagExists==='function' && !_lgTagExists(_tgt)) _noteLogicFailure('A "'+_verb+'" action targets the tag "'+_tgt+'", but no placed prop has that tag.');
-      try{ _applySignalAction({ do:_verb, target:_tgt, clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
+      try{ _applySignalAction({ do:_verb, target:_tgt, prefab:p.prefab||'',   /* build 1277: spawnprop was dead twice — the forwarded object dropped its prefab name */
+        clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
         etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim(),
         stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }
       catch(e){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "'+_verb+'" action failed: '+((e&&e.message)||e)); } _lgFollow(id,0); break; }
@@ -11695,7 +11696,18 @@ function _applySignalAction(s, src){
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
     if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
     if(s.do==='emit'){ if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(String(s.text||'').trim()); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed.
-    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
+    // build 1277: THE SIX PROP VERBS WERE NEVER IN THIS LIST. Builds 1170/1216/1258 implemented
+    // showprop/hideprop/moveprop/delprop/pushprop/spawnprop in _applyWorldAction and offered all six in
+    // the Do node's dropdown — but _applyWorldAction has exactly ONE call site, this one, and the list
+    // gating it named none of them. So every prop verb fell through to the tag loop below, which handles
+    // only toggle/open/close/anim/unlock, and did nothing. Three builds shipped capability no level could
+    // reach: nothing could destroy, hide, show, move, shove or spawn a prop at runtime.
+    //
+    // This is build 1158's "wrong half" pattern, and the tests are why it survived — they asserted the
+    // HANDLER's source and the DROPDOWN's source and never that a node reaches the handler. test-1277
+    // walks the path instead.
+    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'
+       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -28279,10 +28291,10 @@ function checkProximity(){
     const _uk = (typeof padRecent==='function' && padRecent()) ? 'Y' : (isTouch ? 'USE' : 'E');   // build 935: the prompt names the key on the device in use
     if(nearTarget.type==='station'){
       const w=W();
-      prompt.innerHTML = `AMMO STATION — <b>${_uk}</b> Buy ${w.refillAmt} ${w.name} rounds &nbsp;·&nbsp; ◆${w.refillCost}`;
+      prompt.innerHTML = `AMMO STATION — <b>${_uk}</b> Buy ${w.refillAmt} ${_creditEsc(w.name)} rounds &nbsp;·&nbsp; ◆${w.refillCost}`;   /* build 1277: weapon names are authorable (1190) */
     } else if(nearTarget.type==='anim' || nearTarget.type==='xanim' || nearTarget.type==='use'){
       const lo=nearTarget.obj, lk=lo&&lo.userData.lockId;
-      if(lk && !lo.userData.unlocked) prompt.innerHTML = playerKeys[lk] ? `<b>${_uk}</b> Unlock \u2014 ${keyDisplayName(lk)}` : `LOCKED \u2014 needs ${keyDisplayName(lk)}`;
+      if(lk && !lo.userData.unlocked) prompt.innerHTML = playerKeys[lk] ? `<b>${_uk}</b> Unlock \u2014 ${_creditEsc(keyDisplayName(lk))}` : `LOCKED \u2014 needs ${_creditEsc(keyDisplayName(lk))}`;   /* build 1277: key names are authorable */
       else prompt.innerHTML = `<b>${_uk}</b> Activate`;
     } else if(nearTarget.type==='npc'){
       const nm=nearTarget.obj.userData.npcName; prompt.innerHTML = nm ? `<b>${_uk}</b> Talk to ${_creditEsc(nm)}` : `<b>${_uk}</b> Talk`;
@@ -29165,7 +29177,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1276 · 2026-08-01';
+const BUILD_VERSION = 'build 1277 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -45376,13 +45388,18 @@ function bindPauseMenu(){
   const pb=document.getElementById('pauseBtn'); if(pb) pb.onclick=openPause;
   const r=document.getElementById('pauseResume'); if(r) r.onclick=resumeGame;
   const plb=document.getElementById('pauseLoadout'); if(plb) plb.onclick=()=>{ if(typeof openLoadout==='function') openLoadout(); };
-  const pcr=document.getElementById('pauseCredits'); if(pcr) pcr.onclick=()=>{ if(typeof showCreditsModal==='function') showCreditsModal(); };   // build 1166: CC-BY attribution must be reachable at play time
+  /* build 1166: CC-BY attribution must be reachable at play time. build 1277: TWO buttons carried
+     id="pauseCredits", so getElementById only ever reached the first and the second was inert — which is
+     how the duplicate handler assignment below went unnoticed. The second is #pauseCredits2 now. */
+  for(const _cid of ['pauseCredits','pauseCredits2']){ const pcr=document.getElementById(_cid); if(pcr) pcr.onclick=()=>{ if(typeof showCreditsModal==='function') showCreditsModal(); }; }
   const eh=document.getElementById('pauseEditHud'); if(eh) eh.onclick=()=>{ const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.add('hidden'); enterTouchEdit(); };
   const smb=document.getElementById('pauseSprintMode'); if(smb){ const upds=()=>{ smb.textContent='Sprint: '+(_sprintMode==='toggle'?'Toggle':'Hold'); }; upds(); smb.onclick=()=>{ _sprintMode = _sprintMode==='toggle'?'hold':'toggle'; _sprintToggled=false; try{ localStorage.setItem('breach_sprint_mode', _sprintMode); }catch(e){} upds(); }; }
   const crmb=document.getElementById('pauseCrouchMode'); if(crmb){ const updc=()=>{ crmb.textContent='Crouch: '+(_crouchMode==='toggle'?'Toggle':'Hold'); }; updc(); crmb.onclick=()=>{ _crouchMode = _crouchMode==='toggle'?'hold':'toggle'; _crouchToggled=false; try{ localStorage.setItem('breach_crouch_mode', _crouchMode); }catch(e){} updc(); }; }   // Toggle lets players crouch-walk without the Ctrl+W browser close-combo
   const cmb=document.getElementById('pauseCamMode'); if(cmb){ const updc=()=>{ cmb.textContent='Camera: '+(tpMode?'Third person':'First person'); }; updc(); cmb.onclick=()=>{ tpMode=!tpMode; try{ localStorage.setItem('breach_tp', tpMode?'1':'0'); }catch(e){} updc(); }; }
   const x=document.getElementById('pauseExit'); if(x) x.onclick=exitToMenu;
-  const pc=document.getElementById('pauseCredits'); if(pc) pc.onclick=openCredits;   // build 549: credits reachable mid-game from the pause menu
+  /* build 1277: this line used to re-assign #pauseCredits.onclick back to openCredits, overwriting build
+     1166's showCreditsModal six lines above it — so the safe renderer was dead code and every credits
+     screen went through the vulnerable path. There is only one credits handler now, and it is 1166's. */
   const ph=document.getElementById('pauseHelp'); if(ph) ph.onclick=openHelp;   // build 848: help & tutorials mid-game too
   const mc=document.getElementById('muteCb'); if(mc){ mc.checked=audioSettings.muted; mc.onchange=()=>{ audioSettings.muted=mc.checked; applyAudioSettings(); saveAudioSettings(); }; }
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
@@ -45481,8 +45498,20 @@ function collectLevelCredits(){   // de-duped, sorted per-asset attributions: pl
   assetCredits.forEach(a=>set.add(a));
   return [...set].sort((a,b)=>a.localeCompare(b));
 }
-function _creditEsc(s){ return String(s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-function _creditLinkify(s){ return _creditEsc(s).replace(/(https?:\/\/[^\s)]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#7fe6cf">$1</a>'); }   // escape first, then linkify — safe against markup in author-supplied strings
+// build 1277: escape QUOTES as well as angle brackets. Every string this function guards is level data —
+// an attribution, a dialogue line, an objective, an NPC name, a weapon name — and level data arrives from
+// a stranger's share code. Escaping only `& < >` is correct for a TEXT node and wrong for an ATTRIBUTE,
+// and _creditLinkify below drops its match straight into href="...": a single `"` in an attribution closed
+// the attribute and opened an event handler, with the publish key, the API keys and the endpoint overrides
+// (which make a backdoor persistent) all readable from localStorage on the other side.
+//
+// Escaping the quotes costs nothing in a text node — `&quot;` renders as `"` — so one function can stay
+// correct in both contexts rather than needing the caller to know which one it is in.
+function _creditEsc(s){ return String(s).replace(/[&<>"']/g, c=> c==='&' ? '&amp;' : c==='<' ? '&lt;' : c==='>' ? '&gt;' : c==='"' ? '&quot;' : '&#39;'); }
+// Escape first, then linkify. The escape above now neutralises quotes, so the match cannot terminate the
+// href; the character class excludes them as well, which is belt-and-braces rather than the load-bearing
+// part. (`&` must stay permitted — an escaped query string is full of `&amp;`.)
+function _creditLinkify(s){ return _creditEsc(s).replace(/(https?:\/\/[^\s)"']+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#7fe6cf">$1</a>'); }
 function renderCreditsScreen(){
   const host=document.getElementById('creditsBody'); if(!host) return;
   let h='<div style="color:#9fc4ba;margin-bottom:10px">RUMPUS ENGINE is built on open-source libraries and free Creative-Commons assets. Thanks to everyone below.</div>';
