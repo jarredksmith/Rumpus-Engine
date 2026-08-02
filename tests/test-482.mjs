@@ -20,6 +20,7 @@ const deps = `
   function shatterProp(){ shatterCalls++; }
   function defaultHpFor(){ return 30; }
   const performance={ now:()=>0 };
+  function playPropHitSound(){ return false; }   /* build 1305: the per-prop impact sound; this harness owns the ignite/shatter branches */
 `;
 const api = new Function(deps + '\n' + extractFunction('damageProp') + '\n return { damageProp, counts:()=>[igniteCalls, shatterCalls] };')();
 const mkObj=(o)=>({ userData:Object.assign({ phys:{}, breakable:true, hp:30 }, o), traverse:()=>{} });

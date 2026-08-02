@@ -53,8 +53,8 @@ const block = melee.slice(melee.indexOf('if(dynamicProps.length){'));
 {
   assert(!/NET\.mode!=='client' && dynamicProps\.length/.test(melee),
     'the whole block is no longer skipped on a client');
-  assert(/if\(NET\.mode==='client'\)\{ if\(NET\.conn\) try\{ NET\.conn\.send\(\{t:'propHit', nid:o\.userData\.nid, d:DMG, dir:\[dir\.x,dir\.y,dir\.z\], s:8, pt:\[pt\.x,pt\.y,pt\.z\]\}\); \}catch\(e\)\{\} \}/.test(block),
-    'a client asks the host, exactly as a shot does');
+  assert(/if\(NET\.mode==='client'\)\{ if\(NET\.conn\) try\{ NET\.conn\.send\(\{t:'propHit', nid:o\.userData\.nid, d:DMG, dir:\[dir\.x,dir\.y,dir\.z\], s:8, pt:\[pt\.x,pt\.y,pt\.z\]\}\); \}catch\(e\)\{\}/.test(block),
+    'a client asks the host, exactly as a shot does');   /* build 1305 appends the locally-predicted impact sound to the same branch */
   assert(/else \{ const broke=damageProp\(o, DMG, pt, dir, 8, NET\.myId\); if\(!broke\) pushDynamic\(o, dir, 8, pt\); \}/.test(block),
     'and the host (or solo) applies it directly');
   // THE PACKET MUST MATCH WHAT THE HOST READS — pinning one end alone is how a wire goes dead silently
