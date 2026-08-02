@@ -5,8 +5,11 @@ const src = gameSource();
 
 // --- (A) hold mode, applied live in setEnemyAnimState from cfg.clipHold, default true only for 'die' ---
 const sa = extractFunction('setEnemyAnimState');
-assert(/const _holdDefault = _ANIM_ONESHOT\.has\(state\);/.test(sa), 'one-shot slots hold by default, loops loop (build 486)');
-assert(/const _hold = \(_cfg && _cfg\.clipHold && _cfg\.clipHold\[state\] != null\) \? !!_cfg\.clipHold\[state\] : _holdDefault;/.test(sa), 'per-state hold override from config');
+// build 1304: the loop mode belongs to the RESOLVED slot, not the requested name — a one-shot request
+// falling back to a looping slot was stamping LoopOnce onto it (idle froze; see test-1304). An authored
+// override is still honoured, looked up under the requested name first and the resolved slot second.
+assert(/const _holdDefault = _ANIM_ONESHOT\.has\(key\);/.test(sa), 'one-shot slots hold by default, loops loop (build 486)');
+assert(/const _hold = \(_cfg && _cfg\.clipHold && _cfg\.clipHold\[_pick\(_cfg\.clipHold\)\] != null\) \? !!_cfg\.clipHold\[_pick\(_cfg\.clipHold\)\] : _holdDefault;/.test(sa), 'per-state hold override from config');
 assert(/if\(_hold\)\{ next\.loop = THREE\.LoopOnce; next\.clampWhenFinished = true; \} else \{ next\.loop = THREE\.LoopRepeat; next\.clampWhenFinished = false; \}/.test(sa), 'hold => play once + clamp last frame; otherwise loop');
 // the early-return on same-state keeps a held clip frozen (it does not re-trigger every frame)
 assert(/if\(v\.userData\.animState === key\) return;/.test(sa), 'same-state re-selection is a no-op, so a held pose stays clamped');

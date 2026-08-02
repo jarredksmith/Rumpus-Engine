@@ -20,5 +20,8 @@ assert(/setEnemyAnimState\(a, st\);/.test(src), 'live body state is set each fra
 
 // and setEnemyAnimState reads hold from the avatar config (the path that now actually receives updates)
 const sa = extractFunction('setEnemyAnimState');
-assert(/_cfg\.clipHold && _cfg\.clipHold\[state\] != null/.test(sa), 'hold is read from the (now-refreshed) avatar config');
+// build 1304: the loop mode belongs to the RESOLVED slot, not the requested name — a one-shot request
+// falling back to a looping slot was stamping LoopOnce onto it (idle froze; see test-1304). An authored
+// override is still honoured, looked up under the requested name first and the resolved slot second.
+assert(/_cfg\.clipHold && _cfg\.clipHold\[_pick\(_cfg\.clipHold\)\] != null/.test(sa), 'hold is read from the (now-refreshed) avatar config');
 done();

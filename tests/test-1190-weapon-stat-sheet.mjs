@@ -48,7 +48,10 @@ const mk = () => {
   eq((src.match(/_wepApplyStats\(k, null\);/g) || []).length, 2, '...and the net + restore loaders reset weapons a level does not mention');
   // build 1296 added melee + reach to the sheet and normalises both on the live weapon first, because the
   // only-changed serializer compares against this baseline and `true !== 1` would emit a phantom override.
-  assert(/const GUN_BASE = \{\}; for\(const _k in WEAPONS\)\{ const _w=WEAPONS\[_k\];\n  _w\.melee = _w\.melee \? 1 : 0; _w\.reach = _w\.reach \|\| 3\.4;\n  GUN_BASE\[_k\]=\{ fireRate:_w\.fireRate, magSize:_w\.magSize, reserve0:_w\.reserve, reserveMax:_w\.reserveMax, spread:_w\.spread, reloadMs:_w\.reloadMs, pellets:_w\.pellets, melee:_w\.melee, reach:_w\.reach \}; _w\.reserve0=_w\.reserve; \}/.test(src),
+  // build 1303 added `windup` alongside 1296's melee/reach, normalised the same way and for the same reason.
+  assert(/const GUN_BASE = \{\}; for\(const _k in WEAPONS\)\{ const _w=WEAPONS\[_k\];/.test(src) &&
+         /_w\.melee = _w\.melee \? 1 : 0; _w\.reach = _w\.reach \|\| 3\.4;/.test(src) &&
+         /GUN_BASE\[_k\]=\{ fireRate:_w\.fireRate, magSize:_w\.magSize, reserve0:_w\.reserve, reserveMax:_w\.reserveMax, spread:_w\.spread, reloadMs:_w\.reloadMs, pellets:_w\.pellets, melee:_w\.melee, reach:_w\.reach, windup:_w\.windup \}; _w\.reserve0=_w\.reserve; \}/.test(src),
     'the baseline is captured from the live table before any override — retuning a factory gun retunes its baseline everywhere');
 }
 
@@ -83,7 +86,7 @@ const mk = () => {
   // crowbar's own reach and swing speed unauthorable. What a melee weapon does not get is the magazine
   // rows, which is the same intent expressed on the field list instead of on the whole panel.
   assert(/const _isM = !!WEAPONS\[curWep\]\.melee;/.test(src), 'the sheet asks whether this weapon is melee');
-  assert(/\? \[ \['reach','Reach m',0\.1\], \['fireRate','Swing interval ms',10\] \]/.test(src),
+  assert(/\? \[ \['reach','Reach m',0\.1\], \['fireRate','Swing interval ms',10\], \['windup','Contact delay ms',10\] \]/.test(src),
     'a melee weapon gets reach and swing speed, not a magazine — fists have no magazine');
   for (const f of ["'fireRate','Fire interval ms'", "'magSize','Magazine'", "'reserve0','Start ammo'", "'reserveMax','Max ammo'", "'spread','Spread'", "'reloadMs','Reload ms'", "'pellets','Pellets'"])
     assert(src.indexOf('[' + f) > -1, 'the editor exposes ' + f.split(',')[1]);

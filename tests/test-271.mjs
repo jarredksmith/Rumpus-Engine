@@ -6,7 +6,11 @@ const src = gameSource();
 // setEnemyAnimState reads a per-state speed from the avatar's animCfg and applies it (default 1)
 const sa = extractFunction('setEnemyAnimState');
 assert(/const _cfg = v\.userData\.animCfg \|\| \(body\.userData && body\.userData\.animCfg\);/.test(sa), 'reads the avatar anim config');
-assert(/_cfg\.clipSpeed && _cfg\.clipSpeed\[state\] != null\) \? Math\.max\(0\.1, Math\.min\(4, \+_cfg\.clipSpeed\[state\]\)\) : 1/.test(sa), 'per-state speed, clamped 0.1–4, default 1');
+// build 1304: the loop mode belongs to the RESOLVED slot, not the requested name — a one-shot request
+// falling back to a looping slot was stamping LoopOnce onto it (idle froze; see test-1304). An authored
+// override is still honoured, looked up under the requested name first and the resolved slot second.
+assert(/_cfg\.clipSpeed && _cfg\.clipSpeed\[_pick\(_cfg\.clipSpeed\)\] != null\) \? Math\.max\(0\.1, Math\.min\(4, \+_cfg\.clipSpeed\[_pick\(_cfg\.clipSpeed\)\]\)\) : 1/.test(sa), 'per-state speed, clamped 0.1–4, default 1');
+assert(/const _pick = \(m\) => \(m && m\[state\] != null\) \? state : key;/.test(sa), '...looked up by requested name, then resolved slot');
 assert(/next\.setEffectiveTimeScale\(_spd\);/.test(sa), 'speed applied to the action');
 
 // the cfg is stashed on the visual at both build sites so the read above resolves

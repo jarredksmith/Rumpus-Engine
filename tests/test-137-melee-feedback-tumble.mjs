@@ -6,7 +6,9 @@
 import { gameSource, extractFunction, done, assert } from './harness.mjs';
 const src = gameSource();
 
-const m = extractFunction('meleeAttack');
+// build 1303: the swing and the contact are two functions now — the blow lands after the weapon's
+// windup, not on the input frame. These assertions are about the CONTACT, so read both halves.
+const m = extractFunction('meleeAttack') + '\n' + extractFunction('_meleeStrike');
 assert(/spawnDamageNumber\(best\.mesh\.position, DMG, _k, false\); \} showHitmarker\(_k\)/.test(m), 'melee on a bot shows a damage number + hitmarker');
 assert(/spawnDamageNumber\(best\.posEye, DMG, false, false\); \} showHitmarker\(false\)/.test(m), 'melee on a remote player shows feedback');
 assert(/spawnDamageNumber\(best\.mesh\.position, _d, _k, false\); flashEnemy\(best\); showHitmarker\(_k\)/.test(m), 'melee on a solo enemy shows number + flash + hitmarker');

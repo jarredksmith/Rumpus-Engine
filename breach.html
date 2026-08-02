@@ -10594,10 +10594,29 @@ function setEnemyAnimState(body, state){
   const cur = v.userData.animState ? acts[v.userData.animState] : null;
   const next = acts[key];
   const _cfg = v.userData.animCfg || (body.userData && body.userData.animCfg);
-  const _spd = (_cfg && _cfg.clipSpeed && _cfg.clipSpeed[state] != null) ? Math.max(0.1, Math.min(4, +_cfg.clipSpeed[state])) : 1;
+  // ---- build 1304: PLAY THE ACTION THE WAY THE ACTION IS, not the way the request was named --------------
+  // REPORTED FROM PLAY: "it freezes the animation on idle after I use the weapon a few times. The character
+  // gets stuck in the idle position, no animation, but I can still move. Running a distance away picks it
+  // back up." That is this, exactly.
+  //
+  // These three values were read from `state` — the name the CALLER asked for — and then applied to `next`,
+  // the action `_stateActionKey` actually RESOLVED. Those are the same thing only when the model happens to
+  // ship a clip for the requested slot. When it does not, the request falls back: `moveStop` (a one-shot,
+  // emitted the moment you stop moving) falls back to `idle` on any model without a stop clip. `_holdDefault`
+  // then read TRUE from the request and stamped `LoopOnce` + `clampWhenFinished` onto **the idle action** —
+  // which played once, froze on its final frame, and stayed there, because every later idle request hits the
+  // `animState === key` early return above and never resets it. Running asks for a different key, which is
+  // why moving away "picks it back up".
+  //
+  // A one-shot request must never make the slot it falls back to a one-shot. The loop mode belongs to the
+  // RESOLVED slot; an explicit per-state override from the creator still wins, and is looked up under the
+  // requested name first and the resolved slot second — which also repairs build 1294's per-weapon speed
+  // field, whose `attack@crowbar` entries had been silently missing every lookup here.
+  const _pick = (m) => (m && m[state] != null) ? state : key;
+  const _spd = (_cfg && _cfg.clipSpeed && _cfg.clipSpeed[_pick(_cfg.clipSpeed)] != null) ? Math.max(0.1, Math.min(4, +_cfg.clipSpeed[_pick(_cfg.clipSpeed)])) : 1;
   // hold = play once and freeze the final frame; default true for 'die', otherwise loop. Editor can override per state.
-  const _holdDefault = _ANIM_ONESHOT.has(state);
-  const _hold = (_cfg && _cfg.clipHold && _cfg.clipHold[state] != null) ? !!_cfg.clipHold[state] : _holdDefault;
+  const _holdDefault = _ANIM_ONESHOT.has(key);
+  const _hold = (_cfg && _cfg.clipHold && _cfg.clipHold[_pick(_cfg.clipHold)] != null) ? !!_cfg.clipHold[_pick(_cfg.clipHold)] : _holdDefault;
   if(_hold){ next.loop = THREE.LoopOnce; next.clampWhenFinished = true; } else { next.loop = THREE.LoopRepeat; next.clampWhenFinished = false; }
   // reset() clears a finished/clamped LoopOnce state — without it, re-entering a held state (e.g. aim, then
   // release, then aim again) would stay frozen at the last frame instead of replaying from the start.
@@ -19581,7 +19600,7 @@ const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k]
 // per-stat reset-to-factory button and the clamp all already exist and all work on any key in this array —
 // which is what that build was for. `melee` rides as 0/1 so it needs no separate boolean path; every reader
 // already asks `if(w.melee)` / `!!w.melee`.
-const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach'];
+const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach','windup'];
 // build 1297: the shortest reach a melee weapon may be authored to, and the closest a bot will stand while
 // swinging one. They are stated together because the ONLY thing that matters is the inequality between
 // them: a bot holds `max(BOT_MELEE_MIN, reach*0.7)` and hits inside `reach`, so if the floor on reach ever
@@ -19592,14 +19611,19 @@ const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','re
 const BOT_MELEE_REACH_MIN = 1.2, BOT_MELEE_MIN = 1.0;
 // build 1296: pellets floors at 0, not 1. A melee weapon fires none, and the old floor rewrote the crowbar's
 // authored 0 into a 1 the moment any stat was applied — the same spurious-diff fault as magSize below.
-const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12] };
+const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12], windup:[0,600] };
 // The live values are NORMALISED here, beside the baseline that is captured from them: `melee` starts as
 // `true`/undefined and `reach` is absent on every gun, and the serializer emits a stat whenever it differs
 // from its baseline — so leaving `true` beside a baseline of `1` would write a spurious melee override into
 // every level ever saved. 3.4 is the crowbar's reach, which is what a gun becomes when a creator flips it.
 const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k];
   _w.melee = _w.melee ? 1 : 0; _w.reach = _w.reach || 3.4;
-  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach }; _w.reserve0=_w.reserve; }
+  /* build 1303: how long after the swing STARTS the blow actually lands. Reported from play: "it deals
+     damage immediately, even though the swing hasn't gotten close to the prop yet in the animation."
+     A gun fires on the frame you pull the trigger and ships 0; a swing has to travel. Melee enemies have
+     had a telegraph since build 627 (ENEMY_MELEE_WINDUP_MS) — the player never did. */
+  _w.windup = _w.windup!=null ? _w.windup : (_w.melee ? (_w.fists ? 90 : 160) : 0);
+  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach, windup:_w.windup }; _w.reserve0=_w.reserve; }
 // build 1240: RENAME WEAPONS — reported from play ("add a sword/axe/staff... we have melee, so maybe
 // the answer is the ability to rename"). The name follows 1190's exact pattern: a factory baseline
 // captured at boot, only-changed values serialized (nm), one sanitizer every loader routes through.
@@ -19765,6 +19789,7 @@ function switchWeapon(key){
   if(!owned.includes(key) || key===curWep) return;
   if(reloading){ reloading = false; _reloadTok++; updateHUD(); }   // build 1172: switching CANCELS the reload instead of being refused by it
   if(typeof _allowedWep==='function' && !_allowedWep(key)) return;   // build 1014: host match rules
+  _meleeTok++;   /* build 1303: a swing in flight does not land after you have put the weapon away (build 1172's rule for reloads) */
   curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim(_wepAnimSlot('equip', key), 320);   // third-person draw/equip pose. build 1294: drawing a sword is not drawing a pistol — note this uses the NEW weapon, which is the one being drawn
   _drawDur = WEAPONS[key].drawMs || DRAW_MS; _drawUntil = performance.now() + _drawDur;   // build 965: the viewmodel rises before the trigger works · build 1172: per-weapon — a pistol should not draw at a launcher's pace
   showWeaponModel(key);   // show this weapon's own viewmodel (loads on first use)
@@ -29649,7 +29674,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1302 · 2026-08-02';
+const BUILD_VERSION = 'build 1304 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31619,6 +31644,7 @@ function teardownInstancing(){
 
 let _meleeT = 0;
 const MELEE_CD = 480, MELEE_RANGE = 2.9, MELEE_DMG = 34;   // punch: cooldown ms, reach m, damage
+let _meleeTok = 0;   // build 1303: a pending strike belongs to ONE swing — switching weapon or swinging again supersedes it
 // build 1295: the melee swing's own raycaster. Its own, because `far` has to be the swing's reach and the
 // shared `raycaster` is read by a dozen other systems that would inherit the limit; module scope, because
 // build 1168 removed exactly this class of per-swing allocation.
@@ -31642,6 +31668,28 @@ function meleeAttack(wep){
   }
   const RANGE = (wep && wep.reach) || MELEE_RANGE, DMG = (wep && wep.dmg) || MELEE_DMG;
   if(typeof tone==='function') tone({ freq:320, type:'sine', dur:0.07, vol:0.07, slideTo:150 });   // swing whoosh
+  // ---- build 1303: the blow lands when the SWING does -------------------------------------------------
+  // REPORTED FROM PLAY: "it deals damage immediately, even though the swing of the sword hasn't even gotten
+  // close to the prop yet in the animation." Correct — everything below used to run on the frame the button
+  // went down, so a 400 ms swing animation was pure decoration over an instant hit.
+  //
+  // Melee ENEMIES have telegraphed since build 627 (ENEMY_MELEE_WINDUP_MS = 320): wind up, then strike, and
+  // back out during the windup and the swing whiffs. The player never got the same treatment. The windup is
+  // now a per-weapon STAT (build 1296's sheet, so it serializes and appears in the editor for free) — an axe
+  // lands later than a knife, and a creator can tune it.
+  //
+  // THE AIM IS RE-READ AT CONTACT, not captured at the swing. That is the forgiving direction and the one
+  // that matches the animation: the blade connects with whatever it is pointing at when it arrives.
+  const _tok = ++_meleeTok;
+  const _wind = Math.max(0, Math.min(600, +(wep && wep.windup) || 0));
+  if(_wind > 0) setTimeout(()=>{ if(_meleeTok===_tok) _meleeStrike(wep, RANGE, DMG); }, _wind);
+  else _meleeStrike(wep, RANGE, DMG);
+}
+// The contact itself. Re-checks the world because a windup is real time: the player can die, pause, open the
+// editor or put the weapon away between the swing and the blow, and a strike that lands anyway is worse than
+// one that whiffs. Build 1172 established the same token rule for cancelling a reload.
+function _meleeStrike(wep, RANGE, DMG){
+  if(!gameOn || editorOpen || paused || duelDead) return;
   const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
   if(typeof cursorAimActive==='function' && cursorAimActive()) fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));   // build 874: punch toward the cursor (build 1103: chase-cursor too)
   const fh = Math.hypot(fwd.x, fwd.z) || 1;
@@ -42450,8 +42498,11 @@ function renderEditorFields(){
             /* a melee weapon has no magazine. Zeroing the AUTHORED stats (rather than overriding them at
                apply time) keeps the sheet honest about what it will play, and the per-stat reset buttons
                put the gun back when the box is unticked. */
-            if(cb.checked){ keep.magSize=0; keep.reserve0=0; keep.reserveMax=0; keep.reloadMs=0; }
-            else { const b=GUN_BASE[curWep]; keep.magSize=b.magSize; keep.reserve0=b.reserve0; keep.reserveMax=b.reserveMax; keep.reloadMs=b.reloadMs; }
+            if(cb.checked){ keep.magSize=0; keep.reserve0=0; keep.reserveMax=0; keep.reloadMs=0;
+              /* build 1303: a gun's factory windup is 0 — correct for a trigger, wrong for a swing. Seed a
+                 real contact delay when the creator converts one, or their sword lands before it moves. */
+              if(!(keep.windup>0)) keep.windup=160; }
+            else { const b=GUN_BASE[curWep]; keep.magSize=b.magSize; keep.reserve0=b.reserve0; keep.reserveMax=b.reserveMax; keep.reloadMs=b.reloadMs; keep.windup=b.windup; }
             _wepApplyStats(curWep, keep);
             WEAPONS[curWep].mag = Math.min(WEAPONS[curWep].mag||0, WEAPONS[curWep].magSize||0);
             WEAPONS[curWep].reserve = Math.min(WEAPONS[curWep].reserve||0, WEAPONS[curWep].reserveMax||0);
@@ -42460,7 +42511,7 @@ function renderEditorFields(){
             renderEditorFields();   /* the field list below depends on the answer */ };
           r.appendChild(lb); r.appendChild(cb); r.appendChild(nt); urlHost.appendChild(r); }
         const DEFS = _isM
-          ? [ ['reach','Reach m',0.1], ['fireRate','Swing interval ms',10] ]
+          ? [ ['reach','Reach m',0.1], ['fireRate','Swing interval ms',10], ['windup','Contact delay ms',10] ]
           : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1] ];
         for(const [sk, lbl, stp] of DEFS){
           const r=document.createElement('div'); r.className='row2'; r.style.margin='2px 0';

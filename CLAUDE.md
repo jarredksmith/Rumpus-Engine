@@ -4368,6 +4368,53 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The blow lands when the swing does (build 1303)
+
+Reported from play: *"when hitting props with the sword it is finnicky. It deals damage immediately, even
+though the swing hasn't even gotten close to the prop yet in the animation."* Correct — the whole hit
+resolution ran on the frame the button went down, so a 400 ms swing animation was decoration over an instant
+hit.
+
+Melee ENEMIES have telegraphed since build 627 (`ENEMY_MELEE_WINDUP_MS = 320`): wind up, then strike, and
+back out during the windup and the swing whiffs. **The player never got the same treatment.** `meleeAttack`
+is now the swing (pose + whoosh) and `_meleeStrike` is the contact, separated by a per-weapon `windup` —
+which joins build 1296's stat sheet, so it serializes and appears in the editor for free. Crowbar 160 ms,
+fists 90, guns 0.
+
+Three decisions:
+- **The aim is re-read at CONTACT**, not captured at the swing. That is the forgiving direction and the one
+  that matches the animation: the blade connects with whatever it is pointing at when it arrives.
+- **A pending strike is cancelled by switching weapon** (build 1172's token rule for reloads), and
+  `_meleeStrike` re-checks `gameOn / editorOpen / paused / duelDead`, because a windup is real time and a
+  blow that lands after you died is worse than one that whiffs.
+- **The melee toggle seeds a windup.** A gun's factory value is 0 — right for a trigger, wrong for a swing —
+  so converting one without this would land its blow before the animation moved.
+
+## A one-shot request turned the slot it fell back to into a one-shot (build 1304)
+
+Reported in the same breath: *"it freezes the animation on idle after I use the weapon a few times. The
+character gets stuck in the idle position, no animation, but I can still move them around. If I run a
+distance away it picks back up."*
+
+`setEnemyAnimState` read the loop mode, hold and speed from **`state`** — the name the caller asked for —
+and applied them to **`next`**, the action `_stateActionKey` actually RESOLVED. Those are the same thing only
+when the model ships a clip for the requested slot. When it does not, the request falls back — and
+**`moveStop` is a one-shot, emitted the instant you stop moving, that falls back to `idle`** on any model
+without a stop clip. So `LoopOnce + clampWhenFinished` was stamped onto the IDLE action, which played once,
+froze on its final frame, and stayed there: every later idle request hits the `animState === key` early
+return and never resets it. Running asks for a different key. **That is exactly why moving away recovers it.**
+
+On a basic model (idle/walk/run) the real fallback table sends **many** one-shots onto looping slots, several
+onto idle itself — `test-1304` enumerates them rather than asserting the one case. The loop mode now comes
+from the resolved slot; a creator's explicit override still wins, looked up under the requested name first
+and the resolved slot second — **which also repairs build 1294's per-weapon clip speed**, whose
+`attack@crowbar` entries had been silently missing every lookup here.
+
+**NOT REPRODUCED HEADLESS, and that is worth stating.** The stock level's third-person body is the stylised
+capsule, which carries no `stateActions` at all — there is nothing to freeze. The probe returned
+`{err:'no actions'}` on every swing. This one is reasoned from the code and driven against the real fallback
+tables; it wants a browser confirmation with a rigged character.
+
 ## The editor panel latched itself shut (build 1302)
 
 Reported from play: *"the weapons editor is getting stuck. If I select one weapon, say shotgun, the stats
