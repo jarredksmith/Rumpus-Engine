@@ -8,6 +8,18 @@ import { gzipSync } from 'zlib';
 import { parseIssue, validateSubmission, decodeLevelCode } from '../.github/scripts/publish-level.mjs';
 const src = gameSource();
 
+// build 1282: the submit handler grew a Level Check preflight, which pushed these needles past a
+// CHARACTER-COUNT-scoped slice — build 1149's recorded trap, verbatim ("a source pin must not be scoped
+// by a character count"). The handler is an anonymous onclick so extractFunction cannot reach it; the
+// slice is anchored on the next named declaration after it instead, which fails loudly if the handler is
+// ever restructured rather than drifting silently.
+function submitHandlerSrc(s){
+  const a = s.indexOf("const submitBtn = p.querySelector('#edSubmitComm');");
+  const b = s.indexOf('const collapsed = (_edFolds[id]', a);
+  if(!(a >= 0 && b > a)) throw new Error('the submit handler is no longer where this test expects it');
+  return s.slice(a, b);
+}
+
 // ---- the Action decodes real codes (round-trip through the actual codec format) ----
 const lvl = { world:{ arena:90 }, props:[{src:'box',t:[1,2,3,0,0,0,1,1,1]}], game:{ objective:'race' } };
 const b64url = (buf)=>buf.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
@@ -26,7 +38,7 @@ const bad = validateSubmission(parseIssue(FIX.replace(gCode, 'g%%%not-base64%%%'
 assert(!bad.ok && /did not decode/.test(bad.reason), 'a mangled code is rejected with a clear reason');
 
 // ---- the game side: prefill first, thumb-shedding retry, clipboard fallback retained ----
-const sub = src.match(/#edSubmitComm[\s\S]{0,4600}/)[0];   // build 958 put the native-submit path first; the GitHub flow sits below it
+const sub = submitHandlerSrc(src);   // build 958 put the native-submit path first; the GitHub flow sits below it
 assert(/'RUMPUSLVL:' \+ await encodeLevel\(lvl\)/.test(sub), 'prefill uses the share-link codec (RUMPUSLVL since build 952; the Action accepts BREACHLVL forever)');
 assert(/&level-json=/.test(sub) && /u\.length<=1900/.test(sub), 'prefills the level-json field, capped under GitHub\'s REAL budget (build 950: it 500s far below the documented 8K — safe is ~2K)');
 assert(/delete noThumb\.thumb; const u2=mk\('RUMPUSLVL:' \+ await encodeLevel\(noThumb\)\)/.test(sub), 'retries without the thumbnail before giving up');

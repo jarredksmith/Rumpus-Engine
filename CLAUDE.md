@@ -4118,6 +4118,49 @@ fields, threshold, attribution), and pins `_pfSpawnEntry`'s divergence so nobody
 **The general rule: a test that counts copies of a thing is a test of the copying.** If the answer to "is
 this applied everywhere?" is a number greater than one, the test is measuring the wrong property.
 
+## Mouse sensitivity, and a zoom-matched aim (build 1281)
+
+The gameplay audit's #1 finding: the engine shipped a gamepad look slider (909) and TWO touch sliders (1042)
+and **nothing at all for the mouse** — the primary input, and the first setting a player in this genre
+changes. `HIP_SENS` was a `const` with two consumers, so a player whose DPI disagreed with one hardcoded
+number had to change it system-wide.
+
+A MULTIPLIER, not a replacement: **1.0 is byte-identical** to every value builds 160–1280 were tuned
+against, so nothing authored moves. Both mouse consumers now ask one derivation (`_mouseSensNow`), so they
+cannot drift.
+
+**Zoom-matched aim, off by default.** The audit measured the shipped ratio: `ADS_SENS/HIP_SENS = 0.545`
+against a **2.34× magnification**, so the same mouse travel swept ~28% more world while aimed — which is
+what "muscle memory doesn't carry into ADS" actually means. The option divides by the real magnification,
+`tan(baseFov/2)/tan(adsFov/2)`, not the fov ratio. `test-1281` proves the defining property directly: one
+mouse-inch sweeps the same on-screen arc aimed or not. Off by default because it changes a feel every
+existing player has learned.
+
+**The first draft had a live TDZ and its own catch would have hidden it.** `mouseSens`'s initialiser reads
+`MOUSE_SENS_MIN` inside a `try/catch`, and the constants were declared 25 lines BELOW it — so every saved
+sensitivity would have been silently discarded, invisibly, forever. Build 1127's trap verbatim. The boot
+test passed, because the catch swallowed it. Ordering is now pinned.
+
+## Publish runs the Level Check (build 1282)
+
+`levelIssues()` had exactly two call sites — its own definition and the panel that renders it. So the engine
+would write *"this prop's model is stored on this device only and will load for nobody else"* and then let
+the creator publish that level to strangers anyway. The knowledge existed; nothing asked for it at the one
+moment it mattered. This was quick-win #3 in the build-1253 audit and had not moved since.
+
+It runs AFTER serializing (so it sees exactly what would be uploaded) and BEFORE the name prompt (so nobody
+names a level they then abandon), shows six issues and counts the rest, and **advises rather than refuses** —
+a warning is not proof of a defect, and an engine that blocks publishing on its own heuristic will be wrong
+sometimes and infuriating always.
+
+**`uiConfirm` would have been a worse bug than the one being fixed.** It only calls back on CONFIRM, so a
+cancelled dialog would leave the promise pending forever and the publish flow would die silently. `_uiDialog`
+runs each button's `fn` and routes Escape to the first non-primary one, so all three exits settle.
+
+**Two harnesses failed on a character-count-scoped slice** (`{0,4800}`) — build 1149's recorded trap, again.
+The handler is an anonymous `onclick` so `extractFunction` cannot reach it; both now anchor on the next
+named declaration after it, which fails loudly if the handler is restructured instead of drifting silently.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

@@ -1411,6 +1411,11 @@
       <label class="paLbl">Stick deadzone<input type="range" id="padDeadRng" min="0.05" max="0.4" step="0.01" style="margin-left:auto;flex:1"></label>
       <label class="paLbl"><input type="checkbox" id="padInvCb"> Invert look Y (controller)</label>
     </div>
+    <div class="pauseAudio">
+      <label class="paLbl">Mouse look<input type="range" id="msSensRng" min="0.1" max="5" step="0.05" style="margin-left:auto;flex:1"><span id="msSensVal" style="min-width:34px;text-align:right;opacity:.85">1.00</span></label>
+      <label class="paLbl"><input type="checkbox" id="msAimMatchCb"> Zoom-matched aim sensitivity</label>
+      <div id="msSensHint" style="font-size:11px;opacity:.7;margin:2px 0 0">1.00 = the engine default. Aiming is slower than the hip by design; tick the box to make it match the zoom instead.</div>
+    </div>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
     <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <button id="pauseExit" class="pBtnExit">⌂ Exit to main menu</button>
@@ -18815,8 +18820,9 @@ document.addEventListener('mousemove', e=>{
       return;
     }
     if(editorDragLook && !editorTopView){
-      player.yaw   -= e.movementX * HIP_SENS;
-      player.pitch -= e.movementY * HIP_SENS;
+      { const _s = _mouseSensNow(false);   /* build 1281 */
+        player.yaw   -= e.movementX * _s;
+        player.pitch -= e.movementY * _s; }
       player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
       if(Math.abs(e.movementX) + Math.abs(e.movementY) > 2) editorDragMoved = true;
     }
@@ -18838,7 +18844,7 @@ document.addEventListener('mousemove', e=>{
   const mx = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, e.movementX));
   const my = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, e.movementY));
   if(typeof cursorAimActive==='function' && cursorAimActive() && !drivingCar){ _vcX += mx; _vcY += my; return; }   // build 874: the pointer steers the twin-stick cursor, not the head (build 1103: chase-cursor too)
-  const sens = ads ? ((typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].scope) ? SCOPE_SENS : ADS_SENS) : HIP_SENS;
+  const sens = _mouseSensNow(ads);   /* build 1281: one derivation, so the two mouse paths cannot drift */
   player.yaw   -= mx * sens;
   player.pitch -= my * sens;
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
@@ -29237,7 +29243,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1280 · 2026-08-02';
+const BUILD_VERSION = 'build 1282 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29409,7 +29415,41 @@ if(savedLevel && savedLevel.aim && savedLevel.aim.state){
   if(!savedLevel.aimWep){ for(const k of Object.keys(WEAPONS)) aimByWep[k]=Object.assign({}, AIM_DEFAULT, a); }   // legacy levels: seed every weapon from the single saved pose
   ADS_AIM.set(a.x, a.y, a.z); ADS_ROT.set(a.rx*D2R, a.ry*D2R, a.rz*D2R); adsFovLive = a.fov;
 }
+const MOUSE_SENS_MIN = 0.1, MOUSE_SENS_MAX = 5;
 const HIP_SENS = 0.0022, ADS_SENS = 0.0012;  // slower look while aiming for precision
+// build 1281: MOUSE SENSITIVITY. The engine shipped a gamepad look slider (909) and two touch sliders
+// (1042) and nothing at all for the mouse — the primary input, and the one setting every player in this
+// genre changes first. HIP_SENS was a const with two consumers, so a player whose mouse DPI disagreed with
+// one hardcoded number had no recourse but to change it system-wide.
+//
+// A MULTIPLIER, not a replacement: 1.0 is byte-identical to every value builds 160-1280 were tuned
+// against, so nothing authored moves and no level plays differently. Stored per device (it is a property
+// of the mouse, not of the level) beside the pad and touch prefs.
+let mouseSens = 1;
+try{ const _ms = parseFloat(localStorage.getItem('breach_mouse_sens')); if(isFinite(_ms)) mouseSens = Math.max(MOUSE_SENS_MIN, Math.min(MOUSE_SENS_MAX, _ms)); }catch(e){}
+function saveMouseSens(){ try{ localStorage.setItem('breach_mouse_sens', String(mouseSens)); }catch(e){} }
+// ZOOM-MATCHED AIM. The audit measured the shipped ratio: ADS_SENS/HIP_SENS = 0.545 against a 2.34x zoom,
+// so turning the mouse the same distance swept ~28% more world while aimed than while hip-firing — the
+// thing "muscle memory doesn't carry into ADS" actually means. `mouseAimMatch` divides the aim sensitivity
+// by the zoom instead, which is what a zoom-matched (monitor-distance) setting does. Default OFF, because
+// it changes a feel every existing player has already learned.
+let mouseAimMatch = false;
+try{ mouseAimMatch = localStorage.getItem('breach_mouse_aimmatch') === '1'; }catch(e){}
+function saveMouseAimMatch(){ try{ localStorage.setItem('breach_mouse_aimmatch', mouseAimMatch ? '1' : '0'); }catch(e){} }
+// The look sensitivity for the current state, in ONE place so the two mouse consumers cannot disagree.
+function _mouseSensNow(ads){
+  const base = ads ? ((typeof WEAPONS!=='undefined' && typeof curWep!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].scope) ? SCOPE_SENS : ADS_SENS) : HIP_SENS;
+  let s = base * mouseSens;
+  if(ads && mouseAimMatch){
+    // zoom = tan(baseFov/2) / tan(adsFov/2) — the real magnification, not the fov ratio, which is what
+    // "zoom-matched" means to anyone who has set this in another shooter.
+    const _bf = (typeof BASE_FOV!=='undefined') ? BASE_FOV : 78;
+    const _af = (typeof adsFovLive!=='undefined') ? adsFovLive : ((typeof ADS_FOV!=='undefined') ? ADS_FOV : _bf);
+    const z = (_af > 0) ? (Math.tan(_bf*Math.PI/360) / Math.tan(_af*Math.PI/360)) : 0;
+    if(z > 1) s = HIP_SENS * mouseSens / z;   // same on-screen arc per mouse-inch, aimed or not
+  }
+  return s;
+}
 const SCOPE_SENS = 0.00045;                   // much slower under the scope's hard zoom
 addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ _bmSpin(e.deltaY, e.deltaMode); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
 addEventListener('mousedown', e=>{
@@ -39061,9 +39101,30 @@ function buildEditorPanel(){
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
     let lvl, str; try{ lvl = serializeLevel(); const th = _commCaptureThumb(); if(th) lvl.thumb = th; str = JSON.stringify(lvl); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
-    // build 958: PRIMARY path — submit straight to our own server for review (no GitHub account
-    // needed). Real rejections (too big / rate-limited / queue full) surface as-is and stop; only
-    // an unreachable server falls through to the GitHub-issue flow below.
+    // build 1282: RUN THE LEVEL CHECK BEFORE PUBLISHING. levelIssues() had exactly two call sites — its
+    // own definition and the panel that renders it — so the engine would write "this prop's model is
+    // stored on this device only and will load for nobody else", or "a signal targets a tag no prop
+    // carries", and then let the creator publish it to strangers anyway. The knowledge existed; nothing
+    // asked for it at the one moment it mattered.
+    //
+    // It ADVISES, it does not refuse: a warning is not proof a level is broken (an intentionally unused
+    // tag is fine), and an engine that blocks publishing on its own heuristic will be wrong sometimes and
+    // infuriating always. The creator sees what the engine sees and decides.
+    try{
+      const _pre = (typeof levelIssues==='function') ? levelIssues() : [];
+      if(_pre && _pre.length){
+        const _top = _pre.slice(0, 6).map(t=>'\u2022 ' + String(t)).join('\n');
+        const _more = _pre.length > 6 ? ('\n\u2026and ' + (_pre.length-6) + ' more.') : '';
+        // _uiDialog, not uiConfirm: uiConfirm only calls back on CONFIRM, so a cancelled dialog would
+        // leave this promise pending forever and the publish flow would die silently. Both buttons
+        // resolve, and Escape routes to the first non-primary one, so every exit path settles.
+        const _go = await new Promise(res=>_uiDialog(
+          'Level Check found ' + _pre.length + ' thing' + (_pre.length===1?'':'s') + ' to look at:\n\n' + _top + _more +
+          '\n\nPublish anyway?',
+          [ { label:'Go back', fn:()=>res(false) }, { label:'Publish anyway', primary:true, fn:()=>res(true) } ]));
+        if(!_go){ if(note) note.textContent='Publish cancelled \u2014 see Level Check in the Save tab.'; return; }
+      }
+    }catch(e){}
     try{
       let name='', author='';   // build 959: one themed modal (fullscreen survives), not window.prompt()
       try{ name=(localStorage.getItem('breach_last_level_name')||'').trim(); }catch(e){}
@@ -45473,6 +45534,13 @@ function bindPauseMenu(){
   // ---- controller (build 909: shown once a pad exists; values re-sync on every open) ----
   { const pc=document.getElementById('pauseCtl'); if(pc) pc.style.display = padSeen ? '' : 'none';
     const sr=document.getElementById('padSensRng'); if(sr){ sr.value=String(padPrefs.sens); sr.oninput=()=>{ padPrefs.sens=Math.max(0.3,Math.min(3,parseFloat(sr.value)||1)); savePadPrefs(); }; }
+    /* build 1281: mouse look — the same shape as the pad slider above it */
+    { const mr=document.getElementById('msSensRng'), mv=document.getElementById('msSensVal');
+      const _show=()=>{ if(mv) mv.textContent=mouseSens.toFixed(2); };
+      if(mr){ mr.value=String(mouseSens); _show();
+        mr.oninput=()=>{ const v=parseFloat(mr.value); mouseSens=Math.max(MOUSE_SENS_MIN,Math.min(MOUSE_SENS_MAX,isFinite(v)?v:1)); _show(); saveMouseSens(); }; }
+      const mc=document.getElementById('msAimMatchCb');
+      if(mc){ mc.checked=!!mouseAimMatch; mc.onchange=()=>{ mouseAimMatch=!!mc.checked; saveMouseAimMatch(); }; } }
     const ar=document.getElementById('padAdsRng'); if(ar){ ar.value=String(padPrefs.ads); ar.oninput=()=>{ padPrefs.ads=Math.max(0.2,Math.min(1.5,parseFloat(ar.value)||0.7)); savePadPrefs(); }; }
     const dr=document.getElementById('padDeadRng'); if(dr){ dr.value=String(padPrefs.dead); dr.oninput=()=>{ padPrefs.dead=Math.max(0.05,Math.min(0.4,parseFloat(dr.value)||0.18)); savePadPrefs(); }; }
     const iv=document.getElementById('padInvCb'); if(iv){ iv.checked=!!padPrefs.invertY; iv.onchange=()=>{ padPrefs.invertY=iv.checked; savePadPrefs(); }; } }
