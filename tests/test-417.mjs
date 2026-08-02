@@ -9,7 +9,8 @@ const src = gameSource();
 // --- mt rides in all three send sites (host self entry, host relay of a client, client's own packet) ---
 assert(/n:NET\.name\|\|'Host', mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\), c:_packCar\(\), ac:_actNetCode, aq:_actNetSeq \}\];/.test(src), 'host snapshot self-entry carries its mounted-turret index');
 assert(/hs:rp\.hs\|\|0, n:rp\.name, mt:\(rp\.mt!=null\?rp\.mt:-1\), cl:\(rp\.cl\|\|0\), c:\(rp\.car\|\|undefined\) \}\);/.test(src), 'host relays each remote player mounted-turret index');
-assert(/n:NET\.name, mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\), c:_packCar\(\), ac:_actNetCode, aq:_actNetSeq \}\); \}catch/.test(src), 'client state packet carries its mounted-turret index');
+// build 1298: the client state packet is DROPPABLE — the tail is the backpressure call, not a bare try/catch.
+assert(/n:NET\.name, mt:\(mountedTurret\?_turretIndexOf\(mountedTurret\):-1\), cl:_climbCode\(\), c:_packCar\(\), ac:_actNetCode, aq:_actNetSeq \}, 400\);/.test(src), 'client state packet carries its mounted-turret index');
 
 // --- mt is applied on receipt (host from a client, client from the snapshot) and defaulted on the record ---
 assert(/rp\.mt = \(msg\.mt!=null\?msg\.mt:-1\);/.test(src), 'setRemoteState stores the synced turret index');

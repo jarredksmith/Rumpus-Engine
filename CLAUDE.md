@@ -4368,6 +4368,43 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The 20Hz stream had no brakes (build 1298)
+
+The peer connection is `reliable:true` — ordered SCTP — and the host fans a world snapshot to every client
+20 times a second, with the client answering at the same rate. Across **53 `send` sites, nothing had ever
+looked at `bufferedAmount`.**
+
+On a link that cannot drain 20 Hz, a reliable channel does not drop packets — it **QUEUES them, without
+bound**. Every later message (a hit, a chat line, the next keyframe) waits behind the backlog, so the
+connection does not degrade gracefully: it slides into ever-growing latency and never recovers. That is the
+classic *"everything went to slow motion and stayed there"* multiplayer failure, and it is **invisible in
+every LAN test**, because the queue never builds.
+
+**A state snapshot is the one message safe to drop** — the next one supersedes it. Hits, chat, joins, the
+level transfer and prop sync are semantic events and still send unconditionally; `test-1298` pins that
+`_sendDroppable` appears at exactly two call sites and nowhere else, because a silently-skipped event is a
+far worse bug than the one this fixes.
+
+**The threshold is stated in SNAPSHOTS, not bytes**, because bytes are a property of the level. Measured on
+the stock level (1 enemy, 59 props): keyframe **557 B**, delta **325 B**, ~6.8 KB/s — and that is the floor,
+a populated match is many times it. So the limit is `max(16 KB, payloadBytes × 8)`: eight snapshots deep is
+**400 ms of backlog at 20 Hz whatever the level weighs**, with a floor so a small level does not trip on
+ordinary jitter.
+
+Two details:
+- **A skip forces the next snapshot to be a keyframe.** Build 1197's snapshots are deltas against one shared
+  previous state, so a client that misses one is stale until the next keyframe — up to nine snapshots
+  (450 ms). `_snapN = 0` makes the next one full (the counter is incremented *before* the modulo, which the
+  test executes rather than assumes), and because every client reads the same payload, one keyframe repairs
+  all of them at once. 450 ms → 50 ms.
+- **A transport that will not answer is treated as HEALTHY.** `_netBuffered` returns 0 on a missing channel,
+  a non-numeric answer or a throwing getter. Guessing the other way stops a connection sending, which is
+  worse than the queue this exists to bound.
+
+**One earlier claim retired while checking this.** The open work listed "reliable-ordered WebRTC transport"
+as a heavyweight; the channel already *is* reliable and ordered (`p.connect(host, { reliable:true })`). The
+real gap was never ordering — it was that nothing bounded the queue that ordering creates.
+
 ## A bot holding a sword shot bullets (build 1297)
 
 Checked immediately after 1296, because that build made a configuration reachable that might be broken

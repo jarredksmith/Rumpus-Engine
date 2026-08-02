@@ -25461,7 +25461,50 @@ function serializeWorld(){
   return { t:'world', dl: full?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:_hostileAlive() };   /* en: the HUD count must not read a partial E; build 1226: nor count a friendly */
 }
 function dynamicById(id){ for(const o of dynamicProps){ if(o.userData.phys && o.userData.phys.id===id) return o; } return null; }
-function broadcastWorld(){ const w=serializeWorld(); for(const id in NET.conns){ try{ NET.conns[id].send(w); }catch(e){} } }
+// ---- build 1298: BACKPRESSURE on the droppable traffic -------------------------------------------------
+// The peer connection is `reliable:true` — ordered SCTP — and the host fans a world snapshot to every client
+// 20 times a second, with the client answering at the same rate. Across 53 `send` sites nothing had ever
+// looked at `bufferedAmount`. On a link that cannot drain 20 Hz, a reliable channel does not drop: it
+// QUEUES, without bound. Every later message — a hit, a chat line, the next keyframe — waits behind the
+// backlog, so the connection does not degrade gracefully, it slides into ever-growing latency and never
+// recovers. That is the classic "everything went to slow motion and stayed there" multiplayer failure, and
+// it is invisible in a LAN test because the queue never builds.
+//
+// A state snapshot is the one message that is safe to drop: the next one supersedes it. Everything else —
+// hits, chat, joins, the level transfer, prop sync — is a semantic event and still goes unconditionally.
+//
+// THE THRESHOLD IS STATED IN SNAPSHOTS, NOT BYTES, because bytes are a property of the level. Measured on
+// the stock level (1 enemy, 59 props): keyframe 557 B, delta 325 B, ~6.8 KB/s — and that is the FLOOR; a
+// populated match is many times it. So the limit scales with what is actually being sent: eight snapshots
+// deep is 400 ms of backlog at 20 Hz whatever the level weighs, with a floor so a small level does not trip
+// on ordinary jitter.
+const NET_BUF_FLOOR = 16384, NET_BUF_SNAPS = 8;
+let _netDropped = 0, _netDropWarned = false;
+function _netBuffered(c){
+  try{ const dc = c && (c.dataChannel || c._dc); return (dc && typeof dc.bufferedAmount === 'number') ? dc.bufferedAmount : 0; }
+  catch(e){ return 0; }   /* a transport that will not answer is treated as healthy — never stop sending on a guess */
+}
+// Returns false when the send was SKIPPED, so the caller can repair what the skip cost.
+function _sendDroppable(c, msg, bytes){
+  if(!c) return false;
+  if(_netBuffered(c) > Math.max(NET_BUF_FLOOR, (bytes||0) * NET_BUF_SNAPS)){
+    _netDropped++;
+    if(!_netDropWarned && _netDropped > 40){ _netDropWarned = true; console.warn('[net] a peer cannot keep up with the 20Hz state stream — snapshots are being skipped to stop the send queue growing without bound ('+_netDropped+' so far)'); }
+    return false;
+  }
+  try{ c.send(msg); return true; }catch(e){ return false; }
+}
+function broadcastWorld(){
+  const w=serializeWorld(); let bytes=0;
+  try{ bytes=JSON.stringify(w).length; }catch(e){ bytes=0; }
+  let skipped=false;
+  for(const id in NET.conns){ if(!_sendDroppable(NET.conns[id], w, bytes)) skipped=true; }
+  // Build 1197's snapshots are DELTAS against a single shared previous state, so a client that misses one is
+  // stale on whatever changed in it until the next keyframe. Forcing the next snapshot to be a keyframe
+  // turns that window from up to nine snapshots (450 ms) into one (50 ms), and it repairs every skipped
+  // client at once because they all read the same payload.
+  if(skipped) _snapN = 0;
+}
 
 // ---- live prop sync: add / move / delete of STATIC props across an online session ----
 // A reconciler diffs the local prop set against NET.sentProps (what peers already know) and emits
@@ -25778,7 +25821,9 @@ function netTick(dt){
   if(NET.sendTimer<=0){
     NET.sendTimer=0.05;
     if(NET.mode==='client' && NET.conn && NET.conn.open){
-      try{ NET.conn.send({ t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }); }catch(e){}
+      /* build 1298: droppable — the next one supersedes it. Unlike the host's, this packet carries no delta
+         state, so a skip costs exactly one frame of staleness and repairs itself on the very next send. */
+      _sendDroppable(NET.conn, { t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }, 400);
       if(heldProp && heldNidLocal!=null){ const tgt=_localHoldTarget(); try{ NET.conn.send({ t:'hold', nid:heldNidLocal, p:[tgt.x,tgt.y,tgt.z] }); }catch(e){} }
     } else if(NET.mode==='host'){
       broadcastWorld();
@@ -29563,7 +29608,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1297 · 2026-08-02';
+const BUILD_VERSION = 'build 1298 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

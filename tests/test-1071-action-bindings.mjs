@@ -108,7 +108,8 @@ assert(/if\(typeof actionMovementLocked==='function' && actionMovementLocked\(\)
 
 // ---- multiplayer: peers replay it, using the same shape as the proven hit-react one-shot ----
 assert(/ac:_actNetCode, aq:_actNetSeq \}\];/.test(src), 'the host self-entry carries the action code + sequence');
-assert(/ac:_actNetCode, aq:_actNetSeq \}\); \}catch/.test(src), 'the client state packet carries them too');
+// build 1298: the client state packet is DROPPABLE — the tail is the backpressure call, not a bare try/catch.
+assert(/ac:_actNetCode, aq:_actNetSeq \}, 400\);/.test(src), 'the client state packet carries them too');
 assert(/if\(pl\.aq!=null && pl\.aq!==rp\._aq\)\{ rp\._aq=pl\.aq;/.test(src), 'a CHANGED sequence is what triggers the replay (not a level flag)');
 assert(/rp\._actSlot=_as; rp\._actT=performance\.now\(\)\+Math\.max\(200, Math\.min\(6000, \(typeof _ownSlotDurMs==='function' && _ownSlotDurMs\(_as\)\)\|\|600\)\);/.test(src),
   '...for the clip’s own measured length on the receiving end, resolved the same way the firing player resolved it');
