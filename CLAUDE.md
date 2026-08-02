@@ -4368,6 +4368,37 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## Variable jump height (build 1301 — gameplay audit F6)
+
+> Greped `jumpCut`, `shortHop`, `holdJump`, `varJump` → zero hits, and the jump is one assignment
+> (`player.vel.y = JUMP`) with no release handling. **Every jump is exactly 2.82 m.** Rumpus advertises a
+> side-scroll mode with a lane lock — a 2.5D platformer where you cannot tap for a short hop is missing the
+> primary verb of the genre.
+
+Releasing while RISING now cuts the remaining ascent. **Height goes as v², so one setting spans the whole
+tap-to-hold range** without a second constant: the shipped `jumpCut: 0.5` is half the launch velocity and
+therefore a quarter of the height — a 0.71 m hop against the 2.82 m hold.
+
+**Why this is safe for levels that already exist**, which is the question any movement change has to answer:
+it can only ever shorten a jump the player *chose* to release early, and **a player attempting a demanding
+jump holds the key** — that is the natural input when you are trying to clear something. A jump puzzle that
+needs the full 2.82 m is still cleared by holding, exactly as before. `jumpCut: 1` restores the old engine
+byte-for-byte, and the slider says which end that is.
+
+Two details the test found rather than confirmed:
+- **A cut of exactly 0 swallows the jump.** It zeroes the rising velocity, so the player never leaves the
+  ground and the input vanishes. `JUMP_CUT_MIN = 0.1` floors it — a 2.8 cm hop is effectively none, but you
+  still leave the floor. A slider that can silently eat an input is worse than one that cannot quite reach
+  its own extreme.
+- **The apex is frame-rate dependent, and that is the integrator, not this build.** Semi-implicit Euler at a
+  real frame time lands ~0.10 m under the analytic `v²/2g` at 60 fps and further at 20. So `test-1301`
+  asserts the **tap-to-hold RATIO** across 8–50 ms steps — the quantity this build actually decides — rather
+  than an absolute height it does not own. Stating the assertion on the wrong quantity is how a test ends up
+  guarding someone else's behaviour.
+
+Still absent and deliberately not added here: double jump, wall jump, dash, air-dash. Each is its own verb
+with its own tuning and its own compatibility question; F6 named them together but they are not one build.
+
 ## The Level Check takes you to the problem (build 1300 — editor audit 4.3, HIGH)
 
 > `renderLevelIssues`: `d.textContent = msg`, no handler. *"A signal targets tag 'vaultDoor', but no prop
