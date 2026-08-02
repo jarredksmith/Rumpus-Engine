@@ -4298,6 +4298,66 @@ and `test-1269` was slicing 200 characters from `msg.t==='hudv'` to reach an ass
 pushed past — **the fourth character-budget slice this audit has broken**, after 1149 supposedly converted
 them all. They only surface when something nearby grows.
 
+## The ledge hang stopped asking which camera is active (build 1289)
+
+Reported from play: *"Ledge hang in third-person is still not working. I noticed that in first-person, the
+camera height is much lower than what is in third-person."* Both halves are one fault, and the second
+observation is the tell.
+
+Build 966 derived the hang's height from the DRAWN BODY's bounding box and 1239 tuned `LEDGE_HANG_SINK`
+against it — but that measurement was gated on `_ownAvatar.visible`, which is **false in first person**. So
+the same jump at the same box produced two different COLLIDER heights depending on which camera was showing.
+Measured live on the stock level's 2.2 m box, holding W into it from 2.6 m out:
+
+```
+                    hy (player.pos.y at full hang)
+first person                1.75      <- 0.45 under the lip: the framing 1239 tuned
+third person  BEFORE        1.58      <- exactly _gy + EYE - 0.12, the floor clamp
+third person  AFTER         1.75
+```
+
+1.58 is the *"never feet-through-the-floor"* clamp winning, i.e. the body standing at the wall base with its
+arms in the air — which is exactly what the report's screenshot showed. And it won on **every reachable
+ledge**: the ideal beats the clamp only when `lip - ground > vh*1.02 + 0.30`, so `vh = 1.7` needs a 2.03 m
+rise (just inside the 1.55-2.05 window) and `vh = 2.2` needs 2.54 m (outside it, always).
+
+**Why `vh` read 2.2 for a 1.9 m player: the stock third-person body is a STYLISED capsule proxy.**
+`remoteBodyGeo = CapsuleGeometry(0.5, 1.2)` boxes 2.2 m, and its *head zone* (`_mkHeadProxy`) sits at 1.66 —
+the gameplay head is right, the lozenge's top just overshoots by half a metre. The term was reading a piece
+of art as a body height. That is also the answer to the camera question: nothing is wrong with the
+first-person eye; the third-person boom rides a body drawn taller than the collider it stands in for.
+
+The fix splits the two facts that had been conflated:
+- **`LEDGE_REACH = EYE*1.02 + LEDGE_HANG_SINK`** — the PLAYER's reach, so the collider hangs identically in
+  every view. Numerically the exact expression first person already evaluated, so **that view is
+  byte-identical** and 1239's tuning is untouched.
+- **`_avatarHangDrop(a)`** — how tall the character is DRAWN, applied to the avatar's foot placement in
+  `updateOwnAvatar`, clamped so the body's feet never go under the ground beneath it, eased on the collider's
+  own 0.18 s curve and faded back out across the pull-up so the body does not snap when it mounts the top.
+  966's "raised hands land on the lip" survives intact — it now sizes the body instead of the player, which
+  is the layer a visual belongs in, and it finally works for an imported character of any height.
+
+**The general rule this is an instance of: a gameplay quantity must never be derived from something only the
+renderer knows.** Build 1140 established that for the viewmodel's AO; this is the same thing one level down —
+`_ownAvatar.visible` is a camera state, and it was silently deciding how high the player hung.
+
+Four pins moved (966, 1168, 1239, 1243) and every one kept its assertion's intent: 1168's once-a-second Box3
+budget, 1243's ground clamp and 1239's sink are all still asserted, at their new addresses.
+
+**The probe is the durable part.** `scratchpad/ledge3.mjs` boots the real game headless, finds a grabbable
+collider, and runs the whole trial INSIDE the closure off `requestAnimationFrame` — one round trip instead of
+one per sample, which is the difference between 40 s and a timeout under SwiftShader. It reports `_ledge`'s
+phase, `hy`, `mantleLedge` at all four scan distances and the drawn body's foot, per frame, for `tpMode`
+false and true. Two earlier drafts failed for reasons worth not repeating: `window.__probe` is injected
+*inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
+60 ms is far slower than the frames it is trying to sample.
+
+**Two view-mode gates found while reading this and deliberately NOT fixed here** — each needs its own probe
+pass, and neither is what was reported. The grab gate is `wish.dot(forward) > 0.5`, and `forward` is the
+SCREEN-relative movement basis in the fixed-camera views: `side` sets it to the **zero vector**, so a 2.5D
+platformer can never ledge-grab at all, and `chaseCursorOn()` sets it to the frozen camera yaw while the body
+faces the cursor, so the probe goes where the camera looks rather than where the character does.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
