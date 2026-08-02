@@ -15,7 +15,10 @@ const src = gameSource();
 // build 1158 lifted this out of _renderPostFX into `_aoHideNoDepth`, because the block was applied to the
 // world scene only while the muzzle flash lives in the VIEWMODEL scene. Same predicate, one caller became
 // two — so this drives the function rather than a block scraped out of the middle of a render pass.
-const BLOCK = extractFunction('_aoHideNoDepth');
+// build 1285: the predicate moved to its own module-scope function (_aoNoDepthMat) so no closure is
+// allocated per object. Rigs that EXECUTE _aoHideNoDepth need it too — lifted from real source, not
+// restated, so widening the predicate cannot leave these tests passing against a stale copy.
+const BLOCK = extractFunction('_aoNoDepthMat') + '\n' + extractFunction('_aoHideNoDepth');
 assert(BLOCK, 'the AO prepass sweep is one named function both callers share');
 
 function run(objs){

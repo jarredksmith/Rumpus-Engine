@@ -24,9 +24,11 @@ const CAP_R = K('ENEMY_CAP_R');
 
 // ================================================================ 1. the viewmodel G-buffer
 {
-  const fn = extractFunction('_aoHideNoDepth');
+  const fn = extractFunction('_aoHideNoDepth') + extractFunction('_aoNoDepthMat');
   assert(/q\.depthWrite===false \|\| q\.transparent===true/.test(fn),
     'the rule is a property of the MATERIAL, not a list of names (build 1152)');
+  assert(/\(q\.alphaTest\|\|0\) > 0/.test(fn),
+    '...and build 1285 widened it to alpha-tested cutouts, which are opaque by both older tests');
   assert(/if\(!o\.visible\) return;/.test(fn),
     'already-invisible objects are not collected, or the restore would switch them on (editor gizmos in play)');
   assert(/for\(let i=0;i<m\.length;i\+\+\)/.test(fn), 'one offending slot in a multi-material array is enough — the object is drawn or it is not (build 1168: allocation-free walk, same predicate)');
@@ -61,7 +63,7 @@ const CAP_R = K('ENEMY_CAP_R');
 {
   // executable: the predicate, over the material shapes that actually occur
   const hidden = [];
-  const run = new Function('root', 'out', extractFunction('_aoHideNoDepth') + '\nreturn _aoHideNoDepth(root, out);');
+  const run = new Function('root', 'out', extractFunction('_aoNoDepthMat') + '\n' + extractFunction('_aoHideNoDepth') + '\nreturn _aoHideNoDepth(root, out);');
   const mk = (name, material, visible) => ({ name, material, visible: visible !== false, traverse(f){ f(this); } });
   const kids = [
     mk('flash',   { transparent: true, depthWrite: false }),

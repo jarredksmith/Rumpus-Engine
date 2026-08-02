@@ -4198,6 +4198,39 @@ declares. `test-1283` executes all four combinations.
 Two pins moved (1126's gate literal, 1115's encode-position pattern, which now allows any run of comments
 and const declarations between the encode and the branch rather than one exact line).
 
+## Alpha-cutout foliage was a field of solid rectangles (build 1285)
+
+**The SIXTH arrival of build 1152's rule**, after the sky dome (1126), the weather points (1126), the world
+flipbooks (1152) and the viewmodel muzzle flash (1158).
+
+A glTF `alphaMode:MASK` material arrives from GLTFLoader as **opaque** — `transparent:false`,
+`depthWrite:true` — with the cutout expressed as `alphaTest`. So both of `_aoHideNoDepth`'s tests passed it.
+But the prepass runs under `scene.overrideMaterial`, which REPLACES the material and with it the alpha test,
+so every grass blade, leaf card, fence and grate stamped its full **rectangle** into the AO, SSR and
+velocity buffers as solid geometry. The level generator emits exactly this for foliage (`alphaMode:'MASK'`,
+cutoff 0.32) — so a garden arena was writing a field of solid quads into the buffer that decides where the
+frame is dark.
+
+**Why five namings did not stop the sixth:** the rule was *"nothing that fails to write depth belongs in a
+depth-derived buffer"*, and a cutout **does** write depth. What it does not write is the depth of its own
+SILHOUETTE. The predicate now asks whether the override material can REPRESENT the object at all, which is
+the property that actually matters.
+
+The trade, stated rather than left to be discovered: a cutout surface now contributes no AO, SSR or velocity
+of its own. Its correct shape would need the prepass to carry each material's map and `alphaTest` — a real
+build, and worth one. A missing occluder is a far smaller error than a solid rectangle where a leaf is.
+
+**The first draft undid build 1168 in the same stroke.** Declaring the predicate inside the traverse
+callback allocates one closure PER OBJECT across two scenes every frame — precisely the transient 1168
+measured and removed. It is `_aoNoDepthMat`, a module-scope function declaration, and `test-1285` asserts
+that no arrow function survives inside the traverse. **A fix that reintroduces a documented optimisation's
+bug is not a fix**; the log is only useful if it is read in the direction of the code being touched, not
+just the code being fixed.
+
+Four call sites share it, not two: the AO G-buffer and the velocity pass each sweep both the world and
+viewmodel scenes. Three pins moved (1152, 1158, 1168), each an executing rig that needed the predicate
+lifted from real source rather than restated.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

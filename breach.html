@@ -7996,6 +7996,9 @@ function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next 
 //
 // Already-invisible objects are NOT collected, or the restore would switch them on (editor gizmos in play).
 // One offending slot in a multi-material array is enough, because the object is drawn or it is not.
+// build 1285: defined ONCE at module scope. Declaring this inside the traverse callback would allocate a
+// closure per OBJECT across two scenes every frame — exactly the transient build 1168 measured and removed.
+function _aoNoDepthMat(q){ return !!q && (q.depthWrite===false || q.transparent===true || (q.alphaTest||0) > 0); }
 function _aoHideNoDepth(root, out){
   // build 1168: this runs over 2 scenes per frame with AO on, and the old wrap-into-an-array + a per-object
   // predicate closure allocated per OBJECT — thousands of transients a frame. Same predicate, zero allocation:
@@ -8003,8 +8006,25 @@ function _aoHideNoDepth(root, out){
   root.traverse(o=>{ if(!o.visible) return;
     const m=o.material; if(!m) return;
     let bad=false;
-    if(Array.isArray(m)){ for(let i=0;i<m.length;i++){ const q=m[i]; if(q && (q.depthWrite===false || q.transparent===true)){ bad=true; break; } } }
-    else bad = (m.depthWrite===false || m.transparent===true);
+    // build 1285: ALPHA-TESTED CUTOUTS TOO. A glTF `alphaMode:MASK` material arrives from GLTFLoader as
+    // OPAQUE — transparent:false, depthWrite:true — with the cutout expressed as `alphaTest`. Both of the
+    // tests above therefore pass it, and the prepass runs under `scene.overrideMaterial`, which REPLACES
+    // the material and with it the alpha test. So every grass blade, leaf card, fence and grate stamped
+    // its full RECTANGLE into the AO, SSR and velocity buffers as solid geometry. The generator emits
+    // exactly this for foliage (`alphaMode:'MASK'`, cutoff 0.32), so a garden arena was writing a field of
+    // solid quads into the buffer that decides where the frame is dark.
+    //
+    // This is the SIXTH arrival of build 1152's rule — after the sky dome (1126), the weather points
+    // (1126), the world flipbooks (1152) and the viewmodel muzzle flash (1158). The rule was "nothing that
+    // fails to write depth belongs in a depth-derived buffer", and this got in because it DOES write
+    // depth; what it does not do is write the depth of its own silhouette. The predicate is now about
+    // whether the override material can REPRESENT the object, which is the property that actually matters.
+    //
+    // The trade, stated: a cutout surface now contributes no AO, SSR or velocity of its own. Its correct
+    // shape would need the prepass to carry each material's map and alphaTest — a real build, and worth
+    // one. A missing occluder is a far smaller error than a solid rectangle where a leaf is.
+    if(Array.isArray(m)){ for(let i=0;i<m.length;i++){ if(_aoNoDepthMat(m[i])){ bad=true; break; } } }
+    else bad = _aoNoDepthMat(m);
     if(bad){ o.visible=false; out.push(o); } });
   return out;
 }
@@ -29271,7 +29291,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1284 · 2026-08-02';
+const BUILD_VERSION = 'build 1285 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

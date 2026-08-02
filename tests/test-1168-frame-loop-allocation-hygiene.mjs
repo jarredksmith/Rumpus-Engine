@@ -55,7 +55,8 @@ const src = gameSource();
   assert(!/\.some\(/.test(fn), '...and the closure-per-object');
   assert(/for\(let i=0;i<m\.length;i\+\+\)/.test(fn), 'multi-material arrays are walked in place');
   // behaviour identical: the 1152/1158 predicate still holds (their tests also re-run it; this is the diff check)
-  const run = new Function('root', 'out', fn + '\nreturn _aoHideNoDepth(root, out);');
+  // build 1285: the predicate is its own module-scope function now — lifted from source, not restated
+  const run = new Function('root', 'out', extractFunction('_aoNoDepthMat') + '\n' + fn + '\nreturn _aoHideNoDepth(root, out);');
   const mk = (name, material, visible) => ({ name, material, visible: visible !== false });
   const kids = [
     mk('flash', { transparent: true, depthWrite: false }),
