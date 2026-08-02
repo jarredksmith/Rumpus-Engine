@@ -9,6 +9,11 @@
 import { gameSource, extractFunction, assert, near, done } from './harness.mjs';
 const src = gameSource();
 
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
+
 // --- the two banked pieces exist, registered as primitives ---
 for(const k of ['track_bank_l','track_bank_r'])
   assert(new RegExp(k+":\\(\\)=>_buildTrackPiece\\('"+k+"'\\)").test(src), k+' is registered in PRIMITIVE_BUILDERS');
@@ -53,7 +58,7 @@ assert(/refreshPropCollider\(o\);/.test(ta), 'the prop collider box is refreshed
 assert(/if\(o\.userData\.trk && o\.userData\.trk\.w\) e\.trk=1;/.test(src), 'propEntry serializes the walls flag');
 {
   const m=src.match(/if\(p\.trk\) trackApply\(obj, \{w:1\}\);/g);
-  assert(m && m.length===4, 'all four entry-apply sites (boot / net / restore / prefab spawn) reapply walls (found '+(m?m.length:0)+')');
+  assert(m && m.length===2, 'all four entry-apply sites (boot / net / restore / prefab spawn) reapply walls (found '+(m?m.length:0)+')');
 }
 
 // --- editor UI: per-piece checkbox + whole-track button ---

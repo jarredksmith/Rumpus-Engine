@@ -1411,8 +1411,13 @@
       <label class="paLbl">Stick deadzone<input type="range" id="padDeadRng" min="0.05" max="0.4" step="0.01" style="margin-left:auto;flex:1"></label>
       <label class="paLbl"><input type="checkbox" id="padInvCb"> Invert look Y (controller)</label>
     </div>
+    <div class="pauseAudio">
+      <label class="paLbl">Mouse look<input type="range" id="msSensRng" min="0.1" max="5" step="0.05" style="margin-left:auto;flex:1"><span id="msSensVal" style="min-width:34px;text-align:right;opacity:.85">1.00</span></label>
+      <label class="paLbl"><input type="checkbox" id="msAimMatchCb"> Zoom-matched aim sensitivity</label>
+      <div id="msSensHint" style="font-size:11px;opacity:.7;margin:2px 0 0">1.00 = the engine default. Aiming is slower than the hip by design; tick the box to make it match the zoom instead.</div>
+    </div>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
-    <button id="pauseCredits" class="pBtnGhost">Credits &amp; licenses</button>
+    <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <button id="pauseExit" class="pBtnExit">⌂ Exit to main menu</button>
   </div>
 </div>
@@ -6540,6 +6545,26 @@ const SFX = {
     tone(L.body); noise(L.crack);
     setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass'}), L.tail[3]); },
   enemyShot(at){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105, at}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass', at}); },
+  // ---------- build 1283: THE TELEGRAPHS ARE AUDIBLE ----------
+  // Across all 85 SFX call sites, enemies made sound in exactly three: a ranged shot (twice) and death.
+  // So build 627's 320 ms melee wind-up and the charger's 520 ms lunge tell — the two mechanics that exist
+  // SPECIFICALLY to be reacted to — were purely visual, and a brute closing from behind you was silent.
+  // The panner and distance falloff already existed (`_spatialOut`, build 1208); nothing was using them.
+  //
+  // Every one of these is positional (`at`), so the cue carries the direction the threat is coming from —
+  // which is the whole point for something behind you. They RISE in pitch through the wind-up because a
+  // rising tell reads as "about to happen" without needing to be loud.
+  meleeWind(at){ tone({freq:150, type:'sawtooth', dur:0.26, vol:0.075, slideTo:330, at}); },
+  lungeWind(at){ tone({freq:110, type:'sawtooth', dur:0.42, vol:0.10, slideTo:420, at});
+    noise({dur:0.18, vol:0.05, filterFreq:400, type:'lowpass', at}); },
+  meleeSwing(at){ noise({dur:0.13, vol:0.11, filterFreq:1200, type:'bandpass', at}); tone({freq:220, type:'square', dur:0.06, vol:0.05, slideTo:80, at}); },
+  // a hurt grunt, so shooting something in the dark tells you that you connected AND where it is
+  enemyHurt(at){ tone({freq:260, type:'sawtooth', dur:0.09, vol:0.065, slideTo:170, at}); },
+  // DEFERRED, deliberately: a footfall for a closing enemy is the other half of "a brute behind you is
+  // inaudible", but a per-enemy step is CONTINUOUS rather than event-driven — its value is entirely in the
+  // density, and 40 enemies in a wave is a mud of overlapping noise if that is wrong. The four cues above
+  // are discrete events that cannot spam. Tuning a step rate needs a live listen, which the headless
+  // harness cannot give, so it is its own build with a browser pass rather than a guess bolted on here.
   shootAt(pos){ if(!actx||!sfxBus) return; const gain=_spatialOut(pos); if(!gain) return;   /* build 1208: shared panner replaces the hand-rolled distance-only gain — a shot to your side now reads to your side */
     const t=actx.currentTime;
     const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
@@ -7971,6 +7996,9 @@ function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next 
 //
 // Already-invisible objects are NOT collected, or the restore would switch them on (editor gizmos in play).
 // One offending slot in a multi-material array is enough, because the object is drawn or it is not.
+// build 1285: defined ONCE at module scope. Declaring this inside the traverse callback would allocate a
+// closure per OBJECT across two scenes every frame — exactly the transient build 1168 measured and removed.
+function _aoNoDepthMat(q){ return !!q && (q.depthWrite===false || q.transparent===true || (q.alphaTest||0) > 0); }
 function _aoHideNoDepth(root, out){
   // build 1168: this runs over 2 scenes per frame with AO on, and the old wrap-into-an-array + a per-object
   // predicate closure allocated per OBJECT — thousands of transients a frame. Same predicate, zero allocation:
@@ -7978,8 +8006,25 @@ function _aoHideNoDepth(root, out){
   root.traverse(o=>{ if(!o.visible) return;
     const m=o.material; if(!m) return;
     let bad=false;
-    if(Array.isArray(m)){ for(let i=0;i<m.length;i++){ const q=m[i]; if(q && (q.depthWrite===false || q.transparent===true)){ bad=true; break; } } }
-    else bad = (m.depthWrite===false || m.transparent===true);
+    // build 1285: ALPHA-TESTED CUTOUTS TOO. A glTF `alphaMode:MASK` material arrives from GLTFLoader as
+    // OPAQUE — transparent:false, depthWrite:true — with the cutout expressed as `alphaTest`. Both of the
+    // tests above therefore pass it, and the prepass runs under `scene.overrideMaterial`, which REPLACES
+    // the material and with it the alpha test. So every grass blade, leaf card, fence and grate stamped
+    // its full RECTANGLE into the AO, SSR and velocity buffers as solid geometry. The generator emits
+    // exactly this for foliage (`alphaMode:'MASK'`, cutoff 0.32), so a garden arena was writing a field of
+    // solid quads into the buffer that decides where the frame is dark.
+    //
+    // This is the SIXTH arrival of build 1152's rule — after the sky dome (1126), the weather points
+    // (1126), the world flipbooks (1152) and the viewmodel muzzle flash (1158). The rule was "nothing that
+    // fails to write depth belongs in a depth-derived buffer", and this got in because it DOES write
+    // depth; what it does not do is write the depth of its own silhouette. The predicate is now about
+    // whether the override material can REPRESENT the object, which is the property that actually matters.
+    //
+    // The trade, stated: a cutout surface now contributes no AO, SSR or velocity of its own. Its correct
+    // shape would need the prepass to carry each material's map and alphaTest — a real build, and worth
+    // one. A missing occluder is a far smaller error than a solid rectangle where a leaf is.
+    if(Array.isArray(m)){ for(let i=0;i<m.length;i++){ if(_aoNoDepthMat(m[i])){ bad=true; break; } } }
+    else bad = _aoNoDepthMat(m);
     if(bad){ o.visible=false; out.push(o); } });
   return out;
 }
@@ -8205,7 +8250,15 @@ function _renderPostFX(scn, cam){
   // depth-carrying target that r149 will not multisample. When MSAA IS in effect the frame skips
   // FXAA entirely: measured on a pillar edge, MSAA gives a 1.02-pixel coverage gradient on every
   // scanline where this FXAA gives none, so running both would only cost a pass and soften texture.
-  const _fx = _matFXAA && (_postRT.samples||0) === 0;
+  // build 1284: ask whether THIS FRAME was multisampled, not whether the target declares samples.
+  // The DoF path (8016) rasterises the scene into _dofRT — single-sampled, because r149 will not attach a
+  // depth texture to a multisampled target — and then blits the result INTO _postRT. _postRT still
+  // declares samples:4 at the top rung, so the old test read "MSAA is in effect" and skipped FXAA, while
+  // MSAA had in fact never touched the pixels. DoF-on at rung 0 therefore got NEITHER: no MSAA, no FXAA,
+  // and the cost of a multisampled target that only ever received a fullscreen quad. The comment three
+  // lines above states the opposite intent verbatim, which is how it survived.
+  const _msaaThisFrame = (_postRT.samples||0) > 0 && !dofEnabled;
+  const _fx = _matFXAA && !_msaaThisFrame;
   if(!_mbOn){
     if(!_fx){ _postQuad.material=_matComp; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam); return; }
     _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
@@ -9904,6 +9957,13 @@ const LOD_HYST = 1.4;        // re-show at 1.4x the hide threshold, so a prop ho
 // not a shape anybody can read. Every engine ships this (Unreal's per-object shadow cull distance, Unity's
 // shadow distance); it is the cheap middle rung of an LOD ladder and needs no simplified geometry.
 const LOD_SHADOW_MUL = 4;    // below lodPx * this, a prop still DRAWS but no longer CASTS
+// build 1273: NOTHING IS EVER CULLED WITHIN THIS RANGE, whatever its screen size. Reported from play
+// against 1267: "large models I've imported literally don't appear until the player gets right up on
+// them. Then they disappear as soon as the player has barely moved away." A near floor makes that
+// symptom impossible to reach by construction, independently of whether the screen-size maths is right
+// for a given asset — which is the point, because a measurement that is wrong for ONE asset should not
+// be able to delete it.
+const LOD_NEAR_KEEP = 40;
 const LOD_BUDGET = 128;      // props examined per frame; the cursor rolls, so a 2,000-prop level costs a fixed slice
 let _lodCursor = 0, _lodAnyCulled = false;
 function _lodPxNow(){ const v = (typeof worldCfg!=='undefined' && worldCfg) ? +worldCfg.lodPx : 0; return (v>0 && isFinite(v)) ? Math.min(16, v) : 0; }
@@ -9924,6 +9984,13 @@ function _lodEligible(o){
     const sz = bb.getSize(new THREE.Vector3());
     u._lodR = sz.length() / 2;
     if(!(u._lodR > 0)) return false;
+    // build 1274: and WHERE that geometry actually is. A GLB's contents need not sit at its own origin —
+    // a model exported from a scene carries its world position baked in, and this engine's own probe
+    // constructed an ordinary case with the geometry 300 m from the prop's origin. Measuring the distance
+    // to the ORIGIN then asks "how far am I from a point in empty space", which is the wrong question and
+    // reads as a prop that appears and disappears nowhere near itself.
+    const _c = bb.getCenter(new THREE.Vector3());
+    u._lodCx = _c.x - o.position.x; u._lodCy = _c.y - o.position.y; u._lodCz = _c.z - o.position.z;
   }
   u._lodNo = bad;
   return !bad;
@@ -9938,6 +10005,25 @@ function _lodSetCasting(o, on){
     c.castShadow = on ? c.userData._lodCS : false;
   });
 }
+// build 1274: what the culler is actually doing, for the Level Check panel. Build 1273 shipped this
+// feature OFF because a play report ("large imported models don't appear until you're right on top of
+// them") could not be reproduced against a real GLB — the maths measured correctly and the mechanism is
+// still unidentified. The lesson from that is not to guess harder next time: it is that a subsystem which
+// can DELETE THINGS FROM THE SCREEN must be able to say what it removed and why, so the next report is one
+// number rather than another round of hypotheses. The smallest radius is the tell — a big model reading a
+// tiny radius is the whole class of bug this could not rule out.
+function lodReport(){
+  if(typeof propModels==='undefined') return null;
+  let culled=0, noShadow=0, eligible=0, minR=Infinity, minName='';
+  for(const o of propModels){
+    const u=o&&o.userData; if(!u) continue;
+    if(u._lodNo===false){ eligible++;
+      if(u._lodR>0 && u._lodR<minR){ minR=u._lodR; minName=String(u.src||'shape').split('/').pop().slice(-22); } }
+    if(u._lodCull) culled++;
+    if(u._lodNoShadow) noShadow++;
+  }
+  return { px:_lodPxNow(), culled, noShadow, eligible, minR:(minR===Infinity?0:minR), minName };
+}
 function _lodRestoreAll(){
   if(!_lodAnyCulled) return;
   for(const o of propModels){
@@ -9948,13 +10034,34 @@ function _lodRestoreAll(){
   _lodAnyCulled = false;
   if(typeof _dirtyShadows==='function') _dirtyShadows();   // build 1270: the map is STATIC — see below
 }
+// Re-measure a prop's radius from the live scene graph. The cached one is used for the CHEAP direction
+// (deciding something is big enough to keep); this is called before anything is actually removed, so a
+// stale or wrong radius can only ever cost one Box3 — never a missing building.
+function _lodRemeasure(o){
+  const bb = new THREE.Box3().setFromObject(o);
+  if(bb.isEmpty()) return 0;
+  const sz = bb.getSize(new THREE.Vector3());
+  const r = sz.length() / 2;
+  if(r > 0){
+    o.userData._lodR = r;
+    const c = bb.getCenter(new THREE.Vector3());   // build 1274: the centre is re-measured with it
+    o.userData._lodCx = c.x - o.position.x; o.userData._lodCy = c.y - o.position.y; o.userData._lodCz = c.z - o.position.z;
+  }
+  return r;
+}
 function _lodTick(){
   const px = _lodPxNow();
   // Never while AUTHORING: a prop that vanishes because it is small on screen is indistinguishable from a
   // prop you failed to place. The editor shows the level, the game shows the frame.
   if(!px || (typeof editorOpen!=='undefined' && editorOpen) || typeof propModels==='undefined'){ _lodRestoreAll(); return; }
   const n = propModels.length; if(!n) return;
-  const k = (renderer.domElement.height * 0.5) / Math.tan(camera.fov * Math.PI / 360);   // world radius -> pixels
+  // build 1273: CSS pixels, not the DRAWING BUFFER. `domElement.height` is the backing store, which build
+  // 1141's adaptive resolution ladder shrinks under load — so the worse a device was performing, the more
+  // of the level it deleted, and how much depended on which rung the ladder happened to be on. Measured on
+  // this machine mid-session: buffer 518 against a 720 CSS height, pixel ratio 0.72, so every cull distance
+  // was 32% shorter than the number the creator typed. The creator's threshold is in the pixels they SEE.
+  const _vh = renderer.domElement.clientHeight || renderer.domElement.height || 720;
+  const k = (_vh * 0.5) / Math.tan(camera.fov * Math.PI / 360);   // world radius -> CSS pixels
   const cam = camera.position, lim = Math.min(n, LOD_BUDGET);
   let _lodDirty = false;
   for(let i = 0; i < lim; i++){
@@ -9962,18 +10069,27 @@ function _lodTick(){
     if(!o || !o.userData || o.userData._shattered) continue;
     if(o.userData._pvHidden) continue;                      // the logic graph owns this one's visibility (1170)
     if(!_lodEligible(o)) continue;
-    const dx = o.position.x - cam.x, dy = o.position.y - cam.y, dz = o.position.z - cam.z;
+    const u0 = o.userData;
+    // build 1274: to the geometry's centre, not the prop's origin
+    const dx = (o.position.x + (u0._lodCx||0)) - cam.x,
+          dy = (o.position.y + (u0._lodCy||0)) - cam.y,
+          dz = (o.position.z + (u0._lodCz||0)) - cam.z;
     const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
-    const sp = (d > 0.01) ? (o.userData._lodR / d) * k : 1e9;
-    const u = o.userData;
+    const sp = (d > 0.01) ? (u0._lodR / d) * k : 1e9;
+    const u = u0;
+    // build 1273: inside the near floor a prop is ALWAYS drawn and always casts, whatever its screen size.
+    const near = d < LOD_NEAR_KEEP;
     // rung 2 — drawn or not: below px it is not worth a draw call at all
-    if(u._lodCull){ if(sp > px * LOD_HYST){ u._lodCull = false; o.visible = true; _lodDirty = true; } }
-    else if(sp < px && o.visible){ u._lodCull = true; o.visible = false; _lodAnyCulled = true; _lodDirty = true; }
+    if(u._lodCull){ if(near || sp > px * LOD_HYST){ u._lodCull = false; o.visible = true; _lodDirty = true; } }
+    else if(!near && sp < px && o.visible && _lodRemeasure(o) / d * k < px){
+      // measured AGAIN, live, before removing it — see _lodRemeasure
+      u._lodCull = true; o.visible = false; _lodAnyCulled = true; _lodDirty = true;
+    }
     // rung 1 — casting or not. Checked even while culled, so a prop that comes back does so with the right
     // caster state rather than one rung behind.
     const spx = px * LOD_SHADOW_MUL;
-    if(u._lodNoShadow){ if(sp > spx * LOD_HYST){ u._lodNoShadow = false; _lodSetCasting(o, true); _lodDirty = true; } }
-    else if(sp < spx){ u._lodNoShadow = true; _lodSetCasting(o, false); _lodAnyCulled = true; _lodDirty = true; }
+    if(u._lodNoShadow){ if(near || sp > spx * LOD_HYST){ u._lodNoShadow = false; _lodSetCasting(o, true); _lodDirty = true; } }
+    else if(!near && sp < spx){ u._lodNoShadow = true; _lodSetCasting(o, false); _lodAnyCulled = true; _lodDirty = true; }
   }
   // THE REFRESH 1267 OWED AND DID NOT PAY. `renderer.shadowMap.autoUpdate` is false (build 1093's static
   // shadow map): the map is only redrawn when _dirtyShadows() asks. So hiding a prop does NOT remove its
@@ -10666,6 +10782,127 @@ function _lgPlayerEvent(name, ctx){
   if(typeof logicGraph==='undefined' || !logicGraph.nodes.length) return;
   const _pv=_lgCtx; _lgCtx=ctx||{}; try{ _lgFireEvents('event', String(name||'').trim()); } finally { _lgCtx=_pv; }
 }
+// ---------- build 1271: EXPRESSIONS — the escape hatch, in the only form this engine can ship ----------
+// The audit's editor CRITICAL was "no scripting escape hatch": the graph is expressive but anything the
+// nodes cannot say is unsayable, and every competitor lets you drop to code. `(hp / maxhp) * 100` took
+// three Math nodes and two throwaway variables; `score + wave * 10 + bonus` took four.
+//
+// It CANNOT be `new Function` or `eval`. Levels travel as share codes, .rumpus files and URLs, and a player
+// opens someone else's level by clicking a link — so compiling creator text as JavaScript would be remote
+// code execution in that player's browser, with their saves, their settings and their session on the other
+// side of it. There are ZERO uses of eval/new Function in this engine and that is not an accident. So this
+// is a hand-written tokenizer and Pratt parser producing a closure tree: the only things it can reach are
+// numbers, the variable store, and a fixed function table. There is no property access, no indexing, no
+// assignment and no way to name anything the table does not contain — not because those are filtered out,
+// but because the grammar cannot express them.
+const LGX_MAXLEN = 240, LGX_MAXDEPTH = 24, LGX_CACHE_MAX = 200;
+const LGX_FUNCS = {
+  abs:[1,(a)=>Math.abs(a)], floor:[1,(a)=>Math.floor(a)], ceil:[1,(a)=>Math.ceil(a)],
+  round:[1,(a)=>Math.round(a)], sqrt:[1,(a)=>Math.sqrt(Math.max(0,a))], sign:[1,(a)=>Math.sign(a)],
+  min:[2,(a,b)=>Math.min(a,b)], max:[2,(a,b)=>Math.max(a,b)],
+  clamp:[3,(a,lo,hi)=>Math.min(Math.max(a,lo),hi)], lerp:[3,(a,b,t)=>a+(b-a)*t],
+  rand:[2,(lo,hi)=>lo+Math.random()*(hi-lo)],
+};
+const _lgxCache = new Map();
+function _lgxTokens(s){
+  const out=[]; let i=0;
+  while(i<s.length){
+    const c=s[i];
+    if(c===' '||c==='\t'){ i++; continue; }
+    if(c>='0'&&c<='9' || (c==='.'&&s[i+1]>='0'&&s[i+1]<='9')){
+      let j=i+1; while(j<s.length && ((s[j]>='0'&&s[j]<='9')||s[j]==='.')) j++;
+      const n=parseFloat(s.slice(i,j)); if(!isFinite(n)) return null;
+      out.push({t:'n',v:n}); i=j; continue;
+    }
+    // an identifier may end in '@' — build 1231's per-player variable convention, and nothing else
+    if(/[A-Za-z_#]/.test(c)){
+      let j=i+1; while(j<s.length && /[A-Za-z0-9_#]/.test(s[j])) j++;
+      if(s[j]==='@') j++;
+      out.push({t:'id',v:s.slice(i,j)}); i=j; continue;
+    }
+    const two=s.substr(i,2);
+    if(two==='=='||two==='!='||two==='<='||two==='>='||two==='&&'||two==='||'){ out.push({t:'op',v:two}); i+=2; continue; }
+    if('+-*/%^()<>,'.indexOf(c)>=0){ out.push({t:'op',v:c}); i++; continue; }
+    return null;                       // anything else is not part of the language at all
+  }
+  return out;
+}
+const _LGX_BIN = {
+  '||':[1,(a,b)=>(a!==0||b!==0)?1:0], '&&':[2,(a,b)=>(a!==0&&b!==0)?1:0],
+  '==':[3,(a,b)=>a===b?1:0], '!=':[3,(a,b)=>a!==b?1:0],
+  '<':[4,(a,b)=>a<b?1:0], '<=':[4,(a,b)=>a<=b?1:0], '>':[4,(a,b)=>a>b?1:0], '>=':[4,(a,b)=>a>=b?1:0],
+  '+':[5,(a,b)=>a+b], '-':[5,(a,b)=>a-b],
+  '*':[6,(a,b)=>a*b], '/':[6,(a,b)=>b===0?0:a/b], '%':[6,(a,b)=>b===0?0:((a%b)+b)%b],
+  '^':[7,(a,b)=>Math.pow(a,b)],
+};
+// Compile to a closure tree. Returns null on ANY malformed input — a broken expression must read as 0 and
+// leave the graph running, never throw mid-pulse and kill the rest of the level's logic.
+function _lgxCompile(srcText){
+  const s=String(srcText||'').trim();
+  if(!s || s.length>LGX_MAXLEN) return null;
+  if(_lgxCache.has(s)) return _lgxCache.get(s);
+  const tk=_lgxTokens(s);
+  let fn=null;
+  if(tk && tk.length){
+    let pos=0, depth=0;
+    const peek=()=>tk[pos], eat=()=>tk[pos++];
+    const isOp=(v)=>{ const t=peek(); return t && t.t==='op' && t.v===v; };
+    function parseExpr(minPrec){
+      if(++depth>LGX_MAXDEPTH) throw 0;
+      let left=parseUnary();
+      for(;;){
+        const t=peek(); if(!t || t.t!=='op') break;
+        const b=_LGX_BIN[t.v]; if(!b || b[0]<minPrec) break;
+        eat();
+        const right=parseExpr(t.v==='^' ? b[0] : b[0]+1);   // ^ is right-associative
+        const f=b[1], l=left, r=right;
+        left=(g)=>f(l(g), r(g));
+      }
+      depth--; return left;
+    }
+    function parseUnary(){
+      if(isOp('-')){ eat(); const v=parseUnary(); return (g)=>-v(g); }
+      if(isOp('+')){ eat(); return parseUnary(); }
+      return parsePrimary();
+    }
+    function parsePrimary(){
+      const t=eat(); if(!t) throw 0;
+      if(t.t==='n'){ const v=t.v; return ()=>v; }
+      if(t.t==='op' && t.v==='('){ const e=parseExpr(1); if(!isOp(')')) throw 0; eat(); return e; }
+      if(t.t==='id'){
+        if(isOp('(')){
+          const def=LGX_FUNCS[t.v]; if(!def) throw 0;          // an unknown name is never callable
+          eat(); const args=[];
+          if(!isOp(')')){ for(;;){ args.push(parseExpr(1)); if(isOp(',')){ eat(); continue; } break; } }
+          if(!isOp(')')) throw 0; eat();
+          if(args.length!==def[0]) throw 0;                     // wrong arity is a compile error, not a NaN
+          const f=def[1];
+          if(args.length===1){ const a=args[0]; return (g)=>f(a(g)); }
+          if(args.length===2){ const a=args[0], b=args[1]; return (g)=>f(a(g), b(g)); }
+          const a=args[0], b=args[1], c=args[2]; return (g)=>f(a(g), b(g), c(g));
+        }
+        const nm=t.v; return (g)=>g(nm);                        // a bare name is ALWAYS a variable read
+      }
+      throw 0;
+    }
+    try{ const e=parseExpr(1); if(pos===tk.length) fn=e; }catch(err){ fn=null; }
+  }
+  if(_lgxCache.size >= LGX_CACHE_MAX) _lgxCache.clear();        // bounded: a hostile level cannot grow it
+  _lgxCache.set(s, fn);
+  return fn;
+}
+// Evaluate against the live variable store. Never returns NaN or Infinity — build 1169's rule: one poisoned
+// value silently corrupts every compare downstream of it.
+function _lgxEval(srcText){
+  const fn=_lgxCompile(srcText); if(!fn) return 0;
+  // OWN properties only. `logicVars` is a plain object, so a bare `constructor` or `__proto__` in an
+  // expression would otherwise read Object.prototype's — safe today only because those coerce to NaN and
+  // then to 0, which is luck rather than design. hasOwnProperty makes it structural: a name the creator
+  // never set reads 0 because it is unset, full stop.
+  const get=(nm)=>{ const k=_lgVarKey(nm); return Object.prototype.hasOwnProperty.call(logicVars,k) ? (+logicVars[k]||0) : 0; };
+  let v; try{ v=fn(get); }catch(e){ return 0; }
+  return isFinite(v) ? v : 0;
+}
 function _lgNum(v){
   if(v==null) return 0;
   const t=String(v).trim(); if(t==='') return 0;
@@ -10727,6 +10964,10 @@ function _lgPulse(id, pin){
                 : op==='min' ? Math.min(a,b) : op==='max' ? Math.max(a,b) : (b===0?0:((a%b)+b)%b);
         logicVars[k] = isFinite(v) ? v : 0;
       } _lgFollow(id,0); break; }
+    // build 1271: EXPRESSION — one node for arithmetic that used to be three or four, and the escape
+    // hatch the audit asked for in the only form a shared-level engine can safely ship.
+    case 'expr': { const k=_lgVarKey(String(p.name||'').trim()); if(k) logicVars[k]=_lgxEval(p.expr);
+      _lgFollow(id,0); break; }
     // build 1269: LIST — the graph's first ORDERED collection. Everything before it held one number per
     // name, so "deal a card", "did they press the switches in this order" and "shuffle the deck" were
     // unsayable: a 52-card deck was 52 nodes and a 4-step combination could not be compared at all.
@@ -10813,7 +11054,8 @@ function _lgPulse(id, pin){
     case 'emit': { logicEvent(String(p.name||'')); _lgFollow(id,0); break; }   // call a named 'event' node (the reusable-function mechanism), then CONTINUE this chain
     case 'do': { const _verb=p.verb||'toggle', _tgt=String(p.target||'').trim();
       if(_LG_TAG_VERBS.has(_verb) && _tgt && _tgt!=='this' && typeof _lgTagExists==='function' && !_lgTagExists(_tgt)) _noteLogicFailure('A "'+_verb+'" action targets the tag "'+_tgt+'", but no placed prop has that tag.');
-      try{ _applySignalAction({ do:_verb, target:_tgt, clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
+      try{ _applySignalAction({ do:_verb, target:_tgt, prefab:p.prefab||'',   /* build 1277: spawnprop was dead twice — the forwarded object dropped its prefab name */
+        clip:p.clip||'', cs:p.cs||'', text:p.text||'', sound:p.sound||'',
         etype:p.etype||'grunt', n:p.n, pk:p.pk||'health', item:p.item||'', who:p.who||'player', amt:p.amt, at:String(p.at==null?'':p.at).trim(),
         stat:p.stat||'speed', mul:p.mul, ewho:p.ewho||'enemies', cmd:p.cmd||'hunt' }, null); }
       catch(e){ if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "'+_verb+'" action failed: '+((e&&e.message)||e)); } _lgFollow(id,0); break; }
@@ -11126,6 +11368,7 @@ const LG_DEFS = {
   setvar:   { t:'Set variable',    cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'value',w:50},{k:'rand',l:'random',chk:1},{k:'min',l:'min',w:36,ifk:'rand'},{k:'max',l:'max',w:36,ifk:'rand'}] },
   addvar:   { t:'Change variable', cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'name',w:66,listId:'lgVarList'},{k:'value',l:'+/\u2212',w:50}] },
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
+  expr:     { t:'Expression',      cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'expr',l:'',w:210}] },
   list:     { t:'List',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'list',w:62,listId:'lgListList'},{k:'op',l:'',w:96,sel:[['push','Add value'],['fill','Fill 1..N'],['draw','Draw first \u2192'],['drawrand','Draw random \u2192'],['shuffle','Shuffle'],['remove','Remove value'],['clear','Clear'],['len','Length \u2192'],['has','Contains? \u2192'],['at','Value at \u2192'],['matches','Same order as? \u2192']]},{k:'value',l:'value',w:50,listId:'lgVarList',ifv:['op',['push','fill','remove','has']]},{k:'idx',l:'index',w:44,listId:'lgVarList',ifv:['op','at']},{k:'other',l:'other list',w:66,listId:'lgListList',ifv:['op','matches']},{k:'var',l:'\u2192 var',w:60,listId:'lgVarList',ifv:['op',['draw','drawrand','len','has','at','matches']]}] },
   read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
   do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
@@ -11506,7 +11749,18 @@ function _applySignalAction(s, src){
     if(s.do==='checkpoint'){ if(typeof setCheckpoint==='function') setCheckpoint(); return; }   // build 693: drop a respawn checkpoint at the player; no target needed
     if(s.do==='sound'){ if(s.sound && typeof playSample==='function'){ if(!playSample(s.sound) && typeof loadSound==='function') loadSound(s.sound); } return; }   // build 750: play a custom audio clip (light switch / button click / chime). No target needed.
     if(s.do==='emit'){ if(typeof logicEvent==='function' && (typeof NET==='undefined' || NET.mode!=='client')) logicEvent(String(s.text||'').trim()); return; }   // build 1027: pulse the logic graph's matching 'event' nodes. No target needed.
-    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
+    // build 1277: THE SIX PROP VERBS WERE NEVER IN THIS LIST. Builds 1170/1216/1258 implemented
+    // showprop/hideprop/moveprop/delprop/pushprop/spawnprop in _applyWorldAction and offered all six in
+    // the Do node's dropdown — but _applyWorldAction has exactly ONE call site, this one, and the list
+    // gating it named none of them. So every prop verb fell through to the tag loop below, which handles
+    // only toggle/open/close/anim/unlock, and did nothing. Three builds shipped capability no level could
+    // reach: nothing could destroy, hide, show, move, shove or spawn a prop at runtime.
+    //
+    // This is build 1158's "wrong half" pattern, and the tests are why it survived — they asserted the
+    // HANDLER's source and the DROPDOWN's source and never that a node reaches the handler. test-1277
+    // walks the path instead.
+    if(s.do==='spawn'||s.do==='pickup'||s.do==='damage'||s.do==='heal'||s.do==='kill'||s.do==='teleport'||s.do==='give'||s.do==='take'||s.do==='stat'||s.do==='music'||s.do==='command'
+       ||s.do==='showprop'||s.do==='hideprop'||s.do==='moveprop'||s.do==='delprop'||s.do==='pushprop'||s.do==='spawnprop'){   // builds 1073/1074/1077: the world verbs take no tag — they act on a PLACE, on WHO, or on the run itself
       if((typeof NET==='undefined' || NET.mode!=='client') && typeof _applyWorldAction==='function') try{ _applyWorldAction(s); }catch(e){}
       return; }
     if(s.target==='this'){   // build 1035: the signal's own prop is the target — no tag required
@@ -17122,11 +17376,26 @@ function removeProp(idx){
 let _groupSeq = 0;
 function _newGroupId(){ return 'g'+(++_groupSeq); }
 function _bumpGroupSeq(gid){ if(typeof gid==='string' && gid[0]==='g'){ const n=parseInt(gid.slice(1),10); if(isFinite(n) && n>_groupSeq) _groupSeq=n; } }   // keep new ids ahead of loaded ones
+// build 1280: THE PROP ENTRY, APPLIED IN ONE PLACE.
+// This 1,326-character block was byte-identical in loadHostedProps, loadLevelFromNet and restoreLevel —
+// the three paths by which a prop reaches the scene (first load, a multiplayer joiner, and every level
+// load or undo). The audit's code critic proved the cost by mutation: delete ONE statement from ONE copy
+// and the suite stays fully green while every prop a joiner receives silently loses its tag, taking the
+// trigger zones, all six prop verbs, the push verb, logic-graph place resolution and joint targets with
+// it. Nothing tested that the three agreed, because there was nothing to test — agreement was a fact
+// about the text, and text drifts.
+//
+// _pfSpawnEntry keeps its own near-copy DELIBERATELY and is not merged here: prefabs and paste strip
+// identity (a fresh gid, no nid) and that difference is the feature. Two functions that differ on purpose
+// beat three that are supposed to match.
+function _applyPropEntry(obj, p){
+  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
+}
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
   propModels.length = list.length;   // reserve slots so async GLB loads can't clobber later push-spawned props
   const _tRel = !!(savedLevel && savedLevel.tRel);
-  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
+  list.forEach((p, i)=> spawnProp(p.src, p.t, (obj)=>{ if(!_tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } _applyPropEntry(obj, p); }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip));   // slot=i preserves order
 }
 loadHostedProps();
 
@@ -17837,7 +18106,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:2, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -18599,8 +18868,9 @@ document.addEventListener('mousemove', e=>{
       return;
     }
     if(editorDragLook && !editorTopView){
-      player.yaw   -= e.movementX * HIP_SENS;
-      player.pitch -= e.movementY * HIP_SENS;
+      { const _s = _mouseSensNow(false);   /* build 1281 */
+        player.yaw   -= e.movementX * _s;
+        player.pitch -= e.movementY * _s; }
       player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
       if(Math.abs(e.movementX) + Math.abs(e.movementY) > 2) editorDragMoved = true;
     }
@@ -18622,7 +18892,7 @@ document.addEventListener('mousemove', e=>{
   const mx = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, e.movementX));
   const my = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, e.movementY));
   if(typeof cursorAimActive==='function' && cursorAimActive() && !drivingCar){ _vcX += mx; _vcY += my; return; }   // build 874: the pointer steers the twin-stick cursor, not the head (build 1103: chase-cursor too)
-  const sens = ads ? ((typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].scope) ? SCOPE_SENS : ADS_SENS) : HIP_SENS;
+  const sens = _mouseSensNow(ads);   /* build 1281: one derivation, so the two mouse paths cannot drift */
   player.yaw   -= mx * sens;
   player.pitch -= my * sens;
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
@@ -18660,14 +18930,45 @@ function _marqueeFinish(e){
   editorDragMoved = true;   // a real drag -> suppress the click-select that follows on mouseup
   const r = renderer.domElement.getBoundingClientRect();
   const x0=Math.min(_marqueeX0,e.clientX), x1=Math.max(_marqueeX0,e.clientX), y0=Math.min(_marqueeY0,e.clientY), y1=Math.max(_marqueeY0,e.clientY);
-  const cam = activeCam(); const hits=[];
-  for(const p of propModels){ if(!p || (p.userData && (p.userData.edLock || p.userData.edHide))) continue; _marqueeV.setFromMatrixPosition(p.matrixWorld); _marqueeV.project(cam);   // build 1036: locked/hidden props dodge the marquee
-    const sx = r.left + (_marqueeV.x*0.5+0.5)*r.width, sy = r.top + (-_marqueeV.y*0.5+0.5)*r.height;
-    if(_marqueeV.z < 1 && sx>=x0 && sx<=x1 && sy>=y0 && sy<=y1) hits.push(p);
+  const cam = activeCam();
+  // build 1275: sweep LIGHTS as well as props. Laying out a row of lamps in top view is exactly the job
+  // the marquee exists for, and it was the one thing it could not do — worse, every marquee ended with
+  // `selLights = []`, so box-selecting anything silently threw a light selection away.
+  //
+  // The editor's selection is ONE TYPE AT A TIME (`activeSel()` returns selProps or selLights depending on
+  // editorActive), and a genuinely mixed selection would mean reworking the gizmo, the group ops and the
+  // inspector. So the marquee picks the type the box actually CAUGHT: it keeps the type you are already
+  // working in when the box contains any of them, and switches when the box contains only the other. Both
+  // flows a creator would try therefore work, and neither surprises them by acting on something invisible.
+  const _sweep = (list) => {
+    const out=[];
+    for(const p of (list||[])){
+      if(!p || (p.userData && (p.userData.edLock || p.userData.edHide))) continue;   // build 1036: locked/hidden dodge the marquee
+      _marqueeV.setFromMatrixPosition(p.matrixWorld); _marqueeV.project(cam);
+      const sx = r.left + (_marqueeV.x*0.5+0.5)*r.width, sy = r.top + (-_marqueeV.y*0.5+0.5)*r.height;
+      if(_marqueeV.z < 1 && sx>=x0 && sx<=x1 && sy>=y0 && sy<=y1) out.push(p);
+    }
+    return out;
+  };
+  const propHits = _sweep(propModels);
+  const lightHits = _sweep(typeof lightModels!=='undefined' ? lightModels : null);
+  // which list this marquee is about
+  const wantLights = (editorActive==='lights') ? (lightHits.length>0 || propHits.length===0)
+                                               : (lightHits.length>0 && propHits.length===0);
+  if(wantLights){
+    if(e.shiftKey){ for(const g of lightHits) if(selLights.indexOf(g)<0) selLights.push(g); }
+    else selLights = lightHits.slice();
+    editorActive='lights';
+    if(selLights.length) editorTargets.lights.idx = lightModels.indexOf(selLights[selLights.length-1]);
+    if(typeof syncModeToActive==='function') syncModeToActive();
+    if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    return;
   }
+  const hits = propHits;
   const _mem = (typeof _groupMembers==='function') ? (o)=>_groupMembers(o).filter(m=>!(m && m.userData && m.userData.edLock)) : (o)=>[o];   // build 798: a box that catches any group member grabs the whole group (1038: minus locked members)
   if(e.shiftKey){ for(const o of hits) for(const m of _mem(o)) if(selProps.indexOf(m)<0) selProps.push(m); }   // add to the current selection
-  else { const set=[]; for(const o of hits) for(const m of _mem(o)) if(set.indexOf(m)<0) set.push(m); selProps = set; selLights = []; }   // fresh selection (empty box clears)
+  else { const set=[]; for(const o of hits) for(const m of _mem(o)) if(set.indexOf(m)<0) set.push(m); selProps = set; selLights = []; }   // fresh selection (empty box clears; a PROP marquee drops the light selection because only one type can be active)
   editorActive='props';
   if(selProps.length) editorTargets.props.idx = propModels.indexOf(selProps[selProps.length-1]);
   if(typeof syncModeToActive==='function') syncModeToActive();
@@ -18887,7 +19188,22 @@ function wepModelUrl(key){ const w=WEAPONS[key]; return (w && w.model) ? w.model
 // build 1266: the ONE rule for "this weapon shows no gun at all". Both the first-person viewmodel and the
 // third-person hand ask it, so a punching character can never end up holding a rifle and the two views can
 // never disagree about what the player is carrying. A creator's own model for the slot always wins (674).
-function _wepShowsFists(key){ const w=WEAPONS[key]; return !(w && w.model) && (key==='hands' || !!(w && w.fists)); }
+// build 1272: a melee weapon with no model of its own shows the procedural HANDS, not a rifle. Before
+// this, `crowbar` fell through to wepModelUrl's fallback and the player held the engine's gun while
+// swinging — visibly wrong in first person and, since build 1266 shares this predicate, on the
+// third-person body too. A creator's imported model still wins (build 674), which is the intended path
+// for an actual crowbar mesh.
+function _wepShowsFists(key){ const w=WEAPONS[key]; return !(w && w.model) && (key==='hands' || !!(w && w.melee)); }
+// Reported from play: "there's no option under gameplay to set the melee weapon as the starting weapon."
+// Correct — build 976 added startWeapon as "the PRIMARY you spawn with" and filtered `!melee` out of the
+// list, while fists got their own "Start unarmed" checkbox (which also carries the stricter
+// no-guns-at-all rule). The CROWBAR fell between the two features and could not be chosen at all, so the
+// standard survival-horror opener — you start with a melee weapon and find a gun — was unauthorable.
+//
+// So the filter is no longer "not melee" but "not the FISTS slot", which the checkbox owns. Named once
+// here and asked by all six sites (the dropdown, its current-value guard, both loaders, the serializer
+// and the deploy), because six copies of a condition is how the crowbar got lost in the first place.
+function _canStartWith(k){ const w=WEAPONS[k]; return !!w && k!=='hands' && !w.fists; }
 // Default per-weapon transform (falls back to the shared GUN_* framing when a weapon has no saved view).
 function wepView(key){ const w=WEAPONS[key]; return (w && w.view) ? w.view
   : { px:GUN_OFFSET.x, py:GUN_OFFSET.y, pz:GUN_OFFSET.z, rx:GUN_ROT.x*DEG, ry:GUN_ROT.y*DEG, rz:GUN_ROT.z*DEG, s:GUN_SCALE, mzx:GUN_OFFSET.x, mzy:GUN_OFFSET.y+0.04, mzz:GUN_OFFSET.z-1.02 }; }
@@ -19853,7 +20169,11 @@ function setAudioZoneMarkersVisible(v){ for(const g of audioZoneMarkers) g.visib
 // a hardcoded behaviour (death, audio, jump, ladder, fire, water); this one does nothing by
 // itself and hands the moment to the graph, which is where the author's game actually lives.
 // Authoritative side only (host/solo) — the graph is, so the trigger must be.
-const TRIG_WHO = ['player','enemy','any'];
+// build 1276: 'prop' — a zone can watch for a PROP, not just a body. Build 1170 gave props a runtime
+// lifecycle (show/hide/move/push) and 1258 let the graph shove them, but nothing could DETECT one: "the
+// ball is in the goal", "the crate is on the pressure plate" and "the key landed in the slot" were all
+// unaskable, which is most of what a sports or physics-puzzle level is made of.
+const TRIG_WHO = ['player','enemy','any','prop'];
 const TRIG_ON  = ['enter','exit','stay'];
 function _migrateTrigger(z){
   z=z||{};
@@ -19861,6 +20181,7 @@ function _migrateTrigger(z){
     y:+z.y||0, h:Math.max(0.5, Math.min(200, z.h!=null?+z.h:4)),
     on:(TRIG_ON.indexOf(z.on)>=0?z.on:'enter'),
     who:(TRIG_WHO.indexOf(z.who)>=0?z.who:'player'),
+    ptag:String(z.ptag==null?'':z.ptag).trim().slice(0,40),   /* build 1276: which prop tag to watch; blank = any prop */
     ev:String(z.ev==null?'':z.ev).trim().slice(0,60),
     once:!!z.once,
     every:Math.max(0.1, Math.min(60, +z.every||1)) };   // 'stay' cadence, seconds
@@ -19942,7 +20263,15 @@ function updateTriggerZones(dt){
     const z=triggerZones[i]; if(!z.ev) continue;
     const st=_trigState[i] || (_trigState[i]={ inside:false, fired:0, next:0 });
     if(!st.a) st.a={};
-    if(z.who!=='enemy'){
+    // build 1276: state the three audiences POSITIVELY. Both branches below used to test `who` with
+    // `!==`, which is correct for a three-value enum and silently wrong the moment a fourth arrives: a
+    // 'prop' zone would have fired for players AND enemies as well. Adding a value to an enum tested by
+    // exclusion enables every branch that did not name the new value — the same shape as build 1272's
+    // six copies of one condition.
+    const _wPlayer = (z.who==='player' || z.who==='any');
+    const _wEnemy  = (z.who==='enemy'  || z.who==='any');
+    const _wProp   = (z.who==='prop');
+    if(_wPlayer){
       for(const ac of _trigActors){
         const ast=st.a[ac.pid] || (st.a[ac.pid]={ inside:false, next:0 });
         const inz = !ac.dead && _trigContains(z, ac.x, ac.y, ac.z);
@@ -19952,10 +20281,24 @@ function updateTriggerZones(dt){
     }
     // enemies keep the union edge with no identity — an enemy has no pid, and per-enemy edges would
     // turn a 40-strong wave crossing a zone into 40 pulses a graph never asked for
-    if(z.who!=='player' && typeof enemies!=='undefined'){
+    if(_wEnemy && typeof enemies!=='undefined'){
       let inside=false;
       for(const en of enemies){ if(!en.mesh) continue;
         if(_trigContains(z, en.mesh.position.x, en.mesh.position.y, en.mesh.position.z)){ inside=true; break; } }
+      if(_trigStep(z, st, inside, now) && typeof logicEvent==='function') logicEvent(z.ev);
+    }
+    // build 1276: props take the enemy's UNION edge for the same reason — a prop has no pid, and a
+    // per-prop edge would turn a pile of debris rolling through a zone into a pulse each. A blank tag
+    // means any prop, which is the "did ANYTHING land in here" question.
+    if(_wProp && typeof propModels!=='undefined'){
+      const tag=z.ptag||'';
+      let inside=false;
+      for(const o of propModels){
+        if(!o || !o.visible) continue;                                  // hidden by the graph (1170) or culled — not in play
+        const u=o.userData; if(u && (u._shattered || u._pvHidden)) continue;
+        if(tag && !(u && u.tag===tag)) continue;
+        if(_trigContains(z, o.position.x, o.position.y, o.position.z)){ inside=true; break; }
+      }
       if(_trigStep(z, st, inside, now) && typeof logicEvent==='function') logicEvent(z.ev);
     }
   }
@@ -23431,7 +23774,7 @@ function loadLevelFromNet(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } _applyPropEntry(obj, p); if(obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('net prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('net prop '+i+' failed', e); } });
   }
   if(Array.isArray(level.lights)){ for(const L of level.lights) buildLight(L); }
   turretModelUrl=(level.turret && level.turret.url)||''; turretModelScale=(level.turret && +level.turret.scale)||1; turretModelYaw=(level.turret && +level.turret.modelYaw)||0; turretMuzzle={ fwd:(level.turret&&level.turret.muz&&+level.turret.muz.fwd)||1.1, up:(level.turret&&level.turret.muz&&+level.turret.muz.up)||0, side:(level.turret&&level.turret.muz&&+level.turret.muz.side)||0 }; clearTurrets(); if(Array.isArray(level.turrets)) for(const T of level.turrets) buildTurret(T);
@@ -23445,7 +23788,7 @@ function loadLevelFromNet(level){
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
   // per-player characters: the client keeps its own avatar; the host's character arrives via the welcome 'char' field
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && _canStartWith(level.game.startWeapon)) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   extractSpot = level.extract ? { x:level.extract.x||0, z:level.extract.z||0 } : null; if(level.extractFx){ extractFxCfg.color=level.extractFx.color!=null?level.extractFx.color:extractFxCfg.color; extractFxCfg.opacity=level.extractFx.opacity!=null?level.extractFx.opacity:extractFxCfg.opacity; extractFxCfg.height=level.extractFx.height!=null?level.extractFx.height:extractFxCfg.height; extractFxCfg.pillar=level.extractFx.pillar!=null?!!level.extractFx.pillar:extractFxCfg.pillar; if(typeof applyExtractFx==='function') applyExtractFx(); } if(typeof refreshExtractMarker==='function') refreshExtractMarker();   // restore the per-level extraction spot (campaign / co-op load path)
   audioZones = Array.isArray(level.audioZones) ? level.audioZones.map(z=>({ x:+z.x||0, z:+z.z||0, r:+z.r||14, url:z.url||'', vol:(z.vol!=null?+z.vol:0.8), loop:z.loop!==false })) : [];
@@ -25252,6 +25595,18 @@ function _structAllow(id){
   if(a.n >= STRUCT_BURST) return false;
   a.n += 1; return true;
 }
+// build 1279: a death is a rare event. Real play cannot produce more than a few per respawn cycle, so a
+// small leaky allowance costs an honest player nothing and makes farming pointless. Same shape as the
+// per-source damage buckets (1164) — bounded per SOURCE, so one cheat cannot tax anybody else.
+const _DIED_PER_SEC = 0.5, _DIED_BURST = 3;
+const _diedBuckets = {};
+function _diedOk(id){
+  const now = (typeof performance!=='undefined' ? performance.now() : Date.now()) / 1000;
+  const b = _diedBuckets[id] || (_diedBuckets[id] = { n: _DIED_BURST, t: now });
+  b.n = Math.min(_DIED_BURST, b.n + (now - b.t) * _DIED_PER_SEC); b.t = now;
+  if(b.n < 1) return false;
+  b.n -= 1; return true;
+}
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
@@ -25261,6 +25616,24 @@ function handleClientMsg(conn, msg){
   // attribute its damage to someone else. A `to` naming the host, or an unknown peer, falls through
   // and is handled here as normal.
   //
+  // build 1279: AN ALLOW-LIST, NOT A DENY-LIST. Build 1205 (below) wrote the rule as "only KNOWN damage
+  // types are mediated, everything else passes", reasoning that a whitelist would rot as new cosmetics
+  // arrived. That is exactly backwards for a trust boundary: the destination's handler is handleHostMsg,
+  // which cannot tell a relayed packet from one the host sent, so the relay was a write primitive into
+  // every host-authoritative verb. `{t:'hurt', to:V, d:1e9}` reached applyEnemyDamageToSelf unclamped;
+  // `wact` handed out remote kills and teleports; a forged `name` on a relayed `chat` impersonated
+  // anyone in a private message the host never renders and therefore cannot moderate.
+  //
+  // The set below is derived, not guessed: `sendToPlayer` is the only way a targeted message is built,
+  // and of the eight types that reach it, four (`wact`, `frag`, `credit`, `power`) are host->client verbs
+  // a client has no business relaying. The remaining three are genuine peer traffic. Anything else is
+  // DROPPED — and a dropped cosmetic is a missing visual, while a forwarded verb is a stolen match.
+  // When a new peer-to-peer type is added it must be named here, which is the cost this design accepts.
+  // A SET, not an object literal. `{...}[msg.t]` inherits Object.prototype, so `{t:'constructor'}` and
+  // `{t:'toString'}` look like members and sail through — an allow-list with a hole in it is worse than
+  // none, because it reads as safe. Caught by test-1279 before this shipped; it is the same trap build
+  // 1271 closed for the expression evaluator's variable lookup.
+  const _RELAY_OK = new Set(['pvpHit','grab','holdEnd','rematchReq']);
   // build 1205: BOUND THE RELAYED CLAIM. Builds 1130/1164 clamp damage aimed AT THE HOST — but a packet
   // addressed to a third client was forwarded VERBATIM, so in any 3+ player FFA a cheat could send
   // {t:'pvpHit', to:victim, d:1e9} and one-shot anyone, through walls, unrated: the marquee competitive
@@ -25273,12 +25646,14 @@ function handleClientMsg(conn, msg){
   if(msg && msg.to != null && +msg.to !== NET.myId && +msg.to !== id){   /* build 1201: a promoted host is not id 0 */
     const dest = NET.conns[+msg.to];
     if(dest){
+      if(!_RELAY_OK.has(msg.t)) return;                       // build 1279: not peer traffic — drop it
       if(msg.t==='pvpHit'){                                   // client-vs-client damage: clamp before relaying
         const d = _netDmgBudget(id, 'pvp', _netDmg(msg.d));
         if(!(d > 0)) return;                                  // over budget or non-positive: drop, never forward a raw claim
         const fwd = Object.assign({}, msg, { from: id, d }); delete fwd.to;
         try{ dest.send(fwd); }catch(e){} return;
       }
+      // the rest carry no authority, but they still travel as the VERIFIED sender, never a claimed one
       const fwd = Object.assign({}, msg, { from: id }); delete fwd.to;
       try{ dest.send(fwd); }catch(e){} return;
     }
@@ -25289,7 +25664,13 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
   else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmgBudget(id,'pvp',_netDmg(msg.d)), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
-  else if(msg.t==='died'){ const _by=+msg.by; if(_by===0 || NET.conns[_by]) registerDuelKill(_by, id); }            // a client died; credit the killer — build 1130: only a player who is actually in the match
+  else if(msg.t==='died'){
+    // build 1130 checks that the credited killer is really in the match. build 1279 adds the missing
+    // half: a client can only die so often. Unbounded, a loop handed an ally the kill target outright —
+    // and `died` is not in _structAllow, so nothing else was slowing it down.
+    const _by=+msg.by;
+    if((_by===0 || NET.conns[_by]) && _diedOk(id)) registerDuelKill(_by, id);
+  }
   else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(id, msg.id)){ const _s=NET.players[id]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, _netDmgBudget(id,'pvp',_netDmg(msg.d)), _sx, _sz)) registerDuelKill(id, msg.id); } }   // a client shot a bot — build 1130: the shooter is the connection, so a claimed `from` can no longer dodge the sameTeam check or steal the credit
   else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } if(NET.phase==='lobby') refreshLobby(); }   // a client changed character (the lobby card updates live)
   else if(msg.t==='rocket'){ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), d=new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]); fireRocket(o,d,id,true,msg.r||7,WEAPONS.launcher.dmg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'rocket', o:msg.o, d:msg.d, r:msg.r, by:id}); }catch(e){} } } }   // a client fired a rocket: host simulates it + relays the visual
@@ -25319,7 +25700,14 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='death'){ playerDeathFx(msg.p[0], msg.p[1], msg.p[2]); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send(msg); }catch(e){} } } }   // a client died -> show + relay the pop
   else if(msg.t==='chat'){ const nm=(NET.players[id]&&NET.players[id].name)||msg.name||('P'+id); const tx=(''+(msg.text||'')).slice(0,200); addChatLine(nm, tx); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'chat', name:nm, text:tx}); }catch(e){} } } }   // a client chatted -> show + relay to the others
   else if(msg.t==='race'){ _raceNet[id]={ lap:msg.lap|0, f:+msg.f||0 }; for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'race', from:id, lap:msg.lap, f:msg.f}); }catch(e){} } } }   // build 836: a racer's progress -> store + relay
-  else if(msg.t==='raceFin'){ _raceDeclareWinner(id); }   // build 836: a client crossed the final line — first one in wins
+  else if(msg.t==='raceFin'){
+    // build 1279: CHECK THE CLAIM. This called _raceDeclareWinner with no validation at all, so one
+    // packet at t=0 won any race. The host already tracks every racer's lap from their own `race`
+    // progress messages (25595), so the evidence to check against was sitting right there.
+    const _rp = (typeof _raceNet!=='undefined') ? _raceNet[id] : null;
+    const _need = Math.max(1, (typeof gameCfg!=='undefined' && gameCfg.raceLaps) ? (gameCfg.raceLaps|0) : 3);
+    if(_rp && (_rp.lap|0) >= _need) _raceDeclareWinner(id);
+  }   // build 836: a client crossed the final line — first one in wins
   else if(msg.t==='rematchReq'){ if(gameOver) hostRematch(); }   // a client asked to replay; only honor it once the match has actually ended (so it can't force a mid-match restart)
 }
 function handleHostMsg(msg){
@@ -28017,10 +28405,10 @@ function checkProximity(){
     const _uk = (typeof padRecent==='function' && padRecent()) ? 'Y' : (isTouch ? 'USE' : 'E');   // build 935: the prompt names the key on the device in use
     if(nearTarget.type==='station'){
       const w=W();
-      prompt.innerHTML = `AMMO STATION — <b>${_uk}</b> Buy ${w.refillAmt} ${w.name} rounds &nbsp;·&nbsp; ◆${w.refillCost}`;
+      prompt.innerHTML = `AMMO STATION — <b>${_uk}</b> Buy ${w.refillAmt} ${_creditEsc(w.name)} rounds &nbsp;·&nbsp; ◆${w.refillCost}`;   /* build 1277: weapon names are authorable (1190) */
     } else if(nearTarget.type==='anim' || nearTarget.type==='xanim' || nearTarget.type==='use'){
       const lo=nearTarget.obj, lk=lo&&lo.userData.lockId;
-      if(lk && !lo.userData.unlocked) prompt.innerHTML = playerKeys[lk] ? `<b>${_uk}</b> Unlock \u2014 ${keyDisplayName(lk)}` : `LOCKED \u2014 needs ${keyDisplayName(lk)}`;
+      if(lk && !lo.userData.unlocked) prompt.innerHTML = playerKeys[lk] ? `<b>${_uk}</b> Unlock \u2014 ${_creditEsc(keyDisplayName(lk))}` : `LOCKED \u2014 needs ${_creditEsc(keyDisplayName(lk))}`;   /* build 1277: key names are authorable */
       else prompt.innerHTML = `<b>${_uk}</b> Activate`;
     } else if(nearTarget.type==='npc'){
       const nm=nearTarget.obj.userData.npcName; prompt.innerHTML = nm ? `<b>${_uk}</b> Talk to ${_creditEsc(nm)}` : `<b>${_uk}</b> Talk`;
@@ -28903,7 +29291,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1270 · 2026-08-01';
+const BUILD_VERSION = 'build 1285 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -29075,7 +29463,41 @@ if(savedLevel && savedLevel.aim && savedLevel.aim.state){
   if(!savedLevel.aimWep){ for(const k of Object.keys(WEAPONS)) aimByWep[k]=Object.assign({}, AIM_DEFAULT, a); }   // legacy levels: seed every weapon from the single saved pose
   ADS_AIM.set(a.x, a.y, a.z); ADS_ROT.set(a.rx*D2R, a.ry*D2R, a.rz*D2R); adsFovLive = a.fov;
 }
+const MOUSE_SENS_MIN = 0.1, MOUSE_SENS_MAX = 5;
 const HIP_SENS = 0.0022, ADS_SENS = 0.0012;  // slower look while aiming for precision
+// build 1281: MOUSE SENSITIVITY. The engine shipped a gamepad look slider (909) and two touch sliders
+// (1042) and nothing at all for the mouse — the primary input, and the one setting every player in this
+// genre changes first. HIP_SENS was a const with two consumers, so a player whose mouse DPI disagreed with
+// one hardcoded number had no recourse but to change it system-wide.
+//
+// A MULTIPLIER, not a replacement: 1.0 is byte-identical to every value builds 160-1280 were tuned
+// against, so nothing authored moves and no level plays differently. Stored per device (it is a property
+// of the mouse, not of the level) beside the pad and touch prefs.
+let mouseSens = 1;
+try{ const _ms = parseFloat(localStorage.getItem('breach_mouse_sens')); if(isFinite(_ms)) mouseSens = Math.max(MOUSE_SENS_MIN, Math.min(MOUSE_SENS_MAX, _ms)); }catch(e){}
+function saveMouseSens(){ try{ localStorage.setItem('breach_mouse_sens', String(mouseSens)); }catch(e){} }
+// ZOOM-MATCHED AIM. The audit measured the shipped ratio: ADS_SENS/HIP_SENS = 0.545 against a 2.34x zoom,
+// so turning the mouse the same distance swept ~28% more world while aimed than while hip-firing — the
+// thing "muscle memory doesn't carry into ADS" actually means. `mouseAimMatch` divides the aim sensitivity
+// by the zoom instead, which is what a zoom-matched (monitor-distance) setting does. Default OFF, because
+// it changes a feel every existing player has already learned.
+let mouseAimMatch = false;
+try{ mouseAimMatch = localStorage.getItem('breach_mouse_aimmatch') === '1'; }catch(e){}
+function saveMouseAimMatch(){ try{ localStorage.setItem('breach_mouse_aimmatch', mouseAimMatch ? '1' : '0'); }catch(e){} }
+// The look sensitivity for the current state, in ONE place so the two mouse consumers cannot disagree.
+function _mouseSensNow(ads){
+  const base = ads ? ((typeof WEAPONS!=='undefined' && typeof curWep!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].scope) ? SCOPE_SENS : ADS_SENS) : HIP_SENS;
+  let s = base * mouseSens;
+  if(ads && mouseAimMatch){
+    // zoom = tan(baseFov/2) / tan(adsFov/2) — the real magnification, not the fov ratio, which is what
+    // "zoom-matched" means to anyone who has set this in another shooter.
+    const _bf = (typeof BASE_FOV!=='undefined') ? BASE_FOV : 78;
+    const _af = (typeof adsFovLive!=='undefined') ? adsFovLive : ((typeof ADS_FOV!=='undefined') ? ADS_FOV : _bf);
+    const z = (_af > 0) ? (Math.tan(_bf*Math.PI/360) / Math.tan(_af*Math.PI/360)) : 0;
+    if(z > 1) s = HIP_SENS * mouseSens / z;   // same on-screen arc per mouse-inch, aimed or not
+  }
+  return s;
+}
 const SCOPE_SENS = 0.00045;                   // much slower under the scope's hard zoom
 addEventListener('wheel', e=>{ if(typeof buildMode!=='undefined' && buildMode){ _bmSpin(e.deltaY, e.deltaMode); return; } if(heldProp){ heldDist=Math.max(HOLD_MIN, Math.min(HOLD_MAX, heldDist - e.deltaY*0.003)); } }, {passive:true});
 addEventListener('mousedown', e=>{
@@ -31075,6 +31497,9 @@ function enemyHurt(en, dmg, sx, sz){
   if(!en || en.hp<=0) return false;
   en.hp -= dmg;
   if(en.hp<=0){ killEnemy(en, sx, sz); return true; }
+  /* build 1283: a hurt grunt. Shooting something you cannot see told you nothing before — the hitmarker
+     is on screen, and the thing you shot is not. This is the same information, from the right direction. */
+  if(typeof SFX!=='undefined' && SFX.enemyHurt && en.mesh) SFX.enemyHurt(en.mesh.position);
   if(typeof _lgEnemyEvent==='function') _lgEnemyEvent('onhurt', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) });   // build 1077: it took the hit and lived — a boss phase, a retreat, an alarm; build 1221: with the enemy's position + HP
 
   const now=performance.now();
@@ -34520,6 +34945,7 @@ function loop(){
           const lx = near.pos.x - en.mesh.position.x, lz = near.pos.z - en.mesh.position.z, ll = Math.hypot(lx,lz)||1;
           en._lungeDx = lx/ll; en._lungeDz = lz/ll; en._lungeT = (en.lungeDur||0.45);
         } else if(en.cooldown<=0 && en._chase && en._see && en._dist > (en._reach||2.4)+1.5 && en._dist < (en.lungeRange||16)){
+          if(typeof SFX!=='undefined' && SFX.lungeWind) SFX.lungeWind(en.mesh.position);   /* build 1283: the 520ms charger telegraph, finally audible */
           en._lungeWind = nowMs + (en.lungeWind||520); en._attackT = nowMs + (en.lungeWind||520) + 450; en.cooldown = 2.6; en._lungePending = true; _charging = true; en._wantMove = false;   // begin the telegraph
         }
       }
@@ -34793,6 +35219,7 @@ function loop(){
         }
       } else if(en._chase && en._dist < (en._reach || 2.4) && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6 && en.cooldown<=0 && !editorOpen && !en._windupT){   // build 539: a chasing melee enemy in reach AND at roughly the same height attacks on PROXIMITY (no LOS gate — at melee range the sightline is moot, and requiring it meant they only swung when literally touching on a cover-heavy map)
         en.cooldown = 0.8; en._attackT = nowMs + 550; en._windupT = nowMs + ENEMY_MELEE_WINDUP_MS;   // build 627: wind up now; the hit lands at the end of the wind-up, not on contact
+        if(typeof SFX!=='undefined' && SFX.meleeWind) SFX.meleeWind(en.mesh.position);   // build 1283: the tell is audible, and positional — this is what makes it dodgeable from behind
       }
       // build 627: resolve a telegraphed melee strike. Damage lands when the wind-up completes, and ONLY if the
       // target is still within reach (a little leniency) at roughly the same height — so backing out of range
@@ -34800,6 +35227,7 @@ function loop(){
       // attack animation something real to telegraph.
       if(en._windupT && nowMs >= en._windupT){
         en._windupT = 0;
+        if(typeof SFX!=='undefined' && SFX.meleeSwing) SFX.meleeSwing(en.mesh.position);   // build 1283: the swing itself, whether or not it connects
         const _tn = en._near;
         if(_tn && _tn.hurt && en._dist < (en._reach || 2.4) * 1.3 && Math.abs((_tn.pos.y - EYE) - en.mesh.position.y) < 2.6){
           _tn.hurt(en.dmg || 9, en.mesh.position.x, en.mesh.position.z);   // routes to the local player or, in co-op, the remote one
@@ -36839,7 +37267,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', autoRig:c.autoRig||undefined, ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
-    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: (WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+    game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
     pstart:  { x: playerSpawn.x, y: playerSpawn.y||0, z: playerSpawn.z, yaw: playerSpawn.yaw },
@@ -37520,7 +37948,18 @@ function renderTriggersPanel(){
         b.onclick=()=>{ pushUndoSnapshot(); on(o[0]); touch(); renderTriggersPanel(); }; wrap.appendChild(b); });
       row(label, wrap); };
     seg('when', [['enter','Enters'],['exit','Leaves'],['stay','Stays in']], z.on, v=>{ z.on=v; });
-    seg('who', [['player','Player'],['enemy','Enemy'],['any','Anything']], z.who, v=>{ z.who=v; });
+    seg('who', [['player','Player'],['enemy','Enemy'],['any','Anything'],['prop','A prop']], z.who, v=>{ z.who=v; });
+    if(z.who==='prop'){   /* build 1276 */
+      const ti=document.createElement('input'); ti.type='text'; ti.value=z.ptag||''; ti.placeholder='any prop';
+      ti.setAttribute('list','lgTagList');
+      ti.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
+      ti.onchange=()=>{ pushUndoSnapshot(); z.ptag=String(ti.value||'').trim().slice(0,40); touch(); renderTriggersPanel(); };
+      row('prop tag', ti);
+      const h=document.createElement('div'); h.className='hint'; h.style.cssText='font-size:10px;opacity:0.75;margin:2px 0 0;';
+      h.textContent=z.ptag ? ('Fires when a prop tagged \u201c'+z.ptag+'\u201d is inside \u2014 a ball in a goal, a crate on a plate. One edge for the whole zone, however many arrive.')
+                           : 'Blank = ANY prop. Tag a prop on the World tab to watch just that one.';
+      box.appendChild(h);
+    }
     const mkN=(label,key,min,max,step,after)=>{
       const inp=document.createElement('input'); inp.type='number'; inp.min=min; inp.max=max; inp.step=step; inp.value=z[key];
       inp.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 5px;font-size:11px;';
@@ -37706,7 +38145,7 @@ function restoreLevel(level){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
     _healLevelNids(level.props);   // build 923: duplicate nids heal the SAME way on every machine
-    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1}); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
+    level.props.forEach((p,i)=>{ try{ _nidSpawnStart(p.nid); spawnProp(p.src, p.t, (obj)=>{ try{ if(_nidSpawnEnd(p.nid, obj)) return; if(!level.tRel){ obj.position.y=p.t[1]; refreshPropCollider(obj); } _applyPropEntry(obj, p); if(NET.mode!=='off' && obj.userData.nid) NET.sentProps.set(obj.userData.nid, obj.userData.phys ? 'dyn' : propTuple(obj)); }catch(e){ console.warn('prop '+i+' apply failed', e); } }, i, {trig:(p.animTrig||(p.anim==='trigger'?'interact':'auto')), play:(p.animPlay||(p.anim==='trigger'?'once':'loop'))}, p.mat || (p.tex ? {tex:p.tex} : null), undefined, p.nid, p.animClip); }catch(e){ console.warn('prop '+i+' failed to load', e); } });
   }
   // lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
@@ -37715,7 +38154,7 @@ function restoreLevel(level){
   // enemy spawns
   for(let i=spawnMarkers.length-1;i>=0;i--) removeSpawnMarker(i);
   if(Array.isArray(level.spawns)){ for(const sp of level.spawns) buildSpawnMarker(sp); } setSpawnMarkersVisible(editorOpen);
-  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && WEAPONS[level.game.startWeapon] && !WEAPONS[level.game.startWeapon].melee) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
+  if(level.game){ gameCfg.mode = level.game.mode||'random'; gameCfg.winWaves = level.game.winWaves||0; gameCfg.upgrades = level.game.upgrades !== false; gameCfg.objective = level.game.objective||'eliminate'; gameCfg.surviveSecs = level.game.surviveSecs!=null ? level.game.surviveSecs : 120; gameCfg.raceLaps = level.game.raceLaps!=null ? level.game.raceLaps : 3; gameCfg.raceBots = level.game.raceBots!=null ? level.game.raceBots : 3; gameCfg.raceBotSkill = level.game.raceBotSkill!=null ? level.game.raceBotSkill : 0.85; gameCfg.extractHold = level.game.extractHold!=null ? level.game.extractHold : 5; gameCfg.extractRadius = level.game.extractRadius!=null ? level.game.extractRadius : 3.5; gameCfg.bossWave = level.game.bossWave!=null ? level.game.bossWave : 5; gameCfg.wavesText = (typeof level.game.wavesText==='string') ? level.game.wavesText.slice(0,2000) : ''; gameCfg.waves = gameCfg.wavesText ? parseWaveManifest(gameCfg.wavesText) : null; gameCfg.noRespawn = !!level.game.noRespawn; gameCfg.unarmed = !!level.game.unarmed; gameCfg.startWeapon = (typeof level.game.startWeapon==='string' && _canStartWith(level.game.startWeapon)) ? level.game.startWeapon : 'rifle'; gameCfg.allowPickup = level.game.allowPickup!==false; gameCfg.flashlight = !!level.game.flashlight; gameCfg.flashCfg = _sanitizeFlash(level.game.flash); if(typeof applyFlashCfg==="function") applyFlashCfg(); gameCfg.goalText = (typeof level.game.goalText==="string") ? level.game.goalText.slice(0,160) : ""; gameCfg.respawnOnDeath = !!level.game.respawnOnDeath; gameCfg.winText = (typeof level.game.winText==="string") ? level.game.winText.slice(0,240) : ""; gameCfg.loseText = (typeof level.game.loseText==="string") ? level.game.loseText.slice(0,240) : ""; gameCfg.ragdoll = !!level.game.ragdoll; gameCfg.view = (level.game.view==='top'||level.game.view==='side'||level.game.view==='chase') ? level.game.view : 'fps'; gameCfg.viewDist = level.game.viewDist!=null ? +level.game.viewDist : 0; gameCfg.viewAxis = (level.game.viewAxis==='z') ? 'z' : 'x'; gameCfg.viewYaw = +level.game.viewYaw||0; gameCfg.viewTilt = (level.game.viewTilt!=null) ? +level.game.viewTilt : null; gameCfg.viewHeight = +level.game.viewHeight||0; gameCfg.viewRoll = +level.game.viewRoll||0; gameCfg.viewOrbit = !!level.game.viewOrbit; gameCfg.chaseCursorAim = !!level.game.chaseCursorAim; gameCfg.enemyMods = _sanitizeEnemyMods(level.game.enemyMods);   // build 1085: null tilt = the mode's default · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
       if(level.game.spawnRegion){ const _sr=level.game.spawnRegion; gameCfg.spawnRegion = { on:!!_sr.on, shape:_sr.shape||'circle', x:+_sr.x||0, z:+_sr.z||0, r:(_sr.r!=null?+_sr.r:30), poly:Array.isArray(_sr.poly)?_sr.poly.map(p=>({x:+p.x||0,z:+p.z||0})):[] }; } else { gameCfg.spawnRegion = { on:false, shape:'circle', x:0, z:0, r:30, poly:[] }; } }
   if(level.dmgNum){ const d=level.dmgNum; dmgNumCfg.on = d.on!==false; if(d.size) dmgNumCfg.size=+d.size; if(d.hit) dmgNumCfg.hitColor=d.hit; if(d.kill) dmgNumCfg.killColor=d.kill; }
   if(level.pstart){ playerSpawn.x=level.pstart.x||0; playerSpawn.z=level.pstart.z||0; playerSpawn.y=level.pstart.y||0; playerSpawn.yaw=level.pstart.yaw||0; } else { playerSpawn.x=0; playerSpawn.z=0; playerSpawn.y=0; playerSpawn.yaw=0; }
@@ -38716,9 +39155,30 @@ function buildEditorPanel(){
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
     let lvl, str; try{ lvl = serializeLevel(); const th = _commCaptureThumb(); if(th) lvl.thumb = th; str = JSON.stringify(lvl); }catch(e){ if(note) note.textContent='Could not serialize the level'; return; }
-    // build 958: PRIMARY path — submit straight to our own server for review (no GitHub account
-    // needed). Real rejections (too big / rate-limited / queue full) surface as-is and stop; only
-    // an unreachable server falls through to the GitHub-issue flow below.
+    // build 1282: RUN THE LEVEL CHECK BEFORE PUBLISHING. levelIssues() had exactly two call sites — its
+    // own definition and the panel that renders it — so the engine would write "this prop's model is
+    // stored on this device only and will load for nobody else", or "a signal targets a tag no prop
+    // carries", and then let the creator publish it to strangers anyway. The knowledge existed; nothing
+    // asked for it at the one moment it mattered.
+    //
+    // It ADVISES, it does not refuse: a warning is not proof a level is broken (an intentionally unused
+    // tag is fine), and an engine that blocks publishing on its own heuristic will be wrong sometimes and
+    // infuriating always. The creator sees what the engine sees and decides.
+    try{
+      const _pre = (typeof levelIssues==='function') ? levelIssues() : [];
+      if(_pre && _pre.length){
+        const _top = _pre.slice(0, 6).map(t=>'\u2022 ' + String(t)).join('\n');
+        const _more = _pre.length > 6 ? ('\n\u2026and ' + (_pre.length-6) + ' more.') : '';
+        // _uiDialog, not uiConfirm: uiConfirm only calls back on CONFIRM, so a cancelled dialog would
+        // leave this promise pending forever and the publish flow would die silently. Both buttons
+        // resolve, and Escape routes to the first non-primary one, so every exit path settles.
+        const _go = await new Promise(res=>_uiDialog(
+          'Level Check found ' + _pre.length + ' thing' + (_pre.length===1?'':'s') + ' to look at:\n\n' + _top + _more +
+          '\n\nPublish anyway?',
+          [ { label:'Go back', fn:()=>res(false) }, { label:'Publish anyway', primary:true, fn:()=>res(true) } ]));
+        if(!_go){ if(note) note.textContent='Publish cancelled \u2014 see Level Check in the Save tab.'; return; }
+      }
+    }catch(e){}
     try{
       let name='', author='';   // build 959: one themed modal (fullscreen survives), not window.prompt()
       try{ name=(localStorage.getItem('breach_last_level_name')||'').trim(); }catch(e){}
@@ -38796,6 +39256,20 @@ function levelIssues(){
         issues.push(_emitterRefused+' emissive prop light'+(_emitterRefused>1?'s were':' was')+' past the engine budget and dropped at deploy — those props still glow, they just do not cast light.');
       if(c.shadow > 4)
         issues.push(c.shadow+' lights cast shadows. Each one is an extra render of the level every time it moves — keep it to a few key lights.');
+    }
+    // build 1274: culling is opt-in (1273); when it IS on, say what it is removing. A subsystem that can
+    // DELETE THINGS FROM THE SCREEN must be able to account for itself — build 1273 shipped this feature
+    // off because a play report could not be reproduced, and the lesson from that is not to guess harder
+    // next time but to make the next report one number instead of another round of hypotheses. The
+    // smallest measured radius is the tell: a large model reading a tiny radius is the whole class of bug
+    // that could not be ruled out.
+    if(typeof lodReport==='function'){
+      const r=lodReport();
+      if(r && r.px>0 && (r.culled>0 || r.noShadow>0))
+        issues.push('Culling is on (below '+r.px+'px): '+r.culled+' prop'+(r.culled===1?'':'s')+' hidden and '
+          +r.noShadow+' not casting shadows, of '+r.eligible+' eligible. Smallest measured prop radius is '
+          +r.minR.toFixed(2)+'m'+(r.minName?(' \u2014 '+r.minName):'')
+          +'. If something large is disappearing, set Cull below (px) back to 0; that radius is the number to report.');
     }
     // build 1167: failed asset loads lead the list — "my prop vanished" is the #1 support thread and the
     // answer was sitting in the console. The url's tail is shown because Poly Pizza urls only differ there.
@@ -39331,8 +39805,8 @@ function renderEditorFields(){
         texRow(b,'https://\u2026/grade-lut.png (256x16 strip)','lut'); slider(b,'LUT strength','lutAmt',0,1,0.05); hint(b,'Color grade LUT: a standard 256\u00d716 (or 1024\u00d732) strip \u2014 screenshot the game, drop the shot into any photo editor with a neutral LUT strip, grade them together, crop the strip back out, host it, paste the URL. The whole look of the level follows.','1px 0 4px');
         slider(b,'Ambient occlusion','ssao',0,1,0.05); slider(b,'AO radius','ssaoRadius',0.1,4,0.1);   // build 1126
         slider(b,'Reflections','ssr',0,1,0.05);   /* build 1245: screen-space floor reflections; 0 = off */
-        slider(b,'Cull below (px)','lodPx',0,16,1);   /* build 1267 */
-        hint(b,'','2px 0 6px').textContent='Props smaller than this on screen stop being drawn, and stop casting a shadow at 4\u00d7 this size (a shadow that small is not a shape you can read). 0 turns it off; 2 is about the size of a full stop and removes nothing you could see. Raise it on a heavy level to trade a little pop-in for draw calls. Never applies while the editor is open, lights are never hidden, and a culled prop still blocks bullets.';
+        slider(b,'Cull below (px)','lodPx',0,16,1);   /* build 1267 \u00b7 1273: default 0 = OFF */
+        hint(b,'','2px 0 6px').textContent='OFF by default (0). Set it above 0 and props smaller than this many screen pixels stop being drawn, and stop casting a shadow at 4\u00d7 that size \u2014 a way to buy back draw calls on a level with hundreds of props. Try 1 or 2 first and look around before going higher. Nothing within '+LOD_NEAR_KEEP+'m is ever affected however small it looks, it never applies while the editor is open, props carrying a light are never hidden, and a hidden prop still blocks bullets.';
         hint(b,'','0 0 4px').textContent='Motion blur = camera blur strength (real per-pixel smear when you turn; 0 = off). Bloom threshold = how bright a surface must be to glow. Ambient occlusion darkens creases and the ground where objects meet it — radius is how far it reaches, in metres. These save with the level; the on/off switch is a global preference.';
       } }
     { const b=subSec('Sky','sky',true);
@@ -40205,12 +40679,12 @@ function renderEditorFields(){
       hint(bPly, '<b>Starts with</b> — the weapon players spawn holding', '12px 0 4px');
       const swRow=document.createElement('div'); swRow.style.cssText='display:flex;align-items:center;gap:8px;margin:2px 0 2px;';
       const swSel=document.createElement('select'); swSel.style.cssText='flex:1;font-size:12px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 6px;';
-      const _guns=Object.keys(WEAPONS).filter(k=>WEAPONS[k] && !WEAPONS[k].melee);
-      const _cur=(WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle';
+      const _guns=Object.keys(WEAPONS).filter(_canStartWith);   /* build 1272: melee included; the fists slot is the checkbox below */
+      const _cur=_canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle';
       for(const k of _guns){ const o=document.createElement('option'); o.value=k; o.textContent=WEAPONS[k].name; if(k===_cur) o.selected=true; swSel.appendChild(o); }
       swSel.onchange=()=>{ pushUndoSnapshot(); gameCfg.startWeapon=swSel.value; _levelDirty=true; };
       swRow.appendChild(swSel); bPly.appendChild(swRow);
-      hint(bPly, '', '0 0 6px').textContent='Players can still find and pick up other weapons placed in the level.';
+      hint(bPly, '', '0 0 6px').textContent='Players can still find and pick up other weapons placed in the level. A melee weapon works here too \u2014 start with the crowbar and let them find a gun. Give it a model on the Weapons tab, or it is swung bare-handed.';
     }
     hint(bPly, '<b>Hands / unarmed</b>', '12px 0 4px');
     const _chk=(label, checked, on)=>{ const lab=document.createElement('label'); lab.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;cursor:pointer;'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked; cb.style.cssText='width:15px;height:15px;accent-color:var(--accent);cursor:pointer;'; cb.onchange=()=>{ pushUndoSnapshot(); on(cb.checked); }; const sp=document.createElement('span'); sp.innerHTML=label; lab.appendChild(cb); lab.appendChild(sp); bPly.appendChild(lab); return cb; };
@@ -44081,7 +44555,7 @@ function startGame(){
   player.hp=100; player.maxHp=100; run = { ...RUN0 }; _checkpoint=null; if(typeof closeDialogue==='function') closeDialogue(); if(typeof closeUpgradePicker==='function') closeUpgradePicker(); player.pos.set(playerSpawn.x, terrainHeightAt(playerSpawn.x, playerSpawn.z)+(playerSpawn.y||0)+EYE, playerSpawn.z); player.vel.set(0,0,0);
   player.yaw=playerSpawn.yaw; player.pitch=0; player.onGround=(playerSpawn.y||0)<=0;
   // reset weapons — build 672: an "unarmed" level starts you on fists, no guns
-  if(gameCfg.unarmed){ owned = ['hands']; curWep='hands'; } else { const _sw=(gameCfg.startWeapon && WEAPONS[gameCfg.startWeapon] && !WEAPONS[gameCfg.startWeapon].melee) ? gameCfg.startWeapon : 'rifle'; owned = [_sw]; curWep=_sw; }   // build 976: per-level starting weapon
+  if(gameCfg.unarmed){ owned = ['hands']; curWep='hands'; } else { const _sw=_canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle'; owned = [_sw]; curWep=_sw; }   // build 976: per-level starting weapon
   if(typeof showWeaponModel==='function') showWeaponModel(curWep);   // show fists / gun for the chosen loadout
   flashlightOn=false; if(_flashlight){ _flashlight.intensity=0; }   // flashlight off at the start of a run (stays visible at 0 — see ensureFlashlight)
   if(gameCfg.flashlight && typeof ensureFlashlight==='function') ensureFlashlight();   // build 977: pre-warm — the spotlight joins the scene during level start, so shaders compile once here, not on the first L press
@@ -45089,13 +45563,18 @@ function bindPauseMenu(){
   const pb=document.getElementById('pauseBtn'); if(pb) pb.onclick=openPause;
   const r=document.getElementById('pauseResume'); if(r) r.onclick=resumeGame;
   const plb=document.getElementById('pauseLoadout'); if(plb) plb.onclick=()=>{ if(typeof openLoadout==='function') openLoadout(); };
-  const pcr=document.getElementById('pauseCredits'); if(pcr) pcr.onclick=()=>{ if(typeof showCreditsModal==='function') showCreditsModal(); };   // build 1166: CC-BY attribution must be reachable at play time
+  /* build 1166: CC-BY attribution must be reachable at play time. build 1277: TWO buttons carried
+     id="pauseCredits", so getElementById only ever reached the first and the second was inert — which is
+     how the duplicate handler assignment below went unnoticed. The second is #pauseCredits2 now. */
+  for(const _cid of ['pauseCredits','pauseCredits2']){ const pcr=document.getElementById(_cid); if(pcr) pcr.onclick=()=>{ if(typeof showCreditsModal==='function') showCreditsModal(); }; }
   const eh=document.getElementById('pauseEditHud'); if(eh) eh.onclick=()=>{ const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.add('hidden'); enterTouchEdit(); };
   const smb=document.getElementById('pauseSprintMode'); if(smb){ const upds=()=>{ smb.textContent='Sprint: '+(_sprintMode==='toggle'?'Toggle':'Hold'); }; upds(); smb.onclick=()=>{ _sprintMode = _sprintMode==='toggle'?'hold':'toggle'; _sprintToggled=false; try{ localStorage.setItem('breach_sprint_mode', _sprintMode); }catch(e){} upds(); }; }
   const crmb=document.getElementById('pauseCrouchMode'); if(crmb){ const updc=()=>{ crmb.textContent='Crouch: '+(_crouchMode==='toggle'?'Toggle':'Hold'); }; updc(); crmb.onclick=()=>{ _crouchMode = _crouchMode==='toggle'?'hold':'toggle'; _crouchToggled=false; try{ localStorage.setItem('breach_crouch_mode', _crouchMode); }catch(e){} updc(); }; }   // Toggle lets players crouch-walk without the Ctrl+W browser close-combo
   const cmb=document.getElementById('pauseCamMode'); if(cmb){ const updc=()=>{ cmb.textContent='Camera: '+(tpMode?'Third person':'First person'); }; updc(); cmb.onclick=()=>{ tpMode=!tpMode; try{ localStorage.setItem('breach_tp', tpMode?'1':'0'); }catch(e){} updc(); }; }
   const x=document.getElementById('pauseExit'); if(x) x.onclick=exitToMenu;
-  const pc=document.getElementById('pauseCredits'); if(pc) pc.onclick=openCredits;   // build 549: credits reachable mid-game from the pause menu
+  /* build 1277: this line used to re-assign #pauseCredits.onclick back to openCredits, overwriting build
+     1166's showCreditsModal six lines above it — so the safe renderer was dead code and every credits
+     screen went through the vulnerable path. There is only one credits handler now, and it is 1166's. */
   const ph=document.getElementById('pauseHelp'); if(ph) ph.onclick=openHelp;   // build 848: help & tutorials mid-game too
   const mc=document.getElementById('muteCb'); if(mc){ mc.checked=audioSettings.muted; mc.onchange=()=>{ audioSettings.muted=mc.checked; applyAudioSettings(); saveAudioSettings(); }; }
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
@@ -45109,6 +45588,13 @@ function bindPauseMenu(){
   // ---- controller (build 909: shown once a pad exists; values re-sync on every open) ----
   { const pc=document.getElementById('pauseCtl'); if(pc) pc.style.display = padSeen ? '' : 'none';
     const sr=document.getElementById('padSensRng'); if(sr){ sr.value=String(padPrefs.sens); sr.oninput=()=>{ padPrefs.sens=Math.max(0.3,Math.min(3,parseFloat(sr.value)||1)); savePadPrefs(); }; }
+    /* build 1281: mouse look — the same shape as the pad slider above it */
+    { const mr=document.getElementById('msSensRng'), mv=document.getElementById('msSensVal');
+      const _show=()=>{ if(mv) mv.textContent=mouseSens.toFixed(2); };
+      if(mr){ mr.value=String(mouseSens); _show();
+        mr.oninput=()=>{ const v=parseFloat(mr.value); mouseSens=Math.max(MOUSE_SENS_MIN,Math.min(MOUSE_SENS_MAX,isFinite(v)?v:1)); _show(); saveMouseSens(); }; }
+      const mc=document.getElementById('msAimMatchCb');
+      if(mc){ mc.checked=!!mouseAimMatch; mc.onchange=()=>{ mouseAimMatch=!!mc.checked; saveMouseAimMatch(); }; } }
     const ar=document.getElementById('padAdsRng'); if(ar){ ar.value=String(padPrefs.ads); ar.oninput=()=>{ padPrefs.ads=Math.max(0.2,Math.min(1.5,parseFloat(ar.value)||0.7)); savePadPrefs(); }; }
     const dr=document.getElementById('padDeadRng'); if(dr){ dr.value=String(padPrefs.dead); dr.oninput=()=>{ padPrefs.dead=Math.max(0.05,Math.min(0.4,parseFloat(dr.value)||0.18)); savePadPrefs(); }; }
     const iv=document.getElementById('padInvCb'); if(iv){ iv.checked=!!padPrefs.invertY; iv.onchange=()=>{ padPrefs.invertY=iv.checked; savePadPrefs(); }; } }
@@ -45194,8 +45680,20 @@ function collectLevelCredits(){   // de-duped, sorted per-asset attributions: pl
   assetCredits.forEach(a=>set.add(a));
   return [...set].sort((a,b)=>a.localeCompare(b));
 }
-function _creditEsc(s){ return String(s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-function _creditLinkify(s){ return _creditEsc(s).replace(/(https?:\/\/[^\s)]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#7fe6cf">$1</a>'); }   // escape first, then linkify — safe against markup in author-supplied strings
+// build 1277: escape QUOTES as well as angle brackets. Every string this function guards is level data —
+// an attribution, a dialogue line, an objective, an NPC name, a weapon name — and level data arrives from
+// a stranger's share code. Escaping only `& < >` is correct for a TEXT node and wrong for an ATTRIBUTE,
+// and _creditLinkify below drops its match straight into href="...": a single `"` in an attribution closed
+// the attribute and opened an event handler, with the publish key, the API keys and the endpoint overrides
+// (which make a backdoor persistent) all readable from localStorage on the other side.
+//
+// Escaping the quotes costs nothing in a text node — `&quot;` renders as `"` — so one function can stay
+// correct in both contexts rather than needing the caller to know which one it is in.
+function _creditEsc(s){ return String(s).replace(/[&<>"']/g, c=> c==='&' ? '&amp;' : c==='<' ? '&lt;' : c==='>' ? '&gt;' : c==='"' ? '&quot;' : '&#39;'); }
+// Escape first, then linkify. The escape above now neutralises quotes, so the match cannot terminate the
+// href; the character class excludes them as well, which is belt-and-braces rather than the load-bearing
+// part. (`&` must stay permitted — an escaped query string is full of `&amp;`.)
+function _creditLinkify(s){ return _creditEsc(s).replace(/(https?:\/\/[^\s)"']+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#7fe6cf">$1</a>'); }
 function renderCreditsScreen(){
   const host=document.getElementById('creditsBody'); if(!host) return;
   let h='<div style="color:#9fc4ba;margin-bottom:10px">RUMPUS ENGINE is built on open-source libraries and free Creative-Commons assets. Thanks to everyone below.</div>';

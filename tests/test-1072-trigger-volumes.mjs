@@ -97,10 +97,14 @@ eq(mig(null).r, 6, 'junk in gives a sane default zone, never a crash');
   assert(/if\(!gameOn \|\| \(typeof editorOpen!=='undefined' && editorOpen\) \|\| \(typeof paused!=='undefined' && paused\)\) return;/.test(fn),
     'they never fire while editing or paused');
   assert(/const z=triggerZones\[i\]; if\(!z\.ev\) continue;/.test(fn), 'a trigger with no event name is skipped entirely');
-  assert(/if\(z\.who!=='enemy'\)\{/.test(fn) && /for\(const id in NET\.players\)/.test(fn),
+  // build 1276: the audience tests are stated positively now — a fourth enum value ('prop') would have
+  // matched both of the old EXCLUSION tests and fired for players and enemies as well.
+  assert(/if\(_wPlayer\)\{/.test(fn) && /const _wPlayer = \(z\.who==='player' \|\| z\.who==='any'\);/.test(fn)
+      && /for\(const id in NET\.players\)/.test(fn),
     'in co-op ANY teammate counts as "the player" (a door opens for whoever reaches it)');
   assert(/dead:\(rp\.hp!=null && rp\.hp<=0\)/.test(fn) && /const inz = !ac\.dead && _trigContains/.test(fn), '...but a downed teammate does not hold a trigger open');   // build 1231: per-actor — a dead player reads as OUTSIDE (and now fires their exit edge)
-  assert(/if\(z\.who!=='player' && typeof enemies!=='undefined'\)/.test(fn), 'enemy/any zones test the enemies too');   // build 1231: the enemy union runs beside the per-actor player edges instead of after them
+  assert(/if\(_wEnemy && typeof enemies!=='undefined'\)/.test(fn) && /const _wEnemy  = \(z\.who==='enemy'  \|\| z\.who==='any'\);/.test(fn),
+    'enemy/any zones test the enemies too');   // build 1231: the enemy union runs beside the per-actor player edges instead of after them
   assert(/if\(_trigStep\(z, st, inside, now\) && typeof logicEvent==='function'\) logicEvent\(z\.ev\);/.test(fn),
     'and the whole thing ends in one logic pulse — the trigger itself does no gameplay');
 }
@@ -124,7 +128,8 @@ assert(/triggers:   'Volumes that fire a Logic event when something enters, leav
   const fn = extractFunction('renderTriggersPanel', src);
   assert(/ev\.setAttribute\('list','lgEvtList'\)/.test(fn), 'the event field shares the graph’s event dropdown — pick it, do not retype it');
   assert(/seg\('when', \[\['enter','Enters'\],\['exit','Leaves'\],\['stay','Stays in'\]\], z\.on/.test(fn), 'enter / leave / stay are one click');
-  assert(/seg\('who', \[\['player','Player'\],\['enemy','Enemy'\],\['any','Anything'\]\], z\.who/.test(fn), 'and so is the filter');
+  assert(/seg\('who', \[\['player','Player'\],\['enemy','Enemy'\],\['any','Anything'\],\['prop','A prop'\]\], z\.who/.test(fn),
+    'and so is the filter (build 1276 added the fourth audience)');
   assert(/No event name \\u2014 this trigger does nothing yet\./.test(fn), 'an unwired trigger says so instead of silently doing nothing');
   assert(/On event reachedVault \\u2192 Show message/.test(fn), 'the empty state shows the whole loop, end to end');
 }

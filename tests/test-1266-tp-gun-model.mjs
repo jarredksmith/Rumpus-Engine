@@ -27,7 +27,9 @@ const showsFists = new Function('WEAPONS', extractFunction('_wepShowsFists') + '
   eq(showsFists('hands'), true, 'bare fists show no gun in either view');
   eq(showsFists('handsMod'), false, 'a creator’s own model for the fists slot wins (build 674/675)');
   eq(showsFists('rifle'), false, 'a gun with no model of its OWN is still a gun — it falls back, it does not become fists');
-  eq(showsFists('crowbar'), false, 'a melee weapon that is not FISTS is unchanged');
+  // build 1272 inverted this deliberately: a melee weapon with no model of its own is swung bare-handed
+  // rather than holding the engine's rifle. The shared predicate is exactly why one change reached both views.
+  eq(showsFists('crowbar'), true, 'a melee weapon with no model shows hands, not a rifle (build 1272)');
   eq(showsFists('nosuch'), false, 'an unknown key never throws');
 }
 
@@ -48,7 +50,7 @@ const aag = extractFunction('attachAvatarGun');
   const stock = mk({ rifle:{model:''}, pistol:{model:''}, hands:{fists:true,model:''}, crowbar:{melee:true,model:''} }, 'ENGINE_GUN');
   eq(stock('rifle'), 'ENGINE_GUN', 'THE REPORTED CASE: a stock rifle now puts the engine’s gun in the hand');
   eq(stock('pistol'), 'ENGINE_GUN', '...as does every other stock weapon');
-  eq(stock('crowbar'), 'ENGINE_GUN', '...and the crowbar, exactly as the viewmodel does');
+  eq(stock('crowbar'), '', '...while a MELEE weapon holds nothing until the creator gives it a model (build 1272)');
   eq(stock('hands'), '', 'but FISTS still holds nothing — a punching character must not sprout a rifle');
 
   const custom = mk({ rifle:{model:'MY_RIFLE'}, pistol:{model:''}, hands:{fists:true,model:''} }, 'ENGINE_GUN');

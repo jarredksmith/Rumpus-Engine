@@ -13,7 +13,8 @@ assert(kdn({ gold:'   ' })('gold') === 'GOLD KEY', 'whitespace-only name falls b
 assert(/flashToast\(k\.key \? keyDisplayName\(k\.key\)\.toUpperCase\(\) : k\.label\);/.test(extractFunction('applyPowerupLocal')), 'pickup toast');
 const tu = extractFunction('tryUnlockProp');
 assert(/keyDisplayName\(lk\)\.toUpperCase\(\)\+' USED'/.test(tu) && /NEEDS '\+keyDisplayName\(lk\)\.toUpperCase\(\)/.test(tu), 'unlock + locked toasts');
-assert(/Unlock \\u2014 \$\{keyDisplayName\(lk\)\}/.test(src) && /needs \$\{keyDisplayName\(lk\)\}/.test(src), 'proximity prompt');
+// build 1277: key names are level-authored and this is an innerHTML sink, so they go through _creditEsc
+assert(/Unlock \\u2014 \$\{_creditEsc\(keyDisplayName\(lk\)\)\}/.test(src) && /needs \$\{_creditEsc\(keyDisplayName\(lk\)\)\}/.test(src), 'proximity prompt');
 assert(/ch\.textContent=keyDisplayName\(k\)\.toUpperCase\(\); ch\.style\.maxWidth='130px';/.test(extractFunction('renderKeyChips')), 'HUD chips show the name, ellipsized');
 
 // --- persistence: serialize (only non-empty), boot restore, runtime level-load restore ---

@@ -12,6 +12,18 @@ import { gameSource, html, assert, eq, done } from './harness.mjs';
 import { readFileSync, existsSync } from 'fs';
 import { parseIssue, validateSubmission } from '../.github/scripts/publish-level.mjs';
 const src = gameSource();
+
+// build 1282: the submit handler grew a Level Check preflight, which pushed these needles past a
+// CHARACTER-COUNT-scoped slice — build 1149's recorded trap, verbatim ("a source pin must not be scoped
+// by a character count"). The handler is an anonymous onclick so extractFunction cannot reach it; the
+// slice is anchored on the next named declaration after it instead, which fails loudly if the handler is
+// ever restructured rather than drifting silently.
+function submitHandlerSrc(s){
+  const a = s.indexOf("const submitBtn = p.querySelector('#edSubmitComm');");
+  const b = s.indexOf('const collapsed = (_edFolds[id]', a);
+  if(!(a >= 0 && b > a)) throw new Error('the submit handler is no longer where this test expects it');
+  return s.slice(a, b);
+}
 const root = new URL('..', import.meta.url);
 
 // ---- the seed library is real and loadable ----
@@ -42,7 +54,7 @@ assert(/pushUndoSnapshot\(\)/.test(src.match(/async function _commLoad[\s\S]{0,9
 
 // ---- the submit path ----
 assert(/id="edSubmitComm"/.test(src), 'Save tab has the submit button');
-assert(/navigator\.clipboard\.writeText\(str\)/.test(src.match(/#edSubmitComm[\s\S]{0,4800}/)[0]), 'it copies the level JSON');   // build 869: the prefill path sits above the clipboard fallback
+assert(/navigator\.clipboard\.writeText\(str\)/.test(submitHandlerSrc(src)), 'it copies the level JSON');   // build 869: the prefill path sits above the clipboard fallback
 assert(/template=submit-level\.yml/.test(src), '...and opens the issue form');
 
 // ---- the publish pipeline (executable) ----

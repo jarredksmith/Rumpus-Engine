@@ -37,11 +37,19 @@ jobs:
         run: node .github/scripts/publish-level.mjs
       - name: Commit to main
         if: steps.pub.outputs.ok == 'true'
+        # SECURITY: the level name is attacker-controlled (it comes from the submission issue). A
+        # ${{ }} expression is pasted into the script TEXT before the shell ever sees it, so a name
+        # containing $(...) or backticks would execute as a command in a job holding contents: write
+        # and actions: write, against the branch GitHub Pages serves. Passing it through env and
+        # quoting "$LEVEL_NAME" means the shell treats it as data, whatever it contains.
+        env:
+          LEVEL_NAME: ${{ steps.pub.outputs.name }}
+          ISSUE_NUM: ${{ github.event.issue.number }}
         run: |
           git config user.name "breach-librarian[bot]"
           git config user.email "noreply@github.com"
           git add community/
-          git commit -m "community: publish \"${{ steps.pub.outputs.name }}\" (#${{ github.event.issue.number }})"
+          git commit -m "community: publish \"$LEVEL_NAME\" (#$ISSUE_NUM)"
           git pull --rebase origin main
           git push origin main
       - name: Deploy the site
@@ -54,18 +62,27 @@ jobs:
       - name: Close the issue (published)
         if: steps.pub.outputs.ok == 'true'
         uses: actions/github-script@v7
+        # SECURITY: same rule as the commit step. A ${{ }} expression is pasted into the SCRIPT TEXT,
+        # so an attacker-controlled name containing a backtick or ${ escapes this template literal and
+        # runs as JavaScript holding the workflow token. env keeps it data.
+        env:
+          LEVEL_NAME: ${{ steps.pub.outputs.name }}
+          LEVEL_FILE: ${{ steps.pub.outputs.file }}
         with:
           script: |
             const n = context.issue.number;
+            const name = process.env.LEVEL_NAME, file = process.env.LEVEL_FILE;
             await github.rest.issues.createComment({ ...context.repo, issue_number: n, body:
-              `🏁 **"${{ steps.pub.outputs.name }}" is published!** It will appear in the in-game **Community levels** gallery as soon as the site redeploys (a few minutes).\n\nFile: \`community/levels/${{ steps.pub.outputs.file }}\`` });
+              `🏁 **"${name}" is published!** It will appear in the in-game **Community levels** gallery as soon as the site redeploys (a few minutes).\n\nFile: \`community/levels/${file}\`` });
             await github.rest.issues.update({ ...context.repo, issue_number: n, state: 'closed', state_reason: 'completed' });
       - name: Comment the rejection (stays open)
         if: steps.pub.outputs.ok != 'true'
         uses: actions/github-script@v7
+        env:
+          FAIL_REASON: ${{ steps.pub.outputs.reason }}
         with:
           script: |
             const n = context.issue.number;
             await github.rest.issues.removeLabel({ ...context.repo, issue_number: n, name: 'approved' }).catch(()=>{});
             await github.rest.issues.createComment({ ...context.repo, issue_number: n, body:
-              `⚠️ Could not publish this submission: ${{ toJSON(steps.pub.outputs.reason) }}\n\nEdit the issue body to fix it, then re-add the \`approved\` label to retry.` });
+              `⚠️ Could not publish this submission: ${process.env.FAIL_REASON}\n\nEdit the issue body to fix it, then re-add the \`approved\` label to retry.` });

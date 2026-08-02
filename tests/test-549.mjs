@@ -1,5 +1,10 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 // build 706: a signal can require a specific inventory item. The signal only fires if the player carries that item
 // (optionally consuming it) — like a key, but any inventory item. e.g. press E on a door, it opens only if you
 // found the hidden note.
@@ -40,7 +45,7 @@ const mk = (held) => {
 
 // --- serialize + restore carry the gate (compact ni/nc) ---
 assert(/if\(s\.needItem\) x\.ni=s\.needItem; if\(s\.needConsume\) x\.nc=1;/.test(extractFunction('propEntry')), 'needItem/needConsume serialized');
-assert(src.split('if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true;').length - 1 === 3, 'restored at all three prop-load sites');
+assert(extractFunction('_applyPropEntry').includes('if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true;'), 'restored at all three prop-load sites');
 
 // --- editor UI: a "needs item" picker + consume toggle per signal ---
 const ui = extractFunction('buildSignalsUI');

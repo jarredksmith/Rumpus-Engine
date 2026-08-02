@@ -171,8 +171,8 @@ const mkEnemy = (tag, x, z, extra) => Object.assign({
 
 // ---------------------------------------------------------------- wiring
 assert(/v==='music'\|\|v==='command'/.test(extractFunction('_isWorldVerb', src)), 'command is a world verb');
-assert(/s\.do==='music'\|\|s\.do==='command'\)\{/.test(extractFunction('_applySignalAction', src)),
-  '...so a prop signal can issue it too — an alarm lever really is a lever');
+assert(/s\.do==='music'\|\|s\.do==='command'/.test(extractFunction('_applySignalAction', src)),
+  '...so a prop signal can issue it too — an alarm lever really is a lever');   /* build 1277: the condition continues past 'command' now (six prop verbs joined it) */
 eq((src.match(/\['command','Command enemies'\]/g) || []).length, 2, 'it appears in the graph node AND the prop-signal editor');
 assert(/\{k:'ewho',l:'',w:100,ifv:\['verb','command'\],sel:\[\['enemies','All enemies'\],\['nearest','Nearest enemy'\]\]\}/.test(src),
   'the node asks WHICH enemies — and does not offer "the player", which would mean nothing here');

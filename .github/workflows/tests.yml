@@ -1,0 +1,64 @@
+# build 1278: the test gate.
+#
+# The build-1276 audit's cheapest finding by a wide margin: 1,018 harnesses existed and NOTHING ran them
+# except a human remembering to. Both other workflows deploy — `pages.yml` publishes the site and
+# `publish-level.yml` pushes to the branch Pages serves — so until now every push went to production with
+# the suite entirely on the honour system.
+#
+# This is deliberately boring. It runs the same command the engineering log tells a human to run, on the
+# same Node, and fails loudly. It does not lint, format, or have opinions; the suite is the contract.
+name: tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run irrelevant — cancel it rather than queue it.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read        # the suite reads the tree and writes nothing
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15   # the suite runs in ~103s; this only catches a hang
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # tests/package.json declares three (the harness needs a real three.js to execute against real r149 facts)
+      - name: Install test dependencies
+        working-directory: tests
+        run: npm install --no-audit --no-fund
+
+      # Fail fast and specifically: a syntax error in breach.html should not be reported as 400 broken
+      # harnesses, and the boot test is the one that actually EXECUTES the source and catches TDZ errors.
+      - name: Syntax
+        working-directory: tests
+        run: node test-01-syntax.mjs
+      - name: Boot
+        working-directory: tests
+        run: node test-202-boot.mjs
+
+      # run-all.mjs DOES exit 1 on failure (run-all.mjs:26) — but it is piped through tee here, and a
+      # pipeline reports the LAST command's status, so without `set -o pipefail` a red suite would look
+      # green. That is the same masking that made a local `node run-all.mjs | tail -2` report success
+      # during this very audit. pipefail is the gate; the grep is belt-and-braces and prints the failures.
+      - name: Full suite
+        working-directory: tests
+        run: |
+          set -o pipefail
+          node run-all.mjs 2>&1 | tee suite.log
+          if grep -q "FAILED" suite.log; then
+            echo "::error::the suite reported failing harnesses"
+            grep -E "^FAIL|^ +-" suite.log | head -40
+            exit 1
+          fi
+          grep -E "harnesses passed" suite.log

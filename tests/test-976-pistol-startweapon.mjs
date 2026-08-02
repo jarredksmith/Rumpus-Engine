@@ -27,18 +27,20 @@ assert(/let l=\['pistol','rifle','smg','shotgun','sniper','launcher','crowbar'\]
 // ---- per-level starting weapon ----
 assert(/startWeapon: \(savedLevel && savedLevel\.game && typeof savedLevel\.game\.startWeapon==='string'\) \? savedLevel\.game\.startWeapon : 'rifle'/.test(src),
   'gameCfg.startWeapon defaults to rifle (back-compat)');
-assert(/startWeapon: \(WEAPONS\[gameCfg\.startWeapon\] && !WEAPONS\[gameCfg\.startWeapon\]\.melee\) \? gameCfg\.startWeapon : 'rifle'/.test(src),
-  'serialized, guarded to a real non-melee gun');
-assert((src.match(/gameCfg\.startWeapon = \(typeof level\.game\.startWeapon==='string' && WEAPONS\[level\.game\.startWeapon\] && !WEAPONS\[level\.game\.startWeapon\]\.melee\) \? level\.game\.startWeapon : 'rifle';/g) || []).length === 2,
+// build 1272: the guard is the named _canStartWith predicate — same job, and melee is now allowed
+// (the crowbar could not be chosen at all before). The FISTS slot is still excluded; "Start unarmed" owns it.
+assert(/startWeapon: _canStartWith\(gameCfg\.startWeapon\) \? gameCfg\.startWeapon : 'rifle'/.test(src),
+  'serialized, guarded to a weapon you may actually start with');
+assert((src.match(/gameCfg\.startWeapon = \(typeof level\.game\.startWeapon==='string' && _canStartWith\(level\.game\.startWeapon\)\) \? level\.game\.startWeapon : 'rifle';/g) || []).length === 2,
   'restored in BOTH load paths (net + local)');
-assert(/const _sw=\(gameCfg\.startWeapon && WEAPONS\[gameCfg\.startWeapon\] && !WEAPONS\[gameCfg\.startWeapon\]\.melee\) \? gameCfg\.startWeapon : 'rifle'; owned = \[_sw\]; curWep=_sw;/.test(src),
+assert(/const _sw=_canStartWith\(gameCfg\.startWeapon\) \? gameCfg\.startWeapon : 'rifle'; owned = \[_sw\]; curWep=_sw;/.test(src),
   'startGame spawns the player holding the chosen weapon');
 
 // ---- the editor "Starts with" selector ----
 assert(/if\(!gameCfg\.unarmed\)\{[\s\S]{0,600}?Starts with<\/b> — the weapon players spawn holding/.test(src),
   'an armed level shows a Starts with selector');
-assert(/Object\.keys\(WEAPONS\)\.filter\(k=>WEAPONS\[k\] && !WEAPONS\[k\]\.melee\)/.test(src),
-  'the selector lists every non-melee gun (so the pistol appears automatically)');
+assert(/Object\.keys\(WEAPONS\)\.filter\(_canStartWith\)/.test(src),
+  'the selector is built from the predicate, so a new weapon appears automatically (the pistol did; build 1272 let the crowbar too)');
 assert(/swSel\.onchange=\(\)=>\{ pushUndoSnapshot\(\); gameCfg\.startWeapon=swSel\.value; _levelDirty=true; \}/.test(src),
   'choosing a weapon updates the level');
 

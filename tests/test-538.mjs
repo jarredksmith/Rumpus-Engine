@@ -25,7 +25,8 @@ assert(/\['objective','Set objective'\]/.test(src), 'the do dropdown offers Set 
 assert(/if\(s\.do==='objective'\)\{ if\(typeof setGoal==='function'\) setGoal\(s\.text\|\|''\); return; \}/.test(src), 'the objective action updates the live goal');
 assert(/function setGoal\(text\)\{/.test(src), 'setGoal updates _curGoal + banner + HUD');
 // the signal text round-trips
-assert(/if\(s\.text\) x\.tx=s\.text;/.test(src) && (src.match(/if\(s\.tx\) x\.text=s\.tx;/g)||[]).length===3, 'signal objective text serialized + restored');
+// build 1280: restored once, in the shared applier every loader calls
+assert(/if\(s\.text\) x\.tx=s\.text;/.test(src) && /if\(s\.tx\) x\.text=s\.tx;/.test(extractFunction('_applyPropEntry')), 'signal objective text serialized + restored');
 
 // --- the editor exposes the field ---
 const panel = extractFunction('renderEditorFields');

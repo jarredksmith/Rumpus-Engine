@@ -84,8 +84,14 @@ const mk = () => new Function(TRIG + '\nreturn { _trigStepActor, _trigStep };')(
 }
 { // writes route through the key mapping everywhere
   const pulse = extractFunction('_lgPulse');
-  eq((pulse.match(/_lgVarKey\(String\(p\.name\|\|''\)\.trim\(\)\)/g) || []).length, 4,
-    'all four variable-writing nodes (setvar/addvar/math/read) scope their key');
+  // build 1269 added List and 1271 added Expression, both of which write a variable — the ASSERTION is
+  // that every writing node scopes its key, so the count follows the nodes rather than pinning a number.
+  eq((pulse.match(/_lgVarKey\(String\(p\.name\|\|''\)\.trim\(\)\)/g) || []).length, 5,
+    'every variable-writing node by name (setvar/addvar/math/read/expr) scopes its key');
+  assert(/const dst = _lgVarKey\(String\(p\.var\|\|''\)\.trim\(\)\)/.test(pulse),
+    '...and List, which writes through `var` rather than `name`, scopes it too (build 1269)');
+  assert(/const k = _lgVarKey\(String\(name\|\|''\)\.trim\(\)\)/.test(extractFunction('_lgList')),
+    '...as do LIST NAMES themselves, so `hand@` is this player\u2019s hand');
   assert(/\\\{\(\[\\w#@\]\+\)\\\}/.test(pulse) && /logicVars\[_lgVarKey\(k\)\]/.test(pulse),
     'toast interpolation accepts {coins@} and scopes it');
 }

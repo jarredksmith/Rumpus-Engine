@@ -6,6 +6,11 @@
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
 
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
+
 // ---- executable: capture normalization + placement marks, on a stubbed prop world ----
 function makeEnv(){
   const world = { props:[], spawned:[], undo:0, store:{} };
@@ -89,7 +94,7 @@ const E = (x,y,z,extra)=>Object.assign({ src:'box', t:[x,y,z, 0,0,0, 1,1,1] }, e
 // ---- serialization + wiring pins ----
 assert(/if\(o\.userData\.pf && o\.userData\.pf\.id\) e\.pf=\{ id:String\(o\.userData\.pf\.id\), inst:String\(o\.userData\.pf\.inst\|\|'i0'\), slot:o\.userData\.pf\.slot\|0 \};/.test(src),
   'pf marks ride propEntry (level saves, share codes, lobby transfers)');
-eq(src.split("if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; }").length - 1, 3,
+assert(extractFunction('_applyPropEntry').includes("if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; }"),
   'all three level loaders restore the marks');
 assert(/prefabDefs: _pfUsedDefs\(\),/.test(src), 'used defs are embedded in the level file');
 eq(src.split('if(level.prefabDefs && typeof _pfMergeDefs===\'function\') _pfMergeDefs(level.prefabDefs);').length - 1, 2,

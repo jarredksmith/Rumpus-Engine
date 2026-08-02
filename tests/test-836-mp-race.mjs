@@ -11,7 +11,10 @@ assert(/if\(typeof NET!=='undefined' && NET\.mode!=='off'\) return;\s*\/\/ build
 assert(/if\(_raceLap>=total\)\{ objectiveHUD\(\); _raceFinishLocal\(\); return; \}/.test(extractFunction('_raceTick')), 'the final lap goes through the arbitration path');
 assert(/_raceNetTick\(dt\);/.test(extractFunction('_raceTick')), 'progress broadcasts ride the race tick');
 assert(/else if\(msg\.t==='race'\)\{ _raceNet\[id\]=\{ lap:msg\.lap\|0, f:\+msg\.f\|\|0 \}; for\(const cid in NET\.conns\)\{ if\(\+cid!==id\)/.test(src), 'host stores + relays racer progress');
-assert(/else if\(msg\.t==='raceFin'\)\{ _raceDeclareWinner\(id\); \}/.test(src), 'host arbitrates the finish');
+// build 1279: the host still arbitrates — and now CHECKS the claim against the lap count it already
+// tracks, because this called _raceDeclareWinner with no validation at all and one packet won any race.
+assert(/else if\(msg\.t==='raceFin'\)\{/.test(src) && /if\(_rp && \(_rp\.lap\|0\) >= _need\) _raceDeclareWinner\(id\);/.test(src),
+  'host arbitrates the finish');
 assert(/else if\(msg\.t==='race'\)\{ _raceNet\[msg\.from\]=\{ lap:msg\.lap\|0, f:\+msg\.f\|\|0 \}; \}/.test(src), 'clients track the other racers');
 assert(/else if\(msg\.t==='raceOver'\)\{ if\(msg\.w\)\{ if\(typeof gameWon==='function'\) gameWon\(\); \} else _raceLose\(msg\.wn\); \}/.test(src), 'clients act on the verdict');
 assert(/if\(isClient && !duelMode && !editorOpen && typeof objectiveActive==='function' && objectiveActive\(\)==='race' && typeof _raceTick==='function'\) _raceTick\(dt\);/.test(src), 'clients run their own race tick');

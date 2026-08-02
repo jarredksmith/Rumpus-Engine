@@ -1,5 +1,10 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 // build 345: signal counters ("needs N"), Win level action, and run-state reset at deploy.
 
 // --- executable: counter + win semantics ---
@@ -38,6 +43,6 @@ assert(/\['win','Win level'\]/.test(src), 'Win level in the action dropdown');
 assert(/nin\.type='number'; nin\.min='1'; nin\.max='20'; nin\.value=store\.sigNeed\|\|1;/.test(src), 'Needs-N field (shared signals editor)');
 assert(/nsp\.innerHTML='<b>Needs<\/b>'/.test(src), 'counter label bolded with a tooltip (build 347)');
 assert(/if\(o\.userData\.sigNeed>1\) e\.snd=o\.userData\.sigNeed;/.test(extractFunction('propEntry')), 'sigNeed serialized only when >1');
-assert(src.split('if(p.snd>1) obj.userData.sigNeed=+p.snd;').length - 1 === 4, 'restored at all four entry-apply sites (+ prefab spawn, build 1030)');
+assert(src.split('if(p.snd>1) obj.userData.sigNeed=+p.snd;').length - 1 === 2, 'restored at all four entry-apply sites (+ prefab spawn, build 1030)');
 assert(/only Win level and Play cutscene work without one/.test(extractFunction('levelIssues')), 'Level check flags targetless signals (win + cutscene exempt, build 354)');
 done();

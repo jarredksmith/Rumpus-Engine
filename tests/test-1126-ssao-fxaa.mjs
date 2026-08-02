@@ -115,7 +115,11 @@ assert(/_aoGeoRT,_aoRT,_aoRT2/.test(extractFunction('disposePost')), 'a resize d
   const rp = extractFunction('_renderPostFX');
   assert(/_matFXAA\.uniforms\.tColor\.value=_compRT\.texture/.test(rp), 'the no-motion-blur path can present through FXAA');
   assert(/_matFXAA\.uniforms\.tColor\.value=_afterB\.texture/.test(rp), '...and so can the motion-blur path');
-  assert(/const _fx = _matFXAA && \(_postRT\.samples\|\|0\) === 0;/.test(rp),
+  // build 1284: the same rule, asking the right question. _postRT DECLARES samples:4 at the top rung even
+  // on the DoF path, where the scene was rasterised into the single-sampled _dofRT and MSAA never touched
+  // a pixel — so the old test skipped FXAA exactly where 1126 says it is needed.
+  assert(/const _msaaThisFrame = \(_postRT\.samples\|\|0\) > 0 && !dofEnabled;/.test(rp) &&
+         /const _fx = _matFXAA && !_msaaThisFrame;/.test(rp),
     'FXAA runs only when MSAA is not in effect — running both would cost a pass and soften texture for nothing');
   // ordering: the composite encodes, so everything after it is display-referred — FXAA's luminance
   // thresholds are perceptual and would be wrong on scene-linear values

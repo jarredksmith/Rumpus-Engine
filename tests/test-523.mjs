@@ -14,6 +14,7 @@ assert(/const isFists = _wepShowsFists\(key\);/.test(sw), 'isFists is false when
     hands:   { fists:true, model:'' },
     handsMod:{ fists:true, model:'x.glb' },
     crowbar: { melee:true, model:'' },
+    crowbarM:{ melee:true, model:'crowbar.glb' },
     rifle:   { model:'' },
     rifleMod:{ model:'r.glb' },
   });
@@ -21,7 +22,11 @@ assert(/const isFists = _wepShowsFists\(key\);/.test(sw), 'isFists is false when
   assert(showsFists('handsMod') === false, 'a creator’s imported model for the fists slot wins (build 675)');
   assert(showsFists('rifle') === false, 'a gun with no model of its own is still a gun, not fists');
   assert(showsFists('rifleMod') === false, '...and so is one with a model');
-  assert(showsFists('crowbar') === false, 'a melee weapon that is not FISTS still shows a model (unchanged)');
+  // build 1272 CHANGED this deliberately: a melee weapon with no model of its own is swung
+  // bare-handed rather than putting the engine's rifle in the player's hands. What is unchanged is
+  // the rule that a creator's own model always wins.
+  assert(showsFists('crowbar') === true, 'a melee weapon with no model shows hands, not a rifle (build 1272)');
+  assert(showsFists('crowbarM') === false, '...and a creator\u2019s own melee model still wins (build 674)');
   assert(showsFists('nosuch') === false, 'an unknown key never throws');
 }
 // when not fists, the function falls through to the cached/loading viewmodel path (no early return)

@@ -38,17 +38,19 @@ const src = gameSource();
 // ---------------------------------------------------------------- the tick, executed
 const LOD_HYST = +extractConst('LOD_HYST');
 const LOD_BUDGET = +extractConst('LOD_BUDGET');
-const LOD_SHADOW_MUL = +extractConst('LOD_SHADOW_MUL');   // build 1270 added the caster rung to the same tick
+const LOD_SHADOW_MUL = +extractConst('LOD_SHADOW_MUL');
+const LOD_NEAR_KEEP = +extractConst('LOD_NEAR_KEEP');   // build 1273's near floor   // build 1270 added the caster rung to the same tick
 eq(LOD_HYST > 1, true, 'the hysteresis re-show threshold is above the hide threshold');
 
 function rig(props, opts = {}) {
   const body = [
-    'const LOD_HYST = ' + LOD_HYST + ', LOD_BUDGET = ' + LOD_BUDGET + ', LOD_SHADOW_MUL = ' + LOD_SHADOW_MUL + ';',
+    'const LOD_HYST = ' + LOD_HYST + ', LOD_BUDGET = ' + LOD_BUDGET + ', LOD_SHADOW_MUL = ' + LOD_SHADOW_MUL + ', LOD_NEAR_KEEP = ' + LOD_NEAR_KEEP + ';',
     'function _dirtyShadows(){}',
     'let _lodCursor = 0, _lodAnyCulled = false;',
     'let editorOpen = ' + (opts.editorOpen ? 'true' : 'false') + ';',
     extractFunction('_lodPxNow'), extractFunction('_lodEligible'),
-    extractFunction('_lodSetCasting'), extractFunction('_lodRestoreAll'), extractFunction('_lodTick'),
+    extractFunction('_lodSetCasting'), extractFunction('_lodRemeasure'),
+    extractFunction('_lodRestoreAll'), extractFunction('_lodTick'),
     'return { tick:_lodTick, restore:_lodRestoreAll, px:_lodPxNow, elig:_lodEligible,',
     '  any:()=>_lodAnyCulled, setEditor:(v)=>{ editorOpen=v; } };',
   ].join('\n');
@@ -190,7 +192,9 @@ function prop(x, z, size, extra = {}) {
 }
 
 // ---------------------------------------------------------------- wiring
-assert(/lodPx:2,/.test(src), 'the default threshold ships at 2 px — about a full stop, below anything you could see');
+// build 1273: it ships OFF (0) after a play report of props vanishing. The feature is unchanged and
+// still does everything below when a creator turns it on; what changed is who decides.
+assert(/lodPx:0,/.test(src), 'the threshold ships at 0 — culling is opt-in (build 1273)');
 assert(/if\(typeof _lodTick==='function'\) _lodTick\(\);/.test(src), 'the frame loop drives it');
 {
   const off = extractFunction('_postOffWorld');

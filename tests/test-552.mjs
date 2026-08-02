@@ -1,5 +1,10 @@
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 // build 709: drivable vehicles (arcade kinematic, Phase 1). A prop flagged as a vehicle is entered with E and driven
 // (W/S throttle, A/D steer) with a chase cam; it follows the ground/ramps. The drive math is a pure function, so the
 // feel is unit-tested here; the camera / enter-exit are browser-verified.
@@ -147,7 +152,7 @@ assert(/_carEuler\.set\(o\.userData\.carPitch \+ o\.userData\.leanPitch, carYaw,
 
 // --- serialize + restore (compact veh) at all three prop-load sites ---
 assert(/if\(o\.userData\.vehicle\)\{ const V=o\.userData\.vehicle; e\.veh=\{ maxSpeed:V\.maxSpeed, accel:V\.accel, turn:V\.turn, reverse:V\.reverse \}; if\(V\.units==='mph'\) e\.veh\.units='mph'; if\(V\.boost>1\.01\)\{ e\.veh\.boost=V\.boost; e\.veh\.boostDur=V\.boostDur; e\.veh\.boostCd=V\.boostCd; \} if\(V\.modelYaw\) e\.veh\.modelYaw=V\.modelYaw; if\(V\.pivot\) e\.veh\.pivot=V\.pivot;/.test(src), 'vehicle (+ units + boost + model facing + pivot) serialized');
-eq(src.split('if(p.veh) vehicleApply(obj, p.veh);').length - 1, 4, 'vehicle restored at all four entry-apply sites (+ prefab spawn, build 1030)');
+eq(src.split('if(p.veh) vehicleApply(obj, p.veh);').length - 1, 2, 'vehicle restored at all four entry-apply sites (+ prefab spawn, build 1030)');
 
 // --- editor fold ---
 assert(/edFold\(motionHost, 'vehicle', 'Vehicle \(drivable\)'/.test(src), 'a Vehicle (drivable) fold in the inspector');

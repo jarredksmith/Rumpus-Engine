@@ -3832,6 +3832,405 @@ work something else was silently relying on*; this one is *a perf change may not
 silently needs*. Both are the same question — what did the thing you changed used to do for someone else? —
 and the shadow map has now answered it twice.
 
+## Safe expressions — the escape hatch, in the only form this engine can ship (build 1271)
+
+The audit's editor CRITICAL was "no scripting escape hatch": the graph is expressive but anything the nodes
+cannot say is unsayable, and every competitor lets you drop to code. `(hp / maxhp) * 100` took three Math
+nodes and two throwaway variables; `score + wave * 10 + bonus` took four.
+
+**It cannot be `eval` or `new Function`, and that is the whole design.** Levels travel as share codes,
+`.rumpus` files and URLs, and a player opens someone else's level by clicking a link — so compiling creator
+text as JavaScript would be remote code execution in that player's browser, against their saves, their
+settings and their session. There are **zero** uses of `eval`/`new Function` in this engine and that is not
+an accident; `test-1271` asserts it engine-wide so this build cannot be what changes it.
+
+So it is a hand-written tokenizer and Pratt parser producing a closure tree. Precedence, right-associative
+`^`, unary minus, comparisons and `&&`/`||` returning 1/0 (so they feed Branch and the HUD unchanged), and a
+fixed function table (`abs floor ceil round sqrt sign min max clamp lerp rand`). **The safety is
+STRUCTURAL:** there is no property access, no indexing, no assignment and no way to name anything outside the
+table — not because a filter rejects them, but because the grammar cannot express them. 35 hostile inputs
+(`document.cookie`, `a.constructor("return 1")()`, `x = 1`, backtick literals, `?.`, `??`, `typeof`,
+`delete`) are refused at COMPILE time.
+
+Never NaN or Infinity (1169's rule — one poisoned value corrupts every compare downstream): `1/0`, `5%0`,
+`0/0` and an overflowing power all resolve to 0. Bounded at 240 chars, depth 24, and a 200-entry compile
+cache that also remembers REJECTIONS, so a hostile level cannot force a re-parse every pulse.
+
+**One hardening the test rig forced.** `constructor` and `__proto__` are legal identifiers, so they compile —
+to a *variable read*. `logicVars` is a plain object, so that read returned `Object.prototype.constructor`,
+and it was safe only because `+Function` is NaN and `||0` swallowed it. Luck, not design. The getter now
+tests `hasOwnProperty`, so an unset name reads 0 because it is unset — and a creator who legitimately names a
+variable `constructor` gets their own value.
+
+## A melee weapon can be the starting weapon (build 1272)
+
+Reported from play: *"there's no option under gameplay to set the melee weapon as the starting weapon."*
+Correct, and it was a gap BETWEEN two features rather than a bug in either. Build 976 added `startWeapon` as
+"the PRIMARY you spawn with" and filtered `!melee` out of the list; fists got their own **Start unarmed**
+checkbox, which also carries the stricter no-guns-at-all rule. The CROWBAR belonged to neither — melee, so
+excluded from the dropdown; not fists, so the checkbox did not give it. The standard survival-horror opener
+(start with a melee weapon, find a gun) was unauthorable.
+
+The filter is now "not the FISTS slot" rather than "not melee", named once as `_canStartWith` and asked by
+all six sites — the dropdown, its current-value guard, both loaders, the serializer and the deploy. **Six
+copies of a condition is how the crowbar got lost in the first place**, which is 1266's lesson again.
+
+**And the consequence is fixed in the same build rather than left as a surprise.** A melee weapon with no
+model of its own fell through `wepModelUrl`'s fallback and put the ENGINE'S GUN in the player's hands while
+they swung it. Invisible before this build (nobody could start with a crowbar) and immediately visible
+after, so `_wepShowsFists` now covers every melee weapon, not just the fists slot — and because build 1266
+shares that predicate with the third-person hand, the body agrees with the viewmodel. A creator's own model
+still wins (674), which is the intended path for an actual crowbar mesh, and the panel hint says so.
+
+Seven pins moved (520, 523, 62, and four in 976). Two of them — 520/523's "a melee weapon that is not FISTS
+still shows a model" — are the rare case where a pin's ASSERTION was deliberately inverted rather than
+re-expressed: that behaviour was the defect.
+
+## Culling ships OFF, because I could not explain the report (build 1273)
+
+Reported from play against 1267: *"I've placed some props and they don't appear now unless I'm right in
+front of them... large models I've imported literally don't appear until the player gets right up on them.
+Then they disappear as soon as the player has barely moved away."*
+
+**I could not reproduce it.** Probed with a real imported GLB placed through the actual `spawnProp` path:
+bbox 79 × 8.5 × 79, cached `_lodR` **56.02** matching a live re-measure to three decimals, and **not culled
+at any distance out to 120 m** (px 137 at 120 m). So the screen-size maths is right for that asset and the
+mechanism behind the report is still unidentified.
+
+That is precisely why this build does not try to out-argue it. **A performance feature that removes a
+creator's content by default, and that I cannot fully explain, does not get to stay on by default.**
+`lodPx` now defaults to **0**. The feature is unchanged and still does everything 1267 and 1270 measured
+when a creator turns it on; what changed is who decides.
+
+Three things make it safe to turn on, two of which are real defects found while looking:
+
+- **`LOD_NEAR_KEEP = 40`.** Nothing inside 40 m is ever culled or stops casting, whatever its screen size.
+  This makes the reported symptom unreachable *by construction*, independently of whether the screen-size
+  maths is right for a given asset — which is the point: a measurement that is wrong for ONE asset must not
+  be able to delete it. The floor also beats the hysteresis band, so walking up to something restores it at
+  once.
+- **CSS pixels, not the drawing buffer — a real bug.** `domElement.height` is the backing store, which build
+  1141's adaptive resolution ladder shrinks under load. Measured live mid-session: **buffer 518 against a
+  720 CSS height, pixel ratio 0.72**, so every cull distance was 32% shorter than the number the creator
+  typed — and *how much* shorter depended on which rung the ladder happened to be on. The worse a device
+  performed, the more of the level it deleted. The creator's threshold is in the pixels they SEE.
+- **Re-measure before removing — the asymmetry that matters.** The cached radius is now used only for the
+  cheap direction (deciding something is big enough to KEEP). Before anything is actually hidden, the radius
+  is measured again from the live scene graph. A wrong cache can then only ever cost one `Box3` — never a
+  missing building — and the re-measure repairs the cache in passing. `test-1273` proves it by lying to the
+  cache by four orders of magnitude and showing the prop still cannot be hidden.
+
+**The general rule this is an instance of:** when a report and a measurement disagree, and the feature's
+failure mode is *deleting the user's work*, the measurement does not get the benefit of the doubt. Ship the
+safe default, make the symptom structurally impossible, and leave the door open. Four pins moved (1267's
+default, 1270's hint text, and both LOD rigs, which needed the new constant and helper).
+
+## Cull from the geometry, and make the culler answerable (build 1274)
+
+Two follow-ups to 1273's unreproducible report, after three more hypotheses were tested and none reproduced
+it. Worth recording what was ELIMINATED, since the next person will otherwise re-test them:
+
+| hypothesis | result |
+|---|---|
+| a real imported GLB measures a wrong radius | **no** — bbox 79×8.5×79, cached `_lodR` 56.02 matching a live re-measure to 3 dp, never culled to 120 m |
+| geometry offset far from the prop's origin makes it vanish | **not at size** — a 40-unit model with a 300 m offset still reads 50 px at its origin distance |
+| a rigged model measures a collapsed bbox | **no** — `Box3.setFromObject` on a real `SkinnedMesh` returns the REST pose (20×20×20 for 20×20×20 geometry). It does not follow the animated pose, which is a mild inaccuracy, but it is the right order of magnitude |
+
+**1. The distance is now measured to the geometry's CENTRE, not the prop's origin.** The offset hypothesis
+did not reproduce the report, but it is a real inaccuracy and the probe constructed an ordinary case — a
+building whose geometry is 20 m from the camera while its origin is 320 m away. Measuring to the origin asks
+"how far am I from a point in empty space". The centre is cached as an OFFSET from the origin beside the
+radius, so the per-frame path stays allocation-free, and it is re-measured wherever the radius is. The
+`LOD_NEAR_KEEP` floor uses it too, or the floor would protect the wrong point in space.
+
+**2. `lodReport()` — the culler accounts for itself**, in the Level Check panel a creator already opens when
+something looks wrong: the threshold in force, how many props are hidden, how many stopped casting, how many
+are even eligible, and **the smallest measured prop radius with its source name**. That last one is the tell:
+a large model reading a tiny radius is precisely the class of bug that could not be ruled out, and it turns
+the next report into one number. It says nothing at all when culling is off or idle — an opt-in feature must
+not nag.
+
+**The general lesson, and it is the one worth keeping from this whole sequence:** when a report cannot be
+reproduced, the fix is not to guess harder. It is (a) ship the safe default, (b) make the reported symptom
+structurally impossible, and (c) *make the subsystem able to answer the question next time*. Builds 1273 and
+1274 are those three steps. A subsystem that can delete things from the screen has to be able to say what it
+removed and why.
+
+## The marquee learns lights (build 1275)
+
+The top-view marquee swept only `propModels` — and every marquee ended with `selLights = []`, so
+box-selecting anything silently threw a light selection away. Laying out a row of lamps is exactly the job
+the marquee exists for and it was the one thing it could not do.
+
+The editor's selection is ONE TYPE AT A TIME (`activeSel()` returns `selProps` or `selLights` depending on
+`editorActive`), and a genuinely mixed selection means reworking the gizmo, the group ops and the inspector —
+a real build, not a side effect of this one. So the marquee picks the type the box actually CAUGHT: it keeps
+the type you are already working in when the box contains any of them, and switches when the box contains
+only the other. Both flows a creator would try therefore work, and neither acts on something invisible.
+Locked and hidden lights dodge it exactly as props do (1036), and shift still adds.
+
+## A trigger zone can watch for a prop (build 1276)
+
+Build 1170 gave props a runtime lifecycle (show/hide/move/destroy) and 1258 let the graph shove them, but
+nothing could **detect** one. "The ball is in the goal", "the crate is on the pressure plate", "the key
+landed in the slot" were all unaskable — which is most of what a sports or physics-puzzle level is made of.
+
+`who` gains `prop`, with an optional tag (blank = any prop). Props take the ENEMY's union edge for the same
+reason enemies have it: a prop has no pid, and a per-prop edge would turn a pile of debris rolling through a
+zone into a pulse each. A prop that is invisible, destroyed, or hidden by the graph does not count — hidden
+means not in play.
+
+**The trap this build nearly shipped, and it is worth the space.** Both existing branches tested the audience
+by EXCLUSION — `if(z.who!=='enemy')` and `if(z.who!=='player')`. That is correct for a three-value enum and
+silently wrong the instant a fourth arrives: a `prop` zone matches neither exclusion, so it would have fired
+for players AND enemies as well as props. **Adding a value to an enum tested by exclusion enables every
+branch that did not name the new value.** The three audiences are now stated positively, and `test-1276`
+executes all four columns — including that `any` did NOT silently gain props.
+
+Serialization needed no new code: `triggers` round-trips through `_migrateTrigger`, so sanitizing the tag
+there covers both directions at once. That is the shape to copy for any future zone field.
+
+## The build-1276 audit, and its three client-side CRITICALs (build 1277)
+
+Eight domain critics were run against the committed 1276 tree, each required to verify claims in source
+before asserting them and to score 1-10. Reports are in `scratchpad-audit/`. **Every headline claim was
+re-verified by hand before being acted on**, and all of the ones below held.
+
+### Six of the 27 logic verbs had never worked
+
+`showprop / hideprop / moveprop / delprop / pushprop / spawnprop` were implemented in `_applyWorldAction`
+and offered in the Do node's dropdown — but `_applyWorldAction` has exactly ONE call site, and the verb list
+gating it named none of them. Every prop verb fell through to the tag loop, which handles only
+toggle/open/close/anim/unlock, and did nothing. **Builds 1170, 1216 and 1258 each shipped capability no level
+could reach**: nothing could destroy, hide, show, move, shove or spawn a prop at runtime. `spawnprop` was
+dead twice over — the Do node also dropped `prefab` from the object it forwarded.
+
+**The tests are why it survived, and that is the lesson.** They asserted the HANDLER's source and the
+DROPDOWN's source and never that a node reaches the handler — build 1158's "wrong half" pattern, in test
+form. `test-1277` walks the node→dispatcher→handler PATH by execution, and checks the inverse too (a tag
+verb must still NOT reach the world handler). Pin both ends of a wire and you have proven nothing about the
+wire.
+
+`_isWorldVerb` deliberately still excludes them: it means "takes no target tag", and a prop verb does take
+one.
+
+### Level text could reach the DOM as markup
+
+`_creditEsc` escaped `& < >` but **not `"`**, and `_creditLinkify` drops its match inside `href="$1"` — so a
+single quote in an attribution closed the attribute and opened an event handler. The payoff was the publish
+key, the Sketchfab token, an Anthropic key, and the `breach_comm_api`/`breach_ice` endpoint overrides, which
+make a backdoor persistent. Escaping quotes costs nothing in a text node (`&quot;` renders as `"`), so one
+function stays correct in both contexts rather than the caller having to know which it is in. Weapon names
+and key names — both level-authored — were also reaching `innerHTML` raw.
+
+**And build 1166's SAFE credits renderer was dead code.** `bindPauseMenu` assigned the safe handler, then an
+older line six below re-assigned the same element back to the vulnerable path. It was invisible because
+**two buttons carried `id="pauseCredits"`**, so `getElementById` only ever reached the first and nobody
+noticed the second was inert. One handler now, both buttons wired.
+
+### A GitHub Action was a command injection into the published site
+
+Fixed in its own commit ahead of the rest: `publish-level.yml` interpolated an attacker-controlled level
+name into shell and into a `github-script` template literal. A `${{ }}` expression is pasted into the script
+TEXT before the shell sees it, so `$(...)` or a backtick in a submitted level name ran as a command in a job
+holding `contents: write` — against the branch Pages serves. Name, file and reason now travel through `env:`
+and are read as `"$LEVEL_NAME"` / `process.env.LEVEL_NAME`.
+
+### Scores, and what the audit retracted
+
+rendering 7 · editor 7 · gameplay 7 · performance 7 · features 6 · multiplayer 5 · platform 5.
+
+Two previously-recorded CRITICALs died on verification this round, which is the rule working in both
+directions: **KTX2, meshopt and Draco are all wired** (the last audit's "deliberately unwired" was false),
+as the phantom-BVH claim was false before it. Five pins moved (1074, 1077, 238, 418, 835).
+
+## The relay is an allow-list now (build 1279)
+
+The audit's multiplayer CRITICAL. Build 1205 closed client-to-client damage relaying and wrote the rule as
+*"only KNOWN damage types are mediated, everything else passes"*, reasoning that a whitelist would rot as
+new cosmetics arrived. **That is backwards for a trust boundary.** The destination's handler is
+`handleHostMsg`, which cannot tell a relayed packet from one the host sent — so the relay was a write
+primitive into every host-authoritative verb, and 1205's fix covered exactly one door in a room with 36.
+
+Verified before changing anything: `hurt` (25613) applied `msg.d` with **no clamp**, and `raceFin` (25584)
+declared a race winner with **no lap check at all**.
+
+The allow-list is DERIVED, not guessed: `sendToPlayer` is the only builder of a targeted message, and of the
+eight types that reach it, four (`wact`, `frag`, `credit`, `power`) are host→client verbs a client has no
+business relaying. The remaining three plus `pvpHit` are genuine peer traffic. **Anything else is dropped**
+— and a dropped cosmetic is a missing visual, while a forwarded verb is a stolen match. A new peer type must
+be named here, which is the cost this design accepts and 1205 declined to.
+
+**A SET, not an object literal — and my own test caught that before it shipped.** `{...}[msg.t]` inherits
+`Object.prototype`, so `{t:'constructor'}` and `{t:'toString'}` look like members and sail straight through.
+An allow-list with a hole in it is worse than none, because it reads as safe. Same trap build 1271 closed for
+the expression evaluator's variable lookup; third time this file has met it.
+
+Two credit claims are now checked rather than believed:
+- **`raceFin`** is tested against the lap count the host already tracks from each racer's own `race`
+  progress messages. The evidence was sitting right there; nobody had asked for it.
+- **`died`** gets a per-source leaky bucket (0.5/s, burst 3) beside the damage buckets from 1164. A player
+  dying every 8 seconds is never limited — proven by execution — while a farming loop gets three.
+
+`test-1205`'s "cosmetic relays pass verbatim" case used `fire`, which the host BROADCASTS from its own
+handler — a targeted `fire` was never real traffic, only something the test constructed. It now asserts the
+inversion: a host verb addressed to a peer is dropped, and so is a cosmetic that fails closed. Three pins
+moved (1130, 836, 1205).
+
+## The test gate (build 1278)
+
+1,018 harnesses existed and nothing ran them but a human remembering to, while both other workflows deploy.
+`tests.yml` runs syntax → boot → suite on every push and PR. One detail worth its comment: `run-all.mjs`
+does exit 1 on failure, but it is piped through `tee`, and a pipeline reports the LAST command's status — so
+without `set -o pipefail` a red suite looks green. That is the exact masking that made a local
+`node run-all.mjs | tail -2` report success during this audit.
+
+## The prop entry is applied in one place (build 1280)
+
+The audit's code-quality CRITICAL, and the most valuable structural change in the sequence. A
+**1,326-character block was BYTE-IDENTICAL** in `loadHostedProps`, `loadLevelFromNet` and `restoreLevel` —
+the three paths by which a prop reaches the scene: first load, a multiplayer joiner, and every level load
+or undo.
+
+**The critic proved the cost by MUTATION rather than by argument**, which is why it landed. Delete one
+statement (`if(p.tg) obj.userData.tag=p.tg;`) from ONE copy and the suite stays **fully green** while every
+prop a joiner receives silently loses its tag — taking the trigger zones, all six prop verbs, the push verb,
+logic-graph place resolution and joint targets with it. Nothing tested that the three agreed, because there
+was nothing to test: agreement was a fact about the TEXT, and text drifts. This file had already fixed two
+symptoms of it (1162's duplicate, 1252's emitter config) and called "four loader sites" a fact of nature.
+
+`_pfSpawnEntry` keeps its own near-copy **deliberately** and is not merged: prefabs and paste strip identity
+(a fresh gid, no nid) and that difference is the feature. Two functions that differ on purpose beat three
+that are supposed to match — but the reason is now written beside the shared one, or the next reader
+"fixes" it.
+
+**Fourteen harnesses failed on the refactor, and that is the finding, not the inconvenience.** Every one of
+them asserted a variant of *"this field is restored at all N loader sites"* by COUNTING occurrences of
+duplicated text. They were measuring the duplication, not the behaviour — so they would have gone green
+against three copies that had quietly diverged, and they went red against one copy that is correct. Each was
+converted to ask where the field actually lives (`extractFunction('_applyPropEntry')`), which is immune to
+the count and says what was always meant.
+
+`test-1280` reproduces the critic's exact mutation and proves it now bites, executes every field the entry
+carries (tag, group, prefab mark, interact, name, folder, hide, lock, dialogue, NPC name, all twelve signal
+fields, threshold, attribution), and pins `_pfSpawnEntry`'s divergence so nobody merges it by mistake.
+
+**The general rule: a test that counts copies of a thing is a test of the copying.** If the answer to "is
+this applied everywhere?" is a number greater than one, the test is measuring the wrong property.
+
+## Mouse sensitivity, and a zoom-matched aim (build 1281)
+
+The gameplay audit's #1 finding: the engine shipped a gamepad look slider (909) and TWO touch sliders (1042)
+and **nothing at all for the mouse** — the primary input, and the first setting a player in this genre
+changes. `HIP_SENS` was a `const` with two consumers, so a player whose DPI disagreed with one hardcoded
+number had to change it system-wide.
+
+A MULTIPLIER, not a replacement: **1.0 is byte-identical** to every value builds 160–1280 were tuned
+against, so nothing authored moves. Both mouse consumers now ask one derivation (`_mouseSensNow`), so they
+cannot drift.
+
+**Zoom-matched aim, off by default.** The audit measured the shipped ratio: `ADS_SENS/HIP_SENS = 0.545`
+against a **2.34× magnification**, so the same mouse travel swept ~28% more world while aimed — which is
+what "muscle memory doesn't carry into ADS" actually means. The option divides by the real magnification,
+`tan(baseFov/2)/tan(adsFov/2)`, not the fov ratio. `test-1281` proves the defining property directly: one
+mouse-inch sweeps the same on-screen arc aimed or not. Off by default because it changes a feel every
+existing player has learned.
+
+**The first draft had a live TDZ and its own catch would have hidden it.** `mouseSens`'s initialiser reads
+`MOUSE_SENS_MIN` inside a `try/catch`, and the constants were declared 25 lines BELOW it — so every saved
+sensitivity would have been silently discarded, invisibly, forever. Build 1127's trap verbatim. The boot
+test passed, because the catch swallowed it. Ordering is now pinned.
+
+## Publish runs the Level Check (build 1282)
+
+`levelIssues()` had exactly two call sites — its own definition and the panel that renders it. So the engine
+would write *"this prop's model is stored on this device only and will load for nobody else"* and then let
+the creator publish that level to strangers anyway. The knowledge existed; nothing asked for it at the one
+moment it mattered. This was quick-win #3 in the build-1253 audit and had not moved since.
+
+It runs AFTER serializing (so it sees exactly what would be uploaded) and BEFORE the name prompt (so nobody
+names a level they then abandon), shows six issues and counts the rest, and **advises rather than refuses** —
+a warning is not proof of a defect, and an engine that blocks publishing on its own heuristic will be wrong
+sometimes and infuriating always.
+
+**`uiConfirm` would have been a worse bug than the one being fixed.** It only calls back on CONFIRM, so a
+cancelled dialog would leave the promise pending forever and the publish flow would die silently. `_uiDialog`
+runs each button's `fn` and routes Escape to the first non-primary one, so all three exits settle.
+
+**Two harnesses failed on a character-count-scoped slice** (`{0,4800}`) — build 1149's recorded trap, again.
+The handler is an anonymous `onclick` so `extractFunction` cannot reach it; both now anchor on the next
+named declaration after it, which fails loudly if the handler is restructured instead of drifting silently.
+
+## The enemy telegraphs are audible (build 1283)
+
+Across all 85 `SFX.*` call sites, enemies made sound in exactly THREE: a ranged shot (twice) and death. So
+build 627's 320 ms melee wind-up and the charger's 520 ms lunge tell — **the two mechanics that exist
+specifically to be reacted to** — were purely visual, and a brute closing from behind you was silent. The
+panner and distance falloff had existed since build 1208; nothing was using them.
+
+Four cues, all positional so they carry the direction the threat is coming from, which is the entire point
+for something behind you:
+- **`meleeWind`** at the start of the wind-up, and **`lungeWind`** at the start of the charger's. Both RISE
+  in pitch, because a rising tell reads as "about to happen" without needing to be loud.
+- **`meleeSwing`** when the wind-up completes, hit or miss. It FALLS — it is the impact, not the warning.
+- **`enemyHurt`**, placed after the `killEnemy` early-return so a corpse does not grunt. Shooting something
+  you cannot see previously told you nothing: the hitmarker is on screen and the thing you shot is not.
+
+**A footfall for a closing enemy is deferred, with the reason recorded rather than guessed.** It is the
+other half of "a brute behind you is inaudible", but a per-enemy step is CONTINUOUS rather than
+event-driven — its value is entirely in the density, and 40 enemies in a wave is mud if that is wrong.
+Tuning it needs a live listen the headless harness cannot give. The four above are discrete events that
+cannot spam. No unused sound was left in the table.
+
+## DoF was getting neither MSAA nor FXAA (build 1284)
+
+The rendering critic's sharpest catch. `_postRT` DECLARES `samples:4` at the top rung — but the DoF path
+rasterises the scene into `_dofRT`, which is single-sampled because r149 will not attach a depth texture to
+a multisampled target, and then blits the result in. So the gate `(_postRT.samples||0) === 0` read "MSAA is
+in effect" and skipped FXAA **while MSAA had never touched a pixel**. DoF-on at rung 0 got neither, plus the
+cost of a multisampled target that only ever received a fullscreen quad.
+
+**The comment three lines above states the opposite intent verbatim** — *"FXAA covers the one path 4× MSAA
+cannot — DoF"* — which is exactly how it survived: the code read as if it did what the comment said. The gate
+now asks whether THIS FRAME was multisampled (`samples > 0 && !dofEnabled`) rather than what the target
+declares. `test-1283` executes all four combinations.
+
+Two pins moved (1126's gate literal, 1115's encode-position pattern, which now allows any run of comments
+and const declarations between the encode and the branch rather than one exact line).
+
+## Alpha-cutout foliage was a field of solid rectangles (build 1285)
+
+**The SIXTH arrival of build 1152's rule**, after the sky dome (1126), the weather points (1126), the world
+flipbooks (1152) and the viewmodel muzzle flash (1158).
+
+A glTF `alphaMode:MASK` material arrives from GLTFLoader as **opaque** — `transparent:false`,
+`depthWrite:true` — with the cutout expressed as `alphaTest`. So both of `_aoHideNoDepth`'s tests passed it.
+But the prepass runs under `scene.overrideMaterial`, which REPLACES the material and with it the alpha test,
+so every grass blade, leaf card, fence and grate stamped its full **rectangle** into the AO, SSR and
+velocity buffers as solid geometry. The level generator emits exactly this for foliage (`alphaMode:'MASK'`,
+cutoff 0.32) — so a garden arena was writing a field of solid quads into the buffer that decides where the
+frame is dark.
+
+**Why five namings did not stop the sixth:** the rule was *"nothing that fails to write depth belongs in a
+depth-derived buffer"*, and a cutout **does** write depth. What it does not write is the depth of its own
+SILHOUETTE. The predicate now asks whether the override material can REPRESENT the object at all, which is
+the property that actually matters.
+
+The trade, stated rather than left to be discovered: a cutout surface now contributes no AO, SSR or velocity
+of its own. Its correct shape would need the prepass to carry each material's map and `alphaTest` — a real
+build, and worth one. A missing occluder is a far smaller error than a solid rectangle where a leaf is.
+
+**The first draft undid build 1168 in the same stroke.** Declaring the predicate inside the traverse
+callback allocates one closure PER OBJECT across two scenes every frame — precisely the transient 1168
+measured and removed. It is `_aoNoDepthMat`, a module-scope function declaration, and `test-1285` asserts
+that no arrow function survives inside the traverse. **A fix that reintroduces a documented optimisation's
+bug is not a fix**; the log is only useful if it is read in the direction of the code being touched, not
+just the code being fixed.
+
+Four call sites share it, not two: the AO G-buffer and the velocity pass each sweep both the world and
+viewmodel scenes. Three pins moved (1152, 1158, 1168), each an executing rig that needed the predicate
+lifted from real source rather than restated.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or
