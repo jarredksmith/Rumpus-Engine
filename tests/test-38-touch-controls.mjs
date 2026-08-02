@@ -26,7 +26,7 @@ assert(/if\(!isTouch && gameOn && !locked/.test(src), 'no pointer-lock grab on t
 
 // touch look is applied in the loop (no pointer lock on mobile) and reset each frame
 assert(/const tsens = \(ads\|\|touchAds\) \? \(TOUCH_ADS_SENS\*touchAdsMul\) : \(TOUCH_LOOK_SENS\*touchLookMul\);/.test(src), 'slower look while aiming, scaled by the player sensitivity multipliers (build 515)');
-assert(/player\.yaw\s+-= touchLookDX \* tsens;/.test(src), 'drag rotates yaw');
+assert(/player\.yaw\s+-= touchLookDX \* tsens \* _aaSlow;/.test(src), 'drag rotates yaw');   /* build 1316: x the aim-assist slowdown, which is 1 whenever nothing is being aimed at */
 assert(/touchLookDX = 0; touchLookDY = 0;/.test(src), 'look deltas consumed each frame');
 assert(/const d=\(gameOn && !shopOpen && !choosingUpgrade\)\?'block':'none'/.test(src), 'UI shows only during active play');
 
