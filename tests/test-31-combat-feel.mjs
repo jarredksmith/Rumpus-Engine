@@ -47,7 +47,7 @@ assert(!/if\(!NET\.mode\) hitStop/.test(ke), 'no broken !NET.mode gate (NET.mode
 // loop applies the time-scale with a real-time countdown
 const loopSrc = extractFunction('loop');   // build 358 grew the loop preamble; extract the whole body
 assert(/const rawDt = Math\.min\(clock\.getDelta\(\), 0\.05\);/.test(loopSrc), 'loop reads raw frame time');
-assert(/if\(hitStop > 0\)\{ hitStop -= rawDt; dt = rawDt \* 0\.12; \}/.test(loopSrc), 'hitstop slows the sim + counts down in real time');
+assert(/if\(hitStop > 0\)\{ hitStop -= rawDt; const _hs=\(typeof a11y!=='undefined'\)\?a11y\.hitstop:1; if\(_hs>0\) dt = rawDt \* \(0\.12 \+ 0\.88\*\(1-_hs\)\); \}/.test(loopSrc), 'hitstop slows the sim + counts down in real time');   /* build 1313: at the shipped setting of 1 this is exactly rawDt*0.12; the countdown runs regardless, so nothing waiting on hitStop hangs when a player turns it off */
 
 // solo hit path feeds all three
 const sh = extractFunction('shoot');

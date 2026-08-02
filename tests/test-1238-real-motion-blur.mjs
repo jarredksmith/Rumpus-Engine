@@ -59,7 +59,7 @@ const mk = () => new Function('THREE',
   assert(/uAmt\.value = cut \? 0 : _postMotion;/.test(src), 'a cut frame zeroes the amount CPU-side');
   assert(/mu\.uTanF\.value\.set\(th\*\(cam\.aspect\|\|\(w\/h\)\), th\);/.test(src), 'the frustum tangents track the live camera fov/aspect');
   assert(!/tOld/.test(extractFunction('_renderPostFX')), 'the accumulation ping-pong is GONE from the pipeline');
-  assert(/const _mbOn = _postMotion>0\.01/.test(src), 'postMotion 0 still skips the pass entirely — byte-identical old behavior at zero');
+  assert(/const _mbOn = \(_postMotion \* \(\(typeof a11y!=='undefined'\) \? a11y\.blur : 1\)\)>0\.01/.test(src), 'postMotion 0 still skips the pass entirely — byte-identical old behavior at zero');   /* build 1313: ...and so does a player who has set their blur to 0, which is the whole point of that multiply */
   assert(/Motion blur = camera blur strength/.test(src), 'the editor hint stops saying "trail"');
 }
 

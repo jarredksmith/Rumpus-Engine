@@ -41,8 +41,8 @@ function run(mode, kills) {
 // ---------------------------------------------------------------- the wiring
 {
   const fn = extractFunction('registerLocalKill');
-  assert(/if\(NET\.mode!=='off' && typeof shake!=='undefined'\) shake = Math\.max\(shake, n>=3 \? 0\.15 : 0\.06\);/.test(fn),
-    'the local jolt fires only in netplay, scaled up for a multi-kill');
+  assert(/if\(NET\.mode!=='off' && typeof shake!=='undefined'\) shake = Math\.max\(shake, \(n>=3 \? 0\.15 : 0\.06\)\*\(\(typeof a11y!=='undefined'\)\?a11y\.shake:1\)\);/.test(fn),
+    'the local jolt fires only in netplay, scaled up for a multi-kill');   /* build 1313: the player's motion-accessibility scale rides at the point of use; the tuned value it multiplies is unchanged */
   assert(/if\(n>=2\)\{ showMultiKill\(n\); if\(NET\.mode==='off' && n>=3\) hitStop=Math\.max\(hitStop, 0\.2\); \}/.test(fn),
     'the solo-only slow-mo is untouched — the shake substitutes for it online, it does not replace it in solo');
   const ke = extractFunction('killEnemy');

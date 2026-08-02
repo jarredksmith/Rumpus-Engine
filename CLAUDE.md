@@ -967,6 +967,55 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Motion accessibility (build 1313 — gameplay audit F9)
+
+> Greped `colorblind`, `reduceMotion`, `prefers-reduced`, `a11y` → one CSS media query for UI animation,
+> nothing that touches camera shake, the damage flash, motion blur or hitstop. **A player who gets motion
+> sick from `addShake`/`postMotion` has no recourse inside the game.**
+
+Every one of those was a hardcoded constant or a LEVEL setting the creator owns — so a player who cannot
+tolerate camera shake could not turn it down in someone else's level, on any platform, at all.
+
+Five per-device sliders in the pause menu (**Motion & comfort**): camera shake, camera sway, motion blur,
+damage flash, kill slow-mo. Three decisions:
+
+- **Per device, not per level.** This is a property of the person, not the content. It must survive
+  switching levels and apply to levels other people made — which is the whole point, since a creator cannot
+  be relied on to have thought about it.
+- **A multiplier at the point of use, never a write to the level's values.** `worldCfg.postMotion` stays
+  exactly what the creator authored; the preference scales it on the way to the shader. Writing it would
+  save the player's accessibility setting into someone else's file.
+- **Seeded from the OS.** A player who has told their system "reduce motion" has said it once; asking again
+  is the accessibility failure one level up. `prefers-reduced-motion: reduce` seeds a calm baseline on first
+  run, and an explicit choice always wins after that — including the choice to turn it all back up.
+
+**Defaults are 1 across the board**, so nothing moves for a player who never opens the panel: at 100% the
+flash alpha is the same 0.55, the freeze is the same `rawDt*0.12`, `addShake` is the identity.
+
+**The damage flash is dimmed, not removed.** At zero it still writes alpha 0.12 — a player who has turned
+motion down still needs to know they are being hit. The slider dims the pulse; it does not delete the
+feedback.
+
+Two places the scaling had to go where it isn't obvious:
+- **`addShake` is the chokepoint** — blasts, hits, kills, car impacts and the melee thump all route through
+  it, so one scale covers them and the next one somebody adds. But two sites write `shake` directly (a car
+  slam, a multi-kill punch); those are scaled too, because *a chokepoint you can go around is not one.*
+- **Sway scales the TARGETS, not the springs.** The dip still settles and the lean still eases on their
+  tuned curves; they just have less to travel. Scaling the spring rates would change the *feel* rather than
+  the amount, which is not what the setting says.
+
+Measured live at every site (`tools/probe/a11y-motion.mjs`): shake 0.40/0.20/0.10/0.00 at 100/50/25/0%;
+flash alpha 0.55/0.333/0.12; a 0.62 authored blur reaching the shader as 0.62/0.31/0.00 with `worldCfg`
+untouched; hitstop dt 0.00192/0.00896/0.016 (at 0 the clock never slows, and the countdown still runs so
+nothing waiting on it can hang).
+
+**The probe found a defect in the loader itself:** `loadA11y()` only ever ADDED constraints — a second call
+with nothing stored and no OS preference left whatever the last call had written. It now starts from the
+defaults every time. That only showed up because the probe called it twice.
+
+Six pins moved (1210, 1220, 1238, 1246, 31, 437), each keeping its assertion's intent — and 1246's gained a
+case, since a player who turns blur off must skip the whole velocity pass in a level that authored it on.
+
 ## The editor viewport answers to two fingers (build 1312 — editor audit 4.6)
 
 > Top view pan is `mousedown` button 1/2 and zoom is `wheel` → **top view is unreachable on a phone**, and

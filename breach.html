@@ -1416,6 +1416,19 @@
       <label class="paLbl"><input type="checkbox" id="msAimMatchCb"> Zoom-matched aim sensitivity</label>
       <div id="msSensHint" style="font-size:11px;opacity:.7;margin:2px 0 0">1.00 = the engine default. Aiming is slower than the hip by design; tick the box to make it match the zoom instead.</div>
     </div>
+    <!-- build 1313 (gameplay audit F9): motion accessibility. Per DEVICE, so it follows the player into
+         levels other people made — which is the whole point, since a creator cannot be relied on to have
+         thought about it. -->
+    <div class="pauseAudio" id="pauseA11y">
+      <div style="font-size:11px;letter-spacing:1.5px;opacity:.75;margin:0 0 4px">MOTION &amp; COMFORT</div>
+      <label class="paLbl">Camera shake<input type="range" id="a11yShake" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yShakeV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Camera sway<input type="range" id="a11ySway" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11ySwayV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Motion blur<input type="range" id="a11yBlur" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yBlurV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Damage flash<input type="range" id="a11yFlash" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yFlashV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Slow-mo on kills<input type="range" id="a11yHitstop" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yHitstopV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <div class="row2" style="margin-top:5px"><button id="a11yReduce" class="pBtnGhost">Reduce all motion</button><button id="a11yRestore" class="pBtnGhost">Restore defaults</button></div>
+      <div id="a11yHint" style="font-size:11px;opacity:.7;margin:4px 0 0">These are yours, not the level's \u2014 they follow you into every level, including ones other people made. Being hit always stays visible, however low the flash goes.</div>
+    </div>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
     <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <button id="pauseExit" class="pBtnExit">⌂ Exit to main menu</button>
@@ -8240,7 +8253,10 @@ function _renderPostFX(scn, cam){
   // 1d) build 1246: the velocity buffer — top rung only; lower rungs keep 1238's rotation blur.
   // Same envelope as the AO prepass: shadow refresh frozen, sky/weather/background out, the no-depth
   // sweep on BOTH scenes (1158's rule), and the viewmodel drawn with its own near-zero velocities.
-  const _velWant = _postMotion > 0.01 && _prStepI === 0 && _velRT && _matVel && cam && cam.isPerspectiveCamera;
+  /* build 1313: the player's motion-blur preference SCALES the creator's authored value on the way to the
+     shader. worldCfg.postMotion is untouched, so the level still saves exactly what its author set. */
+  const _postMotionP = _postMotion * ((typeof a11y!=='undefined') ? a11y.blur : 1);
+  const _velWant = _postMotionP > 0.01 && _prStepI === 0 && _velRT && _matVel && cam && cam.isPerspectiveCamera;
   if(_velWant){
     const vu=_matVel.uniforms;
     if(_velVPF === _frameNo - 1) vu.uPrevVP.value.copy(_velPrevVP);
@@ -8330,7 +8346,7 @@ function _renderPostFX(scn, cam){
   // build 810: with motion blur ~0 (or shed by adaptive res at its lowest step), composite STRAIGHT TO SCREEN — the
   // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
   // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
-  const _mbOn = _postMotion>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);
+  const _mbOn = (_postMotion * ((typeof a11y!=='undefined') ? a11y.blur : 1))>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);   /* build 1313 */
   // build 1117: the composite always encodes — it is the last stage that sees linear light either
   // way, and the grade after it has to run in display space. Everything downstream is a blit or a
   // temporal blend, both of which are fine on display-referred pixels.
@@ -27276,7 +27292,9 @@ let shake = 0;                 // current trauma 0..1, decays each frame
 // the genre and both absent (the speed-FOV of build 730 lived only in the driving branch). _landDip is a
 // spring the landing impulse kicks (dip then recover), _camLean an eased strafe roll.
 let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0;
-function addShake(amt){ shake = Math.min(1, shake + amt); }
+/* build 1313: EVERY shake in the engine goes through here — blasts, hits, kills, car impacts, the melee
+   thump — so scaling it at this one point covers all of them, and a future one for free. */
+function addShake(amt){ shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1)); }
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){
     const g = grenades[i];
@@ -29943,7 +29961,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1312 · 2026-08-02';
+const BUILD_VERSION = 'build 1313 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30127,6 +30145,47 @@ const HIP_SENS = 0.0022, ADS_SENS = 0.0012;  // slower look while aiming for pre
 // of the mouse, not of the level) beside the pad and touch prefs.
 let mouseSens = 1;
 try{ const _ms = parseFloat(localStorage.getItem('breach_mouse_sens')); if(isFinite(_ms)) mouseSens = Math.max(MOUSE_SENS_MIN, Math.min(MOUSE_SENS_MAX, _ms)); }catch(e){}
+// ---- build 1313 (gameplay audit F9): MOTION ACCESSIBILITY ---------------------------------------------
+// The audit: "Greped `colorblind`, `reduceMotion`, `prefers-reduced`, `a11y` -> one CSS media query for UI
+// animation, nothing that touches camera shake, the damage flash, motion blur or hitstop. A PLAYER WHO GETS
+// MOTION SICK FROM addShake/postMotion HAS NO RECOURSE INSIDE THE GAME."
+//
+// Verified: every one of those is either a hardcoded constant or a LEVEL setting the creator owns. A player
+// who cannot tolerate camera shake could not turn it down in someone else's level, on any platform, at all.
+//
+// Three decisions:
+//  * PER DEVICE, NOT PER LEVEL. This is a property of the person, not the content. It has to survive
+//    switching levels and has to apply to levels other people made — which is the whole point, since a
+//    creator cannot be relied on to have thought about it.
+//  * A MULTIPLIER AT THE POINT OF USE, never a write to the level's own values. `worldCfg.postMotion` stays
+//    exactly what the creator authored; the player's preference scales it on the way to the shader. Editing
+//    the level would save the player's accessibility setting into someone else's file.
+//  * SEEDED FROM THE OPERATING SYSTEM. A player who has already told their OS "reduce motion" has said it
+//    once; asking again is the accessibility failure one level up. `prefers-reduced-motion: reduce` sets the
+//    defaults to a calm baseline on first run, and an explicit choice always wins after that.
+const A11Y_KEY = 'breach_a11y';
+const A11Y_DEFAULT = { shake:1, flash:1, blur:1, sway:1, hitstop:1 };
+let a11y = Object.assign({}, A11Y_DEFAULT);
+function _a11yOsReduced(){ try{ return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){ return false; } }
+function loadA11y(){
+  /* build 1313: start from the defaults EVERY time. Without this the function only ever ADDS constraints —
+     a second call with no stored value and no OS preference left whatever the last call had written, which
+     is a real trap the moment anything reloads settings (a profile switch, a reset button, a test). Caught
+     by this build's own probe, which called it twice. */
+  a11y = Object.assign({}, A11Y_DEFAULT);
+  let saved = null;
+  try{ saved = JSON.parse(localStorage.getItem(A11Y_KEY) || 'null'); }catch(e){}
+  if(saved && typeof saved === 'object'){
+    for(const k in A11Y_DEFAULT) a11y[k] = Math.max(0, Math.min(1, saved[k] == null ? A11Y_DEFAULT[k] : +saved[k] || 0));
+    return;
+  }
+  /* no stored choice: take the OS at its word rather than making them find this panel */
+  if(_a11yOsReduced()) a11y = { shake:0, flash:0.35, blur:0, sway:0, hitstop:0 };
+}
+function saveA11y(){ try{ localStorage.setItem(A11Y_KEY, JSON.stringify(a11y)); }catch(e){} }
+function a11yReduceAll(){ a11y = { shake:0, flash:0.35, blur:0, sway:0, hitstop:0 }; saveA11y(); }
+function a11yRestoreAll(){ a11y = Object.assign({}, A11Y_DEFAULT); saveA11y(); }
+loadA11y();
 function saveMouseSens(){ try{ localStorage.setItem('breach_mouse_sens', String(mouseSens)); }catch(e){} }
 // ZOOM-MATCHED AIM. The audit measured the shipped ratio: ADS_SENS/HIP_SENS = 0.545 against a 2.34x zoom,
 // so turning the mouse the same distance swept ~28% more world while aimed than while hip-firing — the
@@ -30786,8 +30845,8 @@ function moveKCC(dt){
     if(_playerWasAir && !drivingCar){                      // build 1210: the air->ground frame — vel.y is still the fall speed
       const _fall = Math.max(0, -player.vel.y);
       if(_fall > 2.5){ const _imp = Math.min(1, _fall/22);
-        _landDipV -= 1.6 + _imp*7.0;                        // kick the eye-dip spring downward
-        shake = Math.max(shake, _imp*0.22);
+        _landDipV -= (1.6 + _imp*7.0) * ((typeof a11y!=='undefined')?a11y.sway:1);   // kick the eye-dip spring downward (build 1313: scaled at the impulse, so the spring's tuned curve is untouched)
+        shake = Math.max(shake, _imp*0.22*((typeof a11y!=='undefined')?a11y.shake:1));   /* build 1313 */
         if(typeof SFX!=='undefined' && SFX.land) SFX.land(_imp); }
     }
     player.onGround = true; if(player.vel.y < 0) player.vel.y = 0;
@@ -32827,7 +32886,7 @@ function registerLocalKill(){   // call when the LOCAL player gets a kill
   // sells a kill is exactly what the social mode lost. Slowing time is unsafe online, but a LOCAL cosmetic
   // jolt is not: substitute a camera-shake punch on the killing client (bigger on a multi-kill). Solo is
   // untouched — it keeps its real hitstop, so there is no double-crunch there.
-  if(NET.mode!=='off' && typeof shake!=='undefined') shake = Math.max(shake, n>=3 ? 0.15 : 0.06);
+  if(NET.mode!=='off' && typeof shake!=='undefined') shake = Math.max(shake, (n>=3 ? 0.15 : 0.06)*((typeof a11y!=='undefined')?a11y.shake:1));   /* build 1313 */
   if(n>=2){ showMultiKill(n); if(NET.mode==='off' && n>=3) hitStop=Math.max(hitStop, 0.2); }   // solo: dramatic slow-mo on triple+
 }
 // ---- Combat feel: floating damage numbers, enemy hit-flash, hitstop ----
@@ -33051,7 +33110,12 @@ function updateHurtDir(dt){
 }
 function flashDamage(){
   const d = $('damage');
-  d.style.boxShadow='inset 0 0 200px rgba(255,40,70,.55)';
+  /* build 1313: scaled, never removed. Being hit MUST stay legible — a player who has turned motion down
+     still needs to know they are taking damage, so the floor is a visible 0.12 rather than nothing. The
+     slider dims the full-screen pulse; it does not delete the feedback. */
+  const _a = (typeof a11y!=='undefined') ? a11y.flash : 1;
+  const _amt = (_a <= 0) ? 0.12 : (0.12 + 0.43*_a);
+  d.style.boxShadow='inset 0 0 200px rgba(255,40,70,'+_amt.toFixed(3)+')';
   setTimeout(()=>{ d.style.boxShadow='inset 0 0 200px rgba(255,40,70,0)'; },120);
 }
 
@@ -35032,7 +35096,10 @@ function loop(){
   if(_cineAvatar && _cineAvatar.visible && !editorOpen && !_cineActive){ _hideCineAvatar(); }   // editor authoring body never lingers into play
   { const v = gameOn && !gameOver && !shopOpen && !editorOpen && !choosingUpgrade && !paused;   // show ❚❚ only during live play
     if(v!==_pbShow){ _pbShow=v; const pb=document.getElementById('pauseBtn'); if(pb) pb.style.display = v?'flex':'none'; } }
-  if(hitStop > 0){ hitStop -= rawDt; dt = rawDt * 0.12; }   // impact freeze: slow the sim briefly (real-time countdown)
+  /* build 1313: the impact freeze eases toward normal speed as the player turns it down — at 0 the clock
+     never slows at all, which is what "no sudden time distortion" has to mean. The countdown still runs, so
+     nothing that waits on hitStop can hang. */
+  if(hitStop > 0){ hitStop -= rawDt; const _hs=(typeof a11y!=='undefined')?a11y.hitstop:1; if(_hs>0) dt = rawDt * (0.12 + 0.88*(1-_hs)); }   // impact freeze: slow the sim briefly (real-time countdown)
   if(typeof updateLaser==='function') updateLaser();   // build 585: laser sight dot/beam (hides itself when inactive)
   if(_infAmmo){ for(const k in WEAPONS){ const w=WEAPONS[k]; if(w && w.reserveMax!=null && w.reserve<w.reserveMax) w.reserve=w.reserveMax; } }   // build 589: unlimited ammo (testing)
   // build 661: kill the cinematic camera-preview window the instant we leave editing. The branches below own
@@ -35103,11 +35170,14 @@ function loop(){
   if(Math.abs(adsBlend - adsTarget) < 0.002) adsBlend = adsTarget;
   // build 1210: the landing-dip spring (stiff, well damped — a quick dip and settle, no wobble) and the
   // strafe-lean target (roll away from your lateral velocity, killed while aiming so the sight stays true).
-  { const _dt=Math.min(0.05, dt);
+  /* build 1313: `sway` scales the TARGETS, not the springs — the dip still settles and the lean still eases
+     on their tuned curves, they just have less to travel. Scaling the spring rates instead would change the
+     FEEL rather than the amount, which is not what the setting says. */
+  { const _dt=Math.min(0.05, dt), _sw=(typeof a11y!=='undefined')?a11y.sway:1;
     _landDipV += (-_landDip*90 - _landDipV*14) * _dt; _landDip += _landDipV*_dt;
     if(Math.abs(_landDip)<1e-4 && Math.abs(_landDipV)<1e-3){ _landDip=0; _landDipV=0; }
     const _latV = (typeof player!=='undefined'&&player.vel) ? (player.vel.x*Math.cos(player.yaw) - player.vel.z*Math.sin(player.yaw)) : 0;
-    const _leanT = Math.max(-0.05, Math.min(0.05, -_latV*0.006)) * (1 - adsBlend);
+    const _leanT = Math.max(-0.05, Math.min(0.05, -_latV*0.006)) * (1 - adsBlend) * _sw;
     _camLean += (_leanT - _camLean) * Math.min(1, dt*8); }
   _scopedNow = !!((ads || padAds || touchAds) && WEAPONS[curWep] && WEAPONS[curWep].scope && adsBlend > 0.6 && gameOn && !editorOpen); if(_scopedNow && typeof cursorAimActive==='function' && cursorAimActive()) _scopedNow=false;   // build 874: no optic tunnel from a bird's-eye camera (build 1103: nor from chase-cursor) · build 913: touch AIM + controller LT scope too (the sniper never zoomed on mobile)
   _setScopeOverlay(_scopedNow);
@@ -46788,6 +46858,19 @@ function bindPauseMenu(){
         mr.oninput=()=>{ const v=parseFloat(mr.value); mouseSens=Math.max(MOUSE_SENS_MIN,Math.min(MOUSE_SENS_MAX,isFinite(v)?v:1)); _show(); saveMouseSens(); }; }
       const mc=document.getElementById('msAimMatchCb');
       if(mc){ mc.checked=!!mouseAimMatch; mc.onchange=()=>{ mouseAimMatch=!!mc.checked; saveMouseAimMatch(); }; } }
+    /* build 1313: motion & comfort. One loop over the keys rather than five copies of the same six lines —
+       adding a sixth effect is then one entry here and one <input> above it. */
+    { const A11Y_ROWS = [['shake','a11yShake'],['sway','a11ySway'],['blur','a11yBlur'],['flash','a11yFlash'],['hitstop','a11yHitstop']];
+      const _a11ySync=()=>{ for(const [key,id] of A11Y_ROWS){
+        const r=document.getElementById(id), v=document.getElementById(id+'V');
+        if(r) r.value=String(Math.round(a11y[key]*100));
+        if(v) v.textContent=Math.round(a11y[key]*100)+'%'; } };
+      for(const [key,id] of A11Y_ROWS){ const r=document.getElementById(id);
+        if(r) r.oninput=()=>{ a11y[key]=Math.max(0, Math.min(1, (+r.value||0)/100)); saveA11y();
+          const v=document.getElementById(id+'V'); if(v) v.textContent=Math.round(a11y[key]*100)+'%'; }; }
+      const rd=document.getElementById('a11yReduce'); if(rd) rd.onclick=()=>{ a11yReduceAll(); _a11ySync(); if(typeof toast==='function') toast('Motion reduced'); };
+      const rs=document.getElementById('a11yRestore'); if(rs) rs.onclick=()=>{ a11yRestoreAll(); _a11ySync(); if(typeof toast==='function') toast('Motion settings restored'); };
+      _a11ySync(); }
     const ar=document.getElementById('padAdsRng'); if(ar){ ar.value=String(padPrefs.ads); ar.oninput=()=>{ padPrefs.ads=Math.max(0.2,Math.min(1.5,parseFloat(ar.value)||0.7)); savePadPrefs(); }; }
     const dr=document.getElementById('padDeadRng'); if(dr){ dr.value=String(padPrefs.dead); dr.oninput=()=>{ padPrefs.dead=Math.max(0.05,Math.min(0.4,parseFloat(dr.value)||0.18)); savePadPrefs(); }; }
     const iv=document.getElementById('padInvCb'); if(iv){ iv.checked=!!padPrefs.invertY; iv.onchange=()=>{ padPrefs.invertY=iv.checked; savePadPrefs(); }; } }

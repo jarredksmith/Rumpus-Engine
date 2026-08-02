@@ -20,7 +20,7 @@ let last=-1; for(const pat of order){ const i=rp.search(new RegExp(pat)); assert
 assert(rp.lastIndexOf('setRenderTarget(null)') > last, 'the present-to-screen pass comes last in the motion-blur chain');
 // build 810: with motion blur ~0 (or shed at the lowest adaptive step), the composite goes straight to screen — the
 // motion-blend + copy passes (two full-res fullscreen draws) are skipped entirely.
-assert(/const _mbOn = _postMotion>0\.01 && !\(_adaptOn && _prStepI>=_PR_STEPS\.length-1\);/.test(rp), 'motion chain is skipped when motion is ~0 or adaptive res is at its floor');
+assert(/const _mbOn = \(_postMotion \* \(\(typeof a11y!=='undefined'\) \? a11y\.blur : 1\)\)>0\.01 && !\(_adaptOn && _prStepI>=_PR_STEPS\.length-1\);/.test(rp), 'motion chain is skipped when motion is ~0 or adaptive res is at its floor');   /* build 1313 */
 assert(/if\(!_mbOn\)\{[\s\S]{0,140}?_postQuad\.material=_matComp; renderer\.setRenderTarget\(null\); renderer\.render\(_postScene,_postCam\);\s*\n?\s*return;\s*\n?\s*\}/.test(rp), 'no-motion path composites straight to the screen (saves 2 full-res passes)');
 assert(!/const t=_afterA; _afterA=_afterB; _afterB=t;/.test(rp) && /cut \? 0 : _postMotion/.test(rp), 'no accumulation ping-pong any more — one reprojection pass per frame, zeroed on a camera cut (build 1238)');
 assert(/if\(_postRT\.width!==w \|\| _postRT\.height!==h \|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost\(\); ensurePost\(\); \}/.test(rp), 'targets rebuild on resolution change (and on the MSAA step, build 880)');

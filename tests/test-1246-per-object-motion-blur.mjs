@@ -79,12 +79,20 @@ const velHook = function(){};
 // --- executable: the gate ----------------------------------------------------------------------------
 const velLine = fx.match(/const _velWant = ([^;]+);/);
 assert(velLine, 'the velocity gate exists');
-const gate = new Function('_postMotion','_prStepI','_velRT','_matVel','cam', `return !!(${velLine[1]});`);
-const CAM={isPerspectiveCamera:true};
-assert(gate(0.62, 0, {}, {}, CAM) === true, 'top rung with motion blur on: the pass runs');
-assert(gate(0, 0, {}, {}, CAM) === false, 'motion blur authored off: no pass');
-assert(gate(0.62, 1, {}, {}, CAM) === false, 'first downshift sheds it — lower rungs keep the 1238 rotation blur');
-assert(gate(0.62, 0, {}, {}, {isPerspectiveCamera:false}) === false, 'ortho editor views go without');
+/* build 1313: the gate reads _postMotionP — the authored strength times the PLAYER'S motion-blur setting —
+   so the rig supplies both, and gains a case: a player who has turned blur off skips the pass in a level
+   that authored it on, which is exactly what that multiply exists for. */
+const pLine = fx.match(/const _postMotionP = ([^;]+);/);
+assert(pLine, 'the player-scaled strength is derived before the gate');
+const gate = new Function('_postMotion','_prStepI','_velRT','_matVel','cam','a11y',
+  `const _postMotionP = ${pLine[1]}; return !!(${velLine[1]});`);
+const CAM={isPerspectiveCamera:true}, FULL={blur:1};
+assert(gate(0.62, 0, {}, {}, CAM, FULL) === true, 'top rung with motion blur on: the pass runs');
+assert(gate(0, 0, {}, {}, CAM, FULL) === false, 'motion blur authored off: no pass');
+assert(gate(0.62, 0, {}, {}, CAM, {blur:0}) === false, 'and a PLAYER who turned blur off skips it in a level that authored it on (build 1313)');
+assert(gate(0.62, 0, {}, {}, CAM, {blur:0.5}) === true, '...while half strength still runs the pass');
+assert(gate(0.62, 1, {}, {}, CAM, FULL) === false, 'first downshift sheds it — lower rungs keep the 1238 rotation blur');
+assert(gate(0.62, 0, {}, {}, {isPerspectiveCamera:false}, FULL) === false, 'ortho editor views go without');
 
 // --- the frame block: hygiene envelope + freshness guards --------------------------------------------
 assert(/renderer\.setClearColor\(0x808080, 0\);/.test(fx),

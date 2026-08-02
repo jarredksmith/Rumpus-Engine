@@ -49,9 +49,9 @@ const src = gameSource();
 {
   assert(/if\(_playerWasAir && !drivingCar\)\{/.test(src) && /const _fall = Math\.max\(0, -player\.vel\.y\);/.test(src),
     'the air->ground frame reads the fall speed BEFORE vel.y is zeroed');
-  assert(/_landDipV -= 1\.6 \+ _imp\*7\.0;/.test(src) && /if\(typeof SFX!=='undefined' && SFX\.land\) SFX\.land\(_imp\);/.test(src),
-    'a real landing kicks the dip spring, and plays a thud scaled by impact');
-  assert(/shake = Math\.max\(shake, _imp\*0\.22\);/.test(src), '...with a touch of impact shake');
+  assert(/_landDipV -= \(1\.6 \+ _imp\*7\.0\) \* \(\(typeof a11y!=='undefined'\)\?a11y\.sway:1\);/.test(src) && /if\(typeof SFX!=='undefined' && SFX\.land\) SFX\.land\(_imp\);/.test(src),
+    'a real landing kicks the dip spring, and plays a thud scaled by impact');   /* build 1313 scales the IMPULSE by the player's sway setting; the 1.6 + _imp*7.0 tuning is unchanged */
+  assert(/shake = Math\.max\(shake, _imp\*0\.22\*\(\(typeof a11y!=='undefined'\)\?a11y\.shake:1\)\);/.test(src), '...with a touch of impact shake');
   assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend \+ _sprintFovCur;/.test(src),
     'the sprint push is added to the ADS-blended FOV, not multiplied — and since 1222 it is the EASED value, so no single-frame condition can step the lens');
   assert(/_sprintFovCur \+= \(_sprintTarget - _sprintFovCur\) \* Math\.min\(1, dt\*8\);/.test(src),
