@@ -10,7 +10,9 @@ const src = gameSource();
 //   third person   camera->prop 5.7   player->prop 1.5   old test MISSES   (boom 4.2 m behind)
 // After: the real swing deals the crowbar's full 60 damage in BOTH views.
 
-const melee = extractFunction('meleeAttack');
+// build 1303: the swing and the contact are two functions now — the blow lands after the weapon's
+// windup, not on the input frame. These assertions are about the CONTACT, so read both halves.
+const melee = extractFunction('meleeAttack') + '\n' + extractFunction('_meleeStrike');
 const block = melee.slice(melee.indexOf('if(dynamicProps.length){'));
 
 // ---------------------------------------------------------------- 1. the reach is measured from the player

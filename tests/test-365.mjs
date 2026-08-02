@@ -67,5 +67,8 @@ assert(resolve(partial,'jumpStart') === 'idle','jumpStart -> jump(missing) -> id
 const pes = extractFunction('playEnemyStates');
 assert(/_ANIM_ONESHOT\.has\(st\)/.test(pes), 'build loop uses the one-shot set for loop mode');
 const sa = extractFunction('setEnemyAnimState');
-assert(/_holdDefault = _ANIM_ONESHOT\.has\(state\)/.test(sa), 'crossfade uses the one-shot set for hold default');
+// build 1304: the loop mode belongs to the RESOLVED slot, not the requested name — a one-shot request
+// falling back to a looping slot was stamping LoopOnce onto it (idle froze; see test-1304). An authored
+// override is still honoured, looked up under the requested name first and the resolved slot second.
+assert(/_holdDefault = _ANIM_ONESHOT\.has\(key\)/.test(sa), 'crossfade uses the one-shot set for hold default');
 done();

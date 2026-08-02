@@ -9,7 +9,9 @@ assert(/crowbar: \{ name:'CROWBAR'.*melee:true, reach:3\.4, loud:0 \}/.test(src)
 const sh = extractFunction('shoot');
 assert(/if\(w\.melee\)\{ if\(firingLatch\) return; firingLatch=true; touchFireBufT=0; lastShot=now; triggerGunAnim\('shoot'\); meleeAttack\(w\); return; \}/.test(sh), 'firing a melee weapon swings it (before the ammo path; build 1059: one swing per click)');
 
-const m = extractFunction('meleeAttack');
+// build 1303: the swing and the contact are two functions now — the blow lands after the weapon's
+// windup, not on the input frame. These assertions are about the CONTACT, so read both halves.
+const m = extractFunction('meleeAttack') + '\n' + extractFunction('_meleeStrike');
 assert(/function meleeAttack\(wep\)/.test(src), 'meleeAttack takes an optional weapon');
 assert(/const RANGE = \(wep && wep\.reach\) \|\| MELEE_RANGE, DMG = \(wep && wep\.dmg\) \|\| MELEE_DMG;/.test(m), 'melee uses the weapon reach/damage, fists fall back to constants');
 assert(/if\(now - _meleeT < \(wep \? 0 : MELEE_CD\)\) return;/.test(m), 'weapon gated by fireRate; fist by MELEE_CD');

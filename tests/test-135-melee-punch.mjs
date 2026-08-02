@@ -4,7 +4,9 @@
 import { gameSource, extractFunction, done, assert } from './harness.mjs';
 const src = gameSource();
 
-const m = extractFunction('meleeAttack');
+// build 1303: the swing and the contact are two functions now — the blow lands after the weapon's
+// windup, not on the input frame. These assertions are about the CONTACT, so read both halves.
+const m = extractFunction('meleeAttack') + '\n' + extractFunction('_meleeStrike');
 assert(/now - _meleeT < \(wep \? 0 : MELEE_CD\)/.test(m), 'punch respects a cooldown');
 assert(/const cone=\(tx,ty,tz\)=>/.test(m) && />0\.35 \? dist : -1/.test(m), 'punch only hits within a forward cone');
 assert(/best\.evx=\(best\.evx\|\|0\)\+fwd\.x\/fh\*KB; best\.evz=\(best\.evz\|\|0\)\+fwd\.z\/fh\*KB; best\.vy=Math\.max\(best\.vy\|\|0,UP\)/.test(m), 'punch shoves the target along aim + pops it up');

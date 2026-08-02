@@ -26,7 +26,7 @@ const LIM = new Function('BOT_MELEE_REACH_MIN', 'return ' + extractConst('GUN_ST
 {
   assert(KEYS.includes('melee'), 'melee is an authorable stat');
   assert(KEYS.includes('reach'), '...and so is reach');
-  eq(KEYS.length, 9, 'nine stats — the seven build 1190 shipped plus these two');
+  eq(KEYS.length, 10, 'ten stats — the seven build 1190 shipped, 1296’s melee + reach, and 1303’s contact delay');
   for (const k of ['fireRate', 'magSize', 'reserve0', 'reserveMax', 'spread', 'reloadMs', 'pellets'])
     assert(KEYS.includes(k), '1190’s ' + k + ' is untouched');
   eq(LIM.melee.join(','), '0,1', 'melee rides as 0/1 — no separate boolean path, and every reader already asks `if(w.melee)`');
@@ -135,8 +135,8 @@ const FACTORY = {
 {
   assert(/const _isM = !!WEAPONS\[curWep\]\.melee;/.test(src), 'the panel asks whether this weapon is melee');
   assert(/lb\.textContent='Melee weapon';/.test(src), 'and offers the toggle');
-  assert(/\? \[ \['reach','Reach m',0\.1\], \['fireRate','Swing interval ms',10\] \]/.test(src),
-    'a melee weapon gets reach and swing speed…');
+  assert(/\? \[ \['reach','Reach m',0\.1\], \['fireRate','Swing interval ms',10\], \['windup','Contact delay ms',10\] \]/.test(src),
+    'a melee weapon gets reach, swing speed and (build 1303) the contact delay…');
   assert(/: \[ \['fireRate','Fire interval ms',5\], \['magSize','Magazine',1\]/.test(src),
     '…and a gun keeps the seven it had');
   // BEFORE THIS BUILD THE WHOLE SHEET WAS HIDDEN FOR MELEE WEAPONS — even the crowbar's reach was unreachable
@@ -144,8 +144,12 @@ const FACTORY = {
     'the sheet is no longer hidden outright for a melee weapon');
   assert(/before this build the whole stat sheet was hidden for melee\n           weapons, so even the crowbar's reach and swing speed were unreachable/.test(src),
     'and that is recorded');
-  assert(/if\(cb\.checked\)\{ keep\.magSize=0; keep\.reserve0=0; keep\.reserveMax=0; keep\.reloadMs=0; \}/.test(src),
+  assert(/if\(cb\.checked\)\{ keep\.magSize=0; keep\.reserve0=0; keep\.reserveMax=0; keep\.reloadMs=0;/.test(src),
     'ticking it clears the magazine, so a sword does not show 25 rounds');
+  // build 1303: it also seeds a contact delay. A gun's factory windup is 0 — right for a trigger, wrong for
+  // a swing, and a converted gun would otherwise land its blow before the animation moved.
+  assert(/if\(!\(keep\.windup>0\)\) keep\.windup=160; \}/.test(src),
+    '...and seeds a real contact delay, which a gun has no factory value for');
   assert(/else \{ const b=GUN_BASE\[curWep\]; keep\.magSize=b\.magSize;/.test(src),
     '...and unticking restores the factory magazine, so the toggle is reversible');
   assert(/renderEditorFields\(\);   \/\* the field list below depends on the answer \*\//.test(src),
