@@ -10616,12 +10616,23 @@ function applyAnimSpeedLive(state, spd){
   if(typeof previewAvatar!=='undefined' && previewAvatar) apply(previewAvatar.userData.visual || previewAvatar);
   if(typeof _ownAvatar!=='undefined' && _ownAvatar) apply(_ownAvatar.userData.visual || _ownAvatar);
 }
+// ---- build 1306: is the action we think we are playing ACTUALLY playing? ------------------------------
+// three disables an action whose fade-out completes (`_updateWeight`: `if(interpolantValue === 0)
+// this.enabled = false`), a LoopOnce action stops advancing on its final frame, and a zero-weight action
+// writes no bones at all — which does not reset the skeleton, it FREEZES it wherever it was.
+function _animLive(a){
+  if(!a || !a.enabled || a.paused) return false;
+  if(a.getEffectiveWeight() <= 1e-3) return false;
+  const c = a.getClip && a.getClip();
+  if(a.loop === THREE.LoopOnce && c && c.duration > 0 && a.time >= c.duration - 1e-4) return false;
+  return true;
+}
+const ANIM_LIVE_GRACE = 260;   // ms — comfortably past the 180 ms crossfade, so a fade-in is never mistaken for a stall
 function setEnemyAnimState(body, state){
   const v = body.userData.visual; if(!v) return;
   const acts = v.userData.stateActions; if(!acts) return;
   _ensureClipAction(v, state);   // build 1079: 'clip:<name>' builds its action on first use
   const key = _stateActionKey(acts, state); if(!key || !acts[key]) return;
-  if(v.userData.animState === key) return;   // already there
   const cur = v.userData.animState ? acts[v.userData.animState] : null;
   const next = acts[key];
   const _cfg = v.userData.animCfg || (body.userData && body.userData.animCfg);
@@ -10648,12 +10659,35 @@ function setEnemyAnimState(body, state){
   // hold = play once and freeze the final frame; default true for 'die', otherwise loop. Editor can override per state.
   const _holdDefault = _ANIM_ONESHOT.has(key);
   const _hold = (_cfg && _cfg.clipHold && _cfg.clipHold[_pick(_cfg.clipHold)] != null) ? !!_cfg.clipHold[_pick(_cfg.clipHold)] : _holdDefault;
+  // ---- build 1306: THE EARLY RETURN IS WHAT MAKES A STRANDED ACTION PERMANENT ---------------------------
+  // REPORTED AGAIN after build 1304: "it freezes the animation on the idle after I use the weapon a few
+  // times — no animation, but I can still move; running a distance away picks it back up."
+  //
+  // `if(animState === key) return` was the whole of the check. Every other part of this system is
+  // re-evaluated every frame and therefore self-correcting; that one line is a LATCH. Whatever leaves the
+  // current action not running — a completed fade-out (three sets `enabled = false`), a LoopOnce clamped on
+  // its final frame, a weight that reached zero — the state machine then asks for the same state, sees the
+  // name it already holds, and returns, forever. Build 1304 removed ONE route to that (a one-shot request
+  // stamping LoopOnce onto the looping slot it fell back to) and the freeze survived it, so the fix here is
+  // not a third named cause: the early return now checks that the state it is short-circuiting is ALIVE,
+  // and re-arms it if not. That repairs the reported symptom whatever stranded the action.
+  //
+  // Two things it must NOT do. A HELD state finishing on its last frame is the entire point of holding, so
+  // `_hold` returns before the liveness test — a corpse must stay down. And a state entered moments ago is
+  // mid-crossfade with its weight ramping from zero, which reads exactly like a stall; `ANIM_LIVE_GRACE`
+  // is what keeps a fade-in from re-arming itself every frame.
+  const _same = (v.userData.animState === key);
+  if(_same){
+    if(_hold) return;
+    const _held = performance.now() - (v.userData.animAt || 0);
+    if(_held < ANIM_LIVE_GRACE || _animLive(next)) return;
+  }
   if(_hold){ next.loop = THREE.LoopOnce; next.clampWhenFinished = true; } else { next.loop = THREE.LoopRepeat; next.clampWhenFinished = false; }
   // reset() clears a finished/clamped LoopOnce state — without it, re-entering a held state (e.g. aim, then
   // release, then aim again) would stay frozen at the last frame instead of replaying from the start.
   next.reset(); next.enabled = true; next.setEffectiveTimeScale(_spd); next.setEffectiveWeight(1); next.time = 0; next.play();
-  if(cur && cur !== next) cur.crossFadeTo(next, 0.18, false);
-  v.userData.animState = key;
+  if(!_same && cur && cur !== next) cur.crossFadeTo(next, 0.18, false);   /* build 1306: a re-arm has nothing to fade FROM — itself */
+  v.userData.animState = key; v.userData.animAt = performance.now();
 }
 // --- Animation SELECTION helpers: turn live movement into the right directional slot ----------------
 // _locoSlot: choose forward / back / strafe locomotion from the planar move vector relative to facing yaw.
@@ -29705,7 +29739,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1305 · 2026-08-02';
+const BUILD_VERSION = 'build 1306 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -40838,7 +40872,7 @@ function renderEditorFields(){
       spd.onchange=()=>{ if(!mc.clipSpeed) mc.clipSpeed={}; const v=Math.max(0.1,Math.min(4,parseFloat(spd.value)||1)); mc.clipSpeed[stKey]=v; spd.value=String(v); refreshEnemyVisuals(); };
       const holdWrap=document.createElement('label'); holdWrap.title='Hold the last frame instead of looping (good for Aim / Death)'; holdWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
       const hold=document.createElement('input'); hold.type='checkbox'; hold.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
-      hold.checked = (mc.clipHold && mc.clipHold[stKey]!=null) ? !!mc.clipHold[stKey] : (stKey==='die');
+      hold.checked = (mc.clipHold && mc.clipHold[stKey]!=null) ? !!mc.clipHold[stKey] : _ANIM_ONESHOT.has(stKey);   /* build 1306: the RUNTIME default is the one-shot set, not just 'die' — the box showed Reload, Jump land, Equip and Move stop as looping when the engine plays them once */
       hold.onchange=()=>{ if(!mc.clipHold) mc.clipHold={}; mc.clipHold[stKey]=hold.checked; refreshEnemyVisuals(); };
       const hl=document.createElement('span'); hl.textContent='hold'; holdWrap.appendChild(hold); holdWrap.appendChild(hl);
       const ipWrap=document.createElement('label'); ipWrap.title='Lock this clip in place \u2014 cancels root-motion forward travel AND holds the hips at rest height (fixes clips retargeted from a bigger/smaller rig that fling the body into the air). Tick it for Walk / Run / strafe / any clip that drifts or floats.'; ipWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
@@ -42794,7 +42828,7 @@ function renderEditorFields(){
         spd.onchange=()=>{ if(!playerModelCfg.clipSpeed) playerModelCfg.clipSpeed={}; const v=Math.max(0.1,Math.min(4,parseFloat(spd.value)||1)); playerModelCfg.clipSpeed[stKey]=v; spd.value=String(v); applyAnimSpeedLive(stKey, v); };
         const holdWrap=document.createElement('label'); holdWrap.title='Hold the last frame instead of looping (good for Aim / Death)'; holdWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
         const hold=document.createElement('input'); hold.type='checkbox'; hold.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
-        hold.checked = (playerModelCfg.clipHold && playerModelCfg.clipHold[stKey]!=null) ? !!playerModelCfg.clipHold[stKey] : (stKey==='die');
+        hold.checked = (playerModelCfg.clipHold && playerModelCfg.clipHold[stKey]!=null) ? !!playerModelCfg.clipHold[stKey] : _ANIM_ONESHOT.has(stKey);   /* build 1306: match the runtime default (see the enemy tab) */
         hold.onchange=()=>{ if(!playerModelCfg.clipHold) playerModelCfg.clipHold={}; playerModelCfg.clipHold[stKey]=hold.checked; rebuildAvatars(); };
         const hl=document.createElement('span'); hl.textContent='hold'; holdWrap.appendChild(hold); holdWrap.appendChild(hl);
         const ipWrap=document.createElement('label'); ipWrap.title='Lock this clip in place \u2014 cancels root-motion forward travel AND holds the hips at rest height so the body animates on the spot (fixes clips retargeted from a bigger/smaller rig that fling the body into the air). Tick it for Walk / Run / strafe / any clip that drifts or floats.'; ipWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';

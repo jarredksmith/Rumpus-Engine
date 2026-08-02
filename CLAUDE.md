@@ -967,6 +967,59 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The animation state machine repairs itself (build 1306)
+
+Reported AGAIN, after build 1304 claimed it: *"stuck in the idle position, no animation, but I can still
+move them around the screen. If I run a distance away from the props I was hitting at, it picks back up."*
+
+1304's fix is real and stands. It was not enough, and this build deliberately does **not** name a third
+cause. It removes the thing that makes ANY stranded action permanent:
+
+```js
+if(v.userData.animState === key) return;   // "already there"
+```
+
+Every other part of this system is recomputed every frame and therefore self-correcting. **That one line is
+a latch.** Once the current action stops running, the machine asks for the same state, recognises the name
+it already holds, and returns — forever. Asking for a DIFFERENT state is the only escape, which is exactly
+why the reporter found that running away recovered it. Three ways an action stops running, all live in this
+engine:
+
+- three **disables** an action whose fade-out completes (`_updateWeight`: `if(interpolantValue === 0)
+  this.enabled = false`).
+- a `LoopOnce` action stops advancing on its final frame.
+- a **zero-weight** action writes no bones — which does not reset the skeleton, it FREEZES it wherever it
+  was. That is precisely "stuck in the idle position".
+
+So the early return now checks that the state it short-circuits is ALIVE (`_animLive`), and re-arms it if
+not. Two things it must not do, and both are pinned:
+
+- **A HELD state returns first, before the liveness test.** A corpse clamped on its last frame is the point
+  of holding, not a stall, and an authored `clipHold` is honoured the same way.
+- **A state entered moments ago is mid-crossfade with its weight ramping from zero**, which reads exactly
+  like a stall. `ANIM_LIVE_GRACE` (260 ms, against a 180 ms crossfade) is what stops a fade-in re-arming
+  itself every frame — without it the repair would be a worse freeze than the bug, and one that would only
+  appear on fast machines.
+
+A re-arm does not crossfade (there is nothing to fade *from* but itself), and `animAt` is stamped on entry
+because that is what the grace measures.
+
+Verified live on a real `AnimationMixer` with real actions (`tools/probe/anim-strand.mjs`): stranded four
+ways — disabled, clamped on its last frame, zero weight, paused — the real `setEnemyAnimState` repaired
+every one **without a state change**; a healthy action was left byte-identical (time 0.42 preserved, zero
+restarts across ten simulated seconds); a clamped death pose stayed down; and a state entered that instant
+at weight 0 re-armed **zero** times in ten calls.
+
+**And the editor had been lying about which slots hold.** The hold checkbox defaulted to `stKey === 'die'`
+while the runtime default is `_ANIM_ONESHOT.has(key)` — thirty-odd slots. Reload, Jump land, Equip and Move
+start/stop all showed as looping in the editor while the engine played them once. Both tabs (player and
+enemy) now default to the runtime rule. This changes no behaviour; it stops the UI contradicting it.
+
+**Stated plainly: this is a structural repair, not a pinpointed root cause.** The freeze could not be
+reproduced headless — the stock third-person body is the stylised capsule and carries no `stateActions`, so
+the probe had to synthesise a rigged one. What the probe DOES prove is that the latch is gone: whatever
+strands an action, the next frame repairs it.
+
 ## A prop sounds like what it is made of (build 1305)
 
 Reported with the melee-timing report: *"there needs to be a way to add a per prop hit sound, so if I'm
