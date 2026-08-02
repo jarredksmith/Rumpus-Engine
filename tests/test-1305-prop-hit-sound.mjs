@@ -133,8 +133,8 @@ const crate = (url) => ({ userData: url === undefined ? {} : { hitSnd: url }, po
   // it must NOT go inside damageProp, where the bullet path would double it
   assert(!/spark\(/.test(extractFunction('damageProp')),
     'and NOT inside damageProp — the shot already sparks at its own hit point and would draw two');
-  assert(/spark\(hit\.point, 0xffd166\); if\(p===0\)\{ showHitmarker\(\); SFX\.hit\(\); \}/.test(src),
-    '...which is the spark it would have doubled');
+  assert(/spark\(hit\.point, 0xffd166\); if\(p===0\)\{ showHitmarker\(\); if\(!_propSndFresh\(\)\) SFX\.hit\(\); \}/.test(src),
+    '...which is the spark it would have doubled');   /* build 1314 guarded the SOUND on this same line; the spark is unchanged */
   assert(/The BULLET\n           path has sparked at its hit point since long before this; the swing never did/.test(src),
     'the asymmetry that made this invisible is written down');
 }
@@ -152,7 +152,8 @@ const crate = (url) => ({ userData: url === undefined ? {} : { hitSnd: url }, po
 { // playSample returns FALSE until the buffer decodes, so the first hit on every prop would be silent
   const pl = extractFunction('preloadPropHitSounds');
   assert(/for\(const o of propModels\)/.test(pl), 'every prop in the level is warmed');
-  assert(/if\(u\) loadSound\(u\)/.test(pl));
+  assert(/if\(u\.hitSnd\) loadSound\(u\.hitSnd\)/.test(pl),
+    'and its clip is warmed (build 1314 warms the break clip on the same pass)');
   assert(/if\(typeof preloadPropHitSounds==='function'\) preloadPropHitSounds\(\);/.test(src),
     '...at deploy, beside the signal clips build 750 warms for the same reason');
   const i = src.indexOf("preloadSignalSounds();   // build 750"), j = src.indexOf('preloadPropHitSounds();   // build 1305');
@@ -161,12 +162,14 @@ const crate = (url) => ({ userData: url === undefined ? {} : { hitSnd: url }, po
 
 // ---------------------------------------------------------------- the field
 {
-  assert(/_sndRow\('Impact sound \\u2014 played on every hit'/.test(src), 'the row is in the prop inspector');
-  assert(/_selApply\(o=>\{ if\(v\) o\.userData\.hitSnd=v; else delete o\.userData\.hitSnd; \}\);/.test(src),
+  /* build 1314 turned the row into a builder called twice (impact + break), so the label is an ARGUMENT
+     and the userData key is a variable. Same row, same group-wide behaviour — assert the call and the apply. */
+  assert(/_propSndSlot\('Impact sound \\u2014 played on every hit', 'hitSnd',/.test(src), 'the row is in the prop inspector');
+  assert(/_selApply\(o=>\{ if\(v\) o\.userData\[key\]=v; else delete o\.userData\[key\]; \}\);/.test(src),
     'and it is GROUP-WIDE — a level has thirty wooden crates and one wood sound');
   assert(/_selBanner\(pdBody, _selTargets\(\)\.length, true\);/.test(src),
     '...announced, by build 1299’s rule that every field states which one it follows');
-  eq((src.match(/_selBanner\(/g) || []).length, 5, 'four folds now announce their rule, plus the definition');
+  eq((src.match(/_selBanner\(/g) || []).length, 5, 'four folds announce their rule, plus the definition (1314 added a second row inside the SAME announced fold)');
   // _sndRow was device-scoped: every existing caller writes audioSettings, which a LEVEL field must not
   const sr = extractFunction('_sndRow');
   assert(/function _sndRow\(label, get, set, save\)\{/.test(sr), '_sndRow takes who to save to');

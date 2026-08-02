@@ -967,6 +967,44 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A custom prop sound REPLACES the engine's (build 1314)
+
+Reported from play, three things in one message: *"There seems to be a default coded sound for when pressing
+the fire button and impact on props, especially for melee. It plays the default AND the custom sound at the
+same time. Can we remove the default sounds if there is a custom sound loaded? Also need the option to search
+freesounds for prop impact noises. I'd also like a slot per-prop for a custom explosion or breaking sound."*
+
+**The doubling is two systems that did not know about each other.** Build 1305 gave the PROP its own impact
+clip; the generic `SFX.hit()` at the end of every swing and after every pellet has fired since long before
+that. A creator who authors a wood-crate sound is *saying what the crate sounds like* — layering the
+engine's 600 Hz sine on top is the engine talking over them.
+
+- **The latch is a TIMESTAMP, not a return value** threaded through six call sites, because the host and a
+  co-op client reach the sound by different routes (the host through `damageProp`, the client through its own
+  prediction) and both land within a frame of the generic one. 80 ms is one frame at any rate the game runs
+  and far shorter than two deliberate hits.
+- **Set only on a play that actually happened.** `playSample` returns false until a buffer decodes; latching
+  on the attempt would silence the fallback for the one hit that needed it.
+- **Exactly the two prop paths are guarded.** Enemy, player, bot and turret hits are untouched. So is the
+  **hitmarker** — that is information, not decoration, and the report was about the sound.
+
+**A break slot, and ONE slot for break and explosion**, because for an explosive prop they are the same
+event; two slots would mean authoring it twice and choosing which wins. It replaces `SFX.shatter`/`SFX.puff`
+the same way, needs no debounce (a prop is destroyed once), and is warmed at deploy alongside the impact clip
+— *especially* the break clip, since it gets exactly one chance to be right.
+
+**Freesound is where the field is.** The browser already took a `{label, set}` direct target (used by audio
+zones, signals, cutscenes, per-weapon shoot), so both slots open it seeded with the query a creator came to
+run. The picked url applies to the **whole selection**, exactly as typing one does — a picker that acts on
+one prop while the field beside it acts on thirty is a trap.
+
+Measured live (`tools/probe/prop-sound-dedupe.mjs`, recording every sound start on both the sample and synth
+paths): melee at a prop, 1 sound with a custom clip and 1 without; shooting a prop, the same; breaking, the
+engine's 220 Hz synth without a break clip and the custom clip **alone** with one.
+
+Four pins moved (1305 ×3 — the row became a builder called twice, so its label is an argument and its
+userData key a variable).
+
 ## Motion accessibility (build 1313 — gameplay audit F9)
 
 > Greped `colorblind`, `reduceMotion`, `prefers-reduced`, `a11y` → one CSS media query for UI animation,

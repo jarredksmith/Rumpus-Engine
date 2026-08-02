@@ -6672,6 +6672,20 @@ const PROP_SND_GAP = 55;      // ms before the SAME prop may sound again
 const PROP_SND_BURST = 4;     // starts allowed across DIFFERENT props inside one window
 const PROP_SND_WINDOW = 60;
 let _propSndT = 0, _propSndN = 0;
+// build 1314: REPORTED FROM PLAY — "there's a default coded sound for the fire button and impact on props,
+// especially melee. It plays the default AND the custom sound at the same time."
+//
+// Correct, and it is two independent systems arriving at the same instant: build 1305 gave the PROP its own
+// impact clip, while the generic `SFX.hit()` at the end of the swing and after every pellet has fired since
+// long before that. Neither knew about the other. A creator who authors a wood-crate sound is SAYING what
+// the crate sounds like; layering the engine's 600 Hz sine on top is the engine talking over them.
+//
+// The latch is a TIMESTAMP rather than a return value threaded through six call sites, because the host and
+// a co-op client reach the sound by different routes (the host through damageProp, the client through its
+// own prediction) and both land within a frame of the generic one. 80 ms is comfortably one frame at any
+// rate the game runs and far shorter than any two deliberate hits.
+let _propSndAt = -1e9;
+function _propSndFresh(){ return performance.now() - _propSndAt < 80; }
 function playPropHitSound(obj, pt){
   if(!obj || !obj.userData || !obj.userData.hitSnd) return false;
   if(obj.userData.breakable===false) return false;   // it takes no damage, so nothing landed on it
@@ -6689,11 +6703,20 @@ function playPropHitSound(obj, pt){
   obj.userData._hitSndT = now;
   /* the radius damage above passes no contact point, so the prop's own position is the fallback — a
      positioned clip pans and attenuates (build 1208), and `null` would put it flat in both ears. */
-  return playSample(obj.userData.hitSnd, { at: pt || obj.position, vary: 0.08 });
+  const ok = playSample(obj.userData.hitSnd, { at: pt || obj.position, vary: 0.08 });
+  if(ok) _propSndAt = now;   /* build 1314: the generic SFX.hit stands down for this hit */
+  return ok;
+}
+// build 1314: ...and the same for the moment it BREAKS. Requested alongside the above: "a slot per-prop for
+// a custom explosion or breaking sound." ONE slot serves both, because for an explosive prop the break IS
+// the explosion — two slots would mean authoring the same event twice and choosing which one wins.
+function playPropBreakSound(obj, at){
+  const u = obj && obj.userData; if(!u || !u.breakSnd) return false;
+  return playSample(u.breakSnd, { at: at || (obj.position || null), vary: 0.05 });
 }
 // build 1305: warm every prop's impact clip at deploy. playSample RETURNS FALSE when the buffer has not
 // decoded yet, so without this the first axe swing at every crate in the level is silent.
-function preloadPropHitSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const u=o&&o.userData&&o.userData.hitSnd; if(u) loadSound(u); } }
+function preloadPropHitSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const u=o&&o.userData; if(!u) continue; if(u.hitSnd) loadSound(u.hitSnd); if(u.breakSnd) loadSound(u.breakSnd); } }   /* build 1314: the break clip too — it fires exactly once per prop, so a cold first play would be silent for the one hit that matters most */
 // build 750: preload every signal's custom clip (do:'sound') so a light switch / button plays on the first press, not the second.
 function preloadSignalSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const sigs=o&&o.userData&&o.userData.signals; if(!sigs) continue; for(const s of sigs){ if(s.do==='sound' && s.sound) loadSound(s.sound); } } }
 
@@ -29961,7 +29984,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1313 · 2026-08-02';
+const BUILD_VERSION = 'build 1314 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30889,6 +30912,7 @@ function applyPropDynState(obj, p){
   if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
   if(p.mass!=null) obj.userData.mass = p.mass;
   if(p.hsn) obj.userData.hitSnd = String(p.hsn).slice(0,300);   // build 1305
+  if(p.bsn) obj.userData.breakSnd = String(p.bsn).slice(0,300);   // build 1314
   if(p.par){ obj.userData.parNid = String(p.par).slice(0,64); if(typeof _pntMark==='function') _pntMark(); }   // build 1309: resolved lazily — props load async, so the parent may not exist yet
   if(p.brk===false){ obj.userData.breakable = false; }
   else { obj.userData.breakable = true; if(p.obj) obj.userData.objective=true; if(p.hp!=null){ obj.userData.maxHp = p.hp; obj.userData.hp = p.hp; } obj.userData.breakStyle = (p.bst==='puff') ? 'puff' : 'shatter';
@@ -31640,12 +31664,12 @@ function shatterProp(obj, point, dir, power, byId){
     const shape = (obj.userData.debrisShape==='cubes') ? 'cubes' : 'shards';
     spawnFragments(_shCtr, _shSize, colorHex, count, dir, power||6, sizeFrac, shape);
     spark(_shCtr, colorHex); spark(_shCtr, 0xffd166);
-    if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(_shCtr);
+    if(!playPropBreakSound(obj, _shCtr) && typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(_shCtr);   /* build 1314 */
     obj.userData._breakFx = { sf:sizeFrac, sh:shape };   // stash so the net message below carries them
   } else {
     // puff: no debris cloud — a quick particle burst + soft pop, then despawn
     spark(_shCtr, colorHex); spark(_shCtr, 0xcfeee6);
-    if(typeof SFX!=='undefined' && SFX.puff) SFX.puff();
+    if(!playPropBreakSound(obj, _shCtr) && typeof SFX!=='undefined' && SFX.puff) SFX.puff();   /* build 1314 */
   }
   if(obj.userData.explosive){ explodeAt(_shCtr.clone(), obj.userData.blastRadius||7, obj.userData.blastDmg||70, byId); }   // propane/gas-can blast
   // network it so co-op peers see the same break (host authoritative)
@@ -32123,7 +32147,8 @@ function _meleeStrike(wep, RANGE, DMG){
     }
   }
   addShake(0.05);
-  if(hit && SFX.hit) SFX.hit();
+  /* build 1314: the prop's own impact clip replaces the generic one rather than layering under it. */
+  if(hit && SFX.hit && !_propSndFresh()) SFX.hit();
 }
 function shoot(){
   if(matchWarmup>0) return;   // no firing during the pre-match generating/countdown
@@ -32253,7 +32278,7 @@ function shoot(){
           const broke = damageProp(dprop, w.dmg*dmgMul, hp, dir, power, NET.myId);
           if(!broke) pushDynamic(dprop, dir, power, hp);
         }
-        spark(hit.point, 0xffd166); if(p===0){ showHitmarker(); SFX.hit(); }
+        spark(hit.point, 0xffd166); if(p===0){ showHitmarker(); if(!_propSndFresh()) SFX.hit(); }   /* build 1314 */
         tracer(muzzleWorld, endPoint);
         continue;   // a dynamic prop absorbs the pellet
       }
@@ -38131,6 +38156,7 @@ function propEntry(o){
        serializing its health, break style, objective flag and explosive settings. Caught by this build's
        round-trip probe, not by 1305's, which only checked the field it had just added. */
     if(o.userData.hitSnd) e.hsn = String(o.userData.hitSnd).slice(0,300);   // build 1305: this prop's own impact sound
+    if(o.userData.breakSnd) e.bsn = String(o.userData.breakSnd).slice(0,300);   // build 1314: ...and the one it makes breaking
     if(o.userData.breakable===false) e.brk=false;   // breakable defaults true; only store when off
     else { if(o.userData.maxHp!=null) e.hp=o.userData.maxHp; if(o.userData.breakStyle==='puff') e.bst='puff'; if(o.userData.objective) e.obj=1;
       if(o.userData.fragCount!=null) e.fc=o.userData.fragCount;
@@ -42824,14 +42850,36 @@ function renderEditorFields(){
             const bnote=document.createElement('div'); bnote.className='hint'; bnote.style.marginTop='3px'; bnote.textContent='Shatter = physics debris. Puff = quick burst + vanish (cheaper). Higher HP = more shots to break. Health refills on Deploy.';
             pdBody.appendChild(bnote);
             /* build 1305: the prop's own impact sound. GROUP-WIDE by build 1299's rule — a level has thirty
-               wooden crates and one wood sound, and marking the set is the whole point of the field. */
+               wooden crates and one wood sound, and marking the set is the whole point of the field.
+               build 1314: a second slot for the BREAK, and a Freesound search on each — "I'd also like a
+               slot per-prop for a custom explosion or breaking sound", and asking a creator to go and find
+               a wood-impact url elsewhere is most of the reason the first slot would sit empty. */
             _selBanner(pdBody, _selTargets().length, true);
-            pdBody.appendChild(_sndRow('Impact sound \u2014 played on every hit',
-              ()=>sel.userData.hitSnd||'',
-              (u)=>{ const v=String(u||'').trim().slice(0,300); _selApply(o=>{ if(v) o.userData.hitSnd=v; else delete o.userData.hitSnd; }); },
-              ()=>{}));   /* _selApply already snapshots and marks dirty; there is no device setting to save */
-            const hsn=document.createElement('div'); hsn.className='hint'; hsn.style.marginTop='2px'; hsn.innerHTML='Wood, metal, glass \u2014 whatever this prop is made of. Plays wherever the hit landed (it pans and fades with distance), on shots, swings and explosions alike. Unlike the Sounds tab, this one is <b>saved with the level</b>, so everyone who plays it hears it.';
-            pdBody.appendChild(hsn);
+            const _propSndSlot = (label, key, hintHtml, fsLabel, fsQuery)=>{
+              pdBody.appendChild(_sndRow(label,
+                ()=>sel.userData[key]||'',
+                (u)=>{ const v=String(u||'').trim().slice(0,300); _selApply(o=>{ if(v) o.userData[key]=v; else delete o.userData[key]; }); },
+                ()=>{}));   /* _selApply already snapshots and marks dirty; there is no device setting to save */
+              const h=document.createElement('div'); h.className='hint'; h.style.marginTop='2px'; h.innerHTML=hintHtml; pdBody.appendChild(h);
+              const fsBtn=document.createElement('button'); fsBtn.textContent='Search Freesound'; fsBtn.style.cssText='margin:4px 0 2px;font-size:11px;padding:3px 8px;';
+              let fsBox=null;
+              fsBtn.onclick=()=>{
+                if(fsBox){ fsBox.remove(); fsBox=null; fsBtn.textContent='Search Freesound'; return; }
+                if(!fsLastQuery) fsLastQuery=fsQuery;   /* seed the box with the search a creator came here to run */
+                /* the picked url applies to the WHOLE selection, exactly as typing one does — otherwise the
+                   two ways of filling the same field would disagree about what they act on. */
+                fsBox=renderFreesoundBrowser(pdBody, ()=>renderEditorFields(), { label:fsLabel,
+                  set:v=>{ const u=String(v||'').trim().slice(0,300); _selApply(o=>{ if(u) o.userData[key]=u; else delete o.userData[key]; }); if(u && typeof loadSound==='function') loadSound(u); } });
+                pdBody.appendChild(fsBox); fsBtn.textContent='Hide Freesound';
+              };
+              pdBody.appendChild(fsBtn);
+            };
+            _propSndSlot('Impact sound \u2014 played on every hit', 'hitSnd',
+              'Wood, metal, glass \u2014 whatever this prop is made of. Plays wherever the hit landed (it pans and fades with distance), on shots, swings and explosions alike. Unlike the Sounds tab, this one is <b>saved with the level</b>, so everyone who plays it hears it. <b>It replaces the engine\u2019s default hit sound</b> rather than layering over it.',
+              'Prop impact', 'wood impact hit');
+            _propSndSlot('Break / explosion sound \u2014 played once, when it goes', 'breakSnd',
+              'The moment this prop is destroyed. One slot covers both: for an explosive prop, the break <i>is</i> the explosion. Replaces the engine\u2019s shatter/puff sound for this prop.',
+              'Prop break', 'wood crate break smash');
             // ---- Debris controls (count / size / shape) — only meaningful for the shatter style ----
             if(sel.userData.breakStyle!=='puff'){
               sel.updateMatrixWorld(true);
