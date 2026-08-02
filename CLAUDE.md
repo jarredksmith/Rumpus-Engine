@@ -4368,6 +4368,63 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The editor panel latched itself shut (build 1302)
+
+Reported from play: *"the weapons editor is getting stuck. If I select one weapon, say shotgun, the stats
+section stays on shotgun no matter what other weapon I choose."*
+
+**It was not the weapons editor. It was every field in the inspector, and it had been there since build
+1070.** `renderEditorFields` throttles to one rebuild per 8 ms and defers the rest to `requestAnimationFrame`
+behind a `_refQueued` latch. The deferred pass set `_refLast = performance.now()` and **then** called the
+function that opens by asking whether `now - _refLast < 8`. It always was, by microseconds. So the deferred
+pass re-latched, queued another frame, and did the same on that one — an infinite self-rescheduling loop
+that rendered nothing, with `_refQueued` stuck true so every later call returned at the first line.
+
+**Two clicks inside one animation frame was all it took**, which is exactly what picking two weapons in
+quick succession is. After that the panel showed whatever it had last drawn, forever, and no further
+interaction recovered it. Reproduced live before fixing: `curWep` 'pistol' with the panel showing shotgun's
+650 ms and the latch true; five slow clicks afterwards changed nothing.
+
+`_refLast = 0` rather than deleting the line: the deferred pass must be **guaranteed** through the window,
+not merely likely. Dropping it works at 60 Hz (16 ms > 8) and fails at 120 Hz (8.3 ms) — the sort of "fixed
+on my machine" this file has been bitten by before. `test-1302` drives the real throttle with a controllable
+clock at 4 / 8.3 / 11 / 16 / 33 ms frames and asserts one frame drains the queue.
+
+**And test-240 failed on a CHARACTER BUDGET** — `sI < 900` — while its assertion stayed true, which is build
+1149's recorded trap arriving again. It now asserts the ORDER it actually means: the scroll capture sits
+after build 818's coalescing gate and before the first rebuild.
+
+## Variable jump height (build 1301 — gameplay audit F6)
+
+> Greped `jumpCut`, `shortHop`, `holdJump`, `varJump` → zero hits, and the jump is one assignment
+> (`player.vel.y = JUMP`) with no release handling. **Every jump is exactly 2.82 m.** Rumpus advertises a
+> side-scroll mode with a lane lock — a 2.5D platformer where you cannot tap for a short hop is missing the
+> primary verb of the genre.
+
+Releasing while RISING now cuts the remaining ascent. **Height goes as v², so one setting spans the whole
+tap-to-hold range** without a second constant: the shipped `jumpCut: 0.5` is half the launch velocity and
+therefore a quarter of the height — a 0.71 m hop against the 2.82 m hold.
+
+**Why this is safe for levels that already exist**, which is the question any movement change has to answer:
+it can only ever shorten a jump the player *chose* to release early, and **a player attempting a demanding
+jump holds the key** — that is the natural input when you are trying to clear something. A jump puzzle that
+needs the full 2.82 m is still cleared by holding, exactly as before. `jumpCut: 1` restores the old engine
+byte-for-byte, and the slider says which end that is.
+
+Two details the test found rather than confirmed:
+- **A cut of exactly 0 swallows the jump.** It zeroes the rising velocity, so the player never leaves the
+  ground and the input vanishes. `JUMP_CUT_MIN = 0.1` floors it — a 2.8 cm hop is effectively none, but you
+  still leave the floor. A slider that can silently eat an input is worse than one that cannot quite reach
+  its own extreme.
+- **The apex is frame-rate dependent, and that is the integrator, not this build.** Semi-implicit Euler at a
+  real frame time lands ~0.10 m under the analytic `v²/2g` at 60 fps and further at 20. So `test-1301`
+  asserts the **tap-to-hold RATIO** across 8–50 ms steps — the quantity this build actually decides — rather
+  than an absolute height it does not own. Stating the assertion on the wrong quantity is how a test ends up
+  guarding someone else's behaviour.
+
+Still absent and deliberately not added here: double jump, wall jump, dash, air-dash. Each is its own verb
+with its own tuning and its own compatibility question; F6 named them together but they are not one build.
+
 ## The Level Check takes you to the problem (build 1300 — editor audit 4.3, HIGH)
 
 > `renderLevelIssues`: `d.textContent = msg`, no handler. *"A signal targets tag 'vaultDoor', but no prop

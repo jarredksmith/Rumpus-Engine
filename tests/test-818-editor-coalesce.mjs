@@ -10,7 +10,10 @@ const src = gameSource();
 assert(/let _refLast = 0, _refQueued = false;/.test(src), 'coalescing state exists');
 const ref = extractFunction('renderEditorFields');
 assert(/if\(_refQueued\) return;/.test(ref), 'a queued rebuild swallows further calls');
-assert(/if\(_rnow - _refLast < 8\)\{ _refQueued = true; requestAnimationFrame\(\(\)=>\{ _refQueued = false; _refLast = performance\.now\(\); renderEditorFields\(\); \}\); return; \}/.test(ref), 'a same-frame burst defers ONE rebuild to the next frame');
+// build 1302: the deferred pass RESETS the clock instead of setting it to now. Setting it re-tripped the
+// throttle inside the callback, so the pass re-latched and queued another frame forever and the panel
+// stopped rendering entirely — reported from play as "the weapons stats stay on shotgun".
+assert(/if\(_rnow - _refLast < 8\)\{ _refQueued = true; requestAnimationFrame\(\(\)=>\{ _refQueued = false; _refLast = 0; renderEditorFields\(\); \}\); return; \}/.test(ref), 'a same-frame burst defers ONE rebuild to the next frame');
 
 // executable: burst arithmetic — 5 calls in one frame = 1 sync rebuild + 1 queued
 {

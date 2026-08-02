@@ -18323,7 +18323,7 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -18563,7 +18563,8 @@ function skyStatus(msg, isErr){
   try{ const el = editorEl && editorEl.querySelector('#edSkyStatus'); if(el){ el.textContent = msg; el.style.color = isErr ? '#ff8a9b' : '#7fe6cf'; } }catch(e){}
 }
 
-let SPEED, SPRINT, JUMP, GRAV, CROUCH_SPEED;   // live values derived from worldCfg
+const JUMP_CUT_MIN = 0.1;   // build 1301: the shortest tap hop, so the setting can never swallow a jump
+let SPEED, SPRINT, JUMP, GRAV, CROUCH_SPEED, JUMP_CUT = 0.5;   // live values derived from worldCfg (build 1301: JUMP_CUT — the release cut, 1 = no cut)
 function applyWorldCfg(){
   if(typeof _applyPaintCfg==='function') _applyPaintCfg();   // build 875: floor paint layers + splat
   if(typeof _applyTrackCfg==='function') _applyTrackCfg();   // build 886: track appearance
@@ -18642,6 +18643,11 @@ function applyWorldCfg(){
   }
   SPEED = worldCfg.walk; SPRINT = worldCfg.run / worldCfg.walk;
   JUMP = worldCfg.jump; GRAV = worldCfg.grav; CROUCH_SPEED = worldCfg.crouch;
+  /* build 1301: floored at JUMP_CUT_MIN, not 0. A cut of exactly 0 sets the rising velocity to zero, so a
+     tapped jump never leaves the ground at all — a slider that can silently swallow the jump input is a
+     worse outcome than one that cannot quite reach "no hop". 0.1 is a 2.8 cm hop: effectively none, but the
+     player still leaves the floor and the input is never lost. */
+  JUMP_CUT = Math.max(JUMP_CUT_MIN, Math.min(1, worldCfg.jumpCut == null ? DEFAULT_WORLD.jumpCut : +worldCfg.jumpCut));
   // arena size — rebuild floor/grid/walls only when it changes; coalesce rapid changes (slider drag)
   // into one rebuild per frame so dragging stays smooth.
   worldCfg.arena = Math.max(15, Math.min(2000, worldCfg.arena == null ? DEFAULT_WORLD.arena : +worldCfg.arena));   // build 827: up to 2000 (a 4 km course) for racing-scale worlds; the flat floor/walls scale free and the nav grid stays bounded
@@ -29643,7 +29649,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1300 · 2026-08-02';
+const BUILD_VERSION = 'build 1302 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34897,6 +34903,25 @@ function loop(){
   if(player.onGround) _coyoteT = COYOTE_T; else if(_coyoteT>0) _coyoteT -= dt;
   if(_jPressed) _jumpBufT = JUMP_BUF; else if(_jumpBufT>0) _jumpBufT -= dt;
   if(!_ledge && _jumpBufT>0 && (player.onGround || _coyoteT>0) && (player.jumpCd||0)<=0 && !_levelLoaderActive && matchWarmup<=0 && !mountedTurret){ player.vel.y = JUMP; player.onGround=false; _coyoteT=0; _jumpBufT=0; sliding=false; player.jumpCd=JUMP_CD; SFX.jump(); }
+  // ---- build 1301: VARIABLE JUMP HEIGHT (gameplay audit F6) --------------------------------------------
+  // "The jump is one assignment with no release handling. Every jump is exactly 2.82 m. Rumpus advertises a
+  // side-scroll mode with a lane lock — a 2.5D platformer where you cannot tap for a short hop is missing
+  // the primary verb of the genre."
+  //
+  // The standard fix, and the one every platformer uses: releasing the key while still RISING cuts the
+  // remaining ascent. Height goes as v², so a cut to half the launch velocity is a quarter of the height —
+  // one setting spans the whole tap-to-hold range without a second constant.
+  //
+  // WHY THIS IS SAFE FOR LEVELS THAT ALREADY EXIST, which is the question a movement change has to answer:
+  // it can only ever reduce the height of a jump the player CHOSE to release early, and a player attempting
+  // a demanding jump holds the key — that is the natural input when you are trying to clear something. A
+  // jump puzzle that needs the full 2.82 m is still cleared by holding, exactly as before. `jumpCut:1`
+  // restores the old behaviour byte-for-byte for a creator who wants it.
+  //
+  // Only while RISING: cutting a descent would be a mid-air brake, which is a different (and bad) feature.
+  if(_jumpHeldPrev && !_jHeld && player.vel.y > 0 && !player.onGround && JUMP_CUT < 1){
+    player.vel.y = Math.min(player.vel.y, JUMP * JUMP_CUT);
+  }
   _jumpHeldPrev = _jHeld;
   touchJump = false;   // tap is consumed for one frame
   if(_ledge){
@@ -40212,8 +40237,26 @@ function renderEditorFields(){
   if(!editorEl) return;
   if(typeof _outQueueRefresh==='function') _outQueueRefresh();   // build 1036: the outliner mirrors every add/delete/select
   if(_refQueued) return;
+  // ---- build 1302: THE LATCH USED TO RE-ARM ITSELF FOREVER ----------------------------------------------
+  // REPORTED FROM PLAY: "the weapons editor is getting stuck — if I select shotgun, the stats section stays
+  // on shotgun no matter what other weapon I choose." It was not the weapons editor. It was every field in
+  // the panel, and it had been there since build 1070.
+  //
+  // The throttle coalesces a burst of renders into one, which is right — a rebuild costs 8-27 ms. The
+  // deferred pass set `_refLast = performance.now()` and THEN called this function, which opens by asking
+  // whether `now - _refLast < 8`. It always was, by microseconds. So the deferred pass re-latched, queued
+  // another frame, and did the same thing on that one: an infinite self-rescheduling loop that never
+  // rendered anything, with `_refQueued` stuck true so every later call returned at the line above.
+  //
+  // Two clicks inside one animation frame is all it took — which is exactly what picking two weapons in
+  // quick succession is. After that the inspector showed whatever it had last drawn, forever, and no
+  // further interaction could recover it.
+  //
+  // `_refLast = 0` rather than `performance.now()`: the deferred pass must be GUARANTEED to get through the
+  // window, not merely likely to. Dropping the line entirely would work at 60 Hz (16 ms > 8) and fail at
+  // 120 Hz (8.3 ms), which is the sort of "fixed on my machine" this file has been bitten by before.
   { const _rnow = performance.now();
-    if(_rnow - _refLast < 8){ _refQueued = true; requestAnimationFrame(()=>{ _refQueued = false; _refLast = performance.now(); renderEditorFields(); }); return; }
+    if(_rnow - _refLast < 8){ _refQueued = true; requestAnimationFrame(()=>{ _refQueued = false; _refLast = 0; renderEditorFields(); }); return; }
     _refLast = _rnow; }
   // The wholesale rebuild below resets the panel's scroll position on every change; restore it once
   // this pass (whichever return path it takes) has finished, before the next paint.
@@ -40288,7 +40331,7 @@ function renderEditorFields(){
     };
     { const b=subSec('Movement','move',false);
       slider(b,'Walk speed','walk',4,60,1); slider(b,'Run speed','run',4,100,1); slider(b,'Crouch speed','crouch',1,40,1);
-      slider(b,'Jump','jump',0,30,0.5); slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);
+      slider(b,'Jump','jump',0,30,0.5); slider(b,'Tap hop','jumpCut',0.1,1,0.05); slider(b,'Launch power','launchPower',0.25,4,0.25); slider(b,'Gravity','grav',5,80,1);   /* build 1301: Tap hop — how much of the jump a TAP keeps (height goes as the square, so 0.5 is a quarter-height hop). 1 = every jump is full height, the pre-1301 engine. */
       slider(b,'Eye height','eyeHeight',0.4,20,0.05);   // build 702/703: first-person camera height (up to 20m)
       hint(b,'','1px 0 2px').textContent='Crouch: hold Ctrl (R3 on a controller). Eye height sets the first-person camera level (1.7 = default; up to 20m for a tall/overhead view). View only — collision is unchanged. Gravity change affects props on next Deploy.'; }
     { const b=subSec('Lighting','light',true);
