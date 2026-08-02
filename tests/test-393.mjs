@@ -22,7 +22,9 @@ eq(fs('idle'),null,'idle (standing) -> null, caller uses plain attack');
 
 // ---- resolvers choose the combined slot when moving + firing ----
 assert(/firing: combined move\+fire when moving, else the standing attack pose/.test(src) && /_fireSlot\(_ff\)\|\|'attack'/.test(src), 'local avatar uses move+fire');
-assert(/const _bt=md>0\.06\?'run':\(md>0\.015\?'walk':null\); st=\(_bt\?\(_fireSlot\(_bt\)\|\|'attack'\):'attack'\);/.test(src), 'bots use move+fire while advancing');
-assert(/const _rf = rp\.crouch \? 'crouch' : \(tier==='run'\?'run':\(tier==='walk'\?'walk':null\)\); _st=\(_rf\?\(_fireSlot\(_rf\)\|\|'attack'\):'attack'\);/.test(src), 'remote players use move+fire after a networked shot');
+// build 1294: the same choice, now qualified by the weapon in hand — _wepAnimSlot appends `@<weapon>`
+// and an unmapped variant falls straight back to the slot chosen here, so the selection is unchanged.
+assert(/const _bt=md>0\.06\?'run':\(md>0\.015\?'walk':null\); st=_wepAnimSlot\(\(_bt\?\(_fireSlot\(_bt\)\|\|'attack'\):'attack'\), b\.wep\);/.test(src), 'bots use move+fire while advancing');
+assert(/const _rf = rp\.crouch \? 'crouch' : \(tier==='run'\?'run':\(tier==='walk'\?'walk':null\)\); _st=_wepAnimSlot\(\(_rf\?\(_fireSlot\(_rf\)\|\|'attack'\):'attack'\), rp\.wep\);/.test(src), 'remote players use move+fire after a networked shot');
 
 done();

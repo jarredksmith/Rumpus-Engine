@@ -10506,6 +10506,19 @@ function playEnemyStates(root, gltf, clips){
       if(_ANIM_ONESHOT.has(st)){ a.loop = THREE.LoopOnce; a.clampWhenFinished = true; } else { a.loop = THREE.LoopRepeat; }
       a.enabled = true; a.setEffectiveWeight(0); a.play(); actions[st] = a; }
   }
+  // build 1294: per-weapon variants. Explicit mappings only, and the LOOP MODE comes from the base slot —
+  // `attack@crowbar` is a one-shot because `attack` is one, which is the sort of thing that goes wrong
+  // silently if each variant has to restate it.
+  if(clips) for(const _k in clips){
+    const _at = _k.indexOf('@'); if(_at <= 0) continue;
+    const _base = _k.slice(0, _at);
+    if(!_STATE_RE[_base] || actions[_k]) continue;                       // must name a real slot
+    const _nm = clips[_k]; if(!_nm) continue;                            // no auto-match by name, by design
+    const _c = gltf.animations.find(a=>(a.name||'')===_nm); if(!_c) continue;
+    const _a = mixer.clipAction(_c); _a.userData = _a.userData || {}; _a.userData.state = _k;
+    if(_ANIM_ONESHOT.has(_base)){ _a.loop = THREE.LoopOnce; _a.clampWhenFinished = true; } else { _a.loop = THREE.LoopRepeat; }
+    _a.enabled = true; _a.setEffectiveWeight(0); _a.play(); actions[_k] = _a;
+  }
   if(!Object.keys(actions).length){ const a = mixer.clipAction(gltf.animations[0]); a.loop = THREE.LoopRepeat; a.play(); actions.idle = a; }   // no recognizable clip -> loop the first
   const startKey = actions.idle ? 'idle' : Object.keys(actions)[0];
   if(actions[startKey]) actions[startKey].setEffectiveWeight(1);
@@ -10533,10 +10546,34 @@ function _ensureClipAction(v, state){
     acts[state]=a;
   }catch(e){}
 }
+// ---- build 1294: PER-WEAPON animation variants ---------------------------------------------------------
+// REPORTED: "the editor doesn't allow different attack animations per weapon — I have to choose one
+// animation for left click and it is used for every weapon. A pistol, a sword, an axe and a rifle should
+// all be different." Correct: ANIM_SLOTS carried ONE `attack` slot and all three animators asked for it by
+// that literal name, so a character had a single firing motion for its whole arsenal.
+//
+// A variant is the ordinary slot name with the weapon appended: `attack@crowbar`, `equip@sniper`. That
+// choice is what makes this small — `clips`, `clipSpeed`, `clipHold` and `clipInPlace` are all plain maps
+// keyed by slot string, so a variant rides through the character config, the save file and the network
+// snapshot with no format change; `myCharCfg` already copies the whole `clips` object, so co-op peers see
+// your sword swing without a protocol bump.
+//
+// Nothing is per-weapon unless the creator says so. The variant only becomes an action when it is
+// EXPLICITLY mapped to a clip — there is deliberately no name auto-match for it, because "sword_attack"
+// guessing its way onto the crowbar slot is the kind of magic that is impossible to debug — and an
+// unmapped variant falls straight back to the base slot. A character authored before this build resolves
+// to exactly the clip it resolved to before.
+function _wepAnimSlot(slot, wep){ return (slot && wep) ? (slot + '@' + wep) : slot; }
+// Which slots the editor offers per weapon. The RESOLVER is generic — `walkFire@sniper` works the moment
+// someone maps it — so this list is about how much UI to put in front of a creator, not a capability limit.
+const WEP_ANIM_SLOTS = ['attack', 'equip'];
 // Resolve a requested state to an available action (graceful fallback when a clip is missing).
 function _stateActionKey(acts, state){
   let s = state, guard = 0;
-  while(s && guard++ < 12){ if(acts[s]) return s; s = _ANIM_FALLBACK[s]; }   // walk the fallback chain to the nearest mapped clip
+  while(s && guard++ < 12){ if(acts[s]) return s;
+    const at = s.indexOf('@');
+    s = (at > 0) ? s.slice(0, at) : _ANIM_FALLBACK[s];   /* build 1294: a per-weapon variant falls back to its base slot, and from there down the ordinary chain */
+  }
   return acts.idle ? 'idle' : Object.keys(acts)[0];
 }
 // Re-apply a clip-speed change to any avatar currently PLAYING that state, so the editor slider updates
@@ -19655,7 +19692,7 @@ function switchWeapon(key){
   if(!owned.includes(key) || key===curWep) return;
   if(reloading){ reloading = false; _reloadTok++; updateHUD(); }   // build 1172: switching CANCELS the reload instead of being refused by it
   if(typeof _allowedWep==='function' && !_allowedWep(key)) return;   // build 1014: host match rules
-  curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim('equip', 320);   // third-person draw/equip pose
+  curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim(_wepAnimSlot('equip', key), 320);   // third-person draw/equip pose. build 1294: drawing a sword is not drawing a pistol — note this uses the NEW weapon, which is the one being drawn
   _drawDur = WEAPONS[key].drawMs || DRAW_MS; _drawUntil = performance.now() + _drawDur;   // build 965: the viewmodel rises before the trigger works · build 1172: per-weapon — a pistol should not draw at a launcher's pace
   showWeaponModel(key);   // show this weapon's own viewmodel (loads on first use)
   applyWeaponAim(key);    // load this weapon's saved ADS pose
@@ -19926,11 +19963,21 @@ function refreshPlayerClipOptions(){
   const names = playerModelClips.slice();
   if(!playerModelCfg.clips) playerModelCfg.clips = { idle:'', walk:'', run:'', attack:'' };
   for(const e of Object.values(playerModelCfg.clips)){ if(e && names.indexOf(e)<0) names.push(e); }
+  const _fill=(sel, st, autoLabel)=>{
+    sel.innerHTML='';
+    const auto=document.createElement('option'); auto.value=''; auto.textContent = names.length ? autoLabel : 'Auto — set a model first'; if(!playerModelCfg.clips[st]) auto.selected=true; sel.appendChild(auto);
+    for(const nm of names){ const o=document.createElement('option'); o.value=nm; o.textContent=nm||'(unnamed)'; if(playerModelCfg.clips[st]===nm) o.selected=true; sel.appendChild(o); }
+  };
   for(const _slot of ANIM_SLOTS){ const st = _slot.k;
     const sel = edDoc().getElementById('edPlayerClip_'+st); if(!sel) continue;
-    sel.innerHTML='';
-    const auto=document.createElement('option'); auto.value=''; auto.textContent = names.length ? ('Auto — '+st+' by name') : 'Auto — set a model first'; if(!playerModelCfg.clips[st]) auto.selected=true; sel.appendChild(auto);
-    for(const nm of names){ const o=document.createElement('option'); o.value=nm; o.textContent=nm||'(unnamed)'; if(playerModelCfg.clips[st]===nm) o.selected=true; sel.appendChild(o); }
+    _fill(sel, st, 'Auto — '+st+' by name');
+  }
+  /* build 1294: the per-weapon variants. "Auto" here means "use the plain slot", which is the true
+     behaviour of an unmapped variant — saying "auto by name" would be a lie, since a variant never
+     name-matches. */
+  for(const _b of WEP_ANIM_SLOTS) for(const _w of Object.keys(WEAPONS)){
+    const sel = edDoc().getElementById('edPlayerClipW_'+_b+'_'+_w); if(!sel) continue;
+    _fill(sel, _b+'@'+_w, 'Same as ' + _b);
   }
 }
 function enemyClipOptionList(typeKey){   // discovered clips + any saved picks not yet discovered
@@ -23555,7 +23602,7 @@ function updateBots(dt){
           else if(b._turnSt){ b._turnSt.turning=false; b._turnSt.accum=0; b._turnSt.last=''; } }   // left idle-stand -> disarm the burst so it re-arms cleanly
         let st;
         if(b._evt && performance.now()<b._evt.until) st=b._evt.slot;   // directional hit-react flinch (wins over fire/loco, below death)
-        else if(b._fireAnimT && performance.now()<b._fireAnimT){ const _bt=md>0.06?'run':(md>0.015?'walk':null); st=(_bt?(_fireSlot(_bt)||'attack'):'attack'); }   // combined move+fire while moving
+        else if(b._fireAnimT && performance.now()<b._fireAnimT){ const _bt=md>0.06?'run':(md>0.015?'walk':null); st=_wepAnimSlot((_bt?(_fireSlot(_bt)||'attack'):'attack'), b.wep); }   // combined move+fire while moving. build 1294: bots hold a weapon too
         else { const air=_airborneSlot(b._air||(b._air={}), b.grounded!==false, b.vy||0, dt);   // jumpStart/jump/fall/land while path-hopping or launched
           if(air) st=air;
           else { const tier = md>0.06?'run':(md>0.015?'walk':'idle'); st=(tier==='idle')?(b._crouch?'crouch':'idle'):_locoSlot(mvx,mvz,b.yaw,(b._crouch&&tier==='walk')?'crouch':tier); } }   // strafes/back-pedals show when orbiting a target it's facing; a bot holding cover ducks (build 1006)
@@ -24755,7 +24802,7 @@ function updateOwnAvatar(dt){
     if(dead) st=_lastDieVariant||'die';                         // directional death from the killing hit
     else if(_climbAnim) st=_climbAnim;                          // build 644: ledge hang / pull-up / drop (and ladder climb in 645)
     else if(evtLive) st=_ownEvt.slot;                           // one-shot: throw / melee / equip / hit-react
-    else if(performance.now()-lastShot < 250){ const _ff = crouching ? 'crouch' : (typeof sprinting==='function'&&sprinting()) ? 'sprint' : (_ownSpeed>0.11?'run':'walk'); st = (_ownSpeed>=0.012 ? (_fireSlot(_ff)||'attack') : 'attack'); }   // firing: combined move+fire when moving, else the standing attack pose
+    else if(performance.now()-lastShot < 250){ const _ff = crouching ? 'crouch' : (typeof sprinting==='function'&&sprinting()) ? 'sprint' : (_ownSpeed>0.11?'run':'walk'); st = _wepAnimSlot((_ownSpeed>=0.012 ? (_fireSlot(_ff)||'attack') : 'attack'), curWep); }   // firing: combined move+fire when moving, else the standing attack pose. build 1294: for the weapon in hand
     else if(reloading) st='reload';                             // reloading the mag
     else if(sliding && player.onGround) st='slide';             // sprint-slide
     else if(air) st=air;                                        // jumpStart / jump / fall / jumpLand / hardLand
@@ -25638,7 +25685,7 @@ function netInterpolate(dt){
       if(rp.air) _st='jump';                                          // airborne flag travels in the state packet
       if(rp.slide) _st='slide';                                       // sliding flag travels in the state packet
       if(rp.cl) _st = _CLIMB_BY_CODE[rp.cl] || _st;                   // build 644: climbing (ledge hang/up/drop, ladder) overrides loco/air
-      if(rp._fireT && performance.now() < rp._fireT){ const _rf = rp.crouch ? 'crouch' : (tier==='run'?'run':(tier==='walk'?'walk':null)); _st=(_rf?(_fireSlot(_rf)||'attack'):'attack'); }   // brief move+fire (or standing attack) after a networked shot
+      if(rp._fireT && performance.now() < rp._fireT){ const _rf = rp.crouch ? 'crouch' : (tier==='run'?'run':(tier==='walk'?'walk':null)); _st=_wepAnimSlot((_rf?(_fireSlot(_rf)||'attack'):'attack'), rp.wep); }   // brief move+fire (or standing attack) after a networked shot. build 1294: the weapon the snapshot says they hold
       if(rp._actT && performance.now() < rp._actT) _st=rp._actSlot;   // build 1071: an author-bound action the peer fired
       if(rp._hitT && performance.now() < rp._hitT) _st=['hitFront','hitBack','hitLeft','hitRight'][rp._hitDir||0];   // directional hit-react (wins over loco, below death)
       if(rp.hp!=null && rp.hp<=0) _st = (rp._hitDir===0?'dieBack':rp._hitDir===1?'dieFront':'die');   // directional death (front hit -> fall backward), else flat die
@@ -29464,7 +29511,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1293 · 2026-08-02';
+const BUILD_VERSION = 'build 1295 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31434,6 +31481,10 @@ function teardownInstancing(){
 
 let _meleeT = 0;
 const MELEE_CD = 480, MELEE_RANGE = 2.9, MELEE_DMG = 34;   // punch: cooldown ms, reach m, damage
+// build 1295: the melee swing's own raycaster. Its own, because `far` has to be the swing's reach and the
+// shared `raycaster` is read by a dozen other systems that would inherit the limit; module scope, because
+// build 1168 removed exactly this class of per-swing allocation.
+const _meleeRc = new THREE.Raycaster(), _meleeOrig = new THREE.Vector3(), _meleeDir = new THREE.Vector3();
 // Melee / punch. Fired by the V key or automatically when you pull the trigger fully dry. Hits the nearest
 // enemy / bot / player in a forward cone and shoves them along your aim (reuses the same launch channel the
 // trebuchet + explosions use), and breaks / shoves a prop you're facing. Knockback scales with Launch Power.
@@ -31474,12 +31525,36 @@ function meleeAttack(wep){
     for(const en of enemies){ if(!en.mesh) continue; const dd=cone(en.mesh.position.x,en.mesh.position.y,en.mesh.position.z); if(dd>=0&&dd<bestD){ bestD=dd; best=en; } }
     if(best){ hit=true; const _d=DMG*(buffs.damage?2:1)*run.dmgMul; best.evx=(best.evx||0)+fwd.x/fh*KB; best.evz=(best.evz||0)+fwd.z/fh*KB; best.vy=Math.max(best.vy||0,UP); best.grounded=false; const _k=enemyHurt(best, _d, player.pos.x, player.pos.z); spark(best.mesh.position,0xffd166); spawnDamageNumber(best.mesh.position, _d, _k, false); flashEnemy(best); showHitmarker(_k); }
   }
-  if(NET.mode!=='client' && dynamicProps.length){   // punch a prop in front: break / detonate + shove
-    raycaster.setFromCamera({x:0,y:0}, camera);
-    const ph = raycaster.intersectObjects(dynamicProps, true);
-    if(ph.length && ph[0].distance<=RANGE){
+  // ---- build 1295: swing at a prop -------------------------------------------------------------------
+  // REPORTED: "if I give the player a sword as a melee weapon, I can't break/explode props if I swing at
+  // it." Three faults in this one block, all from it having been written for a first-person solo punch and
+  // never revisited. The enemy cone twenty lines above already does all three things right, which is what
+  // made the difference invisible: enemies took the hit, props did not.
+  //
+  //  1. IT CAST FROM THE CAMERA AND RANGE-LIMITED ON THE DISTANCE FROM THE CAMERA. The reach is 2.9 m and
+  //     the third-person boom sits 4.2 m behind the player, so anything within reach of the PLAYER is at
+  //     least 4.2 m from the camera and the test could never pass. Measured on the same crate 1.5 m in
+  //     front: first person camera->prop 1.5 (hits), third person camera->prop 5.7 (misses), player->prop
+  //     1.5 in both. Melee has therefore never broken a prop in third person.
+  //  2. IT AIMED THROUGH SCREEN CENTRE. The cone corrects `fwd` for the twin-stick and chase-cursor views
+  //     (build 874/1103) where the body faces the cursor and the camera does not; this did not, so in
+  //     those views it swung wherever the camera happened to point.
+  //  3. A CLIENT COULD NOT DO IT AT ALL. `NET.mode!=='client'` skipped the whole block, while the bullet
+  //     path has always sent `propHit` to the host. So in co-op, a guest with a sword could not break a
+  //     barrel — and the host's own swing worked, which is the sort of asymmetry nobody reports as a bug,
+  //     they just conclude melee is decorative.
+  if(dynamicProps.length){
+    _meleeRc.set(_meleeOrig.set(px, py, pz), _meleeDir.copy(fwd).normalize());
+    _meleeRc.near = 0; _meleeRc.far = RANGE;   /* the reach IS the ray, so the hit test and the cone agree */
+    const ph = _meleeRc.intersectObjects(dynamicProps, true);
+    if(ph.length){
       let o=ph[0].object; while(o && dynamicProps.indexOf(o)<0) o=o.parent;
-      if(o){ const dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(); const broke=damageProp(o, DMG, ph[0].point, dir, 8, NET.myId); if(!broke) pushDynamic(o, dir, 8, ph[0].point); hit=true; }
+      if(o){
+        const dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(), pt=ph[0].point;
+        if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} }   /* host-authoritative, exactly like a shot */
+        else { const broke=damageProp(o, DMG, pt, dir, 8, NET.myId); if(!broke) pushDynamic(o, dir, 8, pt); }
+        hit=true;
+      }
     }
   }
   addShake(0.05);
@@ -42386,6 +42461,33 @@ function renderEditorFields(){
         const ipl=document.createElement('span'); ipl.textContent='in place'; ipWrap.appendChild(ip); ipWrap.appendChild(ipl);
         row.appendChild(sp); row.appendChild(sel); row.appendChild(spd); row.appendChild(holdWrap); row.appendChild(ipWrap); foldBody.appendChild(row);
       });
+      /* ---- build 1294: per-weapon attack / equip ------------------------------------------------------
+         The taxonomy has ONE `attack` slot, so a character swung a crowbar with its rifle-firing motion.
+         These rows write `attack@<weapon>` into the same clips map; anything left on "Same as attack"
+         resolves to the plain slot, so a character authored before this build is unchanged. */
+      { const wHost = edFold(urlHost, 'pAnimWep', 'Combat — per weapon',
+          false, 'A different attack (and draw) motion for each weapon. Leave a row on \u201cSame as attack\u201d to use the single clip above — that is what every character did before.');
+        for(const _b of WEP_ANIM_SLOTS){
+          const hdr=document.createElement('div'); hdr.className='hint'; hdr.style.margin='6px 0 2px';
+          hdr.innerHTML = '<b>' + (_b==='attack' ? 'Fire / attack' : 'Equip / draw') + '</b> per weapon';
+          wHost.appendChild(hdr);
+          for(const _w of Object.keys(WEAPONS)){
+            const key=_b+'@'+_w;
+            const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;';
+            const sp=document.createElement('span'); sp.textContent=(WEAPONS[_w] && WEAPONS[_w].name) ? WEAPONS[_w].name : _w;
+            sp.style.cssText='min-width:86px;cursor:pointer;text-decoration:underline dotted;text-decoration-color:#3a5a52;text-underline-offset:2px;'; sp.title='Click to preview this clip';
+            sp.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); if(previewAvatar) setEnemyAnimState(previewAvatar, key); };
+            const sel=document.createElement('select'); sel.id='edPlayerClipW_'+_b+'_'+_w; sel.dataset.state=key;
+            sel.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+            sel.onchange=()=>{ if(sel.value) playerModelCfg.clips[key]=sel.value; else delete playerModelCfg.clips[key]; rebuildAvatars(); };   /* an empty pick DELETES the variant rather than storing '' — an empty string is a mapping to a clip that does not exist */
+            const spd=document.createElement('input'); spd.type='number'; spd.min='0.1'; spd.max='4'; spd.step='0.05'; spd.title='Playback speed (1 = normal)';
+            spd.value=String((playerModelCfg.clipSpeed && playerModelCfg.clipSpeed[key]!=null) ? playerModelCfg.clipSpeed[key] : 1);
+            spd.style.cssText='flex:0 0 52px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 4px;font-size:11px;';
+            spd.onchange=()=>{ if(!playerModelCfg.clipSpeed) playerModelCfg.clipSpeed={}; const v=Math.max(0.1,Math.min(4,parseFloat(spd.value)||1)); playerModelCfg.clipSpeed[key]=v; spd.value=String(v); applyAnimSpeedLive(key, v); };
+            row.appendChild(sp); row.appendChild(sel); row.appendChild(spd); wHost.appendChild(row);
+          }
+        }
+      }
       refreshPlayerClipOptions();
       // third-person camera framing: side / distance / height. Live-applied + persisted.
       { const tpHdr=document.createElement('div'); tpHdr.className='hint'; tpHdr.innerHTML='<b>Third-person camera</b>'; tpHdr.style.margin='8px 0 2px'; urlHost.appendChild(tpHdr);

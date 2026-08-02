@@ -4368,6 +4368,68 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## One attack animation for the whole arsenal (build 1294)
+
+Reported: *"the editor doesn't allow different attack animations per weapon. I have to choose one animation
+for the left mouse button and it is used for every weapon. If the player switches from a pistol, to a sword,
+to an axe, to a rifle, those should all be different."* Correct — `ANIM_SLOTS` carried ONE `attack` slot and
+all three animators (local avatar, remote player, bot) asked for it by that literal name.
+
+**A variant is the slot name with the weapon appended: `attack@crowbar`.** That choice is the whole reason
+this is small — `clips`, `clipSpeed`, `clipHold` and `clipInPlace` are plain maps keyed by slot string, so a
+variant rides through the character config, the save file and the network snapshot with **no format change**;
+`myCharCfg` already copies the whole `clips` object, so a co-op peer sees your sword swing without a protocol
+bump, and `w:rp.wep` was already in the snapshot so every animator knows which weapon to ask for.
+
+Four decisions:
+- **The resolver is one line.** `_stateActionKey` walks `_ANIM_FALLBACK`; it now peels a `@` qualifier first,
+  so `attack@pistol` → `attack` → `aim` → `idle` with no new table entries. **An unmapped variant therefore
+  resolves to exactly what it resolved to before this build** — that is the compatibility argument, and it
+  is executed rather than asserted.
+- **Explicit only, no name auto-match.** A clip called "SwordSwing" guessing its way onto a slot is the kind
+  of magic that cannot be debugged. A variant becomes an action only when a creator maps it.
+- **Loop mode comes from the BASE slot.** `attack@crowbar` is a one-shot because `attack` is one. Making each
+  variant restate it is the version that fails silently on the twentieth weapon.
+- **`equip` gets it too**, using the weapon being switched TO — drawing a sword is not drawing a pistol.
+  `WEP_ANIM_SLOTS` is `['attack','equip']`, and that list is a UI budget, not a capability: the resolver is
+  generic, so `walkFire@sniper` works the moment anyone maps it.
+
+Verified through the REAL editor path (`toggleEditor` → `setEditorMode('player')`), because builds 1266/1268
+shipped a fix whose call site sat in a camera branch no creator reaches — 16 selects present, correct state
+keys, and the live animator asking for `attack@pistol` / `attack@crowbar` / `attack@rifle` as the weapon changes.
+
+## Melee could never break a prop in third person (build 1295)
+
+Reported in the same breath: *"if I give the player a sword as a melee weapon, I can't break/explode props if
+I swing at it."* Three faults in one block of `meleeAttack`, all from it having been written for a
+first-person solo punch and never revisited. **The enemy cone twenty lines above already does all three
+things right**, which is exactly what made the difference invisible: enemies took the hit, props did not.
+
+1. **It cast from the CAMERA and range-limited on the distance from the CAMERA.** The reach is 2.9 m and the
+   third-person boom sits 4.2 m behind, so anything within reach of the *player* is at least 4.2 m from the
+   camera. Measured on one crate 1.5 m in front:
+   ```
+                  camera->prop   player->prop   old test
+   first person       1.5            1.5          HITS
+   third person       5.7            1.5          MISSES
+   ```
+   **`tpDist > MELEE_RANGE` is the entire bug in one comparison** — no prop, at any distance, in any third-
+   person level, has ever been breakable by a swing.
+2. **It aimed through screen centre**, ignoring the cursor-aim correction its own cone applies (builds
+   874/1103), so in the twin-stick and chase-cursor views it swung wherever the camera pointed.
+3. **A client could not do it at all** — `NET.mode!=='client'` skipped the block, while the bullet path has
+   always relayed `propHit` to the host. In co-op the host's swing worked and a guest's did nothing, which
+   nobody reports as a bug; they just conclude melee is decorative.
+
+After: the real swing deals the crowbar's full 60 damage in both views. The swing gets **its own** module-scope
+raycaster, because the reach has to be its `far` and setting that on the shared `raycaster` would leak the
+limit into a dozen other systems.
+
+**Two probe runs were lost to the rig, both worth remembering.** The stock level ships NO dynamic props, so
+the first run measured nothing; and the prop I then repurposed is a 16-unit floor slab, so the ray started
+*inside* it and three reported no hit at all (front faces only). Neither failure looks like a rig failure —
+both read as "the feature is broken", which is the answer I was already expecting.
+
 ## The editor panel stopped rebuilding what nobody can see (build 1293)
 
 Build 1291 made undo fast and named what was left: `serializeLevel` and `renderEditorFields`. Measured,
