@@ -26,6 +26,10 @@ function mkHost() {
     extractFunction('_netDmg') + '\n' +
     'const _dmgAcc={}; const _DMG_RATE_PVP=' + PVP + ', _DMG_RATE_PVE=1500;\n' +
     extractFunction('_netDmgBudget') + '\n' +
+    // build 1279: the relay allow-list lives at module scope (one Set, not one per packet), so the rig
+    // supplies it the same way it supplies the damage-budget state. Lifted from the real source rather
+    // than restated, or this test would keep passing after someone widened it.
+    src.match(/const _RELAY_OK = new Set\(\[[^\]]*\]\);/)[0] + '\n' +
     // a stripped handleClientMsg: the real forward branch, then a sentinel for "fell through to local handling"
     'function handleClientMsg(conn, msg){ const id=conn._pid;\n' +
     src.match(/if\(msg && msg\.to != null && \+msg\.to !== NET\.myId[\s\S]*?\n  \}/)[0] + '\n' +
@@ -54,14 +58,26 @@ function mkHost() {
   near(total, PVP, 1e-6, '50 one-shot packets in one window relay at most the 1s PvP budget total — no instakill through the relay');
   assert((h.sent[2] || []).length < 50, '...and the over-budget packets are DROPPED, not forwarded at zero');
 }
-{ // a legitimate cosmetic relay is untouched
+{ // build 1279: a legitimate PEER relay is untouched. This block used to use `fire`, which the
+  // deny-list forwarded — but the host BROADCASTS fire from its own handler, so a targeted `fire` was
+  // never real traffic, only something this test constructed. `grab` is peer traffic and is on the list.
   const h = mkHost();
-  const relayed = h.handleClientMsg({ _pid: 1 }, { t: 'fire', to: 2, o: [0, 0, 0], d: [1, 0, 0], w: 'rifle' });
-  assert(relayed !== 'LOCAL', 'a fire packet is relayed');
+  const relayed = h.handleClientMsg({ _pid: 1 }, { t: 'grab', to: 2, nid: 7 });
+  assert(relayed !== 'LOCAL', 'a peer packet is relayed');
   const pk = h.sent[2][0];
-  eq(pk.t, 'fire', '...verbatim (only KNOWN damage types are mediated)');
+  eq(pk.t, 'grab', '...verbatim (only damage types are mediated)');
   eq(pk.from, 1, '...with from rewritten to the verified sender');
-  eq(pk.w, 'rifle', '...and its payload intact');
+  eq(pk.nid, 7, '...and its payload intact');
+}
+{ // ...and a type that is NOT peer traffic is dropped rather than forwarded — the 1279 inversion
+  const h = mkHost();
+  const relayed = h.handleClientMsg({ _pid: 1 }, { t: 'hurt', to: 2, d: 1e9 });
+  assert(relayed !== 'LOCAL', 'it is still taken by the relay branch');
+  eq((h.sent[2] || []).length, 0,
+    'THE EXPLOIT 1205 LEFT OPEN: a host-authoritative verb addressed to a peer is now dropped, not forwarded');
+  const h2 = mkHost();
+  h2.handleClientMsg({ _pid: 1 }, { t: 'fire', to: 2, o: [0, 0, 0], d: [1, 0, 0], w: 'rifle' });
+  eq((h2.sent[2] || []).length, 0, 'and so is a cosmetic the host broadcasts itself — it fails closed');
 }
 { // a packet TO the host still falls through to local handling (unchanged)
   const h = mkHost();

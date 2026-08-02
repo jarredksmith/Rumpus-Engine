@@ -4044,6 +4044,47 @@ Two previously-recorded CRITICALs died on verification this round, which is the 
 directions: **KTX2, meshopt and Draco are all wired** (the last audit's "deliberately unwired" was false),
 as the phantom-BVH claim was false before it. Five pins moved (1074, 1077, 238, 418, 835).
 
+## The relay is an allow-list now (build 1279)
+
+The audit's multiplayer CRITICAL. Build 1205 closed client-to-client damage relaying and wrote the rule as
+*"only KNOWN damage types are mediated, everything else passes"*, reasoning that a whitelist would rot as
+new cosmetics arrived. **That is backwards for a trust boundary.** The destination's handler is
+`handleHostMsg`, which cannot tell a relayed packet from one the host sent — so the relay was a write
+primitive into every host-authoritative verb, and 1205's fix covered exactly one door in a room with 36.
+
+Verified before changing anything: `hurt` (25613) applied `msg.d` with **no clamp**, and `raceFin` (25584)
+declared a race winner with **no lap check at all**.
+
+The allow-list is DERIVED, not guessed: `sendToPlayer` is the only builder of a targeted message, and of the
+eight types that reach it, four (`wact`, `frag`, `credit`, `power`) are host→client verbs a client has no
+business relaying. The remaining three plus `pvpHit` are genuine peer traffic. **Anything else is dropped**
+— and a dropped cosmetic is a missing visual, while a forwarded verb is a stolen match. A new peer type must
+be named here, which is the cost this design accepts and 1205 declined to.
+
+**A SET, not an object literal — and my own test caught that before it shipped.** `{...}[msg.t]` inherits
+`Object.prototype`, so `{t:'constructor'}` and `{t:'toString'}` look like members and sail straight through.
+An allow-list with a hole in it is worse than none, because it reads as safe. Same trap build 1271 closed for
+the expression evaluator's variable lookup; third time this file has met it.
+
+Two credit claims are now checked rather than believed:
+- **`raceFin`** is tested against the lap count the host already tracks from each racer's own `race`
+  progress messages. The evidence was sitting right there; nobody had asked for it.
+- **`died`** gets a per-source leaky bucket (0.5/s, burst 3) beside the damage buckets from 1164. A player
+  dying every 8 seconds is never limited — proven by execution — while a farming loop gets three.
+
+`test-1205`'s "cosmetic relays pass verbatim" case used `fire`, which the host BROADCASTS from its own
+handler — a targeted `fire` was never real traffic, only something the test constructed. It now asserts the
+inversion: a host verb addressed to a peer is dropped, and so is a cosmetic that fails closed. Three pins
+moved (1130, 836, 1205).
+
+## The test gate (build 1278)
+
+1,018 harnesses existed and nothing ran them but a human remembering to, while both other workflows deploy.
+`tests.yml` runs syntax → boot → suite on every push and PR. One detail worth its comment: `run-all.mjs`
+does exit 1 on failure, but it is piped through `tee`, and a pipeline reports the LAST command's status — so
+without `set -o pipefail` a red suite looks green. That is the exact masking that made a local
+`node run-all.mjs | tail -2` report success during this audit.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

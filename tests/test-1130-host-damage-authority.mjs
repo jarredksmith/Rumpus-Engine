@@ -68,8 +68,11 @@ const src = gameSource();
   assert(!/sameTeam\(msg\.from, msg\.id\)/.test(h), 'msg.from is no longer trusted for the team check');
   assert(!/NET\.players\[msg\.from\]/.test(h), '...nor for looking the shooter up');
   // `died` is reported BY the victim, naming its killer — that name still has to be someone in the match
-  assert(/const _by=\+msg\.by; if\(_by===0 \|\| NET\.conns\[_by\]\) registerDuelKill\(_by, id\);/.test(h),
+  // build 1279 added the missing half — a client can only die so often — but 1130's identity check is
+  // unchanged and is what this asserts.
+  assert(/const _by=\+msg\.by;[\s\S]{0,120}?if\(\(_by===0 \|\| NET\.conns\[_by\]\) && _diedOk\(id\)\) registerDuelKill\(_by, id\);/.test(h),
     'a victim can only credit the host or a connected player, not an arbitrary id');
+  assert(/_diedOk\(id\)/.test(h), '...and cannot do it faster than a player can actually die (build 1279)');
 }
 // build 1122's forwarding rule is the same principle, and must still hold
 {

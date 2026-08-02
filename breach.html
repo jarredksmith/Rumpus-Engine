@@ -25526,6 +25526,18 @@ function _structAllow(id){
   if(a.n >= STRUCT_BURST) return false;
   a.n += 1; return true;
 }
+// build 1279: a death is a rare event. Real play cannot produce more than a few per respawn cycle, so a
+// small leaky allowance costs an honest player nothing and makes farming pointless. Same shape as the
+// per-source damage buckets (1164) — bounded per SOURCE, so one cheat cannot tax anybody else.
+const _DIED_PER_SEC = 0.5, _DIED_BURST = 3;
+const _diedBuckets = {};
+function _diedOk(id){
+  const now = (typeof performance!=='undefined' ? performance.now() : Date.now()) / 1000;
+  const b = _diedBuckets[id] || (_diedBuckets[id] = { n: _DIED_BURST, t: now });
+  b.n = Math.min(_DIED_BURST, b.n + (now - b.t) * _DIED_PER_SEC); b.t = now;
+  if(b.n < 1) return false;
+  b.n -= 1; return true;
+}
 function handleClientMsg(conn, msg){
   const id=conn._pid;
   if(NET._seen) NET._seen[id]=performance.now();   // build 578: any message proves the client is alive
@@ -25535,6 +25547,24 @@ function handleClientMsg(conn, msg){
   // attribute its damage to someone else. A `to` naming the host, or an unknown peer, falls through
   // and is handled here as normal.
   //
+  // build 1279: AN ALLOW-LIST, NOT A DENY-LIST. Build 1205 (below) wrote the rule as "only KNOWN damage
+  // types are mediated, everything else passes", reasoning that a whitelist would rot as new cosmetics
+  // arrived. That is exactly backwards for a trust boundary: the destination's handler is handleHostMsg,
+  // which cannot tell a relayed packet from one the host sent, so the relay was a write primitive into
+  // every host-authoritative verb. `{t:'hurt', to:V, d:1e9}` reached applyEnemyDamageToSelf unclamped;
+  // `wact` handed out remote kills and teleports; a forged `name` on a relayed `chat` impersonated
+  // anyone in a private message the host never renders and therefore cannot moderate.
+  //
+  // The set below is derived, not guessed: `sendToPlayer` is the only way a targeted message is built,
+  // and of the eight types that reach it, four (`wact`, `frag`, `credit`, `power`) are host->client verbs
+  // a client has no business relaying. The remaining three are genuine peer traffic. Anything else is
+  // DROPPED — and a dropped cosmetic is a missing visual, while a forwarded verb is a stolen match.
+  // When a new peer-to-peer type is added it must be named here, which is the cost this design accepts.
+  // A SET, not an object literal. `{...}[msg.t]` inherits Object.prototype, so `{t:'constructor'}` and
+  // `{t:'toString'}` look like members and sail through — an allow-list with a hole in it is worse than
+  // none, because it reads as safe. Caught by test-1279 before this shipped; it is the same trap build
+  // 1271 closed for the expression evaluator's variable lookup.
+  const _RELAY_OK = new Set(['pvpHit','grab','holdEnd','rematchReq']);
   // build 1205: BOUND THE RELAYED CLAIM. Builds 1130/1164 clamp damage aimed AT THE HOST — but a packet
   // addressed to a third client was forwarded VERBATIM, so in any 3+ player FFA a cheat could send
   // {t:'pvpHit', to:victim, d:1e9} and one-shot anyone, through walls, unrated: the marquee competitive
@@ -25547,12 +25577,14 @@ function handleClientMsg(conn, msg){
   if(msg && msg.to != null && +msg.to !== NET.myId && +msg.to !== id){   /* build 1201: a promoted host is not id 0 */
     const dest = NET.conns[+msg.to];
     if(dest){
+      if(!_RELAY_OK.has(msg.t)) return;                       // build 1279: not peer traffic — drop it
       if(msg.t==='pvpHit'){                                   // client-vs-client damage: clamp before relaying
         const d = _netDmgBudget(id, 'pvp', _netDmg(msg.d));
         if(!(d > 0)) return;                                  // over budget or non-positive: drop, never forward a raw claim
         const fwd = Object.assign({}, msg, { from: id, d }); delete fwd.to;
         try{ dest.send(fwd); }catch(e){} return;
       }
+      // the rest carry no authority, but they still travel as the VERIFIED sender, never a claimed one
       const fwd = Object.assign({}, msg, { from: id }); delete fwd.to;
       try{ dest.send(fwd); }catch(e){} return;
     }
@@ -25563,7 +25595,13 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
   else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmgBudget(id,'pvp',_netDmg(msg.d)), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
-  else if(msg.t==='died'){ const _by=+msg.by; if(_by===0 || NET.conns[_by]) registerDuelKill(_by, id); }            // a client died; credit the killer — build 1130: only a player who is actually in the match
+  else if(msg.t==='died'){
+    // build 1130 checks that the credited killer is really in the match. build 1279 adds the missing
+    // half: a client can only die so often. Unbounded, a loop handed an ally the kill target outright —
+    // and `died` is not in _structAllow, so nothing else was slowing it down.
+    const _by=+msg.by;
+    if((_by===0 || NET.conns[_by]) && _diedOk(id)) registerDuelKill(_by, id);
+  }
   else if(msg.t==='botHit'){ const b=botById(msg.id); if(b && !b.dead && !sameTeam(id, msg.id)){ const _s=NET.players[id]; const _sx=_s&&_s.posEye?_s.posEye.x:null, _sz=_s&&_s.posEye?_s.posEye.z:null; if(botHurt(b, _netDmgBudget(id,'pvp',_netDmg(msg.d)), _sx, _sz)) registerDuelKill(id, msg.id); } }   // a client shot a bot — build 1130: the shooter is the connection, so a claimed `from` can no longer dodge the sameTeam check or steal the credit
   else if(msg.t==='char'){ applyRemoteChar(id, msg.cfg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.cfg}); }catch(e){} } } if(NET.phase==='lobby') refreshLobby(); }   // a client changed character (the lobby card updates live)
   else if(msg.t==='rocket'){ const o=new THREE.Vector3(msg.o[0],msg.o[1],msg.o[2]), d=new THREE.Vector3(msg.d[0],msg.d[1],msg.d[2]); fireRocket(o,d,id,true,msg.r||7,WEAPONS.launcher.dmg); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'rocket', o:msg.o, d:msg.d, r:msg.r, by:id}); }catch(e){} } } }   // a client fired a rocket: host simulates it + relays the visual
@@ -25593,7 +25631,14 @@ function handleClientMsg(conn, msg){
   else if(msg.t==='death'){ playerDeathFx(msg.p[0], msg.p[1], msg.p[2]); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send(msg); }catch(e){} } } }   // a client died -> show + relay the pop
   else if(msg.t==='chat'){ const nm=(NET.players[id]&&NET.players[id].name)||msg.name||('P'+id); const tx=(''+(msg.text||'')).slice(0,200); addChatLine(nm, tx); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'chat', name:nm, text:tx}); }catch(e){} } } }   // a client chatted -> show + relay to the others
   else if(msg.t==='race'){ _raceNet[id]={ lap:msg.lap|0, f:+msg.f||0 }; for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'race', from:id, lap:msg.lap, f:msg.f}); }catch(e){} } } }   // build 836: a racer's progress -> store + relay
-  else if(msg.t==='raceFin'){ _raceDeclareWinner(id); }   // build 836: a client crossed the final line — first one in wins
+  else if(msg.t==='raceFin'){
+    // build 1279: CHECK THE CLAIM. This called _raceDeclareWinner with no validation at all, so one
+    // packet at t=0 won any race. The host already tracks every racer's lap from their own `race`
+    // progress messages (25595), so the evidence to check against was sitting right there.
+    const _rp = (typeof _raceNet!=='undefined') ? _raceNet[id] : null;
+    const _need = Math.max(1, (typeof gameCfg!=='undefined' && gameCfg.raceLaps) ? (gameCfg.raceLaps|0) : 3);
+    if(_rp && (_rp.lap|0) >= _need) _raceDeclareWinner(id);
+  }   // build 836: a client crossed the final line — first one in wins
   else if(msg.t==='rematchReq'){ if(gameOver) hostRematch(); }   // a client asked to replay; only honor it once the match has actually ended (so it can't force a mid-match restart)
 }
 function handleHostMsg(msg){
@@ -29177,7 +29222,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1277 · 2026-08-02';
+const BUILD_VERSION = 'build 1279 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
