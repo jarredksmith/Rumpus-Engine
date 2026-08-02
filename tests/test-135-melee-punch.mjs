@@ -8,7 +8,10 @@ const src = gameSource();
 // windup, not on the input frame. These assertions are about the CONTACT, so read both halves.
 const m = extractFunction('meleeAttack') + '\n' + extractFunction('_meleeStrike');
 assert(/now - _meleeT < \(wep \? 0 : MELEE_CD\)/.test(m), 'punch respects a cooldown');
-assert(/const cone=\(tx,ty,tz\)=>/.test(m) && />0\.35 \? dist : -1/.test(m), 'punch only hits within a forward cone');
+assert(/const cone=\(tx,ty,tz\)=>/.test(m) && />MELEE_ARC_DOT \? dist : -1/.test(m), 'punch only hits within a forward cone');
+// build 1311: the arc is a named constant now, read by the enemy cone AND the prop test so the two
+// cannot disagree about what "in the swing" means. Same angle, one source.
+assert(/const MELEE_ARC_DOT = 0\.35;/.test(src), '...whose half-angle is unchanged at ~69.5 deg');
 assert(/best\.evx=\(best\.evx\|\|0\)\+fwd\.x\/fh\*KB; best\.evz=\(best\.evz\|\|0\)\+fwd\.z\/fh\*KB; best\.vy=Math\.max\(best\.vy\|\|0,UP\)/.test(m), 'punch shoves the target along aim + pops it up');
 assert(/sendToPlayer\(bestId,\{t:'pvpHit', d:DMG, from:NET\.myId\}\)/.test(m), 'punch damages a remote player in PvP');
 assert(/enemyHurt\(best,/.test(m) && /botHurt\(best,/.test(m), 'punch can kill enemies (solo) and bots (pvp)');

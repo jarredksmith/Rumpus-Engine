@@ -29880,7 +29880,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1310 · 2026-08-02';
+const BUILD_VERSION = 'build 1311 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31856,11 +31856,17 @@ function teardownInstancing(){
 
 let _meleeT = 0;
 const MELEE_CD = 480, MELEE_RANGE = 2.9, MELEE_DMG = 34;   // punch: cooldown ms, reach m, damage
+// build 1311: THE SWING'S ARC, named once and shared by everything a swing can hit. A cos of 0.35 is a
+// ~69.5 deg half-angle — wide, because a sword is swung, not aimed. This value has governed the ENEMY test
+// since melee existed; props were the only target class that did not get it, which is the whole of the
+// report this build answers. Naming it in one place is build 1143's lesson: two copies of a number that
+// must agree is how they stop agreeing.
+const MELEE_ARC_DOT = 0.35;
 let _meleeTok = 0;   // build 1303: a pending strike belongs to ONE swing — switching weapon or swinging again supersedes it
 // build 1295: the melee swing's own raycaster. Its own, because `far` has to be the swing's reach and the
 // shared `raycaster` is read by a dozen other systems that would inherit the limit; module scope, because
 // build 1168 removed exactly this class of per-swing allocation.
-const _meleeRc = new THREE.Raycaster(), _meleeOrig = new THREE.Vector3(), _meleeDir = new THREE.Vector3();
+const _meleeRc = new THREE.Raycaster(), _meleeOrig = new THREE.Vector3(), _meleeDir = new THREE.Vector3(), _meleePt = new THREE.Vector3();
 // Melee / punch. Fired by the V key or automatically when you pull the trigger fully dry. Hits the nearest
 // enemy / bot / player in a forward cone and shoves them along your aim (reuses the same launch channel the
 // trebuchet + explosions use), and breaks / shoves a prop you're facing. Knockback scales with Launch Power.
@@ -31907,7 +31913,7 @@ function _meleeStrike(wep, RANGE, DMG){
   const fh = Math.hypot(fwd.x, fwd.z) || 1;
   const px=player.pos.x, py=player.pos.y, pz=player.pos.z;
   const LP=(worldCfg && +worldCfg.launchPower)||1, KB=11*LP, UP=5*LP;
-  const cone=(tx,ty,tz)=>{ const dx=tx-px, dy=ty-py, dz=tz-pz, dist=Math.hypot(dx,dy,dz); if(dist>RANGE) return -1; return ((dx*fwd.x+dy*fwd.y+dz*fwd.z)/(dist||1))>0.35 ? dist : -1; };
+  const cone=(tx,ty,tz)=>{ const dx=tx-px, dy=ty-py, dz=tz-pz, dist=Math.hypot(dx,dy,dz); if(dist>RANGE) return -1; return ((dx*fwd.x+dy*fwd.y+dz*fwd.z)/(dist||1))>MELEE_ARC_DOT ? dist : -1; };
   let hit=false;
   if(pvpMode()){
     if(duelDead) return;
@@ -31941,14 +31947,48 @@ function _meleeStrike(wep, RANGE, DMG){
   //     path has always sent `propHit` to the host. So in co-op, a guest with a sword could not break a
   //     barrel — and the host's own swing worked, which is the sort of asymmetry nobody reports as a bug,
   //     they just conclude melee is decorative.
+  // ---- build 1311: A SWING IS AN ARC, NOT A LASER ---------------------------------------------------
+  // REPORTED FROM PLAY: "unless the character is directly facing the object with the cross-hair dead middle
+  // of the prop, it doesn't deal damage. With a sword, if the player isn't dead on, even if it visually
+  // looks like a strike landed, it doesn't count."
+  //
+  // Exactly right, and the asymmetry is twenty lines apart in this same function. The ENEMY test is a cone
+  // — `cone()` above, a ~69.5 deg half-angle that has governed melee since it existed. Build 1295 gave the
+  // PROP test the player's origin and the cursor-corrected direction, which fixed third person and co-op,
+  // but left it a SINGLE RAY through screen centre. So a swing that visibly sweeps through a crate misses
+  // it unless the crosshair is on it, while the same swing hits an enemy standing anywhere in the arc.
+  //
+  // The prop test is now the same cone, against the prop's COLLIDER BOX rather than its origin — which
+  // matters more here than for an enemy: a prop's origin can sit at its foot, at a corner, or metres away
+  // for an imported building, so an origin-based cone would miss a wall you are standing against. The
+  // closest point on the box is what the blade would actually meet.
+  //
+  // No line-of-sight gate, deliberately: build 539 established that "at melee range the sightline is moot"
+  // for the enemy cone, and a prop test that disagreed with the enemy test is the defect being fixed.
   if(dynamicProps.length){
     _meleeRc.set(_meleeOrig.set(px, py, pz), _meleeDir.copy(fwd).normalize());
     _meleeRc.near = 0; _meleeRc.far = RANGE;   /* the reach IS the ray, so the hit test and the cone agree */
     const ph = _meleeRc.intersectObjects(dynamicProps, true);
-    if(ph.length){
+    let target=null, tpt=null;
+    if(ph.length){   /* a dead-on strike still wins, and gives the exact contact point for the spark */
       let o=ph[0].object; while(o && dynamicProps.indexOf(o)<0) o=o.parent;
-      if(o){
-        const dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(), pt=ph[0].point;
+      if(o){ target=o; tpt=ph[0].point; }
+    }
+    if(!target){
+      let bestD=1e9;
+      for(const o of dynamicProps){
+        if(!o || !o.userData || o.userData._shattered) continue;
+        const b=o.userData.box; if(!b) continue;
+        /* the closest point on the prop's own box to the player — clamped per axis */
+        _meleePt.set(Math.max(b.min.x, Math.min(px, b.max.x)), Math.max(b.min.y, Math.min(py, b.max.y)), Math.max(b.min.z, Math.min(pz, b.max.z)));
+        const dx=_meleePt.x-px, dy=_meleePt.y-py, dz=_meleePt.z-pz, d=Math.hypot(dx,dy,dz);
+        if(d>RANGE || d>=bestD) continue;
+        if(d>1e-4 && ((dx*fwd.x+dy*fwd.y+dz*fwd.z)/d) <= MELEE_ARC_DOT) continue;   /* outside the swing's arc */
+        bestD=d; target=o; tpt=_meleePt.clone();
+      }
+    }
+    if(target){
+      { const o=target, dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(), pt=tpt;
         if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} playPropHitSound(o, pt); }   /* host-authoritative, exactly like a shot — but the sound is predicted locally (build 1305) */
         else { const broke=damageProp(o, DMG, pt, dir, 8, NET.myId); if(!broke) pushDynamic(o, dir, 8, pt); }
         /* build 1305: "it would also be nice to have some sort of visual that the blow landed". The BULLET
