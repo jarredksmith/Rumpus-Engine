@@ -9540,7 +9540,7 @@ const CG_CELL = 8, CG_HALF = 512;                 /* 8m cells over +/-4096m of w
 const _cgMap = new Map(); const _cgDyn = [];
 let _cgLen = -1, _cgStale = true, _cgSeen = 0;
 function _cgDirty(){ _cgStale = true; }
-function _cgMobileNow(c){ const u = c.userData || {}; return !u.box || !!(u.phys && u.phys.body) || !!(u.xa && u.xa.on) || !!u._kbody; }
+function _cgMobileNow(c){ const u = c.userData || {}; return !u.box || !!(u.phys && u.phys.body) || !!(u.xa && u.xa.on) || !!u._kbody || !!u.parNid; }   /* build 1309: a parented prop moves with its parent, so it is a MOVER — without this its every-frame collider refresh would rebuild the static spatial grid (build 1188) */
 function _cgKey(ix, iz){ return ((Math.max(-CG_HALF, Math.min(CG_HALF - 1, ix)) + CG_HALF) << 10) | (Math.max(-CG_HALF, Math.min(CG_HALF - 1, iz)) + CG_HALF); }
 function _cgRebuild(){
   _cgMap.clear(); _cgDyn.length = 0; _cgLen = colliders.length; _cgStale = false;
@@ -17685,6 +17685,10 @@ function removeProp(idx){
   if(obj.userData._fxRT){ try{ obj.userData._fxRT.geo.dispose(); }catch(e){} obj.userData._fxRT=null; }   // build 1250: per-emitter geometry only — the particle material is shared with fire
   scene.remove(obj);
   const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1);
+  /* build 1309: a deleted parent RELEASES its children where they stand rather than leaving them pointing
+     at a nid nothing answers to — the same call build 997 makes for a light whose pole was deleted. */
+  if(obj.userData.nid){ for(const q of propModels){ if(q && q.userData && q.userData.parNid===obj.userData.nid){ delete q.userData.parNid; delete q.userData._pntPose; } } }
+  if(typeof _pntMark==='function') _pntMark();
   if(obj.userData.mixer){ const mi = mixers.indexOf(obj.userData.mixer); if(mi>=0) mixers.splice(mi,1); }
   if(obj.userData.src && typeof isModelSrc==='function' && isModelSrc(obj.userData.src)) _modelRelease(obj.userData.src);   // build 576: drop this instance's ref; the master is freed once no instance remains
   propModels.splice(idx,1);
@@ -17933,6 +17937,100 @@ function buildLight(opts){
   scene.add(g);
   lightModels.push(g);
   return g;
+}
+// ---- build 1309 (editor audit 4.5): TRANSFORM PARENTING --------------------------------------
+// The audit: "Zero greps for parentTo|attachTo|userData.parent|parentNid. Groups are a shared groupId;
+// folders are outliner metadata. Consequences that show in play, not just authoring: a crate on a moving
+// platform does not ride it, `moveprop` is a teleport, a rotating assembly must be authored as one mesh.
+// Build 997's light-attach and build 1228's entry carry are a SPECIAL CASE of parenting implemented once;
+// generalising them is the structural fix."
+//
+// A child names its parent by NID — the same stable serialized identity build 997 uses, and the only one
+// that survives a save, a reload and a co-op join.
+//
+// IT IS A FOLLOW CONSTRAINT, NOT SCENE-GRAPH RE-PARENTING, and that is the load-bearing decision here.
+// `host.add(child)` is right for a LIGHT (build 997) because a light has no collider, no physics body and
+// no serialized transform of its own. A prop has all three: `colliders` holds world-space boxes,
+// `serializeLevel` writes `o.position` as a WORLD transform, and the gizmo drags in world space. Re-parenting
+// silently turns every one of those into a local transform — a level that saves wrong, a collider in the
+// wrong place, and a gizmo that fights the creator. Applying the parent's per-frame DELTA instead leaves
+// every one of those invariants exactly as it was.
+//
+// Depth-ordered, so a chain (a crate on a lift on a barge) resolves in ONE frame rather than lagging a
+// frame per link.
+const _pntKids = new Map();          // parent nid -> [child props], in depth order
+let _pntDirty = true, _pntN = -1;
+function _pntMark(){ _pntDirty = true; }
+// A prop's ancestor chain, used both to refuse a cycle and to sort parents shallowest-first.
+function _pntDepth(o, guard){
+  let d = 0, cur = o;
+  for(let i=0;i<16;i++){
+    const pid = cur && cur.userData && cur.userData.parNid; if(!pid) return d;
+    let nx = null; for(const q of propModels){ if(q && q.userData.nid===pid){ nx = q; break; } }
+    if(!nx) return d;
+    if(guard && nx===guard) return -1;   // a cycle
+    cur = nx; d++;
+  }
+  return -1;   // deeper than any real assembly -> treat as a cycle rather than looping forever
+}
+function _pntRebuild(){
+  _pntKids.clear(); _pntDirty = false; _pntN = propModels.length;
+  const seen = [];
+  for(const o of propModels){
+    const pid = o && o.userData && o.userData.parNid; if(!pid) continue;
+    if(_pntDepth(o) < 0){ delete o.userData.parNid; continue; }   // a cycle can only arrive from a hand-edited file
+    let a = _pntKids.get(pid); if(!a) _pntKids.set(pid, a = []); a.push(o); seen.push(o);
+  }
+}
+// Can `o` legally take `host` as its parent? (No cycles, no self, and both must be real props.)
+function canParentTo(o, host){
+  if(!o || !host || o===host) return false;
+  if(propModels.indexOf(o)<0 || propModels.indexOf(host)<0) return false;
+  return _pntDepth(host, o) >= 0;   // walking UP from the host must not reach the child
+}
+function setPropParent(o, host){
+  if(!canParentTo(o, host)) return false;
+  if(!host.userData.nid) host.userData.nid = genNid();
+  o.userData.parNid = host.userData.nid;
+  /* the child now MOVES, so it needs the mover treatment the mechanism props already get: a kinematic
+     body updatePhysics drives, and exemption from the static spatial grid's rebuild. */
+  if(typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();
+  _pntMark(); return true;
+}
+function clearPropParent(o){
+  if(!o || !o.userData || !o.userData.parNid) return false;
+  delete o.userData.parNid; delete o.userData._pntPose;
+  if(typeof _schedulePhysRebuild==='function') _schedulePhysRebuild();
+  _pntMark(); return true;
+}
+function propByNidLocal(nid){ for(const o of propModels){ if(o && o.userData.nid===nid) return o; } return null; }
+const _pntV=new THREE.Vector3(), _pntQ=new THREE.Quaternion(), _pntQI=new THREE.Quaternion(), _pntD=new THREE.Vector3();
+function _syncParentedProps(){
+  if(_pntDirty || _pntN !== propModels.length) _pntRebuild();
+  if(!_pntKids.size) return;
+  /* shallowest parent first, so a chain settles in one frame */
+  const hosts = [];
+  for(const nid of _pntKids.keys()){ const h = propByNidLocal(nid); if(h) hosts.push(h); }
+  hosts.sort((a,b)=>_pntDepth(a)-_pntDepth(b));
+  for(const host of hosts){
+    const kids = _pntKids.get(host.userData.nid); if(!kids || !kids.length) continue;
+    let prev = host.userData._pntPose;
+    if(!prev){ host.userData._pntPose = { p:host.position.clone(), q:host.quaternion.clone() }; continue; }
+    _pntD.copy(host.position).sub(prev.p);
+    _pntQI.copy(prev.q).invert(); _pntQ.copy(host.quaternion).multiply(_pntQI);
+    const moved = _pntD.lengthSq() > 1e-12, turned = Math.abs(_pntQ.w) < 0.9999995;
+    if(moved || turned){
+      for(const k of kids){
+        if(k.userData._shattered) continue;
+        /* rotate about the parent's ORIGIN — a rotating assembly is the audit's third case, and a child
+           that only translated would swing off a turntable instead of riding it. */
+        if(turned){ k.position.copy(_pntV.copy(k.position).sub(prev.p).applyQuaternion(_pntQ).add(prev.p)); k.quaternion.premultiply(_pntQ); }
+        if(moved) k.position.add(_pntD);
+        if(typeof refreshPropCollider==='function') refreshPropCollider(k);
+      }
+    }
+    prev.p.copy(host.position); prev.q.copy(host.quaternion);
+  }
 }
 // ---- build 997: LIGHT-TO-PROP ATTACHMENT ------------------------------------------------------
 // A light with userData.att = { nid, p, q } belongs on the prop with that nid, at that local
@@ -18918,6 +19016,10 @@ let _jumpHeldPrev=false; const JUMP_CD=0.5;   // jump must be a fresh press, and
 // ground flickers away. BUFFER: a press this early before touchdown fires on the first grounded frame.
 let _coyoteT=0, _jumpBufT=0; const COYOTE_T=0.10, JUMP_BUF=0.15;
 const MOVE_ACCEL_K=14, MOVE_BRAKE_K=20, MOVE_AIR_K=3.5, MOVE_AIR_BRAKE_K=0.4;   // build 1171: the acceleration model's four rates (see the movement block)
+// build 1308 (gameplay audit F8): the same model for the AI. Deliberately SLOWER to start and stop than the
+// player's — you are the one with the crisp controls; a wave that starts and stops as sharply as you do
+// reads as a swarm of cursors. 11 reaches 95% of top speed in ~270 ms, 16 stops in ~190 ms.
+const EN_ACCEL_K=11, EN_BRAKE_K=16;
 const TOUCH_LOOK_SENS = 0.0042, TOUCH_ADS_SENS = 0.0022;
 // Pointer Lock isn't supported on iOS Safari (the methods are undefined). Route every call through these
 // guards so a missing API can't throw — touch devices steer via the on-screen look pad instead.
@@ -29762,7 +29864,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1307 · 2026-08-02';
+const BUILD_VERSION = 'build 1309 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30401,7 +30503,10 @@ function addStaticColliderFor(o){
   // physics step (see updatePhysics) so it actually sweeps through — and launches — dynamic props.
   // colliderDescFor(propShapeInfo) gives a body-local shape (scale baked into the half-extents), so the
   // body only needs translation + rotation; primitives are exact, models get a rotating box approximation.
-  if(o.userData && o.userData.xa && o.userData.xa.on){
+  /* build 1309: ...and so does a PARENTED prop. Routing it through the same branch means updatePhysics's
+     existing kinematic driver sweeps it, so a dynamic crate resting on a parented platform is carried and
+     launched exactly as it is by a mechanism-animated one — inherited rather than reimplemented. */
+  if(o.userData && ((o.userData.xa && o.userData.xa.on) || o.userData.parNid)){
     o.updateMatrixWorld(true);
     const info = propShapeInfo(o), q = o.quaternion;
     const rb = physWorld.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased()
@@ -30646,6 +30751,7 @@ function applyPropDynState(obj, p){
   if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
   if(p.mass!=null) obj.userData.mass = p.mass;
   if(p.hsn) obj.userData.hitSnd = String(p.hsn).slice(0,300);   // build 1305
+  if(p.par){ obj.userData.parNid = String(p.par).slice(0,64); if(typeof _pntMark==='function') _pntMark(); }   // build 1309: resolved lazily — props load async, so the parent may not exist yet
   if(p.brk===false){ obj.userData.breakable = false; }
   else { obj.userData.breakable = true; if(p.obj) obj.userData.objective=true; if(p.hp!=null){ obj.userData.maxHp = p.hp; obj.userData.hp = p.hp; } obj.userData.breakStyle = (p.bst==='puff') ? 'puff' : 'shatter';
     if(p.fc!=null) obj.userData.fragCount = p.fc;
@@ -35471,6 +35577,38 @@ function loop(){
     _repathBudget = 3;   // cap A* searches per tick so a frame never stalls on many enemy repaths at once
     _losBudget = 5; _groundBudget = 5; _pathBudget = 5;   // build 547/553: per-frame LOS + ground + direct-path raycast caps. A wave spawns many enemies whose caches all come due on the same frame; these stop that frame from firing dozens of raycasts at once (the wave-framerate spike). Over-budget enemies reuse the cached value one more frame; the jittered intervals stagger them after ~1s.
     _airGroundBudget = 8;   // build 809: cell-moved / airborne refreshes were EXEMPT from _groundBudget — a blast launching a wave fired ~3 casts x every enemy on one frame. Now they draw from their own (larger) pool; over-budget movers reuse last frame's ground for one frame.
+// ---- build 1308 (gameplay audit F8): ENEMIES MOVE WITH MASS ------------------------------------------
+// Every enemy translation was direct position integration — `position.x += dir*speed*dt` at five sites — so
+// an enemy reached full chase speed on frame 1 and stopped dead on frame 1. Facing has been SMOOTHED since
+// build 531 (`turnToward` at TURN_RATE), which made the mismatch more visible rather than less: the body
+// rotated while the position slid sideways. This is exactly the defect build 1171 fixed for the player and
+// never ported to the AI.
+//
+// The safe-change constraint is 1171's: the TARGET is the same `dir * speed` the old code wrote directly,
+// so every tuned speed, standoff, patrol pace and slow-zone multiplier is BYTE-IDENTICAL at steady state.
+// What changes is the ramp on either end. A dt spike clamps the blend to 1, degrading exactly to the old
+// behaviour rather than overshooting.
+//
+// `_enStep` returns the CANDIDATE position rather than writing it, because two callers (the strafe and the
+// charger's dash) have to test the step against `insideSolid` before taking it. The velocity is chased
+// either way — an enemy pressed against a wall has genuinely spent that acceleration.
+//
+// THE BLEND IS `1 - exp(-k*dt)`, NOT `k*dt`. Build 1171 uses the linear approximation for the player, and
+// measured over half a second of chasing it drifts 22% between 20 fps and 240 fps — the same input covering
+// different ground on different machines. That is small enough never to have been noticed on the player and
+// it is not worth a re-tune of every authored speed to change there, but there is no reason to reproduce it
+// here: the exact form costs one `Math.exp` per moving enemy per frame and makes the velocity curve
+// identical at any refresh rate. It is also self-clamping, so a dt spike still degrades to the old instant
+// speed rather than overshooting.
+const _enStepOut = { x:0, z:0 };
+function _enStep(en, tvx, tvz, dt){
+  const k = 1 - Math.exp(-((tvx || tvz) ? EN_ACCEL_K : EN_BRAKE_K) * dt);
+  en._vx = (en._vx||0) + (tvx - (en._vx||0)) * k;
+  en._vz = (en._vz||0) + (tvz - (en._vz||0)) * k;
+  _enStepOut.x = en.mesh.position.x + en._vx*dt;
+  _enStepOut.z = en.mesh.position.z + en._vz*dt;
+  return _enStepOut;
+}
     // Phase 1 — behavior: hunt chases anywhere; patrol/hold use detection + leash and otherwise patrol
     // their area or guard their post. Movement aims at the state's target point; chasing stops just
     // outside melee so they crowd the player instead of bulldozing through.
@@ -35506,7 +35644,11 @@ function loop(){
       if(en.charger && !editorOpen){
         if(en._lungeT > 0){                                   // mid-dash: drive straight along the locked direction
           _charging = true; en._wantMove = true; en._lungeT -= dt;
-          const nx = en.mesh.position.x + en._lungeDx*(en.lungeSpeed||30)*dt, nz = en.mesh.position.z + en._lungeDz*(en.lungeSpeed||30)*dt;
+          /* build 1308: the dash is an AUTHORED burst and keeps writing its own position — but it seeds the
+             velocity, so when the lunge ends the charger carries its momentum out instead of stopping dead
+             in mid-air. That transition is the most visible frame of the whole move. */
+          en._vx = en._lungeDx*(en.lungeSpeed||30); en._vz = en._lungeDz*(en.lungeSpeed||30);
+          const nx = en.mesh.position.x + en._vx*dt, nz = en.mesh.position.z + en._vz*dt;
           if(typeof insideSolid==='function' && insideSolid(nx, nz, (en._groundY!=null?en._groundY:0)+0.6)){ en._lungeT=0; en.cooldown=1.4; }   // slammed a wall -> stop short
           else { en.mesh.position.x=nx; en.mesh.position.z=nz; }
           if(en._dist < (en._reach||2.4) + 0.6){ near.hurt(en.dmg||20, en.mesh.position.x, en.mesh.position.z); en._lungeT=0; en.cooldown=1.6; }   // slammed into the player
@@ -35541,23 +35683,23 @@ function loop(){
         if(en._aiCover && (en._aiCoverT||0) > 0){
           en._aiCoverT -= dt;
           const cvx = en._aiCover.x - en.mesh.position.x, cvz = en._aiCover.z - en.mesh.position.z, cvd = Math.hypot(cvx,cvz);
-          if(cvd > 1.0){ en._wantMove = true; en.mesh.position.x += cvx/cvd*en.speed*_stag*dt; en.mesh.position.z += cvz/cvd*en.speed*_stag*dt; }
+          if(cvd > 1.0){ en._wantMove = true; const _p=_enStep(en, cvx/cvd*en.speed*_stag, cvz/cvd*en.speed*_stag, dt); en.mesh.position.x=_p.x; en.mesh.position.z=_p.z; }
           if(en._aiCoverT <= 0) en._aiCover = null;
         }
         else if(!en._see){
           const _ba = Math.atan2(td.tz - en.mesh.position.z, td.tx - en.mesh.position.x) + en.flankSide*0.7;
           const _fx = td.tx + Math.cos(_ba)*5 - en.mesh.position.x, _fz = td.tz + Math.sin(_ba)*5 - en.mesh.position.z, _fd = Math.hypot(_fx,_fz)||1;
-          en._wantMove = true; en.mesh.position.x += _fx/_fd*en.speed*_stag*dt; en.mesh.position.z += _fz/_fd*en.speed*_stag*dt;
+          en._wantMove = true; const _p=_enStep(en, _fx/_fd*en.speed*_stag, _fz/_fd*en.speed*_stag, dt); en.mesh.position.x=_p.x; en.mesh.position.z=_p.z;
         }
         else {
         // hold a standoff range: close in if too far, back off if the player crowds it, else hold + shoot
         const toPx = near.pos.x - en.mesh.position.x, toPz = near.pos.z - en.mesh.position.z, pd = Math.hypot(toPx,toPz)||1;
-        if(pd > en.standoff + 1){ en._wantMove=true; en.mesh.position.x += toPx/pd*en.speed*_stag*dt; en.mesh.position.z += toPz/pd*en.speed*_stag*dt; }
-        else if(pd < en.standoff*0.6){ en._wantMove=true; en.mesh.position.x -= toPx/pd*en.speed*_stag*dt; en.mesh.position.z -= toPz/pd*en.speed*_stag*dt; }
+        if(pd > en.standoff + 1){ en._wantMove=true; const _p=_enStep(en, toPx/pd*en.speed*_stag, toPz/pd*en.speed*_stag, dt); en.mesh.position.x=_p.x; en.mesh.position.z=_p.z; }
+        else if(pd < en.standoff*0.6){ en._wantMove=true; const _p=_enStep(en, -toPx/pd*en.speed*_stag, -toPz/pd*en.speed*_stag, dt); en.mesh.position.x=_p.x; en.mesh.position.z=_p.z; }
         else if(en.strafe && en._see){   // build 633: at standoff -> STRAFE sideways (circle the player) instead of standing still. Flips direction on a timer or when it would walk into a wall.
           if(en._strafeDir==null || nowMs > (en._strafeFlip||0)){ en._strafeDir = (Math.random()<0.5?-1:1); en._strafeFlip = nowMs + 1100 + Math.random()*1500; }
           const sx = -toPz/pd*en._strafeDir, sz = toPx/pd*en._strafeDir;   // perpendicular to the player line
-          const nx = en.mesh.position.x + sx*en.speed*0.62*dt, nz = en.mesh.position.z + sz*en.speed*0.62*dt;
+          const _p=_enStep(en, sx*en.speed*0.62, sz*en.speed*0.62, dt), nx=_p.x, nz=_p.z;
           if(typeof insideSolid!=='function' || !insideSolid(nx, nz, (en._groundY!=null?en._groundY:0)+0.4)){ en._wantMove=true; en.mesh.position.x = nx; en.mesh.position.z = nz; }
           else { en._strafeFlip = 0; }   // wall ahead -> reverse next frame
         }
@@ -35607,8 +35749,13 @@ function loop(){
         // (up to 3 collider-scans + a raycast PER enemy PER frame) tanked wave framerates to single digits and
         // over-rejected on imported meshes ("invisible collider"). Pathfinding routes around walls; the nudge
         // above handles a head-on pin between waypoints.
-        en.mesh.position.x += _mvx*spd*dt; en.mesh.position.z += _mvz*spd*dt;
+        const _p=_enStep(en, _mvx*spd, _mvz*spd, dt); en.mesh.position.x=_p.x; en.mesh.position.z=_p.z;
       }
+      /* build 1308: nothing commanded a step this frame — a charger telegraphing its lunge, a gunner that
+         has reached its standoff, a patroller that arrived. Brake rather than snapping to zero, so an
+         enemy that stops still LOOKS like it stopped. `_wantMove` is the engine's own "is it trying to
+         translate" flag (build 541) and is already false in exactly those cases. */
+      if(!en._wantMove && ((en._vx||0) || (en._vz||0))){ const _p=_enStep(en, 0, 0, dt); en.mesh.position.x=_p.x; en.mesh.position.z=_p.z; }
       }
     }
     // Phase 2 — separation: shove overlapping enemies apart so they don't stack / clip through each
@@ -35838,6 +35985,7 @@ function loop(){
   if(!editorOpen && _corpses.length) updateCorpses(dt);   // build 779: ragdoll corpses follow their tumbling bodies
   if(!editorOpen && _fadeCorpses.length) updateFadeCorpses(dt);   // build 994: topple/fade fallback corpses
   if(typeof updateFragments==='function') updateFragments();   // advance/cleanup destruction debris
+  if(typeof _syncParentedProps==='function') _syncParentedProps();   // build 1309: carry parented props on their parent's delta — BEFORE the lights, so a light on a child prop follows the same frame
   if(typeof _syncAttachedLights==='function') _syncAttachedLights();   // build 997: glue attached lights to their props
   updateLightBudget();
   if(typeof updateEditorViewInfo==='function') updateEditorViewInfo(_pnow());   // build 1137
@@ -37749,13 +37897,18 @@ function propEntry(o){
   if(o.userData.joint){ const J=o.userData.joint; e.j={ type:J.type||'hinge', to:J.to||'', ax:J.ax||0, ay:J.ay||0, az:J.az||0, axis:J.axis||'y' }; if(J.lim){ e.j.lim=1; e.j.min=J.min; e.j.max=J.max; } if(J.mspeed){ e.j.mspeed=J.mspeed; e.j.mstr=(J.mstr!=null?J.mstr:1); } if(J.center) e.j.center=J.center; }   // build 707: physics joint (759: trailer self-centering)
   if(o.userData.trk && o.userData.trk.w) e.trk=1;   // build 830: track-piece barrier walls
   if(o.userData.vehicle){ const V=o.userData.vehicle; e.veh={ maxSpeed:V.maxSpeed, accel:V.accel, turn:V.turn, reverse:V.reverse }; if(V.units==='mph') e.veh.units='mph'; if(V.boost>1.01){ e.veh.boost=V.boost; e.veh.boostDur=V.boostDur; e.veh.boostCd=V.boostCd; } if(V.modelYaw) e.veh.modelYaw=V.modelYaw; if(V.pivot) e.veh.pivot=V.pivot; if(V.camDist) e.veh.camDist=V.camDist; if(V.camHigh) e.veh.camHigh=V.camHigh; if(V.rideHeight) e.veh.rideHeight=V.rideHeight; if(V.grip && V.grip!==6) e.veh.grip=V.grip; if(V.latG!=null && V.latG!==2.2) e.veh.latG=V.latG; if(V.susp!=null && V.susp!==1) e.veh.susp=V.susp; if(V.launch!=null && V.launch!==1) e.veh.launch=V.launch; if(V.brake!=null && V.brake!==1) e.veh.brake=V.brake; if(V.lean!=null && V.lean!==0.5) e.veh.lean=V.lean; if(V.dust!=null && V.dust!==1) e.veh.dust=V.dust; if(V.skid!=null && V.skid!==1) e.veh.skid=V.skid; if(V.animIdle) e.veh.animIdle=V.animIdle; if(V.animFwd) e.veh.animFwd=V.animFwd; if(V.animBack) e.veh.animBack=V.animBack; if(V.animLeft) e.veh.animLeft=V.animLeft; if(V.animRight) e.veh.animRight=V.animRight; if(V.ram!=null && V.ram!==50) e.veh.ram=V.ram; if(V.camView==='cockpit') e.veh.camView='cockpit'; if(V.seatF) e.veh.seatF=V.seatF; if(V.seatU!=null && V.seatU!==1) e.veh.seatU=V.seatU; if(V.seatS) e.veh.seatS=V.seatS; if(V.camFollow) e.veh.camFollow=1; if(V.enterDist!=null && V.enterDist!==2.5) e.veh.enterDist=V.enterDist; if(V.boostFlame) e.veh.boostFlame=1; if(V.flameColor!=null && V.flameColor!==0xff7a3d) e.veh.flameColor=V.flameColor; if(V.flameSize!=null && V.flameSize!==1) e.veh.flameSize=V.flameSize; if(V.flameDensity!=null && V.flameDensity!==1) e.veh.flameDensity=V.flameDensity; if(V.flameBack) e.veh.flameBack=V.flameBack; if(V.flameUp) e.veh.flameUp=V.flameUp; if(V.flameSide) e.veh.flameSide=V.flameSide; if(V.hitLen!=null && V.hitLen!==1) e.veh.hitLen=V.hitLen; if(V.hitWid!=null && V.hitWid!==1) e.veh.hitWid=V.hitWid; if(V.hitH!=null && V.hitH!==1) e.veh.hitH=V.hitH; if(V.hitOffX) e.veh.hitOffX=V.hitOffX; if(V.hitOffY) e.veh.hitOffY=V.hitOffY; if(V.hitOffZ) e.veh.hitOffZ=V.hitOffZ; if(V.headlights){ e.veh.headlights=1; if(V.headColor!=null && V.headColor!==0xfff2cc) e.veh.headColor=V.headColor; if(V.headInten!=null && V.headInten!==6) e.veh.headInten=V.headInten; if(V.headRange!=null && V.headRange!==32) e.veh.headRange=V.headRange; if(V.headSep) e.veh.headSep=V.headSep; if(V.headY) e.veh.headY=V.headY; if(V.headFwd) e.veh.headFwd=V.headFwd; if(V.headStart===false) e.veh.headStart=0; } if(V.brakeLights){ e.veh.brakeLights=1; if(V.brakeColor!=null && V.brakeColor!==0xff2020) e.veh.brakeColor=V.brakeColor; if(V.brakeSize!=null && V.brakeSize!==0.5) e.veh.brakeSize=V.brakeSize; if(V.brakeSep) e.veh.brakeSep=V.brakeSep; if(V.brakeY) e.veh.brakeY=V.brakeY; if(V.brakeBack) e.veh.brakeBack=V.brakeBack; } if(V.ejectCoast===false) e.veh.ejectCoast=0; if(V.wheels) e.veh.wheels=V.wheels; if(V.wheelsFront) e.veh.wheelsFront=V.wheelsFront; if(V.wheelAxis && V.wheelAxis!=='x') e.veh.wheelAxis=V.wheelAxis; if(V.wheelSteer!=null && V.wheelSteer!==28) e.veh.wheelSteer=V.wheelSteer; if(V.wheelSpin!=null && V.wheelSpin!==1) e.veh.wheelSpin=V.wheelSpin; }   // build 709-745: drivable vehicle + tuning + ram + cockpit view; 762: procedural wheels
+  if(o.userData.parNid) e.par = String(o.userData.parNid);   // build 1309: rides this prop. Top level — a STATIC crate on a lift is the commonest case, and the block below is dynamic-props-only
   if(o.userData.phys){ e.dyn=true; if(o.userData.mass!=null) e.mass=o.userData.mass;
     if(o.userData.noGrab) e.ng=true;
     if(o.userData.grabLabel && o.userData.noGrab!==true) e.glbl = String(o.userData.grabLabel).slice(0,80);   // build 679: custom grab prompt
     if(o.userData.grabRange>0 && o.userData.noGrab!==true) e.grng = +o.userData.grabRange;   // build 683: per-prop grab distance
     if(o.userData.onFire){ e.fire=1; if(o.userData.fireDps!=null) e.fdps=o.userData.fireDps; if(o.userData.fireFuse!=null) e.ffuse=o.userData.fireFuse; }
-    if(o.userData.breakable===false) e.brk=false;   // breakable defaults true; only store when off
+    /* build 1309: DO NOT put a statement between this `if` and its `else`. Build 1305 inserted the impact
+       sound here and the `else` below silently re-bound to IT — so any prop carrying a hit sound stopped
+       serializing its health, break style, objective flag and explosive settings. Caught by this build's
+       round-trip probe, not by 1305's, which only checked the field it had just added. */
     if(o.userData.hitSnd) e.hsn = String(o.userData.hitSnd).slice(0,300);   // build 1305: this prop's own impact sound
+    if(o.userData.breakable===false) e.brk=false;   // breakable defaults true; only store when off
     else { if(o.userData.maxHp!=null) e.hp=o.userData.maxHp; if(o.userData.breakStyle==='puff') e.bst='puff'; if(o.userData.objective) e.obj=1;
       if(o.userData.fragCount!=null) e.fc=o.userData.fragCount;
       if(o.userData.fragSize!=null && Math.abs(o.userData.fragSize-DEBRIS_SIZE_FRAC)>1e-6) e.fz=o.userData.fragSize;
@@ -41993,6 +42146,40 @@ function renderEditorFields(){
           lh.textContent='Pressing E needs the '+sel.userData.lockId+' key (place a key pickup pad). Unlocks once per deploy, for everyone.';
           lHost.appendChild(lh);
         }
+      }
+      // ---- build 1309 (editor audit 4.5): Parent — make this prop RIDE another one ----
+      if(sel){
+        const pBody = edFold(behaveHost, 'parent', 'Parent', false, 'Make props ride another prop \u2014 a crate on a moving platform, a turret on a turntable');
+        const _pHost = sel.userData.parNid ? propByNidLocal(sel.userData.parNid) : null;
+        const _nameOf = (o)=>(o && o.userData && (o.userData.name || o.userData.tag || (typeof assetShortName==='function' ? assetShortName(o.userData.src||'') : '') )) || 'prop';
+        const cur=document.createElement('div'); cur.className='hint'; cur.style.cssText='margin:4px 0 6px;font-size:11px;color:#9fe6cf;';
+        cur.textContent = sel.userData.parNid ? ('Riding: ' + (_pHost ? _nameOf(_pHost) : '(a prop that is no longer here)')) : 'Not parented \u2014 this prop stands on its own.';
+        pBody.appendChild(cur);
+        /* The primary is the parent and everything ELSE in the selection becomes its child. That is the
+           convention every editor with a hierarchy uses (Blender Ctrl+P, Unity drag-onto): pick the
+           children, pick the parent last, commit. It also means one gesture parents thirty crates. */
+        const others = (typeof _selTargets==='function' ? _selTargets() : []).filter(o=>o && o!==sel);
+        const row=document.createElement('div'); row.className='row2'; row.style.margin='2px 0 4px;';
+        const set=document.createElement('button');
+        set.textContent = others.length ? ('Parent ' + others.length + ' to this prop') : 'Parent to this prop';
+        set.title='Select the children, then the parent LAST, then press this. The children keep exactly where they are and ride from now on.';
+        set.disabled = !others.length;
+        set.onclick=()=>{
+          pushUndoSnapshot();
+          let n=0, refused=0;
+          for(const o of others){ if(setPropParent(o, sel)) n++; else refused++; }
+          _levelDirty=true; renderEditorFields();
+          if(typeof flashToast==='function') flashToast(n + ' prop' + (n===1?'':'s') + ' now ride' + (n===1?'s':'') + ' this one' + (refused ? (' \u2014 ' + refused + ' refused (that would make a loop)') : ''));
+        };
+        const clr=document.createElement('button'); clr.textContent='Clear parent';
+        clr.title='Release the selected props where they stand';
+        clr.onclick=()=>{ pushUndoSnapshot(); let n=0; for(const o of (typeof _selTargets==='function'?_selTargets():[sel])){ if(clearPropParent(o)) n++; } _levelDirty=true; renderEditorFields(); if(typeof flashToast==='function') flashToast(n ? (n + ' released') : 'Nothing was parented'); };
+        row.appendChild(set); row.appendChild(clr); pBody.appendChild(row);
+        const ph=document.createElement('div'); ph.className='hint'; ph.style.marginTop='2px';
+        ph.innerHTML = others.length
+          ? 'The <b>last</b> prop you picked is the parent. Children keep their exact position and follow every move and turn of the parent from here on \u2014 including a mechanism, a <b>Move prop</b> action, and physics.'
+          : 'Shift-click the props you want to move, then click the one they should ride <b>last</b>. Works on a moving platform, a lift, a turntable, or a vehicle.';
+        pBody.appendChild(ph);
       }
       // ---- Signals: tag this prop / make it trigger other tagged props ----
       if(sel){

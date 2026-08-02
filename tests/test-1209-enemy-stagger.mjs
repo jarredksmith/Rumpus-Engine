@@ -57,8 +57,12 @@ const mkEn = (over) => Object.assign({ hp: 100, maxHp: 100, evx: 0, evz: 0, mesh
     'the movement block reads a stagger factor from _slowT');
   assert(/const spd = \(td\.chase \? en\.speed : en\.speed\*0\.5\) \* _stag \*/.test(src),
     'the beeline/patrol speed folds in the stagger');
-  eq((src.match(/en\.speed\*_stag\*dt/g) || []).length, 8,
+  // build 1308 routed every enemy translation through _enStep, so the stagger is now a term of the TARGET
+  // velocity rather than of a per-frame position delta. Same four moves, same factor — count the targets.
+  eq((src.match(/en\.speed\*_stag,/g) || []).length, 8,
     'the ranged cover/flank/standoff moves fold it in too (4 move statements = 8 x/z components)');
+  assert(!/en\.speed\*_stag\*dt/.test(src),
+    '...and none of them integrates position directly any more (build 1308)');
   assert(/if\(en\._slowT>0\) en\._slowT=Math\.max\(0, en\._slowT-dt\);/.test(src),
     'the slow decays in the per-enemy update, beside the knockback integrator');
 }
