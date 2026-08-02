@@ -1,6 +1,6 @@
 // Build 1292's claim: the SAME scene luminance blooms whatever the eye has adapted to.
 // Drive the real _bloomThreshNow across the exposure sweep and measure coverage at the value it returns.
-import { withGame } from './tools/probe/driver.mjs';
+import { withGame } from './driver.mjs';
 
 const CODE = `(function(){
   const rw=320, rh=180;
