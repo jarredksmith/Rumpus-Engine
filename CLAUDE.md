@@ -4368,6 +4368,38 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The Level Check takes you to the problem (build 1300 — editor audit 4.3, HIGH)
+
+> `renderLevelIssues`: `d.textContent = msg`, no handler. *"A signal targets tag 'vaultDoor', but no prop
+> carries that tag"* is a great message with nowhere to click. The outliner already searches by tag and
+> `selectAssetInstances` already knows how to select-and-frame — the two are three lines apart.
+
+**The locator rides BESIDE the message rather than replacing it.** `levelIssues()` returns an array of
+strings, and **ten test harnesses plus the publish preflight** consume it that way; turning it into objects
+to carry one extra field would have rewritten all of them for no gain. So the check that RAISES an issue
+registers how to find it, keyed by the message it just produced, and the panel looks it up. Two identical
+messages share a locator, which is correct — they name the same tag.
+
+Seven raise-sites now point somewhere: the four signal faults (the prop carrying the signal is the loop
+variable, right there), both cutscene faults, and the CC-BY attribution one — which registers a **finder**
+rather than a snapshot, so it re-resolves the actual props at click time. The rest are level-wide; a light
+budget or a missing key pad has no single prop to blame, and those stay plain rows. **A dead-looking click
+is worse than none.**
+
+**It resolves at CLICK time, not at check time.** A prop can be deleted between opening the panel and
+pressing the arrow, and *"that prop is no longer in the level"* is a better answer than selecting a ghost. A
+throwing resolver is a refusal, not a crash out of a click handler.
+
+Verified end to end in the real editor by authoring the audit's exact fault — a signal pointing at
+`vaultDoor` with no prop carrying it. The message appears, the row is clickable with an arrow, pressing it
+selects and frames the culprit and switches to the props tab; deleting the prop first leaves the click
+harmless.
+
+**Five old harnesses broke, and correctly.** 241/246/248/252/254 execute `levelIssues` in an EMPTY scope, so
+a new module-level dependency is genuinely missing there — they now supply an inert recorder. That is the
+suite working: a rig that evaluates a function outside the file has to be told when the function's
+dependencies change.
+
 ## The inspector ignored the selection (build 1299 — editor audit 4.2, CRITICAL)
 
 Verified still live before touching it. The audit's words:

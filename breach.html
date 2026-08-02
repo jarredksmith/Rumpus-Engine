@@ -29643,7 +29643,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1299 · 2026-08-02';
+const BUILD_VERSION = 'build 1300 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39736,8 +39736,35 @@ function edFold(host, id, title, openDefault, subtitle){
   return body;
 }
 // Pre-save sanity check: non-blocking warnings about authoring mistakes that make a level feel broken.
+// ---- build 1300: a diagnostic you can CLICK (editor audit, finding 4.3 HIGH) ---------------------------
+// "renderLevelIssues: `d.textContent = msg`, no handler. 'A signal targets tag vaultDoor, but no prop carries
+// that tag' is a great message with nowhere to click. The outliner already searches by tag and
+// selectAssetInstances already knows how to select-and-frame — the two are three lines apart."
+//
+// The locator rides BESIDE the message rather than replacing it. `levelIssues()` returns an array of strings
+// and ten test harnesses plus the publish preflight consume it that way; turning it into objects to carry
+// one extra field would have rewritten all of them for no gain. So the check that RAISED an issue registers
+// how to find it, keyed by the message it just produced, and the panel looks it up. Two messages that come
+// out identical share a locator, which is correct — they name the same tag.
+//
+// It resolves at CLICK time, not at check time: a prop can be deleted between opening the panel and pressing
+// the arrow, and "that prop is gone" is a better answer than selecting a stale object.
+const _issueFind = new Map();
+function _issueAt(msg, resolve){ if(msg && resolve) _issueFind.set(msg, resolve); return msg; }
+// Select and frame, the way build 1147's asset browser does — a diagnostic that selects something off screen
+// is the same "nothing happened" the click exists to fix.
+function _edGoToIssue(resolve){
+  let list=[]; try{ list=(resolve()||[]).filter(o=>o && propModels.indexOf(o)>=0); }catch(e){}
+  if(!list.length){ if(typeof flashToast==='function') flashToast('That prop is no longer in the level'); return false; }
+  selProps=list.slice(); editorActive='props';
+  editorTargets.props.idx=Math.max(0, propModels.indexOf(list[list.length-1]));
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof _edFrameSelected==='function') _edFrameSelected();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  return true;
+}
 function levelIssues(){
-  const issues=[];
+  const issues=[]; _issueFind.clear();   /* build 1300: locators belong to THIS run of the check */
   try{
     // build 1257: the perf census. Not a mistake to fix — a cost to SEE. three r149 loops every
     // point/spot light in every fragment of every material, so this number is the one a creator
@@ -39790,24 +39817,25 @@ function levelIssues(){
     const tags=new Set(); for(const o of propModels){ if(o && o.userData && o.userData.tag) tags.add(o.userData.tag); }
     for(const o of propModels){ if(!o || !o.userData || !o.userData.signals) continue;
       for(const s of o.userData.signals){
-        if(s.target && s.target!=='this' && !tags.has(s.target)) issues.push("A signal targets tag '"+s.target+"', but no prop carries that tag.");
-        if(!s.target && s.do!=='win' && s.do!=='cutscene') issues.push('A signal has no target tag (only Win level and Play cutscene work without one).');
-        if(s.when==='contact' && s.from && !tags.has(s.from)) issues.push("A contact signal only triggers on objects tagged '"+s.from+"', but no prop carries that tag.");
+        if(s.target && s.target!=='this' && !tags.has(s.target)) issues.push(_issueAt("A signal targets tag '"+s.target+"', but no prop carries that tag.", ()=>[o]));
+        if(!s.target && s.do!=='win' && s.do!=='cutscene') issues.push(_issueAt('A signal has no target tag (only Win level and Play cutscene work without one).', ()=>[o]));
+        if(s.when==='contact' && s.from && !tags.has(s.from)) issues.push(_issueAt("A contact signal only triggers on objects tagged '"+s.from+"', but no prop carries that tag.", ()=>[o]));
         if(s.do==='cutscene'){
           const _all=[cineCfg, ...((cineCfg&&Array.isArray(cineCfg.others))?cineCfg.others:[])];
           const _cc = !s.cs ? _all[0] : _all.find(c=>c && ((c===cineCfg?(c.name||'Intro'):c.name)===s.cs));
-          if(!_cc) issues.push("A signal plays cutscene '"+s.cs+"', but no cutscene has that name.");
-          else { const _ok=[_cc, ...((Array.isArray(_cc.shots2))?_cc.shots2:[])].some(x=>x && x.path && x.path.length>=2); if(!_ok) issues.push("A signal plays cutscene '"+(s.cs||_cc.name||'#1')+"', but none of its shots has 2+ path points \u2014 it will play nothing."); } } } }
+          if(!_cc) issues.push(_issueAt("A signal plays cutscene '"+s.cs+"', but no cutscene has that name.", ()=>[o]));
+          else { const _ok=[_cc, ...((Array.isArray(_cc.shots2))?_cc.shots2:[])].some(x=>x && x.path && x.path.length>=2); if(!_ok) issues.push(_issueAt("A signal plays cutscene '"+(s.cs||_cc.name||'#1')+"', but none of its shots has 2+ path points \u2014 it will play nothing.", ()=>[o])); } } } }
     for(const o of propModels){ const a=o && o.userData && o.userData.xa; if(!a || !a.on || a.trig!=='signal') continue;
       const tg=o.userData.tag; let wired=false;
       if(tg){ for(const p of propModels){ const ss=p && p.userData && p.userData.signals; if(!ss) continue;
         for(const s of ss){ if(s.target===tg){ wired=true; break; } } if(wired) break; } }
-      if(!wired) issues.push('A Signals-only mechanism can never move \u2014 '+(tg ? ("nothing targets its tag '"+tg+"'.") : 'it has no tag for signals to target.')); }
+      if(!wired) issues.push(_issueAt('A Signals-only mechanism can never move \u2014 '+(tg ? ("nothing targets its tag '"+tg+"'.") : 'it has no tag for signals to target.'), ()=>[o])); }
     // build 1166: a Sketchfab model with no recorded attribution is a LICENSING exposure, not a cosmetic one \u2014
     // Sketchfab downloadable models are typically CC-BY, and CC-BY is only satisfied if the credit ships.
     // (Models placed through the in-editor search always carry one; this catches hand-pasted sketchfab: urls.)
-    { let bare=0; for(const o of propModels){ if(o && o.userData && /^sketchfab:/i.test(String(o.userData.src||'')) && !o.userData.attribution) bare++; }
-      if(bare) issues.push(bare+' Sketchfab model'+(bare>1?'s have':' has')+' no attribution recorded \u2014 CC-BY requires the credit to ship with the level (see Asset credits in the pause menu).'); }
+    { const _bareOf=()=>propModels.filter(o=>o && o.userData && /^sketchfab:/i.test(String(o.userData.src||'')) && !o.userData.attribution);
+      const bare=_bareOf().length;
+      if(bare) issues.push(_issueAt(bare+' Sketchfab model'+(bare>1?'s have':' has')+' no attribution recorded \u2014 CC-BY requires the credit to ship with the level (see Asset credits in the pause menu).', _bareOf)); }
   }catch(e){}
   return issues;
 }
@@ -39822,7 +39850,17 @@ function renderLevelIssues(){
   host.appendChild(head);
   for(const msg of issues){ const d=document.createElement('div');
     d.style.cssText='font-size:11px;color:#ffd9a8;border-left:2px solid rgba(255,180,90,0.6);padding:2px 0 2px 7px;margin:0 0 3px;';
-    d.textContent=msg; host.appendChild(d); }
+    d.textContent=msg;
+    /* build 1300: if the check that raised this knew where to look, the row takes you there. */
+    const _find=_issueFind.get(msg);
+    if(_find){
+      d.style.cursor='pointer'; d.title='Click to select and frame the prop this is about';
+      d.style.borderLeftColor='var(--accent)';
+      const arrow=document.createElement('span'); arrow.textContent=' \u2192'; arrow.style.cssText='color:var(--accent);font-weight:700;';
+      d.appendChild(arrow);
+      d.onclick=()=>{ _edGoToIssue(_find); };
+    }
+    host.appendChild(d); }
 }
 // build 592: attachment authoring lives in the Weapons tab (under the gun framing). Per weapon, per slot:
 // pick the attachment (mounts it live for preview), point it at a custom .glb, and tune its mount offset/rotation/scale.
