@@ -4368,6 +4368,35 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The inspector ignored the selection (build 1299 — editor audit 4.2, CRITICAL)
+
+Verified still live before touching it. The audit's words:
+
+> The gizmo is group-aware, the material fold is group-aware and *says so*, and the tag field, interact,
+> signals, name and dialogue are all primary-only with no indication. Two different rules for one selection,
+> in adjacent folds. A creator who tags 30 crates one at a time will conclude the editor is fine; a creator
+> who assumes the fields follow the selection will silently corrupt their level.
+
+**The fix is not "make everything group-aware".** Some of those fields are per-object by nature. It is that
+every field states which rule it follows:
+- **Mark-the-set fields** — tag, interactable, lock — apply to the whole selection. For `tag` that was always
+  the intent: a signal resolves a tag to a **list** of props at runtime, so one tag across thirty crates is
+  the normal authoring move, not an edge case. Thirty doors and one key, likewise.
+- **Per-object fields** — an NPC's name and its dialogue script — stay on the primary and now **say so**.
+  Thirty characters with one name and one speech is not something anyone wants by accident.
+
+*Silent inconsistency was the bug; labelled asymmetry is a design.* Every fold that can face a
+multi-selection now carries a banner naming its rule, in a different colour per rule — the same colour for
+opposite rules would have been the original bug in a new costume.
+
+`_selApply` takes **one undo snapshot per gesture**, not per object: per-object would cost thirty Ctrl+Z
+presses to undo one edit. It also keeps going past a throwing field handler, so a bad prop cannot leave a
+selection half-applied. And `_selTargets` deliberately does NOT filter to material primitives the way
+`_matTargets` does — an imported GLB carries tags, locks and interact flags just like a box.
+
+Measured through the real editor (`toggleEditor` → Build mode → select five props): the banner reads
+*"Editing 5 selected props — changes apply to all"*, and one tag edit tagged **five**.
+
 ## The 20Hz stream had no brakes (build 1298)
 
 The peer connection is `reliable:true` — ordered SCTP — and the host fans a world snapshot to every client

@@ -60,7 +60,8 @@ eq(src.split('if(p.itr) obj.userData.interact=true;').length - 1, 2, 'restored a
 // ---- the checkbox beside the Tag ----
 assert(/iw\.appendChild\(document\.createTextNode\('Interactable \(E\)'\)\)/.test(src), 'the checkbox exists, labeled plainly');
 assert(/row\.appendChild\(spn\); row\.appendChild\(tin\); row\.appendChild\(iw\);/.test(src), '...in the SAME top row as the Tag field');
-assert(/if\(icb\.checked\) tagObj\.userData\.interact=true; else delete tagObj\.userData\.interact;/.test(src), 'it writes the flag directly');
+// build 1299: across the whole selection (audit 4.2), still a direct userData write with no indirection
+assert(/_selApply\(o=>\{ if\(icb\.checked\) o\.userData\.interact=true; else delete o\.userData\.interact; \}\);/.test(src), 'it writes the flag directly');
 
 // ---- runtime: prompt + E ----
 const prox = extractFunction('checkProximity', src);

@@ -13131,6 +13131,41 @@ function applyPropColor(obj, hex){
 }
 // build 564: material edits apply to EVERY selected primitive (the whole multi-selection), not just the primary.
 // Returns the selected shape-primitives; falls back to the primary props target when nothing's multi-selected.
+// ---- build 1299: the inspector follows the selection (editor audit, finding 4.2 CRITICAL) -------------
+// "The gizmo is group-aware, the material fold is group-aware and SAYS SO, and the tag field, interact,
+// signals, name and dialogue are all primary-only with no indication. Two different rules for one selection,
+// in adjacent folds. A creator who tags 30 crates one at a time will conclude the editor is fine; a creator
+// who assumes the fields follow the selection will silently corrupt their level."
+//
+// The fix is not "make everything group-aware" — some of these fields are per-object BY NATURE. It is that
+// every field must say which rule it follows:
+//  - MARK-THE-SET fields (tag, interactable, lock) apply to the whole selection. A signal resolves a tag to
+//    a LIST of props, so one tag across thirty crates is the normal authoring move, not an edge case.
+//  - PER-OBJECT fields (an NPC's name, its dialogue script) stay on the primary and now SAY so. Thirty
+//    characters with one name and one speech is not something anybody wants by accident.
+// Silent inconsistency was the bug; labelled asymmetry is a design.
+function _selTargets(){
+  if(typeof selProps!=='undefined' && selProps && selProps.length) return selProps.filter(Boolean);
+  const p = (typeof editorTargets!=='undefined' && editorTargets.props && typeof editorTargets.props.obj==='function') ? editorTargets.props.obj() : null;
+  return p ? [p] : [];
+}
+// One snapshot per GESTURE, not per object — otherwise a 30-prop tag costs thirty Ctrl+Z presses to undo.
+function _selApply(fn){
+  const list = _selTargets(); if(!list.length) return 0;
+  if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+  for(const o of list){ try{ fn(o); }catch(e){} }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  return list.length;
+}
+// The banner the material fold has had since build 844, so a creator can see which rule a fold follows
+// WITHOUT having to test it on their own level.
+function _selBanner(host, n, groupWide){
+  if(!host || !(n > 1)) return;
+  const d=document.createElement('div'); d.className='hint'; d.style.cssText='margin:0 0 6px;color:'+(groupWide?'var(--accent)':'#ffbf7a')+';';
+  d.innerHTML = groupWide ? ('<b>Editing '+n+' selected props</b> \u2014 changes apply to all.')
+                          : ('<b>'+n+' props selected</b> \u2014 this fold edits the primary one only.');
+  host.appendChild(d);
+}
 function _matTargets(){
   const list = (selProps && selProps.length) ? selProps : [ (editorTargets && editorTargets.props && typeof editorTargets.props.obj==='function' ? editorTargets.props.obj() : null) ];
   return list.filter(o=>o && isMatPrimitive(o.userData.src));
@@ -29608,7 +29643,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1298 · 2026-08-02';
+const BUILD_VERSION = 'build 1299 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41719,7 +41754,8 @@ function renderEditorFields(){
         const lsp=document.createElement('span'); lsp.innerHTML='<b>Lock</b>'; lsp.style.minWidth='56px';
         const lsel=document.createElement('select'); lsel.style.cssText='flex:1;font-size:11px;';
         [['','None'],['red',keyDisplayName('red')],['blue',keyDisplayName('blue')],['gold',keyDisplayName('gold')],['green',keyDisplayName('green')]].forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if((sel.userData.lockId||'')===o[0]) op.selected=true; lsel.appendChild(op); });
-        lsel.onchange=()=>{ pushUndoSnapshot(); if(lsel.value) sel.userData.lockId=lsel.value; else { delete sel.userData.lockId; delete sel.userData.lockConsume; } delete sel.userData.unlocked; renderEditorFields(); };
+        lsel.onchange=()=>{ _selApply(o=>{ if(lsel.value) o.userData.lockId=lsel.value; else { delete o.userData.lockId; delete o.userData.lockConsume; } delete o.userData.unlocked; }); renderEditorFields(); };   /* build 1299: one key for a whole set of doors */
+        _selBanner(lHost, _selTargets().length, true);   /* build 1299 */
         lr.appendChild(lsp); lr.appendChild(lsel); lHost.appendChild(lr);
         if(sel.userData.lockId){
           const cr=document.createElement('label'); cr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 2px;font-size:11px;color:#9fe6cf;';
@@ -41741,6 +41777,10 @@ function renderEditorFields(){
       // ---- Dialogue (build 695): make this prop a talkable NPC ----
       if(sel){
         const dBody = edFold(behaveHost, 'dialogue', 'Dialogue (NPC)', true, 'Talk to this prop with E — one line per row, with replies and conditions when you want them');
+        /* build 1299: DELIBERATELY primary-only. A character's name and its speech are per-object by
+           nature — thirty NPCs with one name and one script is not something anyone wants by accident.
+           The banner is what makes that a design rather than the silent inconsistency the audit found. */
+        _selBanner(dBody, _selTargets().length, false);
         const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 4px;font-size:11px;color:#9fe6cf;';
         const nsp=document.createElement('span'); nsp.textContent='Name'; nsp.style.minWidth='42px';
         const nin=document.createElement('input'); nin.type='text'; nin.maxLength=40; nin.placeholder='e.g. Old Hermit (optional)'; nin.value=sel.userData.npcName||''; nin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
@@ -42871,18 +42911,21 @@ function renderEditorFields(){
         const tagObj=(editorActive==='props' && editorTargets.props.obj) ? editorTargets.props.obj() : null;
         if(tagObj){
           if(typeof _lgRefreshDatalists==='function') _lgRefreshDatalists();
+          _selBanner(th, _selTargets().length, true);   /* build 1299 */
           const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 7px;';
           const spn=document.createElement('span'); spn.textContent='Tag'; spn.title='Signals and the logic graph find this prop by its tag'; spn.style.cssText='min-width:56px;font-size:11px;color:#9fe6cf;';
           const tin=document.createElement('input'); tin.type='text'; tin.placeholder='e.g. vaultDoor'; tin.value=tagObj.userData.tag||'';
           tin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
           tin.setAttribute('list','lgTagList');
-          tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) tagObj.userData.tag=v; else delete tagObj.userData.tag; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
+          /* build 1299: the whole selection. A signal resolves a tag to a LIST, so tagging thirty crates
+             at once is the point of the field, not a corner of it. */
+          tin.onchange=()=>{ const v=tin.value.trim(); _selApply(o=>{ if(v) o.userData.tag=v; else delete o.userData.tag; }); renderEditorFields(); };
           // build 1035: interactability is ONE visible checkbox — it used to hide inside the
           // mechanism trigger dropdown, where even the engine's author lost it.
           const iw=document.createElement('label'); iw.title='The player can press E on this prop: it prompts \u201cActivate\u201d and fires its On-E signals. No mechanism needed \u2014 pair it with a signal like On E \u2192 Toggle \u2192 this.';
           iw.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:4px;font-size:11px;color:#9fe6cf;cursor:pointer;';
           const icb=document.createElement('input'); icb.type='checkbox'; icb.checked=!!tagObj.userData.interact; icb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
-          icb.onchange=()=>{ pushUndoSnapshot(); if(icb.checked) tagObj.userData.interact=true; else delete tagObj.userData.interact; if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+          icb.onchange=()=>{ _selApply(o=>{ if(icb.checked) o.userData.interact=true; else delete o.userData.interact; }); };   /* build 1299 */
           iw.appendChild(icb); iw.appendChild(document.createTextNode('Interactable (E)'));
           row.appendChild(spn); row.appendChild(tin); row.appendChild(iw); th.appendChild(row);
           // build 1252: per-emitter effect controls — multipliers over the preset, Reset returns to it

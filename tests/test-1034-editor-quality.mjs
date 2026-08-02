@@ -47,7 +47,9 @@ assert(/if\(typeof renderPrefabsPanel==='function'\) renderPrefabsPanel\(\);\s+\
 assert(/'<div id="edPropTag"><\/div>'\s*\+ '<div id="edPicker"><\/div>'/.test(src), 'the tag host is the FIRST thing in Object & selection');
 assert(/object:\['edPropTag','edShapes'/.test(src), 'contextual visibility covers it');
 assert(/tin\.setAttribute\('list','lgTagList'\)/.test(src), 'the top field gets the tag dropdown too');
-assert(/if\(v\) tagObj\.userData\.tag=v; else delete tagObj\.userData\.tag;[^\n]*renderEditorFields\(\);/.test(src),
+// build 1299: it writes the tag to the whole SELECTION (audit 4.2) — same field, same userData key, same
+// re-render; what changed is how many props it reaches.
+assert(/_selApply\(o=>\{ if\(v\) o\.userData\.tag=v; else delete o\.userData\.tag; \}\); renderEditorFields\(\);/.test(src),
   'the top field writes userData.tag and re-renders (updates the Signals copy)');
 assert(/if\(v\) store\.tag=v; else delete store\.tag; if\(typeof renderEditorFields==='function'\) renderEditorFields\(\);/.test(src),
   'the Signals copy re-renders too (updates the top field) — one tag, two views');
