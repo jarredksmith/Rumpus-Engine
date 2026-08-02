@@ -19041,6 +19041,14 @@ addEventListener('keydown', e=>{
   }
   // Universal escape hatch in multiplayer: Esc always opens a match menu, even while dead or on the result
   // screen, so you can never get trapped with no way out.
+  /* build 1310: Esc clears the selection — the key every editor uses for it, and the one this build's Edit
+     menu now advertises. It claims Esc ONLY when there is something to clear, so with nothing selected the
+     key still does whatever it did before (dialogs, the animation editor and the big map all handle it
+     above this line and return, so none of them can be stolen). Advertising a key that does nothing is the
+     same defect build 1306 fixed in the animation tab: the UI must not lie about the engine. */
+  if(e.code==='Escape' && editorOpen && !e.repeat && typeof selProps!=='undefined' && selProps && selProps.length){
+    e.preventDefault(); if(typeof deselectAllProps==='function') deselectAllProps(); return;
+  }
   if(e.code==='Escape' && typeof buildMode!=='undefined' && buildMode){ e.preventDefault(); exitBuildMode(); return; }   // build 928
   if(e.code==='KeyX' && typeof buildMode!=='undefined' && buildMode && gameOn && !editorOpen){ e.preventDefault(); _bmDeleteAimed(); return; }   // build 941: delete the aimed placed block
   if(e.code==='Escape' && mountedTurret){ e.preventDefault(); dismountTurret(); return; }
@@ -19103,6 +19111,14 @@ addEventListener('keydown', e=>{
   if(editorOpen && (e.ctrlKey||e.metaKey) && e.code==='KeyV' && !e.shiftKey && !e.altKey){
     const tag = (e.target && e.target.tagName) || '';
     if(tag!=='INPUT' && tag!=='TEXTAREA'){ e.preventDefault(); if(typeof pasteProps==='function') pasteProps(); }
+    return;
+  }
+  /* build 1310: Ctrl/Cmd+A selects every prop. It yields to a field the same way build 1176's copy does —
+     select-all inside a dialogue textarea is what the creator meant, and stealing it there would be
+     hostile. Shift+A is already "add a shape", which is why this needs the modifier. */
+  if(editorOpen && (e.ctrlKey||e.metaKey) && e.code==='KeyA' && !e.shiftKey && !e.altKey && !e.repeat){
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){ e.preventDefault(); if(typeof selectAllProps==='function') selectAllProps(); }
     return;
   }
   if(editorOpen && (e.code==='Delete' || e.code==='Backspace')){
@@ -29864,7 +29880,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1309 · 2026-08-02';
+const BUILD_VERSION = 'build 1310 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37398,6 +37414,34 @@ function _dupSpawnFrom(o, dx, dz, gid, cb){
 // point through the loader-mirroring apply block, groups a multi-prop paste so it moves as one, selects
 // the result, and CAPS a hostile paste at 100 entries. System-clipboard text is untrusted; it goes
 // through the exact apply block level files already go through, nothing looser.
+// ---- build 1310 (editor audit 4.7): SELECT ALL / DESELECT --------------------------------------------
+// The audit: "Select-all, which does not exist — no Ctrl+A." It did not: every other editor command in
+// this file had a key and a function, and the one every creator reaches for first had neither.
+//
+// It respects the outliner's HIDE and LOCK (build 1036) for the same reason the marquee does: a locked
+// prop is locked precisely so a sweeping gesture cannot pick it up, and a select-all that ignores that is
+// the most destructive gesture in the editor. Runtime props (spawned during play) are excluded — they are
+// not level content and selecting them would let a creator "edit" something the next Deploy deletes.
+function selectAllProps(){
+  const list = propModels.filter(o => o && o.userData && !o.userData.edLock && !o.userData.edHide && !o.userData.runtime && !o.userData._shattered);
+  selProps = list;
+  editorActive = 'props';
+  editorTargets.props.idx = list.length ? propModels.indexOf(list[list.length-1]) : -1;
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof flashToast==='function'){
+    const skipped = propModels.filter(o => o && o.userData && (o.userData.edLock || o.userData.edHide)).length;
+    flashToast(list.length ? ('Selected ' + list.length + ' prop' + (list.length===1?'':'s') + (skipped ? (' \u2014 ' + skipped + ' hidden/locked skipped') : '')) : 'Nothing to select');
+  }
+  return list.length;
+}
+function deselectAllProps(){
+  const n = (selProps && selProps.length) || 0;
+  selProps = [];
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  return n;
+}
 let _propClipboard = null;
 function copySelectedProps(){
   const list=(typeof selProps!=='undefined' && selProps && selProps.length) ? selProps.filter(Boolean)
@@ -45209,9 +45253,26 @@ const ED_MENUS = [
     { label:'Clear browser save',   run:()=>_edClick('edClear') },
     { label:'Main menu',            run:()=>{ if(typeof editorToMenu==='function') editorToMenu(); } },
   ]},
+  /* build 1310 (editor audit 4.7): "The Edit menu is Undo / Redo / Delete-all. Absent from EVERY menu,
+     palette and panel: Copy, Paste, Duplicate, Group/Ungroup, Align, Snap toggle, Select-all (which does
+     not exist), Local/World space." Every one of those had a key binding and no way to discover it, which
+     is the same defect as not having the feature for anyone who does not read release notes. */
   { id:'edit', label:'Edit', items:[
     { label:'Undo', key:'Ctrl+Z',   run:()=>{ if(typeof performUndo==='function') performUndo(); } },
     { label:'Redo', key:'Ctrl+Shift+Z', run:()=>{ if(typeof performRedo==='function') performRedo(); } },
+    { sep:1 },
+    { label:'Select all',     key:'Ctrl+A', run:()=>{ if(typeof selectAllProps==='function') selectAllProps(); } },
+    { label:'Deselect all',   key:'Esc',    run:()=>{ if(typeof deselectAllProps==='function') deselectAllProps(); } },
+    { sep:1 },
+    { label:'Copy',           key:'Ctrl+C', run:()=>{ if(typeof copySelectedProps==='function') copySelectedProps(); } },
+    { label:'Paste',          key:'Ctrl+V', run:()=>{ if(typeof pasteProps==='function') pasteProps(); } },
+    { label:'Duplicate',      key:'Shift+D', run:()=>{ if(typeof duplicateSelected==='function') duplicateSelected(); } },
+    { sep:1 },
+    { label:'Group',          key:'Ctrl+G', run:()=>{ if(typeof groupSelectedProps==='function') groupSelectedProps(); } },
+    { label:'Ungroup',        key:'Ctrl+Shift+G', run:()=>{ if(typeof ungroupSelectedProps==='function') ungroupSelectedProps(); } },
+    { sep:1 },
+    { label:'Snap on/off',    key:'Ctrl (invert)', run:()=>{ gizmoSnap=!gizmoSnap; _saveSnapPrefs(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof flashToast==='function') flashToast('Snapping '+(gizmoSnap?'ON':'OFF')); } },
+    { label:'Gizmo space: World/Local', run:()=>{ gizmoSpace = (gizmoSpace==='local') ? 'world' : 'local'; _saveSnapPrefs(); if(typeof updateGizmo==='function') updateGizmo(); if(typeof renderEditorFields==='function') renderEditorFields(); if(typeof flashToast==='function') flashToast('Gizmo in '+(gizmoSpace==='local'?'LOCAL':'WORLD')+' space'); } },
     { sep:1 },
     { label:'Delete all objects',   run:()=>{ if(typeof wipeScene==='function') uiConfirm('Delete every object in the scene? Your world, gameplay and other settings are kept \u2014 use File \u203a New level to clear those too.', ()=>{ wipeScene(); if(typeof flashToast==='function') flashToast('Scene cleared'); }, 'Delete'); }, danger:true },
   ]},
@@ -45312,6 +45373,21 @@ function _palItems(){
   A('Play level','test run deploy start', ()=>{ const b=document.getElementById('edPlay'); if(b) b.click(); });
   A('Play from camera','test run here spawn from camera', ()=>{ const b=document.getElementById('edPlayHere'); if(b) b.click(); });
   A('Undo','revert ctrl+z back', ()=>{ if(typeof performUndo==='function') performUndo(); });
+  /* build 1310: the palette covered actions and settings but NOT objects, and not even Redo. These are the
+     commands a creator reaches for a hundred times an hour; they belonged here from the day each shipped. */
+  A('Redo','again forward ctrl+shift+z', ()=>{ if(typeof performRedo==='function') performRedo(); });
+  A('Select all props','everything ctrl+a all', ()=>{ if(typeof selectAllProps==='function') selectAllProps(); });
+  A('Deselect all','none clear selection escape', ()=>{ if(typeof deselectAllProps==='function') deselectAllProps(); });
+  A('Copy','clipboard ctrl+c duplicate', ()=>{ if(typeof copySelectedProps==='function') copySelectedProps(); });
+  A('Paste','clipboard ctrl+v insert', ()=>{ if(typeof pasteProps==='function') pasteProps(); });
+  A('Duplicate','clone copy shift+d repeat', ()=>{ if(typeof duplicateSelected==='function') duplicateSelected(); });
+  A('Group','link together ctrl+g parent set', ()=>{ if(typeof groupSelectedProps==='function') groupSelectedProps(); });
+  A('Ungroup','unlink split ctrl+shift+g', ()=>{ if(typeof ungroupSelectedProps==='function') ungroupSelectedProps(); });
+  A('Toggle snapping','grid lattice snap magnet', ()=>{ gizmoSnap=!gizmoSnap; _saveSnapPrefs(); renderEditorFields(); if(typeof flashToast==='function') flashToast('Snapping '+(gizmoSnap?'ON':'OFF')); });
+  A('Gizmo space: World/Local','axis local world orientation', ()=>{ gizmoSpace=(gizmoSpace==='local')?'world':'local'; _saveSnapPrefs(); if(typeof updateGizmo==='function') updateGizmo(); renderEditorFields(); if(typeof flashToast==='function') flashToast('Gizmo in '+(gizmoSpace==='local'?'LOCAL':'WORLD')+' space'); });
+  for(const [ax,axl] of [['x','X'],['y','Y'],['z','Z']])
+    for(const [md,mdl] of [['min','min'],['center','centre'],['max','max']])
+      A('Align '+axl+' '+mdl,'line up distribute arrange edge', ((a,m)=>()=>{ if(typeof alignSelectedProps==='function') alignSelectedProps(a,m); })(ax,md));
   A('Save level','store keep', ()=>{ const b=document.getElementById('edSave'); if(b) b.click(); else if(typeof saveLevel==='function'){ saveLevel(); flashToast('SAVED'); } });
   A('Copy share link','url send friend', ()=>{ const b=document.getElementById('edShare'); if(b) b.click(); });
   A('Main menu','exit leave quit home', ()=>{ if(typeof editorToMenu==='function') editorToMenu(); });

@@ -967,6 +967,37 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The editor tells you what it can do (build 1310 — editor audit 4.7)
+
+> The Edit menu is Undo / Redo / Delete-all. Absent from *every* menu, palette and panel: Copy, Paste,
+> Duplicate, Group/Ungroup, Array, Align, Snap toggle, Select-all (which does not exist — no `Ctrl+A`),
+> Local/World space. The `Ctrl+K` palette covers actions and settings but not objects and not Redo.
+
+**A shortcut nobody can discover is, for most creators, the same as not having the feature.** Every command
+the audit named already existed and had a key; none had a way to be found. Select-all did not exist at all.
+
+- **`Ctrl+A` selects every prop** — new capability, not just a new menu row. It skips **locked and hidden**
+  props for exactly the reason the marquee does (build 1036): locked exists so a sweeping gesture cannot
+  pick something up, and a select-all that ignores it is the most destructive gesture in the editor. It also
+  skips runtime props (not level content; the next Deploy deletes them). It **says how many it skipped**, or
+  "select all" silently means "select most".
+- **`Esc` clears the selection** — and claims the key ONLY when there is a selection, so dialogs, the
+  animation editor and the big map (all of which handle Escape above this line and return) keep it.
+- The **Edit menu** carries twelve labelled commands with their shortcuts shown, which is how anyone learns
+  a shortcut in the first place.
+- The **palette** gained every object command, Redo, and nine generated Align entries — with the shortcuts
+  themselves as search terms, so typing the half-remembered `ctrl+g` finds Group.
+
+**The first draft listed `Esc` in the menu before Esc did anything.** That is the exact defect build 1306
+fixed in the animation tab — the UI must not lie about the engine — so the key was implemented rather than
+the label dropped. Worth stating because the temptation in a discoverability build is to describe what you
+wish were true.
+
+Measured in the live editor (`tools/probe/editor-commands.mjs`): the real `Ctrl+A` selected 59 of 64 props
+with the locked and hidden ones provably absent; `Esc` cleared it and left the editor open; **`Ctrl+A` inside
+a focused text field selected the 9 characters of text and zero props**; the Edit menu read back twelve
+labelled commands; every object command in the palette ran and restored its toggle.
+
 ## Props can ride other props (build 1309 — editor audit 4.5)
 
 > Zero greps for `parentTo|attachTo|userData.parent|parentNid`. Groups are a shared `groupId`; folders are
