@@ -967,6 +967,62 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A state is level-triggered. An event is edge-triggered. (build 1307)
+
+Third report of the same freeze, and this sentence is the whole diagnosis:
+
+> *"I can replicate it by rapidly hitting the left mouse button. It still deals damage, but doesn't play the
+> animation. If I click, wait a second, and click again, it doesn't freeze."*
+
+**A swing is an EVENT that the state machine reports as a STATE for as long as its clip lasts.**
+`meleeAttack` calls `playOwnAnim('meleeHeavy', <the clip's own length>)` and `updateOwnAvatar` returns that
+slot every frame until the window expires. The crowbar swings every **500 ms** and a swing clip is typically
+**~1 s**, so the second swing arrives while the first is still being reported — the requested name never
+changes, `animState === key` short-circuits, and the clip is never replayed. Leave a gap and the event
+expires, the state falls back to idle, and the next click is a real transition.
+
+That is exactly "click, wait a second, click again" working while rapid clicking does not. **And it explains
+the half of the report I had been reading past for two builds: the damage is edge-driven and kept landing;
+the animation is level-driven and did not.**
+
+Reproduced and fixed on the real chain (`tools/probe/melee-retrigger.mjs` — a rigged body, real actions, the
+real `meleeAttack → playOwnAnim → updateOwnAvatar → setEnemyAnimState` path, a 1.0 s swing clip against the
+crowbar's 500 ms fire rate):
+
+```
+                                 swings   clip restarts   final clip time
+before  rapid (500 ms)              9           0         ran on to 0.85, never replayed
+before  rapid + Hold on Attack      9           1         1.00 — CLAMPED ON ITS LAST FRAME. Frozen.
+before  spaced (1600 ms)            4           3         works
+after   rapid                       8           6         alive
+after   rapid + Hold on Attack      9           9         0.25, mid-swing
+after   spaced                      4           4         works
+```
+
+The fix is not a special case for the swing. `setEnemyAnimState(body, state, restart)` — the **caller** says
+whether this is a new event, and a new event replays even when the resolved slot name is unchanged.
+`playOwnAnim` stamps a serial, so ONE mechanism covers every one-shot the local avatar plays: swings,
+grenades, `equip` on a fast weapon swap, back-to-back hit reactions, custom actions. Firing rides `lastShot`
+the same way, so a second round inside the 250 ms attack window re-fires the pose instead of being swallowed
+as "already attacking". A respawn clears the serials, or a fresh run swallows its first swing.
+
+**Three builds, three different mechanisms, and only the third was the reported one:**
+
+| build | mechanism | was it real |
+|---|---|---|
+| 1304 | a one-shot request stamped `LoopOnce` onto the looping slot it fell back to | real, still fixed |
+| 1306 | `animState === key` latched a stranded action permanently | real, still fixed |
+| 1307 | a repeated one-shot could not RE-TRIGGER | **the reported one** |
+
+**What I should have done sooner.** 1304 and 1306 were both reasoned from the code, and 1306's own entry
+admits it could not reproduce the report. The thing that solved it in one run was the user handing me a
+deterministic repro — *rapid clicks freeze, spaced clicks do not* — and my building a probe that drove BOTH
+cadences with a control. Two builds of plausible mechanisms cost more than the harness would have. The
+existing rule in this file is "probe the mechanic's own inputs in the live game" (1244); the sharper form is
+**a report that contains a timing contrast is describing the mechanism — reproduce the contrast first.**
+
+Five pins moved (204, 275, 276, 367, and 1306's own), each keeping its assertion's intent.
+
 ## The animation state machine repairs itself (build 1306)
 
 Reported AGAIN, after build 1304 claimed it: *"stuck in the idle position, no animation, but I can still

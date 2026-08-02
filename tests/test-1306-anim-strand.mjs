@@ -164,7 +164,7 @@ for (const how of ['disabled', 'clamped', 'zeroweight', 'paused']) {
   const fn = extractFunction('setEnemyAnimState');
   assert(!/if\(v\.userData\.animState === key\) return;/.test(fn), 'the bare early return is gone');
   assert(/const _same = \(v\.userData\.animState === key\);/.test(fn), '...replaced by a liveness check');
-  assert(/if\(_same\)\{\n    if\(_hold\) return;/.test(fn), 'a held state returns before the liveness test');
+  assert(/if\(_same && !restart\)\{\n    if\(_hold\) return;/.test(fn), 'a held state returns before the liveness test');   /* build 1307 added the event edge in front of it */
   assert(/if\(_held < ANIM_LIVE_GRACE \|\| _animLive\(next\)\) return;/.test(fn),
     '...and a recently-entered or genuinely-live one returns too');
   assert(/if\(!_same && cur && cur !== next\) cur\.crossFadeTo\(next, 0\.18, false\);/.test(fn),

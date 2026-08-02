@@ -20,5 +20,5 @@ assert(/const dead = duelDead \|\| \(player\.hp!=null && player\.hp<=0\)/.test(u
 assert(/performance\.now\(\)-lastShot < 250/.test(uoa) && /_fireSlot\(_ff\)\|\|'attack'/.test(uoa), 'attack / move+fire from recent shot (build 518)');
 assert(/_airborneSlot\(a\.userData\._air/.test(uoa) && /if\(air\) st=air;/.test(uoa), 'airborne sub-states (jumpStart/jump/fall/land) via _airborneSlot (build 488)');
 assert(/if\(sm<0\.012\) tier='idle';/.test(uoa) && /sm>0\.11\) \? 'run' : 'walk'/.test(uoa) && /_locoSlot\(mvx,mvz,player\.yaw,tier,cur\)/.test(uoa), 'directional run/walk/idle by smoothed travel + hysteresis (build 488)');
-assert(/setEnemyAnimState\(a, st\)/.test(uoa), 'state pushed to the avatar mixer');
+assert(/setEnemyAnimState\(a, st, _restart\)/.test(uoa), 'state pushed to the avatar mixer');   /* build 1307: with the edge flag that tells it a repeated one-shot is a NEW event */
 done();
