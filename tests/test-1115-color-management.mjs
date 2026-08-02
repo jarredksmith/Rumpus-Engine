@@ -48,7 +48,10 @@ const env = src.slice(src.indexOf('function _skyEnv()'), src.indexOf('function a
     'the reflection probe neither tone-maps nor encodes — it is convolved and then sampled as linear radiance');
   assert(/gl_FragColor=vec4\(skyRadiance\(normalize\(vDir\)\),1\.0\)/.test(env), '...it writes the raw radiance');
 }
-assert(/cu\.uEncode\.value=1;\n(?:\s*\/\/[^\n]*\n)*\s*const _fx = [^\n]*\n\s*if\(!_mbOn\)\{/.test(src),
+// build 1284: an extra `const _msaaThisFrame` now sits between the encode and the branch. What this pins
+// is that the encode is UNCONDITIONAL and precedes the motion-blur split, which is unchanged — so allow
+// any run of comments and const declarations between them rather than one exact line.
+assert(/cu\.uEncode\.value=1;\n(?:\s*(?:\/\/[^\n]*|const [^\n]*)\n)*\s*if\(!_mbOn\)\{/.test(src),
   'the composite encodes unconditionally — motion blur no longer changes where the encode happens');
 assert(/_dofMatV\.uniforms\.uEncode\.value = \(out === null\) \? 1 : 0;/.test(src),
   'the DoF present pass encodes only when it is the frame\'s last pass, not when it feeds the post chain');

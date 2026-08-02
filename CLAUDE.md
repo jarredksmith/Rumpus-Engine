@@ -4161,6 +4161,43 @@ runs each button's `fn` and routes Escape to the first non-primary one, so all t
 The handler is an anonymous `onclick` so `extractFunction` cannot reach it; both now anchor on the next
 named declaration after it, which fails loudly if the handler is restructured instead of drifting silently.
 
+## The enemy telegraphs are audible (build 1283)
+
+Across all 85 `SFX.*` call sites, enemies made sound in exactly THREE: a ranged shot (twice) and death. So
+build 627's 320 ms melee wind-up and the charger's 520 ms lunge tell — **the two mechanics that exist
+specifically to be reacted to** — were purely visual, and a brute closing from behind you was silent. The
+panner and distance falloff had existed since build 1208; nothing was using them.
+
+Four cues, all positional so they carry the direction the threat is coming from, which is the entire point
+for something behind you:
+- **`meleeWind`** at the start of the wind-up, and **`lungeWind`** at the start of the charger's. Both RISE
+  in pitch, because a rising tell reads as "about to happen" without needing to be loud.
+- **`meleeSwing`** when the wind-up completes, hit or miss. It FALLS — it is the impact, not the warning.
+- **`enemyHurt`**, placed after the `killEnemy` early-return so a corpse does not grunt. Shooting something
+  you cannot see previously told you nothing: the hitmarker is on screen and the thing you shot is not.
+
+**A footfall for a closing enemy is deferred, with the reason recorded rather than guessed.** It is the
+other half of "a brute behind you is inaudible", but a per-enemy step is CONTINUOUS rather than
+event-driven — its value is entirely in the density, and 40 enemies in a wave is mud if that is wrong.
+Tuning it needs a live listen the headless harness cannot give. The four above are discrete events that
+cannot spam. No unused sound was left in the table.
+
+## DoF was getting neither MSAA nor FXAA (build 1284)
+
+The rendering critic's sharpest catch. `_postRT` DECLARES `samples:4` at the top rung — but the DoF path
+rasterises the scene into `_dofRT`, which is single-sampled because r149 will not attach a depth texture to
+a multisampled target, and then blits the result in. So the gate `(_postRT.samples||0) === 0` read "MSAA is
+in effect" and skipped FXAA **while MSAA had never touched a pixel**. DoF-on at rung 0 got neither, plus the
+cost of a multisampled target that only ever received a fullscreen quad.
+
+**The comment three lines above states the opposite intent verbatim** — *"FXAA covers the one path 4× MSAA
+cannot — DoF"* — which is exactly how it survived: the code read as if it did what the comment said. The gate
+now asks whether THIS FRAME was multisampled (`samples > 0 && !dofEnabled`) rather than what the target
+declares. `test-1283` executes all four combinations.
+
+Two pins moved (1126's gate literal, 1115's encode-position pattern, which now allows any run of comments
+and const declarations between the encode and the branch rather than one exact line).
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

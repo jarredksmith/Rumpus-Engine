@@ -6545,6 +6545,26 @@ const SFX = {
     tone(L.body); noise(L.crack);
     setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass'}), L.tail[3]); },
   enemyShot(at){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105, at}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass', at}); },
+  // ---------- build 1283: THE TELEGRAPHS ARE AUDIBLE ----------
+  // Across all 85 SFX call sites, enemies made sound in exactly three: a ranged shot (twice) and death.
+  // So build 627's 320 ms melee wind-up and the charger's 520 ms lunge tell — the two mechanics that exist
+  // SPECIFICALLY to be reacted to — were purely visual, and a brute closing from behind you was silent.
+  // The panner and distance falloff already existed (`_spatialOut`, build 1208); nothing was using them.
+  //
+  // Every one of these is positional (`at`), so the cue carries the direction the threat is coming from —
+  // which is the whole point for something behind you. They RISE in pitch through the wind-up because a
+  // rising tell reads as "about to happen" without needing to be loud.
+  meleeWind(at){ tone({freq:150, type:'sawtooth', dur:0.26, vol:0.075, slideTo:330, at}); },
+  lungeWind(at){ tone({freq:110, type:'sawtooth', dur:0.42, vol:0.10, slideTo:420, at});
+    noise({dur:0.18, vol:0.05, filterFreq:400, type:'lowpass', at}); },
+  meleeSwing(at){ noise({dur:0.13, vol:0.11, filterFreq:1200, type:'bandpass', at}); tone({freq:220, type:'square', dur:0.06, vol:0.05, slideTo:80, at}); },
+  // a hurt grunt, so shooting something in the dark tells you that you connected AND where it is
+  enemyHurt(at){ tone({freq:260, type:'sawtooth', dur:0.09, vol:0.065, slideTo:170, at}); },
+  // DEFERRED, deliberately: a footfall for a closing enemy is the other half of "a brute behind you is
+  // inaudible", but a per-enemy step is CONTINUOUS rather than event-driven — its value is entirely in the
+  // density, and 40 enemies in a wave is a mud of overlapping noise if that is wrong. The four cues above
+  // are discrete events that cannot spam. Tuning a step rate needs a live listen, which the headless
+  // harness cannot give, so it is its own build with a browser pass rather than a guess bolted on here.
   shootAt(pos){ if(!actx||!sfxBus) return; const gain=_spatialOut(pos); if(!gain) return;   /* build 1208: shared panner replaces the hand-rolled distance-only gain — a shot to your side now reads to your side */
     const t=actx.currentTime;
     const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
@@ -8210,7 +8230,15 @@ function _renderPostFX(scn, cam){
   // depth-carrying target that r149 will not multisample. When MSAA IS in effect the frame skips
   // FXAA entirely: measured on a pillar edge, MSAA gives a 1.02-pixel coverage gradient on every
   // scanline where this FXAA gives none, so running both would only cost a pass and soften texture.
-  const _fx = _matFXAA && (_postRT.samples||0) === 0;
+  // build 1284: ask whether THIS FRAME was multisampled, not whether the target declares samples.
+  // The DoF path (8016) rasterises the scene into _dofRT — single-sampled, because r149 will not attach a
+  // depth texture to a multisampled target — and then blits the result INTO _postRT. _postRT still
+  // declares samples:4 at the top rung, so the old test read "MSAA is in effect" and skipped FXAA, while
+  // MSAA had in fact never touched the pixels. DoF-on at rung 0 therefore got NEITHER: no MSAA, no FXAA,
+  // and the cost of a multisampled target that only ever received a fullscreen quad. The comment three
+  // lines above states the opposite intent verbatim, which is how it survived.
+  const _msaaThisFrame = (_postRT.samples||0) > 0 && !dofEnabled;
+  const _fx = _matFXAA && !_msaaThisFrame;
   if(!_mbOn){
     if(!_fx){ _postQuad.material=_matComp; renderer.setRenderTarget(null); renderer.render(_postScene,_postCam); return; }
     _postQuad.material=_matComp; renderer.setRenderTarget(_compRT); renderer.render(_postScene,_postCam);
@@ -29243,7 +29271,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1282 · 2026-08-02';
+const BUILD_VERSION = 'build 1284 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31449,6 +31477,9 @@ function enemyHurt(en, dmg, sx, sz){
   if(!en || en.hp<=0) return false;
   en.hp -= dmg;
   if(en.hp<=0){ killEnemy(en, sx, sz); return true; }
+  /* build 1283: a hurt grunt. Shooting something you cannot see told you nothing before — the hitmarker
+     is on screen, and the thing you shot is not. This is the same information, from the right direction. */
+  if(typeof SFX!=='undefined' && SFX.enemyHurt && en.mesh) SFX.enemyHurt(en.mesh.position);
   if(typeof _lgEnemyEvent==='function') _lgEnemyEvent('onhurt', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) });   // build 1077: it took the hit and lived — a boss phase, a retreat, an alarm; build 1221: with the enemy's position + HP
 
   const now=performance.now();
@@ -34894,6 +34925,7 @@ function loop(){
           const lx = near.pos.x - en.mesh.position.x, lz = near.pos.z - en.mesh.position.z, ll = Math.hypot(lx,lz)||1;
           en._lungeDx = lx/ll; en._lungeDz = lz/ll; en._lungeT = (en.lungeDur||0.45);
         } else if(en.cooldown<=0 && en._chase && en._see && en._dist > (en._reach||2.4)+1.5 && en._dist < (en.lungeRange||16)){
+          if(typeof SFX!=='undefined' && SFX.lungeWind) SFX.lungeWind(en.mesh.position);   /* build 1283: the 520ms charger telegraph, finally audible */
           en._lungeWind = nowMs + (en.lungeWind||520); en._attackT = nowMs + (en.lungeWind||520) + 450; en.cooldown = 2.6; en._lungePending = true; _charging = true; en._wantMove = false;   // begin the telegraph
         }
       }
@@ -35167,6 +35199,7 @@ function loop(){
         }
       } else if(en._chase && en._dist < (en._reach || 2.4) && Math.abs((near.pos.y - EYE) - en.mesh.position.y) < 2.6 && en.cooldown<=0 && !editorOpen && !en._windupT){   // build 539: a chasing melee enemy in reach AND at roughly the same height attacks on PROXIMITY (no LOS gate — at melee range the sightline is moot, and requiring it meant they only swung when literally touching on a cover-heavy map)
         en.cooldown = 0.8; en._attackT = nowMs + 550; en._windupT = nowMs + ENEMY_MELEE_WINDUP_MS;   // build 627: wind up now; the hit lands at the end of the wind-up, not on contact
+        if(typeof SFX!=='undefined' && SFX.meleeWind) SFX.meleeWind(en.mesh.position);   // build 1283: the tell is audible, and positional — this is what makes it dodgeable from behind
       }
       // build 627: resolve a telegraphed melee strike. Damage lands when the wind-up completes, and ONLY if the
       // target is still within reach (a little leniency) at roughly the same height — so backing out of range
@@ -35174,6 +35207,7 @@ function loop(){
       // attack animation something real to telegraph.
       if(en._windupT && nowMs >= en._windupT){
         en._windupT = 0;
+        if(typeof SFX!=='undefined' && SFX.meleeSwing) SFX.meleeSwing(en.mesh.position);   // build 1283: the swing itself, whether or not it connects
         const _tn = en._near;
         if(_tn && _tn.hurt && en._dist < (en._reach || 2.4) * 1.3 && Math.abs((_tn.pos.y - EYE) - en.mesh.position.y) < 2.6){
           _tn.hurt(en.dmg || 9, en.mesh.position.x, en.mesh.position.z);   // routes to the local player or, in co-op, the remote one
