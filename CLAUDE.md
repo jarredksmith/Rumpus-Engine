@@ -4324,8 +4324,24 @@ rise (just inside the 1.55-2.05 window) and `vh = 2.2` needs 2.54 m (outside it,
 **Why `vh` read 2.2 for a 1.9 m player: the stock third-person body is a STYLISED capsule proxy.**
 `remoteBodyGeo = CapsuleGeometry(0.5, 1.2)` boxes 2.2 m, and its *head zone* (`_mkHeadProxy`) sits at 1.66 —
 the gameplay head is right, the lozenge's top just overshoots by half a metre. The term was reading a piece
-of art as a body height. That is also the answer to the camera question: nothing is wrong with the
-first-person eye; the third-person boom rides a body drawn taller than the collider it stands in for.
+of art as a body height.
+
+**CORRECTION, measured after this build shipped.** This section first said the camera observation had the
+same cause — "the third-person boom rides a body drawn taller than the collider". **That is wrong, and it
+was written from reading `_avatarHangDrop` rather than from reading `_tpPivot`.** The boom pivots at
+`footY + centerLocal.y`, which for the stock capsule is a **hardcoded 1.0** and never looks at the bounding
+box at all. Probed at a standing pose, `tpHeight = 0`, `tpTilt = 0`:
+
+```
+first person   camera.position.y = 1.700   (the eye)
+third person   camera.position.y = 1.002   (foot + centerLocal.y)
+```
+So the third-person camera is **0.7 m LOWER**, not higher — the opposite of what the retracted sentence
+claimed and of the direction in the report. The ledge fix above stands on its own measurement and is
+unaffected; only the camera explanation was wrong. *Three sections of this file already say some version of
+"a frame statistic cannot test a mechanism" — this is the same mistake with source instead of pixels: I
+explained a second symptom with the mechanism I had just finished proving for the first one, without
+opening the code that owns it.*
 
 The fix splits the two facts that had been conflated:
 - **`LEDGE_REACH = EYE*1.02 + LEDGE_HANG_SINK`** — the PLAYER's reach, so the collider hangs identically in
@@ -4382,6 +4398,15 @@ Three things beyond the gate had to follow the same direction, and each is a bug
   the record remembers, falling back to the basis so an in-flight record from before this build still behaves.
 
 Six pins moved (493, 966, 1243, 1244 plus 1289's own two), all keeping their assertions' intent.
+
+**Left open, with numbers, because it is a real defect and NOT the reported one.** `centerLocal.y` is the
+drawn body's own centre — hardcoded 1.0 for the capsule, `yoff + h*0.5` for an imported model. So the chase
+camera's pivot is HALF THE MODEL'S HEIGHT: the same level plays with a different sight line depending on
+which character is equipped, and there is no authored control over it (`tpHeight` offsets the camera, not
+the pivot). For humanoids the spread is small (a 1.8 m model gives 0.9 against the capsule's 1.0); for the
+non-humanoids this engine happily imports it is not (a 0.5 m creature gives 0.25, a 4 m mech gives 2.0).
+That is the same fault class as 1289 — a gameplay quantity derived from the art — and it wants its own build
+with a compatibility story, because every level that has already tuned `tpHeight` did so against this pivot.
 
 
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
