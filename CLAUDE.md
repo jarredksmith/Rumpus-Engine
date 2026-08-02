@@ -967,6 +967,54 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Enemies move with mass (build 1308 — gameplay audit F8)
+
+> Enemy translation is direct position integration — `en.mesh.position.x += _mvx*spd*dt`, and the same at
+> the strafe and the lunge. There is no velocity state and no acceleration, so an enemy reaches full chase
+> speed on frame 1 and stops dead on frame 1. Facing *is* smoothed (`turnToward` at `TURN_RATE`), which
+> makes the mismatch more visible, not less: the body rotates while the position slides sideways. This is
+> exactly the defect build 1171 fixed for the player and did not port to the AI.
+
+Verified still live at all five sites, and closed with 1171's model and 1171's safe-change constraint: the
+TARGET is the same `dir * speed` the old code wrote directly, so **every authored speed, standoff, patrol
+pace and slow-zone multiplier is byte-identical at steady state** — proven to 1e-9 across seven speeds and a
+diagonal. What changes is the ramp on either end.
+
+Four decisions:
+
+- **Slower than the player, deliberately.** 11/16 against the player's 14/20. You are the one with the crisp
+  controls; a wave that starts and stops as sharply as you do reads as a swarm of cursors.
+- **`_enStep` returns a CANDIDATE position rather than writing one**, because two callers — the strafe and
+  the charger's dash — must test the step against `insideSolid` before taking it. The velocity is chased
+  either way: an enemy pressed against a wall has genuinely spent that acceleration.
+- **A frame that commands no step BRAKES.** A charger telegraphing its lunge, a gunner at its standoff, a
+  patroller that arrived. `_wantMove` (build 541) is already false in exactly those cases, so an enemy that
+  stops now *looks* like it stopped.
+- **The dash still writes its own position but seeds the velocity**, so a charger carries its momentum out
+  of the lunge instead of stopping dead in mid-air — the most visible frame of the whole move.
+
+**The anti-overlap separation is deliberately NOT routed through it.** That is a CORRECTION, not locomotion;
+giving it mass would reintroduce build 995's vibration, whose real stabiliser is the `(minD-d)*0.5` term
+(build 1154 established that).
+
+**The blend is `1 - exp(-k·dt)`, not `k·dt`.** Build 1171 uses the linear approximation for the player, and
+measured with it here, half a second of chasing covered **3.56 m at 20 fps against 2.92 m at 240** — a 22%
+spread on the same input, i.e. the same wave covering different ground on different machines. That is small
+enough never to have been noticed on the player and not worth a re-tune of every authored speed to change
+there, but there is no reason to reproduce it in new code: the exact form costs one `Math.exp` per moving
+enemy per frame and reproduces the continuous solution at any step (asserted against `S(1-e^{-kt})` at six
+refresh rates). It is also self-clamping, so a dt spike still degrades to the old instant speed rather than
+overshooting — at a 30-second stall it is still under the target.
+
+**The one real regression risk, measured rather than argued.** Build 540's stuck recovery counts a frame as
+no-progress when travel is under 30% of top speed and wall-follows after 0.2 s of it — and a ramp starts
+below 30% *by design*, so this could have made every enemy begin every chase by wall-following. Swept from
+20 to 240 fps, the start-up accrues at most **32 ms** against that 0.2 s trigger. Pinned, because a future
+change to either constant could close that gap silently.
+
+One pin moved (1209 — the stagger factor is now a term of the target velocity rather than of a per-frame
+position delta; same four moves, same factor).
+
 ## A state is level-triggered. An event is edge-triggered. (build 1307)
 
 Third report of the same freeze, and this sentence is the whole diagnosis:
