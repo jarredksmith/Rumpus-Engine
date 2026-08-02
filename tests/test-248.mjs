@@ -31,6 +31,9 @@ assert(/function cineHasData\(\)\{ return _ccHasData\(_curCutscene\(\)\); \}/.te
 
 // --- level check goes per-shot ---
 const li = new Function('propModels','pickupSpots','POWERUP_KINDS','keyDisplayName','pickupsOn','audioZones','cineCfg',
+  // build 1300: levelIssues records WHERE each issue is, beside the message. This rig runs it in an
+  // empty scope, so it supplies an inert recorder — the locators are build 1300's own test's business.
+  'const _issueFind = new Map(); const _issueAt = (m)=>m;\n' +
   extractFunction('levelIssues') + '\nreturn levelIssues();');
 const run = (cine) => li([], [], {}, c=>c, true, [], cine);
 assert(run({ on:true, path:[[0,0,0],[1,1,1]], shots2:[{ path:[[2,2,2]] }] }).some(m=>/shot 2/.test(m)), 'a one-point extra shot is flagged by number');

@@ -10506,6 +10506,19 @@ function playEnemyStates(root, gltf, clips){
       if(_ANIM_ONESHOT.has(st)){ a.loop = THREE.LoopOnce; a.clampWhenFinished = true; } else { a.loop = THREE.LoopRepeat; }
       a.enabled = true; a.setEffectiveWeight(0); a.play(); actions[st] = a; }
   }
+  // build 1294: per-weapon variants. Explicit mappings only, and the LOOP MODE comes from the base slot —
+  // `attack@crowbar` is a one-shot because `attack` is one, which is the sort of thing that goes wrong
+  // silently if each variant has to restate it.
+  if(clips) for(const _k in clips){
+    const _at = _k.indexOf('@'); if(_at <= 0) continue;
+    const _base = _k.slice(0, _at);
+    if(!_STATE_RE[_base] || actions[_k]) continue;                       // must name a real slot
+    const _nm = clips[_k]; if(!_nm) continue;                            // no auto-match by name, by design
+    const _c = gltf.animations.find(a=>(a.name||'')===_nm); if(!_c) continue;
+    const _a = mixer.clipAction(_c); _a.userData = _a.userData || {}; _a.userData.state = _k;
+    if(_ANIM_ONESHOT.has(_base)){ _a.loop = THREE.LoopOnce; _a.clampWhenFinished = true; } else { _a.loop = THREE.LoopRepeat; }
+    _a.enabled = true; _a.setEffectiveWeight(0); _a.play(); actions[_k] = _a;
+  }
   if(!Object.keys(actions).length){ const a = mixer.clipAction(gltf.animations[0]); a.loop = THREE.LoopRepeat; a.play(); actions.idle = a; }   // no recognizable clip -> loop the first
   const startKey = actions.idle ? 'idle' : Object.keys(actions)[0];
   if(actions[startKey]) actions[startKey].setEffectiveWeight(1);
@@ -10533,10 +10546,34 @@ function _ensureClipAction(v, state){
     acts[state]=a;
   }catch(e){}
 }
+// ---- build 1294: PER-WEAPON animation variants ---------------------------------------------------------
+// REPORTED: "the editor doesn't allow different attack animations per weapon — I have to choose one
+// animation for left click and it is used for every weapon. A pistol, a sword, an axe and a rifle should
+// all be different." Correct: ANIM_SLOTS carried ONE `attack` slot and all three animators asked for it by
+// that literal name, so a character had a single firing motion for its whole arsenal.
+//
+// A variant is the ordinary slot name with the weapon appended: `attack@crowbar`, `equip@sniper`. That
+// choice is what makes this small — `clips`, `clipSpeed`, `clipHold` and `clipInPlace` are all plain maps
+// keyed by slot string, so a variant rides through the character config, the save file and the network
+// snapshot with no format change; `myCharCfg` already copies the whole `clips` object, so co-op peers see
+// your sword swing without a protocol bump.
+//
+// Nothing is per-weapon unless the creator says so. The variant only becomes an action when it is
+// EXPLICITLY mapped to a clip — there is deliberately no name auto-match for it, because "sword_attack"
+// guessing its way onto the crowbar slot is the kind of magic that is impossible to debug — and an
+// unmapped variant falls straight back to the base slot. A character authored before this build resolves
+// to exactly the clip it resolved to before.
+function _wepAnimSlot(slot, wep){ return (slot && wep) ? (slot + '@' + wep) : slot; }
+// Which slots the editor offers per weapon. The RESOLVER is generic — `walkFire@sniper` works the moment
+// someone maps it — so this list is about how much UI to put in front of a creator, not a capability limit.
+const WEP_ANIM_SLOTS = ['attack', 'equip'];
 // Resolve a requested state to an available action (graceful fallback when a clip is missing).
 function _stateActionKey(acts, state){
   let s = state, guard = 0;
-  while(s && guard++ < 12){ if(acts[s]) return s; s = _ANIM_FALLBACK[s]; }   // walk the fallback chain to the nearest mapped clip
+  while(s && guard++ < 12){ if(acts[s]) return s;
+    const at = s.indexOf('@');
+    s = (at > 0) ? s.slice(0, at) : _ANIM_FALLBACK[s];   /* build 1294: a per-weapon variant falls back to its base slot, and from there down the ordinary chain */
+  }
   return acts.idle ? 'idle' : Object.keys(acts)[0];
 }
 // Re-apply a clip-speed change to any avatar currently PLAYING that state, so the editor slider updates
@@ -13094,6 +13131,41 @@ function applyPropColor(obj, hex){
 }
 // build 564: material edits apply to EVERY selected primitive (the whole multi-selection), not just the primary.
 // Returns the selected shape-primitives; falls back to the primary props target when nothing's multi-selected.
+// ---- build 1299: the inspector follows the selection (editor audit, finding 4.2 CRITICAL) -------------
+// "The gizmo is group-aware, the material fold is group-aware and SAYS SO, and the tag field, interact,
+// signals, name and dialogue are all primary-only with no indication. Two different rules for one selection,
+// in adjacent folds. A creator who tags 30 crates one at a time will conclude the editor is fine; a creator
+// who assumes the fields follow the selection will silently corrupt their level."
+//
+// The fix is not "make everything group-aware" — some of these fields are per-object BY NATURE. It is that
+// every field must say which rule it follows:
+//  - MARK-THE-SET fields (tag, interactable, lock) apply to the whole selection. A signal resolves a tag to
+//    a LIST of props, so one tag across thirty crates is the normal authoring move, not an edge case.
+//  - PER-OBJECT fields (an NPC's name, its dialogue script) stay on the primary and now SAY so. Thirty
+//    characters with one name and one speech is not something anybody wants by accident.
+// Silent inconsistency was the bug; labelled asymmetry is a design.
+function _selTargets(){
+  if(typeof selProps!=='undefined' && selProps && selProps.length) return selProps.filter(Boolean);
+  const p = (typeof editorTargets!=='undefined' && editorTargets.props && typeof editorTargets.props.obj==='function') ? editorTargets.props.obj() : null;
+  return p ? [p] : [];
+}
+// One snapshot per GESTURE, not per object — otherwise a 30-prop tag costs thirty Ctrl+Z presses to undo.
+function _selApply(fn){
+  const list = _selTargets(); if(!list.length) return 0;
+  if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+  for(const o of list){ try{ fn(o); }catch(e){} }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  return list.length;
+}
+// The banner the material fold has had since build 844, so a creator can see which rule a fold follows
+// WITHOUT having to test it on their own level.
+function _selBanner(host, n, groupWide){
+  if(!host || !(n > 1)) return;
+  const d=document.createElement('div'); d.className='hint'; d.style.cssText='margin:0 0 6px;color:'+(groupWide?'var(--accent)':'#ffbf7a')+';';
+  d.innerHTML = groupWide ? ('<b>Editing '+n+' selected props</b> \u2014 changes apply to all.')
+                          : ('<b>'+n+' props selected</b> \u2014 this fold edits the primary one only.');
+  host.appendChild(d);
+}
 function _matTargets(){
   const list = (selProps && selProps.length) ? selProps : [ (editorTargets && editorTargets.props && typeof editorTargets.props.obj==='function' ? editorTargets.props.obj() : null) ];
   return list.filter(o=>o && isMatPrimitive(o.userData.src));
@@ -19493,9 +19565,35 @@ const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k]
 // baseline captured before any override, only CHANGED values serialized, every loader resetting to base
 // when a level carries nothing. One clamped helper applies them, so a hostile level file cannot set a
 // 0ms fire rate or 10,000 pellets no matter which loader it arrives through.
-const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets'];
-const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[1,24] };
-const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k]; GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets }; _w.reserve0=_w.reserve; }
+// build 1296: MELEE IS A STAT. Build 1240 answered "add a sword/axe/staff" with renaming, and 1190 made the
+// stat sheet authorable — but `melee` and `reach` were in neither, so a creator could rename the SMG to
+// SWORD and it still fired bullets. Exactly ONE slot shipped as a usable melee weapon (`crowbar`; `hands` is
+// the bare-fist loadout), so "a pistol, a sword, an axe and a rifle" was unbuildable: the sword and the axe
+// were competing for the same slot.
+//
+// Adding them to 1190's list is the whole feature. Serialization (only-changed diff), the three loaders, the
+// per-stat reset-to-factory button and the clamp all already exist and all work on any key in this array —
+// which is what that build was for. `melee` rides as 0/1 so it needs no separate boolean path; every reader
+// already asks `if(w.melee)` / `!!w.melee`.
+const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach'];
+// build 1297: the shortest reach a melee weapon may be authored to, and the closest a bot will stand while
+// swinging one. They are stated together because the ONLY thing that matters is the inequality between
+// them: a bot holds `max(BOT_MELEE_MIN, reach*0.7)` and hits inside `reach`, so if the floor on reach ever
+// dropped below the floor on the stand-off distance, a creator could author a weapon whose bots physically
+// cannot land a hit — they would close to the stand-off, be outside their own reach, and swing forever.
+// With 1.2 and 1.0, `max(1.0, 0.7r) < r` holds for every authorable r. (1.2 m is a knife; nothing shipped
+// is under 2.3, so no existing weapon moves.)
+const BOT_MELEE_REACH_MIN = 1.2, BOT_MELEE_MIN = 1.0;
+// build 1296: pellets floors at 0, not 1. A melee weapon fires none, and the old floor rewrote the crowbar's
+// authored 0 into a 1 the moment any stat was applied — the same spurious-diff fault as magSize below.
+const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12] };
+// The live values are NORMALISED here, beside the baseline that is captured from them: `melee` starts as
+// `true`/undefined and `reach` is absent on every gun, and the serializer emits a stat whenever it differs
+// from its baseline — so leaving `true` beside a baseline of `1` would write a spurious melee override into
+// every level ever saved. 3.4 is the crowbar's reach, which is what a gun becomes when a creator flips it.
+const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k];
+  _w.melee = _w.melee ? 1 : 0; _w.reach = _w.reach || 3.4;
+  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach }; _w.reserve0=_w.reserve; }
 // build 1240: RENAME WEAPONS — reported from play ("add a sword/axe/staff... we have melee, so maybe
 // the answer is the ability to rename"). The name follows 1190's exact pattern: a factory baseline
 // captured at boot, only-changed values serialized (nm), one sanitizer every loader routes through.
@@ -19618,7 +19716,13 @@ function rebuildAttMounts(wep){
 }
 function applyAttachments(){   // recompute live stats from base + equipped (idempotent)
   for(const k in WEAPONS){ const base=_attBase[k]; if(!base) continue; const r=_resolveAtt(k);
-    const newMag=Math.max(1, Math.round(base.magSize*r.magMul));
+    // build 1296: a weapon with NO magazine keeps none. Build 583 wrote this when every weapon had one, so
+    // the floor of 1 handed the crowbar and the fists a 1-round magazine — which then differed from the
+    // captured baseline and made `serializeLevel` write a spurious `st:{magSize:1}` into EVERY level saved
+    // since build 1190. It matters more now that any slot can be melee: a creator sets the magazine to 0 and
+    // this put it straight back. The floor still does its real job — a magazine multiplier must never round a
+    // real magazine down to nothing.
+    const newMag = (base.magSize > 0) ? Math.max(1, Math.round(base.magSize*r.magMul)) : 0;
     WEAPONS[k].magSize=newMag; if(WEAPONS[k].mag>newMag) WEAPONS[k].mag=newMag;   // never hold more than capacity
     WEAPONS[k].spread=base.spread*r.spreadMul;
     WEAPONS[k].hasLaser=r.laser;
@@ -19655,7 +19759,7 @@ function switchWeapon(key){
   if(!owned.includes(key) || key===curWep) return;
   if(reloading){ reloading = false; _reloadTok++; updateHUD(); }   // build 1172: switching CANCELS the reload instead of being refused by it
   if(typeof _allowedWep==='function' && !_allowedWep(key)) return;   // build 1014: host match rules
-  curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim('equip', 320);   // third-person draw/equip pose
+  curWep = key; SFX.swap(); showWeaponToast(); updateHUD(); if(typeof playOwnAnim==='function') playOwnAnim(_wepAnimSlot('equip', key), 320);   // third-person draw/equip pose. build 1294: drawing a sword is not drawing a pistol — note this uses the NEW weapon, which is the one being drawn
   _drawDur = WEAPONS[key].drawMs || DRAW_MS; _drawUntil = performance.now() + _drawDur;   // build 965: the viewmodel rises before the trigger works · build 1172: per-weapon — a pistol should not draw at a launcher's pace
   showWeaponModel(key);   // show this weapon's own viewmodel (loads on first use)
   applyWeaponAim(key);    // load this weapon's saved ADS pose
@@ -19926,11 +20030,21 @@ function refreshPlayerClipOptions(){
   const names = playerModelClips.slice();
   if(!playerModelCfg.clips) playerModelCfg.clips = { idle:'', walk:'', run:'', attack:'' };
   for(const e of Object.values(playerModelCfg.clips)){ if(e && names.indexOf(e)<0) names.push(e); }
+  const _fill=(sel, st, autoLabel)=>{
+    sel.innerHTML='';
+    const auto=document.createElement('option'); auto.value=''; auto.textContent = names.length ? autoLabel : 'Auto — set a model first'; if(!playerModelCfg.clips[st]) auto.selected=true; sel.appendChild(auto);
+    for(const nm of names){ const o=document.createElement('option'); o.value=nm; o.textContent=nm||'(unnamed)'; if(playerModelCfg.clips[st]===nm) o.selected=true; sel.appendChild(o); }
+  };
   for(const _slot of ANIM_SLOTS){ const st = _slot.k;
     const sel = edDoc().getElementById('edPlayerClip_'+st); if(!sel) continue;
-    sel.innerHTML='';
-    const auto=document.createElement('option'); auto.value=''; auto.textContent = names.length ? ('Auto — '+st+' by name') : 'Auto — set a model first'; if(!playerModelCfg.clips[st]) auto.selected=true; sel.appendChild(auto);
-    for(const nm of names){ const o=document.createElement('option'); o.value=nm; o.textContent=nm||'(unnamed)'; if(playerModelCfg.clips[st]===nm) o.selected=true; sel.appendChild(o); }
+    _fill(sel, st, 'Auto — '+st+' by name');
+  }
+  /* build 1294: the per-weapon variants. "Auto" here means "use the plain slot", which is the true
+     behaviour of an unmapped variant — saying "auto by name" would be a lie, since a variant never
+     name-matches. */
+  for(const _b of WEP_ANIM_SLOTS) for(const _w of Object.keys(WEAPONS)){
+    const sel = edDoc().getElementById('edPlayerClipW_'+_b+'_'+_w); if(!sel) continue;
+    _fill(sel, _b+'@'+_w, 'Same as ' + _b);
   }
 }
 function enemyClipOptionList(typeKey){   // discovered clips + any saved picks not yet discovered
@@ -23195,6 +23309,12 @@ function spawnBots(n){
       wep: (function(){ const _w=['rifle','rifle','smg','shotgun','pistol'].filter(k=>WEAPONS[k] && _allowedWep(k)); return _w.length?_w[(Math.random()*_w.length)|0]:(['pistol','rifle','smg','shotgun','sniper','launcher'].find(k=>WEAPONS[k]&&_allowedWep(k))||'crowbar'); })(),   // build 1012: the gun it visibly holds (rifle-weighted)
       // personality: aggression (push vs hold), bravery (low hp before retreat), preferred engage distance
       aggr:0.4+Math.random()*0.6, bravery:0.18+Math.random()*0.22, prefRange:6+Math.random()*9 });
+    // build 1297: a bot holding a MELEE weapon has to close. `prefRange` is the distance the engage state
+    // holds while it strafes, and 6-15 m is a rifle's answer — a bot with a sword stood there swinging at
+    // nothing. This has been reachable since the crowbar existed (a melee-only match falls through to it),
+    // and build 1296 made any slot melee, so it is now one checkbox away in every level.
+    { const _nb=bots[bots.length-1], _bw=WEAPONS[_nb.wep];
+      if(_bw && _bw.melee) _nb.prefRange = Math.max(BOT_MELEE_MIN, (_bw.reach||3.4)*0.7); }   /* inside its own reach, so it presses rather than hovering on the edge */
     if(teamMode()) NET.teams[id]=team;
     NET.duelScore[id]=0;
   }
@@ -23555,7 +23675,7 @@ function updateBots(dt){
           else if(b._turnSt){ b._turnSt.turning=false; b._turnSt.accum=0; b._turnSt.last=''; } }   // left idle-stand -> disarm the burst so it re-arms cleanly
         let st;
         if(b._evt && performance.now()<b._evt.until) st=b._evt.slot;   // directional hit-react flinch (wins over fire/loco, below death)
-        else if(b._fireAnimT && performance.now()<b._fireAnimT){ const _bt=md>0.06?'run':(md>0.015?'walk':null); st=(_bt?(_fireSlot(_bt)||'attack'):'attack'); }   // combined move+fire while moving
+        else if(b._fireAnimT && performance.now()<b._fireAnimT){ const _bt=md>0.06?'run':(md>0.015?'walk':null); st=_wepAnimSlot((_bt?(_fireSlot(_bt)||'attack'):'attack'), b.wep); }   // combined move+fire while moving. build 1294: bots hold a weapon too
         else { const air=_airborneSlot(b._air||(b._air={}), b.grounded!==false, b.vy||0, dt);   // jumpStart/jump/fall/land while path-hopping or launched
           if(air) st=air;
           else { const tier = md>0.06?'run':(md>0.015?'walk':'idle'); st=(tier==='idle')?(b._crouch?'crouch':'idle'):_locoSlot(mvx,mvz,b.yaw,(b._crouch&&tier==='walk')?'crouch':tier); } }   // strafes/back-pedals show when orbiting a target it's facing; a bot holding cover ducks (build 1006)
@@ -23569,17 +23689,31 @@ function updateBots(dt){
     if(tgt && wantFire && b.fireCd<=0 && !(b._reactT>0)){   // build 1003: no shot inside the human reaction beat after acquiring
       const ty=(tgt.pos.y!=null?Math.min(1.5,tgt.pos.y):1.4);
       const fdist=Math.hypot(tgt.pos.x-b.pos.x, ty-1.4, tgt.pos.z-b.pos.z);
-      if(fdist<D.range && hasLOS){   // reuse the cached LOS instead of a second raycast per shot
-        b.fireCd=D.cdMin+Math.random()*D.cdRand;
-        const aim=_bv2.set(tgt.pos.x-b.pos.x, ty-1.4, tgt.pos.z-b.pos.z).normalize();
-        // build 1003: settle-in accuracy — wide right after acquiring, tightening with unbroken
-        // time-on-target; the bot's own movement this frame loosens it (run-and-gun penalty).
-        const _moved=Math.hypot(b.pos.x-ox, b.pos.z-oz);
-        const _esp=D.spread*(0.5 + 1.8*(b._aimErr==null?0.4:b._aimErr)) + (_moved>0.02 ? D.spread*0.5 : 0);
-        aim.x+=(Math.random()*2-1)*_esp; aim.y+=(Math.random()*2-1)*_esp*0.75; aim.z+=(Math.random()*2-1)*_esp; aim.normalize();
-        const o=[b.pos.x,1.4,b.pos.z], d=[aim.x,aim.y,aim.z];
-        remoteFire(b.id, o, d); b._fireAnimT=performance.now()+480; for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'fire', from:b.id, o, d}); }catch(e){} }
-        if(Math.random()<D.hit) _botDamage(b, tgt, D.dmgMin+Math.random()*D.dmgRand);
+      // build 1297: a melee bot SWINGS. Its range is the weapon's reach, not the difficulty table's, and it
+      // fires no bullet — `remoteFire` spawns a tracer and a hit for every peer, so a sword bot was landing
+      // invisible shots from 20 m. DAMAGE stays on the difficulty table, deliberately: a bot's damage has
+      // never come from its weapon (a sniper bot and a pistol bot hit for the same), and making melee the
+      // one exception would be a stealth rebalance of every match.
+      const _bw = WEAPONS[b.wep], _bMelee = !!(_bw && _bw.melee);
+      const _bRange = _bMelee ? Math.max(1, (_bw.reach || 3.4)) : D.range;
+      if(fdist<_bRange && hasLOS){   // reuse the cached LOS instead of a second raycast per shot
+        b.fireCd = _bMelee ? Math.max(0.25, (_bw.fireRate||500)/1000) : (D.cdMin+Math.random()*D.cdRand);
+        if(_bMelee){
+          /* the attack pose only — build 1294 resolves it to `attack@<weapon>`, so a creator's own swing
+             clip plays here with no extra plumbing. No tracer, no `fire` packet: there is no projectile. */
+          b._fireAnimT=performance.now()+480;
+          if(Math.random()<D.hit) _botDamage(b, tgt, D.dmgMin+Math.random()*D.dmgRand);
+        } else {
+          const aim=_bv2.set(tgt.pos.x-b.pos.x, ty-1.4, tgt.pos.z-b.pos.z).normalize();
+          // build 1003: settle-in accuracy — wide right after acquiring, tightening with unbroken
+          // time-on-target; the bot's own movement this frame loosens it (run-and-gun penalty).
+          const _moved=Math.hypot(b.pos.x-ox, b.pos.z-oz);
+          const _esp=D.spread*(0.5 + 1.8*(b._aimErr==null?0.4:b._aimErr)) + (_moved>0.02 ? D.spread*0.5 : 0);
+          aim.x+=(Math.random()*2-1)*_esp; aim.y+=(Math.random()*2-1)*_esp*0.75; aim.z+=(Math.random()*2-1)*_esp; aim.normalize();
+          const o=[b.pos.x,1.4,b.pos.z], d=[aim.x,aim.y,aim.z];
+          remoteFire(b.id, o, d); b._fireAnimT=performance.now()+480; for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'fire', from:b.id, o, d}); }catch(e){} }
+          if(Math.random()<D.hit) _botDamage(b, tgt, D.dmgMin+Math.random()*D.dmgRand);
+        }
       }
     }
     // ---- build 1006: grenades. The AAA move: the target ducks behind cover (contact just broke,
@@ -24755,7 +24889,7 @@ function updateOwnAvatar(dt){
     if(dead) st=_lastDieVariant||'die';                         // directional death from the killing hit
     else if(_climbAnim) st=_climbAnim;                          // build 644: ledge hang / pull-up / drop (and ladder climb in 645)
     else if(evtLive) st=_ownEvt.slot;                           // one-shot: throw / melee / equip / hit-react
-    else if(performance.now()-lastShot < 250){ const _ff = crouching ? 'crouch' : (typeof sprinting==='function'&&sprinting()) ? 'sprint' : (_ownSpeed>0.11?'run':'walk'); st = (_ownSpeed>=0.012 ? (_fireSlot(_ff)||'attack') : 'attack'); }   // firing: combined move+fire when moving, else the standing attack pose
+    else if(performance.now()-lastShot < 250){ const _ff = crouching ? 'crouch' : (typeof sprinting==='function'&&sprinting()) ? 'sprint' : (_ownSpeed>0.11?'run':'walk'); st = _wepAnimSlot((_ownSpeed>=0.012 ? (_fireSlot(_ff)||'attack') : 'attack'), curWep); }   // firing: combined move+fire when moving, else the standing attack pose. build 1294: for the weapon in hand
     else if(reloading) st='reload';                             // reloading the mag
     else if(sliding && player.onGround) st='slide';             // sprint-slide
     else if(air) st=air;                                        // jumpStart / jump / fall / jumpLand / hardLand
@@ -25362,7 +25496,50 @@ function serializeWorld(){
   return { t:'world', dl: full?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:_hostileAlive() };   /* en: the HUD count must not read a partial E; build 1226: nor count a friendly */
 }
 function dynamicById(id){ for(const o of dynamicProps){ if(o.userData.phys && o.userData.phys.id===id) return o; } return null; }
-function broadcastWorld(){ const w=serializeWorld(); for(const id in NET.conns){ try{ NET.conns[id].send(w); }catch(e){} } }
+// ---- build 1298: BACKPRESSURE on the droppable traffic -------------------------------------------------
+// The peer connection is `reliable:true` — ordered SCTP — and the host fans a world snapshot to every client
+// 20 times a second, with the client answering at the same rate. Across 53 `send` sites nothing had ever
+// looked at `bufferedAmount`. On a link that cannot drain 20 Hz, a reliable channel does not drop: it
+// QUEUES, without bound. Every later message — a hit, a chat line, the next keyframe — waits behind the
+// backlog, so the connection does not degrade gracefully, it slides into ever-growing latency and never
+// recovers. That is the classic "everything went to slow motion and stayed there" multiplayer failure, and
+// it is invisible in a LAN test because the queue never builds.
+//
+// A state snapshot is the one message that is safe to drop: the next one supersedes it. Everything else —
+// hits, chat, joins, the level transfer, prop sync — is a semantic event and still goes unconditionally.
+//
+// THE THRESHOLD IS STATED IN SNAPSHOTS, NOT BYTES, because bytes are a property of the level. Measured on
+// the stock level (1 enemy, 59 props): keyframe 557 B, delta 325 B, ~6.8 KB/s — and that is the FLOOR; a
+// populated match is many times it. So the limit scales with what is actually being sent: eight snapshots
+// deep is 400 ms of backlog at 20 Hz whatever the level weighs, with a floor so a small level does not trip
+// on ordinary jitter.
+const NET_BUF_FLOOR = 16384, NET_BUF_SNAPS = 8;
+let _netDropped = 0, _netDropWarned = false;
+function _netBuffered(c){
+  try{ const dc = c && (c.dataChannel || c._dc); return (dc && typeof dc.bufferedAmount === 'number') ? dc.bufferedAmount : 0; }
+  catch(e){ return 0; }   /* a transport that will not answer is treated as healthy — never stop sending on a guess */
+}
+// Returns false when the send was SKIPPED, so the caller can repair what the skip cost.
+function _sendDroppable(c, msg, bytes){
+  if(!c) return false;
+  if(_netBuffered(c) > Math.max(NET_BUF_FLOOR, (bytes||0) * NET_BUF_SNAPS)){
+    _netDropped++;
+    if(!_netDropWarned && _netDropped > 40){ _netDropWarned = true; console.warn('[net] a peer cannot keep up with the 20Hz state stream — snapshots are being skipped to stop the send queue growing without bound ('+_netDropped+' so far)'); }
+    return false;
+  }
+  try{ c.send(msg); return true; }catch(e){ return false; }
+}
+function broadcastWorld(){
+  const w=serializeWorld(); let bytes=0;
+  try{ bytes=JSON.stringify(w).length; }catch(e){ bytes=0; }
+  let skipped=false;
+  for(const id in NET.conns){ if(!_sendDroppable(NET.conns[id], w, bytes)) skipped=true; }
+  // Build 1197's snapshots are DELTAS against a single shared previous state, so a client that misses one is
+  // stale on whatever changed in it until the next keyframe. Forcing the next snapshot to be a keyframe
+  // turns that window from up to nine snapshots (450 ms) into one (50 ms), and it repairs every skipped
+  // client at once because they all read the same payload.
+  if(skipped) _snapN = 0;
+}
 
 // ---- live prop sync: add / move / delete of STATIC props across an online session ----
 // A reconciler diffs the local prop set against NET.sentProps (what peers already know) and emits
@@ -25638,7 +25815,7 @@ function netInterpolate(dt){
       if(rp.air) _st='jump';                                          // airborne flag travels in the state packet
       if(rp.slide) _st='slide';                                       // sliding flag travels in the state packet
       if(rp.cl) _st = _CLIMB_BY_CODE[rp.cl] || _st;                   // build 644: climbing (ledge hang/up/drop, ladder) overrides loco/air
-      if(rp._fireT && performance.now() < rp._fireT){ const _rf = rp.crouch ? 'crouch' : (tier==='run'?'run':(tier==='walk'?'walk':null)); _st=(_rf?(_fireSlot(_rf)||'attack'):'attack'); }   // brief move+fire (or standing attack) after a networked shot
+      if(rp._fireT && performance.now() < rp._fireT){ const _rf = rp.crouch ? 'crouch' : (tier==='run'?'run':(tier==='walk'?'walk':null)); _st=_wepAnimSlot((_rf?(_fireSlot(_rf)||'attack'):'attack'), rp.wep); }   // brief move+fire (or standing attack) after a networked shot. build 1294: the weapon the snapshot says they hold
       if(rp._actT && performance.now() < rp._actT) _st=rp._actSlot;   // build 1071: an author-bound action the peer fired
       if(rp._hitT && performance.now() < rp._hitT) _st=['hitFront','hitBack','hitLeft','hitRight'][rp._hitDir||0];   // directional hit-react (wins over loco, below death)
       if(rp.hp!=null && rp.hp<=0) _st = (rp._hitDir===0?'dieBack':rp._hitDir===1?'dieFront':'die');   // directional death (front hit -> fall backward), else flat die
@@ -25679,7 +25856,9 @@ function netTick(dt){
   if(NET.sendTimer<=0){
     NET.sendTimer=0.05;
     if(NET.mode==='client' && NET.conn && NET.conn.open){
-      try{ NET.conn.send({ t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }); }catch(e){}
+      /* build 1298: droppable — the next one supersedes it. Unlike the host's, this packet carries no delta
+         state, so a skip costs exactly one frame of staleness and repairs itself on the very next send. */
+      _sendDroppable(NET.conn, { t:'st', p:[player.pos.x,player.pos.y,player.pos.z], y:player.yaw, pi:player.pitch, w:curWep, g:_packGrip(), hp:Math.max(0,player.hp), j:player.onGround?0:1, sl:sliding?1:0, ad:(ads||padAds||touchAds)?1:0, cr:crouching?1:0, hd:_netHitDir, hs:_netHitSeq, n:NET.name, mt:(mountedTurret?_turretIndexOf(mountedTurret):-1), cl:_climbCode(), c:_packCar(), ac:_actNetCode, aq:_actNetSeq }, 400);
       if(heldProp && heldNidLocal!=null){ const tgt=_localHoldTarget(); try{ NET.conn.send({ t:'hold', nid:heldNidLocal, p:[tgt.x,tgt.y,tgt.z] }); }catch(e){} }
     } else if(NET.mode==='host'){
       broadcastWorld();
@@ -29464,7 +29643,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1293 · 2026-08-02';
+const BUILD_VERSION = 'build 1300 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31434,6 +31613,10 @@ function teardownInstancing(){
 
 let _meleeT = 0;
 const MELEE_CD = 480, MELEE_RANGE = 2.9, MELEE_DMG = 34;   // punch: cooldown ms, reach m, damage
+// build 1295: the melee swing's own raycaster. Its own, because `far` has to be the swing's reach and the
+// shared `raycaster` is read by a dozen other systems that would inherit the limit; module scope, because
+// build 1168 removed exactly this class of per-swing allocation.
+const _meleeRc = new THREE.Raycaster(), _meleeOrig = new THREE.Vector3(), _meleeDir = new THREE.Vector3();
 // Melee / punch. Fired by the V key or automatically when you pull the trigger fully dry. Hits the nearest
 // enemy / bot / player in a forward cone and shoves them along your aim (reuses the same launch channel the
 // trebuchet + explosions use), and breaks / shoves a prop you're facing. Knockback scales with Launch Power.
@@ -31474,12 +31657,36 @@ function meleeAttack(wep){
     for(const en of enemies){ if(!en.mesh) continue; const dd=cone(en.mesh.position.x,en.mesh.position.y,en.mesh.position.z); if(dd>=0&&dd<bestD){ bestD=dd; best=en; } }
     if(best){ hit=true; const _d=DMG*(buffs.damage?2:1)*run.dmgMul; best.evx=(best.evx||0)+fwd.x/fh*KB; best.evz=(best.evz||0)+fwd.z/fh*KB; best.vy=Math.max(best.vy||0,UP); best.grounded=false; const _k=enemyHurt(best, _d, player.pos.x, player.pos.z); spark(best.mesh.position,0xffd166); spawnDamageNumber(best.mesh.position, _d, _k, false); flashEnemy(best); showHitmarker(_k); }
   }
-  if(NET.mode!=='client' && dynamicProps.length){   // punch a prop in front: break / detonate + shove
-    raycaster.setFromCamera({x:0,y:0}, camera);
-    const ph = raycaster.intersectObjects(dynamicProps, true);
-    if(ph.length && ph[0].distance<=RANGE){
+  // ---- build 1295: swing at a prop -------------------------------------------------------------------
+  // REPORTED: "if I give the player a sword as a melee weapon, I can't break/explode props if I swing at
+  // it." Three faults in this one block, all from it having been written for a first-person solo punch and
+  // never revisited. The enemy cone twenty lines above already does all three things right, which is what
+  // made the difference invisible: enemies took the hit, props did not.
+  //
+  //  1. IT CAST FROM THE CAMERA AND RANGE-LIMITED ON THE DISTANCE FROM THE CAMERA. The reach is 2.9 m and
+  //     the third-person boom sits 4.2 m behind the player, so anything within reach of the PLAYER is at
+  //     least 4.2 m from the camera and the test could never pass. Measured on the same crate 1.5 m in
+  //     front: first person camera->prop 1.5 (hits), third person camera->prop 5.7 (misses), player->prop
+  //     1.5 in both. Melee has therefore never broken a prop in third person.
+  //  2. IT AIMED THROUGH SCREEN CENTRE. The cone corrects `fwd` for the twin-stick and chase-cursor views
+  //     (build 874/1103) where the body faces the cursor and the camera does not; this did not, so in
+  //     those views it swung wherever the camera happened to point.
+  //  3. A CLIENT COULD NOT DO IT AT ALL. `NET.mode!=='client'` skipped the whole block, while the bullet
+  //     path has always sent `propHit` to the host. So in co-op, a guest with a sword could not break a
+  //     barrel — and the host's own swing worked, which is the sort of asymmetry nobody reports as a bug,
+  //     they just conclude melee is decorative.
+  if(dynamicProps.length){
+    _meleeRc.set(_meleeOrig.set(px, py, pz), _meleeDir.copy(fwd).normalize());
+    _meleeRc.near = 0; _meleeRc.far = RANGE;   /* the reach IS the ray, so the hit test and the cone agree */
+    const ph = _meleeRc.intersectObjects(dynamicProps, true);
+    if(ph.length){
       let o=ph[0].object; while(o && dynamicProps.indexOf(o)<0) o=o.parent;
-      if(o){ const dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(); const broke=damageProp(o, DMG, ph[0].point, dir, 8, NET.myId); if(!broke) pushDynamic(o, dir, 8, ph[0].point); hit=true; }
+      if(o){
+        const dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(), pt=ph[0].point;
+        if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} }   /* host-authoritative, exactly like a shot */
+        else { const broke=damageProp(o, DMG, pt, dir, 8, NET.myId); if(!broke) pushDynamic(o, dir, 8, pt); }
+        hit=true;
+      }
     }
   }
   addShake(0.05);
@@ -39529,8 +39736,35 @@ function edFold(host, id, title, openDefault, subtitle){
   return body;
 }
 // Pre-save sanity check: non-blocking warnings about authoring mistakes that make a level feel broken.
+// ---- build 1300: a diagnostic you can CLICK (editor audit, finding 4.3 HIGH) ---------------------------
+// "renderLevelIssues: `d.textContent = msg`, no handler. 'A signal targets tag vaultDoor, but no prop carries
+// that tag' is a great message with nowhere to click. The outliner already searches by tag and
+// selectAssetInstances already knows how to select-and-frame — the two are three lines apart."
+//
+// The locator rides BESIDE the message rather than replacing it. `levelIssues()` returns an array of strings
+// and ten test harnesses plus the publish preflight consume it that way; turning it into objects to carry
+// one extra field would have rewritten all of them for no gain. So the check that RAISED an issue registers
+// how to find it, keyed by the message it just produced, and the panel looks it up. Two messages that come
+// out identical share a locator, which is correct — they name the same tag.
+//
+// It resolves at CLICK time, not at check time: a prop can be deleted between opening the panel and pressing
+// the arrow, and "that prop is gone" is a better answer than selecting a stale object.
+const _issueFind = new Map();
+function _issueAt(msg, resolve){ if(msg && resolve) _issueFind.set(msg, resolve); return msg; }
+// Select and frame, the way build 1147's asset browser does — a diagnostic that selects something off screen
+// is the same "nothing happened" the click exists to fix.
+function _edGoToIssue(resolve){
+  let list=[]; try{ list=(resolve()||[]).filter(o=>o && propModels.indexOf(o)>=0); }catch(e){}
+  if(!list.length){ if(typeof flashToast==='function') flashToast('That prop is no longer in the level'); return false; }
+  selProps=list.slice(); editorActive='props';
+  editorTargets.props.idx=Math.max(0, propModels.indexOf(list[list.length-1]));
+  if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+  if(typeof _edFrameSelected==='function') _edFrameSelected();
+  if(typeof renderEditorFields==='function') renderEditorFields();
+  return true;
+}
 function levelIssues(){
-  const issues=[];
+  const issues=[]; _issueFind.clear();   /* build 1300: locators belong to THIS run of the check */
   try{
     // build 1257: the perf census. Not a mistake to fix — a cost to SEE. three r149 loops every
     // point/spot light in every fragment of every material, so this number is the one a creator
@@ -39583,24 +39817,25 @@ function levelIssues(){
     const tags=new Set(); for(const o of propModels){ if(o && o.userData && o.userData.tag) tags.add(o.userData.tag); }
     for(const o of propModels){ if(!o || !o.userData || !o.userData.signals) continue;
       for(const s of o.userData.signals){
-        if(s.target && s.target!=='this' && !tags.has(s.target)) issues.push("A signal targets tag '"+s.target+"', but no prop carries that tag.");
-        if(!s.target && s.do!=='win' && s.do!=='cutscene') issues.push('A signal has no target tag (only Win level and Play cutscene work without one).');
-        if(s.when==='contact' && s.from && !tags.has(s.from)) issues.push("A contact signal only triggers on objects tagged '"+s.from+"', but no prop carries that tag.");
+        if(s.target && s.target!=='this' && !tags.has(s.target)) issues.push(_issueAt("A signal targets tag '"+s.target+"', but no prop carries that tag.", ()=>[o]));
+        if(!s.target && s.do!=='win' && s.do!=='cutscene') issues.push(_issueAt('A signal has no target tag (only Win level and Play cutscene work without one).', ()=>[o]));
+        if(s.when==='contact' && s.from && !tags.has(s.from)) issues.push(_issueAt("A contact signal only triggers on objects tagged '"+s.from+"', but no prop carries that tag.", ()=>[o]));
         if(s.do==='cutscene'){
           const _all=[cineCfg, ...((cineCfg&&Array.isArray(cineCfg.others))?cineCfg.others:[])];
           const _cc = !s.cs ? _all[0] : _all.find(c=>c && ((c===cineCfg?(c.name||'Intro'):c.name)===s.cs));
-          if(!_cc) issues.push("A signal plays cutscene '"+s.cs+"', but no cutscene has that name.");
-          else { const _ok=[_cc, ...((Array.isArray(_cc.shots2))?_cc.shots2:[])].some(x=>x && x.path && x.path.length>=2); if(!_ok) issues.push("A signal plays cutscene '"+(s.cs||_cc.name||'#1')+"', but none of its shots has 2+ path points \u2014 it will play nothing."); } } } }
+          if(!_cc) issues.push(_issueAt("A signal plays cutscene '"+s.cs+"', but no cutscene has that name.", ()=>[o]));
+          else { const _ok=[_cc, ...((Array.isArray(_cc.shots2))?_cc.shots2:[])].some(x=>x && x.path && x.path.length>=2); if(!_ok) issues.push(_issueAt("A signal plays cutscene '"+(s.cs||_cc.name||'#1')+"', but none of its shots has 2+ path points \u2014 it will play nothing.", ()=>[o])); } } } }
     for(const o of propModels){ const a=o && o.userData && o.userData.xa; if(!a || !a.on || a.trig!=='signal') continue;
       const tg=o.userData.tag; let wired=false;
       if(tg){ for(const p of propModels){ const ss=p && p.userData && p.userData.signals; if(!ss) continue;
         for(const s of ss){ if(s.target===tg){ wired=true; break; } } if(wired) break; } }
-      if(!wired) issues.push('A Signals-only mechanism can never move \u2014 '+(tg ? ("nothing targets its tag '"+tg+"'.") : 'it has no tag for signals to target.')); }
+      if(!wired) issues.push(_issueAt('A Signals-only mechanism can never move \u2014 '+(tg ? ("nothing targets its tag '"+tg+"'.") : 'it has no tag for signals to target.'), ()=>[o])); }
     // build 1166: a Sketchfab model with no recorded attribution is a LICENSING exposure, not a cosmetic one \u2014
     // Sketchfab downloadable models are typically CC-BY, and CC-BY is only satisfied if the credit ships.
     // (Models placed through the in-editor search always carry one; this catches hand-pasted sketchfab: urls.)
-    { let bare=0; for(const o of propModels){ if(o && o.userData && /^sketchfab:/i.test(String(o.userData.src||'')) && !o.userData.attribution) bare++; }
-      if(bare) issues.push(bare+' Sketchfab model'+(bare>1?'s have':' has')+' no attribution recorded \u2014 CC-BY requires the credit to ship with the level (see Asset credits in the pause menu).'); }
+    { const _bareOf=()=>propModels.filter(o=>o && o.userData && /^sketchfab:/i.test(String(o.userData.src||'')) && !o.userData.attribution);
+      const bare=_bareOf().length;
+      if(bare) issues.push(_issueAt(bare+' Sketchfab model'+(bare>1?'s have':' has')+' no attribution recorded \u2014 CC-BY requires the credit to ship with the level (see Asset credits in the pause menu).', _bareOf)); }
   }catch(e){}
   return issues;
 }
@@ -39615,7 +39850,17 @@ function renderLevelIssues(){
   host.appendChild(head);
   for(const msg of issues){ const d=document.createElement('div');
     d.style.cssText='font-size:11px;color:#ffd9a8;border-left:2px solid rgba(255,180,90,0.6);padding:2px 0 2px 7px;margin:0 0 3px;';
-    d.textContent=msg; host.appendChild(d); }
+    d.textContent=msg;
+    /* build 1300: if the check that raised this knew where to look, the row takes you there. */
+    const _find=_issueFind.get(msg);
+    if(_find){
+      d.style.cursor='pointer'; d.title='Click to select and frame the prop this is about';
+      d.style.borderLeftColor='var(--accent)';
+      const arrow=document.createElement('span'); arrow.textContent=' \u2192'; arrow.style.cssText='color:var(--accent);font-weight:700;';
+      d.appendChild(arrow);
+      d.onclick=()=>{ _edGoToIssue(_find); };
+    }
+    host.appendChild(d); }
 }
 // build 592: attachment authoring lives in the Weapons tab (under the gun framing). Per weapon, per slot:
 // pick the attachment (mounts it live for preview), point it at a custom .glb, and tune its mount offset/rotation/scale.
@@ -41547,7 +41792,8 @@ function renderEditorFields(){
         const lsp=document.createElement('span'); lsp.innerHTML='<b>Lock</b>'; lsp.style.minWidth='56px';
         const lsel=document.createElement('select'); lsel.style.cssText='flex:1;font-size:11px;';
         [['','None'],['red',keyDisplayName('red')],['blue',keyDisplayName('blue')],['gold',keyDisplayName('gold')],['green',keyDisplayName('green')]].forEach(o=>{ const op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if((sel.userData.lockId||'')===o[0]) op.selected=true; lsel.appendChild(op); });
-        lsel.onchange=()=>{ pushUndoSnapshot(); if(lsel.value) sel.userData.lockId=lsel.value; else { delete sel.userData.lockId; delete sel.userData.lockConsume; } delete sel.userData.unlocked; renderEditorFields(); };
+        lsel.onchange=()=>{ _selApply(o=>{ if(lsel.value) o.userData.lockId=lsel.value; else { delete o.userData.lockId; delete o.userData.lockConsume; } delete o.userData.unlocked; }); renderEditorFields(); };   /* build 1299: one key for a whole set of doors */
+        _selBanner(lHost, _selTargets().length, true);   /* build 1299 */
         lr.appendChild(lsp); lr.appendChild(lsel); lHost.appendChild(lr);
         if(sel.userData.lockId){
           const cr=document.createElement('label'); cr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 2px;font-size:11px;color:#9fe6cf;';
@@ -41569,6 +41815,10 @@ function renderEditorFields(){
       // ---- Dialogue (build 695): make this prop a talkable NPC ----
       if(sel){
         const dBody = edFold(behaveHost, 'dialogue', 'Dialogue (NPC)', true, 'Talk to this prop with E — one line per row, with replies and conditions when you want them');
+        /* build 1299: DELIBERATELY primary-only. A character's name and its speech are per-object by
+           nature — thirty NPCs with one name and one script is not something anyone wants by accident.
+           The banner is what makes that a design rather than the silent inconsistency the audit found. */
+        _selBanner(dBody, _selTargets().length, false);
         const nr=document.createElement('div'); nr.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 4px;font-size:11px;color:#9fe6cf;';
         const nsp=document.createElement('span'); nsp.textContent='Name'; nsp.style.minWidth='42px';
         const nin=document.createElement('input'); nin.type='text'; nin.maxLength=40; nin.placeholder='e.g. Old Hermit (optional)'; nin.value=sel.userData.npcName||''; nin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
@@ -42138,11 +42388,37 @@ function renderEditorFields(){
       dreset.onclick=()=>{ pushUndoSnapshot(); WEAPONS[curWep].dmg=GUN_BASE_DMG[curWep]; dinp.value=GUN_BASE_DMG[curWep]; };
       drow.appendChild(dinp); drow.appendChild(dreset); urlHost.appendChild(drow);
       // build 1190: the FULL stat sheet — fire rate, magazine, ammo, spread, reload, pellets — per level.
-      if(!WEAPONS[curWep].melee){
+      {
+        const _isM = !!WEAPONS[curWep].melee;
         const sh2=document.createElement('div'); sh2.className='hint'; sh2.style.margin='10px 0 2px';
         sh2.innerHTML='<b>Stats</b> \u2014 '+wnD+' (saved with the level; blank levels play factory)';
         urlHost.appendChild(sh2);
-        const DEFS=[ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1] ];
+        /* build 1296: the melee toggle. Shown for EVERY weapon — this is the control that turns a renamed
+           SMG into an actual sword, and before this build the whole stat sheet was hidden for melee
+           weapons, so even the crowbar's reach and swing speed were unreachable. */
+        { const r=document.createElement('label'); r.className='row2'; r.style.cssText='margin:2px 0;display:flex;align-items:center;gap:7px;cursor:pointer;';
+          const lb=document.createElement('span'); lb.textContent='Melee weapon'; lb.style.cssText='flex:0 0 108px;font-size:11px;color:#9fc0b8;';
+          const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=_isM; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
+          const nt=document.createElement('span'); nt.className='hint'; nt.style.cssText='flex:1;font-size:10px;';
+          nt.textContent = _isM ? 'Swings instead of firing \u2014 no ammo, no reload.' : 'Swings instead of firing. Ticking this clears the magazine and ammo.';
+          cb.onchange=()=>{ pushUndoSnapshot();
+            const keep={}; for(const s2 of GUN_STAT_KEYS) keep[s2]=WEAPONS[curWep][s2];
+            keep.melee = cb.checked ? 1 : 0;
+            /* a melee weapon has no magazine. Zeroing the AUTHORED stats (rather than overriding them at
+               apply time) keeps the sheet honest about what it will play, and the per-stat reset buttons
+               put the gun back when the box is unticked. */
+            if(cb.checked){ keep.magSize=0; keep.reserve0=0; keep.reserveMax=0; keep.reloadMs=0; }
+            else { const b=GUN_BASE[curWep]; keep.magSize=b.magSize; keep.reserve0=b.reserve0; keep.reserveMax=b.reserveMax; keep.reloadMs=b.reloadMs; }
+            _wepApplyStats(curWep, keep);
+            WEAPONS[curWep].mag = Math.min(WEAPONS[curWep].mag||0, WEAPONS[curWep].magSize||0);
+            WEAPONS[curWep].reserve = Math.min(WEAPONS[curWep].reserve||0, WEAPONS[curWep].reserveMax||0);
+            if(typeof showWeaponModel==='function') try{ showWeaponModel(curWep); }catch(e){}   /* fists vs the model */
+            if(typeof updateHUD==='function') updateHUD();
+            renderEditorFields();   /* the field list below depends on the answer */ };
+          r.appendChild(lb); r.appendChild(cb); r.appendChild(nt); urlHost.appendChild(r); }
+        const DEFS = _isM
+          ? [ ['reach','Reach m',0.1], ['fireRate','Swing interval ms',10] ]
+          : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1] ];
         for(const [sk, lbl, stp] of DEFS){
           const r=document.createElement('div'); r.className='row2'; r.style.margin='2px 0';
           const lb=document.createElement('span'); lb.textContent=lbl; lb.style.cssText='flex:0 0 108px;font-size:11px;color:#9fc0b8;';
@@ -42386,6 +42662,33 @@ function renderEditorFields(){
         const ipl=document.createElement('span'); ipl.textContent='in place'; ipWrap.appendChild(ip); ipWrap.appendChild(ipl);
         row.appendChild(sp); row.appendChild(sel); row.appendChild(spd); row.appendChild(holdWrap); row.appendChild(ipWrap); foldBody.appendChild(row);
       });
+      /* ---- build 1294: per-weapon attack / equip ------------------------------------------------------
+         The taxonomy has ONE `attack` slot, so a character swung a crowbar with its rifle-firing motion.
+         These rows write `attack@<weapon>` into the same clips map; anything left on "Same as attack"
+         resolves to the plain slot, so a character authored before this build is unchanged. */
+      { const wHost = edFold(urlHost, 'pAnimWep', 'Combat — per weapon',
+          false, 'A different attack (and draw) motion for each weapon. Leave a row on \u201cSame as attack\u201d to use the single clip above — that is what every character did before.');
+        for(const _b of WEP_ANIM_SLOTS){
+          const hdr=document.createElement('div'); hdr.className='hint'; hdr.style.margin='6px 0 2px';
+          hdr.innerHTML = '<b>' + (_b==='attack' ? 'Fire / attack' : 'Equip / draw') + '</b> per weapon';
+          wHost.appendChild(hdr);
+          for(const _w of Object.keys(WEAPONS)){
+            const key=_b+'@'+_w;
+            const row=document.createElement('label'); row.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;';
+            const sp=document.createElement('span'); sp.textContent=(WEAPONS[_w] && WEAPONS[_w].name) ? WEAPONS[_w].name : _w;
+            sp.style.cssText='min-width:86px;cursor:pointer;text-decoration:underline dotted;text-decoration-color:#3a5a52;text-underline-offset:2px;'; sp.title='Click to preview this clip';
+            sp.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); if(previewAvatar) setEnemyAnimState(previewAvatar, key); };
+            const sel=document.createElement('select'); sel.id='edPlayerClipW_'+_b+'_'+_w; sel.dataset.state=key;
+            sel.style.cssText='flex:1;min-width:0;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+            sel.onchange=()=>{ if(sel.value) playerModelCfg.clips[key]=sel.value; else delete playerModelCfg.clips[key]; rebuildAvatars(); };   /* an empty pick DELETES the variant rather than storing '' — an empty string is a mapping to a clip that does not exist */
+            const spd=document.createElement('input'); spd.type='number'; spd.min='0.1'; spd.max='4'; spd.step='0.05'; spd.title='Playback speed (1 = normal)';
+            spd.value=String((playerModelCfg.clipSpeed && playerModelCfg.clipSpeed[key]!=null) ? playerModelCfg.clipSpeed[key] : 1);
+            spd.style.cssText='flex:0 0 52px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 4px;font-size:11px;';
+            spd.onchange=()=>{ if(!playerModelCfg.clipSpeed) playerModelCfg.clipSpeed={}; const v=Math.max(0.1,Math.min(4,parseFloat(spd.value)||1)); playerModelCfg.clipSpeed[key]=v; spd.value=String(v); applyAnimSpeedLive(key, v); };
+            row.appendChild(sp); row.appendChild(sel); row.appendChild(spd); wHost.appendChild(row);
+          }
+        }
+      }
       refreshPlayerClipOptions();
       // third-person camera framing: side / distance / height. Live-applied + persisted.
       { const tpHdr=document.createElement('div'); tpHdr.className='hint'; tpHdr.innerHTML='<b>Third-person camera</b>'; tpHdr.style.margin='8px 0 2px'; urlHost.appendChild(tpHdr);
@@ -42646,18 +42949,21 @@ function renderEditorFields(){
         const tagObj=(editorActive==='props' && editorTargets.props.obj) ? editorTargets.props.obj() : null;
         if(tagObj){
           if(typeof _lgRefreshDatalists==='function') _lgRefreshDatalists();
+          _selBanner(th, _selTargets().length, true);   /* build 1299 */
           const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;align-items:center;margin:2px 0 7px;';
           const spn=document.createElement('span'); spn.textContent='Tag'; spn.title='Signals and the logic graph find this prop by its tag'; spn.style.cssText='min-width:56px;font-size:11px;color:#9fe6cf;';
           const tin=document.createElement('input'); tin.type='text'; tin.placeholder='e.g. vaultDoor'; tin.value=tagObj.userData.tag||'';
           tin.style.cssText='flex:1;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
           tin.setAttribute('list','lgTagList');
-          tin.onchange=()=>{ pushUndoSnapshot(); const v=tin.value.trim(); if(v) tagObj.userData.tag=v; else delete tagObj.userData.tag; if(typeof _levelDirty!=='undefined') _levelDirty=true; renderEditorFields(); };
+          /* build 1299: the whole selection. A signal resolves a tag to a LIST, so tagging thirty crates
+             at once is the point of the field, not a corner of it. */
+          tin.onchange=()=>{ const v=tin.value.trim(); _selApply(o=>{ if(v) o.userData.tag=v; else delete o.userData.tag; }); renderEditorFields(); };
           // build 1035: interactability is ONE visible checkbox — it used to hide inside the
           // mechanism trigger dropdown, where even the engine's author lost it.
           const iw=document.createElement('label'); iw.title='The player can press E on this prop: it prompts \u201cActivate\u201d and fires its On-E signals. No mechanism needed \u2014 pair it with a signal like On E \u2192 Toggle \u2192 this.';
           iw.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:4px;font-size:11px;color:#9fe6cf;cursor:pointer;';
           const icb=document.createElement('input'); icb.type='checkbox'; icb.checked=!!tagObj.userData.interact; icb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
-          icb.onchange=()=>{ pushUndoSnapshot(); if(icb.checked) tagObj.userData.interact=true; else delete tagObj.userData.interact; if(typeof _levelDirty!=='undefined') _levelDirty=true; };
+          icb.onchange=()=>{ _selApply(o=>{ if(icb.checked) o.userData.interact=true; else delete o.userData.interact; }); };   /* build 1299 */
           iw.appendChild(icb); iw.appendChild(document.createTextNode('Interactable (E)'));
           row.appendChild(spn); row.appendChild(tin); row.appendChild(iw); th.appendChild(row);
           // build 1252: per-emitter effect controls — multipliers over the preset, Reset returns to it

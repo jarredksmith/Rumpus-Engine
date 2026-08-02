@@ -31,6 +31,9 @@ assert(/_cineAudioUrl = \(typeof data\.audio==='string'\) \? data\.audio : cineC
 
 // --- level check, executed ---
 const li = new Function('propModels','pickupSpots','POWERUP_KINDS','keyDisplayName','pickupsOn','audioZones','cineCfg',
+  // build 1300: levelIssues records WHERE each issue is, beside the message. This rig runs it in an
+  // empty scope, so it supplies an inert recorder — the locators are build 1300's own test's business.
+  'const _issueFind = new Map(); const _issueAt = (m)=>m;\n' +
   extractFunction('levelIssues') + '\nreturn levelIssues();');
 const propsFor = (cs) => [{ userData:{ signals:[{ when:'interacted', do:'cutscene', cs }] } }];
 const base = { on:false, path:[[0,0,0],[1,1,1]], shots2:[], others:[ { name:'Boss', path:[[1,1,1],[2,2,2]], shots2:[] } ] };

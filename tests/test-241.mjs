@@ -40,6 +40,9 @@ assert(/head\.className='edSecHead'/.test(src.slice(src.indexOf('function edFold
 
 // --- 340: levelIssues, executed against fixtures ---
 const li = new Function('propModels','pickupSpots','POWERUP_KINDS','keyDisplayName','pickupsOn','audioZones','cineCfg',
+  // build 1300: levelIssues records WHERE each issue is, beside the message. This rig runs it in an
+  // empty scope, so it supplies an inert recorder — the locators are build 1300's own test's business.
+  'const _issueFind = new Map(); const _issueAt = (m)=>m;\n' +
   extractFunction('levelIssues') + '\nreturn levelIssues();');
 const PK = { key_red:{ key:'red' }, health:{} };
 const KDN = c => c.toUpperCase()+' KEY';

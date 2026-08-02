@@ -18,7 +18,8 @@ assert(/n:\(o\.userData\.nid\|\|''\), s:\(o\.userData\.src\|\|''\)/.test(pack), 
 assert(/r:\[\+o\.rotation\.x\.toFixed\(3\),\+o\.rotation\.y\.toFixed\(3\),\+o\.rotation\.z\.toFixed\(3\)\]/.test(pack), 'full rotation (pitch/roll ride the arc)');
 assert(/cl:_climbCode\(\), c:_packCar\(\), ac:_actNetCode, aq:_actNetSeq \}\];/.test(src), "the host's own snapshot entry carries it");
 assert(/cl:\(rp\.cl\|\|0\), c:\(rp\.car\|\|undefined\) \}\); \}/.test(src), '...and relays every client\'s');
-assert(/cl:_climbCode\(\), c:_packCar\(\), ac:_actNetCode, aq:_actNetSeq \}\); \}catch\(e\)\{\}/.test(src), 'the client state packet carries it');
+// build 1298: the client state packet is DROPPABLE — the tail is the backpressure call, not a bare try/catch.
+assert(/cl:_climbCode\(\), c:_packCar\(\), ac:_actNetCode, aq:_actNetSeq \}, 400\);/.test(src), 'the client state packet carries it');
 assert(/rp\.car = msg\.c\|\|null;/.test(src) && /rp\.car=pl\.c\|\|null;/.test(src), 'both receive paths store it');
 
 // ---- rendering: the car, not the character ----

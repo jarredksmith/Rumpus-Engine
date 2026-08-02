@@ -4368,6 +4368,243 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The Level Check takes you to the problem (build 1300 — editor audit 4.3, HIGH)
+
+> `renderLevelIssues`: `d.textContent = msg`, no handler. *"A signal targets tag 'vaultDoor', but no prop
+> carries that tag"* is a great message with nowhere to click. The outliner already searches by tag and
+> `selectAssetInstances` already knows how to select-and-frame — the two are three lines apart.
+
+**The locator rides BESIDE the message rather than replacing it.** `levelIssues()` returns an array of
+strings, and **ten test harnesses plus the publish preflight** consume it that way; turning it into objects
+to carry one extra field would have rewritten all of them for no gain. So the check that RAISES an issue
+registers how to find it, keyed by the message it just produced, and the panel looks it up. Two identical
+messages share a locator, which is correct — they name the same tag.
+
+Seven raise-sites now point somewhere: the four signal faults (the prop carrying the signal is the loop
+variable, right there), both cutscene faults, and the CC-BY attribution one — which registers a **finder**
+rather than a snapshot, so it re-resolves the actual props at click time. The rest are level-wide; a light
+budget or a missing key pad has no single prop to blame, and those stay plain rows. **A dead-looking click
+is worse than none.**
+
+**It resolves at CLICK time, not at check time.** A prop can be deleted between opening the panel and
+pressing the arrow, and *"that prop is no longer in the level"* is a better answer than selecting a ghost. A
+throwing resolver is a refusal, not a crash out of a click handler.
+
+Verified end to end in the real editor by authoring the audit's exact fault — a signal pointing at
+`vaultDoor` with no prop carrying it. The message appears, the row is clickable with an arrow, pressing it
+selects and frames the culprit and switches to the props tab; deleting the prop first leaves the click
+harmless.
+
+**Five old harnesses broke, and correctly.** 241/246/248/252/254 execute `levelIssues` in an EMPTY scope, so
+a new module-level dependency is genuinely missing there — they now supply an inert recorder. That is the
+suite working: a rig that evaluates a function outside the file has to be told when the function's
+dependencies change.
+
+## The inspector ignored the selection (build 1299 — editor audit 4.2, CRITICAL)
+
+Verified still live before touching it. The audit's words:
+
+> The gizmo is group-aware, the material fold is group-aware and *says so*, and the tag field, interact,
+> signals, name and dialogue are all primary-only with no indication. Two different rules for one selection,
+> in adjacent folds. A creator who tags 30 crates one at a time will conclude the editor is fine; a creator
+> who assumes the fields follow the selection will silently corrupt their level.
+
+**The fix is not "make everything group-aware".** Some of those fields are per-object by nature. It is that
+every field states which rule it follows:
+- **Mark-the-set fields** — tag, interactable, lock — apply to the whole selection. For `tag` that was always
+  the intent: a signal resolves a tag to a **list** of props at runtime, so one tag across thirty crates is
+  the normal authoring move, not an edge case. Thirty doors and one key, likewise.
+- **Per-object fields** — an NPC's name and its dialogue script — stay on the primary and now **say so**.
+  Thirty characters with one name and one speech is not something anyone wants by accident.
+
+*Silent inconsistency was the bug; labelled asymmetry is a design.* Every fold that can face a
+multi-selection now carries a banner naming its rule, in a different colour per rule — the same colour for
+opposite rules would have been the original bug in a new costume.
+
+`_selApply` takes **one undo snapshot per gesture**, not per object: per-object would cost thirty Ctrl+Z
+presses to undo one edit. It also keeps going past a throwing field handler, so a bad prop cannot leave a
+selection half-applied. And `_selTargets` deliberately does NOT filter to material primitives the way
+`_matTargets` does — an imported GLB carries tags, locks and interact flags just like a box.
+
+Measured through the real editor (`toggleEditor` → Build mode → select five props): the banner reads
+*"Editing 5 selected props — changes apply to all"*, and one tag edit tagged **five**.
+
+## The 20Hz stream had no brakes (build 1298)
+
+The peer connection is `reliable:true` — ordered SCTP — and the host fans a world snapshot to every client
+20 times a second, with the client answering at the same rate. Across **53 `send` sites, nothing had ever
+looked at `bufferedAmount`.**
+
+On a link that cannot drain 20 Hz, a reliable channel does not drop packets — it **QUEUES them, without
+bound**. Every later message (a hit, a chat line, the next keyframe) waits behind the backlog, so the
+connection does not degrade gracefully: it slides into ever-growing latency and never recovers. That is the
+classic *"everything went to slow motion and stayed there"* multiplayer failure, and it is **invisible in
+every LAN test**, because the queue never builds.
+
+**A state snapshot is the one message safe to drop** — the next one supersedes it. Hits, chat, joins, the
+level transfer and prop sync are semantic events and still send unconditionally; `test-1298` pins that
+`_sendDroppable` appears at exactly two call sites and nowhere else, because a silently-skipped event is a
+far worse bug than the one this fixes.
+
+**The threshold is stated in SNAPSHOTS, not bytes**, because bytes are a property of the level. Measured on
+the stock level (1 enemy, 59 props): keyframe **557 B**, delta **325 B**, ~6.8 KB/s — and that is the floor,
+a populated match is many times it. So the limit is `max(16 KB, payloadBytes × 8)`: eight snapshots deep is
+**400 ms of backlog at 20 Hz whatever the level weighs**, with a floor so a small level does not trip on
+ordinary jitter.
+
+Two details:
+- **A skip forces the next snapshot to be a keyframe.** Build 1197's snapshots are deltas against one shared
+  previous state, so a client that misses one is stale until the next keyframe — up to nine snapshots
+  (450 ms). `_snapN = 0` makes the next one full (the counter is incremented *before* the modulo, which the
+  test executes rather than assumes), and because every client reads the same payload, one keyframe repairs
+  all of them at once. 450 ms → 50 ms.
+- **A transport that will not answer is treated as HEALTHY.** `_netBuffered` returns 0 on a missing channel,
+  a non-numeric answer or a throwing getter. Guessing the other way stops a connection sending, which is
+  worse than the queue this exists to bound.
+
+**One earlier claim retired while checking this.** The open work listed "reliable-ordered WebRTC transport"
+as a heavyweight; the channel already *is* reliable and ordered (`p.connect(host, { reliable:true })`). The
+real gap was never ordering — it was that nothing bounded the queue that ordering creates.
+
+## A bot holding a sword shot bullets (build 1297)
+
+Checked immediately after 1296, because that build made a configuration reachable that might be broken
+downstream — and it was, and it had been for a long time. A PvP bot's engagement range came from the
+DIFFICULTY table (`D.range`) and its shot from `remoteFire`, which spawns a tracer and a hit for every peer.
+Its stand-off came from `prefRange`, 6-15 m — a rifle's answer. So a bot with a crowbar stood at rifle range
+landing **invisible shots** while holding a blunt object, and never closed.
+
+This predates 1296: the bot weapon pick ends `|| 'crowbar'`, so a host who allows nothing else already got
+melee bots. 1296 made it one checkbox away in every level, which is why it was worth finding now.
+
+Now `prefRange` is the weapon's own reach × 0.7, the attack gate is the reach, and the melee branch spawns
+no projectile — just the attack pose, which **build 1294 resolves to `attack@<weapon>`**, so the creator's
+own swing clip plays with no extra plumbing. Three builds composing without any of them knowing about the
+others is the payoff for keeping each one's mechanism generic.
+
+**Damage deliberately stays on the difficulty table.** A bot's damage has never come from its weapon — a
+sniper bot and a pistol bot hit for the same — and making melee the one exception would be a stealth
+rebalance of every existing match. Only the RANGE and the DELIVERY changed.
+
+**The test found a real hole in my first draft, and it is the interesting part.** `prefRange` had a floor of
+1.2 m and `GUN_STAT_LIM.reach` a floor of 0.5, so a creator could author a 0.5 m weapon whose bots close to
+1.2 m — *outside their own reach* — and swing forever. Two independent constants that had to satisfy an
+inequality nobody had written down. They are now declared together as `BOT_MELEE_REACH_MIN = 1.2` and
+`BOT_MELEE_MIN = 1.0`, with the inequality stated where they live, and `test-1297` sweeps the ENTIRE
+authorable range rather than three hand-picked values to prove `max(1.0, 0.7r) < r` for every r. The
+original three-value spot check passed; the sweep is what caught it.
+
+## Melee is a per-weapon stat, so any slot can be a sword (build 1296)
+
+Following the same report as 1294/1295: a creator wants *a pistol, a sword, an axe and a rifle*. Build 1240
+answered that report with **renaming** and 1190 made the stat sheet **authorable** — but `melee` and `reach`
+were in neither list, so the SMG could be renamed SWORD and it still fired bullets. Exactly ONE slot shipped
+as a usable melee weapon (`crowbar`; `hands` is the bare-fist loadout), so **the sword and the axe were
+competing for the same slot.**
+
+**Adding the two keys to 1190's `GUN_STAT_KEYS` array IS the feature.** The only-changed serializer, all
+three loaders, the per-stat reset-to-factory buttons and the clamps already operate on any key in it — that
+is what build 1190 was for, and it paid off here. `melee` rides as 0/1 so it needs no separate boolean path;
+every reader already asks `if(w.melee)`.
+
+Measured live, authoring two melee weapons through the real `_wepApplyStats` and firing the real `shoot()`
+at a crate:
+```
+SWORD (smg)      melee 1  reach 3.2   55 damage
+AXE (shotgun)    melee 1  reach 3.8  110
+CROWBAR          melee 1  reach 3.4   60   (unchanged)
+RIFLE            melee 0              12   (still a gun, still the bullet path)
+```
+
+Two details are load-bearing:
+- **The live values are NORMALISED where the baseline is captured.** `melee` ships as `true`/undefined and
+  `reach` is absent on every gun; the serializer emits a stat whenever it differs from its baseline, so
+  leaving `true` beside a baseline of `1` would write a phantom melee override into every level ever saved.
+  A gun's baseline `reach` is the crowbar's 3.4, so flipping the flag yields a usable weapon rather than one
+  with zero reach.
+- **The editor's stat sheet was hidden outright for melee weapons** (`if(!WEAPONS[curWep].melee)`), which is
+  why even the crowbar's own reach and swing speed were unauthorable. It now shows for every weapon, with
+  the field list switching: reach + swing interval for a melee weapon, the seven gun stats otherwise.
+
+**And it exposed a real pre-existing bug.** `applyAttachments` did `Math.max(1, Math.round(base.magSize *
+r.magMul))` — build 583, written when every weapon had a magazine. So the crowbar and the fists were handed
+a **1-round magazine**, which then differed from the captured baseline and made `serializeLevel` write a
+spurious `st:{magSize:1}` into **every level saved since build 1190**. It matters more now: a creator sets
+their sword's magazine to 0 and this put it straight back. Now `(base.magSize > 0) ? Math.max(1, …) : 0` —
+the floor still does its real job (a multiplier must never round a real magazine away) but does not invent
+one. `GUN_STAT_LIM.pellets` moved from `[1,24]` to `[0,24]` for the same reason.
+
+**Three probe runs were lost to the rig before any of this measured, and the third is the one to remember:
+the pose must be set a FRAME BEFORE the swing.** `meleeAttack` takes its direction from
+`camera.getWorldDirection`, and the camera only picks up a new `player.yaw` in the frame loop — so teleport
+and swing in one synchronous block and the swing aims wherever the camera was already looking, which reads
+*exactly* like "the weapon does no damage". (The other two: the stock level ships no dynamic props at all,
+and the prop I first repurposed is a 16-unit floor slab, so the ray started inside it — front faces only,
+no hit.) None of the three looks like a rig failure; all three read as the feature being broken, which was
+the answer I was already expecting.
+
+## One attack animation for the whole arsenal (build 1294)
+
+Reported: *"the editor doesn't allow different attack animations per weapon. I have to choose one animation
+for the left mouse button and it is used for every weapon. If the player switches from a pistol, to a sword,
+to an axe, to a rifle, those should all be different."* Correct — `ANIM_SLOTS` carried ONE `attack` slot and
+all three animators (local avatar, remote player, bot) asked for it by that literal name.
+
+**A variant is the slot name with the weapon appended: `attack@crowbar`.** That choice is the whole reason
+this is small — `clips`, `clipSpeed`, `clipHold` and `clipInPlace` are plain maps keyed by slot string, so a
+variant rides through the character config, the save file and the network snapshot with **no format change**;
+`myCharCfg` already copies the whole `clips` object, so a co-op peer sees your sword swing without a protocol
+bump, and `w:rp.wep` was already in the snapshot so every animator knows which weapon to ask for.
+
+Four decisions:
+- **The resolver is one line.** `_stateActionKey` walks `_ANIM_FALLBACK`; it now peels a `@` qualifier first,
+  so `attack@pistol` → `attack` → `aim` → `idle` with no new table entries. **An unmapped variant therefore
+  resolves to exactly what it resolved to before this build** — that is the compatibility argument, and it
+  is executed rather than asserted.
+- **Explicit only, no name auto-match.** A clip called "SwordSwing" guessing its way onto a slot is the kind
+  of magic that cannot be debugged. A variant becomes an action only when a creator maps it.
+- **Loop mode comes from the BASE slot.** `attack@crowbar` is a one-shot because `attack` is one. Making each
+  variant restate it is the version that fails silently on the twentieth weapon.
+- **`equip` gets it too**, using the weapon being switched TO — drawing a sword is not drawing a pistol.
+  `WEP_ANIM_SLOTS` is `['attack','equip']`, and that list is a UI budget, not a capability: the resolver is
+  generic, so `walkFire@sniper` works the moment anyone maps it.
+
+Verified through the REAL editor path (`toggleEditor` → `setEditorMode('player')`), because builds 1266/1268
+shipped a fix whose call site sat in a camera branch no creator reaches — 16 selects present, correct state
+keys, and the live animator asking for `attack@pistol` / `attack@crowbar` / `attack@rifle` as the weapon changes.
+
+## Melee could never break a prop in third person (build 1295)
+
+Reported in the same breath: *"if I give the player a sword as a melee weapon, I can't break/explode props if
+I swing at it."* Three faults in one block of `meleeAttack`, all from it having been written for a
+first-person solo punch and never revisited. **The enemy cone twenty lines above already does all three
+things right**, which is exactly what made the difference invisible: enemies took the hit, props did not.
+
+1. **It cast from the CAMERA and range-limited on the distance from the CAMERA.** The reach is 2.9 m and the
+   third-person boom sits 4.2 m behind, so anything within reach of the *player* is at least 4.2 m from the
+   camera. Measured on one crate 1.5 m in front:
+   ```
+                  camera->prop   player->prop   old test
+   first person       1.5            1.5          HITS
+   third person       5.7            1.5          MISSES
+   ```
+   **`tpDist > MELEE_RANGE` is the entire bug in one comparison** — no prop, at any distance, in any third-
+   person level, has ever been breakable by a swing.
+2. **It aimed through screen centre**, ignoring the cursor-aim correction its own cone applies (builds
+   874/1103), so in the twin-stick and chase-cursor views it swung wherever the camera pointed.
+3. **A client could not do it at all** — `NET.mode!=='client'` skipped the block, while the bullet path has
+   always relayed `propHit` to the host. In co-op the host's swing worked and a guest's did nothing, which
+   nobody reports as a bug; they just conclude melee is decorative.
+
+After: the real swing deals the crowbar's full 60 damage in both views. The swing gets **its own** module-scope
+raycaster, because the reach has to be its `far` and setting that on the shared `raycaster` would leak the
+limit into a dozen other systems.
+
+**Two probe runs were lost to the rig, both worth remembering.** The stock level ships NO dynamic props, so
+the first run measured nothing; and the prop I then repurposed is a 16-unit floor slab, so the ray started
+*inside* it and three reported no hit at all (front faces only). Neither failure looks like a rig failure —
+both read as "the feature is broken", which is the answer I was already expecting.
+
 ## The editor panel stopped rebuilding what nobody can see (build 1293)
 
 Build 1291 made undo fast and named what was left: `serializeLevel` and `renderEditorFields`. Measured,

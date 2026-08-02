@@ -11,8 +11,10 @@ assert(/localStorage\.getItem\('breach_botdiff'\)/.test(src), 'persisted tier lo
 const ub = extractFunction('updateBots');
 assert(/const D=botDiff\(\)/.test(ub), 'updateBots resolves the tier');
 assert(/spd=SPEED\*D\.spd/.test(ub), 'move speed uses tier');
-assert(/fdist<D\.range/.test(ub), 'engagement range uses tier');
-assert(/b\.fireCd=D\.cdMin\+Math\.random\(\)\*D\.cdRand/.test(ub), 'fire cooldown uses tier');
+// build 1297: both still come from the tier for a GUN — a melee weapon uses its own reach and swing
+// interval instead, which is the one thing about a bot that its weapon now decides.
+assert(/const _bRange = _bMelee \? Math\.max\(1, \(_bw\.reach \|\| 3\.4\)\) : D\.range;/.test(ub), 'engagement range uses tier');
+assert(/b\.fireCd = _bMelee \? Math\.max\(0\.25, \(_bw\.fireRate\|\|500\)\/1000\) : \(D\.cdMin\+Math\.random\(\)\*D\.cdRand\);/.test(ub), 'fire cooldown uses tier');
 assert(/D\.spread/.test(ub), 'aim spread uses tier');
 assert(/Math\.random\(\)<D\.hit/.test(ub), 'hit chance uses tier');
 assert(/D\.dmgMin\+Math\.random\(\)\*D\.dmgRand/.test(ub), 'damage uses tier');

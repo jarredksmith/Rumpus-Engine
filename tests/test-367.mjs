@@ -8,7 +8,7 @@ const src = gameSource();
 // ---- the one-shot override + triggers ----
 assert(/function playOwnAnim\(slot, dur\)\{ _ownEvt = \{ slot, until: performance\.now\(\) \+ \(dur\|\|300\) \}; \}/.test(src), 'playOwnAnim sets a timed slot override');
 const sw = extractFunction('switchWeapon');
-assert(/playOwnAnim\('equip', 320\)/.test(sw), 'weapon swap -> equip');
+assert(/playOwnAnim\(_wepAnimSlot\('equip', key\), 320\)/.test(sw), 'weapon swap -> equip');   // build 1294: per weapon, using the weapon being drawn — the plain 'equip' clip is still what an unmapped variant resolves to
 const me = extractFunction('meleeAttack');
 assert(/const _mslot = wep \? \(wep\.dmg>=50\?'meleeHeavy':'meleeCombo'\) : 'meleeLight';/.test(me), 'melee -> heavy for the crowbar, combo for light weapons, light for the bare key (build 933)');
 const tg = extractFunction('throwGrenade');

@@ -9,6 +9,9 @@ assert(/a\.trig!=='interact'\) continue;/.test(extractFunction('checkProximity')
 
 // level check rule, executed: an unwired signals-only mech is flagged; a wired one is clean
 const li = new Function('propModels','pickupSpots','POWERUP_KINDS','keyDisplayName','pickupsOn','audioZones','cineCfg',
+  // build 1300: levelIssues records WHERE each issue is, beside the message. This rig runs it in an
+  // empty scope, so it supplies an inert recorder — the locators are build 1300's own test's business.
+  'const _issueFind = new Map(); const _issueAt = (m)=>m;\n' +
   extractFunction('levelIssues') + '\nreturn levelIssues();');
 const run = (props) => li(props, [], {}, c=>c, true, [], { on:false });
 const mech = (tag) => ({ userData:{ tag, xa:{ on:true, trig:'signal' } } });
