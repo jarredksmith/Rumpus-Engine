@@ -4231,6 +4231,44 @@ Four call sites share it, not two: the AO G-buffer and the velocity pass each sw
 viewmodel scenes. Three pins moved (1152, 1158, 1168), each an executing rig that needed the predicate
 lifted from real source rather than restated.
 
+## The bake was occlusion applied as albedo (build 1286)
+
+The per-vertex sky-visibility bake wrote its result into the `color` attribute and set
+`vertexColors = true`. **Verified against the real r149 build**: `<color_fragment>` sits at index 2327 of
+`ShaderLib.physical.fragmentShader` and `<lights_fragment_begin>` at 2707 — so `diffuseColor.rgb *= vColor`
+ran BEFORE any lighting, which means a sky-visibility term was multiplying the surface's ALBEDO and
+therefore attenuating **direct sunlight**.
+
+Wrong three times over: the shadow map already answers direct occlusion, SSAO applies a contact term again
+at composite, and a vertex at 50% sky visibility was additionally losing 32% of its direct sun
+(`0.35 + 0.65*0.5 = 0.675`).
+
+Occlusion is an INDIRECT-ONLY term, which is exactly how three treats its own `aoMap`: `<aomap_fragment>`
+(index 2806, after every lighting chunk) multiplies `indirectDiffuse` and `indirectSpecular` and never
+touches albedo. The bake could not USE `aoMap` — that needs a uv2 an arbitrary GLB does not have, which is
+the reason the per-vertex path exists at all — so it borrows the same position via `onBeforeCompile`.
+
+Three things in the patch are load-bearing:
+- **It CHAINS any existing `onBeforeCompile`.** Build 1145's object-space detail and `floorMat`'s paint
+  splat both use that hook; clobbering one silently removes a whole subsystem. A throwing predecessor is
+  caught, too — the bake must not depend on someone else's code succeeding.
+- **Applied once per material** (`_bakeOccPatched`), or the `replace` would stack.
+- **`customProgramCacheKey` composes** rather than overwriting, so a material carrying both patches is
+  still one program per combination and not one per material.
+
+`test-1286` applies the patch to the REAL shader source and asserts both replaces LAND — a `replace` that
+silently misses is how this file has twice lost a subsystem, and it fails as a plausible-looking frame
+rather than an error. It also pins the ordering (the multiply must fall after `lights_fragment_end`, or
+`indirectDiffuse` does not exist yet) and the `USE_COLOR` guard.
+
+**A regex trap worth remembering: `indirectDiffuse` contains `directDiffuse` as a substring.** The first
+draft's "never touches the direct terms" assertion was matching the indirect ones and failing. Match the
+full property path.
+
+**Not capture-verified.** The shader maths and the chunk ordering are proven against the real build, but
+what this looks like needs a browser pass: interiors should get DARKER indirect and keep their direct
+sunlight, so a sunbeam through a doorway should read stronger than before while the shadowed corners hold.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

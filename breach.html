@@ -9537,6 +9537,40 @@ function _bakeVisAt(px, py, pz, nx, ny, nz, self){
 function requestSceneBake(){ _bakeWant = true; _bakeJob = null; }
 function unbakeScene(){ _bakeWant = false; _bakeJob = null; _bakeDoneN = -1; _bakeDoneSig = -1;
   for(const m of _bakeMats){ try{ m.vertexColors = false; m.needsUpdate = true; }catch(e){} } _bakeMats.clear(); }
+// ---------- build 1286: THE BAKE IS OCCLUSION, NOT ALBEDO ----------
+// The per-vertex sky-visibility bake wrote its result into the `color` attribute and set
+// `vertexColors = true`. Verified against the real r149 build: `<color_fragment>` sits at index 2327 of
+// ShaderLib.physical.fragmentShader and `<lights_fragment_begin>` at 2707 — so `diffuseColor.rgb *= vColor`
+// runs BEFORE any lighting, which means a sky-visibility term was multiplying the surface's ALBEDO and
+// therefore attenuating DIRECT SUNLIGHT as well as indirect.
+//
+// That is wrong three times over. The shadow map already answers direct occlusion; SSAO applies a contact
+// term again at composite; and a vertex at 50% sky visibility was additionally losing 32% of its direct sun
+// (0.35 + 0.65*0.5 = 0.675). Occlusion is an INDIRECT-ONLY term — which is exactly how three treats its own
+// `aoMap`: `<aomap_fragment>` (index 2806, after all the lighting chunks) multiplies `indirectDiffuse` and
+// `indirectSpecular` and never touches albedo. The bake could not USE aoMap — that needs a uv2 an arbitrary
+// GLB does not have, which is why the per-vertex path exists at all — so it borrows the same position.
+//
+// The patch CHAINS any existing onBeforeCompile rather than replacing it: build 1145's object-space detail
+// and floorMat's paint splat both use that hook, and clobbering one silently removes a whole subsystem.
+// Applied once per material (`_bakeOccPatched`), because re-patching would stack the replace.
+const _bakeOccPatched = new WeakSet();
+function _bakeOccludeIndirect(m){
+  if(!m || _bakeOccPatched.has(m)) return;
+  _bakeOccPatched.add(m);
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = function(sh, renderer){
+    if(prev) try{ prev.call(this, sh, renderer); }catch(e){}
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <color_fragment>',
+        '/* build 1286: vColor is the sky-visibility BAKE, not albedo — applied to indirect below */')
+      .replace('#include <aomap_fragment>',
+        '#include <aomap_fragment>\n#ifdef USE_COLOR\n\treflectedLight.indirectDiffuse *= vColor;\n\treflectedLight.indirectSpecular *= vColor;\n#endif');
+  };
+  // three compiles a program per distinct key; without this every baked material would get its own.
+  const pk = m.customProgramCacheKey;
+  m.customProgramCacheKey = function(){ return 'bakeOcc|' + (pk ? pk.call(this) : ''); };
+}
 function _bakeCollect(){
   const meshes = [];
   for(const c of colliders){ const u = c.userData;
@@ -9594,7 +9628,7 @@ function _bakeTick(){
     if(J.vi >= n){
       col.needsUpdate = true;
       const ms = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for(const m of ms){ if(m){ m.vertexColors = true; m.needsUpdate = true; _bakeMats.add(m); } }
+      for(const m of ms){ if(m){ m.vertexColors = true; _bakeOccludeIndirect(m); m.needsUpdate = true; _bakeMats.add(m); } }
       J.mi++; J.vi = 0;
     }
   }
@@ -29291,7 +29325,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1285 · 2026-08-02';
+const BUILD_VERSION = 'build 1286 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
