@@ -2,7 +2,7 @@
 // model upload became a shared renderUploadRow + _uploadAsset(type) path; the same magic-byte
 // discipline extends to images (PNG/JPEG/WebP) and audio (MP3/OGG/WAV), each with its own inert
 // hosting folder. flashBigToast is a loud, animated confirmation for a deliberate action.
-import { gameSource, html, assert, eq, done } from './harness.mjs';
+import { gameSource, html, extractFunction, assert, eq, done } from './harness.mjs';
 import { readFileSync } from 'fs';
 const src = gameSource();
 const up  = readFileSync(new URL('../server/api/upload.php', import.meta.url), 'utf8');
@@ -37,8 +37,8 @@ assert(/fetch\(_commApi\(\)\+'upload\.php\?type='\+type\+'&name='/.test(src), 't
 assert(/renderUploadRow\(matHost, 'texture', \(url\)=>\{[\s\S]{0,220}?applyPropTexture\(o, url\)/.test(src),
   'the texture panel gets an Upload image control that applies to the selection');
 // sound: a per-slot upload inside the shared _sndRow helper (covers shoot/reload/turret/music/…)
-const snd = src.match(/function _sndRow\(label, get, set\)\{[\s\S]*?return row;\n\}/)[0];
-assert(/renderUploadRow\(row, 'sound', \(url\)=>\{ inp\.value=url; set\(url\);/.test(snd),
+const snd = extractFunction('_sndRow');   /* build 1149's rule: brace-match rather than pin a window; build 1305 gave the row a 4th `save` param */
+assert(/renderUploadRow\(row, 'sound', \(url\)=>\{ inp\.value=url; set\(url\); _save\(\);/.test(snd),
   'every sound field gains an Upload sound control that fills + applies the slot');
 assert(/loadSound\(url, mark\)/.test(snd), '...and previews/loads the uploaded sound');
 

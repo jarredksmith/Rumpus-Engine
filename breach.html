@@ -6650,6 +6650,37 @@ function playSample(url, opts){
     src.connect(out); src.start(); return true; }catch(e){ return false; }
 }
 function preloadCustomSounds(){ const s=curSounds(); if(!s) return; if(s.shoot){ for(const k in s.shoot) loadSound(s.shoot[k]); } if(s.reload && typeof s.reload==='object'){ for(const k in s.reload) loadSound(s.reload[k]); } else loadSound(s.reload); if(s.enemyKill){ for(const k in s.enemyKill) loadSound(s.enemyKill[k]); } for(const k of ['explode','coin','hit','kill','hurt','turret','carEngine','carBrake','carSkid','carBoost','pickup','jump']) loadSound(s[k]); }
+// ---- build 1305: a prop's OWN impact sound ---------------------------------------------------------
+// REPORTED: "there needs to be a way to add a per prop hit sound, so if I'm hitting a wooden crate with an
+// axe, it sounds like the box is hit with an axe; if I hit a metal barrel, it should sound like metal
+// hitting metal." So it is one url per prop (`userData.hitSnd`), LEVEL data rather than a device setting —
+// the material of a crate belongs to the crate, and it has to travel with the level to anyone who plays it.
+const PROP_SND_GAP = 55;      // ms before the SAME prop may sound again
+const PROP_SND_BURST = 4;     // starts allowed across DIFFERENT props inside one window
+const PROP_SND_WINDOW = 60;
+let _propSndT = 0, _propSndN = 0;
+function playPropHitSound(obj, pt){
+  if(!obj || !obj.userData || !obj.userData.hitSnd) return false;
+  if(obj.userData.breakable===false) return false;   // it takes no damage, so nothing landed on it
+  const now = performance.now();
+  /* An SMG fires every ~90 ms and a shotgun lands 8 pellets in ONE frame, so without a per-prop gap a
+     single trigger pull starts eight copies of the same buffer at the same instant — which is not eight
+     hits, it is one hit 18 dB louder with comb filtering. */
+  if(now - (obj.userData._hitSndT||0) < PROP_SND_GAP) return false;
+  /* And an explosion damages EVERY breakable prop in its radius in one pass, so a warehouse of thirty
+     crates would start thirty buffers on the same frame. The burst is capped ACROSS props as well as
+     within one. */
+  if(now - _propSndT > PROP_SND_WINDOW){ _propSndT = now; _propSndN = 0; }
+  if(_propSndN >= PROP_SND_BURST) return false;
+  _propSndN++;
+  obj.userData._hitSndT = now;
+  /* the radius damage above passes no contact point, so the prop's own position is the fallback — a
+     positioned clip pans and attenuates (build 1208), and `null` would put it flat in both ears. */
+  return playSample(obj.userData.hitSnd, { at: pt || obj.position, vary: 0.08 });
+}
+// build 1305: warm every prop's impact clip at deploy. playSample RETURNS FALSE when the buffer has not
+// decoded yet, so without this the first axe swing at every crate in the level is silent.
+function preloadPropHitSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const u=o&&o.userData&&o.userData.hitSnd; if(u) loadSound(u); } }
 // build 750: preload every signal's custom clip (do:'sound') so a light switch / button plays on the first press, not the second.
 function preloadSignalSounds(){ if(typeof propModels==='undefined') return; for(const o of propModels){ const sigs=o&&o.userData&&o.userData.signals; if(!sigs) continue; for(const s of sigs){ if(s.do==='sound' && s.sound) loadSound(s.sound); } } }
 
@@ -10585,12 +10616,23 @@ function applyAnimSpeedLive(state, spd){
   if(typeof previewAvatar!=='undefined' && previewAvatar) apply(previewAvatar.userData.visual || previewAvatar);
   if(typeof _ownAvatar!=='undefined' && _ownAvatar) apply(_ownAvatar.userData.visual || _ownAvatar);
 }
+// ---- build 1306: is the action we think we are playing ACTUALLY playing? ------------------------------
+// three disables an action whose fade-out completes (`_updateWeight`: `if(interpolantValue === 0)
+// this.enabled = false`), a LoopOnce action stops advancing on its final frame, and a zero-weight action
+// writes no bones at all — which does not reset the skeleton, it FREEZES it wherever it was.
+function _animLive(a){
+  if(!a || !a.enabled || a.paused) return false;
+  if(a.getEffectiveWeight() <= 1e-3) return false;
+  const c = a.getClip && a.getClip();
+  if(a.loop === THREE.LoopOnce && c && c.duration > 0 && a.time >= c.duration - 1e-4) return false;
+  return true;
+}
+const ANIM_LIVE_GRACE = 260;   // ms — comfortably past the 180 ms crossfade, so a fade-in is never mistaken for a stall
 function setEnemyAnimState(body, state){
   const v = body.userData.visual; if(!v) return;
   const acts = v.userData.stateActions; if(!acts) return;
   _ensureClipAction(v, state);   // build 1079: 'clip:<name>' builds its action on first use
   const key = _stateActionKey(acts, state); if(!key || !acts[key]) return;
-  if(v.userData.animState === key) return;   // already there
   const cur = v.userData.animState ? acts[v.userData.animState] : null;
   const next = acts[key];
   const _cfg = v.userData.animCfg || (body.userData && body.userData.animCfg);
@@ -10617,12 +10659,35 @@ function setEnemyAnimState(body, state){
   // hold = play once and freeze the final frame; default true for 'die', otherwise loop. Editor can override per state.
   const _holdDefault = _ANIM_ONESHOT.has(key);
   const _hold = (_cfg && _cfg.clipHold && _cfg.clipHold[_pick(_cfg.clipHold)] != null) ? !!_cfg.clipHold[_pick(_cfg.clipHold)] : _holdDefault;
+  // ---- build 1306: THE EARLY RETURN IS WHAT MAKES A STRANDED ACTION PERMANENT ---------------------------
+  // REPORTED AGAIN after build 1304: "it freezes the animation on the idle after I use the weapon a few
+  // times — no animation, but I can still move; running a distance away picks it back up."
+  //
+  // `if(animState === key) return` was the whole of the check. Every other part of this system is
+  // re-evaluated every frame and therefore self-correcting; that one line is a LATCH. Whatever leaves the
+  // current action not running — a completed fade-out (three sets `enabled = false`), a LoopOnce clamped on
+  // its final frame, a weight that reached zero — the state machine then asks for the same state, sees the
+  // name it already holds, and returns, forever. Build 1304 removed ONE route to that (a one-shot request
+  // stamping LoopOnce onto the looping slot it fell back to) and the freeze survived it, so the fix here is
+  // not a third named cause: the early return now checks that the state it is short-circuiting is ALIVE,
+  // and re-arms it if not. That repairs the reported symptom whatever stranded the action.
+  //
+  // Two things it must NOT do. A HELD state finishing on its last frame is the entire point of holding, so
+  // `_hold` returns before the liveness test — a corpse must stay down. And a state entered moments ago is
+  // mid-crossfade with its weight ramping from zero, which reads exactly like a stall; `ANIM_LIVE_GRACE`
+  // is what keeps a fade-in from re-arming itself every frame.
+  const _same = (v.userData.animState === key);
+  if(_same){
+    if(_hold) return;
+    const _held = performance.now() - (v.userData.animAt || 0);
+    if(_held < ANIM_LIVE_GRACE || _animLive(next)) return;
+  }
   if(_hold){ next.loop = THREE.LoopOnce; next.clampWhenFinished = true; } else { next.loop = THREE.LoopRepeat; next.clampWhenFinished = false; }
   // reset() clears a finished/clamped LoopOnce state — without it, re-entering a held state (e.g. aim, then
   // release, then aim again) would stay frozen at the last frame instead of replaying from the start.
   next.reset(); next.enabled = true; next.setEffectiveTimeScale(_spd); next.setEffectiveWeight(1); next.time = 0; next.play();
-  if(cur && cur !== next) cur.crossFadeTo(next, 0.18, false);
-  v.userData.animState = key;
+  if(!_same && cur && cur !== next) cur.crossFadeTo(next, 0.18, false);   /* build 1306: a re-arm has nothing to fade FROM — itself */
+  v.userData.animState = key; v.userData.animAt = performance.now();
 }
 // --- Animation SELECTION helpers: turn live movement into the right directional slot ----------------
 // _locoSlot: choose forward / back / strafe locomotion from the planar move vector relative to facing yaw.
@@ -29674,7 +29739,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1304 · 2026-08-02';
+const BUILD_VERSION = 'build 1306 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30557,6 +30622,7 @@ function applyPropDynState(obj, p){
   if(p.grng>0) obj.userData.grabRange = +p.grng;   // build 683: per-prop grab distance
   if(p.fire){ obj.userData.onFire=true; obj.userData.fireDps=(p.fdps!=null?+p.fdps:12); if(p.ffuse!=null) obj.userData.fireFuse=+p.ffuse; }
   if(p.mass!=null) obj.userData.mass = p.mass;
+  if(p.hsn) obj.userData.hitSnd = String(p.hsn).slice(0,300);   // build 1305
   if(p.brk===false){ obj.userData.breakable = false; }
   else { obj.userData.breakable = true; if(p.obj) obj.userData.objective=true; if(p.hp!=null){ obj.userData.maxHp = p.hp; obj.userData.hp = p.hp; } obj.userData.breakStyle = (p.bst==='puff') ? 'puff' : 'shatter';
     if(p.fc!=null) obj.userData.fragCount = p.fc;
@@ -31349,6 +31415,7 @@ function damageProp(obj, dmg, point, dir, power, byId){
     return false;
   }
   obj.userData.hp -= dmg;
+  playPropHitSound(obj, point);   /* build 1305: damageProp is the one place a bullet, a swing, an explosion and a client's relayed propHit all pass through */
   // brief impact flash on the prop
   obj.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.setHex(0x661a00); o.material.emissiveIntensity = Math.max(o.material.emissiveIntensity||0, 0.8); } });
   obj.userData._flash = performance.now();
@@ -31737,8 +31804,13 @@ function _meleeStrike(wep, RANGE, DMG){
       let o=ph[0].object; while(o && dynamicProps.indexOf(o)<0) o=o.parent;
       if(o){
         const dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize(), pt=ph[0].point;
-        if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} }   /* host-authoritative, exactly like a shot */
+        if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:o.userData.nid, d:DMG, dir:[dir.x,dir.y,dir.z], s:8, pt:[pt.x,pt.y,pt.z]}); }catch(e){} playPropHitSound(o, pt); }   /* host-authoritative, exactly like a shot — but the sound is predicted locally (build 1305) */
         else { const broke=damageProp(o, DMG, pt, dir, 8, NET.myId); if(!broke) pushDynamic(o, dir, 8, pt); }
+        /* build 1305: "it would also be nice to have some sort of visual that the blow landed". The BULLET
+           path has sparked at its hit point since long before this; the swing never did, so a melee hit on a
+           prop had no impact at all until the prop broke. The spark goes HERE rather than inside damageProp
+           because the shot already draws its own and would double up, and an explosion has a blast. */
+        spark(pt, 0xffd166);
         hit=true;
       }
     }
@@ -31868,7 +31940,7 @@ function shoot(){
         const dir = raycaster.ray.direction.clone().normalize();
         const power = 6 + w.dmg*0.04;
         const hp = hit.point;
-        if(clientMode){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:w.dmg*dmgMul, dir:[dir.x,dir.y,dir.z], s:power, pt:[hp.x,hp.y,hp.z]}); }catch(e){} }
+        if(clientMode){ if(NET.conn) try{ NET.conn.send({t:'propHit', nid:dprop.userData.nid, d:w.dmg*dmgMul, dir:[dir.x,dir.y,dir.z], s:power, pt:[hp.x,hp.y,hp.z]}); }catch(e){} playPropHitSound(dprop, hp); }   /* build 1305: damageProp runs on the HOST, so a guest predicts its own impact sound or never hears the crate it just hit */
         else {
           // breakable props take damage; a lethal shot shatters them instead of just shoving
           const broke = damageProp(dprop, w.dmg*dmgMul, hp, dir, power, NET.myId);
@@ -37660,6 +37732,7 @@ function propEntry(o){
     if(o.userData.grabRange>0 && o.userData.noGrab!==true) e.grng = +o.userData.grabRange;   // build 683: per-prop grab distance
     if(o.userData.onFire){ e.fire=1; if(o.userData.fireDps!=null) e.fdps=o.userData.fireDps; if(o.userData.fireFuse!=null) e.ffuse=o.userData.fireFuse; }
     if(o.userData.breakable===false) e.brk=false;   // breakable defaults true; only store when off
+    if(o.userData.hitSnd) e.hsn = String(o.userData.hitSnd).slice(0,300);   // build 1305: this prop's own impact sound
     else { if(o.userData.maxHp!=null) e.hp=o.userData.maxHp; if(o.userData.breakStyle==='puff') e.bst='puff'; if(o.userData.objective) e.obj=1;
       if(o.userData.fragCount!=null) e.fc=o.userData.fragCount;
       if(o.userData.fragSize!=null && Math.abs(o.userData.fragSize-DEBRIS_SIZE_FRAC)>1e-6) e.fz=o.userData.fragSize;
@@ -40799,7 +40872,7 @@ function renderEditorFields(){
       spd.onchange=()=>{ if(!mc.clipSpeed) mc.clipSpeed={}; const v=Math.max(0.1,Math.min(4,parseFloat(spd.value)||1)); mc.clipSpeed[stKey]=v; spd.value=String(v); refreshEnemyVisuals(); };
       const holdWrap=document.createElement('label'); holdWrap.title='Hold the last frame instead of looping (good for Aim / Death)'; holdWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
       const hold=document.createElement('input'); hold.type='checkbox'; hold.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
-      hold.checked = (mc.clipHold && mc.clipHold[stKey]!=null) ? !!mc.clipHold[stKey] : (stKey==='die');
+      hold.checked = (mc.clipHold && mc.clipHold[stKey]!=null) ? !!mc.clipHold[stKey] : _ANIM_ONESHOT.has(stKey);   /* build 1306: the RUNTIME default is the one-shot set, not just 'die' — the box showed Reload, Jump land, Equip and Move stop as looping when the engine plays them once */
       hold.onchange=()=>{ if(!mc.clipHold) mc.clipHold={}; mc.clipHold[stKey]=hold.checked; refreshEnemyVisuals(); };
       const hl=document.createElement('span'); hl.textContent='hold'; holdWrap.appendChild(hold); holdWrap.appendChild(hl);
       const ipWrap=document.createElement('label'); ipWrap.title='Lock this clip in place \u2014 cancels root-motion forward travel AND holds the hips at rest height (fixes clips retargeted from a bigger/smaller rig that fling the body into the air). Tick it for Walk / Run / strafe / any clip that drifts or floats.'; ipWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
@@ -42317,6 +42390,15 @@ function renderEditorFields(){
             stRow.appendChild(shB); stRow.appendChild(puB); pdBody.appendChild(stRow);
             const bnote=document.createElement('div'); bnote.className='hint'; bnote.style.marginTop='3px'; bnote.textContent='Shatter = physics debris. Puff = quick burst + vanish (cheaper). Higher HP = more shots to break. Health refills on Deploy.';
             pdBody.appendChild(bnote);
+            /* build 1305: the prop's own impact sound. GROUP-WIDE by build 1299's rule — a level has thirty
+               wooden crates and one wood sound, and marking the set is the whole point of the field. */
+            _selBanner(pdBody, _selTargets().length, true);
+            pdBody.appendChild(_sndRow('Impact sound \u2014 played on every hit',
+              ()=>sel.userData.hitSnd||'',
+              (u)=>{ const v=String(u||'').trim().slice(0,300); _selApply(o=>{ if(v) o.userData.hitSnd=v; else delete o.userData.hitSnd; }); },
+              ()=>{}));   /* _selApply already snapshots and marks dirty; there is no device setting to save */
+            const hsn=document.createElement('div'); hsn.className='hint'; hsn.style.marginTop='2px'; hsn.innerHTML='Wood, metal, glass \u2014 whatever this prop is made of. Plays wherever the hit landed (it pans and fades with distance), on shots, swings and explosions alike. Unlike the Sounds tab, this one is <b>saved with the level</b>, so everyone who plays it hears it.';
+            pdBody.appendChild(hsn);
             // ---- Debris controls (count / size / shape) — only meaningful for the shatter style ----
             if(sel.userData.breakStyle!=='puff'){
               sel.updateMatrixWorld(true);
@@ -42746,7 +42828,7 @@ function renderEditorFields(){
         spd.onchange=()=>{ if(!playerModelCfg.clipSpeed) playerModelCfg.clipSpeed={}; const v=Math.max(0.1,Math.min(4,parseFloat(spd.value)||1)); playerModelCfg.clipSpeed[stKey]=v; spd.value=String(v); applyAnimSpeedLive(stKey, v); };
         const holdWrap=document.createElement('label'); holdWrap.title='Hold the last frame instead of looping (good for Aim / Death)'; holdWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
         const hold=document.createElement('input'); hold.type='checkbox'; hold.style.cssText='width:13px;height:13px;accent-color:var(--accent);';
-        hold.checked = (playerModelCfg.clipHold && playerModelCfg.clipHold[stKey]!=null) ? !!playerModelCfg.clipHold[stKey] : (stKey==='die');
+        hold.checked = (playerModelCfg.clipHold && playerModelCfg.clipHold[stKey]!=null) ? !!playerModelCfg.clipHold[stKey] : _ANIM_ONESHOT.has(stKey);   /* build 1306: match the runtime default (see the enemy tab) */
         hold.onchange=()=>{ if(!playerModelCfg.clipHold) playerModelCfg.clipHold={}; playerModelCfg.clipHold[stKey]=hold.checked; rebuildAvatars(); };
         const hl=document.createElement('span'); hl.textContent='hold'; holdWrap.appendChild(hold); holdWrap.appendChild(hl);
         const ipWrap=document.createElement('label'); ipWrap.title='Lock this clip in place \u2014 cancels root-motion forward travel AND holds the hips at rest height so the body animates on the spot (fixes clips retargeted from a bigger/smaller rig that fling the body into the air). Tick it for Walk / Run / strafe / any clip that drifts or floats.'; ipWrap.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:3px;font-size:10px;color:#7fb8a6;cursor:pointer;';
@@ -45244,6 +45326,7 @@ function startGame(){
   if(drivingCar){ drivingCar=null; _carReturn=null; }   // never start a round still driving
   if(typeof _engStop==='function') _engStop(); if(typeof _clearSkids==='function') _clearSkids(); if(typeof _clearDust==='function') _clearDust(); { const _dh=document.getElementById('driveHud'); if(_dh) _dh.style.display='none'; const _cx=document.getElementById('crosshair'); if(_cx) _cx.style.display=''; }   // build 715/728/732/738: kill engine + HUD + skid + dust + restore crosshair on (re)deploy
   if(typeof preloadSignalSounds==='function') preloadSignalSounds();   // build 750: warm up custom signal clips so the first trigger plays
+  if(typeof preloadPropHitSounds==='function') preloadPropHitSounds();   // build 1305: ...and every prop's own impact clip, or the first hit on each is silent
   if(typeof grid!=='undefined' && grid) grid.visible = false;   // build 1133: never show the viewport grid in a running game
   if(typeof closeModal==='function'){ closeModal('charPicker'); closeModal('lobby'); closeModal('mpModal'); }   // never start a match with a menu modal still open over the game
   if(typeof _wakeLockTry==='function') setTimeout(_wakeLockTry, 0);   // build 908: keep the phone awake during play (gameOn is set below; next tick reads it true)
@@ -45593,7 +45676,11 @@ document.addEventListener('webkitfullscreenchange', syncFsBtn);
 
 // ---- Custom Sounds (in the editor's "Sounds" section): per-weapon shoot + reload/explosion/coin/hit/kill/hurt ----
 // URLs are stored per-device in audioSettings.sounds; a loaded sample overrides the built-in synth for that event.
-function _sndRow(label, get, set){
+// build 1305: `save` is how the row is told WHOSE settings it just changed. It defaults to the device-wide
+// audio settings, which is every existing caller; a per-prop row passes its own (its setter has already
+// taken the undo snapshot and marked the level dirty, so there is nothing further to save).
+function _sndRow(label, get, set, save){
+  const _save = save || saveAudioSettings;
   const row=document.createElement('div'); row.style.cssText='margin:6px 0;';
   const lab=document.createElement('div'); lab.textContent=label; lab.style.cssText='color:#9fe6cf;font-size:11px;letter-spacing:1px;margin-bottom:2px;';
   const line=document.createElement('div'); line.style.cssText='display:flex;gap:5px;align-items:center;';
@@ -45602,13 +45689,13 @@ function _sndRow(label, get, set){
   const test=document.createElement('button'); test.textContent='▶'; test.title='Test'; test.style.cssText='flex:0 0 auto;width:26px;background:rgba(var(--accent-rgb),.16);border:1px solid var(--accent);color:#eafff7;border-radius:4px;cursor:pointer;';
   const st=document.createElement('span'); st.style.cssText='flex:0 0 auto;width:14px;text-align:center;font-size:12px;color:#a8ccbf;';
   const mark=(x)=>{ st.textContent = x==='ok'?'✓':x==='loading'?'…':x==='error'?'✗':''; st.style.color = x==='error'?'#ff6b6b':(x==='ok'?'var(--accent)':'#a8ccbf'); };
-  inp.onchange=()=>{ const u=inp.value.trim(); set(u); saveAudioSettings(); if(u){ initAudio(); loadSound(u, mark); } else mark(''); };
+  inp.onchange=()=>{ const u=inp.value.trim(); set(u); _save(); if(u){ initAudio(); loadSound(u, mark); } else mark(''); };
   test.onclick=()=>{ const u=inp.value.trim(); if(!u){ return; } initAudio(); loadSound(u, (x)=>{ mark(x); if(x==='ok'){ playSample(u); } else if(x==='loading'){ setTimeout(()=>{ if(playSample(u)) mark('ok'); }, 500); } }); };
   const u0=get(); if(u0){ const b=_soundBuffers[u0]; if(b && b.duration!==undefined) mark('ok'); else { mark('loading'); loadSound(u0, mark); } }
   line.appendChild(inp); line.appendChild(test); line.appendChild(st);
   row.appendChild(lab); row.appendChild(line);
   if(typeof renderUploadRow==='function'){   // build 975: upload your own sound straight into this slot
-    renderUploadRow(row, 'sound', (url)=>{ inp.value=url; set(url); if(typeof saveAudioSettings==='function') saveAudioSettings(); if(typeof initAudio==='function') initAudio(); if(typeof loadSound==='function') loadSound(url, mark); },
+    renderUploadRow(row, 'sound', (url)=>{ inp.value=url; set(url); _save(); if(typeof initAudio==='function') initAudio(); if(typeof loadSound==='function') loadSound(url, mark); },
       { tight:true, noHead:true, btnText:'Upload sound', applyHint:'applied' });
   }
   return row;

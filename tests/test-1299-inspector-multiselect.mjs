@@ -110,8 +110,8 @@ const mkBanner = () => {
     'a tag resolves to a LIST of props at runtime, which is why one tag across a set is the normal move');
   assert(/A signal resolves a tag to a LIST/.test(src), '...and that reasoning is recorded beside the field');
   // each of the three announces itself
-  eq((src.match(/_selBanner\(/g) || []).length, 4,
-    'the definition plus exactly three folds — tag/interact, lock, and dialogue. Every fold that can face a multi-selection states its rule.');
+  eq((src.match(/_selBanner\(/g) || []).length, 5,
+    'the definition plus every fold that can face a multi-selection — tag/interact, lock, dialogue, and build 1305’s impact sound. Each states its rule.');
   assert(/_selBanner\(th, _selTargets\(\)\.length, true\);/.test(src), 'the tag/interact fold announces group-wide');
   assert(/_selBanner\(lHost, _selTargets\(\)\.length, true\);/.test(src), 'the lock fold too');
 }

@@ -967,6 +967,103 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The animation state machine repairs itself (build 1306)
+
+Reported AGAIN, after build 1304 claimed it: *"stuck in the idle position, no animation, but I can still
+move them around the screen. If I run a distance away from the props I was hitting at, it picks back up."*
+
+1304's fix is real and stands. It was not enough, and this build deliberately does **not** name a third
+cause. It removes the thing that makes ANY stranded action permanent:
+
+```js
+if(v.userData.animState === key) return;   // "already there"
+```
+
+Every other part of this system is recomputed every frame and therefore self-correcting. **That one line is
+a latch.** Once the current action stops running, the machine asks for the same state, recognises the name
+it already holds, and returns — forever. Asking for a DIFFERENT state is the only escape, which is exactly
+why the reporter found that running away recovered it. Three ways an action stops running, all live in this
+engine:
+
+- three **disables** an action whose fade-out completes (`_updateWeight`: `if(interpolantValue === 0)
+  this.enabled = false`).
+- a `LoopOnce` action stops advancing on its final frame.
+- a **zero-weight** action writes no bones — which does not reset the skeleton, it FREEZES it wherever it
+  was. That is precisely "stuck in the idle position".
+
+So the early return now checks that the state it short-circuits is ALIVE (`_animLive`), and re-arms it if
+not. Two things it must not do, and both are pinned:
+
+- **A HELD state returns first, before the liveness test.** A corpse clamped on its last frame is the point
+  of holding, not a stall, and an authored `clipHold` is honoured the same way.
+- **A state entered moments ago is mid-crossfade with its weight ramping from zero**, which reads exactly
+  like a stall. `ANIM_LIVE_GRACE` (260 ms, against a 180 ms crossfade) is what stops a fade-in re-arming
+  itself every frame — without it the repair would be a worse freeze than the bug, and one that would only
+  appear on fast machines.
+
+A re-arm does not crossfade (there is nothing to fade *from* but itself), and `animAt` is stamped on entry
+because that is what the grace measures.
+
+Verified live on a real `AnimationMixer` with real actions (`tools/probe/anim-strand.mjs`): stranded four
+ways — disabled, clamped on its last frame, zero weight, paused — the real `setEnemyAnimState` repaired
+every one **without a state change**; a healthy action was left byte-identical (time 0.42 preserved, zero
+restarts across ten simulated seconds); a clamped death pose stayed down; and a state entered that instant
+at weight 0 re-armed **zero** times in ten calls.
+
+**And the editor had been lying about which slots hold.** The hold checkbox defaulted to `stKey === 'die'`
+while the runtime default is `_ANIM_ONESHOT.has(key)` — thirty-odd slots. Reload, Jump land, Equip and Move
+start/stop all showed as looping in the editor while the engine played them once. Both tabs (player and
+enemy) now default to the runtime rule. This changes no behaviour; it stops the UI contradicting it.
+
+**Stated plainly: this is a structural repair, not a pinpointed root cause.** The freeze could not be
+reproduced headless — the stock third-person body is the stylised capsule and carries no `stateActions`, so
+the probe had to synthesise a rigged one. What the probe DOES prove is that the latch is gone: whatever
+strands an action, the next frame repairs it.
+
+## A prop sounds like what it is made of (build 1305)
+
+Reported with the melee-timing report: *"there needs to be a way to add a per prop hit sound, so if I'm
+hitting a wooden crate with an axe, it sounds like the box is hit with an axe; if I hit a metal barrel, it
+should sound like metal hitting metal. It would also be nice to have some sort of visual that the blow
+landed, maybe with some small particles etc."*
+
+One url per prop (`userData.hitSnd`, serialized as `hsn`) — **level data, not a device setting.** The material
+of a crate belongs to the crate and has to travel to whoever plays the level, which is the one way this
+field differs from every other row `_sndRow` builds; that helper gained a fourth `save` parameter so the
+prop row can opt out of `saveAudioSettings` rather than misusing it. The field is GROUP-WIDE by build 1299's
+rule (a level has thirty wooden crates and one wood sound) and says so with the same banner.
+
+`damageProp` is the one place a bullet, a swing, an explosion and a client's relayed `propHit` all pass
+through, so the sound lives there. Two rate limits, each answering a real firing pattern rather than a
+guess:
+- **A shotgun lands eight pellets in ONE frame.** Eight copies of one buffer starting on the same sample is
+  not eight hits, it is one hit ~18 dB louder with comb filtering — hence `PROP_SND_GAP` (55 ms, per prop).
+  It is shorter than any weapon's fire rate, so an SMG at 90 ms still sounds on every round.
+- **An explosion damages every breakable prop in its radius in one pass.** The per-prop gap cannot see that,
+  because they are different props — hence `PROP_SND_BURST` (4 starts per 60 ms window, across props).
+
+**A guest predicts its own hit.** `damageProp` runs on the HOST, so without a local call the player who
+swung would be the only one in the match who did not hear the crate they hit. Both client send-sites
+(shot and swing) play it locally.
+
+**The spark went to the melee path, NOT into `damageProp`.** The bullet path has sparked at its own hit
+point since long before this, so a spark at the chokepoint would draw two on every shot; an explosion has a
+blast. The swing had nothing at all until the prop broke, which is the whole of "no visual that the blow
+landed".
+
+`playSample` returns FALSE until a buffer decodes, so `preloadPropHitSounds()` warms every prop's clip at
+deploy beside build 750's signal clips — without it the first hit on every crate in the level is silent.
+
+Measured live (`tools/probe/prop-hitsound.mjs`, which replaces `playSample`/`spark` in the game closure and
+records): a real crowbar swing at a real crate played the authored url at the contact point [0, 1.70, 31.50]
+with vary 0.08 and drew one spark there; eight `damageProp` calls in one frame played it ONCE; twelve props
+in one explosion played four times at four distinct positions (the null-point fallback to each prop's own
+position); the url survived a full `serializeLevel()` round trip; a prop with no url played nothing.
+
+Four pins moved: 482 (its `damageProp` harness needed the new stub), 975 (`_sndRow`'s signature — converted
+to `extractFunction`, build 1149's rule), 1295 (the client branch it pins gained a trailing call), 1299
+(`_selBanner` count 4 → 5).
+
 ## Auto-exposure (build 1180) — PHASE 3 OPENS
 
 toneMappingExposure was a static authored value — desert noon into a dark interior, nothing adapted; every
