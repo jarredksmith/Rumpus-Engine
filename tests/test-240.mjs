@@ -5,8 +5,15 @@ const src = gameSource();
 
 // --- 336: scroll preservation ---
 const ref = extractFunction('renderEditorFields');
+// build 1302: this was `sI < 900` — a CHARACTER BUDGET, which build 1149 recorded as the wrong way to scope
+// a source pin. Adding a comment above the line broke it while the assertion stayed true. What it means is
+// an ORDER: after build 818's coalescing gate, before anything is rebuilt.
 const sI = ref.indexOf('const _edScroll = editorEl.scrollTop;');
-assert(sI > 0 && sI < 900, 'scroll captured up-front, before any rebuild (build 818: after the coalescing gate)');
+const gateI = ref.indexOf('if(_rnow - _refLast < 8)');
+const buildI = ref.indexOf("editorEl.querySelectorAll('.tab')");
+assert(sI > 0 && gateI > 0 && buildI > 0, 'the gate, the capture and the first rebuild are all present');
+assert(sI > gateI, 'scroll is captured AFTER the coalescing gate (build 818) — a deferred call must not capture it');
+assert(sI < buildI, '...and before any rebuild, or it would read the post-teardown scroll');
 // build 818: same-frame rebuild bursts collapse into one deferred rebuild
 assert(/if\(_refQueued\) return;/.test(ref) && /if\(_rnow - _refLast < 8\)\{ _refQueued = true; requestAnimationFrame\(/.test(ref), 'burst rebuilds coalesce to one rAF rebuild');
 assert(/queueMicrotask\(\(\)=>\{ try\{ if\(editorEl\) editorEl\.scrollTop = _edScroll; \}catch\(e\)\{\} try\{ renderLevelIssues\(\); \}catch\(e\)\{\} \}\);/.test(ref), 'restored after the pass regardless of return path (build 340: issues list piggybacks the same microtask)');

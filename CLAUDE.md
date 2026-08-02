@@ -4368,6 +4368,32 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The editor panel latched itself shut (build 1302)
+
+Reported from play: *"the weapons editor is getting stuck. If I select one weapon, say shotgun, the stats
+section stays on shotgun no matter what other weapon I choose."*
+
+**It was not the weapons editor. It was every field in the inspector, and it had been there since build
+1070.** `renderEditorFields` throttles to one rebuild per 8 ms and defers the rest to `requestAnimationFrame`
+behind a `_refQueued` latch. The deferred pass set `_refLast = performance.now()` and **then** called the
+function that opens by asking whether `now - _refLast < 8`. It always was, by microseconds. So the deferred
+pass re-latched, queued another frame, and did the same on that one — an infinite self-rescheduling loop
+that rendered nothing, with `_refQueued` stuck true so every later call returned at the first line.
+
+**Two clicks inside one animation frame was all it took**, which is exactly what picking two weapons in
+quick succession is. After that the panel showed whatever it had last drawn, forever, and no further
+interaction recovered it. Reproduced live before fixing: `curWep` 'pistol' with the panel showing shotgun's
+650 ms and the latch true; five slow clicks afterwards changed nothing.
+
+`_refLast = 0` rather than deleting the line: the deferred pass must be **guaranteed** through the window,
+not merely likely. Dropping it works at 60 Hz (16 ms > 8) and fails at 120 Hz (8.3 ms) — the sort of "fixed
+on my machine" this file has been bitten by before. `test-1302` drives the real throttle with a controllable
+clock at 4 / 8.3 / 11 / 16 / 33 ms frames and asserts one frame drains the queue.
+
+**And test-240 failed on a CHARACTER BUDGET** — `sI < 900` — while its assertion stayed true, which is build
+1149's recorded trap arriving again. It now asserts the ORDER it actually means: the scroll capture sits
+after build 818's coalescing gate and before the first rebuild.
+
 ## Variable jump height (build 1301 — gameplay audit F6)
 
 > Greped `jumpCut`, `shortHop`, `holdJump`, `varJump` → zero hits, and the jump is one assignment

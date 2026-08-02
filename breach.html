@@ -29649,7 +29649,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1301 · 2026-08-02';
+const BUILD_VERSION = 'build 1302 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -40237,8 +40237,26 @@ function renderEditorFields(){
   if(!editorEl) return;
   if(typeof _outQueueRefresh==='function') _outQueueRefresh();   // build 1036: the outliner mirrors every add/delete/select
   if(_refQueued) return;
+  // ---- build 1302: THE LATCH USED TO RE-ARM ITSELF FOREVER ----------------------------------------------
+  // REPORTED FROM PLAY: "the weapons editor is getting stuck — if I select shotgun, the stats section stays
+  // on shotgun no matter what other weapon I choose." It was not the weapons editor. It was every field in
+  // the panel, and it had been there since build 1070.
+  //
+  // The throttle coalesces a burst of renders into one, which is right — a rebuild costs 8-27 ms. The
+  // deferred pass set `_refLast = performance.now()` and THEN called this function, which opens by asking
+  // whether `now - _refLast < 8`. It always was, by microseconds. So the deferred pass re-latched, queued
+  // another frame, and did the same thing on that one: an infinite self-rescheduling loop that never
+  // rendered anything, with `_refQueued` stuck true so every later call returned at the line above.
+  //
+  // Two clicks inside one animation frame is all it took — which is exactly what picking two weapons in
+  // quick succession is. After that the inspector showed whatever it had last drawn, forever, and no
+  // further interaction could recover it.
+  //
+  // `_refLast = 0` rather than `performance.now()`: the deferred pass must be GUARANTEED to get through the
+  // window, not merely likely to. Dropping the line entirely would work at 60 Hz (16 ms > 8) and fail at
+  // 120 Hz (8.3 ms), which is the sort of "fixed on my machine" this file has been bitten by before.
   { const _rnow = performance.now();
-    if(_rnow - _refLast < 8){ _refQueued = true; requestAnimationFrame(()=>{ _refQueued = false; _refLast = performance.now(); renderEditorFields(); }); return; }
+    if(_rnow - _refLast < 8){ _refQueued = true; requestAnimationFrame(()=>{ _refQueued = false; _refLast = 0; renderEditorFields(); }); return; }
     _refLast = _rnow; }
   // The wholesale rebuild below resets the panel's scroll position on every change; restore it once
   // this pass (whichever return path it takes) has finished, before the next paint.
