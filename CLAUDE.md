@@ -967,6 +967,67 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Props can ride other props (build 1309 — editor audit 4.5)
+
+> Zero greps for `parentTo|attachTo|userData.parent|parentNid`. Groups are a shared `groupId`; folders are
+> outliner metadata. Consequences that show in play, not just authoring: a crate on a moving platform does
+> not ride it, `moveprop` is a teleport, a rotating assembly must be authored as one mesh. Build 997's
+> light-attach and build 1228's entry carry are a *special case* of parenting implemented once; generalising
+> them is the structural fix.
+
+A child names its parent by **nid** — the same stable serialized identity build 997 uses, and the only one
+that survives a save, a reload and a co-op join.
+
+**IT IS A FOLLOW CONSTRAINT, NOT SCENE-GRAPH RE-PARENTING.** That is the load-bearing decision.
+`host.add(child)` is right for a LIGHT because a light has no collider, no physics body and no serialized
+transform of its own. A prop has all three: `colliders` holds world-space boxes, `serializeLevel` writes
+`o.position` as a WORLD transform, and the gizmo drags in world space. Re-parenting silently turns every one
+of those into a *local* transform — a level that saves wrong, a collider in the wrong place, and a gizmo
+that fights the creator. Applying the parent's per-frame delta leaves all three invariants untouched.
+
+- **Depth-ordered**, so a chain (a crate on a lift on a barge) settles in ONE frame rather than lagging a
+  frame per link — verified with `propModels` deliberately in the wrong order.
+- **Rotation is about the parent's ORIGIN, and the child turns too.** Otherwise a prop slides round a
+  turntable facing one way, which is the audit's third case only half-solved.
+- **Cycles are refused** at the point of authoring, and a cycle arriving from a hand-edited file is broken
+  on load rather than looping forever.
+- **A deleted parent releases its children where they stand** — `removeProp`, which every deletion goes
+  through — rather than leaving them pointing at a dead nid.
+
+**It inherits the existing mover story rather than reimplementing it.** Two one-line changes: `_cgMobileNow`
+counts a parented prop as a mover (or its per-frame collider refresh would rebuild the static spatial grid
+every frame — build 1188), and `addStaticColliderFor` gives it the same **kinematic** body a mechanism-
+animated prop gets, so `updatePhysics`'s existing driver sweeps it and a dynamic crate resting on a parented
+platform is carried and launched exactly as it is by a mechanism. That is what "generalising them" meant.
+
+Measured live (`tools/probe/prop-parenting.mjs`): a platform slid 5 m carried its crate to x=5 **with its
+collider centre at 5** — a mesh that rides while its collider does not is worse than no feature; a three-link
+chain resolved in one frame; a 90° turn swung a crate 3 m off-axis from (+3,0) to (0,−3) at an unchanged
+radius with its own yaw turned 90°; both children serialized; deleting the parent left the crate exactly
+where it stood.
+
+### The probe found a build 1305 regression I had shipped
+
+```js
+if(o.userData.breakable===false) e.brk=false;
+if(o.userData.hitSnd) e.hsn = …;        // <- build 1305 inserted this HERE
+else { hp, breakStyle, objective, explosive … }
+```
+
+The `else` re-bound to the impact-sound test. **Any prop carrying a hit sound had stopped serializing its
+health, break style, objective flag and explosive settings.** 1305's own round-trip probe missed it because
+it only checked the field it had just added; 1309's checked the *whole* entry with and without the sound and
+they now match field for field. Two lessons, both now written into the source at the site:
+
+- **Never put a statement between an `if` and its `else`** — this file's dense one-line style makes the
+  dangling `else` invisible, and a serializer is where it costs the most.
+- **A round-trip test that only checks the new field is not a round-trip test.** Compare the whole entry
+  against the same entry without the feature.
+
+`par` also went in at the top level of `propEntry`, not inside the `if(o.userData.phys)` block where the
+first draft put it: **a static crate on a lift is the commonest case of all**, and it would have silently
+never saved.
+
 ## Enemies move with mass (build 1308 — gameplay audit F8)
 
 > Enemy translation is direct position integration — `en.mesh.position.x += _mvx*spd*dt`, and the same at
