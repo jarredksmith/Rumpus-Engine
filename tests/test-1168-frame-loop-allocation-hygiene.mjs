@@ -24,9 +24,11 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- ledge probe
 {
-  assert(/if\(_nw-_avHCacheT>1000\)\{ _avHCacheT=_nw; const _bb=_avHBox\.setFromObject\(_ownAvatar\);/.test(src),
-    'the avatar-height Box3 traversal runs at most once a second, not every airborne-forward frame');
-  assert(/_avHCache=\(_h2>1\.1 && _h2<3\)\?_h2:1\.7;/.test(src), '...cached with the same 1.1..3 sanity band as before');
+  // build 1289 moved this measurement OUT of the grab and into _avatarHangDrop (it sizes the DRAWN body,
+  // not the collider) — the budget it establishes here is unchanged and still the point.
+  assert(/if\(nw-_avHCacheT>1000\)\{ _avHCacheT=nw; const bb=_avHBox\.setFromObject\(a\);/.test(src),
+    'the avatar-height Box3 traversal runs at most once a second, not every frame that needs it');
+  assert(/_avHCache=\(h2>1\.1 && h2<3\.2\)\?h2:EYE;/.test(src), '...cached with a sanity band, falling back to the player');
   assert(!/const _bb=new THREE\.Box3\(\)\.setFromObject\(_ownAvatar\)/.test(src), 'the per-frame Box3 allocation is gone');
 }
 

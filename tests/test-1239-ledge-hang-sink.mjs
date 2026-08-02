@@ -12,8 +12,12 @@ const src = gameSource();
   const SINK = +src.match(/const LEDGE_HANG_SINK = ([0-9.]+);/)[1];
   near(SINK, 0.42, 1e-9, 'the sink ships at 0.42 — roughly a raised forearm');
   // replay the hy formula for a representative avatar and ledge
+  // build 1289: the collider's reach is the PLAYER's, so this replay is now exactly what ships (it was
+  // written with vh = 1.7 = EYE, which is why first person was byte-identical across that change).
   const EYE = 1.7, lip = 10, vh = 1.7;
-  const hy = lip + EYE - vh * 1.02 - SINK;                       // player.pos.y (the EYES) at full hang
+  const REACH = new Function('EYE', 'LEDGE_HANG_SINK', 'return ' + src.match(/const LEDGE_REACH = ([^;]+);/)[1])(EYE, SINK);
+  near(REACH, vh * 1.02 + SINK, 1e-12, 'the reach is the sink carried on the player’s own height');
+  const hy = lip + EYE - REACH;                                  // player.pos.y (the EYES) at full hang
   const feet = hy - EYE, headTop = feet + vh;
   assert(headTop < lip, 'the head top now sits BELOW the lip (was exactly at it)');
   near(lip - headTop, 0.454, 0.01, '...by ~0.45 — so hands raised ~0.4 above the head land ON the edge, not in the air over it');
@@ -25,8 +29,10 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- the wiring
 {
-  assert(/const _hy=Math\.max\(_lt \+ EYE - _vh\*1\.02 - LEDGE_HANG_SINK, _gy \+ EYE - 0\.12\);/.test(src),
-    'the hang height carries the sink (966\'s avatar-height sizing is kept — a short model still hangs by its hands, not its waist; 1243 added the ground clamp so low-window ledges cannot bury the feet)');
+  assert(/const _hy=Math\.max\(_lt \+ EYE - LEDGE_REACH, _gy \+ EYE - 0\.12\);/.test(src),
+    'the hang height carries the sink (via LEDGE_REACH since 1289; 1243\'s ground clamp still stops a low-window ledge burying the feet)');
+  assert(/_avatarHangDrop/.test(src) && /h\*1\.02 \+ LEDGE_HANG_SINK/.test(src),
+    '...and 966\'s avatar-height sizing is kept where it belongs — a short model is still DRAWN hanging by its hands, not its waist');
   const i0 = src.indexOf('const LEDGE_HANG_SINK'), i1 = src.indexOf('const _hy=Math.max(_lt + EYE');
   assert(i0 > 0 && i0 < i1, 'the constant is declared above its reader (the TDZ rule this file has been burned by)');
 }

@@ -56,7 +56,7 @@ const fns = new Function(...Object.keys(env),
     'mantleLedge probes with the reach-window ceiling (1233\'s rule, applied to the function 1233 missed)');
   assert(/surfaceTopAt\(player\.pos\.x\+forward\.x\*_d, player\.pos\.z\+forward\.z\*_d, undefined, undefined, _lt \+ 0\.5\)/.test(src),
     'the wall-face scan ceilings too — it must find THIS ledge\'s wall, not a taller neighbour\'s');
-  assert(/const _hy=Math\.max\(_lt \+ EYE - _vh\*1\.02 - LEDGE_HANG_SINK, _gy \+ EYE - 0\.12\);/.test(src),
+  assert(/const _hy=Math\.max\(_lt \+ EYE - LEDGE_REACH, _gy \+ EYE - 0\.12\);/.test(src),   // build 1289: the reach term is the player's own, not the drawn body's
     'the hang height clamps at the ground — a low-window ledge stands the body at the wall base, arms up, instead of burying the feet');
 }
 
