@@ -4269,6 +4269,35 @@ full property path.
 what this looks like needs a browser pass: interiors should get DARKER indirect and keep their direct
 sunlight, so a sunbeam through a doorway should read stronger than before while the shadowed corners hold.
 
+## A HUD widget can finally show YOUR number (build 1287)
+
+The feature audit's third finding, and it killed every co-op shop and scoreboard. Build 1231 gave the graph
+per-player variables and taught the toast node to interpolate them; `_hwText`'s regex was `[\w#]+` with no
+`@`, so a widget bound to `coins@` matched nothing and rendered the literal text. **And even had it parsed,
+the host→client mirror broadcast ONE scalar per name to every connection** — so every player would have seen
+the HOST's value. Either half alone is still broken.
+
+**`_hwVarKey`, deliberately NOT `_lgVarKey`.** The graph's resolver keys on `_lgCtx.pid` — *"the player this
+event is about"* — which is exactly right inside a pulse and exactly wrong for a HUD, which draws every
+frame **outside any event**, where the pid is whatever the last pulse left behind (0 in practice). A widget
+asks "what is MY number", so it resolves against `NET.myId`. That the answer has the same shape on host and
+client is what lets the mirror stay a plain scalar per connection instead of becoming a routing problem.
+
+The mirror now splits shared names from per-player ones, resolves each connection's own pid into its packet,
+and includes the per-player values in its change-detection signature — without that last part a per-player
+change would never have been sent at all. A level with no per-player widgets still sends ONE shared object
+rather than a copy per connection.
+
+**The client stores under its OWN key.** The host sends a per-player name under its BARE key (`coins@`)
+carrying that client's value, and the client re-keys it to `coins@<myId>`. Sending the host-resolved key
+would be wrong the moment ids differ, and silently so.
+
+Three pins moved. Two are worth noting for their shape: `test-1058`'s rig had to be given `_hwVarKey`
+(lifted from source, never restated — a rig that restates a predicate keeps passing against a stale copy),
+and `test-1269` was slicing 200 characters from `msg.t==='hudv'` to reach an assignment my comment had
+pushed past — **the fourth character-budget slice this audit has broken**, after 1149 supposedly converted
+them all. They only surface when something nearby grows.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

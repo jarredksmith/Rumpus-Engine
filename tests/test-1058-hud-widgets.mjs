@@ -42,8 +42,10 @@ eq(san(new Array(40).fill({ kind: 'text' })).length, 24, 'hard cap at 24 widgets
 }
 
 // ---- the timer format and live interpolation, executed ----
-const glue = extractFunction('_lgVarKey', src) + '\n' + extractFunction('_lgNum', src) + '\n' + extractFunction('_hwFmtTimer', src) + '\n' + extractFunction('_hwText', src);   // build 1231: _lgNum scopes names through _lgVarKey
-const env = new Function('logicVars', glue + '\nreturn { fmt:_hwFmtTimer, text:_hwText };');
+// build 1287: _hwText resolves per-player names through _hwVarKey (NOT _lgVarKey — a HUD draws outside
+// any event context), so the rig needs it too. Lifted from source, never restated.
+const glue = extractFunction('_hwVarKey', src) + '\n' + extractFunction('_lgVarKey', src) + '\n' + extractFunction('_lgNum', src) + '\n' + extractFunction('_hwFmtTimer', src) + '\n' + extractFunction('_hwText', src);   // build 1231: _lgNum scopes names through _lgVarKey
+const env = new Function('logicVars', 'NET', glue + '\nreturn { fmt:_hwFmtTimer, text:_hwText };');
 {
   const e = env({ score: 12.345, time: 65, kills: 3 });
   eq(e.fmt(65), '1:05', 'seconds format as M:SS');
@@ -72,7 +74,11 @@ assert(/const vis=!w\.when \|\| \(\+logicVars\[w\.when\]\|\|0\)!==0;/.test(src),
   "'show when' gates visibility on a logic variable being non-zero");
 assert(/pointer-events:none;z-index:4;/.test(src), 'the widget layer never eats clicks');
 assert(/NET\.conns\[cid\]\.send\(\{t:'hudv', v\}\)/.test(src), 'the host mirrors the watched variables to clients');
-assert(/else if\(msg\.t==='hudv'\)\{ if\(msg\.v && typeof msg\.v==='object'\) for\(const k in msg\.v\) logicVars\[k\]=\+msg\.v\[k\]\|\|0; \}/.test(src),
+// build 1287: a per-player name arrives under its BARE key carrying THIS client's value, so the fold
+// re-keys it through the client's own _hwVarKey. Shared names are unchanged; the intent — clients fold
+// the mirror into their own store so widgets render identically — is what is asserted, not the line.
+assert(/else if\(msg\.t==='hudv'\)\{ if\(msg\.v && typeof msg\.v==='object'\) for\(const k in msg\.v\)\{/.test(src) &&
+       /logicVars\[\(typeof _hwVarKey==='function'\) \? _hwVarKey\(k\) : k\] = \+msg\.v\[k\]\|\|0;/.test(src),
   'clients fold the mirror into their own variable store (widgets render identically everywhere)');
 assert(/if\(js!==_hwSent \|\| now-_hwSentAt>2000\)/.test(src), 'the mirror sends on change, with a 2s keepalive for late joiners');
 assert(/grp\('Custom widgets \(logic-driven\)'\);/.test(src), 'the HUD tab has the authoring section');

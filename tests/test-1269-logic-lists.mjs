@@ -189,7 +189,11 @@ const L = (p) => { const r = rig(p.__lists ? { lists: p.__lists } : {}); r.run(p
   assert(/let logicLists = \{\};/.test(src), 'lists live in their own store');
   const reset = src.slice(src.indexOf('logicVars={}; logicLists={};'), src.indexOf('logicVars={}; logicLists={};') + 60);
   assert(/logicLists=\{\}/.test(reset), 'and are wiped with the rest of the run state — a deck must not survive a match');
-  const hudv = src.slice(src.indexOf("msg.t==='hudv'"), src.indexOf("msg.t==='hudv'") + 200);
+  // build 1287 gave the handler a per-player re-key and a comment explaining it, so 200 chars no longer
+  // reaches the assignment — another character-budget slice (build 1149's trap). Anchored on the handler's
+  // own closing instead.
+  const _hi = src.indexOf("msg.t==='hudv'");
+  const hudv = src.slice(_hi, src.indexOf('build 1058: the host mirrors', _hi));
   assert(/\+msg\.v\[k\]\|\|0/.test(hudv) && !/logicLists/.test(hudv),
     'the net variable mirror is untouched and still numeric — nothing new crosses the wire');
 }

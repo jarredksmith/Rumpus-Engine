@@ -11260,8 +11260,21 @@ const _HW_POS={ tl:['top:12px;left:12px;',''], tc:['top:12px;left:50%;','transla
   ml:['top:50%;left:12px;','translateY(-50%) '], mr:['top:50%;right:12px;','translateY(-50%) '],
   bl:['bottom:86px;left:12px;',''], bc:['bottom:86px;left:50%;','translateX(-50%) '], br:['bottom:86px;right:12px;',''] };
 function _hwFmtTimer(sec){ sec=Math.max(0, Math.ceil(+sec||0)); return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'); }
+// build 1287: a HUD per-player name resolves against MY id, deliberately NOT through _lgVarKey.
+// _lgVarKey keys on _lgCtx.pid — "the player this event is about" — which is the right question inside a
+// graph pulse and the wrong one here: the HUD draws every frame, outside any event, where _lgCtx.pid is
+// whatever the last pulse left behind (0 in practice). A widget asks "what is MY number", and the answer
+// is the same shape on the host and on a client, which is what lets the mirror below stay a plain scalar
+// per connection instead of becoming a routing problem.
+function _hwVarKey(k){
+  if(!k || k.charAt(k.length-1)!=='@') return k;
+  return k + ((typeof NET!=='undefined' && NET.myId!=null) ? (NET.myId|0) : 0);
+}
 function _hwText(w){
-  const interp=(t)=>String(t).replace(/\{([\w#]+)\}/g, (m,k)=>String(Math.round((+logicVars[k]||0)*100)/100));
+  // build 1287: the `@` class the toast node has accepted since 1231, resolved through _hwVarKey (above).
+  // Without it a widget bound to `coins@` matched nothing and rendered the literal text; with the mirror
+  // below fixed too, it now shows THIS player's value. A co-op shop or scoreboard needed both halves.
+  const interp=(t)=>String(t).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_hwVarKey(k)]||0)*100)/100));
   if(w.kind==='timer'){ const t=_hwFmtTimer(_lgNum(w.value)); return w.label ? (interp(w.label)+' '+t) : t; }
   return interp(w.label);
 }
@@ -11374,10 +11387,21 @@ function updateHudWidgets(){
   }
   _hwSyncCursor(_btnVis && (typeof gameOn!=='undefined' && gameOn) && !(typeof paused!=='undefined' && paused) && !(typeof editorOpen!=='undefined' && editorOpen));
   if(typeof NET!=='undefined' && NET.mode==='host' && _hwVars.length){
-    const v={}; for(const k of _hwVars) v[k]=+logicVars[k]||0;
-    const js=JSON.stringify(v); const now=(typeof performance!=='undefined')?performance.now():Date.now();
+    // build 1287: a name ending in `@` is PER PLAYER (build 1231), so one broadcast scalar was wrong by
+    // construction — every client saw the HOST's value. Shared names still ride one shared object; the
+    // per-player ones are resolved against each connection's own pid and merged into that client's packet.
+    // The client stores them under the BARE `name@` key, because its own _lgVarKey will re-key the read
+    // with its own id — sending it `coins@3` would leave it looking for `coins@0`.
+    const shared={}, perP=[];
+    for(const k of _hwVars){ if(k.charAt(k.length-1)==='@') perP.push(k); else shared[k]=+logicVars[k]||0; }
+    const js=JSON.stringify(shared)+'|'+perP.map(k=>k+':'+(+logicVars[k+'0']||0)).join(',');
+    const now=(typeof performance!=='undefined')?performance.now():Date.now();
     if(js!==_hwSent || now-_hwSentAt>2000){ _hwSent=js; _hwSentAt=now;
-      for(const cid in NET.conns){ try{ NET.conns[cid].send({t:'hudv', v}); }catch(e){} }
+      for(const cid in NET.conns){
+        let v=shared;
+        if(perP.length){ v=Object.assign({}, shared); for(const k of perP) v[k]=+logicVars[k+(+cid|0)]||0; }
+        try{ NET.conns[cid].send({t:'hudv', v}); }catch(e){}
+      }
     }
   }
 }
@@ -25786,7 +25810,11 @@ function handleHostMsg(msg){
   else if(msg.t==='feed'){ addKillFeed(msg.k, msg.v); }
   else if(msg.t==='frag'){ registerLocalKill(); }   // co-op: the host confirmed our shot killed an enemy -> multi-kill tracking
   else if(msg.t==='actEv'){ if(typeof logicEvent==='function') logicEvent(String(msg.n||'').slice(0,60)); }   // build 1071: a client's action pulses the host's logic graph
-  else if(msg.t==='hudv'){ if(msg.v && typeof msg.v==='object') for(const k in msg.v) logicVars[k]=+msg.v[k]||0; }   // build 1058: the host mirrors widget-watched logic variables
+  else if(msg.t==='hudv'){ if(msg.v && typeof msg.v==='object') for(const k in msg.v){
+    /* build 1287: the host sends a per-player name under its BARE key (`coins@`) carrying THIS client's
+       value; store it where this client's own _hwVarKey will look, which is `coins@<myId>`. Sending the
+       host-resolved key instead would be wrong the moment ids differ, and silently so. */
+    logicVars[(typeof _hwVarKey==='function') ? _hwVarKey(k) : k] = +msg.v[k]||0; } }   // build 1058: the host mirrors widget-watched logic variables
   else if(msg.t==='full'){ NET._lost=true; if(typeof netStatus==='function') netStatus('That room is full ('+(msg.max||8)+' players).'); if(typeof toast==='function') toast('Room is full'); }   // build 1207: the host refused us at the cap
   else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200)); }   // chat from the host or relayed from another player
   else if(msg.t==='duelOver'){ showDuelResult(msg.w, msg.wt); }
@@ -29325,7 +29353,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1286 · 2026-08-02';
+const BUILD_VERSION = 'build 1287 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
