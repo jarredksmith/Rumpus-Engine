@@ -5,7 +5,7 @@ const src = gameSource();
 // section is registered on the Gameplay (rules) tab
 assert(/rules:\s*\['game','pickups','loot','invitems','buildmenu','logic','cutscenes'\]/.test(src), 'invitems section on the rules tab');
 assert(/sec\('Inventory items', 'invitems', '<div id="edInvItems"><\/div>'\)/.test(src), 'panel host declared');
-assert(/const invItemsHost = editorEl\.querySelector\('#edInvItems'\); if\(invItemsHost && typeof renderInvItems==='function'\) renderInvItems\(invItemsHost\)/.test(src), 'panel renders from renderEditorFields');
+assert(/const invItemsHost = editorEl\.querySelector\('#edInvItems'\); if\(invItemsHost && _edOnScreen\(invItemsHost\) && typeof renderInvItems==='function'\) renderInvItems\(invItemsHost\)/.test(src), 'panel renders from renderEditorFields');   // build 1293: ...when it is actually on screen
 
 // unique id minting skips taken slots
 const mint = new Function(extractFunction('_newInvId').replace('function _newInvId','return function _newInvId') + '; ');

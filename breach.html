@@ -29464,7 +29464,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1292 · 2026-08-02';
+const BUILD_VERSION = 'build 1293 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38947,7 +38947,7 @@ function renderModelBrowserPP(host){
       ul.appendChild(row);
     });
     body.appendChild(ul);
-    head.onclick = ()=> sec.classList.toggle('collapsed');
+    head.onclick = ()=>{ sec.classList.toggle('collapsed'); if(!sec.classList.contains('collapsed') && typeof renderEditorFields==='function') renderEditorFields(); };   /* build 1293 */
     sec.appendChild(head); sec.appendChild(body); credHost.appendChild(sec);
   }
   // expose so the add callback can refresh the credits after a successful load
@@ -39232,6 +39232,9 @@ function buildEditorPanel(){
       s.classList.toggle('collapsed');
       secState[k] = s.classList.contains('collapsed');
       try{ localStorage.setItem('breach_editor_sections', JSON.stringify(secState)); }catch(e){}
+      /* build 1293: a section skipped while hidden has no content yet — build it now that it is open.
+         Only on EXPAND: collapsing reveals nothing and a rebuild there would be the cost this removes. */
+      if(!s.classList.contains('collapsed') && typeof renderEditorFields==='function') renderEditorFields();
     };
   });
   // ---- build 984: static sub-fold toggle (delegated; JS-built folds keep their own onclick) ----
@@ -39936,6 +39939,30 @@ function renderInvItems(host){
 // synchronously (callers may read the fresh DOM); any further call within ~8ms collapses into ONE deferred rebuild on the
 // next animation frame. Same output, a fraction of the DOM work on burst interactions.
 let _refLast = 0, _refQueued = false;
+// ---- build 1293: do not rebuild what nobody can see ------------------------------------------------
+// `renderEditorFields` tears down and re-creates the WHOLE panel — every tab's sections, whichever tab is
+// showing. Measured in the real editor on the stock level, sitting on the Props tab: the Environment,
+// Enemies, Objectives, Crosshair, Loot and Inventory hosts hold 1,867 DOM nodes between them, ALL SIX are
+// off screen, and every one of those nodes is destroyed and rebuilt on every call. The call costs 26.7 ms
+// — which is 82% of what a fast undo now costs (build 1291 measured serializeLevel at 5.8 ms beside it),
+// and it runs on every selection change, every field edit and every gizmo release, not just undo.
+//
+// The gate is VISIBILITY, not a tab-to-section map: `offsetParent === null` is exactly "display:none
+// somewhere above me", which covers both the inactive tab and the collapsed fold (`.edSection.collapsed
+// .edSecBody { display:none }`) without this function having to know which is which. A map would need
+// updating every time a section moves, and would be wrong silently.
+//
+// Two things make it safe:
+//  - The block is skipped only when NONE of the six is on screen. Any one of them visible builds all six,
+//    exactly as before — so a section can never be half-built, which is the failure this would otherwise
+//    invite. That is deliberately less aggressive than gating each host: the win is concentrated on the
+//    Props tab, where the interaction rate is highest and all six are always hidden.
+//  - Expanding a fold now re-renders. Nothing else called this on a fold toggle, so a section expanded
+//    after a skipped pass would have shown empty.
+// On any error the predicate answers TRUE, which is the old behaviour — a panel that builds too much is a
+// slow editor, a panel that builds too little is an empty one.
+function _edOnScreen(el){ try{ return !!(el && el.offsetParent !== null); }catch(e){ return true; } }
+function _edAnyOnScreen(list){ for(let i=0;i<list.length;i++){ if(_edOnScreen(list[i])) return true; } return false; }
 function renderEditorFields(){
   if(!editorEl) return;
   if(typeof _outQueueRefresh==='function') _outQueueRefresh();   // build 1036: the outliner mirrors every add/delete/select
@@ -39964,9 +39991,9 @@ function renderEditorFields(){
   const gameHost    = editorEl.querySelector('#edGame');
   const crosshairHost = editorEl.querySelector('#edCrosshair');
   const lootHost    = editorEl.querySelector('#edLoot');
-  const invItemsHost = editorEl.querySelector('#edInvItems'); if(invItemsHost && typeof renderInvItems==='function') renderInvItems(invItemsHost);
+  const invItemsHost = editorEl.querySelector('#edInvItems'); if(invItemsHost && _edOnScreen(invItemsHost) && typeof renderInvItems==='function') renderInvItems(invItemsHost);   /* build 1293 */
   // Sounds relocated: per-weapon shoot sound -> each weapon (Weapons tab); music + global SFX -> Scene > Audio
-  if(worldHost){
+  if(worldHost && _edAnyOnScreen([worldHost, enemyHost, gameHost, lootHost, crosshairHost])){   /* build 1293: 1,867 nodes, all of them off screen on the Props tab */
     worldHost.innerHTML = '';
     if(enemyHost) enemyHost.innerHTML = '';
     if(gameHost) gameHost.innerHTML = '';

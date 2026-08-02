@@ -4368,6 +4368,48 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## The editor panel stopped rebuilding what nobody can see (build 1293)
+
+Build 1291 made undo fast and named what was left: `serializeLevel` and `renderEditorFields`. Measured,
+the split is not close — `serializeLevel` is **5.8 ms** and `renderEditorFields` is **26.7 ms**, and the
+second one runs on every selection change, every field edit and every gizmo release, not only on undo.
+
+`renderEditorFields` tears down and re-creates the WHOLE panel: every mode's sections, whichever mode is
+showing. Probed in the real editor, in Build mode — the default, and where every drag and selection
+happens — the Environment, Enemies, Objectives, Crosshair and Loot hosts hold **1,867 DOM nodes between
+them and every single one is off screen**, destroyed and rebuilt on every call.
+
+```
+                  render      panel nodes
+Build mode        26.7 ms  ->  8.1 ms      5,191 -> 3,150
+Scene / Enemies / Rules / HUD   unchanged — those modes show the sections, so they build them
+Kit / Files / Settings          2.7-3.2 ms
+```
+
+**The gate is `offsetParent === null`, not a section-to-mode map.** That is exactly "display:none somewhere
+above me", so it covers the mode filter (`applyEditorMode` sets `display` per `.edSection`) and the
+collapsed fold (`.edSection.collapsed .edSecBody { display:none }`) without this function knowing which is
+which. A map would need updating every time a section moved, and would be wrong silently.
+
+Three things make it safe, and all three are asserted:
+- **All-or-nothing per group.** Those five hosts are built INTERLEAVED across 3,000 lines by helpers that
+  take a host argument, so gating each one would push a null host into every build site. Any one visible
+  builds all five. Less aggressive, and a section can never be half-built.
+- **Expanding a fold now re-renders.** Nothing called this on a fold toggle before, because the content was
+  always there. Only on expand — collapsing reveals nothing, and rebuilding there is the cost being removed.
+- **Every error path answers "build it".** A panel that builds too much is a slow editor; one that builds
+  too little is an empty one.
+
+`setEditorMode` already did `applyEditorMode()` *then* `renderEditorFields()` — reveal, then build. That
+order was incidental before and is load-bearing now, so it is pinned.
+
+**Finding the real structure took two wrong probes, both recorded in `tools/probe/README.md`'s spirit.**
+The first drove `editorActive` directly and concluded the World tab "did not come back" — but `#edTabs` is
+the TARGET picker (props/lights/spawns), not the section list, so that click did nothing. The second called
+`renderEditorFields` twice in a row and read a zero: the function rate-limits itself to one build per 8 ms
+and defers the rest to `requestAnimationFrame`, so the second call never ran. **Measuring through a
+rate-limiter reads exactly like measuring a fix that works.**
+
 ## The bloom threshold was measuring the wrong thing (build 1292)
 
 The bloom prefilter thresholds the luminance of `_postRT`, which holds the scene **after** three has applied
