@@ -967,6 +967,62 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The editor viewport answers to two fingers (build 1312 — editor audit 4.6)
+
+> Top view pan is `mousedown` button 1/2 and zoom is `wheel` → **top view is unreachable on a phone**, and
+> with it the marquee, which is top-view only. A touch creator has no multi-select at all beyond the
+> outliner. No pinch-zoom anywhere in the viewport.
+
+Verified at the lines: the pan handler returns unless `e.button` is the MIDDLE or RIGHT button, and the zoom
+lives on `wheel`. A touchscreen has neither — so a phone creator could press Top, arrive fitted to the whole
+arena, and never get closer or move sideways. **The view existed and was useless.**
+
+```
+TOP VIEW      two fingers drag -> pan          pinch -> zoom
+PERSPECTIVE   two fingers drag -> look         pinch -> dolly along the view
+```
+
+**One finger is deliberately untouched.** Tap-select, gizmo drags, the marquee and the look-drag all run off
+the existing pointer path; the handler ignores anything that is not exactly two touches and never calls
+`preventDefault` on one. That is what makes the change additive rather than a rewrite of the input layer.
+
+Every number is borrowed rather than invented, so the two inputs cannot disagree about the same view: the
+pan reuses the mouse pan's own `(2*topZoom)/innerHeight`, the zoom clamps are byte-identical to the wheel's,
+the look reads build 1281's sensitivity setting, and the pitch clamps at the same ±1.5.
+
+**The dolly is logarithmic, not `1 - 1/scale`.** The ratio form is asymmetric — pinching out and back in by
+the same amount leaves the camera somewhere new, which reads as drift and is the sort of thing nobody
+reports; they just stop trusting the gesture. `log(scale) * 9` returns to exactly where it started (measured
+live: −6.238 / +6.238 m).
+
+Measured with real `TouchEvent`s at the real canvas (`tools/probe/editor-touch.mjs`): a 100 px two-finger
+drag panned 111.11 world units with the zoom unchanged; a ×2 pinch took zoom 200 → 100 with the pan
+unchanged; a held pinch hit floor 6 and ceiling 110, exactly the wheel's clamps; two-finger drag in
+perspective moved yaw/pitch and left the fly position alone; **one finger changed nothing, and neither did
+anything with the editor closed.**
+
+### The suite caught a regression I was one commit from shipping
+
+I also hid the on-screen touch sticks while editing, reading the audit's *"taps on the stick half do
+nothing"* as the overlay swallowing half the canvas. Build 165's own test failed with `touch UI shows in the
+editor` — and the assertion one line below it says why:
+
+```js
+if(isTouch){ if(touchMoveZ) flyPos.addScaledVector(fwd, -touchMoveZ*spd*1.5);
+```
+
+**The joystick is how a touch creator flies the editor camera.** Hiding it would have taken away their only
+way to *move*, in exchange for making the left half tappable. Reverted. The stick half not selecting is a
+trade-off that was made deliberately in build 165, not a defect — so **this build does not close that third
+bullet**, and the entry should not be read as though it does.
+
+Two things worth carrying: a decade-old-looking assertion with a terse message can be load-bearing, and the
+line under it is usually the reason. And when an audit finding and a passing test disagree, **read the test's
+neighbours before believing the audit.**
+
+One pin moved (1281 — `_mouseSensNow` is now asked three times, because the touch look reads the creator's
+own sensitivity rather than inventing a second one).
+
 ## A swing is an arc, not a laser (build 1311)
 
 Reported from play: *"unless the character is directly facing the object with the cross-hair dead middle of

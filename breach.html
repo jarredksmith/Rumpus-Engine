@@ -19420,6 +19420,69 @@ function _marqueeFinish(e){
 }
 // middle / right drag pans in top view (left-drag is the marquee now); suppress the context menu while editing in top view
 renderer.domElement.addEventListener('mousedown', e=>{ if(!editorOpen || (e.button!==1 && e.button!==2)) return; if(editorTopView){ editorDragPan=true; editorDragMoved=false; e.preventDefault(); } });
+// ---- build 1312 (editor audit 4.6): TWO-FINGER CAMERA IN THE EDITOR VIEWPORT --------------------------
+// The audit: "Top view pan is mousedown button 1/2 and zoom is `wheel` -> TOP VIEW IS UNREACHABLE ON A
+// PHONE, and with it the marquee, which is top-view only. A touch creator has no multi-select at all beyond
+// the outliner. No pinch-zoom anywhere in the viewport."
+//
+// Verified: the pan handler one line above returns unless `e.button` is the MIDDLE or RIGHT button, and the
+// zoom lives on `wheel`. A touchscreen has neither. So a phone creator could press the Top button, arrive
+// fitted to the whole arena, and then never get closer or move sideways — the view existed and was useless.
+//
+// ONE FINGER IS UNTOUCHED. Tap-to-select, gizmo drags, the marquee and the look-drag all run off the
+// existing pointer path and must keep working exactly as they do; this handler ignores anything that is not
+// a two-finger gesture and never calls preventDefault on one. That is what keeps the change additive.
+//
+// The gesture is the one every 3D app on a tablet uses, which is worth more here than any cleverness:
+//   TOP VIEW      two fingers drag -> pan          pinch -> zoom about the arena
+//   PERSPECTIVE   two fingers drag -> look         pinch -> dolly along the view
+// Pinch is scale-relative (a ratio, not pixels), so it behaves the same on a phone and a tablet.
+let _edTouch = null;   // { d, cx, cy } from the previous move, or null when no two-finger gesture is live
+function _edTouchGeom(t){
+  const a=t[0], b=t[1];
+  return { d: Math.hypot(b.clientX-a.clientX, b.clientY-a.clientY),
+           cx: (a.clientX+b.clientX)/2, cy: (a.clientY+b.clientY)/2 };
+}
+renderer.domElement.addEventListener('touchstart', e=>{
+  if(!editorOpen || e.touches.length!==2){ _edTouch=null; return; }
+  _edTouch = _edTouchGeom(e.touches); editorDragMoved = true;   /* a two-finger gesture is never a tap-select */
+  e.preventDefault();
+}, { passive:false });
+renderer.domElement.addEventListener('touchmove', e=>{
+  if(!editorOpen || e.touches.length!==2 || !_edTouch) return;
+  const g = _edTouchGeom(e.touches);
+  const dx = g.cx - _edTouch.cx, dy = g.cy - _edTouch.cy;
+  /* the pinch ratio, guarded: two fingers landing at the same point would divide by ~0 */
+  const scale = (_edTouch.d > 8 && g.d > 8) ? (g.d / _edTouch.d) : 1;
+  if(editorTopView){
+    const wpp = (2*topZoom)/innerHeight;                       // world units per pixel, the same figure the mouse pan uses
+    topPanX -= dx * wpp; topPanZ -= dy * wpp;
+    if(scale!==1) topZoom = Math.max(6, Math.min(Math.max(110, ARENA*1.3), topZoom / scale));   // pinch OUT zooms in, like every map
+  } else {
+    const _s = (typeof _mouseSensNow==='function') ? _mouseSensNow(false) : 0.0022;
+    player.yaw -= dx * _s; player.pitch -= dy * _s;
+    player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+    /* dolly along the view. In free-fly that is the fly position; otherwise it is the same third-person
+       preview distance the wheel drives, so the gesture means the same thing the mouse does in each mode. */
+    if(scale!==1){
+      if(editorFreeFly && typeof flyPos!=='undefined'){
+        /* log, not a ratio difference, so pinching in and out by the same amount travels the same
+           distance — (1 - 1/scale) is asymmetric and a creator feels that immediately as drift. */
+        const _step = Math.log(scale) * 9;   // ~6 m per doubling, either way
+        flyPos.x += -Math.sin(player.yaw)*Math.cos(player.pitch)*_step;
+        flyPos.y +=  Math.sin(player.pitch)*_step;
+        flyPos.z += -Math.cos(player.yaw)*Math.cos(player.pitch)*_step;
+      } else if(typeof _charPrevDist!=='undefined'){
+        _charPrevDist = Math.max(1.8, Math.min(12, _charPrevDist / scale));
+      }
+    }
+  }
+  _edTouch = g;
+  e.preventDefault();
+}, { passive:false });
+const _edTouchEnd = (e)=>{ if(!e.touches || e.touches.length<2) _edTouch=null; };
+renderer.domElement.addEventListener('touchend', _edTouchEnd, { passive:true });
+renderer.domElement.addEventListener('touchcancel', _edTouchEnd, { passive:true });
 renderer.domElement.addEventListener('contextmenu', e=>{ if(editorOpen && editorTopView) e.preventDefault(); });
 
 // ---------- Weapon (viewmodel) ----------
@@ -29880,7 +29943,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1311 · 2026-08-02';
+const BUILD_VERSION = 'build 1312 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34999,6 +35062,12 @@ function loop(){
     }
   }
   touchLookDX = 0; touchLookDY = 0;
+  /* build 1312 TRIED to hide these while editing, reading the audit's "taps on the stick half do nothing"
+     as the sticks swallowing half the canvas. THE SUITE CAUGHT IT: build 165's own test asserts the touch
+     UI shows in the editor, and one line below it asserts why — `if(isTouch){ if(touchMoveZ)
+     flyPos.addScaledVector(...) }`. THE JOYSTICK IS HOW A TOUCH CREATOR FLIES THE EDITOR CAMERA. Hiding it
+     would have taken away their only way to MOVE, in exchange for making the left half tappable. The stick
+     half not selecting is a trade-off that was already made deliberately, not a defect. */
   if(isTouch){ const tu=document.getElementById('touchUI'); if(tu){ const d=(gameOn && !shopOpen && !choosingUpgrade)?'block':'none'; if(tu.style.display!==d) tu.style.display=d; } }
   document.body.classList.toggle('editing', !!editorOpen);   // build 615: editor-state class for all platforms (hides the integrity HUD so it can't sit over the camera preview)
   updateColliderViz(dt);   // debug overlay of collision boxes (toggle in editor)
