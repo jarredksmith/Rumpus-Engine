@@ -4352,11 +4352,37 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
-**Two view-mode gates found while reading this and deliberately NOT fixed here** — each needs its own probe
-pass, and neither is what was reported. The grab gate is `wish.dot(forward) > 0.5`, and `forward` is the
-SCREEN-relative movement basis in the fixed-camera views: `side` sets it to the **zero vector**, so a 2.5D
-platformer can never ledge-grab at all, and `chaseCursorOn()` sets it to the frozen camera yaw while the body
-faces the cursor, so the probe goes where the camera looks rather than where the character does.
+## The ledge grab probes where the character is GOING (build 1290)
+
+Found while reading 1289, verified with the same rig, and it is a whole game mode: the grab gate was
+`wish.dot(forward) > 0.5`, and `forward` is the movement BASIS. Build 874 makes that basis SCREEN-relative in
+the fixed-camera views, and side-scroll sets it to the **literal zero vector** (the lane lives in `right`).
+So the gate was `0 > 0.5` on every frame and **a 2.5D platformer could not ledge-grab at all** — the single
+most genre-defining verb a side-scroller has. With build 1103's cursor aim the basis is the FROZEN camera yaw
+while the body runs wherever the stick points, so the probe went where the camera looked, not where the
+character was going.
+
+Measured, side view, same box and approach, control pair:
+```
+before   the player runs straight past the box, NO GRAB on any frame
+after    hang at hy 1.75, grab direction +X, _ledge.yaw -1.57 (facing the wall it grabbed)
+```
+First and third person re-measured after the change: **1.75 in both, unchanged** — the first-person test is
+deliberately untouched, because that is the view where the grab must also mean *toward where you are looking*,
+which is what makes it deliberate rather than accidental there.
+
+Three things beyond the gate had to follow the same direction, and each is a bug on its own:
+- **All five probes** — the reach scan, the contact point, 966's wall-face walk, the chest anchor and the
+  pull-up landing spot. A test asserts that nothing in the block still reads the raw basis, because one probe
+  landing somewhere else than the other four is a hang anchored to a wall that was never found.
+- **The hang yaw.** 966 faced the body along `player.yaw`, which in the twin-stick views points at the
+  CURSOR. It is now `atan2(-gx, -gz)` — the inverse of the engine's `(-sin yaw, -cos yaw)` forward, so it
+  round-trips exactly.
+- **The drop.** It stepped back along whatever the basis pointed at *that* frame; it now backs off the wall
+  the record remembers, falling back to the basis so an in-flight record from before this build still behaves.
+
+Six pins moved (493, 966, 1243, 1244 plus 1289's own two), all keeping their assertions' intent.
+
 
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 

@@ -9,7 +9,7 @@ const MIN = 0.6 + 0.05;   // STEP + 0.05
 
 // --- wiring in the movement loop (build 644: grab now HANGS, then pull-up or drop) ---
 assert(/if\(!_ledge && _jumpBufT>0 && \(player\.onGround \|\| _coyoteT>0\)/.test(src), 'a fresh jump is suppressed on the frame a ledge is grabbed');
-assert(/for\(const _sd of \[0\.45, 0\.7, 0\.95, 1\.2\]\)\{ _lt = mantleLedge\(player\.pos\.x \+ forward\.x\*_sd, player\.pos\.z \+ forward\.z\*_sd, _fy\); if\(_lt != null\)\{ _pd = _sd; break; \} \}/.test(src), 'movement probes for a ledge in front');   // build 1244: an outward SCAN to arm's reach — the single 0.55 probe never cleared the KCC's 0.8 capsule standoff, so it sampled the ground at the player's feet and no ledge ever grabbed
+assert(/for\(const _sd of \[0\.45, 0\.7, 0\.95, 1\.2\]\)\{ _lt = mantleLedge\(player\.pos\.x \+ _gFwd\.x\*_sd, player\.pos\.z \+ _gFwd\.z\*_sd, _fy\); if\(_lt != null\)\{ _pd = _sd; break; \} \}/.test(src), 'movement probes for a ledge in front');   // build 1290: _gFwd, not the raw basis   // build 1244: an outward SCAN to arm's reach — the single 0.55 probe never cleared the KCC's 0.8 capsule standoff, so it sampled the ground at the player's feet and no ledge ever grabbed
 assert(/wish\.dot\(forward\) > 0\.5/.test(src), 'only grabs when actually pushing forward (input-agnostic: keys or stick)');
 assert(/_ledge = \{ ph:'hang'/.test(src), 'grabbing a ledge starts in the HANG phase');
 assert(/player\.pos\.y = _ledge\.fy0 \+ \(_ledge\.ty-_ledge\.fy0\)\*_up;/.test(src), 'the pull-up phase rises then sweeps forward onto the top');

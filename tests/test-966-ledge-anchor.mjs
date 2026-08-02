@@ -12,7 +12,7 @@ const src = gameSource();
 
 // grab: face anchor + wall yaw + avatar-sized drop
 assert(/let _fd=0\.55; for\(let _d=0\.08;_d<=0\.9;_d\+=0\.03\)\{ const _t2=surfaceTopAt\(/.test(src), 'the grab walks the probe to the wall face');
-assert(/const _gap=0\.34, _hx=player\.pos\.x\+forward\.x\*\(_fd-_gap\)/.test(src), 'the chest holds a fixed gap off the face');
+assert(/const _gap=0\.34, _hx=player\.pos\.x\+_gFwd\.x\*\(_fd-_gap\)/.test(src), 'the chest holds a fixed gap off the face');   // build 1290: measured along the grab direction
 // build 1289: the avatar-sized drop is a VISUAL — it placed the COLLIDER until then, which is what made the
 // hang depend on whether the body was being drawn at all. It is still measured, and it still puts the hands
 // on the lip; it now does it to the body rather than to the player.

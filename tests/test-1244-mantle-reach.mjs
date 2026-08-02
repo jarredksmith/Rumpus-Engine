@@ -53,9 +53,9 @@ const fns = new Function(...Object.keys(env),
 
 // ---------------------------------------------------------------- the wiring
 {
-  assert(/for\(const _sd of \[0\.45, 0\.7, 0\.95, 1\.2\]\)\{ _lt = mantleLedge\(player\.pos\.x \+ forward\.x\*_sd, player\.pos\.z \+ forward\.z\*_sd, _fy\); if\(_lt != null\)\{ _pd = _sd; break; \} \}/.test(src),
+  assert(/for\(const _sd of \[0\.45, 0\.7, 0\.95, 1\.2\]\)\{ _lt = mantleLedge\(player\.pos\.x \+ _gFwd\.x\*_sd, player\.pos\.z \+ _gFwd\.z\*_sd, _fy\); if\(_lt != null\)\{ _pd = _sd; break; \} \}/.test(src),   // build 1290: along the grab direction
     'the grab scans outward; first grabbable top wins');
-  assert(/const _fx = player\.pos\.x \+ forward\.x\*_pd, _fz = player\.pos\.z \+ forward\.z\*_pd;/.test(src),
+  assert(/const _fx = player\.pos\.x \+ _gFwd\.x\*_pd, _fz = player\.pos\.z \+ _gFwd\.z\*_pd;/.test(src),
     '...and the hang/pull anchor derives from the distance that actually FOUND the ledge');
 }
 

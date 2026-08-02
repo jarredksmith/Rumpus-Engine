@@ -18669,7 +18669,7 @@ let touchBoost=false, touchHandbrake=false;   // build 788: dedicated mobile dri
 // (movement basis, stick clones, editor-fly basis, ledge avatar-height probe) and allPlayers() built a fresh
 // array with two closures per entry per frame — exactly the steady-state garbage behind the periodic GC
 // pauses the adaptive ladder then has to forgive. Module scratch, the codebase's own _lp/_pcV pattern.
-const _mvFwd=new THREE.Vector3(), _mvRight=new THREE.Vector3(), _mvWish=new THREE.Vector3();
+const _mvFwd=new THREE.Vector3(), _mvRight=new THREE.Vector3(), _mvWish=new THREE.Vector3(), _mvGrab=new THREE.Vector3();   /* build 1290: the ledge grab's own direction — module scratch, per build 1168 */
 const _flyFwd=new THREE.Vector3(), _flyRight=new THREE.Vector3();
 let _avHCache=1.7, _avHCacheT=-1e9; const _avHBox=new THREE.Box3();   // avatar height, re-measured at most 1x/s
 let _jumpHeldPrev=false; const JUMP_CD=0.5;   // jump must be a fresh press, and at least JUMP_CD seconds apart — stops hold-to-bunny-hop
@@ -29406,7 +29406,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1289 · 2026-08-02';
+const BUILD_VERSION = 'build 1290 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34595,7 +34595,18 @@ function loop(){
   }
   // build 640/644: ledge grab — jumping or falling toward a chest/head-high ledge while pushing FORWARD grabs it
   // and you HANG. From the hang: Space (or keep holding forward) PULLS UP onto the top; Ctrl/back DROPS down.
-  if(!_ledge && gameOn && !editorOpen && !mountedTurret && !sliding && !duelDead && !_levelLoaderActive && matchWarmup<=0 && (_jPressed || !player.onGround) && wish.dot(forward) > 0.5){
+  // build 1290: `forward` is the movement BASIS, and in the fixed-camera views build 874 makes that basis
+  // SCREEN-relative rather than facing-relative — side-scroll sets it to the ZERO VECTOR (the lane lives in
+  // `right`), so `wish.dot(forward) > 0.5` could never pass and a 2.5D platformer could not ledge-grab at
+  // all; and with build 1103's cursor aim the basis is the FROZEN camera yaw while the body runs wherever
+  // the stick points, so the probe went where the camera looked instead of where the character was going.
+  // The question the grab is really asking is "am I pushing INTO something", so in those views it asks the
+  // direction actually being pushed. The first-person test is untouched — it is the one that also has to
+  // mean "toward where you are LOOKING", which is what makes a ledge grab deliberate there.
+  const _gScreen = (_vm874!=='fps') || (typeof chaseCursorOn==='function' && chaseCursorOn());
+  const _gPush = _gScreen ? (wish.lengthSq() > 0.25) : (wish.dot(forward) > 0.5);
+  const _gFwd = (_gScreen && wish.lengthSq() > 1e-6) ? _mvGrab.copy(wish).setY(0).normalize() : forward;
+  if(!_ledge && gameOn && !editorOpen && !mountedTurret && !sliding && !duelDead && !_levelLoaderActive && matchWarmup<=0 && (_jPressed || !player.onGround) && _gPush){
     const _fy = player.pos.y - EYE;
     // build 1244: PROBED HEADLESS — the single fixed probe 0.55 ahead of the player's CENTRE never
     // reached the wall: the KCC holds the capsule (radius 0.8) at least that far off the face, so
@@ -34603,16 +34614,16 @@ function loop(){
     // every jump. That is why 1239/1243's window and ceiling fixes changed nothing in play — the
     // probe never landed on the box at all. Scan outward to arm's reach; first grabbable top wins.
     let _lt = null, _pd = 0.55;
-    for(const _sd of [0.45, 0.7, 0.95, 1.2]){ _lt = mantleLedge(player.pos.x + forward.x*_sd, player.pos.z + forward.z*_sd, _fy); if(_lt != null){ _pd = _sd; break; } }
-    const _fx = player.pos.x + forward.x*_pd, _fz = player.pos.z + forward.z*_pd;
+    for(const _sd of [0.45, 0.7, 0.95, 1.2]){ _lt = mantleLedge(player.pos.x + _gFwd.x*_sd, player.pos.z + _gFwd.z*_sd, _fy); if(_lt != null){ _pd = _sd; break; } }
+    const _fx = player.pos.x + _gFwd.x*_pd, _fz = player.pos.z + _gFwd.z*_pd;
     if(_lt!=null){
       // build 966: anchor the hang to the WALL FACE (not wherever the grab happened), face it, and
       // size the drop to the ACTUAL avatar so the raised hands land on the lip.
-      let _fd=0.55; for(let _d=0.08;_d<=0.9;_d+=0.03){ const _t2=surfaceTopAt(player.pos.x+forward.x*_d, player.pos.z+forward.z*_d, undefined, undefined, _lt + 0.5); if(isFinite(_t2) && _t2>=_lt-0.08){ _fd=_d; break; } }   /* build 1243: same ceiling — the face scan must find THIS ledge's wall, not a taller neighbour's */
-      const _gap=0.34, _hx=player.pos.x+forward.x*(_fd-_gap), _hz=player.pos.z+forward.z*(_fd-_gap);
+      let _fd=0.55; for(let _d=0.08;_d<=0.9;_d+=0.03){ const _t2=surfaceTopAt(player.pos.x+_gFwd.x*_d, player.pos.z+_gFwd.z*_d, undefined, undefined, _lt + 0.5); if(isFinite(_t2) && _t2>=_lt-0.08){ _fd=_d; break; } }   /* build 1243: same ceiling — the face scan must find THIS ledge's wall, not a taller neighbour's */
+      const _gap=0.34, _hx=player.pos.x+_gFwd.x*(_fd-_gap), _hz=player.pos.z+_gFwd.z*(_fd-_gap);
       const _gy=(typeof groundHeightAt==='function')?groundHeightAt(player.pos.x, player.pos.z, player.pos.y-EYE):0;   /* build 1243 */
       const _hy=Math.max(_lt + EYE - LEDGE_REACH, _gy + EYE - 0.12);   /* build 1289: the PLAYER's reach, not the drawn body's — same in every camera. Full-extension hang, but never feet-through-the-floor: on a ledge near the bottom of the window the body stands at the wall base, arms up to the lip */
-      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:player.yaw, fy0:player.pos.y, hy:_hy, tx:_fx + forward.x*0.35, tz:_fz + forward.z*0.35, ty:_lt+EYE, lip:_lt, gy:_gy };   /* build 1289: lip + ground ride along so the VISUAL can place a body of any height against them */
+      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:Math.atan2(-_gFwd.x, -_gFwd.z), fy0:player.pos.y, hy:_hy, tx:_fx + _gFwd.x*0.35, tz:_fz + _gFwd.z*0.35, ty:_lt+EYE, lip:_lt, gy:_gy, gx:_gFwd.x, gz:_gFwd.z };   /* build 1290: face the wall this grab found (in the twin-stick views player.yaw points at the CURSOR, which is not the wall), and remember the direction so the drop steps back off it */   /* build 1289: lip + ground ride along so the VISUAL can place a body of any height against them */
       player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
   }
   // build 1160: same pattern as the slide buffer (926). Grounded refreshes the coyote window; a press
@@ -34646,7 +34657,7 @@ function loop(){
       if(_mt>=1){ player.pos.x=_ledge.tx; player.pos.y=_ledge.ty; player.pos.z=_ledge.tz; player.onGround=true; _ledge=null; _climbAnim=0; }
     } else {   // drop
       _ledge.t += dt; _climbAnim = 'ledgeDrop';
-      if(_ledge.t >= LEDGE_DROP_DUR){ player.pos.x -= forward.x*0.25; player.pos.z -= forward.z*0.25; player.vel.y = -1; _ledge=null; _climbAnim=0; }
+      if(_ledge.t >= LEDGE_DROP_DUR){ player.pos.x -= (_ledge.gx!=null?_ledge.gx:forward.x)*0.25; player.pos.z -= (_ledge.gz!=null?_ledge.gz:forward.z)*0.25; player.vel.y = -1; _ledge=null; _climbAnim=0; }   /* build 1290: back off the wall that was GRABBED, not wherever the basis points this frame */
     }
   } else if(_onLadder && _ladder){
     // build 645: ladder climb — W up / S down, jump hops off; XZ is softly locked to the ladder line.
