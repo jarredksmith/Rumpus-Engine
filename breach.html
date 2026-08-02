@@ -19530,9 +19530,27 @@ const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k]
 // baseline captured before any override, only CHANGED values serialized, every loader resetting to base
 // when a level carries nothing. One clamped helper applies them, so a hostile level file cannot set a
 // 0ms fire rate or 10,000 pellets no matter which loader it arrives through.
-const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets'];
-const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[1,24] };
-const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k]; GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets }; _w.reserve0=_w.reserve; }
+// build 1296: MELEE IS A STAT. Build 1240 answered "add a sword/axe/staff" with renaming, and 1190 made the
+// stat sheet authorable — but `melee` and `reach` were in neither, so a creator could rename the SMG to
+// SWORD and it still fired bullets. Exactly ONE slot shipped as a usable melee weapon (`crowbar`; `hands` is
+// the bare-fist loadout), so "a pistol, a sword, an axe and a rifle" was unbuildable: the sword and the axe
+// were competing for the same slot.
+//
+// Adding them to 1190's list is the whole feature. Serialization (only-changed diff), the three loaders, the
+// per-stat reset-to-factory button and the clamp all already exist and all work on any key in this array —
+// which is what that build was for. `melee` rides as 0/1 so it needs no separate boolean path; every reader
+// already asks `if(w.melee)` / `!!w.melee`.
+const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach'];
+// build 1296: pellets floors at 0, not 1. A melee weapon fires none, and the old floor rewrote the crowbar's
+// authored 0 into a 1 the moment any stat was applied — the same spurious-diff fault as magSize below.
+const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[0.5,12] };
+// The live values are NORMALISED here, beside the baseline that is captured from them: `melee` starts as
+// `true`/undefined and `reach` is absent on every gun, and the serializer emits a stat whenever it differs
+// from its baseline — so leaving `true` beside a baseline of `1` would write a spurious melee override into
+// every level ever saved. 3.4 is the crowbar's reach, which is what a gun becomes when a creator flips it.
+const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k];
+  _w.melee = _w.melee ? 1 : 0; _w.reach = _w.reach || 3.4;
+  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach }; _w.reserve0=_w.reserve; }
 // build 1240: RENAME WEAPONS — reported from play ("add a sword/axe/staff... we have melee, so maybe
 // the answer is the ability to rename"). The name follows 1190's exact pattern: a factory baseline
 // captured at boot, only-changed values serialized (nm), one sanitizer every loader routes through.
@@ -19655,7 +19673,13 @@ function rebuildAttMounts(wep){
 }
 function applyAttachments(){   // recompute live stats from base + equipped (idempotent)
   for(const k in WEAPONS){ const base=_attBase[k]; if(!base) continue; const r=_resolveAtt(k);
-    const newMag=Math.max(1, Math.round(base.magSize*r.magMul));
+    // build 1296: a weapon with NO magazine keeps none. Build 583 wrote this when every weapon had one, so
+    // the floor of 1 handed the crowbar and the fists a 1-round magazine — which then differed from the
+    // captured baseline and made `serializeLevel` write a spurious `st:{magSize:1}` into EVERY level saved
+    // since build 1190. It matters more now that any slot can be melee: a creator sets the magazine to 0 and
+    // this put it straight back. The floor still does its real job — a magazine multiplier must never round a
+    // real magazine down to nothing.
+    const newMag = (base.magSize > 0) ? Math.max(1, Math.round(base.magSize*r.magMul)) : 0;
     WEAPONS[k].magSize=newMag; if(WEAPONS[k].mag>newMag) WEAPONS[k].mag=newMag;   // never hold more than capacity
     WEAPONS[k].spread=base.spread*r.spreadMul;
     WEAPONS[k].hasLaser=r.laser;
@@ -29511,7 +29535,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1295 · 2026-08-02';
+const BUILD_VERSION = 'build 1296 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42213,11 +42237,37 @@ function renderEditorFields(){
       dreset.onclick=()=>{ pushUndoSnapshot(); WEAPONS[curWep].dmg=GUN_BASE_DMG[curWep]; dinp.value=GUN_BASE_DMG[curWep]; };
       drow.appendChild(dinp); drow.appendChild(dreset); urlHost.appendChild(drow);
       // build 1190: the FULL stat sheet — fire rate, magazine, ammo, spread, reload, pellets — per level.
-      if(!WEAPONS[curWep].melee){
+      {
+        const _isM = !!WEAPONS[curWep].melee;
         const sh2=document.createElement('div'); sh2.className='hint'; sh2.style.margin='10px 0 2px';
         sh2.innerHTML='<b>Stats</b> \u2014 '+wnD+' (saved with the level; blank levels play factory)';
         urlHost.appendChild(sh2);
-        const DEFS=[ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1] ];
+        /* build 1296: the melee toggle. Shown for EVERY weapon — this is the control that turns a renamed
+           SMG into an actual sword, and before this build the whole stat sheet was hidden for melee
+           weapons, so even the crowbar's reach and swing speed were unreachable. */
+        { const r=document.createElement('label'); r.className='row2'; r.style.cssText='margin:2px 0;display:flex;align-items:center;gap:7px;cursor:pointer;';
+          const lb=document.createElement('span'); lb.textContent='Melee weapon'; lb.style.cssText='flex:0 0 108px;font-size:11px;color:#9fc0b8;';
+          const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=_isM; cb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
+          const nt=document.createElement('span'); nt.className='hint'; nt.style.cssText='flex:1;font-size:10px;';
+          nt.textContent = _isM ? 'Swings instead of firing \u2014 no ammo, no reload.' : 'Swings instead of firing. Ticking this clears the magazine and ammo.';
+          cb.onchange=()=>{ pushUndoSnapshot();
+            const keep={}; for(const s2 of GUN_STAT_KEYS) keep[s2]=WEAPONS[curWep][s2];
+            keep.melee = cb.checked ? 1 : 0;
+            /* a melee weapon has no magazine. Zeroing the AUTHORED stats (rather than overriding them at
+               apply time) keeps the sheet honest about what it will play, and the per-stat reset buttons
+               put the gun back when the box is unticked. */
+            if(cb.checked){ keep.magSize=0; keep.reserve0=0; keep.reserveMax=0; keep.reloadMs=0; }
+            else { const b=GUN_BASE[curWep]; keep.magSize=b.magSize; keep.reserve0=b.reserve0; keep.reserveMax=b.reserveMax; keep.reloadMs=b.reloadMs; }
+            _wepApplyStats(curWep, keep);
+            WEAPONS[curWep].mag = Math.min(WEAPONS[curWep].mag||0, WEAPONS[curWep].magSize||0);
+            WEAPONS[curWep].reserve = Math.min(WEAPONS[curWep].reserve||0, WEAPONS[curWep].reserveMax||0);
+            if(typeof showWeaponModel==='function') try{ showWeaponModel(curWep); }catch(e){}   /* fists vs the model */
+            if(typeof updateHUD==='function') updateHUD();
+            renderEditorFields();   /* the field list below depends on the answer */ };
+          r.appendChild(lb); r.appendChild(cb); r.appendChild(nt); urlHost.appendChild(r); }
+        const DEFS = _isM
+          ? [ ['reach','Reach m',0.1], ['fireRate','Swing interval ms',10] ]
+          : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1] ];
         for(const [sk, lbl, stp] of DEFS){
           const r=document.createElement('div'); r.className='row2'; r.style.margin='2px 0';
           const lb=document.createElement('span'); lb.textContent=lbl; lb.style.cssText='flex:0 0 108px;font-size:11px;color:#9fc0b8;';

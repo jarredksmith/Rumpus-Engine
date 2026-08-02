@@ -4368,6 +4368,55 @@ false and true. Two earlier drafts failed for reasons worth not repeating: `wind
 *inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
 60 ms is far slower than the frames it is trying to sample.
 
+## Melee is a per-weapon stat, so any slot can be a sword (build 1296)
+
+Following the same report as 1294/1295: a creator wants *a pistol, a sword, an axe and a rifle*. Build 1240
+answered that report with **renaming** and 1190 made the stat sheet **authorable** — but `melee` and `reach`
+were in neither list, so the SMG could be renamed SWORD and it still fired bullets. Exactly ONE slot shipped
+as a usable melee weapon (`crowbar`; `hands` is the bare-fist loadout), so **the sword and the axe were
+competing for the same slot.**
+
+**Adding the two keys to 1190's `GUN_STAT_KEYS` array IS the feature.** The only-changed serializer, all
+three loaders, the per-stat reset-to-factory buttons and the clamps already operate on any key in it — that
+is what build 1190 was for, and it paid off here. `melee` rides as 0/1 so it needs no separate boolean path;
+every reader already asks `if(w.melee)`.
+
+Measured live, authoring two melee weapons through the real `_wepApplyStats` and firing the real `shoot()`
+at a crate:
+```
+SWORD (smg)      melee 1  reach 3.2   55 damage
+AXE (shotgun)    melee 1  reach 3.8  110
+CROWBAR          melee 1  reach 3.4   60   (unchanged)
+RIFLE            melee 0              12   (still a gun, still the bullet path)
+```
+
+Two details are load-bearing:
+- **The live values are NORMALISED where the baseline is captured.** `melee` ships as `true`/undefined and
+  `reach` is absent on every gun; the serializer emits a stat whenever it differs from its baseline, so
+  leaving `true` beside a baseline of `1` would write a phantom melee override into every level ever saved.
+  A gun's baseline `reach` is the crowbar's 3.4, so flipping the flag yields a usable weapon rather than one
+  with zero reach.
+- **The editor's stat sheet was hidden outright for melee weapons** (`if(!WEAPONS[curWep].melee)`), which is
+  why even the crowbar's own reach and swing speed were unauthorable. It now shows for every weapon, with
+  the field list switching: reach + swing interval for a melee weapon, the seven gun stats otherwise.
+
+**And it exposed a real pre-existing bug.** `applyAttachments` did `Math.max(1, Math.round(base.magSize *
+r.magMul))` — build 583, written when every weapon had a magazine. So the crowbar and the fists were handed
+a **1-round magazine**, which then differed from the captured baseline and made `serializeLevel` write a
+spurious `st:{magSize:1}` into **every level saved since build 1190**. It matters more now: a creator sets
+their sword's magazine to 0 and this put it straight back. Now `(base.magSize > 0) ? Math.max(1, …) : 0` —
+the floor still does its real job (a multiplier must never round a real magazine away) but does not invent
+one. `GUN_STAT_LIM.pellets` moved from `[1,24]` to `[0,24]` for the same reason.
+
+**Three probe runs were lost to the rig before any of this measured, and the third is the one to remember:
+the pose must be set a FRAME BEFORE the swing.** `meleeAttack` takes its direction from
+`camera.getWorldDirection`, and the camera only picks up a new `player.yaw` in the frame loop — so teleport
+and swing in one synchronous block and the swing aims wherever the camera was already looking, which reads
+*exactly* like "the weapon does no damage". (The other two: the stock level ships no dynamic props at all,
+and the prop I first repurposed is a 16-unit floor slab, so the ray started inside it — front faces only,
+no hit.) None of the three looks like a rig failure; all three read as the feature being broken, which was
+the answer I was already expecting.
+
 ## One attack animation for the whole arsenal (build 1294)
 
 Reported: *"the editor doesn't allow different attack animations per weapon. I have to choose one animation

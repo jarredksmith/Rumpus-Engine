@@ -46,7 +46,9 @@ const mk = () => {
     'the serializer diffs against GUN_BASE — factory levels carry no sheet at all (623\'s pattern)');
   eq((src.match(/_wepApplyStats\(k, wd\.st\);/g) || []).length, 3, 'all three loaders (boot, net, restore) apply the sheet');
   eq((src.match(/_wepApplyStats\(k, null\);/g) || []).length, 2, '...and the net + restore loaders reset weapons a level does not mention');
-  assert(/const GUN_BASE = \{\}; for\(const _k in WEAPONS\)\{ const _w=WEAPONS\[_k\]; GUN_BASE\[_k\]=\{ fireRate:_w\.fireRate, magSize:_w\.magSize, reserve0:_w\.reserve, reserveMax:_w\.reserveMax, spread:_w\.spread, reloadMs:_w\.reloadMs, pellets:_w\.pellets \}; _w\.reserve0=_w\.reserve; \}/.test(src),
+  // build 1296 added melee + reach to the sheet and normalises both on the live weapon first, because the
+  // only-changed serializer compares against this baseline and `true !== 1` would emit a phantom override.
+  assert(/const GUN_BASE = \{\}; for\(const _k in WEAPONS\)\{ const _w=WEAPONS\[_k\];\n  _w\.melee = _w\.melee \? 1 : 0; _w\.reach = _w\.reach \|\| 3\.4;\n  GUN_BASE\[_k\]=\{ fireRate:_w\.fireRate, magSize:_w\.magSize, reserve0:_w\.reserve, reserveMax:_w\.reserveMax, spread:_w\.spread, reloadMs:_w\.reloadMs, pellets:_w\.pellets, melee:_w\.melee, reach:_w\.reach \}; _w\.reserve0=_w\.reserve; \}/.test(src),
     'the baseline is captured from the live table before any override — retuning a factory gun retunes its baseline everywhere');
 }
 
@@ -77,7 +79,12 @@ const mk = () => {
 
 // ---------------------------------------------------------------- the editor
 {
-  assert(/if\(!WEAPONS\[curWep\]\.melee\)\{/.test(src), 'the stat sheet shows for guns only — fists have no magazine');
+  // build 1296: the sheet shows for EVERY weapon now — hiding it from melee weapons is what made the
+  // crowbar's own reach and swing speed unauthorable. What a melee weapon does not get is the magazine
+  // rows, which is the same intent expressed on the field list instead of on the whole panel.
+  assert(/const _isM = !!WEAPONS\[curWep\]\.melee;/.test(src), 'the sheet asks whether this weapon is melee');
+  assert(/\? \[ \['reach','Reach m',0\.1\], \['fireRate','Swing interval ms',10\] \]/.test(src),
+    'a melee weapon gets reach and swing speed, not a magazine — fists have no magazine');
   for (const f of ["'fireRate','Fire interval ms'", "'magSize','Magazine'", "'reserve0','Start ammo'", "'reserveMax','Max ammo'", "'spread','Spread'", "'reloadMs','Reload ms'", "'pellets','Pellets'"])
     assert(src.indexOf('[' + f) > -1, 'the editor exposes ' + f.split(',')[1]);
   assert(/rs\.textContent='\\u21ba '\+GUN_BASE\[curWep\]\[sk\];/.test(src), 'every field carries a reset-to-factory button showing the factory value');
