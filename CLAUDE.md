@@ -967,6 +967,56 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Enemies make noise when they move and when they notice you (build 1315 — gameplay audit F3)
+
+> Cataloguing all 85 `SFX.*` call sites: enemies produce sound in exactly three places. No approach/footstep,
+> no aggro/spot vocal, no sapper fuse. `SFX.step()` takes no `at` argument at all, so it can only ever be the
+> PLAYER's own footsteps. **A brute closing from behind you is inaudible in a genre where audio does most of
+> the threat detection.** This is also the cheapest large feel win available.
+
+Build 1283 closed the two telegraphs and explicitly DEFERRED the footfall — *"a per-enemy step is
+CONTINUOUS rather than event-driven; its value is entirely in the density, and 40 enemies in a wave is a mud
+of overlapping noise if that is wrong."* That worry is what shaped this build: the density is **bounded**
+rather than left to the wave size.
+
+- **Distance-accumulated, not on a timer.** A step falls where the foot falls at any speed, and a staggered
+  (build 1209) or wading enemy slows for free — no second tuning knob. Measured from the same
+  previous-position pair the stuck detector uses, so an enemy grinding on a corner does not tap-dance:
+  400 frames of scraping is **zero** footsteps.
+- **Three limits.** A 30 m range gate (well inside the panner's own 55 m — a footstep you can hear across
+  the arena is a hum); a per-tick budget of 3 beyond 12 m; and **no rationing inside 12 m**, because the
+  enemy behind you is precisely the one that must not be cut. A sort would be fairer and costs an array
+  every frame; the near-field exemption gets the same outcome for two comparisons.
+- **Darker and quieter than the player's own step** (420/260 Hz against the player's 520), so the two stay
+  tellable apart when both are running. `SFX.step()` is deliberately untouched and still has no `at`.
+- **The sapper gets a fuse.** It is FASTER than you, so by the time its footsteps read as close it is
+  already on you; the fuse ticks the whole approach and quickens from 0.5 s to 0.14 s as it closes.
+- **The aggro vocal rides the EXISTING `aware` rising edge** — the one build 1214 put there for the logic
+  graph's `onspot`, with the comment explaining that four things can set `aware` and watching it in one
+  place means every one fires it and none fires it twice. That argument is exactly as true for a sound.
+
+Verified live (`tools/probe/enemy-audio.mjs` — a real enemy spawned and walked at the player by the real AI,
+every `tone`/`noise` recorded): a grunt at speed 8 walked 7 m in 5 s → 3 footsteps + a spot vocal; a brute
+→ 1 footstep at 260 Hz; a sapper → footsteps + fuse ticks; **a grunt 75 m away → zero sounds.**
+
+### The probe caught a TDZ that the boot test passed straight through
+
+The constants were first declared beside the two functions that use them, 17,000 lines below the enemy
+tick that resets the budget. The first frame threw `Cannot access 'ENEMY_STEP_BUDGET' before
+initialization` — the temporal dead zone, which builds 838 and 1127 both recorded.
+
+**`test-202-boot` PASSED**, because the throw happens inside the frame loop rather than during evaluation.
+The live probe found it on its first run. **A boot test that executes the source is not a substitute for
+running a frame.**
+
+Also worth knowing, established while debugging it: `_enStep`, `_enemyFootstep`, `_sapperFuse` and
+`updateEnemies` are **inside the enemy-AI closure**, not module scope — a probe can reach `shatterProp` and
+the module-level constants but not those. Unit-level behaviour for anything in there belongs in a Node
+harness with `extractFunction`; the probe drives it end to end instead.
+
+Two pins moved (1077 — the edge line no longer ends at the event; 1283 — its "footsteps are deferred"
+assertion became "deferred here, delivered in 1315", which is the more useful thing to pin).
+
 ## A custom prop sound REPLACES the engine's (build 1314)
 
 Reported from play, three things in one message: *"There seems to be a default coded sound for when pressing

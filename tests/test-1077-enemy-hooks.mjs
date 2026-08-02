@@ -58,7 +58,9 @@ const E = new Function(`
   eq(step.run(en, false), 1, 'losing you fires nothing');
   eq(step.run(en, true), 2, '...and noticing you again fires again');
 }
-assert(/if\(en\.aware && !en\._wasAware\)\{ en\._wasAware=1; _lgEnemyEvent\('onspot', \{ x:en\.mesh\.position\.x, z:en\.mesh\.position\.z, hp:en\.hp, hpf:en\.hp\/\(en\.maxHp\|\|en\.hp\|\|1\) \}\); \}/.test(src),
+/* build 1315 hung the aggro VOCAL on this same edge, for the reason the comment above it gives, so the
+   line no longer ends at the event — assert the event itself and that the edge still re-arms below. */
+assert(/if\(en\.aware && !en\._wasAware\)\{ en\._wasAware=1; _lgEnemyEvent\('onspot', \{ x:en\.mesh\.position\.x, z:en\.mesh\.position\.z, hp:en\.hp, hpf:en\.hp\/\(en\.maxHp\|\|en\.hp\|\|1\) \}\);/.test(src),
   'that edge is watched in the update loop, after the AI has decided (with the enemy payload since 1221)');
 assert(/else if\(!en\.aware && en\._wasAware\) en\._wasAware=0;/.test(src), '...and re-arms when they give up');
 {

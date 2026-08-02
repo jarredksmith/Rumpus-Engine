@@ -6573,11 +6573,12 @@ const SFX = {
   meleeSwing(at){ noise({dur:0.13, vol:0.11, filterFreq:1200, type:'bandpass', at}); tone({freq:220, type:'square', dur:0.06, vol:0.05, slideTo:80, at}); },
   // a hurt grunt, so shooting something in the dark tells you that you connected AND where it is
   enemyHurt(at){ tone({freq:260, type:'sawtooth', dur:0.09, vol:0.065, slideTo:170, at}); },
-  // DEFERRED, deliberately: a footfall for a closing enemy is the other half of "a brute behind you is
-  // inaudible", but a per-enemy step is CONTINUOUS rather than event-driven — its value is entirely in the
-  // density, and 40 enemies in a wave is a mud of overlapping noise if that is wrong. The four cues above
-  // are discrete events that cannot spam. Tuning a step rate needs a live listen, which the headless
-  // harness cannot give, so it is its own build with a browser pass rather than a guess bolted on here.
+  // Build 1283 DEFERRED the footfall: "a per-enemy step is CONTINUOUS rather than event-driven — its value
+  // is entirely in the density, and 40 enemies in a wave is a mud of overlapping noise if that is wrong."
+  // DELIVERED in build 1315, and the deferral's worry is what shaped it: the density is bounded by a range
+  // gate, a per-tick budget and a near-field exemption rather than left to the wave size. The step rate
+  // still wants a live listen — the headless harness can prove three sound and thirty do not, but not that
+  // it feels right — so ENEMY_STEP_M is the first thing to try if a wave reads as mud.
   shootAt(pos){ if(!actx||!sfxBus) return; const gain=_spatialOut(pos); if(!gain) return;   /* build 1208: shared panner replaces the hand-rolled distance-only gain — a shot to your side now reads to your side */
     const t=actx.currentTime;
     const o=actx.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(110,t+0.08); const og=actx.createGain(); og.gain.setValueAtTime(0.0001,t); og.gain.linearRampToValueAtTime(0.12,t+0.004); og.gain.exponentialRampToValueAtTime(0.0001,t+0.09); o.connect(og).connect(gain); o.start(t); o.stop(t+0.11);
@@ -6617,6 +6618,22 @@ const SFX = {
     const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.2,t+0.05); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
     src.connect(filt).connect(g).connect(sfxBus); src.start(t); },
   step(){ noise({dur:0.06, vol:0.07, filterFreq:520, type:'lowpass'}); },
+  /* ---- build 1315 (gameplay audit F3): ENEMIES MAKE NOISE WHEN THEY MOVE AND WHEN THEY NOTICE YOU ----
+     The audit, cataloguing all 85 SFX call sites: "enemies produce sound in exactly three places — a
+     ranged projectile and death. No approach/footstep, no aggro/spot vocal, no sapper fuse. SFX.step()
+     takes no `at` argument at all, so it can only ever be the PLAYER's own footsteps. A brute closing from
+     behind you is inaudible in a genre where audio does most of the threat detection."
+     Build 1283 closed the two telegraphs; the approach was still silent. These are positional (build
+     1208's panner), and deliberately DARKER and quieter than the player's own step so the two are
+     tellable apart when both are running. */
+  enemyStep(at, heavy){ heavy
+    ? noise({dur:0.09, vol:0.085, filterFreq:260, type:'lowpass', at})
+    : noise({dur:0.055, vol:0.05, filterFreq:420, type:'lowpass', at}); },
+  /* the moment it notices you — the one cue that lets a player react BEFORE the shooting starts */
+  enemySpot(at, heavy){ tone({freq: heavy?90:170, type:'sawtooth', dur:0.22, vol:0.10, slideTo: heavy?150:300, at});
+    noise({dur:0.12, vol:0.07, filterFreq:900, type:'bandpass', at}); },
+  /* a rushing exploder is the one enemy whose approach you MUST hear; it ticks while it closes */
+  sapperFuse(at){ tone({freq:1500, type:'square', dur:0.045, vol:0.055, slideTo:1900, at}); },
   heartbeat(){ tone({freq:60, type:'sine', dur:0.16, vol:0.22, slideTo:42}); setTimeout(()=>tone({freq:54, type:'sine', dur:0.18, vol:0.15, slideTo:40}),175); },
 };
 
@@ -18304,6 +18321,16 @@ const ENEMY_TYPES = {
   charger: { name:'Charger', hp:75, speedMin:4.5, speedMax:6, scale:1.3, tint:0xff8c1a, dmg:20, charger:true, lungeRange:16, lungeSpeed:30, lungeDur:0.45, lungeWind:520 },
 };
 const ENEMY_TYPE_KEYS = ['grunt','runner','brute','gunner','sapper','shielded','charger','boss'];
+// build 1315: the enemy-audio tuning lives HERE, beside the type table, and NOT beside the two functions
+// that use it 17,000 lines below. It was declared down there first and the reset line in the enemy tick
+// threw `Cannot access 'ENEMY_STEP_BUDGET' before initialization` on the first frame — a temporal dead
+// zone, the trap builds 838 and 1127 both recorded. Worth knowing HOW it was caught: `test-202-boot`
+// PASSED, because the throw happens inside the frame loop rather than during evaluation. A live probe
+// found it on its first run. A boot test that executes the source is not a substitute for running a frame.
+const ENEMY_STEP_M = 1.9, ENEMY_STEP_RANGE = 30, ENEMY_STEP_NEAR = 12, ENEMY_STEP_BUDGET = 3;
+const ENEMY_HEAVY = { brute:1, boss:1, shielded:1 };
+const SAPPER_FUSE_FAR = 0.5, SAPPER_FUSE_NEAR = 0.14;
+let _enStepBudget = 0;
 // build 1191: per-level ENEMY TUNING — hp / damage / speed per type, the weapon stat sheet's exact
 // pattern (1190): a factory baseline captured at boot, only-changed values serialized, one clamped
 // sanitizer every loader routes through so a hostile level file cannot ship a 0-hp boss army at 30x
@@ -29984,7 +30011,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1314 · 2026-08-02';
+const BUILD_VERSION = 'build 1315 · 2026-08-02';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35796,6 +35823,11 @@ function loop(){
     else if(typeof navDirtyStep==='function') navDirtyStep(3);   // build 1200: fold moved/destroyed props back into the grid
     _repathBudget = 3;   // cap A* searches per tick so a frame never stalls on many enemy repaths at once
     _losBudget = 5; _groundBudget = 5; _pathBudget = 5;   // build 547/553: per-frame LOS + ground + direct-path raycast caps. A wave spawns many enemies whose caches all come due on the same frame; these stop that frame from firing dozens of raycasts at once (the wave-framerate spike). Over-budget enemies reuse the cached value one more frame; the jittered intervals stagger them after ~1s.
+    /* build 1315: the footstep budget for this tick, and the ordering that makes it fair — nearest first,
+       so a thirty-enemy wave spends its three steps on the ones close enough to matter. Sorting a live
+       array would reorder every other system's iteration, so the DISTANCE is stamped and the step pass
+       reads it; nothing else sees a different order. */
+    _enStepBudget = ENEMY_STEP_BUDGET;
     _airGroundBudget = 8;   // build 809: cell-moved / airborne refreshes were EXEMPT from _groundBudget — a blast launching a wave fired ~3 casts x every enemy on one frame. Now they draw from their own (larger) pool; over-budget movers reuse last frame's ground for one frame.
 // ---- build 1308 (gameplay audit F8): ENEMIES MOVE WITH MASS ------------------------------------------
 // Every enemy translation was direct position integration — `position.x += dir*speed*dt` at five sites — so
@@ -35820,6 +35852,48 @@ function loop(){
 // here: the exact form costs one `Math.exp` per moving enemy per frame and makes the velocity curve
 // identical at any refresh rate. It is also self-clamping, so a dt spike still degrades to the old instant
 // speed rather than overshooting.
+// ---- build 1315 (gameplay audit F3): the footstep cadence ---------------------------------------------
+// DISTANCE-ACCUMULATED, not on a timer: a step then falls where the foot falls at any speed, and a slowed
+// (build 1209) or wading enemy automatically steps slower without a second tuning knob.
+//
+// Three limits, because a wave is thirty enemies and every one of them walks:
+//  * a RANGE gate well inside the panner's own 55 m — a footstep you can hear from across the arena is
+//    not a footstep, it is a hum;
+//  * a per-tick BUDGET beyond a CLOSE radius, so a horde arriving together cannot start twenty buffers on
+//    one frame (build 1305 learned the same lesson from a shotgun) — while the enemy actually near you is
+//    never rationed, which is the entire point of the feature. A sort would be fairer still and costs an
+//    array every frame; a near-field exemption gets the same outcome for two comparisons, because the
+//    enemy whose footstep matters is by definition the close one.
+function _enemyFootstep(en, moved){
+  if(!en || !en.mesh || en.dead) return false;
+  en._stepAcc = (en._stepAcc || 0) + moved;
+  if(en._stepAcc < ENEMY_STEP_M) return false;
+  en._stepAcc = 0;
+  if(typeof camera==='undefined' || !camera) return false;
+  const p = en.mesh.position;
+  const dx = p.x - camera.position.x, dy = p.y - camera.position.y, dz = p.z - camera.position.z;
+  const d2 = dx*dx + dy*dy + dz*dz;
+  if(d2 > ENEMY_STEP_RANGE*ENEMY_STEP_RANGE) return false;
+  if(d2 > ENEMY_STEP_NEAR*ENEMY_STEP_NEAR){ if(_enStepBudget <= 0) return false; _enStepBudget--; }
+  if(typeof SFX!=='undefined' && SFX.enemyStep) SFX.enemyStep(p, !!ENEMY_HEAVY[en.type]);
+  return true;
+}
+// build 1315: a rushing exploder is the one enemy whose approach you MUST hear, and a footstep is not
+// enough — it is FASTER than you, so by the time its steps read as close it is already on you. The fuse
+// ticks the whole time it is closing, and quickens as it gets near, which is the tell that makes a sapper
+// dodgeable rather than a random death.
+function _sapperFuse(en, dt){
+  if(!en || en.dead || en.type!=='sapper' || !en._chase || typeof camera==='undefined' || !camera) return false;
+  const p = en.mesh.position;
+  const d = Math.hypot(p.x-camera.position.x, p.y-camera.position.y, p.z-camera.position.z);
+  if(d > ENEMY_STEP_RANGE) return false;
+  const k = Math.max(0, Math.min(1, d/18));
+  en._fuseT = (en._fuseT || 0) - dt;
+  if(en._fuseT > 0) return false;
+  en._fuseT = SAPPER_FUSE_NEAR + (SAPPER_FUSE_FAR - SAPPER_FUSE_NEAR)*k;
+  if(typeof SFX!=='undefined' && SFX.sapperFuse) SFX.sapperFuse(p);
+  return true;
+}
 const _enStepOut = { x:0, z:0 };
 function _enStep(en, tvx, tvz, dt){
   const k = 1 - Math.exp(-((tvx || tvz) ? EN_ACCEL_K : EN_BRAKE_K) * dt);
@@ -35843,7 +35917,11 @@ function _enStep(en, tvx, tvz, dt){
       // build 1077: the moment this enemy goes from oblivious to alerted, exactly once per alert. The edge is
       // watched HERE rather than at the four places that can set `aware` (sight, gunfire, a blast, a rule), so
       // every one of them fires it and none of them fires it twice.
-      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) }); }
+      if(en.aware && !en._wasAware){ en._wasAware=1; _lgEnemyEvent('onspot', { x:en.mesh.position.x, z:en.mesh.position.z, hp:en.hp, hpf:en.hp/(en.maxHp||en.hp||1) });
+        /* build 1315: the aggro vocal rides the SAME rising edge, for the same reason the comment above
+           gives — four things can set `aware`, and watching it here means every one of them sounds it and
+           none of them sounds it twice. */
+        if(typeof SFX!=='undefined' && SFX.enemySpot) SFX.enemySpot(en.mesh.position, !!ENEMY_HEAVY[en.type]); }
       else if(!en.aware && en._wasAware) en._wasAware=0;
       en._chase = td.chase; en._see = !!td.see;
       // face the player only when actually seen; while hunting a last-known spot, face where we're walking
@@ -36180,6 +36258,14 @@ function _enStep(en, tvx, tvz, dt){
         const _mv = Math.hypot(en.mesh.position.x - (en._spx!=null?en._spx:en.mesh.position.x), en.mesh.position.z - (en._spz!=null?en._spz:en.mesh.position.z));
         if(_mv < (en.speed||3)*dt*0.3){ en._stuckT=(en._stuckT||0)+dt; } else { en._stuckT=0; en._stuckSide=0; en._sFlip1=0; en._sFlip2=0; }
       } else { en._stuckT=0; en._stuckSide=0; en._sFlip1=0; en._sFlip2=0; }
+      /* build 1315: a footstep every ENEMY_STEP_M of real travel. Measured from the SAME previous-position
+         pair the stuck detector uses, so a shoved or wall-sliding enemy accrues only the ground it actually
+         covered — an enemy grinding on a corner does not tap-dance. */
+      if(en.grounded!==false && !en.dead){
+        const _sd = Math.hypot(en.mesh.position.x - (en._spx!=null?en._spx:en.mesh.position.x), en.mesh.position.z - (en._spz!=null?en._spz:en.mesh.position.z));
+        if(_sd > 1e-4) _enemyFootstep(en, _sd);
+      }
+      _sapperFuse(en, dt);   /* build 1315: and the exploder ticks while it closes, at any height */
       en._spx = en.mesh.position.x; en._spz = en.mesh.position.z;
       // drive the animation state machine: attack window > running (chasing) > walking (patrol) > idle
       if(en.mesh.userData.hasModel && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
