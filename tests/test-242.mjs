@@ -1,5 +1,10 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 // build 341: tags + signals — props can trigger actions on other tagged props.
 
 // --- executable: fireSignals across the action matrix ---
@@ -48,7 +53,7 @@ assert(it.indexOf("fireSignals(o, 'interacted')", xI) > it.indexOf('broadcastXAn
 // --- persistence: serialize + 3-site restore ---
 assert(/if\(o\.userData\.tag\) e\.tg=o\.userData\.tag;/.test(extractFunction('propEntry')), 'tag serialized');
 assert(/e\.sg=o\.userData\.signals\.map\(s=>\{ const x=\{ w:s\.when, d:s\.do, t:s\.target \}; if\(s\.clip\) x\.c=s\.clip; if\(s\.cs\) x\.n=s\.cs; if\(s\.from\) x\.f=s\.from; if\(s\.contain\) x\.ci=1; if\(s\.text\) x\.tx=s\.text; if\(s\.needItem\) x\.ni=s\.needItem; if\(s\.needConsume\) x\.nc=1; if\(s\.consume\) x\.cn=1; if\(s\.sound\) x\.so=s\.sound; return x; \}\);/.test(extractFunction('propEntry')), 'signals serialized compactly (clip 349, cutscene 356, contact 682, objective 692, needItem 706, consume 740, sound 750)');
-assert(src.split('if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; });').length - 1 === 3, 'restored at all three prop-load sites (clip + cutscene + contact + objective + needItem + consume + sound)');
+assert(extractFunction('_applyPropEntry').includes('if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; });'), 'restored at all three prop-load sites (clip + cutscene + contact + objective + needItem + consume + sound)');
 
 // --- editor + level check ---
 assert(/edFold\(behaveHost, 'signals', 'Signals', false, 'Tag this prop/.test(src), 'Signals fold in the inspector (title + subtitle, build 362)');

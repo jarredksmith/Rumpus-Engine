@@ -4085,6 +4085,39 @@ does exit 1 on failure, but it is piped through `tee`, and a pipeline reports th
 without `set -o pipefail` a red suite looks green. That is the exact masking that made a local
 `node run-all.mjs | tail -2` report success during this audit.
 
+## The prop entry is applied in one place (build 1280)
+
+The audit's code-quality CRITICAL, and the most valuable structural change in the sequence. A
+**1,326-character block was BYTE-IDENTICAL** in `loadHostedProps`, `loadLevelFromNet` and `restoreLevel` —
+the three paths by which a prop reaches the scene: first load, a multiplayer joiner, and every level load
+or undo.
+
+**The critic proved the cost by MUTATION rather than by argument**, which is why it landed. Delete one
+statement (`if(p.tg) obj.userData.tag=p.tg;`) from ONE copy and the suite stays **fully green** while every
+prop a joiner receives silently loses its tag — taking the trigger zones, all six prop verbs, the push verb,
+logic-graph place resolution and joint targets with it. Nothing tested that the three agreed, because there
+was nothing to test: agreement was a fact about the TEXT, and text drifts. This file had already fixed two
+symptoms of it (1162's duplicate, 1252's emitter config) and called "four loader sites" a fact of nature.
+
+`_pfSpawnEntry` keeps its own near-copy **deliberately** and is not merged: prefabs and paste strip identity
+(a fresh gid, no nid) and that difference is the feature. Two functions that differ on purpose beat three
+that are supposed to match — but the reason is now written beside the shared one, or the next reader
+"fixes" it.
+
+**Fourteen harnesses failed on the refactor, and that is the finding, not the inconvenience.** Every one of
+them asserted a variant of *"this field is restored at all N loader sites"* by COUNTING occurrences of
+duplicated text. They were measuring the duplication, not the behaviour — so they would have gone green
+against three copies that had quietly diverged, and they went red against one copy that is correct. Each was
+converted to ask where the field actually lives (`extractFunction('_applyPropEntry')`), which is immune to
+the count and says what was always meant.
+
+`test-1280` reproduces the critic's exact mutation and proves it now bites, executes every field the entry
+carries (tag, group, prefab mark, interact, name, folder, hide, lock, dialogue, NPC name, all twelve signal
+fields, threshold, attribution), and pins `_pfSpawnEntry`'s divergence so nobody merges it by mistake.
+
+**The general rule: a test that counts copies of a thing is a test of the copying.** If the answer to "is
+this applied everywhere?" is a number greater than one, the test is measuring the wrong property.
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

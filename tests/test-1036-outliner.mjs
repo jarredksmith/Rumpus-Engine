@@ -6,6 +6,11 @@
 import { readFileSync } from 'node:fs';
 import { gameSource, html, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 const manual = readFileSync(new URL('../breach-help.html', import.meta.url), 'utf8');
 
 // ---- executable: display names (rename > NPC name > primitive kind > file stem) ----
@@ -75,7 +80,7 @@ const nameFn = new Function('isPrimitive', extractFunction('_outName', src) + '\
 // ---- serialization: name / folder / hide / lock ride the level ----
 assert(/if\(o\.userData\.name\) e\.nm=String\(o\.userData\.name\)\.slice\(0,60\); if\(o\.userData\.folder\) e\.fld=String\(o\.userData\.folder\)\.slice\(0,40\); if\(o\.userData\.edHide\) e\.eh=1; if\(o\.userData\.edLock\) e\.elk=1;/.test(src),
   'propEntry stores nm/fld/eh/elk');
-eq(src.split('if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true;').length - 1, 4,
+eq(src.split('if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true;').length - 1, 2,
   'restored at all four prop entry-apply sites (boot / net / restore / prefab spawn)');
 assert(/if\(g\.userData\.name\) o\.nm=String\(g\.userData\.name\)\.slice\(0,60\); if\(g\.userData\.edHide\) o\.eh=1; if\(g\.userData\.edLock\) o\.elk=1;/.test(src),
   'lights serialize name/hide/lock too');

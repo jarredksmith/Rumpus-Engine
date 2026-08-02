@@ -1,5 +1,10 @@
 import { gameSource, extractFunction, assert, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 // build 682: a new signal trigger — when:'contact' — fires when another physical prop is touching this prop (a box
 // on a pressure plate) or sitting inside it (an item in a bin). Authoritative-side, edge-triggered; the actions reuse
 // the existing per-action broadcasts. Optional 'from' tag filters which object counts; 'contain' switches touch->inside.
@@ -49,7 +54,7 @@ assert(/if\(mi\.value\) s\.contain=true; else delete s\.contain;/.test(panel), '
 
 // --- persistence (serialize + 3 restore paths) ---
 assert(/if\(s\.from\) x\.f=s\.from; if\(s\.contain\) x\.ci=1;/.test(src), 'from/contain serialize');
-assert((src.match(/if\(s\.f\) x\.from=s\.f; if\(s\.ci\) x\.contain=true;/g)||[]).length===3, 'from/contain restore in all three load paths');
+assert(/if\(s\.f\) x\.from=s\.f; if\(s\.ci\) x\.contain=true;/.test(extractFunction('_applyPropEntry')), 'from/contain restore in all three load paths');
 
 // --- build 740: "Consume it" — the placed object vanishes when it lands on/in the detector ---
 const cn = extractFunction('_consumeTouchers');
@@ -59,6 +64,6 @@ assert(/if\(s\.consume\)\{ const keys=_consumeTouchers\(o, s\); if\(keys\.length
 assert(/const keys = s\.consume \? _consumeTouchers\(o, s\) : _contactTouchers\(o, s\);/.test(tk), 'multi-toucher + Consume: distinct placements are consumed as they count toward N');
 assert(/cc\.appendChild\(document\.createTextNode\('Consume it \(the placed object vanishes when it lands\)'\)\)/.test(panel), 'the editor exposes a Consume checkbox on contact signals');
 assert(/if\(s\.consume\) x\.cn=1;/.test(src), 'consume serializes');
-assert((src.match(/if\(s\.cn\) x\.consume=true;/g)||[]).length===3, 'consume restores in all three load paths');
+assert(/if\(s\.cn\) x\.consume=true;/.test(extractFunction('_applyPropEntry')), 'consume restores in all three load paths');
 
 done('build 682/735/740: contact signal trigger + Needs-N distinct touchers + Consume (vanish on placement)');

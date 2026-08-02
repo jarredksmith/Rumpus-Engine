@@ -1,5 +1,10 @@
 import { gameSource, extractFunction, assert, near, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 // build 331: per-run keys + locked interactable props.
 
 // --- registry: key kinds exist, colored, marked with .key ---
@@ -50,7 +55,7 @@ assert(/msg\.t==='unlock'\)\{ const o=propModels\[msg\.i\]; if\(o\) o\.userData\
 
 // --- serialization round-trip + editor + prompt ---
 assert(/if\(o\.userData\.lockId\)\{ e\.lk=o\.userData\.lockId; if\(o\.userData\.lockConsume\) e\.lkc=1; \}/.test(extractFunction('propEntry')), 'lock fields serialize');
-assert(src.split("if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }").length - 1 === 4, 'lock restored at all four entry-apply sites (boot / net / restore / prefab spawn, build 1030)');
+assert(src.split("if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }").length - 1 === 2, 'lock restored at all four entry-apply sites (boot / net / restore / prefab spawn, build 1030)');
 assert(/\[\['','None'\],\['red',keyDisplayName\('red'\)\],\['blue',keyDisplayName\('blue'\)\],\['gold',keyDisplayName\('gold'\)\],\['green',keyDisplayName\('green'\)\]\]/.test(src), 'editor lock dropdown shows custom key names (build 334)');
 // build 332 regression: the lock UI must append to its fold host (behaveHost since build 989) — a bare `host`
 // here is a later-declared binding in renderEditorFields and throws a TDZ ReferenceError in the browser.

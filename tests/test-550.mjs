@@ -1,5 +1,10 @@
 import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 // build 707: physics JOINT system (Rapier revolute/hinge). A dynamic prop can be hinged to a fixed world point or to
 // another tagged body, so it swings under physics (doors, levers, see-saws, pendulums) — with optional limits + motor.
 // Physics can't run in the Node harness (no Rapier/WASM), so this pins the wiring; the swing itself is browser-verified.
@@ -52,7 +57,7 @@ assert(/num\('Trailer tracking','center',0,1,0\.05\)/.test(src), 'the joint edit
 
 // --- serialize + restore (compact j) at all three prop-load sites ---
 assert(/if\(o\.userData\.joint\)\{ const J=o\.userData\.joint; e\.j=\{ type:J\.type\|\|'hinge', to:J\.to\|\|'', ax:J\.ax\|\|0, ay:J\.ay\|\|0, az:J\.az\|\|0, axis:J\.axis\|\|'y' \};/.test(src), 'joint serialized compactly');
-eq(src.split('if(p.j) jointApply(obj, p.j);').length - 1, 4, 'joint restored at all four entry-apply sites (+ prefab spawn, build 1030)');
+eq(src.split('if(p.j) jointApply(obj, p.j);').length - 1, 2, 'joint restored at all four entry-apply sites (+ prefab spawn, build 1030)');
 
 // --- editor: a Joint fold with anchor / axis / hinge offset / motor ---
 assert(/edFold\(motionHost, 'joint', 'Joint \(physics\)'/.test(src), 'a Joint (physics) fold in the inspector');

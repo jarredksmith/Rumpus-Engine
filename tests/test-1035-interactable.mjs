@@ -7,6 +7,11 @@
 import { readFileSync } from 'node:fs';
 import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 const manual = readFileSync(new URL('../breach-help.html', import.meta.url), 'utf8');
 
 // ---- executable: the "this" target applies the verb to the SOURCE prop, no fanout ----
@@ -50,7 +55,7 @@ const other = { userData:{ tag:'door1', xa:{ on:true, dest:0 } } };
 
 // ---- the Interactable flag: serialize + all four entry-apply sites ----
 assert(/if\(o\.userData\.interact\) e\.itr=1;/.test(src), 'the flag rides propEntry (saves, share codes, prefabs, MP)');
-eq(src.split('if(p.itr) obj.userData.interact=true;').length - 1, 4, 'restored at all four entry-apply sites (boot / net / restore / prefab spawn)');
+eq(src.split('if(p.itr) obj.userData.interact=true;').length - 1, 2, 'restored at all four entry-apply sites (boot / net / restore / prefab spawn)');
 
 // ---- the checkbox beside the Tag ----
 assert(/iw\.appendChild\(document\.createTextNode\('Interactable \(E\)'\)\)/.test(src), 'the checkbox exists, labeled plainly');

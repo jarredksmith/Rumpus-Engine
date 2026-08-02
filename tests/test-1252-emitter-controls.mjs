@@ -1,5 +1,10 @@
 import { gameSource, extractFunction, assert, eq, near, done } from './harness.mjs';
 const src = gameSource();
+
+// build 1280: the three loaders' byte-identical apply blocks became ONE function, _applyPropEntry,
+// which all three call. So a field now appears TWICE in the file: there, and in _pfSpawnEntry's
+// deliberate near-copy for prefabs/paste. The intent below is unchanged — the field survives a load
+// by every path — and it is now structural rather than a count of duplicated text.
 // build 1252: per-emitter controls. Overrides (amt/spd/size/spread/hgt/alpha/sat/col) are
 // MULTIPLIERS over the preset, stored in userData.fx.cfg, serialized as `fxc` through propEntry
 // (the one serializer every path routes through) and applied at all four loader sites. Executed
@@ -67,7 +72,7 @@ assert(/const P=_fxEff\(o\.userData\.fx\.kind, o\.userData\.fx\.cfg\), n=P\.n;/.
   'the runtime builds from preset x overrides');
 assert(/if\(o\.userData\.fx && o\.userData\.fx\.cfg\) e\.fxc=_fxCfgSan\(o\.userData\.fx\.cfg\);/.test(src),
   'overrides serialize through propEntry — saves, prefabs, duplicate, clipboard and net pAdd all inherit (1162)');
-eq((src.match(/if\(p\.fxc && obj\.userData\.fx\)\{ obj\.userData\.fx\.cfg=_fxCfgSan\(p\.fxc\); if\(typeof _fxReset==='function'\) _fxReset\(obj\); \}/g) || []).length, 4,
+eq((src.match(/if\(p\.fxc && obj\.userData\.fx\)\{ obj\.userData\.fx\.cfg=_fxCfgSan\(p\.fxc\); if\(typeof _fxReset==='function'\) _fxReset\(obj\); \}/g) || []).length, 2,
   'applied at all FOUR loader sites (level, net level, prefab spawn, net pAdd)');
 assert(/fxSlide\('Amount','amt',0\.25,3,1/.test(src) && /fxSlide\('Saturation','sat',0,2,1/.test(src),
   'the panel offers the sliders');
