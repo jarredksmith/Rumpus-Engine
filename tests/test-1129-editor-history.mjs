@@ -19,17 +19,22 @@ assert(/const editorRedo = \[\];/.test(src), 'there is a redo stack');
   assert(/if\(editorUndo\.length > 60\) editorUndo\.shift\(\);/.test(push), 'the undo stack is still bounded');
 }
 {
-  const u = extractFunction('performUndo'), r = extractFunction('performRedo');
+  // build 1291: undo and redo are ONE step in opposite directions (_historyStep), so each of these is now
+  // asserted once instead of twice — which is stronger, not weaker: the two can no longer drift apart.
+  const u = extractFunction('performUndo'), r = extractFunction('performRedo'), h = extractFunction('_historyStep');
+  assert(/return _historyStep\(editorUndo\.pop\(\), editorRedo\);/.test(u) &&
+         /return _historyStep\(editorRedo\.pop\(\), editorUndo\);/.test(r),
+    'and redo does the mirror image — the same step, with the stacks swapped');
   // undo has to capture the state it is LEAVING: pushUndoSnapshot stores pre-edit states, so the
   // post-edit state exists nowhere else and there would be nothing to redo
-  assert(/let cur = null; try \{ cur = JSON\.stringify\(serializeLevel\(\)\); \} catch\(e\)\{\}/.test(u),
+  assert(/let cur = null; try \{ cur = JSON\.stringify\(serializeLevel\(\)\); \} catch\(e\)\{\}/.test(h),
     'undo captures the state it is leaving');
-  assert(/editorRedo\.push\(cur\); if\(editorRedo\.length > 60\) editorRedo\.shift\(\);/.test(u),
+  assert(/pushTo\.push\(cur\); if\(pushTo\.length > 60\) pushTo\.shift\(\);/.test(h),
     '...onto a bounded redo stack');
-  assert(/editorRedo\.push\(cur\)/.test(u) && /editorUndo\.push\(cur\)/.test(r), 'and redo does the mirror image');
-  for (const [name, fn] of [['performUndo', u], ['performRedo', r]])
-    assert(/editorUndoActive = true;/.test(fn) && /finally \{ editorUndoActive = false; \}/.test(fn),
-      name + ' suppresses snapshots during its own restore, and restores the flag even if the restore throws');
+  assert(/editorUndoActive = true;/.test(h) && /finally \{ editorUndoActive = false; \}/.test(h),
+    'the step suppresses snapshots during its own restore, and restores the flag even if the restore throws');
+  assert((h.match(/finally \{ editorUndoActive = false; \}/g) || []).length === 2,
+    '...on the fast path too, or a failed fast apply would leave history recording switched off');
 }
 
 // ---------------------------------------------------------------- executable: the history round-trips
@@ -105,7 +110,7 @@ assert(/\{ label:'Save',                 key:'Ctrl\+S', run:\(\)=>_edClick\('edS
   const fn = extractFunction('_edSyncHistoryBtns');
   assert(/u\.disabled = !editorUndo\.length;/.test(fn) && /r\.disabled = !editorRedo\.length;/.test(fn),
     'both buttons grey out when their stack is empty');
-  for (const caller of ['performUndo', 'performRedo', 'pushUndoSnapshot'])
+  for (const caller of ['_historyStep', 'pushUndoSnapshot'])   // build 1291: performUndo/Redo are _historyStep
     assert(/_edSyncHistoryBtns\(\)/.test(extractFunction(caller)), caller + ' refreshes them');
 }
 

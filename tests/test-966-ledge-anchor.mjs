@@ -12,10 +12,15 @@ const src = gameSource();
 
 // grab: face anchor + wall yaw + avatar-sized drop
 assert(/let _fd=0\.55; for\(let _d=0\.08;_d<=0\.9;_d\+=0\.03\)\{ const _t2=surfaceTopAt\(/.test(src), 'the grab walks the probe to the wall face');
-assert(/const _gap=0\.34, _hx=player\.pos\.x\+forward\.x\*\(_fd-_gap\)/.test(src), 'the chest holds a fixed gap off the face');
-assert(/const _bb=_avHBox\.setFromObject\(_ownAvatar\); const _h2=_bb\.max\.y-_bb\.min\.y; _avHCache=\(_h2>1\.1 && _h2<3\)\?_h2:1\.7;/.test(src),
-  'the drop is sized to the measured avatar, not a constant');   // build 1168: measured at most 1x/s into a cache, same 1.1..3 sanity band
-assert(/_lt \+ EYE - _vh\*1\.02 - LEDGE_HANG_SINK/.test(src), 'raised hands land on the lip');   // builds 1239/1243: the avatar-height sizing survives inside the sunk, ground-clamped hang height
+assert(/const _gap=0\.34, _hx=player\.pos\.x\+_gFwd\.x\*\(_fd-_gap\)/.test(src), 'the chest holds a fixed gap off the face');   // build 1290: measured along the grab direction
+// build 1289: the avatar-sized drop is a VISUAL — it placed the COLLIDER until then, which is what made the
+// hang depend on whether the body was being drawn at all. It is still measured, and it still puts the hands
+// on the lip; it now does it to the body rather than to the player.
+assert(/const bb=_avHBox\.setFromObject\(a\); const h2=bb\.max\.y-bb\.min\.y; _avHCache=\(h2>1\.1 && h2<3\.2\)\?h2:EYE;/.test(src),
+  'the drop is sized to the measured avatar, not a constant');   // build 1168: measured at most 1x/s into a cache
+assert(/return h\*1\.02 \+ LEDGE_HANG_SINK;/.test(src), 'raised hands land on the lip');   // builds 1239/1243: the sink survives inside the avatar-sized drop
+assert(/const _wantY = Math\.max\(_ledge\.gy\|\|0, _ledge\.lip - _avatarHangDrop\(a\)\);/.test(src),
+  '...and that drop is what places the drawn body against the lip it grabbed');
 assert(/yaw:player\.yaw,/.test(src), 'the grab direction is remembered');
 
 // hang: eased onto the anchor; body faces the wall, not the camera

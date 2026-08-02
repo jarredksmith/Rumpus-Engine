@@ -4231,6 +4231,321 @@ Four call sites share it, not two: the AO G-buffer and the velocity pass each sw
 viewmodel scenes. Three pins moved (1152, 1158, 1168), each an executing rig that needed the predicate
 lifted from real source rather than restated.
 
+## The bake was occlusion applied as albedo (build 1286)
+
+The per-vertex sky-visibility bake wrote its result into the `color` attribute and set
+`vertexColors = true`. **Verified against the real r149 build**: `<color_fragment>` sits at index 2327 of
+`ShaderLib.physical.fragmentShader` and `<lights_fragment_begin>` at 2707 — so `diffuseColor.rgb *= vColor`
+ran BEFORE any lighting, which means a sky-visibility term was multiplying the surface's ALBEDO and
+therefore attenuating **direct sunlight**.
+
+Wrong three times over: the shadow map already answers direct occlusion, SSAO applies a contact term again
+at composite, and a vertex at 50% sky visibility was additionally losing 32% of its direct sun
+(`0.35 + 0.65*0.5 = 0.675`).
+
+Occlusion is an INDIRECT-ONLY term, which is exactly how three treats its own `aoMap`: `<aomap_fragment>`
+(index 2806, after every lighting chunk) multiplies `indirectDiffuse` and `indirectSpecular` and never
+touches albedo. The bake could not USE `aoMap` — that needs a uv2 an arbitrary GLB does not have, which is
+the reason the per-vertex path exists at all — so it borrows the same position via `onBeforeCompile`.
+
+Three things in the patch are load-bearing:
+- **It CHAINS any existing `onBeforeCompile`.** Build 1145's object-space detail and `floorMat`'s paint
+  splat both use that hook; clobbering one silently removes a whole subsystem. A throwing predecessor is
+  caught, too — the bake must not depend on someone else's code succeeding.
+- **Applied once per material** (`_bakeOccPatched`), or the `replace` would stack.
+- **`customProgramCacheKey` composes** rather than overwriting, so a material carrying both patches is
+  still one program per combination and not one per material.
+
+`test-1286` applies the patch to the REAL shader source and asserts both replaces LAND — a `replace` that
+silently misses is how this file has twice lost a subsystem, and it fails as a plausible-looking frame
+rather than an error. It also pins the ordering (the multiply must fall after `lights_fragment_end`, or
+`indirectDiffuse` does not exist yet) and the `USE_COLOR` guard.
+
+**A regex trap worth remembering: `indirectDiffuse` contains `directDiffuse` as a substring.** The first
+draft's "never touches the direct terms" assertion was matching the indirect ones and failing. Match the
+full property path.
+
+**Not capture-verified.** The shader maths and the chunk ordering are proven against the real build, but
+what this looks like needs a browser pass: interiors should get DARKER indirect and keep their direct
+sunlight, so a sunbeam through a doorway should read stronger than before while the shadowed corners hold.
+
+## A HUD widget can finally show YOUR number (build 1287)
+
+The feature audit's third finding, and it killed every co-op shop and scoreboard. Build 1231 gave the graph
+per-player variables and taught the toast node to interpolate them; `_hwText`'s regex was `[\w#]+` with no
+`@`, so a widget bound to `coins@` matched nothing and rendered the literal text. **And even had it parsed,
+the host→client mirror broadcast ONE scalar per name to every connection** — so every player would have seen
+the HOST's value. Either half alone is still broken.
+
+**`_hwVarKey`, deliberately NOT `_lgVarKey`.** The graph's resolver keys on `_lgCtx.pid` — *"the player this
+event is about"* — which is exactly right inside a pulse and exactly wrong for a HUD, which draws every
+frame **outside any event**, where the pid is whatever the last pulse left behind (0 in practice). A widget
+asks "what is MY number", so it resolves against `NET.myId`. That the answer has the same shape on host and
+client is what lets the mirror stay a plain scalar per connection instead of becoming a routing problem.
+
+The mirror now splits shared names from per-player ones, resolves each connection's own pid into its packet,
+and includes the per-player values in its change-detection signature — without that last part a per-player
+change would never have been sent at all. A level with no per-player widgets still sends ONE shared object
+rather than a copy per connection.
+
+**The client stores under its OWN key.** The host sends a per-player name under its BARE key (`coins@`)
+carrying that client's value, and the client re-keys it to `coins@<myId>`. Sending the host-resolved key
+would be wrong the moment ids differ, and silently so.
+
+Three pins moved. Two are worth noting for their shape: `test-1058`'s rig had to be given `_hwVarKey`
+(lifted from source, never restated — a rig that restates a predicate keeps passing against a stale copy),
+and `test-1269` was slicing 200 characters from `msg.t==='hudv'` to reach an assignment my comment had
+pushed past — **the fourth character-budget slice this audit has broken**, after 1149 supposedly converted
+them all. They only surface when something nearby grows.
+
+## The ledge hang stopped asking which camera is active (build 1289)
+
+Reported from play: *"Ledge hang in third-person is still not working. I noticed that in first-person, the
+camera height is much lower than what is in third-person."* Both halves are one fault, and the second
+observation is the tell.
+
+Build 966 derived the hang's height from the DRAWN BODY's bounding box and 1239 tuned `LEDGE_HANG_SINK`
+against it — but that measurement was gated on `_ownAvatar.visible`, which is **false in first person**. So
+the same jump at the same box produced two different COLLIDER heights depending on which camera was showing.
+Measured live on the stock level's 2.2 m box, holding W into it from 2.6 m out:
+
+```
+                    hy (player.pos.y at full hang)
+first person                1.75      <- 0.45 under the lip: the framing 1239 tuned
+third person  BEFORE        1.58      <- exactly _gy + EYE - 0.12, the floor clamp
+third person  AFTER         1.75
+```
+
+1.58 is the *"never feet-through-the-floor"* clamp winning, i.e. the body standing at the wall base with its
+arms in the air — which is exactly what the report's screenshot showed. And it won on **every reachable
+ledge**: the ideal beats the clamp only when `lip - ground > vh*1.02 + 0.30`, so `vh = 1.7` needs a 2.03 m
+rise (just inside the 1.55-2.05 window) and `vh = 2.2` needs 2.54 m (outside it, always).
+
+**Why `vh` read 2.2 for a 1.9 m player: the stock third-person body is a STYLISED capsule proxy.**
+`remoteBodyGeo = CapsuleGeometry(0.5, 1.2)` boxes 2.2 m, and its *head zone* (`_mkHeadProxy`) sits at 1.66 —
+the gameplay head is right, the lozenge's top just overshoots by half a metre. The term was reading a piece
+of art as a body height.
+
+**CORRECTION, measured after this build shipped.** This section first said the camera observation had the
+same cause — "the third-person boom rides a body drawn taller than the collider". **That is wrong, and it
+was written from reading `_avatarHangDrop` rather than from reading `_tpPivot`.** The boom pivots at
+`footY + centerLocal.y`, which for the stock capsule is a **hardcoded 1.0** and never looks at the bounding
+box at all. Probed at a standing pose, `tpHeight = 0`, `tpTilt = 0`:
+
+```
+first person   camera.position.y = 1.700   (the eye)
+third person   camera.position.y = 1.002   (foot + centerLocal.y)
+```
+So the third-person camera is **0.7 m LOWER**, not higher — the opposite of what the retracted sentence
+claimed and of the direction in the report. The ledge fix above stands on its own measurement and is
+unaffected; only the camera explanation was wrong. *Three sections of this file already say some version of
+"a frame statistic cannot test a mechanism" — this is the same mistake with source instead of pixels: I
+explained a second symptom with the mechanism I had just finished proving for the first one, without
+opening the code that owns it.*
+
+The fix splits the two facts that had been conflated:
+- **`LEDGE_REACH = EYE*1.02 + LEDGE_HANG_SINK`** — the PLAYER's reach, so the collider hangs identically in
+  every view. Numerically the exact expression first person already evaluated, so **that view is
+  byte-identical** and 1239's tuning is untouched.
+- **`_avatarHangDrop(a)`** — how tall the character is DRAWN, applied to the avatar's foot placement in
+  `updateOwnAvatar`, clamped so the body's feet never go under the ground beneath it, eased on the collider's
+  own 0.18 s curve and faded back out across the pull-up so the body does not snap when it mounts the top.
+  966's "raised hands land on the lip" survives intact — it now sizes the body instead of the player, which
+  is the layer a visual belongs in, and it finally works for an imported character of any height.
+
+**The general rule this is an instance of: a gameplay quantity must never be derived from something only the
+renderer knows.** Build 1140 established that for the viewmodel's AO; this is the same thing one level down —
+`_ownAvatar.visible` is a camera state, and it was silently deciding how high the player hung.
+
+Four pins moved (966, 1168, 1239, 1243) and every one kept its assertion's intent: 1168's once-a-second Box3
+budget, 1243's ground clamp and 1239's sink are all still asserted, at their new addresses.
+
+**The probe is the durable part.** `scratchpad/ledge3.mjs` boots the real game headless, finds a grabbable
+collider, and runs the whole trial INSIDE the closure off `requestAnimationFrame` — one round trip instead of
+one per sample, which is the difference between 40 s and a timeout under SwiftShader. It reports `_ledge`'s
+phase, `hy`, `mantleLedge` at all four scan distances and the drawn body's foot, per frame, for `tpMode`
+false and true. Two earlier drafts failed for reasons worth not repeating: `window.__probe` is injected
+*inside* `startGame`, so it does not exist until the start button has been clicked; and polling from Node at
+60 ms is far slower than the frames it is trying to sample.
+
+## The editor panel stopped rebuilding what nobody can see (build 1293)
+
+Build 1291 made undo fast and named what was left: `serializeLevel` and `renderEditorFields`. Measured,
+the split is not close — `serializeLevel` is **5.8 ms** and `renderEditorFields` is **26.7 ms**, and the
+second one runs on every selection change, every field edit and every gizmo release, not only on undo.
+
+`renderEditorFields` tears down and re-creates the WHOLE panel: every mode's sections, whichever mode is
+showing. Probed in the real editor, in Build mode — the default, and where every drag and selection
+happens — the Environment, Enemies, Objectives, Crosshair and Loot hosts hold **1,867 DOM nodes between
+them and every single one is off screen**, destroyed and rebuilt on every call.
+
+```
+                  render      panel nodes
+Build mode        26.7 ms  ->  8.1 ms      5,191 -> 3,150
+Scene / Enemies / Rules / HUD   unchanged — those modes show the sections, so they build them
+Kit / Files / Settings          2.7-3.2 ms
+```
+
+**The gate is `offsetParent === null`, not a section-to-mode map.** That is exactly "display:none somewhere
+above me", so it covers the mode filter (`applyEditorMode` sets `display` per `.edSection`) and the
+collapsed fold (`.edSection.collapsed .edSecBody { display:none }`) without this function knowing which is
+which. A map would need updating every time a section moved, and would be wrong silently.
+
+Three things make it safe, and all three are asserted:
+- **All-or-nothing per group.** Those five hosts are built INTERLEAVED across 3,000 lines by helpers that
+  take a host argument, so gating each one would push a null host into every build site. Any one visible
+  builds all five. Less aggressive, and a section can never be half-built.
+- **Expanding a fold now re-renders.** Nothing called this on a fold toggle before, because the content was
+  always there. Only on expand — collapsing reveals nothing, and rebuilding there is the cost being removed.
+- **Every error path answers "build it".** A panel that builds too much is a slow editor; one that builds
+  too little is an empty one.
+
+`setEditorMode` already did `applyEditorMode()` *then* `renderEditorFields()` — reveal, then build. That
+order was incidental before and is load-bearing now, so it is pinned.
+
+**Finding the real structure took two wrong probes, both recorded in `tools/probe/README.md`'s spirit.**
+The first drove `editorActive` directly and concluded the World tab "did not come back" — but `#edTabs` is
+the TARGET picker (props/lights/spawns), not the section list, so that click did nothing. The second called
+`renderEditorFields` twice in a row and read a zero: the function rate-limits itself to one build per 8 ms
+and defers the rest to `requestAnimationFrame`, so the second call never ran. **Measuring through a
+rate-limiter reads exactly like measuring a fix that works.**
+
+## The bloom threshold was measuring the wrong thing (build 1292)
+
+The bloom prefilter thresholds the luminance of `_postRT`, which holds the scene **after** three has applied
+`toneMappingExposure` and the ACES fit. Build 1180 then made that exposure MOVE at runtime by up to 1.5
+stops. So the fixed threshold was never selecting highlights — it was selecting *whatever the eye had
+currently adapted to*, and the fraction of the frame that blooms breathed with the adaptation.
+
+Measured live, ONE pose, one level, exposure the only variable:
+```
+exposure           1.00    1.25    1.60    1.90
+threshold used    0.5442  0.6200  0.6954  0.7415
+% blooming, OLD    0.02%   5.49%  20.23%  43.13%     <- fixed 0.62
+% blooming, NEW    5.53%   5.49%   5.44%   5.43%     <- derived
+```
+**A 2000x swing becomes flat to a tenth of a percentage point**, and at the authored exposure the derived
+value is *exactly* the authored number — so no level is retuned and nothing needs migrating.
+
+The fix states the threshold in the space where it means something — SCENE luminance, before exposure — and
+re-derives the comparison value each frame: `uThresh = F( Finv(postThresh) * expNow / expBase )`. `F` is
+r149's own `RRTAndODTFit`, and `test-1292` checks every one of its five constants against the real
+`ShaderChunk`, so a three upgrade that retunes the curve fails loudly instead of silently detuning every
+adapted frame. The full ACES path also applies colour matrices; those are near luminance-preserving (each
+row sums to ~1, exact for neutrals, a few percent off on saturated colour), which is well inside what a
+luminance threshold needs.
+
+**I got this wrong first, and the way it was wrong is the point.** Three camera poses on the stock level
+showed 22%, 37% and 39% of the frame blooming, and I read that as "the threshold is too low — raise the
+default". Those three poses confounded exposure with what was in shot. The one-pose sweep above disproves
+it: at the authored 1.25 the shipped 0.62 is **correct**, giving a 5.5% highlight budget. Nothing needed
+retuning; something needed to carry the threshold along when the exposure it was tuned against started
+moving. *Three cameras is not a control. One variable is.*
+
+**Two other hypotheses died on the way here, both worth recording so they are not re-run:**
+- *"Make the post chain HDR."* The rendering audit's structural claim — ACES applies inside every material,
+  so bloom cannot tell a 3x lamp from a 1000x sun — is true of the code. Measured in scene-linear on real
+  frames, the content has no such range: max radiance 2.66 with **0.02% of pixels above 1.0**, and raising
+  the sun 5.3x moved the max to 1.04. There is no HDR there to preserve.
+- *"Invert the tone curve in the bloom prefilter so selection happens in linear."* `Finv` is **monotonic**,
+  so the set of pixels above the threshold is IDENTICAL either way. Checked before building it; it would
+  have been hours for a byte-identical frame. The weights shift slightly (a 7x relative weighting becomes
+  6x), which is not the difference between a wash and a highlight.
+
+**The instrument failed twice first, and only the control caught it.** Reading `_postRT` directly returns
+all zeros — it is MULTISAMPLED (build 1182 already had to blit through `_matCopy` for exactly this reason).
+Rendering into an own target instead *also* returned all zeros, **control included**, because a HalfFloat
+target read into a `Float32Array` yields nothing here; `FloatType` reads back. Without a known clear colour
+read through the identical path, "0% of the frame blooms" would have been published as a measured fact —
+which is build 1152's lesson arriving for the seventh time. `tools/probe/` now carries the rig and that
+list, in the repo, because it had been rebuilt from memory three times in one session.
+
+## Undo stopped reloading the level (build 1291)
+
+Every Ctrl+Z ran `restoreLevel` — a full teardown and respawn of every prop, light, zone and marker, with
+each imported model re-fetched or re-cloned and re-materialised. So nudging a crate and undoing it cost the
+same as **loading the level**, on the step the editor's core rhythm (tweak, undo, tweak again) repeats
+constantly. Build 1163 had already had to bolt a by-nid reselect onto the far side because the rebuild threw
+the selection away — the shape of a workaround for a step that should not have been happening.
+
+Measured live in the real editor, stock 56-prop scene, undoing one nudge. **Two figures, and only the second
+is what a creator feels:**
+```
+the step replaced   restoreLevel 74.33 ms  ->  _applyUndoMoves 0.44 ms   169x
+the whole Ctrl+Z    108.5 ms               ->  24.4 ms                   4.4x
+```
+The gap is `serializeLevel()` (unavoidable — the state being left is what makes the redo possible) and
+`renderEditorFields()`. Those are the floor now, they were already being paid, and naming them is where the
+next build looks. That scene has no imported models; the reload side is far worse with them and this side
+does not change at all.
+
+**The fast path is deliberately narrow, and the narrowness is the safety.** It applies only when the two
+states differ in NOTHING except prop transforms — an add, a delete, a reorder, a material, a signal, a world
+setting, a model swap all fall through to the old reload, unchanged. So this cannot introduce a class of
+"undo didn't fully undo": either the diff is exactly a set of transforms, or the old path runs.
+
+Three details are load-bearing:
+- **The comparison is by EXCLUSION.** It strips `t` from each prop and compares the rest whole, then strips
+  `props` and compares the level whole. The other direction — enumerating the fields allowed to differ — is
+  the version that silently goes wrong the first time somebody adds a prop field. `test-1291` proves an
+  unknown future key REFUSES rather than being ignored. Both sides come from the same `serializeLevel`, so
+  key order matches and a string compare is a true deep compare; that assumption is written down.
+- **An entry with no `nid` disqualifies the whole diff.** Identity is what links a transform to an object;
+  without it the index is the only link and a silent mismatch writes a transform onto the wrong prop.
+- **Every object is resolved before any is moved**, and the apply is wrapped so a throw falls back to the
+  reload — which rebuilds from the snapshot anyway, so a partial apply cannot survive.
+
+The write is the gizmo drag's own sequence (position/rotation/scale → `retileProcSurface` → `refreshPropCollider`
+→ `_homeSync`), so a transform arrived at by undo is identical to one dragged. `performUndo` and `performRedo`
+are now **one** `_historyStep` in opposite directions, which is why 1129's and 1163's pins each moved from two
+assertions to one — stronger, not weaker: the two directions can no longer drift apart.
+
+**Verified end to end by OBJECT IDENTITY**, which is the cheap way to prove a reload did not happen: after
+undoing a move, `propByNid(nid)` returns the SAME JS object and `selProps` still holds it; redo puts it back;
+and undoing a TAG edit returns a *different* object — the reload correctly running. Rotation and scale
+round-trip too.
+
+## The ledge grab probes where the character is GOING (build 1290)
+
+Found while reading 1289, verified with the same rig, and it is a whole game mode: the grab gate was
+`wish.dot(forward) > 0.5`, and `forward` is the movement BASIS. Build 874 makes that basis SCREEN-relative in
+the fixed-camera views, and side-scroll sets it to the **literal zero vector** (the lane lives in `right`).
+So the gate was `0 > 0.5` on every frame and **a 2.5D platformer could not ledge-grab at all** — the single
+most genre-defining verb a side-scroller has. With build 1103's cursor aim the basis is the FROZEN camera yaw
+while the body runs wherever the stick points, so the probe went where the camera looked, not where the
+character was going.
+
+Measured, side view, same box and approach, control pair:
+```
+before   the player runs straight past the box, NO GRAB on any frame
+after    hang at hy 1.75, grab direction +X, _ledge.yaw -1.57 (facing the wall it grabbed)
+```
+First and third person re-measured after the change: **1.75 in both, unchanged** — the first-person test is
+deliberately untouched, because that is the view where the grab must also mean *toward where you are looking*,
+which is what makes it deliberate rather than accidental there.
+
+Three things beyond the gate had to follow the same direction, and each is a bug on its own:
+- **All five probes** — the reach scan, the contact point, 966's wall-face walk, the chest anchor and the
+  pull-up landing spot. A test asserts that nothing in the block still reads the raw basis, because one probe
+  landing somewhere else than the other four is a hang anchored to a wall that was never found.
+- **The hang yaw.** 966 faced the body along `player.yaw`, which in the twin-stick views points at the
+  CURSOR. It is now `atan2(-gx, -gz)` — the inverse of the engine's `(-sin yaw, -cos yaw)` forward, so it
+  round-trips exactly.
+- **The drop.** It stepped back along whatever the basis pointed at *that* frame; it now backs off the wall
+  the record remembers, falling back to the basis so an in-flight record from before this build still behaves.
+
+Six pins moved (493, 966, 1243, 1244 plus 1289's own two), all keeping their assertions' intent.
+
+**Left open, with numbers, because it is a real defect and NOT the reported one.** `centerLocal.y` is the
+drawn body's own centre — hardcoded 1.0 for the capsule, `yoff + h*0.5` for an imported model. So the chase
+camera's pivot is HALF THE MODEL'S HEIGHT: the same level plays with a different sight line depending on
+which character is equipped, and there is no authored control over it (`tpHeight` offsets the camera, not
+the pivot). For humanoids the spread is small (a 1.8 m model gives 0.9 against the capsule's 1.0); for the
+non-humanoids this engine happily imports it is not (a 0.5 m creature gives 0.25, a 4 m mech gives 2.0).
+That is the same fault class as 1289 — a gameplay quantity derived from the art — and it wants its own build
+with a compatibility story, because every level that has already tuned `tpHeight` did so against this pivot.
+
+
 ## Open work (as of build 1203) — THE CRITIC ROADMAP IS COMPLETE
 
 Every item from the six-critic review panel (build 1159's `scratchpad/critics/ROADMAP.md`) has shipped or

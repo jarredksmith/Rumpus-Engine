@@ -10,12 +10,17 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- selection survives the rebuild
 {
-  const u = extractFunction('performUndo'), r = extractFunction('performRedo');
-  for (const [name, fn] of [['performUndo', u], ['performRedo', r]]) {
+  // build 1291: undo and redo share one step, and the reselect is only needed on the RELOAD path — the
+  // fast transform path never tears the scene down, so there is no selection to recover. Asserted once,
+  // on the branch that still rebuilds.
+  const h = extractFunction('_historyStep');
+  for (const [name, fn] of [['_historyStep', h]]) {
     assert(/const selN = _selNids\(\);/.test(fn), name + ' records the selected nids before the restore');
     assert(/_reselectByNids\(selN\);/.test(fn), '...and reselects them after');
     assert(fn.indexOf('restoreLevel(level)') < fn.indexOf('_reselectByNids(selN)'),
       '...in that order — the reselect must run on the rebuilt scene');
+    assert(fn.indexOf('const selN = _selNids();') > fn.indexOf('if(fast) _edFastRefresh();'),
+      '...and only on the reload branch — the fast path keeps the selection rather than recovering it');
   }
 }
 {

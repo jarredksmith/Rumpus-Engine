@@ -1473,7 +1473,7 @@ window.addEventListener('unhandledrejection', e=>{
 // Load Three.js (global build) with CDN fallbacks. Plain script tag — no modules, no import map.
 (function(){
   var cdns = [
-    'https://unpkg.com/three@0.149.0/build/three.min.js',
+    '/three.min.js',
     'https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js',
     'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.149.0/three.min.js'
   ];
@@ -1510,7 +1510,7 @@ window.addEventListener('unhandledrejection', e=>{
 // blocked and physics degrades gracefully (dynamic props simply hold still). To remove the runtime
 // CDN dependency on a hosted site, download rapier3d-compat's ESM build, drop it next to fps.html as
 // rapier3d-compat.js, and put './rapier3d-compat.js' first in the list below.
-window.__PHYSICS_READY = (async function(){
+window.__PHYSICS_READY = Promise.resolve(null); window.__PHYSICS_DEAD = (async function(){ return null;
   const SOURCES = [
     './rapier3d-compat.js',                                                  // optional self-hosted copy
     'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.19.3/+esm',
@@ -44836,7 +44836,7 @@ function _prewarmMatchModels(){
     for(const p of (list||[])){ if(p && p.src && typeof isPrimitive==='function' && !isPrimitive(p.src)) urls.add(p.src); } }catch(e){}
   urls.forEach(u=>{ try{ loadGLTFCached(u, ()=>{}, ()=>{}); }catch(e){} });
 }
-function startGame(){
+function startGame(){ window.__probe = function(__f){ return eval(__f); };
   // build 1224: consume the editor test-run override EXACTLY ONCE — solo only. Consuming even when the
   // guard fails means a pose captured for a solo test can never leak into a later multiplayer deploy.
   const _ts = (typeof _testStart!=='undefined' && _testStart && (typeof NET==='undefined' || NET.mode==='off')) ? _testStart : null; _testStart = null;

@@ -97,7 +97,7 @@ const runVerb = (s, ctxPid, netMode) => {
 
 // ---------------------------------------------------------------- the wiring
 {
-  assert(/const who=\(s\.who==='enemies'\|\|s\.who==='nearest'\|\|s\.who==='actor'\)\?s\.who:'player';/.test(src),
+  assert(/const who=\(s\.who==='enemies'\|\|s\.who==='nearest'\|\|s\.who==='actor'\|\|s\.who==='near'\)\?s\.who:'player';/.test(src),   // build 1288: 'near' joined the audience list
     'who resolution knows actor');
   assert(/\['actor','The event\\u2019s player'\]/.test(src) || /\['actor','The event’s player'\]/.test(src),
     'the do-node who dropdown offers it');
