@@ -967,6 +967,51 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The part editor works on models you dragged in (build 1319 — editor audit 4.8)
+
+> `renderModelParts`: `if(!/^https?:/i.test(url) || !/\.glb(\?|#|$)/i.test(url))` → a `local:` src (build
+> 1177's drag-import) fails the test and gets *"Part editing works on direct .glb models"*, which is both
+> true and useless. And the whole feature requires `_uploadAsset` → the founder's cPanel `upload.php`:
+> offline or host-down, a creator cannot recolor a part of their OWN model. Two features shipped 20 builds
+> apart that do not know about each other.
+
+Both halves are **one misunderstanding**: the part editor reads bytes, edits bytes and writes bytes, and had
+hardcoded one SOURCE (http) and one DESTINATION (the host). Neither is essential to what it does.
+
+- `_bakeSourceBytes(url)` is the source. A `local:` url comes back out of build 1177's own IndexedDB store,
+  by the same key scheme; anything else is fetched exactly as before. A model that is not on *this* device
+  says so by name (`local model not on this device — re-import it`) — the one failure mode specific to a
+  local import, and the one a generic "couldn't fetch" would have hidden.
+- **A local model stays local.** Uploading the edited bytes would reverse the decision the creator made when
+  they dragged the file in, and would fail on exactly the offline/host-down case the audit named. So the
+  result goes back to IndexedDB under a FRESH key (`e<ts>/<base>-edit.glb`) — the original survives, the
+  same as on the hosted path — and `done()` hands back a `local:` src. A failed save (storage full) says
+  why and returns `null`, rather than swapping in a url that does not exist.
+- **The gate asks the right question.** The old test asked WHERE the model lives; the right question is
+  whether we can read its glb. `sketchfab:` is still refused with its own reason (its download is a one-time
+  archive), and the general refusal now names *both* kinds that work, so it is a direction rather than a
+  dead end.
+
+Build 1177's publish warning is unchanged and still correct: an edited local model is still a local model,
+so `levelIssues` still tells you it cannot travel.
+
+**What the probe could and could not show** (`tools/probe/local-model-parts.mjs`): the bake needs
+gltf-transform from a CDN and a real .glb to repack, neither of which exists in the sandbox. So it proves
+the two things this build changes and stops at the library boundary, which it reports rather than papers
+over — a blob put in IndexedDB came back through the bake's own reader as 12 bytes with the magic `glTF`; a
+missing one threw the named error; the panel BUILT for `local:` and for an http `.glb` and still refused
+`sketchfab:` and `.obj`; and `_bakeModelEdits` on a `local:` url reached *"Reading model…"* and then
+*"✕ editor library unavailable (offline?)"* — i.e. the URL check no longer turns it away, which is the whole
+change. `test-1319` executes `_bakeSourceBytes` itself through all four branches with stubs.
+
+**A straight apostrophe in a comment can break `extractFunction` for an unrelated function.** Two harnesses
+crashed this build with `no matching } from index 3422216` — pointing at `_creditLinkify`, which this build
+never touched. The harness's brace matcher tracks quote state, and `_creditLinkify` contains quotes inside
+regexes and strings that it already mis-parses; my new comments' `'` characters flipped the running parity
+so the mis-parse landed somewhere fatal. The fix is to write `’` in prose comments (the codebase already
+does this in strings — see build 1177's note about `—` escapes). If a harness fails naming a function
+you did not edit, check the apostrophes you added, not that function.
+
 ## The logic graph shows its work (build 1318 — editor audit 4.9)
 
 > `logicFailures` surfaced through `levelIssues` is good and was worth shipping. There is still **no live
