@@ -967,6 +967,46 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The logic graph shows its work (build 1318 — editor audit 4.9)
+
+> `logicFailures` surfaced through `levelIssues` is good and was worth shipping. There is still **no live
+> pulse, no wire highlight, no variable watch, no breakpoint.** The graph is now 22 node types, 26 verbs and
+> an expression language — expressive enough that "why didn't that fire" is now a real question with no
+> instrument. `_lgPulse` is one function; flashing the node DOM as it executes is ~15 lines and would be the
+> highest-leverage editor addition in the file.
+
+Two hooks and a painter:
+
+- **`_lgPulse`** records the node, *after* it is resolved (so a wire pointing at a deleted node cannot
+  invent a hit) and *before* the switch (so every node type is covered, including any added later). It also
+  sits after the pulse-budget guard, so a wiring loop cannot flood the recorder either.
+- **`_lgFollow`** records the wire, by index — the only change is `for…of` → an indexed loop.
+- The painter pokes the DOM the renderer already built. It never calls `_lgRender`, which rebuilds the board
+  wholesale and would fight every drag, every open `<select>` and every field being typed into.
+
+**The COUNT is the half that answers the audit's actual question.** A node that lights up tells you it
+fired. A node showing **no badge** after a minute of play tells you it never did — which is what "why didn't
+that fire" is really asking. So the flash decays in half a second and the count stays until the board
+closes, with an explicit RESET.
+
+The **variable watch** is `logicVars` listed and sorted, with values that changed since the last frame
+highlighted. That IS the graph's whole memory, so there is no subscription to author and nothing to keep in
+sync. Both the name and the value are HTML-escaped — a level file authors both.
+
+**It costs nothing when the board is closed.** `_lgTraceOn` is only true while the modal is up, so a
+published level running someone else's graph pays one boolean per pulse and nothing else; closing cancels
+the frame loop. Counts deliberately *survive* a close/reopen, because open-the-graph → play → come-back is
+exactly how the question gets asked.
+
+Measured on a real four-node graph in the real board (`tools/probe/logic-trace.mjs`), the fourth node wired
+to nothing: one pulse recorded three nodes and two wires with **n4 absent**; ten pulses read `10` on three
+DOM badges and **nothing on the fourth**; the fired node carried the accent glow and the unfired one did
+not; wires went 2.5 px → 5.97 px; after the decay window the glow was gone and the badge remained; and with
+the board closed, **a hundred pulses recorded exactly zero.**
+
+Two pins moved (1027, 1169 — both drive `_lgPulse`/`_lgFollow` in constructed scopes and needed inert
+stubs; those harnesses are about the graph's behaviour, and 1318 owns proving the recorder records).
+
 ## The weapon has inertia (build 1317 — gameplay audit F7)
 
 > The viewmodel applies a vertical bob, ADS translation, recoil Z, reload dip, draw dip, melee thrust.

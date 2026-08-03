@@ -11202,8 +11202,38 @@ function _lgNum(v){
   if(!isNaN(n) && isFinite(n) && /^[-+]?[0-9.]/.test(t)) return n;
   return +(logicVars[_lgVarKey(t)]||0);   // build 1231: 'coins@' reads the event's player
 }
+// ---- build 1318 (editor audit 4.9): THE GRAPH SHOWS ITS WORK ----------------------------------------
+// The audit: "logicFailures surfaced through levelIssues is good and was worth shipping. There is still no
+// live pulse, no wire highlight, no variable watch, no breakpoint. The graph is now 22 node types, 26 verbs
+// and an expression language — expressive enough that 'WHY DIDN'T THAT FIRE' is now a real question with no
+// instrument. `_lgPulse` is one function; flashing the node DOM as it executes is ~15 lines and would be the
+// highest-leverage editor addition in the file."
+//
+// It is two hooks and a painter, and it costs NOTHING when the board is closed — `_lgTraceOn` is only true
+// while the modal is up, so a shipped level running someone else's graph pays one boolean per pulse.
+//
+// The COUNT matters as much as the flash, and is the half that answers the audit's actual question. A node
+// that lights up tells you it fired; a node showing 0 after a minute of play tells you it never did, which
+// is what "why didn't that fire" is really asking. The count is therefore shown until the board closes,
+// while the flash decays in half a second.
+let _lgTraceOn = false, _lgTraceRaf = 0;
+const _lgHitN = new Map(), _lgHitW = new Map();
+const LG_TRACE_MS = 550;
+function _lgTraceNode(id){
+  if(!_lgTraceOn) return;
+  const e = _lgHitN.get(id);
+  if(e){ e.t = performance.now(); e.n++; } else _lgHitN.set(id, { t: performance.now(), n: 1 });
+}
+function _lgTraceWire(i){
+  if(!_lgTraceOn) return;
+  const e = _lgHitW.get(i);
+  if(e){ e.t = performance.now(); e.n++; } else _lgHitW.set(i, { t: performance.now(), n: 1 });
+}
+function _lgTraceClear(){ _lgHitN.clear(); _lgHitW.clear(); }
 function _lgFollow(id, out){
-  for(const w of logicGraph.wires){ if(w.a===id && w.o===out) _lgPulse(w.b, w.i); }
+  /* indexed, because the TRACE needs to name the wire it travelled — the behaviour is unchanged */
+  for(let i=0;i<logicGraph.wires.length;i++){ const w=logicGraph.wires[i];
+    if(w.a===id && w.o===out){ _lgTraceWire(i); _lgPulse(w.b, w.i); } }
 }
 // build 1077: the enemy hooks. Entry nodes, so they cost nothing until an author drops one on the board, and
 // they run on the authoritative side like every other event source.
@@ -11240,6 +11270,7 @@ function _lgPulse(id, pin){
     return;
   }
   const n=_lgNode(id); if(!n) return;
+  _lgTraceNode(id);   /* build 1318: after the node is known to be real, before it runs */
   const p=n.p||{}, st=_lgState[id] || (_lgState[id]={});
   switch(n.type){
     case 'setvar': { const k=_lgVarKey(String(p.name||'').trim()); if(k){
@@ -11909,7 +11940,65 @@ function _lgRender(){
   _lgApplyView(); _lgRenderWires(); _lgDirty();
 }
 function _lgApplyView(){ if(_lgBoard) _lgBoard.style.transform='translate('+_lgPan.x+'px,'+_lgPan.y+'px) scale('+_lgZoom+')'; const z=document.getElementById('lgZoom'); if(z) z.textContent=Math.round(_lgZoom*100)+'%'; }
-function _lgClose(){ if(_lgEl) _lgEl.style.display='none'; if(typeof renderLogicPanel==='function') renderLogicPanel(); }
+// build 1318: paint the trace. Pokes the DOM the renderer already built rather than re-rendering — the
+// board is rebuilt wholesale by _lgRender, and doing that sixty times a second would fight every drag,
+// every open <select> and every field the creator is typing into.
+function _lgTracePaint(){
+  if(!_lgTraceOn || !_lgBoard){ _lgTraceRaf = 0; return; }
+  const now = performance.now();
+  _lgBoard.querySelectorAll('[data-node]').forEach(el=>{
+    const h = _lgHitN.get(el.dataset.node);
+    const k = h ? Math.max(0, 1 - (now - h.t)/LG_TRACE_MS) : 0;
+    /* the FLASH decays; the COUNT stays, because "it fired 0 times" is the answer to the audit's question */
+    el.style.boxShadow = k > 0.01
+      ? '0 4px 14px rgba(0,0,0,.45), 0 0 '+(6+18*k).toFixed(1)+'px rgba(122,255,209,'+(0.25+0.55*k).toFixed(3)+')'
+      : '0 4px 14px rgba(0,0,0,.45)';
+    let badge = el.querySelector('[data-lgn]');
+    if(h){
+      if(!badge){ badge=document.createElement('span'); badge.dataset.lgn='1';
+        badge.style.cssText='position:absolute;top:-8px;right:-8px;min-width:17px;height:17px;line-height:17px;padding:0 4px;border-radius:9px;background:#0d151b;border:1px solid #7affd1;color:#7affd1;font-size:10px;text-align:center;font-weight:700;pointer-events:none;';
+        el.appendChild(badge); }
+      badge.textContent = h.n > 999 ? '999+' : String(h.n);
+      badge.style.background = k > 0.01 ? '#155e46' : '#0d151b';
+    } else if(badge) badge.remove();
+  });
+  if(_lgSvg) _lgSvg.querySelectorAll('[data-wire]').forEach(pth=>{
+    const h = _lgHitW.get(+pth.dataset.wire);
+    const k = h ? Math.max(0, 1 - (now - h.t)/LG_TRACE_MS) : 0;
+    pth.setAttribute('stroke-width', (2.5 + 3.5*k).toFixed(2));
+    pth.setAttribute('opacity', (0.85 + 0.15*k).toFixed(3));
+  });
+  _lgWatchPaint();
+  _lgTraceRaf = requestAnimationFrame(_lgTracePaint);
+}
+// The variable watch. `logicVars` IS the graph's whole memory, so listing it is the whole feature — no
+// per-variable subscription, no watch expressions to author, nothing to keep in sync with the graph.
+let _lgWatchPrev = {};
+function _lgWatchPaint(){
+  const host = document.getElementById('lgWatch'); if(!host) return;
+  const keys = Object.keys(logicVars || {}).sort();
+  if(!keys.length){
+    if(host.dataset.empty !== '1'){ host.dataset.empty='1';
+      host.innerHTML = '<div style="color:#5f8579;font-size:10px;">No variables yet \u2014 they appear here the moment a Set/Add/Math node writes one.</div>'; }
+    return;
+  }
+  host.dataset.empty='0';
+  let html = '';
+  for(const k of keys){
+    const v = logicVars[k], changed = _lgWatchPrev[k] !== v;
+    html += '<div style="display:flex;gap:6px;font-size:11px;line-height:1.7;'+(changed?'color:#7affd1;':'color:#a8ccbf;')+'">'
+         + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">'+String(k).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))+'</span>'
+         + '<b style="color:#eafff7;">'+String(v).slice(0,14).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))+'</b></div>';
+  }
+  host.innerHTML = html;
+  _lgWatchPrev = Object.assign({}, logicVars);
+}
+function _lgClose(){
+  /* build 1318: the trace stops dead with the board. A published level running someone else's graph pays
+     one boolean per pulse and nothing else. */
+  _lgTraceOn=false; if(_lgTraceRaf){ cancelAnimationFrame(_lgTraceRaf); _lgTraceRaf=0; }
+  if(_lgEl) _lgEl.style.display='none'; if(typeof renderLogicPanel==='function') renderLogicPanel();
+}
 function _lgOpen(){
   if(!_lgEl){
     _lgEl=document.createElement('div'); _lgEl.id='lgModal';
@@ -11927,11 +12016,17 @@ function _lgOpen(){
       +'<svg id="lgWires" width="4000" height="3000" style="position:absolute;left:0;top:0;pointer-events:none;overflow:visible;"></svg>'
       +'</div>'
       +'<div id="lgMenu" style="position:absolute;left:14px;top:12px;display:none;background:#0a1016;border:1px solid #2a3a42;border-radius:10px;padding:8px;z-index:5;max-height:82%;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.6);"></div>'
+      /* build 1318: the variable watch, bottom-right so it never covers the + ADD NODE menu */
+      +'<div id="lgWatchBox" style="position:absolute;right:12px;bottom:12px;width:190px;max-height:46%;overflow:auto;background:#0a1016ee;border:1px solid #2a3a42;border-radius:10px;padding:8px 10px;z-index:5;box-shadow:0 10px 30px rgba(0,0,0,.6);">'
+      +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;"><div style="flex:1;font-size:10px;letter-spacing:1.5px;color:#7fa79a;">VARIABLES</div>'
+      +'<button id="lgTraceReset" title="Clear the fire counts" style="background:none;border:1px solid #2a3a42;color:#7fa79a;border-radius:5px;font-size:9px;padding:1px 5px;cursor:pointer;">RESET</button></div>'
+      +'<div id="lgWatch"></div></div>'
       +'</div>';
     document.body.appendChild(_lgEl);
     _lgBoard=_lgEl.querySelector('#lgBoard'); _lgSvg=_lgEl.querySelector('#lgWires');
     _lgSvg.style.pointerEvents='none';   // paths opt back in individually
     _lgEl.querySelector('#lgDone').onclick=_lgClose;
+    { const rb=_lgEl.querySelector('#lgTraceReset'); if(rb) rb.onclick=()=>{ _lgTraceClear(); _lgTracePaint(); }; }
     const view=_lgEl.querySelector('#lgView');
     view.onpointerdown=(e)=>{
       if(e.target.closest('[data-node]') || e.target.closest('#lgMenu')) return;
@@ -11965,6 +12060,10 @@ function _lgOpen(){
   }
   _lgEl.style.display='flex';
   _lgRender();
+  /* build 1318: the trace runs only while the board is open. Counts survive a close/reopen on purpose —
+     you open the graph, play, come back, and the numbers are still there to read. */
+  _lgTraceOn = true;
+  if(!_lgTraceRaf) _lgTraceRaf = requestAnimationFrame(_lgTracePaint);
 }
 function renderLogicPanel(){
   const host=(typeof edDoc==='function') ? edDoc().getElementById('edLogic') : document.getElementById('edLogic');
@@ -30132,7 +30231,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1317 · 2026-08-03';
+const BUILD_VERSION = 'build 1318 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
