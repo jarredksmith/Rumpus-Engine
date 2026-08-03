@@ -10709,6 +10709,135 @@ function _animSlotFolds(host, prefix, openGroups, mkRow){
     mkRow(body, slot);
   }
 }
+// ---- build 1336: CLIP SLICING ---------------------------------------------------------------------
+// Reported from use: most .glb characters and weapons found on the free-model web bake idle, fire and
+// reload into ONE long take, and this engine maps a SLOT to a CLIP NAME — so a model with one clip could
+// only ever have one animation. The art fix is to re-export from Blender with an NLA strip per action,
+// which is a whole tool and a whole skill away from someone building a level.
+//
+// A slice is just another named clip, and that is the entire reason this is small: every consumer already
+// resolves by name out of `gltf.animations` — `_resolveStateClip`, the per-weapon variants (1294), the
+// `clip:<name>` direct play (1079), the slot dropdowns, the peer replay. Injecting the slices INTO that
+// array means none of them changes, and a slice is reachable everywhere a real clip is.
+//
+// three ships `AnimationUtils.subclip`, and it is NOT used here. Measured against the real r149 build on a
+// sparsely-keyed clip (hips keyed every frame, one arm keyed only at t=0):
+//   * A TRACK WITH NO KEY IN RANGE IS DROPPED ENTIRELY — `if(times.length===0) continue`. That arm simply
+//     vanishes from the slice, so the bone keeps whatever pose the PREVIOUS animation left it in. Silent,
+//     and exactly the kind of thing that reads as "the model is broken" rather than "the slice is wrong".
+//   * THE SHIFT IS BY THE FIRST SURVIVING KEY, not by the requested frame, so a slice whose in-point falls
+//     between keys starts late — and the requested 2-second range came back with `duration` 1, because the
+//     end is trimmed to the last key too. A sliced reload would end early.
+// Bracketing fixes all three at once: every track is EVALUATED at exactly the in and out points and those
+// keys are inserted, so no track can be empty, t=0 is exactly the in-point, and the duration is exactly
+// what was asked for. `createInterpolant()` is what evaluates them, which means a quaternion track is
+// slerped rather than lerped — three's own interpolant, not a second opinion about rotation.
+const ANIM_CUT_MAX = 40;          // slices per model
+const ANIM_CUT_URLS = 24;         // models carrying slices in one level
+const ANIM_CUT_FPS_MIN = 1;
+const ANIM_CUT_FPS_MAX = 240;
+function _trackValueAt(track, t){
+  const vs = track.getValueSize();
+  try{
+    const it = track.createInterpolant();
+    const r = it.evaluate(t);
+    return Array.prototype.slice.call(r, 0, vs);
+  }catch(e){
+    // no interpolant (a single-key track can still make one, but be safe): nearest key at or before t
+    let i = 0; for(let j=0;j<track.times.length;j++){ if(track.times[j] <= t) i = j; }
+    return Array.prototype.slice.call(track.values, i*vs, i*vs + vs);
+  }
+}
+// [fromFrame, toFrame] INCLUSIVE, in frames at `fps`. Inclusive because that is what an animator means by
+// "idle is 0 to 60", and because two adjacent slices sharing their boundary frame is correct — the end pose
+// of one IS the start pose of the next, which is what makes a cut loop cleanly.
+function sliceClip(src, name, fromFrame, toFrame, fps){
+  if(!src || !src.tracks) return null;
+  const f = Math.max(ANIM_CUT_FPS_MIN, Math.min(ANIM_CUT_FPS_MAX, +fps || 30));
+  let t0 = (+fromFrame || 0) / f, t1 = (+toFrame || 0) / f;
+  if(t1 < t0){ const _s = t0; t0 = t1; t1 = _s; }
+  const EPS = 1e-6;
+  if(t1 - t0 < EPS) t1 = t0 + 1 / f;              // a zero-length slice is not a clip; give it one frame
+  const tracks = [];
+  for(const tr of src.tracks){
+    const vs = tr.getValueSize();
+    const times = [], values = [];
+    const push = (t, v)=>{ times.push(t - t0); for(let k=0;k<vs;k++) values.push(v[k]); };
+    push(t0, _trackValueAt(tr, t0));             // the bracketing in-key: no track can come out empty
+    for(let j=0;j<tr.times.length;j++){
+      const tt = tr.times[j];
+      if(tt <= t0 + EPS || tt >= t1 - EPS) continue;
+      const v = []; for(let k=0;k<vs;k++) v.push(tr.values[j*vs + k]);
+      push(tt, v);
+    }
+    push(t1, _trackValueAt(tr, t1));             // ...and the out-key, so the duration is what was asked
+    const T = tr.constructor;
+    let nt;
+    try{ nt = new T(tr.name, times, values); }
+    catch(e){ continue; }
+    if(tr.getInterpolation) { try{ nt.setInterpolation(tr.getInterpolation()); }catch(e){} }
+    tracks.push(nt);
+  }
+  if(!tracks.length) return null;
+  const c = new THREE.AnimationClip(String(name||'Slice'), t1 - t0, tracks);
+  c.userData = c.userData || {}; c.userData._cut = true;   // so a re-apply can remove its own work
+  return c;
+}
+// Level data: slices belong to the ASSET, not to a role — the same character used by the player and by an
+// enemy must slice the same way — so they are keyed by model url rather than living in a character config.
+// Seeded HERE, at the declaration, and not beside the other level fields 3,000 lines below: the bare
+// module-level `loadHostedProps()` builds the saved level's props at boot (build 1331), and every model it
+// loads is sliced on delivery. Seeded late, the first level of the session would load against an EMPTY cut
+// set and the slices would only appear on the next level change. `savedLevel` is read at 10052, above this.
+let animCuts = _sanAnimCuts(savedLevel && savedLevel.animCuts);
+function _sanAnimCuts(raw){
+  const out = {};
+  if(!raw || typeof raw !== 'object') return out;
+  let nu = 0;
+  for(const url in raw){
+    if(!Object.prototype.hasOwnProperty.call(raw, url)) continue;
+    if(++nu > ANIM_CUT_URLS) break;
+    const list = raw[url];
+    if(!Array.isArray(list)) continue;
+    const cuts = [];
+    for(const c of list){
+      if(!c || typeof c !== 'object') continue;
+      if(cuts.length >= ANIM_CUT_MAX) break;
+      const n = String(c.n == null ? '' : c.n).slice(0, 48).trim();
+      if(!n) continue;                                    // an unnamed slice cannot be selected, so it is nothing
+      const f = Math.max(ANIM_CUT_FPS_MIN, Math.min(ANIM_CUT_FPS_MAX, Math.round(+c.f) || 30));
+      const a = Math.max(0, Math.min(1e6, Math.round(+c.a) || 0));
+      const b = Math.max(0, Math.min(1e6, Math.round(+c.b) || 0));
+      const src = String(c.s == null ? '' : c.s).slice(0, 120);
+      cuts.push({ n, s:src, a, b, f });
+    }
+    if(cuts.length) out[String(url).slice(0, 400)] = cuts;
+  }
+  return out;
+}
+function _animCutSig(url){
+  const l = animCuts[url]; if(!l || !l.length) return '';
+  return l.map(c=>c.n+'|'+c.s+'|'+c.a+'|'+c.b+'|'+c.f).join(';');
+}
+// Idempotent, and it REMOVES its own previous work first — editing a slice must update it, not stack a
+// second clip with the same name beside it, which would make `find(by name)` return whichever came first.
+function applyAnimCuts(gltf, url){
+  if(!gltf || !Array.isArray(gltf.animations)) return gltf;
+  const sig = _animCutSig(url);
+  if(gltf.userData && gltf.userData._cutSig === sig) return gltf;   // already exactly this set
+  const kept = gltf.animations.filter(c=>!(c && c.userData && c.userData._cut));
+  const out = kept.slice();
+  for(const c of (animCuts[url] || [])){
+    const src = kept.find(x=>(x.name||'')===c.s) || kept[0];
+    if(!src) continue;
+    if(out.some(x=>(x.name||'')===c.n)) continue;   // never shadow a real clip the model already carries
+    const cut = sliceClip(src, c.n, c.a, c.b, c.f);
+    if(cut) out.push(cut);
+  }
+  gltf.animations = out;
+  gltf.userData = gltf.userData || {}; gltf.userData._cutSig = sig;
+  return gltf;
+}
 function _resolveStateClip(gltf, clips, state){
   const want = clips && clips[state];
   if(want){ const c = gltf.animations.find(a=>(a.name||'')===want); if(c) return c; }   // explicit override
@@ -17557,7 +17686,9 @@ function _importLocalModel(file, atPoint){
 }
 function loadGLTFCached(url, cb, errcb){
   url = _migrateAssetUrl(url);   // build 973: dead-host heal — one choke point for every model load
-  if(gltfCache[url]){ _modelTouch(url); cb(gltfCache[url]); return; }   // cached: synchronous, nothing to wait on
+  /* build 1336: slices are applied HERE, at the two points a gltf reaches a consumer, so every caller —
+     avatars, props, weapons, the part editor, the thumbnail renderer — sees the same animation list. */
+  if(gltfCache[url]){ _modelTouch(url); cb(applyAnimCuts(gltfCache[url], url)); return; }   // cached: synchronous, nothing to wait on
   if(_glbWaiters[url]){ _glbWaiters[url].push({cb:cb,errcb:errcb}); return; }   // a load for this url is already in flight; ride along instead of fetching again
   const waiters=[{cb:cb,errcb:errcb}]; _glbWaiters[url]=waiters;
   _glbPending++;
@@ -17565,7 +17696,8 @@ function loadGLTFCached(url, cb, errcb){
   const _prog=(ev)=>{ if(!ev) return; _glbProg[url]={ l:ev.loaded||0, t:(ev.total && ev.total>=(ev.loaded||0))?ev.total:0 }; };   // build 943
   const _release=()=>{ _glbActive=Math.max(0,_glbActive-1); _glbPump(); };
   const _cxl=()=>{ delete _glbCancel[url]; _done(); _release(); for(const w of waiters){ try{ w.errcb && w.errcb(new Error('cancelled')); }catch(_){} } };   // build 945
-  const _cb=(g)=>{ if(_glbCancel[url]){ _cxl(); return; } _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} try{ _modelBytes[url]=_estimateGLTFBytes(g); }catch(e){} for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
+  const _cb=(g)=>{ if(_glbCancel[url]){ _cxl(); return; } _done(); _release(); try{ if(g && g.scene) _shrinkTexturesForMobile(g.scene); }catch(e){} try{ _modelBytes[url]=_estimateGLTFBytes(g); }catch(e){} try{ if(g) applyAnimCuts(g, url); }catch(e){}   /* build 1336 */
+    for(const w of waiters){ if(g) _modelTouch(url); try{ w.cb && w.cb(g); }catch(e){} } _enforceModelCacheCap(); };
   let _tries=0, _ktx2Retried=false, _meshoptRetried=false, _dracoRetried=false;
   const _ec=(e)=>{
     const _m=(e&&e.message)||'';
@@ -24909,7 +25041,8 @@ function loadLevelFromNet(level){
   pickupsOn = (level.pickupsOn !== false);
   pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact })) : [];   // build 879: joiners used to lose pickup transforms/items
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
-  if(typeof refreshLootMarkers==='function') refreshLootMarkers(); pickupModels = _sanPickupModels(level.pickupModels); keyNames = _sanKeyNames(level.keyNames);   /* build 1325 */ if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
+  if(typeof refreshLootMarkers==='function') refreshLootMarkers(); pickupModels = _sanPickupModels(level.pickupModels); keyNames = _sanKeyNames(level.keyNames);   /* build 1325 */
+  animCuts = _sanAnimCuts(level.animCuts); if(typeof refreshAnimCuts==='function') refreshAnimCuts();   /* build 1336: re-slice BEFORE the avatars rebuild from the cache */ if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   // (world/terrain adopted ABOVE the prop rebuild — build 893)
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
@@ -25366,6 +25499,17 @@ function buildAvatarVisual(g, cfg){
     },
     (err)=>{ console.warn('Player model load failed, using capsule:', err && err.message); if(g.userData._loadingUrl===mc.url && g.userData.visual) g.userData.visual.visible=true; }   // build 977: the hidden placeholder becomes the fallback body
   );
+}
+// build 1336: after a slice is added, edited or deleted, every CACHED gltf for that url has to be
+// re-sliced before anything rebuilds from it — the cache is shared, so re-slicing once repairs every
+// consumer at the same instant instead of leaving a stale list behind whichever one rebuilt first.
+function refreshAnimCuts(url){
+  try{
+    for(const k in gltfCache){ if(!url || k === url) applyAnimCuts(gltfCache[k], k); }
+  }catch(e){}
+  try{ if(typeof rebuildAvatars==='function') rebuildAvatars(); }catch(e){}
+  try{ if(typeof refreshPlayerClipOptions==='function') refreshPlayerClipOptions(); }catch(e){}
+  try{ if(typeof refreshEnemyClipOptions==='function') refreshEnemyClipOptions(); }catch(e){}
 }
 function rebuildAvatars(){ for(const id in NET.players){ const rp=NET.players[id]; if(rp && rp.mesh) buildAvatarVisual(rp.mesh, rp.modelCfg); } if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar); if(typeof _ownAvatar!=='undefined' && _ownAvatar){ _ownAvatarKey=''; if(typeof ensureOwnAvatar==='function') ensureOwnAvatar(); }   /* refresh the live third-person body too */ _scheduleCharBroadcast(); }
 // ---- Third-person chase camera (toggle in the pause menu) ----
@@ -30634,7 +30778,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1335 · 2026-08-03';
+const BUILD_VERSION = 'build 1336 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39489,6 +39633,7 @@ function serializeLevel(){
     roster: charRoster.map(c=>({ name:c.name, url:c.url, scale:c.scale, face:c.face, rx:c.rx, rz:c.rz, xoff:c.xoff, yoff:c.yoff, zoff:c.zoff, thumb:c.thumb||'', animLib:c.animLib||'', autoRig:c.autoRig||undefined, ikHold:(c.ikHold===false)?false:true, jointFix:_sanitizeJointFix(c.jointFix), clips:Object.assign({},c.clips||{}), clipSpeed:Object.assign({},c.clipSpeed||{}), clipHold:Object.assign({},c.clipHold||{}), clipInPlace:Object.assign({},c.clipInPlace||{}), grip:_sanitizeGripMap(c.grip), view:_sanitizeView(c.view) })),
     pickupModels: Object.keys(pickupModels).reduce((a,k)=>{ const m=pickupModels[k]; if(m&&m.url){ a[k]={ url:m.url, scale:m.scale||1 }; } return a; }, {}),
     keyNames: Object.keys(keyNames).reduce((a,k)=>{ const n=(keyNames[k]||'').trim(); if(n) a[k]=n; return a; }, {}),
+    animCuts: (Object.keys(animCuts).length ? _sanAnimCuts(animCuts) : undefined),   /* build 1336: undefined when unused, so a level with no slices does not grow a dead key. Sanitized on the way OUT as well as in, so nothing out-of-range can enter a share code (1191's rule). */
     game:    { mode: gameCfg.mode, pvp: gameCfg.pvp||undefined, pvpTarget: gameCfg.pvpTarget||undefined, winWaves: gameCfg.winWaves, upgrades: gameCfg.upgrades !== false, objective: gameCfg.objective, surviveSecs: gameCfg.surviveSecs, raceLaps: gameCfg.raceLaps, raceBots: gameCfg.raceBots, raceBotSkill: gameCfg.raceBotSkill, extractHold: gameCfg.extractHold, extractRadius: gameCfg.extractRadius, bossWave: gameCfg.bossWave, wavesText: (gameCfg.wavesText||'').slice(0,2000) || undefined, enemyMods: _sanitizeEnemyMods(gameCfg.enemyMods) || undefined, noRespawn: !!gameCfg.noRespawn, unarmed: !!gameCfg.unarmed, startWeapon: _canStartWith(gameCfg.startWeapon) ? gameCfg.startWeapon : 'rifle', allowPickup: gameCfg.allowPickup!==false, flashlight: !!gameCfg.flashlight, flash: { intensity:+gameCfg.flashCfg.intensity, angle:+gameCfg.flashCfg.angle, penumbra:+gameCfg.flashCfg.penumbra, distance:+gameCfg.flashCfg.distance, color:gameCfg.flashCfg.color }, goalText: (gameCfg.goalText||'').slice(0,160), respawnOnDeath: !!gameCfg.respawnOnDeath, winText: (gameCfg.winText||'').slice(0,240), loseText: (gameCfg.loseText||'').slice(0,240), spawnRegion: { on: !!gameCfg.spawnRegion.on, shape: gameCfg.spawnRegion.shape||'circle', x: +gameCfg.spawnRegion.x, z: +gameCfg.spawnRegion.z, r: +gameCfg.spawnRegion.r, poly: (gameCfg.spawnRegion.poly||[]).map(p=>({ x:+p.x, z:+p.z })) } , fallDamage: { on: !!gameCfg.fallDamage.on, player: gameCfg.fallDamage.player!==false, ai: gameCfg.fallDamage.ai!==false, minSpeed: +gameCfg.fallDamage.minSpeed, perUnit: +gameCfg.fallDamage.perUnit }, crushDamage: { on: !!gameCfg.crushDamage.on, player: gameCfg.crushDamage.player!==false, ai: gameCfg.crushDamage.ai!==false, minSpeed: +gameCfg.crushDamage.minSpeed, perUnit: +gameCfg.crushDamage.perUnit }, ragdoll: !!gameCfg.ragdoll, crosshair: { style: gameCfg.crosshair.style, size: +gameCfg.crosshair.size, thickness: +gameCfg.crosshair.thickness, gap: +gameCfg.crosshair.gap, dot: !!gameCfg.crosshair.dot, color: gameCfg.crosshair.color }, view: (gameCfg.view==='top'||gameCfg.view==='side'||gameCfg.view==='chase')?gameCfg.view:'fps', viewDist: +gameCfg.viewDist||0, viewAxis: (gameCfg.viewAxis==='z')?'z':'x', viewYaw: +gameCfg.viewYaw||0, viewTilt: (gameCfg.viewTilt!=null?+gameCfg.viewTilt:undefined), viewHeight: +gameCfg.viewHeight||0, viewRoll: +gameCfg.viewRoll||0, viewOrbit: !!gameCfg.viewOrbit, chaseCursorAim: !!gameCfg.chaseCursorAim },   // build 1085: camera orbit (tilt is undefined-when-unset so old levels keep the per-mode default) · build 1100: player orbit opt-in · build 1103: ARPG cursor aim
     credits: (typeof assetCredits!=='undefined' && assetCredits.size) ? [...assetCredits].slice(0,200).map(s=>String(s).slice(0,240)) : undefined,   // build 835: CC credits for NON-prop assets (enemy/pickup/chest/coin/attachment models, sounds) — session-only before, now they ship with the level
     dmgNum:  { on: dmgNumCfg.on !== false, size: dmgNumCfg.size, hit: dmgNumCfg.hitColor, kill: dmgNumCfg.killColor },
@@ -40455,6 +40600,7 @@ function restoreLevel(level){
      three load paths agreed and the third simply had no line. Build 1280 unified the PROP apply for exactly
      this reason; these two sat outside it. */
   try{ keyNames = _sanKeyNames(level.keyNames); }catch(e){}
+  try{ animCuts = _sanAnimCuts(level.animCuts); if(typeof refreshAnimCuts==='function') refreshAnimCuts(); }catch(e){}   /* build 1336 */
   try{ pickupModels = _sanPickupModels(level.pickupModels); if(typeof refreshPickupMarkers==='function') refreshPickupMarkers(); }catch(e){}
   if(level.audio){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply, don't persist (see loadLevelFromNet)
   _applyCine(level.cine);
@@ -42887,6 +43033,14 @@ function renderEditorFields(){
       const ipl=document.createElement('span'); ipl.textContent='in place'; ipWrap.appendChild(ip); ipWrap.appendChild(ipl);
       row.appendChild(sp); row.appendChild(sel); row.appendChild(spd); row.appendChild(holdWrap); row.appendChild(ipWrap); foldBody.appendChild(row);
     });
+    { /* build 1336 */
+      const b=document.createElement('button'); b.textContent='\u2702 Slice clips\u2026';
+      b.title='Cut a long baked take (idle+attack+die in one clip) into named clips you can map above.';
+      b.style.cssText='width:100%;margin:6px 0 2px;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
+      b.onclick=()=>{ const u=((mc && mc.url)||'').trim();
+        if(!u){ if(typeof toast==='function') toast('Set an enemy model first'); return; }
+        showClipSlicer(u, 'Enemy model'); };
+      eHost.appendChild(b); }
     refreshEnemyClipOptions();
     // collider radius — the WIDTH of the damage hit-cylinder shots test against (0 = auto-fit to the model). Movement spacing is separate + automatic.
     const ecRow=document.createElement('label'); ecRow.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;';
@@ -44931,6 +45085,15 @@ function renderEditorFields(){
           }
         }
       }
+      { /* build 1336: the slicer, where the clip dropdowns are — that is where you find out the model has
+           one clip called "allanim" and nothing else. */
+        const b=document.createElement('button'); b.textContent='\u2702 Slice clips\u2026';
+        b.title='Cut a long baked take (idle+fire+reload in one clip) into named clips you can map above.';
+        b.style.cssText='width:100%;margin:6px 0 2px;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
+        b.onclick=()=>{ const u=(myCharCfg().url||playerModelCfg.url||'').trim();
+          if(!u){ if(typeof toast==='function') toast('Set a character model first'); return; }
+          showClipSlicer(u, 'Player character'); };
+        urlHost.appendChild(b); }
       refreshPlayerClipOptions();
       // third-person camera framing: side / distance / height. Live-applied + persisted.
       { const tpHdr=document.createElement('div'); tpHdr.className='hint'; tpHdr.innerHTML='<b>Third-person camera</b>'; tpHdr.style.margin='8px 0 2px'; urlHost.appendChild(tpHdr);
@@ -48552,6 +48715,217 @@ function showThirdPartyModal(){
   row.appendChild(close); card.appendChild(row);
   wrap.appendChild(card); document.body.appendChild(wrap);
   wrap.addEventListener('pointerdown', e=>{ if(e.target===wrap) close.onclick(); });
+}
+
+// ---- build 1336: the clip slicer panel -------------------------------------------------------------
+// It is anchored to the BOTTOM of the viewport rather than centred like every other modal in this file,
+// and that is the whole point of it: a slicer you cannot see the model through is a pair of number fields.
+// Scrubbing poses the live preview avatar, so an in-point is chosen by looking at the pose, which is what
+// "a visual way to slice these" means.
+let _slicePv = { mixer:null, act:null, name:'' }, _sliceLoop = null;
+function _sliceTarget(){
+  if(typeof previewAvatar!=='undefined' && previewAvatar && previewAvatar.userData && previewAvatar.userData.mixer) return previewAvatar;
+  if(typeof previewEnemy!=='undefined' && previewEnemy && previewEnemy.userData && previewEnemy.userData.mixer) return previewEnemy;
+  return null;
+}
+// Pose the preview rig at one instant of a clip. `paused` + an explicit `time` + mixer.update(0) is the
+// scrub: the mixer evaluates the pose without advancing, so dragging is exact rather than a race with the
+// frame loop.
+function _slicePose(clipName, t){
+  const v = _sliceTarget(); if(!v) return false;
+  const mixer = v.userData.mixer, clips = v.userData.animClips || [];
+  const clip = clips.find(c=>(c.name||'')===clipName); if(!clip) return false;
+  const acts = v.userData.stateActions || {};
+  for(const k in acts){ try{ acts[k].setEffectiveWeight(0); }catch(e){} }   /* silence the state machine while scrubbing, or it blends against the pose */
+  if(_slicePv.mixer !== mixer || _slicePv.name !== clipName){
+    if(_slicePv.act){ try{ _slicePv.act.setEffectiveWeight(0); _slicePv.act.stop(); }catch(e){} }
+    const a = mixer.clipAction(clip); a.reset(); a.play(); _slicePv = { mixer, act:a, name:clipName };
+  }
+  const a = _slicePv.act;
+  a.enabled = true; a.paused = true; a.setEffectiveWeight(1);
+  a.time = Math.max(0, Math.min(clip.duration, t));
+  mixer.update(0);
+  return true;
+}
+function _sliceRelease(){
+  if(_sliceLoop){ clearInterval(_sliceLoop); _sliceLoop = null; }
+  if(_slicePv.act){ try{ _slicePv.act.setEffectiveWeight(0); _slicePv.act.stop(); }catch(e){} }
+  _slicePv = { mixer:null, act:null, name:'' };
+  /* hand the rig back to the state machine, or it stands frozen on the last scrubbed pose */
+  const v = _sliceTarget(); if(v && typeof setEnemyAnimState==='function'){ try{ setEnemyAnimState(v, 'idle', true); }catch(e){} }
+}
+function _sliceClipList(url){
+  try{
+    const g = gltfCache[url];
+    if(g && Array.isArray(g.animations)) return g.animations.filter(c=>!(c.userData && c.userData._cut));
+  }catch(e){}
+  return [];
+}
+function showClipSlicer(url, label){
+  url = String(url||'').trim();
+  const old = document.getElementById('clipSlicer'); if(old) old.remove();
+  const src = _sliceClipList(url);
+  const wrap = document.createElement('div'); wrap.id = 'clipSlicer';
+  wrap.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:310;background:rgba(7,13,18,0.97);'
+    + 'border-top:1px solid rgba(var(--accent-rgb),0.4);box-shadow:0 -14px 40px rgba(0,0,0,.55);'
+    + 'color:#cfeee2;font-size:12px;padding:12px 16px 14px;max-height:52vh;overflow:auto;';
+  const row = (mt)=>{ const d=document.createElement('div'); d.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:'+(mt||6)+'px'; wrap.appendChild(d); return d; };
+  const lbl = (t,w)=>{ const d=document.createElement('span'); d.textContent=t; d.style.cssText='color:#7fb8a6;font-size:11px;'+(w?('min-width:'+w+'px;'):''); return d; };
+  const btn = (t,title)=>{ const b=document.createElement('button'); b.textContent=t; if(title) b.title=title;
+    b.style.cssText='padding:4px 10px;font-size:11px;border-radius:5px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;'; return b; };
+  const num = (v,w)=>{ const i=document.createElement('input'); i.type='number'; i.value=String(v);
+    i.style.cssText='width:'+(w||62)+'px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 5px;font-size:11px;'; return i; };
+
+  // ---- header
+  const head = row(0);
+  const h = document.createElement('div'); h.textContent = '✂ Slice clips';
+  h.style.cssText='font-family:var(--display-font);letter-spacing:2px;color:var(--accent);font-size:15px;flex:1';
+  const who = document.createElement('div'); who.textContent = label || url || '(no model)';
+  who.style.cssText='font-size:11px;color:#7fb8a6;max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  const close = btn('Close'); close.onclick = ()=>{ _sliceRelease(); wrap.remove(); };
+  head.appendChild(h); head.appendChild(who); head.appendChild(close);
+
+  if(!src.length){
+    const m = document.createElement('div'); m.style.cssText='margin-top:10px;color:#ffd166;font-size:12px';
+    m.textContent = 'This model carries no animation clips, so there is nothing to slice. Load a model with animation on the tab behind this panel first.';
+    wrap.appendChild(m); document.body.appendChild(wrap); return;
+  }
+
+  // ---- source + fps
+  const r1 = row();
+  const sel = document.createElement('select');
+  sel.style.cssText='flex:1;min-width:140px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:3px 6px;font-size:12px;';
+  for(const c of src){ const o=document.createElement('option'); o.value=c.name||''; o.textContent=(c.name||'(unnamed)')+'  —  '+c.duration.toFixed(2)+'s'; sel.appendChild(o); }
+  const fps = num(30, 54);
+  fps.min = String(ANIM_CUT_FPS_MIN); fps.max = String(ANIM_CUT_FPS_MAX); fps.step = '1';
+  fps.title = 'The frame rate the animation was AUTHORED at. If your in/out frames come from Blender’s timeline, this is that scene’s fps — usually 24 or 30.';
+  r1.appendChild(lbl('Source', 44)); r1.appendChild(sel); r1.appendChild(lbl('fps')); r1.appendChild(fps);
+
+  // ---- the timeline
+  const r2 = row(10);
+  const play = btn('▶', 'Play the selected range on a loop');
+  const head2 = document.createElement('input'); head2.type='range'; head2.min='0'; head2.step='1'; head2.value='0';
+  head2.style.cssText='flex:1;min-width:180px;accent-color:var(--accent);';
+  const frameOut = document.createElement('span'); frameOut.style.cssText='min-width:96px;text-align:right;font-size:11px;color:#cfeee2;';
+  r2.appendChild(play); r2.appendChild(head2); r2.appendChild(frameOut);
+
+  // a bar under the scrubber showing the slice against the whole take
+  const barWrap = document.createElement('div');
+  barWrap.style.cssText='position:relative;height:8px;margin:6px 0 0;border-radius:4px;background:#0c1418;border:1px solid #23323a;overflow:hidden;';
+  const barSel = document.createElement('div');
+  barSel.style.cssText='position:absolute;top:0;bottom:0;background:rgba(var(--accent-rgb),0.45);';
+  barWrap.appendChild(barSel); wrap.appendChild(barWrap);
+
+  const r3 = row();
+  const inN = num(0), outN = num(30);
+  const setIn = btn('Set in', 'Use the playhead as the first frame'), setOut = btn('Set out', 'Use the playhead as the last frame');
+  r3.appendChild(lbl('In', 44)); r3.appendChild(inN); r3.appendChild(setIn);
+  r3.appendChild(lbl('Out')); r3.appendChild(outN); r3.appendChild(setOut);
+  const rangeNote = document.createElement('span'); rangeNote.style.cssText='font-size:11px;color:#7fb8a6;';
+  r3.appendChild(rangeNote);
+
+  const r4 = row();
+  const nameI = document.createElement('input'); nameI.type='text'; nameI.placeholder='Slice name, e.g. Reload'; nameI.maxLength=48;
+  nameI.style.cssText='flex:1;min-width:140px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:4px 7px;font-size:12px;';
+  const add = btn('+ Add slice', 'Adds a clip with this name — it appears in every animation dropdown at once');
+  add.style.borderColor = 'var(--accent)';
+  r4.appendChild(lbl('Name', 44)); r4.appendChild(nameI); r4.appendChild(add);
+
+  const list = document.createElement('div'); list.style.cssText='margin-top:10px;'; wrap.appendChild(list);
+  const hint = document.createElement('div'); hint.style.cssText='margin-top:8px;font-size:11px;color:#7fb8a6;line-height:1.5;';
+  hint.textContent = 'Frames are INCLUSIVE, so 0–60 and 60–165 correctly share frame 60 — the end pose of one is the start pose of the next, which is what makes a cut loop cleanly. Slices are saved with the level and belong to the model, so the player and an enemy using the same character get the same set.';
+  wrap.appendChild(hint);
+
+  // ---- state
+  const curClip = ()=> src.find(c=>(c.name||'')===sel.value) || src[0];
+  const maxFrame = ()=> Math.max(1, Math.round(curClip().duration * (+fps.value || 30)));
+  const clampAll = ()=>{
+    const mx = maxFrame();
+    head2.max = String(mx);
+    let a = Math.max(0, Math.min(mx, Math.round(+inN.value || 0)));
+    let b = Math.max(0, Math.min(mx, Math.round(+outN.value || 0)));
+    if(b < a) b = a;
+    inN.value = String(a); outN.value = String(b);
+    barSel.style.left = (100 * a / mx) + '%';
+    barSel.style.width = Math.max(0.5, 100 * (b - a) / mx) + '%';
+    const f = +fps.value || 30;
+    rangeNote.textContent = (b - a + 1) + ' frames · ' + ((b - a) / f).toFixed(2) + 's  of  ' + mx + ' (' + curClip().duration.toFixed(2) + 's)';
+    return { a, b, mx };
+  };
+  const showFrame = ()=>{
+    const f = +fps.value || 30, fr = Math.round(+head2.value || 0);
+    frameOut.textContent = 'frame ' + fr + '  ' + (fr / f).toFixed(2) + 's';
+    if(!_slicePose(sel.value, fr / f)) frameOut.textContent += '  (no preview rig)';
+  };
+  const stopLoop = ()=>{ if(_sliceLoop){ clearInterval(_sliceLoop); _sliceLoop = null; play.textContent = '▶'; } };
+
+  sel.onchange = ()=>{ stopLoop(); const mx = maxFrame(); inN.value = '0'; outN.value = String(mx); head2.value = '0'; clampAll(); showFrame(); };
+  fps.onchange = ()=>{ stopLoop(); clampAll(); showFrame(); };
+  head2.oninput = ()=>{ stopLoop(); showFrame(); };
+  inN.onchange = outN.onchange = ()=>{ clampAll(); };
+  setIn.onclick = ()=>{ inN.value = String(Math.round(+head2.value||0)); clampAll(); };
+  setOut.onclick = ()=>{ outN.value = String(Math.round(+head2.value||0)); clampAll(); };
+  play.onclick = ()=>{
+    if(_sliceLoop){ stopLoop(); return; }
+    const { a, b } = clampAll(); const f = +fps.value || 30;
+    let t = a; play.textContent = '■';
+    /* an interval rather than a hook in the frame loop: the panel owns its own playback and cannot leave
+       anything behind in the game's update path when it closes */
+    _sliceLoop = setInterval(()=>{
+      t += f / 30;                 /* f frames per second, ticked at ~30Hz = real time at the authored fps */
+      if(t > b) t = a;
+      head2.value = String(Math.round(t)); showFrame();
+    }, 33);
+  };
+
+  const redraw = ()=>{
+    list.innerHTML = '';
+    const cuts = animCuts[url] || [];
+    if(!cuts.length){
+      const e = document.createElement('div'); e.style.cssText='font-size:11px;color:#7fb8a6;';
+      e.textContent = 'No slices yet. Scrub to the first frame of the motion you want, press Set in, scrub to its last frame, press Set out, name it and add.';
+      list.appendChild(e); return;
+    }
+    for(let i=0;i<cuts.length;i++){
+      const c = cuts[i];
+      const r = document.createElement('div');
+      r.style.cssText='display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid rgba(255,255,255,.07);';
+      const n = document.createElement('div'); n.textContent = c.n; n.style.cssText='flex:1;color:#e8fff6;font-size:12px;';   /* textContent: a slice name is level data (1325) */
+      const w = document.createElement('div'); w.textContent = c.a + '–' + c.b + ' @' + c.f + 'fps  ← ' + (c.s || src[0].name || '');
+      w.style.cssText='font-size:11px;color:#7fb8a6;max-width:44vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      const ld = btn('↵', 'Load this slice back into the fields above');
+      ld.onclick = ()=>{ stopLoop(); sel.value = c.s || sel.value; fps.value = String(c.f); inN.value = String(c.a); outN.value = String(c.b);
+        nameI.value = c.n; head2.value = String(c.a); clampAll(); showFrame(); };
+      const del = btn('✕', 'Delete this slice');
+      del.onclick = ()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+        cuts.splice(i, 1); if(!cuts.length) delete animCuts[url];
+        if(typeof _levelDirty!=='undefined') _levelDirty = true;
+        refreshAnimCuts(url); redraw(); };
+      r.appendChild(n); r.appendChild(w); r.appendChild(ld); r.appendChild(del); list.appendChild(r);
+    }
+  };
+
+  add.onclick = ()=>{
+    const nm = nameI.value.trim().slice(0, 48);
+    if(!nm){ if(typeof toast==='function') toast('Give the slice a name first'); nameI.focus(); return; }
+    /* A slice that shadows a real clip would make `find(by name)` ambiguous — applyAnimCuts refuses it, so
+       refusing it HERE too is the difference between "nothing happened" and a reason. */
+    if(src.some(c=>(c.name||'')===nm)){ if(typeof toast==='function') toast('The model already has a clip called “'+nm+'” — pick another name'); return; }
+    const cuts = animCuts[url] || (animCuts[url] = []);
+    if(cuts.length >= ANIM_CUT_MAX){ if(typeof toast==='function') toast('That is the limit of '+ANIM_CUT_MAX+' slices for one model'); return; }
+    if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+    const { a, b } = clampAll();
+    const ex = cuts.findIndex(c=>c.n === nm);
+    const entry = { n:nm, s:sel.value, a, b, f:Math.round(+fps.value || 30) };
+    if(ex >= 0) cuts[ex] = entry; else cuts.push(entry);       /* same name = edit, not a duplicate */
+    if(typeof _levelDirty!=='undefined') _levelDirty = true;
+    refreshAnimCuts(url); redraw();
+    if(typeof toast==='function') toast('“'+nm+'” added — it is now in every animation dropdown');
+  };
+
+  document.body.appendChild(wrap);
+  { const mx = maxFrame(); outN.value = String(Math.min(mx, 30)); }
+  clampAll(); showFrame(); redraw();
 }
 function bindPauseMenu(){
   const pb=document.getElementById('pauseBtn'); if(pb) pb.onclick=openPause;
