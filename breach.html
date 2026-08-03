@@ -19560,6 +19560,43 @@ renderer.domElement.addEventListener('contextmenu', e=>{ if(editorOpen && editor
 // .glb into a holder inside it, with tunable offsets so it sits naturally in first-person view.
 const GUN_MODEL_URL = 'https://static.poly.pizza/78846e47-3be2-48f2-a7ce-6b50c09358bb.glb';
 const GUN_OFFSET = new THREE.Vector3(0.32000, -0.34000, -0.60000);
+// ---- build 1317 (gameplay audit F7): THE WEAPON HAS INERTIA ------------------------------------------
+// The audit: "The viewmodel applies a vertical bob, ADS translation, recoil Z, reload dip, draw dip, melee
+// thrust. There is NO LOOK-SWAY — no lag/counter-rotation from mouse delta — so the gun tracks a flick with
+// zero inertia, which is the single most-noticed 'cheap' tell in a first-person game."
+//
+// The sway is a first-order lag driven by the TURN RATE: `x' = -k*x + u`, where u is how fast the view is
+// turning. Solved ANALYTICALLY across the frame rather than stepped:
+//
+//     x  <-  x*e^(-k dt) + (u/k)*(1 - e^(-k dt))
+//
+// which is exact for a constant turn rate over the frame and therefore gives the same answer at any
+// refresh rate. THE FIRST VERSION OF THIS SHIPPED AS AN IMPULSE PLUS A DECAY, with a comment claiming it
+// was frame-rate independent "by construction" because the per-frame deltas sum to the same total. That is
+// true of the deltas and false of the RESULT: the decay runs between them, so a coarse step under-counts.
+// Measured — the same 0.75 rad turn over the same 0.25 s gave 0.110 in 3 frames against 0.156 in 24, a 42%
+// spread, i.e. a weapon that settles differently on two machines, which is the exact tell this build exists
+// to remove. The analytic form makes the claim true instead of restating it.
+const VM_SWAY_IN = 0.55;     // how much of a look delta becomes sway
+const VM_SWAY_K = 9;         // decay rate — settles in ~0.35 s
+const VM_SWAY_POS = 0.10;    // world units of gun travel per unit of sway
+const VM_SWAY_ROT = 0.42;    // radians of counter-rotation per unit of sway
+const VM_SWAY_MAX = 0.32;    // a 180-degree flick must not throw the gun off screen
+let _vmSwayX = 0, _vmSwayY = 0, _vmPrevYaw = null, _vmPrevPitch = 0;
+// Returns nothing; leaves the current sway in _vmSwayX/_vmSwayY for the viewmodel block to consume.
+function _vmSwayStep(dt){
+  if(_vmPrevYaw === null){ _vmPrevYaw = player.yaw; _vmPrevPitch = player.pitch; return; }
+  let dy = player.yaw - _vmPrevYaw;
+  dy = Math.atan2(Math.sin(dy), Math.cos(dy));     /* unwrapped, so crossing +/-PI is not a full-circle flick */
+  const dp = player.pitch - _vmPrevPitch;
+  _vmPrevYaw = player.yaw; _vmPrevPitch = player.pitch;
+  const _dt = Math.max(1e-4, Math.min(0.1, dt));
+  const e = Math.exp(-VM_SWAY_K * _dt), g = (1 - e) * VM_SWAY_IN / VM_SWAY_K;
+  _vmSwayX = _vmSwayX * e + (dy / _dt) * g;      /* dy/_dt is the turn RATE — the driving term */
+  _vmSwayY = _vmSwayY * e + (dp / _dt) * g;
+  _vmSwayX = Math.max(-VM_SWAY_MAX, Math.min(VM_SWAY_MAX, _vmSwayX));
+  _vmSwayY = Math.max(-VM_SWAY_MAX, Math.min(VM_SWAY_MAX, _vmSwayY));
+}
 const GUN_SCALE = 0.74782;                                 // tweak to fit the frame
 const GUN_ROT = new THREE.Euler(0.00000, 1.53388, 0.00000);            // face the muzzle forward (−z)
 const gun = new THREE.Group();
@@ -30095,7 +30132,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1316 · 2026-08-02';
+const BUILD_VERSION = 'build 1317 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35768,21 +35805,35 @@ function loop(){
 
   // weapon sway + recoil + reload dip; ADS physically slides the gun to screen center
   const t = performance.now()/1000;
-  const sway = (1 - adsBlend*0.85);
-  const move = (wish.length()>0 ? Math.sin(t*10)*0.012 : Math.sin(t*2)*0.004) * sway;
+  /* build 1313: a player who turned camera sway down for motion comfort must not still get a swaying gun —
+     the viewmodel is 11% of the screen and the most persistent moving thing in it. */
+  const _a11ySway = (typeof a11y!=='undefined') ? a11y.sway : 1;
+  const sway = (1 - adsBlend*0.85) * _a11ySway;
+  /* build 1317: a FIGURE-8, not a vertical line. A pure up-down bob reads as a bouncing prop; the
+     horizontal component at half the frequency is what makes it a walk. The vertical amplitude is
+     deliberately unchanged — the audit called it near-invisible, but changing it is a taste judgement the
+     headless harness cannot settle, and the sway below is the part that was actually missing. */
+  const _bobA = (wish.length()>0 ? 0.012 : 0.004), _bobF = (wish.length()>0 ? 10 : 2);
+  const move = Math.sin(t*_bobF)*_bobA * sway;
+  const moveX = Math.sin(t*_bobF*0.5)*_bobA*0.8 * sway;
+  if(typeof _vmSwayStep==='function') _vmSwayStep(dt);
   // Center on the gun's CURRENT local offset (works for the loaded model or the placeholder,
   // and stays correct even after you retune the gun in the editor).
   const off = gunModel ? gunModel.position : GUN_OFFSET;
   const aimX = -off.x + ADS_AIM.x;        // cancel the hip horizontal offset, then nudge
   const aimY = -off.y + ADS_AIM.y;        // bring up to ~crosshair height
   const aimZ = ADS_AIM.z;                 // pull the gun in closer to the eye
-  gun.position.x = aimX * adsBlend;
+  /* build 1317: the sway rides ON TOP of every existing term rather than replacing any of them, and is
+     folded out by ADS and by the comfort setting through the same `sway` factor the bob uses — a scoped
+     weapon that lagged behind the crosshair would be a different and worse defect. */
+  const _swX = _vmSwayX * sway, _swY = _vmSwayY * sway;
+  gun.position.x = aimX * adsBlend + moveX + _swX * VM_SWAY_POS;
   _rlP += ((reloading?1:0) - _rlP) * Math.min(1, dt*12);   // build 965: the reload dip eases in AND back out
-  gun.position.y = move - recoil*0.5 + _rlP*-0.25 + aimY*adsBlend;
+  gun.position.y = move - recoil*0.5 + _rlP*-0.25 + aimY*adsBlend - _swY * VM_SWAY_POS;
   gun.position.z = recoil + aimZ*adsBlend;
-  gun.rotation.x = _rlP*0.5 + ADS_ROT.x*adsBlend;
-  gun.rotation.y = ADS_ROT.y*adsBlend;
-  gun.rotation.z = ADS_ROT.z*adsBlend;
+  gun.rotation.x = _rlP*0.5 + ADS_ROT.x*adsBlend - _swY * VM_SWAY_ROT;
+  gun.rotation.y = ADS_ROT.y*adsBlend + _swX * VM_SWAY_ROT;
+  gun.rotation.z = ADS_ROT.z*adsBlend + _swX * VM_SWAY_ROT * 0.6;   /* a flick rolls the wrist as well as turning it */
   { const _dw = Math.max(0, Math.min(1, (_drawUntil - performance.now()) / (_drawDur||DRAW_MS)));   // build 965: draw — 1 = just switched (down), 0 = up · build 1172: per-weapon duration
     if(_dw>0){ gun.position.y -= _dw*0.45; gun.rotation.x += _dw*0.85; } }
   // build 678: the built-in "punch thrust" shoves the whole viewmodel forward on a melee swing. Fists rely on their

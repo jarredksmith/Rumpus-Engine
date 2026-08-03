@@ -967,6 +967,51 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The weapon has inertia (build 1317 — gameplay audit F7)
+
+> The viewmodel applies a vertical bob, ADS translation, recoil Z, reload dip, draw dip, melee thrust.
+> **There is no look-sway** — no lag/counter-rotation from mouse delta — so the gun tracks a flick with zero
+> inertia, which is the single most-noticed "cheap" tell in a first-person game.
+
+The sway is a **first-order lag driven by the turn rate**, `x' = -k·x + u`, solved analytically across the
+frame:
+
+```
+x  <-  x·e^(-k dt) + (u/k)·(1 - e^(-k dt))
+```
+
+**The first cut shipped an impulse-plus-decay with a comment claiming frame-rate independence "by
+construction"**, on the grounds that the per-frame deltas sum to the same total across a turn. That is true
+of the deltas and **false of the result** — the decay runs between them, so a coarse step under-counts.
+Measured: the same 0.75 rad turn over the same 0.25 s gave **0.110 in 3 frames against 0.156 in 24**, a 42%
+spread — a weapon that settles differently on two machines, which is the exact tell the build exists to
+remove. The analytic form makes the claim true instead of restating it: 3, 6, 12, 24 and 60 frames now all
+give −0.164.
+
+Measured live through a real flick in the real frame loop (`tools/probe/vm-sway.mjs`): three frames of hard
+turn peaked the sway at 0.226 on frame 5, swung the gun 0.024 world units and counter-rotated 0.095 rad, and
+it was back at rest by frame 26. A steady 3 rad/s turn settles at `rate·gain/k` — the gun trails at a fixed
+distance rather than running away. A 360 in eight frames clamps at 0.32 instead of throwing the gun off
+screen, and crossing the ±π yaw wrap is unwrapped so it reads as 0.02 rad of motion, not 6.26.
+
+Three things fold it out, each for its own reason:
+- **ADS**, through the same factor the bob uses — a scoped weapon lagging behind the crosshair would be a
+  different and worse defect.
+- **Build 1313's motion-comfort sway slider.** The viewmodel is 11% of the screen and the most persistent
+  moving thing in it; a player who turned camera sway down and still got a swaying gun would reasonably
+  conclude the setting did nothing.
+- The clamp, for a spin.
+
+**The bob's vertical amplitude is deliberately unchanged.** The audit also called it near-invisible at 0.012
+world units — but that is a taste judgement the headless harness cannot settle, and the missing *sway* is
+what this build is about. What it did gain is a horizontal component at half the frequency, which turns a
+vertical line into a figure-8: that is a structural difference between "a bouncing prop" and "a walk", not
+a number.
+
+**A sign convention worth recording**, because the test had it backwards on its first run and the code was
+right: yaw DECREASES turning left, so `dy` and the sway go negative, and `gun.rotation.y = sway · ROT` then
+turns the gun *right* while the view turns left. That is the lag.
+
 ## Aim assist, for sticks and thumbs only (build 1316 — gameplay audit F4)
 
 > Greped `aimAssist`, `magnetism`, `stickyAim`, `snapTarget`, `adhes`, `friction` → the only hit is a
