@@ -967,6 +967,52 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The slicer, per weapon (build 1337)
+
+Asked for immediately after 1336: *"I really need it in the weapon tab for each weapon."*
+
+**The button was the easy half.** A weapon does not animate on the character — the viewmodel gun carries its
+own `AnimationMixer` and its own three-slot mapping (`idle` / `shoot` / `reload`, or the fists' punch R /
+punch L / grab), built by `playGunStates`. Slicing a gun against the character rig would have shown the
+player standing still while the numbers changed, which is exactly the *"you cannot see what you are
+cutting"* the panel exists to remove.
+
+So the rig is **resolved per kind** rather than found by looking around, and the two kinds are handed back
+differently:
+
+- **A character** returns to its state machine (`setEnemyAnimState(obj, 'idle', true)`).
+- **A weapon is REBUILT.** A gun's actions are constructed *once* out of the clip list, so a new slice is
+  not playable until they are built again — the rebuild is not tidying up, it is what makes the slice work.
+  The weapon branch returns before the character branch, so a gun can never fall through to it.
+
+**A gun whose clips name-matched nothing has no mixer at all.** The panel makes one for the scrub and takes
+it back out of `mixers` on close — but only if it was the one that made it, or closing would strip a mixer
+the engine owns.
+
+**An edit has to reach `_gunClipNames`, and that is not obvious.** It is a separate list, populated at model
+load, and it is what the weapon tab's dropdowns read — without refreshing it the slice would exist, be
+playable, and be *unselectable*. Every weapon pointing at that model is refreshed, because several can share
+one, and the panel redraws because the weapon tab builds its dropdowns in `renderEditorFields` rather than
+refreshing them in place.
+
+Measured live in the real editor, a synthesized 3s take whose slide travels z 0→3, loaded through the
+engine's own `showWeaponModel`:
+
+```
+editor          editorActive "gun", _vmWanted() true, the button rendered
+rig             { kind:"weapon", wep:"rifle", obj: THE VIEWMODEL GUN, madeMixer:false }
+scrub           t 0/1/2/3  ->  the GUN's slide at z 0/1/2/3
+after Add       clips ["allanim","Reload"], _gunClipNames.rifle ["allanim","Reload"], serialized
+map to reload   gunStates ["reload"], playing clip "Reload", duration 1.0000
+after close     panel gone, rig null, gunStates rebuilt, the gun's mixer still live
+```
+
+**A probe-instrument note, because it looked like a defect for ten minutes:** the button's tooltip read back
+as `""`. The editor has its own tooltip system that moves every `title` to `data-tip` and removes the native
+attribute. Nothing was wrong — the probe was reading the attribute the engine had deliberately just removed.
+
+One pin moved (1336's release assertion, to its new address — same intent).
+
 ## One long take, sliced into clips (build 1336)
 
 Asked for from use: *"most glb files I find have all animations (idle, shoot, reload) baked into one long

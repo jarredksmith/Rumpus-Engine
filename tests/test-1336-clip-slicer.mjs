@@ -161,7 +161,9 @@ const mkClip = () => new THREE.AnimationClip('allanim', 5, [
     'the scrub pauses the action and evaluates at an explicit time — exact, rather than racing the frame loop');
   assert(/acts\[k\]\.setEffectiveWeight\(0\)/.test(pose), 'and silences the state machine, or it blends against the pose');
   const rel = extractFunction('_sliceRelease');
-  assert(/setEnemyAnimState\(v, 'idle', true\)/.test(rel),
+  // build 1337 moved this from a rig found by looking around to one resolved per kind; the assertion is
+  // the same — closing hands the CHARACTER back to its state machine — at its new address.
+  assert(/setEnemyAnimState\(rig\.obj, 'idle', true\)/.test(rel),
     'closing hands the rig back, or it stands frozen on the last scrubbed pose');
   assert(/clearInterval\(_sliceLoop\)/.test(rel), 'and the range-loop timer cannot outlive the panel');
 }
