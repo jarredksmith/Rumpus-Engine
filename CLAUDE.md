@@ -967,6 +967,67 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The error overlay reports WHERE (build 1330)
+
+A report from play arrived as a red bar reading **`ERROR: Promise: Cannot access 'FX_PRESETS' before
+initialization`** and nothing else. In a 47,000-line single file, a message alone narrows it to nothing —
+and I could not reproduce it: `FX_PRESETS` initialises fine here, every path that reaches `buildFxEmitter`
+(direct spawn, the Object panel's Effects row, the + menu's Effect submenu, serialize→restoreLevel) runs
+clean, and the literal is pure data so its initialiser cannot throw. A TDZ on a `const` that far down means
+execution reached an access **before** its declaration line ran, which is a question about *when*, and the
+overlay was throwing away the only thing that could answer it.
+
+**The rejected-promise route was where the stack was destroyed, and that is the case with no line number of
+its own.** The old handler rebuilt a bare `ErrorEvent` from `reason.message` alone:
+
+```js
+window.dispatchEvent(new ErrorEvent('error',{message:'Promise: '+(e.reason&&e.reason.message||e.reason)}));
+```
+
+So the hardest failure to place was the one stripped hardest. Three changes, each answering a real obstacle:
+
+- **The stack survives both routes** — `e.error.stack` for a throw, `reason.stack` carried across the
+  re-dispatch for a rejection. First six frames; past that it is the frame loop calling itself.
+- **The FIRST error is kept, not the last.** A failure inside the frame loop repeats at 60 Hz and overwrote
+  the original before anyone could read it. Later ones are counted: *"(+41 more errors since — the FIRST one
+  is shown, it is usually the cause)"*.
+- **It is selectable and scrolls**, because the whole point of the box is that it gets sent to someone.
+
+Verified in a real browser: a throw shows `at inner / at outer / at eval`; a rejection shows the async
+function it came from; 41 subsequent errors leave the first on screen with a count.
+
+Build 659's ResizeObserver exemption and build 838's `let box = null` are both intact — 838's own pin moved,
+because it scoped the declaration and the handler with a `{0,200}` window and this build put 2 kB between
+them. **The assertion was still true.** That is the character-count trap this file records under build 1149,
+for the fourth time; it asserts the ORDER now, which is what "declared before use" actually means.
+
+## The last unbounded client claim (build 1329 — multiplayer audit 2.2)
+
+**Re-verified before touching anything**, because most of the multiplayer CRITICALs turned out to be closed
+already and re-fixing them would have been busywork:
+
+| finding | state |
+|---|---|
+| 2.1 — the relay mediates one of 36 host-authoritative types | **CLOSED by 1279.** `_RELAY_OK` is an explicit four-type allow-list, so `hurt`, `wact`, `teams`, `duelOver`, `credit` and targeted `chat` impersonation are dropped, not forwarded |
+| 2.2 — `died` | **CLOSED by 1279** — `_diedOk(id)` rate-limits it |
+| 2.2 — `raceFin` | **CLOSED by 1279** — checked against the lap the host was already counting |
+| 2.2 — `buyChest` | **OPEN** |
+
+`buyChest` removed **any** crate for **everyone** with no proximity check, no rate limit and no validation of
+any kind — a loop over the id range wiped every crate in the level for every player.
+
+Bounded now by exactly what makes the claim possible, which is builds 1130/1164's own rule. A legitimate buy
+needs the shop open, and the shop only opens inside **3.5 m** — so the host, which already holds every
+client's position, checks that. `CHEST_REACH` is 8 rather than 3.5 because the packet arrives a round trip
+after the player was standing there, and the reported position is itself already bounded by 1164's
+`_plausibleMove`. A leaky bucket covers what proximity cannot: one crate per client per 400 ms.
+
+**The test found a latent bug in my own fix.** `const last = _buyChestAt[id] || -1e9` — **a stored timestamp
+of 0 is falsy**, so the first entry read back as "never" and the bucket never engaged. `performance.now()`
+is never exactly 0 in a live page, so this would have sat there indefinitely without ever biting; only a
+test that drives its clock **from zero** finds it. It is `(id in _buyChestAt)` now. Worth generalising:
+**a `||` default on a numeric timestamp or counter is a bug waiting for the value to be 0.**
+
 ## The board shows the level's prop signals (build 1328)
 
 Reported: *"If signals are created for a prop in the editor panel, make it show as nodes in the signal node

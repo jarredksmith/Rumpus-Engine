@@ -30,6 +30,15 @@ const src = gameSource();
 }
 
 // --- 2. the error reporter declares its element (this is in the small bootstrap script, so pin the full html) ---
-assert(/let box = null;\s*\/\/ build 838[\s\S]{0,200}window\.addEventListener\('error'/.test(html), 'the on-screen error box variable is declared before use');
+/* build 1330 widened this block (the overlay now carries a stack and keeps the FIRST error), so the old
+   `{0,200}` window between the declaration and the handler no longer spans it — the assertion was still
+   TRUE, which is exactly the character-count trap CLAUDE.md records. Assert the ORDER instead, which is
+   what "declared before use" actually means and cannot go stale. */
+{
+  const _decl = html.indexOf('let box = null;');
+  const _use  = html.indexOf("window.addEventListener('error'");
+  assert(_decl > 0 && _use > _decl, 'the on-screen error box variable is declared before use');
+  assert(/let box = null;\s*\/\/ build 838/.test(html), '...still carrying the build that fixed it');
+}
 
 done('build 838: boot TDZ on grouped-prop levels fixed + the error reporter can actually report');
