@@ -7859,7 +7859,19 @@ function ensurePost(){
   _bloomMips=[]; for(let i=0, mw=hw, mh=hh; i<_BLOOM_MIPS; i++){ _bloomMips.push(mkRT(mw,mh)); mw=Math.max(1,mw>>1); mh=Math.max(1,mh>>1); }
   _raysRT=mkRT(Math.max(1,hw>>1), Math.max(1,hh>>1));   /* build 1242: quarter-res light shafts */
   _ssrRT=mkRT(hw,hh);   /* build 1245: half-res reflections — matches the G-buffer it ray-marches */
-  _velRT=mkRT(hw,hh);   /* build 1246: half-res velocity buffer (encoded, byte-target safe) */
+  // build 1246: half-res velocity buffer (encoded, byte-target safe).
+  // build 1344: NEAREST, and it is not a preference. This is a DATA FIELD, not an image — rg is a
+  // direction and a is a written/not-written FLAG — and it is sampled by `_matAfter` at FULL-res uvs,
+  // so every screen pixel lands a quarter of a texel off centre and bilinear returns a 0.75/0.25 mix of
+  // two texels, never a pure one. At a silhouette that mixes a moving surface's velocity with the static
+  // background's into a velocity belonging to NEITHER, and it hands the hard `vv.a > 0.5` test a flag of
+  // 0.75 or 0.25 — so adjacent pixels flip between the velocity path and the rotation path, which do not
+  // agree at all (the rotation path knows nothing of camera translation or object motion). Measured on
+  // the default level in real motion, the blur's own direction field jumped **15.3 pixels of sampling
+  // offset between two ADJACENT pixels** on 492 of them, with the same field minus the branch perfectly
+  // smooth. Sampling at texel centres takes that to 1.6 px on 46. It costs nothing: the snap is free in
+  // hardware, and nothing else samples this target.
+  _velRT=new THREE.WebGLRenderTarget(hw, hh, { minFilter:THREE.NearestFilter, magFilter:THREE.NearestFilter, type:_postRTType() });
   // build 1126: the AO buffers. _aoGeoRT is a half-resolution G-BUFFER — view normal in rgb, view
   // distance in a — written by a second, material-free pass over the scene.
   //
@@ -8148,6 +8160,10 @@ function ensurePost(){
       'varying vec2 vUv; uniform sampler2D tNew; uniform sampler2D tVel; uniform float uVelOn; uniform mat3 uMbRot; uniform vec2 uTanF; uniform float uAmt; uniform float uShutter;',
       'void main(){',
       '  vec2 d;',
+      // build 1344: tVel is NEAREST-sampled (see ensurePost) so `vv.a` is a true 0 or 1 and `vv.rg` is one
+      // real surface's velocity. Before that it was a bilinear blend and this branch flipped between two
+      // unrelated directions along every silhouette, 2 screen pixels at a time, AFTER the MSAA resolve —
+      // which is why no antialiasing setting could touch it and why it only appeared with blur on.
       '  vec4 vv = texture2D(tVel, vUv);',
       // build 1246: a WRITTEN velocity pixel is the truth — camera rotation + translation + the
       // object's own motion. Unwritten pixels (the sky) and shed rungs keep 1238's rotation path.
@@ -31016,7 +31032,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1343 · 2026-08-03';
+const BUILD_VERSION = 'build 1344 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

@@ -4,7 +4,7 @@
 // a plain render target with ZERO antialiasing — so canvas MSAA never applied. Fix: 4x multisample on
 // that one target (WebGL2). Companion fix: adaptive resolution (on-by-default since 810) gets a real
 // settings checkbox instead of a localStorage-only escape hatch.
-import { gameSource, html, assert, done } from './harness.mjs';
+import { gameSource, html, extractFunction, assert, done } from './harness.mjs';
 
 const src = gameSource();
 
@@ -12,8 +12,13 @@ const src = gameSource();
 assert(/function _desiredPostSamples\(\)\{\s*\n\s*if\(!\(renderer\.capabilities && renderer\.capabilities\.isWebGL2\)\) return 0;/.test(src) && /_postRT\.samples = _desiredPostSamples\(\);/.test(src),
   'the post-FX scene target is 4x multisampled on WebGL2 (build 880: only at the full-res step)');
 // it must land inside ensurePost, AFTER the target exists and BEFORE the pass materials
-assert(/_postRT=mkRT\(w,h\); _compRT=mkRT\(w,h\); _afterA=mkRT\(w,h\); _afterB=mkRT\(w,h\);[\s\S]{0,2000}_postRT\.samples = _desiredPostSamples\(\);/.test(src),
-  'samples set at target creation inside ensurePost');
+// build 1344: this scoped the gap with {0,2000} characters and broke when a comment landed between the
+// two lines, with the assertion still true — the character-budget trap. It asserts the ORDER now, inside
+// ensurePost, which is what "at target creation, before the pass materials" has always meant.
+{ const ep = extractFunction('ensurePost', src);
+  const a = ep.indexOf('_postRT=mkRT(w,h); _compRT=mkRT(w,h); _afterA=mkRT(w,h); _afterB=mkRT(w,h);');
+  const b = ep.indexOf('_postRT.samples = _desiredPostSamples();');
+  assert(a >= 0 && b > a, 'samples set at target creation inside ensurePost'); }
 // ONLY the scene pass is multisampled — the quad passes draw no geometry, and the DoF target carries a
 // DepthTexture (can't be multisampled in r149). Exactly one `.samples =` assignment exists.
 const sampleAssigns = src.match(/_postRT\.samples = _desiredPostSamples\(\)/g) || [];

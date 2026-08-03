@@ -967,6 +967,85 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The blur was interpolating a flag (build 1344)
+
+Fourth round of the jagged-edges report, and **build 1343's readout found it in one line**:
+
+```
+AA MSAA x4   render 1.00/1.00   rung 0   +blur
+```
+
+MSAA *was* reaching their frame, at native resolution, at the top rung. So the ladder (1342), the render
+scale, WebGL 1 and depth of field are all eliminated at once, and whatever hardens the edge happens **after
+the MSAA resolve**, in the post chain, with motion blur the only variable. That is what an instrument buys:
+1342 was a guess, 1343 was a question, and this is the answer to it.
+
+`_matAfter` reads `_velRT` — a **half-res** buffer whose `rg` is a direction and whose `a` is a
+written/not-written **flag** — at full-res uvs, and branches on `vv.a > 0.5`. Under `LinearFilter` a full-res
+pixel centre lands exactly a quarter of a texel off a half-res texel centre, **for every pixel, everywhere**,
+so bilinear returns a 0.75/0.25 mix of two texels and can never return a pure one. At a silhouette that hands
+the threshold a flag of 0.75 on one pixel and 0.25 on its neighbour — and those two take **entirely different
+directions**, because the rotation fallback knows nothing of camera translation or object motion.
+
+Measured on the default level in real motion, rendering the blur's own direction field and reading it back,
+with the same field minus the branch as the control:
+
+```
+                                   max jump between ADJACENT pixels   pixels affected   invented flag
+control — no branch at all                     0.0 px                        0
+LinearFilter (as shipped)                     15.3 px                      492               0.74%
+mix() the two directions by the flag           6.6 px                      552
+3x3 velocity DILATION                         35.1 px   <- the textbook fix, and WORSE
+NEAREST (shipped here)                         1.6 px                       38               0.00%
+```
+
+**Fifteen pixels of sampling offset between two adjacent pixels**, quantised to 2 screen pixels along every
+silhouette, after the resolve — which is exactly why 4x MSAA could not touch it and why it only appeared with
+blur on, at any strength.
+
+**Dilation being worse is the interesting result**, and it is not a bug in the experiment. Dilation is the
+standard fix for a *different* defect — a moving object's blur being cut off at its own silhouette by the
+static background — and it works by deliberately pushing a large velocity into pixels that had none. That is
+the opposite of what a discontinuity metric wants. Right tool, wrong question; recorded so it is not tried
+again.
+
+The fix is one word: `_velRT` is built `NearestFilter`. **A direction field is not an image.** Interpolating
+it invents a velocity belonging to neither surface, and interpolating a boolean invents a "partly written"
+state that a threshold then resolves arbitrarily. It costs nothing — the snap is free in hardware — and
+`_velRT.texture` is bound in exactly one place, which the test pins so the sampler change cannot reach
+anything else. The `vv.a > 0.5` branch is deliberately **unchanged**: with NEAREST it reads a true 0 or 1, so
+a threshold is finally the right shape for it, and `mix()`-ing the two directions measured 4x worse.
+
+**A correction to build 1246, at the place it happened.** That build recorded the bilinear mixing and accepted
+it: *"the residual softening is the half-res buffer's bilinear boundary mixing weapon and world velocity at the
+silhouette — the standard gather-blur edge artifact, accepted."* It measured **softening** and never asked
+whether the same blend made the direction field **discontinuous**, which hardens edges instead. The blend was
+seen; the branch on top of it was not.
+
+### Four instrument failures before a single number was real
+
+Every one produced output, and only the controls stopped three of them being published:
+
+| # | what it reported | why it was wrong |
+|---|---|---|
+| 1 | 44.52% invented under Linear, 44.54% under Nearest | two filters cannot agree to two decimals. **No control.** The debug shader was never in the frame and this was an ordinary screenshot |
+| 2 | control failed: a flat 0.5 red came back mean 83.8 | correct catch, wrong reason assumed — I blamed the shader swap |
+| 3 | control failed again, after waiting on frames genuinely presented | `page.screenshot()` is not a faithful read of this canvas. **No amount of waiting fixes an instrument that is looking at the wrong thing** |
+| 4 | `_velRT` reads 100% unwritten | half-float target read into a `Float32Array` — build 1152's lesson #6, verbatim, again |
+
+**#3 is the one worth carrying.** The fix was to stop screenshotting entirely: render the question into a
+`FloatType` target with the engine's own fullscreen quad and read it back with `readRenderTargetPixels`. No
+compositor, no DOM, no PNG round trip. Every number in the table above comes from that path.
+
+And #2/#3 only became findable because `post-passes.mjs` counted which passes actually run: under SwiftShader
+with MSAA and the full chain, this scene renders **about one frame per second**, so a 700 ms wait was
+photographing the previous frame. **A probe that waits in wall-clock time is measuring the renderer's speed,
+not its output** — wait on frames.
+
+Two pins moved (872, 1246), both with their assertions still true. 872's scoped the gap between two lines
+with `{0,2000}` characters and broke when a comment landed between them — the character-budget trap, for the
+fifth time this session; it asserts the ORDER now.
+
 ## The frame says what is antialiasing it (build 1343)
 
 Third round of the jagged-edges report, and the reporter's reply to build 1342 is what this build is:
