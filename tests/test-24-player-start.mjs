@@ -12,7 +12,10 @@ assert(/function buildPlayerSpawnMarker\(\)/.test(src) && /function refreshPlaye
 assert(/pstart: \{\s*label: 'Player start',\s*isPstart: true/.test(src), 'Player start is an editor target/tab');
 
 // gizmo wiring: move writes x/z, rotate writes yaw, getters read the marker
-assert(/editorActive==='pstart'\)\{\s*playerSpawn\.x=v\.x; playerSpawn\.z=v\.z; refreshPlayerSpawnMarker/.test(src), 'gizmo move sets playerSpawn x/z');
+/* build 1326: the drag writes Y as well now (reported: "allow the gizmo y handle to move it for height
+   placement"). Same claim, plus the axis that was being thrown away. */
+assert(/editorActive==='pstart'\)\{[\s\S]{0,900}playerSpawn\.x=v\.x; playerSpawn\.z=v\.z;/.test(src), 'gizmo move sets playerSpawn x/z');
+assert(/playerSpawn\.y=\+Math\.max\(0, v\.y-_pterr\)\.toFixed\(2\);/.test(src), '...and y, terrain-relative and clamped at the floor');
 assert(/editorActive==='pstart'\)\{\s*playerSpawn\.yaw = euler\.y; refreshPlayerSpawnMarker/.test(src), 'gizmo rotate sets playerSpawn yaw');
 assert(/editorActive==='pstart'\)\{ return playerSpawnMarker\?playerSpawnMarker\.position:null; \}/.test(src), 'getSelPos reads the marker');
 assert(/editorActive==='props' \|\| editorActive==='station' \|\| editorActive==='lights' \|\| editorActive==='spawns' \|\| editorActive==='pstart'/.test(src), 'gizmo treats player start as movable');

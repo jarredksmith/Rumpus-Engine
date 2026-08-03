@@ -7,7 +7,12 @@ const src = gameSource();
 // --- config + sanitize (executable) ---
 const DEFAULT_RADIAL = (new Function('return ('+extractConstArr('DEFAULT_RADIAL', src)+')'))();
 function extractConstArr(name, s){ const m = s.match(new RegExp('const '+name+' = (\\[[\\s\\S]*?\\n\\]);')); return m?m[1]:'[]'; }
-const RADIAL_PRIMS = (new Function('return ('+(src.match(/const RADIAL_PRIMS = (\[[^\]]*\]);/)||[])[1]+')'))();
+/* build 1320: the shape list is written ONCE (PRIM_SHAPES) and RADIAL_PRIMS maps its keys, so the
+   radial menu cannot offer a shape the engine cannot build. Derive it here the same way the engine does —
+   asserting the same fact through the new single source. */
+const PRIM_SHAPES = (new Function('return ('+(src.match(/const PRIM_SHAPES = (\[[\s\S]*?\n\]);/)||[])[1]+')'))();
+assert(/const RADIAL_PRIMS = PRIM_SHAPES\.map\(_s=>_s\[0\]\);/.test(src), 'RADIAL_PRIMS IS the shape table');
+const RADIAL_PRIMS = PRIM_SHAPES.map(s=>s[0]);
 assert(Array.isArray(DEFAULT_RADIAL) && DEFAULT_RADIAL.length===5, 'five default slots');
 assert(RADIAL_PRIMS.join(',')==='box,cylinder,sphere,cone,pillar,wedge,stairs,dome,tube,torus', 'the built-in shapes (build 928: the full 871 primitive set)');
 

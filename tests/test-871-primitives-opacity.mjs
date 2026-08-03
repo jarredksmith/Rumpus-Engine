@@ -106,10 +106,25 @@ assert(/if\(o\.userData\.op!=null && \+o\.userData\.op < 1\) m\.op = \+o\.userDa
 assert(/if\(mat\.op!=null\) applyPropOpacity\(obj, mat\.op\);/.test(src), 'applyStoredMaterial restores opacity on load/share/net');
 
 // ---- editor UI wiring ----
-assert(/\[\['box','Box'\],\['sphere','Sphere'\],\['cylinder','Cylinder'\],\['cone','Cone'\],\['wedge','Ramp'\],\['stairs','Stairs'\],\['dome','Dome'\],\['tube','Tube'\],\['torus','Ring'\]\]/.test(src), 'Add-shape row lists all nine');
+/* build 1320: the row is `for(const [src,label] of PRIM_SHAPES)`, which is all TEN — this row had been
+   missing `pillar` since 871 shipped. Assert the labels through the table. */
+assert(/for\(const \[src,label\] of PRIM_SHAPES\)\{/.test(src), 'the Add-shape row is the shape table');
+{ const tbl = (new Function('return ('+(src.match(/const PRIM_SHAPES = (\[[\s\S]*?\n\]);/)||[])[1]+')'))();
+  const byKey = Object.fromEntries(tbl.map(r=>[r[0], r[1]]));
+  for (const [k, lab] of [['box','Box'],['sphere','Sphere'],['cylinder','Cylinder'],['cone','Cone'],['wedge','Ramp'],['stairs','Stairs'],['dome','Dome'],['tube','Tube'],['torus','Ring']])
+    assert(byKey[k]===lab, 'Add-shape row lists '+lab);
+  assert(byKey.pillar==='Pillar', '...and pillar, which every surface but the radial menu had dropped'); }
 for (const k of ['wedge','stairs','dome','tube','torus']) assert(new RegExp(k + ':\\s+_svgIcon\\(').test(src), `PRIM_ICON has a ${k} icon`);
-assert(/'\\u25e2 Ramp',\s+\(\)=>\{ jump\('build','props'\);\s+addSceneProp\('wedge'\); \}/.test(src), 'quick-add: Ramp');
-assert(/'\\u2630 Stairs',\s+\(\)=>\{ jump\('build','props'\);\s+addSceneProp\('stairs'\); \}/.test(src), 'quick-add: Stairs');
+/* build 1320: the + menu's shape entries are generated from the same table (the common ones at the top,
+   the rest under "More shapes"). Same intent: Ramp and Stairs are one click from the + button. */
+assert(/const ADD_ITEMS = PRIM_SHAPES\.filter\(_s=>_s\[3\]\)\.map\(\(\[src,label,glyph\]\)=>\[glyph\+' '\+label, \(\)=>\{ jump\('build','props'\); addSceneProp\(src\); \}\]\)/.test(src),
+  'the + menu builds its shape entries from the table');
+{ const tbl = (new Function('return ('+(src.match(/const PRIM_SHAPES = (\[[\s\S]*?\n\]);/)||[])[1]+')'))();
+  const common = tbl.filter(r=>r[3]).map(r=>r[1]);
+  assert(common.indexOf('Ramp')>=0, 'quick-add: Ramp');
+  assert(common.indexOf('Stairs')>=0, 'quick-add: Stairs');
+  assert(/menuItem\(glyph\+' '\+label, \(\)=>\{ addMenu\.style\.display='none'; jump\('build','props'\); addSceneProp\(src\); \}\); \}\n      \};\n      const buildFx/.test(src),
+    '...and the four that are not common (pillar, dome, tube, ring) reach the menu through a submenu'); }
 assert(/slider\('Opacity', \(selObj\.userData\.op!=null\?\+selObj\.userData\.op:1\), '#9fd8ff', \(v\)=>\{ for\(const o of _matTargets\(\)\) applyPropOpacity\(o, v\); \}\);/.test(src), 'Opacity slider in the Material section');
 assert(/Opacity under 1 makes it see-through — glass = low opacity \+ high shininess/.test(src), 'the hint teaches the glass recipe');
 assert(/Box \/ Sphere \/ Cylinder \/ Cone \/ Ramp \/ Stairs \/ Dome \/ Tube \/ Ring/.test(src), 'the imported-model note lists the full shape set');

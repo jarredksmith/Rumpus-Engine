@@ -21,7 +21,11 @@ assert(/function addJumpPad\(\)/.test(src) && /function removeJumpPad\(i\)/.test
 // markers (distinct green) + gizmo move support
 assert(/function refreshJumpPadMarkers\(\)/.test(src) && /const JP_COLOR = 0x46e0a4/.test(src), 'jump pads draw their own (green) markers');
 assert(/\(editorActive==='jumppads'&&selJumpPad>=0\)/.test(src), 'gizmo can move a selected jump pad');
-assert(/editorActive==='jumppads'\)\{\s*const z=jumpPads\[selJumpPad\]; if\(!z\) return; z\.x=\+v\.x\.toFixed\(2\); z\.z=\+v\.z\.toFixed\(2\);/.test(src), 'dragging writes back the pad position');
+/* build 1326: six near-identical zone branches (and two types that had none) became one table-driven
+   call that also carries Y. Same claim, through _zoneMove. */
+assert(/jumppads:   \{ list:\(\)=>jumpPads/.test(src) && /_zoneMove\(editorActive, v\)/.test(src), 'dragging writes back the pad position');
+assert(/z\.x = \+v\.x\.toFixed\(2\); z\.z = \+v\.z\.toFixed\(2\);/.test(src) && /z\.y = \+Math\.max\(0, v\.y - terr\)/.test(src),
+  '...in all three axes now');
 
 // trigger logic applies to player + bots + enemies
 const uj = extractFunction('updateJumpPads');

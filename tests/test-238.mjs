@@ -19,8 +19,11 @@ assert(/ch\.textContent=keyDisplayName\(k\)\.toUpperCase\(\); ch\.style\.maxWidt
 
 // --- persistence: serialize (only non-empty), boot restore, runtime level-load restore ---
 assert(/keyNames: Object\.keys\(keyNames\)\.reduce\(\(a,k\)=>\{ const n=\(keyNames\[k\]\|\|''\)\.trim\(\); if\(n\) a\[k\]=n; return a; \}, \{\}\),/.test(src), 'serialized compactly');
-assert(/let keyNames = \(savedLevel && savedLevel\.keyNames/.test(src), 'boot restore');
-assert(/pickupModels\)\) : \{\}; keyNames = \(level\.keyNames && typeof level\.keyNames==='object'\) \? JSON\.parse\(JSON\.stringify\(level\.keyNames\)\) : \{\};/.test(src), 'runtime level-load restore beside pickupModels');
+/* build 1325: both load paths go through _sanKeyNames now (level data is untrusted), and restoreLevel —
+   which had no line for keyNames at all, so the second level you opened kept the first one's — gained one. */
+assert(/let keyNames = _sanKeyNames\(savedLevel && savedLevel\.keyNames\)/.test(src), 'boot restore');
+assert(/keyNames = _sanKeyNames\(level\.keyNames\)/.test(extractFunction('loadLevelFromNet')), 'runtime level-load restore beside pickupModels');
+assert(/keyNames = _sanKeyNames\(level\.keyNames\)/.test(extractFunction('restoreLevel')), '...and a plain level load, which never restored them');
 
 // --- editor: name input appears for key kinds, appends to gHost (scope-audited container) ---
 const ni = src.indexOf("// keys: optional display name ('Engine Room Keycard')");

@@ -23,7 +23,10 @@ function makeEnv(graph){
   // build 1214: _lgPulse's do-branch references these — the graph tests don't exercise them, so harmless stubs
   const glue = 'let logicGraph=_sanitizeLogic(GRAPH); let logicVars={}; let _lgCtx={}; let _lgTimers=[]; let _lgState={}; let _lgBudget=0, _lgWarned=false;\n'
     + 'const _LG_TAG_VERBS=new Set(["toggle","open","close","anim","unlock","showprop","hideprop","moveprop","delprop"]);\n'
-    + 'function _lgTagExists(){ return true; } function _noteLogicFailure(){}\n';
+    + 'function _lgTagExists(){ return true; } function _noteLogicFailure(){}\n'
+    /* build 1318: the trace hooks. Inert stubs here — this harness is about the graph's BEHAVIOUR, and
+       test-1318 owns proving that the recorder records. */
+    + 'function _lgTraceNode(){} function _lgTraceWire(){}\n';
   const env = new Function('GRAPH','NET','gameOn','editorOpen','_applySignalAction','flashToast','gameWon','applyEnemyDamageToSelf','toast','console',
     glue + fns + '\nreturn { start:logicStart, event:logicEvent, tick:updateLogic, vars:()=>logicVars, graph:()=>logicGraph, sanitize:_sanitizeLogic };')(
     graph, { mode:'off' }, true, false,

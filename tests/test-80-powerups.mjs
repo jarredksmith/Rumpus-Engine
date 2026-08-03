@@ -22,7 +22,13 @@ assert(/applyDamage\(\)/.test(ap) && /applySpeed\(\)/.test(ap) && /applyShield\(
 // sync
 assert(/const PUall = powerups\.map/.test(src) && /const PU = full \? \(powerups\.length \? PUall : undefined\)/.test(src), 'powerups serialized in snapshot (changed-only between keyframes since 1197)');
 assert(/return \{ t:'world', dl: full\?undefined:1, P, E, Ex, C, D, K, PU, O, wv:wave, en:_hostileAlive\(\) \};/.test(src), 'PU in world packet');   // build 1226: en became the hostile count
-assert(/m=buildPowerupMesh\(pu\.k\); m\.position\.set\(pu\.p\[0\],0,pu\.p\[1\]\)/.test(src), 'client builds pad meshes');
+/* build 1327: the client no longer places the pad flat at y=0 — that put its disc in the floor and the
+   z-fighting was the "pickups flash on the joiner" report. It uses _applyPickupXform, the host's own
+   placement function, so the terrain lift and the authored y/rotation/scale all arrive. Same claim: the
+   client builds the meshes; stronger: it builds them where the host has them. */
+assert(/m=buildPowerupMesh\(pu\.k\); m\.userData\._puKind=pu\.k/.test(src), 'client builds pad meshes');
+assert(/_applyPickupXform\(m, \{ x:pu\.p\[0\], z:pu\.p\[1\], y:\(pu\.y\|\|0\)/.test(src),
+  '...and places them with the host’s own transform function');
 assert(/else if\(msg\.t==='power'\)\{ applyPowerupLocal\(msg\.k, msg\.item\); \}/.test(src), 'client applies a granted powerup');
 
 // lifecycle

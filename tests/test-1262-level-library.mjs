@@ -115,10 +115,15 @@ assert(/if\(_libCurrent && typeof libCommit==='function'\)\{ try\{ libCommit\(\)
   assert(/_libStopTracking\(\)/.test(mf), 'a shared/imported level stops tracking your project — Save must not write THEIR level into YOUR entry');
 }
 {
-  const op = extractFunction('libOpen');
+  /* build 1322: libOpen became the GATE (it asks before discarding unsaved work — 4.11's own bullet said
+     relying on 1254's rescue was not consent) and the open itself moved wholesale to _libOpenNow. Every
+     assertion below is unchanged in intent; it just reads the function that now does the work. */
+  const op = extractFunction('_libOpenNow');
   assert(/markForeignLevel\(/.test(op), 'opening from the library still rescues unsaved work first (1254)');
   assert(/_foreignLevel=false/.test(op), '...but the level itself is yours, so autosave resumes immediately');
   assert(/saveLevel\(\)/.test(op), 'and the active slot follows, so a reload lands on what you opened');
+  assert(/uiConfirm\('You have unsaved changes/.test(extractFunction('libOpen')),
+    '...and the gate in front of it asks first, which 1254 only rescued after the fact');
 }
 assert(/id="edLibrary"/.test(src), 'the Save tab hosts the list');
 assert(/uiPromptForm\('Rename level'/.test(src) && /uiConfirm\('Delete /.test(src),

@@ -967,6 +967,543 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The board shows the level's prop signals (build 1328)
+
+Reported: *"If signals are created for a prop in the editor panel, make it show as nodes in the signal node
+modal."*
+
+**Two authoring systems that had never met.** A SIGNAL is `{when, do, target}` on a prop — the simple path,
+and the one most levels are actually wired with. The GRAPH is nodes and wires. Open the graph on a level
+built entirely out of signals and it said *"no nodes yet"*, which is flatly false: the level is full of
+logic, just not in that data structure.
+
+**They are a VIEW, and the distinction is load-bearing.** They are not in `logicGraph.nodes` — not
+serialized, not sanitized, not pulsed, not wired — and they are drawn `[data-signode]`, never `[data-node]`,
+which is what keeps build 1318's trace painter and the wire renderer from ever seeing them. Converting
+signals into real graph nodes would **change what the level does**: the two systems fire at different times
+through different code, so a conversion would silently rewrite every level that so much as opened the board.
+
+Clicking a card does the only honest thing: closes the board, selects the prop that owns the signal, and
+frames it. **A card that looked editable there and was not would be worse than nothing**, so the card says
+*"prop signal — click to edit on the prop"* on its face.
+
+Three details: the column sits 250 px left of the leftmost real node (and at a fixed origin when the graph
+is empty, rather than at −Infinity); cards are capped at 60, because past that the view is a wall; and every
+field is `textContent` per build 1325, since a prop name and a target tag are level data.
+
+Measured live (`tools/probe/signal-mirror.mjs`), three props carrying five signals:
+
+```
+graph nodes 0, signals 5   ->  5 cards, each reading its own when / prop / verb / target
+still a view               logicGraph.nodes 0, serialized 0, [data-node] 0, trace painter blind
+column x 150 vs leftmost real node 400, stacked 20 / 92 / 164 / 236 / 308
+click                      board closed, "vault door" selected, mode build / target props
+0 signals -> 0 cards;  400 signals on one prop -> 60
+```
+
+**Two probe faults, both mine.** The empty-case check deleted signals from `propModels.slice(0,3)` — the
+STOCK level's first three props, which never had any — and reported "still 5 cards" as if the removal had
+failed. And a backtick inside a comment I added *inside a template literal* closed the template: a syntax
+error in the instrument, not the engine. Neither reached a conclusion, but the first would have if the
+number had been less obviously wrong.
+
+## A joiner's pickups flashed (build 1327)
+
+Reported from play: *"in a multiplayer match, the joiner sees the pickups, but they flash. They don't flash
+on the host."*
+
+**Flashing that is per-frame and camera-dependent is z-fighting** — two surfaces contending for the same
+pixels. So the question was never "what toggles `visible`"; it was **what stands somewhere different on a
+client**. Enumerating the scene answered it in one run.
+
+The pickup snapshot carried `x, z, kind, ready` and **nothing else**. A pickup spot also carries an authored
+`y`, three rotations and a scale (`pickupSpots {x,z,kind,item,y,rx,ry,rz,scale,interact}`), and the host
+lifts every pad onto the ground with `_maxTerrainOver`. The client did neither — `m.position.set(pu.p[0], 0,
+pu.p[1])`, flat at zero. A pad disc buried in, or exactly coplanar with, the floor **is** the flash.
+
+```
+ground 3, pad authored y 1.5 / ry 45 / scale 1.4
+before   host group y 3            client group y 0     (rotation and scale lost entirely)
+after    host y 4.5 ry 0.785 sc 1.4  ==  client y 4.5 ry 0.785 sc 1.4
+```
+
+The payload gained the three fields, **each omitted at its default**, so an unauthored pad is byte-identical
+on the wire — and PU is only sent when the set changes, so the cost is nil. The client places its pads with
+`_applyPickupXform`, **the host's own function**, rather than a second copy of the maths: that is the whole
+reason the two diverged, and sharing the function is what stops it recurring.
+
+**The same probe found a second thing nobody had reported.** `updatePowerups` opens with
+`if(!powerups.length) return;` — and a client's pads live in `NET.powerupMeshes`, not in `powerups`. So a
+joiner's pickups were never animated at all: no spin, no bob, and `pad.visible` never followed the world's
+`pickupBase` toggle. Measured on a client: icon y 1.25 and rotation 0, unchanged after a frame. **A joiner
+watched four dead discs and nobody said so**, presumably because the flashing was louder.
+
+The general shape, for the fourth time this session: **one behaviour, two implementations, and only one of
+them maintained.** Build 1320's shape list, 1320's zone-add list, 1326's zone pick/drag lists, and now the
+pickup transform. When a client and a host must agree about something, they have to run the same function.
+
+One pin moved (80).
+
+## The gizmo reaches the whole level (build 1326)
+
+Reported from play: *"For the player start, allow the gizmo y handle to move it for height placement. Make
+sure all placed zones are clickable and have gizmo handles to drag their x, y, z location."*
+
+Verified, and it was **three gaps between three hand-maintained lists**:
+
+| | knew about |
+|---|---|
+| the CLICK resolver | death zones, jump pads, fire zones, ladders, audio zones — **not** triggers, water zones or effect zones, which could not be selected by clicking them at all |
+| the DRAG write-back | six of the eight, and wrote only `.x` and `.z` — water and effect zones had no branch, so their handle moved nothing |
+| the Y axis | discarded by **every** zone type, though each has a `y` its marker already draws (`baseY = +z.y`) |
+
+And `pstart` did the same, under a comment reading *"player start lives on the floor"* — while the panel
+directly beside it has had a **Height** slider for that exact field the whole time. Build 1087 had already
+solved the identical problem for ENEMY spawn markers six hundred builds earlier: store the height RELATIVE
+to the terrain so the marker rides terrain edits instead of being stranded in the air. Same rule here.
+
+**`ZONE_EDIT` is one table**, read by both the picker and the drag, and `test-1326` asserts its keys are
+exactly `ZONE_TYPES` — so the ninth zone type cannot reach two lists out of three. This is the third time
+this session that a defect turned out to be a duplicated list (1320's shapes, 1320's zone-add, this).
+`_zoneHitAt` walks UP the parents, because a marker is a *group* of rings and dots and the raycast hits one
+of those. The refresh/panel hooks are direct function references, not names: a string-keyed dispatch would
+reintroduce exactly what build 1271 removed.
+
+Measured live driving the real `applyGizmoDrag` and the real click resolver:
+
+```
+pstart     drag to (4, 6.5, -3)  -> y 6.5, marker follows;  y -50 -> clamped 0
+           on terrain 10, drag to 13 -> stores 3  (height ABOVE ground)
+all EIGHT  placed; click resolves from a CHILD mesh to the right type; drag writes 7 / 5 / -9
+```
+
+**One thing this deliberately does NOT resolve, stated rather than silently picked.** The marker group sits
+at `_maxTerrainOver(x,z,0)` and adds `+z.y`, while the gameplay containment tests (`inBand`) compare `+z.y`
+against an ABSOLUTE feet height. On flat ground those agree exactly, which is why nobody has ever reported
+it; on sculpted terrain they do not. Reconciling them means deciding the semantics across eight zone types
+and their runtime tests — its own build. This one makes the handle honest about what it is setting.
+
+Six pins moved (24, 338, 339, 507, 533), each keeping its intent through the table.
+
+**A drafting note worth keeping:** two of the eight table entries kept string-valued `refresh`/`panel`
+handlers because my edit script's anchors did not match their whitespace, and `_zoneRepaint`'s `try/catch`
+swallowed the resulting `def.refresh is not a function` **silently** — the probe still showed correct x/y/z,
+because those are data writes. The test caught it by counting `refresh:()=>` across the table. A `catch(e){}`
+around a dispatch hides a wiring error perfectly.
+
+## Level DATA is untrusted, not just level SINKS (build 1325 — platform audit 2.2)
+
+The audit listed **four verified DOM-injection vectors from level data**. Re-verified against the current
+tree first, because re-fixing closed findings is busywork:
+
+| | sink | state |
+|---|---|---|
+| V1 | credits linkifier → `href="$1"` | **CLOSED by 1277** — `_creditEsc` escapes `"` and `'`, URL class excludes them |
+| V3 | lock prompt | **CLOSED by 1277** |
+| V4 | ammo prompt | **CLOSED by 1277** |
+| V2 | `openInspect` title | **STILL OPEN** — one click from picking up any item |
+
+**V2 survived a build that fixed three sinks precisely because the fix was at the sinks.** Escaping at the
+point of use protects the sinks you remembered. So this build does the other half.
+
+`invItems`, `keyNames` and `pickupModels` were the only level data loaded with a raw
+`JSON.parse(JSON.stringify(...))` — no type coercion, no length cap, no entry cap, no `hasOwnProperty`
+guard — sitting right beside prop strings that have been `String(x).slice(n)`-ed for hundreds of builds.
+They are sanitised where they ENTER now, in all three load paths, with caps matched to the equivalent prop
+fields (name 60, the use-* fields 30) so a creator meets one rule rather than four. `type` is a whitelist
+because it selects a code path.
+
+`openInspect`'s title is `textContent`, not an escape: **a title has no legitimate markup at all**, and the
+weaker fix invites the next person to add markup back.
+
+### Measured with a real hostile level (`tools/probe/xss-level.mjs`)
+
+```
+control      an unsafe innerHTML with the same payload DOES create the node  -> the probe can see it
+the sink     0 img nodes, 0 script nodes, canary still 0 after a 500 ms settle
+caps         name 60, desc 400, journal 4000, model 300; 500 items -> 199; "NaN please" -> 1
+prototype    a JSON "__proto__" key does not pollute Object.prototype
+1277's work  linkify still leaks no attribute
+```
+
+**The first run reported `pwned: 1` with ZERO nodes created in the sink**, which is a contradiction and was
+worth chasing rather than reporting. The control block wrote the *same* payload into a real `<img>`, whose
+`onerror` fires **asynchronously** — after the canary reset. A control that shares a canary with the
+measurement is not a control. Separate canaries, and the reset moved to immediately before the sink.
+
+### The bug the sweep turned up
+
+`keyNames` and `pickupModels` **serialize** with the level and were loaded at boot and by the multiplayer
+loader — and **`restoreLevel` had no line for either.** So the second level you opened kept the first one's
+key names and pickup models, an imported level inherited yours, and a key rename could not be undone. Build
+1280 unified the *prop* apply across the three loaders for exactly this reason; these two sat outside it and
+nobody noticed, because two of the three paths agreed and the third was simply silent.
+
+Four pins moved (115, 238, 879, plus one of my own regexes that spanned a line wrap).
+
+## Wires and rails (build 1324 — editor audit 4.10, second leg)
+
+Build 1323 closed the room; the other half of 4.10 is a **path**. The user's own case for it was the one
+that shaped the design: **power cables and telephone wires** strung between poles. A fence, a kerb and a
+catwalk are the same machinery with two differences that matter — a wire **sags**, and a wire must not be
+**solid**.
+
+**The path is the SELECTION, in selection order.** A click-to-place point mode is a whole input system;
+typing coordinates is not authoring. Place your poles, select them in order, press the button — and it
+composes with every selection feature the editor already has (1299's group-aware selection, 1310's
+select-all, the marquee) for no new picking code.
+
+**A parabola, not a catenary.** Visually identical at the sags a level uses, and unlike a catenary it needs
+no root-finding, so it cannot fail to converge on a degenerate span. `sag` is the droop at midspan in
+metres — a number a creator can see, rather than a tension coefficient they cannot.
+
+**Orientation goes quaternion → Euler for both modes, deliberately.** three's Euler ORDER is a real trap
+here and `setFromQuaternion` cannot get it wrong the way a hand-built yaw/pitch pair would — which would
+have shown up as a silent twist on the first sloped segment. A wire maps local +Y (a cylinder's length) to
+the segment; a rail is built from an explicit basis so it stays **upright**, with the dead-vertical case
+handled.
+
+### `noCol` — a real, serialized "decoration only"
+
+Build 1093's `nocollide` convention keys off a mesh NAME, which only an imported model carries: a primitive's
+name is never saved, so a "decoration" primitive would come back solid after one save/load and nothing would
+say so. `noCol` rides the prop entry as `nc` through the file, the share link and the net, and it is exposed
+in the inspector beside *Interactable* — because "this bush must not block the doorway" is a thing creators
+want constantly and the only previous answer needed a 3D package.
+
+**Writing the opt-out as "emit no boxes" was tried and measured wrong.**
+`finalBoxes = boxes.length ? boxes : [obj.userData.box]` is build 1148's **fail-solid** fallback, so the
+empty list silently became one box spanning the whole prop and the wire was solid after all — with the flag
+set, correctly serialized, and every source pin passing. It has to **return early** and bypass the fallback,
+which is exactly what build 1250's emitter case already did. *An opt-out expressed as an absence loses to a
+fallback designed to fail closed.*
+
+Unchecking it deletes the own `raycast` property to expose three's prototype method again — nothing else
+restores it, and without that the checkbox would be one-way.
+
+### Measured live (`tools/probe/path-tool.mjs`)
+
+Two poles 20 m apart with 6 m tops:
+
+```
+anchors        (290, 6.20, 300) -> (310, 6.20, 300),  10 segments, one group
+sag            highest 6.20, lowest 5.00   = exactly the 1.2 m setting, below the CHORD
+endpoint       the last segment's drawn far end lands on the second pole to 0.0000 m
+not solid      noCol set, collider boxes 0   (a pole beside it: 1)   insideSolid false
+save/load      10/10 carry `nc`, 10/10 return noCol with ZERO collider boxes
+rail           3-point curve -> 20 segments, worst tilt from upright 0.00 deg, all solid
+```
+
+**Two instrument failures again, and one of them was the same shape as build 1323's.** The endpoint check
+called `pathAnchors()` *after* building — by which time `buildPathFrom` had replaced the selection with the
+wire segments, so it compared the wire against itself and reported a 2 m error that did not exist. And a
+zero-length span (a pole to itself, one shift-click away) let the sag term apply and drooped straight down
+and back; it now collapses to a single point.
+
+### Still absent
+
+A floorplan tool — multiple rooms laid out at once — composes from 1323 by hand (duplicate, snap, drag),
+which is a real answer but not the same thing. True CSG remains deliberately absent for the reason 1323
+records.
+
+## The room tool (build 1323 — editor audit 4.10, the last one)
+
+> No CSG / room / spline tools; **a doorway is four boxes forever.** Ten primitives, grid snap, the arena
+> generator. Mitigated but not solved. This is the honest ceiling on hand-built interiors and it is the same
+> ceiling the previous audit found.
+
+**CSG is the obvious reading and the wrong tool for THIS engine.** Build 1148 turns a mesh into a per-column,
+per-slot collider box grid that every consumer walks. A boolean subtract buys you ONE opaque mesh with a hole
+in it: more collider boxes, no editable parts, no instancing, and a doorway you cannot move afterwards
+without re-cutting it. A room built from PRIMITIVES inherits everything the engine already has — gizmo,
+snapping, materials, per-part collider, serialization, undo, duplicate, multiplayer — for no new code.
+
+So a doorway is still boxes. It is boxes the creator never places, never measures, and can move by typing a
+number, which is the part that was missing.
+
+`roomPieces` is **pure** — spec in, box list out, no THREE and no DOM. That is what makes it testable
+exhaustively instead of eyeballed: **3600 configurations, zero overlaps, zero interior intrusions, zero
+degenerate pieces**, every door's clear gap equal to the authored width and head height to a millimetre, and
+a wall carrying both a door and a window tiling itself with no holes.
+
+Three conventions, stated once because everything depends on them:
+
+- **The interior is exactly what you type.** 8 × 6 gives 8 × 6 of floor, not 8−2t. Interior-first is the only
+  measurement that means anything when you are placing furniture in it.
+- **`y` is a piece's BASE**, matching build 871's primitives and what `finalizeProp` lifts onto terrain.
+- **N/S walls run the full outer width; E/W walls run the interior depth only.** They meet exactly at
+  ±d/2. Overlapping them would double the collider at four corners and z-fight two coplanar faces; gapping
+  them would let a bot through the corner.
+
+### Two things the maths could not have told me
+
+**A room on a slope sheared by 1.245 m.** `finalizeProp` lifts EVERY prop independently by
+`_maxTerrainOver(x, z, footR)` — correct for a crate, ruinous for an assembly. On a 15% grade the walls sank
+through the slab and the door header floated. The shell now takes ONE room lift and each piece pre-subtracts
+the lift `finalizeProp` is about to add, so it lands flat on a pad like a real building foundation. **It
+round-trips exactly**, because `propTuple` stores `position.y − _maxTerrainOver(...)` — which is the very
+number passed in. Measured after: shear 0.0000 on flat *and* on the 15% grade.
+
+**A 1.6 m doorway is exactly the player's diameter.** Radius 0.8, so at 1.6 the jamb test is a floating-point
+coin flip — a body of that radius swept across the opening **did not fit**. Doors default to 2.0 m now
+(20 cm either side), and anything under 1.8 warns *where the number is*, not in a manual. Build 1113 learned
+this the same way for the generator: **author to the collider, not to the eye.**
+
+### Three instrument failures, one after another
+
+Worth recording because each produced a confident, wrong number:
+
+| # | reading | what was actually wrong |
+|---|---|---|
+| 1 | "the doorway is clear at every height, and so is the wall" | `insideSolid(x, z, feetY)` called as `(x, y, z)`. **No control** — a sweep that never reports SOLID proves nothing. |
+| 2 | "2.1 m of shear on flat ground" | The metric compared each piece's `y` to the floor top, so a door header's legitimate 2.1 m base read as shear. Shear is the spread of the per-piece **lift**. |
+| 3 | "the doorway is blocked" (with a working control) | The room was built at the ORIGIN, and a **stock-level crate stands at (0, −3.15)**. Building it at (200, 200) reported 5.42 m clear — exactly 12 m of sweep − 8.6 m of wall + a 2.0 m door. |
+
+#3 is build 1124's lesson (*know where the camera is*) and 1151's (*read WHO before attributing anything to
+a surface*) for the third time in this session, now about a collision query. **Probe the scene before
+believing the number**, and build the thing you are measuring somewhere nothing else lives.
+
+### Still absent
+
+Spline/path extrusion — a corridor swept along a curve — is the remaining leg of 4.10 and is its own build.
+Multi-room floorplans compose from this one by hand (duplicate, snap, drag), which is a real answer but not
+the same as a floorplan tool.
+
+## Three papercuts with one measurement between them (build 1322 — editor audit 4.11, the rest)
+
+**Five decimal places on a position in metres.** That is ten microns — and `STEP_POS` matched it, so an
+arrow key on the field nudged a prop by **0.01 mm**. The most-used panel in the editor was both unreadable
+and useless from the keyboard. Precision is per CHANNEL now (`FIELD_DP`: position 3, rotation 2, scale 3)
+with **trailing zeros trimmed**, which is most of the win — a wall at x=12 reads `12`, not `12.00000` — and
+the steps became 1 cm / 0.1° / 1 cm. `fmt` (the copy-paste block that bakes a tuned value back into the
+source) deliberately keeps its five digits: there the extra precision is the whole point.
+
+**The outliner rebuilt every row on a 160 ms coalesce during edits.** Measured with the real `_outRefresh`,
+10 DOM nodes per row:
+
+```
+ 56 rows   2.88 ms          256 rows   8.72 ms
+106 rows   3.82 ms          456 rows  19.64 ms      superlinear: 0.019 -> 0.042 ms/row
+```
+
+At 456 props that is ~123 ms of teardown-and-rebuild **per second** while a gizmo drag keeps firing the
+coalesce. And every one of those rebuilds was **wasted**: the outliner lists names, tags, folders, hide/lock
+and selection — a transform appears nowhere in it.
+
+So the fix is not virtualisation, it is *not doing the work*. `_outSignature()` joins exactly what the panel
+renders, compared before the DOM is touched. The honest pair at 456 rows:
+
+```
+unchanged refresh   19.64 -> 0.12 ms
+a gizmo drag                 0.16 ms      <- the case the coalesce actually fires on
+GENUINELY changed           14.84 ms      <- essentially untouched
+```
+
+**The third number is why this is not a performance claim about the outliner.** The rebuild costs what it
+always did; a virtualised tree is still absent, and it is a separate build with its own measurement. Two
+details in the signature are load-bearing: it must cover everything a row can *render* (a displayed field
+that is not signed is a stale panel), and the skip must also require that the body was built at least once,
+or an empty panel with a stale signature stays empty forever.
+
+**`libOpen` replaced unsaved work and relied on build 1254's one-deep rescue.** A rescue you have to know
+about is not consent. The confirm goes in `libOpen` itself — which became the gate, with the open moved
+wholesale to `_libOpenNow` — so every future entry point inherits it, and it fires only when `_levelDirty`:
+a prompt on every open is trained away in a week and then not read. Three of `test-1262`'s pins moved to the
+new function, all with their intent intact.
+
+**Still open from 4.11, and deliberately:** `renderEditorFields` tears down and rebuilds the whole panel on
+every change, with a scroll-restore microtask as the mitigation — which is why a text field anywhere in the
+panel has to be `onchange` rather than `oninput`. That is an architecture change, not a papercut, and it
+needs its own build and its own measurement.
+
+## The + button sat under the file menu bar (build 1321)
+
+Reported from play: *"the circle plus button gets slightly obscured with the file menu UI."*
+
+Build 1083 added the menu bar (`position:fixed; top:0; height:30px; z-index:34`) and pushed `#editor` and
+`#edToolbar` down for it. It stopped there. **The + FAB is a SIBLING of the panel, not a child**, so nothing
+moved it: it stayed at `top:14px`, under a 30px bar, at z-index **31**.
+
+Measured at 1280×720 with the editor open, before and after:
+
+```
+                circle top   px behind bar   elementFromPoint at the circle's TOP
+before               14           16          mbSpacer      <- the BAR owns those pixels
+after                44            0          edAdd
+narrow (700px)       14            0          edAdd         <- unchanged, bar not wanted below 760
+```
+
+**`elementFromPoint` is the finding, not the rectangle overlap.** The bar's own filler element owned the top
+16 px of the circle, so a click there went to the *bar* — a lost hit target on the button that adds
+everything, not a cosmetic smudge. Rectangles alone could not have said that; z-index decides it.
+
+The FAB's `top` moved **out of its inline `cssText` and into the stylesheet**, because an inline style beats
+a class rule. `body.edMenuBar #edAddFab { top:44px }` — the 30px bar plus the original 14px gap, derived
+rather than picked — keyed on the same body class `_edMenuSync` already toggles. So there is no JS, and no
+future path that shows the bar has anything to remember. `placeFab` still owns left/right, which genuinely
+depends on the panel width and dock side; only the vertical moved.
+
+The three shift-down rules now sit in one block, which is the actual repair: 1083 wrote two of them and the
+third didn't exist yet, and nothing connected them.
+
+**A probe-instrument note worth keeping.** `page.setViewportSize` did **not** reliably deliver a `resize`
+event here — the narrow re-measure first reported `menuBarShown: true` at 700px, which `_edMenuSync`'s own
+`>= 760` rule makes impossible. The probe now calls `_edMenuSync()` directly and *prints the precondition it
+just asserted*, because a measurement taken in a state you did not verify is not a measurement.
+
+## The shape list was written out five times (build 1320 — editor audit 4.11)
+
+The audit's last cluster was four small sharp edges in the "add something" path. **One of the four is false**,
+and the other three are the same defect wearing three hats — plus a fifth instance the probe found on its own.
+
+**KILLED: "new primitives ignore terrain height."** `finalizeProp` lifts EVERY prop by
+`_maxTerrainOver(t[0], t[2], footR)` with no gate of any kind, and `propTuple` stores y terrain-*relative* so
+the round trip survives re-sculpting. Measured with `terrainHeightAt` stubbed to 7.5: a box lands at 7.500, a
+ramp at 7.500, stored tuple y 0. Primitives are base-at-origin, so that is exactly sitting on the ground.
+
+The real defect: **the list of shapes the engine can build was written out FIVE times, and four copies had
+drifted, each in a different direction.**
+
+| copy | had | missing / wrong |
+|---|---|---|
+| `RADIAL_PRIMS` | 10 | — (the only one that never drifted) |
+| the Object panel's Add-shape row | 9 | `pillar` |
+| `PRIM_ICON` | 9 | `pillar` |
+| the command palette | 9 | `pillar`, `wedge`, **plus a bogus `ramp`** |
+| the `+` menu | 6 | `pillar`, `dome`, `tube`, `torus`, every model, all six emitters |
+
+`pillar` was therefore reachable from exactly one surface out of five. And **`ramp` is not a key in
+`PRIMITIVE_BUILDERS`** — the builder is `wedge`, `ramp` is its *label* — so the palette's "Add ramp" fell
+through `isPrimitive()` and was handed to `loadGLTFCached` **as a model URL**. Measured before: it added
+**zero props**, silently. Someone had written the label into the key list, which is why `PRIM_SHAPES` carries
+**both**: `[key, label, glyph, common?]`. Deriving the palette from it fixes the entry in the direction its
+author intended — "ramp" is what a creator types, `wedge` is what it builds — and the key rides in the
+keywords so "wedge" still finds it. Measured after: **1 prop.**
+
+`test-1320` asserts the table's keys **are** the builder keys *in both directions*, so a new primitive either
+reaches every surface or fails the suite. That is the property five hand-kept copies could not hold.
+
+**The `+` menu's zone list was a sixth copy — of `ZONE_TYPES` — and had drifted by exactly one entry:
+TRIGGERS.** The volume the entire logic graph is built on could not be added from the menu build 650 calls
+"the ONE place to add anything placeable". It iterates `ZONE_TYPES` now, and the if/else chain of adders
+became `ZONE_ADDERS` keyed by the same string, so a type cannot be listed but unwired.
+
+The menu also gains what it never had: `More shapes ▸` (the four uncommon shapes, selected by the table's own
+`common` flag rather than a second list), `Effect ▸` (build 1250's six emitters, previously placeable from
+the Object panel and nowhere else), and **`Model…`** — the commonest thing a level is made of. `_edRevealHost`
+makes that entry *land*: it opens the sub-fold, opens the section around it and scrolls to it. A menu entry
+that switches tabs and leaves its target collapsed two folds down is the same "nothing happened" build 1147
+fixed for the asset browser.
+
+**"(at me)" was false on eight buttons, and the number is what makes it a defect rather than a quibble.**
+Every one places at `editorDropPoint()`, which is the point you are *looking at* while flying and the pan
+centre in top view. Measured with the fly camera at (40, 25, −60) pitched down and the player at the spawn:
+the drop point was **116.9 m from the player**. They say "(here)" now and share ONE `DROP_HINT` tooltip, so
+the eight cannot disagree again; six empty-state hints that said "Stand where you want one" moved with them.
+
+Measured live after (`tools/probe/add-paths.mjs`, editor open — the + FAB is an editor-session object, which
+is how the probe's first run read `noFab` and measured nothing):
+
+```
++ menu      6 shapes -> 14 entries, with More shapes ▸ [Pillar, Dome, Tube, Ring],
+            Model…, Effect ▸ [6 emitters]
++ -> Zone   7 entries -> 8, led by ⚡ Trigger
+Model…      mode=build target=props, fold NOT collapsed, browser rendered
+palette     10 offered, 10 resolve to a real builder, every shape covered; "Add ramp" 0 props -> 1
+button      "+ Add trigger (here)"  title="Drops where you're looking (a few metres in front of you…)"
+```
+
+**Nine pins moved, and one of them was the character-count trap again.** `test-241` scoped the + menu block
+with `src.slice(pi, pi + 7600)`; the block grew and twelve assertions failed **with every one of them still
+true** — precisely the failure recorded under *"a source pin must not be scoped by a character count"*. It is
+not a function, so `extractFunction` cannot help; it now ends on the outside-click handler that has been its
+last line since build 342.
+
+## The part editor works on models you dragged in (build 1319 — editor audit 4.8)
+
+> `renderModelParts`: `if(!/^https?:/i.test(url) || !/\.glb(\?|#|$)/i.test(url))` → a `local:` src (build
+> 1177's drag-import) fails the test and gets *"Part editing works on direct .glb models"*, which is both
+> true and useless. And the whole feature requires `_uploadAsset` → the founder's cPanel `upload.php`:
+> offline or host-down, a creator cannot recolor a part of their OWN model. Two features shipped 20 builds
+> apart that do not know about each other.
+
+Both halves are **one misunderstanding**: the part editor reads bytes, edits bytes and writes bytes, and had
+hardcoded one SOURCE (http) and one DESTINATION (the host). Neither is essential to what it does.
+
+- `_bakeSourceBytes(url)` is the source. A `local:` url comes back out of build 1177's own IndexedDB store,
+  by the same key scheme; anything else is fetched exactly as before. A model that is not on *this* device
+  says so by name (`local model not on this device — re-import it`) — the one failure mode specific to a
+  local import, and the one a generic "couldn't fetch" would have hidden.
+- **A local model stays local.** Uploading the edited bytes would reverse the decision the creator made when
+  they dragged the file in, and would fail on exactly the offline/host-down case the audit named. So the
+  result goes back to IndexedDB under a FRESH key (`e<ts>/<base>-edit.glb`) — the original survives, the
+  same as on the hosted path — and `done()` hands back a `local:` src. A failed save (storage full) says
+  why and returns `null`, rather than swapping in a url that does not exist.
+- **The gate asks the right question.** The old test asked WHERE the model lives; the right question is
+  whether we can read its glb. `sketchfab:` is still refused with its own reason (its download is a one-time
+  archive), and the general refusal now names *both* kinds that work, so it is a direction rather than a
+  dead end.
+
+Build 1177's publish warning is unchanged and still correct: an edited local model is still a local model,
+so `levelIssues` still tells you it cannot travel.
+
+**What the probe could and could not show** (`tools/probe/local-model-parts.mjs`): the bake needs
+gltf-transform from a CDN and a real .glb to repack, neither of which exists in the sandbox. So it proves
+the two things this build changes and stops at the library boundary, which it reports rather than papers
+over — a blob put in IndexedDB came back through the bake's own reader as 12 bytes with the magic `glTF`; a
+missing one threw the named error; the panel BUILT for `local:` and for an http `.glb` and still refused
+`sketchfab:` and `.obj`; and `_bakeModelEdits` on a `local:` url reached *"Reading model…"* and then
+*"✕ editor library unavailable (offline?)"* — i.e. the URL check no longer turns it away, which is the whole
+change. `test-1319` executes `_bakeSourceBytes` itself through all four branches with stubs.
+
+**A straight apostrophe in a comment can break `extractFunction` for an unrelated function.** Two harnesses
+crashed this build with `no matching } from index 3422216` — pointing at `_creditLinkify`, which this build
+never touched. The harness's brace matcher tracks quote state, and `_creditLinkify` contains quotes inside
+regexes and strings that it already mis-parses; my new comments' `'` characters flipped the running parity
+so the mis-parse landed somewhere fatal. The fix is to write `’` in prose comments (the codebase already
+does this in strings — see build 1177's note about `—` escapes). If a harness fails naming a function
+you did not edit, check the apostrophes you added, not that function.
+
+## The logic graph shows its work (build 1318 — editor audit 4.9)
+
+> `logicFailures` surfaced through `levelIssues` is good and was worth shipping. There is still **no live
+> pulse, no wire highlight, no variable watch, no breakpoint.** The graph is now 22 node types, 26 verbs and
+> an expression language — expressive enough that "why didn't that fire" is now a real question with no
+> instrument. `_lgPulse` is one function; flashing the node DOM as it executes is ~15 lines and would be the
+> highest-leverage editor addition in the file.
+
+Two hooks and a painter:
+
+- **`_lgPulse`** records the node, *after* it is resolved (so a wire pointing at a deleted node cannot
+  invent a hit) and *before* the switch (so every node type is covered, including any added later). It also
+  sits after the pulse-budget guard, so a wiring loop cannot flood the recorder either.
+- **`_lgFollow`** records the wire, by index — the only change is `for…of` → an indexed loop.
+- The painter pokes the DOM the renderer already built. It never calls `_lgRender`, which rebuilds the board
+  wholesale and would fight every drag, every open `<select>` and every field being typed into.
+
+**The COUNT is the half that answers the audit's actual question.** A node that lights up tells you it
+fired. A node showing **no badge** after a minute of play tells you it never did — which is what "why didn't
+that fire" is really asking. So the flash decays in half a second and the count stays until the board
+closes, with an explicit RESET.
+
+The **variable watch** is `logicVars` listed and sorted, with values that changed since the last frame
+highlighted. That IS the graph's whole memory, so there is no subscription to author and nothing to keep in
+sync. Both the name and the value are HTML-escaped — a level file authors both.
+
+**It costs nothing when the board is closed.** `_lgTraceOn` is only true while the modal is up, so a
+published level running someone else's graph pays one boolean per pulse and nothing else; closing cancels
+the frame loop. Counts deliberately *survive* a close/reopen, because open-the-graph → play → come-back is
+exactly how the question gets asked.
+
+Measured on a real four-node graph in the real board (`tools/probe/logic-trace.mjs`), the fourth node wired
+to nothing: one pulse recorded three nodes and two wires with **n4 absent**; ten pulses read `10` on three
+DOM badges and **nothing on the fourth**; the fired node carried the accent glow and the unfired one did
+not; wires went 2.5 px → 5.97 px; after the decay window the glow was gone and the badge remained; and with
+the board closed, **a hundred pulses recorded exactly zero.**
+
+Two pins moved (1027, 1169 — both drive `_lgPulse`/`_lgFollow` in constructed scopes and needed inert
+stubs; those harnesses are about the graph's behaviour, and 1318 owns proving the recorder records).
+
 ## The weapon has inertia (build 1317 — gameplay audit F7)
 
 > The viewmodel applies a vertical bob, ADS translation, recoil Z, reload dip, draw dip, melee thrust.

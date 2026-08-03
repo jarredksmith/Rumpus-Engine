@@ -6,11 +6,27 @@ const src = gameSource();
 assert(/<button id="edAdd"/.test(src) && /<div id="edAddMenu"/.test(src), 'palette button + menu in the top bar');
 const pi = src.indexOf('// "+ Add" palette:');
 assert(pi > 0, 'palette binding block exists');
-const pb = src.slice(pi, pi + 7600);   // build 342/650: fab creation + the unified add helpers lengthened the block
-for(const item of ['Box','Sphere','Cylinder','Cone','Light','Turret','Enemy spawn','Pickup pad','Audio zone'])
+/* build 1320: this was `src.slice(pi, pi + 7600)` and it broke the moment the block grew — with every
+   assertion inside it still TRUE. That is exactly the failure CLAUDE.md records under "a source pin must
+   not be scoped by a character count". The block is not a function, so it cannot use extractFunction;
+   it ends on a statement that has been its last line since build 342, so anchor on THAT. */
+const _pEnd = src.indexOf("document.addEventListener('click', ()=>{ addMenu.style.display='none'; });", pi);
+assert(_pEnd > pi, 'the palette block still ends on its outside-click handler');
+const pb = src.slice(pi, _pEnd + 200);
+for(const item of ['Light','Turret','Enemy spawn','Pickup pad'])
   assert(pb.indexOf(item) > 0, 'palette offers: '+item);
+/* build 1320: the shapes and the zones are no longer written out here — the menu iterates PRIM_SHAPES and
+   ZONE_TYPES, which is the whole point of that build (this block offered 6 of the 10 shapes and 7 of the 8
+   zones, each a hand-kept copy that had drifted). Assert the same offering through the tables. */
+{ const shapes = (new Function('return ('+(src.match(/const PRIM_SHAPES = (\[[\s\S]*?\n\]);/)||[])[1]+')'))();
+  const common = shapes.filter(r=>r[3]).map(r=>r[1]);
+  for(const item of ['Box','Sphere','Cylinder','Cone'])
+    assert(common.indexOf(item) >= 0, 'palette offers: '+item);
+  assert(/const ADD_ITEMS = PRIM_SHAPES\.filter\(_s=>_s\[3\]\)/.test(pb), '...by iterating the shape table');
+  assert(/\['audiozones','\\ud83d\\udd0a','Audio'\]/.test(src) && /of ZONE_TYPES\)\{ menuItem\(icon\+' '\+label/.test(pb),
+    'palette offers: Audio zone'); }
 assert(/jump\('enemies','spawns'\); addSceneSpawn\(\);/.test(pb), 'spawn item jumps to the Enemies tab first');
-assert(/jump\('build','props'\);\s+addSceneProp\('box'\)/.test(pb), 'shape items jump to Build/props');
+assert(/\[glyph\+' '\+label, \(\)=>\{ jump\('build','props'\); addSceneProp\(src\); \}\]/.test(pb), 'shape items jump to Build/props');
 // build 343: the pickup entry opens a kind submenu instead of blind-placing
 assert(/\['\\u25c6 Pickup pad \\u25b8',  '_pickupSub'\]/.test(pb), 'pickup entry routes to a submenu');
 assert(/const buildPickups=\(\)=>\{/.test(pb) && /menuItem\('\\u2039 Back', buildMain\);/.test(pb), 'submenu lists kinds with a Back row');
@@ -22,12 +38,26 @@ assert(!/audioZones\.push\(\{[^}]+\}\); refreshAudioZoneMarkers\(\); renderEdito
 
 // build 650: the + menu is the single way to add anything — all five zone tools + turret join it
 assert(/\['\\u25c8 Zone \\u25b8',        '_zoneSub'\]/.test(pb), 'a Zone submenu entry exists');
-assert(/const buildZones=\(\)=>\{/.test(pb) && /for\(const \[type,icon,label\] of ZONE_ADD\)\{ menuItem\(icon\+' '\+label/.test(pb), 'the Zone submenu lists every volume type');
-assert(/const ZONE_ADD=\[\['audiozones'[\s\S]*?'deathzones'[\s\S]*?'jumppads'[\s\S]*?'ladders'[\s\S]*?'firezones'/.test(pb), 'ZONE_ADD covers all five placeable volumes');
+assert(/const buildZones=\(\)=>\{/.test(pb) && /for\(const \[type,icon,label\] of ZONE_TYPES\)\{ menuItem\(icon\+' '\+label/.test(pb), 'the Zone submenu lists every volume type');
+/* build 1320: ZONE_ADD was a SECOND copy of ZONE_TYPES and had drifted by one entry — triggers, the volume
+   the logic graph is built on, could not be added from "the ONE place to add anything placeable". The menu
+   iterates the picker's own list now, so this assertion covers all EIGHT and cannot go stale again. */
+assert(!/const ZONE_ADD=\[/.test(pb), 'the duplicate zone list is gone');
+{ const zt = (new Function('return ('+(src.match(/const ZONE_TYPES = (\[[\s\S]*?\]);/)||[])[1]+')'))();
+  assert(zt.map(z=>z[0]).join(',')==='triggers,audiozones,deathzones,jumppads,ladders,firezones,waterzones,fxzones',
+    'the + menu covers every placeable volume, triggers included');
+  for(const t of zt) assert(new RegExp(t[0]+': *\\(\\)=>').test(pb), 'addZone wires '+t[0]); }
 assert(/const addZone=\(type\)=>\{/.test(pb), 'a shared addZone helper routes each zone type to its add fn');
 for(const fn of ['addDeathZone','addJumpPad','addLadder','addFireZone']) assert(pb.indexOf(fn)>0, 'addZone wires '+fn);
 assert(/jump\('build','turrets'\); if\(typeof addSceneTurret==='function'\) addSceneTurret\(\);/.test(pb), 'Turret can be added from the + menu');
-assert(/if\(act==='_zoneSub'\)\{ menuItem\(label, buildZones\); continue; \}/.test(pb), 'the main menu routes the Zone entry to its submenu');
+assert(/_zoneSub:\(\)=>buildZones\(\)/.test(pb) && /if\(typeof act==='string'\)\{ const sub=SUBS\[act\]; if\(sub\) menuItem\(label, sub\); continue; \}/.test(pb),
+  'the main menu routes the Zone entry to its submenu');
+/* build 1320: and the two things the menu could never reach — an imported MODEL (the commonest thing a
+   level is made of) and build 1250's six emitters. */
+assert(/Model\\u2026', \(\)=>\{ jump\('build','props'\); if\(typeof _edRevealHost==='function'\) _edRevealHost\('edModels'\); \}/.test(pb),
+  'a Model entry that lands ON the model browser, not just its tab');
+assert(/_fxSub:\(\)=>buildFx\(\)/.test(pb) && /const buildFx=\(\)=>\{/.test(pb), 'and the effect emitters');
+assert(/_shapeSub:\(\)=>buildShapes\(\)/.test(pb) && /const buildShapes=\(\)=>\{/.test(pb), 'and the four uncommon shapes');
 assert(/e\.stopPropagation\(\);/.test(pb) && /document\.addEventListener\('click', \(\)=>\{ addMenu\.style\.display='none'; \}\);/.test(pb), 'menu closes on outside click');
 // build 342: circular floating button outside the panel, side- and width-aware
 assert(/fab\.id='edAddFab'/.test(pb) && /border-radius:50%/.test(pb), 'Add is a floating circle');

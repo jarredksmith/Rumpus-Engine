@@ -18,6 +18,7 @@ const src = gameSource();
       'let _lgBudget=0, _lgWarned=false;\n' +
       'const _lgNode=(id)=>logicGraph.nodes.find(n=>n.id===id);\n' +
       'const _lgFollow=()=>{};\n' +
+      'function _lgTraceNode(){}\n' +   /* build 1318: inert here; test-1318 proves the recorder itself */
       extractFunction('_lgVarKey') + '\n' + extractFunction('_lgNum') + '\n' + extractFunction('_lgPulse') + '\nreturn _lgPulse;'   /* build 1231 */
     )(graph, logicVars, {}, [], { rifle: { mag: 17, reserve: 51 } }, 'rifle',
       { hp: 73.4, maxHp: 100 }, 990, 250, 4,
