@@ -78,9 +78,14 @@ assert(/if\(o\.userData && isShapePrimitive\(o\.userData\.src\)\)\{[\s\S]{0,600}
 assert(/isShapePrimitive\(o\.userData\.src\) && !o\.userData\.tex/.test(src), 'instancing eligibility remains SHAPE_PRIMS-only');
 
 // ---- opacity: executed clamp/threshold behaviour ----
-const applyPropOpacity = evalDecl(extractFunction('applyPropOpacity', src), 'applyPropOpacity', {
+// build 1340: applyPropOpacity no longer writes the blend state itself — cutout and blend are mutually
+// exclusive, so ONE function owns transparent/opacity/depthWrite/alphaTest. The real writer is supplied
+// here rather than stubbed, because every assertion below is about what that state ends up as.
+const _blendSrc = extractFunction('_applyPropBlend', src);
+const applyPropOpacity = evalDecl(_blendSrc + '\n' + extractFunction('applyPropOpacity', src), 'applyPropOpacity', {
   isMatPrimitive,
   eachPrimMesh: (obj, fn) => fn(obj._mesh),
+  THREE: { DoubleSide: 2, FrontSide: 0 },
 });
 const mk = (srcName) => ({ userData: { src: srcName }, _mesh: { material: {} } });
 let o = mk('wedge');
@@ -130,3 +135,19 @@ assert(/Opacity under 1 makes it see-through — glass = low opacity \+ high shi
 assert(/Box \/ Sphere \/ Cylinder \/ Cone \/ Ramp \/ Stairs \/ Dome \/ Tube \/ Ring/.test(src), 'the imported-model note lists the full shape set');
 
 done('build 871: ramp/stairs/dome/tube/torus primitives + glass-capable opacity, wired end to end');
+
+// build 1340: and the cutout, which overrides the blend entirely — an opacity edit must not un-cut it.
+const applyPropCutout = evalDecl(_blendSrc + '\n' + extractFunction('applyPropCutout', src), 'applyPropCutout', {
+  isMatPrimitive,
+  eachPrimMesh: (obj, fn) => fn(obj._mesh),
+  THREE: { DoubleSide: 2, FrontSide: 0 },
+  CUT_MAX: 0.99,
+});
+o = mk('box'); applyPropOpacity(o, 0.4); applyPropCutout(o, 0.5);
+assert(o._mesh.material.alphaTest === 0.5 && o._mesh.material.transparent === false,
+  'a cutout overrides opacity — it is opaque, which is the whole point of it');
+applyPropOpacity(o, 0.3);
+assert(o._mesh.material.alphaTest === 0.5, 'and an opacity edit while cut out does not un-cut it');
+applyPropCutout(o, 0);
+assert(o._mesh.material.alphaTest === 0 && o._mesh.material.transparent === true && o._mesh.material.opacity === 0.3,
+  'turning it off restores the blending path exactly');

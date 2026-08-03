@@ -967,6 +967,66 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Alpha cutout (build 1340 — rendering audit #4)
+
+> Greped `alphaTest` across the game script: **one hit**, the snow sprite. Foliage cards, chain-link, grates
+> and decals-as-props are unbuildable without either z-fighting or blend-sorting artifacts; opacity <1 forces
+> `transparent`.
+
+Verified. A creator had exactly one alpha tool and it was the wrong one. Alpha **blending sorts per object**,
+so a bush drawn as one transparent card either draws in front of what is behind it or vanishes behind it,
+and never intersects correctly. A cutout is **opaque**: it writes depth, sorts per PIXEL for free, and needs
+no ordering at all.
+
+### One writer of the blend state
+
+Cutout and blend are mutually exclusive, and `_applyPropBlend` is the only function that touches
+`transparent` / `opacity` / `depthWrite` / `alphaTest` / `side`. Two functions each setting those is the
+defect this file has recorded **six times** — whichever ran last would win, so turning on a cutout and then
+nudging opacity would silently un-cut the leaves. Executed both directions:
+
+```
+applyPropOpacity(0.4)   -> alphaTest 0    transparent true   opacity 0.4  front
+applyPropCutout(0.5)    -> alphaTest 0.5  transparent false  opacity 1    double
+applyPropOpacity(0.9)   -> alphaTest 0.5  transparent false  opacity 1    double   <- still cut out
+applyPropCutout(0)      -> alphaTest 0    transparent true   opacity 0.9  front    <- the 0.9 came back
+```
+
+**Double-sided is not a preference.** A foliage card, a grate and a chain-link panel are all single quads,
+and a single-sided quad is invisible from behind — a cutout that disappears when you walk round it is not a
+feature anybody would keep.
+
+**The cutoff clamps below 1** (`CUT_MAX = 0.99`): at exactly 1 every pixel fails the test and the prop
+vanishes, which reads as "the engine ate my prop".
+
+### The shadow follows the holes
+
+Asserted against the **real r149** shadow path rather than assumed: `getDepthMaterial` takes its custom
+branch for `(material.map && material.alphaTest > 0)` and copies `alphaTest`, `map` and the mapped `side`
+into the depth material. So a leaf card casts a leaf-shaped shadow — and if an upgrade drops that, foliage
+silently starts casting rectangles and nothing errors, which is why it is pinned.
+
+### Measured
+
+Same camera, same scanline, only the flag changed:
+
+```
+cutout 0     alphaTest 0    side front    scanline min 12 max 17   FLAT — one solid card
+cutout 0.5   alphaTest 0.5  side double   scanline min 16 max 82   alternating across 31 runs
+```
+
+**The first two runs of that probe measured the middle of the frame and produced numbers opposite to the
+prediction** — because the card was not on that scanline at all. It projects the card and raycasts it before
+believing a pixel now. Build 1124's rule, and the third time this session that it has been the answer.
+
+**The standing trade, restated:** build 1285's prepass excludes `alphaTest` materials, so a cutout
+contributes no AO, SSR or velocity of its own. A missing occluder is a far smaller error than a solid
+rectangle where a leaf is; the real fix is alpha-tested prepass variants, and that is its own build.
+
+One pin moved (871), which executes `applyPropOpacity` in an isolated scope — the real blend writer is
+supplied to it rather than stubbed, because every assertion there is about what that state ends up as, and
+it gained three cases for the interaction.
+
 ## A slice can hold a single frame (build 1339)
 
 Asked for from use: *"add an option to hold a single frame. The default slow bob of the weapon while idling
