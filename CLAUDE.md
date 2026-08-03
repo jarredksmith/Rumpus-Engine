@@ -967,6 +967,65 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The corner leak is one texel wide (build 1346)
+
+Build 1345 halved the leak and the reporter said it looked unchanged. That is fair — 156 pixels of a bright
+line is still a bright line — so this build characterises the residue instead of arguing with it.
+
+**Where it is, on the reporter's own configuration** (a room with a doorway, their lighting): the bright
+pixels sit on a wall's INNER face at `y = 2.99–3.00`, the wall/ceiling junction, facing the sun
+(`N·L = 0.74`), with the occluder **one millimetre away**.
+
+**The benign explanation is dead, and it was worth testing.** A sunlit top face seen edge-on aliases into
+exactly a dashed bright line and would be *correct rendering* that no setting should change. The face
+normals settle it: of eight bright pixels sampled, `upFaces 0, sideFaces 8`.
+
+### It scales with exactly one thing
+
+```
+shadowDist   400     120      60      30      15       8
+texel      39.06cm 11.72cm  5.86cm  2.93cm  1.46cm  0.78cm
+leaking px    910     300     141      75      37      28
+```
+
+Proportional to the texel. Meanwhile `normalBias` is **flat across its whole range**, `shadowRadius` is flat,
+and **overlapping the wall/ceiling seam by 3 / 6 / 12 cm changes nothing** (141/140/131 against a 130
+baseline). So it is not a bias, not a filter width, and not a modelling seam that could be authored away:
+**it is a band one texel wide along every concave corner**, which is the resolution limit of shadow mapping.
+
+`texel = 2·extent / mapSize`. `shadowDist` is one half of that ratio — and it is a lever a creator already
+has — but it shortens the range at which shadows exist at all. The MAP SIZE is the other half and costs only
+time. Measured on the same room, with the return to 2048 as the control:
+
+```
+near map    2048        4096        8192      2048 (control)
+leaking px    136          70          39       137
+frame     323.6ms     364.3ms     528.3ms    330.6ms
+```
+
+**4096 halves the leak for ~12% of frame time; 8192 quarters it for 63%**, which is not a trade worth
+making — recorded so it is not tried again. So the near cascade goes to 4096 on desktop.
+
+Two exclusions, both deliberate:
+- **The FAR cascade stays 2048.** Its texel is 4× coarser by design and a one-texel line on geometry tens of
+  metres away is under a pixel. It was also exonerated directly: turning the near cascade off zeroed the
+  leak, turning the far one off changed nothing.
+- **Phones stay at 1024.** 12% of frame time is not free there and a 4096 depth map is ~16× the memory.
+
+**A residue remains at ~70 px, and it is inherent.** An occluder 1 mm from its receiver is below what any
+practical shadow map resolves. Closing it completely needs contact shadows — screen-space or traced — not a
+bigger map. The comment says so at the constant.
+
+`SUN_SHADOW_PX` is declared **immediately above its only use**, not beside `SHADOW_DEPTH_BIAS`: that constant
+lives ~140 lines further down, so the tidy-looking placement would have been a temporal dead zone, and
+`typeof` does not guard one (builds 1127, 1331). The test pins the ordering.
+
+Two pins moved. `test-50`'s quoted the literal `IS_COARSE ? 1024 : 2048` pair; its intent — touch gets a
+materially smaller map — is now *stronger* (a quarter, not a half) and it asserts the relation. And
+**`test-1345`'s broke on a needle that stopped being unique**: this build added a second `A RESIDUE REMAINS`
+note and `indexOf` found the new one first. That is the character-budget trap in another costume — a source
+pin anchored on a phrase is only as stable as that phrase's uniqueness.
+
 ## The corner leak was the DEPTH bias, and build 1341 was innocent (build 1345)
 
 Third report of *"light leaks in corners… I've noticed this with closed rooms too."* Build 1341 cut
