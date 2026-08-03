@@ -60,8 +60,11 @@ const src = gameSource();
     'the list serializes with the level');
   eq((src.match(/fxZones = Array\.isArray\(level\.fxZones\) \? level\.fxZones\.map\(_migrateFxZone\) : \[\];/g) || []).length, 2,
     'both loaders migrate it (and a level without the field gets an empty list, not a crash)');
+  /* build 1320: the + menu's if/else chain of zone adders became ZONE_ADDERS, keyed by the same type
+     string as ZONE_TYPES — the chain had drifted (triggers were missing from the menu entirely). Same
+     assertion: the chip, the host and a reachable add-button. */
   assert(/\['fxzones','\\u2728','Effect'\]/.test(src) && /fxzones:'edFxZones'/.test(src) &&
-    /else if\(type==='fxzones'\)\{ if\(typeof addFxZone==='function'\) addFxZone\(\); \}/.test(src),
+    /fxzones:    \(\)=>\{ if\(typeof addFxZone==='function'\) addFxZone\(\); \},/.test(src),
     'the zones tab gains the Effect chip, host and add-button');
   assert(/if\(typeof updateFxZones==='function'\) updateFxZones\(dt\);/.test(src), 'the frame loop drives it');
   assert(/grp\.visible=!!\(typeof editorOpen!=='undefined' && editorOpen\)/.test(src), 'markers are editor-only cues, like death zones');

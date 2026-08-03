@@ -60,7 +60,11 @@ assert(/waterZones: waterZones\.map\(z=>\(\{ x:\+z\.x, z:\+z\.z, r:\+z\.r, y:\(\
 eq((src.match(/waterZones = Array\.isArray\(level\.waterZones\) \? level\.waterZones\.map\(_migrateWaterZone\) : \[\];/g)||[]).length, 2, '...and restore on BOTH the local and network load paths');
 assert(/waterZones\.length=0; selWaterZone=-1;/.test(src), 'wipe clears them');
 assert(/if\(typeof _waterPlayerStep==='function'\) _waterPlayerStep\(dt\);/.test(src), 'the swim hook sits after gravity, before both movers');
-assert(/Water zone'\]/.test(src), 'quick-add (+) offers a Water zone');
+/* build 1320: the + menu's zone list WAS a second hand-maintained copy of ZONE_TYPES and had drifted by
+   one entry (triggers). It iterates ZONE_TYPES itself now, so the same assertion is made of that list. */
+assert(/\['waterzones','\\ud83d\\udca7','Water'\]/.test(src) &&
+  /for\(const \[type,icon,label\] of ZONE_TYPES\)\{ menuItem\(icon\+' '\+label/.test(src),
+  'quick-add (+) offers a Water zone');
 assert(/waterzones: 'Lakes, ponds, puddles, streams & waterfalls/.test(src), 'the picker subtitle');   // build 858 added falls to the same tool
 
 done('build 856: water zones — executable swim/wade/flow physics, one-draw-call shader surface, full zone plumbing');

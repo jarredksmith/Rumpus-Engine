@@ -967,6 +967,74 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The shape list was written out five times (build 1320 — editor audit 4.11)
+
+The audit's last cluster was four small sharp edges in the "add something" path. **One of the four is false**,
+and the other three are the same defect wearing three hats — plus a fifth instance the probe found on its own.
+
+**KILLED: "new primitives ignore terrain height."** `finalizeProp` lifts EVERY prop by
+`_maxTerrainOver(t[0], t[2], footR)` with no gate of any kind, and `propTuple` stores y terrain-*relative* so
+the round trip survives re-sculpting. Measured with `terrainHeightAt` stubbed to 7.5: a box lands at 7.500, a
+ramp at 7.500, stored tuple y 0. Primitives are base-at-origin, so that is exactly sitting on the ground.
+
+The real defect: **the list of shapes the engine can build was written out FIVE times, and four copies had
+drifted, each in a different direction.**
+
+| copy | had | missing / wrong |
+|---|---|---|
+| `RADIAL_PRIMS` | 10 | — (the only one that never drifted) |
+| the Object panel's Add-shape row | 9 | `pillar` |
+| `PRIM_ICON` | 9 | `pillar` |
+| the command palette | 9 | `pillar`, `wedge`, **plus a bogus `ramp`** |
+| the `+` menu | 6 | `pillar`, `dome`, `tube`, `torus`, every model, all six emitters |
+
+`pillar` was therefore reachable from exactly one surface out of five. And **`ramp` is not a key in
+`PRIMITIVE_BUILDERS`** — the builder is `wedge`, `ramp` is its *label* — so the palette's "Add ramp" fell
+through `isPrimitive()` and was handed to `loadGLTFCached` **as a model URL**. Measured before: it added
+**zero props**, silently. Someone had written the label into the key list, which is why `PRIM_SHAPES` carries
+**both**: `[key, label, glyph, common?]`. Deriving the palette from it fixes the entry in the direction its
+author intended — "ramp" is what a creator types, `wedge` is what it builds — and the key rides in the
+keywords so "wedge" still finds it. Measured after: **1 prop.**
+
+`test-1320` asserts the table's keys **are** the builder keys *in both directions*, so a new primitive either
+reaches every surface or fails the suite. That is the property five hand-kept copies could not hold.
+
+**The `+` menu's zone list was a sixth copy — of `ZONE_TYPES` — and had drifted by exactly one entry:
+TRIGGERS.** The volume the entire logic graph is built on could not be added from the menu build 650 calls
+"the ONE place to add anything placeable". It iterates `ZONE_TYPES` now, and the if/else chain of adders
+became `ZONE_ADDERS` keyed by the same string, so a type cannot be listed but unwired.
+
+The menu also gains what it never had: `More shapes ▸` (the four uncommon shapes, selected by the table's own
+`common` flag rather than a second list), `Effect ▸` (build 1250's six emitters, previously placeable from
+the Object panel and nowhere else), and **`Model…`** — the commonest thing a level is made of. `_edRevealHost`
+makes that entry *land*: it opens the sub-fold, opens the section around it and scrolls to it. A menu entry
+that switches tabs and leaves its target collapsed two folds down is the same "nothing happened" build 1147
+fixed for the asset browser.
+
+**"(at me)" was false on eight buttons, and the number is what makes it a defect rather than a quibble.**
+Every one places at `editorDropPoint()`, which is the point you are *looking at* while flying and the pan
+centre in top view. Measured with the fly camera at (40, 25, −60) pitched down and the player at the spawn:
+the drop point was **116.9 m from the player**. They say "(here)" now and share ONE `DROP_HINT` tooltip, so
+the eight cannot disagree again; six empty-state hints that said "Stand where you want one" moved with them.
+
+Measured live after (`tools/probe/add-paths.mjs`, editor open — the + FAB is an editor-session object, which
+is how the probe's first run read `noFab` and measured nothing):
+
+```
++ menu      6 shapes -> 14 entries, with More shapes ▸ [Pillar, Dome, Tube, Ring],
+            Model…, Effect ▸ [6 emitters]
++ -> Zone   7 entries -> 8, led by ⚡ Trigger
+Model…      mode=build target=props, fold NOT collapsed, browser rendered
+palette     10 offered, 10 resolve to a real builder, every shape covered; "Add ramp" 0 props -> 1
+button      "+ Add trigger (here)"  title="Drops where you're looking (a few metres in front of you…)"
+```
+
+**Nine pins moved, and one of them was the character-count trap again.** `test-241` scoped the + menu block
+with `src.slice(pi, pi + 7600)`; the block grew and twelve assertions failed **with every one of them still
+true** — precisely the failure recorded under *"a source pin must not be scoped by a character count"*. It is
+not a function, so `extractFunction` cannot help; it now ends on the outside-click handler that has been its
+last line since build 342.
+
 ## The part editor works on models you dragged in (build 1319 — editor audit 4.8)
 
 > `renderModelParts`: `if(!/^https?:/i.test(url) || !/\.glb(\?|#|$)/i.test(url))` → a `local:` src (build

@@ -12,8 +12,12 @@ import { gameSource, html, extractFunction, evalDecl, assert, eq, done } from '.
 const src = gameSource();
 
 // 1) the full primitive set is buildable
-assert(/const RADIAL_PRIMS = \['box','cylinder','sphere','cone','pillar','wedge','stairs','dome','tube','torus'\]/.test(src),
-  'all ten primitives in the slot shape picker');
+/* build 1320: the literal moved into PRIM_SHAPES and RADIAL_PRIMS maps it. Same assertion — all ten,
+   in this order — read through the table so the two can never disagree. */
+assert(/const RADIAL_PRIMS = PRIM_SHAPES\.map\(_s=>_s\[0\]\);/.test(src), 'RADIAL_PRIMS is the shape table');
+{ const tbl = (new Function('return ('+(src.match(/const PRIM_SHAPES = (\[[\s\S]*?\n\]);/)||[])[1]+')'))();
+  assert(tbl.map(r=>r[0]).join(',')==='box,cylinder,sphere,cone,pillar,wedge,stairs,dome,tube,torus',
+    'all ten primitives in the slot shape picker'); }
 
 // 2) slot schema: the two new options survive sanitize (level save + MP both pass through it)
 const sr = extractFunction('_sanitizeRadial', src);

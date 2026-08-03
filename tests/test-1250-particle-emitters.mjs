@@ -102,6 +102,12 @@ assert(!/new THREE\.PointLight/.test(sys) && !/new THREE\.SpotLight/.test(sys),
   'no emitter creates a light — the 636/977/1153/1155 rule holds');
 assert(/mk\.name='fxMark'; mk\.visible=false;/.test(src) && /rt\.mk\.visible=eo;/.test(src),
   'the selection marker exists only for the editor and is invisible in play');
-assert(/\['fx_ember','Embers'\],\['fx_dust','Dust'\]/.test(src), 'the editor offers the Effects row');
+/* build 1320: the six emitters were written out in the Object panel and nowhere else — the + menu could
+   not place one. They are FX_SHAPES now, consumed by both. */
+{ const fx = (new Function('return ('+(src.match(/const FX_SHAPES = (\[[\s\S]*?\n\]);/)||[])[1]+')'))();
+  assert(fx.map(r=>r[0]).join(',')==='fx_ember,fx_dust,fx_smoke,fx_steam,fx_firefly,fx_fountain',
+    'the editor offers the Effects row');
+  assert(/for\(const \[fsrc,flabel\] of FX_SHAPES\)\{/.test(src), '...from the one table');
+  assert(/for\(const \[src,label,glyph\] of FX_SHAPES\)\{/.test(src), '...which the + menu now shares'); }
 
 done('build 1250: particle emitters — presets validated, seed/envelope/step executed (bounds, respawn, jet splash, scale), all three collision exemptions pinned, shared materials, no lights');

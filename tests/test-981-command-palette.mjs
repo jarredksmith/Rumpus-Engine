@@ -16,8 +16,12 @@ assert(/\(e\.ctrlKey\|\|e\.metaKey\) && \(e\.key==='k'\|\|e\.key==='K'\) && type
 // curated actions
 for (const a of ['Play level', 'Undo', 'Save level', 'Copy share link', 'Toggle Top view', 'Gizmo: Rotate'])
   assert(new RegExp("A\\('" + a.replace(/[:()]/g, '\\$&')).test(src), 'action "' + a + '" is offered');
-assert(/for\(const s of \['box','sphere','cylinder','cone','ramp','stairs','dome','tube','torus'\]\)\s*\n\s*A\('Add '\+s/.test(src),
-  'every primitive is an "Add …" action');
+/* build 1320: this list was hand-written and carried 'ramp' — not a builder key, so the entry loaded it as
+   a MODEL URL and added nothing. It is derived from PRIM_SHAPES now, whose LABEL for `wedge` is "Ramp", so
+   the same wording a creator types resolves to a real shape. Same assertion, stronger: every primitive. */
+assert(/for\(const \[key,label\] of PRIM_SHAPES\)\s*\n\s*A\('Add '\+label\.toLowerCase\(\),'shape place spawn primitive new '\+key/.test(src),
+  'every primitive is an "Add …" action, derived from the one shape table');
+assert(!/A\('Add '\+s,/.test(src), '...and the hand-written list that dropped pillar and wedge is gone');
 assert(/for\(const m of EDITOR_MODES\)\s*\n\s*A\('Go to '\+\(MODE_LABEL\[m\]\|\|m\)\+' tab'/.test(src), 'each mode is a jump action');
 
 // settings sections, matched by title + SEC_SUB (render-independent, so cross-tab search works)

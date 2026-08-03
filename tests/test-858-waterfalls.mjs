@@ -34,6 +34,9 @@ eq((src.match(/waterfalls = Array\.isArray\(level\.waterfalls\) \? level\.waterf
 assert(/waterfalls\.length=0; if\(typeof refreshWaterfalls==='function'\) refreshWaterfalls\(\);/.test(src), 'wipe clears them');
 assert(/updateWaterfalls\(dt\);/.test(src.match(/updateWaterZones\(dt\);[^\n]*/)[0]), 'ticked beside the water zones');
 assert(/_renderWaterfallsUI\(host\);/.test(src), 'the Waterfalls UI renders inside the Water tool');
-assert(/\+ Add waterfall \(at me\)/.test(src), '...with its add button');
+/* build 1320: "(at me)" was false on all eight of these — they place at editorDropPoint(), which with the
+   fly camera at (40,25,-60) pitched down measured 116.9 m from the player. The label is "(here)" and the
+   precise wording lives in one shared tooltip. */
+assert(/\+ Add waterfall \(here\)'; addB\.title=DROP_HINT;/.test(src), '...with its add button');
 
 done('build 858: waterfalls — executable gain/falloff math, one-plane sheet + foam pool, sfxBus positional sound');
