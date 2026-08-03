@@ -967,6 +967,110 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The weapon has inertia (build 1317 — gameplay audit F7)
+
+> The viewmodel applies a vertical bob, ADS translation, recoil Z, reload dip, draw dip, melee thrust.
+> **There is no look-sway** — no lag/counter-rotation from mouse delta — so the gun tracks a flick with zero
+> inertia, which is the single most-noticed "cheap" tell in a first-person game.
+
+The sway is a **first-order lag driven by the turn rate**, `x' = -k·x + u`, solved analytically across the
+frame:
+
+```
+x  <-  x·e^(-k dt) + (u/k)·(1 - e^(-k dt))
+```
+
+**The first cut shipped an impulse-plus-decay with a comment claiming frame-rate independence "by
+construction"**, on the grounds that the per-frame deltas sum to the same total across a turn. That is true
+of the deltas and **false of the result** — the decay runs between them, so a coarse step under-counts.
+Measured: the same 0.75 rad turn over the same 0.25 s gave **0.110 in 3 frames against 0.156 in 24**, a 42%
+spread — a weapon that settles differently on two machines, which is the exact tell the build exists to
+remove. The analytic form makes the claim true instead of restating it: 3, 6, 12, 24 and 60 frames now all
+give −0.164.
+
+Measured live through a real flick in the real frame loop (`tools/probe/vm-sway.mjs`): three frames of hard
+turn peaked the sway at 0.226 on frame 5, swung the gun 0.024 world units and counter-rotated 0.095 rad, and
+it was back at rest by frame 26. A steady 3 rad/s turn settles at `rate·gain/k` — the gun trails at a fixed
+distance rather than running away. A 360 in eight frames clamps at 0.32 instead of throwing the gun off
+screen, and crossing the ±π yaw wrap is unwrapped so it reads as 0.02 rad of motion, not 6.26.
+
+Three things fold it out, each for its own reason:
+- **ADS**, through the same factor the bob uses — a scoped weapon lagging behind the crosshair would be a
+  different and worse defect.
+- **Build 1313's motion-comfort sway slider.** The viewmodel is 11% of the screen and the most persistent
+  moving thing in it; a player who turned camera sway down and still got a swaying gun would reasonably
+  conclude the setting did nothing.
+- The clamp, for a spin.
+
+**The bob's vertical amplitude is deliberately unchanged.** The audit also called it near-invisible at 0.012
+world units — but that is a taste judgement the headless harness cannot settle, and the missing *sway* is
+what this build is about. What it did gain is a horizontal component at half the frequency, which turns a
+vertical line into a figure-8: that is a structural difference between "a bouncing prop" and "a walk", not
+a number.
+
+**A sign convention worth recording**, because the test had it backwards on its first run and the code was
+right: yaw DECREASES turning left, so `dy` and the sway go negative, and `gun.rotation.y = sway · ROT` then
+turns the gun *right* while the view turns left. That is the lag.
+
+## Aim assist, for sticks and thumbs only (build 1316 — gameplay audit F4)
+
+> Greped `aimAssist`, `magnetism`, `stickyAim`, `snapTarget`, `adhes`, `friction` → the only hit is a
+> twin-stick CURSOR nudge, which is for top-down aim, not stick aim. There is no rotational slowdown near a
+> target, no bullet magnetism, no target snap. Rumpus ships a full touch layout editor and a gamepad prefs
+> panel, so it clearly intends those inputs to be first-class; **a 3D FPS with zero aim assist on a stick is
+> not.**
+
+Both components, from ONE per-frame scan the pad and the touch pad share:
+
+- **ADHESION** — look sensitivity drops to 55% dead on target and fades to nothing at an 8° rim. The
+  falloff is **squared**, so the assist concentrates near the middle rather than smearing across the cone:
+  the difference between "sticky" and "floaty".
+- **MAGNETISM** — the view is pulled toward the target *in proportion to how hard the player is already
+  turning*.
+
+Four things it must never do, each of which is how aim assist earns its bad name:
+
+- **Never for a mouse.** A mouse has no deadzone, no stick drift and no analogue floor; assisting it is
+  just aiming for the player. Pinned: the mouse look path never reads the slowdown, and `_aaSlow` appears
+  in exactly six places — declared, cleared, computed, and read by the pad and the two touch axes.
+- **Never while the stick is still.** Magnetism with no input is a camera that moves on its own, which
+  reads as broken rather than helpful. Two seconds at rest with a target dead ahead moves the view by
+  exactly zero, while the *slowdown* stays live.
+- **Never at a teammate, a corpse, a downed player, or through a wall.** It resolves the targets the game
+  already considers shootable and asks the same segment test.
+- **Never silently.** One slider in the controller panel; 0 turns it fully off.
+
+Measured live against a real enemy 20 m away (`tools/probe/aim-assist.mjs`):
+
+```
+off target      0 deg    2      4      6      8     10
+look slowdown   0.644  0.749  0.883  0.969  1.00   1.00
+
+half a second of a HALF-DEFLECTED stick, the same input both times:
+  4 deg off target   assist off: swept 20.05 deg   assist on: swept 4.23 deg
+  nothing in view    assist off: swept 20.05 deg   assist on: swept 20.05 deg   <- IDENTICAL
+```
+
+### Three instrument errors in one build, all mine
+
+The probe read `k = 0` everywhere on its first two runs and the code was right every time:
+
+1. **The forward vector.** The engine's forward is `(-sin yaw, -cos yaw)`, so `yaw = π` faces **+Z** — the
+   enemy has to go at +Z of the player. I put it at −Z and then reported `k = 0.55` for the case labelled
+   "behind you", which should have been the tell.
+2. **A wall.** The second placement ran a sightline the stock level has geometry across (`box z[26,35]
+   y[0,1.2]`, another to y = 2.5). `segmentBlocked` correctly said blocked and the assist correctly
+   declined. **Open ground had to be found, not assumed** — `(0,0)` is clear in all four directions.
+3. **The sweep direction**, in the Node rig: with the target on the side the crosshair is turning *away*
+   from, there is nothing to stick to, and the magnetism reads as ~4% instead of ~79%.
+
+Build 1124's rule was "know where the camera is before you judge the frame". The general form, which this
+build paid for three times: **before believing a null result, prove the instrument can produce a positive
+one.** A probe that reports "no effect" has two explanations and only one of them is about the code.
+
+Two pins moved (38 — touch drag now multiplies by the slowdown; and the test's own PvP fixtures, which had
+the same +Z/−Z error).
+
 ## Enemies make noise when they move and when they notice you (build 1315 — gameplay audit F3)
 
 > Cataloguing all 85 `SFX.*` call sites: enemies produce sound in exactly three places. No approach/footstep,
