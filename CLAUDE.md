@@ -967,6 +967,40 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The error overlay reports WHERE (build 1330)
+
+A report from play arrived as a red bar reading **`ERROR: Promise: Cannot access 'FX_PRESETS' before
+initialization`** and nothing else. In a 47,000-line single file, a message alone narrows it to nothing —
+and I could not reproduce it: `FX_PRESETS` initialises fine here, every path that reaches `buildFxEmitter`
+(direct spawn, the Object panel's Effects row, the + menu's Effect submenu, serialize→restoreLevel) runs
+clean, and the literal is pure data so its initialiser cannot throw. A TDZ on a `const` that far down means
+execution reached an access **before** its declaration line ran, which is a question about *when*, and the
+overlay was throwing away the only thing that could answer it.
+
+**The rejected-promise route was where the stack was destroyed, and that is the case with no line number of
+its own.** The old handler rebuilt a bare `ErrorEvent` from `reason.message` alone:
+
+```js
+window.dispatchEvent(new ErrorEvent('error',{message:'Promise: '+(e.reason&&e.reason.message||e.reason)}));
+```
+
+So the hardest failure to place was the one stripped hardest. Three changes, each answering a real obstacle:
+
+- **The stack survives both routes** — `e.error.stack` for a throw, `reason.stack` carried across the
+  re-dispatch for a rejection. First six frames; past that it is the frame loop calling itself.
+- **The FIRST error is kept, not the last.** A failure inside the frame loop repeats at 60 Hz and overwrote
+  the original before anyone could read it. Later ones are counted: *"(+41 more errors since — the FIRST one
+  is shown, it is usually the cause)"*.
+- **It is selectable and scrolls**, because the whole point of the box is that it gets sent to someone.
+
+Verified in a real browser: a throw shows `at inner / at outer / at eval`; a rejection shows the async
+function it came from; 41 subsequent errors leave the first on screen with a count.
+
+Build 659's ResizeObserver exemption and build 838's `let box = null` are both intact — 838's own pin moved,
+because it scoped the declaration and the handler with a `{0,200}` window and this build put 2 kB between
+them. **The assertion was still true.** That is the character-count trap this file records under build 1149,
+for the fourth time; it asserts the ORDER now, which is what "declared before use" actually means.
+
 ## The last unbounded client claim (build 1329 — multiplayer audit 2.2)
 
 **Re-verified before touching anything**, because most of the multiplayer CRITICALs turned out to be closed
