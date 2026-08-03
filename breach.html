@@ -31016,7 +31016,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1342 · 2026-08-03';
+const BUILD_VERSION = 'build 1343 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -35508,7 +35508,59 @@ function updatePerfHud(){
     + 'render '+r.toFixed(1)+'  phys '+p.toFixed(1)+'  net '+n.toFixed(1)+'<br>'
     + 'minimap '+mi.toFixed(1)+'  other '+other.toFixed(1)+' ms<br>'
     + 'draws '+_perfCalls+'   tris '+(_perfTris/1000).toFixed(0)+'k   geom '+mem.geometries+'   tex '+mem.textures+'   lights '+((typeof _lightCensus==='function')?_lightLoad(_lightCensus()):'?')+'<br>'   /* build 1257: the per-pixel light loop, beside the draws it costs as much as */
-    + 'enemies '+enemies.length+'   mixers '+mixers.length+(dofEnabled?'   <span style="color:#ffd166">DoF ON</span>':'');
+    + 'enemies '+enemies.length+'   mixers '+mixers.length+(dofEnabled?'   <span style="color:#ffd166">DoF ON</span>':'')
+    + '<br>' + _aaReport();
+}
+// ---- build 1343: WHAT IS ACTUALLY ANTIALIASING THIS FRAME ------------------------------------------
+// Two builds in a row guessed at a play report of jagged edges and were wrong: 1342 blamed the adaptive
+// ladder shedding MSAA, and the reporter then found that turning the ladder OFF changed nothing at all.
+// That single observation kills every explanation that routes through the ladder — so the answer is
+// somewhere in the pipeline I could not see from here, and the honest move is the one build 1274 already
+// established for the culling report: stop guessing and make the subsystem able to ANSWER.
+//
+// Everything that decides whether an edge is antialiased, on one line, in the perf HUD (` toggles it):
+//   * MSAA needs WebGL2 — `_desiredPostSamples` returns 0 outright without it, at every rung, forever,
+//     and no adaptive setting can bring it back. That alone would produce exactly the report.
+//   * ...and the top rung. `_prStepI`/`_hiFxOn` are shown so a shed rung is visible rather than inferred.
+//   * ...and NO depth of field, which rasterises into its own single-sampled target (1284).
+//   * FXAA is the fallback, and it is measurably weaker (1126: a 1.02 px coverage gradient becomes ~0).
+//     Saying WHICH of the two is running is the difference between "AA is broken" and "AA is the weak one".
+//   * The RENDER SCALE, which sits UNDERNEATH all of it: `_prBase` caps at 1.5 on a desktop, so a display
+//     at devicePixelRatio 2 draws the world at 75% of native and the browser upscales it — jagged edges
+//     that no antialiasing setting can touch and that the adaptive ladder never had anything to do with.
+//     If that is what this is, the readout says so immediately: render 1.50 vs display 2.00.
+// One source of truth for both readouts — a HUD and a panel that disagreed about the frame would be worse
+// than either alone (this file's recurring defect, seven times now).
+function _aaState(){
+  const w2 = !!(renderer.capabilities && renderer.capabilities.isWebGL2);
+  const sm = _postRT ? (_postRT.samples||0) : 0;
+  const msaa = !!_postOn && sm > 0 && !dofEnabled;
+  const fxaa = !!_postOn && !!_matFXAA && !msaa;
+  const pr = renderer.getPixelRatio(), dpr = (typeof devicePixelRatio!=='undefined' && devicePixelRatio) ? devicePixelRatio : 1;
+  /* The report this build answers is specifically about MOTION BLUR, so the readout has to say whether
+     blur is live in the very frame it is describing — otherwise "turn it on and read the line again" is
+     an instruction with no observable. It is a fact about the frame, not a cause: measured four ways in
+     build 1342, blur does not harden an edge. What it can do is cost a rung. */
+  const mb = (typeof _postMotion!=='undefined')
+    && (_postMotion * ((typeof a11y!=='undefined') ? a11y.blur : 1)) > 0.01
+    && !(_adaptOn && typeof _mbShed!=='undefined' && _mbShed)
+    && !(_adaptOn && typeof _prStepI!=='undefined' && _prStepI >= _PR_STEPS.length-1);
+  return { webgl2:w2, samples:sm, dof:!!dofEnabled, postOn:!!_postOn, mb:!!mb,
+           aa: !_postOn ? 'canvas AA (post off)' : msaa ? ('MSAA x'+sm) : fxaa ? 'FXAA only' : 'NONE',
+           pr, dpr, scale: pr/dpr, rung:(typeof _prStepI!=='undefined')?_prStepI:0, hiFx:!!_hiFxOn };
+}
+function _aaReport(){
+  try{
+    const a = _aaState();
+    const col = (a.aa === 'NONE') ? '#ff6b6b' : (a.aa === 'FXAA only' ? '#ffd166' : '#9fe6cf');
+    return 'AA <span style="color:' + col + '">' + a.aa + '</span>'
+      + (a.dof ? ' <span style="color:#ffd166">(DoF)</span>' : '') + (a.mb ? ' +blur' : '')
+      + '   render ' + a.pr.toFixed(2) + '/' + a.dpr.toFixed(2)
+      + (a.scale < 0.995 ? ' <span style="color:#ffd166">(' + Math.round(a.scale*100) + '% of native)</span>' : '')
+      + '   rung ' + a.rung + (a.hiFx ? '' : ' fxOff')
+      + (typeof _mbShed!=='undefined' && _mbShed ? ' mbShed' : '')
+      + (a.webgl2 ? '' : '   <span style="color:#ff6b6b">WebGL1 \u2014 MSAA unavailable</span>');
+  }catch(e){ return 'AA ?'; }
 }
 // ---------- Cinematic intro camera: author a fly-through in the editor, play it on deploy ----------
 // Reuses pointAlongPath. The camera rides cineCfg.path over cineCfg.dur seconds, framing either the player
@@ -42335,6 +42387,19 @@ function levelIssues(){
           +'. Every player who opens it gives those sites their IP address, and the level breaks if any of '
           +'them goes away — upload the files to your own game (Files → Upload asset) to avoid both.');
       }
+    }
+    /* build 1343: the same answer where a creator looks when the picture is wrong, rather than only behind
+       a debug key. Reported only when something is actually degraded — a full-quality frame says nothing. */
+    if(typeof _aaState==='function'){
+      const a = _aaState();
+      if(!a.webgl2)
+        issues.push('This browser gave the game a WebGL 1 context, so hardware antialiasing (MSAA) is unavailable — edges will be jagged and no setting in here can change that. Chrome, Edge and Firefox all support WebGL 2; a browser flag or a very old driver is the usual cause.');
+      else if(a.aa === 'FXAA only' && a.dof)
+        issues.push('Depth of field is on, which turns hardware antialiasing off — a depth-of-field pass cannot be multisampled, so the engine falls back to FXAA and edges get harder. Turn Depth of field off if crisp edges matter more.');
+      else if(a.aa === 'NONE')
+        issues.push('Nothing is antialiasing the frame right now — edges will be jagged. Post-processing is off, or the FXAA fallback failed to build.');
+      if(a.scale < 0.995)
+        issues.push('The world is being drawn at '+Math.round(a.scale*100)+'% of your display resolution and upscaled, which looks like jagged edges no antialiasing setting can fix. '+(a.rung>0?'The adaptive scaler has stepped down — turn Adaptive resolution off in the pause menu to test.':'This is the engine\u2019s own render-scale ceiling on a high-DPI display.'));
     }
     // build 1214: logic-graph failures from the last play session — the graph swallowed these before.
     if(typeof logicFailures!=='undefined') for(const [msg, e] of logicFailures) issues.push('Logic (last run): '+msg+(e.n>1?' ×'+e.n:''));
