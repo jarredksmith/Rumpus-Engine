@@ -25510,6 +25510,21 @@ function refreshAnimCuts(url){
   try{ if(typeof rebuildAvatars==='function') rebuildAvatars(); }catch(e){}
   try{ if(typeof refreshPlayerClipOptions==='function') refreshPlayerClipOptions(); }catch(e){}
   try{ if(typeof refreshEnemyClipOptions==='function') refreshEnemyClipOptions(); }catch(e){}
+  /* build 1337: and the weapons. A gun's actions are built ONCE by playGunStates out of the clip list, so a
+     new slice is not playable until they are built again — and `_gunClipNames` is what the weapon tab's
+     dropdowns read, so without this the slice would exist and be unselectable. Every weapon sharing the url
+     is refreshed, because several can point at one model. */
+  try{
+    if(typeof WEAPONS!=='undefined' && typeof wepModelUrl==='function'){
+      for(const k in WEAPONS){
+        const wu = wepModelUrl(k); if(url && wu !== url) continue;
+        const g = gltfCache[wu]; if(g) _gunClipNames[k] = (g.animations||[]).map(c=>c.name||'');
+        if(typeof _rebuildGunStates==='function') _rebuildGunStates(k);
+      }
+    }
+  }catch(e){}
+  /* the weapon tab's dropdowns are built by renderEditorFields, so they only learn the new name on a redraw */
+  try{ if(typeof editorOpen!=='undefined' && editorOpen && typeof renderEditorFields==='function') renderEditorFields(); }catch(e){}
 }
 function rebuildAvatars(){ for(const id in NET.players){ const rp=NET.players[id]; if(rp && rp.mesh) buildAvatarVisual(rp.mesh, rp.modelCfg); } if(typeof previewAvatar!=='undefined' && previewAvatar) buildAvatarVisual(previewAvatar); if(typeof _ownAvatar!=='undefined' && _ownAvatar){ _ownAvatarKey=''; if(typeof ensureOwnAvatar==='function') ensureOwnAvatar(); }   /* refresh the live third-person body too */ _scheduleCharBroadcast(); }
 // ---- Third-person chase camera (toggle in the pause menu) ----
@@ -30778,7 +30793,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1336 · 2026-08-03';
+const BUILD_VERSION = 'build 1337 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -43039,7 +43054,7 @@ function renderEditorFields(){
       b.style.cssText='width:100%;margin:6px 0 2px;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
       b.onclick=()=>{ const u=((mc && mc.url)||'').trim();
         if(!u){ if(typeof toast==='function') toast('Set an enemy model first'); return; }
-        showClipSlicer(u, 'Enemy model'); };
+        showClipSlicer(u, 'Enemy model', { kind:'char' }); };
       eHost.appendChild(b); }
     refreshEnemyClipOptions();
     // collider radius — the WIDTH of the damage hit-cylinder shots test against (0 = auto-fit to the model). Movement spacing is separate + automatic.
@@ -44726,6 +44741,16 @@ function renderEditorFields(){
           sel.onchange=()=>{ pushUndoSnapshot(); if(!WEAPONS[curWep].clips) WEAPONS[curWep].clips=_wepClipBlank(curWep); WEAPONS[curWep].clips[st]=sel.value; _rebuildGunStates(curWep); };
           r.appendChild(sp); r.appendChild(sel); urlHost.appendChild(r);
         }
+        /* build 1337: the slicer, PER WEAPON, right under that weapon's three slots — which is where you
+           find out the model you just pasted carries one clip called "allanim". It previews on the
+           viewmodel gun, so an in-point is chosen by watching the slide come back. */
+        { const sb=document.createElement('button'); sb.textContent='\u2702 Slice clips\u2026';
+          sb.title='This model has one long take? Cut it into idle / shoot / reload here — the gun in your hands scrubs as you drag.';
+          sb.style.cssText='width:100%;margin:5px 0 2px;padding:6px 10px;font-size:11px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
+          sb.onclick=()=>{ const u=(typeof wepModelUrl==='function') ? (wepModelUrl(curWep)||'') : '';
+            if(!u){ if(typeof toast==='function') toast('Give this weapon a model first'); return; }
+            showClipSlicer(u, (WEAPONS[curWep] && WEAPONS[curWep].name) || curWep, { kind:'weapon', wep:curWep }); };
+          urlHost.appendChild(sb); }
       }
     }
     if(tgt.addable){
@@ -45092,7 +45117,7 @@ function renderEditorFields(){
         b.style.cssText='width:100%;margin:6px 0 2px;padding:7px 10px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #2a6e5c;background:rgba(8,18,18,.5);color:#9fe6cf;';
         b.onclick=()=>{ const u=(myCharCfg().url||playerModelCfg.url||'').trim();
           if(!u){ if(typeof toast==='function') toast('Set a character model first'); return; }
-          showClipSlicer(u, 'Player character'); };
+          showClipSlicer(u, 'Player character', { kind:'char' }); };
         urlHost.appendChild(b); }
       refreshPlayerClipOptions();
       // third-person camera framing: side / distance / height. Live-applied + persisted.
@@ -48723,20 +48748,48 @@ function showThirdPartyModal(){
 // Scrubbing poses the live preview avatar, so an in-point is chosen by looking at the pose, which is what
 // "a visual way to slice these" means.
 let _slicePv = { mixer:null, act:null, name:'' }, _sliceLoop = null;
-function _sliceTarget(){
-  if(typeof previewAvatar!=='undefined' && previewAvatar && previewAvatar.userData && previewAvatar.userData.mixer) return previewAvatar;
-  if(typeof previewEnemy!=='undefined' && previewEnemy && previewEnemy.userData && previewEnemy.userData.mixer) return previewEnemy;
-  return null;
+// build 1337: WHICH rig the scrub poses. Asked for immediately after 1336 — "I really need it in the weapon
+// tab for each weapon" — and a weapon does not animate on the character: the viewmodel gun carries its own
+// mixer and its own three-slot mapping (idle / shoot / reload, or the fists' punch R / punch L / grab).
+// Slicing a gun against the character rig would have shown the player standing still while the numbers
+// changed, which is the same "you cannot see what you are cutting" the panel exists to fix.
+//
+// So the rig is resolved per KIND rather than found by looking around, and the two differ in how they are
+// handed back afterwards: a character returns to its state machine, and a weapon is REBUILT — the gun's
+// actions are constructed once by playGunStates from the clip list, so a new slice only becomes playable
+// when they are built again anyway.
+let _sliceRig = null;
+function _sliceRigFor(kind, url, wep){
+  try{
+    if(kind === 'weapon'){
+      const m = (typeof gunModelByWep !== 'undefined') ? gunModelByWep[wep] : null;
+      if(!m || !m.userData) return null;
+      let mixer = m.userData.mixer, made = false;
+      /* a gun whose clips name-matched nothing has no mixer at all — give it one for the scrub, and take it
+         away again on release, or the model would keep an orphan mixer in the frame loop forever */
+      if(!mixer){ mixer = new THREE.AnimationMixer(m); m.userData.mixer = mixer; mixers.push(mixer); made = true; }
+      const g = gltfCache[url];
+      return { kind, wep, obj:m, mixer, clips:(g && g.animations) || [], made };
+    }
+    const v = (typeof previewAvatar!=='undefined' && previewAvatar && previewAvatar.userData && previewAvatar.userData.mixer) ? previewAvatar
+            : (typeof previewEnemy!=='undefined' && previewEnemy && previewEnemy.userData && previewEnemy.userData.mixer) ? previewEnemy : null;
+    if(!v) return null;
+    return { kind:'char', obj:v, mixer:v.userData.mixer, clips:v.userData.animClips || [], made:false };
+  }catch(e){ return null; }
 }
+function _sliceTarget(){ return _sliceRig && _sliceRig.obj; }
 // Pose the preview rig at one instant of a clip. `paused` + an explicit `time` + mixer.update(0) is the
 // scrub: the mixer evaluates the pose without advancing, so dragging is exact rather than a race with the
 // frame loop.
 function _slicePose(clipName, t){
-  const v = _sliceTarget(); if(!v) return false;
-  const mixer = v.userData.mixer, clips = v.userData.animClips || [];
+  const rig = _sliceRig; if(!rig) return false;
+  const v = rig.obj, mixer = rig.mixer, clips = rig.clips || [];
   const clip = clips.find(c=>(c.name||'')===clipName); if(!clip) return false;
-  const acts = v.userData.stateActions || {};
+  const acts = (v.userData && v.userData.stateActions) || {};
   for(const k in acts){ try{ acts[k].setEffectiveWeight(0); }catch(e){} }   /* silence the state machine while scrubbing, or it blends against the pose */
+  /* a weapon's own idle/shoot actions live in gunStates and would blend against the scrub the same way */
+  const gs = (v.userData && v.userData.gunStates) || {};
+  for(const k in gs){ try{ gs[k].setEffectiveWeight(0); gs[k].paused = true; }catch(e){} }
   if(_slicePv.mixer !== mixer || _slicePv.name !== clipName){
     if(_slicePv.act){ try{ _slicePv.act.setEffectiveWeight(0); _slicePv.act.stop(); }catch(e){} }
     const a = mixer.clipAction(clip); a.reset(); a.play(); _slicePv = { mixer, act:a, name:clipName };
@@ -48751,8 +48804,17 @@ function _sliceRelease(){
   if(_sliceLoop){ clearInterval(_sliceLoop); _sliceLoop = null; }
   if(_slicePv.act){ try{ _slicePv.act.setEffectiveWeight(0); _slicePv.act.stop(); }catch(e){} }
   _slicePv = { mixer:null, act:null, name:'' };
+  const rig = _sliceRig; _sliceRig = null;
+  if(!rig) return;
+  if(rig.kind === 'weapon'){
+    /* a mixer this panel invented must not outlive it — it would keep updating an object nothing else drives */
+    if(rig.made && rig.mixer){ try{ rig.mixer.stopAllAction(); const i = mixers.indexOf(rig.mixer); if(i>=0) mixers.splice(i,1); }catch(e){}
+      if(rig.obj && rig.obj.userData) rig.obj.userData.mixer = null; }
+    try{ if(typeof _rebuildGunStates==='function') _rebuildGunStates(rig.wep); }catch(e){}
+    return;
+  }
   /* hand the rig back to the state machine, or it stands frozen on the last scrubbed pose */
-  const v = _sliceTarget(); if(v && typeof setEnemyAnimState==='function'){ try{ setEnemyAnimState(v, 'idle', true); }catch(e){} }
+  if(rig.obj && typeof setEnemyAnimState==='function'){ try{ setEnemyAnimState(rig.obj, 'idle', true); }catch(e){} }
 }
 function _sliceClipList(url){
   try{
@@ -48761,9 +48823,11 @@ function _sliceClipList(url){
   }catch(e){}
   return [];
 }
-function showClipSlicer(url, label){
+function showClipSlicer(url, label, opts){
   url = String(url||'').trim();
-  const old = document.getElementById('clipSlicer'); if(old) old.remove();
+  const old = document.getElementById('clipSlicer'); if(old){ _sliceRelease(); old.remove(); }
+  opts = opts || {};
+  _sliceRig = _sliceRigFor(opts.kind || 'char', url, opts.wep);
   const src = _sliceClipList(url);
   const wrap = document.createElement('div'); wrap.id = 'clipSlicer';
   wrap.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:310;background:rgba(7,13,18,0.97);'
