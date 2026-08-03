@@ -967,6 +967,70 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A level says who it will make you talk to (build 1335 — platform audit 2.5)
+
+> A level can direct the browser to fetch arbitrary `http(s)` URLs through prop `src`, every
+> weapon/enemy/player/chest/coin/turret/grenade/attachment model url, per-primitive textures,
+> `audioZones[].url`, custom SFX, the HDRI sky, `lobbyBg`, homepage `bg`/`logo` and HUD widget `img`.
+> There is **no host allowlist, no confirmation prompt and no disclosure.** Opening a shared level link
+> hands the player's IP to whoever authored it. For a product marketed to children this is the sharpest
+> privacy edge in the whole system, and it is invisible.
+
+**The url fields are deliberately NOT enumerated.** A hand-kept list that drifts from the thing it
+describes is the single most-repeated defect in this file — the shape lists (1320), the zone-add list
+(1320), the zone pick/drag lists (1326), the pickup transform (1327), the prop-entry apply (1280) — and a
+privacy disclosure that silently misses a field is **worse than none, because it reads as complete.** So
+the serialized level is WALKED: every string is examined, which covers every field that exists and every
+field anybody adds later. `test-1335` proves that by feeding the walk a field invented after this build.
+
+### The block is one declaration, not eleven guards
+
+Blocking in JavaScript would mean a guard at eight loaders plus three CSS paths — and **the one that got
+missed would be the one that leaked.** A CSP is ONE declaration the *browser* enforces across every fetch a
+page can make, including CSS backgrounds and `new Image()`, so there is nothing to miss and nothing to keep
+in step. It runs as the first script in `<head>`, because a policy only governs content parsed after it —
+which is also why the setting needs a reload, and why the panel distinguishes **what is stored** from
+**what is in force**. *A privacy control that claims protection it does not have is the worst possible
+failure*, so `tpBlocked()` and `tpBlockLive()` are two questions.
+
+The allowlist is the engine's own infrastructure, named: the script CDNs, the fonts, the founder's host,
+and the PeerJS broker — without which multiplayer cannot signal.
+
+### The control pair is the whole verification
+
+```
+                   block OFF                          block ON
+policy live        false                              true
+game               gameOn, 59 props                   gameOn, 59 props
+same-origin fetch  ok 200                             ok 200
+off-origin img     failed                             failed
+CSP refusals       []                                 ["connect-src <- …", "img-src <- …"]
+```
+
+This sandbox has **no route to the open internet**, so "the image failed" is worth nothing — a network
+failure and a refusal look identical, and the `off-origin img` row is the same in both. What discriminates
+is `securitypolicyviolation`, which fires only from CSP and fires in exactly one of the two runs. The
+same-origin row is the other half: **a block that also broke the engine would look like a success from the
+refusal count alone.**
+
+### And a finding nobody was looking for
+
+**The shipped stock level already contacts two other sites** — `static.poly.pizza` and
+`jarredksmith.github.io`. The first level anybody opens hands two third parties their IP. That is now
+visible in the Level Check rather than being a fact only a network tab could tell you.
+
+Both audiences are told: the creator through Level Check (they are the only person who can change it and
+the only one who could not see it, and the row names the fix — upload the files to your own game), and the
+player through a toast on a level that arrived from OUTSIDE, which is exactly the case they cannot inspect.
+The modal reads the CURRENT level rather than a stored summary — a share link can swap the level at any
+moment and **a stale list is a false statement** — and every host goes in as `textContent`, because a
+hostname is level data (1325).
+
+**Still open, and stated rather than implied:** the block is all-or-nothing. A per-host allowlist ("allow
+poly.pizza, refuse the rest") is the better product and needs a UI for managing it plus a decision about
+what a refused prop looks like in play; the report route and the privacy policy the audit lists as release
+blockers are unaffected by this build.
+
 ## Colour vision (build 1334 — the last census entry)
 
 **Correction, not simulation.** A simulation shows a colour-blind player what they already see.

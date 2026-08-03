@@ -35,6 +35,9 @@ export async function withGame(fn, opts = {}) {
     // the dialog instead of the game. The driver plays a RETURNING player; pass `firstRun:true` when the
     // dialog itself is what is being measured.
     if (!opts.firstRun) await page.addInitScript(() => { try { localStorage.setItem('breach_photowarn', '1'); } catch (e) {} });
+    // build 1335: the third-party block is read at PARSE time from localStorage, so it can only be set
+    // before the document loads — an init script is the only place a probe can turn it on.
+    if (opts.initBlock != null) await page.addInitScript((v) => { try { localStorage.setItem('breach_tpblock', v ? '1' : '0'); } catch (e) {} }, opts.initBlock);
     page.on('pageerror', e => console.log('[ERR]', e.message));
     if (opts.console) page.on('console', m => console.log('[c]', m.type(), m.text()));
     await new Promise(r => setTimeout(r, 1200));
