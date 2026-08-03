@@ -967,6 +967,71 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Wires and rails (build 1324 — editor audit 4.10, second leg)
+
+Build 1323 closed the room; the other half of 4.10 is a **path**. The user's own case for it was the one
+that shaped the design: **power cables and telephone wires** strung between poles. A fence, a kerb and a
+catwalk are the same machinery with two differences that matter — a wire **sags**, and a wire must not be
+**solid**.
+
+**The path is the SELECTION, in selection order.** A click-to-place point mode is a whole input system;
+typing coordinates is not authoring. Place your poles, select them in order, press the button — and it
+composes with every selection feature the editor already has (1299's group-aware selection, 1310's
+select-all, the marquee) for no new picking code.
+
+**A parabola, not a catenary.** Visually identical at the sags a level uses, and unlike a catenary it needs
+no root-finding, so it cannot fail to converge on a degenerate span. `sag` is the droop at midspan in
+metres — a number a creator can see, rather than a tension coefficient they cannot.
+
+**Orientation goes quaternion → Euler for both modes, deliberately.** three's Euler ORDER is a real trap
+here and `setFromQuaternion` cannot get it wrong the way a hand-built yaw/pitch pair would — which would
+have shown up as a silent twist on the first sloped segment. A wire maps local +Y (a cylinder's length) to
+the segment; a rail is built from an explicit basis so it stays **upright**, with the dead-vertical case
+handled.
+
+### `noCol` — a real, serialized "decoration only"
+
+Build 1093's `nocollide` convention keys off a mesh NAME, which only an imported model carries: a primitive's
+name is never saved, so a "decoration" primitive would come back solid after one save/load and nothing would
+say so. `noCol` rides the prop entry as `nc` through the file, the share link and the net, and it is exposed
+in the inspector beside *Interactable* — because "this bush must not block the doorway" is a thing creators
+want constantly and the only previous answer needed a 3D package.
+
+**Writing the opt-out as "emit no boxes" was tried and measured wrong.**
+`finalBoxes = boxes.length ? boxes : [obj.userData.box]` is build 1148's **fail-solid** fallback, so the
+empty list silently became one box spanning the whole prop and the wire was solid after all — with the flag
+set, correctly serialized, and every source pin passing. It has to **return early** and bypass the fallback,
+which is exactly what build 1250's emitter case already did. *An opt-out expressed as an absence loses to a
+fallback designed to fail closed.*
+
+Unchecking it deletes the own `raycast` property to expose three's prototype method again — nothing else
+restores it, and without that the checkbox would be one-way.
+
+### Measured live (`tools/probe/path-tool.mjs`)
+
+Two poles 20 m apart with 6 m tops:
+
+```
+anchors        (290, 6.20, 300) -> (310, 6.20, 300),  10 segments, one group
+sag            highest 6.20, lowest 5.00   = exactly the 1.2 m setting, below the CHORD
+endpoint       the last segment's drawn far end lands on the second pole to 0.0000 m
+not solid      noCol set, collider boxes 0   (a pole beside it: 1)   insideSolid false
+save/load      10/10 carry `nc`, 10/10 return noCol with ZERO collider boxes
+rail           3-point curve -> 20 segments, worst tilt from upright 0.00 deg, all solid
+```
+
+**Two instrument failures again, and one of them was the same shape as build 1323's.** The endpoint check
+called `pathAnchors()` *after* building — by which time `buildPathFrom` had replaced the selection with the
+wire segments, so it compared the wire against itself and reported a 2 m error that did not exist. And a
+zero-length span (a pole to itself, one shift-click away) let the sag term apply and drooped straight down
+and back; it now collapses to a single point.
+
+### Still absent
+
+A floorplan tool — multiple rooms laid out at once — composes from 1323 by hand (duplicate, snap, drag),
+which is a real answer but not the same thing. True CSG remains deliberately absent for the reason 1323
+records.
+
 ## The room tool (build 1323 — editor audit 4.10, the last one)
 
 > No CSG / room / spline tools; **a doorway is four boxes forever.** Ten primitives, grid snap, the arena

@@ -13290,6 +13290,20 @@ function refreshPropCollider(obj){
   // build 1250: a particle emitter is pure decoration — the overall box (which spans the particle
   // spread) is kept for selection/framing, but NOTHING may collide: no per-mesh boxes, ever.
   if(obj.userData.fx){ obj.userData.boxes = []; return; }
+  /* build 1324: the same idea as a PER-PROP, SERIALIZED flag. Build 1093's convention keys off a mesh
+     NAME, which only an imported model carries — a primitive's name is not saved, so a "decoration"
+     primitive would come back solid after one save/load and nothing would say so. `noCol` rides the prop
+     entry as `nc`, so it survives the file, the share link and the net.
+     IT MUST RETURN HERE, not skip meshes inside the loop below. Writing it as "emit no boxes" was tried
+     and measured: `finalBoxes = boxes.length ? boxes : [obj.userData.box]` is build 1148's FAIL-SOLID
+     fallback, so an empty list silently became one box spanning the whole prop and the wire was solid
+     after all. An opt-out from collision has to bypass the fallback — which is exactly what build 1250's
+     emitter case above already does, and why it is written the same way. */
+  if(obj.userData.noCol){
+    obj.userData.boxes = [];
+    obj.traverse(o=>{ if(o.isMesh) o.raycast = _ncNoRay; });   // and no bullet hits either
+    return;
+  }
   // Per-mesh boxes for player collision. Each mesh's box is built from ITS OWN vertices only — NOT via
   // setFromObject, which recurses into child meshes and can fuse an offset child into one giant box.
   // Invisible/helper meshes are skipped. Precise (per-vertex) keeps each box tight to the real geometry.
@@ -13299,6 +13313,10 @@ function refreshPropCollider(obj){
     // build 1093: "nocollide"-named meshes are pure decoration. No collider box, and no raycast
     // hits either — so grass never blocks movement probes, enemy sight lines, or bullets.
     for(let p=o; p; p=p.parent){ if(p.name && /^nocollide/i.test(p.name)){ o.raycast = _ncNoRay; return; } }
+    /* build 1324: a mesh that was decoration and is not any more gets its raycast back. `_ncNoRay` is an
+       OWN property stamped onto the mesh, so deleting it restores three's prototype method — nothing else
+       can, and without this the No-collision checkbox would be one-way. */
+    if(o.raycast === _ncNoRay) delete o.raycast;
     const pos = o.geometry.attributes && o.geometry.attributes.position; if(!pos || !pos.count) return;
     o.updateWorldMatrix(true, false);
     const b = new THREE.Box3();
@@ -17880,7 +17898,7 @@ function _bumpGroupSeq(gid){ if(typeof gid==='string' && gid[0]==='g'){ const n=
 // identity (a fresh gid, no nid) and that difference is the feature. Two functions that differ on purpose
 // beat three that are supposed to match.
 function _applyPropEntry(obj, p){
-  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
+  applyPropDynState(obj, p); if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; } if(p.tg) obj.userData.tag=p.tg; if(p.gid){ obj.userData.groupId=p.gid; _bumpGroupSeq(p.gid); } if(p.pf && p.pf.id){ obj.userData.pf={ id:String(p.pf.id), inst:String(p.pf.inst||'i0'), slot:p.pf.slot|0 }; } if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true; if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(s=>String(s).slice(0,200)); if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40); if(Array.isArray(p.sg)) obj.userData.signals=p.sg.map(s=>{ const x={ when:s.w, do:s.d, target:s.t }; if(s.c) x.clip=s.c; if(s.n) x.cs=s.n; if(s.f) x.from=s.f; if(s.ci) x.contain=true; if(s.tx) x.text=s.tx; if(s.ni) x.needItem=s.ni; if(s.nc) x.needConsume=true; if(s.cn) x.consume=true; if(s.so) x.sound=s.so; return x; }); if(p.snd>1) obj.userData.sigNeed=+p.snd; if(p.att) obj.userData.attribution=p.att; if(p.fxc && obj.userData.fx){ obj.userData.fx.cfg=_fxCfgSan(p.fxc); if(typeof _fxReset==='function') _fxReset(obj); } if(p.xa) xaApply(obj, p.xa); if(p.j) jointApply(obj, p.j); if(p.veh) vehicleApply(obj, p.veh); if(p.trk) trackApply(obj, {w:1});
 }
 function loadHostedProps(){
   const list = (savedLevel && Array.isArray(savedLevel.props)) ? savedLevel.props : SCENE_PROPS;
@@ -30240,7 +30258,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1323 · 2026-08-03';
+const BUILD_VERSION = 'build 1324 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36716,6 +36734,87 @@ function roomPieces(raw){
   return out;
 }
 
+
+// ---------- build 1324: THE PATH TOOL — rails and WIRES (editor audit 4.10, second leg) ----------
+// Build 1323 closed "a doorway is four boxes forever"; the other half of 4.10 is a path: a fence that
+// follows a curve, a kerb, a catwalk — and, the user's own case, POWER CABLES and telephone wires strung
+// between poles. Those are the same machinery with two differences that matter: a wire SAGS, and a wire
+// must not be solid (see build 1324's `noCol` above — a cable you can stand on is worse than no cable).
+//
+// WHERE THE PATH COMES FROM is the design decision. A click-to-place point mode would be a whole input
+// system; typing coordinates is not authoring. The selection already IS an ordered list of positions —
+// place your poles, select them in order, press the button. It composes with every selection feature the
+// editor has (1299's group-aware selection, 1310's select-all, the marquee) and needs no new picking code.
+//
+// The maths below is PURE — points in, segment centres/lengths/directions out — which is what lets
+// test-1324 check sag depth, endpoint anchoring, curve continuity and the segment caps without a browser.
+// Only the orientation step needs THREE, and it deliberately goes through a QUATERNION rather than
+// hand-built Euler angles: three's Euler order is a real trap here, and `setFromQuaternion` cannot get it
+// wrong the way I would.
+const PATH_MAX_PTS = 64;          // a selection bigger than this is a mistake, not a path
+const PATH_MAX_SEG = 400;         // hard cap on props emitted — a typo must not make 10,000 boxes
+const WIRE_SEG_DEFAULT = 10, WIRE_SAG_MAX = 30;
+// Uniform Catmull-Rom through p1..p2 with p0/p3 as tangent neighbours. Uniform (not centripetal) is right
+// here: the control points are hand-placed poles or corners, roughly evenly spaced, and uniform is the
+// curve creators expect from every other tool.
+function _crAxis(p0, p1, p2, p3, t){
+  const t2=t*t, t3=t2*t;
+  return 0.5*((2*p1) + (-p0+p2)*t + (2*p0-5*p1+4*p2-p3)*t2 + (-p0+3*p1-3*p2+p3)*t3);
+}
+// Sample a polyline. `smooth` runs it through Catmull-Rom; `per` is samples per span.
+function pathSample(pts, closed, smooth, per){
+  const P = (pts||[]).slice(0, PATH_MAX_PTS).map(q=>[+q[0]||0, +q[1]||0, +q[2]||0]);
+  if(P.length < 2) return P;
+  if(closed && (P[0][0]!==P[P.length-1][0] || P[0][1]!==P[P.length-1][1] || P[0][2]!==P[P.length-1][2])) P.push(P[0].slice());
+  if(!smooth) return P;
+  const n = P.length, out = [], N = Math.max(1, Math.min(24, per|0 || 8));
+  const at = (i)=> closed ? P[((i % (n-1)) + (n-1)) % (n-1)] : P[Math.max(0, Math.min(n-1, i))];
+  for(let i=0; i<n-1; i++){
+    const a=at(i-1), b=at(i), c=at(i+1), d=at(i+2);
+    for(let k=0; k<N; k++){
+      const t=k/N;
+      out.push([_crAxis(a[0],b[0],c[0],d[0],t), _crAxis(a[1],b[1],c[1],d[1],t), _crAxis(a[2],b[2],c[2],d[2],t)]);
+    }
+  }
+  out.push(P[n-1].slice());
+  return out;
+}
+// A hanging span between two anchors. A real cable is a catenary; a PARABOLA is what everyone ships and is
+// visually identical at the sags a level uses — and unlike a catenary it needs no root-finding, so it
+// cannot fail to converge on a degenerate span. `sag` is the droop at midspan, in metres, which is a
+// number a creator can see rather than a tension coefficient they cannot.
+function wireSpan(a, b, sag, segs){
+  /* A span between a pole and ITSELF is not a wire. Without this it is worse than a no-op: the sag term
+     still applies, so the "span" droops straight down and climbs back, emitting a stack of near-vertical
+     segments at one spot. Two poles placed on top of each other, or the same prop shift-clicked twice into
+     the selection, are both one click away. */
+  if(Math.hypot(b[0]-a[0], b[1]-a[1], b[2]-a[2]) < 1e-4) return [a.slice()];
+  const n = Math.max(1, Math.min(48, segs|0 || WIRE_SEG_DEFAULT));
+  const s = Math.max(0, Math.min(WIRE_SAG_MAX, +sag||0));
+  const out = [];
+  for(let i=0;i<=n;i++){
+    const t=i/n;
+    out.push([ a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t - 4*s*t*(1-t), a[2]+(b[2]-a[2])*t ]);
+  }
+  return out;                       // t=0 and t=1 give exactly a and b: a wire that misses its pole is wrong
+}
+// Polyline -> one record per segment: centre, length, unit direction. Zero-length segments are dropped
+// (two poles at the same spot, or a smooth pass that duplicated a point) — a zero-length prop is invisible
+// and still costs a collider query.
+function pathSegments(samples){
+  const out = [];
+  for(let i=0;i+1<samples.length;i++){
+    const a=samples[i], b=samples[i+1];
+    const dx=b[0]-a[0], dy=b[1]-a[1], dz=b[2]-a[2];
+    const len=Math.hypot(dx,dy,dz);
+    if(len < 1e-4) continue;
+    out.push({ cx:(a[0]+b[0])/2, cy:(a[1]+b[1])/2, cz:(a[2]+b[2])/2, len,
+               dx:dx/len, dy:dy/len, dz:dz/len });
+    if(out.length >= PATH_MAX_SEG) break;
+  }
+  return out;
+}
+
 // The draft the panel edits. Module-level rather than stored in the level: a room is a one-shot GENERATOR,
 // not an object — once it is built the pieces are ordinary props and the numbers that made them are of no
 // further interest. (An editable room object would have to own its pieces forever, which is exactly the
@@ -38423,7 +38522,7 @@ function _pfSpawnEntry(p, at, pfMark, gid, cb){
     applyPropDynState(obj, p);
     if(p.lk){ obj.userData.lockId=p.lk; if(p.lkc) obj.userData.lockConsume=true; }
     if(p.tg) obj.userData.tag=p.tg;
-    if(p.itr) obj.userData.interact=true; if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true;
+    if(p.itr) obj.userData.interact=true; if(p.nc){ obj.userData.noCol=true; if(typeof refreshPropCollider==='function') refreshPropCollider(obj); } if(p.nm) obj.userData.name=String(p.nm).slice(0,60); if(p.fld) obj.userData.folder=String(p.fld).slice(0,40); if(p.eh) obj.userData.edHide=true; if(p.elk) obj.userData.edLock=true;
     if(gid) obj.userData.groupId=gid;
     if(Array.isArray(p.dlg)) obj.userData.dialogue=p.dlg.map(x=>String(x).slice(0,200));
     if(p.npc) obj.userData.npcName=String(p.npc).slice(0,40);
@@ -38729,6 +38828,7 @@ function propEntry(o){
   if(o.userData.attribution) e.att=o.userData.attribution;
   if(o.userData.pf && o.userData.pf.id) e.pf={ id:String(o.userData.pf.id), inst:String(o.userData.pf.inst||'i0'), slot:o.userData.pf.slot|0 };   // build 1030: prefab instance mark
   if(o.userData.interact) e.itr=1;   // build 1035: Interactable (press E)
+  if(o.userData.noCol) e.nc=1;       // build 1324: decoration only — no collider, no raycast
   if(o.userData.name) e.nm=String(o.userData.name).slice(0,60); if(o.userData.folder) e.fld=String(o.userData.folder).slice(0,40); if(o.userData.edHide) e.eh=1; if(o.userData.edLock) e.elk=1;   // build 1036: outliner name/folder/hide/lock
   if(o.userData.nid) e.nid=o.userData.nid;
   return e;
@@ -40146,6 +40246,177 @@ function assetShortName(src){
   if(/^[0-9a-f]{8}-?[0-9a-f]{4}/i.test(base) || /^[0-9a-f]{16,}$/i.test(base)) return 'model · ' + base.slice(0, 6);
   return base.replace(/[_-]+/g, ' ').trim().slice(0, 40) || 'model';
 }
+
+// ---- build 1324: the spawner. Everything above is pure; this is the only part that needs THREE. ----
+const _pthQ = new THREE.Quaternion(), _pthE = new THREE.Euler(), _pthUP = new THREE.Vector3(0,1,0);
+const _pthF = new THREE.Vector3(), _pthR = new THREE.Vector3(), _pthU = new THREE.Vector3(), _pthM = new THREE.Matrix4();
+// A cylinder's length is its local +Y, so mapping +Y to the segment direction is all a wire needs — roll
+// around its own axis is meaningless on a round section.
+function _pathEulerAlongY(dx, dy, dz){
+  _pthF.set(dx, dy, dz);
+  _pthQ.setFromUnitVectors(_pthUP, _pthF);
+  _pthE.setFromQuaternion(_pthQ);              // three's own conversion, in obj.rotation's own order
+  return _pthE;
+}
+// A box has a cross-section, so a rail must stay UPRIGHT: local +Z along the path, local +Y as close to
+// world up as the slope allows. Built as a basis rather than as Euler angles, because a hand-rolled
+// yaw/pitch pair depends on three's Euler ORDER and would silently twist on the first sloped segment.
+function _pathEulerUpright(dx, dy, dz){
+  _pthF.set(dx, dy, dz).normalize();
+  _pthR.crossVectors(_pthUP, _pthF);
+  if(_pthR.lengthSq() < 1e-8) _pthR.set(1,0,0);   // dead vertical: any horizontal right will do
+  _pthR.normalize();
+  _pthU.crossVectors(_pthF, _pthR).normalize();
+  _pthM.makeBasis(_pthR, _pthU, _pthF);
+  _pthQ.setFromRotationMatrix(_pthM);
+  _pthE.setFromQuaternion(_pthQ);
+  return _pthE;
+}
+// The ordered anchor points the tool works from: the CURRENT SELECTION, in selection order. For a wire the
+// anchor is the TOP of each prop (that is where a cable leaves a pole), plus an offset.
+function pathAnchors(mode, rise){
+  const list = (typeof selProps!=='undefined' && selProps) ? selProps.filter(Boolean) : [];
+  return list.slice(0, PATH_MAX_PTS).map(o=>{
+    const top = (mode==='wire' && o.userData && o.userData.box) ? o.userData.box.max.y : o.position.y;
+    return [o.position.x, top + (+rise||0), o.position.z];
+  });
+}
+function buildPathFrom(pts, opts){
+  opts = opts || {};
+  const mode = (opts.mode==='rail') ? 'rail' : 'wire';
+  if(!pts || pts.length < 2) return [];
+  let segs;
+  if(mode==='wire'){
+    const all=[];
+    for(let i=0;i+1<pts.length;i++){
+      const sp = wireSpan(pts[i], pts[i+1], opts.sag, opts.per);
+      for(let k=(i?1:0); k<sp.length; k++) all.push(sp[k]);   // don't repeat the shared anchor
+    }
+    segs = pathSegments(all);
+  } else {
+    segs = pathSegments(pathSample(pts, !!opts.closed, opts.smooth!==false, opts.per));
+  }
+  if(!segs.length) return [];
+  if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+  const gid = _newGroupId();
+  const made = [];
+  const th = Math.max(0.01, Math.min(2, +opts.thick||0.06));
+  const rw = Math.max(0.05, Math.min(40, +opts.width||1)), rh = Math.max(0.05, Math.min(40, +opts.height||0.6));
+  for(const sg of segs){
+    /* The wire hangs in the air, so its y is ABSOLUTE — pass it through finalizeProp's terrain lift by
+       pre-subtracting what that lift will be, exactly as build 1323's room does. A cable that rose with
+       the ground under each segment would climb the hill instead of crossing the valley. */
+    const own = (typeof _maxTerrainOver==='function')
+      ? _maxTerrainOver(sg.cx, sg.cz, 0.5*Math.hypot(mode==='wire'?th:rw, mode==='wire'?th:sg.len)) : 0;
+    const e = (mode==='wire') ? _pathEulerAlongY(sg.dx, sg.dy, sg.dz) : _pathEulerUpright(sg.dx, sg.dy, sg.dz);
+    const src = (mode==='wire') ? 'cylinder' : 'box';
+    const sc  = (mode==='wire') ? [th, sg.len, th] : [rw, rh, sg.len];
+    /* Build 871 translates every primitive so its BASE sits at local y=0, and that decides both origins:
+         wire — a cylinder grows from its origin along local +Y, which is now the segment direction, so the
+                origin is the segment's START.
+         rail — a box is centred in local X and Z and grows UP from its origin, so the origin is the
+                segment's MIDPOINT and the path you selected is the rail's underside. That is what a fence
+                placed from ground-level markers should do. */
+    const isWire = (mode==='wire');
+    const ax = isWire ? sg.cx - sg.dx*sg.len/2 : sg.cx;
+    const ay = isWire ? sg.cy - sg.dy*sg.len/2 : sg.cy;
+    const az = isWire ? sg.cz - sg.dz*sg.len/2 : sg.cz;
+    spawnProp(src, [ ax, ay - own, az, e.x, e.y, e.z, sc[0], sc[1], sc[2] ], (o)=>{
+      if(o && o.userData){
+        o.userData.groupId = gid;
+        o.userData.name = (mode==='wire') ? 'wire' : 'rail';
+        if(mode==='wire'){ o.userData.noCol = true; if(typeof refreshPropCollider==='function') refreshPropCollider(o); }
+      }
+      if(o) made.push(o);
+    });
+  }
+  if(made.length){
+    editorActive='props'; selProps = made.slice();
+    editorTargets.props.idx = propModels.indexOf(made[made.length-1]);
+    if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    if(typeof updateGizmo==='function') updateGizmo();
+  }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  return made;
+}
+
+let pathDraft = { mode:'wire', thick:0.06, sag:1.2, rise:0.2, width:0.3, height:1.0, per:10, smooth:true, closed:false };
+
+const PATH_WALL_HINT = 'Uses the props you have SELECTED, in the order you selected them.';
+function renderPathPanel(host){
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px';
+  intro.innerHTML='<b>Path</b> — strings something along the props you have selected, <i>in the order you '
+    + 'selected them</i>. <b>Wire</b> hangs a sagging cable between them (power lines, telephone wires, '
+    + 'washing lines) and is <b>not solid</b>; <b>Rail</b> lays a fence, kerb or catwalk along a smooth curve.';
+  host.appendChild(intro);
+
+  const modeRow=document.createElement('div'); modeRow.className='row2';
+  for(const [k,lab] of [['wire','⚡ Wire'],['rail','▬ Rail']]){
+    const b=document.createElement('button'); b.textContent=lab;
+    if(pathDraft.mode===k){ b.style.background='var(--accent)'; b.style.color='#05070a'; b.style.fontWeight='700'; b.style.border='none'; }
+    b.onclick=()=>{ pathDraft.mode=k; renderEditorFields(); };
+    modeRow.appendChild(b);
+  }
+  host.appendChild(modeRow);
+
+  const num=(label, key, min, max, step, hint)=>{
+    const f=document.createElement('div'); f.className='field';
+    const lb=document.createElement('label');
+    const nm=document.createElement('span'); nm.textContent=label; if(hint) nm.title=hint;
+    const inp=document.createElement('input'); inp.type='number'; inp.className='valnum';
+    inp.min=min; inp.max=max; inp.step=step; inp.value=String(pathDraft[key]);
+    inp.onchange=()=>{ const v=parseFloat(inp.value); if(isFinite(v)) pathDraft[key]=Math.max(min, Math.min(max, v)); renderEditorFields(); };
+    inp.onkeydown=(e)=>e.stopPropagation();
+    lb.appendChild(nm); lb.appendChild(inp); f.appendChild(lb); host.appendChild(f);
+  };
+  const chk=(label, key, hint)=>{
+    const w=document.createElement('label'); w.style.cssText='display:flex;align-items:center;gap:6px;margin:3px 0;font-size:11px;cursor:pointer;';
+    const c=document.createElement('input'); c.type='checkbox'; c.checked=!!pathDraft[key];
+    c.onchange=()=>{ pathDraft[key]=c.checked; renderEditorFields(); };
+    const t=document.createElement('span'); t.textContent=label; if(hint) t.title=hint;
+    w.appendChild(c); w.appendChild(t); host.appendChild(w);
+  };
+
+  if(pathDraft.mode==='wire'){
+    num('Thickness', 'thick', 0.01, 2, 0.01, 'Cable radius in metres');
+    num('Sag', 'sag', 0, WIRE_SAG_MAX, 0.1, 'How far the cable droops at the middle of each span');
+    num('Above the pole', 'rise', -20, 20, 0.1, 'The cable leaves each prop this far above its top');
+    num('Segments per span', 'per', 1, 48, 1, 'More is smoother and costs more props');
+  } else {
+    num('Width', 'width', 0.05, 40, 0.05, 'Across the path');
+    num('Height', 'height', 0.05, 40, 0.05, 'The path you selected is the UNDERSIDE');
+    num('Points per span', 'per', 1, 24, 1, 'Only used when Smooth is on');
+    chk('Smooth curve', 'smooth', 'Catmull-Rom through your points instead of straight runs');
+    chk('Closed loop', 'closed', 'Join the last point back to the first');
+  }
+
+  const pts = pathAnchors(pathDraft.mode, pathDraft.rise);
+  const go=document.createElement('button');
+  go.style.cssText='width:100%;margin-top:7px;font-weight:700;';
+  if(pts.length < 2){
+    go.textContent='Select 2 or more props first';
+    go.disabled=true; go.style.opacity='0.55';
+  } else {
+    /* Say how many props it is about to make, BEFORE it makes them — a path is the one tool here that can
+       turn two numbers into hundreds of objects, and finding that out by pressing the button is not a
+       reasonable way to learn it. */
+    const preview = (pathDraft.mode==='wire')
+      ? Math.min(PATH_MAX_SEG, (pts.length-1) * Math.max(1, pathDraft.per|0))
+      : pathSegments(pathSample(pts, pathDraft.closed, pathDraft.smooth, pathDraft.per)).length;
+    go.textContent = (pathDraft.mode==='wire' ? 'String wire' : 'Lay rail') + ' along ' + pts.length + ' props (' + preview + ' segments)';
+    go.style.background='var(--accent)'; go.style.color='#05070a'; go.style.border='none';
+    go.onclick=()=>{
+      const made=buildPathFrom(pts, pathDraft);
+      if(typeof flashToast==='function') flashToast(made.length + (pathDraft.mode==='wire' ? ' wire' : ' rail') + ' segments, grouped');
+    };
+  }
+  host.appendChild(go);
+  const note=document.createElement('div'); note.className='hint'; note.style.cssText='font-size:10px;margin-top:4px;';
+  note.textContent = PATH_WALL_HINT + (pathDraft.mode==='wire' ? ' A wire is decoration — you walk straight through it.' : '');
+  host.appendChild(note);
+}
+
 // build 1323: the Room panel. Deliberately plain — number fields and a list — because the geometry is
 // where the value is and a 3D room gizmo would be a build of its own. Every input is `onchange`, not
 // `oninput`: renderEditorFields tears the panel down on every edit (audit 4.11's remaining bullet), so an
@@ -40428,6 +40699,7 @@ function buildEditorPanel(){
         + '<div id="edPicker"></div>'
         + subfold('Add a shape', 'o_shapes', '<div id="edShapes"></div>', true)
         + subfold('Room', 'o_room', '<div id="edRoom"></div>', false)   /* build 1323: closed by default — it is a tool, not a property of the selection */
+        + subfold('Path (wires &amp; rails)', 'o_path', '<div id="edPath"></div>', false)   /* build 1324 */
         + subfold('In this level', 'o_assets', '<div id="edAssets"></div>', true)
         + subfold('Model &amp; texture', 'o_model', '<div id="edModels"></div><div id="edUrl"></div>', true)
         + subfold('Animation', 'o_anim', '<div id="edAnim"></div>', false)
@@ -40591,6 +40863,7 @@ function buildEditorPanel(){
         ['\u25c7 More shapes \u25b8', '_shapeSub'],
         ['\ud83d\udce6 Model\u2026', ()=>{ jump('build','props'); if(typeof _edRevealHost==='function') _edRevealHost('edModels'); }],
         ['\ud83c\udfe0 Room\u2026',  ()=>{ jump('build','props'); if(typeof _edRevealHost==='function') _edRevealHost('edRoom'); }],
+        ['\u26a1 Wire / rail\u2026', ()=>{ jump('build','props'); if(typeof _edRevealHost==='function') _edRevealHost('edPath'); }],
         ['\u2728 Effect \u25b8',      '_fxSub'],
         ['\ud83d\udca1 Light',       ()=>{ jump('build','lights');  addSceneLight(); }],
         ['\ud83d\udee1 Turret',      ()=>{ jump('build','turrets'); if(typeof addSceneTurret==='function') addSceneTurret(); }],
@@ -42958,6 +43231,8 @@ function renderEditorFields(){
   // build 1323: the room tool (Props tab only, same gate as the shape row it sits under)
   { const roomHost = editorEl.querySelector('#edRoom');
     if(roomHost){ roomHost.innerHTML=''; if(tgt.addable && tgt.urlField && typeof renderRoomPanel==='function') renderRoomPanel(roomHost); } }
+  { const pathHost = editorEl.querySelector('#edPath');   /* build 1324 */
+    if(pathHost){ pathHost.innerHTML=''; if(tgt.addable && tgt.urlField && typeof renderPathPanel==='function') renderPathPanel(pathHost); } }
   // build 1147: what this level is already built from (Props tab only) — the content-browser half of the
   // pair. It renders BEFORE the web search, because the asset you want next is most often one you already
   // used, and a panel that answers that should not be below a search box.
@@ -44306,7 +44581,17 @@ function renderEditorFields(){
           const icb=document.createElement('input'); icb.type='checkbox'; icb.checked=!!tagObj.userData.interact; icb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
           icb.onchange=()=>{ _selApply(o=>{ if(icb.checked) o.userData.interact=true; else delete o.userData.interact; }); };   /* build 1299 */
           iw.appendChild(icb); iw.appendChild(document.createTextNode('Interactable (E)'));
-          row.appendChild(spn); row.appendChild(tin); row.appendChild(iw); th.appendChild(row);
+          /* build 1324: the same treatment for "decoration only". This flag exists because a wire must not
+             be solid, but it is exposed HERE and not left as an internal because "this bush should not
+             block the doorway" is a thing creators want constantly and the only previous answer — build
+             1093's `nocollide` mesh-name convention — needs an imported model and a 3D package to set it. */
+          const nw=document.createElement('label'); nw.title='No collision and no bullet hits \u2014 the player, enemies and shots pass straight through. Use it for cables, foliage and anything that should look present without being in the way.';
+          nw.style.cssText='flex:0 0 auto;display:flex;align-items:center;gap:4px;font-size:11px;color:#9fe6cf;cursor:pointer;';
+          const ncb=document.createElement('input'); ncb.type='checkbox'; ncb.checked=!!tagObj.userData.noCol; ncb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
+          ncb.onchange=()=>{ _selApply(o=>{ if(ncb.checked) o.userData.noCol=true; else delete o.userData.noCol;
+            if(typeof refreshPropCollider==='function') refreshPropCollider(o); }); };
+          nw.appendChild(ncb); nw.appendChild(document.createTextNode('No collision'));
+          row.appendChild(spn); row.appendChild(tin); row.appendChild(iw); row.appendChild(nw); th.appendChild(row);
           // build 1252: per-emitter effect controls — multipliers over the preset, Reset returns to it
           if(tagObj.userData.fx && typeof FX_PRESETS!=='undefined'){
             const cfg=()=> tagObj.userData.fx.cfg || (tagObj.userData.fx.cfg={});
