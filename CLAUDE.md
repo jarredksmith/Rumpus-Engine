@@ -967,6 +967,46 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Motion blur and jagged edges — one hypothesis killed, one open (no build)
+
+Reported from play with a screenshot of the default level: *"seriously jagged edges… if any level of motion
+blur is turned on (anything >0) those rough jagged edges appear."*
+
+**The obvious hypothesis is DEAD: motion blur does not cost the frame its MSAA.** Measured with build
+1126's own metric — an antialiased silhouette against the sky has a coverage gradient, a hard edge has none
+— at the top rung with `samples: 4`, one camera, auto-exposure and grain off:
+
+```
+postMotion 0      65.7% of scanlines antialiased,  mean gradient 0.68 px
+postMotion 0.3    70.4%                            0.85 px
+postMotion 0.62   72.2%                            0.88 px
+```
+
+Blur makes the edge *softer*, not harder. The pipeline reading confirms MSAA is live in all three
+(`_postRT.samples 4`), so the extra `_compRT` hop the blur path adds is not losing the resolve.
+
+**The instrument nearly lied first, in the way this file keeps recording.** The unforced run reported
+`prStep: 3, samples: 0, pixelRatio: 0.66` — SwiftShader had already walked the adaptive ladder down to a
+rung where MSAA is off *anyway*, so it was measuring a machine with no MSAA in either condition. The probe
+forces `_adaptOn=false; _prStepI=0; _hiFxOn=true` and rebuilds the post targets now. Build 1242 lost a
+capture round to exactly this.
+
+**What is still open, and the candidate.** The report is from play, i.e. while MOVING, and build 1246's own
+notes already accept a silhouette artifact from the velocity buffer: *"the residual softening is the
+half-res buffer's bilinear boundary mixing weapon and world velocity at the silhouette — the standard
+gather-blur edge artifact, accepted."* `_velRT` is `mkRT(hw, hh)` — half resolution — and on an
+UnsignedByte fallback its encoded velocity also quantises to ~1 px. A blur whose *amount* steps in 2-pixel
+blocks across an edge is a good description of "rough jagged edges", and it would appear only with blur on
+and only while moving.
+
+**That is a hypothesis, not a finding.** Three attempts to measure it failed and are worth listing so
+nobody repeats them: an edge-jaggedness metric that tracked the strongest gradient per scanline and
+therefore hopped between different edges of the same box; a forced `uVelOn` that `_renderPostFX` overwrites
+every frame; and a screenshot taken after the scripted spin had already stopped, so the blur was back at
+zero. **The discriminator costs the reporter one click and me nothing: does the jaggedness appear with
+motion blur up while standing perfectly still?** Velocity is zero when still, so if it is there when still
+it is not the velocity buffer; if it only appears while turning, it is.
+
 ## The shadow bias was wider than a wall (build 1341)
 
 Reported from play with screenshots: light leaking along edges and inside **closed rooms**, and a column
