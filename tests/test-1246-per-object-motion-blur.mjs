@@ -118,7 +118,13 @@ assert(/mu\.tVel\.value = _velWant \? _velRT\.texture : _compRT\.texture; mu\.uV
   'a bound-but-unread texture beats an unbound sampler (1242 rule)');
 
 // --- lifecycle ---------------------------------------------------------------------------------------
-assert(/_velRT=mkRT\(hw,hh\);/.test(src), 'the velocity target is half-res');
+// build 1344: this quoted the construction line verbatim, and _velRT is now built explicitly so it can be
+// NEAREST-sampled (a direction field is not an image). Half-res is what the assertion always meant.
+assert(/_velRT\s*=\s*new THREE\.WebGLRenderTarget\(hw, hh,/.test(src), 'the velocity target is half-res');
+assert(/_velRT\s*=\s*new THREE\.WebGLRenderTarget\(hw, hh, \{ minFilter:THREE\.NearestFilter, magFilter:THREE\.NearestFilter/.test(src),
+  '...and build 1344 samples it as DATA: bilinear over a half-res velocity+flag buffer invents a velocity ' +
+  'belonging to neither surface at every silhouette, and a 0.75/0.25 flag that the hard written-test then ' +
+  'resolves in opposite directions on adjacent pixels');
 assert(/_raysRT,_ssrRT,_velRT\]\.concat/.test(src) && /_ssrRT=_velRT=null;/.test(src),
   'allocates with the post targets, disposes with them (880 hygiene)');
 
