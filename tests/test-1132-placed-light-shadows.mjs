@@ -7,7 +7,7 @@
 // Opt-in per light, and only on SPOT and DIRECTIONAL. A point light's shadow is a cube map — six depth
 // passes for one lamp — which is not a cost to hand a creator behind a checkbox in a room with eight
 // of them. A spot is one pass, and a spot is what you reach for when you want a visible shadow anyway.
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- buildLight, executed
@@ -26,8 +26,17 @@ const src = gameSource();
     HemisphereLight: class { constructor(c,g,i){ this.color=c; this.groundColor=g; this.intensity=i; this.castShadow=false; this.shadow=mkShadow(); } },
   };
   const mkBuild = (coarse) => { const lightModels = [];
+    // build 1341: buildLight's normalBias now comes from the SHARED _sunNormalBias, so the isolated scope
+    // has to be given the real one rather than a stub — every assertion below is about the value it
+    // produces. The three constants come out of the source too, so a retune moves the expectations here.
     const fn = new Function('THREE', 'editorOpen', 'IS_COARSE', 'Math', 'String', '_aimLight', '_UP_Y', 'scene', 'lightModels',
-      extractFunction('buildLight') + '; return buildLight;')(THREE, false, coarse, Math, String, () => {}, null, { add(){} }, lightModels);
+      `const SUN_NB_TEXELS = ${extractConst('SUN_NB_TEXELS')};
+       const WALL_REF_M = ${extractConst('WALL_REF_M')};
+       const SUN_NB_MAX_M = ${extractConst('SUN_NB_MAX_M')};
+       const SUN_NB_MIN_TEXELS = ${extractConst('SUN_NB_MIN_TEXELS')};
+       ${src.match(/const _sunNbCap = [^\n]+/)[0]}
+       ${src.slice(src.indexOf('const _sunNormalBias = '), src.indexOf('const SHADOW_REFIT_TEXELS'))}
+       ` + extractFunction('buildLight') + '; return buildLight;')(THREE, false, coarse, Math, String, () => {}, null, { add(){} }, lightModels);
     return (o) => fn(Object.assign({ t:[0,0,0] }, o)); };
   const build = mkBuild(false);
 
@@ -57,7 +66,11 @@ const src = gameSource();
     eq(sh.camera.far, 12, 'a spot\'s far plane is its range');
     eq(sh.camera.near, 0.4, '...with a near plane close enough for a lamp on a wall');
     // build 1125's rule: normalBias is a TEXEL quantity, and a spot's texel comes from its range
-    const expect = Math.min(0.35, Math.max(0.01, (2 * 12 / 1024) * 7.7));
+    // build 1341: the cap is a WORLD quantity now (half the room tool's default wall) with a 1.5-texel
+    // floor, and a spotlight shares the sun's derivation — a creator's lamp in a corridor is exactly where
+    // an offset wider than the wall lights the room next door.
+    const _t = 2 * 12 / 1024;
+    const expect = Math.min(Math.max(0.15, _t * 1.5), Math.max(0.01, _t * 7.7));
     assert(Math.abs(sh.normalBias - expect) < 1e-9, 'normalBias is derived from the range and the map size (' + sh.normalBias.toFixed(4) + ')');
     assert(sh.bias < 0, 'and the depth bias is negative, as on the sun');
   }
@@ -66,7 +79,8 @@ const src = gameSource();
     const a = build({ type:'spot', shadow:1, distance:8 }).userData.light.shadow.normalBias;
     const b = build({ type:'spot', shadow:1, distance:30 }).userData.light.shadow.normalBias;
     assert(b > a, 'a 30 m spot gets a larger normalBias than an 8 m one (' + a.toFixed(4) + ' vs ' + b.toFixed(4) + ')');
-    assert(b <= 0.35, '...capped, so a huge range cannot offset the shadow off the surface entirely');
+    assert(b <= 0.15 + 1e-9 || b <= (2 * 30 / 1024) * 1.5 + 1e-9,
+      '...capped at half a wall, so a huge range cannot light the room next door (build 1341)');
   }
   {
     // phones get half the map

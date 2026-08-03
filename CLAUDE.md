@@ -967,6 +967,76 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The shadow bias was wider than a wall (build 1341)
+
+Reported from play with screenshots: light leaking along edges and inside **closed rooms**, and a column
+whose shadow starts with a lit gap instead of at its base.
+
+Both are one number. Measured live at the shipped defaults, before touching anything:
+
+```
+shadowDist 60, map 2048, extent 60  ->  texel 5.86 cm,  normalBias 0.4512  (7.7 texels)
+the far cascade                     ->  normalBias 1.805
+```
+
+**Forty-five centimetres** of world-space offset along the receiver's normal — and the room tool's own
+default wall is `roomDraft.t = 0.3`. The lookup was displaced **one and a half walls**, so it landed on the
+lit side and the room was lit through its own wall. The same offset slides a contact shadow out from under
+the thing casting it, which is the gap at the column's base. The far cascade's 1.805 m is **six walls**.
+
+### The unit was the bug
+
+Build 1125 got half of this right, and its correction was real: `normalBias` had been a world constant tuned
+against the old fixed ±80 volume, build 1120 made the volume variable without retuning it, and 1125
+re-expressed the constant in TEXELS so it would scale. But **the trade has two ends and they are measured
+in different units**:
+
+- **Acne** is a shadow-map SAMPLING artifact. Its scale is TEXELS.
+- **Light leak and peter-panning** are GEOMETRY artifacts. Their scale is METRES, set by how thin the things
+  a creator actually builds are.
+
+A rule in texels alone cannot know that at shadowDist 60 it has grown past a wall. So the texel rule stays,
+and a world cap sits beside it — **derived from the room tool's own default wall** rather than picked (half
+of it, so the offset cannot reach a wall's mid-plane), with a **1.5-texel floor** so the cure cannot become
+the disease: at shadowDist 400 a texel is 39 cm, and a flat 0.15 m cap would be 0.4 of a texel on the volume
+where the map is coarsest.
+
+```
+dist    texel      normalBias   texels   far cascade
+   8    0.78cm     0.060        7.7      0.150      <- unchanged: the texel rule still binds
+  20    1.95cm     0.150        7.7      0.150      <- the crossover
+  30    2.93cm     0.150        5.1      0.176
+  60    5.86cm     0.150        2.6      0.352      <- the default: was 0.451 / 1.805
+ 120   11.72cm     0.176        1.5      0.703
+ 400   39.06cm     0.586        1.5      0.732      <- the texel floor takes over
+```
+
+It only ever LOWERS the bias, and never below the sampling scale. The near cascade, the far cascade and a
+creator's spotlight now share **one** derivation instead of three literal caps (0.6, 2.2, 0.35) that had to
+be kept in step — and the far one, at 1.8 m, had never been in step with anything.
+
+**Build 1095's own tuning was already leaking.** 0.6 m was two of the engine's walls; there was simply no
+volume small enough for anyone to notice until 1120 made shadowDist variable and 1125 held the ratio.
+
+### What I did NOT measure, stated plainly
+
+**That the residual gap at 0.15 is smaller than at 0.45.** Three attempts at that measurement produced junk
+— a counter that saturated at its loop limit for every input, a leak reading that moved non-monotonically
+because the rig was re-aiming the camera between samples, and a scanline that turned out to be crossing the
+column's own lit edge rather than the ground. What IS established: the parameter, the geometry it exceeded,
+and that the bias is what lights those pixels — a controlled A/B (auto-exposure and grain off, one camera,
+one scene) took the base region from `57,56,54,52` at the shipped bias to `26,26,26,26` at zero.
+
+**The acne floor is likewise unmeasured**, which is why the change is conservative in that direction: 2.6
+texels at the default is inside the ordinary range for a normal offset, and small volumes are byte-identical.
+Acne is on the "what only a human can verify" list — worth a look at a low sun on a large flat surface.
+
+Five pins moved (1125, 1120, 1132, 1185, 1261). Four of them grabbed the derivation with a **two-line
+regex** — the line-count form of the character-budget trap this file records — and take the whole block by
+slice now. 1125's own numbers genuinely changed, since this constant is its entire subject; its intent
+(one derivation, texel-proportional below the cap, small enough not to erase the shadow it biases) is
+asserted in the regime it still governs, and that last assertion now passes by a much wider margin.
+
 ## Alpha cutout (build 1340 — rendering audit #4)
 
 > Greped `alphaTest` across the game script: **one hit**, the snow sprite. Foliage cards, chain-link, grates

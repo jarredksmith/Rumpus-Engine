@@ -37,8 +37,11 @@ const build = (coarse, shadowDist) => {
   if (moonFar) { moonFar.shadow.mapSize.set(2048, 2048); moonFar.target = _sunTargetFar; }
   const worldCfg = { shadowDist: shadowDist || 60 };
   const fit = new Function('THREE', 'moon', 'moonFar', '_sunTarget', '_sunTargetFar', 'worldCfg',
-    'const SUN_NB_TEXELS = ' + NB + ';\n' +
-    src.match(/const _sunNormalBias = \(extent, px\) => [^\n]+;/)[0] + '\n' +
+    // build 1341: the sun's normalBias derivation grew from two lines to a small block (a world cap with a
+    // texel floor beside the texel rule). Every rig below used to grab it with a TWO-LINE regex — the line
+    // count version of the character-budget trap this file records. They take the whole block by slice now,
+    // which cannot break when it grows again.
+    src.slice(src.indexOf('const SUN_NB_TEXELS'), src.indexOf('const SHADOW_REFIT_TEXELS')) + '\n' +
     'const _fitF = new THREE.Vector3(), _fitAx = new THREE.Vector3(), _fitAy = new THREE.Vector3(), _fitL = new THREE.Vector3(), _fitL2 = new THREE.Vector3();\n' +
     'let _fitFx = 1e9, _fitFz = 1e9;\n' +
     'const SHADOW_REFIT_TEXELS=' + extractConst('SHADOW_REFIT_TEXELS') + ';\n' + extractFunction('_fitSunShadow') + '\nreturn _fitSunShadow;'
@@ -56,8 +59,18 @@ const build = (coarse, shadowDist) => {
   { const d1 = t.moon.position.clone().sub(t._sunTarget.position).normalize();
     const d2 = t.moonFar.position.clone().sub(t._sunTargetFar.position).normalize();
     assert(d1.dot(d2) > 0.9999, 'both cascades shine the SAME direction — they are one sun, split by coverage, not two lights'); }
-  near(t.moonFar.shadow.normalBias, Math.min(2.2, (2 * 240 / 2048) * NB), 1e-9,
-    'the far bias is the texel rule (1125) at the far map\'s own scale — the near 0.6 cap is a near-volume quantity and must not clamp it');
+  // build 1341: the far cascade no longer carries a cap of its own. It was 7.7 texels of a 240-extent map
+  // — 1.805 m, six of the room tool's 0.3 m walls — and that leaks light through anything at any distance.
+  // The assertion's INTENT is unchanged: the far map's texel is 4x the near one, so the far bias must be
+  // free to be proportionally larger. Giving the shared cap a 1.5-texel FLOOR is what grants that, without
+  // a second constant to keep in step.
+  { const tf = 2 * 240 / 2048, tn = 2 * 60 / 2048;
+    near(t.moonFar.shadow.normalBias, Math.min(Math.max(0.15, tf * 1.5), tf * NB), 1e-9,
+      'the far bias is the SHARED derivation at the far map\'s own scale');
+    assert(t.moonFar.shadow.normalBias > Math.min(Math.max(0.15, tn * 1.5), tn * NB),
+      '...and is larger than the near cascade\'s, because its texels are coarser');
+    assert(t.moonFar.shadow.normalBias < 1.805,
+      '...but far below the 1.805 m it used to be, which was six walls thick'); }
   { // the mirror runs BEFORE the early return — colour/intensity stay live even when nothing moved
     t.moon.intensity = 0.42; t.moon.color.setHex(0xff0000);
     assert(t.fit(cam) === false, 'an unmoved camera fits nothing...');
