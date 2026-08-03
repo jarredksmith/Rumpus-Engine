@@ -967,6 +967,43 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A joiner's pickups flashed (build 1327)
+
+Reported from play: *"in a multiplayer match, the joiner sees the pickups, but they flash. They don't flash
+on the host."*
+
+**Flashing that is per-frame and camera-dependent is z-fighting** — two surfaces contending for the same
+pixels. So the question was never "what toggles `visible`"; it was **what stands somewhere different on a
+client**. Enumerating the scene answered it in one run.
+
+The pickup snapshot carried `x, z, kind, ready` and **nothing else**. A pickup spot also carries an authored
+`y`, three rotations and a scale (`pickupSpots {x,z,kind,item,y,rx,ry,rz,scale,interact}`), and the host
+lifts every pad onto the ground with `_maxTerrainOver`. The client did neither — `m.position.set(pu.p[0], 0,
+pu.p[1])`, flat at zero. A pad disc buried in, or exactly coplanar with, the floor **is** the flash.
+
+```
+ground 3, pad authored y 1.5 / ry 45 / scale 1.4
+before   host group y 3            client group y 0     (rotation and scale lost entirely)
+after    host y 4.5 ry 0.785 sc 1.4  ==  client y 4.5 ry 0.785 sc 1.4
+```
+
+The payload gained the three fields, **each omitted at its default**, so an unauthored pad is byte-identical
+on the wire — and PU is only sent when the set changes, so the cost is nil. The client places its pads with
+`_applyPickupXform`, **the host's own function**, rather than a second copy of the maths: that is the whole
+reason the two diverged, and sharing the function is what stops it recurring.
+
+**The same probe found a second thing nobody had reported.** `updatePowerups` opens with
+`if(!powerups.length) return;` — and a client's pads live in `NET.powerupMeshes`, not in `powerups`. So a
+joiner's pickups were never animated at all: no spin, no bob, and `pad.visible` never followed the world's
+`pickupBase` toggle. Measured on a client: icon y 1.25 and rotation 0, unchanged after a frame. **A joiner
+watched four dead discs and nobody said so**, presumably because the flashing was louder.
+
+The general shape, for the fourth time this session: **one behaviour, two implementations, and only one of
+them maintained.** Build 1320's shape list, 1320's zone-add list, 1326's zone pick/drag lists, and now the
+pickup transform. When a client and a host must agree about something, they have to run the same function.
+
+One pin moved (80).
+
 ## The gizmo reaches the whole level (build 1326)
 
 Reported from play: *"For the player start, allow the gizmo y handle to move it for height placement. Make

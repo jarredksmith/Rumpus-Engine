@@ -23262,7 +23262,7 @@ function spawnPowerups(){
   const spots = (pickupSpots && pickupSpots.length) ? pickupSpots : powerupLayout();
   for(const spot of spots){
     const mesh = buildPowerupMesh(spot.kind, spot.item); _applyPickupXform(mesh, spot); scene.add(mesh);
-    powerups.push({ id:_puId++, x:spot.x, z:spot.z, kind:spot.kind, item:spot.item, interact:!!spot.interact, ready:true, cd:0, mesh });
+    powerups.push({ id:_puId++, x:spot.x, z:spot.z, kind:spot.kind, item:spot.item, interact:!!spot.interact, ready:true, cd:0, mesh, spot });   /* build 1327: the authored transform travels to clients */
   }
 }
 function applyPowerupLocal(kind, item){
@@ -23282,6 +23282,15 @@ function grantPowerup(playerEntry, kind, item){
   else sendToPlayer(playerEntry.id, { t:'power', k:kind, item:item });
 }
 function updatePowerups(dt){
+  /* build 1327: a client's pads live in NET.powerupMeshes, not in `powerups`, so this function early-
+     returned and NOTHING animated them — no spin, no bob, and `pad.visible` never followed the world's
+     `pickupBase` toggle. Measured on a client: icon y 1.25 and rotation 0 before and after a frame. The
+     host has spun and bobbed its pads since they existed; a joiner watched four dead discs. */
+  if(NET.mode==='client'){
+    const M = NET.powerupMeshes;
+    if(M) for(const id in M){ const m=M[id]; if(m && m.visible) _animatePickup(m, dt); }
+    return;
+  }
   if(!powerups.length) return;
   const players = allPlayers();
   for(const p of powerups){
@@ -26090,7 +26099,22 @@ function serializeWorld(){
   const Kall = chests.map(ch=>({ id:ch.id, p:[q2(ch.pos.x),q2(ch.pos.z)], it:ch.items.map(i=>i.id), gc:(ch.glowColor!=null?ch.glowColor:undefined), gi:(ch.glowI!=null?ch.glowI:undefined), gy:(ch.yOff||undefined) }));
   const _ks=JSON.stringify(Kall);
   const K = full ? (chests.length ? Kall : undefined) : (_ks!==_snapPrevK ? Kall : undefined); _snapPrevK=_ks;
-  const PUall = powerups.map(p=>({ id:p.id, p:[q2(p.x),q2(p.z)], k:p.kind, r:p.ready?1:0 }));
+  /* build 1327, reported from play: "the joiner sees the pickups, but they flash. They don't flash on the
+     host." The payload carried x, z, kind and ready — and NOTHING ELSE. A pickup spot also has an authored
+     `y`, three rotations and a scale (`pickupSpots {x,z,kind,item,y,rx,ry,rz,scale,interact}`), and the
+     host lifts every pad onto the ground with `_maxTerrainOver`. A client did neither: it placed the pad at
+     `(x, 0, z)`, flat. Measured: with the ground at 3 the host's group sits at y 3 and the client's at y 0.
+     A pad disc whose bottom face is buried in — or exactly coplanar with — the floor is two surfaces
+     fighting for the same pixels, and z-fighting is what flashing IS.
+     Sent only when the set CHANGES (see below), so five extra numbers per pad cost nothing on the wire. */
+  const PUall = powerups.map(p=>{
+    const sp = p.spot || {};
+    const e = { id:p.id, p:[q2(p.x),q2(p.z)], k:p.kind, r:p.ready?1:0 };
+    if(sp.y) e.y = q2(+sp.y);
+    if(sp.rx || sp.ry || sp.rz) e.rr = [q2(+sp.rx||0), q2(+sp.ry||0), q2(+sp.rz||0)];
+    if(sp.scale!=null && +sp.scale>0 && Math.abs(+sp.scale-1)>1e-3) e.sc = q2(+sp.scale);
+    return e;
+  });
   const _ps=JSON.stringify(PUall);
   const PU = full ? (powerups.length ? PUall : undefined) : (_ps!==_snapPrevPU ? PUall : undefined); _snapPrevPU=_ps;
   // objective state (so clients see the survival timer / extraction beacon + hold, not just "WAVE n")
@@ -26320,7 +26344,12 @@ function applyWorld(msg){
   if(NET.mode==='client' && (msg.PU !== undefined || !msg.dl)){   /* build 1197: omitted on a delta = unchanged */
     const PU = msg.PU || []; const ps=new Set();
     for(const pu of PU){ ps.add(pu.id); let m=NET.powerupMeshes[pu.id];
-      if(!m){ m=buildPowerupMesh(pu.k); m.position.set(pu.p[0],0,pu.p[1]); m.userData._puKind=pu.k; scene.add(m); NET.powerupMeshes[pu.id]=m; }   /* build 1201: the kind survives for migration */
+      if(!m){ m=buildPowerupMesh(pu.k); m.userData._puKind=pu.k; scene.add(m); NET.powerupMeshes[pu.id]=m; }   /* build 1201: the kind survives for migration */
+      /* build 1327: the SAME function the host places its pads with, so the two cannot diverge again. It
+         does the terrain lift, the authored height, the rotation and the scale — all four of which a
+         client used to lose, leaving the pad flat at y=0 and z-fighting the floor. */
+      _applyPickupXform(m, { x:pu.p[0], z:pu.p[1], y:(pu.y||0),
+        rx:(pu.rr?pu.rr[0]:0), ry:(pu.rr?pu.rr[1]:0), rz:(pu.rr?pu.rr[2]:0), scale:(pu.sc!=null?pu.sc:1) });
       m.visible = !!pu.r; }
     for(const id in NET.powerupMeshes){ if(!ps.has(+id)){ scene.remove(NET.powerupMeshes[id]); delete NET.powerupMeshes[id]; } }
   }
@@ -30334,7 +30363,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1326 · 2026-08-03';
+const BUILD_VERSION = 'build 1327 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
