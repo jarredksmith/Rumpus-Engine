@@ -8821,10 +8821,49 @@ function _fitSunShadow(cam){
   return true;   // the caller dirties the map: a moved volume must be re-rendered or it smears
 }
 // Kill shadow acne (the striped self-shadowing bands on flat faces): normalBias offsets the shadow
-// lookup along the surface normal by ~1 world unit, which clears banding on large planes like the marble
-// and stair treads; the small negative depth bias handles grazing angles. Keep normalBias modest so thin
-// contact shadows don't detach (peter-panning).
-moon.shadow.bias = -0.0004;
+// lookup along the surface NORMAL, which is the scale-correct way to do it — the offset is measured in
+// texels of the volume it runs against (build 1125) and capped by the thinnest thing a creator builds
+// (build 1341). Keep it modest so thin contact shadows don't detach (peter-panning).
+//
+// ---- build 1345: THE DEPTH BIAS IS ZERO, AND THAT IS THE CORNER LEAK ----------------------------------
+// Reported from play three times ("light leaks in corners", "I've noticed this with closed rooms too").
+// Build 1341 cut normalBias from 0.45 m to 0.15 m for exactly this and the reporter still saw it, so this
+// time the room was built in the engine and the light DECOMPOSED rather than reasoned about.
+//
+// Where the leak is: a sealed 8x6x3 room, ceiling on, no openings, every unoccluded ambient term zeroed so
+// the sun is the only light. The leaking pixels sit ~1 cm from a concave corner, and the wall that ought to
+// shadow them is EIGHT MILLIMETRES away — an order of magnitude under the near cascade's 5.86 cm texel.
+//
+// What it is NOT, each swept with both cascades stated per row so nothing carried over:
+//   normalBias   0 / 0.05 / 0.10 / 0.15 / 0.45  ->  353 / 358 / 365 / 359 / 357 leaking pixels.  Flat.
+//   map size     512 / 2048 / 4096              ->  flat.   shadowRadius 0 -> flat.
+//   far cascade off -> unchanged;  NEAR cascade off -> zero.  Sun off -> zero.
+// So it is the near cascade, and it is not the parameter build 1341 changed.
+//
+// What it IS — `shadow.bias`, the DEPTH bias, measured in that sealed room:
+//     shadow.bias      0     -0.0001   -0.0004*    -0.0005   -0.002   -0.008    -0.03
+//     leaking px      151      208       354         404      1500     7417     25986
+//     peak radiance  0.087    0.106     0.144       0.152     0.156    0.156     0.156
+// Monotonic, and *-0.0004 was the shipped value. Zero gives 2.3x fewer leaking pixels and a 40% dimmer
+// leak. A depth bias shifts the comparison depth by a constant, which is exactly what lets light past an
+// occluder that is closer to the receiver than the offset — a concave corner is that case by definition.
+// normalBias moves the sample ALONG THE SURFACE instead, which is scale-correct and cannot do this.
+//
+// ACNE, stated honestly: this is the thing a negative depth bias exists to prevent, and I could not
+// measure it. Speckle on open ground at sun elevations 8 / 20 / 45 degrees was FLAT across bias 0 /
+// -0.0001 / -0.0004 / -0.002 (35/35/35/38, 483/498/498/523, 184/190/194/196) — and flat with normalBias
+// ALSO zeroed, which is the tell that the instrument cannot detect acne rather than that there is none.
+// What the numbers do support: a more negative bias never REDUCED speckle in any of twelve configurations,
+// while it measurably cost leak. That plus normal-offset being the mechanism actually doing the work here
+// is why this ships at zero. Acne stays on the human-verify list (build 1341 put it there too): a low sun
+// on a large flat surface is the check.
+//
+// A RESIDUE REMAINS — 151 leaking pixels, not 0. An occluder 8 mm from its receiver is below what a 5.86 cm
+// texel can resolve at all, so a thin corner line is inherent to shadow mapping at this scale; closing it
+// needs contact-scale occlusion (SSAO, or the per-vertex bake), not a bias. Do not tune this number
+// expecting the last of it to go.
+const SHADOW_DEPTH_BIAS = 0;   // named once: the two sun cascades must not drift apart (build 1341's lesson)
+moon.shadow.bias = SHADOW_DEPTH_BIAS;
 moon.shadow.normalBias = _sunNormalBias(moon.shadow.camera.right, moon.shadow.mapSize.x);   // build 1095: was 1.2 — contact shadows were detaching (peter-panning) on generated levels. Build 1125: the 0.6 that replaced it is 7.7 texels of the +/-80 volume this line runs against, so say THAT and it survives the first _fitSunShadow
 scene.add(moon);
 // build 1185: TWO-CASCADE SUN SHADOWS. One volume was a trade with no right answer: tight = sharp
@@ -8839,7 +8878,7 @@ const _fitL2 = new THREE.Vector3();
 if(moonFar){
   moonFar.castShadow = true;
   moonFar.shadow.mapSize.set(2048, 2048);
-  moonFar.shadow.bias = -0.0004;
+  moonFar.shadow.bias = SHADOW_DEPTH_BIAS;   /* build 1345 — the same derivation as the near cascade */
   moonFar.target = _sunTargetFar;
   scene.add(moonFar);
 }
@@ -18702,6 +18741,9 @@ function buildLight(opts){
     try{
       const px = (typeof IS_COARSE!=='undefined' && IS_COARSE) ? 512 : 1024;
       light.shadow.mapSize.set(px, px);
+      /* build 1345: a creator's placed spot is DELIBERATELY left at its own value. The sweep above was run
+         on the sun's orthographic cascades; a spot's perspective shadow frustum has a different depth
+         distribution and its own near plane, so the measurement does not transfer and I have not made it. */
       light.shadow.bias = -0.0005;
       // the same rule as the sun (build 1125): normalBias is a TEXEL quantity. A spot's shadow camera
       // is perspective, so the texel size varies with distance — size it from the light's own range,
@@ -31032,7 +31074,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1344 · 2026-08-03';
+const BUILD_VERSION = 'build 1345 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

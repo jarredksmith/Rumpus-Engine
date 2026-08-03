@@ -68,7 +68,12 @@ const fn = new Function('Math', nb[0] + '; return _sunNormalBias;')(Math);
     'the boot value is the same expression, not a restated literal that can drift');
   assert(!/moon\.shadow\.normalBias = 0\.6;/.test(src), 'the bare constant is gone');
   // the DEPTH bias is a different quantity against an unchanged near/far, so it must NOT be scaled
-  assert(/moon\.shadow\.bias = -0\.0004;/.test(src), 'the depth bias stays as tuned — 1120 did not change the depth range');
+  // build 1345 took this value to zero (it was the corner leak), but THIS assertion is about the depth
+  // bias being a flat constant rather than something scaled with the volume — which is still true.
+  assert(/moon\.shadow\.bias = SHADOW_DEPTH_BIAS;/.test(src) && /const SHADOW_DEPTH_BIAS = \d/.test(src),
+    'the depth bias is a constant, not scaled — 1120 did not change the depth range');
+  assert(!/moon\.shadow\.bias\s*=\s*[^;]*extent|moon\.shadow\.bias\s*=\s*[^;]*mapSize/.test(src),
+    '...and nothing derives it from the volume, which is the distinction this test exists to hold');
   assert(!/moon\.shadow\.bias = [^-\n]*_sunNormalBias/.test(src), '...and is not swept along with the normal bias');
 }
 // the helper must be declared before _fitSunShadow uses it (a const is in TDZ until its line runs)
