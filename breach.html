@@ -10794,11 +10794,22 @@ function _trackValueAt(track, t){
 // [fromFrame, toFrame] INCLUSIVE, in frames at `fps`. Inclusive because that is what an animator means by
 // "idle is 0 to 60", and because two adjacent slices sharing their boundary frame is correct — the end pose
 // of one IS the start pose of the next, which is what makes a cut loop cleanly.
-function sliceClip(src, name, fromFrame, toFrame, fps){
+// build 1339: `hold` makes the slice a STILL — one pose, no motion of any kind.
+// Asked for from use: "the default slow bob of the weapon while idling looks great, and works for most
+// situations." A weapon's baked idle is usually a breathing loop that FIGHTS the engine's procedural bob:
+// two idles playing at once, one of which the creator cannot retime. A held frame takes the baked motion
+// out and leaves the bob, which is the look they already have.
+//
+// It is NOT the same as a one-frame range. A range of [n, n] still brackets t0 and t1 = t0 + 1/fps, so the
+// two keys hold slightly different poses and the clip creeps and loops. A hold evaluates the pose ONCE and
+// writes it to both ends, so every interpolation between them returns the same value — the pose cannot
+// drift no matter how the action is looped, timescaled or blended.
+function sliceClip(src, name, fromFrame, toFrame, fps, hold){
   if(!src || !src.tracks) return null;
   const f = Math.max(ANIM_CUT_FPS_MIN, Math.min(ANIM_CUT_FPS_MAX, +fps || 30));
   let t0 = (+fromFrame || 0) / f, t1 = (+toFrame || 0) / f;
-  if(t1 < t0){ const _s = t0; t0 = t1; t1 = _s; }
+  if(hold) t1 = t0 + 1 / f;                       // a still is one frame long, whatever the out-point says
+  else if(t1 < t0){ const _s = t0; t0 = t1; t1 = _s; }
   const EPS = 1e-6;
   if(t1 - t0 < EPS) t1 = t0 + 1 / f;              // a zero-length slice is not a clip; give it one frame
   const tracks = [];
@@ -10806,6 +10817,11 @@ function sliceClip(src, name, fromFrame, toFrame, fps){
     const vs = tr.getValueSize();
     const times = [], values = [];
     const push = (t, v)=>{ times.push(t - t0); for(let k=0;k<vs;k++) values.push(v[k]); };
+    if(hold){
+      /* ONE evaluation, written to both ends — not two evaluations that happen to be close */
+      const v = _trackValueAt(tr, t0);
+      push(t0, v); push(t1, v);
+    } else {
     push(t0, _trackValueAt(tr, t0));             // the bracketing in-key: no track can come out empty
     for(let j=0;j<tr.times.length;j++){
       const tt = tr.times[j];
@@ -10814,6 +10830,7 @@ function sliceClip(src, name, fromFrame, toFrame, fps){
       push(tt, v);
     }
     push(t1, _trackValueAt(tr, t1));             // ...and the out-key, so the duration is what was asked
+    }
     const T = tr.constructor;
     let nt;
     try{ nt = new T(tr.name, times, values); }
@@ -10824,6 +10841,7 @@ function sliceClip(src, name, fromFrame, toFrame, fps){
   if(!tracks.length) return null;
   const c = new THREE.AnimationClip(String(name||'Slice'), t1 - t0, tracks);
   c.userData = c.userData || {}; c.userData._cut = true;   // so a re-apply can remove its own work
+  if(hold) c.userData._still = true;
   return c;
 }
 // Level data: slices belong to the ASSET, not to a role — the same character used by the player and by an
@@ -10852,7 +10870,9 @@ function _sanAnimCuts(raw){
       const a = Math.max(0, Math.min(1e6, Math.round(+c.a) || 0));
       const b = Math.max(0, Math.min(1e6, Math.round(+c.b) || 0));
       const src = String(c.s == null ? '' : c.s).slice(0, 120);
-      cuts.push({ n, s:src, a, b, f });
+      const e = { n, s:src, a, b, f };
+      if(c.h) e.h = 1;                            /* build 1339: only when set, so nothing else grows a key */
+      cuts.push(e);
     }
     if(cuts.length) out[String(url).slice(0, 400)] = cuts;
   }
@@ -10860,7 +10880,7 @@ function _sanAnimCuts(raw){
 }
 function _animCutSig(url){
   const l = animCuts[url]; if(!l || !l.length) return '';
-  return l.map(c=>c.n+'|'+c.s+'|'+c.a+'|'+c.b+'|'+c.f).join(';');
+  return l.map(c=>c.n+'|'+c.s+'|'+c.a+'|'+c.b+'|'+c.f+'|'+(c.h?1:0)).join(';');
 }
 // Idempotent, and it REMOVES its own previous work first — editing a slice must update it, not stack a
 // second clip with the same name beside it, which would make `find(by name)` return whichever came first.
@@ -10874,7 +10894,7 @@ function applyAnimCuts(gltf, url){
     const src = kept.find(x=>(x.name||'')===c.s) || kept[0];
     if(!src) continue;
     if(out.some(x=>(x.name||'')===c.n)) continue;   // never shadow a real clip the model already carries
-    const cut = sliceClip(src, c.n, c.a, c.b, c.f);
+    const cut = sliceClip(src, c.n, c.a, c.b, c.f, !!c.h);
     if(cut) out.push(cut);
   }
   gltf.animations = out;
@@ -30878,7 +30898,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1338 · 2026-08-03';
+const BUILD_VERSION = 'build 1339 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -48975,6 +48995,18 @@ function showClipSlicer(url, label, opts){
   r3.appendChild(lbl('Out')); r3.appendChild(outN); r3.appendChild(setOut);
   const rangeNote = document.createElement('span'); rangeNote.style.cssText='font-size:11px;color:#7fb8a6;';
   r3.appendChild(rangeNote);
+  /* build 1339: hold a single frame. A baked weapon idle is usually a breathing loop that fights the
+     engine's own viewmodel bob — two idles at once, one of which the creator cannot retime. */
+  const rH = row(4);
+  const holdWrap = document.createElement('label');
+  holdWrap.style.cssText='display:flex;align-items:center;gap:6px;font-size:11px;color:#9fe6cf;cursor:pointer;';
+  const holdCb = document.createElement('input'); holdCb.type='checkbox';
+  holdCb.style.cssText='width:14px;height:14px;accent-color:var(--accent);';
+  const holdTxt = document.createElement('span'); holdTxt.textContent='Hold a single frame (a still pose)';
+  holdWrap.appendChild(holdCb); holdWrap.appendChild(holdTxt); rH.appendChild(holdWrap);
+  const holdNote = document.createElement('span'); holdNote.style.cssText='font-size:11px;color:#7fb8a6;';
+  holdNote.textContent='\u2014 for a weapon idle, this leaves the engine\u2019s own bob to do the moving.';
+  rH.appendChild(holdNote);
 
   const r4 = row();
   const nameI = document.createElement('input'); nameI.type='text'; nameI.placeholder='Slice name, e.g. Reload'; nameI.maxLength=48;
@@ -48985,7 +49017,7 @@ function showClipSlicer(url, label, opts){
 
   const list = document.createElement('div'); list.style.cssText='margin-top:10px;'; wrap.appendChild(list);
   const hint = document.createElement('div'); hint.style.cssText='margin-top:8px;font-size:11px;color:#7fb8a6;line-height:1.5;';
-  hint.textContent = 'Frames are INCLUSIVE, so 0–60 and 60–165 correctly share frame 60 — the end pose of one is the start pose of the next, which is what makes a cut loop cleanly. Slices are saved with the level and belong to the model, so the player and an enemy using the same character get the same set.';
+  hint.textContent = 'Frames are INCLUSIVE, so 0\u201360 and 60\u2013165 correctly share frame 60 \u2014 the end pose of one is the start pose of the next, which is what makes a cut loop cleanly. Tick \u201chold a single frame\u201d for a still pose: the gun stops animating itself and the engine\u2019s viewmodel bob does the moving, which is usually what you want for idle. Slices are saved with the level and belong to the model, so the player and an enemy using the same character get the same set.';
   wrap.appendChild(hint);
 
   // ---- state
@@ -48994,15 +49026,22 @@ function showClipSlicer(url, label, opts){
   const clampAll = ()=>{
     const mx = maxFrame();
     head2.max = String(mx);
+    const hold = !!holdCb.checked;
     let a = Math.max(0, Math.min(mx, Math.round(+inN.value || 0)));
     let b = Math.max(0, Math.min(mx, Math.round(+outN.value || 0)));
     if(b < a) b = a;
     inN.value = String(a); outN.value = String(b);
+    /* the Out controls are DISABLED rather than hidden: a control that vanishes reads as a bug, and a
+       creator who unticks the box wants the range they had back */
+    outN.disabled = hold; setOut.disabled = hold;
+    outN.style.opacity = setOut.style.opacity = hold ? '0.4' : '';
     barSel.style.left = (100 * a / mx) + '%';
-    barSel.style.width = Math.max(0.5, 100 * (b - a) / mx) + '%';
+    barSel.style.width = Math.max(0.5, 100 * ((hold ? a : b) - a) / mx) + '%';
     const f = +fps.value || 30;
-    rangeNote.textContent = (b - a + 1) + ' frames · ' + ((b - a) / f).toFixed(2) + 's  of  ' + mx + ' (' + curClip().duration.toFixed(2) + 's)';
-    return { a, b, mx };
+    rangeNote.textContent = hold
+      ? ('still \u00b7 frame ' + a + '  of  ' + mx)
+      : ((b - a + 1) + ' frames \u00b7 ' + ((b - a) / f).toFixed(2) + 's  of  ' + mx + ' (' + curClip().duration.toFixed(2) + 's)');
+    return { a, b, mx, hold };
   };
   const showFrame = ()=>{
     const f = +fps.value || 30, fr = Math.round(+head2.value || 0);
@@ -49015,11 +49054,14 @@ function showClipSlicer(url, label, opts){
   fps.onchange = ()=>{ stopLoop(); clampAll(); showFrame(); };
   head2.oninput = ()=>{ stopLoop(); showFrame(); };
   inN.onchange = outN.onchange = ()=>{ clampAll(); };
+  holdCb.onchange = ()=>{ stopLoop(); const { a } = clampAll(); head2.value = String(a); showFrame(); };
   setIn.onclick = ()=>{ inN.value = String(Math.round(+head2.value||0)); clampAll(); };
   setOut.onclick = ()=>{ outN.value = String(Math.round(+head2.value||0)); clampAll(); };
   play.onclick = ()=>{
     if(_sliceLoop){ stopLoop(); return; }
-    const { a, b } = clampAll(); const f = +fps.value || 30;
+    const { a, b, hold } = clampAll(); const f = +fps.value || 30;
+    /* there is nothing to play in a still — park the playhead on the frame it holds and show it */
+    if(hold){ head2.value = String(a); showFrame(); return; }
     let t = a; play.textContent = '■';
     /* an interval rather than a hook in the frame loop: the panel owns its own playback and cannot leave
        anything behind in the game's update path when it closes */
@@ -49043,11 +49085,12 @@ function showClipSlicer(url, label, opts){
       const r = document.createElement('div');
       r.style.cssText='display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid rgba(255,255,255,.07);';
       const n = document.createElement('div'); n.textContent = c.n; n.style.cssText='flex:1;color:#e8fff6;font-size:12px;';   /* textContent: a slice name is level data (1325) */
-      const w = document.createElement('div'); w.textContent = c.a + '–' + c.b + ' @' + c.f + 'fps  ← ' + (c.s || src[0].name || '');
+      const w = document.createElement('div');
+      w.textContent = (c.h ? ('still \u00b7 frame ' + c.a) : (c.a + '\u2013' + c.b)) + ' @' + c.f + 'fps  \u2190 ' + (c.s || src[0].name || '');
       w.style.cssText='font-size:11px;color:#7fb8a6;max-width:44vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       const ld = btn('↵', 'Load this slice back into the fields above');
       ld.onclick = ()=>{ stopLoop(); sel.value = c.s || sel.value; fps.value = String(c.f); inN.value = String(c.a); outN.value = String(c.b);
-        nameI.value = c.n; head2.value = String(c.a); clampAll(); showFrame(); };
+        holdCb.checked = !!c.h; nameI.value = c.n; head2.value = String(c.a); clampAll(); showFrame(); };
       const del = btn('✕', 'Delete this slice');
       del.onclick = ()=>{ if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
         cuts.splice(i, 1); if(!cuts.length) delete animCuts[url];
@@ -49066,9 +49109,10 @@ function showClipSlicer(url, label, opts){
     const cuts = animCuts[url] || (animCuts[url] = []);
     if(cuts.length >= ANIM_CUT_MAX){ if(typeof toast==='function') toast('That is the limit of '+ANIM_CUT_MAX+' slices for one model'); return; }
     if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
-    const { a, b } = clampAll();
+    const { a, b, hold } = clampAll();
     const ex = cuts.findIndex(c=>c.n === nm);
     const entry = { n:nm, s:sel.value, a, b, f:Math.round(+fps.value || 30) };
+    if(hold) entry.h = 1;
     if(ex >= 0) cuts[ex] = entry; else cuts.push(entry);       /* same name = edit, not a duplicate */
     if(typeof _levelDirty!=='undefined') _levelDirty = true;
     refreshAnimCuts(url); redraw();

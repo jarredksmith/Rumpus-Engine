@@ -967,6 +967,41 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A slice can hold a single frame (build 1339)
+
+Asked for from use: *"add an option to hold a single frame. The default slow bob of the weapon while idling
+looks great, and works for most situations."*
+
+A baked weapon idle is usually a breathing loop, and the engine **already** bobs the viewmodel — so mapping
+one to `idle` gives you two idles at once, and only one of them is a number the creator can turn. A held
+frame takes the baked motion out and leaves the bob.
+
+**It is deliberately not a one-frame range, and that distinction is the whole build.** A range of `[n, n]`
+still brackets `t0` and `t0 + 1/fps`, which are two *different* poses, so the clip creeps. Measured on a
+source whose slide travels z 0→3 over three seconds:
+
+```
+                          key values         played on the real gun, 60 frames
+one-frame RANGE [45,45]   z 1.500, 1.533     2 distinct poses  (it creeps)
+HELD frame      [45]      z 1.500, 1.500     1 pose, 1.50000
+```
+
+A hold evaluates the pose **once** and writes it to both ends, so every interpolation between them returns
+the same value. `test-1339` asserts the stronger property rather than key equality: sampled 21 times across
+its own timeline through three's real interpolant, a held slice returns **one** value — it cannot drift
+however the action is looped, timescaled or blended.
+
+A hold is defined by its **in-point alone**. The out-point is ignored, and the reversed-range swap is
+skipped for it — otherwise "hold frame 45" with a stale out of 10 would silently become "hold frame 10".
+
+In the panel the Out field and *Set out* are **disabled rather than hidden** (a control that vanishes reads
+as a bug, and unticking should give back the range you had), the readout reads `still · frame 45 of 90`,
+Play parks the playhead on the held frame instead of looping nothing, and the list row shows it as a still.
+The flag serializes only when set, and it is part of the apply signature — without that, ticking the box on
+an existing slice would re-apply nothing.
+
+Omitting the flag is byte-identical to the pre-1339 call, so every slice made before this build is unchanged.
+
 ## Placed lights join the budget (build 1338 — rendering audit #5)
 
 > `registerEmitterLight` is called from emissive props and adopted GLB lights — **not** from `buildLight`.
