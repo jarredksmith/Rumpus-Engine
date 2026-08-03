@@ -967,6 +967,75 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The frame says what is antialiasing it (build 1343)
+
+Third round of the jagged-edges report, and the reporter's reply to build 1342 is what this build is:
+
+> *"No visual change with 1342. What's interesting is if I turn adaptive resolution off, there is no visual
+> difference. Still jagged in both."*
+
+**That one sentence kills every explanation that routes through the adaptive ladder**, including 1342's. With
+the ladder off, `_prStepI` is 0, `_hiFxOn` is true and `_desiredPostSamples()` returns 4 — so if the picture is
+identical either way, MSAA is not reaching that frame at all, and no rung, no strike-out and no shed effect can
+be the reason.
+
+I have now guessed twice (the velocity buffer, then the ladder) and been wrong twice, on a symptom I cannot
+reproduce here. So this build does not guess a third time. It does what build 1274 established the last time a
+report could not be reproduced: **ship the safe default, make the symptom structurally impossible where you
+can, and make the subsystem able to ANSWER the question next time.** 1273/1274 were those steps for culling;
+this is the third one for antialiasing.
+
+`_aaState()` is the whole pipeline's answer in one object, and both readouts consume it — the perf HUD line
+(the `` ` `` key) and four rows in Level Check. **One derivation, deliberately**, because a HUD and a panel that
+disagreed about the frame would be worse than either alone, and this file records that defect seven times.
+
+Five things decide whether an edge is antialiased, and only one of them is the ladder:
+
+| | why it produces exactly this report |
+|---|---|
+| **WebGL 1** | `_desiredPostSamples()` returns 0 outright, at every rung, forever. No in-game setting can bring MSAA back — and turning the ladder off would change nothing, which is the reporter's observation verbatim |
+| **Depth of field** | rasterises into its own single-sampled target, so the frame gets FXAA instead (build 1284). Independent of the ladder |
+| **the rung** | 1342's story. Shown as a number so it is visible rather than inferred |
+| **FXAA vs MSAA** | the fallback is measurably weaker — 1126 measured a 1.02-pixel coverage gradient on 100 of 100 scanlines become a hard edge on 94 of 99. *"AA is broken"* and *"AA is the weak one"* are different bugs |
+| **the render scale** | `_prBase = min(devicePixelRatio, 1.5)`, which sits **underneath** all of it |
+
+**That last row is the one I could not have found by reasoning, and it fits the report best.** On a
+devicePixelRatio-2 display — every modern laptop — the world is drawn at **75% of native** and the browser
+upscales it. Jagged edges that no antialiasing setting can touch, at full quality, with the ladder at rung 0,
+*identical with adaptive resolution on or off*. The readout says so immediately: `render 1.50/2.00 (75% of
+native)`.
+
+Verified through the real pipeline in all four states (`tools/probe/aa-state.mjs`):
+
+```
+settled (SwiftShader)   AA FXAA only          render 0.66/1.00 (66% of native)  rung 3 fxOff
+top rung forced         AA MSAA x4            render 1.00/1.00                  rung 0
++ depth of field        AA FXAA only (DoF)    render 1.00/1.00                  rung 0
+post-processing off     AA canvas AA (post off)
+a dpr-2 display                               render 1.50/2.00 (75% of native)
+```
+
+**Level Check reports only what is actually degraded** — a full-quality frame says nothing, because a panel
+that always complains is not read. And the render-scale row distinguishes the adaptive scaler from the
+engine's own ceiling, since the reporter had already ruled the scaler out and a message blaming it would have
+wasted their time a third time.
+
+**Motion blur is in the readout as a FACT about the frame, not as a cause.** Build 1342 measured it four ways
+and blur makes a silhouette *softer* (65.7% → 72.2% of scanlines antialiased). It is there because the report
+is about blur and *"turn it on and read the line again"* needs something to read.
+
+### Two instrument faults, both mine, and one of them is the reason the DoF case looked broken
+
+- **`dofEnabled = (worldCfg.dof === true)`, and my probe set `worldCfg.dof = 1`.** So the DoF row reported
+  nothing and I spent a cycle believing `_aaState` had a bug it did not have. A truthy value is not `true`,
+  and the identity comparison is the engine's, deliberately.
+- **The first `_aaReport` re-derived every term `_aaState` already returned**, directly under a comment
+  claiming one source of truth. It reads the state now, and `test-1343` asserts none of the terms appear
+  twice — the check is cheap and the defect is this file's most repeated one.
+
+**Stated plainly: this build fixes nothing.** It is an instrument. Whether the reporter's frame is WebGL1, a
+high-DPI upscale or something still unnamed, the next message will contain the answer instead of a symptom.
+
 ## Motion blur was buying an effect with your antialiasing (build 1342)
 
 Reported from play with a screenshot of the default level: *"seriously jagged edges… if any level of motion
