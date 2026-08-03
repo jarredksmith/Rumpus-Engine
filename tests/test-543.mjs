@@ -30,18 +30,22 @@ const mk = () => {
   assert(lights[0].userData.lon===false && lights[1].userData.lon===true, 'Toggle flips each light from its own state'); }
 
 // --- executable: updateLights eases intensity toward the on/off target ---
-const ul = new Function('lightModels','editorOpen', extractFunction('updateLights') + '\nreturn updateLights;');
+// build 1338: updateLights gained the placed-light distance budget, so this isolated scope has to supply
+// it. Injected INERT (no ranking, factor 1) — every assertion below is about the on/off fade ramp and must
+// keep measuring exactly that; the budget's own behaviour is test-1338's job. The last case drives it.
+const ul = new Function('lightModels','editorOpen','_plRankF',
+  'function _rankPlacedLights(){}\n' + extractFunction('updateLights') + '\nreturn updateLights;');
 { const g={ userData:{ light:{ intensity:0 }, lon:true, litI:8, lfade:0 } };
-  ul([g], false)(0.1); eq(g.userData.light.intensity, 8, 'fade 0 = instant on'); }
+  ul([g], false, null)(0.1); eq(g.userData.light.intensity, 8, 'fade 0 = instant on'); }
 { const g={ userData:{ light:{ intensity:8 }, lon:false, litI:8, lfade:0 } };
-  ul([g], false)(0.1); eq(g.userData.light.intensity, 0, 'fade 0 = instant off'); }
+  ul([g], false, null)(0.1); eq(g.userData.light.intensity, 0, 'fade 0 = instant off'); }
 { const g={ userData:{ light:{ intensity:0 }, lon:true, litI:8, lfade:0.4 } };
-  ul([g], false)(0.1); near(g.userData.light.intensity, 2, 1e-6, 'fade ramps part-way (8/0.4*0.1 = 2)');
-  ul([g], false)(0.1); near(g.userData.light.intensity, 4, 1e-6, 'and keeps ramping toward full'); }
+  ul([g], false, null)(0.1); near(g.userData.light.intensity, 2, 1e-6, 'fade ramps part-way (8/0.4*0.1 = 2)');
+  ul([g], false, null)(0.1); near(g.userData.light.intensity, 4, 1e-6, 'and keeps ramping toward full'); }
 { const g={ userData:{ light:{ intensity:8 }, lon:true, litI:8, lfade:0.4 } };
-  ul([g], false)(0.1); eq(g.userData.light.intensity, 8, 'already at target = no change'); }
+  ul([g], false, null)(0.1); eq(g.userData.light.intensity, 8, 'already at target = no change'); }
 { const g={ userData:{ light:{ intensity:0 }, lon:true, litI:8, lfade:0.4 } };
-  ul([g], true)(0.1); eq(g.userData.light.intensity, 0, 'editor open = tick is skipped (lights held at full elsewhere)'); }
+  ul([g], true, null)(0.1); eq(g.userData.light.intensity, 0, 'editor open = tick is skipped (lights held at full elsewhere)'); }
 
 // --- executable: initSceneLights applies the deploy start state ---
 const isl = new Function('lightModels', extractFunction('initSceneLights') + '\nreturn initSceneLights;');
@@ -76,3 +80,11 @@ assert(/fsp\.textContent='Fade \(s\)';/.test(src), 'fade-time input');
 assert(/<b>Open<\/b> = on, <b>Close<\/b> = off, <b>Toggle<\/b> = flip/.test(src), 'hint explains the Open/Close/Toggle mapping');
 
 done('build 699: signal-controlled scene lights (on/off/toggle + fade + start-off)');
+
+// build 1338: and the budget factor multiplies the TARGET, so an off light stays off whatever its rank.
+{ const g={ userData:{ light:{ intensity:8 }, lon:true, litI:8, lfade:0 } };
+  ul([g], false, new Map([[g, 0.5]]))(0.1);
+  eq(g.userData.light.intensity, 4, 'a half-faded rank targets half the authored brightness'); }
+{ const g={ userData:{ light:{ intensity:8 }, lon:false, litI:8, lfade:0 } };
+  ul([g], false, new Map([[g, 1]]))(0.1);
+  eq(g.userData.light.intensity, 0, 'and a signal-off light stays off at full rank — 0 x 1 is still 0'); }

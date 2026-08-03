@@ -8911,9 +8911,52 @@ function enforceEmitterCap(){
     const e = emitterLights.pop(); n++;
     try{ const L=e && e.light; if(L){ L.intensity=0; if(L.parent) L.parent.remove(L); } }catch(err){}
   }
-  if(n){ _emitterRefused = n;
-    if(typeof console!=='undefined') console.warn('[RUMPUS] '+n+' emissive prop light'+(n>1?'s':'')+' past the '+cap+'-light budget were dropped (the props keep their glow).');
+  /* build 1338: PLACED lights count against the same budget, because the per-pixel cost is the total set —
+     r149 compiles NUM_POINT_LIGHTS from every light PRESENT and every fragment of every material loops over
+     all of them. The distance fade above is a visual measure and saves almost nothing there (build 1257's
+     own finding); REMOVING the surplus is the only lever that changes the loop, which is why it belongs
+     here, at deploy, where a count change is already expected and free.
+     Placed lights are dropped only after the emitter lights are gone: an emissive prop's glow is a side
+     effect a creator got for free, and a lamp they positioned by hand is a decision. Shadow-casters are
+     never dropped, for the same reason they are exempt from the fade. */
+  let pn = 0;
+  try{
+    const room = Math.max(0, cap - emitterLights.length);
+    const drop = [];
+    for(const g of lightModels){ const ud=g.userData, t=ud&&ud.ltype;
+      if(t!=='point' && t!=='spot') continue;
+      if(ud.wantShadow) continue;
+      drop.push(g); }
+    if(drop.length > room){
+      /* farthest from the player spawn first — the nearest lights are the ones a player will stand in */
+      const c = (typeof player!=='undefined' && player && player.pos) ? player.pos : { x:0, y:0, z:0 };
+      for(const g of drop){ g.getWorldPosition(_plD); g._plD2 = (_plD.x-c.x)*(_plD.x-c.x) + (_plD.y-(c.y||0))*(_plD.y-(c.y||0)) + (_plD.z-c.z)*(_plD.z-c.z); }
+      drop.sort((a,b)=>b._plD2 - a._plD2);
+      for(let i=0; i<drop.length - room; i++){
+        const g = drop[i], L = g.userData.light;
+        if(!L || !L.parent) continue;
+        g.userData._capParent = L.parent;   /* remembered, so returning to the editor restores it exactly */
+        L.parent.remove(L); L.intensity = 0; pn++;
+      }
+    }
+  }catch(err){}
+  if(pn) _placedRefused = pn;
+  if(n || pn){ _emitterRefused = n;
+    if(typeof console!=='undefined') console.warn('[RUMPUS] '+(n+pn)+' light'+((n+pn)>1?'s':'')+' past the '+cap+'-light budget were dropped at deploy'
+      + (n?(' — '+n+' emissive prop light'+(n>1?'s':'')+' (the props keep their glow)'):'') + (pn?(' — '+pn+' placed light'+(pn>1?'s':'')):'') + '.');
   }
+  return n + pn;
+}
+let _placedRefused = 0;
+// Returning to the editor puts every dropped light back where it was. A creator must never open their level
+// and find lights missing: the cap is a RUNTIME budget, not an edit to their scene.
+function _restoreCappedLights(){
+  let n = 0;
+  for(const g of lightModels){ const ud=g.userData, L=ud&&ud.light;
+    if(!L || !ud._capParent) continue;
+    try{ ud._capParent.add(L); }catch(e){}
+    ud._capParent = null; n++; }
+  _placedRefused = 0;
   return n;
 }
 function updateLightBudget(){
@@ -12982,11 +13025,47 @@ function broadcastLight(i, on){
   else if(NET.mode==='client'){ if(NET.conn) try{ NET.conn.send({t:'lit', i, on:!!on}); }catch(e){} } }
 // Ease each light toward its on/off target. Skipped in the editor, where every light is held at full so it can be
 // seen/aimed. litI is the authored brightness (the on-value); off = 0; lfade is the ramp in seconds (0 = instant).
+// ---- build 1338 (rendering audit #5): PLACED LIGHTS JOIN THE BUDGET ---------------------------------
+// The audit, verified at the line: `registerEmitterLight` is called from emissive props and adopted GLB
+// lights — and NOT from `buildLight`. So the Lights tool, the thing a creator actually lights a level with,
+// produced point and spot lights that were never distance-culled, never faded and never capped. Build 811's
+// budget has existed since then and the one surface that most needed it was outside it.
+//
+// It is NOT done by calling `registerEmitterLight`, and that is the design decision. `updateLightBudget`
+// WRITES `light.intensity` every frame — but a placed light already has an owner writing that same value:
+// `updateLights`, which ramps it between the signal on/off states. Two writers of one value is the defect
+// this file has recorded five times over; the second one wins, so registering would have turned every
+// signal-controlled lamp back on. The budget is therefore a FACTOR that the existing owner multiplies in,
+// so `off` stays off, a fade still ramps, and there is still exactly one writer.
+const _plD = new THREE.Vector3();
+let _plRankF = null;          // light group -> 0..1, recomputed per frame only when it can matter
+function _placedLitCount(){ let n=0; for(const g of lightModels){ const t=g.userData&&g.userData.ltype; if(t==='point'||t==='spot') n++; } return n; }
+function _rankPlacedLights(){
+  const max = _maxActiveLights();
+  const lit = [];
+  for(const g of lightModels){ const ud=g.userData, t=ud&&ud.ltype; if(t!=='point' && t!=='spot') continue;
+    /* a shadow-caster is exempt: it is already bounded by _shadowLightBudget (1132), it is the most
+       deliberate light a creator can place, and fading one to nothing while it still renders a depth pass
+       would be the worst of both */
+    if(ud.wantShadow) continue;
+    lit.push(g); }
+  if(lit.length <= max){ _plRankF = null; return; }   /* under budget: no map, no per-light lookup, no cost */
+  for(const g of lit){ g.getWorldPosition(_plD); g._plD2 = _plD.distanceToSquared(camera.position); }
+  lit.sort((a,b)=>a._plD2 - b._plD2);
+  const m = new Map(); const FADE = 5;   /* the same easing band as the emitter budget, for the same reason */
+  for(let i=0;i<lit.length;i++){
+    const over = i - (max - 1);
+    m.set(lit[i], (over<=0) ? 1 : (over>=FADE ? 0 : 1 - over/FADE));
+  }
+  _plRankF = m;
+}
 function updateLights(dt){
   if(typeof editorOpen!=='undefined' && editorOpen) return;
+  _rankPlacedLights();
   for(const g of lightModels){
     const ud=g.userData, L=ud&&ud.light; if(!L) continue;
-    const tgt = (ud.lon===false) ? 0 : (ud.litI!=null ? ud.litI : L.intensity);
+    const bf = _plRankF ? (_plRankF.has(g) ? _plRankF.get(g) : 1) : 1;
+    const tgt = ((ud.lon===false) ? 0 : (ud.litI!=null ? ud.litI : L.intensity)) * bf;
     if(L.intensity===tgt) continue;
     const fade = ud.lfade||0;
     if(fade<=0){ L.intensity=tgt; continue; }
@@ -13003,6 +13082,7 @@ function initSceneLights(){
 }
 // Back in the editor: relight every light at full, regardless of its deploy start state, so it's visible to author.
 function _lightsToFull(){
+  if(typeof _restoreCappedLights==='function') _restoreCappedLights();   /* build 1338: nothing is missing in the editor */
   for(const g of lightModels){ const ud=g.userData, L=ud&&ud.light; if(!L) continue;
     ud.lon=true; if(ud.litI!=null) L.intensity=ud.litI;
   }
@@ -18422,7 +18502,12 @@ function _lightOpts(g){
   const hx=(c)=>(Math.round(c.r*255)<<16)|(Math.round(c.g*255)<<8)|Math.round(c.b*255);
   // build 997: t is always WORLD coords (attached lights have a prop parent, so g.position is local)
   const _wp=new THREE.Vector3(); g.getWorldPosition(_wp);
-  const o={ type, color:hx(L.color), intensity:+L.intensity, t:[_wp.x,_wp.y,_wp.z] };
+  /* build 1338: the AUTHORED brightness, not the live one. `litI` is what the slider writes and what every
+     fade restores to; `L.intensity` is whatever the frame left behind — 0 for a `startOff` light at deploy,
+     and now also a distance-faded value. Saving the live number would quietly write the creator's lamp down
+     to whatever it happened to be dimmed to. Safe before this build only because `_lightsToFull` runs on the
+     way back into the editor; that is a coincidence to stop relying on. */
+  const o={ type, color:hx(L.color), intensity:+((g.userData.litI!=null) ? g.userData.litI : L.intensity), t:[_wp.x,_wp.y,_wp.z] };
   if(g.userData.att && g.parent && g.parent!==scene) o.att={ nid:g.userData.att.nid, p:[g.position.x,g.position.y,g.position.z], q:[g.quaternion.x,g.quaternion.y,g.quaternion.z,g.quaternion.w] };
   if(type==='point'||type==='spot') o.distance=+L.distance;
   if(type==='spot'){ o.angle=+L.angle; o.penumbra=+L.penumbra; }
@@ -30793,7 +30878,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1337 · 2026-08-03';
+const BUILD_VERSION = 'build 1338 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42074,6 +42159,9 @@ function levelIssues(){
         issues.push('Heavy lighting: '+load+' point/spot lights in the scene. Every one is looped over for every pixel (there is no clustering), so this is the biggest single cost on low-end machines — turn "Light emitter" off on decorative props, or give one bright light a longer range instead of several small ones.');
       if(typeof _emitterRefused!=='undefined' && _emitterRefused>0)
         issues.push(_emitterRefused+' emissive prop light'+(_emitterRefused>1?'s were':' was')+' past the engine budget and dropped at deploy — those props still glow, they just do not cast light.');
+      /* build 1338: and the ones the creator placed by hand, which used to be dropped by nothing at all */
+      if(typeof _placedRefused!=='undefined' && _placedRefused>0)
+        issues.push(_placedRefused+' placed light'+(_placedRefused>1?'s were':' was')+' past the engine budget and switched off during the last play run — the furthest from the player spawn go first. They are all back in the editor; to keep them in play, delete some or give one bright light a longer range instead of several small ones.');
       if(c.shadow > 4)
         issues.push(c.shadow+' lights cast shadows. Each one is an extra render of the level every time it moves — keep it to a few key lights.');
     }
