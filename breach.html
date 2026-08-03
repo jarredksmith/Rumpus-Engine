@@ -26708,6 +26708,21 @@ function handleClientMsg(conn, msg){
   // none, because it reads as safe. Caught by test-1279 before this shipped; it is the same trap build
   // 1271 closed for the expression evaluator's variable lookup.
   const _RELAY_OK = new Set(['pvpHit','grab','holdEnd','rematchReq']);
+/* build 1329: a crate is consumed from inside 3.5 m (the range the shop opens at). The host checks the
+   claim against a LARGER figure because the packet arrives a round trip after the player was standing
+   there, and a client's reported position is itself already bounded by build 1164's _plausibleMove. */
+const CHEST_REACH = 8;
+const CHEST_BUY_MS = 400;                  // one crate every 400 ms per client is far past any real rate
+const _buyChestAt = {};
+function _buyChestOk(id){
+  const now = (typeof performance!=='undefined' ? performance.now() : Date.now());
+  /* `_buyChestAt[id] || -1e9` was wrong: a stored timestamp of 0 is FALSY, so the very first entry read
+     back as "never" and the bucket never engaged. performance.now() is never exactly 0 in a live page, so
+     this would have sat here indefinitely without biting — the test found it by driving a clock from 0. */
+  const last = (id in _buyChestAt) ? _buyChestAt[id] : -1e9;
+  if(now - last < CHEST_BUY_MS) return false;
+  _buyChestAt[id] = now; return true;
+}
   // build 1205: BOUND THE RELAYED CLAIM. Builds 1130/1164 clamp damage aimed AT THE HOST — but a packet
   // addressed to a third client was forwarded VERBATIM, so in any 3+ player FFA a cheat could send
   // {t:'pvpHit', to:victim, d:1e9} and one-shot anyone, through walls, unrated: the marquee competitive
@@ -26762,7 +26777,23 @@ function handleClientMsg(conn, msg){
     else { if(typeof spawnFragmentsVisual==='function') spawnFragmentsVisual(ctr, sz, msg.c, msg.n||8, msg.sf, msg.sh); spark(ctr, msg.c||0xffd166); if(typeof SFX!=='undefined' && SFX.shatter) SFX.shatter(ctr); }
     if(msg.exp){ explodeAt(ctr.clone(), msg.br||7, 0, null); }   // explosive prop: blast visual (host already applied damage)
   }
-  else if(msg.t==='buyChest'){ const ci=chests.findIndex(c=>c.id===msg.id); if(ci>=0){ scene.remove(chests[ci].mesh); chests.splice(ci,1); } }   // a client bought a crate -> remove it for everyone
+  else if(msg.t==='buyChest'){
+    /* build 1329 (multiplayer audit 2.2, the bullet builds 1130/1164/1279 left): "removes any crate for
+       everyone", with ZERO validation. A loop of buyChest over the id range wiped every crate in the level
+       for every player, and nothing in the file slowed it down.
+       BOUND THE CLAIM, the same rule builds 1130/1164 established for damage and movement. A legitimate
+       buy REQUIRES the shop to be open, and the shop only opens inside 3.5 m (29409) — so the host, which
+       already holds every client's position, can check the one thing that makes the claim possible. The
+       allowance is generous (CHEST_REACH) because the claim arrives a round trip after the player was
+       standing there, and a rate bucket covers what proximity cannot: a client genuinely next to a crate
+       can still only consume one every so often. */
+    const _ci = chests.findIndex(c=>c.id===msg.id);
+    if(_ci>=0 && _buyChestOk(id)){
+      const _c = chests[_ci], _s = NET.players[id], _pe = _s && _s.posEye;
+      const _d = _pe ? Math.hypot(_pe.x-_c.pos.x, _pe.z-_c.pos.z) : Infinity;
+      if(_d <= CHEST_REACH){ scene.remove(_c.mesh); chests.splice(_ci,1); }
+    }
+  }   // a client bought a crate -> remove it for everyone
   else if(msg.t==='anim'){ const o=propModels[msg.i]; if(o) playPropAnimationOnce(o, msg.c); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'anim', i:msg.i, c:msg.c}); }catch(e){} } } }   // play + relay to other clients
       else if(msg.t==='cine'){ const cc=cutsceneByName(msg.n); if(cc && !editorOpen && !_cineActive && _ccHasData(cc)) startCinematic({ shots: cineShotsOf(cc), audio: cc.audio }, false); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'cine', n:msg.n}); }catch(e){} } } }   // host plays it too, then relays
   else if(msg.t==='xa'){ const o=propModels[msg.i]; if(o&&o.userData.xa) o.userData.xa.dest=msg.dest?1:0; for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'xa', i:msg.i, dest:msg.dest}); }catch(e){} } } }   // mechanism toggle + relay
@@ -30457,7 +30488,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1328 · 2026-08-03';
+const BUILD_VERSION = 'build 1329 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

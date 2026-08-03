@@ -967,6 +967,33 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The last unbounded client claim (build 1329 — multiplayer audit 2.2)
+
+**Re-verified before touching anything**, because most of the multiplayer CRITICALs turned out to be closed
+already and re-fixing them would have been busywork:
+
+| finding | state |
+|---|---|
+| 2.1 — the relay mediates one of 36 host-authoritative types | **CLOSED by 1279.** `_RELAY_OK` is an explicit four-type allow-list, so `hurt`, `wact`, `teams`, `duelOver`, `credit` and targeted `chat` impersonation are dropped, not forwarded |
+| 2.2 — `died` | **CLOSED by 1279** — `_diedOk(id)` rate-limits it |
+| 2.2 — `raceFin` | **CLOSED by 1279** — checked against the lap the host was already counting |
+| 2.2 — `buyChest` | **OPEN** |
+
+`buyChest` removed **any** crate for **everyone** with no proximity check, no rate limit and no validation of
+any kind — a loop over the id range wiped every crate in the level for every player.
+
+Bounded now by exactly what makes the claim possible, which is builds 1130/1164's own rule. A legitimate buy
+needs the shop open, and the shop only opens inside **3.5 m** — so the host, which already holds every
+client's position, checks that. `CHEST_REACH` is 8 rather than 3.5 because the packet arrives a round trip
+after the player was standing there, and the reported position is itself already bounded by 1164's
+`_plausibleMove`. A leaky bucket covers what proximity cannot: one crate per client per 400 ms.
+
+**The test found a latent bug in my own fix.** `const last = _buyChestAt[id] || -1e9` — **a stored timestamp
+of 0 is falsy**, so the first entry read back as "never" and the bucket never engaged. `performance.now()`
+is never exactly 0 in a live page, so this would have sat there indefinitely without ever biting; only a
+test that drives its clock **from zero** finds it. It is `(id in _buyChestAt)` now. Worth generalising:
+**a `||` default on a numeric timestamp or counter is a bug waiting for the value to be 0.**
+
 ## The board shows the level's prop signals (build 1328)
 
 Reported: *"If signals are created for a prop in the editor panel, make it show as nodes in the signal node
