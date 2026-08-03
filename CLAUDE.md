@@ -967,6 +967,51 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A level with one emitter would not load (build 1331)
+
+Reported from play, **with the stack build 1330 exists to produce**:
+
+```
+ERROR: Promise: Cannot access 'FX_PRESETS' before initialization
+  at buildFxEmitter   (breach.html:21506)
+  at Object.fx_dust   (breach.html:13982)     <- PRIMITIVE_BUILDERS.fx_dust
+  at spawnProp        (breach.html:17947)
+  at loadHostedProps  (breach.html:18027)
+```
+
+`loadHostedProps()` is called **bare at module level** and builds the saved level's props during boot;
+`FX_PRESETS` was declared ~3,400 lines below it. So a saved level containing a single ambient emitter threw
+partway through its own load. Everything lives inside `window.GAME_START`, which is why the throw surfaced
+as an unhandled **rejection** — and therefore carried no line number of its own until 1330 kept the stack.
+
+**Build 889 recorded this exact class, four lines above where the fix went in**: *"A saved level with track
+pieces builds them at boot (loadHostedProps) BEFORE worldCfg initializes, which crashed the whole boot."*
+It patched that with a `try/catch`, which was right *there* — the track style re-applies moments later, so
+missing it is harmless. It is **wrong here**: an emitter with no preset is a thrown exception mid-load, and
+swallowing it strands every later prop with nothing said. `FX_PRESETS` is pure data reading no other binding
+(the test asserts that), so it simply moves above `PRIMITIVE_BUILDERS`.
+
+**The rule left behind:** anything a `PRIMITIVE_BUILDERS` entry reads must be declared **above that table**,
+because `loadHostedProps` can call any builder before most of the file has run. `test-1331` pins the order —
+`FX_PRESETS` → the builder table → `spawnProp` → `loadHostedProps` → the module-level call.
+
+### Two instrument failures, and one honest gap
+
+- **I read a grep's context as the line itself.** My context printer showed the 130 characters *preceding*
+  each hit, so the bare `loadHostedProps();` call rendered as the previous line's comment text and I
+  concluded, twice, that the function was never called. The call was there the whole time. Print the line,
+  not its neighbourhood.
+- **I could not make the failure fire locally.** A seeded save containing `fx_dust` loaded clean on the
+  pre-fix build. The diagnosis does not depend on that — the stack names the four frames, and the control
+  file's `buildFxEmitter` sits at line 21505 against the reported 21506, so it is the same build — but the
+  fix is verified **structurally** (the ordering) rather than by a reproduction, and that is worth saying
+  plainly rather than implying a repro I never got.
+
+**Two tests broke because they extracted by POSITION.** `test-1250` and `test-1252` both sliced "from
+`const FX_PRESETS` to «some later function»", which after the move spanned ~7,500 unrelated lines and
+swallowed `PRIMITIVE_BUILDERS`. They cut the table itself now. A position-relative extraction is precisely
+what a move breaks, and moves are how TDZ bugs get fixed.
+
 ## The error overlay reports WHERE (build 1330)
 
 A report from play arrived as a red bar reading **`ERROR: Promise: Cannot access 'FX_PRESETS' before
