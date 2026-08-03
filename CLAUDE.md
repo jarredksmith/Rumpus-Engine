@@ -967,6 +967,53 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Three papercuts with one measurement between them (build 1322 — editor audit 4.11, the rest)
+
+**Five decimal places on a position in metres.** That is ten microns — and `STEP_POS` matched it, so an
+arrow key on the field nudged a prop by **0.01 mm**. The most-used panel in the editor was both unreadable
+and useless from the keyboard. Precision is per CHANNEL now (`FIELD_DP`: position 3, rotation 2, scale 3)
+with **trailing zeros trimmed**, which is most of the win — a wall at x=12 reads `12`, not `12.00000` — and
+the steps became 1 cm / 0.1° / 1 cm. `fmt` (the copy-paste block that bakes a tuned value back into the
+source) deliberately keeps its five digits: there the extra precision is the whole point.
+
+**The outliner rebuilt every row on a 160 ms coalesce during edits.** Measured with the real `_outRefresh`,
+10 DOM nodes per row:
+
+```
+ 56 rows   2.88 ms          256 rows   8.72 ms
+106 rows   3.82 ms          456 rows  19.64 ms      superlinear: 0.019 -> 0.042 ms/row
+```
+
+At 456 props that is ~123 ms of teardown-and-rebuild **per second** while a gizmo drag keeps firing the
+coalesce. And every one of those rebuilds was **wasted**: the outliner lists names, tags, folders, hide/lock
+and selection — a transform appears nowhere in it.
+
+So the fix is not virtualisation, it is *not doing the work*. `_outSignature()` joins exactly what the panel
+renders, compared before the DOM is touched. The honest pair at 456 rows:
+
+```
+unchanged refresh   19.64 -> 0.12 ms
+a gizmo drag                 0.16 ms      <- the case the coalesce actually fires on
+GENUINELY changed           14.84 ms      <- essentially untouched
+```
+
+**The third number is why this is not a performance claim about the outliner.** The rebuild costs what it
+always did; a virtualised tree is still absent, and it is a separate build with its own measurement. Two
+details in the signature are load-bearing: it must cover everything a row can *render* (a displayed field
+that is not signed is a stale panel), and the skip must also require that the body was built at least once,
+or an empty panel with a stale signature stays empty forever.
+
+**`libOpen` replaced unsaved work and relied on build 1254's one-deep rescue.** A rescue you have to know
+about is not consent. The confirm goes in `libOpen` itself — which became the gate, with the open moved
+wholesale to `_libOpenNow` — so every future entry point inherits it, and it fires only when `_levelDirty`:
+a prompt on every open is trained away in a week and then not read. Three of `test-1262`'s pins moved to the
+new function, all with their intent intact.
+
+**Still open from 4.11, and deliberately:** `renderEditorFields` tears down and rebuilds the whole panel on
+every change, with a scroll-restore microtask as the mitigation — which is why a text field anywhere in the
+panel has to be `onchange` rather than `oninput`. That is an architecture change, not a papercut, and it
+needs its own build and its own measurement.
+
 ## The + button sat under the file menu bar (build 1321)
 
 Reported from play: *"the circle plus button gets slightly obscured with the file menu UI."*

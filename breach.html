@@ -30240,7 +30240,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1321 · 2026-08-03';
+const BUILD_VERSION = 'build 1322 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36606,7 +36606,18 @@ loop();
 // ---------- In-game transform / level editor (press P) ----------
 // Live-adjusts the imported GLB models (gun, station, every prop) and the ADS aim pose,
 // then emits copy-paste-ready code so the chosen values can be baked into the source.
-const STEP_POS = 0.00001, STEP_ROT = 0.001, STEP_SCALE = 0.00001;   // hundred-thousandths
+// build 1322 (editor audit 4.11): "Transform fields show 5 decimal places for a position in metres."
+// Five decimals is TEN MICRONS, and the matching step meant an arrow key nudged a prop by 0.01 mm — so the
+// field was both unreadable and useless from the keyboard, on the most-used panel in the editor. Precision
+// is per CHANNEL now: metres to the millimetre, degrees to a hundredth, scale to the millimetre — with
+// TRAILING ZEROS TRIMMED, which is most of the readability: a wall at x=12 reads "12", not "12.00000".
+// Nothing about the stored values changes; this is display and nudge granularity only.
+const STEP_POS = 0.01, STEP_ROT = 0.1, STEP_SCALE = 0.01;   // 1 cm, a tenth of a degree, 1 cm of size
+const FIELD_DP = { p:3, r:2, s:3 };
+const _fieldDp = (k)=> (k && k[0]==='r') ? FIELD_DP.r : ((k && k[0]==='s') ? FIELD_DP.s : FIELD_DP.p);
+const _fmtField = (v, k)=> String(+(+v).toFixed(_fieldDp(k)));
+// `fmt` is a DIFFERENT job and deliberately keeps five: it writes the copy-paste block that bakes a tuned
+// value back into the source, where the extra digits are the whole point.
 const fmt = n => (+n).toFixed(5);
 function prsTransform(min,max,perAxisScale){
   const f = [
@@ -38758,7 +38769,19 @@ function libCommit(){
   e.t=Date.now(); _libWriteIndex(list); _libPut(_libCurrent, str);
   return true;
 }
+// build 1322 (editor audit 4.11): "libOpen does not ask before replacing unsaved work; it relies on 1254's
+// one-deep rescue." A rescue you have to know about is not consent. The confirm goes HERE rather than at the
+// call site so every future entry point inherits it, and it is asked only when there is something to lose
+// (`_levelDirty`) — a prompt on every open would be trained away in a week and then not read.
 function libOpen(id, cb){
+  if(typeof _levelDirty!=='undefined' && _levelDirty && typeof uiConfirm==='function'){
+    uiConfirm('You have unsaved changes. Opening this level will replace what is in the editor \u2014 save first?',
+      ()=>_libOpenNow(id, cb), 'Discard and open');
+    return;
+  }
+  _libOpenNow(id, cb);
+}
+function _libOpenNow(id, cb){
   _libGet(id).then(str=>{
     let lvl=null; try{ lvl=JSON.parse(str||'null'); }catch(e){}
     if(!lvl || typeof lvl!=='object'){ if(typeof flashToast==='function') flashToast('That level could not be read'); if(cb) cb(false); return; }
@@ -44318,7 +44341,7 @@ function renderEditorFields(){
     const lab = document.createElement('label');
     const name = document.createElement('span'); name.textContent = fld.label;
     const num = document.createElement('input'); num.type='number'; num.className='valnum';
-    num.step = fld.step; num.value = (+tgt.state[fld.k]).toFixed(5);
+    num.step = fld.step; num.value = _fmtField(tgt.state[fld.k], fld.k);
     lab.appendChild(name); lab.appendChild(num);
     const rng = document.createElement('input'); rng.type='range';
     rng.min=fld.min; rng.max=fld.max; rng.step=fld.step; rng.value=tgt.state[fld.k];
@@ -44334,11 +44357,11 @@ function renderEditorFields(){
           tgt.state.sz = Math.max(0.00001, tgt.state.sz*ratio);
           v = tgt.state[fld.k];
         } else { tgt.state[fld.k] = v; }
-        for(const fi of editorFieldInputs){ if((fi.k==='sx'||fi.k==='sy'||fi.k==='sz') && fi.k!==fld.k){ fi.rng.value=tgt.state[fi.k]; fi.num.value=(+tgt.state[fi.k]).toFixed(5); } }   // refresh the sibling axes (leave the one being dragged alone)
+        for(const fi of editorFieldInputs){ if((fi.k==='sx'||fi.k==='sy'||fi.k==='sz') && fi.k!==fld.k){ fi.rng.value=tgt.state[fi.k]; fi.num.value=_fmtField(tgt.state[fi.k], fi.k); } }   // refresh the sibling axes (leave the one being dragged alone)
       } else {
         tgt.state[fld.k] = v;                              // typed numbers can exceed slider min/max
       }
-      rng.value = v; num.value = fromSlider ? (+v).toFixed(5) : num.value;
+      rng.value = v; num.value = fromSlider ? _fmtField(v, fld.k) : num.value;
       tgt.apply(); updateGizmo(); updateEditorOut();
     };
     rng.oninput = ()=>commit(rng.value, true);
@@ -44359,7 +44382,7 @@ function renderEditorFields(){
       const surf=(typeof surfaceTopBelow==='function') ? surfaceTopBelow(o) : (function(){ let s=(typeof surfaceTopAt==='function')?surfaceTopAt(o.position.x,o.position.z):-Infinity; const t=(typeof terrainHeightAt==='function')?terrainHeightAt(o.position.x,o.position.z):0; if(s===-Infinity||s>=bottom-0.01) s=t; return s; })();
       const drop=bottom-surf; tgt.state.py = o.position.y - drop;                       // lift/lower so bottom == surf
       o.position.y = tgt.state.py;
-      for(const fi of editorFieldInputs){ if(fi.k==='py'){ fi.rng.value=tgt.state.py; fi.num.value=(+tgt.state.py).toFixed(5); } }
+      for(const fi of editorFieldInputs){ if(fi.k==='py'){ fi.rng.value=tgt.state.py; fi.num.value=_fmtField(tgt.state.py, 'py'); } }
       tgt.apply(); updateGizmo(); updateEditorOut();
     };
     host.appendChild(snapBtn);
@@ -44377,7 +44400,7 @@ function updateFieldDisplays(){
   if(!tgt || !tgt.state) return;   // zone targets (fire / jump / death zones) own no transform fields
   for(const f of editorFieldInputs){
     const v = tgt.state[f.k];
-    f.rng.value = v; f.num.value = (+v).toFixed(5);
+    f.rng.value = v; f.num.value = _fmtField(v, f.k);
   }
 }
 
@@ -45618,10 +45641,52 @@ function _outEnsure(){
   const ts=el.querySelector('#outTagSel'); ts.onchange=()=>{ _outTag=ts.value; _outRefresh(); };
   _outEl=el; return el;
 }
+// build 1322 (editor audit 4.11): "the outliner renders one DOM row per object with no virtualisation,
+// rebuilt on a 160 ms coalesce during edits." Measured with the real _outRefresh at 10 DOM nodes per row:
+//
+//     56 rows  2.88 ms      256 rows   8.72 ms
+//    106 rows  3.82 ms      456 rows  19.64 ms      (superlinear: 0.019 ms/row -> 0.042 ms/row)
+//
+// At 456 props that is ~123 ms of teardown-and-rebuild per SECOND while a gizmo drag keeps firing the
+// coalesce — and every one of those rebuilds was WASTED, because moving a prop changes nothing the
+// outliner displays. It lists names, tags, folders, hide/lock and selection; a transform appears nowhere.
+//
+// So the fix is not virtualisation, it is not doing the work: a signature of exactly what the panel shows,
+// compared before the DOM is touched. A genuinely changed list still costs what it always did — see the
+// note in CLAUDE.md; a virtualised tree remains absent and is a separate build with its own measurement.
+let _outSig = '';
+function _outSignature(){
+  const p = [_outSearch, _outTag, selProps.length, editorActive, selPickup];
+  for(const k in _outFolds) p.push(k, _outFolds[k] ? 1 : 0);
+  for(const kind of ['props','lights','spawns','turrets','pickups']){
+    const items = _outItems(kind);
+    p.push(kind, items.length);
+    for(const it of items){
+      const u = (it.o && it.o.userData) || {};
+      /* everything a row can RENDER: its label, its chips, its two state icons, and whether it is selected */
+      p.push(it.name, it.tag, it.folder, u.edHide?1:0, u.edLock?1:0, _outIsSel(kind, it)?1:0);
+    }
+  }
+  return p.join('\u0001');
+}
+function _outIsSel(kind, it){
+  const o = it.o;
+  return kind==='props'  ? selProps.indexOf(o)>=0
+       : kind==='lights' ? selLights.indexOf(o)>=0
+       : kind==='spawns' ? selSpawns.indexOf(o)>=0
+       : kind==='turrets'? (typeof selTurrets!=='undefined' && selTurrets.indexOf(o)>=0)
+       : selPickup===it.i;
+}
 function _outRefresh(){
   if(!_outOn) return;
   if(_outRenaming) return;   // build 1038: never yank a rename input out from under the keyboard
   const el=_outEnsure();
+  /* The skip must also require that the body was actually built once — an empty panel with a stale
+     signature would otherwise stay empty forever. */
+  { const b0 = el.querySelector('#outBody');
+    const sig = _outSignature();
+    if(sig === _outSig && b0 && b0.children.length) return;
+    _outSig = sig; }
   const ts=el.querySelector('#outTagSel'); const cur=_outTag;
   while(ts.options.length>1) ts.remove(1);
   if(typeof _lgTagOptions==='function') for(const t of _lgTagOptions()){ const op=document.createElement('option'); op.value=t.tag; op.textContent=t.tag+' ('+t.n+')'; ts.appendChild(op); }
