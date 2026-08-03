@@ -30334,7 +30334,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1325 · 2026-08-03';
+const BUILD_VERSION = 'build 1326 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -37408,6 +37408,64 @@ function applyZoneVisibility(){
 // type's plain-language description underneath (reusing SEC_SUB), then reveals only its tools.
 // Used by scene-click selection (build 657): when you click a zone (audio/death/jump/ladder/fire) anywhere on
 // the map, jump to World mode AND switch the grouped Zones picker to that type so its tools are visible.
+
+// ---------- build 1326: EVERY placed zone is clickable and draggable in all three axes ----------
+// Reported: "make sure all placed zones are clickable and have gizmo handles to drag their x, y, z."
+// Verified, and it was three separate gaps that had grown between three hand-maintained lists:
+//   - the CLICK dispatcher knew death zones, jump pads, fire zones, ladders and audio zones. Triggers,
+//     water zones, effect zones and waterfalls could not be selected by clicking them at all.
+//   - the DRAG write-back knew six of the eight and wrote only `.x` and `.z`. Water and effect zones had
+//     no branch, so dragging their handle moved nothing.
+//   - EVERY zone type discarded the Y of the drag, while every one of them has a `y` field that its
+//     marker already draws (`baseY = +z.y||0`, on a group sitting at the terrain).
+// One table now, read by both the picker and the drag. Build 1320 did this for the + menu's zone list for
+// the same reason: three copies of "the list of zone types" is three chances to add the ninth to two of
+// them. The nine-hundredth build of this file should not still be growing if/else chains per zone.
+const ZONE_EDIT = {
+  triggers:   { list:()=>triggerZones,  sel:()=>selTrigger,   pick:(i)=>{ selTrigger=i;   }, markers:()=>triggerMarkers,   refresh:()=>refreshTriggerMarkers(),   panel:()=>renderTriggersPanel() },
+  audiozones: { list:()=>audioZones,    sel:()=>selAudioZone, pick:(i)=>{ selAudioZone=i; }, markers:()=>audioZoneMarkers, refresh:()=>refreshAudioZoneMarkers(), panel:()=>renderAudioZonesPanel() },
+  deathzones: { list:()=>deathZones,    sel:()=>selDeathZone, pick:(i)=>{ selDeathZone=i; }, markers:()=>deathZoneMarkers, refresh:()=>refreshDeathZoneMarkers(), panel:()=>renderDeathZonesPanel() },
+  jumppads:   { list:()=>jumpPads,      sel:()=>selJumpPad,   pick:(i)=>{ selJumpPad=i;   }, markers:()=>jumpPadMarkers,   refresh:()=>refreshJumpPadMarkers(),   panel:()=>renderJumpPadsPanel() },
+  ladders:    { list:()=>ladders,       sel:()=>selLadder,    pick:(i)=>{ selLadder=i;    }, markers:()=>ladderMarkers,    refresh:()=>refreshLadderMarkers(),    panel:()=>renderLaddersPanel() },
+  firezones:  { list:()=>fireZones,     sel:()=>selFireZone,  pick:(i)=>{ selFireZone=i;  }, markers:()=>fireZoneFx,       refresh:()=>refreshFireZones(),        panel:()=>renderFireZonesPanel() },
+  waterzones: { list:()=>waterZones,    sel:()=>selWaterZone, pick:(i)=>{ selWaterZone=i; }, markers:()=>waterZoneFx,      refresh:()=>refreshWaterZones(),       panel:()=>renderWaterZonesPanel() },
+  fxzones:    { list:()=>fxZones,       sel:()=>selFxZone,    pick:(i)=>{ selFxZone=i;    }, markers:()=>fxZoneFx,         refresh:()=>refreshFxZoneMarkers(),    panel:()=>renderFxZonesPanel() },
+};
+// Which zone (if any) a clicked object belongs to. Walks up the parents because a marker is a GROUP of
+// rings and dots and the raycast hits one of those, not the group.
+function _zoneHitAt(root){
+  for(let g=root; g; g=g.parent){
+    for(const type in ZONE_EDIT){
+      const arr = ZONE_EDIT[type].markers() || [];
+      const i = arr.indexOf(g);
+      if(i>=0) return { type, i };
+    }
+  }
+  return null;
+}
+// Move a zone. `v` is the world point the gizmo dragged to.
+//
+// Y IS STORED THE WAY THE MARKER DRAWS IT — terrain-relative — so what you dragged is where it lands.
+// Worth stating plainly: the marker group sits at `_maxTerrainOver(x,z,0)` and adds `+z.y`, while the
+// gameplay containment tests (`inBand`) compare `+z.y` against an ABSOLUTE feet height. On flat ground
+// those agree exactly, which is why nothing has ever reported it; on sculpted terrain they do not, and
+// reconciling them means deciding the semantics across eight zone types and their runtime tests. That is
+// its own build. This one makes the handle honest about what it is setting.
+function _zoneMove(type, v){
+  const def = ZONE_EDIT[type]; if(!def) return;
+  const z = def.list()[def.sel()]; if(!z) return;
+  z.x = +v.x.toFixed(2); z.z = +v.z.toFixed(2);
+  const terr = (typeof terrainHeightAt==='function') ? terrainHeightAt(z.x, z.z) : 0;
+  z.y = +Math.max(0, v.y - terr).toFixed(2);
+  _zoneRepaint(type);
+}
+function _zoneRepaint(type){
+  const def = ZONE_EDIT[type]; if(!def) return;
+  /* Direct function references, not names looked up at runtime: build 1271 removed eval and new Function
+     from this file entirely and a string-keyed dispatch would be the same hazard wearing a hat. */
+  try{ def.refresh(); }catch(e){}
+  try{ def.panel(); }catch(e){}
+}
 function revealZoneTool(type){
   if(!ZONE_HOST[type]) return;
   if(typeof setEditorMode==='function' && editorMode!=='scene') setEditorMode('scene', true);
@@ -43019,7 +43077,7 @@ function renderEditorFields(){
   }
   if(tgt.isPstart){
     const h=document.createElement('div'); h.className='hint'; h.style.margin='0 0 6px';
-    h.innerHTML='This is where you (and co-op players) spawn at the start of a run. Drag the <b>blue marker</b> with the move gizmo to position it; use the rotate gizmo or the slider below to set which way you face.';
+    h.innerHTML='This is where you (and co-op players) spawn at the start of a run. Drag the <b>blue marker</b> with the move gizmo \u2014 including the <b>green Y handle</b> to lift it onto a platform or a second story; use the rotate gizmo or the slider below to set which way you face.';
     picker.appendChild(h);
     const fl=document.createElement('label'); fl.style.cssText='display:flex;align-items:center;gap:7px;color:#9fe6cf;font-size:12px;margin:2px 0;';
     const fsp=document.createElement('span'); fsp.textContent='Facing°'; fsp.style.minWidth='70px';
@@ -43030,14 +43088,14 @@ function renderEditorFields(){
     fr.addEventListener('mousedown',()=>pushUndoSnapshot()); fn.addEventListener('focus',()=>pushUndoSnapshot());
     fr.oninput=()=>apF(fr.value); fn.onchange=()=>apF(fn.value);
     fl.appendChild(fsp); fl.appendChild(fr); fl.appendChild(fn); picker.appendChild(fl);
-    const pr=document.createElement('div'); pr.className='hint'; pr.style.margin='4px 0 6px'; pr.textContent='Position:  X '+playerSpawn.x.toFixed(1)+'   Z '+playerSpawn.z.toFixed(1)+'   Y +'+(playerSpawn.y||0).toFixed(1)+'   (drag the gizmo for X/Z)';
+    const pr=document.createElement('div'); pr.className='hint'; pr.style.margin='4px 0 6px'; pr.textContent='Position:  X '+playerSpawn.x.toFixed(1)+'   Z '+playerSpawn.z.toFixed(1)+'   Y +'+(playerSpawn.y||0).toFixed(1)+'   (drag the gizmo, all three axes)';
     picker.appendChild(pr);
     // Height field: raise the start above the ground for a second story / platform top. 0 = on the floor.
     const yl=document.createElement('div'); yl.style.cssText='display:flex;align-items:center;gap:8px;margin:2px 0 6px;';
     const ysp=document.createElement('span'); ysp.textContent='Height ↑'; ysp.style.minWidth='70px'; ysp.style.fontSize='12px';
     const yr=document.createElement('input'); yr.type='range'; yr.min='0'; yr.max='30'; yr.step='0.1'; yr.value=String(playerSpawn.y||0); yr.style.flex='1';
     const yn=document.createElement('input'); yn.type='number'; yn.step='0.1'; yn.value=String(playerSpawn.y||0); yn.style.cssText='width:64px;background:#0c1418;border:1px solid #2a3a42;color:#cfeee2;border-radius:4px;padding:2px 4px;font-size:11px;';
-    const apY=(v)=>{ let n=parseFloat(v); if(!isFinite(n)) n=0; if(n<0) n=0; playerSpawn.y=n; yr.max=String(Math.max(30, n+1)); yr.value=String(n); yn.value=String(n); refreshPlayerSpawnMarker(); pr.textContent='Position:  X '+playerSpawn.x.toFixed(1)+'   Z '+playerSpawn.z.toFixed(1)+'   Y +'+n.toFixed(1)+'   (drag the gizmo for X/Z)'; };
+    const apY=(v)=>{ let n=parseFloat(v); if(!isFinite(n)) n=0; if(n<0) n=0; playerSpawn.y=n; yr.max=String(Math.max(30, n+1)); yr.value=String(n); yn.value=String(n); refreshPlayerSpawnMarker(); pr.textContent='Position:  X '+playerSpawn.x.toFixed(1)+'   Z '+playerSpawn.z.toFixed(1)+'   Y +'+n.toFixed(1)+'   (drag the gizmo, all three axes)'; };
     yr.addEventListener('mousedown',()=>pushUndoSnapshot()); yn.addEventListener('focus',()=>pushUndoSnapshot());
     yr.oninput=()=>apY(yr.value); yn.onchange=()=>apY(yn.value);
     yl.appendChild(ysp); yl.appendChild(yr); yl.appendChild(yn); picker.appendChild(yl);
@@ -45458,22 +45516,23 @@ function setSelPos(v){
     g.position.copy(v);
     const s=editorTargets.turrets.state; s.px=v.x; s.py=v.y; s.pz=v.z;
   } else if(editorActive==='pstart'){
-    playerSpawn.x=v.x; playerSpawn.z=v.z; refreshPlayerSpawnMarker();   // player start lives on the floor
+    /* build 1326, reported: "allow the gizmo y handle to move it for height placement". The Y of the drag
+       was discarded here and the comment said "player start lives on the floor" — but `pstart.y` has
+       existed since the field was added (a second story, a platform top) and the panel has a Height
+       slider for it. Build 1087 had already solved the identical problem for ENEMY spawn markers: store
+       the height RELATIVE to the terrain beneath, so the marker rides terrain edits instead of being
+       stranded in the air. Same rule here, and the same clamp at zero — below the floor is not a spawn. */
+    playerSpawn.x=v.x; playerSpawn.z=v.z;
+    const _pterr=(typeof terrainHeightAt==='function')?terrainHeightAt(v.x,v.z):0;
+    playerSpawn.y=+Math.max(0, v.y-_pterr).toFixed(2);
+    refreshPlayerSpawnMarker();
   } else if(editorActive==='extract'){
     const lim=ARENA*0.85; const x=Math.max(-lim,Math.min(lim,v.x)), z=Math.max(-lim,Math.min(lim,v.z));
     extractSpot={x,z}; extractPos.set(x,0,z); if(extractZone) extractZone.position.set(x, _maxTerrainOver(x, z, gameCfg.extractRadius||3.5), z);   // extraction sits on the terrain
-  } else if(editorActive==='triggers'){
-    const z=triggerZones[selTrigger]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshTriggerMarkers==='function') refreshTriggerMarkers(); if(typeof renderTriggersPanel==='function') renderTriggersPanel();
-  } else if(editorActive==='deathzones'){
-    const z=deathZones[selDeathZone]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshDeathZoneMarkers==='function') refreshDeathZoneMarkers(); if(typeof renderDeathZonesPanel==='function') renderDeathZonesPanel();
-  } else if(editorActive==='ladders'){
-    const L=ladders[selLadder]; if(!L) return; L.x=+v.x.toFixed(2); L.z=+v.z.toFixed(2); if(typeof refreshLadderMarkers==='function') refreshLadderMarkers(); if(typeof renderLaddersPanel==='function') renderLaddersPanel();
-  } else if(editorActive==='jumppads'){
-    const z=jumpPads[selJumpPad]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshJumpPadMarkers==='function') refreshJumpPadMarkers(); if(typeof renderJumpPadsPanel==='function') renderJumpPadsPanel();
-  } else if(editorActive==='firezones'){
-    const z=fireZones[selFireZone]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshFireZones==='function') refreshFireZones(); if(typeof renderFireZonesPanel==='function') renderFireZonesPanel();
-  } else if(editorActive==='audiozones'){   // build 687: dragging the handle moves the audio zone (radius stays in the panel)
-    const z=audioZones[selAudioZone]; if(!z) return; z.x=+v.x.toFixed(2); z.z=+v.z.toFixed(2); if(typeof refreshAudioZoneMarkers==='function') refreshAudioZoneMarkers(); if(typeof renderAudioZonesPanel==='function') renderAudioZonesPanel();
+  } else if(ZONE_EDIT[editorActive]){
+    /* build 1326: six near-identical branches that each wrote only .x and .z, and two zone types that had
+       no branch at all. One call now, and it carries the Y the gizmo was already offering. */
+    _zoneMove(editorActive, v);
   }
 }
 // --- rotation (Euler, radians) of the selected object, for the rotate gizmo ---
@@ -45878,18 +45937,13 @@ renderer.domElement.addEventListener('click', (e)=>{
     if(ki>=0){ picked='pickups'; selPickup=ki; break; }
     const lti = lootMarkers.indexOf(root);
     if(lti>=0){ picked='loot'; selLoot=lti; break; }
-    const dzi = deathZoneMarkers.indexOf(root);
-    if(dzi>=0){ picked='deathzones'; selDeathZone=dzi; break; }
-    const jpi = jumpPadMarkers.indexOf(root);
-    if(jpi>=0){ picked='jumppads'; selJumpPad=jpi; break; }
-    { let g=root; while(g){ const fzi=fireZoneFx.indexOf(g); if(fzi>=0){ picked='firezones'; selFireZone=fzi; break; } g=g.parent; } if(picked==='firezones') break; }
+    /* build 1326: every zone type, from the one table. This replaced five hand-written marker lookups
+       and — the point — added the four that had never been here: triggers, water zones, effect zones and
+       waterfalls' own zones. A placed thing you cannot click is a placed thing you cannot edit. */
+    { const zh=_zoneHitAt(root); if(zh){ picked=zh.type; ZONE_EDIT[zh.type].pick(zh.i); break; } }
     // build 657: turret/ladder/audio-zone/pstart/extract resolution
     const ti = turretModels.indexOf(root);
     if(ti>=0){ picked='turrets'; editorTargets.turrets.idx=ti; selTurrets=[turretModels[ti]]; break; }
-    const ldi = ladderMarkers.indexOf(root);
-    if(ldi>=0){ picked='ladders'; selLadder=ldi; break; }
-    const azi = audioZoneMarkers.indexOf(root);
-    if(azi>=0){ picked='audiozones'; selAudioZone=azi; break; }
     if(playerSpawnMarker && root===playerSpawnMarker){ picked='pstart'; break; }
     if(extractZone && root===extractZone){ picked='extract'; break; }
     root = root.parent;

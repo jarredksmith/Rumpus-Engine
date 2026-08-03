@@ -967,6 +967,53 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The gizmo reaches the whole level (build 1326)
+
+Reported from play: *"For the player start, allow the gizmo y handle to move it for height placement. Make
+sure all placed zones are clickable and have gizmo handles to drag their x, y, z location."*
+
+Verified, and it was **three gaps between three hand-maintained lists**:
+
+| | knew about |
+|---|---|
+| the CLICK resolver | death zones, jump pads, fire zones, ladders, audio zones — **not** triggers, water zones or effect zones, which could not be selected by clicking them at all |
+| the DRAG write-back | six of the eight, and wrote only `.x` and `.z` — water and effect zones had no branch, so their handle moved nothing |
+| the Y axis | discarded by **every** zone type, though each has a `y` its marker already draws (`baseY = +z.y`) |
+
+And `pstart` did the same, under a comment reading *"player start lives on the floor"* — while the panel
+directly beside it has had a **Height** slider for that exact field the whole time. Build 1087 had already
+solved the identical problem for ENEMY spawn markers six hundred builds earlier: store the height RELATIVE
+to the terrain so the marker rides terrain edits instead of being stranded in the air. Same rule here.
+
+**`ZONE_EDIT` is one table**, read by both the picker and the drag, and `test-1326` asserts its keys are
+exactly `ZONE_TYPES` — so the ninth zone type cannot reach two lists out of three. This is the third time
+this session that a defect turned out to be a duplicated list (1320's shapes, 1320's zone-add, this).
+`_zoneHitAt` walks UP the parents, because a marker is a *group* of rings and dots and the raycast hits one
+of those. The refresh/panel hooks are direct function references, not names: a string-keyed dispatch would
+reintroduce exactly what build 1271 removed.
+
+Measured live driving the real `applyGizmoDrag` and the real click resolver:
+
+```
+pstart     drag to (4, 6.5, -3)  -> y 6.5, marker follows;  y -50 -> clamped 0
+           on terrain 10, drag to 13 -> stores 3  (height ABOVE ground)
+all EIGHT  placed; click resolves from a CHILD mesh to the right type; drag writes 7 / 5 / -9
+```
+
+**One thing this deliberately does NOT resolve, stated rather than silently picked.** The marker group sits
+at `_maxTerrainOver(x,z,0)` and adds `+z.y`, while the gameplay containment tests (`inBand`) compare `+z.y`
+against an ABSOLUTE feet height. On flat ground those agree exactly, which is why nobody has ever reported
+it; on sculpted terrain they do not. Reconciling them means deciding the semantics across eight zone types
+and their runtime tests — its own build. This one makes the handle honest about what it is setting.
+
+Six pins moved (24, 338, 339, 507, 533), each keeping its intent through the table.
+
+**A drafting note worth keeping:** two of the eight table entries kept string-valued `refresh`/`panel`
+handlers because my edit script's anchors did not match their whitespace, and `_zoneRepaint`'s `try/catch`
+swallowed the resulting `def.refresh is not a function` **silently** — the probe still showed correct x/y/z,
+because those are data writes. The test caught it by counting `refresh:()=>` across the table. A `catch(e){}`
+around a dispatch hides a wiring error perfectly.
+
 ## Level DATA is untrusted, not just level SINKS (build 1325 — platform audit 2.2)
 
 The audit listed **four verified DOM-injection vectors from level data**. Re-verified against the current

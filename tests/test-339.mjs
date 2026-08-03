@@ -22,7 +22,9 @@ assert(/function addFireZone\(\)/.test(src) && /function removeFireZone\(i\)/.te
 assert(/function buildFireZoneGroup\(z, sel\)/.test(src) && /const FIRE_COLS = \[0xff7a1a, 0xffb020, 0xff3a0a\]/.test(src), 'fire zones build flickering flame tongues');
 assert(/function _animateFire\(g, tms, dt\)/.test(src), 'flames are animated each frame');
 assert(/\(editorActive==='firezones'&&selFireZone>=0\)/.test(src), 'gizmo can move a selected fire zone');
-assert(/editorActive==='firezones'\)\{\s*const z=fireZones\[selFireZone\]; if\(!z\) return; z\.x=\+v\.x\.toFixed\(2\); z\.z=\+v\.z\.toFixed\(2\);/.test(src), 'dragging writes back the fire-zone position');
+/* build 1326: six near-identical zone drag branches became one table-driven _zoneMove that also writes Y. */
+assert(/firezones:  \{ list:\(\)=>fireZones/.test(src) && /_zoneMove\(editorActive, v\)/.test(src), 'dragging writes back the fire-zone position');
+assert(/z\.y = \+Math\.max\(0, v\.y - terr\)/.test(src), '...in all three axes now');
 
 // damage applies to player + bots + enemies; player burn is throttled into ticks
 const uf = extractFunction('updateFireZones');

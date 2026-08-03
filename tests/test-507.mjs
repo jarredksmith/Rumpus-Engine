@@ -15,8 +15,14 @@ assert(/if\(extractZone && extractZone\.visible\) targets\.push\(extractZone\);/
 
 // --- the picked-resolution loop maps each clicked root to the right kind ---
 assert(/const ti = turretModels\.indexOf\(root\);\s*\n\s*if\(ti>=0\)\{ picked='turrets'; editorTargets\.turrets\.idx=ti; selTurrets=\[turretModels\[ti\]\]; break; \}/.test(src), 'a turret hit selects it + sets the index');
-assert(/const ldi = ladderMarkers\.indexOf\(root\);\s*\n\s*if\(ldi>=0\)\{ picked='ladders'; selLadder=ldi; break; \}/.test(src), 'a ladder hit selects it');
-assert(/const azi = audioZoneMarkers\.indexOf\(root\);\s*\n\s*if\(azi>=0\)\{ picked='audiozones'; selAudioZone=azi; break; \}/.test(src), 'an audio-zone hit is resolved');
+/* build 1326: five hand-written marker lookups became one table-driven _zoneHitAt, which also added the
+   three types that were never click-selectable at all (triggers, water zones, effect zones). The claim is
+   the same and now covers every type rather than the five somebody remembered. */
+assert(/const zh=_zoneHitAt\(root\); if\(zh\)\{ picked=zh\.type; ZONE_EDIT\[zh\.type\]\.pick\(zh\.i\); break; \}/.test(src),
+  'every zone marker hit is resolved from one table');
+assert(/ladders:    \{ list:\(\)=>ladders/.test(src), 'a ladder hit selects it');
+assert(/audiozones: \{ list:\(\)=>audioZones/.test(src), 'an audio-zone hit is resolved');
+assert(/triggers:   \{ list:\(\)=>triggerZones/.test(src), '...and a trigger, which never was before');
 assert(/if\(playerSpawnMarker && root===playerSpawnMarker\)\{ picked='pstart'; break; \}/.test(src), 'the player-start marker is resolved');
 assert(/if\(extractZone && root===extractZone\)\{ picked='extract'; break; \}/.test(src), 'the extract zone is resolved');
 
