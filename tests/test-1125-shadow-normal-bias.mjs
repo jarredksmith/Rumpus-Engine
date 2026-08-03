@@ -17,15 +17,22 @@ import { gameSource, extractFunction, assert, eq, near, done } from './harness.m
 const src = gameSource();
 
 // ---------------------------------------------------------------- one expression, run for real
-const nb = src.match(/const SUN_NB_TEXELS = ([\d.]+);\nconst _sunNormalBias = [^\n]*\n/);
-assert(nb, 'the bias is a named texel count with a single derivation');
+// build 1341: the derivation grew from two lines to a block, so it is taken by SLICE — a two-line regex
+// is the line-count form of the character-budget trap. And the ceiling is no longer a bare 0.6: acne is a
+// SAMPLING artifact whose scale is texels, while light leak and peter-panning are GEOMETRY artifacts whose
+// scale is metres, so the texel rule now sits under a world cap derived from the room tool's own default
+// wall. The assertions below keep their intent — one derivation, texel-proportional, and small enough not
+// to erase the shadow it is biasing — and that last one now passes by a much wider margin.
+const nb = [src.slice(src.indexOf('const SUN_NB_TEXELS'), src.indexOf('const SHADOW_REFIT_TEXELS'))];
+assert(/const SUN_NB_TEXELS = [\d.]+;/.test(nb[0]), 'the bias is a named texel count with a single derivation');
 const fn = new Function('Math', nb[0] + '; return _sunNormalBias;')(Math);
 {
-  // the build-1095 tuning point, restated: the constant it replaces IS this expression
-  near(fn(80, 2048), 0.6, 1e-6, 'at the old fixed +/-80 volume on a 2048 map it reproduces the tuned 0.6');
-  // ...and the build-1120 default, which is what shipped wrong
+  // The build-1095 tuning point is now CAPPED rather than reproduced, and deliberately: 0.6 m was always
+  // two of the engine's own walls, so build 1095's tuning was itself leaking — it simply had no volume
+  // small enough for anyone to notice until 1120 made shadowDist variable.
+  near(fn(80, 2048), 0.15, 1e-6, 'the old +/-80 volume now yields the world cap, not the tuned 0.6');
   const now = fn(30, 2048);
-  near(now, 0.2256, 1e-3, 'at the default shadowDist of 30 it is ' + now.toFixed(3) + ', not 0.6');
+  near(now, 0.15, 1e-3, 'at shadowDist 30 it is ' + now.toFixed(3) + ', capped rather than 0.2256');
   assert(now < 0.6 * 0.5, 'less than half what builds 1120-1124 used at this extent');
   // the failure this fixes, in the units that matter: a 1.7 m crate under a 72-degree sun casts
   // 1.7 / tan(72) = 0.55 of ground shadow. An offset longer than that erases it completely.
@@ -34,13 +41,19 @@ const fn = new Function('Math', nb[0] + '; return _sunNormalBias;')(Math);
   assert(now < reach * 0.5, '...the new one is under half of it, so the shadow survives');
 }
 {
-  // it is a texel quantity: halve the map and it doubles; halve the extent and it halves
-  near(fn(30, 1024), fn(30, 2048) * 2, 1e-9, 'a 1024 map (IS_COARSE) needs twice the world offset for the same texel count');
-  near(fn(30, 2048), fn(15, 2048) * 2, 1e-9, 'halving the extent halves the offset');
+  // It is a texel quantity BELOW THE CAP, which is where build 1125's rule governs — build 1341 put a
+  // world ceiling above it, so the proportionality is asserted in the regime it still owns rather than
+  // dropped. (Testing it at an extent the cap clamps would only be testing the cap.)
+  near(fn(5, 1024), fn(5, 2048) * 2, 1e-9, 'a 1024 map (IS_COARSE) needs twice the world offset for the same texel count');
+  // 10 -> 5, not 5 -> 2.5: at 2.5 the 0.02 FLOOR binds, and a test that straddles a clamp measures the
+  // clamp rather than the proportionality it is asserting
+  near(fn(10, 2048), fn(5, 2048) * 2, 1e-9, 'halving the extent halves the offset');
   let prev = 0;
   for (const E of [8, 15, 30, 50, 80, 120]) { const v = fn(E, 2048); assert(v >= prev, 'monotonic in extent'); prev = v; }
   // the clamps: a huge shadowDist must not offset shadows off the map, a tiny one must not hit zero
-  eq(fn(400, 2048), 0.6, 'the widest authorable volume is capped at the value that was actually tuned');
+  near(fn(400, 2048), (2 * 400 / 2048) * 1.5, 1e-9,
+    'the widest authorable volume lands on build 1341\'s texel FLOOR — 1.5 texels, because at a 39 cm texel a flat world cap would be too little to clear acne');
+  assert(fn(400, 2048) < 0.6, '...and is below the 0.6 that builds 1095-1340 used, which was two walls thick');
   assert(fn(8, 2048) >= 0.02, 'the tightest volume keeps a floor, or grazing faces band');
   assert(fn(1, 2048) === 0.02, '...an exact floor, not an accidental zero');
 }

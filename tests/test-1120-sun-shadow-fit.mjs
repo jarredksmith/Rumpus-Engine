@@ -38,7 +38,11 @@ assert(/const _sunTarget = new THREE\.Object3D\(\); scene\.add\(_sunTarget\); mo
     // build 1125: the fit also sets the normal bias, so it needs that helper in scope — pulled from
     // the real source rather than restated, or the test could pass against a formula that shipped
     // differently
-    const nb = src.match(/const SUN_NB_TEXELS = [^\n]*\nconst _sunNormalBias = [^\n]*\n/);
+// build 1341: the sun's normalBias derivation grew from two lines to a small block (a world cap with a
+// texel floor beside the texel rule). Every rig below used to grab it with a TWO-LINE regex — the line
+// count version of the character-budget trap this file records. They take the whole block by slice now,
+// which cannot break when it grows again.
+    const nb = [src.slice(src.indexOf('const SUN_NB_TEXELS'), src.indexOf('const SHADOW_REFIT_TEXELS'))];
     assert(nb, 'the normal-bias helper is a named, single-source expression');
     const fn = new Function('THREE', 'moon', '_sunTarget', 'worldCfg', 'Math',
       'const _fitF=new THREE.Vector3(), _fitAx=new THREE.Vector3(), _fitAy=new THREE.Vector3(), _fitL=new THREE.Vector3(), _fitL2=new THREE.Vector3();' +
