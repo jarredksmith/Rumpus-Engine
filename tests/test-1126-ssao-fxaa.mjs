@@ -136,7 +136,11 @@ assert(/_aoGeoRT,_aoRT,_aoRT2/.test(extractFunction('disposePost')), 'a resize d
   assert(/if\(avg > 20 && slowFrac >= 0\.5 && _prStepI===0 && _hiFxOn\)\{/.test(fn), 'it is still shed BEFORE any resolution drop');
   assert(/_hiFxFails\+\+/.test(fn) && /_hiFxFails < 3/.test(fn),
     '...and still locked off after three failed re-arms, which is the build-883 anti-thrash rule');
-  assert(/else _hiFxOn=true;/.test(fn), '...and re-armed last on the way back up');
+  // build 1342 put a rung ABOVE this one (motion blur), so the FX rung is no longer the last thing
+  // restored — blur is. The intent here is that the FX rung comes back only after RESOLUTION has, which
+  // is what "re-armed last" was protecting, and that is still exactly what the climb does.
+  assert(/else if\(!_hiFxOn\) _hiFxOn=true;/.test(fn), '...and re-armed after resolution on the way back up');
+  assert(/else _mbShed=false;/.test(fn), '...with build 1342 handing motion blur back after it, being worth less');
 }
 
 // ---------------------------------------------------------------- authorable, and saved with the level

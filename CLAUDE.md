@@ -967,45 +967,68 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
-## Motion blur and jagged edges — one hypothesis killed, one open (no build)
+## Motion blur was buying an effect with your antialiasing (build 1342)
 
 Reported from play with a screenshot of the default level: *"seriously jagged edges… if any level of motion
 blur is turned on (anything >0) those rough jagged edges appear."*
 
-**The obvious hypothesis is DEAD: motion blur does not cost the frame its MSAA.** Measured with build
-1126's own metric — an antialiased silhouette against the sky has a coverage gradient, a hard edge has none
-— at the top rung with `samples: 4`, one camera, auto-exposure and grain off:
+**Four probes failed to find blur damaging an edge, and that IS the finding.** At the forced top rung with
+MSAA live, blur makes a silhouette *softer*:
 
 ```
-postMotion 0      65.7% of scanlines antialiased,  mean gradient 0.68 px
-postMotion 0.3    70.4%                            0.85 px
-postMotion 0.62   72.2%                            0.88 px
+postMotion 0 / 0.3 / 0.62   ->   65.7% / 70.4% / 72.2% of scanlines antialiased
 ```
 
-Blur makes the edge *softer*, not harder. The pipeline reading confirms MSAA is live in all three
-(`_postRT.samples 4`), so the extra `_compRT` hop the blur path adds is not losing the resolve.
+and on the DEFAULT level, mid-motion, with and without the velocity buffer, the three conditions are
+identical within noise (26.5% / 25.7% / 26.5% hard edges). **The blur is not drawing the jagged edge. It is
+paying for it.**
 
-**The instrument nearly lied first, in the way this file keeps recording.** The unforced run reported
-`prStep: 3, samples: 0, pixelRatio: 0.66` — SwiftShader had already walked the adaptive ladder down to a
-rung where MSAA is off *anyway*, so it was measuring a machine with no MSAA in either condition. The probe
-forces `_adaptOn=false; _prStepI=0; _hiFxOn=true` and rebuilds the post targets now. Build 1242 lost a
-capture round to exactly this.
+`_desiredPostSamples()` returns 4 only at `_prStepI === 0 && _hiFxOn`, and the adaptive ladder's FIRST
+relief was `_hiFxOn = false` — so the very first downshift throws MSAA away while keeping full resolution.
+Motion blur is not free: at the top rung it adds a full-res blur pass **and a half-res velocity SCENE
+RENDER** (build 1246). Measured, switching it on costs **~14% of frame time** (median 272.6 → 311.7 ms
+under SwiftShader; the absolute numbers mean nothing there, the ratio does). On a machine sitting near the
+ladder's threshold, 14% is exactly what tips rung 0 into rung 1 — and rung 1 has no MSAA at all.
 
-**What is still open, and the candidate.** The report is from play, i.e. while MOVING, and build 1246's own
-notes already accept a silhouette artifact from the velocity buffer: *"the residual softening is the
-half-res buffer's bilinear boundary mixing weapon and world velocity at the silhouette — the standard
-gather-blur edge artifact, accepted."* `_velRT` is `mkRT(hw, hh)` — half resolution — and on an
-UnsignedByte fallback its encoded velocity also quantises to ~1 px. A blur whose *amount* steps in 2-pixel
-blocks across an edge is a good description of "rough jagged edges", and it would appear only with blur on
-and only while moving.
+**At any strength**, because the passes run regardless of the amount. Which is precisely what the report
+said, and what no "does blur blur the edge" experiment could ever have explained.
 
-**That is a hypothesis, not a finding.** Three attempts to measure it failed and are worth listing so
-nobody repeats them: an edge-jaggedness metric that tracked the strongest gradient per scanline and
-therefore hopped between different edges of the same box; a forced `uVelOn` that `_renderPostFX` overwrites
-every frame; and a screenshot taken after the scripted spin had already stopped, so the blur was back at
-zero. **The discriminator costs the reporter one click and me nothing: does the jaggedness appear with
-motion blur up while standing perfectly still?** Velocity is zero when still, so if it is there when still
-it is not the velocity buffer; if it only appears while turning, it is.
+### The ladder sheds in value order now
+
+Motion blur becomes the cheapest rung, ABOVE the FX rung: a marginal machine keeps its edges and loses an
+effect, instead of keeping the effect and losing its edges. Three things make it safe:
+
+- **The gate requires blur to actually be on.** A level that never uses it must not spend a rung shedding
+  nothing while the machine struggles. Written as `typeof _postMotion !== 'undefined' && …`, which also
+  makes every existing ladder harness behave exactly as it did.
+- **Recovery is the reverse.** Resolution, then the FX rung, then blur last — the least valuable thing back
+  last.
+- **A three-strike lock on the same pattern as `_hiFxFails`**, so a re-arm that immediately fails cannot
+  become a limit cycle. Turning the scaler off restores everything, blur included, because "off" is a
+  promise of full quality.
+
+Executed against the real `_adaptResTick` by TRACING the sequence rather than reading the end state — the
+ladder keeps shedding for as long as the machine stays slow, so a state read after a long run says nothing
+about what went first.
+
+### Five instrument failures, and the one that mattered
+
+| # | what it said | why it was wrong |
+|---|---|---|
+| 1 | blur costs MSAA | ran on adaptive rung 3, where MSAA is off **in both conditions** |
+| 2 | 21.472 jaggedness in both blur conditions | screenshot taken after the scripted spin stopped — blur was back at zero |
+| 3 | 91% of edges hard even with MSAA on | looked for the intermediate pixel at x−1 and x+2, which are the PLATEAUS |
+| 4 | edge jaggedness ~23 everywhere | re-searched for the strongest gradient per scanline, so it hopped between different edges of one box |
+| 5 | `_prStepI` climbed to 60 | `JSON.stringify(extractConst(...))` made `_PR_STEPS` a STRING, whose `.length` is the character count |
+
+Only #5 was caught by its own absurdity. **The lesson is #1's:** a probe that forces or ignores the adaptive
+ladder cannot see a bug whose mechanism IS the adaptive ladder. Build 1242 lost a capture round to the same
+thing and the note said so; I read it as being about a shed gate rather than about the rung.
+
+Six pins moved (872, 880, 1126, 1141, 437, and 1141's rung count). Three of them quoted a whole line
+verbatim and broke when it gained a term — the character-budget trap in miniature — and assert their members
+now. One of my own repair comments contained a **backtick inside a template literal** and closed it, which
+this file already records under build 1328.
 
 ## The shadow bias was wider than a wall (build 1341)
 
