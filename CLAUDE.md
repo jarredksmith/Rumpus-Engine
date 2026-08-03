@@ -967,6 +967,56 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Level DATA is untrusted, not just level SINKS (build 1325 — platform audit 2.2)
+
+The audit listed **four verified DOM-injection vectors from level data**. Re-verified against the current
+tree first, because re-fixing closed findings is busywork:
+
+| | sink | state |
+|---|---|---|
+| V1 | credits linkifier → `href="$1"` | **CLOSED by 1277** — `_creditEsc` escapes `"` and `'`, URL class excludes them |
+| V3 | lock prompt | **CLOSED by 1277** |
+| V4 | ammo prompt | **CLOSED by 1277** |
+| V2 | `openInspect` title | **STILL OPEN** — one click from picking up any item |
+
+**V2 survived a build that fixed three sinks precisely because the fix was at the sinks.** Escaping at the
+point of use protects the sinks you remembered. So this build does the other half.
+
+`invItems`, `keyNames` and `pickupModels` were the only level data loaded with a raw
+`JSON.parse(JSON.stringify(...))` — no type coercion, no length cap, no entry cap, no `hasOwnProperty`
+guard — sitting right beside prop strings that have been `String(x).slice(n)`-ed for hundreds of builds.
+They are sanitised where they ENTER now, in all three load paths, with caps matched to the equivalent prop
+fields (name 60, the use-* fields 30) so a creator meets one rule rather than four. `type` is a whitelist
+because it selects a code path.
+
+`openInspect`'s title is `textContent`, not an escape: **a title has no legitimate markup at all**, and the
+weaker fix invites the next person to add markup back.
+
+### Measured with a real hostile level (`tools/probe/xss-level.mjs`)
+
+```
+control      an unsafe innerHTML with the same payload DOES create the node  -> the probe can see it
+the sink     0 img nodes, 0 script nodes, canary still 0 after a 500 ms settle
+caps         name 60, desc 400, journal 4000, model 300; 500 items -> 199; "NaN please" -> 1
+prototype    a JSON "__proto__" key does not pollute Object.prototype
+1277's work  linkify still leaks no attribute
+```
+
+**The first run reported `pwned: 1` with ZERO nodes created in the sink**, which is a contradiction and was
+worth chasing rather than reporting. The control block wrote the *same* payload into a real `<img>`, whose
+`onerror` fires **asynchronously** — after the canary reset. A control that shares a canary with the
+measurement is not a control. Separate canaries, and the reset moved to immediately before the sink.
+
+### The bug the sweep turned up
+
+`keyNames` and `pickupModels` **serialize** with the level and were loaded at boot and by the multiplayer
+loader — and **`restoreLevel` had no line for either.** So the second level you opened kept the first one's
+key names and pickup models, an imported level inherited yours, and a key rename could not be undone. Build
+1280 unified the *prop* apply across the three loaders for exactly this reason; these two sat outside it and
+nobody noticed, because two of the three paths agreed and the third was simply silent.
+
+Four pins moved (115, 238, 879, plus one of my own regexes that spanned a line wrap).
+
 ## Wires and rails (build 1324 — editor audit 4.10, second leg)
 
 Build 1323 closed the room; the other half of 4.10 is a **path**. The user's own case for it was the one

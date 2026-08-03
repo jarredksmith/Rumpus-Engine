@@ -20923,8 +20923,78 @@ let audioZoneMarkers = []; const _zoneRT = [];   // editor ring markers + per-zo
 let selAudioZone = -1;   // build 657: tracks the audio zone clicked in the scene (no gizmo today; the panel can scroll to/highlight it later)
 let newPickupKind = 'health';
 let pickupsOn = !(savedLevel && savedLevel.pickupsOn === false);   // off => no pickups at all (not even the default fallback set)
-let pickupModels = (savedLevel && savedLevel.pickupModels && typeof savedLevel.pickupModels==='object') ? JSON.parse(JSON.stringify(savedLevel.pickupModels)) : {};   // kind -> {url, scale}: custom model in place of the floating icon
-let keyNames = (savedLevel && savedLevel.keyNames && typeof savedLevel.keyNames==='object') ? JSON.parse(JSON.stringify(savedLevel.keyNames)) : {};   // color -> custom display name ('Engine Room Keycard'); ring/lock ids stay colors
+
+// ---------- build 1325: the level's own DICTIONARIES are untrusted too (platform audit 2.2) ----------
+// A shared level is a file written by a stranger. Every PROP string in the loader has been coerced and
+// capped for a long time — `String(p.nm).slice(0,60)`, `.slice(0,40)`, `.slice(0,200)` — but three
+// dictionaries beside them were loaded with a raw `JSON.parse(JSON.stringify(...))`: `invItems`,
+// `keyNames` and `pickupModels`. No type coercion, no length cap, no key cap, in all THREE load paths
+// (boot, restoreLevel, loadLevelFromNet).
+//
+// Build 1277 closed the four sinks the audit named — the credits linkifier, the lock prompt, the ammo
+// prompt — by escaping at the point of use. That was right, and it is not enough on its own: escaping at
+// the sink protects the sinks you remembered. `openInspect` was the one it missed (see below), and it was
+// missed precisely because nothing upstream had made the DATA safe. So this build does the other half:
+// the dictionaries are sanitised where they ENTER, the way props already are.
+//
+// The caps are not arbitrary: they match the equivalent prop fields (name 60, folder/tag 40, dialogue 200)
+// so a creator meets one rule, not four. `type` is a whitelist because it selects a code path.
+const SAN_ITEM_MAX = 200, SAN_KEY_MAX = 64;              // how many entries one level may define
+const INV_TYPES = ['object','journal'];
+function _sanStr(v, n){ return String(v==null ? '' : v).slice(0, n); }
+function _sanNum(v, lo, hi, dflt){ const x = +v; return isFinite(x) ? Math.max(lo, Math.min(hi, x)) : dflt; }
+function _sanInvItems(raw){
+  const out = {};
+  if(!raw || typeof raw !== 'object') return out;
+  let n = 0;
+  for(const k in raw){
+    if(!Object.prototype.hasOwnProperty.call(raw, k)) continue;   /* never walk the prototype chain */
+    if(++n > SAN_ITEM_MAX) break;
+    const it = raw[k]; if(!it || typeof it !== 'object') continue;
+    const e = {};
+    e.name = _sanStr(it.name, 60);
+    if(it.desc != null) e.desc = _sanStr(it.desc, 400);
+    if(it.journal != null) e.journal = _sanStr(it.journal, 4000);   /* a journal page is meant to be prose */
+    if(it.model != null) e.model = _sanStr(it.model, 300);
+    if(it.thumb != null) e.thumb = _sanStr(it.thumb, 300);
+    e.type = (INV_TYPES.indexOf(it.type) >= 0) ? it.type : 'object';
+    if(it.scale != null) e.scale = _sanNum(it.scale, 0.001, 100, 1);
+    /* the use-* fields drive giveItem/useItem, so they are coerced rather than copied */
+    if(it.useType != null) e.useType = _sanStr(it.useType, 30);
+    if(it.useKey != null) e.useKey = _sanStr(it.useKey, 30);
+    if(it.useAmount != null) e.useAmount = _sanNum(it.useAmount, 0, 1e6, 0);
+    if(it.useConsume) e.useConsume = true;
+    out[_sanStr(k, 60)] = e;
+  }
+  return out;
+}
+function _sanKeyNames(raw){
+  const out = {};
+  if(!raw || typeof raw !== 'object') return out;
+  let n = 0;
+  for(const k in raw){
+    if(!Object.prototype.hasOwnProperty.call(raw, k)) continue;
+    if(++n > SAN_KEY_MAX) break;
+    out[_sanStr(k, 40)] = _sanStr(raw[k], 40);
+  }
+  return out;
+}
+function _sanPickupModels(raw){
+  const out = {};
+  if(!raw || typeof raw !== 'object') return out;
+  let n = 0;
+  for(const k in raw){
+    if(!Object.prototype.hasOwnProperty.call(raw, k)) continue;
+    if(++n > SAN_KEY_MAX) break;
+    const v = raw[k]; if(!v || typeof v !== 'object') continue;
+    const e = { url: _sanStr(v.url, 300) };
+    if(v.scale != null) e.scale = _sanNum(v.scale, 0.001, 100, 1);
+    out[_sanStr(k, 40)] = e;
+  }
+  return out;
+}
+let pickupModels = _sanPickupModels(savedLevel && savedLevel.pickupModels);   // kind -> {url, scale}: custom model in place of the floating icon
+let keyNames = _sanKeyNames(savedLevel && savedLevel.keyNames);   // color -> custom display name ('Engine Room Keycard'); ring/lock ids stay colors
 function keyDisplayName(color){ const n=keyNames[color]; return (n && String(n).trim()) ? String(n).trim() : color.toUpperCase()+' KEY'; }
 let pickupMarkers = [];
 // build 602: per-placed-pickup transform — height offset (Y), full rotation, and scale on the group. The icon's
@@ -24590,7 +24660,7 @@ function loadLevelFromNet(level){
   pickupsOn = (level.pickupsOn !== false);
   pickupSpots = Array.isArray(level.pickups) ? level.pickups.map(s=>({ x:+s.x||0, z:+s.z||0, kind:s.kind||'health', item:s.item, y:+s.y||0, rx:+s.rx||0, ry:+s.ry||0, rz:+s.rz||0, scale:(s.scale!=null?+s.scale:1), interact:!!s.interact })) : [];   // build 879: joiners used to lose pickup transforms/items
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
-  if(typeof refreshLootMarkers==='function') refreshLootMarkers(); pickupModels = (level.pickupModels && typeof level.pickupModels==='object') ? JSON.parse(JSON.stringify(level.pickupModels)) : {}; keyNames = (level.keyNames && typeof level.keyNames==='object') ? JSON.parse(JSON.stringify(level.keyNames)) : {}; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
+  if(typeof refreshLootMarkers==='function') refreshLootMarkers(); pickupModels = _sanPickupModels(level.pickupModels); keyNames = _sanKeyNames(level.keyNames);   /* build 1325 */ if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   // (world/terrain adopted ABOVE the prop rebuild — build 893)
   if(level.audio && NET.mode!=='client'){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply the level's audio WITHOUT persisting it over the player's saved prefs
   _applyCine(level.cine);
@@ -29676,7 +29746,7 @@ window.infiniteAmmo = function(on){ _infAmmo = (on!==false); if(_infAmmo){ for(c
 // 'object' item can be rotated/zoomed in 3D, or a 'journal' item shows a readable page. Catalog saves with the
 // level; held inventory is runtime. Collectible item-pickups + editor authoring of the catalog come next build.
 let invCatalog = {};   // id -> { name, desc, model, thumb, scale, type:'object'|'journal', journal }
-try{ if(savedLevel && savedLevel.invItems && typeof savedLevel.invItems==='object') invCatalog=savedLevel.invItems; }catch(e){}
+try{ invCatalog = _sanInvItems(savedLevel && savedLevel.invItems); }catch(e){}   /* build 1325 */
 let inventory = [];    // [{id, n}] held
 let invOpen=false; let _invEl=null;
 function defineItem(def){ if(!def||!def.id) return null; invCatalog[def.id]=Object.assign({ name:def.id, desc:'', model:'', thumb:'', scale:1, type:'object', journal:'', useType:'none', useKey:'gold', useAmount:25, useConsume:true }, invCatalog[def.id]||{}, def); return invCatalog[def.id]; }
@@ -29767,7 +29837,13 @@ function openInspect(id){
   const it=invCatalog[id]; if(!it) return;
   if(!_inspEl){ _inspEl=document.createElement('div'); _inspEl.id='inspect'; _inspEl.style.cssText='position:fixed;inset:0;z-index:82;display:none;align-items:center;justify-content:center;background:rgba(3,6,8,.86);'; const cd=document.createElement('div'); cd.id='inspectCard'; cd.style.cssText='position:relative;background:#0a1016;border:1px solid #2a3a42;border-radius:14px;max-width:540px;width:92%;padding:16px 18px;'; _inspEl.appendChild(cd); document.body.appendChild(_inspEl); _inspEl.addEventListener('click', e=>{ if(e.target===_inspEl) closeInspect(); }); }
   const card=_inspEl.querySelector('#inspectCard'); card.innerHTML='';
-  const hd=document.createElement('div'); hd.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'; hd.innerHTML='<div style="font-family:var(--display-font);font-size:20px;color:#ffd166;letter-spacing:1px;">'+(it.name||id)+'</div>';
+  const hd=document.createElement('div'); hd.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
+  /* build 1325 (platform audit 2.2, V2): this was `hd.innerHTML = '...' + (it.name||id) + '...'`, and
+     `it` is invCatalog[id] — level data. Build 1277 escaped the credits linkifier, the lock prompt and the
+     ammo prompt and did not reach here, which is the argument for sanitising at the SOURCE as well: the
+     inventory item title is one click away from picking anything up. textContent, not an escape, because a
+     title has no reason to carry markup at all. */
+  { const t=document.createElement('div'); t.style.cssText='font-family:var(--display-font);font-size:20px;color:#ffd166;letter-spacing:1px;'; t.textContent = it.name || id; hd.appendChild(t); }
   const cl=_invCloseX(closeInspect); hd.appendChild(cl); card.appendChild(hd);
   _inspEl.style.display='flex';
   if(it.type==='journal'){
@@ -30258,7 +30334,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1324 · 2026-08-03';
+const BUILD_VERSION = 'build 1325 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39842,7 +39918,15 @@ function restoreLevel(level){
   selPickup=-1; if(typeof refreshPickupMarkers==='function') refreshPickupMarkers();
   lootSpots = Array.isArray(level.loot) ? level.loot.map(s=>({ x:+s.x||0, y:(s.y!=null?+s.y:0), z:+s.z||0, items:Array.isArray(s.items)?s.items.slice():[], glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })) : [];
   selLoot=-1; if(typeof refreshLootMarkers==='function') refreshLootMarkers();
-  if(level.invItems && typeof level.invItems==='object'){ try{ invCatalog = JSON.parse(JSON.stringify(level.invItems)); if(typeof renderInvItems==='function' && editorOpen) renderEditorFields(); }catch(e){} }
+  if(level.invItems && typeof level.invItems==='object'){ try{ invCatalog = _sanInvItems(level.invItems); if(typeof renderInvItems==='function' && editorOpen) renderEditorFields(); }catch(e){} }   /* build 1325 */
+  /* build 1325: `keyNames` and `pickupModels` SERIALIZE with the level and are loaded at boot and by the
+     multiplayer loader — and restoreLevel never loaded either of them. So the level you opened second kept
+     the first one's key names and pickup models, an undo could not undo a key rename, and a shared level
+     imported over your own inherited yours. Found while sanitising the same three dictionaries: two of the
+     three load paths agreed and the third simply had no line. Build 1280 unified the PROP apply for exactly
+     this reason; these two sat outside it. */
+  try{ keyNames = _sanKeyNames(level.keyNames); }catch(e){}
+  try{ pickupModels = _sanPickupModels(level.pickupModels); if(typeof refreshPickupMarkers==='function') refreshPickupMarkers(); }catch(e){}
   if(level.audio){ try{ audioSettings.musicUrl=(typeof level.audio.musicUrl==='string')?level.audio.musicUrl:''; audioSettings.sounds=_sanitizeSounds(level.audio.sounds); if(typeof preloadCustomSounds==='function') preloadCustomSounds(); if(_musicOn){ stopMusic(); startMusic(); } }catch(e){ console.warn('level audio apply failed', e); } }   // build 907: apply, don't persist (see loadLevelFromNet)
   _applyCine(level.cine);
   if(level.player) applyPlayerLevel(level.player);

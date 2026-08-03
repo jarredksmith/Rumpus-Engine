@@ -15,7 +15,12 @@ const bm = extractFunction('buildPowerupMesh');
 assert(/const pm = pickupModels\[kind\];/.test(bm) && /if\(pm && pm\.url && kind!=='item'\)\{/.test(bm) && /m\.scale\.setScalar\(pm\.scale\|\|1\)/.test(bm), 'custom scaled model replaces the icon (except item pads, which use per-item models)');
 const sl = extractFunction('serializeLevel');
 assert(/pickupModels: Object\.keys\(pickupModels\)/.test(sl), 'pickup models saved');
-assert(/pickupModels = \(level\.pickupModels/.test(src), 'pickup models restored on load');
+/* build 1325: the raw JSON.parse(JSON.stringify(...)) became _sanPickupModels — level data is untrusted
+   and was the only dictionary with no coercion, cap or hasOwnProperty guard. Same claim, and STRONGER: it
+   now also restores in restoreLevel, which never loaded it at all. */
+assert(/pickupModels = _sanPickupModels\(level\.pickupModels\)/.test(src), 'pickup models restored on load');
+assert(/pickupModels = _sanPickupModels\(level\.pickupModels\)/.test(extractFunction('restoreLevel')),
+  '...including on a plain level load, which used to keep the PREVIOUS level’s models');
 assert(/newPickupKind\+' model \.glb URL/.test(src), 'editor model URL field per kind');
 
 // gamepad radial
