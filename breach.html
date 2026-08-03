@@ -13972,6 +13972,36 @@ function trackApply(o, trk){
   }
   if(typeof refreshPropCollider==='function') refreshPropCollider(o);
 }
+// build 1331, reported from play with a stack (which is what build 1330 was for):
+//
+//   ERROR: Promise: Cannot access 'FX_PRESETS' before initialization
+//     at buildFxEmitter -> at Object.fx_dust -> at spawnProp -> at loadHostedProps
+//
+// `loadHostedProps` builds a saved level's props during BOOT, and it runs long before the line that
+// declared FX_PRESETS ~7,500 lines below. So any level containing an ambient emitter — one `fx_dust` was
+// enough — failed to load, and because the failure surfaced as an unhandled REJECTION it carried no line
+// number of its own until 1330 made the overlay keep the stack.
+//
+// BUILD 889 RECORDED THIS EXACT CLASS and its note is four lines above this one: "A saved level with track
+// pieces builds them at boot (loadHostedProps) BEFORE worldCfg initializes, which crashed the whole boot."
+// That one was patched with a try/catch, which was right there — the style re-applies moments later, so
+// missing it is harmless. It is NOT right here: an emitter with no preset is not a degraded emitter, it is
+// a thrown exception in the middle of the level load, and swallowing it would leave the rest of the props
+// unspawned with nothing said. The fix for a pure DATA table is to declare it before anything can read it.
+//
+// The rule this leaves behind: **anything a PRIMITIVE_BUILDERS entry reads must be declared above this
+// table**, because `loadHostedProps` can call any of them before most of the file has run. buildFxEmitter
+// reads FX_PRESETS and nothing else; test-1331 pins the ordering so the next data table cannot land below
+// its own first use.
+const FX_PRESETS = {
+  fx_ember:   { label:'Embers',    n:64, mode:'rise',  life:[1.1,2.3], up:[0.7,1.5],  out:0.30, grav:-0.12, size:[0.055,0.13], endS:0.45, colA:[1.0,0.42,0.10],  colB:[1.0,0.78,0.30],  alpha:1.0,  add:true,  region:[0.45,0.06,0.45], sway:0.22, mk:0xff8c3a },
+  fx_dust:    { label:'Dust',      n:56, mode:'drift', life:[2.6,4.8], up:[0.01,0.05],out:0.05, grav:-0.008,size:[0.09,0.20],  endS:1.0,  colA:[0.55,0.50,0.42], colB:[0.62,0.58,0.50], alpha:0.16, add:true,  region:[1.5,0.9,1.5],   sway:0.35, mk:0xcbb98a },
+  fx_smoke:   { label:'Smoke',     n:52, mode:'rise',  life:[2.2,3.8], up:[0.45,0.85],out:0.10, grav:0,     size:[0.42,0.62],  endS:2.8,  colA:[0.16,0.16,0.18], colB:[0.30,0.30,0.33], alpha:0.34, add:false, region:[0.25,0.05,0.25], sway:0.30, mk:0x8a8f99 },
+  fx_steam:   { label:'Steam',     n:44, mode:'rise',  life:[1.2,2.2], up:[0.9,1.5],  out:0.14, grav:0,     size:[0.30,0.50],  endS:2.2,  colA:[0.55,0.58,0.60], colB:[0.75,0.78,0.80], alpha:0.22, add:false, region:[0.16,0.04,0.16], sway:0.40, mk:0xbfd4dd },
+  fx_firefly: { label:'Fireflies', n:22, mode:'blink', life:[3.0,5.5], up:[0,0],      out:0.0,  grav:0,     size:[0.07,0.11],  endS:1.0,  colA:[0.65,1.0,0.25],  colB:[0.85,1.0,0.40],  alpha:1.0,  add:true,  region:[1.6,0.9,1.6],   sway:0.90, blink:1.7, mk:0xb6ff5e },
+  fx_fountain:{ label:'Fountain',  n:90, mode:'jet',   life:[0.9,1.4], up:[3.4,4.6],  out:0.55, grav:-9.0,  size:[0.05,0.10],  endS:1.3,  colA:[0.55,0.75,0.90], colB:[0.80,0.92,1.00], alpha:0.55, add:false, region:[0.10,0.02,0.10], sway:0,    mk:0x7fc4ff },
+};
+
 const PRIMITIVE_BUILDERS = { box:buildBoxProp, sphere:buildSphereProp, cylinder:buildCylinderProp, cone:buildConeProp, pillar:buildPillar,
   wedge:buildWedgeProp, stairs:buildStairsProp, dome:buildDomeProp, tube:buildTubeProp, torus:buildTorusProp,   // build 871
   track_start:()=>_buildTrackPiece('track_start'), track_straight:()=>_buildTrackPiece('track_straight'), track_short:()=>_buildTrackPiece('track_short'),
@@ -21454,14 +21484,8 @@ function _addFireParticles(grp, count, rad, riseH, sizeW, smoke){
 // sweeps already treat them correctly (transparent, no depth). NO LIGHTS (the 636/977/1153/1155
 // rule), no colliders (three surgical exemptions below), and particles simulate in LOCAL space so
 // a tilted fountain tilts and a carried emitter's plume rides along.
-const FX_PRESETS = {
-  fx_ember:   { label:'Embers',    n:64, mode:'rise',  life:[1.1,2.3], up:[0.7,1.5],  out:0.30, grav:-0.12, size:[0.055,0.13], endS:0.45, colA:[1.0,0.42,0.10],  colB:[1.0,0.78,0.30],  alpha:1.0,  add:true,  region:[0.45,0.06,0.45], sway:0.22, mk:0xff8c3a },
-  fx_dust:    { label:'Dust',      n:56, mode:'drift', life:[2.6,4.8], up:[0.01,0.05],out:0.05, grav:-0.008,size:[0.09,0.20],  endS:1.0,  colA:[0.55,0.50,0.42], colB:[0.62,0.58,0.50], alpha:0.16, add:true,  region:[1.5,0.9,1.5],   sway:0.35, mk:0xcbb98a },
-  fx_smoke:   { label:'Smoke',     n:52, mode:'rise',  life:[2.2,3.8], up:[0.45,0.85],out:0.10, grav:0,     size:[0.42,0.62],  endS:2.8,  colA:[0.16,0.16,0.18], colB:[0.30,0.30,0.33], alpha:0.34, add:false, region:[0.25,0.05,0.25], sway:0.30, mk:0x8a8f99 },
-  fx_steam:   { label:'Steam',     n:44, mode:'rise',  life:[1.2,2.2], up:[0.9,1.5],  out:0.14, grav:0,     size:[0.30,0.50],  endS:2.2,  colA:[0.55,0.58,0.60], colB:[0.75,0.78,0.80], alpha:0.22, add:false, region:[0.16,0.04,0.16], sway:0.40, mk:0xbfd4dd },
-  fx_firefly: { label:'Fireflies', n:22, mode:'blink', life:[3.0,5.5], up:[0,0],      out:0.0,  grav:0,     size:[0.07,0.11],  endS:1.0,  colA:[0.65,1.0,0.25],  colB:[0.85,1.0,0.40],  alpha:1.0,  add:true,  region:[1.6,0.9,1.6],   sway:0.90, blink:1.7, mk:0xb6ff5e },
-  fx_fountain:{ label:'Fountain',  n:90, mode:'jet',   life:[0.9,1.4], up:[3.4,4.6],  out:0.55, grav:-9.0,  size:[0.05,0.10],  endS:1.3,  colA:[0.55,0.75,0.90], colB:[0.80,0.92,1.00], alpha:0.55, add:false, region:[0.10,0.02,0.10], sway:0,    mk:0x7fc4ff },
-};
+/* build 1331: FX_PRESETS moved UP, above PRIMITIVE_BUILDERS — see the note there. It used to sit here,
+   ~7,500 lines below the builder that reads it, and a saved level containing an emitter crashed at boot. */
 // build 1252: PER-EMITTER CONTROLS (asked for from play the day 1250 shipped). Overrides live in
 // userData.fx.cfg — multipliers over the preset, never replacements, so a preset retune reaches
 // every emitter that has not overridden that knob. Serialized as `fxc` through propEntry (the ONE
@@ -30514,7 +30538,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1330 · 2026-08-03';
+const BUILD_VERSION = 'build 1331 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

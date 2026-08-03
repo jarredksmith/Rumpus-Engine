@@ -9,7 +9,13 @@ const sys = src.slice(src.indexOf('build 1250: AMBIENT PARTICLE EMITTERS'), src.
 assert(sys.length > 500 && sys.length < 12000, 'the system block is where expected');
 
 // --- the presets ------------------------------------------------------------------------------------
-const presets = new Function(sys.slice(sys.indexOf('const FX_PRESETS'), sys.indexOf('function buildFxEmitter')) + '; return FX_PRESETS;')();
+/* build 1331 moved FX_PRESETS ABOVE PRIMITIVE_BUILDERS — a saved level with an emitter hit a temporal
+   dead zone at boot. Slicing "from FX_PRESETS to buildFxEmitter" now spans ~7,500 unrelated lines, so cut
+   the TABLE itself instead: a position-relative extraction is exactly what a move breaks. */
+/* ...and the table is no longer inside `sys` at all, because `sys` starts at the 1250 comment block that
+   stayed put. Cut it from the WHOLE source. */
+const _fxTable = (t) => { const i = t.indexOf('const FX_PRESETS = {'); return t.slice(i, t.indexOf('\n};\n', i) + 3); };
+const presets = new Function(_fxTable(src) + '; return FX_PRESETS;')();
 const KINDS = ['fx_ember', 'fx_dust', 'fx_smoke', 'fx_steam', 'fx_firefly', 'fx_fountain'];
 eq(Object.keys(presets).length, 6, 'six presets');
 for (const k of KINDS) {

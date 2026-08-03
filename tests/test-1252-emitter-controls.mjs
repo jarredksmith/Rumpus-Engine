@@ -10,7 +10,10 @@ const src = gameSource();
 // (the one serializer every path routes through) and applied at all four loader sites. Executed
 // here: the real sanitizer and the real effective-params derivation, every knob.
 
-const sys = src.slice(src.indexOf('const FX_PRESETS'), src.indexOf('function _fxBuildRT'));
+/* build 1331 moved FX_PRESETS above PRIMITIVE_BUILDERS, so this slice used to run from the table straight
+   through the builder tables and half the engine. Take the TABLE and the fx helpers as two pieces. */
+const _fxTbl = (()=>{ const i = src.indexOf('const FX_PRESETS = {'); return src.slice(i, src.indexOf('\n};\n', i) + 3); })();
+const sys = _fxTbl + src.slice(src.indexOf('function _fxCfgSan'), src.indexOf('function _fxBuildRT'));
 const scope = new Function(sys + '; return { FX_PRESETS, _fxCfgSan, _fxEff, _fxReset };')();
 const { FX_PRESETS, _fxCfgSan, _fxEff, _fxReset } = scope;
 
