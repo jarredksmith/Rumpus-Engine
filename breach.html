@@ -1,6 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- build 1332: the headers a static host can carry in the document itself. None of these need a hash, and
+     none of them can break a same-origin engine:
+       base-uri 'self'      — a <base> tag injected into the page would silently repoint EVERY relative URL
+                              (the level saves, the community gallery, the asset uploads) at another origin.
+                              Nothing here ever needs a <base>, so it costs nothing to forbid.
+       object-src 'none'    — no <object>/<embed> is used anywhere; this closes a legacy script vector.
+       form-action 'none'   — the engine posts no forms; an injected one cannot exfiltrate to an attacker.
+       frame-ancestors      — clickjacking. The game takes pointer lock and mouse input, which is exactly
+                              what an invisible cross-origin frame wants.
+     A full script-src is deliberately NOT here: the engine is ~47,000 lines of INLINE script, so any policy
+     it could satisfy today would need 'unsafe-inline', which buys nothing while pretending to. Vendoring
+     three.js and PeerJS locally is the change that makes a real script-src possible, and that is its own
+     build; SRI on the two CDN loaders below is what protects those two in the meantime.
+
+     AND WHAT IS STILL UNHASHED, named rather than left to be discovered: the ESM dependencies — Rapier,
+     gltf-transform, meshoptimizer, DRACOLoader, KTX2Loader — arrive through `import` / `import()`, and an
+     ESM import cannot carry `integrity` at all. Import maps are the only way to hash an ESM graph, and a
+     browser import map cannot be added without moving those loads out of dynamic import(); that is its own
+     build too. Their blast radius is smaller (they load on demand, into a page that is already running)
+     but it is not zero, and this comment is here so the next audit finds a decision instead of a gap.
+     The Google Analytics tag below is the third: gtag.js is MUTABLE BY DESIGN — Google reserves the right
+     to change those bytes — so it can never carry a hash, and pinning one would take the page down the day
+     they ship a fix. The honest mitigation is that it is the only script here nobody can hash, and removing
+     it is a product decision rather than an engineering one. -->
+<meta http-equiv="Content-Security-Policy"
+      content="base-uri 'self'; object-src 'none'; form-action 'none'; frame-ancestors 'self'">
 <!-- Google Analytics (GA4). This lives in the repo, not just on the server: it was hand-added to
      the uploaded copies, so any re-upload from git would silently drop it. Keep it on every page. -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-8R98ZNS9HN"></script>
@@ -1536,6 +1562,17 @@ window.addEventListener('unhandledrejection', e=>{
       return;
     }
     var s = document.createElement('script');
+    // build 1332: SUBRESOURCE INTEGRITY. three.js IS the renderer — anyone who compromised unpkg owned
+    // every Rumpus session, and there was no `integrity=` anywhere in the project. Rapier and fflate were
+    // already vendored locally, so the pattern was understood; these two were simply the ones that never
+    // got it. All three CDNs were fetched and hashed and serve BYTE-IDENTICAL files, which is what makes
+    // one hash cover the whole fallback chain.
+    // The fallback list is what makes SRI safe to add here rather than risky: a CDN that serves altered
+    // bytes fails the check, the onerror fires, and the NEXT CDN is tried — so a poisoned mirror degrades
+    // to the behaviour the loader already has for an unreachable one, instead of taking the session.
+    // `crossOrigin` is required: without it the response is opaque and the browser cannot verify it.
+    s.crossOrigin = 'anonymous';
+    s.integrity = 'sha384-RRHfJ6w1mTlKUBMYT/hvnRiOzEB/vyRV3DrQOseb6oYfvaZSfdd0byS4bHps0k2R';
     s.src = cdns[i++];
     s.onload = function(){
       if(window.THREE){
@@ -30538,7 +30575,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1331 · 2026-08-03';
+const BUILD_VERSION = 'build 1332 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -47480,7 +47517,11 @@ function ensurePeerJS(cb){
   if(window.Peer){ cb(true); return; }
   const cdns=['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js','https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js','https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'];
   let i=0;
-  (function next(){ if(i>=cdns.length){ cb(false); return; } const s=document.createElement('script'); s.src=cdns[i++]; s.onload=()=>{ window.Peer?cb(true):next(); }; s.onerror=next; document.head.appendChild(s); })();
+  (function next(){ if(i>=cdns.length){ cb(false); return; } const s=document.createElement('script');
+    /* build 1332: same rule as three.js above — hashed from all three CDNs, which serve identical
+       bytes; a tampered mirror fails the check and the loader falls through to the next. */
+    s.crossOrigin='anonymous'; s.integrity='sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR';
+    s.src=cdns[i++]; s.onload=()=>{ window.Peer?cb(true):next(); }; s.onerror=next; document.head.appendChild(s); })();
 }
 function startHost(){
   const nm=document.getElementById('mpName'); NET.name=(nm&&nm.value.trim())||'Host';
