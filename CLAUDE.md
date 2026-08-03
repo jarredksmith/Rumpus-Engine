@@ -967,6 +967,97 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The corner leak was the DEPTH bias, and build 1341 was innocent (build 1345)
+
+Third report of *"light leaks in corners… I've noticed this with closed rooms too."* Build 1341 cut
+`normalBias` from 0.45 m to 0.15 m for exactly this and the reporter still saw it. So this time the room was
+BUILT IN THE ENGINE and the light decomposed, rather than a parameter reasoned about a third time.
+
+**First, the general answer, which is not the reported one.** In a sealed 8×6×3 room with a ceiling and no
+openings, at the reporter's own settings:
+
+```
+                        interior radiance Y     share
+everything on                  0.0177
+sun alone (all ambient off)    0.0012            6.8%
+sky fill alone                 0.0120           68%
+environment probe              0.0032           18%
+one-bounce ambient             0.0019           11%
+```
+**93% of the light inside a sealed windowless room comes from terms no wall can block** — the hemisphere
+fill, the probe and the bounce are all unoccluded, and the engine has no GI. That is a real property worth
+knowing, and it is *not* a leak.
+
+**The reported one is in the PEAK, not the mean.** With every ambient term zeroed, the sun still produces a
+spike of 0.145 against a mean of 0.0012 — 120×, i.e. concentrated into a thin feature. Sun off gives a clean
+zero. That is the bright corner line.
+
+### What it is not, and what it is
+
+Every row states BOTH cascades explicitly, because an earlier run set one value and left it set:
+
+```
+normalBias   0 / 0.05 / 0.10 / 0.15 / 0.45(pre-1341)  ->  353 / 358 / 365 / 359 / 357 leaking px   FLAT
+map size     512 / 2048 / 4096                        ->  flat.    shadowRadius 0  ->  flat
+far cascade off -> unchanged.    NEAR cascade off -> ZERO.    sun off -> ZERO
+
+shadow.bias      0    -0.0001   -0.0004*   -0.0005   -0.002   -0.008   -0.03
+leaking px      151     208       354        404      1500     7417    25986
+peak radiance  0.087   0.106     0.144      0.152    0.156    0.156    0.156      (* = shipped)
+```
+
+**So build 1341's parameter is exonerated by measurement, and the culprit is the one beside it.** A depth
+bias shifts the comparison depth by a CONSTANT, which is precisely what lets light past an occluder closer to
+the receiver than the offset — and a concave corner is that case by definition. The leaking pixels sit ~1 cm
+from the corner and the wall that should shadow them is **8 mm away**, an order of magnitude under the near
+cascade's 5.86 cm texel. A normal offset moves the sample ALONG THE SURFACE and cannot do this, which is why
+sweeping it across its whole range was flat.
+
+Shipped: `SHADOW_DEPTH_BIAS = 0`, named once so the two cascades cannot drift (1341's lesson). Verified on the
+shipped path afterwards: **354 → 156 leaking pixels, peak 0.144 → 0.085.**
+
+**The acne measurement failed, and that is stated rather than dressed up.** A negative depth bias exists to
+prevent acne. Speckle on open ground at sun elevations 8° / 20° / 45° was FLAT across bias 0 / −0.0001 /
+−0.0004 / −0.002 — *and flat with `normalBias` also zeroed*, which is the tell that the instrument cannot
+detect acne rather than that there is none. What the numbers do support: a more negative bias never REDUCED
+speckle in any of twelve configurations while it measurably cost leak. Acne stays on the human-verify list, as
+build 1341 also left it: a low sun on a large flat surface is the check.
+
+**A residue remains — 151 pixels, not 0.** An occluder 8 mm from its receiver is below what a 5.86 cm texel
+can resolve at all, so a thin corner line is inherent to shadow mapping at this scale. Closing it needs
+contact-scale occlusion (SSAO, or the per-vertex bake — the reporter has both switched off), not more bias.
+The comment says so, so nobody tunes this number chasing the last of it. A creator's placed spotlight is
+deliberately left at its own `-0.0005`: the sweep ran on the sun's ORTHOGRAPHIC cascades and a perspective
+shadow frustum has a different depth distribution, so the measurement does not transfer and I have not made it.
+
+### Six instrument failures, and every one produced a confident number
+
+This is the worst run of the session and all six are the same family — *I did not control the thing I was
+measuring against*:
+
+| # | it reported | why |
+|---|---|---|
+| 1 | a sealed room's light readings | camera at **y = 201.4**, not 1.4 — 200 m in the air, photographing open sky |
+| 2 | the same readings after fixing that | the pose was set in one call and measured in the next, and **the frame loop rewrites `camera.position` from the player every frame**. Pose and render must be ONE block |
+| 3 | the camera standing on the roof | the floor was found by casting DOWN from above, which hits the ceiling first |
+| 4 | "every shadow parameter has no effect" | **`_fitSunShadow` rewrites `normalBias` every frame**, so each override was reset before the measurement. Same class as #2 |
+| 5 | "normalBias 0 removes the leak entirely" — a clean, beautiful, **false** positive I nearly published | the preceding control row had set `moon.intensity = 0` and **left it there**. It was measuring a switched-off sun |
+| 6 | "nothing occludes these points from the sun" | `_sunDir()` returns an **array** and already points TOWARD the sun; I read `.x/.y/.z` off it (NaN) *and* negated it. `NdotL: null` in the JSON was the tell — NaN serialises as null |
+
+**#5 is the one to carry.** A control row that mutates shared state and does not restore it poisons every row
+after it, and it fails in the most dangerous direction: it produced exactly the result I was hoping for. Every
+row of a sweep must state **every** variable it depends on, not just the one being swept — which is what the
+final probe does, and it immediately inverted #5's conclusion.
+
+And the standing rule gets a corollary. Build 1124: *know where the camera is before you judge the frame.*
+1345: **know who else writes what you are setting.** In this engine the frame loop owns the camera, the shadow
+fit owns `normalBias`, and `applySky` owns `scene.environment` — an override that is not in the same
+synchronous block as the render has already been undone.
+
+Two pins moved (143, 1125), both correctly: 143's asserted a small negative depth bias, which is the defect;
+it asserts the single named constant now. 1125's intent — that the depth bias is a flat constant rather than
+something scaled with the volume — is untouched and now says so directly.
+
 ## The blur was interpolating a flag (build 1344)
 
 Fourth round of the jagged-edges report, and **build 1343's readout found it in one line**:
