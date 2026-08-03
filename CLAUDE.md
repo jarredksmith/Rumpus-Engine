@@ -967,6 +967,62 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Placed lights join the budget (build 1338 — rendering audit #5)
+
+> `registerEmitterLight` is called from emissive props and adopted GLB lights — **not** from `buildLight`.
+> So the Lights tool, the thing a creator actually lights a level with, produces point/spot lights that are
+> never distance-culled, never faded, and never touched by `enforceEmitterCap`.
+
+Verified at the line. Build 811's budget had existed for 500 builds and the one surface that most needed it
+was outside it.
+
+**It is deliberately NOT fixed by calling `registerEmitterLight`, and that is the whole design.**
+`updateLightBudget` WRITES `light.intensity` every frame — and a placed light already has an owner writing
+that same value: `updateLights`, which ramps it between the signal on/off states. **Two writers of one value
+is the defect this file has recorded five times**, and the second one wins, so registering would have turned
+every signal-controlled lamp back on. The budget is a FACTOR the existing owner multiplies into its target,
+so `off` stays off (0 × anything is 0), a fade still ramps, and there is still exactly one writer.
+
+Measured live, 20 lights in a line receding from the camera at a cap of 8:
+
+```
+z            0   -4   -8  -12  -16  -20  -24  -28  -32  -36  -40  -44  -48 …
+intensity    8    8    8    8    8    8    8    8  6.4  4.8  3.2  1.6    0 …   the 5-rank easing band
+saved        8    8    8    8    8    8    8    8    8    8    8    8    8 …   authored, never faded
+signal-off nearest 0.000 while its neighbour holds 8.000       <- one writer, not two
+shadow-caster farthest 8.00 while its neighbour is 0.00        <- exempt
+deploy cap  60 placed + 11 emitter, cap 48 -> 23 dropped, 37 live, 23 restored, 60 back in the editor
+under budget: the rank map is null — no ranking, no lookup, no cost
+```
+
+**Shadow-casters are exempt from both the fade and the cap.** They are already bounded by
+`_shadowLightBudget` (1132), they are the most deliberate light a creator can place, and fading one to
+nothing *while it still renders a depth pass* is the worst of both.
+
+**The deploy cap is the half that actually buys anything.** Build 1257's own finding is that a dimmed light
+still costs its loop iteration — r149 compiles `NUM_POINT_LIGHTS` from every light PRESENT — so the fade is a
+visual measure and REMOVING the surplus is the only lever that changes the loop. Placed lights therefore
+share ONE budget with the emitter lights, and are dropped only after those are gone: an emissive prop's glow
+is a side effect a creator got for free, a lamp they positioned by hand is a decision. **Every dropped light
+comes back on the way into the editor** — the cap is a runtime budget, not an edit to their scene — and the
+Level Check says how many went and that they are not lost.
+
+### The latent bug this would have activated
+
+`_lightOpts` serialized `+L.intensity` — the LIVE value. A `startOff` light sits at 0 at deploy, so saving
+mid-play would already have written a creator's lamp down to nothing; it was safe **only because
+`_lightsToFull` happens to run on the way back into the editor**. A distance fade turns that coincidence into
+silent data loss on any level with more than a handful of lights. It saves `litI` now — the value the slider
+writes and every fade restores to.
+
+One pin moved (543), which executes `updateLights` in an isolated scope and needed the new dependency
+supplied inert — every one of its assertions is about the on/off ramp and had to keep measuring exactly
+that. It gained two cases driving the factor.
+
+**A probe note worth keeping:** the first run read 7.36 on every faded light and looked like a broken budget.
+A placed light's default `lfade` is **0.4 s**, so the ramp needs ~25 frames to settle and the probe had
+ticked two. *A fade measured before it finishes is not a measurement.*
+
 ## The slicer, per weapon (build 1337)
 
 Asked for immediately after 1336: *"I really need it in the weapon tab for each weapon."*
