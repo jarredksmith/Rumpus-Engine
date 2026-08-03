@@ -30,6 +30,11 @@ export async function withGame(fn, opts = {}) {
     '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--use-gl=angle'] });
   try {
     const page = await browser.newPage({ viewport: opts.viewport || { width: 640, height: 360 } });
+    // build 1333: the photosensitivity warning is a once-per-browser modal at boot, and a fresh Playwright
+    // context is always a fresh browser — so without this every probe and every capture would photograph
+    // the dialog instead of the game. The driver plays a RETURNING player; pass `firstRun:true` when the
+    // dialog itself is what is being measured.
+    if (!opts.firstRun) await page.addInitScript(() => { try { localStorage.setItem('breach_photowarn', '1'); } catch (e) {} });
     page.on('pageerror', e => console.log('[ERR]', e.message));
     if (opts.console) page.on('console', m => console.log('[c]', m.type(), m.text()));
     await new Promise(r => setTimeout(r, 1200));

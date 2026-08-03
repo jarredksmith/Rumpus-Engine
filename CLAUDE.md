@@ -967,6 +967,128 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The interface has a size, and the game says what it contains (build 1333 — platform audit 9)
+
+The accessibility census, verbatim: *`aria-label` 47, `role="` **0**, `tabindex` **0**, colour-blind modes
+**0**, UI/font scale **0**, photosensitivity/epilepsy warning **0**.* Two of those close here; re-verified
+open first — the only `photosens|epilep` hits in the file were prose about z-fighting.
+
+### Interface size
+
+Every size in the stylesheet is in px, so there was no single value a player could turn. **`zoom` is the
+only property that scales LAYOUT AND HIT-TESTING together** — a `transform` moves the pixels and leaves
+every click where it was, which is worse than no setting at all.
+
+`#hud` is `position:fixed; inset:0`, so zooming it alone makes its BOX `100vw*S` and walks every
+corner-anchored panel off screen. Dividing its own size by the same factor is what keeps the zoomed box
+exactly one viewport: layout `100vw/S`, rendered `100vw/S × S`. Measured at 640×360:
+
+```
+                 x1                x0.75             x1.75             back to x1
+hud box          [0,0,640,360]     [0,0,640,360]     [0,0,640,360]     [0,0,640,360]
+ammo panel            167.4 px          126.0 px          291.4 px          167.4 px
+render canvas    [0,0,640,360]     unchanged         unchanged         unchanged
+#tStick          [26,202,132,132]  identical         identical         identical
+crosshair offset [0,0]             [0,0]             [0,0]             [0,0]
+```
+
+**The on-screen touch controls are deliberately EXEMPT**, counter-zoomed back to 1. They already have their
+own layout editor where a player sizes and places each control by thumb-reach, and silently rescaling that
+is a different setting wearing this one's name. The counter-zoom works because effective scale multiplies
+down the tree (`S × 1/S = 1`) and viewport units are not affected by an ancestor zoom.
+
+Cards scale, backdrops do not — a backdrop is a full-viewport wash with nothing to read.
+
+**It is NOT in the `a11y` blob**, even though its row sits in that fold: `loadA11y` clamps every one of
+those keys to 0..1, which is exactly right for a multiplier of an effect and exactly wrong for a scale that
+has to reach 1.75. Squeezing it in would have meant a special case inside a loop whose entire point is that
+it has none. The fold's own *Restore defaults* still covers it, because that is what the button says.
+
+**Instrument note:** `getComputedStyle(el).fontSize` reads **16px at every scale** — Chrome returns the
+pre-zoom used value. The rendered size is what changed, and only a measured WIDTH shows it. A font-size
+readout would have reported this feature doing nothing.
+
+### The photosensitivity warning
+
+Shown once per browser **at boot**, not at the first Play. That is the console convention and it is also
+the only hook that needs no path analysis: `startGame` is reached from the menu, a share link, the community
+gallery, a campaign step and the editor's own test run, and **a warning five callers have to remember is a
+warning one of them will forget.**
+
+It offers the fix rather than only the fact — *Reduce flashing* drives build 1313's own `a11yReduceAll`,
+so the notice is an action and not a disclaimer. Measured live: `{1,1,1,1,1} → {shake 0, flash 0.35, blur 0,
+sway 0, hitstop 0}`, both exits store the acknowledgement, a returning browser gets nothing at all, and the
+pause fold forces it back up on demand. A player whose OS already asks for reduced motion is told that it
+has been honoured rather than asked to say it again.
+
+**The boot call sits immediately after the `const` it reads**, because `typeof` does not guard a temporal
+dead zone (1127) and build 1331 is the same lesson from the other direction.
+
+**`driver.mjs` now pre-acknowledges it.** A fresh Playwright context is always a fresh browser, so without
+that every future probe and every capture would photograph the dialog instead of the game; `firstRun:true`
+is how the dialog itself gets measured.
+
+One pin moved (335) — a whole-literal match on the `:root` block, broken by one added variable with every
+part of the assertion still true. It asserts the MEMBERS now, which is what *"defines the themable
+variables"* always meant. **That is the character-budget trap in its other form: a pin that quotes a whole
+literal is a pin against the literal, not against what it says.**
+
+## The renderer arrived unverified (build 1332 — platform audit 2.6)
+
+`grep -c "integrity=" breach.html` returned **0**. three.js IS the renderer and PeerJS IS the multiplayer
+transport, both loaded from public CDNs into a page holding the publish key, the Sketchfab token and every
+level save — so anyone who could alter what a mirror served owned every session. Rapier and fflate were
+already vendored locally, so the pattern was understood; these two were simply the ones that never got it.
+
+**The FALLBACK LIST is what makes SRI safe to add here rather than risky**, and that is the whole reason
+this is a small change. A single hashed CDN turns "this mirror is serving altered bytes" into "the game
+does not load". With three, a refused script fires `onerror` and the next mirror is tried — the exact path
+the loader already takes for an unreachable CDN. All six URLs were fetched and hashed and each trio is
+**byte-identical**, including `tests/node_modules/three@0.149.0`, which is what lets one hash cover a chain.
+
+`crossOrigin='anonymous'` is not decoration: without it the response is opaque and the browser **cannot**
+verify it, so the attribute sits there silently inert.
+
+### Two controls, and the first build was theatre without them
+
+"It booted" proves the hash is not wrong. It does **not** prove the browser checked it — an ignored
+attribute boots identically. "Zero CSP violations" reads the same whether the policy is clean or absent.
+Both needed provoking (`tools/probe/sri-csp.mjs`):
+
+```
+                              THREE   game                    CSP violations   base-uri control
+shipped bytes                 r149    gameOn, 59 props, running      0         FIRED, baseURI not hijacked
+ONE FLIPPED BYTE              ABSENT  --                             0         FIRED
+```
+
+**The positive control caught a real defect: my CSP `<meta>` was inside `<body>` and therefore IGNORED.**
+A CSP meta found after content has been parsed does not apply, so the first version of this build shipped a
+policy that did nothing while reporting a clean zero. It is now the first element in `<head>`, ahead of the
+analytics tag, and `test-1332` asserts `<head> < meta < first <script> < <body>` — because the ordering *is*
+the feature.
+
+### What the policy is, and what it deliberately is not
+
+`base-uri 'self'` (an injected `<base>` silently repoints EVERY relative URL — the saves, the gallery, the
+uploads — at another origin), `object-src 'none'`, `form-action 'none'`, `frame-ancestors 'self'`
+(clickjacking, against a game that takes pointer lock).
+
+**No `script-src`, and the test pins that it must never arrive as an `'unsafe-inline'` one.** The engine is
+~47,000 lines of INLINE script, so the only policy it could satisfy today is the one that protects nothing
+while reading as protection. Vendoring three.js and PeerJS locally is the change that makes a real
+`script-src` possible; that is its own build, and SRI is what covers those two meanwhile.
+
+### What is still unhashed, named rather than left to be discovered
+
+- **The ESM dependencies** — Rapier, gltf-transform, meshoptimizer, DRACOLoader, KTX2Loader — arrive through
+  `import` / `import()`, and an ESM import **cannot carry `integrity` at all**. Import maps are the only way
+  to hash an ESM graph and cannot be added without moving those loads out of dynamic `import()`. Smaller
+  blast radius (on demand, into a page already running), not zero.
+- **`gtag.js` is MUTABLE BY DESIGN.** Google reserves the right to change those bytes, so pinning a hash
+  takes the page down the day they ship a fix. Removing it is a product decision, not an engineering one.
+
+The comment in the source names all three, so the next audit finds a decision instead of a gap.
+
 ## A level with one emitter would not load (build 1331)
 
 Reported from play, **with the stack build 1330 exists to produce**:
