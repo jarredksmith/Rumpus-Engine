@@ -967,6 +967,41 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The + button sat under the file menu bar (build 1321)
+
+Reported from play: *"the circle plus button gets slightly obscured with the file menu UI."*
+
+Build 1083 added the menu bar (`position:fixed; top:0; height:30px; z-index:34`) and pushed `#editor` and
+`#edToolbar` down for it. It stopped there. **The + FAB is a SIBLING of the panel, not a child**, so nothing
+moved it: it stayed at `top:14px`, under a 30px bar, at z-index **31**.
+
+Measured at 1280×720 with the editor open, before and after:
+
+```
+                circle top   px behind bar   elementFromPoint at the circle's TOP
+before               14           16          mbSpacer      <- the BAR owns those pixels
+after                44            0          edAdd
+narrow (700px)       14            0          edAdd         <- unchanged, bar not wanted below 760
+```
+
+**`elementFromPoint` is the finding, not the rectangle overlap.** The bar's own filler element owned the top
+16 px of the circle, so a click there went to the *bar* — a lost hit target on the button that adds
+everything, not a cosmetic smudge. Rectangles alone could not have said that; z-index decides it.
+
+The FAB's `top` moved **out of its inline `cssText` and into the stylesheet**, because an inline style beats
+a class rule. `body.edMenuBar #edAddFab { top:44px }` — the 30px bar plus the original 14px gap, derived
+rather than picked — keyed on the same body class `_edMenuSync` already toggles. So there is no JS, and no
+future path that shows the bar has anything to remember. `placeFab` still owns left/right, which genuinely
+depends on the panel width and dock side; only the vertical moved.
+
+The three shift-down rules now sit in one block, which is the actual repair: 1083 wrote two of them and the
+third didn't exist yet, and nothing connected them.
+
+**A probe-instrument note worth keeping.** `page.setViewportSize` did **not** reliably deliver a `resize`
+event here — the narrow re-measure first reported `menuBarShown: true` at 700px, which `_edMenuSync`'s own
+`>= 760` rule makes impossible. The probe now calls `_edMenuSync()` directly and *prints the precondition it
+just asserted*, because a measurement taken in a state you did not verify is not a measurement.
+
 ## The shape list was written out five times (build 1320 — editor audit 4.11)
 
 The audit's last cluster was four small sharp edges in the "add something" path. **One of the four is false**,

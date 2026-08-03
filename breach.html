@@ -173,6 +173,15 @@
   body.edMenuBar #edMenuBar { display:flex; }
   body.edMenuBar #editor { top:30px; height:calc(100dvh - 30px); max-height:calc(100dvh - 30px); }
   body.edMenuBar #edToolbar { top:calc(40px + env(safe-area-inset-top)); }
+  /* build 1321, reported from play: "the circle plus button gets slightly obscured with the file menu UI."
+     Build 1083 pushed #editor and #edToolbar down for its new bar and stopped there — the + FAB is a SIBLING
+     of the panel, not a child, so it kept top:14px under a 30px bar at a LOWER z-index (31 vs 34). Measured:
+     16 of the circle's 46 px sat behind the bar, and elementFromPoint at the circle's top returned `mbSpacer`
+     — the bar owned those pixels, so a click there went to the bar. A hit-target loss, not just a smudge.
+     The FAB's `top` lives HERE rather than in its inline cssText so this rule can win, and it is keyed on
+     the same body class _edMenuSync toggles: no JS, and the narrow layout (no bar) is untouched. */
+  #edAddFab { top:14px; }
+  body.edMenuBar #edAddFab { top:44px; }
   #edMenuBar .mbTitle { display:flex; align-items:center; padding:0 12px 0 13px; color:#7fa79a; letter-spacing:2px; font-size:10px; font-weight:700; flex:0 0 auto; }
   #edMenuBar .mbBtn { background:none; border:none; color:#cfeee2; padding:0 11px; font:inherit; cursor:pointer; flex:0 0 auto; }
   #edMenuBar .mbBtn:hover, #edMenuBar .mbBtn.on { background:rgba(var(--accent-rgb),0.16); color:#eafff7; }
@@ -30231,7 +30240,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1320 · 2026-08-03';
+const BUILD_VERSION = 'build 1321 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -40258,7 +40267,7 @@ function buildEditorPanel(){
     let fab = document.getElementById('edAddFab');
     if(!fab){
       fab = document.createElement('div'); fab.id='edAddFab';
-      fab.style.cssText='position:absolute;top:14px;z-index:31;pointer-events:auto;';
+      fab.style.cssText='position:absolute;z-index:31;pointer-events:auto;';   /* build 1321: `top` is in the stylesheet so body.edMenuBar can move it clear of the menu bar */
       fab.innerHTML = '<button id="edAdd" title="Add an object to the level  (Shift+A)" style="width:46px;height:46px;border-radius:50%;font-size:22px;line-height:1;background:rgba(var(--accent-rgb),0.25);border:1px solid rgba(var(--accent-rgb),0.6);color:#eafff7;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.45), 0 0 12px rgba(var(--accent-rgb),0.25);">\uff0b</button>'
         + '<div id="edAddMenu" style="display:none;position:absolute;top:54px;z-index:60;background:rgba(7,16,20,0.97);border:1px solid rgba(var(--accent-rgb),0.4);border-radius:6px;padding:4px;min-width:170px;box-shadow:0 8px 24px rgba(0,0,0,0.5)"></div>';
       (ed.parentNode || document.body).appendChild(fab);
