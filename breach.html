@@ -1183,6 +1183,15 @@
 </style>
 </head>
 <body>
+<!-- build 1334: the colour-blind filter's one element. `color-interpolation-filters="sRGB"` is REQUIRED and
+     is the whole trap here: an SVG filter defaults to linearRGB, and the daltonization matrices are defined
+     against DISPLAY-space values — left at the default the correction is applied to numbers it was never
+     derived for and reads as a wash. The matrix is written from JS; this is identity until then. -->
+<svg id="cbSvg" width="0" height="0" style="position:fixed;width:0;height:0;pointer-events:none" aria-hidden="true">
+  <filter id="cbFilter" color-interpolation-filters="sRGB">
+    <feColorMatrix id="cbMat" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0"/>
+  </filter>
+</svg>
 <div id="hud" class="hidden">
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="crosshair"><span class="dot"></span></div>
@@ -1483,6 +1492,8 @@
       <label class="paLbl">Slow-mo on kills<input type="range" id="a11yHitstop" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yHitstopV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Interface size<input type="range" id="a11yUiScale" min="75" max="175" step="5" style="margin-left:auto;flex:1"><span id="a11yUiScaleV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <div class="row2" style="margin-top:5px"><button id="a11yReduce" class="pBtnGhost">Reduce all motion</button><button id="a11yRestore" class="pBtnGhost">Restore defaults</button></div>
+      <label class="paLbl">Colour vision<select id="a11yCbMode" style="margin-left:auto;flex:1"></select></label>
+      <label class="paLbl">Correction strength<input type="range" id="a11yCbStr" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yCbStrV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <div class="row2" style="margin-top:5px"><button id="a11yPhotoWarn" class="pBtnGhost">Photosensitivity warning</button></div>
       <div id="a11yHint" style="font-size:11px;opacity:.7;margin:4px 0 0">These are yours, not the level's \u2014 they follow you into every level, including ones other people made. Being hit always stays visible, however low the flash goes.</div>
     </div>
@@ -30594,7 +30605,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1333 · 2026-08-03';
+const BUILD_VERSION = 'build 1334 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30842,6 +30853,65 @@ applyUiScale();
 // It offers the fix rather than only the fact: "Reduce flashing" drives build 1313's own sliders, so the
 // notice is an ACTION and not a disclaimer. A player who has already told their OS to reduce motion has
 // said this once, and 1313's loader has already acted on it — so the dialog says so instead of nagging.
+// ---- build 1334 (platform audit 9, the last census entry: "colour-blind modes 0") ------------------
+// CORRECTION (daltonization), not simulation: a simulation shows a colour-blind player what they already
+// see. The pipeline is RGB -> LMS -> drop the missing cone -> back to RGB -> take the ERROR the eye cannot
+// carry -> redistribute it onto channels it can. Every one of those steps is LINEAR, so the whole thing
+// collapses to ONE 3x3 — which is why this is a matrix and not a shader chain.
+//
+// It is a CSS/SVG filter on <body> rather than a term in the composite shader, and that is the load-bearing
+// decision. The composite is only ONE of three passes that can present a frame (DoF vertical, composite,
+// afterimage copy) and it is absent ENTIRELY when post-processing is off — which is exactly the low-end
+// device most likely to need this. One filter covers the 3D frame, the HUD, the menus and every render
+// path, present or future, instead of three shaders that have to be kept in step.
+//
+// GREYS ARE INVARIANT BY CONSTRUCTION. A dichromat sees a neutral grey as a neutral grey, so the error is
+// zero there and every row of the resulting matrix sums to exactly 1. test-1334 recomputes all three from
+// the constants below and asserts that, which is a far stronger check than restating nine numbers.
+const CB_R2L = [[17.8824,43.5161,4.11935],[3.45565,27.1554,3.86714],[0.0299566,0.184309,1.46709]];
+const CB_L2R = [[0.0809444479,-0.130504409,0.116721066],[-0.0102485335,0.0540193266,-0.113614708],[-0.000365296938,-0.00412161469,0.693511405]];
+const CB_SIM = {   // the missing cone rebuilt from the other two, in LMS (Vienot 1999)
+  protan:[[0,2.02344,-2.52581],[0,1,0],[0,0,1]],       // no long-wave cone  — red
+  deutan:[[1,0,0],[0.494207,0,1.24827],[0,0,1]],       // no medium-wave     — green
+  tritan:[[1,0,0],[0,1,0],[-0.395913,0.801109,0]] };   // no short-wave      — blue
+// The error is pushed OFF the channel that cannot carry it and onto the two that can. Red keeps none of
+// its own error (row 1 is zero) precisely because that is the information being moved.
+const CB_SHIFT = [[0,0,0],[0.7,1,0],[0.7,0,1]];
+const CB_MODES = ['off','protan','deutan','tritan'];
+const CB_LABEL = { off:'Off', protan:'Protanopia (red)', deutan:'Deuteranopia (green)', tritan:'Tritanopia (blue)' };
+function _cbMul(a,b){ return a.map(r=>[0,1,2].map(j=>r[0]*b[0][j]+r[1]*b[1][j]+r[2]*b[2][j])); }
+function cbMatrix(mode, strength){
+  const sim = CB_SIM[mode];
+  const k = Math.max(0, Math.min(1, +strength || 0));
+  if(!sim || k <= 0) return [[1,0,0],[0,1,0],[0,0,1]];
+  const simRGB = _cbMul(CB_L2R, _cbMul(sim, CB_R2L));
+  const err = [0,1,2].map(i=>[0,1,2].map(j=>(i===j?1:0) - simRGB[i][j]));
+  const push = _cbMul(CB_SHIFT, err);
+  // lerp toward identity, so the slider is a real dial and 0 is exactly no filter at all
+  return [0,1,2].map(i=>[0,1,2].map(j=>(i===j?1:0) + push[i][j]*k));
+}
+const CB_MODE_KEY = 'breach_cbmode', CB_STR_KEY = 'breach_cbstr';
+let cbMode = 'off', cbStrength = 1;
+try{ const _m = localStorage.getItem(CB_MODE_KEY); if(CB_MODES.indexOf(_m) > 0) cbMode = _m;
+     const _k = parseFloat(localStorage.getItem(CB_STR_KEY)); if(isFinite(_k)) cbStrength = Math.max(0, Math.min(1, _k)); }catch(e){}
+function applyColorBlind(){
+  const el = document.getElementById('cbMat'), body = document.body;
+  if(!el || !body) return;
+  const on = cbMode !== 'off' && cbStrength > 0.001;
+  if(on){
+    const m = cbMatrix(cbMode, cbStrength);
+    /* feColorMatrix is 4x5: the 3x3 in the top-left, no offsets, alpha untouched */
+    el.setAttribute('values', [
+      m[0][0],m[0][1],m[0][2],0,0,
+      m[1][0],m[1][1],m[1][2],0,0,
+      m[2][0],m[2][1],m[2][2],0,0,
+      0,0,0,1,0 ].map(v=>(+v).toFixed(6)).join(' '));
+  }
+  /* Removed entirely at 'off', not left at identity: a filter on <body> is a full-screen composite every
+     frame, and nobody should pay for a correction they are not using. */
+  body.style.filter = on ? 'url(#cbFilter)' : '';
+}
+function saveColorBlind(){ try{ localStorage.setItem(CB_MODE_KEY, cbMode); localStorage.setItem(CB_STR_KEY, String(cbStrength)); }catch(e){} }
 const PHOTO_WARN_KEY = 'breach_photowarn';
 function photosensitivityWarning(force){
   try{ if(!force && localStorage.getItem(PHOTO_WARN_KEY) === '1') return false; }catch(e){}
@@ -30863,11 +30933,13 @@ function photosensitivityWarning(force){
 /* Called HERE, at the declaration, and not from a boot hook further down: PHOTO_WARN_KEY is a `const` and
    `typeof` does not guard a temporal dead zone (build 1127), so the one place this call is provably safe is
    after the line that initialises it. Build 1331 is the same lesson from the other direction. */
+applyColorBlind();   /* build 1334: after its own consts, same TDZ rule as the call below */
 photosensitivityWarning(false);
 function a11yReduceAll(){ a11y = { shake:0, flash:0.35, blur:0, sway:0, hitstop:0 }; saveA11y(); }
 function a11yRestoreAll(){ a11y = Object.assign({}, A11Y_DEFAULT); saveA11y();
   /* the button says "Restore defaults" for this whole fold, and the size row is in it */
-  if(typeof uiScale!=='undefined'){ uiScale = 1; applyUiScale(); saveUiScale(); } }
+  if(typeof uiScale!=='undefined'){ uiScale = 1; applyUiScale(); saveUiScale(); }
+  if(typeof cbMode!=='undefined'){ cbMode = 'off'; cbStrength = 1; applyColorBlind(); saveColorBlind(); } }
 loadA11y();
 function saveMouseSens(){ try{ localStorage.setItem('breach_mouse_sens', String(mouseSens)); }catch(e){} }
 // ZOOM-MATCHED AIM. The audit measured the shipped ratio: ADS_SENS/HIP_SENS = 0.545 against a 2.34x zoom,
@@ -48390,6 +48462,14 @@ function bindPauseMenu(){
         const _ush=()=>{ if(uv) uv.textContent=Math.round(uiScale*100)+'%'; };
         if(ur){ ur.value=String(Math.round(uiScale*100)); _ush();
           ur.oninput=()=>{ uiScale=(+ur.value||100)/100; applyUiScale(); saveUiScale(); _ush(); }; } }
+      /* build 1334: colour-vision correction. Applies LIVE, because the only way to choose between three
+         corrections is to look at the game through each of them. */
+      { const cm=document.getElementById('a11yCbMode'), cs=document.getElementById('a11yCbStr'), cv=document.getElementById('a11yCbStrV');
+        if(cm && !cm.options.length){ for(const k of CB_MODES){ const o=document.createElement('option'); o.value=k; o.textContent=CB_LABEL[k]; cm.appendChild(o); } }
+        const _csh=()=>{ if(cv) cv.textContent=Math.round(cbStrength*100)+'%'; if(cs) cs.disabled=(cbMode==='off'); };
+        if(cm){ cm.value=cbMode; cm.onchange=()=>{ cbMode = CB_MODES.indexOf(cm.value)>=0 ? cm.value : 'off'; applyColorBlind(); saveColorBlind(); _csh(); }; }
+        if(cs){ cs.value=String(Math.round(cbStrength*100)); cs.oninput=()=>{ cbStrength=Math.max(0,Math.min(1,(+cs.value||0)/100)); applyColorBlind(); saveColorBlind(); _csh(); }; }
+        _csh(); }
       const pw=document.getElementById('a11yPhotoWarn'); if(pw) pw.onclick=()=>{ photosensitivityWarning(true); };
       const rd=document.getElementById('a11yReduce'); if(rd) rd.onclick=()=>{ a11yReduceAll(); _a11ySync(); if(typeof toast==='function') toast('Motion reduced'); };
       const rs=document.getElementById('a11yRestore'); if(rs) rs.onclick=()=>{ a11yRestoreAll(); _a11ySync(); if(typeof toast==='function') toast('Motion settings restored'); };

@@ -967,6 +967,59 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Colour vision (build 1334 — the last census entry)
+
+**Correction, not simulation.** A simulation shows a colour-blind player what they already see.
+Daltonization: RGB → LMS → drop the missing cone → back to RGB → take the ERROR the eye cannot carry →
+redistribute it onto the channels it can. **Every one of those steps is linear, so the whole thing collapses
+to ONE 3×3** — which is why this is an `feColorMatrix` and not a shader chain.
+
+**It is a CSS/SVG filter on `<body>`, not a term in the composite pass, and that is the load-bearing
+decision.** The composite is only one of three passes that can present a frame (DoF vertical, composite,
+afterimage copy) and it is **absent entirely when post-processing is off** — which is exactly the low-end
+device most likely to need this. One filter covers the 3D frame, the HUD, the menus and every render path,
+present or future, instead of three shaders that have to be kept in step. Measured: `#hud` and the minimap
+sit at identical rects with the filter on, so making `<body>` the containing block for fixed descendants
+costs nothing here.
+
+Measured on **real composited pixels** (screenshot, decoded through an offscreen canvas — a filter is
+applied by the compositor and nothing inside the page can read it):
+
+```
+             filter              red             green         grey            teal
+off          (none)              [255,0,0]       [0,192,0]     [128,128,128]   [56,245,181]
+protan       url("#cbFilter")    [255,130,157]   [0,94,0]      [128,128,128]   [56,149,64]
+deutan       url("#cbFilter")    [255,52,132]    [0,153,0]     [128,128,128]   [56,207,83]
+tritan       url("#cbFilter")    [255,0,255]     [0,219,0]     [128,128,128]   [56,255,0]
+protan @50%  url("#cbFilter")    [255,65,79]     [0,143,0]     [128,128,128]   [56,197,123]
+off          (none)              byte-identical to the first row
+```
+
+**Two rows of that table are the verification, and the second one is the reason the control set has colours
+in it at all:**
+
+- **Grey did not move** — a 0,0,0 delta under every correction and at half strength. A dichromat sees a
+  neutral grey as neutral, so the error term is zero there and every row of the matrix sums to exactly 1.
+  `test-1334` recomputes all three from the constants and asserts that, rather than restating nine numbers.
+- **Red landed on exactly the sRGB-space arithmetic**: protan gives G = 0.5089 → 129.8 → **130 measured**,
+  B = 0.6173 → 157.4 → **157 measured**. That is what proves `color-interpolation-filters="sRGB"` took —
+  an SVG filter defaults to **linearRGB**, where those two numbers are different. **The grey invariant
+  could not have caught it, because grey is invariant in either space.** An invariant that holds under the
+  bug is not a test for the bug.
+
+`test-1334` also checks that `CB_L2R` really is the inverse of `CB_R2L` — every matrix derived from them is
+quietly wrong otherwise — with a 1e-4 tolerance, because the published pair is rounded to nine digits and
+the round trip is exact only to ~5e-5. That is 0.013 of one 8-bit code value, which is why the probe read a
+clean zero.
+
+`off` **removes** the filter rather than leaving an identity matrix in place: it is a full-screen composite
+every frame and nobody should pay for a correction they are not using. Strength lerps toward identity, so 0
+is exactly no correction and half is exactly half. Tritan's B-from-R coefficient is 3.37 and clips hard at
+full strength — which is what the strength dial is for.
+
+**The platform audit's accessibility census is now three-for-six**: UI scale, photosensitivity warning and
+colour-blind modes are closed; `role=`, `tabindex` and a key-rebinding review remain.
+
 ## The interface has a size, and the game says what it contains (build 1333 — platform audit 9)
 
 The accessibility census, verbatim: *`aria-label` 47, `role="` **0**, `tabindex` **0**, colour-blind modes
