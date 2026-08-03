@@ -11941,11 +11941,105 @@ function _lgRenderNode(n){
   };
   return el;
 }
+
+// ---------- build 1328: the board shows the level's PROP SIGNALS (reported) ----------
+// "If signals are created for a prop in the editor panel, make it show as nodes in the signal node modal."
+//
+// Two authoring systems that had never met. A SIGNAL is `{when, do, target}` on a prop — the simple path,
+// and the one most levels are actually wired with. The GRAPH is nodes and wires. Open the graph on a level
+// built entirely out of signals and it says "no nodes yet", which is false: the level is full of logic.
+//
+// These are a VIEW, deliberately, and the distinction is load-bearing:
+//   - they are NOT in `logicGraph.nodes`. They are not serialized, not sanitized, not pulsed, not wired.
+//     Turning signals into real graph nodes would change what the level DOES — the two systems fire at
+//     different times through different code — and would silently rewrite every level that opens the board.
+//   - so they are drawn `[data-signode]`, never `[data-node]`, which also keeps build 1318's trace painter
+//     and the wire renderer from ever seeing them.
+//   - clicking one does the only thing that is honest: takes you to the prop that owns it, where the
+//     signal can actually be edited. A card that looked editable here and was not would be worse than
+//     nothing.
+const SIG_MIRROR_MAX = 60;         // a card each; past this the panel is a wall, not a view
+const _SIG_WHEN_LABEL = { destroyed:'destroyed', interacted:'E pressed', contact:'object placed' };
+function _lgSigMirror(){
+  const out = [];
+  const props = (typeof propModels!=='undefined' && propModels) ? propModels : [];
+  for(const o of props){
+    if(!o || !o.userData) continue;
+    const sg = o.userData.signals;
+    if(!Array.isArray(sg) || !sg.length) continue;
+    for(let i=0; i<sg.length; i++){
+      if(out.length >= SIG_MIRROR_MAX) return out;
+      if(sg[i]) out.push({ o, s:sg[i], i });
+    }
+  }
+  return out;
+}
+function _lgSigName(o){
+  const u = o.userData || {};
+  return String(u.name || u.tag || u.src || 'prop').slice(0, 22);
+}
+// Where the column goes: to the LEFT of whatever the graph already occupies, so it never lands on top of
+// a node the creator placed. An empty graph starts the column at a fixed origin rather than at -Infinity.
+function _lgSigColumnX(){
+  let minX = Infinity;
+  for(const n of (logicGraph.nodes||[])) if(+n.x < minX) minX = +n.x;
+  if(!isFinite(minX)) minX = 120;
+  return minX - 250;
+}
+function _lgRenderSigMirror(){
+  if(!_lgBoard) return 0;
+  _lgBoard.querySelectorAll('[data-signode]').forEach(e=>e.remove());
+  const list = _lgSigMirror();
+  if(!list.length) return 0;
+  const x = _lgSigColumnX();
+  list.forEach((it, k)=>{
+    const el = document.createElement('div');
+    el.dataset.signode = String(k);
+    el.style.cssText = 'position:absolute;left:'+x+'px;top:'+(20 + k*72)+'px;width:190px;background:#0b1219;'
+      + 'border:1px dashed rgba(255,209,102,0.55);border-radius:9px;font-size:11px;color:#cfeee2;'
+      + 'user-select:none;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.35);';
+    const hd = document.createElement('div');
+    hd.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px dashed rgba(255,209,102,0.3);background:rgba(255,209,102,0.10);border-radius:9px 9px 0 0;';
+    const dot = document.createElement('span');
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#ffd166;flex:none;';
+    const ti = document.createElement('span');
+    ti.style.cssText = 'flex:1;font-weight:700;letter-spacing:0.4px;color:#ffe6a8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    /* textContent throughout: a prop name and a target tag are level data (build 1325) */
+    ti.textContent = 'On ' + (_SIG_WHEN_LABEL[it.s.when] || it.s.when || '?');
+    hd.appendChild(dot); hd.appendChild(ti); el.appendChild(hd);
+    const bd = document.createElement('div'); bd.style.cssText = 'padding:5px 8px;line-height:1.45;';
+    const who = document.createElement('div'); who.style.cssText='color:#9fb9ad;font-size:10px;';
+    who.textContent = _lgSigName(it.o);
+    const act = document.createElement('div');
+    act.textContent = String(it.s.do || '?') + (it.s.target ? (' → ' + String(it.s.target).slice(0,24)) : '');
+    const foot = document.createElement('div'); foot.style.cssText='color:#7a8f88;font-size:9.5px;margin-top:3px;';
+    foot.textContent = 'prop signal — click to edit on the prop';
+    bd.appendChild(who); bd.appendChild(act); bd.appendChild(foot); el.appendChild(bd);
+    el.title = 'This is a SIGNAL on a prop, not a graph node. Click to select that prop and edit it in the inspector.';
+    el.onclick = ()=>{ _lgSigGoto(it.o); };
+    _lgBoard.appendChild(el);
+  });
+  return list.length;
+}
+// The only honest action a mirrored card can offer: go to the prop that owns the signal.
+function _lgSigGoto(o){
+  try{
+    if(typeof _lgClose==='function') _lgClose();
+    if(typeof selProps!=='undefined'){ selProps = [o]; editorActive='props';
+      if(typeof editorTargets!=='undefined' && editorTargets.props) editorTargets.props.idx = propModels.indexOf(o); }
+    if(typeof setEditorMode==='function') setEditorMode('build', true);
+    if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    if(typeof updateGizmo==='function') updateGizmo();
+    if(typeof _edFrameSelected==='function') _edFrameSelected();
+  }catch(e){}
+}
 function _lgRender(){
   if(!_lgBoard) return;
   _lgRefreshDatalists();
   _lgBoard.querySelectorAll('[data-node]').forEach(e=>e.remove());
   for(const n of logicGraph.nodes){ const el=_lgRenderNode(n); if(el) _lgBoard.appendChild(el); }
+  if(typeof _lgRenderSigMirror==='function') _lgRenderSigMirror();   /* build 1328 */
   _lgApplyView(); _lgRenderWires(); _lgDirty();
 }
 function _lgApplyView(){ if(_lgBoard) _lgBoard.style.transform='translate('+_lgPan.x+'px,'+_lgPan.y+'px) scale('+_lgZoom+')'; const z=document.getElementById('lgZoom'); if(z) z.textContent=Math.round(_lgZoom*100)+'%'; }
@@ -30363,7 +30457,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1327 · 2026-08-03';
+const BUILD_VERSION = 'build 1328 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

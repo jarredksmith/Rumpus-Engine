@@ -967,6 +967,46 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The board shows the level's prop signals (build 1328)
+
+Reported: *"If signals are created for a prop in the editor panel, make it show as nodes in the signal node
+modal."*
+
+**Two authoring systems that had never met.** A SIGNAL is `{when, do, target}` on a prop — the simple path,
+and the one most levels are actually wired with. The GRAPH is nodes and wires. Open the graph on a level
+built entirely out of signals and it said *"no nodes yet"*, which is flatly false: the level is full of
+logic, just not in that data structure.
+
+**They are a VIEW, and the distinction is load-bearing.** They are not in `logicGraph.nodes` — not
+serialized, not sanitized, not pulsed, not wired — and they are drawn `[data-signode]`, never `[data-node]`,
+which is what keeps build 1318's trace painter and the wire renderer from ever seeing them. Converting
+signals into real graph nodes would **change what the level does**: the two systems fire at different times
+through different code, so a conversion would silently rewrite every level that so much as opened the board.
+
+Clicking a card does the only honest thing: closes the board, selects the prop that owns the signal, and
+frames it. **A card that looked editable there and was not would be worse than nothing**, so the card says
+*"prop signal — click to edit on the prop"* on its face.
+
+Three details: the column sits 250 px left of the leftmost real node (and at a fixed origin when the graph
+is empty, rather than at −Infinity); cards are capped at 60, because past that the view is a wall; and every
+field is `textContent` per build 1325, since a prop name and a target tag are level data.
+
+Measured live (`tools/probe/signal-mirror.mjs`), three props carrying five signals:
+
+```
+graph nodes 0, signals 5   ->  5 cards, each reading its own when / prop / verb / target
+still a view               logicGraph.nodes 0, serialized 0, [data-node] 0, trace painter blind
+column x 150 vs leftmost real node 400, stacked 20 / 92 / 164 / 236 / 308
+click                      board closed, "vault door" selected, mode build / target props
+0 signals -> 0 cards;  400 signals on one prop -> 60
+```
+
+**Two probe faults, both mine.** The empty-case check deleted signals from `propModels.slice(0,3)` — the
+STOCK level's first three props, which never had any — and reported "still 5 cards" as if the removal had
+failed. And a backtick inside a comment I added *inside a template literal* closed the template: a syntax
+error in the instrument, not the engine. Neither reached a conclusion, but the first would have if the
+number had been less obviously wrong.
+
 ## A joiner's pickups flashed (build 1327)
 
 Reported from play: *"in a multiplayer match, the joiner sees the pickups, but they flash. They don't flash
