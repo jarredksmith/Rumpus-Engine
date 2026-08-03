@@ -33,7 +33,16 @@ assert(/localStorage\.setItem\('breach_adaptres', _adaptOn\?'on':'off'\)/.test(s
   'persists to the same key build 810 introduced (existing opt-outs keep working)');
 // build 1126: the rung carries SSAO as well as MSAA now, so it is named _hiFxOn — the behaviour
 // this pin guards (clearing the strike-out when the creator turns adaptive resolution off) is unchanged.
-assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \/\* build 883[^*]*\*\/ _hiFxOn=true; _hiFxFails=0; \}/.test(src),
-  'turning it OFF snaps back to full resolution immediately (build 883: and re-arms MSAA)');
+// build 1342: the line gained the motion-blur rung's own reset. Quoting the WHOLE line is the
+// character-budget trap in miniature — it asserts the members now, which is what it always meant.
+{
+  const m = src.match(/if\(!_adaptOn\)\{([^}]*)\}/);
+  assert(m, 'the adaptive-off branch exists');
+  for(const part of ['_prStepI=0', '_prScale=1', '_applyPixelRatio()', '_hiFxOn=true', '_hiFxFails=0'])
+    assert(m[1].indexOf(part) >= 0,
+      'turning it OFF snaps back to full resolution immediately (build 883: and re-arms MSAA) — ' + part);
+  assert(m[1].indexOf('_mbShed=false') >= 0,
+    '...and build 1342 gives motion blur back too, since "off" is a promise of full quality');
+}
 
 done('build 872: post-FX keeps MSAA (4x scene target) + adaptive resolution is a real setting');

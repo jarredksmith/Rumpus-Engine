@@ -15,6 +15,11 @@ const code = `
 let _adaptOn=true, _adaptAcc=0, _adaptN=0, _adaptNext=0, _adaptCool=0, _adaptGood=0, _adaptSlow=0;
 const ADAPT_FRAME_CAP=250, ADAPT_MIN_SAMPLE_MS=250;   // build 1141: a capped per-frame contribution + a time-based sample gate
 let _adaptUpNeed=6, _adaptUpAt=0, _adaptShiftAt=0;
+// build 1342: the ladder gained a rung ABOVE the FX one — motion blur sheds first, so a marginal machine
+// keeps its antialiasing and loses an effect rather than the reverse. This rig has no _postMotion, so
+// _mbLive is false and the new branch never fires: every assertion below measures what it always did.
+// (no backticks in this comment on purpose — it lives INSIDE a template literal, and one would close it)
+let _mbShed=false, _mbFails=0;   // build 1342: the ladder's new top rung — motion blur sheds before MSAA
 let _hiFxOn=true, _hiFxFails=0;   // build 883: the top-quality rung + strike-out (build 1126: MSAA *and* SSAO ride it)
 let _prStepI=0, _prScale=1;
 const _PR_STEPS=[1,0.85,0.72,0.66];
@@ -59,8 +64,13 @@ eq(get().upNeed, 6, '45s of stability resets the climb requirement (scene change
 // ---- MSAA rides the top step only ----
 assert(/return \(_prStepI===0 && \(typeof _hiFxOn==='undefined' \|\| _hiFxOn\)\) \? 4 : 0;/.test(src),
   '4x MSAA only at full resolution AND with the MSAA rung armed (build 883)');
-assert(/if\(!_adaptOn\)\{ _prStepI=0; _prScale=1; _applyPixelRatio\(\); \/\* build 883[^*]*\*\/ _hiFxOn=true; _hiFxFails=0; \}/.test(src),
-  'turning adaptive res off restores full quality and clears the strike-out');
+// build 1342: this quoted the WHOLE line, which gained the motion-blur rung's reset. It asserts the
+// members now — the character-budget trap in miniature.
+{ const mm = src.match(/if\(!_adaptOn\)\{([^}]*)\}/);
+  assert(mm, 'the adaptive-off branch exists');
+  for(const part of ['_prStepI=0', '_prScale=1', '_hiFxOn=true', '_hiFxFails=0'])
+    assert(mm[1].indexOf(part) >= 0, 'turning adaptive res off restores full quality and clears the strike-out — ' + part);
+  assert(mm[1].indexOf('_mbShed=false') >= 0, '...including build 1342\'s motion-blur rung'); }
 assert(/\|\| \(_postRT\.samples\|\|0\)!==_desiredPostSamples\(\)\)\{ disposePost\(\); ensurePost\(\); \}/.test(src),
   'the per-frame size check also rebuilds when the desired sample count changes');
 

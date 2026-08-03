@@ -7222,6 +7222,30 @@ const ADAPT_MIN_SAMPLE_MS = 250;
 const ADAPT_ENABLED_DEFAULT = true;   // build 810: on by default everywhere (was touch-only) — desktop laptops need the relief too; opt out via the setting
 let _adaptOn = ADAPT_ENABLED_DEFAULT;
 try{ const v=localStorage.getItem('breach_adaptres'); if(v==='on') _adaptOn=true; else if(v==='off') _adaptOn=false; }catch(e){}
+// ---- build 1342: MOTION BLUR IS THE FIRST THING THE LADDER SHEDS -----------------------------------
+// Reported from play: "seriously jagged edges… if any level of motion blur is turned on (anything >0)
+// those rough jagged edges appear." Four probes failed to find blur damaging an edge directly — measured
+// at the forced top rung with MSAA live, blur makes a silhouette SOFTER (65.7% -> 72.2% of scanlines
+// antialiased), and on the default level mid-motion the three conditions are identical within noise
+// (26.5% / 25.7% / 26.5% hard edges). The blur is not the thing drawing the jagged edge.
+//
+// It is the thing PAYING for it. `_desiredPostSamples()` returns 4 only at `_prStepI === 0 && _hiFxOn`,
+// and the ladder's FIRST relief is `_hiFxOn = false` — so the very first downshift throws MSAA away
+// while keeping full resolution. Motion blur is not free: at the top rung it adds a full-res blur pass
+// AND a half-res velocity SCENE RENDER (build 1246). Measured here, switching it on costs ~14% of frame
+// time. On a machine sitting near the ladder's threshold, 14% is exactly what tips rung 0 into rung 1 —
+// and rung 1 has no MSAA at all. Turn blur on, lose your edges. At any strength, because the passes run
+// regardless of the amount, which is precisely what the report said.
+//
+// So the ladder sheds in VALUE order now, and antialiasing is worth more than motion blur. Blur becomes
+// the cheapest rung, ABOVE the FX rung: a marginal machine keeps its edges and loses an effect, instead
+// of keeping the effect and losing its edges.
+//
+// The gate requires blur to actually BE on, or a level that never uses it would spend a rung shedding
+// nothing and delay the relief that would have helped. And it inherits the existing hysteresis whole —
+// `_adaptUpNeed`, the cooldown, and a strike counter of its own on the same pattern as `_hiFxFails`, so
+// a re-arm that immediately fails cannot become a limit cycle.
+let _mbShed = false, _mbFails = 0;
 function _adaptResTick(frameMs, now){
   if(!_adaptOn) return;
   // build 1141: a single frame's contribution is CAPPED. One 3-second hitch — a level load, a GC pause,
@@ -7244,16 +7268,25 @@ function _adaptResTick(frameMs, now){
   if(_adaptN < 8 && !(_adaptN >= 2 && _adaptAcc >= ADAPT_MIN_SAMPLE_MS)) return;
   const avg = _adaptAcc/_adaptN, slowFrac = _adaptSlow/_adaptN; _adaptAcc=0; _adaptN=0; _adaptSlow=0;
   if(now < _adaptCool) return;            // settling after a change
-  if(avg > 20 && slowFrac >= 0.5 && _prStepI===0 && _hiFxOn){             // build 883: first relief is the cheap one — drop the top FX rung, keep full resolution
+  const _mbLive = (typeof _postMotion!=='undefined') && (_postMotion * ((typeof a11y!=='undefined') ? a11y.blur : 1)) > 0.01;
+  if(avg > 20 && slowFrac >= 0.5 && _prStepI===0 && _hiFxOn && !_mbShed && _mbLive && _mbFails < 3){
+    /* build 1342: the cheapest rung of all — an effect, not the image. Nothing else changes. */
+    if(_adaptUpAt>0 && now - _adaptUpAt < 6000){ _adaptUpNeed = Math.min(48, _adaptUpNeed*2); _mbFails++; }
+    _mbShed = true; _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;
+  } else if(avg > 20 && slowFrac >= 0.5 && _prStepI===0 && _hiFxOn){             // build 883: first relief is the cheap one — drop the top FX rung, keep full resolution
     if(_adaptUpAt>0 && now - _adaptUpAt < 6000){ _adaptUpNeed = Math.min(48, _adaptUpNeed*2); _hiFxFails++; }   // a re-arm that failed this fast counts a strike
     _hiFxOn=false; _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;   // no _applyPixelRatio: the post pipeline swaps targets on its own
   } else if(avg > 20 && slowFrac >= 0.5 && _prStepI < _PR_STEPS.length-1){   // still slow -> now trade resolution
     if(_adaptUpAt>0 && now - _adaptUpAt < 6000) _adaptUpNeed = Math.min(48, _adaptUpNeed*2);   // build 880: that climb failed — retry later, not sooner (guard: a session's FIRST downshift is not a failed climb)
     _prStepI++; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); _adaptGood=0; _adaptCool=now+900; _adaptShiftAt=now;
-  } else if(avg < 17 && (_prStepI > 0 || (!_hiFxOn && _hiFxFails < 3))){   // headroom -> climb; the FX rung is the final one, and 3 failed re-arms lock it off for the session
+  } else if(avg < 17 && (_prStepI > 0 || (!_hiFxOn && _hiFxFails < 3) || (_mbShed && _mbFails < 3))){   // headroom -> climb; the FX rung is the final one, and 3 failed re-arms lock it off for the session
     if(++_adaptGood >= _adaptUpNeed){
+      /* build 1342: restore in the reverse of the order things were shed, so the LAST thing given up is
+         the FIRST thing returned — resolution, then the FX rung (MSAA/SSAO), and motion blur last of all,
+         because it is the least valuable thing on the ladder. */
       if(_prStepI > 0){ _prStepI--; _prScale=_PR_STEPS[_prStepI]; _applyPixelRatio(); }
-      else _hiFxOn=true;
+      else if(!_hiFxOn) _hiFxOn=true;
+      else _mbShed=false;
       _adaptGood=0; _adaptCool=now+900; _adaptUpAt=now; _adaptShiftAt=now;
     }
   } else { _adaptGood=0; if(_adaptUpNeed>6 && now-_adaptShiftAt>45000){ _adaptUpNeed=6; _adaptShiftAt=now; } }
@@ -8520,7 +8553,10 @@ function _renderPostFX(scn, cam){
   // build 810: with motion blur ~0 (or shed by adaptive res at its lowest step), composite STRAIGHT TO SCREEN — the
   // motion-blend and copy passes only exist to ping-pong the accumulation buffers, so skipping them saves TWO full-res
   // fullscreen passes (of the ~5 the pipeline runs) with zero visual difference when uDamp is 0.
-  const _mbOn = (_postMotion * ((typeof a11y!=='undefined') ? a11y.blur : 1))>0.01 && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);   /* build 1313 */
+  /* build 1342: `_mbShed` is the ladder taking the effect away so the frame can keep its ANTIALIASING —
+     see _adaptResTick. The bottom-rung term stays: that one is about a machine in real trouble. */
+  const _mbOn = (_postMotion * ((typeof a11y!=='undefined') ? a11y.blur : 1))>0.01
+    && !(_adaptOn && _mbShed) && !(_adaptOn && _prStepI>=_PR_STEPS.length-1);   /* build 1313 */
   // build 1117: the composite always encodes — it is the last stage that sees linear light either
   // way, and the grade after it has to run in display space. Everything downstream is a blit or a
   // temporal blend, both of which are fine on display-referred pixels.
@@ -30980,7 +31016,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1341 · 2026-08-03';
+const BUILD_VERSION = 'build 1342 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -49233,7 +49269,7 @@ function bindPauseMenu(){
   const pfx=document.getElementById('postFxCb'); if(pfx){ pfx.checked=_postOn; pfx.onchange=()=>{ _postOn=pfx.checked; _postFail=false; try{ localStorage.setItem('breach_postfx', _postOn?'on':'off'); }catch(e){} if(!_postOn && typeof disposePost==='function') disposePost(); if(typeof toast==='function') toast(_postOn?'Visual effects on':'Visual effects off'); }; }
   // build 872: adaptive resolution gets a visible switch (it was on-by-default with only a localStorage
   // escape hatch since build 810). Turning it OFF also snaps back to full resolution immediately.
-  const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); /* build 883/1126: full quality — the FX rung's strike-out is cleared too */ _hiFxOn=true; _hiFxFails=0; } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
+  const arc=document.getElementById('adaptResCb'); if(arc){ arc.checked=_adaptOn; arc.onchange=()=>{ _adaptOn=arc.checked; try{ localStorage.setItem('breach_adaptres', _adaptOn?'on':'off'); }catch(e){} if(!_adaptOn){ _prStepI=0; _prScale=1; _applyPixelRatio(); /* build 883/1126: full quality — the FX rung's strike-out is cleared too */ _hiFxOn=true; _hiFxFails=0; _mbShed=false; _mbFails=0; /* build 1342 */ } if(typeof toast==='function') toast(_adaptOn?'Adaptive resolution on':'Adaptive resolution off \u2014 full sharpness'); }; }
   const vM=document.getElementById('volMaster'); if(vM){ vM.value=Math.round(audioSettings.master*100); vM.oninput=()=>{ audioSettings.master=(+vM.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vMu=document.getElementById('volMusic'); if(vMu){ vMu.value=Math.round(audioSettings.music*100); vMu.oninput=()=>{ audioSettings.music=(+vMu.value)/100; applyAudioSettings(); saveAudioSettings(); }; }
   const vS=document.getElementById('volSfx'); if(vS){ vS.value=Math.round(audioSettings.sfx*100); vS.oninput=()=>{ audioSettings.sfx=(+vS.value)/100; applyAudioSettings(); saveAudioSettings(); initAudio(); SFX.coin(); }; }   // tick so it's

@@ -31,14 +31,18 @@ const src = gameSource();
 const PR = JSON.parse(src.match(/const _PR_STEPS = IS_COARSE \? \[[^\]]*\] : (\[[^\]]*\]);/)[1]);
 const CAP = +src.match(/const ADAPT_FRAME_CAP = (\d+);/)[1];
 const MIN = +src.match(/const ADAPT_MIN_SAMPLE_MS = (\d+);/)[1];
+// build 1342: the ladder gained a rung above the FX one (motion blur sheds first). The rig defines no
+// _postMotion, so `_mbLive` is false and that branch never fires — every scenario below therefore measures
+// exactly what it measured before, which is the point of the guard being written that way.
 const NAMES = ['_adaptOn','_adaptAcc','_adaptN','_adaptNext','_adaptCool','_adaptGood','_adaptUpAt',
-               '_adaptUpNeed','_adaptShiftAt','_prStepI','_prScale','_hiFxOn','_hiFxFails','_adaptSlow'];
+               '_adaptUpNeed','_adaptShiftAt','_prStepI','_prScale','_hiFxOn','_hiFxFails','_adaptSlow',
+               '_mbShed','_mbFails'];
 
 // a fresh scaler plus a clock, so each scenario starts from a session's opening state
 function rig(opts) {
   const st = Object.assign({ _adaptOn:true, _adaptAcc:0, _adaptN:0, _adaptNext:0, _adaptCool:0,
     _adaptGood:0, _adaptUpAt:0, _adaptUpNeed:6, _adaptShiftAt:0, _prStepI:0, _prScale:1,
-    _hiFxOn:true, _hiFxFails:0, _adaptSlow:0 }, opts || {});
+    _hiFxOn:true, _hiFxFails:0, _adaptSlow:0, _mbShed:false, _mbFails:0 }, opts || {});
   const body = NAMES.map(n => 'let ' + n + '=S.' + n + ';').join('\n') + '\n'
     + extractFunction('_adaptResTick') + '\n'
     + 'return { tick:_adaptResTick, applied:()=>A.n, get:()=>({' + NAMES.map(n => n + ':' + n).join(',') + '}) };';
@@ -119,7 +123,9 @@ assert(MIN >= 100 && MIN <= 1000, 'the minimum sample is a fraction of a second 
   assert(/_adaptAcc \+= Math\.min\(frameMs, ADAPT_FRAME_CAP\); _adaptN\+\+; if\(frameMs > 20\) _adaptSlow\+\+;/.test(fn),
     'a frame contributes at most ADAPT_FRAME_CAP to the mean, and slow frames are counted separately');
   assert(/const avg = _adaptAcc\/_adaptN, slowFrac = _adaptSlow\/_adaptN;/.test(fn), 'both statistics come out of the window');
-  eq((fn.match(/slowFrac >= 0\.5/g) || []).length, 2, 'and BOTH downshift rungs require a majority-slow window, not just a slow mean');
+  // build 1342 added a third downshift rung (motion blur, above the FX one). The assertion's intent is
+  // that EVERY downshift asks the majority question, not just the mean — so the count follows the rungs.
+  eq((fn.match(/slowFrac >= 0\.5/g) || []).length, 3, 'and ALL THREE downshift rungs require a majority-slow window, not just a slow mean');
   assert(!/slowFrac/.test(fn.slice(fn.indexOf('avg < 17'))), 'the CLIMB is not gated on it — recovering means the mean came down, which is the right question');
   // executable proof that the cap is what saves the hitch: with a huge cap the same session downshifts
   {
