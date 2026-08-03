@@ -967,6 +967,77 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## One long take, sliced into clips (build 1336)
+
+Asked for from use: *"most glb files I find have all animations (idle, shoot, reload) baked into one long
+continuous animation."* This engine maps a SLOT to a **clip name**, so such a model could only ever have one
+animation. The art fix is an NLA strip per action in Blender — a whole tool and a whole skill away from
+someone building a level.
+
+**A slice is just another named clip, and that is the entire reason this is small.** Every consumer already
+resolves by name out of `gltf.animations` — `_resolveStateClip`, the per-weapon variants (1294), the
+`clip:<name>` direct play (1079), the slot dropdowns, the peer replay. The slices are injected INTO that
+array, so **not one of them changed** and a slice is reachable everywhere a real clip is.
+
+### `AnimationUtils.subclip` is deliberately not used
+
+three ships it, and both of its failure modes are silent. Executed against the real r149 build on a take
+keyed at t=0 and t=5 plus a bone keyed only at t=0:
+
+```
+                      tracks   duration   single-key bone
+AnimationUtils.subclip      0      0.000   DROPPED
+sliceClip                   2      2.000   kept
+```
+
+- **A track with no key in range is dropped entirely** (`if(times.length===0) continue`). That bone then
+  keeps whatever pose the *previous* animation left it in — which reads as "the model is broken", not "the
+  slice is wrong". On the sparse take above it drops *everything* and the slice is empty.
+- **The shift is by the first surviving key, and the end is trimmed to the last.** Even on a densely-keyed
+  track, a 2-second request came back with `duration` **1**: a sliced reload that ends early.
+
+**Bracketing fixes all three at once.** Every track is EVALUATED at exactly the in and out points and those
+keys inserted, so no track can be empty, `t=0` is exactly the in-point, and the duration is exactly what was
+asked for. `createInterpolant()` does the evaluating, which means a quaternion track is **slerped** — three's
+own interpolant rather than a second opinion about rotation.
+
+Ranges are **inclusive**, because that is what an animator means by "idle is 0 to 60" and because two
+adjacent slices sharing their boundary frame is correct: the end pose of one IS the start pose of the next,
+which is what makes a cut loop cleanly.
+
+### The panel is anchored to the bottom, not centred
+
+Every other modal in this file is centred. **A slicer you cannot see the model through is a pair of number
+fields** — so this one sits along the bottom edge and scrubbing poses the live preview rig. The scrub sets
+`paused`, writes an explicit `time` and calls `mixer.update(0)`, which evaluates the pose without advancing:
+exact, rather than racing the frame loop. Measured: t 0 / 1.25 / 2.5 / 5 posed the rig at x 0 / 1.25 / 2.5 / 5.
+
+Closing hands the rig back to the state machine, or it stands frozen on the last scrubbed pose.
+
+### Where the slices live
+
+**Keyed by MODEL URL, not by role.** The same character used by the player and by an enemy must slice the
+same way, so they cannot live in a character config. They ride the level, sanitized on the way in *and* on
+the way out, so nothing out-of-range can enter a share code.
+
+`applyAnimCuts` is idempotent by signature and **removes its own previous work first** — otherwise editing a
+slice would stack a second clip beside it with the same name and `find(by name)` would return whichever came
+first. A slice may never take the name of a real clip, and the panel refuses that with a reason rather than
+letting it be silently dropped one layer down.
+
+Measured live: three applies in a row left `["allanim","Idle","Reload"]` unchanged; editing an out-point
+updated in place; Add produced a working clip that appeared in the dropdowns and serialized; a colliding
+name left the count at 3.
+
+### The ordering bug I shipped into my own build and caught before pushing
+
+`loadHostedProps()` is called bare at module level and builds the saved level's props **at boot** (1331), and
+every model it loads is sliced on delivery. I had seeded `animCuts` beside the other level fields ~3,000
+lines below that call — so the first level of a session would load against an EMPTY cut set and the slices
+would only appear on the next level change. It is seeded at its declaration now, above the loader, and
+`test-1336` pins `savedLevel < animCuts < loadHostedProps`. **Build 1331's lesson, applied prospectively:
+anything the boot loader can consume must be declared above it.**
+
 ## A level says who it will make you talk to (build 1335 — platform audit 2.5)
 
 > A level can direct the browser to fetch arbitrary `http(s)` URLs through prop `src`, every
