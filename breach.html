@@ -30240,7 +30240,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1322 · 2026-08-03';
+const BUILD_VERSION = 'build 1323 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -36606,7 +36606,159 @@ loop();
 // ---------- In-game transform / level editor (press P) ----------
 // Live-adjusts the imported GLB models (gun, station, every prop) and the ADS aim pose,
 // then emits copy-paste-ready code so the chosen values can be baked into the source.
-// build 1322 (editor audit 4.11): "Transform fields show 5 decimal places for a position in metres."
+
+// ---------- build 1323: THE ROOM TOOL (editor audit 4.10) ----------
+// "No CSG / room / spline tools; a doorway is four boxes forever. This is the honest ceiling on hand-built
+//  interiors and it is the same ceiling the previous audit found."
+//
+// The obvious reading is "add booleans". That is the wrong tool for THIS engine, and the reason is the
+// collider: build 1148 turns a mesh into a per-column, per-slot box grid, and every consumer walks that
+// list. A CSG subtract yields ONE opaque mesh with a hole in it — more collider boxes, no longer editable
+// as parts, no longer instanced, and a doorway you cannot move afterwards without re-cutting it. A room
+// built from PRIMITIVES has none of those problems and inherits every system the engine already has:
+// the gizmo, snapping, materials, the per-part collider, serialization, undo, duplicate, multiplayer.
+//
+// So a doorway is still boxes — but it is boxes the creator never places, never measures and can move by
+// typing a number. `roomPieces` is PURE: spec in, box list out, no THREE, no DOM. That is what makes the
+// geometry testable exhaustively (test-1323 checks the interior is exactly what was asked, that no two
+// pieces overlap, that every opening's clear gap is the authored size, and that the walls tile their own
+// rectangle with no holes) rather than eyeballed in a screenshot.
+//
+// Conventions, stated once because every piece depends on them:
+//   - The INTERIOR is exactly w x d x h, centred on the room origin, with the floor's top face at y=0.
+//     A creator typing 8 x 6 gets 8 x 6 of floor, not 8-2t. Interior-first is the only measurement that
+//     means anything when you are placing furniture in it.
+//   - `y` in a piece is its BASE, because that is what the engine's primitives use (build 871: every
+//     builder translates its geometry so the base sits at y=0) and what finalizeProp lifts onto terrain.
+//   - N/S walls run the FULL outer width; E/W walls run the interior depth only. They meet exactly at
+//     z = +/-d/2 with no overlap and no gap. Overlapping them would double the collider at four corners
+//     and z-fight two coplanar faces; gapping them would let a bot through the corner.
+const ROOM_MIN = 1, ROOM_MAX = 200, ROOM_H_MIN = 1.6, ROOM_T_MIN = 0.05, ROOM_T_MAX = 4;
+const ROOM_OPEN_MAX = 12;          // per room, not per wall — the panel is a list, not a spreadsheet
+/* MEASURED, not chosen. The player is a cylinder of radius 0.8, so a 1.6 m doorway is EXACTLY their
+   diameter: the probe swept a body of that radius across a 1.6 m door and it did not fit — at zero
+   clearance the jamb test is a floating-point coin flip. Enemies are ENEMY_CAP_R 0.7 (build 1154), so the
+   player is the binding constraint. 2.0 gives 20 cm either side, which is the smallest gap that actually
+   reads as a doorway rather than a squeeze. Build 1113 learned this the same way for the generator, and the
+   lesson is the same: author to the COLLIDER, not to the eye. */
+const ROOM_DOOR_W = 2.0, ROOM_WIN_W = 1.6, ROOM_TIGHT_W = 1.8;
+const ROOM_WALLS = ['n','s','w','e'];
+const ROOM_EPS = 1e-6;
+const clampNum = (v, lo, hi, dflt)=>{ v = +v; if(!isFinite(v)) return dflt; return v<lo?lo:(v>hi?hi:v); };
+function roomSpec(raw){
+  raw = raw || {};
+  const w = clampNum(raw.w, ROOM_MIN, ROOM_MAX, 8), d = clampNum(raw.d, ROOM_MIN, ROOM_MAX, 6);
+  const h = clampNum(raw.h, ROOM_H_MIN, ROOM_MAX, 3);
+  /* Thickness is capped against the ROOM, not just an absolute: a 1 m room with 4 m walls is a solid
+     block, and the interior-first promise would be a lie. */
+  const t = clampNum(raw.t, ROOM_T_MIN, Math.min(ROOM_T_MAX, Math.min(w, d) / 2), 0.3);
+  const out = { w, d, h, t, floor: raw.floor !== false, ceiling: !!raw.ceiling, openings: [] };
+  const src = Array.isArray(raw.openings) ? raw.openings : [];
+  for(let i=0; i<src.length && out.openings.length<ROOM_OPEN_MAX; i++){
+    const o = src[i] || {};
+    const wall = ROOM_WALLS.indexOf(o.wall) >= 0 ? o.wall : 'n';
+    const run = (wall==='n'||wall==='s') ? (w + 2*t) : d;
+    const ow = clampNum(o.width, 0.2, run, 1.6);
+    const sill = clampNum(o.sill, 0, h - 0.2, 0);
+    const oh = clampNum(o.height, 0.2, h - sill, Math.min(2.1, h - sill));
+    /* `at` is the centre offset along the wall, clamped so the opening cannot hang off the end — an
+       opening that runs past the wall would emit a negative-length solid and a gap in the shell. */
+    const half = ow/2, lim = Math.max(0, run/2 - half);
+    out.openings.push({ wall, at: clampNum(o.at, -lim, lim, 0), width: ow, sill, height: oh });
+  }
+  return out;
+}
+// One wall's pieces, as spans along its own run axis. Returns [{u, len, y, sy}] in wall-local terms.
+function _roomWallSpans(run, h, openings){
+  const out = [];
+  /* Sort by start and DROP anything that overlaps what is already placed. Two overlapping doorways are
+     an authoring mistake, and the alternative (emitting a negative-length solid between them) is a wall
+     with a hole in it that no field in the panel explains. */
+  const ops = openings.slice().sort((a,b)=>(a.at-a.width/2)-(b.at-b.width/2));
+  const kept = [];
+  let reach = -run/2;
+  for(const o of ops){
+    const a = o.at - o.width/2, b = o.at + o.width/2;
+    if(a < reach - ROOM_EPS) continue;              // overlaps the previous opening -> ignored
+    kept.push(o); reach = b;
+  }
+  let cur = -run/2;
+  for(const o of kept){
+    const a = o.at - o.width/2, b = o.at + o.width/2;
+    if(a - cur > ROOM_EPS) out.push({ u: (cur+a)/2, len: a-cur, y: 0, sy: h });     // solid before it
+    if(o.sill > ROOM_EPS) out.push({ u: o.at, len: o.width, y: 0, sy: o.sill });     // sill (a window)
+    const top = o.sill + o.height;
+    if(h - top > ROOM_EPS) out.push({ u: o.at, len: o.width, y: top, sy: h-top });   // header above it
+    cur = b;
+  }
+  if(run/2 - cur > ROOM_EPS) out.push({ u: (cur+run/2)/2, len: run/2-cur, y: 0, sy: h });
+  return out;
+}
+// The whole room: a flat list of boxes in ROOM-LOCAL space, ready to hand to spawnProp('box', ...).
+function roomPieces(raw){
+  const S = roomSpec(raw);
+  const { w, d, h, t } = S;
+  const ow = w + 2*t, od = d + 2*t;                 // outer footprint
+  const out = [];
+  if(S.floor)   out.push({ role:'floor',   x:0, y:-t, z:0, sx:ow, sy:t, sz:od });
+  if(S.ceiling) out.push({ role:'ceiling', x:0, y: h, z:0, sx:ow, sy:t, sz:od });
+  for(const wall of ROOM_WALLS){
+    const ns = (wall==='n' || wall==='s');
+    const run = ns ? ow : d;
+    const off = ns ? (wall==='n' ? -(d/2 + t/2) : (d/2 + t/2))
+                   : (wall==='w' ? -(w/2 + t/2) : (w/2 + t/2));
+    const mine = S.openings.filter(o=>o.wall===wall);
+    for(const sp of _roomWallSpans(run, h, mine)){
+      out.push(ns ? { role:'wall'+wall, x:sp.u, y:sp.y, z:off, sx:sp.len, sy:sp.sy, sz:t }
+                  : { role:'wall'+wall, x:off, y:sp.y, z:sp.u, sx:t,      sy:sp.sy, sz:sp.len });
+    }
+  }
+  return out;
+}
+
+// The draft the panel edits. Module-level rather than stored in the level: a room is a one-shot GENERATOR,
+// not an object — once it is built the pieces are ordinary props and the numbers that made them are of no
+// further interest. (An editable room object would have to own its pieces forever, which is exactly the
+// coupling that makes CSG history stacks miserable.)
+let roomDraft = { w:8, d:6, h:3, t:0.3, floor:true, ceiling:false, openings:[ { wall:'n', at:0, width:ROOM_DOOR_W, sill:0, height:2.1 } ] };
+// Build the room as ORDINARY PROPS at (cx,cz), grouped so it moves, duplicates and deletes as one thing.
+// Returns the props it made — the caller selects them, so the very first thing that happens after a click
+// is that the gizmo is on the new room and it can be dragged where you actually wanted it.
+function buildRoomAt(cx, cz, raw){
+  const pieces = roomPieces(raw);
+  if(!pieces.length) return [];
+  if(typeof pushUndoSnapshot==='function') pushUndoSnapshot();
+  const gid = _newGroupId();
+  const made = [];
+  /* TERRAIN, and this one had to be measured to be believed. finalizeProp lifts EVERY prop independently by
+     `_maxTerrainOver(x, z, footR)` — correct for a crate, ruinous for an assembly: a room dropped on a 15%
+     grade measured 1.245 m of SHEAR between its own pieces, walls sunk through the slab and a doorway
+     header floating. The fix is to pre-subtract each piece's own lift and add ONE room lift, so the shell
+     lands flat on the highest ground under its footprint, like a real building pad. It round-trips exactly:
+     propTuple stores `position.y - _maxTerrainOver(...)`, which is the very number passed in here, so a
+     reload reproduces it rather than re-shearing. `_propFootR` for a box is 0.5*hypot(sx,sz) — recomputed
+     here rather than guessed, because if those two ever disagree the room tilts on load and nothing says so. */
+  const S = roomSpec(raw);
+  const roomLift = (typeof _maxTerrainOver==='function') ? _maxTerrainOver(cx, cz, 0.5*Math.hypot(S.w+2*S.t, S.d+2*S.t)) : 0;
+  for(const pc of pieces){
+    const own = (typeof _maxTerrainOver==='function') ? _maxTerrainOver(cx+pc.x, cz+pc.z, 0.5*Math.hypot(pc.sx, pc.sz)) : 0;
+    /* primitives finalize synchronously (build 871), so `made` is complete when this loop ends */
+    spawnProp('box', [cx+pc.x, pc.y + roomLift - own, cz+pc.z, 0,0,0, pc.sx, pc.sy, pc.sz], (o)=>{
+      if(o && o.userData){ o.userData.groupId = gid; o.userData.name = 'room · ' + pc.role; }
+      if(o) made.push(o);
+    });
+  }
+  if(made.length){
+    editorActive='props'; selProps = made.slice();
+    editorTargets.props.idx = propModels.indexOf(made[made.length-1]);
+    if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
+    if(typeof renderEditorFields==='function') renderEditorFields();
+    if(typeof updateGizmo==='function') updateGizmo();
+  }
+  if(typeof _levelDirty!=='undefined') _levelDirty=true;
+  return made;
+}
+// build 1322 (editor audit 4.11): "Transform fields show 5 decimal places for a position in metres.\"
 // Five decimals is TEN MICRONS, and the matching step meant an arrow key nudged a prop by 0.01 mm — so the
 // field was both unreadable and useless from the keyboard, on the most-used panel in the editor. Precision
 // is per CHANNEL now: metres to the millimetre, degrees to a hundredth, scale to the millimetre — with
@@ -39994,6 +40146,102 @@ function assetShortName(src){
   if(/^[0-9a-f]{8}-?[0-9a-f]{4}/i.test(base) || /^[0-9a-f]{16,}$/i.test(base)) return 'model · ' + base.slice(0, 6);
   return base.replace(/[_-]+/g, ' ').trim().slice(0, 40) || 'model';
 }
+// build 1323: the Room panel. Deliberately plain — number fields and a list — because the geometry is
+// where the value is and a 3D room gizmo would be a build of its own. Every input is `onchange`, not
+// `oninput`: renderEditorFields tears the panel down on every edit (audit 4.11's remaining bullet), so an
+// oninput field would lose focus mid-number.
+function _roomNum(host, label, key, min, max, step, hint){
+  const f=document.createElement('div'); f.className='field';
+  const lb=document.createElement('label');
+  const nm=document.createElement('span'); nm.textContent=label; if(hint) nm.title=hint;
+  const inp=document.createElement('input'); inp.type='number'; inp.className='valnum';
+  inp.min=min; inp.max=max; inp.step=step; inp.value=String(roomDraft[key]);
+  inp.onchange=()=>{ const v=parseFloat(inp.value); if(isFinite(v)){ roomDraft[key]=v; Object.assign(roomDraft, roomSpec(roomDraft)); }
+    if(typeof renderEditorFields==='function') renderEditorFields(); };
+  inp.onkeydown=(e)=>e.stopPropagation();
+  lb.appendChild(nm); lb.appendChild(inp); f.appendChild(lb); host.appendChild(f);
+}
+function _roomChk(host, label, key, hint){
+  const w=document.createElement('label'); w.className='chk'; w.style.cssText='display:flex;align-items:center;gap:6px;margin:3px 0;font-size:11px;cursor:pointer;';
+  const c=document.createElement('input'); c.type='checkbox'; c.checked=!!roomDraft[key];
+  c.onchange=()=>{ roomDraft[key]=c.checked; if(typeof renderEditorFields==='function') renderEditorFields(); };
+  const t=document.createElement('span'); t.textContent=label; if(hint) t.title=hint;
+  w.appendChild(c); w.appendChild(t); host.appendChild(w);
+}
+const ROOM_WALL_LABEL = { n:'North (−Z)', s:'South (+Z)', w:'West (−X)', e:'East (+X)' };
+function renderRoomPanel(host){
+  const intro=document.createElement('div'); intro.className='hint'; intro.style.margin='0 0 6px';
+  intro.innerHTML='<b>Room</b> — floor, four walls and any doors or windows, built as ordinary props and '
+    + 'grouped. The size you type is the <b>inside</b>: 8 × 6 gives you 8 × 6 of floor. Everything it '
+    + 'makes is a normal box afterwards — move it, retexture it, delete a wall.';
+  host.appendChild(intro);
+  _roomNum(host, 'Width (X)',  'w', ROOM_MIN, ROOM_MAX, 0.1, 'Interior width in metres');
+  _roomNum(host, 'Depth (Z)',  'd', ROOM_MIN, ROOM_MAX, 0.1, 'Interior depth in metres');
+  _roomNum(host, 'Height',     'h', ROOM_H_MIN, ROOM_MAX, 0.1, 'Floor to ceiling, inside');
+  _roomNum(host, 'Wall thickness', 't', ROOM_T_MIN, ROOM_T_MAX, 0.05, 'Capped at half the smaller side — a 1 m room cannot have 4 m walls');
+  _roomChk(host, 'Floor slab', 'floor', 'Off if the room sits on ground you have already built');
+  _roomChk(host, 'Ceiling',    'ceiling', 'Off by default so you can see in from the editor camera');
+
+  const oh=document.createElement('div'); oh.className='hint'; oh.style.cssText='margin:8px 0 3px;';
+  oh.innerHTML='<b>Openings</b> — a door is a window with no sill. Position is measured from the middle of that wall.';
+  host.appendChild(oh);
+  roomDraft.openings.forEach((o,i)=>{
+    const row=document.createElement('div');
+    row.style.cssText='border:1px solid rgba(var(--accent-rgb),0.22);border-radius:6px;padding:5px 7px;margin-bottom:5px;';
+    const top=document.createElement('div'); top.style.cssText='display:flex;gap:6px;align-items:center;margin-bottom:4px;';
+    const sel=document.createElement('select'); sel.style.flex='1';
+    for(const k of ROOM_WALLS){ const op=document.createElement('option'); op.value=k; op.textContent=ROOM_WALL_LABEL[k]; sel.appendChild(op); }
+    sel.value=o.wall; sel.onchange=()=>{ o.wall=sel.value; renderEditorFields(); };
+    const del=document.createElement('button'); del.textContent='✕'; del.title='Remove this opening';
+    del.style.cssText='flex:0 0 auto;width:26px;padding:3px 0;background:rgba(245,80,94,0.18);border-color:rgba(245,80,94,0.45);';
+    del.onclick=()=>{ roomDraft.openings.splice(i,1); renderEditorFields(); };
+    top.appendChild(sel); top.appendChild(del); row.appendChild(top);
+    const grid=document.createElement('div'); grid.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:4px;';
+    for(const [lab,key,step] of [['Along wall','at',0.1],['Width','width',0.1],['Sill','sill',0.1],['Height','height',0.1]]){
+      const l=document.createElement('label'); l.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:4px;font-size:10.5px;';
+      const t=document.createElement('span'); t.textContent=lab;
+      const n=document.createElement('input'); n.type='number'; n.className='valnum'; n.step=step; n.style.width='62px';
+      n.value=String(+(+o[key]||0).toFixed(3));
+      n.onchange=()=>{ const v=parseFloat(n.value); if(isFinite(v)) o[key]=v; Object.assign(roomDraft, roomSpec(roomDraft)); renderEditorFields(); };
+      n.onkeydown=(e)=>e.stopPropagation();
+      l.appendChild(t); l.appendChild(n); grid.appendChild(l);
+    }
+    row.appendChild(grid);
+    /* The one authoring mistake this panel can make that LOOKS fine: a door too narrow for the body that
+       has to walk through it. Say so where the number is, not in a manual. */
+    if(o.sill <= 0.01 && o.width < ROOM_TIGHT_W){
+      const warn=document.createElement('div'); warn.className='hint';
+      warn.style.cssText='font-size:10px;margin-top:4px;color:#ffcf8a;';
+      warn.textContent='⚠ ' + o.width.toFixed(2) + ' m is tight — the player is 1.6 m across, so under '
+        + ROOM_TIGHT_W + ' m they will catch on the jambs.';
+      row.appendChild(warn);
+    }
+    host.appendChild(row);
+  });
+  const addRow=document.createElement('div'); addRow.className='row2';
+  for(const [lab, def] of [['+ Door', { wall:'n', at:0, width:ROOM_DOOR_W, sill:0, height:2.1 }],
+                           ['+ Window', { wall:'n', at:0, width:ROOM_WIN_W, sill:1.0, height:1.2 }]]){
+    const b=document.createElement('button'); b.textContent=lab;
+    b.onclick=()=>{ if(roomDraft.openings.length>=ROOM_OPEN_MAX){ if(typeof flashToast==='function') flashToast('That is as many openings as one room takes'); return; }
+      roomDraft.openings.push(Object.assign({}, def)); renderEditorFields(); };
+    addRow.appendChild(b);
+  }
+  host.appendChild(addRow);
+
+  const count=roomPieces(roomDraft).length;
+  const go=document.createElement('button'); go.textContent='Build room (' + count + ' props)';
+  go.style.cssText='width:100%;margin-top:7px;background:var(--accent);color:#05070a;font-weight:700;border:none;';
+  go.title=DROP_HINT;
+  go.onclick=()=>{
+    const dp=(typeof editorDropPoint==='function')?editorDropPoint(0):{x:player.pos.x,z:player.pos.z};
+    const made=buildRoomAt(dp.x, dp.z, roomDraft);
+    if(typeof flashToast==='function') flashToast('Room built — ' + made.length + ' props, grouped');
+  };
+  host.appendChild(go);
+  const note=document.createElement('div'); note.className='hint'; note.style.cssText='font-size:10px;margin-top:4px;';
+  note.textContent='Drops where you’re looking. Undo removes the whole room.';
+  host.appendChild(note);
+}
 function renderSceneAssets(host){
   if(!host) return;
   host.innerHTML = '';
@@ -40179,6 +40427,7 @@ function buildEditorPanel(){
           '<div id="edPropTag"></div>'
         + '<div id="edPicker"></div>'
         + subfold('Add a shape', 'o_shapes', '<div id="edShapes"></div>', true)
+        + subfold('Room', 'o_room', '<div id="edRoom"></div>', false)   /* build 1323: closed by default — it is a tool, not a property of the selection */
         + subfold('In this level', 'o_assets', '<div id="edAssets"></div>', true)
         + subfold('Model &amp; texture', 'o_model', '<div id="edModels"></div><div id="edUrl"></div>', true)
         + subfold('Animation', 'o_anim', '<div id="edAnim"></div>', false)
@@ -40341,6 +40590,7 @@ function buildEditorPanel(){
       const ADD_ITEMS = PRIM_SHAPES.filter(_s=>_s[3]).map(([src,label,glyph])=>[glyph+' '+label, ()=>{ jump('build','props'); addSceneProp(src); }]).concat([
         ['\u25c7 More shapes \u25b8', '_shapeSub'],
         ['\ud83d\udce6 Model\u2026', ()=>{ jump('build','props'); if(typeof _edRevealHost==='function') _edRevealHost('edModels'); }],
+        ['\ud83c\udfe0 Room\u2026',  ()=>{ jump('build','props'); if(typeof _edRevealHost==='function') _edRevealHost('edRoom'); }],
         ['\u2728 Effect \u25b8',      '_fxSub'],
         ['\ud83d\udca1 Light',       ()=>{ jump('build','lights');  addSceneLight(); }],
         ['\ud83d\udee1 Turret',      ()=>{ jump('build','turrets'); if(typeof addSceneTurret==='function') addSceneTurret(); }],
@@ -42705,6 +42955,9 @@ function renderEditorFields(){
       lib.appendChild(grid);
     }
   }
+  // build 1323: the room tool (Props tab only, same gate as the shape row it sits under)
+  { const roomHost = editorEl.querySelector('#edRoom');
+    if(roomHost){ roomHost.innerHTML=''; if(tgt.addable && tgt.urlField && typeof renderRoomPanel==='function') renderRoomPanel(roomHost); } }
   // build 1147: what this level is already built from (Props tab only) — the content-browser half of the
   // pair. It renders BEFORE the web search, because the asset you want next is most often one you already
   // used, and a panel that answers that should not be below a search box.

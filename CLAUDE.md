@@ -967,6 +967,69 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The room tool (build 1323 — editor audit 4.10, the last one)
+
+> No CSG / room / spline tools; **a doorway is four boxes forever.** Ten primitives, grid snap, the arena
+> generator. Mitigated but not solved. This is the honest ceiling on hand-built interiors and it is the same
+> ceiling the previous audit found.
+
+**CSG is the obvious reading and the wrong tool for THIS engine.** Build 1148 turns a mesh into a per-column,
+per-slot collider box grid that every consumer walks. A boolean subtract buys you ONE opaque mesh with a hole
+in it: more collider boxes, no editable parts, no instancing, and a doorway you cannot move afterwards
+without re-cutting it. A room built from PRIMITIVES inherits everything the engine already has — gizmo,
+snapping, materials, per-part collider, serialization, undo, duplicate, multiplayer — for no new code.
+
+So a doorway is still boxes. It is boxes the creator never places, never measures, and can move by typing a
+number, which is the part that was missing.
+
+`roomPieces` is **pure** — spec in, box list out, no THREE and no DOM. That is what makes it testable
+exhaustively instead of eyeballed: **3600 configurations, zero overlaps, zero interior intrusions, zero
+degenerate pieces**, every door's clear gap equal to the authored width and head height to a millimetre, and
+a wall carrying both a door and a window tiling itself with no holes.
+
+Three conventions, stated once because everything depends on them:
+
+- **The interior is exactly what you type.** 8 × 6 gives 8 × 6 of floor, not 8−2t. Interior-first is the only
+  measurement that means anything when you are placing furniture in it.
+- **`y` is a piece's BASE**, matching build 871's primitives and what `finalizeProp` lifts onto terrain.
+- **N/S walls run the full outer width; E/W walls run the interior depth only.** They meet exactly at
+  ±d/2. Overlapping them would double the collider at four corners and z-fight two coplanar faces; gapping
+  them would let a bot through the corner.
+
+### Two things the maths could not have told me
+
+**A room on a slope sheared by 1.245 m.** `finalizeProp` lifts EVERY prop independently by
+`_maxTerrainOver(x, z, footR)` — correct for a crate, ruinous for an assembly. On a 15% grade the walls sank
+through the slab and the door header floated. The shell now takes ONE room lift and each piece pre-subtracts
+the lift `finalizeProp` is about to add, so it lands flat on a pad like a real building foundation. **It
+round-trips exactly**, because `propTuple` stores `position.y − _maxTerrainOver(...)` — which is the very
+number passed in. Measured after: shear 0.0000 on flat *and* on the 15% grade.
+
+**A 1.6 m doorway is exactly the player's diameter.** Radius 0.8, so at 1.6 the jamb test is a floating-point
+coin flip — a body of that radius swept across the opening **did not fit**. Doors default to 2.0 m now
+(20 cm either side), and anything under 1.8 warns *where the number is*, not in a manual. Build 1113 learned
+this the same way for the generator: **author to the collider, not to the eye.**
+
+### Three instrument failures, one after another
+
+Worth recording because each produced a confident, wrong number:
+
+| # | reading | what was actually wrong |
+|---|---|---|
+| 1 | "the doorway is clear at every height, and so is the wall" | `insideSolid(x, z, feetY)` called as `(x, y, z)`. **No control** — a sweep that never reports SOLID proves nothing. |
+| 2 | "2.1 m of shear on flat ground" | The metric compared each piece's `y` to the floor top, so a door header's legitimate 2.1 m base read as shear. Shear is the spread of the per-piece **lift**. |
+| 3 | "the doorway is blocked" (with a working control) | The room was built at the ORIGIN, and a **stock-level crate stands at (0, −3.15)**. Building it at (200, 200) reported 5.42 m clear — exactly 12 m of sweep − 8.6 m of wall + a 2.0 m door. |
+
+#3 is build 1124's lesson (*know where the camera is*) and 1151's (*read WHO before attributing anything to
+a surface*) for the third time in this session, now about a collision query. **Probe the scene before
+believing the number**, and build the thing you are measuring somewhere nothing else lives.
+
+### Still absent
+
+Spline/path extrusion — a corridor swept along a curve — is the remaining leg of 4.10 and is its own build.
+Multi-room floorplans compose from this one by hand (duplicate, snap, drag), which is a real answer but not
+the same as a floorplan tool.
+
 ## Three papercuts with one measurement between them (build 1322 — editor audit 4.11, the rest)
 
 **Five decimal places on a position in metres.** That is ten microns — and `STEP_POS` matched it, so an
