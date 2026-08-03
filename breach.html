@@ -61,7 +61,23 @@
   /* build 1138: color-scheme did not appear once in the whole file, so every native control —
      checkboxes, radios, scrollbars, spinners — rendered in the browser's LIGHT theme: a white
      checkbox in the darkest panel in the product. One declaration fixes all of them. */
-  :root{ color-scheme: dark; --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Rajdhani', sans-serif; --display-font:'Rajdhani', sans-serif; }
+  :root{ color-scheme: dark; --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Rajdhani', sans-serif; --display-font:'Rajdhani', sans-serif; --uiS:1; }
+
+  /* build 1333 (platform audit 9 — accessibility census: "UI/font scale 0"): INTERFACE SIZE.
+     Every size in this stylesheet is in px, so there was no single value a player could turn. `zoom` is
+     the one property that scales LAYOUT AND HIT-TESTING together — a transform would move the pixels and
+     leave every click where it was, which is worse than no setting.
+     #hud is `position:fixed; inset:0`, so zooming it alone would make its BOX 100vw*S and throw the
+     corner-anchored panels off screen. Dividing its own size by the same factor is what keeps the zoomed
+     box exactly one viewport: layout 100vw/S, rendered 100vw/S * S = 100vw. */
+  #hud { zoom: var(--uiS); width: calc(100vw / var(--uiS)); height: calc(100vh / var(--uiS)); right:auto; bottom:auto; }
+  /* The on-screen touch controls are DELIBERATELY EXEMPT. They already have their own layout editor
+     (build 1042) where a player sizes and places each control by hand, and silently rescaling a stick
+     someone positioned by thumb-reach is a different setting wearing this one's name. Effective zoom
+     here is S * (1/S) = 1, so the viewport units below land on the real viewport. */
+  #touchUI { zoom: calc(1 / var(--uiS)); width: 100vw; height: 100vh; right:auto; bottom:auto; }
+  /* The cards, not the backdrops: a backdrop is a full-viewport wash and has nothing to read. */
+  #pauseMenu .pauseCard, .modalCard, .uiDlgCard { zoom: var(--uiS); }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #05070a; font-family:var(--ui-font); }
@@ -1465,7 +1481,9 @@
       <label class="paLbl">Motion blur<input type="range" id="a11yBlur" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yBlurV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Damage flash<input type="range" id="a11yFlash" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yFlashV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <label class="paLbl">Slow-mo on kills<input type="range" id="a11yHitstop" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yHitstopV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
+      <label class="paLbl">Interface size<input type="range" id="a11yUiScale" min="75" max="175" step="5" style="margin-left:auto;flex:1"><span id="a11yUiScaleV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <div class="row2" style="margin-top:5px"><button id="a11yReduce" class="pBtnGhost">Reduce all motion</button><button id="a11yRestore" class="pBtnGhost">Restore defaults</button></div>
+      <div class="row2" style="margin-top:5px"><button id="a11yPhotoWarn" class="pBtnGhost">Photosensitivity warning</button></div>
       <div id="a11yHint" style="font-size:11px;opacity:.7;margin:4px 0 0">These are yours, not the level's \u2014 they follow you into every level, including ones other people made. Being hit always stays visible, however low the flash goes.</div>
     </div>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
@@ -10066,6 +10084,7 @@ function _uiDialog(msg, buttons){
   back.className='uiDlgBack';   // build 1045: fullscreen layers (animation editor) yield key handling while a dialog is up
   back.style.cssText='position:fixed;inset:0;z-index:400;background:rgba(3,7,10,0.66);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';   // build 1045: above the animation editor (300) — dialogs used to hide behind it
   const card=document.createElement('div');
+  card.className='uiDlgCard';   // build 1333: so the interface-size setting reaches dialogs too
   card.style.cssText='background:rgba(9,17,21,0.97);border:1px solid rgba(var(--accent-rgb),0.45);border-radius:12px;padding:20px 24px;max-width:min(440px,86vw);color:#cfeee2;font-size:14px;line-height:1.55;box-shadow:0 18px 60px rgba(0,0,0,0.6);';
   const txt=document.createElement('div'); txt.style.whiteSpace='pre-line'; txt.textContent=msg; card.appendChild(txt);   // build 1083: multi-paragraph warnings (File > New level) read as written
   const row=document.createElement('div'); row.style.cssText='display:flex;gap:10px;justify-content:flex-end;margin-top:16px;';
@@ -30575,7 +30594,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1332 · 2026-08-03';
+const BUILD_VERSION = 'build 1333 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -30798,8 +30817,57 @@ function loadA11y(){
   if(_a11yOsReduced()) a11y = { shake:0, flash:0.35, blur:0, sway:0, hitstop:0 };
 }
 function saveA11y(){ try{ localStorage.setItem(A11Y_KEY, JSON.stringify(a11y)); }catch(e){} }
+// ---- build 1333 (platform audit 9): INTERFACE SIZE + the photosensitivity warning -------------------
+// The audit's accessibility census read `UI/font scale 0` and `photosensitivity/epilepsy warning 0`.
+// Both are per DEVICE for build 1313's reason: they are properties of the person, not of the content, and
+// they have to follow the player into levels other people made.
+//
+// It is NOT in the `a11y` blob beside the motion sliders, even though it belongs to the same panel:
+// loadA11y clamps every one of those keys to 0..1, which is exactly right for a multiplier of an effect
+// and exactly wrong for a scale that has to reach 1.75. Squeezing it in would have meant a special case
+// inside a loop whose whole point is that it has none.
+const UI_SCALE_MIN = 0.75, UI_SCALE_MAX = 1.75, UI_SCALE_KEY = 'breach_uiscale';
+let uiScale = 1;
+try{ const _us = parseFloat(localStorage.getItem(UI_SCALE_KEY)); if(isFinite(_us)) uiScale = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, _us)); }catch(e){}
+function applyUiScale(){
+  uiScale = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, +uiScale || 1));
+  try{ document.documentElement.style.setProperty('--uiS', String(uiScale)); }catch(e){}
+}
+function saveUiScale(){ try{ localStorage.setItem(UI_SCALE_KEY, String(uiScale)); }catch(e){} }
+applyUiScale();
+// THE PHOTOSENSITIVITY WARNING. Shown once per browser, at BOOT rather than at the first Play — which is
+// both the console convention and the only hook that needs no path analysis: `startGame` is reached from
+// the menu, a share link, the community gallery, a campaign step and the editor's own test run, and a
+// warning that five callers have to remember is a warning that one of them will not.
+// It offers the fix rather than only the fact: "Reduce flashing" drives build 1313's own sliders, so the
+// notice is an ACTION and not a disclaimer. A player who has already told their OS to reduce motion has
+// said this once, and 1313's loader has already acted on it — so the dialog says so instead of nagging.
+const PHOTO_WARN_KEY = 'breach_photowarn';
+function photosensitivityWarning(force){
+  try{ if(!force && localStorage.getItem(PHOTO_WARN_KEY) === '1') return false; }catch(e){}
+  const reduced = _a11yOsReduced();
+  const msg = 'PHOTOSENSITIVITY WARNING\n\n'
+    + 'This game contains flashing light, rapid colour changes, explosions and camera shake. A very small '
+    + 'number of people may experience seizures when exposed to them. Stop playing and consult a doctor if '
+    + 'you feel dizzy, disoriented, or notice altered vision or involuntary movement.\n\n'
+    + (reduced ? 'Your system asks for reduced motion, so these effects have already been turned down. '
+              : 'You can turn every one of these down at any time \u2014 Pause \u2192 Motion & comfort. ')
+    + 'The setting is yours and applies to every level, including ones other people made.';
+  const ack = ()=>{ try{ localStorage.setItem(PHOTO_WARN_KEY, '1'); }catch(e){} };
+  _uiDialog(msg, [
+    { label:'Reduce flashing', fn:()=>{ ack(); a11yReduceAll(); if(typeof toast==='function') toast('Flashing and motion reduced'); } },
+    { label:'Continue', primary:true, fn:ack }
+  ]);
+  return true;
+}
+/* Called HERE, at the declaration, and not from a boot hook further down: PHOTO_WARN_KEY is a `const` and
+   `typeof` does not guard a temporal dead zone (build 1127), so the one place this call is provably safe is
+   after the line that initialises it. Build 1331 is the same lesson from the other direction. */
+photosensitivityWarning(false);
 function a11yReduceAll(){ a11y = { shake:0, flash:0.35, blur:0, sway:0, hitstop:0 }; saveA11y(); }
-function a11yRestoreAll(){ a11y = Object.assign({}, A11Y_DEFAULT); saveA11y(); }
+function a11yRestoreAll(){ a11y = Object.assign({}, A11Y_DEFAULT); saveA11y();
+  /* the button says "Restore defaults" for this whole fold, and the size row is in it */
+  if(typeof uiScale!=='undefined'){ uiScale = 1; applyUiScale(); saveUiScale(); } }
 loadA11y();
 function saveMouseSens(){ try{ localStorage.setItem('breach_mouse_sens', String(mouseSens)); }catch(e){} }
 // ZOOM-MATCHED AIM. The audit measured the shipped ratio: ADS_SENS/HIP_SENS = 0.545 against a 2.34x zoom,
@@ -48315,6 +48383,14 @@ function bindPauseMenu(){
       for(const [key,id] of A11Y_ROWS){ const r=document.getElementById(id);
         if(r) r.oninput=()=>{ a11y[key]=Math.max(0, Math.min(1, (+r.value||0)/100)); saveA11y();
           const v=document.getElementById(id+'V'); if(v) v.textContent=Math.round(a11y[key]*100)+'%'; }; }
+      /* build 1333: interface size sits in this fold but not in the a11y blob — see the note at its
+         declaration. It applies LIVE as the slider moves, because a size you cannot see while choosing it
+         is a size you have to guess at. */
+      { const ur=document.getElementById('a11yUiScale'), uv=document.getElementById('a11yUiScaleV');
+        const _ush=()=>{ if(uv) uv.textContent=Math.round(uiScale*100)+'%'; };
+        if(ur){ ur.value=String(Math.round(uiScale*100)); _ush();
+          ur.oninput=()=>{ uiScale=(+ur.value||100)/100; applyUiScale(); saveUiScale(); _ush(); }; } }
+      const pw=document.getElementById('a11yPhotoWarn'); if(pw) pw.onclick=()=>{ photosensitivityWarning(true); };
       const rd=document.getElementById('a11yReduce'); if(rd) rd.onclick=()=>{ a11yReduceAll(); _a11ySync(); if(typeof toast==='function') toast('Motion reduced'); };
       const rs=document.getElementById('a11yRestore'); if(rs) rs.onclick=()=>{ a11yRestoreAll(); _a11ySync(); if(typeof toast==='function') toast('Motion settings restored'); };
       _a11ySync(); }

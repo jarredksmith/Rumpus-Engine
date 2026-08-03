@@ -6,7 +6,18 @@ const page = html;
 // CSS is driven by variables now
 // build 1138: color-scheme:dark leads the block — it had appeared zero times in the whole file, so every
 // native control (checkboxes, radios, scrollbars, spinners) rendered in the browser's LIGHT theme.
-assert(/:root\{ color-scheme: dark; --accent:#38f5b5; --accent-rgb:56,245,181; --gold:#ffd166; --info:#7ad7ff; --danger:#ff6b6b; --ui-font:'Rajdhani', sans-serif; --display-font:'Rajdhani', sans-serif; \}/.test(html), ':root defines the themable variables (build 814: + gold/info/danger; build 967: Rajdhani defaults)');
+// build 1333: this was a whole-literal match and broke when --uiS joined the block, with every part of the
+// assertion still true — the character-budget trap in its other form. It asserts the MEMBERS now, which is
+// what "defines the themable variables" always meant, so a new variable cannot break it and a removed one still does.
+{
+  const m = html.match(/:root\{([^}]*)\}/);
+  assert(m, ':root block exists');
+  for(const v of ['color-scheme: dark', '--accent:#38f5b5', '--accent-rgb:56,245,181', '--gold:#ffd166',
+                  '--info:#7ad7ff', '--danger:#ff6b6b', "--ui-font:'Rajdhani', sans-serif",
+                  "--display-font:'Rajdhani', sans-serif"])
+    assert(m[1].indexOf(v) >= 0, ':root defines the themable variables (build 814: + gold/info/danger; build 967: Rajdhani defaults) — ' + v);
+  assert(/^ *color-scheme: dark;/.test(m[1]), 'color-scheme LEADS the block (build 1138)');
+}
 assert(page.indexOf('var(--accent)')>=0 && page.indexOf('rgba(var(--accent-rgb)')>=0, 'CSS uses the accent variable (hex + rgba forms)');
 assert(page.indexOf('font-family:var(--ui-font)')>=0 && page.indexOf('var(--display-font)')>=0, 'CSS uses the font variables');
 // extra fonts are loaded so the choices actually render
