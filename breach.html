@@ -19287,6 +19287,29 @@ function refreshSpawnRings(g){
   if(m.mode==='patrol') ring(m.radius, SPAWN_MODE_COLORS.patrol, 0.55);   // patrol area
   ring(m.detect, 0x66ccff, 0.30);                                          // detection range
 }
+// ---- build 1355: FACTIONS ----------------------------------------------------------------------------
+// Every moving creature in this engine was hostile to the player and to nothing else. Build 1226 added the
+// pacifist NPC and explicitly left "enemies fighting each other" as needing a targeting rework; it turned
+// out to need one line of it. `enemyDesiredTarget` has always been target-AGNOSTIC (it takes px, pz, dist,
+// py), and the melee strike calls `_tn.hurt(...)` on whatever object the picker chose. So the whole change
+// is that the picker may choose an ADAPTER around another enemy, the way build 1189 reused the bot's cover
+// finder through a `{pos}` shim.
+//
+// The rule is `a !== b`, and the PLAYER is faction 0. That makes three things fall out with no matrix:
+//   0  Your side  — an ally: fights 1/2/3, never you
+//   1  Hostile    — the default, and therefore what every level authored before this build already is
+//   2/3           — third and fourth parties: fight everyone but their own
+// `friendly` (1226) is ORTHOGONAL and unchanged: a pacifist targets nothing and is targeted by nothing.
+// Widening that to "hostiles hunt villagers" would slaughter every existing level's NPCs on wave 1, so it
+// is a stated limit rather than a side effect.
+const FACTION_DEFAULT = 1;   // absent in the file = this, so an old level serializes and behaves identically
+const FACTION_NAMES = ['Your side', 'Hostile', 'Third party', 'Fourth party'];
+const FACTION_COL   = [0x59a6d9, 0, 0xd9a659, 0xa659d9];   // 0 = keep the mode colour: the default must look unchanged
+function _facOf(v){ if(v==null) return FACTION_DEFAULT;   /* null, undefined and NaN all coerce to ZERO — which is "your side", the one direction this must never fail in */
+  const n = Math.round(+v);
+  return (isFinite(n) && n>=0 && n<FACTION_NAMES.length) ? n : FACTION_DEFAULT; }
+function _facHostile(a, b){ return (a|0) !== (b|0); }
+function _enFac(e){ return e && e.faction!=null ? (e.faction|0) : FACTION_DEFAULT; }
 function buildSpawnMarker(opts){
   const g = new THREE.Group();
   const mode = (opts.mode==='patrol'||opts.mode==='hold') ? opts.mode : 'hunt';
@@ -19296,9 +19319,10 @@ function buildSpawnMarker(opts){
     type: (opts.type && ['grunt','runner','brute','gunner','sapper','shielded','charger','boss'].includes(opts.type)) ? opts.type : 'grunt',   /* build 1226: the editor has offered all 8 types since 635 but this list stopped at 3 — a saved gunner/sapper/shielded/charger/boss marker silently demoted to grunt on every reload. (ENEMY_TYPES itself is declared below the boot loader that runs this — TDZ — so the list stays a literal.) */
     y: Math.max(0, Math.min(SPAWN_MAX_Y, +opts.y||0)),                                  // build 1087: height ABOVE the terrain — rooftops, balconies, catwalks
     wave: (opts.wave!=null) ? (opts.wave|0) : 0,                                        // 0 = every wave; else only that wave (pre-built mode)
-    friendly: !!(opts.fr || opts.friendly) };                                           // build 1226: a WANDERING NPC — never aggros, never attacks, doesn't count as a hostile
+    friendly: !!(opts.fr || opts.friendly),                                             // build 1226: a WANDERING NPC — never aggros, never attacks, doesn't count as a hostile
+    fac: _facOf(opts.fac) };                                                            // build 1355: who it fights. Absent = 1 = the old behaviour exactly
   g.userData.mark = mark; g.userData.isSpawn = true;
-  const col = mark.friendly ? 0x59d98c : SPAWN_MODE_COLORS[mode];   /* build 1226: a friendly marker reads green at a glance */
+  const col = mark.friendly ? 0x59d98c : (FACTION_COL[mark.fac] || SPAWN_MODE_COLORS[mode]);   /* build 1226: a friendly marker reads green at a glance; build 1355: and a non-default faction reads as its own colour, while the default keeps the mode colour it always had */
   const post = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.7, 4), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.9, depthTest:false }));
   post.position.y = 0.85; post.rotation.y = Math.PI/4; post.renderOrder = 9000;
   const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.55, 8), new THREE.MeshBasicMaterial({ color:0xffffff, depthTest:false }));
@@ -19476,7 +19500,7 @@ function randomWaveDescriptors(waveNum, arena, rng){
 // Should a spawn marker appear on this wave? wave 0 = every wave (back-compat default); else exact match.
 function spawnAppearsOnWave(mark, waveNum){ const w0 = mark.wave||0; if(typeof gameCfg!=='undefined' && gameCfg.noRespawn){ const w=(w0===0?1:w0); return w===waveNum; } return w0===0 || w0===waveNum; }
 function _hasFutureAuthoredSpawns(curWaveNum){ for(const g of spawnMarkers){ const w0=g.userData.mark.wave||0; const w=(gameCfg.noRespawn && w0===0)?1:w0; if(w>curWaveNum) return true; } return false; }
-function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt', friendly:!!m.friendly, mark:m }; }   /* build 1226: mark rides the (transient) descriptor so a living friendly's marker can be recognised and skipped */
+function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt', friendly:!!m.friendly, fac:_facOf(m.fac), mark:m }; }   /* build 1226: mark rides the (transient) descriptor so a living friendly's marker can be recognised and skipped */
 // Mode defaults preserve old levels: markers present -> pre-built (markers were wave 0 = every wave); else random.
 let gameCfg = {
   enemyMods: _sanitizeEnemyMods(savedLevel && savedLevel.game && savedLevel.game.enemyMods),   // build 1191
@@ -21363,7 +21387,7 @@ function buildEnemyVisual(body){
   const mc = enemyModelCfg(body.userData.enemyType);
   const useCapsule = ()=>{
     const ty = ENEMY_TYPES[body.userData.enemyType] || ENEMY_TYPES.grunt;
-    const mat = new THREE.MeshStandardMaterial({ color:0x4a1020, emissive:(body.userData.friendly ? 0x59d98c : ty.tint), emissiveIntensity:.6, roughness:.6 });   /* build 1226: a friendly reads green, not threat-red (custom models keep their own look) */
+    const mat = new THREE.MeshStandardMaterial({ color:0x4a1020, emissive:(body.userData.friendly ? 0x59d98c : (body.userData.facTint || ty.tint)), emissiveIntensity:.6, roughness:.6 });   /* build 1226: a friendly reads green, not threat-red (custom models keep their own look) */
     const cap = new THREE.Mesh(enemyGeo, mat); cap.castShadow = true; cap.scale.setScalar(ty.scale);
     const eye = new THREE.Mesh(new THREE.SphereGeometry(.18,8,8), new THREE.MeshBasicMaterial({color:0xffd166}));
     eye.position.set(0, 0.7, -0.55);   // slightly forward so you can read facing
@@ -21565,6 +21589,8 @@ function spawnEnemy(spawn){
   const ty = ENEMY_TYPES[typeKey];
   mesh.userData.enemyType = typeKey;   // read by buildEnemyVisual for per-type scale + tint
   if(spawn && spawn.friendly) mesh.userData.friendly = true;   // build 1226: capsule tints green
+  { const _f = _facOf(spawn && spawn.fac);   // build 1355: and a faction capsule tints as its side
+    if(!(spawn && spawn.friendly) && FACTION_COL[_f]) mesh.userData.facTint = FACTION_COL[_f]; }
   buildEnemyVisual(mesh);
   scene.add(mesh);
   const _eff = (typeof _enemyEff==='function') ? _enemyEff(typeKey) : ty;   /* build 1191: the level's tuning, clamped at the loaders */
@@ -21587,7 +21613,9 @@ function spawnEnemy(spawn){
     detectR: (spawn && spawn.detectR!=null) ? spawn.detectR : 18,
     route: (spawn && spawn.route && spawn.route.length) ? spawn.route.map(p=>({ x:(p.x!=null?p.x:p[0]), z:(p.z!=null?p.z:p[1]) })) : null,
     routeLoop: !(spawn && spawn.routeLoop===false), routeIdx:0, routeDir:1,
+    faction: _facOf(spawn && spawn.fac),   // build 1355
     aware:false, lostAt:0, wp:null, wpUntil:0 };
+  if(spawn && spawn.mark) e._mark = spawn.mark;   /* build 1355: 1226 stored this for friendlies only, and the wave loop's don't-restack guard needs it for any persistent NPC */
   if(spawn && spawn.friendly){   // build 1226: a WANDERER — no combat subsystem is left armed, so no attack gate anywhere can misfire
     e.friendly = true; e._mark = spawn.mark || null;
     e.ranged = false; e.exploder = false; e.charger = false; e.cover = false;
@@ -21620,15 +21648,51 @@ function alertEnemiesNear(sx, sz, radius){
     if(dx*dx + dz*dz <= r2) alertEnemy(en, sx, sz);
   }
 }
+// ---- build 1355: who is shootable, from whose point of view ------------------------------------------
+// ONE list per frame, memoised on _frameNo so the picker and the bolt test cannot disagree about it, and
+// so the build happens once however many consumers ask. Every entry is the shape the two consumers already
+// expected of a player: { pos, eyeY, hurt, fac }. An entry with no `fac` is faction 0 — the player's side —
+// which is why allPlayers()' own objects go in untouched.
+//
+// THE FAST PATH IS THE WHOLE COMPATIBILITY ARGUMENT. If no enemy carries a non-default faction (i.e. every
+// level authored before this build, and every level that never opens the new control) the list is exactly
+// the player list and the O(N^2) scan below never runs at all.
+const _ctArr = []; let _ctFrame = -1;
+function _combatTargets(){
+  if(_ctFrame === _frameNo) return _ctArr;
+  _ctFrame = _frameNo; _ctArr.length = 0;
+  if(typeof allPlayers==='function'){ for(const pl of allPlayers()) _ctArr.push(pl); }
+  else if(typeof player!=='undefined') _ctArr.push({ pos:player.pos, hurt:(d,sx,sz)=>applyEnemyDamageToSelf(d,sx,sz) });
+  if(typeof enemies==='undefined' || !enemies.length) return _ctArr;
+  let multi = false;
+  for(const e of enemies){ if(e && !e.dead && e.hp>0 && !e.friendly && _enFac(e)!==FACTION_DEFAULT){ multi = true; break; } }
+  if(!multi) return _ctArr;
+  for(const e of enemies){
+    if(!e || e.dead || e.hp<=0 || e.friendly || !e.mesh) continue;
+    /* the adapter is cached on the enemy, so a 60-strong fight allocates nothing per frame (build 1168) */
+    let a = e._tgt;
+    if(!a){ a = e._tgt = { pos:e.mesh.position, eyeY:0, fac:0, en:e,
+              hurt:(d,sx,sz)=>enemyHurt(e, d, sx, sz, true) }; }   /* `true` = dealt BY another enemy: no player credit */
+    a.eyeY = e.mesh.position.y + 0.4;   // fireEnemyShot aims eyeY-0.4, i.e. at the body centre
+    a.fac = _enFac(e);
+    _ctArr.push(a);
+  }
+  return _ctArr;
+}
 function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = the target's height, so a pursuit ends on the STOREY the target stands on */
-  const mode = en.friendly ? (en.mode === 'hold' ? 'hold' : 'patrol') : (en.mode || 'hunt');   /* build 1226: a friendly WANDERS — a hunt-mode marker flagged friendly patrols its spot instead */
+  /* build 1355: _noTgt is an ALLY (or third party) with nothing left to fight this frame. It must not fall
+     back to hunting the player — so for this frame it behaves exactly like 1226's pacifist: patrols its
+     post, raycasts no sightline, never becomes aware. The flag is per-frame, so the moment a hostile
+     spawns it goes back to work. */
+  const passive = en.friendly || en._noTgt;
+  const mode = passive ? (en.mode === 'hold' ? 'hold' : 'patrol') : (en.mode || 'hunt');   /* build 1226: a friendly WANDERS — a hunt-mode marker flagged friendly patrols its spot instead */
   // line-of-sight: can this enemy actually SEE the player right now? (same wall test the gun uses)
   const eY = (en.mesh.position.y!=null) ? en.mesh.position.y : 1.4;
   const pEyeY = (en._nearEyeY!=null) ? en._nearEyeY : 1.4;
   // build 546: segmentBlocked scans every collider — refresh LOS ~9x/sec per enemy and cache it (the bots do
   // the same), instead of raycasting every frame. Unthrottled, a wave of enemies was O(enemies x colliders)
   // per frame and a big part of the single-digit wave framerate.
-  if(!en.friendly && (en._losT==null || now - en._losT > (en._losIv||110)) && (typeof _losBudget==='undefined' || _losBudget>0)){   /* build 1226: a friendly never raycasts a sightline — it has no use for one and the budget is shared */
+  if(!passive && (en._losT==null || now - en._losT > (en._losIv||110)) && (typeof _losBudget==='undefined' || _losBudget>0)){   /* build 1226: a friendly never raycasts a sightline — it has no use for one and the budget is shared */
     if(typeof _losBudget!=='undefined') _losBudget--;   // build 547: also capped per frame so a freshly-spawned wave can't raycast every enemy's sightline on the same frame
     en._losT = now; en._losIv = 100 + Math.random()*40;   // jitter the interval so the wave de-clusters after the budget first staggers it, instead of all coming due together again
     en._seesC = (Math.abs(pEyeY - eY) < 3.0) &&
@@ -21649,7 +21713,7 @@ function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = th
 
   // PATROL / HOLD: detection is now gated on BOTH range AND line-of-sight.
   const detect = en.detectR || 18;   // build 620: wider default sight so patrollers notice you a hall earlier
-  if(dist <= detect && sees && !en.friendly){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }   /* build 1226 */
+  if(dist <= detect && sees && !passive){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }   /* build 1226 */
   else if(en.aware){
     // lost sight or range: remember where they were, chase the last spot, then give up after a grace period.
     // A recent gunfire/blast alert extends the window so a sniped enemy actually crosses the map to investigate.
@@ -31433,7 +31497,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1354 · 2026-08-04';
+const BUILD_VERSION = 'build 1355 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34052,10 +34116,10 @@ function shoot(){
 
 // central enemy damage: apply, then a directional flinch (survived) or a kill (killEnemy removes the body
 // instantly, so no death pose). Returns true if this hit killed it. Pass sx/sz = attacker/blast position.
-function enemyHurt(en, dmg, sx, sz){
+function enemyHurt(en, dmg, sx, sz, byEnemy){   /* build 1355: byEnemy — another creature dealt this, so it earns the PLAYER nothing */
   if(!en || en.hp<=0) return false;
   en.hp -= dmg;
-  if(en.hp<=0){ killEnemy(en, sx, sz); return true; }
+  if(en.hp<=0){ killEnemy(en, sx, sz, byEnemy); return true; }
   /* build 1283: a hurt grunt. Shooting something you cannot see told you nothing before — the hitmarker
      is on screen, and the thing you shot is not. This is the same information, from the right direction. */
   if(typeof SFX!=='undefined' && SFX.enemyHurt && en.mesh) SFX.enemyHurt(en.mesh.position);
@@ -34091,12 +34155,13 @@ function enemyHurt(en, dmg, sx, sz){
   }
   return false;
 }
-function killEnemy(en, sx, sz){
+function killEnemy(en, sx, sz, byEnemy){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ const _kp=(typeof _coopKillFor!=='undefined' && _coopKillFor!=null) ? +_coopKillFor : ((typeof NET!=='undefined')?(NET.myId|0):0); const _pv=_lgCtx; _lgCtx={ x:en.mesh.position.x, z:en.mesh.position.z, hp:0, hpf:0, pid:_kp, team:(typeof NET!=='undefined' && NET.teams && NET.teams[_kp]!=null)?+NET.teams[_kp]:0 }; try{ _lgFireEvents('onkill',''); } finally { _lgCtx=_pv; } }   // build 1027: 'On enemy killed' entries; build 1221: at the death position; build 1231: with the KILLER's pid/team (a client's kill credits its player via _coopKillFor)
-  const _fr = !!en.friendly;   // build 1226: killing a friendly is a DEATH (visuals, sound, ragdoll, the onkill event a creator can punish with) but never a REWARD — no kills, no juice, no coins, no score
-  if(!_fr) runKills++;
+  const _fr = !!en.friendly || _enFac(en) === 0;   // build 1226: killing a friendly is a DEATH (visuals, sound, ragdoll, the onkill event a creator can punish with) but never a REWARD — no kills, no juice, no coins, no score; build 1355: and killing your own ALLY is the same
+  const _cred = !_fr && !byEnemy;   /* build 1355: an ally's kill still drops loot on the ground (that is physical, and you have to walk to it) but is not YOUR kill — no count, no lifesteal, no callout, no boss payday */
+  if(_cred) runKills++;
   spark(en.mesh.position, 0xff2d55); SFX.kill(en.type, en.mesh.position);   // build 752: per-enemy-type kill sound; build 1208: panned to the kill
-  if(!_fr){
+  if(_cred){
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
   else if(NET.mode==='host' && _coopKillFor==null) registerLocalKill();   // co-op host's OWN kill -> callout (no slow-mo, gated inside); client kills are credited via {t:'frag'}
   }
@@ -34106,8 +34171,8 @@ function killEnemy(en, sx, sz){
     const ox=(Math.random()-0.5)*1.5, oz=(Math.random()-0.5)*1.5;
     spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round((15 + Math.floor(wave*2)) * run.coinMul));
   }
-  if(!_fr && run.lifesteal>0) player.hp = Math.min(player.maxHp, player.hp + run.lifesteal);   // vampiric rounds
-  if(!_fr && en.type==='boss'){   // a downed boss is a payday + a moment
+  if(_cred && run.lifesteal>0) player.hp = Math.min(player.maxHp, player.hp + run.lifesteal);   // vampiric rounds
+  if(_cred && en.type==='boss'){   // a downed boss is a payday + a moment
     score += 500;
     for(let i=0;i<6;i++){ const ox=(Math.random()-0.5)*3, oz=(Math.random()-0.5)*3; spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round(60*run.coinMul)); }
     spark(en.mesh.position, 0xff7b00); flashToast('☠ BOSS DOWN');
@@ -34779,7 +34844,7 @@ function fireEnemyShot(en, target, spread){
   scene.add(mesh);
   if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);   // muzzle flash at the enemy's gun (scaled by boltCfg)
   const vel = dir.multiplyScalar(en.projSpeed);
-  enemyShots.push({ mesh, vel, dmg: en.dmg, born: performance.now(), life: 3500, from: from.clone() });
+  enemyShots.push({ mesh, vel, dmg: en.dmg, fac: _enFac(en), born: performance.now(), life: 3500, from: from.clone() });   /* build 1355 */
   if(SFX && SFX.enemyShot) SFX.enemyShot(from);
   // build 1020: co-op joiners never saw enemy gunfire at all — the bolts lived only on the host.
   // Relay each shot; clients fly a cosmetic copy (damage still arrives via {t:'hurt'}).
@@ -34798,7 +34863,7 @@ function remoteEnemyShot(o, v){   // build 1020: a host-relayed enemy shot — c
 }
 function updateEnemyShots(dt){
   if(!enemyShots.length) return;
-  const ps = (typeof allPlayers==='function') ? allPlayers() : [{ pos:player.pos, hurt:(d,sx,sz)=>applyEnemyDamageToSelf(d,sx,sz) }];
+  const ps = _combatTargets();   /* build 1355: a bolt can now hit another enemy, and must not hit its own side */
   const now = performance.now();
   for(let i=enemyShots.length-1;i>=0;i--){
     const s = enemyShots[i];
@@ -34806,7 +34871,8 @@ function updateEnemyShots(dt){
     const p = s.mesh.position;
     emitBoltTrail(p);
     let dead = (now - s.born) > s.life || p.y < terrainHeightAt(p.x,p.z)+0.1;
-    if(!dead){ for(const pl of ps){ const dx=pl.pos.x-p.x, dy=((pl.eyeY!=null?pl.eyeY:(pl.pos.y!=null?pl.pos.y:1.4)))-p.y, dz=pl.pos.z-p.z; if(dx*dx+dy*dy+dz*dz < 1.1*1.1){ if(pl.hurt && !s.noDmg) pl.hurt(s.dmg, s.from?s.from.x:null, s.from?s.from.z:null); dead=true; break; } } }
+    if(!dead){ for(const pl of ps){ if(s.fac!=null && (pl.fac||0)===s.fac) continue;   /* build 1355: never your own side */
+      const dx=pl.pos.x-p.x, dy=((pl.eyeY!=null?pl.eyeY:(pl.pos.y!=null?pl.pos.y:1.4)))-p.y, dz=pl.pos.z-p.z; if(dx*dx+dy*dy+dz*dz < 1.1*1.1){ if(pl.hurt && !s.noDmg) pl.hurt(s.dmg, s.from?s.from.x:null, s.from?s.from.z:null); dead=true; break; } } }
     // build 1159: test the PER-PART boxes, not the overall model box. The overall box encloses an imported
     // building's doorways and interior, so an enemy standing inside (or firing out through an opening) had
     // its bolt die on frame 1 against an invisible box — enemies in buildings visibly fired and never landed
@@ -35626,8 +35692,10 @@ function objectiveTick(dt){   // host/solo per-frame; may trigger the win
 // hostiles gate the wave-clear (a level whose villagers outlive every wave must still advance) and
 // ride the net snapshot; pending hostiles subtract queued friendlies so the HUD never promises a
 // fight the queue doesn't hold.
-function _hostileAlive(){ let n = 0; if(typeof enemies !== 'undefined') for(const e of enemies) if(e && !e.friendly) n++; return n; }
-function _hostilePending(){ let n = (typeof toSpawn !== 'undefined' ? toSpawn : 0); if(typeof spawnQueue !== 'undefined' && Array.isArray(spawnQueue)) for(const d of spawnQueue) if(d && d.friendly) n--; return Math.max(0, n); }
+/* build 1355: hostile TO THE PLAYER. A level whose allies outlive every wave must still advance, which is
+   build 1226's lesson restated for the other kind of non-combatant. */
+function _hostileAlive(){ let n = 0; if(typeof enemies !== 'undefined') for(const e of enemies) if(e && !e.friendly && _enFac(e) !== 0) n++; return n; }
+function _hostilePending(){ let n = (typeof toSpawn !== 'undefined' ? toSpawn : 0); if(typeof spawnQueue !== 'undefined' && Array.isArray(spawnQueue)) for(const d of spawnQueue) if(d && (d.friendly || _facOf(d.fac) === 0)) n--; return Math.max(0, n); }
 function startWave(){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onwave','');   // build 1027: 'On wave start' entries
   clearMovementInput();   // don't carry a held key / stuck stick into the new wave (auto-move bug)
@@ -35636,7 +35704,7 @@ function startWave(){
   if(gameCfg.mode === 'prebuilt'){
     for(const g of spawnMarkers){ if(!spawnAppearsOnWave(g.userData.mark, wave)) continue;
       const _m = g.userData.mark;   // build 1226: a friendly marker defaults to wave 0 = every wave, but its NPC is never killed by play — without this guard every wave stacked another copy of the same villager
-      if(_m.friendly && enemies.some(e => e.friendly && e._mark === _m && e.hp > 0)) continue;
+      if((_m.friendly || _facOf(_m.fac) === 0) && enemies.some(e => e._mark === _m && e.hp > 0)) continue;   /* build 1355: an ally is not killed by the wave loop either, so the same don't-restack guard applies — but a DEAD one comes back next wave, which reads as reinforcements */
       spawnQueue.push(descFromMarker(g)); }
     toSpawn = spawnQueue.length;
   } else {
@@ -37677,7 +37745,25 @@ function _enStep(en, tvx, tvz, dt){
       en.mesh.visible = !hideEn;
       en._wantMove = false;   // build 541: set true only when the enemy actually tries to translate (chase/close); stuck recovery keys off THIS, not _chase, so an enemy attacking at the player or holding standoff is never treated as "stuck"
       let near=players[0], nd=1e9;
-      for(const pl of players){ const d=Math.hypot(pl.pos.x-en.mesh.position.x, pl.pos.z-en.mesh.position.z); if(d<nd){ nd=d; near=pl; } }
+      /* build 1355: a pacifist keeps picking the nearest PLAYER exactly as it always did — its _near feeds
+         footsteps and the sapper fuse, and it attacks nothing regardless. Everyone else picks the nearest
+         entry of a DIFFERENT faction, which for every pre-1355 level is still just the nearest player. */
+      if(en.friendly){ for(const pl of players){ const d=Math.hypot(pl.pos.x-en.mesh.position.x, pl.pos.z-en.mesh.position.z); if(d<nd){ nd=d; near=pl; } } }
+      else {
+        const _myF = _enFac(en); near = null;
+        for(const t of _combatTargets()){
+          if(t.en===en || (t.fac||0)===_myF || !t.pos) continue;
+          const d=Math.hypot(t.pos.x-en.mesh.position.x, t.pos.z-en.mesh.position.z); if(d<nd){ nd=d; near=t; }
+        }
+        if(!near){
+          /* nothing hostile to it exists — hold position rather than inventing a target. Per-enemy, not a
+             shared scratch: _near outlives this statement (build 1168's rule). */
+          const hx = en.home ? en.home.x : en.mesh.position.x, hz = en.home ? en.home.z : en.mesh.position.z;
+          near = en._tgtNone || (en._tgtNone = { pos:{x:0,y:0,z:0}, eyeY:1.4, fac:-1 });
+          near.pos.x = hx; near.pos.y = en.mesh.position.y; near.pos.z = hz;
+          nd = 1e9; en._noTgt = true;
+        } else en._noTgt = false;
+      }
       en._near = near; en._dist = nd;
       en._nearEyeY = (near.eyeY!=null ? near.eyeY : (near.pos.y!=null ? near.pos.y : 1.4));
       const td = enemyDesiredTarget(en, near.pos.x, near.pos.z, nd, nowMs, near.pos.y);
@@ -39732,7 +39818,7 @@ function duplicateSelectedSpawn(){
   const g = spawnMarkers[editorTargets.spawns.idx]; if(!g) return;
   pushUndoSnapshot();
   const m = g.userData.mark;
-  const ng = buildSpawnMarker({ t:[g.position.x + DUP_OFFSET, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, type:m.type, wave:m.wave, y:m.y, fr:m.friendly?1:0 });   /* build 1226: duplicate had been dropping type/wave/height since they were added */
+  const ng = buildSpawnMarker({ t:[g.position.x + DUP_OFFSET, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, type:m.type, wave:m.wave, y:m.y, fr:m.friendly?1:0, fac:m.fac });   /* build 1226: duplicate had been dropping type/wave/height since they were added */
   ng.visible = true;
   editorActive='spawns'; editorTargets.spawns.idx = spawnMarkers.length-1; selSpawns=[ng]; renderEditorFields();
 }
@@ -40391,7 +40477,7 @@ function serializeLevel(){
     lights:  lightModels.map(g=>_lightOpts(g)),
     turret:  { url: turretModelUrl, scale: turretModelScale, modelYaw: turretModelYaw, muz: { fwd:turretMuzzle.fwd, up:turretMuzzle.up, side:turretMuzzle.side } },
     turrets: turretModels.map(_turretOpts),
-    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave, ...(m.friendly?{fr:1}:{}) }; }),   /* build 1226: absent when false, so old levels serialize byte-identically */   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
+    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave, ...(m.friendly?{fr:1}:{}), ...(_facOf(m.fac)!==FACTION_DEFAULT?{fac:_facOf(m.fac)}:{}) }; }),   /* build 1226: absent when false, so old levels serialize byte-identically; build 1355: and the default faction is likewise absent */   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
     pickupsOn: pickupsOn,
     pickups: pickupSpots.map(s=>({ x:+s.x, z:+s.z, kind:s.kind, ...(s.item!=null?{item:s.item}:{}), ...(s.y?{y:s.y}:{}), ...(s.rx?{rx:s.rx}:{}), ...(s.ry?{ry:s.ry}:{}), ...(s.rz?{rz:s.rz}:{}), ...(s.scale!=null&&s.scale!==1?{scale:s.scale}:{}), ...(s.interact?{interact:1}:{}) })),
     loot: lootSpots.map(s=>({ x:+s.x, y:+(s.y||0), z:+s.z, items:(s.items||[]).slice(), glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })),
@@ -44730,6 +44816,23 @@ function renderEditorFields(){
             if(g.userData.mark.friendly){ const fh=document.createElement('div'); fh.className='hint'; fh.style.margin='0 0 6px';
               fh.textContent='A wandering NPC: patrols its area or route, ignores players and gunfire, doesn\u2019t count as a hostile, and killing it gives nothing (the On-kill logic event still fires, so you can punish it). Hunt behaves as Patrol while friendly.';
               picker.appendChild(fh); } }
+          // build 1355: FACTION — who this one fights. Hidden while Friendly, because a pacifist fights nobody
+          if(!g.userData.mark.friendly){
+            const flab=document.createElement('div'); flab.className='hint'; flab.style.margin='6px 0 3px'; flab.innerHTML='<b>Faction</b>';
+            picker.appendChild(flab);
+            const fsel=document.createElement('select');
+            for(let i=0;i<FACTION_NAMES.length;i++){ const o=document.createElement('option'); o.value=String(i); o.textContent=FACTION_NAMES[i]+(i===FACTION_DEFAULT?' (default)':''); fsel.appendChild(o); }
+            fsel.value=String(_facOf(g.userData.mark.fac));
+            fsel.onchange=()=>{ pushUndoSnapshot(); g.userData.mark.fac=_facOf(+fsel.value);
+              if(g.userData.post&&g.userData.post.material&&g.userData.post.material.color) g.userData.post.material.color.setHex(FACTION_COL[g.userData.mark.fac] || SPAWN_MODE_COLORS[g.userData.mark.mode] || 0xff2d55);
+              renderEditorFields(); };
+            picker.appendChild(fsel);
+            const fhint=document.createElement('div'); fhint.className='hint'; fhint.style.margin='3px 0 6px';
+            fhint.textContent = _facOf(g.userData.mark.fac)===0
+              ? 'Fights every other faction, never you. Killing one gives you nothing, and its kills are not yours \u2014 the loot still drops.'
+              : 'Anyone of a different faction is a target, including you. Two hostile factions in one level will fight each other.';
+            picker.appendChild(fhint);
+          }
           // ---- Enemy type (archetype) ----
           const tlab=document.createElement('div'); tlab.className='hint'; tlab.style.margin='8px 0 3px'; tlab.innerHTML='<b>Enemy type</b>';
           picker.appendChild(tlab);

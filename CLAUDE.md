@@ -7658,3 +7658,95 @@ between the `if` and its `else` — build 1309's recorded trap, hit once and cau
 **One pin moved (968), and it was the character-budget trap in its other costume.** It quoted `_peerOpts`'s
 whole one-line return verbatim; the merge broke it with every part of the assertion still true. It asserts
 the members now.
+
+## Enemies can belong to a side (build 1355)
+
+Every moving creature in this engine was hostile to the player and to nothing else. Build 1226 added the
+pacifist NPC and recorded "friendlies fleeing gunfire" and enemies fighting each other as needing a
+targeting rework. **It needed one line of one.**
+
+`enemyDesiredTarget` has always been target-AGNOSTIC — it takes `px, pz, dist, py` — and the melee strike
+calls `_tn.hurt(...)` on whatever object the picker chose. So the whole change is that the picker may choose
+an **adapter around another enemy**, the way build 1189 reused the bot's cover finder through a `{pos}` shim.
+The ranged path needed nothing at all: `fireEnemyShot(en, target)` already reads `target.pos` and
+`target.eyeY`.
+
+**The rule is `a !== b`, and the PLAYER is faction 0.** That gives an ally, the default hostile and two third
+parties with no attitude matrix for a creator to author:
+
+| | |
+|---|---|
+| **0 · Your side** | an ally: fights 1/2/3, never you |
+| **1 · Hostile** | the default, and therefore what every level authored before this build already is |
+| **2/3** | third and fourth parties — fight everyone but their own |
+
+`friendly` (1226) stays **orthogonal**: a pacifist targets nothing and is targeted by nothing. Widening that
+to "hostiles hunt villagers" would slaughter every existing level's NPCs on wave 1, so it is a stated limit
+rather than a side effect.
+
+### The fast path IS the compatibility argument
+
+`_combatTargets()` is one list per frame, memoised on `_frameNo` so the picker and the bolt test cannot
+disagree about who is shootable. **If no enemy carries a non-default faction it returns the player list and
+the O(N²) enemy scan never runs** — measured live on a default-only level: target list length 1, and neither
+grunt's `_near` is an enemy. Every level that never opens the new control pays nothing.
+
+The adapter is cached **on the enemy**, so a 60-strong three-way fight allocates nothing per frame (1168).
+
+### An ally with nothing to fight must not fall back to hunting you
+
+`_noTgt` is set per frame when a combatant finds no valid target, and for that frame it behaves exactly like
+1226's pacifist — patrols its post, raycasts no sightline, never becomes aware. Written as one named
+predicate (`passive = en.friendly || en._noTgt`) read by both combat gates, rather than a second condition
+beside each `en.friendly`. Measured: a lone ally never chases, never fires, and the player is untouched.
+
+### Measured live (`tools/probe/factions*.mjs`), waves suppressed so every hp change is a fixture
+
+```
+two gunners, factions 0 and 1, 6 m apart   each picks the OTHER · 400 -> 264 / 400 -> 256 · player 100
+two brutes,  factions 0 and 1, 2 m apart   400 -> 4 / 400 -> 4, through the real wind-up/strike path
+a hostile's bolt at an ally                400 -> 396      at the player   100 -> 96
+an ally's bolt at the player               100 (unchanged) — the bolt flew on
+a LONE ally                                noTgt, never aware, never chasing, hostileAlive 0
+2 allies + 1 hostile + 1 pacifist          _hostileAlive() 1
+marker fac 2 -> desc 2 -> rebuilt 2 · default 1 · 99 -> 1 · -4 -> 1 · 'x' -> 1 · default keeps 0xfe4d5e
+```
+
+### Fail hostile, never ally — and the harness caught me failing the other way
+
+`_facOf` originally read `v|0`, and **`undefined`, `null` and `NaN` all coerce to ZERO — "your side"**. Every
+random-wave queue descriptor carries no `fac` at all, so `_hostilePending` subtracted every queued hostile as
+if it were an ally and a wave read as already clear. The first draft compensated by substituting the default
+at each *caller*, and `test-1226`'s accounting rig — which drives the real functions over plain
+`spawnQueue` entries — found the caller that didn't. The rule now lives in `_facOf` where no caller can
+forget it: `pending 0 → 3`.
+
+Three more things fail in the safe direction on purpose: the default faction **serializes as nothing**, so a
+level with no allies is byte-identical to pre-1355; the default marker **keeps the mode colour it always
+had** (`FACTION_COL[1]` is deliberately 0), because an editor whose every marker changed colour on upgrade
+reads as a bug; and the Faction control is **hidden for a pacifist**, which fights nobody.
+
+### Rewards
+
+`killEnemy` gained `_cred = !_fr && !byEnemy`. Killing your own ally is a death but never a reward (1226's
+rule, restated for the other kind of non-combatant), and **an ally's kill is not your kill** — no count, no
+lifesteal, no callout, no boss payday. The **loot still drops**: that is physical, and you have to walk to
+it. Measured: a `byEnemy` kill gave `runKills +0, coins +2`; the same kill by the player gave `+1`.
+
+### A probe note that cost three runs
+
+An ally's bolt aimed at a hostile reported no damage, twice. Traced step by step: **both enemies were
+standing on a platform at y ≈ 3 and `fireEnemyShot` spawns the bolt at a hardcoded y = 1.4** — inside the
+geometry underneath them, so it died against a collider on its first step. Build 1323's lesson verbatim:
+build the thing you are measuring somewhere nothing else lives. The mechanism was already proven four other
+ways, so this was an instrument fault, not a null result.
+
+Also worth knowing for the next probe of this system: **this sandbox renders ~1.5 fps** (20 frames in
+13.2 s), so a bolt at 38 u/s moves ~25 units per frame and *tunnels straight through* a 1.1 m hit sphere. Any
+projectile test at a real distance has to step `updateEnemyShots(1/120)` by hand rather than wait on frames.
+
+Eighteen pins moved (283, 33, 374, 415, 47, 779, 1020, and eleven in 1226), every one keeping its intent —
+1226's whole point, that a *friendly* pays nothing and holds no wave open, is asserted unchanged at each new
+address. Two of them are executing rigs that needed the new dependency supplied: `test-1020` takes
+`_combatTargets` as a pass-through of its player list (its assertions are about the bolt, not the list), and
+`test-1226` lifts `_facOf`/`_enFac` from source rather than restating them.

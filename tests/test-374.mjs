@@ -8,7 +8,7 @@ const src = gameSource();
 // ---- wiring ----
 assert(/function _reactDir\(dx, dz, yaw\)/.test(src), 'shared hit-bearing -> direction helper exists');
 assert(/function botHurt\(b, dmg, sx, sz\)/.test(src), 'central bot damage hook exists');
-assert(/function enemyHurt\(en, dmg, sx, sz\)/.test(src), 'central enemy damage hook exists');
+assert(/function enemyHurt\(en, dmg, sx, sz, byEnemy\)/.test(src), 'central enemy damage hook exists');   // build 1355: + who dealt it
 assert(/const d=_reactDir\(sx-b\.pos\.x, sz-b\.pos\.z, b\.yaw\); dieSlot = \(d==='Front'\)\?'dieBack'/.test(src), 'botDie picks a directional death (front hit -> fall backward)');
 assert(/if\(b\._evt && performance\.now\(\)<b\._evt\.until\) st=b\._evt\.slot;/.test(src), 'bot resolver plays the flinch one-shot');
 assert(/if\(en\._evt && nowMs < en\._evt\.until\) st = en\._evt\.slot;/.test(src), 'enemy resolver plays the flinch one-shot');

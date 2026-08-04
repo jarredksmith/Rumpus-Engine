@@ -4,7 +4,16 @@ import { gameSource, extractFunction, done, assert, eq } from './harness.mjs';
 const src = gameSource();
 
 assert(/let runKills = 0;/.test(src), 'per-run kill counter exists');
-assert(/function killEnemy\(en, sx, sz\)\{[\s\S]{0,1100}?\n  if\(!_fr\) runKills\+\+;/.test(src), 'kills are counted (build 1027: after the logic-graph onkill hook; build 1226: hostile kills only — a friendly death is not a kill)');   // build 1231: the onkill ctx line grew pid/team — window widened, still anchored on the function header
+// build 1355: the counter's gate widened to _cred, and killEnemy took a fourth argument. The window is
+// gone with it — a character budget is only ever waiting to expire (the trap this file records seven
+// times); the ORDER is what "after the onkill hook" actually means, so assert that.
+{
+  const ke = extractFunction('killEnemy', src);
+  assert(/^function killEnemy\(en, sx, sz, byEnemy\)/.test(ke), 'killEnemy knows who dealt the killing blow');
+  assert(ke.indexOf("_lgFireEvents('onkill'") < ke.indexOf('if(_cred) runKills++;'),
+    'kills are counted (build 1027: after the logic-graph onkill hook; build 1226: hostile kills only — ' +
+    'a friendly death is not a kill; build 1355: nor an ally\u2019s death, nor an ally\u2019s kill)');
+}
 assert(/runKills=0;/.test(src), 'kills reset each run');
 assert(/const BEST_KEY='breach_best'/.test(src) && /localStorage\.setItem\(BEST_KEY/.test(src), 'best persists to localStorage');
 assert(/\$\{runSummaryHTML\(\)\}/.test(src), 'summary injected into the end screens');
