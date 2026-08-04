@@ -25431,7 +25431,40 @@ function closeChat(send){ if(!chatOpen) return; const box=document.getElementByI
 // links from strangers become [link] (the top P2P harm vector) and a baseline profanity list is masked
 // after leet-normalisation. Mute is per-session by display name — /mute Name, /unmute Name — because the
 // relay carries names, not ids; a renamed troll costs one more /mute, which is acceptable for v1.
+// ---- build 1357: the mute survives the tab, and binds to the PLAYER ---------------------------------
+// Build 1178 shipped `/mute` as per-session and by NAME, and named both costs: "a renamed troll costs one
+// more /mute, which is acceptable for v1". Neither is acceptable for a public release with minors. A mute
+// that dies when the tab closes is a mute you have to re-issue every session against the same person, and
+// a mute keyed on a string the muted party chooses is one they can walk out of by retyping it.
+//
+// There is still no persistent identity in this engine (no accounts), so the NAME is what a player can see
+// and therefore what they must be able to type. What changes is that the name is no longer the only handle:
+//   * the set PERSISTS (breach_mutes), so muting someone is a decision, not a session preference;
+//   * muting a name that is CONNECTED also binds their player id for this session, so renaming mid-match
+//     does not dodge it — the relay carries `from` now for exactly this;
+//   * and the host DE-DUPLICATES display names (below), so a name identifies one person inside a room.
+//     Without that, muting "Griefer" could mute YOU, and a report naming "Griefer" is unactionable.
+const MUTE_KEY = 'breach_mutes';
+const MUTE_MAX = 200;   /* a persisted set has to be bounded — it outlives every session that added to it */
 const _chatMuted = new Set();
+const _chatMutedIds = new Set();   /* per SESSION: player ids, because an id means nothing tomorrow */
+function _loadMutes(){ try{ const a=JSON.parse(localStorage.getItem(MUTE_KEY)||'[]');
+  if(Array.isArray(a)) for(const n of a.slice(0, MUTE_MAX)) if(typeof n==='string' && n) _chatMuted.add(n.slice(0,40)); }catch(e){} }
+function _saveMutes(){ try{ localStorage.setItem(MUTE_KEY, JSON.stringify([..._chatMuted].slice(0, MUTE_MAX))); }catch(e){} }
+_loadMutes();
+/* the id a display name currently belongs to, or null. Host and client both hold NET.players. */
+function _pidForName(n){ const k=(''+(n||'')).trim().toLowerCase(); if(!k) return null;
+  try{ for(const id in NET.players){ const rp=NET.players[id]; if(rp && (''+(rp.name||'')).trim().toLowerCase()===k) return +id; } }catch(e){}
+  return null; }
+/* build 1357: ONE name sanitizer, used by the host on arrival and by the dedup below. A display name goes
+   into a chat log, a name sprite, a kill feed and a moderation report, so an unbounded or control-char
+   string is everyone else's problem, not the sender's. */
+const NAME_MAX = 20;
+function _cleanName(n, fallback){
+  let t = (''+(n==null?'':n)).replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029]/g, '').replace(/\s+/g, ' ').trim();
+  t = t.slice(0, NAME_MAX).trim();
+  return t || (fallback || 'Player');
+}
 const _CHAT_BAD = ['fuck','shit','bitch','asshole','cunt','dick','faggot','nigger','nigga','whore','slut'];
 function _chatClean(text){
   let t = ('' + (text || '')).slice(0, 200);
@@ -25442,11 +25475,28 @@ function _chatClean(text){
   return out.join('');
 }
 function sendChat(text){ text=(''+text).slice(0,200); if(!text) return;
-  // /mute Name and /unmute Name are local commands, never sent
+  // /mute Name, /unmute Name, /unmute all and /mutes are local commands, never sent
+  if(/^\/mutes\s*$/i.test(text)){   /* build 1357: a PERSISTENT list you cannot see is a list you cannot undo */
+    const l=[..._chatMuted];
+    if(typeof flashToast==='function') flashToast(l.length ? ('Muted ('+l.length+'): '+l.slice(0,8).join(', ')+(l.length>8?'\u2026':'')+' \u2014 /unmute <name> or /unmute all') : 'Nobody is muted');
+    return; }
   const mm = text.match(/^\/(un)?mute\s+(.+)$/i);
-  if(mm){ const who = mm[2].trim().toLowerCase();
-    if(mm[1]){ _chatMuted.delete(who); if(typeof flashToast==='function') flashToast('Unmuted '+mm[2].trim()); }
-    else { _chatMuted.add(who); if(typeof flashToast==='function') flashToast('Muted '+mm[2].trim()+' for this session'); }
+  if(mm){ const raw = mm[2].trim(), who = raw.toLowerCase();
+    if(mm[1]){
+      if(who === 'all'){ const n=_chatMuted.size; _chatMuted.clear(); _chatMutedIds.clear(); _saveMutes();
+        if(typeof flashToast==='function') flashToast(n ? ('Unmuted everyone ('+n+')') : 'Nobody was muted'); return; }
+      _chatMuted.delete(who);
+      const pid=_pidForName(raw); if(pid!=null) _chatMutedIds.delete(pid);
+      _saveMutes(); if(typeof flashToast==='function') flashToast('Unmuted '+raw);
+    } else {
+      if(_chatMuted.size >= MUTE_MAX){ if(typeof flashToast==='function') flashToast('Mute list is full \u2014 /mutes to see it'); return; }
+      _chatMuted.add(who);
+      /* bind the PLAYER too, so renaming mid-match does not walk out of it */
+      const pid=_pidForName(raw); if(pid!=null) _chatMutedIds.add(pid);
+      _saveMutes();
+      if(typeof flashToast==='function') flashToast(pid!=null ? ('Muted '+raw+' \u2014 and this player, even if they rename')
+                                                             : ('Muted '+raw+' \u2014 they are not in this room, but it will apply if they join'));
+    }
     return; }
   const nm=NET.name||'You'; addChatLine(nm, text, true); if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'chat', name:nm, text}); }catch(e){} } } else if(NET.mode==='client' && NET.conn){ try{ NET.conn.send({t:'chat', text}); }catch(e){} } }
 // ---- build 1351: A WAY TO REPORT SOMETHING ---------------------------------------------------------
@@ -25513,8 +25563,12 @@ function _reportBtn(label, title, fn){
   b.onclick = (e)=>{ e.stopPropagation(); e.preventDefault(); fn(); };
   return b;
 }
-function addChatLine(name, text, mine){ const log=document.getElementById('chatLog'); if(!log) return;
-  if(!mine && _chatMuted.has((''+(name||'')).trim().toLowerCase())) return;   // build 1178: muted senders render nothing
+function addChatLine(name, text, mine, from){ const log=document.getElementById('chatLog'); if(!log) return;
+  /* build 1178: muted senders render nothing. build 1357: by name OR by the player id the mute was bound
+     to, so a rename mid-match does not undo it. `from` is optional — an older host that does not relay it
+     leaves this exactly as it was. */
+  if(!mine && _chatMuted.has((''+(name||'')).trim().toLowerCase())) return;
+  if(!mine && from!=null && _chatMutedIds.has(+from)) return;
   if(!mine) text = _chatClean(text);   /* build 1178: filter at RENDER — your own text shows as typed */
   const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx);
   /* build 1351: report the LINE. Your own text gets no flag — reporting yourself is not a thing — and the
@@ -27732,7 +27786,14 @@ function _buyChestOk(id){
   if(msg.t==='st'){ setRemoteState(id, msg); }
   else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmgBudget(id,'pve',_netDmg(msg.d)), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
-  else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
+  else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n);
+    /* build 1357: the host OWNS the roster, so it resolves the display name. Two players sharing one name
+       is not a cosmetic clash: it makes a chat log ambiguous, makes a moderation report unactionable
+       ("Griefer said X" — which one?), and makes muting a harasser mute their victim instead. Resolved
+       here rather than at the sender, because only the host can see everyone. */
+    msg.n = _resolveName(msg.n, id);
+    try{ const c=NET.conns[id]; if(c && c.open) c.send({t:'yourname', n:msg.n}); }catch(e){}   /* so their own HUD agrees with everyone else's */
+    rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
   else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmgBudget(id,'pvp',_netDmg(msg.d)), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
   else if(msg.t==='died'){
@@ -27785,7 +27846,7 @@ function _buyChestOk(id){
   else if(msg.t==='pDel'){ if(netApplyDelProp(msg.nid)) relayProp({t:'pDel', nid:msg.nid}, id); } // a client deleted a prop
   else if(msg.t==='pMov'){ if(netApplyMovProp(msg.nid, msg.x)) relayProp({t:'pMov', nid:msg.nid, x:msg.x}, id); } // a client moved a prop
   else if(msg.t==='death'){ playerDeathFx(msg.p[0], msg.p[1], msg.p[2]); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send(msg); }catch(e){} } } }   // a client died -> show + relay the pop
-  else if(msg.t==='chat'){ const nm=(NET.players[id]&&NET.players[id].name)||msg.name||('P'+id); const tx=(''+(msg.text||'')).slice(0,200); addChatLine(nm, tx); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'chat', name:nm, text:tx}); }catch(e){} } } }   // a client chatted -> show + relay to the others
+  else if(msg.t==='chat'){ const nm=(NET.players[id]&&NET.players[id].name)||msg.name||('P'+id); const tx=(''+(msg.text||'')).slice(0,200); addChatLine(nm, tx, false, id); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'chat', name:nm, text:tx, from:id}); }catch(e){} } } }   // a client chatted -> show + relay to the others (build 1357: `from` so a mute can bind to the player, not the string they chose)
   else if(msg.t==='race'){ _raceNet[id]={ lap:msg.lap|0, f:+msg.f||0 }; for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'race', from:id, lap:msg.lap, f:msg.f}); }catch(e){} } } }   // build 836: a racer's progress -> store + relay
   else if(msg.t==='raceFin'){
     // build 1279: CHECK THE CLAIM. This called _raceDeclareWinner with no validation at all, so one
@@ -27819,6 +27880,8 @@ function handleHostMsg(msg){
     try{ _prefetchLevelAssets(NET.pendingLevel, NET.charById); }catch(e){}   // build 927: downloads overlap the lobby, not the round
     if(msg.phase==='lobby'){ showClientLobby(); _lobbyDlWatch(); } else { startGame(); }
   }
+  else if(msg.t==='yourname'){ if(typeof msg.n==='string' && msg.n){ const was=NET.name; NET.name=msg.n;   /* build 1357: the host resolved a clash — adopt it so our chat prefix, name sprite and report target all read what everyone else sees */
+      if(was!==msg.n && typeof flashToast==='function') flashToast('That name was taken \u2014 you are "'+msg.n+'" in this room'); } }
   else if(msg.t==='begin'){ NET.phase='playing'; closeModal('lobby'); if(typeof closeMatchMenu==='function') closeMatchMenu(); startGame(); }
   else if(msg.t==='warmup'){ matchWarmup = (msg.secs!=null ? +msg.secs : 3); _clientWarmupHold=false; }   // build 624: host's synced start count — resyncs our countdown so 3-2-1-GO lands together
   else if(msg.t==='lobby'){ NET.lobbyRoster=msg.players||[]; if(NET.phase==='lobby') renderLobby(NET.lobbyRoster); if(msg.bg!=null && typeof _applyLobbyBg==='function') _applyLobbyBg(msg.bg); }
@@ -27845,7 +27908,7 @@ function handleHostMsg(msg){
        host-resolved key instead would be wrong the moment ids differ, and silently so. */
     logicVars[(typeof _hwVarKey==='function') ? _hwVarKey(k) : k] = +msg.v[k]||0; } }   // build 1058: the host mirrors widget-watched logic variables
   else if(msg.t==='full'){ NET._lost=true; if(typeof netStatus==='function') netStatus('That room is full ('+(msg.max||8)+' players).'); if(typeof toast==='function') toast('Room is full'); }   // build 1207: the host refused us at the cap
-  else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200)); }   // chat from the host or relayed from another player
+  else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200), false, msg.from); }   // chat from the host or relayed from another player
   else if(msg.t==='duelOver'){ showDuelResult(msg.w, msg.wt); }
   else if(msg.t==='race'){ _raceNet[msg.from]={ lap:msg.lap|0, f:+msg.f||0 }; }   // build 836: another racer's progress (standings)
   else if(msg.t==='raceOver'){ if(msg.w){ if(typeof gameWon==='function') gameWon(); } else _raceLose(msg.wn); }   // build 836: the host called the finish
@@ -28039,6 +28102,19 @@ function showRoomBadge(code){ const b=document.getElementById('roomBadge'); if(b
 // ---------- Pre-game lobby: everyone gathers, then the host starts the match so all players begin together ----------
 // build 579: pure readiness summary for the lobby roster (host counts as ready). { all, waiting }.
 function _lobbyReadyState(roster){ const list=roster||[]; let waiting=0; for(const p of list){ if(!p.ready) waiting++; } return { all:waiting===0, waiting }; }
+/* build 1357: one display name per player, host-resolved. Case- and whitespace-insensitive, because
+   "Griefer" and "griefer " are the same name to a person reading a chat log. The discriminator counts up
+   rather than randomising, so rejoining an otherwise-empty room gives you your own name back. */
+function _resolveName(n, forId){
+  let base = _cleanName(n, 'Player'+forId);
+  const taken = new Set();
+  const add = (x)=>{ const k=(''+(x||'')).trim().toLowerCase(); if(k) taken.add(k); };
+  add(NET.name||'Host');
+  try{ for(const id in NET.players){ if(+id===+forId) continue; const rp=NET.players[id]; if(rp) add(rp.name); } }catch(e){}
+  if(!taken.has(base.toLowerCase())) return base;
+  for(let i=2;i<=99;i++){ const c=_cleanName(base+' ('+i+')', 'Player'+forId); if(!taken.has(c.toLowerCase())) return c; }
+  return _cleanName('Player'+forId, 'Player');
+}
 function lobbyRoster(){
   const selfTint = (CHARACTERS[myCharIdx]?CHARACTERS[myCharIdx].color:null);
   const list=[{ id:NET.myId, name:(NET.name||'Host'), team:(teamMode()?(NET.teams[NET.myId]||0):null), tint:selfTint, host:true, ready:true }];   // build 552: the host is always "ready" (they press START)
@@ -31519,7 +31595,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1356 · 2026-08-04';
+const BUILD_VERSION = 'build 1357 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

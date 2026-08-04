@@ -7807,3 +7807,57 @@ added fields with every part of it still true; it asserts the members.
 **Not verifiable headless, and stated as such:** a real two-machine mid-match join. The code path is pinned
 at both ends (`phase:NET.phase` sent, `else { startGame(); }` received) and it predates this build; what
 1356 changes is only whether the room is in the list.
+
+## The mute survives the tab, and one name means one player (build 1357)
+
+Build 1178 shipped `/mute` as per-session and by NAME, and named both costs: *"a renamed troll costs one
+more /mute, which is acceptable for v1."* Neither is acceptable for a public release with minors. A mute
+that dies with the tab is one you re-issue every session against the same person, and a mute keyed on a
+string the muted party chooses is one they walk out of by retyping it.
+
+**And nothing de-duplicated display names.** `rp.name = msg.n` took whatever arrived, so a harasser could
+adopt their victim's name. That is not a cosmetic clash — it makes a chat log ambiguous, makes a build-1351
+moderation report **unactionable** ("Griefer said X" — which one?), and makes muting the harasser mute the
+victim. The two problems have one root, which is why they are one build: **the name was the whole
+identity, and it was neither unique nor durable.**
+
+### Three handles instead of one
+
+- **The set PERSISTS** (`breach_mutes`), so muting someone is a decision rather than a session preference.
+  Capped in both directions and validated on the way in, because it is stored data (1325's rule).
+- **Muting a CONNECTED name also binds their player id for the session**, so renaming mid-match does not
+  dodge it. The chat relay carries `from` now for exactly that — an OPTIONAL field, so an older host that
+  does not send it leaves the check exactly as 1178 had it.
+- **The host de-duplicates**, because only the host can see everyone. `_resolveName` is case- and
+  whitespace-insensitive ("Griefer" and "griefer " are the same name to a person reading a log), counts
+  **up** rather than randomising so a room that emptied hands your name straight back, and **skips its own
+  id** — otherwise every re-send would walk a player up the numbers. The resolved name goes back as
+  `{t:'yourname'}` so their own chat prefix, name sprite and report target read what everyone else sees.
+
+`_cleanName` is one sanitizer: control and **zero-width** characters out (a zero-width space is how you
+impersonate a name that only *looks* taken), whitespace collapsed, capped at 20. A display name reaches a
+chat log, a name sprite, a kill feed and a moderation report, so an unbounded string is everyone else's
+problem, not the sender's.
+
+**A persistent list you cannot see is a list you cannot undo**, so `/mutes` prints it and `/unmute all`
+clears it. Muting someone who is not in the room says so rather than claiming a binding it does not have.
+Every command returns *before* the send — a `/mute` relayed to the room would tell the person you muted.
+
+Verified live (`tools/probe/mute-names.mjs`) and executed in `test-1357`:
+
+```
+clean   "  Jarred  "->"Jarred" · ""->fallback · 60 chars->20 · zero-width stripped · "a   b"->"a b"
+dedup   Griefer · Griefer (2) · griefer (3) · Jarred (2) [clashes with the HOST] · ""->Player5
+        and the SAME player re-sending keeps Griefer
+mute    stored ["griefer"], bound to pid 1 · 3 lines in -> 1 rendered
+        the troll RENAMES to NotGriefer -> still 0 rendered
+        a relay carrying no from-id falls back to name-only · the set survives a reload
+```
+
+**Still open, and named rather than implied:** there is no persistent identity in this engine, so a mute
+cannot follow someone across sessions if they change their name between them. That needs accounts, which
+the platform audit already lists. What this build buys is that the name is no longer the *only* handle.
+
+**A backtick inside a template literal, for the third time.** The probe's own comment read ``// no `from` at
+all`` inside a `P(\`…\`)` string and closed the template — a syntax error in the instrument, not the engine.
+Recorded under builds 1328 and 1342; write it as plain prose in probe source.
