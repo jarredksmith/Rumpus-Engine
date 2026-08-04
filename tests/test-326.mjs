@@ -16,7 +16,15 @@ assert(/return 'sfk1:'\+btoa/.test(pack) && /indexOf\('sfk1:'\)!==0\) return ''/
 // only lent when the level actually uses Sketchfab
 const det = extractFunction('_levelUsesSketchfab');
 assert(/u\.indexOf\('sketchfab:'\)===0/.test(det), 'detects sketchfab: model URLs');
-assert(/if\(_levelUsesSketchfab\(level\) && sfGetToken\(\)\) sfTok = _sfPack\(sfGetToken\(\)\)/.test(src), 'host only shares the token when the level needs it AND it has one');
+// build 1349: this quoted the condition verbatim and it gained a CONSENT term. The assertion's intent —
+// the token is shared only when the level needs it and the host has one — is unchanged and now stricter,
+// so it asserts the members rather than the literal.
+{ const line = src.match(/let sfTok; try\{[^\n]*\}catch\(e\)\{\}/);
+  assert(line, 'the welcome decides whether to send a token');
+  for(const part of ['_levelUsesSketchfab(level)', 'sfGetToken()', '_sfPack(sfGetToken())'])
+    assert(line[0].indexOf(part) >= 0, 'host only shares the token when the level needs it AND it has one — ' + part);
+  assert(/sfLendEnabled\(\) &&/.test(line[0]),
+    '...and from build 1349, only when the host has explicitly opted in to lending it'); }
 assert(/conn\.send\(\{t:'welcome'[\s\S]*?sfTok,/.test(src), 'token rides along in the welcome message');
 
 // joiner applies it (session only)

@@ -967,6 +967,39 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The Sketchfab token is lent by choice, not by default (build 1349 — multiplayer audit G6)
+
+The multiplayer audit's sharpest verified own-goal, and it is a one-condition fix. The host's **personal
+Sketchfab API token** was packed into the WELCOME message of every match whose level referenced a
+`sketchfab:` model — and room codes are published in the lobby directory, so anyone who could join received
+it. `_sfPack` is a fixed XOR plus base64 whose **decoder ships in the same file**; the comment beside it
+always admitted it is obfuscation, not encryption.
+
+**The feature is legitimate and stays.** Without a token a joiner sees holes where the level's models
+should be. What was wrong is that it happened SILENTLY and BY DEFAULT. Handing over a credential is a
+decision, and the person whose quota it is has to be the one making it.
+
+So `sfLendEnabled()` gates the send, and it **fails closed** in both directions that matter: an unset key
+reads false, so every existing host stops lending the moment they take this build, and a storage exception
+also returns false — if we cannot tell, we do not hand over the credential.
+
+**The control sits with the token, not in a settings screen somewhere else.** The moment you are choosing
+Sketchfab models is the moment the trade is legible. Both states name their real consequence, because a
+consent prompt that only describes one side is not a choice:
+
+- on — *"joiners can load this level's Sketchfab models, and can also spend your Sketchfab API quota while
+  the match lasts"*
+- off — *"your token stays with you. Joiners will see holes where this level's Sketchfab models should be,
+  unless they add their own token."*
+
+`_sfPack` itself is untouched: this build changes **whether**, not how. And the test asserts the property
+that would have caught the original defect — `_sfPack` is referenced exactly twice (its definition and the
+one send site), and that send site is gated on consent. A second, ungated packing site is the only way this
+comes back.
+
+One pin moved (326), which quoted the condition verbatim; its intent — shared only when the level needs it
+and the host has one — is unchanged and now stricter, so it asserts the members.
+
 ## Three capabilities that existed and could not be found (build 1348)
 
 None of this adds an ability. Each item adds a **door** to something already shipped — which is the

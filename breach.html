@@ -18113,6 +18113,18 @@ function loadGLTFCached(url, cb, errcb){
 // downloading requires the token. Models arrive as a zipped glTF, so we unzip (fflate, lazy-loaded) and feed
 // the entries to GLTFLoader via blob URLs. A prop's src is stored as 'sketchfab:<uid>' so it re-resolves on load.
 const SF_TOKEN_KEY='breach_sketchfab_token', SF_ON_KEY='breach_sketchfab_on';
+/* ---- build 1349: STOP LENDING A PERSONAL API CREDENTIAL TO STRANGERS BY DEFAULT ------------------------
+   The host's Sketchfab token was packed into the WELCOME message of every match whose level referenced a
+   sketchfab: model, so anyone who could join a room — and room codes are published in the lobby directory —
+   received the host's personal API credential. `_sfPack` is a fixed XOR plus base64 whose DECODER ships in
+   the same file, so it is obfuscation, not encryption; the comment beside it always said so.
+   The feature itself is legitimate and worth keeping: without the token a joiner sees holes where the
+   level's models should be. What was wrong is that it happened SILENTLY and by DEFAULT. So it is opt-in
+   and it names the risk — a credential you hand over is a decision, and the person whose quota it is has
+   to be the one making it. Default off: an existing host who never opens the setting stops lending. */
+const SF_LEND_KEY='breach_sketchfab_lend';
+function sfLendEnabled(){ try{ return localStorage.getItem(SF_LEND_KEY)==='1'; }catch(e){ return false; } }
+function sfSetLend(b){ try{ localStorage.setItem(SF_LEND_KEY, b?'1':'0'); }catch(e){} }
 // A host can lend its Sketchfab token to joiners for a session so a level's models load even if the joiner has
 // no token of their own. Session-only (never saved to localStorage), and the joiner's own token always wins.
 let _sfSessionToken = '';
@@ -27622,9 +27634,10 @@ function _hostOnConnection(conn){
       if(teamMode()) assignTeam(conn._pid);
       // hand the joiner the mode, the kill target, and the current level so their map matches
       let level=null; if(_rj==null) try{ level = serializeLevel(); }catch(e){}
-      // If this level uses Sketchfab models and we have a token, lend it to the joiner so the models load even
-      // if they have no Sketchfab account of their own. Obfuscated (not encrypted) — they don't keep it.
-      let sfTok; try{ if(_levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
+      // If this level uses Sketchfab models, the joiner needs a token to load them. Build 1349: ONLY if the
+      // host has explicitly opted in — this is their personal API credential and `_sfPack` is obfuscation,
+      // not encryption. Off by default, so a host who never opens the setting never lends it.
+      let sfTok; try{ if(sfLendEnabled() && _levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
       conn.send({t:'welcome', id:conn._pid, hid:NET.myId, mig:(_rj!=null?1:undefined), mode:NET.gameMode, killTarget:NET.killTarget, level, sfTok, crosshair:gameCfg.crosshair, sounds:audioSettings.sounds, music:audioSettings.musicUrl, teams:NET.teams, yourTeam:(teamMode()?NET.teams[conn._pid]:undefined), char:myCharCfg(), chars:Object.assign({}, NET.charById), rules:{ weps:MP_RULES.weps, nades:MP_RULES.nades }, phase:NET.phase});
       netStatus(_rj!=null ? ('Player rejoined ('+Object.keys(NET.conns).length+' connected)') : ('Player joined ('+Object.keys(NET.conns).length+' connected)'));
       if(pvpMode()) broadcastDuelScore();
@@ -31132,7 +31145,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1348 · 2026-08-04';
+const BUILD_VERSION = 'build 1349 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -41269,6 +41282,22 @@ function _modelSourceBar(host, rerender){
     const off=document.createElement('button'); off.textContent='hide'; off.title='Hide the Sketchfab option'; off.style.cssText='flex:0 0 auto;margin-left:auto;padding:3px 8px;font-size:10px;border-radius:6px;border:1px solid #2a3a42;background:transparent;color:#6f968b;cursor:pointer;'; off.onclick=()=>{ sfSetEnabled(false); _setModelSource('pp'); rerender(); }; wrap.appendChild(off);
   }
   host.appendChild(wrap);
+  if(sfEnabled()){
+    /* build 1349: the consent control sits with the token, not in a settings screen somewhere else — the
+       moment you are choosing Sketchfab models is the moment the trade is legible. */
+    const lw=document.createElement('div'); lw.style.cssText='margin:0 0 6px;';
+    const ll=document.createElement('label'); ll.style.cssText='display:flex;align-items:center;gap:6px;color:#8fb6aa;font-size:11px;cursor:pointer;';
+    const lc=document.createElement('input'); lc.type='checkbox'; lc.style.cssText='width:14px;height:14px;accent-color:var(--accent);flex:none;';
+    lc.checked=(typeof sfLendEnabled==='function') && sfLendEnabled();
+    lc.onchange=()=>{ if(typeof sfSetLend==='function') sfSetLend(lc.checked); rerender(); };
+    const ls=document.createElement('span'); ls.textContent='Lend my token to players who join my games';
+    ll.appendChild(lc); ll.appendChild(ls); lw.appendChild(ll);
+    const lh=document.createElement('div'); lh.className='hint'; lh.style.cssText='font-size:10px;margin:2px 0 0 20px;opacity:.8;';
+    lh.textContent = lc.checked
+      ? 'On — joiners can load this level\u2019s Sketchfab models, and can also spend your Sketchfab API quota while the match lasts.'
+      : 'Off \u2014 your token stays with you. Joiners will see holes where this level\u2019s Sketchfab models should be, unless they add their own token.';
+    lw.appendChild(lh); host.appendChild(lw);
+  }
   if(typeof _modelTexCapControl==='function') _modelTexCapControl(host);   // build 641: texture-resolution control right where you import models
   return wrap;
 }
