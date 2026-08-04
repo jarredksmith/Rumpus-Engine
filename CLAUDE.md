@@ -967,6 +967,86 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The props stop being one flat colour (build 1379)
+
+Build 1139 built the procedural detail set and deliberately left ALBEDO out of it, for a reason that is
+exactly right **about textures**: *"an albedo map cannot be exposure-neutral. It multiplies the material
+colour, so it only darkens — neutrality would need values above 255."* None of that is true of a **shader
+term**, which has no 8-bit ceiling: `mix(1-a, 1+a, field)` goes above 1.0 as freely as below it, so the mean
+albedo — the quantity every level's lighting was tuned against — does not move. That is the whole reason
+this can be retrofitted onto colours creators already chose, which is what 1139 concluded was impossible.
+
+1145 had already built the machinery: `onBeforeCompile` on three's own `MeshStandardMaterial`, an
+object-space hashed noise field, one shared program. This adds one `.replace` to it and a second mode.
+
+**Who gets it is a DIFFERENT question from who gets relief.** `objDetailWanted` refuses a mesh with UVs
+because "the texture path serves it there" — true for relief and roughness, and false for albedo, because
+`PROC_SLOTS` is `normalMap` + `roughnessMap` and carries no albedo at all. So a UV-having, textureless mesh
+was exactly as flat as a UV-less one, and low-poly packs ship those constantly. `albedoDetailWanted` asks
+only "standard material, no authored `map`" — a creator's own albedo always wins.
+
+### Measured, on real pixels, with a control that returns
+
+```
+                unique colours    frame mean    exposure drift
+alb 0            26,116  1.000x      88.075         0.000%
+alb 0.16         26,488  1.014x      88.055        -0.023%
+alb 0.30         26,787  1.026x      88.032        -0.048%   <- shipped
+alb 0.45         27,027  1.035x      88.005        -0.079%
+alb 0 (control)  26,137  1.001x      87.993        -0.093%
+```
+
+Two things that table settles. **The control returns to 1.001x**, so the whole 3.5% is the term and not
+drift. And **the exposure movement the term causes is smaller than the scene's own settling at every
+amplitude** — that is the neutrality claim measured rather than argued. 0.30 is the knee: 0.16→0.30 nearly
+doubles the gain, 0.30→0.45 adds a third as much again for 50% more swing.
+
+`test-1379` proves the neutrality independently by **porting the shipped GLSL into JS and integrating it**
+— the field measures 0.5 over 216,000 samples, so the multiplier's mean is 1.0 — and asserts the three
+`.replace` anchors against the real `ShaderLib.physical.fragmentShader`, because a replace that misses is a
+silent no-op that renders a perfectly plausible frame.
+
+### The density is a pixel-subtense argument
+
+The first cut used 5.5 cycles per metre. **That measures as nothing at the range the game is played at**: the
+broad octave's period is 18 cm, which at 40 m across a 78-degree frame is well under one pixel, so it
+averages straight back to the flat colour it was there to break up while costing a full noise evaluation per
+fragment. At **0.9/m** the broad octave is ~1.1 m — the scale of an architectural panel, which is what reads
+across a room — and the field's second octave (3.1x, ~36 cm) carries it up close.
+
+Frequency is per WORLD METRE, not per object: build 1139's *"UV tiling is not a physical size"* one layer
+down. A 22 m deck and a 1 m crate otherwise read as two differently-zoomed photographs of one material.
+`retileProcSurface` already owns each prop's world span, so the density rides the hook that keeps the grain
+honest through a gizmo scale — gated on `_odSpan` so it never overwrites an imported mesh's own
+bounding-box-normalised frequency (1145).
+
+### Two silent failures, both found by probing and neither by the suite
+
+- **A uniform written before its shader exists is a write to nothing.** The frequency lived only in
+  `shader.uniforms`, which `onBeforeCompile` creates at the material's first RENDER — and a prop's real span
+  is set at SPAWN, before that. Probed on the stock level: all 57 prop materials were correctly patched and
+  every single one still carried the frequency for a **1 m** object, including a 16 m deck. It is stored on
+  the material now and the uniform reads it at compile time.
+- **`!mat.onBeforeCompile` is always false.** three declares `onBeforeCompile` as a no-op on
+  `Material.PROTOTYPE`, so it is truthy on every material ever made and the batch re-apply — which exists
+  because `Material.copy()` does not carry it, 1139's own trap one layer along — never ran. `hasOwnProperty`
+  is the question that actually distinguishes them, and both facts are now asserted against the real build.
+
+Every source pin in this build passed while both of those were live. **A test that pins the two ends of a
+wire proves nothing about the wire** (build 1277), and the probe is what closed it.
+
+### Four instrument failures before one number was real
+
+| # | what it said | why it was wrong |
+|---|---|---|
+| 1 | props gained 0.96x / 0.99x / 0.98x unique colours — a null | two separate capture RUNS, so auto-exposure and settling differed; and the ground, which this build does not touch, moved 1.36x |
+| 2 | mint block -2.25% under the term | the same-condition control drifted -3.9%. The effect was inside it, ordered by CAPTURE TIME (build 1152's failure #5, verbatim) |
+| 3 | the A/B region read mean 45 where the capture read 114 | the probe never posed the camera, so the coordinates were for a frame it was not looking at — build 1124, again |
+| 4 | control: **99.25% of pixels differ between two frames of the SAME condition** | the world was LIVE — wave, enemies, coach pill, minimap. No screenshot diff of this scene can mean anything until it is paused |
+
+`paused = true` is what made every number above possible. **In a running game, the scene is the noise
+floor**, and it is far larger than any material change worth making.
+
 ## The stock level has an albedo (build 1378)
 
 Every one of the six AAA critics named this first, in different words: *"a very good engine with no art
