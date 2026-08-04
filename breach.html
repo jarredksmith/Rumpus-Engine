@@ -27969,7 +27969,10 @@ function _applyMpRules(r){ try{
 // each adding to the 20Hz snapshot fan-out and the host's CPU, or simply exhaust it. The cap is
 // mode-shaped (a duel is strictly 1v1) and counts EXISTING players so a rejoiner reclaiming its slot is
 // never refused; a fresh peer past the ceiling gets a clean 'full' close, not a silent hang.
-function _maxPlayersFor(){ return (NET.gameMode==='duel') ? 2 : 8; }
+/* build 1356: takes the mode, so the GAMES LIST can compute the same cap the door enforces from a listing
+   it has never connected to. Two copies of this number would be a browser that offers a room the host is
+   about to refuse. */
+function _maxPlayersFor(mode){ return ((mode!=null?mode:NET.gameMode)==='duel') ? 2 : 8; }
 function _hostOnConnection(conn){
     const _rj=(conn.metadata && conn.metadata.rejoin!=null) ? +conn.metadata.rejoin : null;
     const _rejoinFree = (_rj!=null && _rj>=1 && !NET.conns[_rj]);
@@ -28192,7 +28195,8 @@ function startMatch(){   // host presses START
   _startArmedT=0;
   const bn=document.getElementById('lobbyBotN');
   if(bn && !(pvpMode() && NET.gameMode==='duel')){ let v=parseInt(bn.value,10); if(v>=0 && v<=7) NET.botCount=v; }
-  NET.phase='playing'; unannounceRoom();
+  NET.phase='playing';
+  announceRoom();   /* build 1356: re-announce as LIVE rather than deleting the entry — the room is still joinable, and its own player cap is the gate */
   for(const id in NET.conns){ try{ NET.conns[id].send({t:'begin'}); }catch(e){} }
   closeModal('lobby'); startGame();
 }
@@ -28215,13 +28219,22 @@ let _lobbyHbT=null, _lobbyCode=null, _lobbyKey=null;
 function announceRoom(){   // host: publish + heartbeat this open lobby
   if(!lobbyEnabled() || NET.mode!=='host') return;
   _lobbyCode=NET.roomCode; if(!_lobbyKey) _lobbyKey=_mkLobbyKey();   // build 956: per-session owner key — the server only lets this key update/close our entry
-  const ping=()=>{ if(!lobbyEnabled() || NET.mode!=='host' || NET.phase!=='lobby') return;
-    const body={ code:NET.roomCode, name:(NET.name||'Host'), mode:NET.gameMode||'coop', players:1+Object.keys(NET.conns).length, ts:Date.now(), key:_lobbyKey };
+  /* build 1356: a MATCH IN PROGRESS stays in the directory. Joining one has worked end to end since the
+     welcome carried `phase` — a client that connects mid-match calls startGame() directly and the host
+     forces a keyframe on the connection count change (1197) — but `startMatch` deleted the entry, so the
+     public list only ever showed rooms where nobody was playing yet. For a game with a handful of
+     concurrent players that reads as "nobody is online" precisely when somebody is.
+     `live` and `max` are OPTIONAL extras: the deployed lobbies.php whitelists the fields it stores, so
+     until it is updated they are dropped and the room simply lists as an ordinary one — which is the whole
+     of the fix. The browser treats them as absent-by-default for exactly that reason. */
+  const ping=()=>{ if(!lobbyEnabled() || NET.mode!=='host' || (NET.phase!=='lobby' && NET.phase!=='playing')) return;
+    const body={ code:NET.roomCode, name:(NET.name||'Host'), mode:NET.gameMode||'coop', players:1+Object.keys(NET.conns).length,
+                 max:_maxPlayersFor(), live:(NET.phase==='playing'?1:0), ts:Date.now(), key:_lobbyKey };
     try{ fetch(_lobbyUrl(NET.roomCode), { method:'PUT', body:JSON.stringify(body) }).catch(()=>{}); }catch(e){}
   };
   ping(); if(_lobbyHbT) clearInterval(_lobbyHbT); _lobbyHbT=setInterval(ping, 5000);
 }
-function unannounceRoom(){   // remove the lobby from the public list (match started / left)
+function unannounceRoom(){   // remove the lobby from the public list — build 1356: on LEAVING only; a started match stays listed
   if(_lobbyHbT){ clearInterval(_lobbyHbT); _lobbyHbT=null; }
   stopLobbyKeepalive();
   if(lobbyEnabled() && _lobbyCode){ try{ fetch(_lobbyUrl(_lobbyCode)+(_lobbyKey?'&k='+_lobbyKey:''), { method:'DELETE', keepalive:true }).catch(()=>{}); }catch(e){} }   // build 956: keyed close; keepalive survives unload
@@ -28270,9 +28283,18 @@ function renderGamesList(rooms){
   rooms.forEach(r=>{
     const d=document.createElement('div'); d.className='gameRow';
     const nm=document.createElement('span'); nm.textContent=r.name||'Host';
-    const md=document.createElement('span'); md.className='gmode'; md.textContent=((r.mode||'coop')+'').toUpperCase()+' \u00b7 '+(r.players||1)+'p';
-    const j=document.createElement('button'); j.className='mpBtn gjoin'; j.style.cssText='padding:3px 12px;font-size:12px'; j.textContent='Join';
-    j.onclick=()=>joinByCode(r.code);
+    /* build 1356: the cap comes from the SAME function the host's door uses, so the list can never offer a
+       seat that is about to be refused. `max` from the server wins when present; otherwise it is derived
+       from the mode, which is what makes this work against a lobbies.php that has not been updated yet. */
+    const cap=(r.max>0?(r.max|0):_maxPlayersFor(r.mode||'coop')), here=(r.players||1);
+    const full=here>=cap;
+    const md=document.createElement('span'); md.className='gmode';
+    md.textContent=((r.mode||'coop')+'').toUpperCase()+' \u00b7 '+here+'/'+cap+(r.live?' \u00b7 in progress':'');
+    const j=document.createElement('button'); j.className='mpBtn gjoin'; j.style.cssText='padding:3px 12px;font-size:12px';
+    j.textContent=full?'Full':'Join';
+    if(full){ j.disabled=true; j.style.opacity='0.45'; j.title='This room is at its player limit'; }
+    else { j.title=r.live?'This match has already started \u2014 you will drop straight in':'Waiting in the lobby';
+           j.onclick=()=>joinByCode(r.code); }
     d.appendChild(nm); d.appendChild(md); d.appendChild(j); wrap.appendChild(d);
   });
 }
@@ -31497,7 +31519,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1355 · 2026-08-04';
+const BUILD_VERSION = 'build 1356 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

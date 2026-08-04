@@ -7750,3 +7750,60 @@ Eighteen pins moved (283, 33, 374, 415, 47, 779, 1020, and eleven in 1226), ever
 address. Two of them are executing rigs that needed the new dependency supplied: `test-1020` takes
 `_combatTargets` as a pass-through of its player list (its assertions are about the bolt, not the list), and
 `test-1226` lifts `_facOf`/`_enFac` from source rather than restating them.
+
+## A match in progress stays findable (build 1356)
+
+**Joining one has worked end to end for a long time.** The welcome carries `phase`, and a client that
+connects mid-match runs `startGame()` directly instead of waiting in a lobby that is over; build 1197 forces
+a keyframe whenever the connection count changes, so a late joiner never applies deltas against a baseline
+it never saw; build 1201's rejoin path exercises all of it.
+
+What did not work was **finding** one. `announceRoom`'s heartbeat returned unless `NET.phase === 'lobby'`,
+and `startMatch` called `unannounceRoom()`. So the public directory only ever listed rooms where nobody was
+playing yet — and for a game with a handful of concurrent players that reads as *"nobody is online"* at
+exactly the moment somebody is. The most valuable rooms in the list were the ones the list deliberately hid.
+
+`startMatch` now **re-announces** rather than deleting, with `live:1`. `unannounceRoom` is untouched and
+still runs on all three ways OUT (leave, the leave button, `beforeunload`) — the test counts the call sites
+so kickoff cannot quietly become a fourth again.
+
+**No new privacy decision is being made here.** The room code was already published the moment the host
+opened the lobby; continuing to publish it is the same exposure with strictly more utility, and the room's
+own player cap is the gate — a full room refuses with `{t:'full'}` and always has.
+
+### The cap is one derivation, or the list offers seats the door refuses
+
+`_maxPlayersFor(mode)` now takes the mode, so the **browser** computes the same number the host's door
+enforces, from a listing it has never connected to. Every existing call site passes nothing and reads the
+live mode exactly as before. A full room is listed and **not clickable** — a dead click is the "nothing
+happened" build 1147 removed — and the handler is only attached when there is a seat, rather than attached
+and then refused.
+
+### It works before the server is redeployed, which is why `max`/`live` are optional
+
+`lobbies.php` whitelists the fields it stores, so a client sending new ones against the currently deployed
+file has them silently dropped — and the room simply lists as an ordinary one, which **is** the whole fix.
+The server half is written (both fields clamped like every other, both defaulting when absent so an older
+client is unchanged) and adds the badge and the exact cap once uploaded. The browser derives the cap from
+the mode meanwhile.
+
+Verified live (`tools/probe/join-live.mjs`), every lobby PUT hooked and read back:
+
+```
+lobby     {live:0, players:3, max:8, mode:"coop"}      kickoff  {live:1, players:3, max:8}
+duel      {max:2}                                       left     zero PUTs
+list  COOP 3/8 Join · COOP 5/8 · in progress Join · COOP 8/8 FULL (disabled)
+      against a lobbies.php that has NOT been updated:  DUEL 2/2 FULL · COOP 4/8 Join
+```
+
+That last row is the point of the derivation: the old-server entries carry no `max` at all and still land on
+the right cap and the right button.
+
+**Two pins moved, and one was deliberately INVERTED** — `test-110`'s *"match start de-lists the lobby"* was
+asserting the defect. What it was really guarding, that a room nobody is in stops being advertised, is now
+asserted where it actually happens. `test-956`'s quoted the whole heartbeat body literal and broke on two
+added fields with every part of it still true; it asserts the members.
+
+**Not verifiable headless, and stated as such:** a real two-machine mid-match join. The code path is pinned
+at both ends (`phase:NET.phase` sent, `else { startGame(); }` received) and it predates this build; what
+1356 changes is only whether the room is in the list.

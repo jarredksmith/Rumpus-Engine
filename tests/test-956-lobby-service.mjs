@@ -22,7 +22,11 @@ assert(/localStorage\.getItem\('breach_lobby_db'\)/.test(src) && /if\(o==='off'\
   'self-hosters can override the endpoint; off switch works');
 assert(/function _mkLobbyKey\(\)/.test(src), 'owner key generator exists');
 assert(/if\(!_lobbyKey\) _lobbyKey=_mkLobbyKey\(\);/.test(src), 'announce mints the per-session owner key');
-assert(/players:1\+Object\.keys\(NET\.conns\)\.length, ts:Date\.now\(\), key:_lobbyKey \};/.test(src), 'heartbeat carries the key');
+// build 1356: the body gained max/live between the player count and the timestamp. Asserting the MEMBERS
+// rather than the whole literal — a pin against a literal is a pin against the literal, not against what
+// it says (this file's most repeated defect).
+assert(/players:1\+Object\.keys\(NET\.conns\)\.length,/.test(src) && /ts:Date\.now\(\), key:_lobbyKey \};/.test(src),
+  'heartbeat carries the key');
 assert(/_lobbyUrl\(_lobbyCode\)\+\(_lobbyKey\?'&k='\+_lobbyKey:''\), \{ method:'DELETE', keepalive:true \}/.test(src),
   'close is keyed and keepalive (survives unload)');
 assert(/if\(typeof r\.age==='number'\)\{ if\(r\.age<=20\) out\.push\(r\); \}/.test(src), 'freshness uses the server-computed age');

@@ -3,8 +3,8 @@
 // One self-contained endpoint, flat-file storage, no database needed.
 // Upload to public_html/api/lobbies.php on any PHP host (GoDaddy cPanel: PHP 7.4+ works).
 //
-//   GET    lobbies.php            -> { "<code>": {code,name,mode,players,age}, ... }  (fresh lobbies only)
-//   PUT    lobbies.php?c=<code>   -> heartbeat/upsert; JSON body {name,mode,players,key}
+//   GET    lobbies.php            -> { "<code>": {code,name,mode,players,max,live,age}, ... }  (fresh only)
+//   PUT    lobbies.php?c=<code>   -> heartbeat/upsert; JSON body {name,mode,players,max,live,key}
 //   DELETE lobbies.php?c=<code>&k=<key> -> close the lobby (key must match the creating host's)
 //   OPTIONS                       -> CORS preflight
 //
@@ -70,6 +70,8 @@ if ($method === 'GET') {
       'name'    => $r['name'],
       'mode'    => $r['mode'],
       'players' => $r['players'],
+      'max'     => isset($r['max']) ? (int)$r['max'] : 8,     // build 1356: the room's own player cap
+      'live'    => !empty($r['live']) ? 1 : 0,                // build 1356: 1 = the match has already started
       'age'     => max(0, $now - (int)$r['beat']),   // seconds since last heartbeat (server clock)
     ];
   }
@@ -106,8 +108,15 @@ if ($method === 'PUT') {
   $mode = isset($b['mode']) && is_string($b['mode']) && preg_match('/^[a-z]{2,8}$/', $b['mode']) ? $b['mode'] : 'coop';
   $players = isset($b['players']) ? (int)$b['players'] : 1;
   if ($players < 1) $players = 1; if ($players > 32) $players = 32;
+  // build 1356: a match in progress stays listed instead of vanishing at kickoff. Both fields are
+  // OPTIONAL and clamped like every other one — an older client that never sends them lists exactly as it
+  // did before, which is why the client half works against this file whether or not it has been deployed.
+  $max = isset($b['max']) ? (int)$b['max'] : 8;
+  if ($max < 1) $max = 1; if ($max > 32) $max = 32;
+  $live = !empty($b['live']) ? 1 : 0;
 
   $db[$code] = ['code' => $code, 'name' => $name, 'mode' => $mode, 'players' => $players,
+                'max' => $max, 'live' => $live,
                 'beat' => $now, 'keyHash' => $keyHash, 'ipHash' => $ipHash];
   saveAndClose($fh, $db);
   respond(200, ['ok' => true]);
