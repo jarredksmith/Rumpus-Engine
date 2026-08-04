@@ -7255,6 +7255,47 @@ const _fogSunDirU = { x:0, y:1, z:0 };                       // TOWARD the sun (
 const _fogParamsU = { x:0.04, y:0, z:0.5 };                  // x: height falloff /m · y: base Y · z: inscatter strength
 THREE.UniformsLib.fog.fogSunDirW = { value:_fogSunDirU };
 THREE.UniformsLib.fog.fogHeightP = { value:_fogParamsU };
+// ---------- build 1366: a zeroed light skips the BRDF ----------
+// updateLightBudget fades far emitters to intensity 0, and r149 keeps them SHADING anyway:
+// lights_fragment_begin calls RE_Direct UNGUARDED for every point and spot light, so a faded light --
+// and any fragment past the distance cutoff of one -- still runs a full BRDF_GGX per fragment. On the
+// stock level that is 13 of 29 point lights paying full shading for zero contribution.
+// getPointLightInfo / getSpotLightInfo already compute directLight.visible (false when the attenuated
+// colour is exactly black: zero intensity, or outside the range) and until this build it was read only
+// on the shadow lines. Wrapping the point and spot RE_Direct calls in an if makes the fade SAVE the
+// shading it pretends to. The DIRECTIONAL loop is deliberately untouched: getDirectionalLightInfo sets
+// visible unconditionally true, and the build 1185 cascade pick blackens directLight.color there on
+// purpose -- a guard there would either do nothing or invite breaking the cascades.
+// A GLOBAL chunk edit, not onBeforeCompile: one program text for every lit material, compiled once,
+// no customProgramCacheKey concern, no per-material walk. The wrap stays on ONE line so the loop
+// unroller still ends its lazy match on the closing brace of the loop itself (proven against the real
+// WebGLProgram unrollLoopPattern in test-1366). Nothing here touches castShadow, .visible or the light
+// COUNT -- those are the 977/1348 recompile traps and this is a shader-text change only.
+function _lgbGuardVisible(txt){
+  let out = txt, n = 0;
+  const call = 'RE_Direct( directLight, geometry, material, reflectedLight );';
+  const pre = 'if ( directLight.visible ) \u007b ';
+  for(const info of ['getPointLightInfo( pointLight, geometry, directLight );',
+                     'getSpotLightInfo( spotLight, geometry, directLight );']){
+    const at = out.indexOf(info);
+    if(at < 0) continue;
+    const ci = out.indexOf(call, at);
+    if(ci < 0) continue;
+    if(out.slice(Math.max(0, ci - pre.length), ci) === pre){ n++; continue; }   /* already guarded: idempotent */
+    out = out.slice(0, ci) + pre + call + ' \u007d' + out.slice(ci + call.length);
+    n++;
+  }
+  return { txt: out, n: n };
+}
+// The replace is VERIFIED to land (the 1181/1183 rule -- a silently-missed replace is how this file has
+// twice lost a subsystem): anything but exactly two landings warns loudly and leaves the chunk UNTOUCHED
+// rather than shipping a half-guarded loop. The typeof gate keeps the boot harness (stub THREE) silent.
+const _lgbChunk0 = THREE.ShaderChunk.lights_fragment_begin;
+if(typeof _lgbChunk0 === 'string'){
+  const _lgbR = _lgbGuardVisible(_lgbChunk0);
+  if(_lgbR.n === 2) THREE.ShaderChunk.lights_fragment_begin = _lgbR.txt;
+  else if(typeof console !== 'undefined') console.warn('[RUMPUS] visible-guard patch landed ' + _lgbR.n + '/2 needles in lights_fragment_begin \u2014 chunk left UNTOUCHED (did a three upgrade move the RE_Direct calls?)');
+}
 // ...but ShaderLib MERGED UniformsLib.fog at module load, so a late add to the lib alone reaches NOTHING:
 // initMaterial clones ShaderLib[shaderID].uniforms and seqWithValue silently drops any program uniform with
 // no value — both new uniforms would sit at GL zero forever (falloff 0 = plain exp2 fog, inscatter 0).
@@ -31826,7 +31867,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1365 · 2026-08-04';
+const BUILD_VERSION = 'build 1366 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
