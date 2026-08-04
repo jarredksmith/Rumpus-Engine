@@ -141,8 +141,8 @@ const enemyAt = (z, type = 'grunt') => ({ mesh: { position: { x: 0, y: 1, z } },
   // It rides the EXISTING `aware` rising edge — the one build 1214 put there for the logic graph, with the
   // comment explaining that four things can set `aware` and watching it in one place means every one of
   // them fires it and none fires it twice. That argument is exactly as true for a sound.
-  assert(/if\(en\.aware && !en\._wasAware\)\{ en\._wasAware=1; _lgEnemyEvent\('onspot'[\s\S]{0,520}SFX\.enemySpot\(en\.mesh\.position, !!ENEMY_HEAVY\[en\.type\]\); \}/.test(src),
-    'the vocal is on the same rising edge as the onspot logic event');
+  assert(/if\(en\.aware && !en\._wasAware\)\{ en\._wasAware=1; _lgEnemyEvent\('onspot'[\s\S]{0,520}SFX\.enemySpot\(en\.mesh\.position, !!ENEMY_HEAVY\[en\.type\]\);/.test(src),
+    'the vocal is on the same rising edge as the onspot logic event (1371 hung the reaction delay after it, so the block no longer ends at the vocal)');
   assert(/the aggro vocal rides the SAME rising edge, for the same reason the comment above\n           gives/.test(src),
     '...and says why rather than repeating the reasoning');
   assert(/else if\(!en\.aware && en\._wasAware\) en\._wasAware=0;/.test(src),

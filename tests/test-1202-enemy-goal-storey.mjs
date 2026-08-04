@@ -6,7 +6,7 @@
 // every chase/contact/search return, the last-known position stores the height it was seen at, and the
 // follow-path call hands it to the goal-layer pick. Patrol/wander/hold returns stay height-less by
 // design — a post and a wander point are ground concepts, and layer A is the right default there.
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, extractConst, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- the descriptor, executed
@@ -14,6 +14,7 @@ const src = gameSource();
   const fn = extractFunction('enemyDesiredTarget');
   const mk = (over) => Object.assign({ mesh:{ position:{ x:0, y:1.4, z:0 } }, mode:'hunt', _seesC:true, _losT:1, _losIv:1e9, aware:false, lostAt:0, lkp:null, _nearEyeY:1.4 }, over);
   const run = new Function('en','px','pz','dist','now','py',
+    'const HUNT_ACQ_MUL = ' + extractConst('HUNT_ACQ_MUL') + ';\n' +   /* build 1371: the gate reads it */
     'const _losBudget=99; function segmentBlocked(){ return false; }\n' + fn + '\nreturn enemyDesiredTarget(en,px,pz,dist,now,py);');
   { const en = mk({}); const td = run(en, 5, 5, 7, 1000, 3.2);
     eq(td.ty, 3.2, 'a seen target\'s height rides the descriptor — the chase ends on the ROOF, not under it');
@@ -22,7 +23,7 @@ const src = gameSource();
     eq(td.tx, 2, 'sight lost: the enemy heads to the last-known position');
     eq(td.ty, 3.2, '...at the height it was SEEN at — the memory includes which storey, not where the target is now'); }
   { const en = mk({ _seesC:false }); const td = run(en, 5, 5, 7, 1000, 3.2);
-    eq(td.ty, 3.2, 'the never-seen advance (original hunt feel) carries the height too'); }
+    eq(td.ty, 3.2, 'the never-seen IN-RANGE advance (live pursuit is earned inside detectR*2.5 since 1371) carries the height too'); }
 }
 
 // ---------------------------------------------------------------- the wiring
@@ -34,7 +35,7 @@ const src = gameSource();
   const fn = extractFunction('enemyDesiredTarget');
   assert(/return \{ tx:t\.x, tz:t\.z, chase:false, see:false \};/.test(fn),
     'patrol route points stay height-less BY DESIGN — a post is a ground concept and layer A is right there');
-  eq((fn.match(/ty:/g)||[]).length, 5, 'exactly the five chase/contact/search returns carry ty — no more, no fewer');
+  eq((fn.match(/ty:/g)||[]).length, 6, 'exactly the six chase/contact/search returns carry ty (1371 split the cold-hunt fallback into the earned live advance + the spawn-time objective) — no more, no fewer');
 }
 
 done('build 1202: the enemy pursuit carries the target\'s storey — descriptor executed through seen/lost-sight/never-seen cases (lkp remembers the height it was SEEN at), the caller feeds the real player height, the goal-layer pick receives it, and patrol stays deliberately grounded');

@@ -22005,6 +22005,10 @@ function _combatTargets(){
   }
   return _ctArr;
 }
+// build 1371 (feel #7): hunt-mode acquisition. A never-seen hunt earns LIVE-position pursuit — the target
+// inside detectR x this multiplier, or a real engagement (aware) — and otherwise advances on a spawn-time
+// objective (en._huntObj) instead of x-raying the map. 2.5x the sight radius keeps hunt the eager mode.
+const HUNT_ACQ_MUL = 2.5;
 function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = the target's height, so a pursuit ends on the STOREY the target stands on */
   /* build 1355: _noTgt is an ALLY (or third party) with nothing left to fight this frame. It must not fall
      back to hunting the player — so for this frame it behaves exactly like 1226's pacifist: patrols its
@@ -22034,7 +22038,19 @@ function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = th
       if(Math.hypot(en.mesh.position.x-en.lkp.x, en.mesh.position.z-en.lkp.z) < 1.4 && (now-en.lostAt) > 2500){ en.lkp=null; }   // reached last spot, gave up the trail
       else return { tx:en.lkp.x, tz:en.lkp.z, ty:en.lkp.y, chase:true, see:false };   // hunt the last-known position
     }
-    return { tx:px, tz:pz, ty:py, chase:true, see:false };   // never saw it yet -> advance toward it (original hunt feel)
+    /* build 1371 (feel #7): hunt used to bypass the perception model right here — this fallback chased the
+       LIVE target position from any distance, through walls, on frame 1 (measured: a grunt 75 m out, aware
+       of nothing, beelining the player). Live-position pursuit is now EARNED: the target inside acquisition
+       range (a generous 2.5x sight radius, so hunt stays the eager mode), or a genuine engagement (aware —
+       set by sight above and by alertEnemy, so gunfire is still the dinner bell, and a hunt that has gone
+       hot once keeps the exact pre-1371 behaviour: aware is sticky in hunt mode). */
+    if(en.aware || dist <= (en.detectR||18)*HUNT_ACQ_MUL) return { tx:px, tz:pz, ty:py, chase:true, see:false };
+    /* Cold hunt: advance on where the target stood when the hunt began — captured ONCE, on the first cold
+       frame (for a wave spawn that is the frame after spawn, so the wave converges on where you WERE, not
+       on where you are). px/pz is the resolved target, which makes this faction-correct (1355) for free
+       where a literal capture-at-spawn of the player would not be. */
+    if(!en._huntObj) en._huntObj = { x:px, z:pz, y:py };
+    return { tx:en._huntObj.x, tz:en._huntObj.z, ty:en._huntObj.y, chase:true, see:false };
   }
 
   // PATROL / HOLD: detection is now gated on BOTH range AND line-of-sight.
@@ -31973,7 +31989,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1370 · 2026-08-04';
+const BUILD_VERSION = 'build 1371 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38407,7 +38423,14 @@ function _enStep(en, tvx, tvz, dt){
         /* build 1315: the aggro vocal rides the SAME rising edge, for the same reason the comment above
            gives — four things can set `aware`, and watching it here means every one of them sounds it and
            none of them sounds it twice. */
-        if(typeof SFX!=='undefined' && SFX.enemySpot) SFX.enemySpot(en.mesh.position, !!ENEMY_HEAVY[en.type]); }
+        if(typeof SFX!=='undefined' && SFX.enemySpot) SFX.enemySpot(en.mesh.position, !!ENEMY_HEAVY[en.type]);
+        /* build 1371 (feel #7): the reaction delay rides the same edge, for the same reason again — once per
+           ACQUISITION, never per frame. shootCd is seeded once at spawn and ticks down while the enemy walks,
+           so one rounding a corner with it long expired fired on frame 1 of contact; AAA gives 300-800 ms.
+           Math.max only ever LENGTHENS what is pending (a mid-burst cadence is untouched), and the floor
+           lands before the attack gates below run this frame, so the very first contact frame is covered. */
+        en.shootCd = Math.max(en.shootCd||0, 0.35 + Math.random()*0.25);
+        en.cooldown = Math.max(en.cooldown||0, 0.25); }
       else if(!en.aware && en._wasAware) en._wasAware=0;
       en._chase = td.chase; en._see = !!td.see;
       // face the player only when actually seen; while hunting a last-known spot, face where we're walking
