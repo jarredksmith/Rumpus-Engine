@@ -79,7 +79,7 @@ async function run() {
           }
           requestAnimationFrame(t); }; requestAnimationFrame(t); })`);
       const file = path.join(OUT, s.id + '.png');
-      await page.screenshot({ path: file });
+      await page.screenshot({ path: file, timeout: 180000 });   /* SwiftShader at ~1 fps can take >30 s to produce a frame under load — the default timeout was killing multi-theme runs at theme 2 */
       meta.push({ id: s.id, desc: s.desc, file, info: JSON.parse(info) });
       console.log(s.id.padEnd(14), JSON.parse(info).centreHit === 'sky' ? 'sky' : JSON.stringify(JSON.parse(info).centreHit), '  ->', file);
     }

@@ -20506,7 +20506,14 @@ document.addEventListener('mousemove', e=>{
   if(typeof cursorAimActive==='function' && cursorAimActive() && !drivingCar){ _vcX += mx; _vcY += my; return; }   // build 874: the pointer steers the twin-stick cursor, not the head (build 1103: chase-cursor too)
   const sens = _mouseSensNow(ads);   /* build 1281: one derivation, so the two mouse paths cannot drift */
   player.yaw   -= mx * sens;
-  player.pitch -= my * sens;
+  /* build 1362: recoil correction-subtraction. The view kick is a temporary camera offset that springs
+     back on its own, so a player who pulls the mouse DOWN against a live kick would otherwise be
+     corrected twice - once by their own pull lowering player.pitch, once by the spring returning the
+     offset - and end up staring at the floor. Pulling down CONSUMES the remaining recoil first; only
+     what is left of the pull reaches player.pitch. Pulling up, and yaw, are untouched. */
+  let _mpd = my * sens;   /* the requested pitch decrease (mouse down = positive my = look down) */
+  if(_recPitch > 0 && _mpd > 0){ const _c = Math.min(_recPitch, _mpd); _recPitch -= _c; _mpd -= _c; }
+  player.pitch -= _mpd;
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
   if(drivingCar && mx) drivingCar.userData._lookCd = 0.6;   // build 765: pause the follow-cam recenter while you orbit with the mouse
 });
@@ -21044,14 +21051,14 @@ flash.position.set(0,0,0); flash.visible = false; vmMuzzle.add(flash);   // soli
 
 // ---------- Weapon system (data-driven) ----------
 const WEAPONS = {
-  rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0 },
-  pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85 },   // build 976: single-shot semi-auto sidearm
-  smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7 },
-  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, shellReload:true, shellIntroMs:260, shellMs:420, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
-  sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
-  launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
-  crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
-  hands:   { name:'FISTS',   drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
+  rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0, kickV:0.014, kickH:0.005 },
+  pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85, kickV:0.018, kickH:0.006 },   // build 976: single-shot semi-auto sidearm
+  smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7, kickV:0.008, kickH:0.003 },
+  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, shellReload:true, shellIntroMs:260, shellMs:420, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35, kickV:0.034, kickH:0.010 },
+  sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6, kickV:0.040, kickH:0.008 },
+  launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2, kickV:0.035, kickH:0.012 },
+  crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0, kickV:0, kickH:0 },
+  hands:   { name:'FISTS',   drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0, kickV:0, kickH:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
 };
 // build 623: the factory damage of each weapon, captured before any saved override is applied, so the editor can
 // show/reset to default and serialize ONLY a damage that was actually changed (keeps old levels on the defaults).
@@ -21070,7 +21077,8 @@ const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k]
 // per-stat reset-to-factory button and the clamp all already exist and all work on any key in this array —
 // which is what that build was for. `melee` rides as 0/1 so it needs no separate boolean path; every reader
 // already asks `if(w.melee)` / `!!w.melee`.
-const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach','windup'];
+/* build 1362: kickV/kickH (the per-weapon view kick, vertical + alternating horizontal) join the sheet. */
+const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach','windup','kickV','kickH'];
 // build 1297: the shortest reach a melee weapon may be authored to, and the closest a bot will stand while
 // swinging one. They are stated together because the ONLY thing that matters is the inequality between
 // them: a bot holds `max(BOT_MELEE_MIN, reach*0.7)` and hits inside `reach`, so if the floor on reach ever
@@ -21081,7 +21089,7 @@ const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','re
 const BOT_MELEE_REACH_MIN = 1.2, BOT_MELEE_MIN = 1.0;
 // build 1296: pellets floors at 0, not 1. A melee weapon fires none, and the old floor rewrote the crowbar's
 // authored 0 into a 1 the moment any stat was applied — the same spurious-diff fault as magSize below.
-const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12], windup:[0,600] };
+const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12], windup:[0,600], kickV:[0,0.15], kickH:[0,0.08] };
 // The live values are NORMALISED here, beside the baseline that is captured from them: `melee` starts as
 // `true`/undefined and `reach` is absent on every gun, and the serializer emits a stat whenever it differs
 // from its baseline — so leaving `true` beside a baseline of `1` would write a spurious melee override into
@@ -21093,7 +21101,10 @@ const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k];
      A gun fires on the frame you pull the trigger and ships 0; a swing has to travel. Melee enemies have
      had a telegraph since build 627 (ENEMY_MELEE_WINDUP_MS) — the player never did. */
   _w.windup = _w.windup!=null ? _w.windup : (_w.melee ? (_w.fists ? 90 : 160) : 0);
-  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach, windup:_w.windup }; _w.reserve0=_w.reserve; }
+  /* build 1362: normalise the kicks the same way (and for the same reason) as melee/reach/windup - the
+     only-changed serializer diffs the live value against this baseline, so the two must be identical. */
+  _w.kickV = +_w.kickV || 0; _w.kickH = +_w.kickH || 0;
+  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach, windup:_w.windup, kickV:_w.kickV, kickH:_w.kickH }; _w.reserve0=_w.reserve; }
 // build 1240: RENAME WEAPONS — reported from play ("add a sword/axe/staff... we have melee, so maybe
 // the answer is the ability to rename"). The name follows 1190's exact pattern: a factory baseline
 // captured at boot, only-changed values serialized (nm), one sanitizer every loader routes through.
@@ -24797,7 +24808,7 @@ function _applyCrushFromProp(obj, speed, dt){
 }
 function applyEnemyDamageToSelf(dmg, sx, sz){
   if(buffs.shield>0){ const a=Math.min(buffs.shield,dmg); buffs.shield-=a; dmg-=a; }
-  player.hp -= dmg; flashDamage(); SFX.hurt(); addShake(Math.min(0.5, dmg/55)); if(sx!=null) hurtDir(sx,sz); updateHUD();
+  player.hp -= dmg; flashDamage(); SFX.hurt(); addShake(Math.min(0.5, dmg/55)); _recPunch(dmg, sx, sz); if(sx!=null) hurtDir(sx,sz); updateHUD();   /* build 1362: aim punch - the view jolts away from the hit and springs back */
   if(player.hp<=0) playerDied();
 }
 // build 693: checkpoints. A signal can drop a checkpoint at the player's spot; with "Respawn at checkpoint" on, a
@@ -25613,7 +25624,7 @@ function applyPvpDamage(dmg, from){
   if(duelDead || duelInvuln>0) return;
   if(sameTeam(from, NET.myId)) return;   // no friendly fire in team modes
   if(buffs.shield>0){ const a=Math.min(buffs.shield,dmg); buffs.shield-=a; dmg-=a; }
-  player.hp -= dmg; lastDamagedBy = (from!=null?from:lastDamagedBy); flashDamage(); SFX.hurt(); addShake(Math.min(0.5, dmg/55)); { const rp=(from!=null)?NET.players[from]:null; if(rp&&rp.posEye) hurtDir(rp.posEye.x, rp.posEye.z); else { const bb=(typeof botById==='function')?botById(from):null; if(bb) hurtDir(bb.pos.x, bb.pos.z); } } updateHUD();
+  player.hp -= dmg; lastDamagedBy = (from!=null?from:lastDamagedBy); flashDamage(); SFX.hurt(); addShake(Math.min(0.5, dmg/55)); { const rp=(from!=null)?NET.players[from]:null; if(rp&&rp.posEye){ hurtDir(rp.posEye.x, rp.posEye.z); _recPunch(dmg, rp.posEye.x, rp.posEye.z); } else { const bb=(typeof botById==='function')?botById(from):null; if(bb){ hurtDir(bb.pos.x, bb.pos.z); _recPunch(dmg, bb.pos.x, bb.pos.z); } else { _recPunch(dmg, null, null); } } } updateHUD();   /* build 1362: aim punch rides the ALREADY-COMPUTED hurt source - an unknown attacker still jolts, just without a direction */
   if(player.hp<=0) duelDie();
 }
 function updateRespawnOverlay(){
@@ -28881,6 +28892,50 @@ function _shakeN(t, k){
   return Math.sin(t*23.7 + k*1.7)*0.55 + Math.sin(t*11.3 + k*4.9)*0.30 + Math.sin(t*47.1 + k*9.1)*0.15;
 }
 const SHAKE_DECAY = 1.1;   // per second, linear — duration is proportional to amplitude, which is right
+/* ---- build 1362: recoil that RECOVERS (feel critic #2/#3/#14 - one mechanism) -----------------------
+   The old view kick wrote 0.010..0.016 rad straight into player.pitch per shot: a PERMANENT displacement (no site among
+   the 26 player.pitch mutations ever subtracted it back - one SMG magazine walked the view 23-31 degrees
+   and 20 frames after release recoveredDeg was 0), weapon-agnostic except a x2.4 scope factor (SMG 14.3
+   deg/s of climb against the shotgun’s 1.4 - exactly backwards), and yaw was never touched. It is now a
+   pair of CAMERA-OFFSET accumulators, applied beside the shake in the frame loop and sprung back to zero
+   exponentially. player.pitch is never written, so nothing is permanent, releasing the trigger returns
+   the view to exactly where the player left it, and build 1102’s cursor-view rule needs no second copy:
+   the kick never accumulates outside first-person aim, and the cursor-view cameras (_vcamPose) overwrite
+   the rotation regardless. Per-weapon kickV/kickH ride build 1190's stat sheet, so they serialize as
+   only-changed diffs, clamp against hostile files, load through all three loaders and get an editor row
+   for free. */
+let _recPitch = 0, _recYaw = 0, _recSign = 1;
+const REC_SPRING = 8;    /* per-second exponential return - ~63% recovered in 125 ms, ~91% in 300 ms */
+const REC_MAX = 0.22;    /* rad. Sustained automatic fire holds a small lean, never a ceiling-stare; the
+                            applied camera pitch also clamps at 1.55 so base aim + offset stays under vertical */
+function _recKick(w){
+  /* build 1102’s gate, kept as ONE predicate both kick sites (hitscan + rocket) share: in top-down/side/
+     chase-cursor the pitch is not the aim, so the view is never kicked there. */
+  if(activeViewMode()!=='fps') return;
+  const _a = (adsBlend>0.5 ? 0.6 : 1);   /* aiming steadies the kick; the per-weapon values do the rest */
+  _recPitch = Math.min(REC_MAX, _recPitch + (w.kickV||0)*_a);
+  _recSign = -_recSign;   /* horizontal recoil alternates side with a random lean - a drift, never a metronome */
+  _recYaw = Math.max(-REC_MAX, Math.min(REC_MAX, _recYaw + (w.kickH||0)*_a*(_recSign + (Math.random()-0.5)*0.6)));
+}
+/* build 1362: aim punch on damage. Being hit moved nothing but a sub-pixel shake - the view now takes a
+   dmg/maxHp-scaled jolt AWAY from the source, along the same forward/right decomposition hurtDir aims its
+   arc with, through the same recovering accumulators as weapon recoil. Gated by build 1313’s a11y.shake
+   like every other physical reaction, so motion-comfort players keep the flash + the direction indicator
+   without the jolt. A source-less hit (an unknown attacker) still jolts, just without a direction. */
+function _recPunch(dmg, sx, sz){
+  const _sc = (typeof a11y!=='undefined') ? a11y.shake : 1;
+  const mag = Math.min(0.06, 0.10 * (dmg / Math.max(1, player.maxHp||100))) * _sc;
+  if(!(mag > 0)) return;
+  let f = 1, r = 0;
+  if(sx != null && sz != null){
+    const dx = sx - player.pos.x, dz = sz - player.pos.z;
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+    const d = Math.hypot(dx, dz) || 1;
+    f = (dx*fx + dz*fz)/d; r = (dx*rx + dz*rz)/d;
+  }
+  _recPitch = Math.min(REC_MAX, _recPitch + mag*(0.6 + 0.4*Math.abs(f)));   /* up-kick, strongest for a frontal hit */
+  _recYaw = Math.max(-REC_MAX, Math.min(REC_MAX, _recYaw + mag*r*0.8));     /* and away from the side it came from (+yaw = left) */
+}
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){
     const g = grenades[i];
@@ -28942,7 +28997,7 @@ function fireRocketShot(){
     d.copy(_t).sub(o).normalize();
   }
   o.addScaledVector(d, 1.2);                 // spawn just ahead of the camera
-  addShake(0.22); if(activeViewMode()==='fps') player.pitch += 0.02;   // chunky launch kick (build 1102: not in cursor views — pitch isn't the aim there)
+  addShake(0.22); _recKick(W());   /* build 1362: through the shared per-weapon kick (the fps gate lives inside) */   // chunky launch kick (build 1102: not in cursor views — pitch isn't the aim there)
   if(!WEAPONS.launcher.noMuzzle){
     if(tpActive() || activeViewMode()!=='fps'){ const _mp=new THREE.Vector3(); if(typeof tpMuzzleWorld==='function') tpMuzzleWorld(_mp); else _mp.copy(o); muzzleFlashAt(_mp); }   // build 1102: world flash at the character, not the sky-camera light
     else { muzzle.intensity=8; flashMat.opacity=1; playFlipbook('muzzle', new THREE.Vector3(0,0,-0.05), 0.7, vmMuzzle); } }   // build 684: per-weapon muzzle-flash toggle
@@ -31633,7 +31688,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1361 · 2026-08-04';
+const BUILD_VERSION = 'build 1362 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34094,7 +34149,7 @@ function shoot(){
   // the aim (the cursor is), so kicking it silently corrupted the stored pitch for later FPS play.
   if(activeViewMode()==='fps'){
     recoil = Math.min(recoil + (0.018*w.pellets*0.5 + 0.014) * (adsBlend>0.5?0.5:1) * (w.scope?2.0:1), 0.10);
-    player.pitch += (0.010 + Math.random()*0.006) * (adsBlend>0.5?0.5:1) * (w.scope?2.4:1);
+    _recKick(w);   /* build 1362: per-weapon view kick into the RECOVERING camera-offset accumulators - the old write into player.pitch here was a permanent displacement that nothing ever subtracted back */
   }
   // (build 1102: the muzzle flash and the network shot moved BELOW, where the real muzzle position
   // and aim direction are known — the flash used to fire a camera-attached light, which in a
@@ -37644,6 +37699,20 @@ function loop(){
       shake = Math.max(0, shake - dt*SHAKE_DECAY);
     } else { shake = 0; camera.rotation.z = _camLean; }
     if(tpActive() && gameOn && !duelDead){ gun.visible=false; tpCameraPushback(dt); }   // third-person chase cam (first-person above is the default; build 894: damped follow, forced by Camera view: Third-person)
+    /* ---- build 1362: apply + spring the recoil view-kick ------------------------------------------
+       A CAMERA offset, never a write into player.pitch, so nothing is permanent and the aim the player
+       stored is exactly the aim they get back. The spring is exponential and dt-correct (multiplicative
+       decay composes: two 8 ms frames land where one 16 ms frame does), so recovery is identical at 30
+       and 144 Hz. The applied pitch clamps at 1.55 so base aim + offset can never cross vertical. Cursor
+       views are unaffected twice over: _recKick never accumulates outside fps aim, and _vcamPose below
+       overwrites the rotation regardless. */
+    if(_recPitch !== 0 || _recYaw !== 0){
+      camera.rotation.x = Math.max(-1.55, Math.min(1.55, camera.rotation.x + _recPitch));
+      camera.rotation.y += _recYaw;
+      const _rk = Math.exp(-REC_SPRING * dt);
+      _recPitch *= _rk; _recYaw *= _rk;
+      if(Math.abs(_recPitch) < 1e-5 && Math.abs(_recYaw) < 1e-5){ _recPitch = 0; _recYaw = 0; }   /* settle exactly, stop paying */
+    }
   }
   // build 874: per-level camera views. Placed AFTER the branch ladder so it wins over first/third-person
   // and the car chase cam; the turret seat, PvP killcam and cutscenes keep their own cameras.
@@ -46023,7 +46092,7 @@ function renderEditorFields(){
           r.appendChild(lb); r.appendChild(cb); r.appendChild(nt); urlHost.appendChild(r); }
         const DEFS = _isM
           ? [ ['reach','Reach m',0.1], ['fireRate','Swing interval ms',10], ['windup','Contact delay ms',10] ]
-          : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1] ];
+          : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1], ['kickV','Recoil kick rad',0.002], ['kickH','Recoil side rad',0.001] ];
         for(const [sk, lbl, stp] of DEFS){
           const r=document.createElement('div'); r.className='row2'; r.style.margin='2px 0';
           const lb=document.createElement('span'); lb.textContent=lbl; lb.style.cssText='flex:0 0 108px;font-size:11px;color:#9fc0b8;';

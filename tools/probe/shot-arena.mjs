@@ -72,7 +72,7 @@ await withGame(async (P, page) => {
           exposure:+renderer.toneMappingExposure.toFixed(3), aa:_aaState().aa, lights:_lightLoad(_lightCensus()) }));
         requestAnimationFrame(t); }; requestAnimationFrame(t); })`);
     const file = path.join(OUT, b.theme + '.png');
-    await page.screenshot({ path: file });
+    await page.screenshot({ path: file, timeout: 180000 });   /* SwiftShader at ~1 fps can take >30 s to produce a frame under load — the default timeout was killing multi-theme runs at theme 2 */
     meta.push({ theme: b.theme, kb: b.kb, file, loaded, place: JSON.parse(info), frame: JSON.parse(shot) });
     console.log(b.theme.padEnd(11), loaded, JSON.parse(shot).draws + ' draws', JSON.parse(shot).tris + ' tris', '->', file);
     // clear before the next theme, or every arena stacks on the last
