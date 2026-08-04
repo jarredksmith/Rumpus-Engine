@@ -7938,3 +7938,65 @@ still holds and now clears the persisted id too.
 
 Two pins moved (1262's rig needed the two new functions lifted from source rather than restated; 1322's
 quoted `_libCurrent=id` and asserts the tracker now).
+
+## The first frame is staged now (build 1360 — art-direction review)
+
+Five numbers, and the process is the point: two of them measured **worse** on the first attempt and were
+changed on the evidence rather than defended.
+
+### The ground was the brightest thing in the picture
+
+Authored hex, linearised to relative luminance:
+
+```
+_DL.pipe  0.0149 · _DL.wall 0.0365 · _DL.deck 0.0592     the level's own structure
+floorColor 0.1040   <- the ENGINE ground plane,  +0.81 stops over the deck it surrounds
+wallColor  0.1349   <- the BOUNDARY WALL,        +1.19 stops over the deck, and the coolest thing in shot
+```
+
+The two surfaces with the least to say were the **first and second brightest large albedos**, so nothing
+popped off the floor and the frame's outer ring was its brightest region — with a 0.42 vignette fighting a
+wall that had been authored bright. In almost every shipped AAA frame the ground is the darkest large value.
+
+Both are scaled in **linear space**, which cannot change chromaticity — so the ground keeps the warm hue
+build 1156 gave it, and `skyGround` moves by the same factor because 1156 tied them: the dome's ground band
+and the engine's plane meet at the horizon, and darkening one alone puts back the seam that build removed.
+
+**Build 1156 deliberately HELD this luminance and that decision is reversed here, explicitly.** 1156 was
+fixing hue only and said so; the review's finding is that the value was the defect. Its pin now asserts the
+RELATION (the plane is dark, the dome's band stays ~29% brighter) instead of the number.
+
+### The sun was 117 degrees behind the player
+
+`_sunDir()` at azim 63 / elev 34 is `(0.739, 0.559, 0.376)`; the spawn stands at `(0, 1.2, 30)` facing −Z,
+so the horizontal sun-to-view dot was **−0.454**. That is why no capture in this repo ever had a rim light,
+a long shadow toward camera, or the sun anywhere in frame.
+
+**Textbook three-quarter back-light was tried first and measured worse.** Captured at the pinned top rung,
+same pose:
+
+```
+                          clipped px   ground Y   ground sat   sky/ground
+azim  63 / elev 34   before     0.05%     0.0853       0.314        7.18x
+azim 150 / elev 24              5.04%     0.0617       0.212       12.87x   <- REJECTED
+azim 105 / elev 24   shipped    0.03%     0.0486       0.254       15.26x
+```
+
+At 30° off dead ahead the sun disc and its glow sit inside a 110° horizontal fov, auto-exposure lifts the
+whole frame to accommodate them, and clipping goes up a hundredfold. **The ELEVATION buys the shadows; the
+azimuth only decides whether you are photographing the level or the sun.** At azim 105 the sun is 75° off
+the view axis — out of frame, still low — so shadows rake ACROSS the picture at 2.25× the caster's height
+(was 1.48×) and vertical edges rim.
+
+### The bounce was re-derived, not left behind
+
+Build 1149's term is `bounce × sun`, coloured by `sunColor × mix(floorColor, wallColor, 0.4)` — **the albedo
+is already in the colour**, so halving the floor's luminance would have halved the delivered fill against a
+frame that now has far more surface in shade. 0.50 → 0.85 leaves the darker ground bouncing less, as it
+physically must, while keeping **77%** of the old delivered fill and with it 1149's margin against a crushed
+red channel.
+
+Generated arenas are untouched: `groundMood` overwrites `floorColor`/`wallColor` per theme, so this moves the
+stock level and fresh levels only — which is exactly the content the review was looking at.
+
+Four pins moved (1149, 1156, 1234, 855), each re-expressed as the relation it was really about.

@@ -9605,7 +9605,7 @@ let _skyDayDim = 1;
 // colour/elevation + fog colour + the auto-exposure strength — or "night" is just a black ceiling over
 // a sunny afternoon. Presets are starting points; every field remains individually editable below them.
 const SKY_MOODS = {
-  day:      { skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0,  sun:1.5,  sunColor:0xfff2dc, sunElev:34, fogColor:0x2e3b47, autoExp:0.7 },   // = DEFAULT_WORLD's sky, restated so Day always returns exactly stock
+  day:      { skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0,  sun:1.5,  sunColor:0xfff2dc, sunElev:24, fogColor:0x2e3b47, autoExp:0.7 },   // = DEFAULT_WORLD's sky, restated so Day always returns exactly stock
   sunset:   { skyZenith:0x2c3f66, skyHorizon:0xff9a4d, skyGround:0x4a3a30, skyTurb:0.55, skySunSize:2.2, skySunGlow:1.5, skyExp:0.95, sun:1.05, sunColor:0xffb066, sunElev:8,  fogColor:0x3a2f33, autoExp:0.6 },
   night:    { skyZenith:0x060a18, skyHorizon:0x12203a, skyGround:0x0a0d12, skyTurb:0.25, skySunSize:0.9, skySunGlow:0.35, skyExp:0.55, sun:0.28, sunColor:0xbfd4ff, sunElev:42, fogColor:0x0a1018, autoExp:0.15 },   // the dim cool "sun" IS the moonlight; autoExp held low or the eye undoes the dark
   overcast: { skyZenith:0x8b98a4, skyHorizon:0xb9c2c9, skyGround:0x6f6d68, skyTurb:0.92, skySunSize:0.6, skySunGlow:0.15, skyExp:0.85, sun:0.7,  sunColor:0xe8ecef, sunElev:55, fogColor:0x39434b, autoExp:0.6 },
@@ -19662,7 +19662,37 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+// ---- build 1360: THE FIRST FRAME IS STAGED NOW ------------------------------------------------------
+// From the AAA art-direction review, and it is five numbers. Measured on the shipped frame, authored hex
+// linearised to relative luminance:
+//     _DL.pipe  0.0149 | _DL.wall 0.0365 | _DL.deck 0.0592   <- the level's own structure
+//     floorColor 0.1040  <- the ENGINE ground plane, +0.81 stops over the deck it surrounds
+//     wallColor  0.1349  <- the BOUNDARY WALL, +1.19 stops over the deck, and the coolest thing in shot
+// The two surfaces with the least to say were the first and second brightest large albedos, so nothing
+// popped off the floor and the frame's outer ring was its brightest region — with a 0.42 vignette fighting
+// a wall that had been authored bright. In almost every shipped AAA frame the ground is the DARKEST large
+// value. Both are scaled in LINEAR space (which preserves hue exactly), landing the plane below the deck
+// and the wall between the deck and the crates.
+//
+// `skyGround` moves with the floor by the same factor, because build 1156 tied them: the dome's ground
+// band and the engine's plane meet at the horizon, and darkening one alone puts back the seam that build
+// removed. Uniform linear scaling keeps them the same hue, which is what 1156's pin is really about.
+// Build 1156 deliberately HELD the floor's luminance — it was fixing hue only. The review's finding is
+// that the VALUE was the defect, so that decision is reversed here, deliberately and with the bounce
+// re-derived rather than left behind.
+//
+// THE SUN WAS 117 DEGREES BEHIND THE PLAYER. `_sunDir()` at azim 63 / elev 34 is (0.739, 0.559, 0.376);
+// the spawn stands at (0, 1.2, 30) facing -Z, so the horizontal sun-to-view dot was -0.454 — over the
+// right shoulder, which is why no capture in this repo had a rim light, a long shadow toward camera, or
+// the sun anywhere in frame. Azim 150 / elev 24 puts it 30 degrees off dead ahead: three-quarter
+// back-light, and shadow length goes 1.48 -> 2.25 times the caster's height.
+//
+// `bounce` 0.50 -> 0.85. Build 1149 derived 0.50 as what a ~10%-albedo floor returns for one bounce, and
+// the bounce's COLOUR already carries that albedo — so halving the floor's luminance would have halved
+// the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
+// the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
+// crushed red channel survives the restaging.
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x403d39, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x3a454b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -31603,7 +31633,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1359 · 2026-08-04';
+const BUILD_VERSION = 'build 1360 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

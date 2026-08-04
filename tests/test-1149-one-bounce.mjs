@@ -105,7 +105,15 @@ function mk(world){
 {
   assert(/const bounceLight = new THREE\.AmbientLight\(0xffffff, 0\);\s*\nscene\.add\(bounceLight\);/.test(src),
     'it is an AmbientLight — a bounce arrives from every direction, which is the one thing that light models correctly');
-  assert(/bounce:0\.50,/.test(src), 'DEFAULT_WORLD carries the default, so it rides the existing world serialization with no new plumbing');
+// build 1360 re-derived the value when it halved the stock floor's luminance: the bounce's COLOUR already
+// carries the floor albedo, so a darker ground delivers proportionally less fill. 0.50 -> 0.85 keeps 77% of
+// the old delivered fill (a darker floor still bounces less, as it must) while preserving this build's
+// margin against a crushed red channel. What THIS pin is about — that the value lives in DEFAULT_WORLD and
+// rides the existing world serialization — is unchanged.
+{
+  const b = Number(src.match(/const DEFAULT_WORLD = \{[^\n]*?bounce:([\d.]+),/)[1]);
+  assert(b > 0 && b <= 1.5, 'DEFAULT_WORLD carries the default, so it rides the existing world serialization with no new plumbing');
+}
   assert(/worldCfg\.bounce = Math\.max\(0, Math\.min\(2, worldCfg\.bounce == null \? DEFAULT_WORLD\.bounce : \+worldCfg\.bounce\)\);/.test(src),
     'applyWorldCfg clamps it, and a level saved without it inherits the default');
   assert(/if\(typeof _applyBounce==='function'\) _applyBounce\(_dayActive \? _dayF : 1\);/.test(src),

@@ -72,7 +72,9 @@ const src = gameSource();
     'one undo snapshot per preset click');
   assert(/Overrides the sky look above while set\./.test(src), 'the HDRI hint says it covers the dome');
   // the fields have serialized since 1119 — the whole-object world write carries them; pin the source of that truth
-  assert(/skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35/.test(src), 'the fields live in DEFAULT_WORLD (whole-object serialization carries them)');
+  // build 1360 darkened skyGround with the ground plane it meets at the horizon (build 1156 tied them).
+  // This pin's subject is that the sky fields LIVE in DEFAULT_WORLD, not their values.
+  assert(/skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x[0-9a-f]{6}, skyTurb:0.35/.test(src), 'the fields live in DEFAULT_WORLD (whole-object serialization carries them)');
 }
 
 done('build 1234: the sky becomes authorable — the real dome model executed proving Night goes 10x darker than the stock Day and a Blood-moon horizon reads red (the model was never the limit; the missing UI was), applySkyMood executed proving the coherent package (sun dimmed, auto-exposure held low, HDRI cleared, unrelated fields untouched, one applyWorldCfg), Day restated as exactly DEFAULT_WORLD so stock is always one click back, and the seven controls plus five presets finally exist in the Sky fold');
