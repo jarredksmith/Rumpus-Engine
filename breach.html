@@ -19652,13 +19652,13 @@ for(const sp of ((savedLevel && Array.isArray(savedLevel.spawns)) ? savedLevel.s
 // are a later slice; this gives variety without a multi-GLB manager.)
 const ENEMY_TYPES = {
   grunt:  { name:'Grunt',  hp:30, speedMin:6,   speedMax:9,  scale:1.0, tint:0xff2d55, dmg:9 },
-  runner: { name:'Runner', hp:16, speedMin:11,  speedMax:13, scale:0.8, tint:0xffd166, dmg:6 },
+  runner: { name:'Runner', hp:16, speedMin:10.5, speedMax:11.5, scale:0.8, tint:0xffd166, dmg:6 },   /* build 1372: 11-13 could never be outrun at full sprint; 10.5-11.5 still presses but is kiteable */
   brute:  { name:'Brute',  hp:90, speedMin:3.5, speedMax:5,  scale:1.5, tint:0x9b6cff, dmg:18 },
   gunner: { name:'Gunner', hp:24, speedMin:4,   speedMax:6,  scale:1.0, tint:0x4dd2ff, dmg:4, ranged:true, standoff:11, fireCd:1.6, projSpeed:38, burst:4, burstGap:0.09, strafe:true, cover:true },   // build 1189: breaks for cover when chunked   // build 633: gunners strafe sideways while holding standoff (harder to hit, more alive)
   boss:   { name:'BOSS',   hp:900,speedMin:2.8, speedMax:4.2,scale:2.6, tint:0xff7b00, dmg:28, ranged:true, standoff:14, fireCd:1.1, projSpeed:26 },
   // build 628: Sapper — a fast, fragile rusher that doesn't swing; it DETONATES (blast + falloff) when it reaches
   // you OR when killed. Kill it from range or it takes a chunk out of you (and launches you). dmg:0 = no melee.
-  sapper: { name:'Sapper', hp:20, speedMin:9.5, speedMax:12.5, scale:0.85, tint:0xff5e3a, dmg:0, exploder:true, blastR:6, blastDmg:40 },
+  sapper: { name:'Sapper', hp:20, speedMin:9.5, speedMax:11.8, scale:0.85, tint:0xff5e3a, dmg:0, exploder:true, blastR:6, blastDmg:40 },   /* build 1372: max 12.5 -> 11.8 so a sprinting player can outrun the fuse */
   // build 634: Shieldbearer — a slow bruiser that SOAKS frontal shots (flank it for full damage). It turns slowly,
   // so a strafing player can get around its guard. Shield only stops bullets/melee, not engulfing explosions.
   shielded: { name:'Shieldbearer', hp:60, speedMin:3, speedMax:4.5, scale:1.25, tint:0x6fb7ff, dmg:14, shielded:true },
@@ -19755,16 +19755,46 @@ function manifestWaveDescriptors(wv, arena, rng){
   }
   return out;
 }
-// Random-mode wave: N hostiles scattered around the arena edge, mixed types.
+// Random-mode wave (build 1372): N hostiles ring the PLAYER at wave start, mixed types. The ring was
+// centred on the ORIGIN, so a player who crossed the map fought every wave from one side of it, and the
+// spawn cadence was a flat metronome. Three staging changes, FORMULA path only (manifest waves are
+// authored and stay byte-identical, the 1179 rule: their descriptors carry no delay field and their
+// loader line in startWave is untouched):
+//   1. the ring centres on the player, hard-clamped inside the arena walls;
+//   2. the spawn DIRECTION is biased to the rear 180deg at ~2:1, so waves press from behind;
+//   3. each descriptor carries a spawn delay (squads of 3-5, bases 0.8-1.4 s apart capped at 4 s, plus
+//      0-0.25 s intra jitter), stored DELTA-ENCODED: the gap after the previous spawn, for the loop.
 function randomWaveDescriptors(waveNum, arena, rng){
   rng = rng || Math.random;
   const n = 3 + waveNum*2, out = [];
+  /* the extracted-function harness has no player global; the (0,0) facing-negZ fallback is exactly the
+     pre-1372 centre. Safe at call time: startWave only runs in play, long after the player const. */
+  const _pl = (typeof player !== 'undefined' && player && player.pos) ? player : null;
+  const cx = _pl ? _pl.pos.x : 0, cz = _pl ? _pl.pos.z : 0, pyaw = _pl ? (+_pl.yaw || 0) : 0;
+  const B = arena - 3;
+  let sqLeft = 0, sqBase = 0;
   for(let i=0;i<n;i++){
-    let px=0, pz=0, guard=0;
-    do { const a=rng()*Math.PI*2, rr=arena*0.6+rng()*arena*0.3; px=Math.cos(a)*rr; pz=Math.sin(a)*rr; guard++; }
-    while((Math.abs(px)>arena-3 || Math.abs(pz)>arena-3) && guard<8);
-    out.push({ x:px, z:pz, mode:'hunt', type: pickEnemyType(waveNum, rng) });
+    let px=0, pz=0, qx=0, qz=0, guard=0;
+    /* forward is (-sin yaw, -cos yaw), so a spawn direction (cos a, sin a) is BEHIND the player iff
+       sin(a + yaw) > 0, i.e. a in (-yaw, -yaw+PI). The guard loop re-rolls the half each try; qx/qz is
+       the wall-clamped candidate, and the loop also refuses one landing inside 12 m of the player: the
+       old origin ring could never spawn close, but a ring clamped at a wall the player stands against
+       could drop an enemy in their lap. */
+    do { const rear = rng() < 2/3, a = -pyaw + (rear ? 0 : Math.PI) + rng()*Math.PI;
+         const rr = arena*0.6 + rng()*arena*0.3;
+         px = cx + Math.cos(a)*rr; pz = cz + Math.sin(a)*rr; guard++;
+         qx = px>B ? B : (px<-B ? -B : px); qz = pz>B ? B : (pz<-B ? -B : pz); }
+    while((Math.abs(px)>B || Math.abs(pz)>B || (qx-cx)*(qx-cx)+(qz-cz)*(qz-cz) < 144) && guard<8);
+    px = qx; pz = qz;   /* the emitted point is the CLAMPED one: in-bounds is a guarantee, not a hope */
+    if(sqLeft<=0){ if(i>0) sqBase = Math.min(4, sqBase + 0.8 + rng()*0.6); sqLeft = 3 + Math.floor(rng()*3); }
+    sqLeft--;
+    out.push({ x:px, z:pz, mode:'hunt', type: pickEnemyType(waveNum, rng), delay: sqBase + rng()*0.25 });
   }
+  /* delay leaves this function as the GAP AFTER THE PREVIOUS SPAWN (the spawn loop defaults an absent
+     field to the old 0.6), so sort by arrival then delta-encode. out[0] keeps its absolute (about
+     0-0.25 s), which the loop never reads: the residual spawn timer governs first contact as before. */
+  out.sort((a,b)=>a.delay-b.delay);
+  for(let i=out.length-1;i>0;i--) out[i].delay = Math.max(0, out[i].delay - out[i-1].delay);
   if(gameCfg.bossWave>0 && waveNum>0 && waveNum % gameCfg.bossWave === 0){   // milestone wave -> a BOSS joins the fight
     out.push({ x:0, z:-(arena*0.72), mode:'hunt', type:'boss' });
   }
@@ -31989,7 +32019,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1371 · 2026-08-04';
+const BUILD_VERSION = 'build 1372 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38259,7 +38289,12 @@ function loop(){
     if(noEnemyMode()){ /* build 685: puzzle mode — no spawns, no wave loop; the run ends via a Win signal */ }
     else if(toSpawn>0){
       spawnTimer-=dt;
-      if(spawnTimer<=0){ spawnEnemy(spawnQueue.length ? spawnQueue.shift() : null); toSpawn--; spawnTimer=0.6; updateHUD(); }
+      if(spawnTimer<=0){ spawnEnemy(spawnQueue.length ? spawnQueue.shift() : null); toSpawn--;
+        /* build 1372: a formula-wave descriptor carries its own arrival gap (delta-encoded by
+           randomWaveDescriptors into loose squads over ~2-4 s). Manifest + marker descriptors carry
+           no delay field, so authored content keeps the 0.6 s metronome byte-identically (1179). */
+        const _nx = spawnQueue.length ? spawnQueue[0] : null;
+        spawnTimer = (_nx && _nx.delay!=null) ? _nx.delay : 0.6; updateHUD(); }
     } else if(_hostileAlive()===0){   /* build 1226: living friendlies must not hold the wave open forever */
       const _cleared = gameCfg.noRespawn && gameCfg.mode==='prebuilt' && !_hasFutureAuthoredSpawns(wave);   // single-pass: authored spawns exhausted -> field stays clear (no respawn, no empty-wave loop)
       if(objectiveActive()==='eliminate' && gameCfg.winWaves>0 && wave>=gameCfg.winWaves){ if(typeof gameWon==='function') gameWon(); }

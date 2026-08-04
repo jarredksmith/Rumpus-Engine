@@ -63,7 +63,7 @@ const STEP     = num(/const STEP = ([\d.]+);/, 'STEP');
   assert(/const push=Math\.min\(\(minD-d\)\*0\.5, sepCap\*dt\)/.test(src),
     '...and the overshoot guard (minD-d)*0.5 is still what actually prevents the build-995 vibration');
   // executable: separation must out-run the speed enemies converge at, or they interpenetrate forever
-  const speeds = [...src.matchAll(/speedMin:(\d+),\s*speedMax:(\d+)/g)].map(m => [+m[1], +m[2]]);
+  const speeds = [...src.matchAll(/speedMin:([\d.]+),\s*speedMax:([\d.]+)/g)].map(m => [+m[1], +m[2]]);   // build 1372: speeds are decimal now (runner 10.5-11.5, sapper 11.8) - the integer-only regex silently dropped them
   assert(speeds.length >= 4, 'enemy speeds are readable (' + speeds.length + ' types)');
   const dt = 1 / 60;
   for (const [lo, hi] of speeds) {
