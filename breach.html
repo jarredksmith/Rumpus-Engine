@@ -9471,7 +9471,8 @@ function _texBytesOf(t){
 function _texCensus(){
   const seen = new Set(); let bytes = 0, n = 0, big = null, bigB = 0;
   const add = (t, label)=>{
-    if(!t || seen.has(t)) return; seen.add(t);
+    if(!t) return; const sk = t.source || t;   // build 1376: tilings are CLONES sharing one Source (texInstance) — count the source once, not one phantom upload per tiling
+    if(seen.has(sk)) return; seen.add(sk);
     const b = _texBytesOf(t); if(!b) return;
     bytes += b; n++;
     if(b > bigB){ bigB = b; big = label || (t.image && t.image.src ? String(t.image.src).split('/').pop() : 'a texture'); }
@@ -13485,12 +13486,12 @@ function _pvApplyOne(o, act, at){
   if(act==='hide'){ if(u._pvHidden) return; u._pvHidden=true; o.visible=false;
     if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: the grid re-samples where it stood */
     if(u.phys){ u._pvWasDyn=true; try{ removeDynamicProp(o); }catch(e){} }
-    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; }
+    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; u._inColliders=false; }
     if(u._physStatic && typeof physWorld!=='undefined' && physWorld){ try{ physWorld.removeRigidBody(u._physStatic); }catch(e){} u._physStatic=null; }   /* build 1194: no invisible physics wall */
     return; }
   if(act==='show'){ if(!u._pvHidden){ o.visible=true; return; } u._pvHidden=false; o.visible=true;
     if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: it blocks (or carries) bots again */
-    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; if(typeof addStaticColliderFor==='function' && typeof physWorld!=='undefined' && physWorld && !u.phys) try{ addStaticColliderFor(o); }catch(e){} }   /* build 1194: show restores the physics body too */
+    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._inColliders=true; u._pvCol=false; if(typeof addStaticColliderFor==='function' && typeof physWorld!=='undefined' && physWorld && !u.phys) try{ addStaticColliderFor(o); }catch(e){} }   /* build 1194: show restores the physics body too */
     if(u._pvWasDyn){ u._pvWasDyn=false; try{ setPropDynamic(o, true); }catch(e){} } return; }
   if(act==='move' && at){
     if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: the OLD footprint opens up... */
@@ -14050,7 +14051,7 @@ function updateXAnim(dt){
       if(player.onGround) _xaCarry(o, _xaOldBox, _xaPrevP, _xaPrevQ, dt, _peakSp);
       if(bots && bots.length){ for(const _bt of bots){ if(!_bt.dead && _bt.grounded!==false) _xaCarryBot(o, _xaOldBox, _xaPrevP, _xaPrevQ, dt, _bt, _peakSp); } }
       if(enemies && enemies.length){ for(const _en of enemies){ if(_en.grounded!==false) _xaCarryEnemy(o, _xaOldBox, _xaPrevP, _xaPrevQ, dt, _en, _peakSp); } }
-      if(colliders.indexOf(o)>=0||o.userData.box) refreshPropCollider(o);
+      if(o.userData._inColliders||o.userData.box) refreshPropCollider(o, true);   /* build 1376: membership flag (set where colliders.push happens), not an O(colliders) indexOf per animated prop per frame; true = the cached-local fast path */
     }
   }
 }
@@ -14505,9 +14506,70 @@ function _mgridEnsureWorker(){
   }catch(e){ _mgridWorkerDead=true; _mgridWorker=null; }
   return _mgridWorker;
 }
-function refreshPropCollider(obj){
+// ---------- build 1376: the animated-prop collider fast path ----------
+// updateXAnim -> refreshPropCollider paid the FULL precise derivation every frame for every moving prop:
+// new Box3().setFromObject(obj, true) transforms EVERY vertex, the per-mesh loop transforms every vertex
+// AGAIN, and a moving MODEL re-derived (or re-posted to the worker) its whole footprint grid on top —
+// 30 animated doors x 5k verts is 300k vertex transforms a frame against a ~9k-triangle visible scene.
+// A mover does not change SHAPE mid-animation; only its transform moves (xa scale rides the matrix too).
+// So the slow path — which just paid the per-vertex cost anyway — records its own output in the prop
+// LOCAL space, and a mover refresh becomes one Box3.copy + applyMatrix4 per box into REUSED Box3s: no
+// allocation, no vertex touched, no grid re-derived. Translation (elevators, platforms, sliding doors)
+// is EXACT; a rotation delta yields the AABB of the rotated cached box — conservative, i.e. fail SOLID
+// (build 1148), never open. The cache is rebuilt by every slow refresh (gizmo, load, deploy restore),
+// dropped by the noCol branch (its un-tick must re-run the traverse that restores mesh raycasts), and
+// rebuilt from a landed worker grid (build 1203) so the tight grid RIDES the movement instead of being
+// clobbered by the next mover frame.
+const _pcInvM = new THREE.Matrix4(), _pcRelM = new THREE.Matrix4(), _pcTmpB = new THREE.Box3();
+function _pcCacheBuild(obj, finalBoxes, fromMeshes){
+  const u = obj.userData;
+  _pcInvM.copy(obj.matrixWorld).invert();
+  const lb = (u._localBox && u._localBox.isBox3) ? u._localBox.makeEmpty() : new THREE.Box3();
+  const locs = [];
+  obj.traverse(o=>{
+    if(!o.isMesh || !o.geometry) return;
+    const pos = o.geometry.attributes && o.geometry.attributes.position; if(!pos || !pos.count) return;
+    if(o.geometry.boundingBox === null) o.geometry.computeBoundingBox();
+    _pcRelM.multiplyMatrices(_pcInvM, o.matrixWorld);
+    _pcTmpB.copy(o.geometry.boundingBox).applyMatrix4(_pcRelM);
+    lb.union(_pcTmpB);                       // the OVERALL box counts every mesh, like setFromObject does
+    if(o.visible === false) return;          // the per-part list mirrors the slow loop: no invisible meshes...
+    for(let q=o; q; q=q.parent){ if(q.name && /^nocollide/i.test(q.name)) return; }   // ...and no decoration
+    if(fromMeshes) locs.push(_pcTmpB.clone());
+  });
+  if(!fromMeshes || locs.length !== finalBoxes.length){
+    // a model grid, the fail-solid whole-box fallback, or a skip mismatch: pull the slow output ITSELF
+    // back into local space — conservative for a model authored rotated (AABB of an AABB), never open.
+    locs.length = 0;
+    for(const b of finalBoxes) locs.push(b.clone().applyMatrix4(_pcInvM));
+  }
+  u._localBox = lb; u._localBoxes = locs;
+  const n = locs.length;
+  let wbs = u._pcWorld; if(!wbs || wbs.length !== n){ wbs = new Array(n); for(let i=0;i<n;i++) wbs[i] = new THREE.Box3(); u._pcWorld = wbs; }
+  for(let i=0;i<n;i++) wbs[i].copy(finalBoxes[i]);
+  if(!(u._pcWorldBox && u._pcWorldBox.isBox3)) u._pcWorldBox = new THREE.Box3();
+  u._pcWorldBox.copy(u.box);
+  u._pcStamp = (u._pcGen|0);            // the version stamp: bump userData._pcGen and the next refresh is precise
+  u._pcKids = obj.children.length;      // a structural edit (an attached decal, an added part) also forces it
+}
+function _pcFastRefresh(obj){
+  const u = obj.userData;
+  if(!u._localBox || !u._localBoxes || !u._pcWorld || u._pcStamp !== (u._pcGen|0) || u._pcKids !== obj.children.length) return false;
+  // a fast refresh MOVES the prop without the slow model branch, so an in-flight worker grid for the old
+  // pose must not land (build 1203) — bump the token its delivery checks.
+  if(typeof isModelSrc==='function' && isModelSrc(u.src)) u._mgridTok = (u._mgridTok|0)+1;
+  u.box = u._pcWorldBox.copy(u._localBox).applyMatrix4(obj.matrixWorld);
+  const loc = u._localBoxes, wbs = u._pcWorld, n = loc.length;
+  for(let i=0;i<n;i++) wbs[i].copy(loc[i]).applyMatrix4(obj.matrixWorld);
+  u.boxes = wbs;
+  return true;
+}
+function refreshPropCollider(obj, mover){
   if(obj && obj.userData && !obj.userData._cgMobile && typeof _cgDirty==='function') _cgDirty();   /* build 1188: a mover's per-frame refresh must NOT rebuild the grid; statics that move reclassify through one rebuild */
   obj.updateMatrixWorld(true);
+  // build 1376: a MOVER mid-animation (updateXAnim, the parent-follow tick) takes the cached-local fast
+  // path above; an absent or stale cache falls through to the precise path, which rebuilds it.
+  if(mover && typeof _pcFastRefresh==='function' && _pcFastRefresh(obj)) return;
   // overall box (selection highlight, proximity, physics shape sizing)
   obj.userData.box = new THREE.Box3().setFromObject(obj, true);
   // build 1250: a particle emitter is pure decoration — the overall box (which spans the particle
@@ -14525,6 +14587,7 @@ function refreshPropCollider(obj){
   if(obj.userData.noCol){
     obj.userData.boxes = [];
     obj.traverse(o=>{ if(o.isMesh) o.raycast = _ncNoRay; });   // and no bullet hits either
+    obj.userData._localBox = null;   // build 1376: DROP the fast-path cache — the un-tick must take the slow path (raycast restore + rebuilt boxes)
     return;
   }
   // Per-mesh boxes for player collision. Each mesh's box is built from ITS OWN vertices only — NOT via
@@ -14561,6 +14624,7 @@ function refreshPropCollider(obj){
           if(!r || !obj.userData || obj.userData._mgridTok!==tok) return;   // failed, or superseded
           const grid=_mgridWrap(r); if(!grid) return;
           obj.userData.boxes=grid;
+          if(typeof _pcCacheBuild==='function') _pcCacheBuild(obj, grid, false);   // build 1376: the fast path must ride THIS grid — without the rebuild the next mover frame would clobber it with stale cached boxes
           if(!obj.userData._cgMobile && typeof _cgDirty==='function') _cgDirty();       // build 1188: the spatial grid re-learns it
           if(typeof _navDirtyProp==='function') _navDirtyProp(obj);                     // build 1200: the nav grid re-samples it
         };
@@ -14576,6 +14640,10 @@ function refreshPropCollider(obj){
   }
   obj.userData.boxes = finalBoxes;   // imported models: per-column grid so concave shape (stairs/archway) is walkable — per-mesh AABBs (fail-solid) while a worker answer is in flight
   obj.userData.climbable = true;
+  // build 1376: record this result in prop-local space so a MOVER can ride it per frame (the fast path
+  // above). Models pass fromMeshes=false — a footprint grid must be pulled back as-is, never replaced
+  // with coarse per-mesh boxes.
+  if(typeof _pcCacheBuild==='function') _pcCacheBuild(obj, finalBoxes, !isModelSrc(obj.userData.src));
 }
 // A built-in box primitive (used when src === 'box'): a 1×1×1 crate you scale via the transform.
 function buildBoxProp(){
@@ -14614,23 +14682,64 @@ function loadTextureCached(url){
   if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace; else if('encoding' in tex) tex.encoding = 3001; // sRGBEncoding
   texCache[url] = tex; return tex;
 }
-// Per-prop texture instance keyed by URL + tiling. Identical (url,tile) usages share one GPU texture
-// (memory-friendly); two props using the same image at DIFFERENT tiling each get their own, so the tiling
-// you set on one prop never bleeds onto another.
+// Per-prop texture instance keyed by URL + tiling. Identical (url,tile) usages share one instance; two
+// props using the same image at DIFFERENT tiling each get their own Texture, so the tiling you set on
+// one prop never bleeds onto another.
+// build 1376: ...but a tiling is a UNIFORM TRANSFORM, not an image. The old code ran a fresh
+// TextureLoader per (url, tiling) — one 4096 image at three tilings was three decodes and three full
+// ~85 MB GPU uploads. Now ONE base texture is fetched per (url, colorspace) and every tiling is a
+// Texture.clone() of it: r149 clone shares .source (one decode) and repeat/offset/rotation sit outside
+// the GL texture cache key (same source + same sampler state = ONE GPU texture) — both facts pinned
+// against the vendored build in test-1376.
 const _texInst = {};
+const _texInstBase = {};   // (url || colorspace) -> the ONE fetched base texture; every tiling clones it
+const _texInstPend = {};   // bases whose image has not landed yet -> clones to re-arm on load. A clone made
+                           // before the image lands is parked at version 0, or the renderer would warn per
+                           // frame about a texture marked for update with no image data.
 function texInstance(url, u, v, srgb, rot){
   url = _migrateAssetUrl(url);   // build 973
   srgb = (srgb !== false);   // color maps are sRGB; normal/roughness maps must stay linear
   rot = +rot || 0;           // radians, rotated about the texture center (planks/bricks running a new way)
   const key = url + '|' + u + '|' + v + '|' + (srgb?'s':'l') + '|' + rot;
   if(_texInst[key]) return _texInst[key];
-  const loader = new THREE.TextureLoader(); loader.crossOrigin = 'anonymous';
-  const t = loader.load(url, undefined, undefined, (err)=>{ console.warn('Texture load failed for', url, '-', err && err.message); });
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  if(srgb){ if('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace; else if('encoding' in t) t.encoding = 3001; }
+  const bk = url + '||' + (srgb?'s':'l');
+  let base = _texInstBase[bk];
+  if(!base){
+    const loader = new THREE.TextureLoader(); loader.crossOrigin = 'anonymous';
+    base = loader.load(url, ()=>{ const cl=_texInstPend[bk]; delete _texInstPend[bk]; if(cl) for(const c of cl) c.needsUpdate = true; },
+      undefined, (err)=>{ console.warn('Texture load failed for', url, '-', err && err.message); });
+    base.wrapS = base.wrapT = THREE.RepeatWrapping;
+    if(srgb){ if('colorSpace' in base) base.colorSpace = THREE.SRGBColorSpace; else if('encoding' in base) base.encoding = 3001; }
+    _texInstBase[bk] = base; _texInstPend[bk] = [];
+  }
+  const t = base.clone();   // shares .source — see the note above
   t.repeat.set(u||1, v||1);
   if(rot){ t.center.set(0.5, 0.5); t.rotation = rot; }
+  if(_texInstPend[bk]){ t.version = 0; _texInstPend[bk].push(t); }   // image not landed (or failed): parked until the base onLoad re-arms it
   _texInst[key] = t; return t;
+}
+// ---------- build 1376: the texture caches EVICT at level teardown ----------
+// texCache and _texInst had ZERO delete sites — every level swap left the previous level textures
+// resident on the GPU forever (the audit perf #8; build 1353 could SEE the number and nothing could
+// lower it). Eviction runs from _wipeSceneCore (beside _enforceModelCacheCap) and from restoreLevel
+// teardown; whatever the next level shares comes back through the browser HTTP cache — build 991 made
+// exactly that trade for models. Two guarantees:
+//   - a texture still assigned to a LIVE SHARED MATERIAL (floorMat/wallMat, the track set) is never
+//     disposed — it also STAYS CACHED, so the entry remains correct;
+//   - the _procSurface detail set (mat.userData.procSurf) is built from a canvas and lives in NEITHER
+//     cache, so it survives untouched (pinned in test-1376).
+const _TEX_EVICT_SLOTS = ['map','normalMap','roughnessMap','metalnessMap','aoMap','lightMap','emissiveMap','alphaMap','bumpMap'];
+function _evictTexCaches(){
+  const keep = new Set();
+  const guard = (m)=>{ if(!m) return; for(const sl of _TEX_EVICT_SLOTS){ const t=m[sl]; if(t && t.isTexture) keep.add(t); } };
+  try{
+    if(typeof floorMat!=='undefined') guard(floorMat);
+    if(typeof wallMat!=='undefined') guard(wallMat);
+    if(typeof _trkM!=='undefined' && _trkM){ guard(_trkM.road); guard(_trkM.line); guard(_trkM.barrier); }   // build 886: the track set persists across wipes and its road map comes from texCache
+  }catch(e){}
+  const sweep = (cache)=>{ for(const k in cache){ const t=cache[k]; if(t && keep.has(t)) continue; try{ if(t && t.dispose) t.dispose(); }catch(e){} delete cache[k]; } };
+  sweep(texCache); sweep(_texInst); sweep(_texInstBase);
+  for(const k in _texInstPend) delete _texInstPend[k];
 }
 function eachPrimMesh(obj, fn){ obj.traverse(o=>{ if(o.isMesh && o.material) fn(o); }); }
 
@@ -19016,7 +19125,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.userData.footR = _propFootR(obj);
   obj.position.y = t[1] + _maxTerrainOver(t[0], t[2], obj.userData.footR);   // clear the HIGHEST terrain under the footprint so a slope can't bury it
   refreshPropCollider(obj);
-  if(!obj.userData.fx) colliders.push(obj);   // build 1250: emitters stay out of the collision world entirely
+  if(!obj.userData.fx){ colliders.push(obj); obj.userData._inColliders=true; }   // build 1250: emitters stay out of the collision world entirely (build 1376: the flag mirrors membership for updateXAnim)
   if(slot != null) propModels[slot] = obj;   // keep saved order even with async GLB loads
   else propModels.push(obj);
   if(gltf){ obj.userData.animClip = animClip || ''; playModelAnimations(obj, gltf, obj.userData.animMode, true); }   // build 1064: props accept custom-clip-only rigs (static models become animatable)
@@ -19182,6 +19291,7 @@ function _wipeSceneCore(){
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
   if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
   if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof _evictTexCaches==='function') _evictTexCaches();   // build 1376: and the texture caches — they had no delete sites at all (see _evictTexCaches)
   if(typeof _enforceModelCacheCap==='function') _enforceModelCacheCap();   // build 576: free VRAM from models with no instances left (recent ones stay warm under the cap)
 }
 function removeProp(idx){
@@ -19192,7 +19302,7 @@ function removeProp(idx){
   if(obj.userData.phys && typeof removeDynamicProp==='function') removeDynamicProp(obj);
   if(obj.userData._fxRT){ try{ obj.userData._fxRT.geo.dispose(); }catch(e){} obj.userData._fxRT=null; }   // build 1250: per-emitter geometry only — the particle material is shared with fire
   scene.remove(obj);
-  const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1);
+  const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false;
   /* build 1309: a deleted parent RELEASES its children where they stand rather than leaving them pointing
      at a nid nothing answers to — the same call build 997 makes for a light whose pole was deleted. */
   if(obj.userData.nid){ for(const q of propModels){ if(q && q.userData && q.userData.parNid===obj.userData.nid){ delete q.userData.parNid; delete q.userData._pntPose; } } }
@@ -19544,7 +19654,7 @@ function _syncParentedProps(){
            that only translated would swing off a turntable instead of riding it. */
         if(turned){ k.position.copy(_pntV.copy(k.position).sub(prev.p).applyQuaternion(_pntQ).add(prev.p)); k.quaternion.premultiply(_pntQ); }
         if(moved) k.position.add(_pntD);
-        if(typeof refreshPropCollider==='function') refreshPropCollider(k);
+        if(typeof refreshPropCollider==='function') refreshPropCollider(k, true);   /* build 1376: a parented prop is a MOVER — same cached-local fast path as updateXAnim */
       }
     }
     prev.p.copy(host.position); prev.q.copy(host.quaternion);
@@ -26272,6 +26382,7 @@ function loadLevelFromNet(level){
   // this one — two levels' models never coexist in memory. The browser's HTTP cache still makes a
   // return trip cheap (only the GLB parse repeats, not the download).
   if(typeof IS_COARSE!=='undefined' && IS_COARSE && typeof freeUnusedModels==='function'){ try{ freeUnusedModels(); }catch(e){} }
+  if(typeof _evictTexCaches==='function') _evictTexCaches();   /* build 1376: the OLD level textures leave with its props — texCache/_texInst had ZERO delete sites; whatever the next level shares returns through the HTTP cache (build 991 made the same trade for models) */
   // clear current lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
   // build 893: adopt the host's world (TERRAIN above all) BEFORE spawning props. Prop y is stored
@@ -32187,7 +32298,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1375 · 2026-08-04';
+const BUILD_VERSION = 'build 1376 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33332,12 +33443,12 @@ function setPropDynamic(obj, on){
     if(obj.userData.hp == null){ obj.userData.maxHp = (typeof defaultHpFor==='function') ? defaultHpFor(obj) : 30; obj.userData.hp = obj.userData.maxHp; }
     obj.userData.physHome  = obj.position.clone();      // authored transform (reset target on Deploy)
     obj.userData.physHomeQ = obj.quaternion.clone();
-    const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1);   // dynamic = not a static collider
+    const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false;   // dynamic = not a static collider
     dynamicProps.push(obj);
     if(physWorld && !editorOpen) createBodyFor(obj);
   } else if(!on && obj.userData.phys){
     removeDynamicProp(obj);
-    refreshPropCollider(obj); if(colliders.indexOf(obj)<0) colliders.push(obj);   // back to static
+    refreshPropCollider(obj); if(colliders.indexOf(obj)<0) colliders.push(obj); obj.userData._inColliders=true;   // back to static
   }
 }
 // Apply saved/synced dynamic state (mass, breakable, hp) to a freshly-spawned prop.
@@ -34158,7 +34269,7 @@ function shatterProp(obj, point, dir, power, byId){
     obj.userData._destroyHome = { p:(obj.userData.physHome||obj.position).clone(), q:(obj.userData.physHomeQ||obj.quaternion).clone() };
     obj.userData._wasDyn = !!obj.userData.phys;
     if(obj.userData.phys && typeof removeDynamicProp==='function') removeDynamicProp(obj);
-    else { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }
+    else { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }
     obj.userData._destroyed = true; obj.visible=false; if(obj.parent) scene.remove(obj);
     return;
   }
@@ -34287,7 +34398,7 @@ function restoreDestroyedProps(){   // bring back authored props destroyed durin
     o.visible=true; if(!o.parent) scene.add(o);
     if(o.userData.modelLights && typeof adoptModelLights==='function') adoptModelLights(o);   // build 1157: re-register, never re-scale
     if(o.userData._wasDyn){ o.userData._wasDyn=false; setPropDynamic(o, true); }   // re-register dynamic (recaptures physHome from the restored position)
-    else { refreshPropCollider(o); if(colliders.indexOf(o)<0) colliders.push(o); }
+    else { refreshPropCollider(o); if(colliders.indexOf(o)<0) colliders.push(o); o.userData._inColliders=true; }
     if(o.userData.maxHp) o.userData.hp = o.userData.maxHp;
   }
 }
@@ -36012,7 +36123,7 @@ function _raceSpawnBots(){
     const st={ i, src, veh, s:_racePath.total - 7 - 6*i, lat:(i%2?2.7:-2.7), v:0, laps:0, prevYaw:null,
                mYaw:((veh.modelYaw||0))*RAD, skill:skill*(1 - 0.035*i), baseOff:0, obj:null };
     spawnProp(src, [0,-1000,0, 0,0,0, sc.x, sc.y, sc.z], (obj)=>{
-      { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // rivals never block rays / physics
+      { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }     // rivals never block rays / physics
       { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }   // ...and never serialize or get picked
       obj.userData.runtime=true; obj.userData._raceBot=st;
       { obj.position.set(0,0,0); obj.updateMatrixWorld(true); const bb=new THREE.Box3().setFromObject(obj); st.baseOff=bb.isEmpty()?0:(-bb.min.y);
@@ -36110,7 +36221,7 @@ function _ghostEnsureObj(){
   const holder={ mYaw:((tmpl.userData.vehicle.modelYaw||0))*RAD, src:tmpl.userData.src, obj:null };
   _ghostObj=holder;
   spawnProp(tmpl.userData.src, [0,-1000,0, 0,0,0, tmpl.scale.x, tmpl.scale.y, tmpl.scale.z], (obj)=>{
-    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // the ghost is pure light — no rays, no saves
+    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }     // the ghost is pure light — no rays, no saves
     { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }
     obj.userData.runtime=true; obj.visible=false;
     obj.traverse(m=>{ if(m.isMesh){ m.castShadow=false; m.receiveShadow=false;
@@ -36258,7 +36369,7 @@ function _gridCarsClear(){ for(const c of _gridCars){ try{ if(c.userData && c.us
 function _gridCloneCar(tmpl){
   const src=tmpl.userData.src, sc=tmpl.scale, veh=tmpl.userData.vehicle;
   spawnProp(src, [0,-1000,0, 0,0,0, sc.x, sc.y, sc.z], (obj)=>{
-    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // local-only extras: no rays/physics
+    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }     // local-only extras: no rays/physics
     { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }   // ...and never serialized or net-synced
     obj.userData.runtime=true; obj.userData.gridClone=true;
     obj.userData.vehicle=Object.assign({}, veh);
@@ -42319,6 +42430,7 @@ function restoreLevel(level){
   // this one — two levels' models never coexist in memory. The browser's HTTP cache still makes a
   // return trip cheap (only the GLB parse repeats, not the download).
   if(typeof IS_COARSE!=='undefined' && IS_COARSE && typeof freeUnusedModels==='function'){ try{ freeUnusedModels(); }catch(e){} }
+  if(typeof _evictTexCaches==='function') _evictTexCaches();   /* build 1376: the OLD level textures leave with its props — texCache/_texInst had ZERO delete sites; whatever the next level shares returns through the HTTP cache (build 991 made the same trade for models) */
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load

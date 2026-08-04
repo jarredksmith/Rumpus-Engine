@@ -11,7 +11,7 @@ const u = extractFunction('updateXAnim');
 assert(/if\(!gameOn \|\| editorOpen \|\| paused\) return;/.test(u), 'mechanisms run only in live play');
 assert(/a\.mode==='pingpong'/.test(u) && /a\.ph\+=step; if\(a\.ph>=1\) a\.ph-=1; lin=true;/.test(u), 'loop / ping-pong / once playback');
 assert(/a\.trig==='interact'/.test(u) && /const tgt=a\.dest\?1:0;/.test(u), 'E-activate eases toward open/closed');
-assert(/colliders\.indexOf\(o\)>=0\|\|o\.userData\.box\) refreshPropCollider\(o\)/.test(u), 'collision follows the motion');
+assert(/o\.userData\._inColliders\|\|o\.userData\.box\) refreshPropCollider\(o, true\)/.test(u), 'collision follows the motion (build 1376: membership flag + the mover fast path, not an O(colliders) indexOf per frame)');
 assert(/const _xaOldBox = o\.userData\.box;[\s\S]*?if\(player\.onGround\) _xaCarry\(o, _xaOldBox, _xaPrevP, _xaPrevQ, dt, _peakSp\)/.test(u), 'grounded player rides on the PRE-rotation box, then collider refreshes');
 
 const c = extractFunction('_xaCarry');
