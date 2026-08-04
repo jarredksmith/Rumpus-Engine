@@ -31867,7 +31867,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1367 · 2026-08-04';
+const BUILD_VERSION = 'build 1368 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -47250,6 +47250,10 @@ function renderEditorFields(){
   const host = editorEl.querySelector('#edFields');
   host.innerHTML = '';
   editorFieldInputs = [];
+  /* build 1368: the Transform fold states its rule like every other fold (build 1299) — and for
+     props it is now GROUP-WIDE: the fields move the whole selection by the primary’s delta/ratio,
+     matching the gizmo beside them. Lights keep single-target fields, so no banner there. */
+  if(editorActive==='props' && typeof _selBanner==='function') _selBanner(host, _selTargets().length, true);
   { const xfSec = host.closest('.edSection'); const xfInMode=(MODE_SECTIONS[editorMode]||[]).indexOf('transform')>=0;
     if(xfSec) xfSec.style.display = (xfInMode && tgt.fields && tgt.fields.length && !_stationOff) ? '' : 'none'; }   // no fields (Extract), or station toggled off -> hide
   for(const fld of (tgt.fields || [])){
@@ -47264,6 +47268,7 @@ function renderEditorFields(){
     const commit = (raw, fromSlider)=>{
       let v = parseFloat(raw); if(isNaN(v)) return;
       const isScale = (fld.k==='sx'||fld.k==='sy'||fld.k==='sz');
+      const _xfOld = tgt.state[fld.k];   /* build 1368: the group apply needs the primary’s value BEFORE this commit */
       if(isScale && scaleProportional && editorActive==='props'){
         // Proportional ON: dragging one scale axis scales all three together, preserving their ratios (matches the gizmo's uniform handle).
         const old = tgt.state[fld.k] || 0.00001, ratio = v/old;
@@ -47278,7 +47283,7 @@ function renderEditorFields(){
         tgt.state[fld.k] = v;                              // typed numbers can exceed slider min/max
       }
       rng.value = v; num.value = fromSlider ? _fmtField(v, fld.k) : num.value;
-      tgt.apply(); updateGizmo(); updateEditorOut();
+      tgt.apply(); if(tgt===editorTargets.props) _xfGroupApply(fld.k, _xfOld, tgt.state[fld.k], isScale && scaleProportional); updateGizmo(); updateEditorOut();
     };
     rng.oninput = ()=>commit(rng.value, true);
     num.oninput = ()=>commit(num.value, false);
@@ -47636,6 +47641,7 @@ function syncPropStateFromObj(){
 // Blender all use it); the free-fly toggle it used to hold moves to Shift+F, and the View buttons in
 // the toolbar still drive both, so nothing becomes keyboard-only.
 const _frmBox = new THREE.Box3(), _frmCtr = new THREE.Vector3(), _frmSz = new THREE.Vector3();
+const _frmOne = new THREE.Box3();   /* build 1368: per-member scratch for the selection-union framing */
 // build 1137: the viewport readout — camera mode, eye position, and a world-axis widget that turns with
 // the view. Throttled to 6 Hz: it is text, and re-laying it out every frame is pure waste.
 let _edViewT = 0;
@@ -47666,9 +47672,29 @@ function updateEditorViewInfo(now){
 function _edFrameSelected(){
   const o = (typeof selectedSceneObject==='function') ? selectedSceneObject() : null;
   if(!o) return false;
-  // a light's own group has no renderable extent — frame the marker the author can actually see
-  const t = (o.userData && o.userData.marker) ? o.userData.marker : o;
-  try{ _frmBox.setFromObject(t, true); }catch(e){ return false; }
+  /* build 1368: frame the SELECTION, not the primary. Three shipped flows hand this function a
+     multi-selection — the asset browser’s select-every-copy, Level Check’s go-to-the-problem, and
+     the F key — and the old resolve went through selectedSceneObject(), which returns the PRIMARY:
+     three props at x 0/60/120 framed the camera a couple of metres from the first and 120 m from
+     the last. The union of the members’ boxes covers the spread; a single selection takes the
+     exact pre-1368 path below. A selected pickup marker is not a prop group — selProps can sit
+     stale beside it — so it keeps the single-object path. */
+  let _got = false;
+  if(typeof isGroupSel==='function' && isGroupSel() && !(typeof selPickup!=='undefined' && selPickup>=0)){
+    _frmBox.makeEmpty();
+    for(const _m of activeSel()){
+      if(!_m) continue;
+      const _mt = (_m.userData && _m.userData.marker) ? _m.userData.marker : _m;   /* the light-marker rule, per member */
+      try{ _frmOne.setFromObject(_mt, true); }catch(e){ continue; }
+      if(!isFinite(_frmOne.min.x) || _frmOne.isEmpty()) continue;
+      _frmBox.union(_frmOne); _got = true;
+    }
+  }
+  if(!_got){
+    // a light's own group has no renderable extent — frame the marker the author can actually see
+    const t = (o.userData && o.userData.marker) ? o.userData.marker : o;
+    try{ _frmBox.setFromObject(t, true); }catch(e){ return false; }
+  }
   if(!isFinite(_frmBox.min.x) || _frmBox.isEmpty()) return false;
   _frmBox.getCenter(_frmCtr); _frmBox.getSize(_frmSz);
   // pull back far enough that the whole thing fits the vertical FOV, with a margin, and never so close
@@ -48098,6 +48124,49 @@ function applyGroupDrag(e, d){
   updateGizmo();
   updateFieldDisplays();
   updateEditorOut();
+}
+// ---- build 1368: the Transform fold edits the whole selection --------------------------------------
+// The fold’s field commit wrote tgt.state then tgt.apply() — the PRIMARY only — while the gizmo
+// beside it has been group-aware for hundreds of builds (applyGroupDrag), and build 1299 put a
+// banner on every OTHER fold for exactly this defect. Typing and dragging must agree, so the fold
+// applies the gizmo’s own group semantics: position and rotation move every member by the DELTA the
+// primary moved (absolute values would smash a deliberate arrangement flat onto one line — build
+// 1146’s rule), and scale multiplies every member by the RATIO the primary scaled, so member offsets
+// and mixed sizes survive. Lights and zones keep their single-target fields — their transform shape
+// is different, and props are the scope here. No snapshot in this function: the gesture handlers own
+// the ONE undo snapshot per gesture (build 1163), and that snapshot already captures every member.
+function _xfGroupApply(k, oldV, newV, uniform){
+  if(!(editorOpen && editorActive==='props' && selProps && selProps.length>1)) return false;
+  const prim = editorTargets.props.obj();
+  const isScale = (k==='sx'||k==='sy'||k==='sz');
+  let delta = 0, ratio = 1;
+  if(isScale){
+    if(!(Math.abs(+oldV) > 1e-6)) return false;   /* a ~0 old scale has no meaningful ratio — leave the members alone */
+    ratio = newV / oldV;
+    if(!isFinite(ratio) || ratio <= 0) return false;
+  } else {
+    delta = newV - oldV;
+    if(!isFinite(delta) || delta === 0) return false;
+  }
+  let n = 0;
+  for(const m of selProps){
+    if(!m || m === prim) continue;   /* the primary was just written by tgt.apply() — no double move */
+    if(k==='px') m.position.x += delta;
+    else if(k==='py') m.position.y += delta;
+    else if(k==='pz') m.position.z += delta;
+    else if(k==='rx') m.rotation.x += delta*RAD;   /* the fields are DEGREES; the scene is radians */
+    else if(k==='ry') m.rotation.y += delta*RAD;
+    else if(k==='rz') m.rotation.z += delta*RAD;
+    else if(uniform) m.scale.multiplyScalar(ratio);   /* proportional ON spreads the ratio to every axis, like the gizmo’s uniform handle */
+    else if(k==='sx') m.scale.x = Math.max(0.00001, m.scale.x*ratio);
+    else if(k==='sy') m.scale.y = Math.max(0.00001, m.scale.y*ratio);
+    else if(k==='sz') m.scale.z = Math.max(0.00001, m.scale.z*ratio);
+    /* the gizmo group drag’s own post-move bookkeeping (applyGroupDrag’s touch), per member */
+    if(typeof retileProcSurface==='function') retileProcSurface(m, _propProcSpan(m));
+    refreshPropCollider(m); _homeSync(m);
+    n++;
+  }
+  return n > 0;
 }
 function updateSelectionHighlight(){
   if(isGroupSel()){
