@@ -6,7 +6,14 @@ const src = gameSource();
 // the MP match menu gains a "Customize controls" entry (touch) so players can actually reach the editor.
 
 // ---- menus cap height + scroll so options can't be cut off in landscape ----
-assert(/box-shadow:0 20px 60px rgba\(0,0,0,\.5\);\s*max-height:92vh; max-height:calc\(100dvh - 16px\); overflow-y:auto;/.test(html), 'the pause card caps height and scrolls');
+// build 1375 moved the SCROLL one level down: the card caps height and CLIPS, and the tab body
+// (#pauseBody) scrolls inside it, so the footer (Resume / Exit) can never sit below a fold. The
+// intent — options are never cut off in landscape — is unchanged; only the scrolling element moved.
+{ const pc = html.match(/#pauseMenu \.pauseCard \{([\s\S]*?)\n  \}/);
+  assert(pc && /box-shadow:0 20px 60px rgba\(0,0,0,\.5\);/.test(pc[1])
+            && /max-height:calc\(88vh \/ var\(--uiS,1\)\); max-height:calc\(\(100dvh - 24px\) \/ var\(--uiS,1\)\); overflow:hidden;/.test(pc[1]),
+    'the pause card caps height (the tab body scrolls inside it since build 1375)');
+  assert(/#pauseBody \{[^}]*overflow-y:auto/.test(html), 'the pause tab body is the scrolling element'); }
 assert(/z-index:72; max-height:92vh; max-height:calc\(100dvh - 16px\); overflow-y:auto;/.test(html), 'the shop caps height and scrolls');
 assert(/@media \(max-height:560px\)\{[\s\S]*?#pauseMenu \.pauseCard\{ padding:14px 24px/.test(html), 'a short-viewport media query compacts the menus');
 assert(/max-height:86vh; overflow:auto;/.test(html), 'the shared modal cards already scroll (unchanged)');

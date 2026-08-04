@@ -1051,10 +1051,29 @@
   }
   #pauseMenu .pauseCard {
     display:flex; flex-direction:column; align-items:center; gap:12px; min-width:280px;
-    padding:30px 36px; border:1px solid rgba(var(--accent-rgb),.22); border-radius:16px;
+    width:min(440px, calc((100vw - 28px) / var(--uiS,1)));
+    padding:26px 32px 22px; border:1px solid rgba(var(--accent-rgb),.22); border-radius:16px;
     background:rgba(8,16,18,.7); box-shadow:0 20px 60px rgba(0,0,0,.5);
-    max-height:92vh; max-height:calc(100dvh - 16px); overflow-y:auto;
+    /* build 1375: the CARD no longer scrolls — the tab body (#pauseBody) scrolls INSIDE it, so the
+       footer (Resume / Help / Exit) stays on screen at every height. Height divides by --uiS because
+       the zoom rule above multiplies it back (build 1333: rendered = layout x scale) — without the
+       divide a scaled-up interface pushes the footer off the bottom. */
+    max-height:calc(88vh / var(--uiS,1)); max-height:calc((100dvh - 24px) / var(--uiS,1)); overflow:hidden;
   }
+  /* build 1375: the tab strip, the four panels, and the always-visible footer */
+  #pauseTabs { display:flex; gap:6px; width:100%; flex:0 0 auto; }
+  .pTab {
+    flex:1 1 0; cursor:pointer; font-family:var(--ui-font); font-size:12px; font-weight:700; letter-spacing:1.5px;
+    color:#7fa99c; background:transparent; border:none; border-bottom:2px solid rgba(42,110,92,.4);
+    padding:8px 2px; text-transform:uppercase; border-radius:6px 6px 0 0;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .pTab:hover { color:#eafff7; background:rgba(var(--accent-rgb),.05); }
+  .pTab.on { color:var(--accent); border-bottom-color:var(--accent); background:rgba(var(--accent-rgb),.08); }
+  #pauseBody { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+  .pPanel { display:none; flex-direction:column; gap:10px; }
+  .pPanel.on { display:flex; }
+  #pauseFooter { width:100%; flex:0 0 auto; display:flex; flex-direction:column; gap:8px; }
   #pauseMenu h2 {
     font-family:var(--display-font); color:var(--accent); letter-spacing:8px;
     font-size:30px; margin:0 0 6px;
@@ -1195,6 +1214,7 @@
     .pBtnPrimary{ padding:8px 22px; font-size:14px; }
     .pBtnGhost, .pBtnExit{ padding:7px 18px; font-size:12px; }
     .pauseAudio{ padding:7px 12px; gap:5px; margin:2px 0; }
+    .pTab{ padding:5px 2px; font-size:11px; }
     .modalCard{ padding:16px 20px; max-height:calc(100dvh - 12px); }
     .modalCard h2{ font-size:19px; margin:0 0 8px; }
     #shop{ padding:14px 20px; }
@@ -1523,22 +1543,33 @@
 <div id="pauseMenu" class="hidden">
   <div class="pauseCard">
     <h2>PAUSED</h2>
-    <button id="pauseResume" class="pBtnPrimary">Resume</button>
-    <button id="pauseEditHud" class="pBtnGhost" style="display:none">✿ Customize controls</button>
-    <button id="pauseKeys" class="pBtnGhost" style="display:none">⌨ Keyboard bindings</button>
+    <!-- build 1375: the pause card is TABBED. It had grown into the whole settings surface (36 controls
+         in one scrolling column, Exit to main menu below the fold at 900px), so the rows are grouped
+         into four panels and the footer (Resume / Help / Exit) never scrolls away. Every control row
+         moved VERBATIM and keeps its id (bindPauseMenu and the a11y loader read them by id); only the
+         wrappers are new. The tab strip is real buttons, so build 1347 focus rules apply for free. -->
+    <div id="pauseTabs">
+      <button class="pTab" data-ptab="game">Game</button>
+      <button class="pTab" data-ptab="controls">Controls</button>
+      <button class="pTab" data-ptab="audio">Audio</button>
+      <button class="pTab" data-ptab="comfort">Comfort</button>
+    </div>
+    <div id="pauseBody">
+    <div class="pPanel" data-ppanel="game">
     <button id="pauseCamMode" class="pBtnGhost">Camera: First person</button>
     <button id="pauseSprintMode" class="pBtnGhost">Sprint: Hold</button>
     <button id="pauseCrouchMode" class="pBtnGhost">Crouch: Hold</button>
     <button id="pauseLoadout" class="pBtnGhost">&#9881; Weapon loadout</button>
     <button id="pauseCredits" class="pBtnGhost">&#9825; Asset credits</button>
+    <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <div class="pauseAudio">
-      <label class="paLbl"><input type="checkbox" id="muteCb"> Mute all</label>
       <label class="paLbl"><input type="checkbox" id="postFxCb"> Visual effects (bloom · motion blur)</label>
       <label class="paLbl"><input type="checkbox" id="adaptResCb"> Adaptive resolution (trades sharpness for fps)</label>
-      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>Master<input type="range" id="volMaster" min="0" max="100" value="80"></label>
-      <label class="paLbl">♪ Music<input type="range" id="volMusic" min="0" max="100" value="60"></label>
-      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>SFX<input type="range" id="volSfx" min="0" max="100" value="100"></label>
     </div>
+    </div>
+    <div class="pPanel" data-ppanel="controls">
+    <button id="pauseEditHud" class="pBtnGhost" style="display:none">✿ Customize controls</button>
+    <button id="pauseKeys" class="pBtnGhost" style="display:none">⌨ Keyboard bindings</button>
     <div class="pauseAudio" id="pauseCtl" style="display:none">
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/><path d="M7 6h10a5 5 0 0 1 5 5v3a4 4 0 0 1-4 4c-1.2 0-2.3-.5-3-1.4L14 15h-4l-1 1.6A4 4 0 0 1 2 14v-3a5 5 0 0 1 5-5z"/></svg>Pad look<input type="range" id="padSensRng" min="0.3" max="3" step="0.05" style="margin-left:auto;flex:1"></label>
       <label class="paLbl">Pad aim (ADS)<input type="range" id="padAdsRng" min="0.2" max="1.5" step="0.05" style="margin-left:auto;flex:1"></label>
@@ -1547,13 +1578,23 @@
       <!-- build 1316: aim assist. Shown in the controller panel because that is where it applies; it also
            covers touch, which has no panel of its own and every problem a stick has. -->
       <label class="paLbl">Aim assist<input type="range" id="padAimRng" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="padAimVal" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
-      <div style="font-size:11px;opacity:.7;margin:2px 0 0">Slows your look near a target and nudges toward it while you are already turning. <b>Stick and touch only</b> \u2014 a mouse is never assisted. 0 turns it off.</div>
+      <div style="font-size:11px;opacity:.7;margin:2px 0 0">Slows your look near a target and nudges toward it while you are already turning. <b>Stick and touch only</b> — a mouse is never assisted. 0 turns it off.</div>
     </div>
     <div class="pauseAudio">
       <label class="paLbl">Mouse look<input type="range" id="msSensRng" min="0.1" max="5" step="0.05" style="margin-left:auto;flex:1"><span id="msSensVal" style="min-width:34px;text-align:right;opacity:.85">1.00</span></label>
       <label class="paLbl"><input type="checkbox" id="msAimMatchCb"> Zoom-matched aim sensitivity</label>
       <div id="msSensHint" style="font-size:11px;opacity:.7;margin:2px 0 0">1.00 = the engine default. Aiming is slower than the hip by design; tick the box to make it match the zoom instead.</div>
     </div>
+    </div>
+    <div class="pPanel" data-ppanel="audio">
+    <div class="pauseAudio">
+      <label class="paLbl"><input type="checkbox" id="muteCb"> Mute all</label>
+      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>Master<input type="range" id="volMaster" min="0" max="100" value="80"></label>
+      <label class="paLbl">♪ Music<input type="range" id="volMusic" min="0" max="100" value="60"></label>
+      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>SFX<input type="range" id="volSfx" min="0" max="100" value="100"></label>
+    </div>
+    </div>
+    <div class="pPanel" data-ppanel="comfort">
     <!-- build 1313 (gameplay audit F9): motion accessibility. Per DEVICE, so it follows the player into
          levels other people made — which is the whole point, since a creator cannot be relied on to have
          thought about it. -->
@@ -1569,11 +1610,15 @@
       <label class="paLbl">Colour vision<select id="a11yCbMode" style="margin-left:auto;flex:1"></select></label>
       <label class="paLbl">Correction strength<input type="range" id="a11yCbStr" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yCbStrV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <div class="row2" style="margin-top:5px"><button id="a11yPhotoWarn" class="pBtnGhost">Photosensitivity warning</button><button id="a11yThirdParty" class="pBtnGhost">Third-party content</button></div>
-      <div id="a11yHint" style="font-size:11px;opacity:.7;margin:4px 0 0">These are yours, not the level's \u2014 they follow you into every level, including ones other people made. Being hit always stays visible, however low the flash goes.</div>
+      <div id="a11yHint" style="font-size:11px;opacity:.7;margin:4px 0 0">These are yours, not the level's — they follow you into every level, including ones other people made. Being hit always stays visible, however low the flash goes.</div>
     </div>
+    </div>
+    </div>
+    <div id="pauseFooter">
+    <button id="pauseResume" class="pBtnPrimary">Resume</button>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
-    <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <button id="pauseExit" class="pBtnExit">⌂ Exit to main menu</button>
+    </div>
   </div>
 </div>
 <div id="padDebug"></div>
@@ -32142,7 +32187,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1374 · 2026-08-04';
+const BUILD_VERSION = 'build 1375 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -50970,9 +51015,35 @@ function showClipSlicer(url, label, opts){
   { const mx = maxFrame(); outN.value = String(Math.min(mx, 30)); }
   clampAll(); showFrame(); redraw();
 }
+/* ---------- build 1375: the pause card is tabbed ---------- */
+/* The pause menu had become the whole settings surface: 36 controls in one scrolling column, with Exit
+   to main menu below the fold on a 900px screen. Four panels now group the rows (game / controls /
+   audio / comfort) behind a strip of real buttons, and the footer never scrolls away. The active tab
+   is remembered for the SESSION only: a var, not storage, so reopening mid-match lands on the panel
+   the player last used and the next session starts back at Game. var, not let, because a module-level
+   bindPauseMenu() call runs far below and a let would sit in its temporal dead zone for any earlier
+   caller (the 1127/1331 trap). */
+var _pauseTab = 'game';
+function _pauseTabShow(name){
+  const panels = document.querySelectorAll('#pauseBody .pPanel');
+  const tabs = document.querySelectorAll('#pauseTabs .pTab');
+  if(!panels.length || !tabs.length) return;   /* markup missing (boot stubs, a stripped page): never throw from a menu */
+  let ok = false; panels.forEach(p=>{ if(p.dataset.ppanel === name) ok = true; });
+  if(!ok) name = 'game';                       /* an unknown name lands on the first tab, never on a blank card */
+  _pauseTab = name;
+  tabs.forEach(b=>{ b.classList.toggle('on', b.dataset.ptab === name); });
+  panels.forEach(p=>{ p.classList.toggle('on', p.dataset.ppanel === name); });
+  const body = document.getElementById('pauseBody'); if(body) body.scrollTop = 0;   /* each panel opens at its own top */
+}
 function bindPauseMenu(){
   const pb=document.getElementById('pauseBtn'); if(pb) pb.onclick=openPause;
   const r=document.getElementById('pauseResume'); if(r) r.onclick=resumeGame;
+  /* build 1375: the tab strip. Re-wired on every open (openPause calls bindPauseMenu) and the remembered
+     tab re-applied, so the menu reopens on the panel the player last used. No explicit SFX here: the
+     build 1363 delegated menu-click listener already voices every button in a menu context, and a second
+     call would double-fire. */
+  document.querySelectorAll('#pauseTabs .pTab').forEach(b=>{ b.onclick=()=>_pauseTabShow(b.dataset.ptab); });
+  _pauseTabShow(_pauseTab);
   const plb=document.getElementById('pauseLoadout'); if(plb) plb.onclick=()=>{ if(typeof openLoadout==='function') openLoadout(); };
   /* build 1166: CC-BY attribution must be reachable at play time. build 1277: TWO buttons carried
      id="pauseCredits", so getElementById only ever reached the first and the second was inert — which is
