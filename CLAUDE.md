@@ -967,6 +967,50 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Texture memory is visible, and the AO sweep stopped allocating (build 1353)
+
+**1. The cost a creator could not discover.** Build 1257 made the LIGHT count visible on the grounds that it
+is the number a creator "most needs and could least discover", and the audit's texture half was never done.
+The gap is specific: the asset panel reports **download** bytes (build 990's inventory) and
+`renderer.info.memory.textures` is a **count**. Neither is what runs a phone out of memory — a 4096×4096
+albedo costs **~85 MB on the GPU** however small the JPEG was.
+
+```
+1024² no mipmaps   4.00 MB      w·h·4
+1024² + mipmaps    5.33 MB      ×4/3 — the 1 + ¼ + 1/16 … series, not a guess
+4096² + mipmaps   85.33 MB      the number the census exists to show
+```
+
+Three things it has to get right, all measured live:
+- **It walks the SCENE, not just the two caches.** An imported GLB's own maps are in neither `texCache` nor
+  `_texInst` and are most of a big level. Verified: a material-only 2048² that is in neither cache added
+  exactly its 21 MB.
+- **A texture shared by ten materials counts once.** Eight materials on one texture moved the count by 1.
+- **A compressed texture is counted as its real transcoded length**, not 4 bytes a pixel. Charging KTX2/Basis
+  the uncompressed rate would libel the one format that actually fixes this problem.
+
+It reports nothing below the cap, because a panel that always complains is not read (1274), and it names the
+distinction that makes the number surprising — *"this is GPU memory, not download size"* — plus the control
+that fixes it rather than only scolding.
+
+Worth knowing when reading the two figures side by side: the census reports **14 textures / 5 MB** on the
+stock level while three reports **26**. The difference is render targets and the engine's own internal
+textures, which three counts and this deliberately does not — the question is what the CONTENT costs.
+
+**2. Build 1168's last transients.** That build hoisted this file's per-frame allocations and named what it
+did not finish. All **four** `_aoHideNoDepth` call sites still allocated a fresh array every frame, with AO
+and motion blur both live — the exact class 1168 removed everywhere else.
+
+**Four buffers, not one shared scratch.** The four fills are sequential *today* — each is filled, rendered
+and drained before the next begins — so one would work, and that is precisely build 1168's own warning: *"a
+shared scratch would be clobbered the day that order matters."* One per consumer costs three empty arrays
+for the life of the page and cannot be broken by reordering the passes. The function now clears the buffer
+on entry, since the callers reuse it; without that every frame would re-show a growing list of objects that
+are already visible.
+
+The registry 1168 actually wanted — a transparent-material registry replacing the traverse — is still the
+bigger idea and still open. This was the cheap half it also named.
+
 ## The graph can ask WHERE, and a campaign can branch (build 1352)
 
 Two gaps the gameplay audit named, both small because the machinery was already there.

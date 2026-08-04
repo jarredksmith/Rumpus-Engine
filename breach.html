@@ -8373,7 +8373,20 @@ function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next 
 // build 1285: defined ONCE at module scope. Declaring this inside the traverse callback would allocate a
 // closure per OBJECT across two scenes every frame — exactly the transient build 1168 measured and removed.
 function _aoNoDepthMat(q){ return !!q && (q.depthWrite===false || q.transparent===true || (q.alphaTest||0) > 0); }
+// ---- build 1353: the sweep's four call sites stop allocating -----------------------------------------
+// Build 1168 hoisted this file's per-frame transients and named what it did NOT finish: "replacing
+// _aoHideNoDepth's traverse with a transparent-material registry". The registry is still the bigger idea,
+// but the cheap half was never done — all FOUR call sites allocated a fresh array every frame, and with AO
+// and motion blur both live that is four arrays per frame forever, which is exactly the class 1168 removed
+// everywhere else.
+//
+// FOUR arrays, not one shared scratch. The four fills happen to be sequential today — each is filled,
+// rendered and drained before the next begins — so one would work, and that is precisely build 1168's own
+// warning: "a shared scratch would be clobbered the day that order matters". One per consumer costs three
+// extra empty arrays for the life of the page and cannot be broken by reordering the passes.
+const _aoHidW = [], _aoHidV = [], _velHidW = [], _velHidV = [];
 function _aoHideNoDepth(root, out){
+  out.length = 0;   /* build 1353: the callers reuse their buffer now, so this owns clearing it */
   // build 1168: this runs over 2 scenes per frame with AO on, and the old wrap-into-an-array + a per-object
   // predicate closure allocated per OBJECT — thousands of transients a frame. Same predicate, zero allocation:
   // one offending slot in a multi-material array is still enough, because the object is drawn or it is not.
@@ -8472,7 +8485,7 @@ function _renderPostFX(scn, cam){
     // build 1140 renders into this same G-buffer through its own `renderer.render(vmScene, vmCam)`. So the one
     // sprite a player sees on almost every trigger pull was still writing its quad. Fixed by making the sweep
     // a function both callers use, rather than a block one of them happens to contain.
-    const _aoHid=[];
+    const _aoHid=_aoHidW;
     _aoHideNoDepth(scn, _aoHid);
     scn.overrideMaterial=_matAOGeo;
     renderer.setRenderTarget(_aoGeoRT); renderer.render(scn, cam);
@@ -8484,7 +8497,7 @@ function _renderPostFX(scn, cam){
     // vmCam shares the main camera's fov and aspect and sits at its own origin looking down -z, so the
     // view distance it writes into alpha is directly comparable with the scene's.
     if(_vmHere){
-      const _vmHid=[];
+      const _vmHid=_aoHidV;
       _aoHideNoDepth(vmScene, _vmHid);   // build 1158: the muzzle flash lives HERE, not in scn
       const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matAOGeo;
       const _vac=renderer.autoClear; renderer.autoClear=false;
@@ -8538,7 +8551,7 @@ function _renderPostFX(scn, cam){
     const _bgV=scn.background; scn.background=null;
     const _sa=renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate=false;
     if(_skyMesh) _skyMesh.visible=false; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=false;
-    const _vHid=[]; _aoHideNoDepth(scn, _vHid);
+    const _vHid=_velHidW; _aoHideNoDepth(scn, _vHid);
     renderer.getClearColor(_velCC); const _ca=renderer.getClearAlpha();
     renderer.setClearColor(0x808080, 0);   // rg 0.5 = zero velocity, alpha 0 = nothing drawn
     scn.overrideMaterial=_matVel;
@@ -8547,7 +8560,7 @@ function _renderPostFX(scn, cam){
     for(const o of _vHid) o.visible=true;
     if(_vmHere){
       vu.uPrevVP.value.multiplyMatrices(vmCam.projectionMatrix, vmCam.matrixWorldInverse);   // vmCam is static: only the weapon's own bob remains — the flick stays sharp
-      const _vmH=[]; _aoHideNoDepth(vmScene, _vmH);
+      const _vmH=_velHidV; _aoHideNoDepth(vmScene, _vmH);
       const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matVel;
       const _vac=renderer.autoClear; renderer.autoClear=false;
       renderer.clearDepth();
@@ -9100,6 +9113,51 @@ const _lp = new THREE.Vector3();
 // the cap a prop keeps its glow (the emissive material is free) and loses only its cast light —
 // which is exactly what the distance budget was already doing to it, minus the per-pixel bill.
 const LIGHT_SOFT_CAP = 40;   // a warning past here; measured guidance, not a limit
+// ---- build 1353: TEXTURE MEMORY, which the creator could not discover any other way ------------------
+// Build 1257 made the LIGHT cost visible for exactly this reason and the audit's texture half was never
+// done. The gap it leaves is real and specific: the asset panel reports DOWNLOAD bytes (build 990's
+// inventory), and `renderer.info.memory.textures` is a COUNT. Neither is what runs a phone out of memory —
+// a single 4096x4096 albedo is 64 MB on the GPU whatever it weighed as a 900 KB JPEG, and nothing in the
+// product said so.
+//
+// GPU bytes, not file bytes: width x height x 4, plus a third again when mipmaps exist (the 1+1/4+1/16...
+// series converges to 4/3). Compressed formats (KTX2/Basis) report their own byte length and are counted
+// as that instead — a transcoded texture is the whole point of using them, so charging it 4 bytes a pixel
+// would libel the one format that fixes this.
+const TEX_MB_SOFT_CAP = 192;   // past here a mid-range phone is at real risk; desktop is fine much higher
+function _texBytesOf(t){
+  try{
+    if(!t || !t.image) return 0;
+    const im = t.image;
+    if(im.isCompressedTexture || (t.mipmaps && t.mipmaps.length && t.mipmaps[0] && t.mipmaps[0].data)){
+      let b = 0; for(const m of (t.mipmaps||[])) if(m && m.data && m.data.byteLength) b += m.data.byteLength;
+      if(b) return b;
+    }
+    const w = im.width|0, h = im.height|0;
+    if(!w || !h) return 0;
+    return w * h * 4 * (t.generateMipmaps === false ? 1 : 4/3);
+  }catch(e){ return 0; }
+}
+function _texCensus(){
+  const seen = new Set(); let bytes = 0, n = 0, big = null, bigB = 0;
+  const add = (t, label)=>{
+    if(!t || seen.has(t)) return; seen.add(t);
+    const b = _texBytesOf(t); if(!b) return;
+    bytes += b; n++;
+    if(b > bigB){ bigB = b; big = label || (t.image && t.image.src ? String(t.image.src).split('/').pop() : 'a texture'); }
+  };
+  try{
+    /* the two caches the audit named, plus whatever is actually bound in the scene — a texture reached
+       only through a material (an imported GLB's own maps) is in neither cache and is most of a big level */
+    if(typeof texCache!=='undefined') for(const k in texCache) add(texCache[k], String(k).split('/').pop());
+    if(typeof _texInst!=='undefined') for(const k in _texInst) add(_texInst[k], String(k).split('/').pop());
+    const SLOTS = ['map','normalMap','roughnessMap','metalnessMap','aoMap','lightMap','emissiveMap','alphaMap','bumpMap','displacementMap'];
+    scene.traverse(o=>{ const m=o.material; if(!m) return;
+      const ms = Array.isArray(m) ? m : [m];
+      for(const mm of ms){ if(!mm) continue; for(const sl of SLOTS) if(mm[sl]) add(mm[sl], sl); } });
+  }catch(e){}
+  return { count:n, mb: Math.round(bytes/1048576), largest: big, largestMb: Math.round(bigB/1048576) };
+}
 function _lightCensus(){
   const c = { point:0, spot:0, dir:0, hemi:0, shadow:0, emitters:(typeof emitterLights!=='undefined')?emitterLights.length:0, total:0 };
   try{ scene.traverseVisible(o=>{
@@ -31338,7 +31396,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1352 · 2026-08-04';
+const BUILD_VERSION = 'build 1353 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -42802,6 +42860,17 @@ function levelIssues(){
         issues.push(_placedRefused+' placed light'+(_placedRefused>1?'s were':' was')+' past the engine budget and switched off during the last play run — the furthest from the player spawn go first. They are all back in the editor; to keep them in play, delete some or give one bright light a longer range instead of several small ones.');
       if(c.shadow > 4)
         issues.push(c.shadow+' lights cast shadows. Each one is an extra render of the level every time it moves — keep it to a few key lights.');
+    }
+    /* build 1353: the other half of 1257's census. A creator can see a model's DOWNLOAD size in the asset
+       panel and has never been able to see what it costs on the GPU, which is the number that decides
+       whether a phone survives the level. */
+    if(typeof _texCensus==='function'){
+      const t=_texCensus();
+      if(t.mb > TEX_MB_SOFT_CAP)
+        issues.push('Texture memory: about '+t.mb+' MB across '+t.count+' textures'
+          + (t.largestMb>=16 ? (' \u2014 the largest alone is ~'+t.largestMb+' MB ('+t.largest+')') : '')
+          + '. This is GPU memory, not download size: a 4096\u00d74096 image costs ~64 MB however small the file is. '
+          + 'Phones commonly have 256\u2013512 MB to spend on everything. Lower "Model texture cap" before importing, or re-export the big ones smaller.');
     }
     // build 1274: culling is opt-in (1273); when it IS on, say what it is removing. A subsystem that can
     // DELETE THINGS FROM THE SCREEN must be able to account for itself — build 1273 shipped this feature
