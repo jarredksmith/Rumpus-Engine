@@ -11899,6 +11899,37 @@ function _lgPulse(id, pin){
           // ("one of each of the four runes"), which counting a single id cannot express.
           case 'itemkinds': { v=0; if(typeof inventory!=='undefined' && Array.isArray(inventory))
                               for(const s of inventory){ if(s && s.n>0) v++; } break; }
+          // ---- build 1352: WHERE SOMETHING IS ------------------------------------------------------
+          // The graph could MOVE a prop (1170), SHOVE one (1258) and be told when one entered a zone
+          // (1276) — and could never ask where one WAS. So "the ball is on your half", "the crate is
+          // within 3 m of the plinth", "how far is the player from the exit" were unaskable, which is
+          // most of what a sports level or a physics puzzle is made of.
+          // `_lgPlaceAt` already resolves a tag (and `me`, `start`, `#here`) to world coordinates, so
+          // this is that resolver plus arithmetic — no new lookup, and the same tag vocabulary the
+          // place field has always used, which is why it needs no new autocomplete list.
+          // Values are METRES, rounded to two decimals: a graph compares numbers, and an unrounded
+          // float compared with `==` never matches anything.
+          case 'propx': case 'propy': case 'propz': case 'propdist': {
+            const _tg=String(p.item||'').trim();
+            const _pl=(typeof _lgPlaceAt==='function') ? _lgPlaceAt(_tg) : null;
+            if(!_pl){
+              /* A tag nobody carries reads 0 forever, which looks EXACTLY like "it is at the origin".
+                 Build 1214 established that a silent logic failure is the hardest class of bug to see. */
+              if(typeof _noteLogicFailure==='function')
+                _noteLogicFailure('A "Read game stat" node asks where "'+(_tg||'(nothing)')+'" is, but nothing carries that tag \u2014 it reads 0.');
+              v=0; break;
+            }
+            const _st=p.stat;
+            if(_st==='propdist'){
+              /* distance FROM THE PLAYER, on the ground plane. Horizontal because a creator asking
+                 "how close is it" means across the floor, and a prop on a shelf is not further away. */
+              const _dx=_pl.x-((typeof player!=='undefined')?player.pos.x:0);
+              const _dz=_pl.z-((typeof player!=='undefined')?player.pos.z:0);
+              v=Math.round(Math.hypot(_dx,_dz)*100)/100;
+            } else {
+              v=Math.round((_st==='propx'?_pl.x:_st==='propy'?_pl.y:_pl.z)*100)/100;
+            }
+            break; }
         }
         logicVars[k]=v;
       } _lgFollow(id,0); break; }
@@ -11932,6 +11963,35 @@ function _lgPulse(id, pin){
     case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_lgVarKey(k)]||0)*100)/100));   // {score} interpolates live variables; build 1231: {coins@} reads the event's player
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
+    // ---- build 1352: GO TO A CAMPAIGN LEVEL ---------------------------------------------------------
+    // A campaign was strictly linear: `_campaignLoad(i)` is a single index load and the ONLY transition
+    // in the engine is `campaignIdx++` on level clear. So a hub world, a level select, a branching route,
+    // a "you failed, go back to the tutorial" — none of them were expressible, and the graph had no verb
+    // that could move between levels at all.
+    // Three guards, and the first two are not optional:
+    //   * CLAMP. `n` comes out of a level file, which is untrusted input (build 1325's rule), and
+    //     `campaign.levels[999]` is `undefined` — `_campaignLoad` would return silently and the creator
+    //     would never learn why. Out of range is REPORTED through 1214's channel instead.
+    //   * HOST/SOLO ONLY, like `win` directly above. A client loading a different level on its own would
+    //     desync the match into two different worlds.
+    //   * ONLY DURING A CAMPAIGN. Fired from a standalone level there is no `campaign.levels` to index,
+    //     and silently doing nothing is exactly the failure 1214 exists to surface.
+    // The number is 1-BASED in the editor because that is what the campaign list shows the creator; the
+    // array is 0-based, and getting that backwards is a whole-level off-by-one nobody would suspect.
+    case 'goto': {
+      if(typeof NET!=='undefined' && NET.mode==='client') break;
+      const _n1 = Math.round(_lgNum(p.n));                      /* accepts a variable, so a hub can branch */
+      if(typeof campaignActive==='undefined' || !campaignActive){
+        if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "Go to level" node fired, but this level is not part of a campaign \u2014 there is nothing to go to.');
+        break;
+      }
+      const _tot = (typeof campaign!=='undefined' && campaign.levels) ? campaign.levels.length : 0;
+      if(!(_n1 >= 1 && _n1 <= _tot)){
+        if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "Go to level" node asked for level '+_n1+', but this campaign has '+_tot+'.');
+        break;
+      }
+      try{ campaignIdx = _n1 - 1; _clearInterstitial(); _campaignLoad(campaignIdx); }catch(e){}
+      break; }
     case 'lose': { try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} break; }   // the death-zone path: ends the run through the normal defeat flow
     default: break;   // start / event / interval / onkill / onwave / onspot / onhurt are entries — they only ever FIRE, never receive
   }
@@ -12264,11 +12324,22 @@ const LG_DEFS = {
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
   expr:     { t:'Expression',      cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'expr',l:'',w:210}] },
   list:     { t:'List',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'list',w:62,listId:'lgListList'},{k:'op',l:'',w:96,sel:[['push','Add value'],['fill','Fill 1..N'],['draw','Draw first \u2192'],['drawrand','Draw random \u2192'],['shuffle','Shuffle'],['remove','Remove value'],['clear','Clear'],['len','Length \u2192'],['has','Contains? \u2192'],['at','Value at \u2192'],['matches','Same order as? \u2192']]},{k:'value',l:'value',w:50,listId:'lgVarList',ifv:['op',['push','fill','remove','has']]},{k:'idx',l:'index',w:44,listId:'lgVarList',ifv:['op','at']},{k:'other',l:'other list',w:66,listId:'lgListList',ifv:['op','matches']},{k:'var',l:'\u2192 var',w:60,listId:'lgVarList',ifv:['op',['draw','drawrand','len','has','at','matches']]}] },
-  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
+  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held'],['propx','Prop X position'],['propy','Prop Y position'],['propz','Prop Z position'],['propdist','Distance to prop']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},
+    /* build 1352: the spatial reads reuse the SAME `item` field as a tag box — one more param would sit
+       unused for every other stat, and `ifv` already switches its label per stat. It offers the place
+       vocabulary (tags, `me`, `start`), which is exactly what _lgPlaceAt accepts. */
+    {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist']],listId:'lgPlaceList'},
+    {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
   do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
+  /* build 1352: its own NODE, not a `do` verb — `win` and `lose` are the same class (they change the RUN,
+     not a prop) and `do` routes everything through _applySignalAction, which knows nothing about levels.
+     My first draft put it in the `do` dropdown while implementing it as a node type, which is build 1277's
+     exact defect — a verb offered in the UI that the dispatcher never routes to a handler. The probe caught
+     it before it shipped: the node resolved, nothing loaded, and campaignIdx never moved. */
+  goto:     { t:'Go to level',     cat:'ac', ins:['in'], outs:[],        params:[{k:'n',l:'level #',w:64,listId:'lgVarList'}] },
   lose:     { t:'Lose level',      cat:'ac', ins:['in'], outs:[],        params:[] },
 };
 const LG_CATS = { ev:['EVENTS','#35e0d6'], fl:['FLOW','#ffd75e'], st:['STATE','#8fe05a'], ac:['ACTIONS','#ff9b5b'] };
@@ -31267,7 +31338,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1351 · 2026-08-04';
+const BUILD_VERSION = 'build 1352 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;

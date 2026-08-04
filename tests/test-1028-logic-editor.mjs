@@ -8,7 +8,7 @@ const src = gameSource();
 
 // ---- every runtime node type has an editor definition, and vice versa ----
 const defs = new Function('return ' + extractConst('LG_DEFS', src) + ';')();
-const runtimeTypes = ['start','event','interval','onkill','onwave','onspot','onhurt','branch','counter','delay','repeat','random','once','setvar','addvar','math','read','list','expr','do','toast','emit','win','lose'];   // build 1169: math + read; build 1269: list; build 1271: expr (each has a _lgPulse case — the parity this test exists to hold)
+const runtimeTypes = ['start','event','interval','onkill','onwave','onspot','onhurt','branch','counter','delay','repeat','random','once','setvar','addvar','math','read','list','expr','do','toast','emit','win','lose','goto'];   // build 1352: goto — a NODE, not a `do` verb, because `do` routes through _applySignalAction which knows nothing about levels; this list is what catches that (it caught it during 1352's own build). build 1169: math + read; build 1269: list; build 1271: expr (each has a _lgPulse case — the parity this test exists to hold)
 for(const t of runtimeTypes) assert(defs[t], 'palette covers runtime type: '+t);
 eq(Object.keys(defs).length, runtimeTypes.length, 'no orphan editor types the runtime would ignore');
 // pin the pieces the interpreter dispatches on
@@ -17,7 +17,7 @@ for(const t of runtimeTypes){ if(['start','event','interval','onkill','onwave','
   assert(new RegExp("case '"+t+"':").test(pulse), 'the interpreter handles '+t); }
 // entry nodes have no input pin; terminal actions have no outputs
 for(const t of ['start','event','interval','onkill','onwave','onspot','onhurt']) assert(!defs[t].ins, t+' is an entry — nothing wires INTO it');
-for(const t of ['win','lose']) eq(defs[t].outs.length, 0, t+' is terminal — nothing continues after it');
+for(const t of ['win','lose','goto']) eq(defs[t].outs.length, 0, t+' is terminal — nothing continues after it');
 // branch/counter/repeat expose the outputs the runtime fires
 eq(defs.branch.outs.join(','), 'true,false', 'branch outs match _lgFollow(0/1)');
 eq(defs.counter.outs.join(','), 'reached,each', 'counter outs match (0=reached, 1=each)');

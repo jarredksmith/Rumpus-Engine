@@ -967,6 +967,59 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## The graph can ask WHERE, and a campaign can branch (build 1352)
+
+Two gaps the gameplay audit named, both small because the machinery was already there.
+
+**1. Where something is.** The graph could MOVE a prop (1170), SHOVE one (1258) and be told when one
+entered a zone (1276) — and could never ask where one WAS. "The ball is on your half", "the crate is within
+3 m of the plinth", "how far is the player from the exit" were all unaskable, which is most of what a
+sports level or a physics puzzle is made of.
+
+`_lgPlaceAt` already resolves a tag — and `me`, `start`, `#here` — to world coordinates, so `propx / propy /
+propz / propdist` are that resolver plus arithmetic. **The same vocabulary the place field has always
+used**, which is why it needs no new autocomplete list and why the tag box reuses the existing `item` param
+keyed by stat rather than adding one that sits unused for every other stat.
+
+Two decisions: distance is **horizontal**, because a creator asking "how close is it" means across the
+floor and a prop on a shelf is not further away; and every value is **rounded to 2 dp**, because a graph
+COMPARES these and an unrounded float never equals anything with `==`. A tag nobody carries **reports**
+rather than reading 0 forever — reading 0 looks exactly like "it is at the origin", which is build 1214's
+whole point.
+
+**2. Go to level.** A campaign was strictly linear: `_campaignLoad(i)` is a single index load and the only
+transition in the engine is `campaignIdx++` on clear. Hub worlds, level select, branching routes and "you
+failed, back to the tutorial" were all inexpressible.
+
+Four guards, each of which is a silent bug without it: a client never loads on its own (two peers in
+different worlds); firing outside a campaign reports rather than doing nothing; the index is range-checked
+because `n` comes out of a level file, which is untrusted input (1325), and `campaign.levels[999]` is
+`undefined` that `_campaignLoad` would swallow; and the interstitial is cleared first or a jump during one
+leaves the card stuck on screen. The field is **1-based** because that is what the campaign list shows the
+creator — the array is 0-based, and getting that backwards is a whole-level off-by-one nobody would suspect.
+
+### I shipped build 1277's defect into my own draft, and the probe caught it
+
+`goto` went into the `do` verb dropdown while being implemented as a node type. `do` routes everything
+through `_applySignalAction`, which knows nothing about levels — so the node resolved, nothing loaded, and
+`campaignIdx` never moved. **That is exactly the defect build 1277 found across six prop verbs that had
+shipped and never worked**, and the reason it did not ship again is that the probe drives the real
+`_lgPulse` switch rather than asserting the dropdown and the handler separately.
+
+It is its own node now, beside `win` and `lose`, which are the same class of run-level verb. And build
+1028's palette↔runtime parity test — which exists for precisely this — failed on the node count until
+`goto` was added to its list, at which point it also began asserting `case 'goto':` exists. **The test
+caught the same mistake a second time, from the other direction.**
+
+Measured through the real switch, a tagged prop at (12, 3.5, −8) with the player at the origin:
+
+```
+propx 12 · propy 3.5 · propz -8 · propdist 14.42 (= hypot(12,8)) · "me" -> the player's own x
+missing tag -> 0 AND a reported failure
+goto: not-in-campaign / out-of-range / zero  -> three distinct reports, nothing loaded
+goto 3 of 3 -> loadedIndex 2, campaignIdx 2   ·   as a client -> nothing loaded
+```
+
 ## A way to report something (build 1351 — platform audit G2)
 
 The platform audit's named blocker for a public release with minors, and the cheapest high-value item in
