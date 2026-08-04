@@ -159,8 +159,8 @@ const enemyAt = (z, type = 'grunt') => ({ mesh: { position: { x: 0, y: 1, z } },
   for (const m of [/enemyStep\(at, heavy\)/, /enemySpot\(at, heavy\)/, /sapperFuse\(at\)/])
     assert(m.test(src), 'every new enemy sound takes an `at` — the whole point is knowing WHERE it is');
   // the player's own step is deliberately NOT changed
-  assert(/step\(\)\{ noise\(\{dur:0\.06, vol:0\.07, filterFreq:520, type:'lowpass'\}\); \},/.test(src),
-    'SFX.step() is untouched — it is the PLAYER’s, has no `at`, and 520 Hz keeps it apart from the enemy’s 420/260');
+  assert(/step\(\)\{ const f=\[420,520,640\]\[_stepSndVar=\(_stepSndVar\+1\)%3\];/.test(src) && !/step\(\)\{ const f=[^}]*\bat[:\}]/.test(src),
+    'SFX.step() is still the PLAYER’s — FLAT (no `at`; build 1363 gave it rotating variants centred on 520), tellable from the enemy’s positional 420/260');
   assert(/deliberately DARKER and quieter than the player's own step so the two are\n     tellable apart when both are running/.test(src),
     'and that separation is a decision, not a coincidence');
 }

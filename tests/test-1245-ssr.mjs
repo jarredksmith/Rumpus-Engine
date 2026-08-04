@@ -3,7 +3,8 @@ const src = gameSource();
 // build 1245: SCREEN-SPACE REFLECTIONS. A half-res march of the AO G-buffer (view normal rgb, linear
 // view depth -mvPosition.z in a) sampling the LINEAR scene at the hit; the composite adds it before
 // its one encode (1115's rule). Floors only — the G-buffer carries no roughness, so the honest look
-// is a glossy ground. Rides the top adaptive rung like the AO sample, but keeps the G-buffer PREPASS
+// is a glossy ground. Rides the top adaptive rung (build 1364: stricter than the AO sample, which now
+// rides all three prepass rungs at a reduced tap count), but keeps the G-buffer PREPASS
 // alive on its own when AO is authored off.
 
 const fx = extractFunction('_renderPostFX');
@@ -24,7 +25,7 @@ assert(g.geo && g.ao && !g.ssr, 'AO alone: exactly the pre-1245 behaviour, SSR n
 g = gates(0, 0, 0, 2, RT, CAM, RT, MAT);
 assert(!g.geo && !g.ao && !g.ssr, 'both off: no prepass at all — a level that wants neither pays for neither');
 g = gates(0.9, 0.35, 1, 2, RT, CAM, RT, MAT);
-assert(g.geo && !g.ao && !g.ssr, 'first downshift: prepass survives (soft particles), AO sample AND SSR both shed');
+assert(g.geo && g.ao && !g.ssr, 'first downshift: prepass AND the AO sample survive (build 1364 — 6 taps), while SSR still sheds');
 g = gates(0.9, 0.35, 3, 2, RT, CAM, RT, MAT);
 assert(!g.geo, 'past the prepass rungs everything is gone');
 

@@ -5,7 +5,7 @@ const src = gameSource();
 
 // slide whoosh
 assert(/slide\(\)\{ if\(!actx\|\|!sfxBus\) return;/.test(src) && /filt\.frequency\.exponentialRampToValueAtTime\(320,t\+dur\)/.test(src), 'SFX.slide is a downward whoosh');
-assert(/step\(\)\{ noise\(\{dur:0\.06, vol:0\.07, filterFreq:520/.test(src), 'SFX.step exists (soft tap)');
+assert(/step\(\)\{ const f=\[420,520,640\]/.test(src) && /noise\(\{dur:0\.06, vol:0\.07\*/.test(src), 'SFX.step exists (soft tap — rotating variants since 1363, base vol 0.07)');
 assert(/slideDir\.copy\(wish\)\.normalize\(\); SFX\.slide\(\);/.test(src), 'whoosh plays when a slide starts');
 
 // footstep cadence

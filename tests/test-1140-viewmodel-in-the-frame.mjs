@@ -100,10 +100,11 @@ const src = gameSource();
   const gate = fn.indexOf('if(_geoWant){'), bloom = fn.indexOf('_matBloomDown');   // build 1218: the viewmodel G-buffer pass lives in the PREPASS block now
   assert(gate >= 0 && i > gate && i < bloom, 'the extra pass is inside the G-buffer prepass block, so it disappears when the prepass is shed');
   // build 1218: the gate SPLIT — the prepass (which the viewmodel + soft particles need) runs on the top 3
-  // rungs; the AO SAMPLE stays on rung 0. Build 1135's "AO below MSAA" intent is preserved in _aoWant.
+  // rungs. build 1364: the AO SAMPLE rides the same rungs at a reduced tap count; both still ride the
+  // RESOLUTION ladder, never the MSAA rung, so build 1135's "AO below MSAA" intent is preserved.
   assert(/const _geoWant = \(_ssaoAmt > 0\.001 \|\| _postSSR > 0\.001\) && _prStepI <= _AO_GEO_MAXSTEP && _aoGeoRT && cam && cam\.isPerspectiveCamera;/.test(fn) &&
-    /const _aoWant = _geoWant && _ssaoAmt > 0\.001 && _prStepI === 0;/.test(fn),
-    'the AO SAMPLE still gates on rung 0 (below MSAA), while its G-buffer is wider');
+    /const _aoWant = _geoWant && _ssaoAmt > 0\.001;/.test(fn),
+    'the AO SAMPLE gates on the resolution ladder through the prepass — never on the MSAA rung');
 }
 {
   // The G-buffer packs a VIEW DISTANCE, and the AO shader rebuilds view rays from a tan-of-fov scale
