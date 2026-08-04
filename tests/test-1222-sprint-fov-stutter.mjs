@@ -39,14 +39,14 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- the wiring
 {
-  assert(/let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0;/.test(src),
-    'the eased value is persistent state beside the other 1210 camera channels');
+  assert(/let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0, _fireFov = 0;/.test(src),
+    'the eased value is persistent state beside the other 1210 camera channels (build 1373: the fire FOV punch joined the same let)');
   assert(/_sprintFovCur \+= \(_sprintTarget - _sprintFovCur\) \* Math\.min\(1, dt\*8\);/.test(src),
     'the loop eases toward the target');
   assert(/if\(Math\.abs\(_sprintFovCur - _sprintTarget\) < 0\.01\) _sprintFovCur = _sprintTarget;/.test(src),
     '...and snaps the last hundredth so a settled lens stops paying updateProjectionMatrix');
-  assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend \+ _sprintFovCur;/.test(src),
-    'the camera reads the EASED value, never the raw target');
+  assert(/const wantFov = hipFov \+ \(_zoomFov - hipFov\) \* adsBlend \+ _sprintFovCur \+ _fireFov;/.test(src),
+    'the camera reads the EASED value, never the raw target (build 1373: plus the fire FOV punch, itself eased state)');
   assert(/_sprintTarget = _f\*_f \* 6 \* \(1 - adsBlend\);/.test(src),
     'the target keeps 1210\'s quadratic curve and ADS fold-out unchanged');
 }

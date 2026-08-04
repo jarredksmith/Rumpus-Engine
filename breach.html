@@ -21365,15 +21365,21 @@ const flash = new THREE.Mesh(new THREE.SphereGeometry(.25,8,8), flashMat);
 flash.position.set(0,0,0); flash.visible = false; vmMuzzle.add(flash);   // solid sphere hidden — the muzzle PointLight (+ muzzle.png) is the flash
 
 // ---------- Weapon system (data-driven) ----------
+// build 1373 (feel review #10/#11/#12): three damage numbers moved and NOTHING else — sustained DPS was
+// INVERTED (pistol 26/170ms = 152.9 the highest in the game, the STARTING rifle the worst automatic at
+// 126.3, and sniper 95 one-shotting every non-boss body shot including the 90 hp brute). rifle 12 -> 15
+// (157.9 sustained — the primary finally leads), pistol 26 -> 20 (117.6 — a sidearm again), sniper
+// 95 -> 80 (the brute survives with 10 hp; the chargers the formula spawns carry the 1213 wave hp ramp and
+// survive too). adsMs is the time to reach ~90% aimed — see _adsK beside adsBlend.
 const WEAPONS = {
-  rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0, kickV:0.014, kickH:0.005 },
-  pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85, kickV:0.018, kickH:0.006 },   // build 976: single-shot semi-auto sidearm
-  smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7, kickV:0.008, kickH:0.003 },
-  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, shellReload:true, shellIntroMs:260, shellMs:420, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35, kickV:0.034, kickH:0.010 },
-  sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6, kickV:0.040, kickH:0.008 },
-  launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2, kickV:0.035, kickH:0.012 },
-  crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0, kickV:0, kickH:0 },
-  hands:   { name:'FISTS',   drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0, kickV:0, kickH:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
+  rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:15, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0, adsMs:180, kickV:0.014, kickH:0.005 },
+  pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:20, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85, adsMs:140, kickV:0.018, kickH:0.006 },   // build 976: single-shot semi-auto sidearm
+  smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7, adsMs:150, kickV:0.008, kickH:0.003 },
+  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, shellReload:true, shellIntroMs:260, shellMs:420, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35, adsMs:220, kickV:0.034, kickH:0.010 },
+  sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:80, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6, adsMs:320, kickV:0.040, kickH:0.008 },
+  launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2, adsMs:300, kickV:0.035, kickH:0.012 },
+  crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0, adsMs:0, kickV:0, kickH:0 },
+  hands:   { name:'FISTS',   drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0, adsMs:0, kickV:0, kickH:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
 };
 // build 623: the factory damage of each weapon, captured before any saved override is applied, so the editor can
 // show/reset to default and serialize ONLY a damage that was actually changed (keeps old levels on the defaults).
@@ -21393,7 +21399,9 @@ const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k]
 // which is what that build was for. `melee` rides as 0/1 so it needs no separate boolean path; every reader
 // already asks `if(w.melee)` / `!!w.melee`.
 /* build 1362: kickV/kickH (the per-weapon view kick, vertical + alternating horizontal) join the sheet. */
-const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach','windup','kickV','kickH'];
+/* build 1373: adsMs (the time to ~90% aimed, ms) joins the sheet — the only-changed serializer, the three
+   loaders, the clamp and the editor row are all free (1190). */
+const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach','windup','kickV','kickH','adsMs'];
 // build 1297: the shortest reach a melee weapon may be authored to, and the closest a bot will stand while
 // swinging one. They are stated together because the ONLY thing that matters is the inequality between
 // them: a bot holds `max(BOT_MELEE_MIN, reach*0.7)` and hits inside `reach`, so if the floor on reach ever
@@ -21404,7 +21412,7 @@ const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','re
 const BOT_MELEE_REACH_MIN = 1.2, BOT_MELEE_MIN = 1.0;
 // build 1296: pellets floors at 0, not 1. A melee weapon fires none, and the old floor rewrote the crowbar's
 // authored 0 into a 1 the moment any stat was applied — the same spurious-diff fault as magSize below.
-const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12], windup:[0,600], kickV:[0,0.15], kickH:[0,0.08] };
+const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12], windup:[0,600], kickV:[0,0.15], kickH:[0,0.08], adsMs:[0,600] };   /* build 1373: adsMs floors at 0, not 80 — melee ships 0 (no ADS ramp), and a clamp floor above a factory value writes a spurious st diff into every saved level (1296); the divide-by-zero guard lives in _adsK, which floors the divide at 40 ms */
 // The live values are NORMALISED here, beside the baseline that is captured from them: `melee` starts as
 // `true`/undefined and `reach` is absent on every gun, and the serializer emits a stat whenever it differs
 // from its baseline — so leaving `true` beside a baseline of `1` would write a spurious melee override into
@@ -21419,7 +21427,9 @@ const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k];
   /* build 1362: normalise the kicks the same way (and for the same reason) as melee/reach/windup - the
      only-changed serializer diffs the live value against this baseline, so the two must be identical. */
   _w.kickV = +_w.kickV || 0; _w.kickH = +_w.kickH || 0;
-  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach, windup:_w.windup, kickV:_w.kickV, kickH:_w.kickH }; _w.reserve0=_w.reserve; }
+  /* build 1373: adsMs normalised the same way — melee carries 0 (no ramp), absence reads 0 too. */
+  _w.adsMs = +_w.adsMs || 0;
+  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach, windup:_w.windup, kickV:_w.kickV, kickH:_w.kickH, adsMs:_w.adsMs }; _w.reserve0=_w.reserve; }
 // build 1240: RENAME WEAPONS — reported from play ("add a sword/axe/staff... we have melee, so maybe
 // the answer is the ability to rename"). The name follows 1190's exact pattern: a factory baseline
 // captured at boot, only-changed values serialized (nm), one sanitizer every loader routes through.
@@ -29211,7 +29221,7 @@ let shake = 0;                 // current trauma 0..1, decays each frame
 // build 1210: the first-person camera reacts to the player's OWN body — the two cheapest game-feel wins in
 // the genre and both absent (the speed-FOV of build 730 lived only in the driving branch). _landDip is a
 // spring the landing impulse kicks (dip then recover), _camLean an eased strafe roll.
-let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0;
+let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0, _fireFov = 0;
 /* build 1313: EVERY shake in the engine goes through here — blasts, hits, kills, car impacts, the melee
    thump — so scaling it at this one point covers all of them, and a future one for free. */
 function addShake(amt){ shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1)); }
@@ -29239,6 +29249,16 @@ let _recPitch = 0, _recYaw = 0, _recSign = 1;
 const REC_SPRING = 8;    /* per-second exponential return - ~63% recovered in 125 ms, ~91% in 300 ms */
 const REC_MAX = 0.22;    /* rad. Sustained automatic fire holds a small lean, never a ceiling-stare; the
                             applied camera pitch also clamps at 1.55 so base aim + offset stays under vertical */
+/* build 1373: FIRE FOV PUNCH (feel review #10). Every shot kicks the lens a touch wider, scaled by the
+   weapon’s own kickV (the per-weapon weight the sheet already carries), decaying on its own exponential —
+   1210/1222’s pattern: persistent eased state, no per-frame boolean gate anywhere near the lens. It lives
+   inside _recKick so both fire sites (hitscan + rocket) inherit it along with the fps gate; unlike the AIM
+   recoil above it is cosmetic camera motion, so it is gated by the same a11y.shake that gates the whole
+   sway/shake family (1313). */
+const FIRE_FOV_SCALE = 85;   /* degrees of punch per radian of kickV: rifle ~1.2, shotgun ~2.9, sniper ~3.4 */
+const FIRE_FOV_MAX = 6;      /* cap — sustained automatic fire pumps the lens a couple of degrees, never fisheye */
+const FIRE_FOV_DECAY = 8;    /* per-second exponential decay, the same family as REC_SPRING above */
+function _fireFovStep(v, dt){ v *= Math.exp(-FIRE_FOV_DECAY*dt); return (v < 0.01) ? 0 : v; }   /* settles to exactly 0 */
 function _recKick(w){
   /* build 1102’s gate, kept as ONE predicate both kick sites (hitscan + rocket) share: in top-down/side/
      chase-cursor the pitch is not the aim, so the view is never kicked there. */
@@ -29247,6 +29267,8 @@ function _recKick(w){
   _recPitch = Math.min(REC_MAX, _recPitch + (w.kickV||0)*_a);
   _recSign = -_recSign;   /* horizontal recoil alternates side with a random lean - a drift, never a metronome */
   _recYaw = Math.max(-REC_MAX, Math.min(REC_MAX, _recYaw + (w.kickH||0)*_a*(_recSign + (Math.random()-0.5)*0.6)));
+  const _fsc = (typeof a11y!=='undefined') ? a11y.shake : 1;   /* the punch is comfort motion (1313); the aim recoil above is gameplay and stays ungated */
+  _fireFov = Math.min(FIRE_FOV_MAX, _fireFov + (w.kickV||0)*FIRE_FOV_SCALE*_a*_fsc);   /* build 1373 */
 }
 /* build 1362: aim punch on damage. Being hit moved nothing but a sub-pixel shake - the view now takes a
    dmg/maxHp-scaled jolt AWAY from the source, along the same forward/right decomposition hurtDir aims its
@@ -31791,6 +31813,12 @@ let firing = false, firingLatch = false;
 // Aim-down-sights state
 let ads = false;          // is right mouse held
 let adsBlend = 0;         // 0 = hip, 1 = fully aimed (smoothed each frame)
+/* build 1373: PER-WEAPON ADS TIME (feel review #11). One global dt*14 eased every weapon to fully aimed on
+   the same ~164 ms curve (t90 = ln(10)/14) while drawMs was already per-weapon — a scope raised as fast as
+   a pistol. adsMs states the time to reach ~90% aimed; the easing SHAPE (exponential + snap epsilon) is
+   untouched, only the time constant becomes per-weapon. The divide floors at 40 ms so an authored 0 (melee
+   ships 0 = no ADS ramp) can never divide by zero; an ABSENT adsMs falls back to the old global feel. */
+function _adsK(ms){ const m = (ms == null || !isFinite(+ms)) ? 164 : +ms; return 2302.585 / Math.max(40, m); }
 let editorAimPreview = false;  // editor forces the aimed pose so the Aim tab is visible while tuning
 const BASE_FOV = 78, ADS_FOV = 38.20;   // gentler zoom — the gun moving to center is the main cue
 let adsFovLive = ADS_FOV;            // editor-adjustable copy the loop actually reads
@@ -32019,7 +32047,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1372 · 2026-08-04';
+const BUILD_VERSION = 'build 1373 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34522,6 +34550,7 @@ function shoot(){
   // the crosshair bloom reads the IDENTICAL number the shot uses — a penalty you can see is a penalty you
   // can learn (before this, 1161's airborne floor felt like random misses).
   const spread = _curSpread(w);   // build 1219: the exact same math the crosshair blooms from, shared so they can never disagree
+  _fireBloomAdd(w);   /* build 1373: THIS shot reads the pre-add spread (the first shot of a burst is the accurate one); the bloom lands on the next shot, and the crosshair shows it via the shared _curSpread */
   // build 885: true twin-stick ballistics. Build 874 cast pellets from the CAMERA through the cursor
   // with the weapon's screen-space spread — from a bird's-eye camera an enemy is a few pixels wide, so
   // hip spread threw most pellets clean past a dead-on cursor ("the gun doesn't hurt enemies"). Now the
@@ -34876,6 +34905,26 @@ function _clearCorpses(){ for(const c of _corpses) _removeCorpse(c); _corpses.le
 
 // ---------- HUD ----------
 const $ = id=>document.getElementById(id);
+/* build 1373: FIRE BLOOM (feel review #12). Standing spread was a CONSTANT — shot 1 and shot 30 of a held
+   trigger were identically accurate, so sustained fire cost nothing. Each shot now adds w.spread*0.35
+   (floored at 0.004 so the zero-spread rifle and sniper pay too — 1161’s argument: a multiplier of zero is
+   zero) into a bloom that drains back to EXACTLY zero in ~400 ms. The cap keeps TOTAL standing spread
+   inside ~2.5x base (bloom <= 1.5x base, or 0.02 for zero-spread guns). Decay is a pure function of the
+   last-add timestamp — framerate-independent by construction, nothing per-frame to forget — and it rides
+   INSIDE _curSpread, so the crosshair communicates it for free (1219: the shot and the reticle read ONE
+   function and can never disagree). */
+let _fireBloom = 0, _fireBloomAt = 0;
+const BLOOM_ADD_MIN = 0.004, BLOOM_CAP_MIN = 0.02, BLOOM_DRAIN_MS = 400;
+function _bloomCapFor(w){ return Math.max(((+w.spread)||0)*1.5, BLOOM_CAP_MIN); }
+function _fireBloomNow(w){
+  if(!(_fireBloom > 0)) return 0;
+  const _dr = _bloomCapFor(w) * (performance.now() - _fireBloomAt) / BLOOM_DRAIN_MS;   /* a full-cap bloom drains in ~400 ms */
+  return Math.max(0, _fireBloom - _dr);
+}
+function _fireBloomAdd(w){
+  _fireBloom = Math.min(_bloomCapFor(w), _fireBloomNow(w) + Math.max(((+w.spread)||0)*0.35, BLOOM_ADD_MIN));
+  _fireBloomAt = performance.now();
+}
 // build 1219: the live weapon spread (radian-ish half-angle), computed from the current weapon + movement
 // + ADS state. shoot() and the crosshair bloom both call this, so the reticle can never lie about accuracy.
 function _curSpread(w){
@@ -34885,7 +34934,7 @@ function _curSpread(w){
   const _mob = Math.min(1, _hspd / 12);                                  // 12 = default run speed
   const _penScale = (1 + 1.2*_mob) * (player.onGround ? 1 : 1.8);
   const _penAdd = (0.012*_mob + (player.onGround ? 0 : 0.030)) * (1 - _ab*0.6);
-  return (+w.spread||0) * (1 - _ab*0.8) * _penScale + _penAdd;
+  return (+w.spread||0) * (1 - _ab*0.8) * _penScale + _penAdd + _fireBloomNow(w);   /* build 1373: sustained-fire bloom rides on top */
 }
 let _xhBloom = 0;   // eased crosshair gap bloom (px)
 // Grow the reticle's centre gap with the live spread, eased so it breathes rather than snaps. Scoped optics
@@ -37672,7 +37721,7 @@ function loop(){
 
   // aim-down-sights: smoothly blend toward aimed state, drive FOV + crosshair
   const adsTarget = (ads || padAds || touchAds || editorAimPreview) ? 1 : 0;
-  adsBlend += (adsTarget - adsBlend) * Math.min(1, dt*14);
+  adsBlend += (adsTarget - adsBlend) * Math.min(1, dt * _adsK((WEAPONS[curWep]||{}).adsMs));   /* build 1373: per-weapon ADS time — sniper 320 ms, pistol 140; same exponential shape via _adsK */
   if(Math.abs(adsBlend - adsTarget) < 0.002) adsBlend = adsTarget;
   // build 1210: the landing-dip spring (stiff, well damped — a quick dip and settle, no wobble) and the
   // strafe-lean target (roll away from your lateral velocity, killed while aiming so the sight stays true).
@@ -37704,7 +37753,8 @@ function loop(){
   }
   _sprintFovCur += (_sprintTarget - _sprintFovCur) * Math.min(1, dt*8);
   if(Math.abs(_sprintFovCur - _sprintTarget) < 0.01) _sprintFovCur = _sprintTarget;
-  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend + _sprintFovCur;
+  _fireFov = _fireFovStep(_fireFov, dt);   /* build 1373: the fire FOV punch decays here, beside the sprint push it sums with */
+  const wantFov = hipFov + (_zoomFov - hipFov) * adsBlend + _sprintFovCur + _fireFov;
   if(Math.abs(camera.fov - wantFov) > 0.01){ camera.fov = wantFov; camera.updateProjectionMatrix(); }
   crosshairEl.style.opacity = _scopedNow ? '0' : (1 - adsBlend*0.85).toFixed(2);
   if(typeof _updateCrosshairBloom==='function') _updateCrosshairBloom(dt);   // build 1219: the reticle blooms with the live spread
@@ -46541,7 +46591,7 @@ function renderEditorFields(){
           r.appendChild(lb); r.appendChild(cb); r.appendChild(nt); urlHost.appendChild(r); }
         const DEFS = _isM
           ? [ ['reach','Reach m',0.1], ['fireRate','Swing interval ms',10], ['windup','Contact delay ms',10] ]
-          : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1], ['kickV','Recoil kick rad',0.002], ['kickH','Recoil side rad',0.001] ];
+          : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1], ['kickV','Recoil kick rad',0.002], ['kickH','Recoil side rad',0.001], ['adsMs','ADS time ms',10] ];
         for(const [sk, lbl, stp] of DEFS){
           const r=document.createElement('div'); r.className='row2'; r.style.margin='2px 0';
           const lb=document.createElement('span'); lb.textContent=lbl; lb.style.cssText='flex:0 0 108px;font-size:11px;color:#9fc0b8;';

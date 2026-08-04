@@ -3,7 +3,7 @@ const src = gameSource();
 // build 319: sniper rifle with a true scope
 assert(/sniper:\s*\{ name:'SNIPER',\s*drawMs:\d+, mag:5,/.test(src), 'sniper weapon entry exists');   // build 1172: entries gained per-weapon drawMs
 assert(/sniper:[^\n]*scope:true/.test(src), 'sniper flagged as scoped');
-assert(/fireRate:1400/.test(src) && /dmg:95/.test(src), 'bolt-action cadence + heavy damage');
+assert(/fireRate:1400/.test(src) && /dmg:80/.test(src), 'bolt-action cadence + heavy damage (build 1373: 95 -> 80 — the 90 hp brute finally survives a body shot)');
 assert(/id:'sniper',\s*name:'SNIPER RIFLE',[^\n]*cost:400[^\n]*giveWeapon\('sniper'\), oneTime:true/.test(src), 'sniper purchasable in the shop');
 
 // scope zoom: per-weapon default ADS fov is a hard zoom

@@ -12,6 +12,7 @@ const src = gameSource();
 // ---------------------------------------------------------------- _curSpread, executed (and identical to 1161's math)
 {
   const cs = new Function('WEAPONS', 'curWep', 'adsBlend', 'player',
+    'const _fireBloomNow = () => 0;\n' +   // build 1373: the sustained-fire bloom, supplied inert here so the 1161 movement math stays the subject
     extractFunction('_curSpread') + '\nreturn _curSpread;');
   const run = (wspread, ads, hspd, grounded) =>
     cs({ r: { spread: wspread } }, 'r', ads, { vel: { x: hspd, z: 0 }, onGround: grounded })();
