@@ -73,7 +73,12 @@ assert(/moonFar\.shadow\.bias = SHADOW_DEPTH_BIAS;/.test(src), 'and so does the 
 }
 
 // ---- the residue's real answer is contact-scale occlusion, which the engine has ----
-assert(/SSAO|per-vertex bake/.test(src.slice(src.indexOf('A RESIDUE REMAINS'), src.indexOf('A RESIDUE REMAINS') + 400)),
-  'the note points at the terms that CAN close a sub-texel corner, rather than at more bias');
+// build 1346 added a second 'A RESIDUE REMAINS' note, and indexOf finds THAT one first — a needle that
+// stops being unique is the same failure as a character-budget window. Scope to 1345's own block.
+{ const blk = src.slice(src.indexOf('const SHADOW_DEPTH_BIAS') - 3200, src.indexOf('const SHADOW_DEPTH_BIAS'));
+  const i = blk.indexOf('A RESIDUE REMAINS');
+  assert(i >= 0, "1345's residue note is in its own block");
+  assert(/SSAO|per-vertex bake/.test(blk.slice(i, i + 400)),
+    'the note points at the terms that CAN close a sub-texel corner, rather than at more bias'); }
 
 done('build 1345: the shadow depth bias was the corner leak, and the normal offset was innocent');

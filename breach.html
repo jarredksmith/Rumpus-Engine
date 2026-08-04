@@ -8685,7 +8685,43 @@ function _applyBounce(sunF){
 const moon = new THREE.DirectionalLight(0x9fd8ff, 0.9);
 moon.position.set(40, 80, 20);
 moon.castShadow = true;
-moon.shadow.mapSize.set(IS_COARSE ? 1024 : 2048, IS_COARSE ? 1024 : 2048);
+// ---- build 1346: THE LEAK IS A FIXED NUMBER OF TEXELS, SO THE ONLY LEVER IS THE TEXEL ----------------
+// Build 1345 halved the corner leak and the reporter said it looked unchanged, which is fair — 156 pixels
+// of a bright line is still a bright line. So the residue was characterised rather than argued about, in a
+// room with a doorway at the reporter's own settings.
+//
+// The bright pixels sit on a wall's INNER face at y = 2.99-3.00 — the wall/ceiling junction — facing the
+// sun (N.L = 0.74), with the occluder ONE MILLIMETRE away. Not a sunlit top face, which was the benign
+// explanation: of eight sampled, `upFaces 0, sideFaces 8`. It is a genuine leak.
+//
+// And it scales with exactly one thing. Sweeping the shadow volume, which sets the texel in world units:
+//     shadowDist   400     120      60      30      15       8
+//     texel      39.06cm 11.72cm  5.86cm  2.93cm  1.46cm  0.78cm
+//     leaking px    910     300     141      75      37      28
+// Proportional. Meanwhile normalBias is FLAT across its whole range, shadow radius is flat, and
+// OVERLAPPING the wall/ceiling seam by 3/6/12 cm changes nothing (141/140/131 against a 130 baseline) — so
+// it is not a bias, not a filter width, and not a modelling seam. It is a band ~ONE TEXEL wide along every
+// concave corner, which is the resolution limit of shadow mapping and nothing else.
+//
+// texel = 2*extent / mapSize. shadowDist is one half of that ratio; the MAP SIZE is the other, and unlike
+// shadowDist it does not shorten the range at which shadows exist at all. Measured on the same room, with
+// the return to 2048 as the control:
+//     near map    2048        4096        8192      2048 (control)
+//     leaking px    136          70          39       137
+//     frame     323.6ms     364.3ms     528.3ms    330.6ms
+// 4096 halves the leak for ~12% of frame time; 8192 quarters it for 63%, which is not a trade worth making.
+// So the NEAR cascade — the one covering everything near the player, and the only one the sweep implicated
+// (turning it off zeroed the leak; turning the far one off changed nothing) — goes to 4096 on desktop.
+// The FAR cascade stays 2048 deliberately: its texel is 4x coarser by design and a one-texel line on
+// geometry tens of metres away is under a pixel. Phones are untouched at 1024 — 12% of frame time is not
+// free there and a 4096 depth map is ~16x the memory of a 1024 one.
+//
+// A RESIDUE REMAINS at ~70 px. An occluder 1 mm from its receiver is below what any practical shadow map
+// resolves, so a hairline at a concave corner is inherent to the technique; closing it completely needs
+// contact shadows (screen-space or traced), not a bigger map. Do not raise this further chasing it —
+// 8192 is measured above and it is not worth its cost.
+const SUN_SHADOW_PX = IS_COARSE ? 1024 : 4096;
+moon.shadow.mapSize.set(SUN_SHADOW_PX, SUN_SHADOW_PX);
 moon.shadow.camera.near = 1; moon.shadow.camera.far = 260;
 // build 1120: the shadow volume FOLLOWS THE CAMERA instead of being a fixed box at the world origin.
 // It was +/-80 on a 2048 map — 7.8 cm a texel — and nailed to (0,0), while worldCfg.arena goes to
@@ -31074,7 +31110,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1345 · 2026-08-03';
+const BUILD_VERSION = 'build 1346 · 2026-08-03';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
