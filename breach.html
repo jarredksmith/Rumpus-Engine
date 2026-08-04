@@ -21009,6 +21009,7 @@ let locked = false;let lookFresh = false;   // set when pointer lock is (re)acqu
 let _lastLookDX = 0, _lastLookDY = 0;   // running reference of recent per-event look deltas, for spurious-spike rejection
 const MAX_LOOK_DELTA = 300;   // px per mousemove event; guards against spurious spikes that snap the view
 let editorDragLook = false, editorDragMoved = false, editorDragPan = false;   // editor mouse states
+let _edOrbit = null;   // build 1377: live orbit drag { px,py,pz, r, yaw, pitch } — pivot + spherical offset captured ONCE at drag start
 renderer.domElement.addEventListener('click', ()=>{ if(!isTouch && gameOn && !locked && !shopOpen && !invOpen && !editorOpen && !paused) tryPointerLock(); });
 // build 1177: drag a .glb/.gltf from your desktop onto the viewport while editing — no server round-trip.
 renderer.domElement.addEventListener('dragover', (e)=>{ if(typeof editorOpen!=='undefined' && editorOpen){ e.preventDefault(); } });
@@ -21037,6 +21038,7 @@ document.addEventListener('mousemove', e=>{
     if(gizmoDrag){ gizmoDragMove(e); editorDragMoved = true; return; }   // dragging an axis handle
     if(_altDupActive){ if(_altDup){ const gp = groundPointUnderPointer(e); if(gp){ _altDup.position.x = gp.x; _altDup.position.z = gp.z; } } editorDragMoved = true; return; }   // Alt-drag: move the fresh duplicate under the cursor
     if(_marqueeOn){ _marqueeMove(e); editorDragMoved = true; return; }   // build 563: drawing the selection box
+    if(_edOrbit && !editorTopView){ _edOrbitMove(e); return; }   // build 1377: Alt+LMB / MMB orbit about the pivot captured at drag start
     if(editorDragPan && editorTopView){
       const wpp = (2*topZoom)/innerHeight;   // world units per pixel at current zoom
       topPanX -= e.movementX * wpp;
@@ -21088,9 +21090,79 @@ renderer.domElement.addEventListener('mousedown', e=>{
   if(terrainBrush.on && terrainPointUnderPointer(e)){ pushUndoSnapshot(); _brushStroke(e); _brushing = true; editorDragMoved = true; return; }   // sculpt instead of select/look
   if(tryGizmoGrab(e)){ editorDragMoved = true; return; }   // grabbing an axis handle (suppresses select)
   if(e.altKey){ const o=_pickPropAt(e); if(o){ e.preventDefault(); pushUndoSnapshot(); _dupPropForDrag(o); _altDupActive = true; editorDragMoved = true; return; } }   // Alt+drag = duplicate the prop under the cursor and drag the copy
-  if(editorTopView) _marqueeStart(e); else editorDragLook = true;   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag)
+  if(editorTopView) _marqueeStart(e); else if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag) · build 1377: Alt+LMB starting on empty space orbits; Alt over a prop stayed the drag-duplicate, claimed above
 });
-addEventListener('mouseup', e=>{ if(e.button===0){ if(_marqueeOn){ _marqueeFinish(e); } if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); } if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); if(typeof _scatLast!=='undefined') _scatLast=null; } editorDragLook = false; editorDragPan = false; const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } });
+addEventListener('mouseup', e=>{ if(e.button===0){ if(_marqueeOn){ _marqueeFinish(e); } if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); } if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); if(typeof _scatLast!=='undefined') _scatLast=null; } editorDragLook = false; editorDragPan = false; _edOrbit = null; const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } });
+
+// ---------- build 1377 (editor audit #5, the cheap half): ORBIT in the fly camera ----------
+// Fly-mode drag was a first-person LOOK, so turning to inspect something swung it off screen — every
+// competitor orbits (Alt+drag or MMB). The pivot is captured ONCE at drag start; per mousemove the camera
+// POSITION is re-derived on the same radius about it (yaw about world Y, pitch about the camera right,
+// clamped exactly as the look drag clamps) and player.yaw/pitch are set to the orbit angles. The basis is
+// the spherical form _edFrameSelected already uses — camera = pivot + r*(sin(yaw)cp, -sin(pitch), cos(yaw)cp)
+// — in which facing the pivot falls out by construction: forward is (-sin yaw, -cos yaw) and the pivot sits
+// exactly r ahead. Re-deriving from (r, yaw, pitch) each step (never integrating the position) is what keeps
+// the radius exact for the whole drag.
+// THE INPUT CLAIM, stated because Alt already means something here: Alt+LMB over a PROP has been the
+// drag-duplicate since build 441 and KEEPS it — that branch runs before this one in the same handler, so
+// orbit takes only Alt-drags starting on empty space. MMB orbits regardless of what is under the cursor.
+// Top view (marquee/pan), walk mode, plain drag-look, WASD, the gizmo and the two-finger touch camera
+// (1312) are all untouched — the orbit writes flyPos, so it is fly-camera only.
+const _edOrbitP = { x:0, y:0, z:0 };   // pivot scratch (one capture per gesture)
+// PIVOT RESOLUTION, in order: (1) the explicit selection — selCentroid over activeSel, the union centre of
+// 1..N members. Deliberately NOT selectedSceneObject: the props tab always has a PRIMARY (idx 0) even when
+// the creator never clicked anything, and orbiting a crate on the far side of the map because it happens to
+// be entry 0 is the surprise this order avoids; the multi-select list is the honest form of a selection
+// existing. (2) the surface under the cursor via the editor pick ray — the same ray the Alt-duplicate
+// drags with. (3) a point ~10 u ahead along the look, so orbiting at the open sky still means something.
+function _edOrbitPivotV(e, out){
+  if(typeof activeSel==='function' && typeof selCentroid==='function'){
+    const list = activeSel();
+    if(list && list.length){ const c = selCentroid(); out.x=c.x; out.y=c.y; out.z=c.z; return out; }
+  }
+  const gp = (e && typeof groundPointUnderPointer==='function') ? groundPointUnderPointer(e) : null;
+  if(gp){ out.x=gp.x; out.y=gp.y; out.z=gp.z; return out; }
+  const cp = Math.cos(player.pitch);
+  out.x = flyPos.x - Math.sin(player.yaw)*cp*10;
+  out.y = flyPos.y + Math.sin(player.pitch)*10;
+  out.z = flyPos.z - Math.cos(player.yaw)*cp*10;
+  return out;
+}
+// spherical capture of the camera offset about the pivot, in the look basis above. Camera above the pivot
+// gives NEGATIVE pitch (looking down), matching the engine pitch sign everywhere else.
+function _edOrbitFrom(px, py, pz, cx, cy, cz){
+  const dx = cx-px, dy = cy-py, dz = cz-pz;
+  const r  = Math.max(0.75, Math.hypot(dx, dy, dz));   // a pivot AT the camera cannot orbit — floor the radius
+  const h  = Math.hypot(dx, dz);
+  const yaw   = (h > 1e-6) ? Math.atan2(dx, dz) : 0;   // back is (sin yaw, cos yaw)
+  const pitch = Math.max(-1.5, Math.min(1.5, Math.atan2(-dy, h)));
+  return { px, py, pz, r, yaw, pitch };
+}
+// one orbit step: turn the angles, re-derive the position on the SAME radius, hand it back. The caller
+// copies yaw/pitch to the player so the view keeps facing the pivot.
+function _edOrbitStep(ob, dyaw, dpitch, out){
+  ob.yaw += dyaw;
+  ob.pitch = Math.max(-1.5, Math.min(1.5, ob.pitch + dpitch));
+  const cp = Math.cos(ob.pitch);
+  out.x = ob.px + Math.sin(ob.yaw)*cp*ob.r;
+  out.y = ob.py - Math.sin(ob.pitch)*ob.r;
+  out.z = ob.pz + Math.cos(ob.yaw)*cp*ob.r;
+  return out;
+}
+function _edOrbitStart(e){
+  if(editorTopView || !editorFreeFly) return false;   // the orbit writes flyPos: fly camera only
+  if(!flyInit){ flyPos.copy(player.pos); flyInit = true; }   // same seed the frame loop takes
+  _edOrbitPivotV(e, _edOrbitP);
+  _edOrbit = _edOrbitFrom(_edOrbitP.x, _edOrbitP.y, _edOrbitP.z, flyPos.x, flyPos.y, flyPos.z);
+  return true;
+}
+function _edOrbitMove(e){
+  if(!_edOrbit) return;
+  const _s = _mouseSensNow(false);   // the look drag reads the same derivation, so orbit and look feel identical
+  _edOrbitStep(_edOrbit, -e.movementX*_s, -e.movementY*_s, flyPos);   // same angular direction as the look drag
+  player.yaw = _edOrbit.yaw; player.pitch = _edOrbit.pitch;   // face the pivot — exact in the basis above
+  if(Math.abs(e.movementX) + Math.abs(e.movementY) > 2) editorDragMoved = true;   // a real orbit is not a select-click
+}
 
 // ---------- build 563: top-view marquee drag-select ----------
 // In top view, a left-drag on empty space draws a selection box and selects every prop whose center projects
@@ -21160,7 +21232,8 @@ function _marqueeFinish(e){
   if(typeof renderEditorFields==='function') renderEditorFields();
 }
 // middle / right drag pans in top view (left-drag is the marquee now); suppress the context menu while editing in top view
-renderer.domElement.addEventListener('mousedown', e=>{ if(!editorOpen || (e.button!==1 && e.button!==2)) return; if(editorTopView){ editorDragPan=true; editorDragMoved=false; e.preventDefault(); } });
+renderer.domElement.addEventListener('mousedown', e=>{ if(!editorOpen || (e.button!==1 && e.button!==2)) return; if(editorTopView){ editorDragPan=true; editorDragMoved=false; e.preventDefault(); } else if(e.button===1 && editorFreeFly && _edOrbitStart(e)){ editorDragMoved=false; e.preventDefault(); } });   // build 1377: MMB in fly mode orbits (verified free there — this handler acted only in top view; the in-game grab returns while editorOpen; the vcam orbit requires gameOn without editorOpen)
+addEventListener('mouseup', e=>{ if(e.button===1) _edOrbit = null; });   // build 1377: MMB release ends the orbit (the LMB path clears it in the main editor mouseup)
 // ---- build 1312 (editor audit 4.6): TWO-FINGER CAMERA IN THE EDITOR VIEWPORT --------------------------
 // The audit: "Top view pan is mousedown button 1/2 and zoom is `wheel` -> TOP VIEW IS UNREACHABLE ON A
 // PHONE, and with it the marquee, which is top-view only. A touch creator has no multi-select at all beyond
@@ -32298,7 +32371,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1376 · 2026-08-04';
+const BUILD_VERSION = 'build 1377 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -39767,7 +39840,7 @@ const MODE_HINT = {
   files:   'Save, share or export this level, and chain levels into a campaign.',
   settings:'Your API keys for the AI tools and the 3D model libraries. Stored in THIS browser only \u2014 never saved into a level or shared.',
 };
-const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+A</b> add · <b>F</b> fly · <b>T</b> top view · <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close.</span>';
+const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+A</b> add · <b>F</b> fly · <b>T</b> top view · <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Alt/MMB-drag</b> orbit · <b>Del</b> remove · <b>P</b> close.</span>';
 function _hexRgba(hex,a){ const nn=parseInt(hex.replace('#',''),16); return 'rgba('+((nn>>16)&255)+','+((nn>>8)&255)+','+(nn&255)+','+a+')'; }
 const SHOW_MODEL_LIBRARY = false;   // hardcoded model-library chips hidden for now (to be rebuilt); flip true to restore
 const _svgIcon = (inner)=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>';
