@@ -28843,6 +28843,14 @@ let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0;
 /* build 1313: EVERY shake in the engine goes through here — blasts, hits, kills, car impacts, the melee
    thump — so scaling it at this one point covers all of them, and a future one for free. */
 function addShake(amt){ shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1)); }
+/* build 1358: smooth trauma noise. Three sines at incommensurate rates — dominant ~24 Hz, which is what
+   reads as a shake rather than as sparkle — summing to +/-1. A function of TIME, so the motion a player
+   sees is the same at any refresh rate; the previous Math.random() per frame was literally a different
+   signal on a 144 Hz display than on a 30 Hz one. Deterministic, allocation-free, three trig calls. */
+function _shakeN(t, k){
+  return Math.sin(t*23.7 + k*1.7)*0.55 + Math.sin(t*11.3 + k*4.9)*0.30 + Math.sin(t*47.1 + k*9.1)*0.15;
+}
+const SHAKE_DECAY = 1.1;   // per second, linear — duration is proportional to amplitude, which is right
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){
     const g = grenades[i];
@@ -31595,7 +31603,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1357 · 2026-08-04';
+const BUILD_VERSION = 'build 1358 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34051,7 +34059,7 @@ function shoot(){
   triggerGunAnim('shoot');   // fire the model's shoot clip if it has one
   if(w.projectile){ fireRocketShot(); firingLatch=true; return; }   // rocket launcher: fire a projectile, skip hitscan
   SFX.shoot();
-  addShake(curWep==='shotgun'?0.16:(curWep==='smg'?0.045:0.08));   // recoil kick
+  addShake(curWep==='shotgun'?0.26:(curWep==='smg'?0.075:0.13));   // recoil kick (build 1358: retuned for the linear curve — rifle 0.30 deg / 118 ms, shotgun 0.60 deg / 236 ms)
   // build 1102: recoil pitch-kick is a first-person-camera feel. In top-down/side the pitch isn't
   // the aim (the cursor is), so kicking it silently corrupted the stored pitch for later FPS play.
   if(activeViewMode()==='fps'){
@@ -37556,13 +37564,29 @@ function loop(){
     if(crouchT > 0.001) camera.position.y -= crouchT * CROUCH_DIP;   // crouch lowers the view
     camera.position.y += _landDip;   // build 1210: the landing dip (negative = down)
 
-    // camera shake (decays quickly) — offsets rotation so it reads as a jolt; build 1210 folds in the strafe lean
+    /* ---- build 1358: THE SHAKE CURVE WAS THROWING AWAY 85-96% OF EVERY GUNSHOT ----------------------
+       `const s = shake * shake` carried the comment "ease — feels punchier". The trauma-squared curve is
+       real and standard — but it is designed for a trauma value that REACHES 1, and every call site here
+       is far below that: gunfire lives at 0.045-0.16, where squaring costs 85-96% of the amplitude.
+       Measured at the shipped 78 deg fov, this block driven to convergence:
+           smg    addShake(0.045)  0.0020 deg   0.02 px @1080p   33 ms
+           rifle  addShake(0.080)  0.0080 deg   0.09 px          50 ms
+           shotgun addShake(0.160) 0.0393 deg   0.46 px          83 ms
+       A tenth of a pixel for two frames is not a camera shake, it is a rounding error — which is why
+       firing this game reads as clicking a mouse. Linear, and the amounts retuned at their call sites.
+
+       Two riders fixed in the same six lines:
+        * It was WHITE NOISE RESAMPLED PER FRAME, so the same shake is a different visual phenomenon at
+          30 Hz and at 144 Hz. Smooth noise of TIME is frame-rate independent by construction.
+        * The decay was 2.2/s, so a rifle's shake was gone inside two frames at 60 Hz. 1.1/s gives it
+          118 ms — still short, still amplitude-proportional (a rocket shakes far longer than a shot),
+          but long enough to be a motion rather than a single displaced frame. */
     if(shake > 0.001){
-      const s = shake * shake;          // ease — feels punchier
-      camera.rotation.x += (Math.random()-0.5) * 0.08 * s;
-      camera.rotation.y += (Math.random()-0.5) * 0.08 * s;
-      camera.rotation.z  = _camLean + (Math.random()-0.5) * 0.06 * s;
-      shake = Math.max(0, shake - dt*2.2);
+      const s = shake, _st = _pnow() * 0.001;
+      camera.rotation.x += _shakeN(_st, 0) * 0.04 * s;
+      camera.rotation.y += _shakeN(_st, 1) * 0.04 * s;
+      camera.rotation.z  = _camLean + _shakeN(_st, 2) * 0.03 * s;
+      shake = Math.max(0, shake - dt*SHAKE_DECAY);
     } else { shake = 0; camera.rotation.z = _camLean; }
     if(tpActive() && gameOn && !duelDead){ gun.visible=false; tpCameraPushback(dt); }   // third-person chase cam (first-person above is the default; build 894: damped follow, forced by Camera view: Third-person)
   }

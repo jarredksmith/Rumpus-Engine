@@ -7861,3 +7861,47 @@ the platform audit already lists. What this build buys is that the name is no lo
 **A backtick inside a template literal, for the third time.** The probe's own comment read ``// no `from` at
 all`` inside a `P(\`…\`)` string and closed the template — a syntax error in the instrument, not the engine.
 Recorded under builds 1328 and 1342; write it as plain prose in probe source.
+
+## The shake curve was throwing away 85–96% of every gunshot (build 1358)
+
+A six-critic AAA review panel ran against build 1357 (rendering, art direction, game feel, editor, performance,
+audio+UI), each required to verify in source and measure rather than assert. This is the first fix out of it,
+and it is one line.
+
+```js
+const s = shake * shake;          // ease — feels punchier
+```
+
+Trauma-squared is a real and standard curve — **for a trauma value that reaches 1.** Every call site in this
+engine is far below that: gunfire lives at 0.045–0.16, where squaring only shrinks. Measured at the shipped
+78° fov, driving the real block to convergence:
+
+```
+smg      addShake(0.045)   0.0020°   0.02 px @1080p    33 ms
+rifle    addShake(0.080)   0.0080°   0.09 px           50 ms
+shotgun  addShake(0.160)   0.0393°   0.46 px           83 ms
+```
+
+**A tenth of a pixel for two frames is not a camera shake, it is a rounding error** — which is why firing this
+game read as clicking a mouse. The only thing that visibly moved the camera was a rocket at your feet.
+
+Three faults in those six lines, all fixed together because they are one behaviour:
+
+- **The curve is linear now**, and the gunfire call site was retuned with it (0.13 / 0.075 / 0.26). Leaving the
+  amounts alone would have kept the frame nearly still. Rifle 0.30° over 118 ms, shotgun 0.60° over 236 ms, a
+  rocket 2.06° over 818 ms. The damage-scaled hit amounts are deliberately **not** retuned — `dmg/55` was
+  already in a usable range.
+- **It was white noise resampled per frame.** The same shake was therefore a different visual phenomenon at
+  30 Hz and at 144 Hz. `_shakeN(t, k)` is three sines at incommensurate rates summing to ±1, dominant ~24 Hz —
+  a function of TIME, so what the player sees is refresh-rate independent by construction, and the three axes
+  are near-uncorrelated so a shake is a shake rather than a diagonal line.
+- **The decay was 2.2/s**, so a rifle's shake was gone inside two frames at 60 Hz. `SHAKE_DECAY = 1.1` gives it
+  118 ms — still amplitude-proportional, which is right (a rocket shakes far longer than a shot), but long
+  enough to be a motion rather than one displaced frame.
+
+Build 1313's `a11y.shake` chokepoint, the clamp at 1, and build 1210's strafe lean as the base of the roll are
+all untouched and pinned.
+
+Two pins moved (1210, 91), both quoting the old literal with their intent intact: 1210's subject is that the
+lean is the base of the roll in both branches, and 91's is that a shotgun kicks hardest and an SMG least —
+both asserted directly now instead of by quotation.

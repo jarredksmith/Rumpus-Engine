@@ -9,7 +9,16 @@ assert(/enemyShot\(at\)\{ tone\(\{freq:300, type:'square', dur:0\.08, vol:0\.09/
 assert(/if\(SFX && SFX\.enemyShot\) SFX\.enemyShot\(from\);/.test(extractFunction('fireEnemyShot')), 'enemy fire uses enemyShot (positioned since 1208), not the player weapon');
 
 // shake
-assert(/addShake\(curWep==='shotgun'\?0\.16:\(curWep==='smg'\?0\.045:0\.08\)\);/.test(extractFunction('shoot')), 'recoil kick on firing');
+// build 1358: retuned when the amplitude curve went from `shake*shake` to linear — squaring a trauma value
+// that never approaches 1 was costing gunfire 85-96% of its amplitude. The RELATION this pin is about
+// (a shotgun kicks hardest, an SMG least) is unchanged and is asserted directly.
+{
+  const sh = extractFunction('shoot').match(/addShake\(curWep==='shotgun'\?([\d.]+):\(curWep==='smg'\?([\d.]+):([\d.]+)\)\)/);
+  assert(sh, 'recoil kick on firing');
+  const [, shot, smg, rest] = sh.map(Number);
+  assert(shot > rest && rest > smg, '...shotgun hardest, SMG lightest');
+  assert(rest >= 0.1, '...and a rifle shot is now visible rather than a tenth of a pixel');
+}
 assert(/addShake\(Math\.min\(0\.5, dmg\/55\)\)/.test(src), 'camera jolt when taking damage');
 
 // low-hp cue
