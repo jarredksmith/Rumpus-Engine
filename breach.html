@@ -6660,11 +6660,30 @@ function _spatialOut(at){
     const e = camera.matrixWorld.elements;
     let dx = at.x - e[12], dy = at.y - e[13], dz = at.z - e[14];
     const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1e-4;
-    let g = 1 - dist/_SND_MAXDIST; if(g <= 0.02) return null; g = g*g;   // null = too far to bother; the caller skips
-    const pan = Math.max(-1, Math.min(1, (e[0]*dx + e[1]*dy + e[2]*dz) / dist));   // component along camera-right
+    if(1 - dist/_SND_MAXDIST <= 0.02) return null;   /* null = too far to bother; the caller skips (the build-1208 contract, kept exactly) */
+    /* build 1363: inverse-distance loudness. The old (1 - d/55)^2 was INVERTED vs physics: 1.3 dB from
+       1 m to 5 m and then a cliff. g = REF/max(REF, d) is the 1/d law a listener expects — full volume
+       inside the first REF metres, then 14 dB per 5x distance. */
+    const REF = 4;
+    const g = REF / Math.max(REF, dist);
+    const pan = Math.max(-1, Math.min(1, (e[0]*dx + e[1]*dy + e[2]*dz) / dist));   /* component along camera-right */
+    /* a StereoPanner projects ahead and behind IDENTICALLY, so the only front/back cue available is
+       spectral: forward is minus column 2 of matrixWorld, and a behind source is darker and a touch
+       quieter (head shadow, cheaply). */
+    const fwd = -(e[8]*dx + e[9]*dy + e[10]*dz) / dist;   /* +1 dead ahead, -1 dead behind */
+    const behind = Math.max(0, -fwd);
     const p = actx.createStereoPanner(); p.pan.value = pan;
-    const dg = actx.createGain(); dg.gain.value = g;
-    p.connect(dg).connect(bus);
+    const dg = actx.createGain(); dg.gain.value = g * (1 - 0.16*behind);   /* fully behind trims ~1.5 dB */
+    if(actx.createBiquadFilter){
+      /* air absorption: 20 kHz at 0 m falling exponentially to ~2.5 kHz at 55 m, then scaled down by
+         behind-ness — a fully-behind source caps around 3.5 kHz (20k x 0.175), so a rifle at 50 m no
+         longer has the same spectrum as one at 1 m. */
+      const lp = actx.createBiquadFilter(); lp.type='lowpass';
+      lp.frequency.value = 20000 * Math.pow(0.125, dist/_SND_MAXDIST) * (1 - behind*0.825);
+      p.connect(lp).connect(dg).connect(bus);
+    } else {
+      p.connect(dg).connect(bus);   /* no createBiquadFilter: skip the filter, keep the pan + gain (old browsers) */
+    }
     return p;
   }catch(err){ return bus; }
 }
@@ -6696,6 +6715,12 @@ function noise({dur=0.15, vol=0.3, filterFreq=1200, type='lowpass', at=null}={})
   src.connect(filt).connect(g).connect(out);
   src.start(t);
 }
+/* build 1363: per-shot humanisation state. Every synth gunshot was BIT-IDENTICAL (playSample applies its
+   pitch wobble only to custom URL clips): _sndJit spreads each tonal layer a little per call, _shotSndAt
+   lets the first shot after a pause read brighter than the middle of a mag dump, and _stepSndVar rotates
+   the footstep between three filter variants. Declared above the SFX object that reads them. */
+let _shotSndAt = -1e9, _stepSndVar = 0;
+const _sndJit = (v,r)=> v*(1+(Math.random()*2-1)*r);
 // build 1211: a gunshot is THREE layers, not one blip — (a) a sub-bass thump (the weight), (b) the tuned
 // body+crack pair the guns always had (byte-identical values, so nothing authored moved), (c) a delayed
 // lowpassed noise re-trigger as a pseudo-tail (the space). Per-weapon: the sniper and shotgun get the
@@ -6705,14 +6730,26 @@ const _SHOT_LAYERS = {
   smg:    { sub:[70,0.05,0.10], body:{freq:380, type:'square', dur:0.05, vol:0.10, slideTo:150}, crack:{dur:0.05, vol:0.15, filterFreq:3000, type:'highpass'}, tail:[0.12,0.05,1200,70] },
   sniper: { sub:[45,0.12,0.22], body:{freq:95, type:'square', dur:0.22, vol:0.22, slideTo:38}, crack:{dur:0.26, vol:0.34, filterFreq:1000, type:'lowpass'}, tail:[0.42,0.14,700,150] },
   rifle:  { sub:[60,0.07,0.13], body:{freq:320, type:'square', dur:0.08, vol:0.12, slideTo:120}, crack:{dur:0.07, vol:0.18, filterFreq:2200, type:'highpass'}, tail:[0.16,0.07,1100,90] },
+  /* build 1363 (audio audit): the pistol and the launcher fell through to the RIFLE patch, so two of the
+     seven guns had no voice of their own. Pistol: a snappy mid crack around a 700 Hz body and a short,
+     close tail. Launcher: a deep 50 Hz thump with a slower attack (subA + body attack) and a long
+     lowpassed rumble tail. */
+  pistol: { sub:[66,0.05,0.11], body:{freq:700, type:'square', dur:0.06, vol:0.13, slideTo:260}, crack:{dur:0.06, vol:0.20, filterFreq:2600, type:'highpass'}, tail:[0.10,0.05,1300,60] },
+  launcher:{ sub:[50,0.16,0.24], subA:0.012, body:{freq:110, type:'square', dur:0.20, vol:0.18, slideTo:45, attack:0.015}, crack:{dur:0.20, vol:0.22, filterFreq:800, type:'lowpass'}, tail:[0.50,0.13,550,160] },
 };
 const SFX = {
   shoot(){ if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;
     if(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].suppressed){ tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass'}); return; }   // build 964: suppressed 'phut' (deliberately tail-less — that is what a suppressor is for)
     const L=_SHOT_LAYERS[curWep]||_SHOT_LAYERS.rifle;
-    tone({freq:L.sub[0], type:'sine', dur:L.sub[1], vol:L.sub[2], slideTo:Math.max(20, L.sub[0]*0.55), attack:0.002});
-    tone(L.body); noise(L.crack);
-    setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass'}), L.tail[3]); },
+    /* build 1363: per-shot variation. Each tonal layer jitters freq +-3% / vol +-10%, the tail delay
+       wanders +-15 ms, and the first shot after a >400 ms gap gets a brighter crack (+20%) so a fresh
+       engagement reads louder than the middle of a mag dump. The table values are untouched; only the
+       jitter multiplies them. */
+    const nw=actx?actx.currentTime:0, first=(nw-_shotSndAt)>0.4; _shotSndAt=nw;
+    tone({freq:_sndJit(L.sub[0],0.03), type:'sine', dur:L.sub[1], vol:_sndJit(L.sub[2],0.10), slideTo:Math.max(20, L.sub[0]*0.55), attack:L.subA||0.002});
+    tone({freq:_sndJit(L.body.freq,0.03), type:L.body.type, dur:L.body.dur, vol:_sndJit(L.body.vol,0.10), slideTo:L.body.slideTo, attack:L.body.attack||0.005});
+    noise({dur:L.crack.dur, vol:_sndJit(L.crack.vol,0.10)*(first?1.2:1), filterFreq:L.crack.filterFreq, type:L.crack.type});
+    setTimeout(()=>noise({dur:L.tail[0], vol:L.tail[1], filterFreq:L.tail[2], type:'lowpass'}), Math.max(0, Math.round(L.tail[3]+(Math.random()*2-1)*15))); },
   enemyShot(at){ tone({freq:300, type:'square', dur:0.08, vol:0.09, slideTo:105, at}); noise({dur:0.07, vol:0.12, filterFreq:1700, type:'highpass', at}); },
   // ---------- build 1283: THE TELEGRAPHS ARE AUDIBLE ----------
   // Across all 85 SFX call sites, enemies made sound in exactly three: a ranged shot (twice) and death.
@@ -6765,6 +6802,28 @@ const SFX = {
   explode(at){ if(playSample(curSounds().explode, {at})) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35, at}); noise({dur:0.45, vol:0.3, filterFreq:600, at}); },
   power(){ tone({freq:440, type:'triangle', dur:0.1, vol:0.16, slideTo:660}); setTimeout(()=>tone({freq:660, type:'triangle', dur:0.1, vol:0.16, slideTo:880}),90); setTimeout(()=>tone({freq:880, type:'triangle', dur:0.14, vol:0.16, slideTo:1320}),180); },
   swap(){ tone({freq:300, type:'square', dur:0.05, vol:0.08, slideTo:500}); },
+  /* ---- build 1363 (audio audit): UI SOUND, VICTORY AND DEFEAT ----
+     Zero menu handlers called SFX — the product had no interface sound at all, and winning or dying was
+     literally silent (gameWon/endGame called stopMusic and nothing else). The UI set is tiny and quiet
+     (fast attacks, vol around 0.05) and is wired through ONE delegated listener (_uiMenuCtx, just below
+     the SFX object) plus openModal/closeModal and the pause path, so there is no per-button list to
+     drift. */
+  uiMove(){ tone({freq:900, type:'sine', dur:0.035, vol:0.05, attack:0.002}); },
+  uiSelect(){ tone({freq:660, type:'triangle', dur:0.05, vol:0.06, attack:0.002}); setTimeout(()=>tone({freq:880, type:'triangle', dur:0.06, vol:0.05}),45); },
+  uiBack(){ tone({freq:520, type:'triangle', dur:0.05, vol:0.055, attack:0.002}); setTimeout(()=>tone({freq:390, type:'triangle', dur:0.06, vol:0.05}),45); },
+  uiOpen(){ noise({dur:0.12, vol:0.045, filterFreq:900, type:'bandpass'}); tone({freq:420, type:'sine', dur:0.10, vol:0.04, slideTo:640}); },
+  uiClose(){ noise({dur:0.12, vol:0.045, filterFreq:700, type:'bandpass'}); tone({freq:640, type:'sine', dur:0.10, vol:0.04, slideTo:420}); },
+  uiDeny(){ SFX.deny(); },
+  /* a rising major triad on MUSIC_ROOT, gentle, about 1.2 s end to end */
+  victory(){ const r=MUSIC_ROOT*2;
+    tone({freq:r, type:'triangle', dur:0.45, vol:0.13});
+    setTimeout(()=>tone({freq:r*1.25, type:'triangle', dur:0.45, vol:0.13}),220);
+    setTimeout(()=>tone({freq:r*1.5, type:'triangle', dur:0.75, vol:0.14, slideTo:r*2}),440); },
+  /* a falling minor second, then a low 2 s sustain */
+  defeat(){ const r=MUSIC_ROOT;
+    tone({freq:r*2, type:'triangle', dur:0.5, vol:0.13});
+    setTimeout(()=>tone({freq:r*1.8878, type:'triangle', dur:0.6, vol:0.12}),300);
+    setTimeout(()=>tone({freq:r, type:'sine', dur:2.0, vol:0.10, slideTo:r*0.97, attack:0.05}),500); },
   slide(){ if(!actx||!sfxBus) return; const t=actx.currentTime, dur=0.45;
     const nn=Math.floor(actx.sampleRate*dur); const buf=actx.createBuffer(1,nn,actx.sampleRate); const d=buf.getChannelData(0);
     for(let i=0;i<nn;i++){ const e=i/nn; d[i]=(Math.random()*2-1)*Math.pow(1-e,1.5); }
@@ -6773,7 +6832,11 @@ const SFX = {
     filt.frequency.setValueAtTime(1900,t); filt.frequency.exponentialRampToValueAtTime(320,t+dur);   // sweep down = whoosh
     const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.2,t+0.05); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
     src.connect(filt).connect(g).connect(sfxBus); src.start(t); },
-  step(){ noise({dur:0.06, vol:0.07, filterFreq:520, type:'lowpass'}); },
+  /* build 1363: the most-heard sound in the game was ONE unvaried burst. Three rotating filter variants
+     (dark / base / bright) plus pitch and volume jitter. Still FLAT (no at) because it is the PLAYER, and
+     still centred on 520 so it stays tellable from the enemy step (420/260, quieter, positional). */
+  step(){ const f=[420,520,640][_stepSndVar=(_stepSndVar+1)%3];
+    noise({dur:0.06, vol:0.07*(1+(Math.random()*2-1)*0.20), filterFreq:f*(1+(Math.random()*2-1)*0.12), type:'lowpass'}); },
   /* ---- build 1315 (gameplay audit F3): ENEMIES MAKE NOISE WHEN THEY MOVE AND WHEN THEY NOTICE YOU ----
      The audit, cataloguing all 85 SFX call sites: "enemies produce sound in exactly three places — a
      ranged projectile and death. No approach/footstep, no aggro/spot vocal, no sapper fuse. SFX.step()
@@ -6792,6 +6855,29 @@ const SFX = {
   sapperFuse(at){ tone({freq:1500, type:'square', dur:0.045, vol:0.055, slideTo:1900, at}); },
   heartbeat(){ tone({freq:60, type:'sine', dur:0.16, vol:0.22, slideTo:42}); setTimeout(()=>tone({freq:54, type:'sine', dur:0.18, vol:0.15, slideTo:40}),175); },
 };
+/* build 1363: ONE delegated UI-click listener instead of 16 hand-wired sites (a hand-kept list drifts —
+   this file records that defect repeatedly). It fires ONLY in a menu context: pointer-locked play can
+   never hear it, so it cannot fire during combat. Capture phase, so a button handler that stops
+   propagation cannot silently starve it. */
+function _uiMenuCtx(){
+  try{
+    if(document.pointerLockElement) return false;   /* locked = combat: never */
+    if(typeof paused!=='undefined' && paused) return true;
+    const ov=document.getElementById('overlay'); if(ov && !ov.classList.contains('hidden')) return true;
+    if(document.querySelector('.modalBack:not(.hidden)')) return true;
+  }catch(e){}
+  return false;
+}
+let _uiClickAt = 0;
+document.addEventListener('click', (ev)=>{
+  try{
+    const el = ev.target && ev.target.closest ? ev.target.closest('button, .mpBtn, .pBtnGhost, .modalClose') : null;
+    if(!el || !_uiMenuCtx() || !actx) return;
+    const nw = performance.now(); if(nw - _uiClickAt < 60) return; _uiClickAt = nw;   /* nested handlers cannot stack blips */
+    if(el.classList.contains('modalClose')) return;   /* the close sound belongs to closeModal — one voice per event */
+    SFX.uiSelect();
+  }catch(e){}
+}, true);
 
 // ---------- Custom sound samples (optional): load mp3/wav/ogg from a URL and play it instead of the synth ----------
 // URLs are stored in audioSettings.sounds (per device). When a sample is loaded for an event we play it;
@@ -31688,7 +31774,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1362 · 2026-08-04';
+const BUILD_VERSION = 'build 1363 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -49148,7 +49234,7 @@ function gameWon(){
       const fromName=(campaign.levels[campaignIdx] && campaign.levels[campaignIdx].name!=null)?campaign.levels[campaignIdx].name:('Level '+(campaignIdx+1));
       const clearedNum=campaignIdx+1;
       campaignIdx++; const toIdx=campaignIdx;
-      stopMusic();
+      stopMusic(); SFX.victory();   /* build 1363: clearing a campaign level is a win moment — it was silent */
       if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false;
       gameOn=false;   // stop objective/enemy ticks while the transition card is up; _campaignLoad->startGame turns it back on
       showCampaignInterstitial(fromName, clearedNum, toIdx, total, ()=>{ _campaignLoad(toIdx); _restoreLoadout(carry); });
@@ -49156,7 +49242,7 @@ function gameWon(){
     }
     campaignActive=false; _campaignComplete=true;
   }
-  stopMusic();
+  stopMusic(); SFX.victory();   /* build 1363: winning called stopMusic and nothing else */
   if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false;
   if(typeof closeUpgradePicker==='function') closeUpgradePicker();
   if(typeof drivingCar!=='undefined' && drivingCar && typeof exitCar==='function') exitCar(); gameOn=false; gameOver=true; safeExitPointerLock();
@@ -49187,7 +49273,7 @@ function gameWon(){
 function endGame(){
   releaseHeld(); closeRadial(false);
   if(typeof closeDialogue==='function') closeDialogue();   // build 695: drop any open NPC dialogue
-  stopMusic();
+  stopMusic(); SFX.defeat();   /* build 1363: dying was silent — the lose screen gets its sting */
   if(typeof drivingCar!=='undefined' && drivingCar && typeof exitCar==='function') exitCar(); gameOn=false; gameOver=true; safeExitPointerLock(); if(typeof _raceHudHide==='function') _raceHudHide(); if(typeof extractZone!=='undefined' && extractZone) extractZone.visible=false; if(typeof closeUpgradePicker==='function') closeUpgradePicker();
   firing=false; ads=false; shopOpen=false;
   if(typeof _outOnEditorClose==='function') _outOnEditorClose();   // build 1036: outliner hides are editor-only
@@ -49966,13 +50052,14 @@ function openPause(){
   if(!gameOn || gameOver || paused || shopOpen || editorOpen || choosingUpgrade) return;
   if(typeof bindPauseMenu==='function') try{ bindPauseMenu(); }catch(e){}   // build 907: re-sync every control from live state (they were bound once at boot and went stale)
   paused = true; firing = false; ads = false;
+  SFX.uiOpen();   /* build 1363: the pause path joins the UI voice */
   safeExitPointerLock();
   const eh=document.getElementById('pauseEditHud'); if(eh) eh.style.display = isTouch ? '' : 'none';
   const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.remove('hidden');
 }
 function resumeGame(){
   if(!paused) return;
-  paused = false;
+  paused = false; SFX.uiClose();   /* build 1363 */
   const pm=document.getElementById('pauseMenu'); if(pm) pm.classList.add('hidden');
   if(!isTouch) tryPointerLock();
 }
@@ -51370,8 +51457,8 @@ function _helpBuildExample(kind){
   if(typeof renderEditorFields==='function') renderEditorFields();
 }
 function openCredits(){ renderCreditsScreen(); openModal('creditsModal'); }
-function openModal(id){ const m=document.getElementById(id); if(m) m.classList.remove('hidden'); }
-function closeModal(id){ const m=document.getElementById(id); if(m) m.classList.add('hidden'); }
+function openModal(id){ const m=document.getElementById(id); if(!m) return; if(m.classList.contains('hidden')) SFX.uiOpen(); m.classList.remove('hidden'); }   /* build 1363: state-checked, so re-opening an already-open modal is silent */
+function closeModal(id){ const m=document.getElementById(id); if(!m) return; if(!m.classList.contains('hidden')) SFX.uiClose(); m.classList.add('hidden'); }   /* build 1363: the defensive closes at boot/startGame stay silent */
 function bindModals(){
   document.querySelectorAll('.modalClose').forEach(b=>{ b.onclick=()=>closeModal(b.dataset.close); });
   document.querySelectorAll('.modalBack').forEach(m=>{ m.addEventListener('click', e=>{ if(e.target===m && m.id!=='lobby') m.classList.add('hidden'); }); });   // build 907: the lobby represents a LIVE room (announced + heartbeating) — dismissing it by backdrop stranded a zombie room with no way back; use Leave

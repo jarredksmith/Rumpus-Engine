@@ -6,7 +6,7 @@ import { gameSource, extractConst, assert, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // ---- the pistol weapon def ----
-const wm = src.match(/pistol:\s*\{[^}]*\}/);
+const wm = src.slice(src.indexOf('const WEAPONS')).match(/pistol:\s*\{[^}]*\}/);   /* build 1363 gave _SHOT_LAYERS its own pistol entry ABOVE the WEAPONS table — this pin has always meant the WEAPONS def, so anchor there */
 assert(wm, 'the pistol is defined in WEAPONS');
 const P = wm[0];
 assert(/name:'PISTOL'/.test(P), 'named PISTOL');
