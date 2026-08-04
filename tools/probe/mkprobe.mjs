@@ -46,5 +46,11 @@ fs.writeFileSync(path.join(out, 'probe.html'), src);
 const three = path.join(repo, 'tests', 'node_modules', 'three', 'build', 'three.min.js');
 if (fs.existsSync(three)) fs.copyFileSync(three, path.join(out, 'three.min.js'));
 else console.warn('! tests/node_modules/three not found — copy a matching three.min.js into ' + out);
+// build 1354: the game now loads PeerJS (and fflate) LOCAL-FIRST, so anything the probe serves has to
+// carry them too — otherwise a probe reports "the local copy is not served" about its own staging.
+for (const f of ['peerjs.min.js', 'fflate.min.js', 'rapier3d-compat.js']) {
+  const src = path.resolve(repo, f);
+  if (fs.existsSync(src)) fs.copyFileSync(src, path.join(out, f));
+}
 
 console.log('probe.html written to ' + out);

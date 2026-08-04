@@ -9,7 +9,11 @@ import { gameSource, assert, done } from './harness.mjs';
 
 const src = gameSource();
 
-assert(/function _peerIce\(\)\{/.test(src) && /return \{ config:\{ iceServers:_peerIce\(\) \} \};/.test(src), 'ICE config helpers exist');
+// build 1354: this pin quoted the whole one-line return verbatim, and broke when _peerOpts gained the
+// self-hosted-broker merge — with every part of the assertion still true. A pin against a literal is a pin
+// against the literal, not against what it says. It asserts the MEMBERS now.
+assert(/function _peerIce\(\)\{/.test(src), 'the ICE list helper exists');
+assert(/config:\{ iceServers:_peerIce\(\) \}/.test(src), '...and _peerOpts hands that list to every Peer');
 assert(/stun:stun\.l\.google\.com:19302/.test(src), 'STUN stays for the direct path');
 // build 1015: openrelay.metered.ca ('openrelayproject') was RETIRED — a dead relay meant
 // same-WiFi joins failed on AP-isolated routers. Live free relay + optional remote config now.

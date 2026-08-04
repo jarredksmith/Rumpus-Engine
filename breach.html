@@ -46,11 +46,22 @@
     if(localStorage.getItem('breach_tpblock') !== '1') return;
     var ok = "'self' https://www.rumpusengine.com https://rumpusengine.com "
            + "https://unpkg.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com";
+    /* build 1354: a self-hosted broker must be in the policy or the block switch silently kills
+       multiplayer for exactly the people who took the trouble to run their own infrastructure. Read from
+       the same `breach_peer` setting `_peerServer()` uses, and only a hostname is admitted — this string
+       goes into a security policy, so anything with a space, a quote or a semicolon in it is dropped
+       rather than escaped. */
+    var peerHost = '';
+    try{
+      var pv = JSON.parse(localStorage.getItem('breach_peer') || 'null');
+      if(pv && pv.host && /^[a-zA-Z0-9.-]+$/.test(pv.host))
+        peerHost = ' https://' + pv.host + ' wss://' + pv.host;
+    }catch(e){}
     var m = document.createElement('meta');
     m.httpEquiv = 'Content-Security-Policy';
     m.content = "img-src 'self' data: blob:; media-src 'self' data: blob:; "
               + "font-src 'self' data: https://fonts.gstatic.com; "
-              + "connect-src " + ok + " https://0.peerjs.com wss://0.peerjs.com wss://*.peerjs.com;";
+              + "connect-src " + ok + " https://0.peerjs.com wss://0.peerjs.com wss://*.peerjs.com" + peerHost + ";";
     document.head.appendChild(m);
     window.__TP_BLOCKED = true;
   }catch(e){}
@@ -27818,7 +27829,33 @@ function _peerIce(){
     { urls:'turns:freeturn.tel:5349', username:'free', credential:'free' },
   ];
 }
-function _peerOpts(){ if(_iceRemote===null && !_peerOpts._f){ _peerOpts._f=1; _fetchIceRemote(); } return { config:{ iceServers:_peerIce() } }; }   // build 1015: kick the remote-config fetch on first use (covers later re-connects)
+// ---- build 1354: A WAY TO POINT AT YOUR OWN BROKER --------------------------------------------------
+// Every `new Peer(...)` passed only `{config:{iceServers}}`, so signalling always went to the PUBLIC
+// PeerJS cloud broker. `breach_ice`, `breach_comm_api`, `breach_lobby_db` and `breach_plays_db` all have a
+// self-hoster override; the broker — the single point of failure the whole feature depends on — had none.
+// So "deploy your own PeerServer" was not merely undocumented, it was IMPOSSIBLE: there was no way to tell
+// the game about it even if one were already running.
+//
+// `breach_peer` takes the same shape PeerJS itself does — {host, port, path, secure, key} — and is merged
+// into the options every call site already builds, so all four `new Peer` sites inherit it without
+// knowing. A malformed or absent value falls straight through to the cloud broker, which is what someone
+// who has not configured anything must keep getting.
+function _peerServer(){
+  try{
+    const o = JSON.parse(localStorage.getItem('breach_peer') || 'null');
+    if(!o || typeof o !== 'object' || !o.host) return null;
+    const out = { host: String(o.host).slice(0, 200) };
+    if(o.port != null) out.port = Math.max(1, Math.min(65535, Math.round(+o.port) || 443));
+    if(o.path) out.path = String(o.path).slice(0, 120);
+    if(o.key)  out.key  = String(o.key).slice(0, 120);
+    out.secure = (o.secure !== false);   /* default to TLS: a broker is a websocket carrying room codes */
+    return out;
+  }catch(e){ return null; }
+}
+function _peerOpts(){ if(_iceRemote===null && !_peerOpts._f){ _peerOpts._f=1; _fetchIceRemote(); }
+  const o = { config:{ iceServers:_peerIce() } };
+  const sv = _peerServer(); if(sv) Object.assign(o, sv);
+  return o; }   // build 1015: kick the remote-config fetch on first use (covers later re-connects)
 function netReset(){
   for(const id in NET.players) removeRemotePlayer(+id);
   for(const id in NET.enemyMeshes){ scene.remove(NET.enemyMeshes[id].mesh); }
@@ -31396,7 +31433,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1353 · 2026-08-04';
+const BUILD_VERSION = 'build 1354 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -48808,13 +48845,22 @@ function endGame(){
 function genRoomCode(){ const a='abcdefghjkmnpqrstuvwxyz23456789'; let s=''; for(let i=0;i<5;i++) s+=a[Math.floor(Math.random()*a.length)]; return s; }
 function ensurePeerJS(cb){
   if(window.Peer){ cb(true); return; }
-  const cdns=['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js','https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js','https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'];
+  /* build 1354: LOCAL FIRST. Rapier and fflate have been vendored beside the game for builds; PeerJS —
+     the transport the whole multiplayer feature rides on — was three CDNs and nothing else, so a
+     self-hoster, an air-gapped classroom or an offline session had no multiplayer at all.
+     The local copy is byte-identical to what build 1332 pinned: fetched from unpkg at the same version and
+     hashed, it produces exactly that build's sha384. It deliberately carries NO `integrity` attribute
+     though — SRI exists to detect a mirror serving something other than what you asked for, and a file you
+     host yourself is a file you control. Pinning a hash to your own copy only means a legitimate update
+     silently stops loading. The CDNs keep theirs, because that is where the risk actually is. */
+  const cdns=['peerjs.min.js','https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js','https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js','https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'];
   let i=0;
   (function next(){ if(i>=cdns.length){ cb(false); return; } const s=document.createElement('script');
     /* build 1332: same rule as three.js above — hashed from all three CDNs, which serve identical
        bytes; a tampered mirror fails the check and the loader falls through to the next. */
-    s.crossOrigin='anonymous'; s.integrity='sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR';
-    s.src=cdns[i++]; s.onload=()=>{ window.Peer?cb(true):next(); }; s.onerror=next; document.head.appendChild(s); })();
+    const _u=cdns[i++], _local=(_u.indexOf('://')<0);
+    if(!_local){ s.crossOrigin='anonymous'; s.integrity='sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR'; }
+    s.src=_u; s.onload=()=>{ window.Peer?cb(true):next(); }; s.onerror=next; document.head.appendChild(s); })();
 }
 function startHost(){
   const nm=document.getElementById('mpName'); NET.name=(nm&&nm.value.trim())||'Host';

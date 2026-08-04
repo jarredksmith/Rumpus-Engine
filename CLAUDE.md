@@ -7604,3 +7604,57 @@ keeping only because each entry named a capture that could settle it.
 
 Also outstanding (user actions): upload `server/api/plays.php` beside lobbies.php (build 1230's flywheel is client-live but counts nothing until then); upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.
+
+## The broker had no override, and PeerJS was three CDNs (build 1354)
+
+`breach_ice`, `breach_comm_api`, `breach_lobby_db` and `breach_plays_db` each have a self-hoster override.
+The **broker** — the single point of failure the entire multiplayer feature depends on — had none. Every
+`new Peer(...)` passed only `{config:{iceServers}}`, so signalling always went to the public PeerJS cloud.
+"Deploy your own PeerServer" was not merely undocumented: it was **impossible**, because there was no way to
+tell the game about one even if it were already running.
+
+And PeerJS itself was three CDNs and nothing else, while Rapier and fflate have been vendored for hundreds
+of builds — so a self-hoster, an air-gapped classroom or an offline session had no multiplayer at all.
+
+**`_peerOpts` is why this is four lines rather than four edits.** All four construction sites (host, client,
+and both host-migration sites from 1201) already route through it, so the override merges into the object
+they each build and there is no fifth place to keep in step. `test-1354` counts the construction sites and
+asserts every one goes through the helper — a site that built its own options would silently ignore the
+override, which is 1266's defect in a new costume.
+
+**It fails to the cloud, not to a broken room.** No host, a non-object, unparseable JSON — every one returns
+`null`, which is exactly what someone who has configured nothing must keep getting. TLS is the default
+(`secure !== false`): a broker is a websocket carrying room codes, so plaintext has to be asked for.
+
+**The local copy carries NO integrity hash, deliberately.** The three CDNs keep build 1332's pin, because
+that is where the risk is — SRI detects a mirror serving something other than what you asked for. A file you
+host yourself is one you control, and pinning your own copy only means a legitimate update stops loading.
+Same reasoning Rapier and fflate already shipped under; this build just makes it explicit at the site.
+
+**The CSP had to learn about it or the block switch would kill exactly the people who ran their own
+infrastructure.** Build 1335's parse-time injector reads the same `breach_peer` setting and appends
+`https://<host> wss://<host>` to `connect-src` — both schemes, since signalling is HTTPS then a websocket
+upgrade. The value goes into a **security policy**, so it is validated against `/^[a-zA-Z0-9.-]+$/` and
+DROPPED rather than escaped if it carries a space, a quote or a semicolon.
+
+Verified live (`tools/probe/peer-selfhost.mjs`):
+
+```
+unset          {"server":null,"host":null,"hasIce":true}
+configured     {"host":"peer.example.org","port":9000,"path":"/rumpus","secure":true,"iceStillThere":true}
+five kinds of rubbish  -> {"server":null}   (i.e. the cloud broker, unchanged)
+clamps         {"hostLen":200,"port":65535,"secure":false}
+loader         {"first":"peerjs.min.js","count":4,"localCarriesNoIntegrity":true}
+               and it is actually served: {"ok":true,"bytes":92863}
+```
+
+The vendored file's sha384 is `nlUQ8Zq…`, **byte-identical to build 1332's pinned CDN hash** — so the copy
+beside the game is provably the same PeerJS the CDNs were serving.
+
+`tools/probe/mkprobe.mjs` now copies the vendored `.js` files into the probe directory, or every future
+probe would boot without multiplayer. That edit went in **after** the `else` of the copy loop's guard, not
+between the `if` and its `else` — build 1309's recorded trap, hit once and caught by reading it back.
+
+**One pin moved (968), and it was the character-budget trap in its other costume.** It quoted `_peerOpts`'s
+whole one-line return verbatim; the merge broke it with every part of the assertion still true. It asserts
+the members now.
