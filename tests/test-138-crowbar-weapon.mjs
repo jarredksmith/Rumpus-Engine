@@ -4,7 +4,7 @@
 import { gameSource, extractFunction, done, assert } from './harness.mjs';
 const src = gameSource();
 
-assert(/crowbar: \{ name:'CROWBAR'.*melee:true, reach:3\.4, loud:0 \}/.test(src), 'crowbar weapon defined (melee, reach 3.4)');
+assert(/crowbar: \{ name:'CROWBAR'.*melee:true, reach:3\.4, loud:0/.test(src), 'crowbar weapon defined (melee, reach 3.4)');   /* build 1362: the literal gained kickV/kickH - pin the members, not the closing brace */
 
 const sh = extractFunction('shoot');
 assert(/if\(w\.melee\)\{ if\(firingLatch\) return; firingLatch=true; touchFireBufT=0; lastShot=now; triggerGunAnim\('shoot'\); meleeAttack\(w\); return; \}/.test(sh), 'firing a melee weapon swings it (before the ammo path; build 1059: one swing per click)');

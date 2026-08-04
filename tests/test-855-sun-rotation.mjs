@@ -11,7 +11,15 @@ const src = gameSource();
 // which is barely visible from eye height — the frame had no key-light read at all and every critic said
 // so. At 34 it casts 2.97 m. The AZIMUTH is unchanged, so the light still comes from the historical
 // direction; any level that saved a world block carries its own values and is untouched.
-assert(/sunAzim:63, sunElev:34,/.test(src.match(/const DEFAULT_WORLD = \{[^\n]*/)[0]), 'defaults 63°/34° in DEFAULT_WORLD');
+// build 1360 restaged the stock frame: the sun was 117 degrees BEHIND the spawn's view, so nothing was ever
+// rimmed and no shadow ever fell toward the camera. What this pin is about — that a default azimuth and
+// elevation live in DEFAULT_WORLD, and that a low sun casts a long shadow — is asserted directly.
+{
+  const dw = src.match(/const DEFAULT_WORLD = \{[^\n]*/)[0];
+  const az = Number(dw.match(/sunAzim:(-?[\d.]+),/)[1]), el = Number(dw.match(/sunElev:(-?[\d.]+),/)[1]);
+  assert(az >= 0 && az <= 360 && el > 5 && el < 60, 'defaults ' + az + '\u00b0/' + el + '\u00b0 in DEFAULT_WORLD');
+  assert(1 / Math.tan(el * Math.PI / 180) > 2, 'and the default sun is low enough to cast a shadow twice the caster\'s height');
+}
 
 // run the REAL apply snippet: sanitize + position math, against a stub moon
 // (build 861 factored the orbit into _sunOrbit so the day/night cycle can drive it — include it)

@@ -30,8 +30,9 @@ assert(/if\(activeViewMode\(\)==='fps'\)\{\n    recoil = Math\.min\(recoil/.test
 // rockets: same flash split, same pitch gate
 assert(/if\(tpActive\(\) \|\| activeViewMode\(\)!=='fps'\)\{ const _mp=new THREE\.Vector3\(\); if\(typeof tpMuzzleWorld==='function'\) tpMuzzleWorld\(_mp\); else _mp\.copy\(o\); muzzleFlashAt\(_mp\); \}/.test(src),
   'rocket launches flash at the character too');
-assert(/addShake\(0\.22\); if\(activeViewMode\(\)==='fps'\) player\.pitch \+= 0\.02;/.test(src),
-  'rocket pitch kick is FPS-only');
+assert(/addShake\(0\.22\); _recKick\(W\(\)\);/.test(src) &&
+       /function _recKick\(w\)\{[\s\S]*?if\(activeViewMode\(\)!=='fps'\) return;/.test(src),
+  'rocket pitch kick is FPS-only (build 1362: the gate lives inside _recKick, shared with the hitscan kick)');
 
 // grenades: chase view throws leave the character's hands
 assert(/if\(typeof tpActive==='function' && tpActive\(\)\) origin\.set\(player\.pos\.x, player\.pos\.y\+0\.4, player\.pos\.z\)\.addScaledVector\(dir, 0\.8\);/.test(src),

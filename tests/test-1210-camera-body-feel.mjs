@@ -59,7 +59,10 @@ const src = gameSource();
   assert(!/player\.vel && player\.onGround && typeof SPEED/.test(src),
     'the onGround gate is GONE — speed-FOV tracks speed, and the flickering ground test can never reach the lens');
   assert(/camera\.position\.y \+= _landDip;/.test(src), 'the dip lowers the first-person eye');
-  assert(/camera\.rotation\.z  = _camLean \+ \(Math\.random\(\)-0\.5\) \* 0\.06 \* s;/.test(src) && /\} else \{ shake = 0; camera\.rotation\.z = _camLean; \}/.test(src),
+// build 1358: the shake's noise became a smooth function of TIME (Math.random() per frame was literally a
+// different signal at 30 Hz and 144 Hz). This pin's subject — that the lean is the BASE of the roll in
+// both branches, so a settled camera returns exactly to it — is unchanged and is what it asserts now.
+assert(/camera\.rotation\.z  = _camLean \+ _shakeN\(/.test(src) && /\} else \{ shake = 0; camera\.rotation\.z = _camLean; \}/.test(src),
     'the lean drives camera roll whether or not shake is active');
   assert(/land\(impact\)\{ const v=Math\.max\(0\.04, Math\.min\(0\.2, 0\.06\+impact\*0\.16\)\);/.test(src),
     'SFX.land scales its thud with the landing impact');

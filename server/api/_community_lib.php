@@ -1,6 +1,6 @@
 <?php
 // RUMPUS ENGINE — shared community-library helpers (build 958).
-// Included by submit.php and admin.php; refuses to run standalone.
+// Included by submit.php, report.php and admin.php; refuses to run standalone.
 if (!defined('RUMPUS_COMM')) { http_response_code(404); exit; }
 
 const COMM_LIMITS = ['json' => 500000, 'name' => 60, 'author' => 40, 'desc' => 200, 'code' => 700000];
@@ -103,4 +103,60 @@ function publishEntry($entry, $levelJson) {
   fwrite($fh, json_encode($idx, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
   fflush($fh); flock($fh, LOCK_UN); fclose($fh);
   return '';
+}
+
+// ---- moderator alerts (both optional; failures never affect the request that triggered them) ----
+// MOVED HERE from submit.php in build 1346, when report.php became a second caller: the delivery
+// and the two config lines exist ONCE, so a change to either reaches every alert. A second copy
+// would drift, which is this codebase's most-repeated defect.
+//
+// $NOTIFY_EMAIL: any address — sent via PHP mail() from noreply@<your domain>. Check spam the
+// first time. $NOTIFY_DISCORD: a Discord channel webhook URL (Server Settings -> Integrations ->
+// Webhooks -> Copy URL) — instant push on your phone via the Discord app, never lands in spam.
+//
+// Callers pass the message PARTS, because what a level submission and an abuse report should say
+// are different; only the plumbing is shared:
+//   subject  email subject, prefixed 'RUMPUS ENGINE: '
+//   title    bold headline in the Discord message
+//   intro    first line of the email body
+//   line     the detail block, shared by both channels
+//   cta      label on the admin.php link ('Review + test play', 'Review reports', …)
+//   icon     Discord emoji prefix
+//   frag     optional #fragment appended to the admin.php link
+function notifyModerator($msg) {
+  $NOTIFY_EMAIL   = 'CHANGE-ME';   // e.g. 'you@example.com'  ('' or CHANGE-ME = off)
+  $NOTIFY_DISCORD = '';            // e.g. 'https://discord.com/api/webhooks/…'  ('' = off)
+
+  // Every part is caller-supplied and one of them lands in a mail HEADER, so CR/LF comes out of
+  // all of them here rather than relying on each caller having sanitized (submit.php's plain()
+  // already had; report.php's free-text note must not be the exception that gets it wrong).
+  $get = function ($k, $dflt = '') use ($msg) {
+    $v = (is_array($msg) && isset($msg[$k]) && is_scalar($msg[$k])) ? (string)$msg[$k] : $dflt;
+    return trim(preg_replace('/[\r\n]+/', ' ', $v));
+  };
+  $subject = $get('subject', 'moderator alert');
+  $title   = $get('title', $subject);
+  $intro   = $get('intro', 'Something needs your attention.');
+  $cta     = $get('cta', 'Review');
+  $icon    = $get('icon', '🕹️');
+  $frag    = preg_replace('/[^a-z0-9#\-]/i', '', $get('frag'));
+  // the detail block is the one part allowed newlines (it is a body, never a header)
+  $line    = trim(preg_replace('/[\r]+/', '', (is_array($msg) && isset($msg['line']) && is_scalar($msg['line'])) ? (string)$msg['line'] : ''));
+
+  $host = preg_replace('/[^a-z0-9.\-]/i', '', preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST'] ?? 'www.rumpusengine.com'));
+  $review = 'https://' . $host . '/api/admin.php' . $frag;
+
+  if ($NOTIFY_EMAIL !== '' && strpos($NOTIFY_EMAIL, 'CHANGE-ME') === false) {
+    @mail($NOTIFY_EMAIL,
+          'RUMPUS ENGINE: ' . $subject,
+          $intro . "\n\n" . $line . "\n\n" . $cta . ': ' . $review . "\n",
+          'From: noreply@' . preg_replace('/^www\./', '', $host) . "\r\nContent-Type: text/plain; charset=utf-8");
+  }
+  if ($NOTIFY_DISCORD !== '' && strpos($NOTIFY_DISCORD, 'discord.com/api/webhooks/') !== false) {
+    $payload = json_encode(['content' => $icon . ' **' . $title . "**\n" . $line . "\n" . $review]);
+    @file_get_contents($NOTIFY_DISCORD, false, stream_context_create(['http' => [
+      'method' => 'POST', 'header' => "Content-Type: application/json\r\n",
+      'content' => $payload, 'timeout' => 4, 'ignore_errors' => true,
+    ]]));
+  }
 }

@@ -40,19 +40,22 @@ assert(/else if\(msg\.t==='eshot'\)\{ if\(typeof remoteEnemyShot==='function'\) 
 // ---- executable: a cosmetic bolt impacts and dies WITHOUT hurting the local player ----
 const ues = extractFunction('updateEnemyShots', src);
 const hurts = [];
-const run = new Function('enemyShots', 'allPlayers', 'performance', 'emitBoltTrail', 'colliders', 'terrainHeightAt', 'boltImpact', 'scene', 'boltCfg', 'player', 'applyEnemyDamageToSelf', 'dt',
+// build 1355: the bolt now asks _combatTargets() who is shootable (so it can hit another enemy and never
+// its own side). Supplied here as a PASS-THROUGH of the player list — every assertion below is about the
+// bolt's own behaviour, and a rig that re-implemented the list would be testing its own copy of it.
+const run = new Function('enemyShots', 'allPlayers', 'performance', 'emitBoltTrail', 'colliders', 'terrainHeightAt', 'boltImpact', 'scene', 'boltCfg', 'player', 'applyEnemyDamageToSelf', '_combatTargets', '_cgQuery', '_cgBolt', 'dt',
   ues + '\nupdateEnemyShots(dt);');
 const mkShot = (extra) => ({ mesh:{ position:{ x:0, y:1.4, z:0, addScaledVector(){ /* park it on the player */ } } }, vel:{}, dmg:25, born:1000, life:3500, from:{ x:9, z:9 }, ...extra });
 const players = [{ pos:{ x:0, y:1.7, z:0 }, eyeY:1.7, hurt:(d)=>hurts.push(d) }];
 { // a REAL bolt hurts
   const shots=[mkShot({})];
-  run(shots, ()=>players, { now:()=>1100 }, ()=>{}, [], ()=>-99, ()=>{}, { remove(){} }, { impactColor:0xffc070 }, {}, ()=>{}, 0.016);
+  run(shots, ()=>players, { now:()=>1100 }, ()=>{}, [], ()=>-99, ()=>{}, { remove(){} }, { impactColor:0xffc070 }, {}, ()=>{}, ()=>players, ()=>[], [], 0.016);
   eq(hurts.length, 1, 'a host-owned bolt applies damage on contact');
   eq(shots.length, 0, 'and the bolt dies');
 }
 { // a COSMETIC bolt impacts identically but never double-dips
   const shots=[mkShot({ dmg:0, noDmg:true })];
-  run(shots, ()=>players, { now:()=>1100 }, ()=>{}, [], ()=>-99, ()=>{}, { remove(){} }, { impactColor:0xffc070 }, {}, ()=>{}, 0.016);
+  run(shots, ()=>players, { now:()=>1100 }, ()=>{}, [], ()=>-99, ()=>{}, { remove(){} }, { impactColor:0xffc070 }, {}, ()=>{}, ()=>players, ()=>[], [], 0.016);
   eq(hurts.length, 1, 'a relayed cosmetic bolt applies NO damage (the host already sent {t:\'hurt\'})');
   eq(shots.length, 0, 'but still impacts and dies on contact like the real one');
 }

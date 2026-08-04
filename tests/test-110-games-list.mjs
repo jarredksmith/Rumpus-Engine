@@ -12,9 +12,13 @@ assert(/NET\.mode!=='host'/.test(an) && /method:'PUT'/.test(an) && /setInterval\
 const fr = extractFunction('fetchRooms');
 assert(/now-\(r\.ts\|\|0\)\)<LOBBY_TTL/.test(fr), 'stale lobbies filtered out by TTL');
 
-// removed from the public list once the match starts, and on leave
+// build 1356: a started match STAYS listed — joining one has always worked (the welcome carries `phase`)
+// and only FINDING one did not. What this pin was really guarding is that a room nobody is in stops being
+// advertised, which is now asserted where it actually happens.
 const sm = extractFunction('startMatch');
-assert(/unannounceRoom\(\)/.test(sm), 'match start de-lists the lobby');
+assert(/announceRoom\(\)/.test(sm) && !/unannounceRoom\(\)/.test(sm),
+  'match start re-announces the room as live instead of de-listing it');
+assert(/unannounceRoom\(\); location\.reload\(\)/.test(src), 'and LEAVING still de-lists it');
 assert(/lv\.onclick=\(\)=>\{ unannounceRoom\(\); location\.reload\(\); \}/.test(src), 'leave de-lists the lobby');
 const el = extractFunction('enterLobby');
 assert(/announceRoom\(\)/.test(el), 'opening a lobby publishes it');

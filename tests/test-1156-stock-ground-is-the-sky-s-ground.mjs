@@ -46,11 +46,17 @@ const floor = lin(num('floorColor')), ground = lin(num('skyGround')), wall = lin
   assert(floor[0] / floor[2] > 1.15, '...clearly so (B/R ' + (floor[2] / floor[0]).toFixed(2) + ')');
 }
 {
-  // luminance is HELD. The grade, the exposure and build 1149's bounce term are all tuned against it, so this
-  // build swaps hue and moves nothing else. 0.1045 is what 0x4f5d66 measured before the change.
-  near(Y(floor), 0.1045, 0.004, 'the floor keeps the luminance the whole grade was tuned against (Y ' + Y(floor).toFixed(4) + ')');
-  assert(Math.abs(Y(floor) - Y(ground)) > 0.02,
-    'and it is NOT simply skyGround adopted outright — that band is 29% brighter and would move the exposure');
+  // BUILD 1360 REVERSED THE HELD LUMINANCE, deliberately. This build swapped HUE and moved nothing else,
+  // because that was its whole subject; the AAA art review's finding is that the VALUE was the defect —
+  // the engine's ground plane was the brightest large albedo in the frame at +0.81 stops over the deck it
+  // surrounds, so nothing popped off the floor. Both were scaled in linear space by the same factor, which
+  // is why the hue link above still holds exactly, and build 1149's bounce was re-derived with them.
+  // What survives here is the RELATION, which is what this pin was always really about.
+  assert(Y(floor) < 0.09, 'the ground plane is a DARK value now, not the brightest surface in the frame (Y ' + Y(floor).toFixed(4) + ')');
+  const r = Y(ground) / Y(floor);
+  assert(r > 1.15 && r < 1.6,
+    'and it is NOT simply skyGround adopted outright — the dome\'s band stays ~29% brighter (x' + r.toFixed(2) + '), ' +
+    'so the two meet at the horizon without the plane inheriting a band tuned for the sky');
 }
 {
   // the wall is deliberately left cool: a warm ground needs something to read against

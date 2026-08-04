@@ -19,7 +19,11 @@ assert(/if: steps\.pub\.outputs\.ok == 'true'\n        env:\n          GH_TOKEN/
 // 2 — no unstyled "hint" text remains in the community modal (inline colors win over any theme)
 assert(!/class="hint"/.test(html.match(/id="communityModal"[\s\S]{0,900}/)[0]), 'the modal markup carries no editor-scoped hint class');
 assert(/id="commNote" style="[^"]*color:#cfe9df/.test(html), 'the intro note has an explicit bright color');
-const gallery = src.match(/async function renderCommunity[\s\S]{0,9500}?\nasync function _commLoad/)[0];   // build 970: gallery spans renderCommunity + _commRenderUI + _commRenderRows
+// build 1351: this slice was capped at 9,500 characters and broke when the gallery row gained a report
+// button, with every assertion below still true — the character-budget trap CLAUDE.md records under
+// build 1149, now for the seventh time this session. The slice is ANCHORED at both ends (a named
+// function on each side), so the budget was never doing anything except expiring.
+const gallery = src.match(/async function renderCommunity[\s\S]*?\nasync function _commLoad/)[0];   // build 970: gallery spans renderCommunity + _commRenderUI + _commRenderRows
 assert(!/class="hint"/.test(gallery), 'loading/error/empty states are inline-styled, not hint-classed');
 assert(/color:#cfe9df/.test(gallery) && /color:#ffc9a3/.test(gallery), 'states use bright body/error colors');
 assert(/color:#a9d3c6/.test(gallery) && /color:#cfe9df;font-size:12px/.test(gallery), 'row meta + description brightened');

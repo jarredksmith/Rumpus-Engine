@@ -14,7 +14,13 @@ function rig(opts = {}) {
                  'libSaveAs','libCommit','libRename','libDelete','_libStopTracking'];
   const body = [
     "const LVLIB_KEY='breach_levels_v1', LVLIB_MAX=" + (opts.max || 40) + ";",
+    // build 1359: the tracked entry is PERSISTED (a reload used to silently detach Save from the entry you
+    // were working in) and every write is VERIFIED (the library would list a level that was never stored).
+    // Both are lifted from source rather than restated, or this rig would be testing its own copy of them.
+    "const LVLIB_CUR='breach_lib_cur';",
     'let _libCurrent=' + (opts.current ? `'${opts.current}'` : 'null') + ';',
+    extractFunction('_libTrack'), extractFunction('_libVerify'),
+    'function renderEditorFields(){}',
     extractFunction('_libIndex'), extractFunction('_libWriteIndex'), extractFunction('_libName'),
     extractFunction('_libPut'), extractFunction('_libGet'), extractFunction('_libDrop'),
     extractFunction('libSaveAs'), extractFunction('libCommit'),

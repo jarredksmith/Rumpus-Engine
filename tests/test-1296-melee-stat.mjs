@@ -26,7 +26,7 @@ const LIM = new Function('BOT_MELEE_REACH_MIN', 'return ' + extractConst('GUN_ST
 {
   assert(KEYS.includes('melee'), 'melee is an authorable stat');
   assert(KEYS.includes('reach'), '...and so is reach');
-  eq(KEYS.length, 10, 'ten stats — the seven build 1190 shipped, 1296’s melee + reach, and 1303’s contact delay');
+  eq(KEYS.length, 12, 'twelve stats — the seven build 1190 shipped, 1296’s melee + reach, and 1303’s contact delay, plus 1362’s kickV/kickH');
   for (const k of ['fireRate', 'magSize', 'reserve0', 'reserveMax', 'spread', 'reloadMs', 'pellets'])
     assert(KEYS.includes(k), '1190’s ' + k + ' is untouched');
   eq(LIM.melee.join(','), '0,1', 'melee rides as 0/1 — no separate boolean path, and every reader already asks `if(w.melee)`');

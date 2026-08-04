@@ -33,6 +33,7 @@ if ($method === 'POST') {
   $a = (string)($b['a'] ?? '');
   $pend = pendingDir();
   $safeId = function ($id) { return preg_match('/^sub_[0-9]+_[a-f0-9]{8}$/', (string)$id) ? (string)$id : ''; };
+  $safeRepId = function ($id) { return preg_match('/^rep_[0-9]+_[a-f0-9]{8}$/', (string)$id) ? (string)$id : ''; };
 
   if ($a === 'list') {
     $pending = [];
@@ -71,8 +72,21 @@ if ($method === 'POST') {
       }
     }
     usort($uploads, function ($x, $y) { return strcmp($y['date'], $x['date']); });
+    // build 1346: moderation reports (report.php). `text` is the reported chat line — for a
+    // peer-to-peer chat report it is the ONLY evidence that exists, so it is always listed.
+    // The reporter is shown as a short salted-hash fingerprint (spot a spammer), never an IP.
+    $reports = [];
+    foreach (glob($pend . '/rep_*.json') ?: [] as $f) {
+      $r = json_decode((string)@file_get_contents($f), true);
+      if (!is_array($r)) continue;
+      $reports[] = ['id' => basename($f, '.json'), 'kind' => $r['kind'] ?? '', 'reason' => $r['reason'] ?? '',
+                    'target' => $r['target'] ?? '', 'note' => $r['note'] ?? '', 'text' => $r['text'] ?? '',
+                    'room' => $r['room'] ?? '', 'ts' => (int)($r['ts'] ?? 0),
+                    'reporter' => substr((string)($r['ipHash'] ?? ''), 0, 8)];
+    }
+    usort($reports, function ($x, $y) { return $y['ts'] - $x['ts']; });
     jsonOut(200, ['pending' => $pending, 'published' => $published, 'games' => $games,
-                  'uploads' => $uploads, 'uploadBytes' => $uploadBytes]);
+                  'uploads' => $uploads, 'uploadBytes' => $uploadBytes, 'reports' => $reports]);
   }
 
   if ($a === 'approve') {
@@ -116,6 +130,13 @@ if ($method === 'POST') {
     jsonOut(200, ['ok' => true]);
   }
 
+  if ($a === 'dismiss_report') {   // build 1346: close a report (the report record only — acting
+    $id = $safeRepId($b['id'] ?? '');   // on what it names is unpublish / unpublish_game / delete_upload)
+    if ($id === '') jsonOut(400, ['error' => 'bad id']);
+    @unlink($pend . '/' . $id . '.json');
+    jsonOut(200, ['ok' => true]);
+  }
+
   if ($a === 'delete_upload') {   // build 975: remove any uploaded asset (file + meta)
     $slug = (string)($b['slug'] ?? '');
     $type = (string)($b['type'] ?? '');
@@ -143,6 +164,9 @@ button.warn{background:#351212;color:#ffb3b3;border-color:#ff6b6b}
 button.ghost{background:transparent;color:#9fc4ba;border-color:#2a3a42}
 .card{border:1px solid #24323a;border-radius:8px;padding:12px 14px;background:#0c1418;margin-bottom:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .card b{color:#eafff7} .meta{color:#9fc4ba;font-size:12px} .grow{flex:1;min-width:200px}
+.card.rep{border-color:#5a2a2a;background:#150e0e}
+.tag{display:inline-block;border:1px solid #ff6b6b;color:#ffb3b3;border-radius:4px;padding:1px 6px;font-size:11px;letter-spacing:1px;margin-right:6px}
+.quote{border-left:3px solid #ff6b6b;margin:6px 0 0;padding:2px 0 2px 8px;color:#ffd9d9;white-space:pre-wrap;word-break:break-word}
 #msg{color:#ffc9a3;margin:10px 0;min-height:18px} a{color:#7fe6cf}
 </style></head><body>
 <h1>RUMPUS ENGINE — community review</h1>
@@ -151,6 +175,7 @@ button.ghost{background:transparent;color:#9fc4ba;border-color:#2a3a42}
   <button onclick="load()">Load queue</button>
 </div>
 <div id="msg"></div>
+<h2 id="reports">REPORTS <span style="letter-spacing:0;color:#5a7d72">(from players — a chat report carries the message itself, because chat is peer-to-peer and the server never saw it)</span></h2><div id="reportBox" class="meta">—</div>
 <h2>PENDING REVIEW</h2><div id="pending" class="meta">—</div>
 <h2>PUBLISHED</h2><div id="published" class="meta">—</div>
 <h2>UNLISTED GAMES <span style="letter-spacing:0;color:#5a7d72">(published instantly — spot-check, unpublish anything that shouldn't be here)</span></h2><div id="games" class="meta">—</div>
@@ -174,6 +199,29 @@ async function act(body, okMsg){
 async function load(){
   $('msg').textContent='';
   let d; try{ d=await api({a:'list', pw:pw()}); }catch(e){ $('msg').textContent='✕ '+e.message; return; }
+  const rp=$('reportBox');
+  rp.innerHTML = (d.reports&&d.reports.length) ? '' : 'No open reports.';
+  for(const r of (d.reports||[])){
+    const div=document.createElement('div'); div.className='card rep';
+    const when=r.ts?new Date(r.ts*1000).toISOString().slice(0,16).replace('T',' '):'';
+    let h='<div class="grow"><span class="tag">'+esc(String(r.kind).toUpperCase())+'</span><b>'+esc(r.reason)+'</b>'
+      +'<span class="meta"> · '+when+' UTC'+(r.target?' · '+esc(r.target):'')+(r.room?' · room '+esc(r.room):'')
+      +' · reporter '+esc(r.reporter)+'…</span>';
+    if(r.text) h+='<div class="quote">'+esc(r.text)+'</div>';
+    if(r.note) h+='<div class="meta">reporter says: '+esc(r.note)+'</div>';
+    div.innerHTML=h+'</div>';
+    // the report names something; give the moderator the one-click way to go look at it
+    if(r.kind==='game'&&/^[a-z0-9-]{1,64}$/.test(r.target||'')){
+      const a=document.createElement('a'); a.textContent='▶ Test play'; a.target='_blank';
+      a.href='../breach.html?game='+encodeURIComponent(r.target); div.appendChild(a);
+    } else if(r.kind==='level'&&/^[a-z0-9-]+\.json$/.test(r.target||'')){
+      const a=document.createElement('a'); a.textContent='⬇ Inspect'; a.target='_blank';
+      a.href='../community/levels/'+encodeURIComponent(r.target); div.appendChild(a);
+    }
+    const no=document.createElement('button'); no.className='ghost'; no.textContent='Dismiss';
+    no.onclick=()=>{ if(confirm('Dismiss this report? It only closes the report — it does not change anything it named.')) act({a:'dismiss_report',id:r.id,pw:pw()},'dismissed'); };
+    div.appendChild(no); rp.appendChild(div);
+  }
   const p=$('pending');
   p.innerHTML = d.pending.length ? '' : 'Queue is empty.';
   for(const s of d.pending){

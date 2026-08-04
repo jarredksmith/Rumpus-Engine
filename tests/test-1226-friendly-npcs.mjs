@@ -6,7 +6,7 @@
 // can punish it. Also fixes a REAL reload bug found on the way: buildSpawnMarker validated types against
 // a pre-628 three-entry list, so every saved gunner/sapper/shielded/charger/boss marker silently
 // demoted to grunt on reload.
-import { gameSource, extractFunction, assert, eq, done } from './harness.mjs';
+import { gameSource, extractFunction, assert, extractConst, eq, done } from './harness.mjs';
 const src = gameSource();
 
 // ---------------------------------------------------------------- the brain, executed: a friendly never hunts, never aggros
@@ -46,13 +46,21 @@ const src = gameSource();
 
 // ---------------------------------------------------------------- hostile accounting, executed
 {
-  const both = extractFunction('_hostileAlive') + '\n' + extractFunction('_hostilePending');
+  // build 1355: the accounting now asks _enFac/_facOf too — "hostile" means hostile TO THE PLAYER, so an
+  // ALLY no longer holds a wave open either. Lifted from source rather than restated, or this rig would be
+  // testing its own copy of the rule.
+  const both = extractFunction('_enFac') + '\n' + extractFunction('_facOf') + '\n' +
+    'const FACTION_NAMES = ' + JSON.stringify(eval(extractConst('FACTION_NAMES'))) + ';\n' +
+    'const FACTION_DEFAULT = ' + extractConst('FACTION_DEFAULT') + ';\n' +
+    extractFunction('_hostileAlive') + '\n' + extractFunction('_hostilePending');
   const r = new Function(
     'const enemies = [{ hp: 30 }, { hp: 30, friendly: true }, { hp: 30 }];\n' +
     'const toSpawn = 4; const spawnQueue = [{}, { friendly: true }, {}, {}];\n' +
     both + '\nreturn { alive: _hostileAlive(), pending: _hostilePending() };')();
   eq(r.alive, 2, '_hostileAlive counts hostiles only');
-  eq(r.pending, 3, '_hostilePending subtracts queued friendlies from toSpawn');
+  eq(r.pending, 3, '_hostilePending subtracts queued friendlies from toSpawn — and build 1355\u2019s ' +
+    'queue descriptors carry no `fac` at all, so this is also the guard that _facOf(undefined) reads as ' +
+    'HOSTILE rather than as an ally (it did not, and this assertion is what caught it)');
   const r2 = new Function(
     'const enemies = [{ hp: 30, friendly: true }];\nconst toSpawn = 0; const spawnQueue = [];\n' +
     both + '\nreturn _hostileAlive();')();
@@ -68,7 +76,7 @@ const src = gameSource();
 // ---------------------------------------------------------------- once only: a living friendly's marker doesn't restack
 {
   const sw = extractFunction('startWave');
-  assert(/if\(_m\.friendly && enemies\.some\(e => e\.friendly && e\._mark === _m && e\.hp > 0\)\) continue;/.test(sw),
+  assert(/if\(\(_m\.friendly \|\| _facOf\(_m\.fac\) === 0\) && enemies\.some\(e => e\._mark === _m && e\.hp > 0\)\) continue;/.test(sw),
     'startWave skips a friendly marker whose NPC is still alive — wave 0 = every wave would otherwise stack a copy of the same villager per wave');
 }
 
@@ -79,18 +87,18 @@ const src = gameSource();
     /e\.ranged = false; e\.exploder = false; e\.charger = false; e\.cover = false;/.test(se),
     'a friendly spawn disarms ranged/exploder/charger/cover at the source — no attack gate anywhere can misfire');
   assert(/if\(spawn && spawn\.friendly\) mesh\.userData\.friendly = true;/.test(se), 'the visual hook is set before buildEnemyVisual');
-  assert(/emissive:\(body\.userData\.friendly \? 0x59d98c : ty\.tint\)/.test(src), 'a friendly capsule reads green, not threat-red');
+  assert(/emissive:\(body\.userData\.friendly \? 0x59d98c : \(body\.userData\.facTint \|\| ty\.tint\)\)/.test(src), 'a friendly capsule reads green, not threat-red');   // build 1355: and a faction capsule tints to its side, with the friendly green still winning
 }
 
 // ---------------------------------------------------------------- a friendly death is a death, not a score event
 {
   const ke = extractFunction('killEnemy');
-  assert(/const _fr = !!en\.friendly;/.test(ke), 'killEnemy knows');
-  assert(/if\(!_fr\) runKills\+\+;/.test(ke), 'no kill count');
+  assert(/const _fr = !!en\.friendly \|\| _enFac\(en\) === 0;/.test(ke), 'killEnemy knows');   // build 1355: and killing your own ALLY is the same non-reward
+  assert(/if\(_cred\) runKills\+\+;/.test(ke), 'no kill count');   // build 1355: _cred = !_fr && you made it
   assert(/const drops = _fr \? 0 :/.test(ke), 'no coins');
   assert(/if\(!_fr\) score \+= 100;/.test(ke), 'no score');
-  assert(/if\(!_fr && en\.type==='boss'\)/.test(ke), 'no boss payday');
-  assert(/if\(!_fr && run\.lifesteal>0\)/.test(ke), 'no lifesteal');
+  assert(/if\(_cred && en\.type==='boss'\)/.test(ke), 'no boss payday');
+  assert(/if\(_cred && run\.lifesteal>0\)/.test(ke), 'no lifesteal');
   const iKill = ke.indexOf("_lgFireEvents('onkill'"), iFr = ke.indexOf('const _fr');
   assert(iKill >= 0 && iKill < iFr, 'the On-kill logic event still fires FIRST — a creator can punish killing the villager');
 }
@@ -101,17 +109,17 @@ const src = gameSource();
     'fr serializes only when set — old levels byte-identical');
   assert(/'grunt','runner','brute','gunner','sapper','shielded','charger','boss'/.test(src),
     'buildSpawnMarker accepts ALL 8 types — a saved gunner/boss marker no longer demotes to grunt on reload');
-  assert(/friendly: !!\(opts\.fr \|\| opts\.friendly\) \}/.test(src), 'the loader reads it back');
-  assert(/type:m\.type, wave:m\.wave, y:m\.y, fr:m\.friendly\?1:0 \}/.test(src),
+  assert(/friendly: !!\(opts\.fr \|\| opts\.friendly\),/.test(src), 'the loader reads it back');   // build 1355: no longer the last field of the mark
+  assert(/type:m\.type, wave:m\.wave, y:m\.y, fr:m\.friendly\?1:0, fac:m\.fac \}/.test(src),
     'duplicate-marker carries type/wave/height/friendly (it had been dropping the first three since they were added)');
-  assert(/friendly:!!m\.friendly, mark:m \}; \}/.test(src), 'descFromMarker threads the flag and the live mark');
+  assert(/friendly:!!m\.friendly, fac:_facOf\(m\.fac\), mark:m \}; \}/.test(src), 'descFromMarker threads the flag and the live mark');
 }
 
 // ---------------------------------------------------------------- the editor UI
 {
   assert(/Friendly — wanders, never attacks or aggros/.test(src), 'the checkbox exists under the behavior row');
   assert(/g\.userData\.mark\.friendly=fCb\.checked/.test(src), '...writing the mark');
-  assert(/mark\.friendly \? 0x59d98c : SPAWN_MODE_COLORS\[mode\]/.test(src), 'a friendly marker post reads green in the editor');
+  assert(/mark\.friendly \? 0x59d98c : \(FACTION_COL\[mark\.fac\] \|\| SPAWN_MODE_COLORS\[mode\]\)/.test(src), 'a friendly marker post reads green in the editor');   // build 1355: a non-default faction reads as its own colour, and the DEFAULT keeps the mode colour it always had
 }
 
 done('build 1226: wandering NPCs — the real brain executed proving a friendly never chases, sees, aggros or spends a LOS raycast while the identical hostile control does; alertEnemy slides off; hostile accounting (HUD, snapshot, wave-clear) executed; living friendlies never restack across waves; combat subsystems disarmed at spawn; a friendly death pays nothing while the On-kill event still fires; and the 8-type marker list fixes saved gunner/sapper/shielded/charger/boss markers silently demoting to grunt on reload');

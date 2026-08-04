@@ -25,7 +25,9 @@ assert(/crosshairEl\.style\.opacity = _scopedNow \? '0'/.test(src), 'normal cros
 assert(/_scopedNow\) return false;   \/\/ looking through the optic: no viewmodel/.test(extractFunction('_vmWanted')), 'gun viewmodel hidden while scoped');
 
 // feel: heavier kick, deep report, key slots, resets
-assert(/\(w\.scope\?2\.4:1\)/.test(src), 'scoped shot kicks harder');
+{ const _kv = (k) => { const m = src.match(new RegExp(k + ':\\s*\\{[^\\n]*kickV:([\\d.]+)')); return m ? +m[1] : NaN; };
+  assert(_kv('sniper') > _kv('rifle') && _kv('sniper') > _kv('smg') && _kv('sniper') > _kv('pistol'),
+    'scoped shot kicks harder (build 1362: per-weapon kickV replaced the scope-only x2.4 - the sniper carries the heaviest gun kick)'); }
 assert(/sniper: \{ sub:\[45/.test(src), 'sniper has its own shot sound (a _SHOT_LAYERS entry since 1211 — deepest sub, longest tail)');
 assert(/Digit4' && owned\[3\]/.test(src) && /Digit5' && owned\[4\]/.test(src), 'weapon slots 4+5 bound');
 assert(/_w\.mag=_w\.magSize; _w\.reserve=Math\.min\(_w\.reserve0!=null\?_w\.reserve0:_w\.reserve, _w\.reserveMax\);/.test(src), 'fresh-run ammo reset (per-sheet loop since 1190 — sniper resets 5/20 from its factory sheet, proven executable in test-1190)');

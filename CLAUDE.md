@@ -967,6 +967,352 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Texture memory is visible, and the AO sweep stopped allocating (build 1353)
+
+**1. The cost a creator could not discover.** Build 1257 made the LIGHT count visible on the grounds that it
+is the number a creator "most needs and could least discover", and the audit's texture half was never done.
+The gap is specific: the asset panel reports **download** bytes (build 990's inventory) and
+`renderer.info.memory.textures` is a **count**. Neither is what runs a phone out of memory — a 4096×4096
+albedo costs **~85 MB on the GPU** however small the JPEG was.
+
+```
+1024² no mipmaps   4.00 MB      w·h·4
+1024² + mipmaps    5.33 MB      ×4/3 — the 1 + ¼ + 1/16 … series, not a guess
+4096² + mipmaps   85.33 MB      the number the census exists to show
+```
+
+Three things it has to get right, all measured live:
+- **It walks the SCENE, not just the two caches.** An imported GLB's own maps are in neither `texCache` nor
+  `_texInst` and are most of a big level. Verified: a material-only 2048² that is in neither cache added
+  exactly its 21 MB.
+- **A texture shared by ten materials counts once.** Eight materials on one texture moved the count by 1.
+- **A compressed texture is counted as its real transcoded length**, not 4 bytes a pixel. Charging KTX2/Basis
+  the uncompressed rate would libel the one format that actually fixes this problem.
+
+It reports nothing below the cap, because a panel that always complains is not read (1274), and it names the
+distinction that makes the number surprising — *"this is GPU memory, not download size"* — plus the control
+that fixes it rather than only scolding.
+
+Worth knowing when reading the two figures side by side: the census reports **14 textures / 5 MB** on the
+stock level while three reports **26**. The difference is render targets and the engine's own internal
+textures, which three counts and this deliberately does not — the question is what the CONTENT costs.
+
+**2. Build 1168's last transients.** That build hoisted this file's per-frame allocations and named what it
+did not finish. All **four** `_aoHideNoDepth` call sites still allocated a fresh array every frame, with AO
+and motion blur both live — the exact class 1168 removed everywhere else.
+
+**Four buffers, not one shared scratch.** The four fills are sequential *today* — each is filled, rendered
+and drained before the next begins — so one would work, and that is precisely build 1168's own warning: *"a
+shared scratch would be clobbered the day that order matters."* One per consumer costs three empty arrays
+for the life of the page and cannot be broken by reordering the passes. The function now clears the buffer
+on entry, since the callers reuse it; without that every frame would re-show a growing list of objects that
+are already visible.
+
+The registry 1168 actually wanted — a transparent-material registry replacing the traverse — is still the
+bigger idea and still open. This was the cheap half it also named.
+
+## The graph can ask WHERE, and a campaign can branch (build 1352)
+
+Two gaps the gameplay audit named, both small because the machinery was already there.
+
+**1. Where something is.** The graph could MOVE a prop (1170), SHOVE one (1258) and be told when one
+entered a zone (1276) — and could never ask where one WAS. "The ball is on your half", "the crate is within
+3 m of the plinth", "how far is the player from the exit" were all unaskable, which is most of what a
+sports level or a physics puzzle is made of.
+
+`_lgPlaceAt` already resolves a tag — and `me`, `start`, `#here` — to world coordinates, so `propx / propy /
+propz / propdist` are that resolver plus arithmetic. **The same vocabulary the place field has always
+used**, which is why it needs no new autocomplete list and why the tag box reuses the existing `item` param
+keyed by stat rather than adding one that sits unused for every other stat.
+
+Two decisions: distance is **horizontal**, because a creator asking "how close is it" means across the
+floor and a prop on a shelf is not further away; and every value is **rounded to 2 dp**, because a graph
+COMPARES these and an unrounded float never equals anything with `==`. A tag nobody carries **reports**
+rather than reading 0 forever — reading 0 looks exactly like "it is at the origin", which is build 1214's
+whole point.
+
+**2. Go to level.** A campaign was strictly linear: `_campaignLoad(i)` is a single index load and the only
+transition in the engine is `campaignIdx++` on clear. Hub worlds, level select, branching routes and "you
+failed, back to the tutorial" were all inexpressible.
+
+Four guards, each of which is a silent bug without it: a client never loads on its own (two peers in
+different worlds); firing outside a campaign reports rather than doing nothing; the index is range-checked
+because `n` comes out of a level file, which is untrusted input (1325), and `campaign.levels[999]` is
+`undefined` that `_campaignLoad` would swallow; and the interstitial is cleared first or a jump during one
+leaves the card stuck on screen. The field is **1-based** because that is what the campaign list shows the
+creator — the array is 0-based, and getting that backwards is a whole-level off-by-one nobody would suspect.
+
+### I shipped build 1277's defect into my own draft, and the probe caught it
+
+`goto` went into the `do` verb dropdown while being implemented as a node type. `do` routes everything
+through `_applySignalAction`, which knows nothing about levels — so the node resolved, nothing loaded, and
+`campaignIdx` never moved. **That is exactly the defect build 1277 found across six prop verbs that had
+shipped and never worked**, and the reason it did not ship again is that the probe drives the real
+`_lgPulse` switch rather than asserting the dropdown and the handler separately.
+
+It is its own node now, beside `win` and `lose`, which are the same class of run-level verb. And build
+1028's palette↔runtime parity test — which exists for precisely this — failed on the node count until
+`goto` was added to its list, at which point it also began asserting `case 'goto':` exists. **The test
+caught the same mistake a second time, from the other direction.**
+
+Measured through the real switch, a tagged prop at (12, 3.5, −8) with the player at the origin:
+
+```
+propx 12 · propy 3.5 · propz -8 · propdist 14.42 (= hypot(12,8)) · "me" -> the player's own x
+missing tag -> 0 AND a reported failure
+goto: not-in-campaign / out-of-range / zero  -> three distinct reports, nothing loaded
+goto 3 of 3 -> loadedIndex 2, campaignIdx 2   ·   as a client -> nothing loaded
+```
+
+## A way to report something (build 1351 — platform audit G2)
+
+The platform audit's named blocker for a public release with minors, and the cheapest high-value item in
+it: **there was no report affordance anywhere in the product.** Chat had build 1178's 11-word filter applied
+at render and a per-session `/mute`, and that was the entire safety surface — a player who saw something
+worse had no way to tell anybody, and a moderator had no queue to read.
+
+The server half is `server/api/report.php` (written alongside; see the correction under build 1350 for how
+it reached the tree). This is the half a person can reach.
+
+**A chat report must carry the message.** Chat is peer-to-peer, so the server has **no copy** of the line
+being reported — a report naming only a player is an unactionable accusation. `report.php` refuses a chat
+report with no `text` for exactly that reason, and the client sends the line and the room code. This is the
+one design point that makes the feature real rather than decorative.
+
+**It must fail loudly when there is no backend.** Reports go to the founder's host, which a self-hoster or
+an offline session does not have. *"Could not reach the moderation service — your report was NOT sent"* is
+the whole point: a silent swallow is worse than no button, because the reporter believes they have been
+heard. Success also requires BOTH `r.ok` and `j.ok` — an HTML error page served with status 200 is not a
+delivered report.
+
+Verified live against a stubbed endpoint through every branch:
+
+```
+sent        {kind:chat, reason:harassment, target:"Griefer", text:"something awful", room:"ab12cd"}
+            -> "Reported — thank you. A moderator will look at it."
+429         -> "You have reported very recently — try again in 37s"   (retry comes from the server)
+400         -> "Could not send the report: bad kind"
+no backend  -> "Could not reach the moderation service — your report was NOT sent"
+cancel      -> zero requests
+your own chat line -> no flag at all
+```
+
+`uiPromptForm` gained an options-driven `<select>`, additively: a field with no `options` builds exactly
+the text input every existing caller already gets, and both land in the same `inputs` array so the
+callback's value-order contract is unchanged. A free-text "reason" would have been useless to a moderator
+and `report.php` whitelists it anyway. **I nearly shipped a dialog that assumed a select and named keys —
+`uiPromptForm` had neither.** Reading the helper before calling it is what caught it.
+
+**Seven times.** Three harnesses (852, 854, 857) broke on `{0,9500}` character-budget slices of the
+community gallery, every assertion still true. All three were anchored at BOTH ends on named functions, so
+the budget was never doing anything except waiting to expire; they are unbounded lazy matches now. That is
+the trap CLAUDE.md records under build 1149, hit for the seventh time in this session alone.
+
+**Still open on G2:** the report button exists on chat lines and community levels; the published `/game/`
+page and in-match players do not have one yet.
+
+## The sun shadow joins the ladder (build 1350 — debt build 1346 created)
+
+Build 1346 raised the near cascade to 4096 for a measured reason: the corner leak is a fixed number of
+TEXELS wide, so halving the texel halved it, at ~12% of frame time. What that build did **not** do is give
+the cost a way out. `SUN_SHADOW_PX` was a constant, so the adaptive ladder could shed motion blur, then
+MSAA and SSAO, then a third of the pixels — while the biggest single draw in the frame stayed at 4096 the
+whole way down.
+
+That is **build 1263's lesson from the other side**: a perf change may not remove work something else
+relies on, and it may not ADD work with no shed path. 1346 is the same author making the second mistake a
+few builds after recording the first.
+
+Measured live, sweeping the rung and reading the real light list:
+
+```
+rung            0      1      2      3      0
+sun map      4096   2048   2048   1024   4096
+lights         35     35     35     35     35     <- never moves
+dir casters     2      2      2      2      2     <- never moves
+programs (warm) 69     69     69     69     69
+```
+
+**Resizing a shadow map compiles nothing, and the control is what proves it.** With the resize neutered and
+the map pinned, the program count still climbed 66 → 69 on a cold cache; with the resize live and the cache
+warm it is flat at 69 across every rung. So the growth was warm-up, not the change.
+
+Three things it must never touch, and the test asserts all three:
+- **`castShadow`** — that is `NUM_DIR_LIGHT_SHADOWS`, a `#define`, and flipping it recompiles every
+  material. It is precisely why build 1348 could *not* do this for point lights: `mapSize` is an
+  allocation, `castShadow` is a program variant.
+- **`.visible`** — build 977's trap; an invisible light is still uncounted, so toggling it moves the count.
+- **`moonFar`** — its texel is 4× coarser by design and it covers geometry where a corner artifact is under
+  a pixel. Shedding it would change the caster count for nothing.
+
+**The temporal dead zone here was handled explicitly rather than behind a catch.** `_applyPixelRatio()`
+runs at BOOT, ~1,500 lines before `moon` and `SUN_SHADOW_PX` are declared, and `typeof` does **not** guard
+a TDZ — build 1127 lost the sky for eight builds to exactly that, behind a `catch` that hid it. My first
+draft had the identical shape (`typeof moon==='undefined'` inside a `try`). It is a `_sunShadowReady` flag
+raised where the light is actually built; the catch remains only as a backstop and is not what makes it
+correct.
+
+Hooked into `_applyPixelRatio` because that function *already means* "the rung moved" — it is called on
+every downshift, every climb and the adaptive-off restore, so there is no second list of call sites to keep
+in step. Two pins moved (50, 123), both of which quoted that function's whole body.
+
+### A process correction to build 1349's record
+
+Build 1349's commit `c058885` also contains `server/api/report.php`, `_community_lib.php`, `submit.php` and
+`admin.php` — the moderation backend — because a `git add -A` swept them in while they were being written
+alongside. The code in that commit is the finished, tested version and nothing needs reverting, but the
+commit message describes none of it. Recorded here rather than by rewriting pushed history. **The lesson is
+the ordinary one: `git add -A` is not safe when anything else is writing to the tree.**
+
+## The Sketchfab token is lent by choice, not by default (build 1349 — multiplayer audit G6)
+
+The multiplayer audit's sharpest verified own-goal, and it is a one-condition fix. The host's **personal
+Sketchfab API token** was packed into the WELCOME message of every match whose level referenced a
+`sketchfab:` model — and room codes are published in the lobby directory, so anyone who could join received
+it. `_sfPack` is a fixed XOR plus base64 whose **decoder ships in the same file**; the comment beside it
+always admitted it is obfuscation, not encryption.
+
+**The feature is legitimate and stays.** Without a token a joiner sees holes where the level's models
+should be. What was wrong is that it happened SILENTLY and BY DEFAULT. Handing over a credential is a
+decision, and the person whose quota it is has to be the one making it.
+
+So `sfLendEnabled()` gates the send, and it **fails closed** in both directions that matter: an unset key
+reads false, so every existing host stops lending the moment they take this build, and a storage exception
+also returns false — if we cannot tell, we do not hand over the credential.
+
+**The control sits with the token, not in a settings screen somewhere else.** The moment you are choosing
+Sketchfab models is the moment the trade is legible. Both states name their real consequence, because a
+consent prompt that only describes one side is not a choice:
+
+- on — *"joiners can load this level's Sketchfab models, and can also spend your Sketchfab API quota while
+  the match lasts"*
+- off — *"your token stays with you. Joiners will see holes where this level's Sketchfab models should be,
+  unless they add their own token."*
+
+`_sfPack` itself is untouched: this build changes **whether**, not how. And the test asserts the property
+that would have caught the original defect — `_sfPack` is referenced exactly twice (its definition and the
+one send site), and that send site is gated on consent. A second, ungated packing site is the only way this
+comes back.
+
+One pin moved (326), which quoted the condition verbatim; its intent — shared only when the level needs it
+and the host has one — is unchanged and now stricter, so it asserts the members.
+
+## Three capabilities that existed and could not be found (build 1348)
+
+None of this adds an ability. Each item adds a **door** to something already shipped — which is the
+difference between having a feature and having a product.
+
+**1. Local `.glb` import was invisible, and on touch it was impossible.** Build 1177 added it and reached
+it from exactly one place: a viewport DROP handler. So the only string in the product that mentioned it was
+the FAILURE toast you get after dropping the wrong kind of file — *you had to already know, and get it
+wrong, to be told.* And a tablet has no drag-and-drop at all: both `input[type=file]` in the file accept
+`.rumpus,.breach,.json`, i.e. LEVELS, so for a touch creator the feature did not exist. `_pickLocalModel`
+is one `<input type="file" accept=".glb,.gltf">` into the **same** `_importLocalModel` — a door, not a
+second code path, so it cannot drift from the drop route.
+
+**2. A point light shines through walls and never said so.** Build 1132 allowed a placed light to cast a
+shadow only for spot and directional, for a real reason: a point light's shadow is a cube map, six depth
+passes for one lamp. But the checkbox was simply **absent** for a point light with no explanation.
+Measured on the shipped stock level: **29 point lights, ZERO casting.** That is not an edge case, it is
+what every level looks like — and it is a much larger "light leaks into my room" than any shadow-map
+hairline.
+
+Two measurements decided *explain* over *implement*, and both are recorded at the site:
+- Flipping `castShadow` at runtime **recompiles — 54 → 65 programs in one frame.** So a point shadow could
+  never be a live toggle; it would arrive as builds 636/977/1153/1155's freeze by a second door and would
+  have to be decided at deploy like `enforceEmitterCap`.
+- The frame-cost sweep **failed its own control** — the 0-caster baseline read 396 ms and the return to 0
+  read 554 ms. There is no honest cost figure to ship a cube shadow against, and shipping an expensive
+  feature on a broken measurement is how this file's worst builds happened. So the panel names the
+  consequence and the fix (use a Spot) and the implementation waits for a build that can measure it.
+
+**3. The fastest way to share was filed under the wrong noun *and* hidden behind another feature's
+toggle.** Build 972's instant `/game/` publish gives a live URL in seconds with no review queue, and its
+only button lived inside the "Title screen" section — which is where you go to set a logo. Verified while
+building this: it is also inside `#hpFields`, which is `display:none` until the **Custom title screen**
+checkbox is ticked. The audit found the first half; the probe found the second.
+
+The link on the publish card **reveals** the real control rather than duplicating the publish logic, and
+when the prerequisite is unmet it scrolls to the CHECKBOX rather than to a button that would refuse — a
+game page *is* the title screen, and `hpPublish` says "turn on the custom title screen first". It never
+ticks it on the creator's behalf. Revealing a control that will refuse is the same dead click build 1147
+removed.
+
+### And a latent bug found while verifying #3
+
+**Build 1293 broke build 1320's reveal helper and nothing connected the two.** 1293 stopped building any
+section whose `offsetParent === null` and made the fold-toggle HANDLER responsible for re-rendering on
+expand. `_edRevealHost` uncollapses the section **directly**, so it never went through that handler and
+could reveal an empty fold — including build 1320's own `Model…` menu entry, which has been landing on
+unbuilt content since 1293 shipped. It re-renders now, in the order uncollapse → build → scroll, because
+scrolling to an unbuilt fold lands nowhere.
+
+Verified in the real editor rather than by flag-setting (builds 1264/1268 shipped a fix into a branch no
+creator reaches, twice): the picker button renders and opens a `.glb`-only input; a placed point light's
+panel reads *"This light shines through walls"* and names Spot; the publish link sits inside the publish
+card, and clicking it opens the Title screen section with the toggle on screen and the publish row still
+hidden — then ticking the toggle brings `Publish game page (instant URL)` into view.
+
+## The keyboard reaches the editor (build 1347 — the accessibility census, 4/6)
+
+Build 1334 left the census at three-for-six and named what remained: `role=`, `tabindex`, and a
+key-rebinding review. The static counts were `role=` **0**, `tabindex` **0**, and exactly **one** `:focus`
+rule in ~2,000 lines of stylesheet — which *removes* the outline.
+
+**A static count says nothing about what a keyboard can do**, so it was measured live. A `<button>` is
+focusable for free; a `<div>` with an `.onclick` never is:
+
+```
+in play       2 clickable,  2 reachable    0 unreachable
+pause menu   15 clickable, 15 reachable    0 unreachable   <- already fine, and untouched
+EDITOR       86 clickable, 59 reachable   27 UNREACHABLE (31%)
+```
+
+**The HUD and the pause menu needed nothing** — they are built from real `<button>` elements throughout.
+The editor was the gap, and 19 of those 27 are DIVs carrying an `.onclick` that include the **entire mode
+rail**: Build / World / Player / Enemies / Gameplay / Weapons / HUD / Save / Settings. **A keyboard user
+could not change editor tab at all.** (The other 8 are `disabled` buttons — correctly unreachable, not a
+defect, and the measurement says so rather than inflating the number.)
+
+### One predicate, not 500 construction sites
+
+There are ~500 `.onclick` assignments in this file and `renderEditorFields` tears the panel down and
+rebuilds it constantly, so stamping attributes at each site would be a hand-kept list that drifts — the
+defect recorded under builds 1152, 1266, 1320 and 1326. `_a11yWire(root)` asks the DOM a **question**
+("clickable, and not already focusable?") and a `MutationObserver` re-asks it of anything added later, so a
+control added by a future build inherits it.
+
+**And it costs nothing until somebody uses a keyboard.** Build 1322 measured the panel rebuild at 8–27 ms
+over ~3,000 nodes; an always-on observer walking all of that would be a real regression for the majority
+who use a mouse. So the whole mechanism arms on the **first Tab press** — and `keydown` fires *before* the
+browser performs its focus move, so the elements are in the tab order in time for the very keystroke that
+armed them.
+
+**`role="button"`, deliberately not a tablist.** A tablist owes the screen reader `aria-selected`,
+`aria-controls` and arrow-key navigation, and a half-implemented one reads worse than an honest list of
+buttons. The rail is a set of things you press; say that.
+
+**Space is JUMP in this game**, so Enter/Space activation is gated on `role="button"` and an existing
+handler, and returns immediately for native controls — double-firing a real `<button>`, or stealing Space
+while the player is in the world, would each be worse than the bug being fixed.
+
+### The focus ring, and why there wasn't one
+
+The single pre-existing `:focus` rule is `outline: none` on text fields — the classic anti-pattern, someone
+disliked the browser default and never drew a replacement. That rule is actually fine on its own terms (it
+swaps in an accent border, so a focused *field* was always legible); every other control had nothing.
+
+`:focus-visible`, not `:focus`, is what makes the replacement shippable: the browser matches it only for
+keyboard focus, so clicking a button does not leave a ring stuck on it — which is exactly why outlines get
+deleted in the first place. Verified live on the World tab: `matches(':focus-visible') true`,
+`outline: solid 2px rgba(56, 245, 181, 0.95)`.
+
+**Measured after, in the same live editor, after one real Tab keypress: 86 clickable, 78 reachable, 8
+unreachable — and the 8 are exactly the disabled buttons.** A tab opened *after* arming inherits it (the
+observer), and Enter on the focused World tab switched the editor mode.
+
+Still open from the census: the key-rebinding review.
+
 ## The corner leak is one texel wide (build 1346)
 
 Build 1345 halved the leak and the reporter said it looked unchanged. That is fair — 156 pixels of a bright
@@ -7258,3 +7604,418 @@ keeping only because each entry named a capture that could settle it.
 
 Also outstanding (user actions): upload `server/api/plays.php` beside lobbies.php (build 1230's flywheel is client-live but counts nothing until then); upload `tools/levelgen.mjs` + `fflate.min.js` to the cPanel host
 for the in-editor generator (see `server/README.md`), and re-upload the museum GLB.
+
+## The broker had no override, and PeerJS was three CDNs (build 1354)
+
+`breach_ice`, `breach_comm_api`, `breach_lobby_db` and `breach_plays_db` each have a self-hoster override.
+The **broker** — the single point of failure the entire multiplayer feature depends on — had none. Every
+`new Peer(...)` passed only `{config:{iceServers}}`, so signalling always went to the public PeerJS cloud.
+"Deploy your own PeerServer" was not merely undocumented: it was **impossible**, because there was no way to
+tell the game about one even if it were already running.
+
+And PeerJS itself was three CDNs and nothing else, while Rapier and fflate have been vendored for hundreds
+of builds — so a self-hoster, an air-gapped classroom or an offline session had no multiplayer at all.
+
+**`_peerOpts` is why this is four lines rather than four edits.** All four construction sites (host, client,
+and both host-migration sites from 1201) already route through it, so the override merges into the object
+they each build and there is no fifth place to keep in step. `test-1354` counts the construction sites and
+asserts every one goes through the helper — a site that built its own options would silently ignore the
+override, which is 1266's defect in a new costume.
+
+**It fails to the cloud, not to a broken room.** No host, a non-object, unparseable JSON — every one returns
+`null`, which is exactly what someone who has configured nothing must keep getting. TLS is the default
+(`secure !== false`): a broker is a websocket carrying room codes, so plaintext has to be asked for.
+
+**The local copy carries NO integrity hash, deliberately.** The three CDNs keep build 1332's pin, because
+that is where the risk is — SRI detects a mirror serving something other than what you asked for. A file you
+host yourself is one you control, and pinning your own copy only means a legitimate update stops loading.
+Same reasoning Rapier and fflate already shipped under; this build just makes it explicit at the site.
+
+**The CSP had to learn about it or the block switch would kill exactly the people who ran their own
+infrastructure.** Build 1335's parse-time injector reads the same `breach_peer` setting and appends
+`https://<host> wss://<host>` to `connect-src` — both schemes, since signalling is HTTPS then a websocket
+upgrade. The value goes into a **security policy**, so it is validated against `/^[a-zA-Z0-9.-]+$/` and
+DROPPED rather than escaped if it carries a space, a quote or a semicolon.
+
+Verified live (`tools/probe/peer-selfhost.mjs`):
+
+```
+unset          {"server":null,"host":null,"hasIce":true}
+configured     {"host":"peer.example.org","port":9000,"path":"/rumpus","secure":true,"iceStillThere":true}
+five kinds of rubbish  -> {"server":null}   (i.e. the cloud broker, unchanged)
+clamps         {"hostLen":200,"port":65535,"secure":false}
+loader         {"first":"peerjs.min.js","count":4,"localCarriesNoIntegrity":true}
+               and it is actually served: {"ok":true,"bytes":92863}
+```
+
+The vendored file's sha384 is `nlUQ8Zq…`, **byte-identical to build 1332's pinned CDN hash** — so the copy
+beside the game is provably the same PeerJS the CDNs were serving.
+
+`tools/probe/mkprobe.mjs` now copies the vendored `.js` files into the probe directory, or every future
+probe would boot without multiplayer. That edit went in **after** the `else` of the copy loop's guard, not
+between the `if` and its `else` — build 1309's recorded trap, hit once and caught by reading it back.
+
+**One pin moved (968), and it was the character-budget trap in its other costume.** It quoted `_peerOpts`'s
+whole one-line return verbatim; the merge broke it with every part of the assertion still true. It asserts
+the members now.
+
+## Enemies can belong to a side (build 1355)
+
+Every moving creature in this engine was hostile to the player and to nothing else. Build 1226 added the
+pacifist NPC and recorded "friendlies fleeing gunfire" and enemies fighting each other as needing a
+targeting rework. **It needed one line of one.**
+
+`enemyDesiredTarget` has always been target-AGNOSTIC — it takes `px, pz, dist, py` — and the melee strike
+calls `_tn.hurt(...)` on whatever object the picker chose. So the whole change is that the picker may choose
+an **adapter around another enemy**, the way build 1189 reused the bot's cover finder through a `{pos}` shim.
+The ranged path needed nothing at all: `fireEnemyShot(en, target)` already reads `target.pos` and
+`target.eyeY`.
+
+**The rule is `a !== b`, and the PLAYER is faction 0.** That gives an ally, the default hostile and two third
+parties with no attitude matrix for a creator to author:
+
+| | |
+|---|---|
+| **0 · Your side** | an ally: fights 1/2/3, never you |
+| **1 · Hostile** | the default, and therefore what every level authored before this build already is |
+| **2/3** | third and fourth parties — fight everyone but their own |
+
+`friendly` (1226) stays **orthogonal**: a pacifist targets nothing and is targeted by nothing. Widening that
+to "hostiles hunt villagers" would slaughter every existing level's NPCs on wave 1, so it is a stated limit
+rather than a side effect.
+
+### The fast path IS the compatibility argument
+
+`_combatTargets()` is one list per frame, memoised on `_frameNo` so the picker and the bolt test cannot
+disagree about who is shootable. **If no enemy carries a non-default faction it returns the player list and
+the O(N²) enemy scan never runs** — measured live on a default-only level: target list length 1, and neither
+grunt's `_near` is an enemy. Every level that never opens the new control pays nothing.
+
+The adapter is cached **on the enemy**, so a 60-strong three-way fight allocates nothing per frame (1168).
+
+### An ally with nothing to fight must not fall back to hunting you
+
+`_noTgt` is set per frame when a combatant finds no valid target, and for that frame it behaves exactly like
+1226's pacifist — patrols its post, raycasts no sightline, never becomes aware. Written as one named
+predicate (`passive = en.friendly || en._noTgt`) read by both combat gates, rather than a second condition
+beside each `en.friendly`. Measured: a lone ally never chases, never fires, and the player is untouched.
+
+### Measured live (`tools/probe/factions*.mjs`), waves suppressed so every hp change is a fixture
+
+```
+two gunners, factions 0 and 1, 6 m apart   each picks the OTHER · 400 -> 264 / 400 -> 256 · player 100
+two brutes,  factions 0 and 1, 2 m apart   400 -> 4 / 400 -> 4, through the real wind-up/strike path
+a hostile's bolt at an ally                400 -> 396      at the player   100 -> 96
+an ally's bolt at the player               100 (unchanged) — the bolt flew on
+a LONE ally                                noTgt, never aware, never chasing, hostileAlive 0
+2 allies + 1 hostile + 1 pacifist          _hostileAlive() 1
+marker fac 2 -> desc 2 -> rebuilt 2 · default 1 · 99 -> 1 · -4 -> 1 · 'x' -> 1 · default keeps 0xfe4d5e
+```
+
+### Fail hostile, never ally — and the harness caught me failing the other way
+
+`_facOf` originally read `v|0`, and **`undefined`, `null` and `NaN` all coerce to ZERO — "your side"**. Every
+random-wave queue descriptor carries no `fac` at all, so `_hostilePending` subtracted every queued hostile as
+if it were an ally and a wave read as already clear. The first draft compensated by substituting the default
+at each *caller*, and `test-1226`'s accounting rig — which drives the real functions over plain
+`spawnQueue` entries — found the caller that didn't. The rule now lives in `_facOf` where no caller can
+forget it: `pending 0 → 3`.
+
+Three more things fail in the safe direction on purpose: the default faction **serializes as nothing**, so a
+level with no allies is byte-identical to pre-1355; the default marker **keeps the mode colour it always
+had** (`FACTION_COL[1]` is deliberately 0), because an editor whose every marker changed colour on upgrade
+reads as a bug; and the Faction control is **hidden for a pacifist**, which fights nobody.
+
+### Rewards
+
+`killEnemy` gained `_cred = !_fr && !byEnemy`. Killing your own ally is a death but never a reward (1226's
+rule, restated for the other kind of non-combatant), and **an ally's kill is not your kill** — no count, no
+lifesteal, no callout, no boss payday. The **loot still drops**: that is physical, and you have to walk to
+it. Measured: a `byEnemy` kill gave `runKills +0, coins +2`; the same kill by the player gave `+1`.
+
+### A probe note that cost three runs
+
+An ally's bolt aimed at a hostile reported no damage, twice. Traced step by step: **both enemies were
+standing on a platform at y ≈ 3 and `fireEnemyShot` spawns the bolt at a hardcoded y = 1.4** — inside the
+geometry underneath them, so it died against a collider on its first step. Build 1323's lesson verbatim:
+build the thing you are measuring somewhere nothing else lives. The mechanism was already proven four other
+ways, so this was an instrument fault, not a null result.
+
+Also worth knowing for the next probe of this system: **this sandbox renders ~1.5 fps** (20 frames in
+13.2 s), so a bolt at 38 u/s moves ~25 units per frame and *tunnels straight through* a 1.1 m hit sphere. Any
+projectile test at a real distance has to step `updateEnemyShots(1/120)` by hand rather than wait on frames.
+
+Eighteen pins moved (283, 33, 374, 415, 47, 779, 1020, and eleven in 1226), every one keeping its intent —
+1226's whole point, that a *friendly* pays nothing and holds no wave open, is asserted unchanged at each new
+address. Two of them are executing rigs that needed the new dependency supplied: `test-1020` takes
+`_combatTargets` as a pass-through of its player list (its assertions are about the bolt, not the list), and
+`test-1226` lifts `_facOf`/`_enFac` from source rather than restating them.
+
+## A match in progress stays findable (build 1356)
+
+**Joining one has worked end to end for a long time.** The welcome carries `phase`, and a client that
+connects mid-match runs `startGame()` directly instead of waiting in a lobby that is over; build 1197 forces
+a keyframe whenever the connection count changes, so a late joiner never applies deltas against a baseline
+it never saw; build 1201's rejoin path exercises all of it.
+
+What did not work was **finding** one. `announceRoom`'s heartbeat returned unless `NET.phase === 'lobby'`,
+and `startMatch` called `unannounceRoom()`. So the public directory only ever listed rooms where nobody was
+playing yet — and for a game with a handful of concurrent players that reads as *"nobody is online"* at
+exactly the moment somebody is. The most valuable rooms in the list were the ones the list deliberately hid.
+
+`startMatch` now **re-announces** rather than deleting, with `live:1`. `unannounceRoom` is untouched and
+still runs on all three ways OUT (leave, the leave button, `beforeunload`) — the test counts the call sites
+so kickoff cannot quietly become a fourth again.
+
+**No new privacy decision is being made here.** The room code was already published the moment the host
+opened the lobby; continuing to publish it is the same exposure with strictly more utility, and the room's
+own player cap is the gate — a full room refuses with `{t:'full'}` and always has.
+
+### The cap is one derivation, or the list offers seats the door refuses
+
+`_maxPlayersFor(mode)` now takes the mode, so the **browser** computes the same number the host's door
+enforces, from a listing it has never connected to. Every existing call site passes nothing and reads the
+live mode exactly as before. A full room is listed and **not clickable** — a dead click is the "nothing
+happened" build 1147 removed — and the handler is only attached when there is a seat, rather than attached
+and then refused.
+
+### It works before the server is redeployed, which is why `max`/`live` are optional
+
+`lobbies.php` whitelists the fields it stores, so a client sending new ones against the currently deployed
+file has them silently dropped — and the room simply lists as an ordinary one, which **is** the whole fix.
+The server half is written (both fields clamped like every other, both defaulting when absent so an older
+client is unchanged) and adds the badge and the exact cap once uploaded. The browser derives the cap from
+the mode meanwhile.
+
+Verified live (`tools/probe/join-live.mjs`), every lobby PUT hooked and read back:
+
+```
+lobby     {live:0, players:3, max:8, mode:"coop"}      kickoff  {live:1, players:3, max:8}
+duel      {max:2}                                       left     zero PUTs
+list  COOP 3/8 Join · COOP 5/8 · in progress Join · COOP 8/8 FULL (disabled)
+      against a lobbies.php that has NOT been updated:  DUEL 2/2 FULL · COOP 4/8 Join
+```
+
+That last row is the point of the derivation: the old-server entries carry no `max` at all and still land on
+the right cap and the right button.
+
+**Two pins moved, and one was deliberately INVERTED** — `test-110`'s *"match start de-lists the lobby"* was
+asserting the defect. What it was really guarding, that a room nobody is in stops being advertised, is now
+asserted where it actually happens. `test-956`'s quoted the whole heartbeat body literal and broke on two
+added fields with every part of it still true; it asserts the members.
+
+**Not verifiable headless, and stated as such:** a real two-machine mid-match join. The code path is pinned
+at both ends (`phase:NET.phase` sent, `else { startGame(); }` received) and it predates this build; what
+1356 changes is only whether the room is in the list.
+
+## The mute survives the tab, and one name means one player (build 1357)
+
+Build 1178 shipped `/mute` as per-session and by NAME, and named both costs: *"a renamed troll costs one
+more /mute, which is acceptable for v1."* Neither is acceptable for a public release with minors. A mute
+that dies with the tab is one you re-issue every session against the same person, and a mute keyed on a
+string the muted party chooses is one they walk out of by retyping it.
+
+**And nothing de-duplicated display names.** `rp.name = msg.n` took whatever arrived, so a harasser could
+adopt their victim's name. That is not a cosmetic clash — it makes a chat log ambiguous, makes a build-1351
+moderation report **unactionable** ("Griefer said X" — which one?), and makes muting the harasser mute the
+victim. The two problems have one root, which is why they are one build: **the name was the whole
+identity, and it was neither unique nor durable.**
+
+### Three handles instead of one
+
+- **The set PERSISTS** (`breach_mutes`), so muting someone is a decision rather than a session preference.
+  Capped in both directions and validated on the way in, because it is stored data (1325's rule).
+- **Muting a CONNECTED name also binds their player id for the session**, so renaming mid-match does not
+  dodge it. The chat relay carries `from` now for exactly that — an OPTIONAL field, so an older host that
+  does not send it leaves the check exactly as 1178 had it.
+- **The host de-duplicates**, because only the host can see everyone. `_resolveName` is case- and
+  whitespace-insensitive ("Griefer" and "griefer " are the same name to a person reading a log), counts
+  **up** rather than randomising so a room that emptied hands your name straight back, and **skips its own
+  id** — otherwise every re-send would walk a player up the numbers. The resolved name goes back as
+  `{t:'yourname'}` so their own chat prefix, name sprite and report target read what everyone else sees.
+
+`_cleanName` is one sanitizer: control and **zero-width** characters out (a zero-width space is how you
+impersonate a name that only *looks* taken), whitespace collapsed, capped at 20. A display name reaches a
+chat log, a name sprite, a kill feed and a moderation report, so an unbounded string is everyone else's
+problem, not the sender's.
+
+**A persistent list you cannot see is a list you cannot undo**, so `/mutes` prints it and `/unmute all`
+clears it. Muting someone who is not in the room says so rather than claiming a binding it does not have.
+Every command returns *before* the send — a `/mute` relayed to the room would tell the person you muted.
+
+Verified live (`tools/probe/mute-names.mjs`) and executed in `test-1357`:
+
+```
+clean   "  Jarred  "->"Jarred" · ""->fallback · 60 chars->20 · zero-width stripped · "a   b"->"a b"
+dedup   Griefer · Griefer (2) · griefer (3) · Jarred (2) [clashes with the HOST] · ""->Player5
+        and the SAME player re-sending keeps Griefer
+mute    stored ["griefer"], bound to pid 1 · 3 lines in -> 1 rendered
+        the troll RENAMES to NotGriefer -> still 0 rendered
+        a relay carrying no from-id falls back to name-only · the set survives a reload
+```
+
+**Still open, and named rather than implied:** there is no persistent identity in this engine, so a mute
+cannot follow someone across sessions if they change their name between them. That needs accounts, which
+the platform audit already lists. What this build buys is that the name is no longer the *only* handle.
+
+**A backtick inside a template literal, for the third time.** The probe's own comment read ``// no `from` at
+all`` inside a `P(\`…\`)` string and closed the template — a syntax error in the instrument, not the engine.
+Recorded under builds 1328 and 1342; write it as plain prose in probe source.
+
+## The shake curve was throwing away 85–96% of every gunshot (build 1358)
+
+A six-critic AAA review panel ran against build 1357 (rendering, art direction, game feel, editor, performance,
+audio+UI), each required to verify in source and measure rather than assert. This is the first fix out of it,
+and it is one line.
+
+```js
+const s = shake * shake;          // ease — feels punchier
+```
+
+Trauma-squared is a real and standard curve — **for a trauma value that reaches 1.** Every call site in this
+engine is far below that: gunfire lives at 0.045–0.16, where squaring only shrinks. Measured at the shipped
+78° fov, driving the real block to convergence:
+
+```
+smg      addShake(0.045)   0.0020°   0.02 px @1080p    33 ms
+rifle    addShake(0.080)   0.0080°   0.09 px           50 ms
+shotgun  addShake(0.160)   0.0393°   0.46 px           83 ms
+```
+
+**A tenth of a pixel for two frames is not a camera shake, it is a rounding error** — which is why firing this
+game read as clicking a mouse. The only thing that visibly moved the camera was a rocket at your feet.
+
+Three faults in those six lines, all fixed together because they are one behaviour:
+
+- **The curve is linear now**, and the gunfire call site was retuned with it (0.13 / 0.075 / 0.26). Leaving the
+  amounts alone would have kept the frame nearly still. Rifle 0.30° over 118 ms, shotgun 0.60° over 236 ms, a
+  rocket 2.06° over 818 ms. The damage-scaled hit amounts are deliberately **not** retuned — `dmg/55` was
+  already in a usable range.
+- **It was white noise resampled per frame.** The same shake was therefore a different visual phenomenon at
+  30 Hz and at 144 Hz. `_shakeN(t, k)` is three sines at incommensurate rates summing to ±1, dominant ~24 Hz —
+  a function of TIME, so what the player sees is refresh-rate independent by construction, and the three axes
+  are near-uncorrelated so a shake is a shake rather than a diagonal line.
+- **The decay was 2.2/s**, so a rifle's shake was gone inside two frames at 60 Hz. `SHAKE_DECAY = 1.1` gives it
+  118 ms — still amplitude-proportional, which is right (a rocket shakes far longer than a shot), but long
+  enough to be a motion rather than one displaced frame.
+
+Build 1313's `a11y.shake` chokepoint, the clamp at 1, and build 1210's strafe lean as the base of the roll are
+all untouched and pinned.
+
+Two pins moved (1210, 91), both quoting the old literal with their intent intact: 1210's subject is that the
+lean is the base of the roll in both branches, and 91's is that a shotgun kicks hardest and an SMG least —
+both asserted directly now instead of by quotation.
+
+## The library reported saves it never checked (build 1359 — editor review, the only CRITICAL)
+
+Two silent data-loss paths in build 1262's level library, both found by reading the store calls:
+
+**1. Nothing verified the write.** `_libPut` fired both stores and discarded both answers; `libSaveAs` and
+`libCommit` never looked either, so the caller flashed `Saved as "Warehouse"` whether or not a byte landed.
+The INDEX is a tiny localStorage write that succeeds when the multi-megabyte payload does not — which is
+exactly what hid it: **the library LISTS a level that does not exist**, and Open, days later, says *"that
+level could not be read"*. Executed against failing stores:
+
+```
+both stores work   -> "Saved as Warehouse" · index 1 · payload written
+BOTH stores fail   -> "Saved as Warehouse" · index 1 · NOTHING WAS WRITTEN
+```
+
+**The author already knew to do this.** `saveLevel()` verifies its own write with a read-back and reports
+*"Autosave failed — storage full"*. The library did not inherit it.
+
+It stays **optimistic** on purpose — the callers are synchronous and the flow is unchanged. What the
+verification buys is that a failed write **rolls its own index row back out** and says so. A row pointing at
+nothing is worse than no row, because `libOpen` loads it over live work and only reports the read failure
+afterwards.
+
+**2. `_libCurrent` was module-level and never persisted.** So a reload — a crash, a restore, the next
+morning — detached Save from the entry you had been working in, with no signal but a badge disappearing
+from a row. Two hours of edits then went to the anonymous autosave slot while the named entry held
+yesterday's level, and clicking Open loaded that *over* them. It is stored now, and `_libTrack` is the
+**one writer** of both the variable and the key, so they cannot disagree. Build 1262's cross-tab guard
+still holds and now clears the persisted id too.
+
+Two pins moved (1262's rig needed the two new functions lifted from source rather than restated; 1322's
+quoted `_libCurrent=id` and asserts the tracker now).
+
+## The first frame is staged now (build 1360 — art-direction review)
+
+Five numbers, and the process is the point: two of them measured **worse** on the first attempt and were
+changed on the evidence rather than defended.
+
+### The ground was the brightest thing in the picture
+
+Authored hex, linearised to relative luminance:
+
+```
+_DL.pipe  0.0149 · _DL.wall 0.0365 · _DL.deck 0.0592     the level's own structure
+floorColor 0.1040   <- the ENGINE ground plane,  +0.81 stops over the deck it surrounds
+wallColor  0.1349   <- the BOUNDARY WALL,        +1.19 stops over the deck, and the coolest thing in shot
+```
+
+The two surfaces with the least to say were the **first and second brightest large albedos**, so nothing
+popped off the floor and the frame's outer ring was its brightest region — with a 0.42 vignette fighting a
+wall that had been authored bright. In almost every shipped AAA frame the ground is the darkest large value.
+
+Both are scaled in **linear space**, which cannot change chromaticity — so the ground keeps the warm hue
+build 1156 gave it, and `skyGround` moves by the same factor because 1156 tied them: the dome's ground band
+and the engine's plane meet at the horizon, and darkening one alone puts back the seam that build removed.
+
+**Build 1156 deliberately HELD this luminance and that decision is reversed here, explicitly.** 1156 was
+fixing hue only and said so; the review's finding is that the value was the defect. Its pin now asserts the
+RELATION (the plane is dark, the dome's band stays ~29% brighter) instead of the number.
+
+### The sun was 117 degrees behind the player
+
+`_sunDir()` at azim 63 / elev 34 is `(0.739, 0.559, 0.376)`; the spawn stands at `(0, 1.2, 30)` facing −Z,
+so the horizontal sun-to-view dot was **−0.454**. That is why no capture in this repo ever had a rim light,
+a long shadow toward camera, or the sun anywhere in frame.
+
+**Textbook three-quarter back-light was tried first and measured worse.** Captured at the pinned top rung,
+same pose:
+
+```
+                          clipped px   ground Y   ground sat   sky/ground
+azim  63 / elev 34   before     0.05%     0.0853       0.314        7.18x
+azim 150 / elev 24              5.04%     0.0617       0.212       12.87x   <- REJECTED
+azim 105 / elev 24   shipped    0.03%     0.0486       0.254       15.26x
+```
+
+At 30° off dead ahead the sun disc and its glow sit inside a 110° horizontal fov, auto-exposure lifts the
+whole frame to accommodate them, and clipping goes up a hundredfold. **The ELEVATION buys the shadows; the
+azimuth only decides whether you are photographing the level or the sun.** At azim 105 the sun is 75° off
+the view axis — out of frame, still low — so shadows rake ACROSS the picture at 2.25× the caster's height
+(was 1.48×) and vertical edges rim.
+
+### The bounce was re-derived, not left behind
+
+Build 1149's term is `bounce × sun`, coloured by `sunColor × mix(floorColor, wallColor, 0.4)` — **the albedo
+is already in the colour**, so halving the floor's luminance would have halved the delivered fill against a
+frame that now has far more surface in shade. 0.50 → 0.85 leaves the darker ground bouncing less, as it
+physically must, while keeping **77%** of the old delivered fill and with it 1149's margin against a crushed
+red channel.
+
+Generated arenas are untouched: `groundMood` overwrites `floorColor`/`wallColor` per theme, so this moves the
+stock level and fresh levels only — which is exactly the content the review was looking at.
+
+Four pins moved (1149, 1156, 1234, 855), each re-expressed as the relation it was really about.
+
+## Airborne input can only add speed, and the mantle keeps momentum (build 1361 — feel review #4/#9)
+
+Air control actively BRAKED the player (feel #4): the build-1171 airborne branch lerped velocity toward wish*sp — walk/sprint speed — so above that speed holding forward decelerated (critic: slide-jump 12.4 m/s held vs 14.8 released; my harness reproduces the defect at 15.19 held-old vs 17.19 released). Fixed with a Quake-derived projection in the airborne+input path only: when the speed ALONG the wish already meets the target, the parallel term is zero (never negative) and the perpendicular component keeps easing at MOVE_AIR_K (course correction still turns the arc). Below target the else branch is TEXTUALLY the old lerp, so walk-speed jumps, the grounded model, and AIR_BRAKE are bit-identical — proven by 120 frame-by-frame === comparisons in the test. Executed evidence: 21 m/s held forward keeps 21.00 exactly and lands faster than released (17.19); a 30 m/s blast keeps 30; diagonal steering after 0.5 s gives 8.72 u/s of new axis while the along-wish speed is invariant to 1e-6; 20 vs 144 Hz agree within 2% and a dt spike clamps without overshoot. The mantle (feel #9): the grab record now captures vx0/vz0 BEFORE the zeroing; pull COMPLETION restores hypot(vx0,vz0)×LEDGE_EXIT_KEEP (0.7, declared with the ledge constants — above every use) along the pull direction (gx,gz); the held-forward pull delay dropped 0.25→0.08 s. The per-frame zeroing during hang+pull is deliberately untouched (a hang is stationary), and a pre-1361 record ({}||0) degrades to the old 0 m/s exit, never NaN — executed. No pins moved: test-1171's lerp/rate pins survive as the else branch, test-1290/1289's grab-slice assertions (no forward.x/z, no _vh) are unaffected by the vx0/vz0 addition. Worktree had rolled back to build 1155 on start; recovered via git reset to origin branch head d5ceaab (build 1360) per the repo's rollback protocol before editing.
+
+EVIDENCE:
+All from the executed harness (154 checks) driving the REAL movement block sliced from breach.html via new Function, frame by frame. Slide-jump at 21 m/s, sp 14, 0.5 s at 120 Hz: held-forward NEW = 21.00 (exact — parallel term zero), released (AIR_BRAKE) = 17.19, held-forward OLD lerp = 15.19 — the old model braked a held jump BELOW the released arc, the new one preserves it fully. 30 m/s blast held forward keeps 30.00. Diagonal steering from (21,0): vel.z = 8.72 u/s of new axis after 0.5 s while the along-wish speed is invariant at 14.849 (min over all frames, 1e-6). Pure-perpendicular wish and all below-target airborne frames are === bit-identical to the old lerp across 120 frames; grounded accelerate+brake sequences === bit-identical. 20 Hz vs 144 Hz: 1 s of diagonal steering lands within 2% in speed and 0.04 rad in heading; a 0.5 s dt spike clamps (speed <= 21, along-wish exact). Mantle, executing the real pull-completion statement: arrival (12,9) with pull direction (0.6,0.8) exits at vel (6.3, 8.4) = |15|*0.7 along the pull; a pre-1361 record exits at exactly (0,0), never NaN; _mt=0.5 does not fire. Source pins: vx0/vz0 captured before the zeroing, per-frame hang zeroing intact, _wantUp at 0.08 with 0.25 absent.
+
+RISKS:
+1) The worktree had rolled back to build 1155 at session start; I recovered with git reset --hard d5ceaab (origin/claude/level-gen-themes-stairs-5slfr0 = build 1360). The orchestrator should confirm the landing tree really is 1360 before running the script — every anchor is a literal of that tree. 2) Steering while above target trades perpendicular speed for direction (total speed can fall toward the along-wish component); that is the intended projection semantics, but it is a feel change worth one browser pass: slide-jump then strafe mid-air. 3) The mantle exit restores velocity along the PULL direction (into the ledge top), not the arrival direction — deliberate (the player is now facing/moving onto the top), noted in case a report says the exit direction feels wrong. 4) The 0.08 s held-forward pull delay makes walking into a wall while holding W mantle almost immediately — if creators report accidental climbs, the delay is the lever, not the keep factor.
+## Recoil recovers, kicks are per-weapon, and being hit punches the aim (build 1362 — feel review #2/#3/#14)
+
+Recoil was a PERMANENT view displacement: the only kicks were player.pitch += 0.010..0.016 in shoot() and a hardcoded += 0.02 in fireRocketShot(), no site among the 26 player.pitch mutations ever subtracted them back (critic: one SMG magazine walked the view 23-31 deg, recoveredDeg 0), the only per-weapon factor was x2.4 for scope (SMG 14.3 deg/s vs shotgun 1.4 — backwards), yaw was never touched, and being hit produced no aim punch. Now: _recPitch/_recYaw camera-offset accumulators, declared beside the shake state, applied in the frame loop's first/third-person branch AFTER tpCameraPushback (the boom lookAt-overwrites rotation — applying before it would drop the kick in exactly the view where the old pitch kick was visible), sprung *= Math.exp(-8*dt) with an exact settle to 0, and the applied pitch clamped at 1.55 so base aim + offset never crosses vertical. player.pitch is never written (test counts exactly 1 remaining +=, the aim-assist one). Both kick sites route through one _recKick(w) whose first line is build 1102's fps gate, so cursor views stay un-kicked with no second copy of the rule. kickV/kickH joined build 1190's GUN_STAT_KEYS/GUN_STAT_LIM (serialization, clamps, loaders, editor rows for free), normalised into GUN_BASE per 1296's spurious-diff rule; table defaults shotgun 0.034 > pistol 0.018 > rifle 0.014 > smg 0.008, sniper 0.040, launcher 0.035, melee 0; ADS scales x0.6; kickH alternates sign with random lean. Aim punch (_recPunch) at both damage sites rides the already-computed hurt source (sx/sz, posEye, botById; unknown attacker jolts directionless), scaled dmg/maxHp, gated by a11y.shake. Mouse handler consumes live recoil before a downward pull reaches player.pitch (no double correction); up-pulls and yaw untouched. Ten pins moved keeping intent: 1102 (rocket gate now inside _recKick), 1190/1296 (GUN_BASE literal + key count 10→12), 103/138 (whole-literal weapon-line trap — pin members, not the closing brace), 95 (pvp hurtDir branch gained braces), 227 (scope x2.4 WAS the defect — now asserts sniper carries the heaviest kickV from the real table). NOTE: the worktree spawned on a stale build-1155 base; recovered via git reset --hard d5ceaab (build 1360 on claude/level-gen-themes-stairs-5slfr0) before any edit.
+
+EVIDENCE:
+Spring executed frame-by-frame through the REAL frame-loop block (sliced from source): a 0.03 rad kick recovers to 9.1% in 0.3 s at 60 Hz (was 0% recovery, forever), and 30/60/144 Hz land byte-identically on the analytic 0.03*e^(-8*0.5) over 0.5 s (1e-12); long run settles to exactly 0. Camera application verified: offset adds to rotation (0.2 -> 0.23 pitch, 1.0 -> 1.01 yaw — the old kick had NO yaw term), and base pitch 1.5 + full 0.22 kick clamps at 1.55 (never crosses vertical). _recKick executed: one shot pushes exactly kickV (0.03), cursor view ('top') pushes 0 (build 1102's gate), ADS scales to 0.018 (x0.6), a 200-round mag-dump clamps at REC_MAX 0.22 rad (~12.6 deg) versus the old 23-31 deg permanent walk. Per-weapon ordering from the real WEAPONS table: shotgun 0.034 > pistol 0.018 > rifle 0.014 > smg 0.008; sniper 0.040, launcher 0.035; crowbar/fists 0; every gun's kickH > 0 and < its kickV. Both damage sites executed through the real functions: PvE hit 30 dmg dead-ahead pushes p=0.0300 with zero side term, from the right yaws away (+), a11y.shake=0 gates to exactly 0; PvP hit via posEye pushes, unknown attacker (no posEye, botById null) still jolts directionless. Correction-subtraction executed on the real mouse-handler slice: a 0.02 rad down-pull against 0.05 live recoil moves the aim 0 and spends recoil to 0.03; a pull past the recoil passes only the remainder (0.29); up-pulls and yaw untouched. player.pitch += count engine-wide is exactly 1 (aim-assist).
+
+RISKS:
+1) The worktree spawned on a STALE base (build 1155, 896 harnesses — the documented rollback signature); I recovered with git reset --hard d5ceaab (build 1360, tip of claude/level-gen-themes-stairs-5slfr0). If the orchestrator's landing tree is also stale, check git log before applying. 2) Feel numbers (kickV/kickH defaults, REC_SPRING 8, punch magnitude 0.10*dmg/maxHp capped 0.06) are reasoned, not play-tested — a browser pass should confirm the shotgun/sniper kick reads heavy and sustained SMG fire holds a small lean; the levers are all in the WEAPONS table and the two constants. 3) In third person the offset is applied after tpCameraPushback (deliberate — the boom lookAt-overwrites rotation), so third-person recoil moves the CAMERA, not the avatar's aim; the old behavior moved both, since it corrupted player.pitch. 4) The accumulators freeze (no decay) while driving a car or manning a turret — those branches skip the apply block; residue is sub-degree and decays in ~0.3 s on exit. A turret's own shots never kick (turret fire doesn't route through shoot()'s kick site — same as before this build). 5) A pre-1362 saved level carrying a full st override for a weapon will have kickV/kickH absent from its st, so _wepApplyStats resets them to factory — correct (factory kick), but means old levels cannot have authored zero-recoil guns until re-saved, which is the intended default anyway.

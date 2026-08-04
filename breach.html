@@ -46,11 +46,22 @@
     if(localStorage.getItem('breach_tpblock') !== '1') return;
     var ok = "'self' https://www.rumpusengine.com https://rumpusengine.com "
            + "https://unpkg.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com";
+    /* build 1354: a self-hosted broker must be in the policy or the block switch silently kills
+       multiplayer for exactly the people who took the trouble to run their own infrastructure. Read from
+       the same `breach_peer` setting `_peerServer()` uses, and only a hostname is admitted — this string
+       goes into a security policy, so anything with a space, a quote or a semicolon in it is dropped
+       rather than escaped. */
+    var peerHost = '';
+    try{
+      var pv = JSON.parse(localStorage.getItem('breach_peer') || 'null');
+      if(pv && pv.host && /^[a-zA-Z0-9.-]+$/.test(pv.host))
+        peerHost = ' https://' + pv.host + ' wss://' + pv.host;
+    }catch(e){}
     var m = document.createElement('meta');
     m.httpEquiv = 'Content-Security-Policy';
     m.content = "img-src 'self' data: blob:; media-src 'self' data: blob:; "
               + "font-src 'self' data: https://fonts.gstatic.com; "
-              + "connect-src " + ok + " https://0.peerjs.com wss://0.peerjs.com wss://*.peerjs.com;";
+              + "connect-src " + ok + " https://0.peerjs.com wss://0.peerjs.com wss://*.peerjs.com" + peerHost + ";";
     document.head.appendChild(m);
     window.__TP_BLOCKED = true;
   }catch(e){}
@@ -382,6 +393,17 @@
   #editor button:hover { background: #1a2831; border-color: rgba(var(--accent-rgb),0.6); color: #eafff7; }
   #editor input[type=text], #editor input[type=search], #editor input[type=number], #editor select, #editor textarea { background: #0b1317; border: 1px solid #223039; border-radius: 4px; color: #dff0e9; padding: 4px 7px; font: 500 11.5px var(--ui-font); }
   #editor input[type=text]:focus, #editor input[type=search]:focus, #editor input[type=number]:focus, #editor select:focus, #editor textarea:focus { outline: none; border-color: rgba(var(--accent-rgb),0.65); }
+  /* build 1347: A VISIBLE FOCUS RING. Before this, the ONLY :focus rule in ~2,000 lines of stylesheet was
+     the one above, and it REMOVES the outline — the classic anti-pattern: someone disliked the browser's
+     default ring, deleted it, and never drew a replacement. That line is fine on its own terms because it
+     swaps in an accent border, so a focused text field IS legible; every other control had nothing at all.
+     Measured in the live editor: of 86 clickable, visible controls, 59 were keyboard-reachable and not one
+     of them showed where the focus was.
+     :focus-visible, not :focus, is what makes this shippable — the browser only matches it for keyboard
+     (and other non-pointer) focus, so clicking a button does not leave a ring stuck on it. That behaviour
+     is exactly why people deleted outlines in the first place. */
+  :focus-visible { outline: 2px solid rgba(var(--accent-rgb),0.95); outline-offset: 2px; border-radius: 3px; }
+  #editor .edMode:focus-visible, #editor button:focus-visible, .a11yBtn:focus-visible { outline: 2px solid rgba(var(--accent-rgb),0.95); outline-offset: 1px; }
   #editor .valnum { font-family: ui-monospace, Menlo, monospace; }
   #editor .hint { color: #67837a; font-size: 10.5px; margin: 2px 0 6px; }
   #editor .hint b { color: #9fc0b5; }
@@ -7191,7 +7213,45 @@ let _prScale = 1;                       // adaptive multiplier on top of the bas
 const _PR_FLOOR = IS_COARSE ? 0.5 : 0.66;   // never blurrier than this
 const _PR_STEPS = IS_COARSE ? [1, 0.85, 0.72, 0.6, 0.5] : [1, 0.85, 0.72, 0.66];
 let _prStepI = 0;
-function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); }
+// ---- build 1350: THE SUN SHADOW JOINS THE LADDER ----------------------------------------------------
+// Build 1346 raised the near cascade to 4096 because the corner leak is a fixed number of TEXELS wide and
+// halving the texel halved it — measured, and worth its ~12% of frame time on a machine that has it.
+// What that build did NOT do is give the cost a way OUT: `SUN_SHADOW_PX` was a constant, so the adaptive
+// ladder could shed motion blur, then MSAA and SSAO, then a third of the pixels, and the biggest single
+// draw in the frame stayed at 4096 the whole way down. That is build 1263's lesson from the other side —
+// a perf change may not remove work something else relied on, and it may not ADD work with no shed path.
+//
+// The shadow map is a texture, not a light: resizing it changes no light COUNT and cannot trip the
+// recompile freeze of builds 636/977/1153/1155 (which is exactly why 1348 could not do the same thing for
+// point shadows — `castShadow` is a #define, `mapSize` is an allocation). Disposing the old map forces
+// three to reallocate on the next shadow render, which is the same rebuild-targets-not-materials shape
+// build 880 established for the post chain.
+//
+// `moonFar` is deliberately NOT shed. Its texel is already 4x coarser by design, it covers distant
+// geometry where a corner artifact is under a pixel, and dropping its `castShadow` WOULD change the
+// shadow-light count. Halving its map buys little and risks the thing this comment exists to avoid.
+const _SUN_PX_STEP = [1.0, 0.5, 0.5, 0.25];   // multiplier of SUN_SHADOW_PX per resolution rung
+function _sunShadowPxFor(step){
+  const m = _SUN_PX_STEP[Math.max(0, Math.min(_SUN_PX_STEP.length-1, step|0))];
+  return Math.max(512, Math.round(SUN_SHADOW_PX * m));
+}
+// `_applyPixelRatio()` runs at BOOT, ~1,500 lines before `moon` and `SUN_SHADOW_PX` are declared. A
+// `typeof` guard does NOT protect a temporal dead zone (build 1127 lost the sky for eight builds to
+// exactly that, behind a catch that hid it), so this uses an explicit READY FLAG set where the light is
+// built. The try/catch stays as a backstop, but it is not what makes this correct.
+let _sunShadowReady = false;
+function _syncSunShadowRes(){
+  if(!_sunShadowReady) return;
+  try{
+    if(!moon || !moon.shadow) return;
+    const want = _sunShadowPxFor(typeof _prStepI!=='undefined' ? _prStepI : 0);
+    if(moon.shadow.mapSize.x === want) return;            /* the common case: nothing moved, nothing costs */
+    moon.shadow.mapSize.set(want, want);
+    if(moon.shadow.map){ moon.shadow.map.dispose(); moon.shadow.map = null; }   /* three reallocates */
+    if(typeof _dirtyShadows==='function') _dirtyShadows(2);
+  }catch(e){}
+}
+function _applyPixelRatio(){ renderer.setPixelRatio(_prBase * _prScale); _syncSunShadowRes(); }
 _applyPixelRatio();
 // Rolling frame-time monitor (always on, ~free). Targets ~50fps; if we miss it for a stretch, drop a
 // step; if we beat ~58fps comfortably for longer, climb back. Asymmetric: quick to relieve, slow to push.
@@ -8324,7 +8384,20 @@ function resizePost(){ if(_postRT) disposePost(); }   // rebuilt lazily on next 
 // build 1285: defined ONCE at module scope. Declaring this inside the traverse callback would allocate a
 // closure per OBJECT across two scenes every frame — exactly the transient build 1168 measured and removed.
 function _aoNoDepthMat(q){ return !!q && (q.depthWrite===false || q.transparent===true || (q.alphaTest||0) > 0); }
+// ---- build 1353: the sweep's four call sites stop allocating -----------------------------------------
+// Build 1168 hoisted this file's per-frame transients and named what it did NOT finish: "replacing
+// _aoHideNoDepth's traverse with a transparent-material registry". The registry is still the bigger idea,
+// but the cheap half was never done — all FOUR call sites allocated a fresh array every frame, and with AO
+// and motion blur both live that is four arrays per frame forever, which is exactly the class 1168 removed
+// everywhere else.
+//
+// FOUR arrays, not one shared scratch. The four fills happen to be sequential today — each is filled,
+// rendered and drained before the next begins — so one would work, and that is precisely build 1168's own
+// warning: "a shared scratch would be clobbered the day that order matters". One per consumer costs three
+// extra empty arrays for the life of the page and cannot be broken by reordering the passes.
+const _aoHidW = [], _aoHidV = [], _velHidW = [], _velHidV = [];
 function _aoHideNoDepth(root, out){
+  out.length = 0;   /* build 1353: the callers reuse their buffer now, so this owns clearing it */
   // build 1168: this runs over 2 scenes per frame with AO on, and the old wrap-into-an-array + a per-object
   // predicate closure allocated per OBJECT — thousands of transients a frame. Same predicate, zero allocation:
   // one offending slot in a multi-material array is still enough, because the object is drawn or it is not.
@@ -8423,7 +8496,7 @@ function _renderPostFX(scn, cam){
     // build 1140 renders into this same G-buffer through its own `renderer.render(vmScene, vmCam)`. So the one
     // sprite a player sees on almost every trigger pull was still writing its quad. Fixed by making the sweep
     // a function both callers use, rather than a block one of them happens to contain.
-    const _aoHid=[];
+    const _aoHid=_aoHidW;
     _aoHideNoDepth(scn, _aoHid);
     scn.overrideMaterial=_matAOGeo;
     renderer.setRenderTarget(_aoGeoRT); renderer.render(scn, cam);
@@ -8435,7 +8508,7 @@ function _renderPostFX(scn, cam){
     // vmCam shares the main camera's fov and aspect and sits at its own origin looking down -z, so the
     // view distance it writes into alpha is directly comparable with the scene's.
     if(_vmHere){
-      const _vmHid=[];
+      const _vmHid=_aoHidV;
       _aoHideNoDepth(vmScene, _vmHid);   // build 1158: the muzzle flash lives HERE, not in scn
       const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matAOGeo;
       const _vac=renderer.autoClear; renderer.autoClear=false;
@@ -8489,7 +8562,7 @@ function _renderPostFX(scn, cam){
     const _bgV=scn.background; scn.background=null;
     const _sa=renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate=false;
     if(_skyMesh) _skyMesh.visible=false; if(typeof _weatherPts!=='undefined' && _weatherPts) _weatherPts.visible=false;
-    const _vHid=[]; _aoHideNoDepth(scn, _vHid);
+    const _vHid=_velHidW; _aoHideNoDepth(scn, _vHid);
     renderer.getClearColor(_velCC); const _ca=renderer.getClearAlpha();
     renderer.setClearColor(0x808080, 0);   // rg 0.5 = zero velocity, alpha 0 = nothing drawn
     scn.overrideMaterial=_matVel;
@@ -8498,7 +8571,7 @@ function _renderPostFX(scn, cam){
     for(const o of _vHid) o.visible=true;
     if(_vmHere){
       vu.uPrevVP.value.multiplyMatrices(vmCam.projectionMatrix, vmCam.matrixWorldInverse);   // vmCam is static: only the weapon's own bob remains — the flick stays sharp
-      const _vmH=[]; _aoHideNoDepth(vmScene, _vmH);
+      const _vmH=_velHidV; _aoHideNoDepth(vmScene, _vmH);
       const _vpv=vmScene.overrideMaterial; vmScene.overrideMaterial=_matVel;
       const _vac=renderer.autoClear; renderer.autoClear=false;
       renderer.clearDepth();
@@ -8722,6 +8795,7 @@ moon.castShadow = true;
 // 8192 is measured above and it is not worth its cost.
 const SUN_SHADOW_PX = IS_COARSE ? 1024 : 4096;
 moon.shadow.mapSize.set(SUN_SHADOW_PX, SUN_SHADOW_PX);
+_sunShadowReady = true;   /* build 1350: from here the ladder may resize this map — see _syncSunShadowRes */
 moon.shadow.camera.near = 1; moon.shadow.camera.far = 260;
 // build 1120: the shadow volume FOLLOWS THE CAMERA instead of being a fixed box at the world origin.
 // It was +/-80 on a 2048 map — 7.8 cm a texel — and nailed to (0,0), while worldCfg.arena goes to
@@ -9050,6 +9124,51 @@ const _lp = new THREE.Vector3();
 // the cap a prop keeps its glow (the emissive material is free) and loses only its cast light —
 // which is exactly what the distance budget was already doing to it, minus the per-pixel bill.
 const LIGHT_SOFT_CAP = 40;   // a warning past here; measured guidance, not a limit
+// ---- build 1353: TEXTURE MEMORY, which the creator could not discover any other way ------------------
+// Build 1257 made the LIGHT cost visible for exactly this reason and the audit's texture half was never
+// done. The gap it leaves is real and specific: the asset panel reports DOWNLOAD bytes (build 990's
+// inventory), and `renderer.info.memory.textures` is a COUNT. Neither is what runs a phone out of memory —
+// a single 4096x4096 albedo is 64 MB on the GPU whatever it weighed as a 900 KB JPEG, and nothing in the
+// product said so.
+//
+// GPU bytes, not file bytes: width x height x 4, plus a third again when mipmaps exist (the 1+1/4+1/16...
+// series converges to 4/3). Compressed formats (KTX2/Basis) report their own byte length and are counted
+// as that instead — a transcoded texture is the whole point of using them, so charging it 4 bytes a pixel
+// would libel the one format that fixes this.
+const TEX_MB_SOFT_CAP = 192;   // past here a mid-range phone is at real risk; desktop is fine much higher
+function _texBytesOf(t){
+  try{
+    if(!t || !t.image) return 0;
+    const im = t.image;
+    if(im.isCompressedTexture || (t.mipmaps && t.mipmaps.length && t.mipmaps[0] && t.mipmaps[0].data)){
+      let b = 0; for(const m of (t.mipmaps||[])) if(m && m.data && m.data.byteLength) b += m.data.byteLength;
+      if(b) return b;
+    }
+    const w = im.width|0, h = im.height|0;
+    if(!w || !h) return 0;
+    return w * h * 4 * (t.generateMipmaps === false ? 1 : 4/3);
+  }catch(e){ return 0; }
+}
+function _texCensus(){
+  const seen = new Set(); let bytes = 0, n = 0, big = null, bigB = 0;
+  const add = (t, label)=>{
+    if(!t || seen.has(t)) return; seen.add(t);
+    const b = _texBytesOf(t); if(!b) return;
+    bytes += b; n++;
+    if(b > bigB){ bigB = b; big = label || (t.image && t.image.src ? String(t.image.src).split('/').pop() : 'a texture'); }
+  };
+  try{
+    /* the two caches the audit named, plus whatever is actually bound in the scene — a texture reached
+       only through a material (an imported GLB's own maps) is in neither cache and is most of a big level */
+    if(typeof texCache!=='undefined') for(const k in texCache) add(texCache[k], String(k).split('/').pop());
+    if(typeof _texInst!=='undefined') for(const k in _texInst) add(_texInst[k], String(k).split('/').pop());
+    const SLOTS = ['map','normalMap','roughnessMap','metalnessMap','aoMap','lightMap','emissiveMap','alphaMap','bumpMap','displacementMap'];
+    scene.traverse(o=>{ const m=o.material; if(!m) return;
+      const ms = Array.isArray(m) ? m : [m];
+      for(const mm of ms){ if(!mm) continue; for(const sl of SLOTS) if(mm[sl]) add(mm[sl], sl); } });
+  }catch(e){}
+  return { count:n, mb: Math.round(bytes/1048576), largest: big, largestMb: Math.round(bigB/1048576) };
+}
 function _lightCensus(){
   const c = { point:0, spot:0, dir:0, hemi:0, shadow:0, emitters:(typeof emitterLights!=='undefined')?emitterLights.length:0, total:0 };
   try{ scene.traverseVisible(o=>{
@@ -9486,7 +9605,7 @@ let _skyDayDim = 1;
 // colour/elevation + fog colour + the auto-exposure strength — or "night" is just a black ceiling over
 // a sunny afternoon. Presets are starting points; every field remains individually editable below them.
 const SKY_MOODS = {
-  day:      { skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0,  sun:1.5,  sunColor:0xfff2dc, sunElev:34, fogColor:0x2e3b47, autoExp:0.7 },   // = DEFAULT_WORLD's sky, restated so Day always returns exactly stock
+  day:      { skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0,  sun:1.5,  sunColor:0xfff2dc, sunElev:24, fogColor:0x2e3b47, autoExp:0.7 },   // = DEFAULT_WORLD's sky, restated so Day always returns exactly stock
   sunset:   { skyZenith:0x2c3f66, skyHorizon:0xff9a4d, skyGround:0x4a3a30, skyTurb:0.55, skySunSize:2.2, skySunGlow:1.5, skyExp:0.95, sun:1.05, sunColor:0xffb066, sunElev:8,  fogColor:0x3a2f33, autoExp:0.6 },
   night:    { skyZenith:0x060a18, skyHorizon:0x12203a, skyGround:0x0a0d12, skyTurb:0.25, skySunSize:0.9, skySunGlow:0.35, skyExp:0.55, sun:0.28, sunColor:0xbfd4ff, sunElev:42, fogColor:0x0a1018, autoExp:0.15 },   // the dim cool "sun" IS the moonlight; autoExp held low or the eye undoes the dark
   overcast: { skyZenith:0x8b98a4, skyHorizon:0xb9c2c9, skyGround:0x6f6d68, skyTurb:0.92, skySunSize:0.6, skySunGlow:0.15, skyExp:0.85, sun:0.7,  sunColor:0xe8ecef, sunElev:55, fogColor:0x39434b, autoExp:0.6 },
@@ -10361,7 +10480,18 @@ function uiPromptForm(title, fields, cb){
   const inputs=[];
   for(const f of fields){
     const lab=document.createElement('div'); lab.textContent=f.label; lab.style.cssText='margin:12px 0 4px;font-size:11px;letter-spacing:0.6px;color:#9fc4ba;'; card.appendChild(lab);
-    const inp=document.createElement('input'); inp.type='text'; inp.value=f.value||''; if(f.max) inp.maxLength=f.max;
+    /* build 1351: an optional options-driven <select>. Additive — every pre-existing caller passes no
+       `options` and gets exactly the text input it always got — and `inputs` still collects an element
+       whose `.value` is what the callback receives, so the array contract is unchanged. */
+    let inp;
+    if(f.options && f.options.length){
+      inp=document.createElement('select');
+      for(const o of f.options){ const op=document.createElement('option');
+        op.value=(o&&o.value!=null)?o.value:o; op.textContent=(o&&o.label!=null)?o.label:String(o);
+        if(op.value===f.value) op.selected=true; inp.appendChild(op); }
+    } else {
+      inp=document.createElement('input'); inp.type='text'; inp.value=f.value||''; if(f.max) inp.maxLength=f.max;
+    }
     inp.style.cssText='width:100%;box-sizing:border-box;background:#0c161b;color:#eafff7;border:1px solid rgba(var(--accent-rgb),0.35);border-radius:7px;padding:9px 11px;font-size:14px;';
     card.appendChild(inp); inputs.push(inp);
   }
@@ -11838,6 +11968,37 @@ function _lgPulse(id, pin){
           // ("one of each of the four runes"), which counting a single id cannot express.
           case 'itemkinds': { v=0; if(typeof inventory!=='undefined' && Array.isArray(inventory))
                               for(const s of inventory){ if(s && s.n>0) v++; } break; }
+          // ---- build 1352: WHERE SOMETHING IS ------------------------------------------------------
+          // The graph could MOVE a prop (1170), SHOVE one (1258) and be told when one entered a zone
+          // (1276) — and could never ask where one WAS. So "the ball is on your half", "the crate is
+          // within 3 m of the plinth", "how far is the player from the exit" were unaskable, which is
+          // most of what a sports level or a physics puzzle is made of.
+          // `_lgPlaceAt` already resolves a tag (and `me`, `start`, `#here`) to world coordinates, so
+          // this is that resolver plus arithmetic — no new lookup, and the same tag vocabulary the
+          // place field has always used, which is why it needs no new autocomplete list.
+          // Values are METRES, rounded to two decimals: a graph compares numbers, and an unrounded
+          // float compared with `==` never matches anything.
+          case 'propx': case 'propy': case 'propz': case 'propdist': {
+            const _tg=String(p.item||'').trim();
+            const _pl=(typeof _lgPlaceAt==='function') ? _lgPlaceAt(_tg) : null;
+            if(!_pl){
+              /* A tag nobody carries reads 0 forever, which looks EXACTLY like "it is at the origin".
+                 Build 1214 established that a silent logic failure is the hardest class of bug to see. */
+              if(typeof _noteLogicFailure==='function')
+                _noteLogicFailure('A "Read game stat" node asks where "'+(_tg||'(nothing)')+'" is, but nothing carries that tag \u2014 it reads 0.');
+              v=0; break;
+            }
+            const _st=p.stat;
+            if(_st==='propdist'){
+              /* distance FROM THE PLAYER, on the ground plane. Horizontal because a creator asking
+                 "how close is it" means across the floor, and a prop on a shelf is not further away. */
+              const _dx=_pl.x-((typeof player!=='undefined')?player.pos.x:0);
+              const _dz=_pl.z-((typeof player!=='undefined')?player.pos.z:0);
+              v=Math.round(Math.hypot(_dx,_dz)*100)/100;
+            } else {
+              v=Math.round((_st==='propx'?_pl.x:_st==='propy'?_pl.y:_pl.z)*100)/100;
+            }
+            break; }
         }
         logicVars[k]=v;
       } _lgFollow(id,0); break; }
@@ -11871,6 +12032,35 @@ function _lgPulse(id, pin){
     case 'toast': { const msg=String(p.text||'').slice(0,120).replace(/\{([\w#@]+)\}/g, (m,k)=>String(Math.round((+logicVars[_lgVarKey(k)]||0)*100)/100));   // {score} interpolates live variables; build 1231: {coins@} reads the event's player
       if(msg && typeof flashToast==='function') flashToast(msg); _lgFollow(id,0); break; }
     case 'win': { if(typeof NET==='undefined' || NET.mode!=='client'){ try{ gameWon(); }catch(e){} } break; }
+    // ---- build 1352: GO TO A CAMPAIGN LEVEL ---------------------------------------------------------
+    // A campaign was strictly linear: `_campaignLoad(i)` is a single index load and the ONLY transition
+    // in the engine is `campaignIdx++` on level clear. So a hub world, a level select, a branching route,
+    // a "you failed, go back to the tutorial" — none of them were expressible, and the graph had no verb
+    // that could move between levels at all.
+    // Three guards, and the first two are not optional:
+    //   * CLAMP. `n` comes out of a level file, which is untrusted input (build 1325's rule), and
+    //     `campaign.levels[999]` is `undefined` — `_campaignLoad` would return silently and the creator
+    //     would never learn why. Out of range is REPORTED through 1214's channel instead.
+    //   * HOST/SOLO ONLY, like `win` directly above. A client loading a different level on its own would
+    //     desync the match into two different worlds.
+    //   * ONLY DURING A CAMPAIGN. Fired from a standalone level there is no `campaign.levels` to index,
+    //     and silently doing nothing is exactly the failure 1214 exists to surface.
+    // The number is 1-BASED in the editor because that is what the campaign list shows the creator; the
+    // array is 0-based, and getting that backwards is a whole-level off-by-one nobody would suspect.
+    case 'goto': {
+      if(typeof NET!=='undefined' && NET.mode==='client') break;
+      const _n1 = Math.round(_lgNum(p.n));                      /* accepts a variable, so a hub can branch */
+      if(typeof campaignActive==='undefined' || !campaignActive){
+        if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "Go to level" node fired, but this level is not part of a campaign \u2014 there is nothing to go to.');
+        break;
+      }
+      const _tot = (typeof campaign!=='undefined' && campaign.levels) ? campaign.levels.length : 0;
+      if(!(_n1 >= 1 && _n1 <= _tot)){
+        if(typeof _noteLogicFailure==='function') _noteLogicFailure('A "Go to level" node asked for level '+_n1+', but this campaign has '+_tot+'.');
+        break;
+      }
+      try{ campaignIdx = _n1 - 1; _clearInterstitial(); _campaignLoad(campaignIdx); }catch(e){}
+      break; }
     case 'lose': { try{ applyEnemyDamageToSelf(99999, null, null); }catch(e){} break; }   // the death-zone path: ends the run through the normal defeat flow
     default: break;   // start / event / interval / onkill / onwave / onspot / onhurt are entries — they only ever FIRE, never receive
   }
@@ -12203,11 +12393,22 @@ const LG_DEFS = {
   math:     { t:'Math',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'a',l:'A',w:50,listId:'lgVarList'},{k:'op',l:'',w:44,sel:['+','-','\u00d7','\u00f7','min','max','mod']},{k:'b',l:'B',w:50,listId:'lgVarList'}] },
   expr:     { t:'Expression',      cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'var =',w:60,listId:'lgVarList'},{k:'expr',l:'',w:210}] },
   list:     { t:'List',            cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'name',l:'list',w:62,listId:'lgListList'},{k:'op',l:'',w:96,sel:[['push','Add value'],['fill','Fill 1..N'],['draw','Draw first \u2192'],['drawrand','Draw random \u2192'],['shuffle','Shuffle'],['remove','Remove value'],['clear','Clear'],['len','Length \u2192'],['has','Contains? \u2192'],['at','Value at \u2192'],['matches','Same order as? \u2192']]},{k:'value',l:'value',w:50,listId:'lgVarList',ifv:['op',['push','fill','remove','has']]},{k:'idx',l:'index',w:44,listId:'lgVarList',ifv:['op','at']},{k:'other',l:'other list',w:66,listId:'lgListList',ifv:['op','matches']},{k:'var',l:'\u2192 var',w:60,listId:'lgVarList',ifv:['op',['draw','drawrand','len','has','at','matches']]}] },
-  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},{k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
+  read:     { t:'Read game stat',  cat:'st', ins:['in'], outs:['\u25b6'], params:[{k:'stat',l:'',w:104,sel:[['hp','Player health'],['maxhp','Max health'],['ammo','Ammo (mag)'],['reserve','Ammo (reserve)'],['score','Score'],['credits','Credits'],['wave','Wave number'],['enemies','Enemies alive'],['time','Seconds elapsed'],['item','How many of an item'],['itemkinds','Different items held'],['propx','Prop X position'],['propy','Prop Y position'],['propz','Prop Z position'],['propdist','Distance to prop']]},{k:'item',l:'item',w:88,ifv:['stat','item'],listId:'lgItemList'},
+    /* build 1352: the spatial reads reuse the SAME `item` field as a tag box — one more param would sit
+       unused for every other stat, and `ifv` already switches its label per stat. It offers the place
+       vocabulary (tags, `me`, `start`), which is exactly what _lgPlaceAt accepts. */
+    {k:'item',l:'tag',w:88,ifv:['stat',['propx','propy','propz','propdist']],listId:'lgPlaceList'},
+    {k:'name',l:'\u2192 var',w:66,listId:'lgVarList'}] },
   do:       { t:'Do action',       cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'verb',l:'',w:126,sel:[['toggle','Toggle'],['open','Open'],['close','Close'],['anim','Play anim'],['unlock','Unlock'],['win','Win level'],['cutscene','Play cutscene'],['objective','Set objective'],['checkpoint','Set checkpoint'],['sound','Play sound'],['spawn','Spawn enemies'],['pickup','Spawn pickup'],['damage','Damage'],['heal','Heal'],['kill','Kill'],['teleport','Teleport'],['give','Give item'],['take','Take item'],['stat','Set player stat'],['music','Play music'],['command','Command enemies'],['showprop','Show props'],['hideprop','Hide props'],['moveprop','Move props'],['delprop','Destroy props'],['pushprop','Push props'],['spawnprop','Spawn prefab']]},{k:'target',l:'tag',w:80,listId:'lgTagList',ifv:['verb',['toggle','open','close','anim','unlock','showprop','hideprop','moveprop','delprop','pushprop']]},{k:'prefab',l:'prefab',w:96,listId:'lgPrefabList',ifv:['verb','spawnprop']},{k:'clip',l:'clip',w:80,ifv:['verb','anim'],listId:'lgClipList'},{k:'cs',l:'cutscene',w:80,ifv:['verb','cutscene']},{k:'text',l:'text',w:96,ifv:['verb','objective']},{k:'sound',l:'url',w:96,ifv:['verb',['sound','music']],listId:'lgSndList'},{k:'etype',l:'',w:96,ifv:['verb','spawn'],sel:[['grunt','Grunt'],['runner','Runner'],['brute','Brute'],['gunner','Gunner'],['sapper','Sapper'],['shielded','Shieldbearer'],['charger','Charger'],['boss','BOSS']]},{k:'n',l:'\u00d7',w:28,ifv:['verb',['spawn','give','take']]},{k:'pk',l:'',w:104,ifv:['verb','pickup'],sel:[['health','+Health'],['ammo','+Ammo'],['pistol','Pistol'],['rifle','Rifle'],['smg','SMG'],['shotgun','Shotgun'],['sniper','Sniper'],['launcher','Rocket'],['grenade','Grenade'],['damage','2x Dmg'],['speed','Speed'],['shield','Shield'],['key_red','Red Key'],['key_blue','Blue Key'],['key_gold','Gold Key'],['key_green','Green Key'],['item','Inventory Item']]},{k:'item',l:'item',w:76,ifv:['verb','pickup'],ifv2:['pk','item'],listId:'lgItemList'},{k:'who',l:'',w:104,ifv:['verb',['damage','heal','kill','teleport','give','take']],sel:[['player','The player'],['actor','The event\u2019s player'],['enemies','All enemies'],['nearest','Nearest enemy'],['near','Enemies near\u2026']]},{k:'r',l:'radius',w:44,ifv:['verb',['damage','heal','kill']],ifv2:['who','near']},{k:'amt',l:'amount',w:42,ifv:['verb',['damage','heal','pushprop']]},{k:'at',l:'at',w:84,ifv:['verb',['spawn','pickup','teleport','command','moveprop','spawnprop','pushprop','damage','heal','kill']],listId:'lgPlaceList'},{k:'item',l:'item',w:88,ifv:['verb',['give','take']],listId:'lgItemList'},{k:'stat',l:'',w:104,ifv:['verb','stat'],sel:[['speed','Move speed'],['jump','Jump height'],['gravity','Gravity'],['maxhp','Max health'],['dmg','Damage dealt']]},{k:'mul',l:'\u00d7',w:38,ifv:['verb','stat']},{k:'ewho',l:'',w:100,ifv:['verb','command'],sel:[['enemies','All enemies'],['nearest','Nearest enemy']]},{k:'cmd',l:'',w:120,ifv:['verb','command'],sel:[['hunt','Hunt the player'],['patrol','Patrol'],['hold','Hold position'],['alert','Alert them to'],['calm','Lose the player'],['post','Move their post to']]}] },
   toast:    { t:'Show message',    cat:'ac', ins:['in'], outs:['\u25b6'], params:[{k:'text',l:'text ({var} ok)',w:110}] },
   emit:     { t:'Send event',      cat:'ac', ins:['in'], outs:['then'],  params:[{k:'name',l:'name',w:86,listId:'lgEvtList'}] },
   win:      { t:'Win level',       cat:'ac', ins:['in'], outs:[],        params:[] },
+  /* build 1352: its own NODE, not a `do` verb — `win` and `lose` are the same class (they change the RUN,
+     not a prop) and `do` routes everything through _applySignalAction, which knows nothing about levels.
+     My first draft put it in the `do` dropdown while implementing it as a node type, which is build 1277's
+     exact defect — a verb offered in the UI that the dispatcher never routes to a handler. The probe caught
+     it before it shipped: the node resolved, nothing loaded, and campaignIdx never moved. */
+  goto:     { t:'Go to level',     cat:'ac', ins:['in'], outs:[],        params:[{k:'n',l:'level #',w:64,listId:'lgVarList'}] },
   lose:     { t:'Lose level',      cat:'ac', ins:['in'], outs:[],        params:[] },
 };
 const LG_CATS = { ev:['EVENTS','#35e0d6'], fl:['FLOW','#ffd75e'], st:['STATE','#8fe05a'], ac:['ACTIONS','#ff9b5b'] };
@@ -17975,6 +18176,17 @@ function _loadLocalModel(url, cb, errcb){
     .catch(errcb);
 }
 const LOCAL_MODEL_MAX_MB = 64;
+/* build 1348: the picker half of local import. Same function, same store, same `local:` src — this adds a
+   DOOR, not a code path, which is why it cannot drift from the drop handler. `atPoint` is omitted so the
+   model lands at the editor drop point exactly as the + menu's own entries do (build 1320's rule: the
+   buttons say "here", meaning where you are looking). */
+function _pickLocalModel(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.glb,.gltf,model/gltf-binary,model/gltf+json';
+  inp.style.display = 'none';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if(f) _importLocalModel(f); inp.remove(); };
+  document.body.appendChild(inp); inp.click();
+}
 function _importLocalModel(file, atPoint){
   if(!file || !/\.(glb|gltf)$/i.test(file.name)){ if(typeof flashToast==='function') flashToast('Drop a .glb or .gltf file'); return; }
   if(file.size > LOCAL_MODEL_MAX_MB*1024*1024){ if(typeof flashToast==='function') flashToast('Model too large ('+Math.round(file.size/1048576)+' MB — cap is '+LOCAL_MODEL_MAX_MB+')'); return; }
@@ -18091,6 +18303,18 @@ function loadGLTFCached(url, cb, errcb){
 // downloading requires the token. Models arrive as a zipped glTF, so we unzip (fflate, lazy-loaded) and feed
 // the entries to GLTFLoader via blob URLs. A prop's src is stored as 'sketchfab:<uid>' so it re-resolves on load.
 const SF_TOKEN_KEY='breach_sketchfab_token', SF_ON_KEY='breach_sketchfab_on';
+/* ---- build 1349: STOP LENDING A PERSONAL API CREDENTIAL TO STRANGERS BY DEFAULT ------------------------
+   The host's Sketchfab token was packed into the WELCOME message of every match whose level referenced a
+   sketchfab: model, so anyone who could join a room — and room codes are published in the lobby directory —
+   received the host's personal API credential. `_sfPack` is a fixed XOR plus base64 whose DECODER ships in
+   the same file, so it is obfuscation, not encryption; the comment beside it always said so.
+   The feature itself is legitimate and worth keeping: without the token a joiner sees holes where the
+   level's models should be. What was wrong is that it happened SILENTLY and by DEFAULT. So it is opt-in
+   and it names the risk — a credential you hand over is a decision, and the person whose quota it is has
+   to be the one making it. Default off: an existing host who never opens the setting stops lending. */
+const SF_LEND_KEY='breach_sketchfab_lend';
+function sfLendEnabled(){ try{ return localStorage.getItem(SF_LEND_KEY)==='1'; }catch(e){ return false; } }
+function sfSetLend(b){ try{ localStorage.setItem(SF_LEND_KEY, b?'1':'0'); }catch(e){} }
 // A host can lend its Sketchfab token to joiners for a session so a level's models load even if the joiner has
 // no token of their own. Session-only (never saved to localStorage), and the joiner's own token always wins.
 let _sfSessionToken = '';
@@ -19063,6 +19287,29 @@ function refreshSpawnRings(g){
   if(m.mode==='patrol') ring(m.radius, SPAWN_MODE_COLORS.patrol, 0.55);   // patrol area
   ring(m.detect, 0x66ccff, 0.30);                                          // detection range
 }
+// ---- build 1355: FACTIONS ----------------------------------------------------------------------------
+// Every moving creature in this engine was hostile to the player and to nothing else. Build 1226 added the
+// pacifist NPC and explicitly left "enemies fighting each other" as needing a targeting rework; it turned
+// out to need one line of it. `enemyDesiredTarget` has always been target-AGNOSTIC (it takes px, pz, dist,
+// py), and the melee strike calls `_tn.hurt(...)` on whatever object the picker chose. So the whole change
+// is that the picker may choose an ADAPTER around another enemy, the way build 1189 reused the bot's cover
+// finder through a `{pos}` shim.
+//
+// The rule is `a !== b`, and the PLAYER is faction 0. That makes three things fall out with no matrix:
+//   0  Your side  — an ally: fights 1/2/3, never you
+//   1  Hostile    — the default, and therefore what every level authored before this build already is
+//   2/3           — third and fourth parties: fight everyone but their own
+// `friendly` (1226) is ORTHOGONAL and unchanged: a pacifist targets nothing and is targeted by nothing.
+// Widening that to "hostiles hunt villagers" would slaughter every existing level's NPCs on wave 1, so it
+// is a stated limit rather than a side effect.
+const FACTION_DEFAULT = 1;   // absent in the file = this, so an old level serializes and behaves identically
+const FACTION_NAMES = ['Your side', 'Hostile', 'Third party', 'Fourth party'];
+const FACTION_COL   = [0x59a6d9, 0, 0xd9a659, 0xa659d9];   // 0 = keep the mode colour: the default must look unchanged
+function _facOf(v){ if(v==null) return FACTION_DEFAULT;   /* null, undefined and NaN all coerce to ZERO — which is "your side", the one direction this must never fail in */
+  const n = Math.round(+v);
+  return (isFinite(n) && n>=0 && n<FACTION_NAMES.length) ? n : FACTION_DEFAULT; }
+function _facHostile(a, b){ return (a|0) !== (b|0); }
+function _enFac(e){ return e && e.faction!=null ? (e.faction|0) : FACTION_DEFAULT; }
 function buildSpawnMarker(opts){
   const g = new THREE.Group();
   const mode = (opts.mode==='patrol'||opts.mode==='hold') ? opts.mode : 'hunt';
@@ -19072,9 +19319,10 @@ function buildSpawnMarker(opts){
     type: (opts.type && ['grunt','runner','brute','gunner','sapper','shielded','charger','boss'].includes(opts.type)) ? opts.type : 'grunt',   /* build 1226: the editor has offered all 8 types since 635 but this list stopped at 3 — a saved gunner/sapper/shielded/charger/boss marker silently demoted to grunt on every reload. (ENEMY_TYPES itself is declared below the boot loader that runs this — TDZ — so the list stays a literal.) */
     y: Math.max(0, Math.min(SPAWN_MAX_Y, +opts.y||0)),                                  // build 1087: height ABOVE the terrain — rooftops, balconies, catwalks
     wave: (opts.wave!=null) ? (opts.wave|0) : 0,                                        // 0 = every wave; else only that wave (pre-built mode)
-    friendly: !!(opts.fr || opts.friendly) };                                           // build 1226: a WANDERING NPC — never aggros, never attacks, doesn't count as a hostile
+    friendly: !!(opts.fr || opts.friendly),                                             // build 1226: a WANDERING NPC — never aggros, never attacks, doesn't count as a hostile
+    fac: _facOf(opts.fac) };                                                            // build 1355: who it fights. Absent = 1 = the old behaviour exactly
   g.userData.mark = mark; g.userData.isSpawn = true;
-  const col = mark.friendly ? 0x59d98c : SPAWN_MODE_COLORS[mode];   /* build 1226: a friendly marker reads green at a glance */
+  const col = mark.friendly ? 0x59d98c : (FACTION_COL[mark.fac] || SPAWN_MODE_COLORS[mode]);   /* build 1226: a friendly marker reads green at a glance; build 1355: and a non-default faction reads as its own colour, while the default keeps the mode colour it always had */
   const post = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.7, 4), new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.9, depthTest:false }));
   post.position.y = 0.85; post.rotation.y = Math.PI/4; post.renderOrder = 9000;
   const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.55, 8), new THREE.MeshBasicMaterial({ color:0xffffff, depthTest:false }));
@@ -19252,7 +19500,7 @@ function randomWaveDescriptors(waveNum, arena, rng){
 // Should a spawn marker appear on this wave? wave 0 = every wave (back-compat default); else exact match.
 function spawnAppearsOnWave(mark, waveNum){ const w0 = mark.wave||0; if(typeof gameCfg!=='undefined' && gameCfg.noRespawn){ const w=(w0===0?1:w0); return w===waveNum; } return w0===0 || w0===waveNum; }
 function _hasFutureAuthoredSpawns(curWaveNum){ for(const g of spawnMarkers){ const w0=g.userData.mark.wave||0; const w=(gameCfg.noRespawn && w0===0)?1:w0; if(w>curWaveNum) return true; } return false; }
-function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt', friendly:!!m.friendly, mark:m }; }   /* build 1226: mark rides the (transient) descriptor so a living friendly's marker can be recognised and skipped */
+function descFromMarker(g){ const m=g.userData.mark; return { x:g.position.x, z:g.position.z, y:(+m.y||0), mode:m.mode, patrolR:m.radius, detectR:m.detect, face:m.face, route:m.route.map(p=>({x:p.x,z:p.z})), routeLoop:m.routeLoop, type:m.type||'grunt', friendly:!!m.friendly, fac:_facOf(m.fac), mark:m }; }   /* build 1226: mark rides the (transient) descriptor so a living friendly's marker can be recognised and skipped */
 // Mode defaults preserve old levels: markers present -> pre-built (markers were wave 0 = every wave); else random.
 let gameCfg = {
   enemyMods: _sanitizeEnemyMods(savedLevel && savedLevel.game && savedLevel.game.enemyMods),   // build 1191
@@ -19414,7 +19662,37 @@ const EYE = 1.7;            // standing camera height above the surface the play
 // but that would halve this level's wall luminance, which is a different change from the one being made; and
 // measured, warming the wall as well moved the frame only from 46.6% to 41.5% blue-dominant while spending the
 // cool-distance note that a warm ground reads against. See test-1156 for the numbers.
-const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:63, sunElev:34, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.50, arena:70, floorColor:0x5f5a55, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x5a6972, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x6b6660, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
+// ---- build 1360: THE FIRST FRAME IS STAGED NOW ------------------------------------------------------
+// From the AAA art-direction review, and it is five numbers. Measured on the shipped frame, authored hex
+// linearised to relative luminance:
+//     _DL.pipe  0.0149 | _DL.wall 0.0365 | _DL.deck 0.0592   <- the level's own structure
+//     floorColor 0.1040  <- the ENGINE ground plane, +0.81 stops over the deck it surrounds
+//     wallColor  0.1349  <- the BOUNDARY WALL, +1.19 stops over the deck, and the coolest thing in shot
+// The two surfaces with the least to say were the first and second brightest large albedos, so nothing
+// popped off the floor and the frame's outer ring was its brightest region — with a 0.42 vignette fighting
+// a wall that had been authored bright. In almost every shipped AAA frame the ground is the DARKEST large
+// value. Both are scaled in LINEAR space (which preserves hue exactly), landing the plane below the deck
+// and the wall between the deck and the crates.
+//
+// `skyGround` moves with the floor by the same factor, because build 1156 tied them: the dome's ground
+// band and the engine's plane meet at the horizon, and darkening one alone puts back the seam that build
+// removed. Uniform linear scaling keeps them the same hue, which is what 1156's pin is really about.
+// Build 1156 deliberately HELD the floor's luminance — it was fixing hue only. The review's finding is
+// that the VALUE was the defect, so that decision is reversed here, deliberately and with the bounce
+// re-derived rather than left behind.
+//
+// THE SUN WAS 117 DEGREES BEHIND THE PLAYER. `_sunDir()` at azim 63 / elev 34 is (0.739, 0.559, 0.376);
+// the spawn stands at (0, 1.2, 30) facing -Z, so the horizontal sun-to-view dot was -0.454 — over the
+// right shoulder, which is why no capture in this repo had a rim light, a long shadow toward camera, or
+// the sun anywhere in frame. Azim 150 / elev 24 puts it 30 degrees off dead ahead: three-quarter
+// back-light, and shadow length goes 1.48 -> 2.25 times the caster's height.
+//
+// `bounce` 0.50 -> 0.85. Build 1149 derived 0.50 as what a ~10%-albedo floor returns for one bounce, and
+// the bounce's COLOUR already carries that albedo — so halving the floor's luminance would have halved
+// the delivered fill, against a frame that now has far more surface in shade. 0.85 restores it to 77% of
+// the old fill: the darker ground still bounces less, as it physically must, but 1149's margin against a
+// crushed red channel survives the restaging.
+const DEFAULT_WORLD = { colorV:2, walk:6, run:12, jump:13, grav:30, crouch:2, jumpCut:0.5, /* build 951: calmer default pace — saved levels keep their own values */ launchPower:1, eyeHeight:1.7, sun:1.5, sunColor:0xfff2dc, sunAzim:105, sunElev:24, dayCycle:false, dayLen:240, dayStart:0.25, weather:'none', weatherAmt:0.6, weatherSize:1, weatherWind:1, weatherWindDir:90, sky:0.3, skyColor:0x93aeb8, ambient:0, bounce:0.85, arena:70, floorColor:0x403d39, floorRough:0.95, floorMetal:0.1, floorTex:'', floorTexN:'', floorTexR:'', floorTile:0, floorTileU:0, floorTileV:0, floorRot:0, wallColor:0x3a454b, wallRough:0.8, wallMetal:0.2, wallTex:'', wallTexN:'', wallTexR:'', wallTile:0, wallTileU:0, wallTileV:0, wallRot:0, sky_hdri:'', skyBright:1, skyRot:0, wallsVisible:true, fov:78, viewDist:400, fogDensity:0.006, fogColor:0x2e3b47, fogHeight:0.04, fogSun:0.5, grid:true, dof:false, dofFocus:18, dofRange:14, dofStrength:1.4, dofAuto:false, pickupBase:true, pickupAnim:true, postBloom:0.65, postMotion:0.62, postVig:0.42, postGrain:0.05, postSat:1.08, postCon:1.05, postThresh:0.62, postRays:0.45, lut:'', lutAmt:1, baked:false, ssao:0.9, ssaoRadius:0.9, ssr:0.35, lodPx:0, filmic:1, exposure:1.25, autoExp:0.7, terrain:null, shadowDist:60, skyMode:'sky', skyZenith:0x6f9ad4, skyHorizon:0xc2cfdc, skyGround:0x494541, skyTurb:0.35, skySunSize:1.6, skySunGlow:1.0, skyExp:1.0 };
 // build 796: a FRESH / cleared canvas starts with the post-processing effects off (bloom, motion blur, vignette, grain, and
 // a neutral grade), so a first-time scene isn't pre-loaded with heavy effects. The authored DEFAULT_WORLD look is untouched
 // (that's still what "reset to defaults" restores); only a brand-new or explicitly-cleared scene starts clean.
@@ -20228,7 +20506,14 @@ document.addEventListener('mousemove', e=>{
   if(typeof cursorAimActive==='function' && cursorAimActive() && !drivingCar){ _vcX += mx; _vcY += my; return; }   // build 874: the pointer steers the twin-stick cursor, not the head (build 1103: chase-cursor too)
   const sens = _mouseSensNow(ads);   /* build 1281: one derivation, so the two mouse paths cannot drift */
   player.yaw   -= mx * sens;
-  player.pitch -= my * sens;
+  /* build 1362: recoil correction-subtraction. The view kick is a temporary camera offset that springs
+     back on its own, so a player who pulls the mouse DOWN against a live kick would otherwise be
+     corrected twice - once by their own pull lowering player.pitch, once by the spring returning the
+     offset - and end up staring at the floor. Pulling down CONSUMES the remaining recoil first; only
+     what is left of the pull reaches player.pitch. Pulling up, and yaw, are untouched. */
+  let _mpd = my * sens;   /* the requested pitch decrease (mouse down = positive my = look down) */
+  if(_recPitch > 0 && _mpd > 0){ const _c = Math.min(_recPitch, _mpd); _recPitch -= _c; _mpd -= _c; }
+  player.pitch -= _mpd;
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
   if(drivingCar && mx) drivingCar.userData._lookCd = 0.6;   // build 765: pause the follow-cam recenter while you orbit with the mouse
 });
@@ -20766,14 +21051,14 @@ flash.position.set(0,0,0); flash.visible = false; vmMuzzle.add(flash);   // soli
 
 // ---------- Weapon system (data-driven) ----------
 const WEAPONS = {
-  rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0 },
-  pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85 },   // build 976: single-shot semi-auto sidearm
-  smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7 },
-  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, shellReload:true, shellIntroMs:260, shellMs:420, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35 },
-  sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6 },
-  launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2 },
-  crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0 },
-  hands:   { name:'FISTS',   drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
+  rifle:   { name:'RIFLE',   mag:30, magSize:30, reserve:90,  reserveMax:270, fireRate:95,  dmg:12, pellets:1, spread:0.0,  auto:true,  reloadMs:1100, color:0xffe08a, refillAmt:60, refillCost:50, model:'', view:null, loud:1.0, kickV:0.014, kickH:0.005 },
+  pistol:  { name:'PISTOL',  drawMs:220, mag:12, magSize:12, reserve:48,  reserveMax:144, fireRate:170, dmg:26, pellets:1, spread:0.006,auto:false, reloadMs:900,  color:0x8fb2ff, refillAmt:36, refillCost:40, model:'', view:null, loud:0.85, kickV:0.018, kickH:0.006 },   // build 976: single-shot semi-auto sidearm
+  smg:     { name:'SMG',     mag:40, magSize:40, reserve:120, reserveMax:360, fireRate:55,  dmg:8,  pellets:1, spread:0.02, auto:true,  reloadMs:1000, color:0xa8e6ff, refillAmt:80, refillCost:50, model:'', view:null, loud:0.7, kickV:0.008, kickH:0.003 },
+  shotgun: { name:'SHOTGUN', drawMs:340, mag:6,  magSize:6,  reserve:24,  reserveMax:72,  fireRate:650, dmg:9,  pellets:8, spread:0.08, auto:false, reloadMs:1300, shellReload:true, shellIntroMs:260, shellMs:420, color:0xffb86b, refillAmt:18, refillCost:60, model:'', view:null, loud:1.35, kickV:0.034, kickH:0.010 },
+  sniper:  { name:'SNIPER',  drawMs:420, mag:5,  magSize:5,  reserve:20,  reserveMax:60,  fireRate:1400,dmg:95, pellets:1, spread:0.0,  auto:false, reloadMs:1600, color:0xc6ff7a, refillAmt:10, refillCost:70, model:'', view:null, scope:true, loud:1.6, kickV:0.040, kickH:0.008 },
+  launcher:{ name:'ROCKET',  drawMs:450, mag:1,  magSize:1,  reserve:6,   reserveMax:18,  fireRate:900, dmg:90, pellets:1, spread:0,    auto:false, reloadMs:1700, color:0xff7a3a, refillAmt:4,  refillCost:120, model:'', view:null, projectile:true, blastRadius:7, loud:1.2, kickV:0.035, kickH:0.012 },
+  crowbar: { name:'CROWBAR', drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:500, dmg:60, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0x9fd8ff, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, reach:3.4, loud:0, kickV:0, kickH:0 },
+  hands:   { name:'FISTS',   drawMs:200, mag:0,  magSize:0,  reserve:0,   reserveMax:0,   fireRate:360, dmg:24, pellets:0, spread:0,    auto:true,  reloadMs:0,    color:0xffd9b0, refillAmt:0,  refillCost:0,   model:'', view:null, melee:true, fists:true, reach:2.3, loud:0, kickV:0, kickH:0 },   // build 672: bare-fist "unarmed" loadout — punch, carry, no guns
 };
 // build 623: the factory damage of each weapon, captured before any saved override is applied, so the editor can
 // show/reset to default and serialize ONLY a damage that was actually changed (keeps old levels on the defaults).
@@ -20792,7 +21077,8 @@ const GUN_BASE_DMG = {}; for(const _k in WEAPONS) GUN_BASE_DMG[_k] = WEAPONS[_k]
 // per-stat reset-to-factory button and the clamp all already exist and all work on any key in this array —
 // which is what that build was for. `melee` rides as 0/1 so it needs no separate boolean path; every reader
 // already asks `if(w.melee)` / `!!w.melee`.
-const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach','windup'];
+/* build 1362: kickV/kickH (the per-weapon view kick, vertical + alternating horizontal) join the sheet. */
+const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','reloadMs','pellets','melee','reach','windup','kickV','kickH'];
 // build 1297: the shortest reach a melee weapon may be authored to, and the closest a bot will stand while
 // swinging one. They are stated together because the ONLY thing that matters is the inequality between
 // them: a bot holds `max(BOT_MELEE_MIN, reach*0.7)` and hits inside `reach`, so if the floor on reach ever
@@ -20803,7 +21089,7 @@ const GUN_STAT_KEYS = ['fireRate','magSize','reserve0','reserveMax','spread','re
 const BOT_MELEE_REACH_MIN = 1.2, BOT_MELEE_MIN = 1.0;
 // build 1296: pellets floors at 0, not 1. A melee weapon fires none, and the old floor rewrote the crowbar's
 // authored 0 into a 1 the moment any stat was applied — the same spurious-diff fault as magSize below.
-const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12], windup:[0,600] };
+const GUN_STAT_LIM = { fireRate:[30,5000], magSize:[0,999], reserve0:[0,9999], reserveMax:[0,9999], spread:[0,0.5], reloadMs:[0,10000], pellets:[0,24], melee:[0,1], reach:[BOT_MELEE_REACH_MIN,12], windup:[0,600], kickV:[0,0.15], kickH:[0,0.08] };
 // The live values are NORMALISED here, beside the baseline that is captured from them: `melee` starts as
 // `true`/undefined and `reach` is absent on every gun, and the serializer emits a stat whenever it differs
 // from its baseline — so leaving `true` beside a baseline of `1` would write a spurious melee override into
@@ -20815,7 +21101,10 @@ const GUN_BASE = {}; for(const _k in WEAPONS){ const _w=WEAPONS[_k];
      A gun fires on the frame you pull the trigger and ships 0; a swing has to travel. Melee enemies have
      had a telegraph since build 627 (ENEMY_MELEE_WINDUP_MS) — the player never did. */
   _w.windup = _w.windup!=null ? _w.windup : (_w.melee ? (_w.fists ? 90 : 160) : 0);
-  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach, windup:_w.windup }; _w.reserve0=_w.reserve; }
+  /* build 1362: normalise the kicks the same way (and for the same reason) as melee/reach/windup - the
+     only-changed serializer diffs the live value against this baseline, so the two must be identical. */
+  _w.kickV = +_w.kickV || 0; _w.kickH = +_w.kickH || 0;
+  GUN_BASE[_k]={ fireRate:_w.fireRate, magSize:_w.magSize, reserve0:_w.reserve, reserveMax:_w.reserveMax, spread:_w.spread, reloadMs:_w.reloadMs, pellets:_w.pellets, melee:_w.melee, reach:_w.reach, windup:_w.windup, kickV:_w.kickV, kickH:_w.kickH }; _w.reserve0=_w.reserve; }
 // build 1240: RENAME WEAPONS — reported from play ("add a sword/axe/staff... we have melee, so maybe
 // the answer is the ability to rename"). The name follows 1190's exact pattern: a factory baseline
 // captured at boot, only-changed values serialized (nm), one sanitizer every loader routes through.
@@ -21139,7 +21428,7 @@ function buildEnemyVisual(body){
   const mc = enemyModelCfg(body.userData.enemyType);
   const useCapsule = ()=>{
     const ty = ENEMY_TYPES[body.userData.enemyType] || ENEMY_TYPES.grunt;
-    const mat = new THREE.MeshStandardMaterial({ color:0x4a1020, emissive:(body.userData.friendly ? 0x59d98c : ty.tint), emissiveIntensity:.6, roughness:.6 });   /* build 1226: a friendly reads green, not threat-red (custom models keep their own look) */
+    const mat = new THREE.MeshStandardMaterial({ color:0x4a1020, emissive:(body.userData.friendly ? 0x59d98c : (body.userData.facTint || ty.tint)), emissiveIntensity:.6, roughness:.6 });   /* build 1226: a friendly reads green, not threat-red (custom models keep their own look) */
     const cap = new THREE.Mesh(enemyGeo, mat); cap.castShadow = true; cap.scale.setScalar(ty.scale);
     const eye = new THREE.Mesh(new THREE.SphereGeometry(.18,8,8), new THREE.MeshBasicMaterial({color:0xffd166}));
     eye.position.set(0, 0.7, -0.55);   // slightly forward so you can read facing
@@ -21341,6 +21630,8 @@ function spawnEnemy(spawn){
   const ty = ENEMY_TYPES[typeKey];
   mesh.userData.enemyType = typeKey;   // read by buildEnemyVisual for per-type scale + tint
   if(spawn && spawn.friendly) mesh.userData.friendly = true;   // build 1226: capsule tints green
+  { const _f = _facOf(spawn && spawn.fac);   // build 1355: and a faction capsule tints as its side
+    if(!(spawn && spawn.friendly) && FACTION_COL[_f]) mesh.userData.facTint = FACTION_COL[_f]; }
   buildEnemyVisual(mesh);
   scene.add(mesh);
   const _eff = (typeof _enemyEff==='function') ? _enemyEff(typeKey) : ty;   /* build 1191: the level's tuning, clamped at the loaders */
@@ -21363,7 +21654,9 @@ function spawnEnemy(spawn){
     detectR: (spawn && spawn.detectR!=null) ? spawn.detectR : 18,
     route: (spawn && spawn.route && spawn.route.length) ? spawn.route.map(p=>({ x:(p.x!=null?p.x:p[0]), z:(p.z!=null?p.z:p[1]) })) : null,
     routeLoop: !(spawn && spawn.routeLoop===false), routeIdx:0, routeDir:1,
+    faction: _facOf(spawn && spawn.fac),   // build 1355
     aware:false, lostAt:0, wp:null, wpUntil:0 };
+  if(spawn && spawn.mark) e._mark = spawn.mark;   /* build 1355: 1226 stored this for friendlies only, and the wave loop's don't-restack guard needs it for any persistent NPC */
   if(spawn && spawn.friendly){   // build 1226: a WANDERER — no combat subsystem is left armed, so no attack gate anywhere can misfire
     e.friendly = true; e._mark = spawn.mark || null;
     e.ranged = false; e.exploder = false; e.charger = false; e.cover = false;
@@ -21396,15 +21689,51 @@ function alertEnemiesNear(sx, sz, radius){
     if(dx*dx + dz*dz <= r2) alertEnemy(en, sx, sz);
   }
 }
+// ---- build 1355: who is shootable, from whose point of view ------------------------------------------
+// ONE list per frame, memoised on _frameNo so the picker and the bolt test cannot disagree about it, and
+// so the build happens once however many consumers ask. Every entry is the shape the two consumers already
+// expected of a player: { pos, eyeY, hurt, fac }. An entry with no `fac` is faction 0 — the player's side —
+// which is why allPlayers()' own objects go in untouched.
+//
+// THE FAST PATH IS THE WHOLE COMPATIBILITY ARGUMENT. If no enemy carries a non-default faction (i.e. every
+// level authored before this build, and every level that never opens the new control) the list is exactly
+// the player list and the O(N^2) scan below never runs at all.
+const _ctArr = []; let _ctFrame = -1;
+function _combatTargets(){
+  if(_ctFrame === _frameNo) return _ctArr;
+  _ctFrame = _frameNo; _ctArr.length = 0;
+  if(typeof allPlayers==='function'){ for(const pl of allPlayers()) _ctArr.push(pl); }
+  else if(typeof player!=='undefined') _ctArr.push({ pos:player.pos, hurt:(d,sx,sz)=>applyEnemyDamageToSelf(d,sx,sz) });
+  if(typeof enemies==='undefined' || !enemies.length) return _ctArr;
+  let multi = false;
+  for(const e of enemies){ if(e && !e.dead && e.hp>0 && !e.friendly && _enFac(e)!==FACTION_DEFAULT){ multi = true; break; } }
+  if(!multi) return _ctArr;
+  for(const e of enemies){
+    if(!e || e.dead || e.hp<=0 || e.friendly || !e.mesh) continue;
+    /* the adapter is cached on the enemy, so a 60-strong fight allocates nothing per frame (build 1168) */
+    let a = e._tgt;
+    if(!a){ a = e._tgt = { pos:e.mesh.position, eyeY:0, fac:0, en:e,
+              hurt:(d,sx,sz)=>enemyHurt(e, d, sx, sz, true) }; }   /* `true` = dealt BY another enemy: no player credit */
+    a.eyeY = e.mesh.position.y + 0.4;   // fireEnemyShot aims eyeY-0.4, i.e. at the body centre
+    a.fac = _enFac(e);
+    _ctArr.push(a);
+  }
+  return _ctArr;
+}
 function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = the target's height, so a pursuit ends on the STOREY the target stands on */
-  const mode = en.friendly ? (en.mode === 'hold' ? 'hold' : 'patrol') : (en.mode || 'hunt');   /* build 1226: a friendly WANDERS — a hunt-mode marker flagged friendly patrols its spot instead */
+  /* build 1355: _noTgt is an ALLY (or third party) with nothing left to fight this frame. It must not fall
+     back to hunting the player — so for this frame it behaves exactly like 1226's pacifist: patrols its
+     post, raycasts no sightline, never becomes aware. The flag is per-frame, so the moment a hostile
+     spawns it goes back to work. */
+  const passive = en.friendly || en._noTgt;
+  const mode = passive ? (en.mode === 'hold' ? 'hold' : 'patrol') : (en.mode || 'hunt');   /* build 1226: a friendly WANDERS — a hunt-mode marker flagged friendly patrols its spot instead */
   // line-of-sight: can this enemy actually SEE the player right now? (same wall test the gun uses)
   const eY = (en.mesh.position.y!=null) ? en.mesh.position.y : 1.4;
   const pEyeY = (en._nearEyeY!=null) ? en._nearEyeY : 1.4;
   // build 546: segmentBlocked scans every collider — refresh LOS ~9x/sec per enemy and cache it (the bots do
   // the same), instead of raycasting every frame. Unthrottled, a wave of enemies was O(enemies x colliders)
   // per frame and a big part of the single-digit wave framerate.
-  if(!en.friendly && (en._losT==null || now - en._losT > (en._losIv||110)) && (typeof _losBudget==='undefined' || _losBudget>0)){   /* build 1226: a friendly never raycasts a sightline — it has no use for one and the budget is shared */
+  if(!passive && (en._losT==null || now - en._losT > (en._losIv||110)) && (typeof _losBudget==='undefined' || _losBudget>0)){   /* build 1226: a friendly never raycasts a sightline — it has no use for one and the budget is shared */
     if(typeof _losBudget!=='undefined') _losBudget--;   // build 547: also capped per frame so a freshly-spawned wave can't raycast every enemy's sightline on the same frame
     en._losT = now; en._losIv = 100 + Math.random()*40;   // jitter the interval so the wave de-clusters after the budget first staggers it, instead of all coming due together again
     en._seesC = (Math.abs(pEyeY - eY) < 3.0) &&
@@ -21425,7 +21754,7 @@ function enemyDesiredTarget(en, px, pz, dist, now, py){   /* build 1202: py = th
 
   // PATROL / HOLD: detection is now gated on BOTH range AND line-of-sight.
   const detect = en.detectR || 18;   // build 620: wider default sight so patrollers notice you a hall earlier
-  if(dist <= detect && sees && !en.friendly){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }   /* build 1226 */
+  if(dist <= detect && sees && !passive){ en.aware = true; en.lostAt = 0; en.lkp = { x:px, z:pz, y:py }; }   /* build 1226 */
   else if(en.aware){
     // lost sight or range: remember where they were, chase the last spot, then give up after a grace period.
     // A recent gunfire/blast alert extends the window so a sniped enemy actually crosses the map to investigate.
@@ -24479,7 +24808,7 @@ function _applyCrushFromProp(obj, speed, dt){
 }
 function applyEnemyDamageToSelf(dmg, sx, sz){
   if(buffs.shield>0){ const a=Math.min(buffs.shield,dmg); buffs.shield-=a; dmg-=a; }
-  player.hp -= dmg; flashDamage(); SFX.hurt(); addShake(Math.min(0.5, dmg/55)); if(sx!=null) hurtDir(sx,sz); updateHUD();
+  player.hp -= dmg; flashDamage(); SFX.hurt(); addShake(Math.min(0.5, dmg/55)); _recPunch(dmg, sx, sz); if(sx!=null) hurtDir(sx,sz); updateHUD();   /* build 1362: aim punch - the view jolts away from the hit and springs back */
   if(player.hp<=0) playerDied();
 }
 // build 693: checkpoints. A signal can drop a checkpoint at the player's spot; with "Respawn at checkpoint" on, a
@@ -25143,7 +25472,40 @@ function closeChat(send){ if(!chatOpen) return; const box=document.getElementByI
 // links from strangers become [link] (the top P2P harm vector) and a baseline profanity list is masked
 // after leet-normalisation. Mute is per-session by display name — /mute Name, /unmute Name — because the
 // relay carries names, not ids; a renamed troll costs one more /mute, which is acceptable for v1.
+// ---- build 1357: the mute survives the tab, and binds to the PLAYER ---------------------------------
+// Build 1178 shipped `/mute` as per-session and by NAME, and named both costs: "a renamed troll costs one
+// more /mute, which is acceptable for v1". Neither is acceptable for a public release with minors. A mute
+// that dies when the tab closes is a mute you have to re-issue every session against the same person, and
+// a mute keyed on a string the muted party chooses is one they can walk out of by retyping it.
+//
+// There is still no persistent identity in this engine (no accounts), so the NAME is what a player can see
+// and therefore what they must be able to type. What changes is that the name is no longer the only handle:
+//   * the set PERSISTS (breach_mutes), so muting someone is a decision, not a session preference;
+//   * muting a name that is CONNECTED also binds their player id for this session, so renaming mid-match
+//     does not dodge it — the relay carries `from` now for exactly this;
+//   * and the host DE-DUPLICATES display names (below), so a name identifies one person inside a room.
+//     Without that, muting "Griefer" could mute YOU, and a report naming "Griefer" is unactionable.
+const MUTE_KEY = 'breach_mutes';
+const MUTE_MAX = 200;   /* a persisted set has to be bounded — it outlives every session that added to it */
 const _chatMuted = new Set();
+const _chatMutedIds = new Set();   /* per SESSION: player ids, because an id means nothing tomorrow */
+function _loadMutes(){ try{ const a=JSON.parse(localStorage.getItem(MUTE_KEY)||'[]');
+  if(Array.isArray(a)) for(const n of a.slice(0, MUTE_MAX)) if(typeof n==='string' && n) _chatMuted.add(n.slice(0,40)); }catch(e){} }
+function _saveMutes(){ try{ localStorage.setItem(MUTE_KEY, JSON.stringify([..._chatMuted].slice(0, MUTE_MAX))); }catch(e){} }
+_loadMutes();
+/* the id a display name currently belongs to, or null. Host and client both hold NET.players. */
+function _pidForName(n){ const k=(''+(n||'')).trim().toLowerCase(); if(!k) return null;
+  try{ for(const id in NET.players){ const rp=NET.players[id]; if(rp && (''+(rp.name||'')).trim().toLowerCase()===k) return +id; } }catch(e){}
+  return null; }
+/* build 1357: ONE name sanitizer, used by the host on arrival and by the dedup below. A display name goes
+   into a chat log, a name sprite, a kill feed and a moderation report, so an unbounded or control-char
+   string is everyone else's problem, not the sender's. */
+const NAME_MAX = 20;
+function _cleanName(n, fallback){
+  let t = (''+(n==null?'':n)).replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029]/g, '').replace(/\s+/g, ' ').trim();
+  t = t.slice(0, NAME_MAX).trim();
+  return t || (fallback || 'Player');
+}
 const _CHAT_BAD = ['fuck','shit','bitch','asshole','cunt','dick','faggot','nigger','nigga','whore','slut'];
 function _chatClean(text){
   let t = ('' + (text || '')).slice(0, 200);
@@ -25154,22 +25516,115 @@ function _chatClean(text){
   return out.join('');
 }
 function sendChat(text){ text=(''+text).slice(0,200); if(!text) return;
-  // /mute Name and /unmute Name are local commands, never sent
+  // /mute Name, /unmute Name, /unmute all and /mutes are local commands, never sent
+  if(/^\/mutes\s*$/i.test(text)){   /* build 1357: a PERSISTENT list you cannot see is a list you cannot undo */
+    const l=[..._chatMuted];
+    if(typeof flashToast==='function') flashToast(l.length ? ('Muted ('+l.length+'): '+l.slice(0,8).join(', ')+(l.length>8?'\u2026':'')+' \u2014 /unmute <name> or /unmute all') : 'Nobody is muted');
+    return; }
   const mm = text.match(/^\/(un)?mute\s+(.+)$/i);
-  if(mm){ const who = mm[2].trim().toLowerCase();
-    if(mm[1]){ _chatMuted.delete(who); if(typeof flashToast==='function') flashToast('Unmuted '+mm[2].trim()); }
-    else { _chatMuted.add(who); if(typeof flashToast==='function') flashToast('Muted '+mm[2].trim()+' for this session'); }
+  if(mm){ const raw = mm[2].trim(), who = raw.toLowerCase();
+    if(mm[1]){
+      if(who === 'all'){ const n=_chatMuted.size; _chatMuted.clear(); _chatMutedIds.clear(); _saveMutes();
+        if(typeof flashToast==='function') flashToast(n ? ('Unmuted everyone ('+n+')') : 'Nobody was muted'); return; }
+      _chatMuted.delete(who);
+      const pid=_pidForName(raw); if(pid!=null) _chatMutedIds.delete(pid);
+      _saveMutes(); if(typeof flashToast==='function') flashToast('Unmuted '+raw);
+    } else {
+      if(_chatMuted.size >= MUTE_MAX){ if(typeof flashToast==='function') flashToast('Mute list is full \u2014 /mutes to see it'); return; }
+      _chatMuted.add(who);
+      /* bind the PLAYER too, so renaming mid-match does not walk out of it */
+      const pid=_pidForName(raw); if(pid!=null) _chatMutedIds.add(pid);
+      _saveMutes();
+      if(typeof flashToast==='function') flashToast(pid!=null ? ('Muted '+raw+' \u2014 and this player, even if they rename')
+                                                             : ('Muted '+raw+' \u2014 they are not in this room, but it will apply if they join'));
+    }
     return; }
   const nm=NET.name||'You'; addChatLine(nm, text, true); if(NET.mode==='host'){ for(const id in NET.conns){ try{ NET.conns[id].send({t:'chat', name:nm, text}); }catch(e){} } } else if(NET.mode==='client' && NET.conn){ try{ NET.conn.send({t:'chat', text}); }catch(e){} } }
-function addChatLine(name, text, mine){ const log=document.getElementById('chatLog'); if(!log) return;
-  if(!mine && _chatMuted.has((''+(name||'')).trim().toLowerCase())) return;   // build 1178: muted senders render nothing
+// ---- build 1351: A WAY TO REPORT SOMETHING ---------------------------------------------------------
+// The platform audit's named blocker for a public release with minors, and the cheapest high-value item in
+// the whole audit: there was NO report affordance anywhere in the product. Chat had a filter (build 1178's
+// 11-word list, applied at render) and a per-session `/mute`, and that was the entire safety surface — a
+// player who saw something worse had no way to tell anybody, and a moderator had no queue to read.
+//
+// The server half is `server/api/report.php`. This is the half a person can reach.
+//
+// Three things shape it:
+//  * A CHAT REPORT MUST CARRY THE TEXT. Chat is peer-to-peer, so the server has no copy of the line being
+//    reported — without the message and the room code a moderator receives an unactionable accusation.
+//    report.php refuses a chat report with no `text` for exactly this reason, and the client sends it.
+//  * IT MUST WORK WHEN THE BACKEND IS NOT THERE. Reports go to the founder's host, which a self-hoster or
+//    an offline session does not have. A failed report says so plainly instead of pretending; a silent
+//    swallow here is worse than no button, because the reporter believes they have been heard.
+//  * 429 CARRIES A `retry` IN SECONDS, so the button says how long rather than guessing.
+const REPORT_REASONS = [['harassment','Harassment or bullying'], ['sexual','Sexual content'],
+  ['violence','Violence or threats'], ['hate','Hate speech'], ['spam','Spam or scam'], ['other','Something else']];
+let _reportBusy = false;
+function openReportDialog(kind, opts){
+  opts = opts || {};
+  if(_reportBusy) return;
+  /* uiPromptForm hands the callback an ARRAY of field values in order, and until this build it only built
+     text inputs. A free-text "reason" would be useless to a moderator and report.php whitelists it anyway,
+     so the helper gained an options-driven <select> — additive, since every existing caller passes none. */
+  const rows = [{ label:'What is wrong?', options:REPORT_REASONS.map(r=>({ value:r[0], label:r[1] })), value:'harassment' },
+                { label:'Anything else? (optional)', max:500, value:'' }];
+  const what = opts.what || kind;
+  uiPromptForm('Report ' + what, rows, async (vals)=>{
+    if(!vals) return;
+    _reportBusy = true;
+    const body = { kind, reason:(vals[0]||'other'), note:String(vals[1]||'').slice(0,500) };
+    if(opts.target) body.target = String(opts.target).slice(0,120);
+    if(opts.text) body.text = String(opts.text).slice(0,300);      /* chat: the server has no copy */
+    if(opts.room) body.room = String(opts.room).slice(0,12);
+    try{
+      const r = await fetch(_commApi()+'report.php', { method:'POST',
+        headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
+      let j = null; try{ j = await r.json(); }catch(e){}
+      if(r.ok && j && j.ok){ flashToast('Reported \u2014 thank you. A moderator will look at it.'); }
+      else if(r.status === 429){
+        const secs = (j && +j.retry) || 60;
+        flashToast('You have reported very recently \u2014 try again in ' + Math.ceil(secs) + 's');
+      }
+      else flashToast('Could not send the report' + ((j && j.error) ? (': ' + j.error) : ''));
+    }catch(e){
+      /* No backend, offline, or a self-hosted build with no report endpoint. Say so — a reporter who
+         believes they were heard and was not is the worst outcome this feature can produce. */
+      flashToast('Could not reach the moderation service \u2014 your report was NOT sent');
+    }
+    _reportBusy = false;
+  });
+}
+function _reportBtn(label, title, fn){
+  const b = document.createElement('button');
+  b.textContent = label; b.title = title;
+  b.setAttribute('aria-label', title);
+  b.style.cssText = 'padding:2px 6px;font-size:11px;line-height:1;border-radius:5px;cursor:pointer;'
+    + 'border:1px solid transparent;background:transparent;color:#7a6b6b;flex:none;';
+  b.onmouseenter = ()=>{ b.style.color='#ff9b93'; b.style.borderColor='#5c2a2a'; };
+  b.onmouseleave = ()=>{ b.style.color='#7a6b6b'; b.style.borderColor='transparent'; };
+  b.onclick = (e)=>{ e.stopPropagation(); e.preventDefault(); fn(); };
+  return b;
+}
+function addChatLine(name, text, mine, from){ const log=document.getElementById('chatLog'); if(!log) return;
+  /* build 1178: muted senders render nothing. build 1357: by name OR by the player id the mute was bound
+     to, so a rename mid-match does not undo it. `from` is optional — an older host that does not relay it
+     leaves this exactly as it was. */
+  if(!mine && _chatMuted.has((''+(name||'')).trim().toLowerCase())) return;
+  if(!mine && from!=null && _chatMutedIds.has(+from)) return;
   if(!mine) text = _chatClean(text);   /* build 1178: filter at RENDER — your own text shows as typed */
-  const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx); log.appendChild(row); while(log.children.length>8) log.removeChild(log.firstChild); setTimeout(()=>{ row.classList.add('chatFade'); }, 9000); }
+  const row=document.createElement('div'); row.className='chatRow'; const nm=document.createElement('span'); nm.className='chatName'+(mine?' chatMine':''); nm.textContent=(name||'?')+': '; const tx=document.createElement('span'); tx.className='chatText'; tx.textContent=(''+(text||'')).slice(0,200); row.appendChild(nm); row.appendChild(tx);
+  /* build 1351: report the LINE. Your own text gets no flag — reporting yourself is not a thing — and the
+     reported message travels with the report because chat is peer-to-peer and the server has no copy. */
+  if(!mine && typeof _reportBtn==='function'){
+    row.appendChild(_reportBtn('\u2691', 'Report this message',
+      ()=>openReportDialog('chat', { what:'this message', target:(''+(name||'')).slice(0,120),
+        text:(''+(text||'')).slice(0,300), room:(NET && NET.room) ? String(NET.room).toLowerCase() : '' })));
+  }
+  log.appendChild(row); while(log.children.length>8) log.removeChild(log.firstChild); setTimeout(()=>{ row.classList.add('chatFade'); }, 9000); }
 function applyPvpDamage(dmg, from){
   if(duelDead || duelInvuln>0) return;
   if(sameTeam(from, NET.myId)) return;   // no friendly fire in team modes
   if(buffs.shield>0){ const a=Math.min(buffs.shield,dmg); buffs.shield-=a; dmg-=a; }
-  player.hp -= dmg; lastDamagedBy = (from!=null?from:lastDamagedBy); flashDamage(); SFX.hurt(); addShake(Math.min(0.5, dmg/55)); { const rp=(from!=null)?NET.players[from]:null; if(rp&&rp.posEye) hurtDir(rp.posEye.x, rp.posEye.z); else { const bb=(typeof botById==='function')?botById(from):null; if(bb) hurtDir(bb.pos.x, bb.pos.z); } } updateHUD();
+  player.hp -= dmg; lastDamagedBy = (from!=null?from:lastDamagedBy); flashDamage(); SFX.hurt(); addShake(Math.min(0.5, dmg/55)); { const rp=(from!=null)?NET.players[from]:null; if(rp&&rp.posEye){ hurtDir(rp.posEye.x, rp.posEye.z); _recPunch(dmg, rp.posEye.x, rp.posEye.z); } else { const bb=(typeof botById==='function')?botById(from):null; if(bb){ hurtDir(bb.pos.x, bb.pos.z); _recPunch(dmg, bb.pos.x, bb.pos.z); } else { _recPunch(dmg, null, null); } } } updateHUD();   /* build 1362: aim punch rides the ALREADY-COMPUTED hurt source - an unknown attacker still jolts, just without a direction */
   if(player.hp<=0) duelDie();
 }
 function updateRespawnOverlay(){
@@ -27372,7 +27827,14 @@ function _buyChestOk(id){
   if(msg.t==='st'){ setRemoteState(id, msg); }
   else if(msg.t==='hit'){ const en=enemies.find(e=>e.id===msg.e); if(en){ spark(en.mesh.position, 0xff6b6b); const _s=NET.players[id]; _coopKillFor=id; const _killed=enemyHurt(en, _netDmgBudget(id,'pve',_netDmg(msg.d)), (_s&&_s.posEye)?_s.posEye.x:null, (_s&&_s.posEye)?_s.posEye.z:null); _coopKillFor=null; if(_killed) sendToPlayer(id, {t:'frag'}); } }   // tell the client it scored, so it gets multi-kill callouts
   else if(msg.t==='ready'){ const rp=NET.players[id]; if(rp) rp.ready=!!msg.r; if(NET.phase==='lobby') refreshLobby(); }   // build 552: a client toggled ready in the lobby -> reflect it for everyone
-  else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n); rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
+  else if(msg.t==='name'){ const rp=ensureRemotePlayer(id, msg.n);
+    /* build 1357: the host OWNS the roster, so it resolves the display name. Two players sharing one name
+       is not a cosmetic clash: it makes a chat log ambiguous, makes a moderation report unactionable
+       ("Griefer said X" — which one?), and makes muting a harasser mute their victim instead. Resolved
+       here rather than at the sender, because only the host can see everyone. */
+    msg.n = _resolveName(msg.n, id);
+    try{ const c=NET.conns[id]; if(c && c.open) c.send({t:'yourname', n:msg.n}); }catch(e){}   /* so their own HUD agrees with everyone else's */
+    rp.name=msg.n; rp.mesh.userData._name=msg.n; if(rp.mesh.userData.label){ if(typeof disposeAvatarLabel==='function') disposeAvatarLabel(rp.mesh); rp.mesh.remove(rp.mesh.userData.label); const l=makeNameSprite(msg.n, teamMode()?NET.teams[id]:undefined); l.position.y=2.5; rp.mesh.add(l); rp.mesh.userData.label=l; } if(msg.char){ applyRemoteChar(id, msg.char); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'char', from:id, cfg:msg.char}); }catch(e){} } } } if(NET.phase==='lobby') refreshLobby(); }
   else if(msg.t==='pvpHit'){ applyPvpDamage(_netDmgBudget(id,'pvp',_netDmg(msg.d)), id); if(msg.kx!=null){ player.extVel.x+=msg.kx; player.extVel.z+=msg.kz; player.vel.y=Math.max(player.vel.y,msg.ky||0); player.onGround=false; } }       // a client shot the host (build 797: a car ram also flings us) — build 1130: clamped, and credited to the CONNECTION, not the claim
   else if(msg.t==='fire'){ remoteFire(id, msg.o, msg.d, msg.w); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'fire', from:id, o:msg.o, d:msg.d, w:msg.w}); }catch(e){} } } }   // show + relay the shot
   else if(msg.t==='died'){
@@ -27425,7 +27887,7 @@ function _buyChestOk(id){
   else if(msg.t==='pDel'){ if(netApplyDelProp(msg.nid)) relayProp({t:'pDel', nid:msg.nid}, id); } // a client deleted a prop
   else if(msg.t==='pMov'){ if(netApplyMovProp(msg.nid, msg.x)) relayProp({t:'pMov', nid:msg.nid, x:msg.x}, id); } // a client moved a prop
   else if(msg.t==='death'){ playerDeathFx(msg.p[0], msg.p[1], msg.p[2]); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send(msg); }catch(e){} } } }   // a client died -> show + relay the pop
-  else if(msg.t==='chat'){ const nm=(NET.players[id]&&NET.players[id].name)||msg.name||('P'+id); const tx=(''+(msg.text||'')).slice(0,200); addChatLine(nm, tx); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'chat', name:nm, text:tx}); }catch(e){} } } }   // a client chatted -> show + relay to the others
+  else if(msg.t==='chat'){ const nm=(NET.players[id]&&NET.players[id].name)||msg.name||('P'+id); const tx=(''+(msg.text||'')).slice(0,200); addChatLine(nm, tx, false, id); for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'chat', name:nm, text:tx, from:id}); }catch(e){} } } }   // a client chatted -> show + relay to the others (build 1357: `from` so a mute can bind to the player, not the string they chose)
   else if(msg.t==='race'){ _raceNet[id]={ lap:msg.lap|0, f:+msg.f||0 }; for(const cid in NET.conns){ if(+cid!==id){ try{ NET.conns[cid].send({t:'race', from:id, lap:msg.lap, f:msg.f}); }catch(e){} } } }   // build 836: a racer's progress -> store + relay
   else if(msg.t==='raceFin'){
     // build 1279: CHECK THE CLAIM. This called _raceDeclareWinner with no validation at all, so one
@@ -27459,6 +27921,8 @@ function handleHostMsg(msg){
     try{ _prefetchLevelAssets(NET.pendingLevel, NET.charById); }catch(e){}   // build 927: downloads overlap the lobby, not the round
     if(msg.phase==='lobby'){ showClientLobby(); _lobbyDlWatch(); } else { startGame(); }
   }
+  else if(msg.t==='yourname'){ if(typeof msg.n==='string' && msg.n){ const was=NET.name; NET.name=msg.n;   /* build 1357: the host resolved a clash — adopt it so our chat prefix, name sprite and report target all read what everyone else sees */
+      if(was!==msg.n && typeof flashToast==='function') flashToast('That name was taken \u2014 you are "'+msg.n+'" in this room'); } }
   else if(msg.t==='begin'){ NET.phase='playing'; closeModal('lobby'); if(typeof closeMatchMenu==='function') closeMatchMenu(); startGame(); }
   else if(msg.t==='warmup'){ matchWarmup = (msg.secs!=null ? +msg.secs : 3); _clientWarmupHold=false; }   // build 624: host's synced start count — resyncs our countdown so 3-2-1-GO lands together
   else if(msg.t==='lobby'){ NET.lobbyRoster=msg.players||[]; if(NET.phase==='lobby') renderLobby(NET.lobbyRoster); if(msg.bg!=null && typeof _applyLobbyBg==='function') _applyLobbyBg(msg.bg); }
@@ -27485,7 +27949,7 @@ function handleHostMsg(msg){
        host-resolved key instead would be wrong the moment ids differ, and silently so. */
     logicVars[(typeof _hwVarKey==='function') ? _hwVarKey(k) : k] = +msg.v[k]||0; } }   // build 1058: the host mirrors widget-watched logic variables
   else if(msg.t==='full'){ NET._lost=true; if(typeof netStatus==='function') netStatus('That room is full ('+(msg.max||8)+' players).'); if(typeof toast==='function') toast('Room is full'); }   // build 1207: the host refused us at the cap
-  else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200)); }   // chat from the host or relayed from another player
+  else if(msg.t==='chat'){ addChatLine(msg.name||'?', (''+(msg.text||'')).slice(0,200), false, msg.from); }   // chat from the host or relayed from another player
   else if(msg.t==='duelOver'){ showDuelResult(msg.w, msg.wt); }
   else if(msg.t==='race'){ _raceNet[msg.from]={ lap:msg.lap|0, f:+msg.f||0 }; }   // build 836: another racer's progress (standings)
   else if(msg.t==='raceOver'){ if(msg.w){ if(typeof gameWon==='function') gameWon(); } else _raceLose(msg.wn); }   // build 836: the host called the finish
@@ -27533,7 +27997,33 @@ function _peerIce(){
     { urls:'turns:freeturn.tel:5349', username:'free', credential:'free' },
   ];
 }
-function _peerOpts(){ if(_iceRemote===null && !_peerOpts._f){ _peerOpts._f=1; _fetchIceRemote(); } return { config:{ iceServers:_peerIce() } }; }   // build 1015: kick the remote-config fetch on first use (covers later re-connects)
+// ---- build 1354: A WAY TO POINT AT YOUR OWN BROKER --------------------------------------------------
+// Every `new Peer(...)` passed only `{config:{iceServers}}`, so signalling always went to the PUBLIC
+// PeerJS cloud broker. `breach_ice`, `breach_comm_api`, `breach_lobby_db` and `breach_plays_db` all have a
+// self-hoster override; the broker — the single point of failure the whole feature depends on — had none.
+// So "deploy your own PeerServer" was not merely undocumented, it was IMPOSSIBLE: there was no way to tell
+// the game about it even if one were already running.
+//
+// `breach_peer` takes the same shape PeerJS itself does — {host, port, path, secure, key} — and is merged
+// into the options every call site already builds, so all four `new Peer` sites inherit it without
+// knowing. A malformed or absent value falls straight through to the cloud broker, which is what someone
+// who has not configured anything must keep getting.
+function _peerServer(){
+  try{
+    const o = JSON.parse(localStorage.getItem('breach_peer') || 'null');
+    if(!o || typeof o !== 'object' || !o.host) return null;
+    const out = { host: String(o.host).slice(0, 200) };
+    if(o.port != null) out.port = Math.max(1, Math.min(65535, Math.round(+o.port) || 443));
+    if(o.path) out.path = String(o.path).slice(0, 120);
+    if(o.key)  out.key  = String(o.key).slice(0, 120);
+    out.secure = (o.secure !== false);   /* default to TLS: a broker is a websocket carrying room codes */
+    return out;
+  }catch(e){ return null; }
+}
+function _peerOpts(){ if(_iceRemote===null && !_peerOpts._f){ _peerOpts._f=1; _fetchIceRemote(); }
+  const o = { config:{ iceServers:_peerIce() } };
+  const sv = _peerServer(); if(sv) Object.assign(o, sv);
+  return o; }   // build 1015: kick the remote-config fetch on first use (covers later re-connects)
 function netReset(){
   for(const id in NET.players) removeRemotePlayer(+id);
   for(const id in NET.enemyMeshes){ scene.remove(NET.enemyMeshes[id].mesh); }
@@ -27583,7 +28073,10 @@ function _applyMpRules(r){ try{
 // each adding to the 20Hz snapshot fan-out and the host's CPU, or simply exhaust it. The cap is
 // mode-shaped (a duel is strictly 1v1) and counts EXISTING players so a rejoiner reclaiming its slot is
 // never refused; a fresh peer past the ceiling gets a clean 'full' close, not a silent hang.
-function _maxPlayersFor(){ return (NET.gameMode==='duel') ? 2 : 8; }
+/* build 1356: takes the mode, so the GAMES LIST can compute the same cap the door enforces from a listing
+   it has never connected to. Two copies of this number would be a browser that offers a room the host is
+   about to refuse. */
+function _maxPlayersFor(mode){ return ((mode!=null?mode:NET.gameMode)==='duel') ? 2 : 8; }
 function _hostOnConnection(conn){
     const _rj=(conn.metadata && conn.metadata.rejoin!=null) ? +conn.metadata.rejoin : null;
     const _rejoinFree = (_rj!=null && _rj>=1 && !NET.conns[_rj]);
@@ -27600,9 +28093,10 @@ function _hostOnConnection(conn){
       if(teamMode()) assignTeam(conn._pid);
       // hand the joiner the mode, the kill target, and the current level so their map matches
       let level=null; if(_rj==null) try{ level = serializeLevel(); }catch(e){}
-      // If this level uses Sketchfab models and we have a token, lend it to the joiner so the models load even
-      // if they have no Sketchfab account of their own. Obfuscated (not encrypted) — they don't keep it.
-      let sfTok; try{ if(_levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
+      // If this level uses Sketchfab models, the joiner needs a token to load them. Build 1349: ONLY if the
+      // host has explicitly opted in — this is their personal API credential and `_sfPack` is obfuscation,
+      // not encryption. Off by default, so a host who never opens the setting never lends it.
+      let sfTok; try{ if(sfLendEnabled() && _levelUsesSketchfab(level) && sfGetToken()) sfTok = _sfPack(sfGetToken()); }catch(e){}
       conn.send({t:'welcome', id:conn._pid, hid:NET.myId, mig:(_rj!=null?1:undefined), mode:NET.gameMode, killTarget:NET.killTarget, level, sfTok, crosshair:gameCfg.crosshair, sounds:audioSettings.sounds, music:audioSettings.musicUrl, teams:NET.teams, yourTeam:(teamMode()?NET.teams[conn._pid]:undefined), char:myCharCfg(), chars:Object.assign({}, NET.charById), rules:{ weps:MP_RULES.weps, nades:MP_RULES.nades }, phase:NET.phase});
       netStatus(_rj!=null ? ('Player rejoined ('+Object.keys(NET.conns).length+' connected)') : ('Player joined ('+Object.keys(NET.conns).length+' connected)'));
       if(pvpMode()) broadcastDuelScore();
@@ -27649,6 +28143,19 @@ function showRoomBadge(code){ const b=document.getElementById('roomBadge'); if(b
 // ---------- Pre-game lobby: everyone gathers, then the host starts the match so all players begin together ----------
 // build 579: pure readiness summary for the lobby roster (host counts as ready). { all, waiting }.
 function _lobbyReadyState(roster){ const list=roster||[]; let waiting=0; for(const p of list){ if(!p.ready) waiting++; } return { all:waiting===0, waiting }; }
+/* build 1357: one display name per player, host-resolved. Case- and whitespace-insensitive, because
+   "Griefer" and "griefer " are the same name to a person reading a chat log. The discriminator counts up
+   rather than randomising, so rejoining an otherwise-empty room gives you your own name back. */
+function _resolveName(n, forId){
+  let base = _cleanName(n, 'Player'+forId);
+  const taken = new Set();
+  const add = (x)=>{ const k=(''+(x||'')).trim().toLowerCase(); if(k) taken.add(k); };
+  add(NET.name||'Host');
+  try{ for(const id in NET.players){ if(+id===+forId) continue; const rp=NET.players[id]; if(rp) add(rp.name); } }catch(e){}
+  if(!taken.has(base.toLowerCase())) return base;
+  for(let i=2;i<=99;i++){ const c=_cleanName(base+' ('+i+')', 'Player'+forId); if(!taken.has(c.toLowerCase())) return c; }
+  return _cleanName('Player'+forId, 'Player');
+}
 function lobbyRoster(){
   const selfTint = (CHARACTERS[myCharIdx]?CHARACTERS[myCharIdx].color:null);
   const list=[{ id:NET.myId, name:(NET.name||'Host'), team:(teamMode()?(NET.teams[NET.myId]||0):null), tint:selfTint, host:true, ready:true }];   // build 552: the host is always "ready" (they press START)
@@ -27805,7 +28312,8 @@ function startMatch(){   // host presses START
   _startArmedT=0;
   const bn=document.getElementById('lobbyBotN');
   if(bn && !(pvpMode() && NET.gameMode==='duel')){ let v=parseInt(bn.value,10); if(v>=0 && v<=7) NET.botCount=v; }
-  NET.phase='playing'; unannounceRoom();
+  NET.phase='playing';
+  announceRoom();   /* build 1356: re-announce as LIVE rather than deleting the entry — the room is still joinable, and its own player cap is the gate */
   for(const id in NET.conns){ try{ NET.conns[id].send({t:'begin'}); }catch(e){} }
   closeModal('lobby'); startGame();
 }
@@ -27828,13 +28336,22 @@ let _lobbyHbT=null, _lobbyCode=null, _lobbyKey=null;
 function announceRoom(){   // host: publish + heartbeat this open lobby
   if(!lobbyEnabled() || NET.mode!=='host') return;
   _lobbyCode=NET.roomCode; if(!_lobbyKey) _lobbyKey=_mkLobbyKey();   // build 956: per-session owner key — the server only lets this key update/close our entry
-  const ping=()=>{ if(!lobbyEnabled() || NET.mode!=='host' || NET.phase!=='lobby') return;
-    const body={ code:NET.roomCode, name:(NET.name||'Host'), mode:NET.gameMode||'coop', players:1+Object.keys(NET.conns).length, ts:Date.now(), key:_lobbyKey };
+  /* build 1356: a MATCH IN PROGRESS stays in the directory. Joining one has worked end to end since the
+     welcome carried `phase` — a client that connects mid-match calls startGame() directly and the host
+     forces a keyframe on the connection count change (1197) — but `startMatch` deleted the entry, so the
+     public list only ever showed rooms where nobody was playing yet. For a game with a handful of
+     concurrent players that reads as "nobody is online" precisely when somebody is.
+     `live` and `max` are OPTIONAL extras: the deployed lobbies.php whitelists the fields it stores, so
+     until it is updated they are dropped and the room simply lists as an ordinary one — which is the whole
+     of the fix. The browser treats them as absent-by-default for exactly that reason. */
+  const ping=()=>{ if(!lobbyEnabled() || NET.mode!=='host' || (NET.phase!=='lobby' && NET.phase!=='playing')) return;
+    const body={ code:NET.roomCode, name:(NET.name||'Host'), mode:NET.gameMode||'coop', players:1+Object.keys(NET.conns).length,
+                 max:_maxPlayersFor(), live:(NET.phase==='playing'?1:0), ts:Date.now(), key:_lobbyKey };
     try{ fetch(_lobbyUrl(NET.roomCode), { method:'PUT', body:JSON.stringify(body) }).catch(()=>{}); }catch(e){}
   };
   ping(); if(_lobbyHbT) clearInterval(_lobbyHbT); _lobbyHbT=setInterval(ping, 5000);
 }
-function unannounceRoom(){   // remove the lobby from the public list (match started / left)
+function unannounceRoom(){   // remove the lobby from the public list — build 1356: on LEAVING only; a started match stays listed
   if(_lobbyHbT){ clearInterval(_lobbyHbT); _lobbyHbT=null; }
   stopLobbyKeepalive();
   if(lobbyEnabled() && _lobbyCode){ try{ fetch(_lobbyUrl(_lobbyCode)+(_lobbyKey?'&k='+_lobbyKey:''), { method:'DELETE', keepalive:true }).catch(()=>{}); }catch(e){} }   // build 956: keyed close; keepalive survives unload
@@ -27883,9 +28400,18 @@ function renderGamesList(rooms){
   rooms.forEach(r=>{
     const d=document.createElement('div'); d.className='gameRow';
     const nm=document.createElement('span'); nm.textContent=r.name||'Host';
-    const md=document.createElement('span'); md.className='gmode'; md.textContent=((r.mode||'coop')+'').toUpperCase()+' \u00b7 '+(r.players||1)+'p';
-    const j=document.createElement('button'); j.className='mpBtn gjoin'; j.style.cssText='padding:3px 12px;font-size:12px'; j.textContent='Join';
-    j.onclick=()=>joinByCode(r.code);
+    /* build 1356: the cap comes from the SAME function the host's door uses, so the list can never offer a
+       seat that is about to be refused. `max` from the server wins when present; otherwise it is derived
+       from the mode, which is what makes this work against a lobbies.php that has not been updated yet. */
+    const cap=(r.max>0?(r.max|0):_maxPlayersFor(r.mode||'coop')), here=(r.players||1);
+    const full=here>=cap;
+    const md=document.createElement('span'); md.className='gmode';
+    md.textContent=((r.mode||'coop')+'').toUpperCase()+' \u00b7 '+here+'/'+cap+(r.live?' \u00b7 in progress':'');
+    const j=document.createElement('button'); j.className='mpBtn gjoin'; j.style.cssText='padding:3px 12px;font-size:12px';
+    j.textContent=full?'Full':'Join';
+    if(full){ j.disabled=true; j.style.opacity='0.45'; j.title='This room is at its player limit'; }
+    else { j.title=r.live?'This match has already started \u2014 you will drop straight in':'Waiting in the lobby';
+           j.onclick=()=>joinByCode(r.code); }
     d.appendChild(nm); d.appendChild(md); d.appendChild(j); wrap.appendChild(d);
   });
 }
@@ -28358,6 +28884,58 @@ let _landDip = 0, _landDipV = 0, _camLean = 0, _sprintFovCur = 0;
 /* build 1313: EVERY shake in the engine goes through here — blasts, hits, kills, car impacts, the melee
    thump — so scaling it at this one point covers all of them, and a future one for free. */
 function addShake(amt){ shake = Math.min(1, shake + amt * ((typeof a11y!=='undefined') ? a11y.shake : 1)); }
+/* build 1358: smooth trauma noise. Three sines at incommensurate rates — dominant ~24 Hz, which is what
+   reads as a shake rather than as sparkle — summing to +/-1. A function of TIME, so the motion a player
+   sees is the same at any refresh rate; the previous Math.random() per frame was literally a different
+   signal on a 144 Hz display than on a 30 Hz one. Deterministic, allocation-free, three trig calls. */
+function _shakeN(t, k){
+  return Math.sin(t*23.7 + k*1.7)*0.55 + Math.sin(t*11.3 + k*4.9)*0.30 + Math.sin(t*47.1 + k*9.1)*0.15;
+}
+const SHAKE_DECAY = 1.1;   // per second, linear — duration is proportional to amplitude, which is right
+/* ---- build 1362: recoil that RECOVERS (feel critic #2/#3/#14 - one mechanism) -----------------------
+   The old view kick wrote 0.010..0.016 rad straight into player.pitch per shot: a PERMANENT displacement (no site among
+   the 26 player.pitch mutations ever subtracted it back - one SMG magazine walked the view 23-31 degrees
+   and 20 frames after release recoveredDeg was 0), weapon-agnostic except a x2.4 scope factor (SMG 14.3
+   deg/s of climb against the shotgun’s 1.4 - exactly backwards), and yaw was never touched. It is now a
+   pair of CAMERA-OFFSET accumulators, applied beside the shake in the frame loop and sprung back to zero
+   exponentially. player.pitch is never written, so nothing is permanent, releasing the trigger returns
+   the view to exactly where the player left it, and build 1102’s cursor-view rule needs no second copy:
+   the kick never accumulates outside first-person aim, and the cursor-view cameras (_vcamPose) overwrite
+   the rotation regardless. Per-weapon kickV/kickH ride build 1190's stat sheet, so they serialize as
+   only-changed diffs, clamp against hostile files, load through all three loaders and get an editor row
+   for free. */
+let _recPitch = 0, _recYaw = 0, _recSign = 1;
+const REC_SPRING = 8;    /* per-second exponential return - ~63% recovered in 125 ms, ~91% in 300 ms */
+const REC_MAX = 0.22;    /* rad. Sustained automatic fire holds a small lean, never a ceiling-stare; the
+                            applied camera pitch also clamps at 1.55 so base aim + offset stays under vertical */
+function _recKick(w){
+  /* build 1102’s gate, kept as ONE predicate both kick sites (hitscan + rocket) share: in top-down/side/
+     chase-cursor the pitch is not the aim, so the view is never kicked there. */
+  if(activeViewMode()!=='fps') return;
+  const _a = (adsBlend>0.5 ? 0.6 : 1);   /* aiming steadies the kick; the per-weapon values do the rest */
+  _recPitch = Math.min(REC_MAX, _recPitch + (w.kickV||0)*_a);
+  _recSign = -_recSign;   /* horizontal recoil alternates side with a random lean - a drift, never a metronome */
+  _recYaw = Math.max(-REC_MAX, Math.min(REC_MAX, _recYaw + (w.kickH||0)*_a*(_recSign + (Math.random()-0.5)*0.6)));
+}
+/* build 1362: aim punch on damage. Being hit moved nothing but a sub-pixel shake - the view now takes a
+   dmg/maxHp-scaled jolt AWAY from the source, along the same forward/right decomposition hurtDir aims its
+   arc with, through the same recovering accumulators as weapon recoil. Gated by build 1313’s a11y.shake
+   like every other physical reaction, so motion-comfort players keep the flash + the direction indicator
+   without the jolt. A source-less hit (an unknown attacker) still jolts, just without a direction. */
+function _recPunch(dmg, sx, sz){
+  const _sc = (typeof a11y!=='undefined') ? a11y.shake : 1;
+  const mag = Math.min(0.06, 0.10 * (dmg / Math.max(1, player.maxHp||100))) * _sc;
+  if(!(mag > 0)) return;
+  let f = 1, r = 0;
+  if(sx != null && sz != null){
+    const dx = sx - player.pos.x, dz = sz - player.pos.z;
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+    const d = Math.hypot(dx, dz) || 1;
+    f = (dx*fx + dz*fz)/d; r = (dx*rx + dz*rz)/d;
+  }
+  _recPitch = Math.min(REC_MAX, _recPitch + mag*(0.6 + 0.4*Math.abs(f)));   /* up-kick, strongest for a frontal hit */
+  _recYaw = Math.max(-REC_MAX, Math.min(REC_MAX, _recYaw + mag*r*0.8));     /* and away from the side it came from (+yaw = left) */
+}
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){
     const g = grenades[i];
@@ -28419,7 +28997,7 @@ function fireRocketShot(){
     d.copy(_t).sub(o).normalize();
   }
   o.addScaledVector(d, 1.2);                 // spawn just ahead of the camera
-  addShake(0.22); if(activeViewMode()==='fps') player.pitch += 0.02;   // chunky launch kick (build 1102: not in cursor views — pitch isn't the aim there)
+  addShake(0.22); _recKick(W());   /* build 1362: through the shared per-weapon kick (the fps gate lives inside) */   // chunky launch kick (build 1102: not in cursor views — pitch isn't the aim there)
   if(!WEAPONS.launcher.noMuzzle){
     if(tpActive() || activeViewMode()!=='fps'){ const _mp=new THREE.Vector3(); if(typeof tpMuzzleWorld==='function') tpMuzzleWorld(_mp); else _mp.copy(o); muzzleFlashAt(_mp); }   // build 1102: world flash at the character, not the sky-camera light
     else { muzzle.intensity=8; flashMat.opacity=1; playFlipbook('muzzle', new THREE.Vector3(0,0,-0.05), 0.7, vmMuzzle); } }   // build 684: per-weapon muzzle-flash toggle
@@ -31110,7 +31688,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1346 · 2026-08-03';
+const BUILD_VERSION = 'build 1362 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -31342,6 +31920,79 @@ function saveA11y(){ try{ localStorage.setItem(A11Y_KEY, JSON.stringify(a11y)); 
 // loadA11y clamps every one of those keys to 0..1, which is exactly right for a multiplier of an effect
 // and exactly wrong for a scale that has to reach 1.75. Squeezing it in would have meant a special case
 // inside a loop whose whole point is that it has none.
+// ---- build 1347: THE KEYBOARD REACHES THE EDITOR --------------------------------------------------
+// Build 1333/1334 closed three of the platform audit's six accessibility items and left `role=` 0 and
+// `tabindex` 0 on the list. Measured live rather than counted statically, because a static count says
+// nothing about what a keyboard can DO:
+//
+//     in play          2 clickable, 2 reachable      0 unreachable
+//     pause menu      15 clickable, 15 reachable     0 unreachable    <- real <button>s throughout
+//     EDITOR          86 clickable, 59 reachable    27 UNREACHABLE (31%)
+//
+// So the HUD and the pause menu were already fine and needed nothing. The editor was not: 19 of those 27
+// are DIVs with an `.onclick`, and they include the ENTIRE MODE RAIL — Build / World / Player / Enemies /
+// Gameplay / Weapons / HUD / Save / Settings. A keyboard user could not change editor tab at all. (The
+// other 8 are `disabled` buttons, which are correctly unreachable and are not a defect.)
+//
+// THE FIX IS ONE PREDICATE, NOT 500 EDITS. There are ~500 `.onclick` assignments in this file and panels
+// are torn down and rebuilt constantly (renderEditorFields), so stamping attributes at each construction
+// site would be a list that drifts — the defect this file records under builds 1152, 1266, 1320 and 1326.
+// Instead `_a11yWire(root)` asks a QUESTION of the DOM — "is this clickable and not already focusable?" —
+// and a MutationObserver re-asks it of anything added later. A control added by a future build inherits it.
+//
+// AND IT COSTS NOTHING UNTIL SOMEBODY USES A KEYBOARD. renderEditorFields rebuilds ~3,000 nodes and build
+// 1322 measured it at 8-27 ms; an observer walking every one of those on every rebuild would be a real
+// regression for the overwhelming majority who are using a mouse. So the whole thing arms on the FIRST TAB
+// PRESS: keydown fires before the browser performs its focus move, so stamping there puts the elements in
+// the tab order in time for that very keystroke. A mouse-only session never runs any of it.
+let _a11yKbd = false, _a11yObs = null;
+const _A11Y_NATIVE = { BUTTON:1, A:1, INPUT:1, SELECT:1, TEXTAREA:1, SUMMARY:1 };
+function _a11yWire(root){
+  if(!root || !root.querySelectorAll) return 0;
+  let n = 0;
+  const all = root.querySelectorAll('*');
+  for(let i = -1; i < all.length; i++){
+    const el = (i < 0) ? root : all[i];
+    if(!el || el.nodeType !== 1) continue;
+    if(typeof el.onclick !== 'function') continue;          /* not a control */
+    if(_A11Y_NATIVE[el.tagName]) continue;                  /* focusable for free */
+    if(el.hasAttribute('tabindex')) continue;               /* already handled, or deliberately opted out */
+    if(el.tagName === 'CANVAS') continue;                   /* the viewport is not a button */
+    el.setAttribute('tabindex', '0');
+    /* role=button and not role=tab for the mode rail: a tablist owes the screen reader aria-selected,
+       aria-controls and arrow-key navigation, and a half-implemented tablist reads worse than an honest
+       list of buttons. The rail is a set of things you press; say that. */
+    if(!el.hasAttribute('role')) el.setAttribute('role', 'button');
+    el.classList.add('a11yBtn');
+    n++;
+  }
+  return n;
+}
+function _a11yArm(){
+  if(_a11yKbd) return;
+  _a11yKbd = true;
+  _a11yWire(document.body);
+  try{
+    _a11yObs = new MutationObserver(muts=>{
+      for(const m of muts) for(const node of m.addedNodes) if(node.nodeType === 1) _a11yWire(node);
+    });
+    _a11yObs.observe(document.body, { childList:true, subtree:true });
+  }catch(e){}
+}
+addEventListener('keydown', (e)=>{
+  if(e.key === 'Tab'){ _a11yArm(); return; }
+  /* Enter and Space activate a stamped control, which is what role=button PROMISES a screen reader. A
+     native <button> does this itself; a div never will. Guarded on the role so this cannot fire for a
+     text field, a select, or the game's own keybindings — Space is JUMP, and stealing it while the player
+     is in the world would be a far worse bug than the one being fixed. */
+  if(e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  const el = document.activeElement;
+  if(!el || el === document.body) return;
+  if(_A11Y_NATIVE[el.tagName]) return;
+  if(el.getAttribute && el.getAttribute('role') === 'button' && typeof el.onclick === 'function'){
+    e.preventDefault(); e.stopPropagation(); el.click();
+  }
+}, true);
 const UI_SCALE_MIN = 0.75, UI_SCALE_MAX = 1.75, UI_SCALE_KEY = 'breach_uiscale';
 let uiScale = 1;
 try{ const _us = parseFloat(localStorage.getItem(UI_SCALE_KEY)); if(isFinite(_us)) uiScale = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, _us)); }catch(e){}
@@ -33493,12 +34144,12 @@ function shoot(){
   triggerGunAnim('shoot');   // fire the model's shoot clip if it has one
   if(w.projectile){ fireRocketShot(); firingLatch=true; return; }   // rocket launcher: fire a projectile, skip hitscan
   SFX.shoot();
-  addShake(curWep==='shotgun'?0.16:(curWep==='smg'?0.045:0.08));   // recoil kick
+  addShake(curWep==='shotgun'?0.26:(curWep==='smg'?0.075:0.13));   // recoil kick (build 1358: retuned for the linear curve — rifle 0.30 deg / 118 ms, shotgun 0.60 deg / 236 ms)
   // build 1102: recoil pitch-kick is a first-person-camera feel. In top-down/side the pitch isn't
   // the aim (the cursor is), so kicking it silently corrupted the stored pitch for later FPS play.
   if(activeViewMode()==='fps'){
     recoil = Math.min(recoil + (0.018*w.pellets*0.5 + 0.014) * (adsBlend>0.5?0.5:1) * (w.scope?2.0:1), 0.10);
-    player.pitch += (0.010 + Math.random()*0.006) * (adsBlend>0.5?0.5:1) * (w.scope?2.4:1);
+    _recKick(w);   /* build 1362: per-weapon view kick into the RECOVERING camera-offset accumulators - the old write into player.pitch here was a permanent displacement that nothing ever subtracted back */
   }
   // (build 1102: the muzzle flash and the network shot moved BELOW, where the real muzzle position
   // and aim direction are known — the flash used to fire a camera-attached light, which in a
@@ -33656,10 +34307,10 @@ function shoot(){
 
 // central enemy damage: apply, then a directional flinch (survived) or a kill (killEnemy removes the body
 // instantly, so no death pose). Returns true if this hit killed it. Pass sx/sz = attacker/blast position.
-function enemyHurt(en, dmg, sx, sz){
+function enemyHurt(en, dmg, sx, sz, byEnemy){   /* build 1355: byEnemy — another creature dealt this, so it earns the PLAYER nothing */
   if(!en || en.hp<=0) return false;
   en.hp -= dmg;
-  if(en.hp<=0){ killEnemy(en, sx, sz); return true; }
+  if(en.hp<=0){ killEnemy(en, sx, sz, byEnemy); return true; }
   /* build 1283: a hurt grunt. Shooting something you cannot see told you nothing before — the hitmarker
      is on screen, and the thing you shot is not. This is the same information, from the right direction. */
   if(typeof SFX!=='undefined' && SFX.enemyHurt && en.mesh) SFX.enemyHurt(en.mesh.position);
@@ -33695,12 +34346,13 @@ function enemyHurt(en, dmg, sx, sz){
   }
   return false;
 }
-function killEnemy(en, sx, sz){
+function killEnemy(en, sx, sz, byEnemy){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')){ const _kp=(typeof _coopKillFor!=='undefined' && _coopKillFor!=null) ? +_coopKillFor : ((typeof NET!=='undefined')?(NET.myId|0):0); const _pv=_lgCtx; _lgCtx={ x:en.mesh.position.x, z:en.mesh.position.z, hp:0, hpf:0, pid:_kp, team:(typeof NET!=='undefined' && NET.teams && NET.teams[_kp]!=null)?+NET.teams[_kp]:0 }; try{ _lgFireEvents('onkill',''); } finally { _lgCtx=_pv; } }   // build 1027: 'On enemy killed' entries; build 1221: at the death position; build 1231: with the KILLER's pid/team (a client's kill credits its player via _coopKillFor)
-  const _fr = !!en.friendly;   // build 1226: killing a friendly is a DEATH (visuals, sound, ragdoll, the onkill event a creator can punish with) but never a REWARD — no kills, no juice, no coins, no score
-  if(!_fr) runKills++;
+  const _fr = !!en.friendly || _enFac(en) === 0;   // build 1226: killing a friendly is a DEATH (visuals, sound, ragdoll, the onkill event a creator can punish with) but never a REWARD — no kills, no juice, no coins, no score; build 1355: and killing your own ALLY is the same
+  const _cred = !_fr && !byEnemy;   /* build 1355: an ally's kill still drops loot on the ground (that is physical, and you have to walk to it) but is not YOUR kill — no count, no lifesteal, no callout, no boss payday */
+  if(_cred) runKills++;
   spark(en.mesh.position, 0xff2d55); SFX.kill(en.type, en.mesh.position);   // build 752: per-enemy-type kill sound; build 1208: panned to the kill
-  if(!_fr){
+  if(_cred){
   if(NET.mode==='off'){ hitStop = Math.max(hitStop, 0.07); registerLocalKill(); }   // brief impact freeze + multi-kill tracking (solo)
   else if(NET.mode==='host' && _coopKillFor==null) registerLocalKill();   // co-op host's OWN kill -> callout (no slow-mo, gated inside); client kills are credited via {t:'frag'}
   }
@@ -33710,8 +34362,8 @@ function killEnemy(en, sx, sz){
     const ox=(Math.random()-0.5)*1.5, oz=(Math.random()-0.5)*1.5;
     spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round((15 + Math.floor(wave*2)) * run.coinMul));
   }
-  if(!_fr && run.lifesteal>0) player.hp = Math.min(player.maxHp, player.hp + run.lifesteal);   // vampiric rounds
-  if(!_fr && en.type==='boss'){   // a downed boss is a payday + a moment
+  if(_cred && run.lifesteal>0) player.hp = Math.min(player.maxHp, player.hp + run.lifesteal);   // vampiric rounds
+  if(_cred && en.type==='boss'){   // a downed boss is a payday + a moment
     score += 500;
     for(let i=0;i<6;i++){ const ox=(Math.random()-0.5)*3, oz=(Math.random()-0.5)*3; spawnCoin(en.mesh.position.x+ox, en.mesh.position.z+oz, Math.round(60*run.coinMul)); }
     spark(en.mesh.position, 0xff7b00); flashToast('☠ BOSS DOWN');
@@ -34383,7 +35035,7 @@ function fireEnemyShot(en, target, spread){
   scene.add(mesh);
   if(!playFlipbook('muzzle', from, 0.7*boltCfg.muzzle)) flashLightAt(from);   // muzzle flash at the enemy's gun (scaled by boltCfg)
   const vel = dir.multiplyScalar(en.projSpeed);
-  enemyShots.push({ mesh, vel, dmg: en.dmg, born: performance.now(), life: 3500, from: from.clone() });
+  enemyShots.push({ mesh, vel, dmg: en.dmg, fac: _enFac(en), born: performance.now(), life: 3500, from: from.clone() });   /* build 1355 */
   if(SFX && SFX.enemyShot) SFX.enemyShot(from);
   // build 1020: co-op joiners never saw enemy gunfire at all — the bolts lived only on the host.
   // Relay each shot; clients fly a cosmetic copy (damage still arrives via {t:'hurt'}).
@@ -34402,7 +35054,7 @@ function remoteEnemyShot(o, v){   // build 1020: a host-relayed enemy shot — c
 }
 function updateEnemyShots(dt){
   if(!enemyShots.length) return;
-  const ps = (typeof allPlayers==='function') ? allPlayers() : [{ pos:player.pos, hurt:(d,sx,sz)=>applyEnemyDamageToSelf(d,sx,sz) }];
+  const ps = _combatTargets();   /* build 1355: a bolt can now hit another enemy, and must not hit its own side */
   const now = performance.now();
   for(let i=enemyShots.length-1;i>=0;i--){
     const s = enemyShots[i];
@@ -34410,7 +35062,8 @@ function updateEnemyShots(dt){
     const p = s.mesh.position;
     emitBoltTrail(p);
     let dead = (now - s.born) > s.life || p.y < terrainHeightAt(p.x,p.z)+0.1;
-    if(!dead){ for(const pl of ps){ const dx=pl.pos.x-p.x, dy=((pl.eyeY!=null?pl.eyeY:(pl.pos.y!=null?pl.pos.y:1.4)))-p.y, dz=pl.pos.z-p.z; if(dx*dx+dy*dy+dz*dz < 1.1*1.1){ if(pl.hurt && !s.noDmg) pl.hurt(s.dmg, s.from?s.from.x:null, s.from?s.from.z:null); dead=true; break; } } }
+    if(!dead){ for(const pl of ps){ if(s.fac!=null && (pl.fac||0)===s.fac) continue;   /* build 1355: never your own side */
+      const dx=pl.pos.x-p.x, dy=((pl.eyeY!=null?pl.eyeY:(pl.pos.y!=null?pl.pos.y:1.4)))-p.y, dz=pl.pos.z-p.z; if(dx*dx+dy*dy+dz*dz < 1.1*1.1){ if(pl.hurt && !s.noDmg) pl.hurt(s.dmg, s.from?s.from.x:null, s.from?s.from.z:null); dead=true; break; } } }
     // build 1159: test the PER-PART boxes, not the overall model box. The overall box encloses an imported
     // building's doorways and interior, so an enemy standing inside (or firing out through an opening) had
     // its bolt die on frame 1 against an invisible box — enemies in buildings visibly fired and never landed
@@ -35230,8 +35883,10 @@ function objectiveTick(dt){   // host/solo per-frame; may trigger the win
 // hostiles gate the wave-clear (a level whose villagers outlive every wave must still advance) and
 // ride the net snapshot; pending hostiles subtract queued friendlies so the HUD never promises a
 // fight the queue doesn't hold.
-function _hostileAlive(){ let n = 0; if(typeof enemies !== 'undefined') for(const e of enemies) if(e && !e.friendly) n++; return n; }
-function _hostilePending(){ let n = (typeof toSpawn !== 'undefined' ? toSpawn : 0); if(typeof spawnQueue !== 'undefined' && Array.isArray(spawnQueue)) for(const d of spawnQueue) if(d && d.friendly) n--; return Math.max(0, n); }
+/* build 1355: hostile TO THE PLAYER. A level whose allies outlive every wave must still advance, which is
+   build 1226's lesson restated for the other kind of non-combatant. */
+function _hostileAlive(){ let n = 0; if(typeof enemies !== 'undefined') for(const e of enemies) if(e && !e.friendly && _enFac(e) !== 0) n++; return n; }
+function _hostilePending(){ let n = (typeof toSpawn !== 'undefined' ? toSpawn : 0); if(typeof spawnQueue !== 'undefined' && Array.isArray(spawnQueue)) for(const d of spawnQueue) if(d && (d.friendly || _facOf(d.fac) === 0)) n--; return Math.max(0, n); }
 function startWave(){
   if(typeof logicGraph!=='undefined' && logicGraph.nodes.length && typeof _lgFireEvents==='function' && (typeof NET==='undefined' || NET.mode!=='client')) _lgFireEvents('onwave','');   // build 1027: 'On wave start' entries
   clearMovementInput();   // don't carry a held key / stuck stick into the new wave (auto-move bug)
@@ -35240,7 +35895,7 @@ function startWave(){
   if(gameCfg.mode === 'prebuilt'){
     for(const g of spawnMarkers){ if(!spawnAppearsOnWave(g.userData.mark, wave)) continue;
       const _m = g.userData.mark;   // build 1226: a friendly marker defaults to wave 0 = every wave, but its NPC is never killed by play — without this guard every wave stacked another copy of the same villager
-      if(_m.friendly && enemies.some(e => e.friendly && e._mark === _m && e.hp > 0)) continue;
+      if((_m.friendly || _facOf(_m.fac) === 0) && enemies.some(e => e._mark === _m && e.hp > 0)) continue;   /* build 1355: an ally is not killed by the wave loop either, so the same don't-restack guard applies — but a DEAD one comes back next wave, which reads as reinforcements */
       spawnQueue.push(descFromMarker(g)); }
     toSpawn = spawnQueue.length;
   } else {
@@ -35505,6 +36160,15 @@ const MANTLE_MIN = 1.55, MANTLE_MAX = 2.05, MANTLE_DUR = 0.42;
 // build 644: grabbing a ledge HANGS you (ledgeHang anim); from the hang you PULL UP (Space / hold forward, anim
 // ledgeUp) or DROP DOWN (Ctrl / back, anim ledgeDrop). _ledge holds the phase + the hang/top positions.
 const LEDGE_PULL_DUR = 0.5, LEDGE_DROP_DUR = 0.3, LEDGE_HANG_AUTO = 2.5;
+// build 1361: the mantle was a FULL STOP (feel audit #9) — velocity zeroed every frame of hang+pull, a
+// 0.25 s wait before a held-forward pull started, and an exit at exactly 0 m/s: ~0.75 s of no control that
+// deleted sprint speed. The hang STAYS stationary (a hang is stationary by definition; the per-frame
+// zeroing is untouched), but the horizontal speed the player ARRIVED with is captured at the grab
+// (vx0/vz0 on the record) and returned at the pull-up EXIT, scaled by LEDGE_EXIT_KEEP along the pull
+// direction — a sprint mantle now exits at a run instead of at a standstill. The held-forward pull delay
+// drops 0.25 -> 0.08 s: enough to distinguish a deliberate hang from a climb-through, not a quarter
+// second of dead input.
+const LEDGE_EXIT_KEEP = 0.7;
 // build 1239: REPORTED FROM PLAY — "the ledge hang positions the chest/belly at the edge, torso/arms/
 // head way over the top, clinging to thin air." Build 966's hang height put the avatar's HEAD TOP
 // exactly at the lip (hy = lip + EYE - avatarHeight*1.02 -> head at lip by construction, whatever the
@@ -36678,8 +37342,24 @@ function loop(){
     const _mvIn = (wish.x !== 0 || wish.z !== 0);
     const _k = player.onGround ? (_mvIn ? MOVE_ACCEL_K : MOVE_BRAKE_K) : (_mvIn ? MOVE_AIR_K : MOVE_AIR_BRAKE_K);
     const _f = Math.min(1, _k * dt);
-    player.vel.x += (_tx - player.vel.x) * _f;
-    player.vel.z += (_tz - player.vel.z) * _f;
+    // build 1361: air control must never BRAKE the player (feel audit #4). The lerp pulls velocity toward
+    // wish*sp, and sp is walk/sprint speed — so whenever the player was FASTER than that (a slide-jump at
+    // 21 m/s, a blast-jump at 30) holding forward actively DECELERATED them: measured, a slide-jump landed
+    // at 12.4 m/s held vs 14.8 released. Quake-derived projection: airborne WITH input, when the speed
+    // ALONG the wish already meets the target, the parallel term is ZERO (never negative) and only the
+    // perpendicular component keeps easing at the air rate — course correction still turns the arc, and
+    // steering trades perpendicular speed, but the speed along the wish is never reduced. Below the target
+    // the else branch is TEXTUALLY the old lerp (a walk-speed jump is byte-identical), and it also carries
+    // the grounded model and AIR_BRAKE untouched — releasing the keys still bleeds speed exactly as tuned.
+    const _vAlong = _mvIn ? (player.vel.x*wish.x + player.vel.z*wish.z) : 0;
+    if(!player.onGround && _mvIn && _vAlong >= sp){
+      const _ppx = player.vel.x - wish.x*_vAlong, _ppz = player.vel.z - wish.z*_vAlong;   // perpendicular part of the velocity
+      player.vel.x = wish.x*_vAlong + _ppx*(1-_f);   // parallel component KEPT; perpendicular eases exactly as before
+      player.vel.z = wish.z*_vAlong + _ppz*(1-_f);
+    } else {
+      player.vel.x += (_tx - player.vel.x) * _f;
+      player.vel.z += (_tz - player.vel.z) * _f;
+    }
   }
   // build 874: side-scroll lane hold — kill off-lane velocity and ease back onto the lane (knockback
   // and slides can push off it; the lane is captured at deploy by _updateViewAim). Cars roam free.
@@ -36747,7 +37427,7 @@ function loop(){
       const _gap=0.34, _hx=player.pos.x+_gFwd.x*(_fd-_gap), _hz=player.pos.z+_gFwd.z*(_fd-_gap);
       const _gy=(typeof groundHeightAt==='function')?groundHeightAt(player.pos.x, player.pos.z, player.pos.y-EYE):0;   /* build 1243 */
       const _hy=Math.max(_lt + EYE - LEDGE_REACH, _gy + EYE - 0.12);   /* build 1289: the PLAYER's reach, not the drawn body's — same in every camera. Full-extension hang, but never feet-through-the-floor: on a ledge near the bottom of the window the body stands at the wall base, arms up to the lip */
-      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:Math.atan2(-_gFwd.x, -_gFwd.z), fy0:player.pos.y, hy:_hy, tx:_fx + _gFwd.x*0.35, tz:_fz + _gFwd.z*0.35, ty:_lt+EYE, lip:_lt, gy:_gy, gx:_gFwd.x, gz:_gFwd.z };   /* build 1290: face the wall this grab found (in the twin-stick views player.yaw points at the CURSOR, which is not the wall), and remember the direction so the drop steps back off it */   /* build 1289: lip + ground ride along so the VISUAL can place a body of any height against them */
+      _ledge = { ph:'hang', t:0, sx:player.pos.x, sz:player.pos.z, hx:_hx, hz:_hz, yaw:Math.atan2(-_gFwd.x, -_gFwd.z), fy0:player.pos.y, hy:_hy, tx:_fx + _gFwd.x*0.35, tz:_fz + _gFwd.z*0.35, ty:_lt+EYE, lip:_lt, gy:_gy, gx:_gFwd.x, gz:_gFwd.z, vx0:player.vel.x, vz0:player.vel.z };   /* build 1290: face the wall this grab found (in the twin-stick views player.yaw points at the CURSOR, which is not the wall), and remember the direction so the drop steps back off it */   /* build 1289: lip + ground ride along so the VISUAL can place a body of any height against them */
       player.vel.x=0; player.vel.y=0; player.vel.z=0; sliding=false; if(typeof SFX!=='undefined' && SFX.jump) SFX.jump(); }
   }
   // build 1160: same pattern as the slide buffer (926). Grounded refreshes the coyote window; a press
@@ -36787,7 +37467,7 @@ function loop(){
       if(_ledge.hx!=null){ player.pos.x = _ledge.sx + (_ledge.hx-_ledge.sx)*_e; player.pos.z = _ledge.sz + (_ledge.hz-_ledge.sz)*_e; }   // build 966: chest a fixed gap off the wall face
       _climbAnim = 'ledgeHang';
       const _wantDrop = (keys[BINDS.crouch]||(BINDS.crouch==='ControlLeft'&&keys['ControlRight'])||padCrouch||touchCrouch||keys[BINDS.back]);
-      const _wantUp = _jPressed || (keys[BINDS.fwd] && _ledge.t>0.25) || _ledge.t>LEDGE_HANG_AUTO;
+      const _wantUp = _jPressed || (keys[BINDS.fwd] && _ledge.t>0.08) || _ledge.t>LEDGE_HANG_AUTO;   /* build 1361: 0.08, was 0.25 — see LEDGE_EXIT_KEEP */
       if(_wantDrop){ _ledge.ph='drop'; _ledge.t=0; }
       else if(_wantUp){ _ledge.ph='pull'; _ledge.t=0; _ledge.sx=player.pos.x; _ledge.sz=player.pos.z; _ledge.fy0=player.pos.y; }
     } else if(_ledge.ph==='pull'){
@@ -36797,7 +37477,7 @@ function loop(){
       player.pos.x = _ledge.sx + (_ledge.tx-_ledge.sx)*_fw;
       player.pos.z = _ledge.sz + (_ledge.tz-_ledge.sz)*_fw;
       _climbAnim = 'ledgeUp';
-      if(_mt>=1){ player.pos.x=_ledge.tx; player.pos.y=_ledge.ty; player.pos.z=_ledge.tz; player.onGround=true; _ledge=null; _climbAnim=0; }
+      if(_mt>=1){ const _mvKeep=Math.hypot(_ledge.vx0||0,_ledge.vz0||0)*LEDGE_EXIT_KEEP; player.vel.x=(_ledge.gx||0)*_mvKeep; player.vel.z=(_ledge.gz||0)*_mvKeep; player.pos.x=_ledge.tx; player.pos.y=_ledge.ty; player.pos.z=_ledge.tz; player.onGround=true; _ledge=null; _climbAnim=0; }   /* build 1361: the mantle is no longer a full stop — a pre-1361 record ({}||0) degrades to the old 0 m/s exit, never NaN */
     } else {   // drop
       _ledge.t += dt; _climbAnim = 'ledgeDrop';
       if(_ledge.t >= LEDGE_DROP_DUR){ player.pos.x -= (_ledge.gx!=null?_ledge.gx:forward.x)*0.25; player.pos.z -= (_ledge.gz!=null?_ledge.gz:forward.z)*0.25; player.vel.y = -1; _ledge=null; _climbAnim=0; }   /* build 1290: back off the wall that was GRABBED, not wherever the basis points this frame */
@@ -36994,15 +37674,45 @@ function loop(){
     if(crouchT > 0.001) camera.position.y -= crouchT * CROUCH_DIP;   // crouch lowers the view
     camera.position.y += _landDip;   // build 1210: the landing dip (negative = down)
 
-    // camera shake (decays quickly) — offsets rotation so it reads as a jolt; build 1210 folds in the strafe lean
+    /* ---- build 1358: THE SHAKE CURVE WAS THROWING AWAY 85-96% OF EVERY GUNSHOT ----------------------
+       `const s = shake * shake` carried the comment "ease — feels punchier". The trauma-squared curve is
+       real and standard — but it is designed for a trauma value that REACHES 1, and every call site here
+       is far below that: gunfire lives at 0.045-0.16, where squaring costs 85-96% of the amplitude.
+       Measured at the shipped 78 deg fov, this block driven to convergence:
+           smg    addShake(0.045)  0.0020 deg   0.02 px @1080p   33 ms
+           rifle  addShake(0.080)  0.0080 deg   0.09 px          50 ms
+           shotgun addShake(0.160) 0.0393 deg   0.46 px          83 ms
+       A tenth of a pixel for two frames is not a camera shake, it is a rounding error — which is why
+       firing this game reads as clicking a mouse. Linear, and the amounts retuned at their call sites.
+
+       Two riders fixed in the same six lines:
+        * It was WHITE NOISE RESAMPLED PER FRAME, so the same shake is a different visual phenomenon at
+          30 Hz and at 144 Hz. Smooth noise of TIME is frame-rate independent by construction.
+        * The decay was 2.2/s, so a rifle's shake was gone inside two frames at 60 Hz. 1.1/s gives it
+          118 ms — still short, still amplitude-proportional (a rocket shakes far longer than a shot),
+          but long enough to be a motion rather than a single displaced frame. */
     if(shake > 0.001){
-      const s = shake * shake;          // ease — feels punchier
-      camera.rotation.x += (Math.random()-0.5) * 0.08 * s;
-      camera.rotation.y += (Math.random()-0.5) * 0.08 * s;
-      camera.rotation.z  = _camLean + (Math.random()-0.5) * 0.06 * s;
-      shake = Math.max(0, shake - dt*2.2);
+      const s = shake, _st = _pnow() * 0.001;
+      camera.rotation.x += _shakeN(_st, 0) * 0.04 * s;
+      camera.rotation.y += _shakeN(_st, 1) * 0.04 * s;
+      camera.rotation.z  = _camLean + _shakeN(_st, 2) * 0.03 * s;
+      shake = Math.max(0, shake - dt*SHAKE_DECAY);
     } else { shake = 0; camera.rotation.z = _camLean; }
     if(tpActive() && gameOn && !duelDead){ gun.visible=false; tpCameraPushback(dt); }   // third-person chase cam (first-person above is the default; build 894: damped follow, forced by Camera view: Third-person)
+    /* ---- build 1362: apply + spring the recoil view-kick ------------------------------------------
+       A CAMERA offset, never a write into player.pitch, so nothing is permanent and the aim the player
+       stored is exactly the aim they get back. The spring is exponential and dt-correct (multiplicative
+       decay composes: two 8 ms frames land where one 16 ms frame does), so recovery is identical at 30
+       and 144 Hz. The applied pitch clamps at 1.55 so base aim + offset can never cross vertical. Cursor
+       views are unaffected twice over: _recKick never accumulates outside fps aim, and _vcamPose below
+       overwrites the rotation regardless. */
+    if(_recPitch !== 0 || _recYaw !== 0){
+      camera.rotation.x = Math.max(-1.55, Math.min(1.55, camera.rotation.x + _recPitch));
+      camera.rotation.y += _recYaw;
+      const _rk = Math.exp(-REC_SPRING * dt);
+      _recPitch *= _rk; _recYaw *= _rk;
+      if(Math.abs(_recPitch) < 1e-5 && Math.abs(_recYaw) < 1e-5){ _recPitch = 0; _recYaw = 0; }   /* settle exactly, stop paying */
+    }
   }
   // build 874: per-level camera views. Placed AFTER the branch ladder so it wins over first/third-person
   // and the car chase cam; the turret seat, PvP killcam and cutscenes keep their own cameras.
@@ -37281,7 +37991,25 @@ function _enStep(en, tvx, tvz, dt){
       en.mesh.visible = !hideEn;
       en._wantMove = false;   // build 541: set true only when the enemy actually tries to translate (chase/close); stuck recovery keys off THIS, not _chase, so an enemy attacking at the player or holding standoff is never treated as "stuck"
       let near=players[0], nd=1e9;
-      for(const pl of players){ const d=Math.hypot(pl.pos.x-en.mesh.position.x, pl.pos.z-en.mesh.position.z); if(d<nd){ nd=d; near=pl; } }
+      /* build 1355: a pacifist keeps picking the nearest PLAYER exactly as it always did — its _near feeds
+         footsteps and the sapper fuse, and it attacks nothing regardless. Everyone else picks the nearest
+         entry of a DIFFERENT faction, which for every pre-1355 level is still just the nearest player. */
+      if(en.friendly){ for(const pl of players){ const d=Math.hypot(pl.pos.x-en.mesh.position.x, pl.pos.z-en.mesh.position.z); if(d<nd){ nd=d; near=pl; } } }
+      else {
+        const _myF = _enFac(en); near = null;
+        for(const t of _combatTargets()){
+          if(t.en===en || (t.fac||0)===_myF || !t.pos) continue;
+          const d=Math.hypot(t.pos.x-en.mesh.position.x, t.pos.z-en.mesh.position.z); if(d<nd){ nd=d; near=t; }
+        }
+        if(!near){
+          /* nothing hostile to it exists — hold position rather than inventing a target. Per-enemy, not a
+             shared scratch: _near outlives this statement (build 1168's rule). */
+          const hx = en.home ? en.home.x : en.mesh.position.x, hz = en.home ? en.home.z : en.mesh.position.z;
+          near = en._tgtNone || (en._tgtNone = { pos:{x:0,y:0,z:0}, eyeY:1.4, fac:-1 });
+          near.pos.x = hx; near.pos.y = en.mesh.position.y; near.pos.z = hz;
+          nd = 1e9; en._noTgt = true;
+        } else en._noTgt = false;
+      }
       en._near = near; en._dist = nd;
       en._nearEyeY = (near.eyeY!=null ? near.eyeY : (near.pos.y!=null ? near.pos.y : 1.4));
       const td = enemyDesiredTarget(en, near.pos.x, near.pos.z, nd, nowMs, near.pos.y);
@@ -38712,6 +39440,12 @@ function _edRevealHost(id){
       const k = sub.dataset && sub.dataset.subfold;
       if(k){ try{ const st=JSON.parse(localStorage.getItem('breach_editor_subfolds')||'{}')||{}; st[k]=false; localStorage.setItem('breach_editor_subfolds', JSON.stringify(st)); }catch(e){} } }
     const sec = h.closest('.edSection'); if(sec) sec.classList.remove('collapsed');
+    /* build 1348: BUILD 1293 MADE THIS NECESSARY AND NOTHING CONNECTED THE TWO. That build stopped
+       building any section whose `offsetParent === null` — i.e. a collapsed one — and made the fold-toggle
+       HANDLER responsible for re-rendering on expand. This helper uncollapses the section DIRECTLY, so it
+       never went through that handler and could reveal an empty fold. Build 1320's `Model...` menu entry
+       goes through here too, so it had the same latent hole. */
+    if(typeof renderEditorFields==='function') renderEditorFields();
     h.scrollIntoView({ block:'start', behavior:'smooth' });
   }catch(e){} }, 60);
 }
@@ -39330,7 +40064,7 @@ function duplicateSelectedSpawn(){
   const g = spawnMarkers[editorTargets.spawns.idx]; if(!g) return;
   pushUndoSnapshot();
   const m = g.userData.mark;
-  const ng = buildSpawnMarker({ t:[g.position.x + DUP_OFFSET, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, type:m.type, wave:m.wave, y:m.y, fr:m.friendly?1:0 });   /* build 1226: duplicate had been dropping type/wave/height since they were added */
+  const ng = buildSpawnMarker({ t:[g.position.x + DUP_OFFSET, g.position.z], mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, type:m.type, wave:m.wave, y:m.y, fr:m.friendly?1:0, fac:m.fac });   /* build 1226: duplicate had been dropping type/wave/height since they were added */
   ng.visible = true;
   editorActive='spawns'; editorTargets.spawns.idx = spawnMarkers.length-1; selSpawns=[ng]; renderEditorFields();
 }
@@ -39989,7 +40723,7 @@ function serializeLevel(){
     lights:  lightModels.map(g=>_lightOpts(g)),
     turret:  { url: turretModelUrl, scale: turretModelScale, modelYaw: turretModelYaw, muz: { fwd:turretMuzzle.fwd, up:turretMuzzle.up, side:turretMuzzle.side } },
     turrets: turretModels.map(_turretOpts),
-    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave, ...(m.friendly?{fr:1}:{}) }; }),   /* build 1226: absent when false, so old levels serialize byte-identically */   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
+    spawns:  spawnMarkers.map(g=>{ const m=g.userData.mark; return { t:[g.position.x, g.position.z], ...(m.y?{y:+m.y}:{}), mode:m.mode, radius:m.radius, detect:m.detect, face:m.face, route:m.route.map(p=>[p.x,p.z]), loop:m.routeLoop, type:m.type, wave:m.wave, ...(m.friendly?{fr:1}:{}), ...(_facOf(m.fac)!==FACTION_DEFAULT?{fac:_facOf(m.fac)}:{}) }; }),   /* build 1226: absent when false, so old levels serialize byte-identically; build 1355: and the default faction is likewise absent */   // build 1087: y omitted when 0, so ground-level levels serialize byte-identically
     pickupsOn: pickupsOn,
     pickups: pickupSpots.map(s=>({ x:+s.x, z:+s.z, kind:s.kind, ...(s.item!=null?{item:s.item}:{}), ...(s.y?{y:s.y}:{}), ...(s.rx?{rx:s.rx}:{}), ...(s.ry?{ry:s.ry}:{}), ...(s.rz?{rz:s.rz}:{}), ...(s.scale!=null&&s.scale!==1?{scale:s.scale}:{}), ...(s.interact?{interact:1}:{}) })),
     loot: lootSpots.map(s=>({ x:+s.x, y:+(s.y||0), z:+s.z, items:(s.items||[]).slice(), glowColor:(s.glowColor!=null?+s.glowColor:0xffd166), glowI:(s.glowI!=null?+s.glowI:8) })),
@@ -40039,7 +40773,7 @@ function _autoSaveStatus(txt){ try{ const el = editorEl && editorEl.querySelecto
 // autosave timer and the beforeunload handler would happily write the old level straight back — so this
 // flag stops every save path the moment New is confirmed.
 let _newLevelPending = false;
-function _libStopTracking(){ if(typeof _libCurrent!=='undefined') _libCurrent=null; }   /* build 1262: New / a foreign load leaves the library entry alone */
+function _libStopTracking(){ if(typeof _libTrack==='function') _libTrack(null); }   /* build 1262: New / a foreign load leaves the library entry alone */
 // build 1254: THE REMIX TRAP, closed. The gallery invites "open in editor to remix", share links load
 // straight over the working level, and there is ONE save slot — so before this build, opening someone
 // else's level and touching anything meant the 20s autosave overwrote your only save with THEIR level.
@@ -40111,7 +40845,16 @@ function saveLevel(){
 // would expect. Clearing it (New level, or opening something foreign) means Save goes back to
 // touching only the active slot — the pre-1262 behaviour, which is the right default.
 const LVLIB_KEY='breach_levels_v1', LVLIB_MAX=40;
-let _libCurrent=null;   // the library entry the active slot is tracking, or null
+// build 1359: PERSISTED. It was module-level, so a reload — a crash, a restore, the next morning — silently
+// detached Save from the entry you had been working in, and the only signal was a badge disappearing from a
+// row. Two hours of edits then went to the anonymous autosave slot while "Warehouse" held yesterday's level,
+// and clicking Open loaded that over them.
+const LVLIB_CUR='breach_lib_cur';
+let _libCurrent=(()=>{ try{ return localStorage.getItem(LVLIB_CUR)||null; }catch(e){ return null; } })();
+function _libTrack(id){   /* the ONE writer, so the memory and the storage can never disagree */
+  _libCurrent = id || null;
+  try{ if(_libCurrent) localStorage.setItem(LVLIB_CUR, _libCurrent); else localStorage.removeItem(LVLIB_CUR); }catch(e){}
+}
 function _libIndex(){ try{ const j=JSON.parse(localStorage.getItem(LVLIB_KEY)||'[]'); return Array.isArray(j)?j.filter(e=>e&&e.id):[]; }catch(e){ return []; } }
 function _libWriteIndex(list){ try{ localStorage.setItem(LVLIB_KEY, JSON.stringify(list.slice(0,LVLIB_MAX))); return true; }catch(e){ return false; } }
 function _libName(n, list){
@@ -40121,9 +40864,34 @@ function _libName(n, list){
   for(let i=2;i<200;i++){ const c=n+' '+i; if(!taken.has(c.toLowerCase())) return c; }   // never silently overwrite a namesake
   return n+' '+Date.now();
 }
+// ---- build 1359: THE LIBRARY REPORTED SAVES IT NEVER CHECKED -----------------------------------------
+// `_libPut` fired both stores and discarded both answers, and libSaveAs/libCommit never looked either — so
+// the caller flashed `Saved as "Warehouse"` whether or not a single byte landed. The INDEX is a tiny
+// localStorage write that succeeds when the multi-megabyte payload does not, which is exactly what hid it:
+// the library would LIST a level that does not exist, and Open days later says "that level could not be
+// read". The author already knew to do this — `saveLevel()` verifies its own write with a read-back and
+// reports "Autosave failed — storage full". Build 1262's library simply did not inherit it.
+//
+// It stays OPTIMISTIC on purpose: the callers are synchronous and the UI flow is unchanged. What the
+// verification buys is that a FAILED write rolls its own index row back out and says so, rather than
+// leaving a phantom entry that outlives the session and overwrites real work when opened.
 function _libPut(id, str){
-  if(typeof _levelDB==='function') _levelDBPutKey('lvl:'+id, str);
-  try{ localStorage.setItem('breach_lvl_'+id, str); }catch(e){}   // best-effort mirror; IndexedDB is the real home
+  const mirror = (()=>{ try{ localStorage.setItem('breach_lvl_'+id, str); return true; }catch(e){ return false; } })();
+  const idb = (typeof _levelDBPutKey==='function') ? _levelDBPutKey('lvl:'+id, str) : Promise.resolve(false);
+  return idb.then(ok=>!!(ok || mirror)).catch(()=>mirror);
+}
+/* Roll the entry back out of the index if neither store took it, and tell the creator. A row pointing at
+   nothing is worse than no row: `libOpen` loads it over live work and reports a read failure afterwards. */
+function _libVerify(id, put, what){
+  return put.then(ok=>{
+    if(ok) return true;
+    const list=_libIndex().filter(e=>e.id!==id); _libWriteIndex(list);
+    if(_libCurrent===id) _libCurrent=null;
+    try{ localStorage.removeItem(LVLIB_CUR); }catch(e){}
+    if(typeof flashToast==='function') flashToast('\u26a0 '+(what||'Save')+' FAILED \u2014 storage is full. The level was NOT saved.');
+    if(typeof renderEditorFields==='function') renderEditorFields();   /* the phantom row leaves the panel now, not on the next unrelated redraw */
+    return false;
+  });
 }
 function _libGet(id){
   return (typeof _levelDBGetKey==='function' ? _levelDBGetKey('lvl:'+id) : Promise.resolve(null))
@@ -40142,7 +40910,7 @@ function libSaveAs(name){
   const e={ id, name:_libName(name, list), t:Date.now() };
   list.unshift(e);
   if(!_libWriteIndex(list)) return { err:'Could not write the library index (storage full).' };
-  _libPut(id, str); _libCurrent=id;
+  _libVerify(id, _libPut(id, str), 'Save as new'); _libTrack(id);
   if(typeof _foreignLevel!=='undefined') _foreignLevel=false;   // it is yours now, by name
   if(typeof _levelDirty!=='undefined') _levelDirty=false;
   return e;
@@ -40152,8 +40920,8 @@ function libCommit(){
   if(!_libCurrent) return false;
   let str; try{ str=JSON.stringify(serializeLevel()); }catch(e){ return false; }
   const list=_libIndex(); const e=list.find(x=>x.id===_libCurrent);
-  if(!e){ _libCurrent=null; return false; }   // deleted from another tab: stop tracking rather than resurrect it
-  e.t=Date.now(); _libWriteIndex(list); _libPut(_libCurrent, str);
+  if(!e){ _libTrack(null); return false; }   // deleted from another tab: stop tracking rather than resurrect it
+  e.t=Date.now(); _libWriteIndex(list); _libVerify(_libCurrent, _libPut(_libCurrent, str), 'Save');
   return true;
 }
 // build 1322 (editor audit 4.11): "libOpen does not ask before replacing unsaved work; it relies on 1254's
@@ -40176,7 +40944,7 @@ function _libOpenNow(id, cb){
     if(typeof markForeignLevel==='function'){ const e=_libIndex().find(x=>x.id===id); markForeignLevel('"'+((e&&e.name)||'a level')+'"'); }
     try{ restoreLevel(lvl); }catch(err){ if(typeof flashToast==='function') flashToast('That level failed to load'); if(cb) cb(false); return; }
     // it came from YOUR library, so it is not foreign — but 1254's rescue of unsaved work still ran
-    _libCurrent=id; if(typeof _foreignLevel!=='undefined') _foreignLevel=false;
+    _libTrack(id); if(typeof _foreignLevel!=='undefined') _foreignLevel=false;
     if(typeof _levelDirty!=='undefined') _levelDirty=false;
     if(typeof saveLevel==='function') saveLevel();   // the active slot follows, so a reload lands here
     if(cb) cb(true);
@@ -41168,6 +41936,22 @@ function _modelSourceBar(host, rerender){
     const off=document.createElement('button'); off.textContent='hide'; off.title='Hide the Sketchfab option'; off.style.cssText='flex:0 0 auto;margin-left:auto;padding:3px 8px;font-size:10px;border-radius:6px;border:1px solid #2a3a42;background:transparent;color:#6f968b;cursor:pointer;'; off.onclick=()=>{ sfSetEnabled(false); _setModelSource('pp'); rerender(); }; wrap.appendChild(off);
   }
   host.appendChild(wrap);
+  if(sfEnabled()){
+    /* build 1349: the consent control sits with the token, not in a settings screen somewhere else — the
+       moment you are choosing Sketchfab models is the moment the trade is legible. */
+    const lw=document.createElement('div'); lw.style.cssText='margin:0 0 6px;';
+    const ll=document.createElement('label'); ll.style.cssText='display:flex;align-items:center;gap:6px;color:#8fb6aa;font-size:11px;cursor:pointer;';
+    const lc=document.createElement('input'); lc.type='checkbox'; lc.style.cssText='width:14px;height:14px;accent-color:var(--accent);flex:none;';
+    lc.checked=(typeof sfLendEnabled==='function') && sfLendEnabled();
+    lc.onchange=()=>{ if(typeof sfSetLend==='function') sfSetLend(lc.checked); rerender(); };
+    const ls=document.createElement('span'); ls.textContent='Lend my token to players who join my games';
+    ll.appendChild(lc); ll.appendChild(ls); lw.appendChild(ll);
+    const lh=document.createElement('div'); lh.className='hint'; lh.style.cssText='font-size:10px;margin:2px 0 0 20px;opacity:.8;';
+    lh.textContent = lc.checked
+      ? 'On — joiners can load this level\u2019s Sketchfab models, and can also spend your Sketchfab API quota while the match lasts.'
+      : 'Off \u2014 your token stays with you. Joiners will see holes where this level\u2019s Sketchfab models should be, unless they add their own token.';
+    lw.appendChild(lh); host.appendChild(lw);
+  }
   if(typeof _modelTexCapControl==='function') _modelTexCapControl(host);   // build 641: texture-resolution control right where you import models
   return wrap;
 }
@@ -41887,6 +42671,17 @@ function buildEditorPanel(){
         '<div class="edPublishCard">'
       +   '<button id="edSubmitComm" class="edCTA">'+_icn('upload')+'Publish to community</button>'
       +   '<div class="hint" style="font-size:10px;margin:6px 0 0;text-align:center">Share your level with everyone \u2014 it appears in the in-game library once approved. No account needed.</div>'
+         /* build 1348: THE FASTEST WAY TO SHARE WAS FILED UNDER THE WRONG NOUN. Build 972's instant
+            /game/ publish gives you a live URL in seconds with no review queue — and its only button lived
+            inside the "Title screen" section, which is where you go to set a logo, not to publish. So the
+            product's best sharing feature sat behind a noun nobody looking to share would open, while the
+            card actually headed "Publish" offered only the queue. Build 1253 fixed the in-game HELP text
+            to name it; this puts it where the decision is made. It SCROLLS to the real control rather than
+            duplicating the publish logic — one publish path, and the creator sees the section it lives in
+            (the same "reveal, don't teleport" rule as build 1320's `_edRevealHost`). */
+      +   '<div class="hint" style="font-size:10px;margin:7px 0 0;text-align:center;border-top:1px solid rgba(var(--accent-rgb),0.25);padding-top:7px">'
+      +     'Want a link <b>right now</b>? <a href="#" id="edGoInstant" style="color:var(--accent)">Publish a game page</a> \u2014 instant URL, no review, your own title screen.'
+      +   '</div>'
       + '</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edOptimizeAll" style="width:100%;border-color:rgba(var(--accent-rgb),0.6);color:#bff5e2">\u26a1 Optimize all models for mobile</button></div>'
       + '<div class="hint" id="edOptStatus" style="font-size:10px;margin:3px 0 8px;min-height:12px">Preflight: bakes every model in the level down for phones (slim re-hosted copies; originals untouched). Check third-party model licenses before re-hosting.</div>'
@@ -42314,6 +43109,25 @@ function buildEditorPanel(){
   }
   const auditBtn = p.querySelector('#edAuditBtn');
   if(auditBtn) auditBtn.onclick=()=>_renderLevelAudit(p.querySelector('#edAudit'));
+  /* build 1348: the instant-publish link on the same card. It REVEALS the real control rather than
+     duplicating the publish logic — one publish path, and the creator ends up looking at the section that
+     owns it, which is build 1320's "reveal, don't teleport" rule. */
+  const inst = p.querySelector('#edGoInstant');
+  if(inst) inst.onclick = (e)=>{ e.preventDefault();
+    if(typeof _edRevealHost==='function') _edRevealHost('edHomePanel');
+    /* A game page IS the title screen — `hpPublish` refuses with "turn on the custom title screen first"
+       when `homepageCfg.on` is false, and the row is inside `#hpFields`, which is display:none until then.
+       So this points at the PREREQUISITE when it is unmet rather than silently ticking a checkbox on the
+       creator's behalf: revealing a control that will refuse is the same dead click build 1147 removed. */
+    setTimeout(()=>{ try{
+      const on = editorEl && editorEl.querySelector('#hpOn');
+      const pub = editorEl && editorEl.querySelector('#hpPublish');
+      const t = (on && !on.checked) ? on : pub;
+      if(t && t.scrollIntoView) t.scrollIntoView({ block:'center' });
+      if(on && !on.checked && typeof flashToast==='function')
+        flashToast('A game page is your title screen \u2014 turn on Custom title screen, then Publish game page');
+    }catch(e){} }, 140);
+  };
   const submitBtn = p.querySelector('#edSubmitComm');
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
@@ -42449,6 +43263,17 @@ function levelIssues(){
         issues.push(_placedRefused+' placed light'+(_placedRefused>1?'s were':' was')+' past the engine budget and switched off during the last play run — the furthest from the player spawn go first. They are all back in the editor; to keep them in play, delete some or give one bright light a longer range instead of several small ones.');
       if(c.shadow > 4)
         issues.push(c.shadow+' lights cast shadows. Each one is an extra render of the level every time it moves — keep it to a few key lights.');
+    }
+    /* build 1353: the other half of 1257's census. A creator can see a model's DOWNLOAD size in the asset
+       panel and has never been able to see what it costs on the GPU, which is the number that decides
+       whether a phone survives the level. */
+    if(typeof _texCensus==='function'){
+      const t=_texCensus();
+      if(t.mb > TEX_MB_SOFT_CAP)
+        issues.push('Texture memory: about '+t.mb+' MB across '+t.count+' textures'
+          + (t.largestMb>=16 ? (' \u2014 the largest alone is ~'+t.largestMb+' MB ('+t.largest+')') : '')
+          + '. This is GPU memory, not download size: a 4096\u00d74096 image costs ~64 MB however small the file is. '
+          + 'Phones commonly have 256\u2013512 MB to spend on everything. Lower "Model texture cap" before importing, or re-export the big ones smaller.');
     }
     // build 1274: culling is opt-in (1273); when it IS on, say what it is removing. A subsystem that can
     // DELETE THINGS FROM THE SCREEN must be able to account for itself — build 1273 shipped this feature
@@ -44271,6 +45096,23 @@ function renderEditorFields(){
             if(g.userData.mark.friendly){ const fh=document.createElement('div'); fh.className='hint'; fh.style.margin='0 0 6px';
               fh.textContent='A wandering NPC: patrols its area or route, ignores players and gunfire, doesn\u2019t count as a hostile, and killing it gives nothing (the On-kill logic event still fires, so you can punish it). Hunt behaves as Patrol while friendly.';
               picker.appendChild(fh); } }
+          // build 1355: FACTION — who this one fights. Hidden while Friendly, because a pacifist fights nobody
+          if(!g.userData.mark.friendly){
+            const flab=document.createElement('div'); flab.className='hint'; flab.style.margin='6px 0 3px'; flab.innerHTML='<b>Faction</b>';
+            picker.appendChild(flab);
+            const fsel=document.createElement('select');
+            for(let i=0;i<FACTION_NAMES.length;i++){ const o=document.createElement('option'); o.value=String(i); o.textContent=FACTION_NAMES[i]+(i===FACTION_DEFAULT?' (default)':''); fsel.appendChild(o); }
+            fsel.value=String(_facOf(g.userData.mark.fac));
+            fsel.onchange=()=>{ pushUndoSnapshot(); g.userData.mark.fac=_facOf(+fsel.value);
+              if(g.userData.post&&g.userData.post.material&&g.userData.post.material.color) g.userData.post.material.color.setHex(FACTION_COL[g.userData.mark.fac] || SPAWN_MODE_COLORS[g.userData.mark.mode] || 0xff2d55);
+              renderEditorFields(); };
+            picker.appendChild(fsel);
+            const fhint=document.createElement('div'); fhint.className='hint'; fhint.style.margin='3px 0 6px';
+            fhint.textContent = _facOf(g.userData.mark.fac)===0
+              ? 'Fights every other faction, never you. Killing one gives you nothing, and its kills are not yours \u2014 the loot still drops.'
+              : 'Anyone of a different faction is a target, including you. Two hostile factions in one level will fight each other.';
+            picker.appendChild(fhint);
+          }
           // ---- Enemy type (archetype) ----
           const tlab=document.createElement('div'); tlab.className='hint'; tlab.style.margin='8px 0 3px'; tlab.innerHTML='<b>Enemy type</b>';
           picker.appendChild(tlab);
@@ -45141,7 +45983,15 @@ function renderEditorFields(){
     }
     if(tgt.addable){
       const head = document.createElement('div'); head.className='hint'; head.style.margin='8px 0 3px';
-      head.innerHTML = '<b>Add from URL</b> — paste any hosted .glb (your own server, a CDN, etc.)';
+      /* build 1348: BRING-YOUR-OWN-ASSET WAS INVISIBLE, AND ON TOUCH IT WAS IMPOSSIBLE.
+         Build 1177 added local .glb import and reached it from exactly one place: a viewport DROP handler.
+         So the only string in the product that mentioned it was the FAILURE toast you get after dropping
+         the wrong kind of file — you had to already know, and get it wrong, to be told. A tablet or phone
+         creator has no drag-and-drop at all, so for them the feature did not exist: the two file inputs in
+         the file both accept `.rumpus,.breach,.json`, i.e. LEVELS, not models.
+         One <input type="file" accept=".glb,.gltf"> into the same `_importLocalModel` fixes both. */
+      head.innerHTML = '<b>Add from URL</b> — paste any hosted .glb (your own server, a CDN, etc.), '
+        + 'or use <b>your own file</b> below. On a computer you can also drag a .glb straight into the viewport.';
       urlHost.appendChild(head);
     }
     const lbl = document.createElement('div'); lbl.className='hint'; lbl.style.marginBottom='4px';
@@ -45161,6 +46011,23 @@ function renderEditorFields(){
       row.appendChild(addUrl);
     }
     urlHost.appendChild(row);
+    if(tgt.addable && typeof _pickLocalModel==='function'){
+      /* build 1348: the door for a creator with the file on their device rather than on a server — and
+         the ONLY door on a tablet, where there is no drag-and-drop. It sits beside Add model because that
+         is where somebody looking for "how do I get my model in" is already reading. */
+      const fr = document.createElement('div'); fr.className='row2'; fr.style.marginTop='6px';
+      const pick = document.createElement('button'); pick.id='edPickLocal';
+      pick.textContent='\ud83d\udcc1 Use a file from this device\u2026';
+      pick.title='Pick a .glb or .gltf off your device. It stays on this device — publish it from Save \u2192 Upload asset to share it.';
+      pick.style.cssText='width:100%';
+      pick.onclick = ()=>_pickLocalModel();
+      fr.appendChild(pick); urlHost.appendChild(fr);
+      const fh = document.createElement('div'); fh.className='hint';
+      fh.style.cssText='font-size:10px;margin:3px 0 0;opacity:.8;';
+      /* build 1177's honesty, restated where the choice is made rather than only in Level Check */
+      fh.textContent='Stays on this device \u2014 other players will not see it until you upload it.';
+      urlHost.appendChild(fh);
+    }
     if(typeof renderModelUpload==='function') renderModelUpload(urlHost, inp, tgt);   // build 974: upload your own .glb
     if(tgt===editorTargets.props && typeof renderModelParts==='function') renderModelParts(urlHost, tgt);   // build 996: recolor/delete parts of the selected imported model
     if(tgt.urlField && !tgt.addable){   // Poly Pizza search for single-slot models (gun/station/grenade/player)
@@ -45225,7 +46092,7 @@ function renderEditorFields(){
           r.appendChild(lb); r.appendChild(cb); r.appendChild(nt); urlHost.appendChild(r); }
         const DEFS = _isM
           ? [ ['reach','Reach m',0.1], ['fireRate','Swing interval ms',10], ['windup','Contact delay ms',10] ]
-          : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1] ];
+          : [ ['fireRate','Fire interval ms',5], ['magSize','Magazine',1], ['reserve0','Start ammo',1], ['reserveMax','Max ammo',1], ['spread','Spread',0.005], ['reloadMs','Reload ms',50], ['pellets','Pellets',1], ['kickV','Recoil kick rad',0.002], ['kickH','Recoil side rad',0.001] ];
         for(const [sk, lbl, stp] of DEFS){
           const r=document.createElement('div'); r.className='row2'; r.style.margin='2px 0';
           const lb=document.createElement('span'); lb.textContent=lbl; lb.style.cssText='flex:0 0 108px;font-size:11px;color:#9fc0b8;';
@@ -45979,6 +46846,29 @@ function renderEditorFields(){
       soLab.appendChild(soCb); soLab.appendChild(soSp); urlHost.appendChild(soLab);
       // build 1132: shadow casting, on spot and directional only. A point light's shadow is a cube map
       // (six depth passes for one lamp), which is not a cost to hand a creator behind a checkbox.
+      /* build 1348: A POINT LIGHT HAS NO SHADOW CONTROL, AND UNTIL NOW IT DID NOT SAY SO.
+         Build 1132 gave placed lights an opt-in shadow and allowed it only for spot and directional, for a
+         real reason: a point light's shadow is a CUBE MAP, six depth passes for one lamp. But the checkbox
+         was simply ABSENT for a point light with no explanation, so a creator lighting a room got light
+         straight through the walls and nothing in the product told them why or what to do instead.
+         Measured on the shipped stock level: 29 point lights, ZERO casting. That is not an edge case,
+         it is what every level looks like.
+         Two things were verified before choosing to explain rather than implement:
+           - flipping `castShadow` at runtime RECOMPILES (54 -> 65 programs in one frame), so a point
+             shadow could never be a live toggle — it would arrive as builds 636/977/1153/1155's freeze by
+             a second door, and would have to be decided at deploy like `enforceEmitterCap`.
+           - the frame-cost sweep FAILED its own control (the 0-caster baseline read 396 ms and the return
+             to 0 read 554 ms), so there is no honest cost figure to ship a cube shadow against. Shipping
+             an expensive feature with a broken measurement is how this file's worst builds happened.
+         So: say it, name the fix, and leave the implementation to a build that can measure it. */
+      if(g0.userData.ltype==='point'){
+        const ns=document.createElement('div'); ns.className='hint';
+        ns.style.cssText='font-size:10px;margin:0 0 6px;opacity:.85;';
+        ns.innerHTML='<b>This light shines through walls.</b> A point light casts in every direction at '
+          + 'once, which needs six depth passes, so the engine does not shadow it. For a lamp that must be '
+          + 'blocked by a wall, use a <b>Spot</b> light and tick Casts shadows.';
+        urlHost.appendChild(ns);
+      }
       if(g0.userData.ltype==='spot' || g0.userData.ltype==='dir'){
         const shLab=document.createElement('label'); shLab.style.cssText='display:flex;gap:6px;align-items:center;margin:6px 0 2px;font-size:11px;color:#9fe6cf;cursor:pointer;';
         const shCb=document.createElement('input'); shCb.type='checkbox'; shCb.checked=!!g0.userData.wantShadow;
@@ -48338,13 +49228,22 @@ function endGame(){
 function genRoomCode(){ const a='abcdefghjkmnpqrstuvwxyz23456789'; let s=''; for(let i=0;i<5;i++) s+=a[Math.floor(Math.random()*a.length)]; return s; }
 function ensurePeerJS(cb){
   if(window.Peer){ cb(true); return; }
-  const cdns=['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js','https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js','https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'];
+  /* build 1354: LOCAL FIRST. Rapier and fflate have been vendored beside the game for builds; PeerJS —
+     the transport the whole multiplayer feature rides on — was three CDNs and nothing else, so a
+     self-hoster, an air-gapped classroom or an offline session had no multiplayer at all.
+     The local copy is byte-identical to what build 1332 pinned: fetched from unpkg at the same version and
+     hashed, it produces exactly that build's sha384. It deliberately carries NO `integrity` attribute
+     though — SRI exists to detect a mirror serving something other than what you asked for, and a file you
+     host yourself is a file you control. Pinning a hash to your own copy only means a legitimate update
+     silently stops loading. The CDNs keep theirs, because that is where the risk actually is. */
+  const cdns=['peerjs.min.js','https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js','https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js','https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'];
   let i=0;
   (function next(){ if(i>=cdns.length){ cb(false); return; } const s=document.createElement('script');
     /* build 1332: same rule as three.js above — hashed from all three CDNs, which serve identical
        bytes; a tampered mirror fails the check and the loader falls through to the next. */
-    s.crossOrigin='anonymous'; s.integrity='sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR';
-    s.src=cdns[i++]; s.onload=()=>{ window.Peer?cb(true):next(); }; s.onerror=next; document.head.appendChild(s); })();
+    const _u=cdns[i++], _local=(_u.indexOf('://')<0);
+    if(!_local){ s.crossOrigin='anonymous'; s.integrity='sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR'; }
+    s.src=_u; s.onload=()=>{ window.Peer?cb(true):next(); }; s.onerror=next; document.head.appendChild(s); })();
 }
 function startHost(){
   const nm=document.getElementById('mpName'); NET.name=(nm&&nm.value.trim())||'Host';
@@ -50267,6 +51166,12 @@ function _commRenderRows(){
       vb.title='Thumbs up \u2014 helps this level rise in Most played';
       if(_playsVoted(L)){ vb.disabled=true; vb.style.opacity='0.55'; }
       row.appendChild(vb); }
+    /* build 1351: report the LEVEL. The server has this one — it is in the published index — so the file
+       name is the whole target and the moderator can pull it up from the queue. */
+    if(typeof _reportBtn==='function')
+      row.appendChild(_reportBtn('\u2691', 'Report this level',
+        ()=>openReportDialog('level', { what:'“'+String(L.name||'this level').slice(0,40)+'”',
+          target:String(L.file||L.name||'').slice(0,120) })));
     rows.appendChild(row);
   }
 }
