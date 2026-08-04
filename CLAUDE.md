@@ -967,6 +967,73 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## A shadow's softness is the distance to what cast it (build 1380)
+
+Every shadow in the engine had the SAME edge softness whatever cast it, because PCF samples a fixed radius
+— `shadowRadius` texels, everywhere. Real shadows do not work that way: the penumbra grows with the
+distance between the occluder and the receiver, which is why a chair leg is razor-sharp where it meets the
+floor and a roofline three storeys up is a soft band. One softness reads as either *cut out with scissors*
+or *everything is out of focus*.
+
+**Builds 1341, 1345 and 1346 all spent themselves on the artifacts of the first choice** — the normal bias,
+then the depth bias, then the map resolution — without ever questioning the model underneath them. This
+build changes the model. PCSS is three passes over the map three already renders: search for blockers,
+estimate the penumbra from how far away they are, PCF at THAT radius.
+
+Four decisions, each of which is a defect without it:
+
+- **Only the NEAR cascade.** The call site is patched with `UNROLLED_LOOP_INDEX == 0`, so light 0 gets PCSS
+  and the far cascade, every spot light and every point light keep three's own `getShadow` untouched. The
+  far cascade's texel is 4× coarser by design and covers geometry where a penumbra is under a pixel — and a
+  **spot's shadow camera is PERSPECTIVE**, so the depth-to-world scale derived below would be wrong for it.
+- **`pcssP.x == 0` returns `getShadow` VERBATIM.** Off is not a cheap approximation of on; it is the shipped
+  1346 path, called. That is what makes it safe to shed on the adaptive ladder (build 1350's rule that a
+  perf *add* needs a way out) and what makes shedding it exactly free.
+- **The disc is COMPUTED, not stored.** GLSL ES 1.0 cannot index a const array with a loop variable, and a
+  golden-angle Vogel spiral (build 1247's bokeh disc) needs no array at all. `sqrt` radius, so it is uniform
+  over the disc rather than centre-heavy.
+- **The scale is derived on the CPU**, inside `_fitSunShadow`, where the extent, the depth range and the map
+  size already live — so the shader carries arithmetic instead of a second copy of the shadow fit:
+  `penumbraTexels = depthGap × (far − near) × tan(sunRadius) / texel`.
+
+`SUN_ANGLE_TAN = 0.020` against the real sun's **0.0047**. At life size the penumbra is under one texel for
+anything but a very tall occluder — it would measure as no change at all. At 0.020 an occluder 10 m above
+its receiver casts a ~7-texel (20 cm) penumbra while one touching the ground gets the 1-texel floor, which
+IS the contact hardening.
+
+### Measured — and the first four runs measured nothing but the HUD
+
+```
+                    world pixels moved by >6      mean |d|
+control  0 vs 0              0.000%                0.0047
+shipped  (tan 0.020)         0.232%                0.0396
+3x                           0.842%                0.1376
+10x                          1.566%                0.3017
+```
+Monotonic in amplitude, replicating to four significant figures across an independent repeat, with the
+control returning to zero. 0.232% is small because **shadow edges are a small fraction of any frame** —
+that is what this build touches and all it should touch. Stated rather than inflated.
+
+Verified on the real GPU path before any of that: **65 programs compiled, `glGetError` 0, zero shader
+console output, frame not black.** A GLSL error in a chunk patch takes down every lit material in the
+engine, and this file has lost a subsystem to a silent shader failure twice.
+
+### Three instrument failures, and the second is a standing rule
+
+| # | it reported | why |
+|---|---|---|
+| 1 | effect 5.14% against a control of 7.34% — a clean null | the **HUD** was inside the window. The minimap dots, the wave banner and the coach pill animate, and they were the entire noise floor. Excluding them took the control from 1.14% of pixels >6 to **0.000%** |
+| 2 | a **10× amplitude** produced exactly the same 5.06% | `_fitSunShadow` REWRITES `_pcssP.x` every frame, so the probe's assignment was undone before the next render and **both conditions rendered identically**. Pinned with `Object.defineProperty` instead |
+| 3 | — | `paused = true` is what makes any of this measurable at all: in a running game the scene is the noise floor, and it is far larger than any shading change worth making |
+
+**#2 is build 1345's lesson arriving again, in a build that quotes it**: *know who else writes what you are
+setting.* The frame loop owns the camera, the shadow fit owns `normalBias` — and now it owns this too.
+
+**And the uniform is the half that would have made the whole build a silent no-op.** `ShaderLib` merged
+`UniformsLib` at module load (build 1181), so adding to the lib alone reaches nothing already built and
+`seqWithValue` silently drops a program uniform with no value — `pcssP` would have sat at GL zero forever,
+which reads exactly like the feature working correctly with itself turned off.
+
 ## The props stop being one flat colour (build 1379)
 
 Build 1139 built the procedural detail set and deliberately left ALBEDO out of it, for a reason that is
