@@ -967,6 +967,62 @@ of glTF candela and giving them a finite reach. The "decision about creators who
 turned out not to be the hard part: reading GLTFLoader showed the intensity and the range were broken
 independently of the freeze.
 
+## Three capabilities that existed and could not be found (build 1348)
+
+None of this adds an ability. Each item adds a **door** to something already shipped — which is the
+difference between having a feature and having a product.
+
+**1. Local `.glb` import was invisible, and on touch it was impossible.** Build 1177 added it and reached
+it from exactly one place: a viewport DROP handler. So the only string in the product that mentioned it was
+the FAILURE toast you get after dropping the wrong kind of file — *you had to already know, and get it
+wrong, to be told.* And a tablet has no drag-and-drop at all: both `input[type=file]` in the file accept
+`.rumpus,.breach,.json`, i.e. LEVELS, so for a touch creator the feature did not exist. `_pickLocalModel`
+is one `<input type="file" accept=".glb,.gltf">` into the **same** `_importLocalModel` — a door, not a
+second code path, so it cannot drift from the drop route.
+
+**2. A point light shines through walls and never said so.** Build 1132 allowed a placed light to cast a
+shadow only for spot and directional, for a real reason: a point light's shadow is a cube map, six depth
+passes for one lamp. But the checkbox was simply **absent** for a point light with no explanation.
+Measured on the shipped stock level: **29 point lights, ZERO casting.** That is not an edge case, it is
+what every level looks like — and it is a much larger "light leaks into my room" than any shadow-map
+hairline.
+
+Two measurements decided *explain* over *implement*, and both are recorded at the site:
+- Flipping `castShadow` at runtime **recompiles — 54 → 65 programs in one frame.** So a point shadow could
+  never be a live toggle; it would arrive as builds 636/977/1153/1155's freeze by a second door and would
+  have to be decided at deploy like `enforceEmitterCap`.
+- The frame-cost sweep **failed its own control** — the 0-caster baseline read 396 ms and the return to 0
+  read 554 ms. There is no honest cost figure to ship a cube shadow against, and shipping an expensive
+  feature on a broken measurement is how this file's worst builds happened. So the panel names the
+  consequence and the fix (use a Spot) and the implementation waits for a build that can measure it.
+
+**3. The fastest way to share was filed under the wrong noun *and* hidden behind another feature's
+toggle.** Build 972's instant `/game/` publish gives a live URL in seconds with no review queue, and its
+only button lived inside the "Title screen" section — which is where you go to set a logo. Verified while
+building this: it is also inside `#hpFields`, which is `display:none` until the **Custom title screen**
+checkbox is ticked. The audit found the first half; the probe found the second.
+
+The link on the publish card **reveals** the real control rather than duplicating the publish logic, and
+when the prerequisite is unmet it scrolls to the CHECKBOX rather than to a button that would refuse — a
+game page *is* the title screen, and `hpPublish` says "turn on the custom title screen first". It never
+ticks it on the creator's behalf. Revealing a control that will refuse is the same dead click build 1147
+removed.
+
+### And a latent bug found while verifying #3
+
+**Build 1293 broke build 1320's reveal helper and nothing connected the two.** 1293 stopped building any
+section whose `offsetParent === null` and made the fold-toggle HANDLER responsible for re-rendering on
+expand. `_edRevealHost` uncollapses the section **directly**, so it never went through that handler and
+could reveal an empty fold — including build 1320's own `Model…` menu entry, which has been landing on
+unbuilt content since 1293 shipped. It re-renders now, in the order uncollapse → build → scroll, because
+scrolling to an unbuilt fold lands nowhere.
+
+Verified in the real editor rather than by flag-setting (builds 1264/1268 shipped a fix into a branch no
+creator reaches, twice): the picker button renders and opens a `.glb`-only input; a placed point light's
+panel reads *"This light shines through walls"* and names Spot; the publish link sits inside the publish
+card, and clicking it opens the Title screen section with the toggle on screen and the publish row still
+hidden — then ticking the toggle brings `Publish game page (instant URL)` into view.
+
 ## The keyboard reaches the editor (build 1347 — the accessibility census, 4/6)
 
 Build 1334 left the census at three-for-six and named what remained: `role=`, `tabindex`, and a

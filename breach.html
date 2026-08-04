@@ -17986,6 +17986,17 @@ function _loadLocalModel(url, cb, errcb){
     .catch(errcb);
 }
 const LOCAL_MODEL_MAX_MB = 64;
+/* build 1348: the picker half of local import. Same function, same store, same `local:` src — this adds a
+   DOOR, not a code path, which is why it cannot drift from the drop handler. `atPoint` is omitted so the
+   model lands at the editor drop point exactly as the + menu's own entries do (build 1320's rule: the
+   buttons say "here", meaning where you are looking). */
+function _pickLocalModel(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.glb,.gltf,model/gltf-binary,model/gltf+json';
+  inp.style.display = 'none';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if(f) _importLocalModel(f); inp.remove(); };
+  document.body.appendChild(inp); inp.click();
+}
 function _importLocalModel(file, atPoint){
   if(!file || !/\.(glb|gltf)$/i.test(file.name)){ if(typeof flashToast==='function') flashToast('Drop a .glb or .gltf file'); return; }
   if(file.size > LOCAL_MODEL_MAX_MB*1024*1024){ if(typeof flashToast==='function') flashToast('Model too large ('+Math.round(file.size/1048576)+' MB — cap is '+LOCAL_MODEL_MAX_MB+')'); return; }
@@ -31121,7 +31132,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1347 · 2026-08-04';
+const BUILD_VERSION = 'build 1348 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -38796,6 +38807,12 @@ function _edRevealHost(id){
       const k = sub.dataset && sub.dataset.subfold;
       if(k){ try{ const st=JSON.parse(localStorage.getItem('breach_editor_subfolds')||'{}')||{}; st[k]=false; localStorage.setItem('breach_editor_subfolds', JSON.stringify(st)); }catch(e){} } }
     const sec = h.closest('.edSection'); if(sec) sec.classList.remove('collapsed');
+    /* build 1348: BUILD 1293 MADE THIS NECESSARY AND NOTHING CONNECTED THE TWO. That build stopped
+       building any section whose `offsetParent === null` — i.e. a collapsed one — and made the fold-toggle
+       HANDLER responsible for re-rendering on expand. This helper uncollapses the section DIRECTLY, so it
+       never went through that handler and could reveal an empty fold. Build 1320's `Model...` menu entry
+       goes through here too, so it had the same latent hole. */
+    if(typeof renderEditorFields==='function') renderEditorFields();
     h.scrollIntoView({ block:'start', behavior:'smooth' });
   }catch(e){} }, 60);
 }
@@ -41971,6 +41988,17 @@ function buildEditorPanel(){
         '<div class="edPublishCard">'
       +   '<button id="edSubmitComm" class="edCTA">'+_icn('upload')+'Publish to community</button>'
       +   '<div class="hint" style="font-size:10px;margin:6px 0 0;text-align:center">Share your level with everyone \u2014 it appears in the in-game library once approved. No account needed.</div>'
+         /* build 1348: THE FASTEST WAY TO SHARE WAS FILED UNDER THE WRONG NOUN. Build 972's instant
+            /game/ publish gives you a live URL in seconds with no review queue — and its only button lived
+            inside the "Title screen" section, which is where you go to set a logo, not to publish. So the
+            product's best sharing feature sat behind a noun nobody looking to share would open, while the
+            card actually headed "Publish" offered only the queue. Build 1253 fixed the in-game HELP text
+            to name it; this puts it where the decision is made. It SCROLLS to the real control rather than
+            duplicating the publish logic — one publish path, and the creator sees the section it lives in
+            (the same "reveal, don't teleport" rule as build 1320's `_edRevealHost`). */
+      +   '<div class="hint" style="font-size:10px;margin:7px 0 0;text-align:center;border-top:1px solid rgba(var(--accent-rgb),0.25);padding-top:7px">'
+      +     'Want a link <b>right now</b>? <a href="#" id="edGoInstant" style="color:var(--accent)">Publish a game page</a> \u2014 instant URL, no review, your own title screen.'
+      +   '</div>'
       + '</div>'
       + '<div class="row2" style="margin-top:6px"><button id="edOptimizeAll" style="width:100%;border-color:rgba(var(--accent-rgb),0.6);color:#bff5e2">\u26a1 Optimize all models for mobile</button></div>'
       + '<div class="hint" id="edOptStatus" style="font-size:10px;margin:3px 0 8px;min-height:12px">Preflight: bakes every model in the level down for phones (slim re-hosted copies; originals untouched). Check third-party model licenses before re-hosting.</div>'
@@ -42398,6 +42426,25 @@ function buildEditorPanel(){
   }
   const auditBtn = p.querySelector('#edAuditBtn');
   if(auditBtn) auditBtn.onclick=()=>_renderLevelAudit(p.querySelector('#edAudit'));
+  /* build 1348: the instant-publish link on the same card. It REVEALS the real control rather than
+     duplicating the publish logic — one publish path, and the creator ends up looking at the section that
+     owns it, which is build 1320's "reveal, don't teleport" rule. */
+  const inst = p.querySelector('#edGoInstant');
+  if(inst) inst.onclick = (e)=>{ e.preventDefault();
+    if(typeof _edRevealHost==='function') _edRevealHost('edHomePanel');
+    /* A game page IS the title screen — `hpPublish` refuses with "turn on the custom title screen first"
+       when `homepageCfg.on` is false, and the row is inside `#hpFields`, which is display:none until then.
+       So this points at the PREREQUISITE when it is unmet rather than silently ticking a checkbox on the
+       creator's behalf: revealing a control that will refuse is the same dead click build 1147 removed. */
+    setTimeout(()=>{ try{
+      const on = editorEl && editorEl.querySelector('#hpOn');
+      const pub = editorEl && editorEl.querySelector('#hpPublish');
+      const t = (on && !on.checked) ? on : pub;
+      if(t && t.scrollIntoView) t.scrollIntoView({ block:'center' });
+      if(on && !on.checked && typeof flashToast==='function')
+        flashToast('A game page is your title screen \u2014 turn on Custom title screen, then Publish game page');
+    }catch(e){} }, 140);
+  };
   const submitBtn = p.querySelector('#edSubmitComm');
   if(submitBtn) submitBtn.onclick = async ()=>{
     const note = editorEl.querySelector('#edCopied');
@@ -45225,7 +45272,15 @@ function renderEditorFields(){
     }
     if(tgt.addable){
       const head = document.createElement('div'); head.className='hint'; head.style.margin='8px 0 3px';
-      head.innerHTML = '<b>Add from URL</b> — paste any hosted .glb (your own server, a CDN, etc.)';
+      /* build 1348: BRING-YOUR-OWN-ASSET WAS INVISIBLE, AND ON TOUCH IT WAS IMPOSSIBLE.
+         Build 1177 added local .glb import and reached it from exactly one place: a viewport DROP handler.
+         So the only string in the product that mentioned it was the FAILURE toast you get after dropping
+         the wrong kind of file — you had to already know, and get it wrong, to be told. A tablet or phone
+         creator has no drag-and-drop at all, so for them the feature did not exist: the two file inputs in
+         the file both accept `.rumpus,.breach,.json`, i.e. LEVELS, not models.
+         One <input type="file" accept=".glb,.gltf"> into the same `_importLocalModel` fixes both. */
+      head.innerHTML = '<b>Add from URL</b> — paste any hosted .glb (your own server, a CDN, etc.), '
+        + 'or use <b>your own file</b> below. On a computer you can also drag a .glb straight into the viewport.';
       urlHost.appendChild(head);
     }
     const lbl = document.createElement('div'); lbl.className='hint'; lbl.style.marginBottom='4px';
@@ -45245,6 +45300,23 @@ function renderEditorFields(){
       row.appendChild(addUrl);
     }
     urlHost.appendChild(row);
+    if(tgt.addable && typeof _pickLocalModel==='function'){
+      /* build 1348: the door for a creator with the file on their device rather than on a server — and
+         the ONLY door on a tablet, where there is no drag-and-drop. It sits beside Add model because that
+         is where somebody looking for "how do I get my model in" is already reading. */
+      const fr = document.createElement('div'); fr.className='row2'; fr.style.marginTop='6px';
+      const pick = document.createElement('button'); pick.id='edPickLocal';
+      pick.textContent='\ud83d\udcc1 Use a file from this device\u2026';
+      pick.title='Pick a .glb or .gltf off your device. It stays on this device — publish it from Save \u2192 Upload asset to share it.';
+      pick.style.cssText='width:100%';
+      pick.onclick = ()=>_pickLocalModel();
+      fr.appendChild(pick); urlHost.appendChild(fr);
+      const fh = document.createElement('div'); fh.className='hint';
+      fh.style.cssText='font-size:10px;margin:3px 0 0;opacity:.8;';
+      /* build 1177's honesty, restated where the choice is made rather than only in Level Check */
+      fh.textContent='Stays on this device \u2014 other players will not see it until you upload it.';
+      urlHost.appendChild(fh);
+    }
     if(typeof renderModelUpload==='function') renderModelUpload(urlHost, inp, tgt);   // build 974: upload your own .glb
     if(tgt===editorTargets.props && typeof renderModelParts==='function') renderModelParts(urlHost, tgt);   // build 996: recolor/delete parts of the selected imported model
     if(tgt.urlField && !tgt.addable){   // Poly Pizza search for single-slot models (gun/station/grenade/player)
@@ -46063,6 +46135,29 @@ function renderEditorFields(){
       soLab.appendChild(soCb); soLab.appendChild(soSp); urlHost.appendChild(soLab);
       // build 1132: shadow casting, on spot and directional only. A point light's shadow is a cube map
       // (six depth passes for one lamp), which is not a cost to hand a creator behind a checkbox.
+      /* build 1348: A POINT LIGHT HAS NO SHADOW CONTROL, AND UNTIL NOW IT DID NOT SAY SO.
+         Build 1132 gave placed lights an opt-in shadow and allowed it only for spot and directional, for a
+         real reason: a point light's shadow is a CUBE MAP, six depth passes for one lamp. But the checkbox
+         was simply ABSENT for a point light with no explanation, so a creator lighting a room got light
+         straight through the walls and nothing in the product told them why or what to do instead.
+         Measured on the shipped stock level: 29 point lights, ZERO casting. That is not an edge case,
+         it is what every level looks like.
+         Two things were verified before choosing to explain rather than implement:
+           - flipping `castShadow` at runtime RECOMPILES (54 -> 65 programs in one frame), so a point
+             shadow could never be a live toggle — it would arrive as builds 636/977/1153/1155's freeze by
+             a second door, and would have to be decided at deploy like `enforceEmitterCap`.
+           - the frame-cost sweep FAILED its own control (the 0-caster baseline read 396 ms and the return
+             to 0 read 554 ms), so there is no honest cost figure to ship a cube shadow against. Shipping
+             an expensive feature with a broken measurement is how this file's worst builds happened.
+         So: say it, name the fix, and leave the implementation to a build that can measure it. */
+      if(g0.userData.ltype==='point'){
+        const ns=document.createElement('div'); ns.className='hint';
+        ns.style.cssText='font-size:10px;margin:0 0 6px;opacity:.85;';
+        ns.innerHTML='<b>This light shines through walls.</b> A point light casts in every direction at '
+          + 'once, which needs six depth passes, so the engine does not shadow it. For a lamp that must be '
+          + 'blocked by a wall, use a <b>Spot</b> light and tick Casts shadows.';
+        urlHost.appendChild(ns);
+      }
       if(g0.userData.ltype==='spot' || g0.userData.ltype==='dir'){
         const shLab=document.createElement('label'); shLab.style.cssText='display:flex;gap:6px;align-items:center;margin:6px 0 2px;font-size:11px;color:#9fe6cf;cursor:pointer;';
         const shCb=document.createElement('input'); shCb.type='checkbox'; shCb.checked=!!g0.userData.wantShadow;
