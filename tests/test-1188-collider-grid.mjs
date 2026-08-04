@@ -85,7 +85,7 @@ const box = (x0, z0, w, d) => ({ userData: { box: { min: { x: x0, y: 0, z: z0 },
   eq((src.match(/_cgQuery\(/g) || []).length, 10, 'nine consumers query the grid (plus the definition): _surfCull, surfaceTopAt\'s fallback, clearAt, insideSolid, ceilingAt, segmentBlocked, the bolt hit test, the enemy resolve — and 1195\'s bake integrator');
   assert(/const _cgSurf = \[\], _cgClear = \[\], _cgInside = \[\], _cgCeil = \[\], _cgSeg = \[\], _cgBolt = \[\], _cgEnemy = \[\];/.test(src),
     'one scratch per consumer — clearAt calls surfaceTopAt (through _surfCull) before its own query, and a shared array would be clobbered the day that order matters');
-  assert(/function refreshPropCollider\(obj\)\{\n  if\(obj && obj\.userData && !obj\.userData\._cgMobile && typeof _cgDirty==='function'\) _cgDirty\(\);/.test(src),
+  assert(/function refreshPropCollider\(obj, mover\)\{\n  if\(obj && obj\.userData && !obj\.userData\._cgMobile && typeof _cgDirty==='function'\) _cgDirty\(\);/.test(src),
     'refreshPropCollider dirties the grid ONLY for statics — a mover\'s per-frame refresh must not rebuild');
   assert(/function refreshWallCollider\(m\)\{ if\(typeof _cgDirty==='function'\) _cgDirty\(\);/.test(src), 'the arena walls dirty it too');
   assert(/for\(const c of _cgQuery\(en\.mesh\.position\.x-eR-0\.01, en\.mesh\.position\.x\+eR\+0\.01/.test(src),

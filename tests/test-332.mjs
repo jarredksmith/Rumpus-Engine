@@ -15,7 +15,7 @@ assert(/p\.mat \|\| \(p\.tex \? \{tex:p\.tex\} : null\)/.test(extractFunction('_
 assert(/if\(e\.altKey\)\{ const o=_pickPropAt\(e\); if\(o\)\{ e\.preventDefault\(\); pushUndoSnapshot\(\); _dupPropForDrag\(o\); _altDupActive = true; editorDragMoved = true; return; \} \}/.test(src), 'Alt+mousedown on a prop starts the drag-duplicate and suppresses look/select');
 // the alt check sits BEFORE drag-look starts
 const iAlt = src.indexOf('if(e.altKey){ const o=_pickPropAt(e);');
-const iLook = src.indexOf('if(editorTopView) _marqueeStart(e); else editorDragLook = true;', iAlt-1);
+const iLook = src.indexOf('if(editorTopView) _marqueeStart(e); else if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;', iAlt-1);
 assert(iAlt>=0 && iLook>iAlt, 'alt-dup is handled before drag-look would start');
 
 // mousemove: the copy follows the ground point under the cursor

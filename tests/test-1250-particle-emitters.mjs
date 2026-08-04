@@ -97,7 +97,7 @@ assert(/if\(obj\.userData\.fx\)\{ obj\.userData\.boxes = \[\]; return; \}/.test(
   'collider exemption 1: no per-mesh collision boxes, ever (the overall box stays for selection)');
 assert(/if\(o\.userData && o\.userData\.fx\) return;   \/\/ build 1250: an emitter never gets a physics body/.test(src),
   'collider exemption 2: no Rapier static body');
-assert(/if\(!obj\.userData\.fx\) colliders\.push\(obj\);/.test(src),
+assert(/if\(!obj\.userData\.fx\)\{ colliders\.push\(obj\); obj\.userData\._inColliders=true; \}/.test(src),
   'collider exemption 3: emitters never join the colliders list (no raycast, no enemy avoidance, no ghost walls — the 1236 class, prevented)');
 assert(/if\(typeof updateEmitters==='function'\) updateEmitters\(dt\);/.test(src), 'the loop ticks emitters beside the other world effects');
 assert(/P\.add \? _getFireMat\(\) : _getFireMatSmoke\(\)/.test(src),

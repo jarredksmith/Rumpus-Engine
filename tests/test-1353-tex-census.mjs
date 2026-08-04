@@ -42,8 +42,8 @@ const src = gameSource();
 // ---- the census finds what the caches cannot see ----
 {
   const f = extractFunction('_texCensus', src);
-  assert(/seen = new Set\(\)/.test(f) && /seen\.has\(t\)/.test(f),
-    'a texture shared by ten materials counts once — verified live: 8 materials, +1 to the count');
+  assert(/seen = new Set\(\)/.test(f) && /seen\.has\(sk\)/.test(f) && /t\.source \|\| t/.test(f),
+    'a texture shared by ten materials counts once — and (build 1376) N tilings sharing one SOURCE count once, because they ARE one upload now');
   assert(/scene\.traverse/.test(f),
     'it walks the SCENE, not just the two caches: an imported GLB’s own maps are in neither cache and are ' +
     'most of a big level. Verified live — a material-only 2048² added exactly its 21 MB');

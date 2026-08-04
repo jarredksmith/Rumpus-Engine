@@ -8,7 +8,7 @@ assert(/let _marqueeOn=false, _marqueeX0=0, _marqueeY0=0, _marqueeEl=null;/.test
 assert(/function _marqueeStart\(e\)\{/.test(src) && /function _marqueeMove\(e\)\{/.test(src) && /function _marqueeFinish\(e\)\{/.test(src), 'marquee start/move/finish helpers');
 
 // wiring: top-view left-drag starts the marquee (not pan); fly still looks
-assert(/if\(editorTopView\) _marqueeStart\(e\); else editorDragLook = true;/.test(src), 'top-view left-drag starts the marquee');
+assert(/if\(editorTopView\) _marqueeStart\(e\); else if\(!\(e\.altKey && editorFreeFly && _edOrbitStart\(e\)\)\) editorDragLook = true;/.test(src), 'top-view left-drag starts the marquee (build 1377: fly-mode Alt+LMB on empty space claims the orbit first)');
 // mousemove updates the box; mouseup finishes it
 assert(/if\(_marqueeOn\)\{ _marqueeMove\(e\); editorDragMoved = true; return; \}/.test(src), 'drag updates the marquee box');
 assert(/if\(_marqueeOn\)\{ _marqueeFinish\(e\); \}/.test(src), 'mouseup finalizes the marquee');

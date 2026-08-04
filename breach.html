@@ -1051,10 +1051,29 @@
   }
   #pauseMenu .pauseCard {
     display:flex; flex-direction:column; align-items:center; gap:12px; min-width:280px;
-    padding:30px 36px; border:1px solid rgba(var(--accent-rgb),.22); border-radius:16px;
+    width:min(440px, calc((100vw - 28px) / var(--uiS,1)));
+    padding:26px 32px 22px; border:1px solid rgba(var(--accent-rgb),.22); border-radius:16px;
     background:rgba(8,16,18,.7); box-shadow:0 20px 60px rgba(0,0,0,.5);
-    max-height:92vh; max-height:calc(100dvh - 16px); overflow-y:auto;
+    /* build 1375: the CARD no longer scrolls — the tab body (#pauseBody) scrolls INSIDE it, so the
+       footer (Resume / Help / Exit) stays on screen at every height. Height divides by --uiS because
+       the zoom rule above multiplies it back (build 1333: rendered = layout x scale) — without the
+       divide a scaled-up interface pushes the footer off the bottom. */
+    max-height:calc(88vh / var(--uiS,1)); max-height:calc((100dvh - 24px) / var(--uiS,1)); overflow:hidden;
   }
+  /* build 1375: the tab strip, the four panels, and the always-visible footer */
+  #pauseTabs { display:flex; gap:6px; width:100%; flex:0 0 auto; }
+  .pTab {
+    flex:1 1 0; cursor:pointer; font-family:var(--ui-font); font-size:12px; font-weight:700; letter-spacing:1.5px;
+    color:#7fa99c; background:transparent; border:none; border-bottom:2px solid rgba(42,110,92,.4);
+    padding:8px 2px; text-transform:uppercase; border-radius:6px 6px 0 0;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .pTab:hover { color:#eafff7; background:rgba(var(--accent-rgb),.05); }
+  .pTab.on { color:var(--accent); border-bottom-color:var(--accent); background:rgba(var(--accent-rgb),.08); }
+  #pauseBody { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+  .pPanel { display:none; flex-direction:column; gap:10px; }
+  .pPanel.on { display:flex; }
+  #pauseFooter { width:100%; flex:0 0 auto; display:flex; flex-direction:column; gap:8px; }
   #pauseMenu h2 {
     font-family:var(--display-font); color:var(--accent); letter-spacing:8px;
     font-size:30px; margin:0 0 6px;
@@ -1195,6 +1214,7 @@
     .pBtnPrimary{ padding:8px 22px; font-size:14px; }
     .pBtnGhost, .pBtnExit{ padding:7px 18px; font-size:12px; }
     .pauseAudio{ padding:7px 12px; gap:5px; margin:2px 0; }
+    .pTab{ padding:5px 2px; font-size:11px; }
     .modalCard{ padding:16px 20px; max-height:calc(100dvh - 12px); }
     .modalCard h2{ font-size:19px; margin:0 0 8px; }
     #shop{ padding:14px 20px; }
@@ -1523,22 +1543,33 @@
 <div id="pauseMenu" class="hidden">
   <div class="pauseCard">
     <h2>PAUSED</h2>
-    <button id="pauseResume" class="pBtnPrimary">Resume</button>
-    <button id="pauseEditHud" class="pBtnGhost" style="display:none">✿ Customize controls</button>
-    <button id="pauseKeys" class="pBtnGhost" style="display:none">⌨ Keyboard bindings</button>
+    <!-- build 1375: the pause card is TABBED. It had grown into the whole settings surface (36 controls
+         in one scrolling column, Exit to main menu below the fold at 900px), so the rows are grouped
+         into four panels and the footer (Resume / Help / Exit) never scrolls away. Every control row
+         moved VERBATIM and keeps its id (bindPauseMenu and the a11y loader read them by id); only the
+         wrappers are new. The tab strip is real buttons, so build 1347 focus rules apply for free. -->
+    <div id="pauseTabs">
+      <button class="pTab" data-ptab="game">Game</button>
+      <button class="pTab" data-ptab="controls">Controls</button>
+      <button class="pTab" data-ptab="audio">Audio</button>
+      <button class="pTab" data-ptab="comfort">Comfort</button>
+    </div>
+    <div id="pauseBody">
+    <div class="pPanel" data-ppanel="game">
     <button id="pauseCamMode" class="pBtnGhost">Camera: First person</button>
     <button id="pauseSprintMode" class="pBtnGhost">Sprint: Hold</button>
     <button id="pauseCrouchMode" class="pBtnGhost">Crouch: Hold</button>
     <button id="pauseLoadout" class="pBtnGhost">&#9881; Weapon loadout</button>
     <button id="pauseCredits" class="pBtnGhost">&#9825; Asset credits</button>
+    <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <div class="pauseAudio">
-      <label class="paLbl"><input type="checkbox" id="muteCb"> Mute all</label>
       <label class="paLbl"><input type="checkbox" id="postFxCb"> Visual effects (bloom · motion blur)</label>
       <label class="paLbl"><input type="checkbox" id="adaptResCb"> Adaptive resolution (trades sharpness for fps)</label>
-      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>Master<input type="range" id="volMaster" min="0" max="100" value="80"></label>
-      <label class="paLbl">♪ Music<input type="range" id="volMusic" min="0" max="100" value="60"></label>
-      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>SFX<input type="range" id="volSfx" min="0" max="100" value="100"></label>
     </div>
+    </div>
+    <div class="pPanel" data-ppanel="controls">
+    <button id="pauseEditHud" class="pBtnGhost" style="display:none">✿ Customize controls</button>
+    <button id="pauseKeys" class="pBtnGhost" style="display:none">⌨ Keyboard bindings</button>
     <div class="pauseAudio" id="pauseCtl" style="display:none">
       <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/><path d="M7 6h10a5 5 0 0 1 5 5v3a4 4 0 0 1-4 4c-1.2 0-2.3-.5-3-1.4L14 15h-4l-1 1.6A4 4 0 0 1 2 14v-3a5 5 0 0 1 5-5z"/></svg>Pad look<input type="range" id="padSensRng" min="0.3" max="3" step="0.05" style="margin-left:auto;flex:1"></label>
       <label class="paLbl">Pad aim (ADS)<input type="range" id="padAdsRng" min="0.2" max="1.5" step="0.05" style="margin-left:auto;flex:1"></label>
@@ -1547,13 +1578,23 @@
       <!-- build 1316: aim assist. Shown in the controller panel because that is where it applies; it also
            covers touch, which has no panel of its own and every problem a stick has. -->
       <label class="paLbl">Aim assist<input type="range" id="padAimRng" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="padAimVal" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
-      <div style="font-size:11px;opacity:.7;margin:2px 0 0">Slows your look near a target and nudges toward it while you are already turning. <b>Stick and touch only</b> \u2014 a mouse is never assisted. 0 turns it off.</div>
+      <div style="font-size:11px;opacity:.7;margin:2px 0 0">Slows your look near a target and nudges toward it while you are already turning. <b>Stick and touch only</b> — a mouse is never assisted. 0 turns it off.</div>
     </div>
     <div class="pauseAudio">
       <label class="paLbl">Mouse look<input type="range" id="msSensRng" min="0.1" max="5" step="0.05" style="margin-left:auto;flex:1"><span id="msSensVal" style="min-width:34px;text-align:right;opacity:.85">1.00</span></label>
       <label class="paLbl"><input type="checkbox" id="msAimMatchCb"> Zoom-matched aim sensitivity</label>
       <div id="msSensHint" style="font-size:11px;opacity:.7;margin:2px 0 0">1.00 = the engine default. Aiming is slower than the hip by design; tick the box to make it match the zoom instead.</div>
     </div>
+    </div>
+    <div class="pPanel" data-ppanel="audio">
+    <div class="pauseAudio">
+      <label class="paLbl"><input type="checkbox" id="muteCb"> Mute all</label>
+      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>Master<input type="range" id="volMaster" min="0" max="100" value="80"></label>
+      <label class="paLbl">♪ Music<input type="range" id="volMusic" min="0" max="100" value="60"></label>
+      <label class="paLbl"><svg class="eico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>SFX<input type="range" id="volSfx" min="0" max="100" value="100"></label>
+    </div>
+    </div>
+    <div class="pPanel" data-ppanel="comfort">
     <!-- build 1313 (gameplay audit F9): motion accessibility. Per DEVICE, so it follows the player into
          levels other people made — which is the whole point, since a creator cannot be relied on to have
          thought about it. -->
@@ -1569,11 +1610,15 @@
       <label class="paLbl">Colour vision<select id="a11yCbMode" style="margin-left:auto;flex:1"></select></label>
       <label class="paLbl">Correction strength<input type="range" id="a11yCbStr" min="0" max="100" step="5" style="margin-left:auto;flex:1"><span id="a11yCbStrV" style="min-width:38px;text-align:right;opacity:.85">100%</span></label>
       <div class="row2" style="margin-top:5px"><button id="a11yPhotoWarn" class="pBtnGhost">Photosensitivity warning</button><button id="a11yThirdParty" class="pBtnGhost">Third-party content</button></div>
-      <div id="a11yHint" style="font-size:11px;opacity:.7;margin:4px 0 0">These are yours, not the level's \u2014 they follow you into every level, including ones other people made. Being hit always stays visible, however low the flash goes.</div>
+      <div id="a11yHint" style="font-size:11px;opacity:.7;margin:4px 0 0">These are yours, not the level's — they follow you into every level, including ones other people made. Being hit always stays visible, however low the flash goes.</div>
     </div>
+    </div>
+    </div>
+    <div id="pauseFooter">
+    <button id="pauseResume" class="pBtnPrimary">Resume</button>
     <button id="pauseHelp" class="pBtnGhost">Help &amp; tutorials</button>
-    <button id="pauseCredits2" class="pBtnGhost">Credits &amp; licenses</button>
     <button id="pauseExit" class="pBtnExit">⌂ Exit to main menu</button>
+    </div>
   </div>
 </div>
 <div id="padDebug"></div>
@@ -6761,7 +6806,7 @@ const _SHOT_LAYERS = {
   launcher:{ sub:[50,0.16,0.24], subA:0.012, body:{freq:110, type:'square', dur:0.20, vol:0.18, slideTo:45, attack:0.015}, crack:{dur:0.20, vol:0.22, filterFreq:800, type:'lowpass'}, tail:[0.50,0.13,550,160] },
 };
 const SFX = {
-  shoot(){ if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;
+  shoot(){ _duckMusic(); if(playSample((curSounds().shoot||{})[curWep], {vary:0.04})) return;   /* build 1374: a shot dips the music on EVERY path - sample, suppressed or synth (explode below does the same) */
     if(typeof WEAPONS!=='undefined' && WEAPONS[curWep] && WEAPONS[curWep].suppressed){ tone({freq:210, type:'square', dur:0.05, vol:0.055, slideTo:90}); noise({dur:0.06, vol:0.07, filterFreq:900, type:'lowpass'}); return; }   // build 964: suppressed 'phut' (deliberately tail-less — that is what a suppressor is for)
     const L=_SHOT_LAYERS[curWep]||_SHOT_LAYERS.rifle;
     /* build 1363: per-shot variation. Each tonal layer jitters freq +-3% / vol +-10%, the tail delay
@@ -6822,7 +6867,7 @@ const SFX = {
   buy(){ tone({freq:660, type:'triangle', dur:0.08, vol:0.16, slideTo:990}); setTimeout(()=>tone({freq:990, type:'triangle', dur:0.1, vol:0.16, slideTo:1320}),80); },
   deny(){ tone({freq:160, type:'sawtooth', dur:0.12, vol:0.14, slideTo:90}); },
   throw(){ tone({freq:220, type:'sine', dur:0.18, vol:0.12, slideTo:380}); },
-  explode(at){ if(playSample(curSounds().explode, {at})) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35, at}); noise({dur:0.45, vol:0.3, filterFreq:600, at}); },
+  explode(at){ _duckMusic(); if(playSample(curSounds().explode, {at})) return; tone({freq:90, type:'sawtooth', dur:0.5, vol:0.25, slideTo:35, at}); noise({dur:0.45, vol:0.3, filterFreq:600, at}); },
   power(){ tone({freq:440, type:'triangle', dur:0.1, vol:0.16, slideTo:660}); setTimeout(()=>tone({freq:660, type:'triangle', dur:0.1, vol:0.16, slideTo:880}),90); setTimeout(()=>tone({freq:880, type:'triangle', dur:0.14, vol:0.16, slideTo:1320}),180); },
   swap(){ tone({freq:300, type:'square', dur:0.05, vol:0.08, slideTo:500}); },
   /* ---- build 1363 (audio audit): UI SOUND, VICTORY AND DEFEAT ----
@@ -7004,6 +7049,8 @@ function preloadSignalSounds(){ if(typeof propModels==='undefined') return; for(
 
 // ---------- Audio buses + persisted volume settings (separate from level data) ----------
 let masterBus=null, sfxBus=null, musicBus=null;
+let _musicDuck=null, _sfxVerb=null, _sfxVerbGain=null;   /* build 1374: sidechain duck + reverb-send nodes, created in buildAudioBuses */
+const REVERB_WET=0.18, DUCK_TO=0.45, DUCK_TAU=0.12;   /* wet mix - duck floor - recovery time-constant (about 95 percent back at 3*tau = 0.36 s) */
 const AUDIO_KEY='breach_audio';
 // ---- UI theme (accent color + fonts) so players can make the interface their own ----
 const UI_THEME_KEY='breach_ui_theme';
@@ -7170,16 +7217,46 @@ function loadAudioSettings(){ try{ const j=JSON.parse(localStorage.getItem(AUDIO
 const audioSettings = loadAudioSettings();
 function saveAudioSettings(){ try{ localStorage.setItem(AUDIO_KEY, JSON.stringify(audioSettings)); }catch(e){} }
 function applyAudioSettings(){ if(!actx||!masterBus) return; const t=actx.currentTime; masterBus.gain.setTargetAtTime(audioSettings.muted?0:audioSettings.master, t, 0.02); const _editing=(typeof editorOpen!=='undefined' && editorOpen); musicBus.gain.setTargetAtTime(_editing?0:audioSettings.music, t, 0.02); sfxBus.gain.setTargetAtTime(audioSettings.sfx, t, 0.02); }   // music is forced silent while editing (no auto-play in the editor); SFX stays for preview buttons
+/* ---------- build 1374: the room, the duck, and the bed (audio review #5/#9) ----------
+   Every sound was bone dry (zero ConvolverNode in the file - an interior and an open arena were
+   sonically identical) and the music sat ~22 dB under the loudest SFX with nothing ducking it, so it
+   read as an unrelated backing track. Three pieces, all BUS-level so no call site changes:
+   - REVERB: a wet/dry SEND off sfxBus (sfxBus -> convolver -> wet gain -> master). The IR is
+     generated, never fetched: 2 s of exponentially decaying noise (-60 dB at the tail), each channel
+     rolled independently so the tail is stereo-decorrelated and reads as a room, not a mono echo.
+     No createConvolver (old browsers) -> the send is skipped cleanly and the dry path is byte-identical.
+   - SIDECHAIN: musicBus -> _musicDuck -> master. SFX.shoot and SFX.explode dip the duck to DUCK_TO and
+     it recovers exponentially via setTargetAtTime - audio-thread scheduling, so there is NO per-frame
+     JS work when silent (the 1182 rule for anything on a cadence, applied in the cheap direction).
+   - the AMBIENCE BED lives beside the music system below and is started/stopped with it. */
+function _makeReverbIR(){
+  const sr=actx.sampleRate, n=Math.floor(sr*2), buf=actx.createBuffer(2, n, sr);
+  for(let ch=0; ch<2; ch++){ const d=buf.getChannelData(ch); for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(0.001, i/n); }   /* pow(0.001, i/n) = exact exponential decay to -60 dB across the 2 s tail */
+  return buf;
+}
+function _duckMusic(){
+  if(!actx||!_musicDuck) return;
+  const t=actx.currentTime, g=_musicDuck.gain;
+  try{ g.cancelScheduledValues(t); g.setValueAtTime(DUCK_TO, t); g.setTargetAtTime(1, t, DUCK_TAU); }catch(e){}   /* cancel first: rapid fire re-dips instead of stacking schedules */
+}
 function buildAudioBuses(){ if(masterBus||!actx) return; masterBus=actx.createGain(); masterBus.connect(actx.destination); sfxBus=actx.createGain();
   /* build 1211: a gentle bus compressor — layered shots stack musically instead of clipping; every SFX
      already routes through sfxBus so no call site changes. Fallback to the plain connect if unavailable. */
   try{ const _cmp=actx.createDynamicsCompressor(); _cmp.threshold.value=-18; _cmp.knee.value=12; _cmp.ratio.value=4; _cmp.attack.value=0.003; _cmp.release.value=0.12; sfxBus.connect(_cmp); _cmp.connect(masterBus); }
   catch(e){ sfxBus.connect(masterBus); }
-  musicBus=actx.createGain(); musicBus.connect(masterBus); applyAudioSettings(); }
+  /* build 1374: the reverb SEND is a PARALLEL wet path, so the dry chain above is untouched and a
+     browser without ConvolverNode simply keeps the pre-1374 graph. Built once (masterBus guard). */
+  try{ if(actx.createConvolver){ _sfxVerb=actx.createConvolver(); _sfxVerb.buffer=_makeReverbIR(); _sfxVerbGain=actx.createGain(); _sfxVerbGain.gain.value=REVERB_WET; sfxBus.connect(_sfxVerb); _sfxVerb.connect(_sfxVerbGain); _sfxVerbGain.connect(masterBus); } }
+  catch(e){ _sfxVerb=null; _sfxVerbGain=null; }
+  musicBus=actx.createGain();
+  /* build 1374: the duck sits BETWEEN musicBus and master, so applyAudioSettings keeps sole ownership
+     of musicBus.gain (one writer per value - the recorded rule) and the dip composes under it. */
+  _musicDuck=actx.createGain(); musicBus.connect(_musicDuck); _musicDuck.connect(masterBus);
+  applyAudioSettings(); }
 function toggleMute(){ audioSettings.muted=!audioSettings.muted; applyAudioSettings(); saveAudioSettings(); return audioSettings.muted; }
 
 // ---------- Adaptive music (procedural; intensity tracks the live threat) ----------
-let _musicOn=false, _musicDrone=null, _musicTimer=null, _musicInt=0, _musicTarget=0, _musicStep=0, _musicSrc=null;
+let _musicOn=false, _musicDrone=null, _musicTimer=null, _musicInt=0, _musicTarget=0, _musicStep=0, _musicSrc=null, _musicCntr=null;
 // build 1074: a track chosen by a RULE, for this match only. null = "whatever the level authored"; a string
 // (including '') overrides it. Deliberately not written into audioSettings — a boss theme that plays during a
 // playtest must never end up saved as the level's music track.
@@ -7193,6 +7270,7 @@ function curMusicUrl(){ if(_lgMusic!=null) return _lgMusic; return (typeof NET!=
 function startMusic(){
   if(!actx||!musicBus||_musicOn) return;
   if(typeof editorOpen!=='undefined' && editorOpen) return;   // no level music while editing
+  _startAmbience();   /* build 1374: the bed starts with the music system on BOTH paths (custom track or proc score); the editor gate above means it can never start while editing */
   const murl=curMusicUrl();
   if(murl){
     _musicOn=true;
@@ -7211,30 +7289,92 @@ function _startProcMusic(){
   if(!actx||!musicBus) return; _musicOn=true; _musicInt=0; _musicStep=0;
   const freqs=[MUSIC_ROOT, MUSIC_ROOT*1.5, MUSIC_ROOT*2];
   _musicDrone=freqs.map((f,i)=>{ const o=actx.createOscillator(); o.type=(i===2?'triangle':'sine'); o.frequency.value=f; const g=actx.createGain(); g.gain.value=0; o.connect(g).connect(musicBus); o.start(); return {o,g}; });   // starts silent — swelled by intensity each step (no constant drone)
+  /* build 1374: the COUNTER-DRONE - a fourth continuous voice a fifth above the octave (MUSIC_ROOT*3),
+     started silent like the drone stack and gated in by the step fn only past intensity 0.75, so the
+     top register is reserved for real pressure. Its entry eases at a step boundary like every layer. */
+  _musicCntr=(function(){ const o=actx.createOscillator(); o.type='triangle'; o.frequency.value=MUSIC_ROOT*3; const g=actx.createGain(); g.gain.value=0; o.connect(g).connect(musicBus); o.start(); return {o,g}; })();
   _musicTimer=setInterval(_musicStepFn, 260);
 }
 function _musicStepFn(){
   if(!actx||!_musicOn) return;
   _musicInt += (_musicTarget-_musicInt)*0.12;   // smooth toward the target each step
   const inten=_musicInt, t=actx.currentTime, beat=_musicStep%4;
-  if(_musicDrone){ const dg=[0.045,0.022,0.018]; for(let i=0;i<_musicDrone.length;i++){ try{ _musicDrone[i].g.gain.setTargetAtTime(dg[i]*inten, t, 0.25); }catch(e){} } }   // drone tracks threat instead of holding a constant tone
-  if(inten>0.04){
+  /* build 1374 (audio review #7): the score is LAYERS, entered on the existing 260 ms step boundary.
+     - drone: ALWAYS-ON above a 0.30 floor (the world between events was silent), still tracking threat
+     - bass: enters past 0.3 (the old gate was 0.04, i.e. effectively always on - nothing ever ENTERED)
+     - hi-hat: 0.5 (was 0.35) - counter-drone: 0.75. Element gains are ~8 dB up toward parity with the
+       SFX (0.045->0.11, 0.06->0.15, 0.04->0.10); musicBus itself stays at the authored 0.6 default and
+       the 1374 duck is what keeps gunfire on top. */
+  if(_musicDrone){ const dg=[0.11,0.055,0.045]; for(let i=0;i<_musicDrone.length;i++){ try{ _musicDrone[i].g.gain.setTargetAtTime(dg[i]*(0.30+0.70*inten), t, 0.25); }catch(e){} } }
+  if(_musicCntr){ try{ _musicCntr.g.gain.setTargetAtTime(inten>0.75 ? 0.05*inten : 0.0001, t, 0.25); }catch(e){} }   /* the fifth-above voice fades in only under real pressure */
+  if(inten>0.3){
     const bf=[MUSIC_ROOT*0.5, MUSIC_ROOT*0.5, MUSIC_ROOT*0.6667, MUSIC_ROOT*0.5][beat];
     const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=bf;
-    const g=actx.createGain(), v=0.06*inten;
+    const g=actx.createGain(), v=0.15*inten;
     g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(v,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+0.22);
     const filt=actx.createBiquadFilter(); filt.type='lowpass'; filt.frequency.value=350+700*inten;
     o.connect(filt).connect(g).connect(musicBus); o.start(t); o.stop(t+0.24);
-    if(inten>0.35 && (beat===1||beat===3)){   // hi-hat tick on the off-beats once it gets tense
+    if(inten>0.5 && (beat===1||beat===3)){   // hi-hat tick on the off-beats once it gets tense
       const n=Math.floor(actx.sampleRate*0.04), buf=actx.createBuffer(1,n,actx.sampleRate), d=buf.getChannelData(0);
       for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
       const src=actx.createBufferSource(); src.buffer=buf; const hf=actx.createBiquadFilter(); hf.type='highpass'; hf.frequency.value=6000;
-      const hg=actx.createGain(); hg.gain.value=0.04*inten; src.connect(hf).connect(hg).connect(musicBus); src.start(t);
+      const hg=actx.createGain(); hg.gain.value=0.10*inten; src.connect(hf).connect(hg).connect(musicBus); src.start(t);
     }
   }
   _musicStep++;
 }
-function stopMusic(){ if(_musicTimer){ clearInterval(_musicTimer); _musicTimer=null; } if(_musicSrc){ try{ _musicSrc.stop(); }catch(e){} _musicSrc=null; } if(_musicDrone&&actx){ const t=actx.currentTime; for(const nd of _musicDrone){ try{ nd.g.gain.setTargetAtTime(0.0001,t,0.1); nd.o.stop(t+0.4); }catch(e){} } } _musicDrone=null; _musicOn=false; _musicInt=0; _musicTarget=0; }
+function stopMusic(){ if(_musicTimer){ clearInterval(_musicTimer); _musicTimer=null; } if(_musicSrc){ try{ _musicSrc.stop(); }catch(e){} _musicSrc=null; } if(_musicDrone&&actx){ const t=actx.currentTime; for(const nd of _musicDrone){ try{ nd.g.gain.setTargetAtTime(0.0001,t,0.1); nd.o.stop(t+0.4); }catch(e){} } } if(_musicCntr&&actx){ try{ _musicCntr.g.gain.setTargetAtTime(0.0001,actx.currentTime,0.1); _musicCntr.o.stop(actx.currentTime+0.4); }catch(e){} } _musicDrone=null; _musicCntr=null; _musicOn=false; _musicInt=0; _musicTarget=0; _stopAmbience(); }
+
+// ---------- build 1374: the AMBIENCE BED (audio review #9 - the world was silent between events) ----------
+// One looping filtered-noise layer at a whisper plus a sparse one-shot scheduler: a distant rumble or a
+// thin far-off whistle every 6-18 s, positioned through _spatialOut at ~30 m in a random direction so the
+// panner, the 1/d rolloff and the 1363 distance lowpass all apply for free. Lifecycle: startMusic and
+// stopMusic own it, so every path that silences the music (win, death, editor open, a track switch)
+// silences the bed with no second list of call sites. The LOOP rides musicBus - so the applyAudioSettings
+// editor mute, the music volume slider and the 1374 duck all cover it - while the one-shots ride the SFX
+// path (they are world sounds), which the editor does NOT mute, so their fire is explicitly gated on
+// gameOn and not-editing. All modulation is audio-thread (an LFO into the filter frequency): zero JS per
+// frame. gameOn and camera are declared far below - both are read only from timer callbacks, which can
+// never run during module evaluation, so there is no TDZ here (the 1331 boot-order rule was checked).
+let _ambOn=false, _ambSrc=null, _ambLfo=null, _ambGain=null, _ambFilt=null, _ambTimer=null, _ambBuf=null;
+const AMB_GAIN=0.02, AMB_LP_BASE=650, AMB_LP_DEPTH=200, AMB_LFO_HZ=0.06, AMB_MIN_MS=6000, AMB_SPAN_MS=12000, AMB_DIST=30;   /* the lowpass wanders 450-850 Hz (inside the 400-900 band) on a ~17 s LFO */
+function _startAmbience(){
+  if(!actx||!musicBus||_ambOn) return;
+  _ambOn=true;
+  try{
+    if(!_ambBuf){ const sr=actx.sampleRate, n=Math.floor(sr*3); _ambBuf=actx.createBuffer(1, n, sr); const d=_ambBuf.getChannelData(0); for(let i=0;i<n;i++) d[i]=Math.random()*2-1; }   /* cached: a level music switch restarts the bed and must not re-roll half a megabyte */
+    _ambSrc=actx.createBufferSource(); _ambSrc.buffer=_ambBuf; _ambSrc.loop=true;
+    _ambFilt=actx.createBiquadFilter(); _ambFilt.type='lowpass'; _ambFilt.frequency.value=AMB_LP_BASE;
+    _ambGain=actx.createGain(); _ambGain.gain.value=AMB_GAIN;
+    _ambSrc.connect(_ambFilt); _ambFilt.connect(_ambGain); _ambGain.connect(musicBus);
+    _ambSrc.start();
+    _ambLfo=actx.createOscillator(); _ambLfo.frequency.value=AMB_LFO_HZ;
+    const lg=actx.createGain(); lg.gain.value=AMB_LP_DEPTH; _ambLfo.connect(lg); lg.connect(_ambFilt.frequency); _ambLfo.start();   /* the slow wander - audio-thread only */
+  }catch(e){}
+  _ambArm();
+}
+function _ambArm(){ if(_ambTimer) clearTimeout(_ambTimer); _ambTimer=setTimeout(_ambOneShot, AMB_MIN_MS+Math.random()*AMB_SPAN_MS); }
+function _ambOneShot(){
+  _ambTimer=null;
+  if(!_ambOn) return;   /* stopped: never re-arm */
+  _ambArm();            /* re-arm FIRST - a gated skip must not end the schedule */
+  if(!(typeof gameOn!=='undefined' && gameOn)) return;         /* menu or between runs: the world is not live */
+  if(typeof editorOpen!=='undefined' && editorOpen) return;    /* the SFX path is not muted while editing, so gate here */
+  try{
+    const th=Math.random()*Math.PI*2, c=(typeof camera!=='undefined' && camera && camera.position) ? camera.position : null;
+    const at=c ? { x:c.x+AMB_DIST*Math.sin(th), y:c.y, z:c.z+AMB_DIST*Math.cos(th) } : null;
+    if(Math.random()<0.5) noise({dur:1.4, vol:0.06, filterFreq:210, type:'lowpass', at});             /* distant rumble */
+    else tone({freq:840+Math.random()*240, type:'sine', dur:1.6, vol:0.024, slideTo:560, attack:0.4, at});   /* thin far-off whistle */
+  }catch(e){}
+}
+function _stopAmbience(){
+  _ambOn=false;
+  if(_ambTimer){ clearTimeout(_ambTimer); _ambTimer=null; }
+  if(_ambSrc){ try{ _ambSrc.stop(); }catch(e){} _ambSrc=null; }
+  if(_ambLfo){ try{ _ambLfo.stop(); }catch(e){} _ambLfo=null; }
+  if(_ambGain){ try{ _ambGain.disconnect(); }catch(e){} _ambGain=null; }
+  _ambFilt=null;
+}
 
 // ---------- Core setup ----------
 const scene = new THREE.Scene();
@@ -9331,7 +9471,8 @@ function _texBytesOf(t){
 function _texCensus(){
   const seen = new Set(); let bytes = 0, n = 0, big = null, bigB = 0;
   const add = (t, label)=>{
-    if(!t || seen.has(t)) return; seen.add(t);
+    if(!t) return; const sk = t.source || t;   // build 1376: tilings are CLONES sharing one Source (texInstance) — count the source once, not one phantom upload per tiling
+    if(seen.has(sk)) return; seen.add(sk);
     const b = _texBytesOf(t); if(!b) return;
     bytes += b; n++;
     if(b > bigB){ bigB = b; big = label || (t.image && t.image.src ? String(t.image.src).split('/').pop() : 'a texture'); }
@@ -13345,12 +13486,12 @@ function _pvApplyOne(o, act, at){
   if(act==='hide'){ if(u._pvHidden) return; u._pvHidden=true; o.visible=false;
     if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: the grid re-samples where it stood */
     if(u.phys){ u._pvWasDyn=true; try{ removeDynamicProp(o); }catch(e){} }
-    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; }
+    const ci=colliders.indexOf(o); if(ci>=0){ colliders.splice(ci,1); u._pvCol=true; u._inColliders=false; }
     if(u._physStatic && typeof physWorld!=='undefined' && physWorld){ try{ physWorld.removeRigidBody(u._physStatic); }catch(e){} u._physStatic=null; }   /* build 1194: no invisible physics wall */
     return; }
   if(act==='show'){ if(!u._pvHidden){ o.visible=true; return; } u._pvHidden=false; o.visible=true;
     if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: it blocks (or carries) bots again */
-    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._pvCol=false; if(typeof addStaticColliderFor==='function' && typeof physWorld!=='undefined' && physWorld && !u.phys) try{ addStaticColliderFor(o); }catch(e){} }   /* build 1194: show restores the physics body too */
+    if(u._pvCol){ if(colliders.indexOf(o)<0) colliders.push(o); u._inColliders=true; u._pvCol=false; if(typeof addStaticColliderFor==='function' && typeof physWorld!=='undefined' && physWorld && !u.phys) try{ addStaticColliderFor(o); }catch(e){} }   /* build 1194: show restores the physics body too */
     if(u._pvWasDyn){ u._pvWasDyn=false; try{ setPropDynamic(o, true); }catch(e){} } return; }
   if(act==='move' && at){
     if(typeof _navDirtyProp==='function') _navDirtyProp(o);   /* build 1200: the OLD footprint opens up... */
@@ -13910,7 +14051,7 @@ function updateXAnim(dt){
       if(player.onGround) _xaCarry(o, _xaOldBox, _xaPrevP, _xaPrevQ, dt, _peakSp);
       if(bots && bots.length){ for(const _bt of bots){ if(!_bt.dead && _bt.grounded!==false) _xaCarryBot(o, _xaOldBox, _xaPrevP, _xaPrevQ, dt, _bt, _peakSp); } }
       if(enemies && enemies.length){ for(const _en of enemies){ if(_en.grounded!==false) _xaCarryEnemy(o, _xaOldBox, _xaPrevP, _xaPrevQ, dt, _en, _peakSp); } }
-      if(colliders.indexOf(o)>=0||o.userData.box) refreshPropCollider(o);
+      if(o.userData._inColliders||o.userData.box) refreshPropCollider(o, true);   /* build 1376: membership flag (set where colliders.push happens), not an O(colliders) indexOf per animated prop per frame; true = the cached-local fast path */
     }
   }
 }
@@ -14365,9 +14506,70 @@ function _mgridEnsureWorker(){
   }catch(e){ _mgridWorkerDead=true; _mgridWorker=null; }
   return _mgridWorker;
 }
-function refreshPropCollider(obj){
+// ---------- build 1376: the animated-prop collider fast path ----------
+// updateXAnim -> refreshPropCollider paid the FULL precise derivation every frame for every moving prop:
+// new Box3().setFromObject(obj, true) transforms EVERY vertex, the per-mesh loop transforms every vertex
+// AGAIN, and a moving MODEL re-derived (or re-posted to the worker) its whole footprint grid on top —
+// 30 animated doors x 5k verts is 300k vertex transforms a frame against a ~9k-triangle visible scene.
+// A mover does not change SHAPE mid-animation; only its transform moves (xa scale rides the matrix too).
+// So the slow path — which just paid the per-vertex cost anyway — records its own output in the prop
+// LOCAL space, and a mover refresh becomes one Box3.copy + applyMatrix4 per box into REUSED Box3s: no
+// allocation, no vertex touched, no grid re-derived. Translation (elevators, platforms, sliding doors)
+// is EXACT; a rotation delta yields the AABB of the rotated cached box — conservative, i.e. fail SOLID
+// (build 1148), never open. The cache is rebuilt by every slow refresh (gizmo, load, deploy restore),
+// dropped by the noCol branch (its un-tick must re-run the traverse that restores mesh raycasts), and
+// rebuilt from a landed worker grid (build 1203) so the tight grid RIDES the movement instead of being
+// clobbered by the next mover frame.
+const _pcInvM = new THREE.Matrix4(), _pcRelM = new THREE.Matrix4(), _pcTmpB = new THREE.Box3();
+function _pcCacheBuild(obj, finalBoxes, fromMeshes){
+  const u = obj.userData;
+  _pcInvM.copy(obj.matrixWorld).invert();
+  const lb = (u._localBox && u._localBox.isBox3) ? u._localBox.makeEmpty() : new THREE.Box3();
+  const locs = [];
+  obj.traverse(o=>{
+    if(!o.isMesh || !o.geometry) return;
+    const pos = o.geometry.attributes && o.geometry.attributes.position; if(!pos || !pos.count) return;
+    if(o.geometry.boundingBox === null) o.geometry.computeBoundingBox();
+    _pcRelM.multiplyMatrices(_pcInvM, o.matrixWorld);
+    _pcTmpB.copy(o.geometry.boundingBox).applyMatrix4(_pcRelM);
+    lb.union(_pcTmpB);                       // the OVERALL box counts every mesh, like setFromObject does
+    if(o.visible === false) return;          // the per-part list mirrors the slow loop: no invisible meshes...
+    for(let q=o; q; q=q.parent){ if(q.name && /^nocollide/i.test(q.name)) return; }   // ...and no decoration
+    if(fromMeshes) locs.push(_pcTmpB.clone());
+  });
+  if(!fromMeshes || locs.length !== finalBoxes.length){
+    // a model grid, the fail-solid whole-box fallback, or a skip mismatch: pull the slow output ITSELF
+    // back into local space — conservative for a model authored rotated (AABB of an AABB), never open.
+    locs.length = 0;
+    for(const b of finalBoxes) locs.push(b.clone().applyMatrix4(_pcInvM));
+  }
+  u._localBox = lb; u._localBoxes = locs;
+  const n = locs.length;
+  let wbs = u._pcWorld; if(!wbs || wbs.length !== n){ wbs = new Array(n); for(let i=0;i<n;i++) wbs[i] = new THREE.Box3(); u._pcWorld = wbs; }
+  for(let i=0;i<n;i++) wbs[i].copy(finalBoxes[i]);
+  if(!(u._pcWorldBox && u._pcWorldBox.isBox3)) u._pcWorldBox = new THREE.Box3();
+  u._pcWorldBox.copy(u.box);
+  u._pcStamp = (u._pcGen|0);            // the version stamp: bump userData._pcGen and the next refresh is precise
+  u._pcKids = obj.children.length;      // a structural edit (an attached decal, an added part) also forces it
+}
+function _pcFastRefresh(obj){
+  const u = obj.userData;
+  if(!u._localBox || !u._localBoxes || !u._pcWorld || u._pcStamp !== (u._pcGen|0) || u._pcKids !== obj.children.length) return false;
+  // a fast refresh MOVES the prop without the slow model branch, so an in-flight worker grid for the old
+  // pose must not land (build 1203) — bump the token its delivery checks.
+  if(typeof isModelSrc==='function' && isModelSrc(u.src)) u._mgridTok = (u._mgridTok|0)+1;
+  u.box = u._pcWorldBox.copy(u._localBox).applyMatrix4(obj.matrixWorld);
+  const loc = u._localBoxes, wbs = u._pcWorld, n = loc.length;
+  for(let i=0;i<n;i++) wbs[i].copy(loc[i]).applyMatrix4(obj.matrixWorld);
+  u.boxes = wbs;
+  return true;
+}
+function refreshPropCollider(obj, mover){
   if(obj && obj.userData && !obj.userData._cgMobile && typeof _cgDirty==='function') _cgDirty();   /* build 1188: a mover's per-frame refresh must NOT rebuild the grid; statics that move reclassify through one rebuild */
   obj.updateMatrixWorld(true);
+  // build 1376: a MOVER mid-animation (updateXAnim, the parent-follow tick) takes the cached-local fast
+  // path above; an absent or stale cache falls through to the precise path, which rebuilds it.
+  if(mover && typeof _pcFastRefresh==='function' && _pcFastRefresh(obj)) return;
   // overall box (selection highlight, proximity, physics shape sizing)
   obj.userData.box = new THREE.Box3().setFromObject(obj, true);
   // build 1250: a particle emitter is pure decoration — the overall box (which spans the particle
@@ -14385,6 +14587,7 @@ function refreshPropCollider(obj){
   if(obj.userData.noCol){
     obj.userData.boxes = [];
     obj.traverse(o=>{ if(o.isMesh) o.raycast = _ncNoRay; });   // and no bullet hits either
+    obj.userData._localBox = null;   // build 1376: DROP the fast-path cache — the un-tick must take the slow path (raycast restore + rebuilt boxes)
     return;
   }
   // Per-mesh boxes for player collision. Each mesh's box is built from ITS OWN vertices only — NOT via
@@ -14421,6 +14624,7 @@ function refreshPropCollider(obj){
           if(!r || !obj.userData || obj.userData._mgridTok!==tok) return;   // failed, or superseded
           const grid=_mgridWrap(r); if(!grid) return;
           obj.userData.boxes=grid;
+          if(typeof _pcCacheBuild==='function') _pcCacheBuild(obj, grid, false);   // build 1376: the fast path must ride THIS grid — without the rebuild the next mover frame would clobber it with stale cached boxes
           if(!obj.userData._cgMobile && typeof _cgDirty==='function') _cgDirty();       // build 1188: the spatial grid re-learns it
           if(typeof _navDirtyProp==='function') _navDirtyProp(obj);                     // build 1200: the nav grid re-samples it
         };
@@ -14436,6 +14640,10 @@ function refreshPropCollider(obj){
   }
   obj.userData.boxes = finalBoxes;   // imported models: per-column grid so concave shape (stairs/archway) is walkable — per-mesh AABBs (fail-solid) while a worker answer is in flight
   obj.userData.climbable = true;
+  // build 1376: record this result in prop-local space so a MOVER can ride it per frame (the fast path
+  // above). Models pass fromMeshes=false — a footprint grid must be pulled back as-is, never replaced
+  // with coarse per-mesh boxes.
+  if(typeof _pcCacheBuild==='function') _pcCacheBuild(obj, finalBoxes, !isModelSrc(obj.userData.src));
 }
 // A built-in box primitive (used when src === 'box'): a 1×1×1 crate you scale via the transform.
 function buildBoxProp(){
@@ -14474,23 +14682,64 @@ function loadTextureCached(url){
   if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace; else if('encoding' in tex) tex.encoding = 3001; // sRGBEncoding
   texCache[url] = tex; return tex;
 }
-// Per-prop texture instance keyed by URL + tiling. Identical (url,tile) usages share one GPU texture
-// (memory-friendly); two props using the same image at DIFFERENT tiling each get their own, so the tiling
-// you set on one prop never bleeds onto another.
+// Per-prop texture instance keyed by URL + tiling. Identical (url,tile) usages share one instance; two
+// props using the same image at DIFFERENT tiling each get their own Texture, so the tiling you set on
+// one prop never bleeds onto another.
+// build 1376: ...but a tiling is a UNIFORM TRANSFORM, not an image. The old code ran a fresh
+// TextureLoader per (url, tiling) — one 4096 image at three tilings was three decodes and three full
+// ~85 MB GPU uploads. Now ONE base texture is fetched per (url, colorspace) and every tiling is a
+// Texture.clone() of it: r149 clone shares .source (one decode) and repeat/offset/rotation sit outside
+// the GL texture cache key (same source + same sampler state = ONE GPU texture) — both facts pinned
+// against the vendored build in test-1376.
 const _texInst = {};
+const _texInstBase = {};   // (url || colorspace) -> the ONE fetched base texture; every tiling clones it
+const _texInstPend = {};   // bases whose image has not landed yet -> clones to re-arm on load. A clone made
+                           // before the image lands is parked at version 0, or the renderer would warn per
+                           // frame about a texture marked for update with no image data.
 function texInstance(url, u, v, srgb, rot){
   url = _migrateAssetUrl(url);   // build 973
   srgb = (srgb !== false);   // color maps are sRGB; normal/roughness maps must stay linear
   rot = +rot || 0;           // radians, rotated about the texture center (planks/bricks running a new way)
   const key = url + '|' + u + '|' + v + '|' + (srgb?'s':'l') + '|' + rot;
   if(_texInst[key]) return _texInst[key];
-  const loader = new THREE.TextureLoader(); loader.crossOrigin = 'anonymous';
-  const t = loader.load(url, undefined, undefined, (err)=>{ console.warn('Texture load failed for', url, '-', err && err.message); });
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  if(srgb){ if('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace; else if('encoding' in t) t.encoding = 3001; }
+  const bk = url + '||' + (srgb?'s':'l');
+  let base = _texInstBase[bk];
+  if(!base){
+    const loader = new THREE.TextureLoader(); loader.crossOrigin = 'anonymous';
+    base = loader.load(url, ()=>{ const cl=_texInstPend[bk]; delete _texInstPend[bk]; if(cl) for(const c of cl) c.needsUpdate = true; },
+      undefined, (err)=>{ console.warn('Texture load failed for', url, '-', err && err.message); });
+    base.wrapS = base.wrapT = THREE.RepeatWrapping;
+    if(srgb){ if('colorSpace' in base) base.colorSpace = THREE.SRGBColorSpace; else if('encoding' in base) base.encoding = 3001; }
+    _texInstBase[bk] = base; _texInstPend[bk] = [];
+  }
+  const t = base.clone();   // shares .source — see the note above
   t.repeat.set(u||1, v||1);
   if(rot){ t.center.set(0.5, 0.5); t.rotation = rot; }
+  if(_texInstPend[bk]){ t.version = 0; _texInstPend[bk].push(t); }   // image not landed (or failed): parked until the base onLoad re-arms it
   _texInst[key] = t; return t;
+}
+// ---------- build 1376: the texture caches EVICT at level teardown ----------
+// texCache and _texInst had ZERO delete sites — every level swap left the previous level textures
+// resident on the GPU forever (the audit perf #8; build 1353 could SEE the number and nothing could
+// lower it). Eviction runs from _wipeSceneCore (beside _enforceModelCacheCap) and from restoreLevel
+// teardown; whatever the next level shares comes back through the browser HTTP cache — build 991 made
+// exactly that trade for models. Two guarantees:
+//   - a texture still assigned to a LIVE SHARED MATERIAL (floorMat/wallMat, the track set) is never
+//     disposed — it also STAYS CACHED, so the entry remains correct;
+//   - the _procSurface detail set (mat.userData.procSurf) is built from a canvas and lives in NEITHER
+//     cache, so it survives untouched (pinned in test-1376).
+const _TEX_EVICT_SLOTS = ['map','normalMap','roughnessMap','metalnessMap','aoMap','lightMap','emissiveMap','alphaMap','bumpMap'];
+function _evictTexCaches(){
+  const keep = new Set();
+  const guard = (m)=>{ if(!m) return; for(const sl of _TEX_EVICT_SLOTS){ const t=m[sl]; if(t && t.isTexture) keep.add(t); } };
+  try{
+    if(typeof floorMat!=='undefined') guard(floorMat);
+    if(typeof wallMat!=='undefined') guard(wallMat);
+    if(typeof _trkM!=='undefined' && _trkM){ guard(_trkM.road); guard(_trkM.line); guard(_trkM.barrier); }   // build 886: the track set persists across wipes and its road map comes from texCache
+  }catch(e){}
+  const sweep = (cache)=>{ for(const k in cache){ const t=cache[k]; if(t && keep.has(t)) continue; try{ if(t && t.dispose) t.dispose(); }catch(e){} delete cache[k]; } };
+  sweep(texCache); sweep(_texInst); sweep(_texInstBase);
+  for(const k in _texInstPend) delete _texInstPend[k];
 }
 function eachPrimMesh(obj, fn){ obj.traverse(o=>{ if(o.isMesh && o.material) fn(o); }); }
 
@@ -18876,7 +19125,7 @@ function finalizeProp(obj, src, t, gltf, slot, animMode, mat, nid, animClip){
   obj.userData.footR = _propFootR(obj);
   obj.position.y = t[1] + _maxTerrainOver(t[0], t[2], obj.userData.footR);   // clear the HIGHEST terrain under the footprint so a slope can't bury it
   refreshPropCollider(obj);
-  if(!obj.userData.fx) colliders.push(obj);   // build 1250: emitters stay out of the collision world entirely
+  if(!obj.userData.fx){ colliders.push(obj); obj.userData._inColliders=true; }   // build 1250: emitters stay out of the collision world entirely (build 1376: the flag mirrors membership for updateXAnim)
   if(slot != null) propModels[slot] = obj;   // keep saved order even with async GLB loads
   else propModels.push(obj);
   if(gltf){ obj.userData.animClip = animClip || ''; playModelAnimations(obj, gltf, obj.userData.animMode, true); }   // build 1064: props accept custom-clip-only rigs (static models become animatable)
@@ -19042,6 +19291,7 @@ function _wipeSceneCore(){
   if(typeof _levelDirty!=='undefined') _levelDirty=true;
   if(typeof updateSelectionHighlight==='function') updateSelectionHighlight();
   if(typeof renderEditorFields==='function') renderEditorFields();
+  if(typeof _evictTexCaches==='function') _evictTexCaches();   // build 1376: and the texture caches — they had no delete sites at all (see _evictTexCaches)
   if(typeof _enforceModelCacheCap==='function') _enforceModelCacheCap();   // build 576: free VRAM from models with no instances left (recent ones stay warm under the cap)
 }
 function removeProp(idx){
@@ -19052,7 +19302,7 @@ function removeProp(idx){
   if(obj.userData.phys && typeof removeDynamicProp==='function') removeDynamicProp(obj);
   if(obj.userData._fxRT){ try{ obj.userData._fxRT.geo.dispose(); }catch(e){} obj.userData._fxRT=null; }   // build 1250: per-emitter geometry only — the particle material is shared with fire
   scene.remove(obj);
-  const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1);
+  const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false;
   /* build 1309: a deleted parent RELEASES its children where they stand rather than leaving them pointing
      at a nid nothing answers to — the same call build 997 makes for a light whose pole was deleted. */
   if(obj.userData.nid){ for(const q of propModels){ if(q && q.userData && q.userData.parNid===obj.userData.nid){ delete q.userData.parNid; delete q.userData._pntPose; } } }
@@ -19404,7 +19654,7 @@ function _syncParentedProps(){
            that only translated would swing off a turntable instead of riding it. */
         if(turned){ k.position.copy(_pntV.copy(k.position).sub(prev.p).applyQuaternion(_pntQ).add(prev.p)); k.quaternion.premultiply(_pntQ); }
         if(moved) k.position.add(_pntD);
-        if(typeof refreshPropCollider==='function') refreshPropCollider(k);
+        if(typeof refreshPropCollider==='function') refreshPropCollider(k, true);   /* build 1376: a parented prop is a MOVER — same cached-local fast path as updateXAnim */
       }
     }
     prev.p.copy(host.position); prev.q.copy(host.quaternion);
@@ -20759,6 +21009,7 @@ let locked = false;let lookFresh = false;   // set when pointer lock is (re)acqu
 let _lastLookDX = 0, _lastLookDY = 0;   // running reference of recent per-event look deltas, for spurious-spike rejection
 const MAX_LOOK_DELTA = 300;   // px per mousemove event; guards against spurious spikes that snap the view
 let editorDragLook = false, editorDragMoved = false, editorDragPan = false;   // editor mouse states
+let _edOrbit = null;   // build 1377: live orbit drag { px,py,pz, r, yaw, pitch } — pivot + spherical offset captured ONCE at drag start
 renderer.domElement.addEventListener('click', ()=>{ if(!isTouch && gameOn && !locked && !shopOpen && !invOpen && !editorOpen && !paused) tryPointerLock(); });
 // build 1177: drag a .glb/.gltf from your desktop onto the viewport while editing — no server round-trip.
 renderer.domElement.addEventListener('dragover', (e)=>{ if(typeof editorOpen!=='undefined' && editorOpen){ e.preventDefault(); } });
@@ -20787,6 +21038,7 @@ document.addEventListener('mousemove', e=>{
     if(gizmoDrag){ gizmoDragMove(e); editorDragMoved = true; return; }   // dragging an axis handle
     if(_altDupActive){ if(_altDup){ const gp = groundPointUnderPointer(e); if(gp){ _altDup.position.x = gp.x; _altDup.position.z = gp.z; } } editorDragMoved = true; return; }   // Alt-drag: move the fresh duplicate under the cursor
     if(_marqueeOn){ _marqueeMove(e); editorDragMoved = true; return; }   // build 563: drawing the selection box
+    if(_edOrbit && !editorTopView){ _edOrbitMove(e); return; }   // build 1377: Alt+LMB / MMB orbit about the pivot captured at drag start
     if(editorDragPan && editorTopView){
       const wpp = (2*topZoom)/innerHeight;   // world units per pixel at current zoom
       topPanX -= e.movementX * wpp;
@@ -20838,9 +21090,79 @@ renderer.domElement.addEventListener('mousedown', e=>{
   if(terrainBrush.on && terrainPointUnderPointer(e)){ pushUndoSnapshot(); _brushStroke(e); _brushing = true; editorDragMoved = true; return; }   // sculpt instead of select/look
   if(tryGizmoGrab(e)){ editorDragMoved = true; return; }   // grabbing an axis handle (suppresses select)
   if(e.altKey){ const o=_pickPropAt(e); if(o){ e.preventDefault(); pushUndoSnapshot(); _dupPropForDrag(o); _altDupActive = true; editorDragMoved = true; return; } }   // Alt+drag = duplicate the prop under the cursor and drag the copy
-  if(editorTopView) _marqueeStart(e); else editorDragLook = true;   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag)
+  if(editorTopView) _marqueeStart(e); else if(!(e.altKey && editorFreeFly && _edOrbitStart(e))) editorDragLook = true;   // build 563: top-view left-drag = marquee select (pan moved to right/middle-drag) · build 1377: Alt+LMB starting on empty space orbits; Alt over a prop stayed the drag-duplicate, claimed above
 });
-addEventListener('mouseup', e=>{ if(e.button===0){ if(_marqueeOn){ _marqueeFinish(e); } if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); } if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); if(typeof _scatLast!=='undefined') _scatLast=null; } editorDragLook = false; editorDragPan = false; const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } });
+addEventListener('mouseup', e=>{ if(e.button===0){ if(_marqueeOn){ _marqueeFinish(e); } if(_altDupActive){ _altDupActive = false; _altDup = null; const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); if(typeof renderEditorFields==='function') renderEditorFields(); } if(_brushing){ _brushing = false; editorDragMoved = true; if(terrainBrush.mode==='paint' && typeof _paintCommit==='function') _paintCommit(); if(typeof _scatLast!=='undefined') _scatLast=null; } editorDragLook = false; editorDragPan = false; _edOrbit = null; const _wg=gizmoDrag; gizmoDrag = null; if(_wg){ const tg=editorTargets[editorActive]; if(tg && typeof tg.sync==='function') tg.sync(); if(typeof updateFieldDisplays==='function') updateFieldDisplays(); } } });
+
+// ---------- build 1377 (editor audit #5, the cheap half): ORBIT in the fly camera ----------
+// Fly-mode drag was a first-person LOOK, so turning to inspect something swung it off screen — every
+// competitor orbits (Alt+drag or MMB). The pivot is captured ONCE at drag start; per mousemove the camera
+// POSITION is re-derived on the same radius about it (yaw about world Y, pitch about the camera right,
+// clamped exactly as the look drag clamps) and player.yaw/pitch are set to the orbit angles. The basis is
+// the spherical form _edFrameSelected already uses — camera = pivot + r*(sin(yaw)cp, -sin(pitch), cos(yaw)cp)
+// — in which facing the pivot falls out by construction: forward is (-sin yaw, -cos yaw) and the pivot sits
+// exactly r ahead. Re-deriving from (r, yaw, pitch) each step (never integrating the position) is what keeps
+// the radius exact for the whole drag.
+// THE INPUT CLAIM, stated because Alt already means something here: Alt+LMB over a PROP has been the
+// drag-duplicate since build 441 and KEEPS it — that branch runs before this one in the same handler, so
+// orbit takes only Alt-drags starting on empty space. MMB orbits regardless of what is under the cursor.
+// Top view (marquee/pan), walk mode, plain drag-look, WASD, the gizmo and the two-finger touch camera
+// (1312) are all untouched — the orbit writes flyPos, so it is fly-camera only.
+const _edOrbitP = { x:0, y:0, z:0 };   // pivot scratch (one capture per gesture)
+// PIVOT RESOLUTION, in order: (1) the explicit selection — selCentroid over activeSel, the union centre of
+// 1..N members. Deliberately NOT selectedSceneObject: the props tab always has a PRIMARY (idx 0) even when
+// the creator never clicked anything, and orbiting a crate on the far side of the map because it happens to
+// be entry 0 is the surprise this order avoids; the multi-select list is the honest form of a selection
+// existing. (2) the surface under the cursor via the editor pick ray — the same ray the Alt-duplicate
+// drags with. (3) a point ~10 u ahead along the look, so orbiting at the open sky still means something.
+function _edOrbitPivotV(e, out){
+  if(typeof activeSel==='function' && typeof selCentroid==='function'){
+    const list = activeSel();
+    if(list && list.length){ const c = selCentroid(); out.x=c.x; out.y=c.y; out.z=c.z; return out; }
+  }
+  const gp = (e && typeof groundPointUnderPointer==='function') ? groundPointUnderPointer(e) : null;
+  if(gp){ out.x=gp.x; out.y=gp.y; out.z=gp.z; return out; }
+  const cp = Math.cos(player.pitch);
+  out.x = flyPos.x - Math.sin(player.yaw)*cp*10;
+  out.y = flyPos.y + Math.sin(player.pitch)*10;
+  out.z = flyPos.z - Math.cos(player.yaw)*cp*10;
+  return out;
+}
+// spherical capture of the camera offset about the pivot, in the look basis above. Camera above the pivot
+// gives NEGATIVE pitch (looking down), matching the engine pitch sign everywhere else.
+function _edOrbitFrom(px, py, pz, cx, cy, cz){
+  const dx = cx-px, dy = cy-py, dz = cz-pz;
+  const r  = Math.max(0.75, Math.hypot(dx, dy, dz));   // a pivot AT the camera cannot orbit — floor the radius
+  const h  = Math.hypot(dx, dz);
+  const yaw   = (h > 1e-6) ? Math.atan2(dx, dz) : 0;   // back is (sin yaw, cos yaw)
+  const pitch = Math.max(-1.5, Math.min(1.5, Math.atan2(-dy, h)));
+  return { px, py, pz, r, yaw, pitch };
+}
+// one orbit step: turn the angles, re-derive the position on the SAME radius, hand it back. The caller
+// copies yaw/pitch to the player so the view keeps facing the pivot.
+function _edOrbitStep(ob, dyaw, dpitch, out){
+  ob.yaw += dyaw;
+  ob.pitch = Math.max(-1.5, Math.min(1.5, ob.pitch + dpitch));
+  const cp = Math.cos(ob.pitch);
+  out.x = ob.px + Math.sin(ob.yaw)*cp*ob.r;
+  out.y = ob.py - Math.sin(ob.pitch)*ob.r;
+  out.z = ob.pz + Math.cos(ob.yaw)*cp*ob.r;
+  return out;
+}
+function _edOrbitStart(e){
+  if(editorTopView || !editorFreeFly) return false;   // the orbit writes flyPos: fly camera only
+  if(!flyInit){ flyPos.copy(player.pos); flyInit = true; }   // same seed the frame loop takes
+  _edOrbitPivotV(e, _edOrbitP);
+  _edOrbit = _edOrbitFrom(_edOrbitP.x, _edOrbitP.y, _edOrbitP.z, flyPos.x, flyPos.y, flyPos.z);
+  return true;
+}
+function _edOrbitMove(e){
+  if(!_edOrbit) return;
+  const _s = _mouseSensNow(false);   // the look drag reads the same derivation, so orbit and look feel identical
+  _edOrbitStep(_edOrbit, -e.movementX*_s, -e.movementY*_s, flyPos);   // same angular direction as the look drag
+  player.yaw = _edOrbit.yaw; player.pitch = _edOrbit.pitch;   // face the pivot — exact in the basis above
+  if(Math.abs(e.movementX) + Math.abs(e.movementY) > 2) editorDragMoved = true;   // a real orbit is not a select-click
+}
 
 // ---------- build 563: top-view marquee drag-select ----------
 // In top view, a left-drag on empty space draws a selection box and selects every prop whose center projects
@@ -20910,7 +21232,8 @@ function _marqueeFinish(e){
   if(typeof renderEditorFields==='function') renderEditorFields();
 }
 // middle / right drag pans in top view (left-drag is the marquee now); suppress the context menu while editing in top view
-renderer.domElement.addEventListener('mousedown', e=>{ if(!editorOpen || (e.button!==1 && e.button!==2)) return; if(editorTopView){ editorDragPan=true; editorDragMoved=false; e.preventDefault(); } });
+renderer.domElement.addEventListener('mousedown', e=>{ if(!editorOpen || (e.button!==1 && e.button!==2)) return; if(editorTopView){ editorDragPan=true; editorDragMoved=false; e.preventDefault(); } else if(e.button===1 && editorFreeFly && _edOrbitStart(e)){ editorDragMoved=false; e.preventDefault(); } });   // build 1377: MMB in fly mode orbits (verified free there — this handler acted only in top view; the in-game grab returns while editorOpen; the vcam orbit requires gameOn without editorOpen)
+addEventListener('mouseup', e=>{ if(e.button===1) _edOrbit = null; });   // build 1377: MMB release ends the orbit (the LMB path clears it in the main editor mouseup)
 // ---- build 1312 (editor audit 4.6): TWO-FINGER CAMERA IN THE EDITOR VIEWPORT --------------------------
 // The audit: "Top view pan is mousedown button 1/2 and zoom is `wheel` -> TOP VIEW IS UNREACHABLE ON A
 // PHONE, and with it the marquee, which is top-view only. A touch creator has no multi-select at all beyond
@@ -26132,6 +26455,7 @@ function loadLevelFromNet(level){
   // this one — two levels' models never coexist in memory. The browser's HTTP cache still makes a
   // return trip cheap (only the GLB parse repeats, not the download).
   if(typeof IS_COARSE!=='undefined' && IS_COARSE && typeof freeUnusedModels==='function'){ try{ freeUnusedModels(); }catch(e){} }
+  if(typeof _evictTexCaches==='function') _evictTexCaches();   /* build 1376: the OLD level textures leave with its props — texCache/_texInst had ZERO delete sites; whatever the next level shares returns through the HTTP cache (build 991 made the same trade for models) */
   // clear current lights
   for(let i=lightModels.length-1;i>=0;i--) removeLight(i);
   // build 893: adopt the host's world (TERRAIN above all) BEFORE spawning props. Prop y is stored
@@ -32047,7 +32371,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1373 · 2026-08-04';
+const BUILD_VERSION = 'build 1377 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -33192,12 +33516,12 @@ function setPropDynamic(obj, on){
     if(obj.userData.hp == null){ obj.userData.maxHp = (typeof defaultHpFor==='function') ? defaultHpFor(obj) : 30; obj.userData.hp = obj.userData.maxHp; }
     obj.userData.physHome  = obj.position.clone();      // authored transform (reset target on Deploy)
     obj.userData.physHomeQ = obj.quaternion.clone();
-    const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1);   // dynamic = not a static collider
+    const ci = colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false;   // dynamic = not a static collider
     dynamicProps.push(obj);
     if(physWorld && !editorOpen) createBodyFor(obj);
   } else if(!on && obj.userData.phys){
     removeDynamicProp(obj);
-    refreshPropCollider(obj); if(colliders.indexOf(obj)<0) colliders.push(obj);   // back to static
+    refreshPropCollider(obj); if(colliders.indexOf(obj)<0) colliders.push(obj); obj.userData._inColliders=true;   // back to static
   }
 }
 // Apply saved/synced dynamic state (mass, breakable, hp) to a freshly-spawned prop.
@@ -34018,7 +34342,7 @@ function shatterProp(obj, point, dir, power, byId){
     obj.userData._destroyHome = { p:(obj.userData.physHome||obj.position).clone(), q:(obj.userData.physHomeQ||obj.quaternion).clone() };
     obj.userData._wasDyn = !!obj.userData.phys;
     if(obj.userData.phys && typeof removeDynamicProp==='function') removeDynamicProp(obj);
-    else { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }
+    else { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }
     obj.userData._destroyed = true; obj.visible=false; if(obj.parent) scene.remove(obj);
     return;
   }
@@ -34147,7 +34471,7 @@ function restoreDestroyedProps(){   // bring back authored props destroyed durin
     o.visible=true; if(!o.parent) scene.add(o);
     if(o.userData.modelLights && typeof adoptModelLights==='function') adoptModelLights(o);   // build 1157: re-register, never re-scale
     if(o.userData._wasDyn){ o.userData._wasDyn=false; setPropDynamic(o, true); }   // re-register dynamic (recaptures physHome from the restored position)
-    else { refreshPropCollider(o); if(colliders.indexOf(o)<0) colliders.push(o); }
+    else { refreshPropCollider(o); if(colliders.indexOf(o)<0) colliders.push(o); o.userData._inColliders=true; }
     if(o.userData.maxHp) o.userData.hp = o.userData.maxHp;
   }
 }
@@ -35872,7 +36196,7 @@ function _raceSpawnBots(){
     const st={ i, src, veh, s:_racePath.total - 7 - 6*i, lat:(i%2?2.7:-2.7), v:0, laps:0, prevYaw:null,
                mYaw:((veh.modelYaw||0))*RAD, skill:skill*(1 - 0.035*i), baseOff:0, obj:null };
     spawnProp(src, [0,-1000,0, 0,0,0, sc.x, sc.y, sc.z], (obj)=>{
-      { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // rivals never block rays / physics
+      { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }     // rivals never block rays / physics
       { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }   // ...and never serialize or get picked
       obj.userData.runtime=true; obj.userData._raceBot=st;
       { obj.position.set(0,0,0); obj.updateMatrixWorld(true); const bb=new THREE.Box3().setFromObject(obj); st.baseOff=bb.isEmpty()?0:(-bb.min.y);
@@ -35970,7 +36294,7 @@ function _ghostEnsureObj(){
   const holder={ mYaw:((tmpl.userData.vehicle.modelYaw||0))*RAD, src:tmpl.userData.src, obj:null };
   _ghostObj=holder;
   spawnProp(tmpl.userData.src, [0,-1000,0, 0,0,0, tmpl.scale.x, tmpl.scale.y, tmpl.scale.z], (obj)=>{
-    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // the ghost is pure light — no rays, no saves
+    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }     // the ghost is pure light — no rays, no saves
     { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }
     obj.userData.runtime=true; obj.visible=false;
     obj.traverse(m=>{ if(m.isMesh){ m.castShadow=false; m.receiveShadow=false;
@@ -36118,7 +36442,7 @@ function _gridCarsClear(){ for(const c of _gridCars){ try{ if(c.userData && c.us
 function _gridCloneCar(tmpl){
   const src=tmpl.userData.src, sc=tmpl.scale, veh=tmpl.userData.vehicle;
   spawnProp(src, [0,-1000,0, 0,0,0, sc.x, sc.y, sc.z], (obj)=>{
-    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); }     // local-only extras: no rays/physics
+    { const ci=colliders.indexOf(obj); if(ci>=0) colliders.splice(ci,1); obj.userData._inColliders=false; }     // local-only extras: no rays/physics
     { const pi=propModels.indexOf(obj); if(pi>=0) propModels.splice(pi,1); }   // ...and never serialized or net-synced
     obj.userData.runtime=true; obj.userData.gridClone=true;
     obj.userData.vehicle=Object.assign({}, veh);
@@ -39516,7 +39840,7 @@ const MODE_HINT = {
   files:   'Save, share or export this level, and chain levels into a campaign.',
   settings:'Your API keys for the AI tools and the 3D model libraries. Stored in THIS browser only \u2014 never saved into a level or shared.',
 };
-const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+A</b> add · <b>F</b> fly · <b>T</b> top view · <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Del</b> remove · <b>P</b> close.</span>';
+const HINT_SHORTCUTS = ' <span style="opacity:.7">·  <b>Shift+A</b> add · <b>F</b> fly · <b>T</b> top view · <b>Shift+D</b> duplicate · <b>Alt+drag</b> a prop to clone · <b>Alt/MMB-drag</b> orbit · <b>Del</b> remove · <b>P</b> close.</span>';
 function _hexRgba(hex,a){ const nn=parseInt(hex.replace('#',''),16); return 'rgba('+((nn>>16)&255)+','+((nn>>8)&255)+','+(nn&255)+','+a+')'; }
 const SHOW_MODEL_LIBRARY = false;   // hardcoded model-library chips hidden for now (to be rebuilt); flip true to restore
 const _svgIcon = (inner)=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>';
@@ -42179,6 +42503,7 @@ function restoreLevel(level){
   // this one — two levels' models never coexist in memory. The browser's HTTP cache still makes a
   // return trip cheap (only the GLB parse repeats, not the download).
   if(typeof IS_COARSE!=='undefined' && IS_COARSE && typeof freeUnusedModels==='function'){ try{ freeUnusedModels(); }catch(e){} }
+  if(typeof _evictTexCaches==='function') _evictTexCaches();   /* build 1376: the OLD level textures leave with its props — texCache/_texInst had ZERO delete sites; whatever the next level shares returns through the HTTP cache (build 991 made the same trade for models) */
   if(Array.isArray(level.props)){
     propModels.length = level.props.length;
     if(Array.isArray(level.credits) && typeof creditAsset==='function') level.credits.forEach(c=>creditAsset(String(c)));   // build 835: the level's CC credits ride along on load
@@ -50875,9 +51200,35 @@ function showClipSlicer(url, label, opts){
   { const mx = maxFrame(); outN.value = String(Math.min(mx, 30)); }
   clampAll(); showFrame(); redraw();
 }
+/* ---------- build 1375: the pause card is tabbed ---------- */
+/* The pause menu had become the whole settings surface: 36 controls in one scrolling column, with Exit
+   to main menu below the fold on a 900px screen. Four panels now group the rows (game / controls /
+   audio / comfort) behind a strip of real buttons, and the footer never scrolls away. The active tab
+   is remembered for the SESSION only: a var, not storage, so reopening mid-match lands on the panel
+   the player last used and the next session starts back at Game. var, not let, because a module-level
+   bindPauseMenu() call runs far below and a let would sit in its temporal dead zone for any earlier
+   caller (the 1127/1331 trap). */
+var _pauseTab = 'game';
+function _pauseTabShow(name){
+  const panels = document.querySelectorAll('#pauseBody .pPanel');
+  const tabs = document.querySelectorAll('#pauseTabs .pTab');
+  if(!panels.length || !tabs.length) return;   /* markup missing (boot stubs, a stripped page): never throw from a menu */
+  let ok = false; panels.forEach(p=>{ if(p.dataset.ppanel === name) ok = true; });
+  if(!ok) name = 'game';                       /* an unknown name lands on the first tab, never on a blank card */
+  _pauseTab = name;
+  tabs.forEach(b=>{ b.classList.toggle('on', b.dataset.ptab === name); });
+  panels.forEach(p=>{ p.classList.toggle('on', p.dataset.ppanel === name); });
+  const body = document.getElementById('pauseBody'); if(body) body.scrollTop = 0;   /* each panel opens at its own top */
+}
 function bindPauseMenu(){
   const pb=document.getElementById('pauseBtn'); if(pb) pb.onclick=openPause;
   const r=document.getElementById('pauseResume'); if(r) r.onclick=resumeGame;
+  /* build 1375: the tab strip. Re-wired on every open (openPause calls bindPauseMenu) and the remembered
+     tab re-applied, so the menu reopens on the panel the player last used. No explicit SFX here: the
+     build 1363 delegated menu-click listener already voices every button in a menu context, and a second
+     call would double-fire. */
+  document.querySelectorAll('#pauseTabs .pTab').forEach(b=>{ b.onclick=()=>_pauseTabShow(b.dataset.ptab); });
+  _pauseTabShow(_pauseTab);
   const plb=document.getElementById('pauseLoadout'); if(plb) plb.onclick=()=>{ if(typeof openLoadout==='function') openLoadout(); };
   /* build 1166: CC-BY attribution must be reachable at play time. build 1277: TWO buttons carried
      id="pauseCredits", so getElementById only ever reached the first and the second was inert — which is

@@ -175,7 +175,8 @@ const enemyAt = (deg, dist = 20, y = 1.7) => {
   assert(/padPrefs\.aim=Math\.max\(0, Math\.min\(1, \(\+ar2\.value\|\|0\)\/100\)\); savePadPrefs\(\);/.test(src),
     '...clamped and persisted');
   assert(/let padPrefs = \{ sens:1, ads:0\.7, dead:PAD_DEADZONE, invertY:false, aim:1 \};/.test(src), 'and it defaults on');
-  assert(/<b>Stick and touch only<\/b> \\u2014 a mouse is never assisted/.test(html),
+  /* build 1375: a REAL em-dash — the literal backslash-u2014 rendered as garbage in the markup */
+  assert(/<b>Stick and touch only<\/b> — a mouse is never assisted/.test(html),
     'the panel tells the player it is stick and touch only, which is the thing a mouse player would otherwise assume');
 }
 

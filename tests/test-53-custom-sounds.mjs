@@ -10,11 +10,11 @@ assert(/sounds:_sanitizeSounds\(j\.sounds\)/.test(src) && /sounds:_emptySounds\(
 assert(/preloadCustomSounds\(\);/.test(src) && /buildAudioBuses\(\); preloadCustomSounds/.test(src), 'configured samples preload on audio init');
 
 // SFX override hooks (sample first, else synth)
-assert(/shoot\(\)\{ if\(playSample\(\(curSounds\(\)\.shoot\|\|\{\}\)\[curWep\], \{vary:0\.04\}\)\) return;/.test(src), 'per-weapon shoot sample overrides the synth (with pitch wobble, build 752)');
+assert(/shoot\(\)\{ _duckMusic\(\); if\(playSample\(\(curSounds\(\)\.shoot\|\|\{\}\)\[curWep\], \{vary:0\.04\}\)\) return;/.test(src), 'per-weapon shoot sample overrides the synth (with pitch wobble, build 752)');
 // build 748: reload is per-weapon now (with _all legacy fallback)
 assert(/reload\(\)\{ const r=curSounds\(\)\.reload; const u=\(r&&typeof r==='object'\)\?\(r\[curWep\]\|\|r\._all\):r; if\(playSample\(u\)\) return;/.test(src), 'per-weapon reload sample overrides the synth');
 assert(/coin\(\)\{ if\(playSample\(curSounds\(\)\.coin\)\) return;/.test(src), 'coin sample overrides the synth');
-assert(/explode\(at\)\{ if\(playSample\(curSounds\(\)\.explode, \{at\}\)\) return;/.test(src), 'explode sample overrides the synth (build 1208: positioned)');
+assert(/explode\(at\)\{ _duckMusic\(\); if\(playSample\(curSounds\(\)\.explode, \{at\}\)\) return;/.test(src), 'explode sample overrides the synth (build 1208: positioned; the 1374 duck fires first on either path)');
 // build 752: hit/hurt get a pitch wobble, kill is per-enemy-type + wobble
 assert(/hit\(at\)\{ if\(playSample\(curSounds\(\)\.hit, \{vary:0\.06, at\}\)\) return;/.test(src), 'hit sample overrides the synth (pitch wobble; positioned since 1208)');
 assert(/hurt\(\)\{ if\(playSample\(curSounds\(\)\.hurt, \{vary:0\.05\}\)\) return;/.test(src), 'hurt sample overrides the synth (pitch wobble)');
