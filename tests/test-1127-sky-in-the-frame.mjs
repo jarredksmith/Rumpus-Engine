@@ -59,8 +59,8 @@ assert(/scene\.environment = /.test(src), 'something still installs an environme
 {
   const es = extractFunction('_ensureSky');
   assert(/_OETF_GLSL, _ACES_GLSL,/.test(es), 'the dome tone-maps and can encode');
-  assert(/gl_FragColor = vec4\(_out\(_aces\(skyRadiance\(normalize\(vDir\)\)\)\), 1\.0\);/.test(es),
-    '...in that order: tone map the linear radiance, then encode');
+  assert(/gl_FragColor = vec4\(_out\(_aces\(applyClouds\(skyRadiance\(nd\), nd\)\)\), 1\.0\);/.test(es),
+    '...in that order: composite the cloud layer over the linear radiance (build 1369), tone map, then encode');
   assert(!/'#include <tonemapping_fragment>'/.test(src),
     'the chunk is NOT included: three defines toneMapping() in the program prefix as a wrapper around a function the chunk declares later, so in a raw ShaderMaterial it is a forward reference and the program fails to compile — silently, and the sky went pure black');
   // uEncode has to be decided per frame, because whether the dome writes the canvas is a runtime toggle
