@@ -31867,7 +31867,7 @@ function pickGamepad(pads){
   return (best && bestScore>-1e8) ? best : null;
 }
 // === BUILD VERSION — bumped every iteration so you can confirm you're on the latest file ===
-const BUILD_VERSION = 'build 1366 · 2026-08-04';
+const BUILD_VERSION = 'build 1367 · 2026-08-04';
 // Live diagnostic — toggle with `, switch active pad with ]. Lists every device the browser reports.
 function updatePadDebug(pads, gp){
   const el = $('padDebug'); if(!el || el.style.display==='none') return;
@@ -34548,6 +34548,7 @@ function killEnemy(en, sx, sz, byEnemy){
     spark(en.mesh.position, 0xff7b00); flashToast('☠ BOSS DOWN');
   }
   // build 779: ragdoll the corpse (carries the killing hit's direction), else just remove the mesh
+  if(en._teleOn) _telegraphEnd(en);   /* build 1367: a death mid-wind-up must not ragdoll/topple a squashed capsule — the splice below means the state-keyed restore never runs again */
   let _rdx, _rdz;
   if(sx!=null){ _rdx=en.mesh.position.x-sx; _rdz=en.mesh.position.z-sz; const _l=Math.hypot(_rdx,_rdz)||1; _rdx/=_l; _rdz/=_l; }
   else { const _a=Math.random()*6.2832; _rdx=Math.cos(_a); _rdz=Math.sin(_a); }
@@ -35158,6 +35159,72 @@ function flashEnemy(en){
     if(en._emi0 == null) en._emi0 = v.material.emissiveIntensity;
     v.material.emissiveIntensity = 2.4; en._flash = 0.12;
   }
+}
+/* ---- build 1367: the capsule enemy telegraphs its wind-up (feel critic #5) --------------------------
+   Both telegraphs exist and are well timed (ENEMY_MELEE_WINDUP_MS = 320, the charger 520 ms _lungeWind)
+   but their only consumer was the anim state machine, gated on hasModel && stateActions — which the
+   procedural capsule has NEITHER of. So on the default path (every random wave, the stock level) an
+   enemy stood still for a third of a second and you lost 9 HP, with only build 1283 audio as the tell.
+   The capsule now pulses its emissive and squashes in anticipation, CAPSULE-ONLY (the gate shape build
+   1226 used for the friendly tint): a custom model keeps its own look — its attack clip IS its
+   telegraph, and two telegraph systems on one body is double grain (build 1145 rule). The capsule
+   material is created PER CAPSULE in useCapsule (verified: new MeshStandardMaterial per body, and
+   flashEnemy already animates exactly this material), so nothing is shared and no clone is needed.
+   Zero per-frame allocation (build 1168): every stash is a number on the enemy. */
+const TELE_EMI_LO = 0.6;   /* pulse floor = the emissiveIntensity useCapsule authors on every capsule */
+const TELE_EMI_HI = 2.2;   /* ceiling UNDER flashEnemy 2.4, so a landed hit still reads brighter than the tell */
+const TELE_CYC = 3;        /* pulse cycles per wind-up. INTEGER on purpose: the cosine is back at its trough at t=1, so the ramp term alone owns the exact TELE_EMI_HI peak at the strike */
+const TELE_SQ_Y = 0.08;    /* anticipation squash: crouch 8 percent (scale.y x0.92)... */
+const TELE_SQ_XZ = 0.04;   /* ...and widen 4 percent — 0.92 * 1.04^2 = 0.995, near volume-preserving */
+function _telegraphPulse(t){
+  /* t = progress through the wind-up, 0 (just started) .. 1 (the strike lands). The phase is t*t, so
+     the instantaneous pulse rate is 2*TELE_CYC*t — it QUICKENS toward the strike, the sapper-fuse
+     pattern (build 1315). The ramp floor (t itself) keeps the overall level RISING while it pulses,
+     and at t=1 the value is exactly TELE_EMI_HI. */
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  const osc = 0.5 - 0.5*Math.cos(t*t*TELE_CYC*2*Math.PI);
+  const m = osc > t ? osc : t;
+  return TELE_EMI_LO + (TELE_EMI_HI - TELE_EMI_LO)*m;
+}
+function _telegraphFrac(en, nowMs){
+  /* Which telegraph is live and how far through it. Returns -1 when neither is pending — and that
+     return keys the RESTORE: build 1209 heavy-hit interrupt zeroes _windupT/_lungeWind, a landed
+     strike zeroes _windupT, the dash consumes _lungePending. Every exit reads -1 on the next frame,
+     so the restore follows the STATE and never a timer of its own. */
+  if(en._windupT && nowMs < en._windupT) return 1 - (en._windupT - nowMs)/ENEMY_MELEE_WINDUP_MS;
+  if(en._lungePending && en._lungeWind > nowMs) return 1 - (en._lungeWind - nowMs)/(en.lungeWind||520);
+  return -1;
+}
+function _telegraphTick(en, nowMs){
+  const ud = en.mesh && en.mesh.userData; if(!ud) return;
+  const v = ud.visual;
+  /* the capsule-only gate, matching how build 1226 gated the tint: no model, no state machine */
+  const cap = !!(v && !ud.hasModel && !(v.userData && v.userData.stateActions) && v.material && v.material.emissive);
+  const t = (cap && !en.dead) ? _telegraphFrac(en, nowMs) : -1;
+  if(t >= 0){
+    if(!en._teleOn){
+      en._teleOn = 1;
+      /* the true base: _emi0 is the capture flashEnemy itself makes, and it is non-null whenever a
+         hit flash is live — so a mid-flash 2.4 can never be recorded as the base */
+      en._teleEmi0 = (en._emi0 != null) ? en._emi0 : v.material.emissiveIntensity;
+      if(en._emi0 == null) en._emi0 = en._teleEmi0;   /* seed the flash restore point too, or a first-ever hit landing mid-pulse would capture a pulsed value as the base forever */
+      en._teleSc = v.scale.x;   /* the AUTHORED scale — useCapsule sets it uniform via setScalar */
+    }
+    if(!(en._flash > 0)) v.material.emissiveIntensity = _telegraphPulse(t);   /* a live hit flash (2.4) outranks the pulse for its 0.12 s */
+    const e = t*4 < 1 ? t*4 : 1;   /* the squash eases in over the first quarter, then holds — no pop */
+    v.scale.set(en._teleSc*(1 + TELE_SQ_XZ*e), en._teleSc*(1 - TELE_SQ_Y*e), en._teleSc*(1 + TELE_SQ_XZ*e));
+  } else if(en._teleOn){
+    _telegraphEnd(en);
+  }
+}
+function _telegraphEnd(en){
+  /* restore EXACTLY the authored look. Reads no TELE_* constant on purpose — killEnemy calls this
+     from outside the enemy loop and must depend on nothing but the stashes. */
+  en._teleOn = 0;
+  const ud = en.mesh && en.mesh.userData, v = ud && ud.visual;
+  if(!v) return;
+  if(en._teleSc != null) v.scale.set(en._teleSc, en._teleSc, en._teleSc);
+  if(v.material && v.material.emissive && en._teleEmi0 != null && !(en._flash > 0)) v.material.emissiveIntensity = en._teleEmi0;
 }
 function updateFloaters(dt){
   const now = performance.now();
@@ -38579,6 +38646,7 @@ function _enStep(en, tvx, tvz, dt){
         if(_sd > 1e-4) _enemyFootstep(en, _sd);
       }
       _sapperFuse(en, dt);   /* build 1315: and the exploder ticks while it closes, at any height */
+      _telegraphTick(en, nowMs);   /* build 1367: the capsule visual wind-up — emissive pulse + anticipation squash while _windupT or the lunge telegraph is pending; restore is keyed off the STATE, so 1209 interrupts and whiffs both recover it */
       en._spx = en.mesh.position.x; en._spz = en.mesh.position.z;
       // drive the animation state machine: attack window > running (chasing) > walking (patrol) > idle
       if(en.mesh.userData.hasModel && en.mesh.userData.visual && en.mesh.userData.visual.userData.stateActions){
